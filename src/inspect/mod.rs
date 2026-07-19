@@ -61,10 +61,10 @@ pub fn inspect_run_with(composer: &InspectComposer, store: &LocalStore, run_id: 
 
 pub(crate) fn inspect_run_core_prefix_body(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let canonical = read_run(store, run_id)?;
-  let input_action_results = list_input_action_results(store, run_id)?;
-  let verifications = list_verifications(store, run_id)?;
-  let observation_snapshots = list_observation_snapshots(store, run_id)?;
-  let detector_recognition_lineage = list_detector_recognition_lineage(store, run_id)?;
+  let input_action_results = crate::run_read::extract_input_action_results(store, &canonical)?;
+  let verifications = crate::run_read::extract_verifications(store, &canonical)?;
+  let observation_snapshots = crate::run_read::extract_observation_snapshots(store, &canonical)?;
+  let detector_recognition_lineage = crate::run_read::extract_detector_recognition_lineage(store, &canonical)?;
   Ok(render_core_run_text(&canonical, &input_action_results, &verifications, &observation_snapshots, &detector_recognition_lineage))
 }
 
@@ -388,7 +388,7 @@ mod tests {
         &span_id,
         None,
         auv_tracing_driver::ArtifactFileSource {
-          role: "input-action-result".to_string(),
+          role: auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE.to_string(),
           source_path: source,
           preferred_name: "iar.json".to_string(),
           summary: None,

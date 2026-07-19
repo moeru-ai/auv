@@ -21,7 +21,7 @@
 //!   -> OperationResult / VerificationResult / ObservationSnapshot
 //!        (this file; the persisted, reader-consumable records)
 //!   -> trace artifacts
-//!        (src/run_read.rs reads them back via `extract_verifications`,
+//!        (src/run_read/mod.rs reads them back via `extract_verifications`,
 //!         `extract_observation_snapshots`, and
 //!         `extract_input_action_results`)
 //! ```

@@ -16,7 +16,7 @@ use crate::contract::{
 };
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
-use auv_driver::InputActionResult;
+use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult};
 use auv_inspect_model::{artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
@@ -26,8 +26,6 @@ pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
 }
 
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
-const INPUT_ACTION_RESULT_ARTIFACT_ROLE: &str = "input-action-result";
-
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DetectorRecognitionLineageStatus {
@@ -329,7 +327,8 @@ mod tests {
   };
   use serde::Serialize;
 
-  use super::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, extract_input_action_results, list_input_action_results};
+  use super::{extract_input_action_results, list_input_action_results};
+  use auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE;
 
   fn temp_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("auv-run-read-iar-{label}-{}", std::process::id()));

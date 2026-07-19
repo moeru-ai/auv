@@ -401,7 +401,7 @@ fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputA
   if let Some(reason) = &result.fallback_reason {
     output.signals.insert("input.fallback_reason".to_string(), reason.clone());
   }
-  output.artifacts.push(input_action_artifact(result, "input-action-result")?);
+  output.artifacts.push(input_action_artifact(result, auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE)?);
   output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
   output
     .known_limits
@@ -432,7 +432,7 @@ fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
 
 #[cfg(target_os = "macos")]
 fn input_action_artifact(result: &auv_driver::InputActionResult, label: &str) -> Result<auv_tracing_driver::ProducedArtifact, String> {
-  json_artifact("input-action-result", label, result, "Typed InputActionResult recorded by the invoke handler.")
+  json_artifact(auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE, label, result, "Typed InputActionResult recorded by the invoke handler.")
 }
 
 #[cfg(test)]

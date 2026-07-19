@@ -19,9 +19,9 @@ pub use geometry::{
   ScreenPoint, Size, WindowPoint, WorldPoint,
 };
 pub use input::{
-  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
-  InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy,
-  ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputAttempt,
+  InputDeliveryPath, InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll,
+  ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 pub use operation::{OperationDisturbance, OperationNamespace, OperationSpec};
 pub use permission::{PermissionProbe, PermissionStatus};
