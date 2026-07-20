@@ -4,8 +4,10 @@
 
 mod artifact;
 mod event;
+mod history;
 mod value;
 
 pub use artifact::*;
 pub use event::*;
+pub use history::*;
 pub use value::*;
