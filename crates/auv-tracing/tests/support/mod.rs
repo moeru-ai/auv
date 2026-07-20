@@ -99,12 +99,17 @@ pub struct ControlledStore {
 }
 
 struct ControlState {
-  gates: Mutex<HashMap<RunId, VecDeque<CommitGate>>>,
-  first_gate: Mutex<Option<CommitGate>>,
+  controls: Mutex<HashMap<RunId, VecDeque<CommitControl>>>,
+  first_control: Mutex<Option<CommitControl>>,
   calls: Mutex<Vec<RunCommitRequest>>,
   calls_changed: Condvar,
   committed: Mutex<Vec<(RunCommitRequest, RunCommit)>>,
   committed_changed: Condvar,
+}
+
+struct CommitControl {
+  gate: CommitGate,
+  failure: Option<ErrorCode>,
 }
 
 impl ControlledStore {
@@ -112,8 +117,8 @@ impl ControlledStore {
     Arc::new(Self {
       inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
       control: Arc::new(ControlState {
-        gates: Mutex::new(HashMap::new()),
-        first_gate: Mutex::new(None),
+        controls: Mutex::new(HashMap::new()),
+        first_control: Mutex::new(None),
         calls: Mutex::new(Vec::new()),
         calls_changed: Condvar::new(),
         committed: Mutex::new(Vec::new()),
@@ -124,13 +129,28 @@ impl ControlledStore {
 
   pub fn block_first_commit(&self) -> CommitGate {
     let gate = CommitGate::new();
-    *self.control.first_gate.lock().unwrap() = Some(gate.clone());
+    *self.control.first_control.lock().unwrap() = Some(CommitControl {
+      gate: gate.clone(),
+      failure: None,
+    });
     gate
   }
 
   pub fn block_next_commit(&self, run_id: RunId) -> CommitGate {
     let gate = CommitGate::new();
-    self.control.gates.lock().unwrap().entry(run_id).or_default().push_back(gate.clone());
+    self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
+      gate: gate.clone(),
+      failure: None,
+    });
+    gate
+  }
+
+  pub fn fail_next_commit(&self, run_id: RunId, code: ErrorCode) -> CommitGate {
+    let gate = CommitGate::new();
+    self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
+      gate: gate.clone(),
+      failure: Some(code),
+    });
     gate
   }
 
@@ -176,17 +196,17 @@ impl ControlledStore {
       .collect()
   }
 
-  fn gate_for(&self, run_id: RunId) -> Option<CommitGate> {
-    if let Some(gate) = self.control.first_gate.lock().unwrap().take() {
-      return Some(gate);
+  fn control_for(&self, run_id: RunId) -> Option<CommitControl> {
+    if let Some(control) = self.control.first_control.lock().unwrap().take() {
+      return Some(control);
     }
-    let mut gates = self.control.gates.lock().unwrap();
-    let queue = gates.get_mut(&run_id)?;
-    let gate = queue.pop_front();
+    let mut controls = self.control.controls.lock().unwrap();
+    let queue = controls.get_mut(&run_id)?;
+    let control = queue.pop_front();
     if queue.is_empty() {
-      gates.remove(&run_id);
+      controls.remove(&run_id);
     }
-    gate
+    control
   }
 }
 
@@ -198,10 +218,15 @@ impl RunStore for ControlledStore {
   fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
     self.control.calls.lock().unwrap().push(request.clone());
     self.control.calls_changed.notify_all();
-    let gate = self.gate_for(request.run_id()).and_then(|gate| gate.enter());
+    let control = self.control_for(request.run_id());
+    let gate = control.as_ref().and_then(|control| control.gate.enter());
+    let failure = control.and_then(|control| control.failure);
     Box::pin(async move {
       if let Some(gate) = gate {
         let _ = gate.await;
+      }
+      if let Some(code) = failure {
+        return Err(CommitError::Rejected(code));
       }
       let commit = self.inner.commit(request.clone()).await?;
       self.control.committed.lock().unwrap().push((request, commit.clone()));
@@ -255,6 +280,21 @@ impl TaskSpawner for FailFirstSpawner {
       return Err(TaskSpawnError::new(ErrorCode::parse("auv.dispatch.spawn").unwrap()));
     }
     std::thread::spawn(move || futures_executor::block_on(task));
+    Ok(())
+  }
+}
+
+pub struct InlineSpawner;
+
+impl InlineSpawner {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self)
+  }
+}
+
+impl TaskSpawner for InlineSpawner {
+  fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
+    futures_executor::block_on(task);
     Ok(())
   }
 }

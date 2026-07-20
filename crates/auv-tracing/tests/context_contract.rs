@@ -4,11 +4,13 @@ mod support;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::task::{Context as TaskContext, Poll};
 
 use auv_tracing::{Attributes, Context, DispatchStage, EventPayload, RunId, RunMutation, RunStore, SpanSpec, configure, dispatcher};
 use serde::{Deserialize, Serialize};
-use support::{ControlledStore, FailFirstSpawner, TestDispatch};
+use support::{ControlledStore, FailFirstSpawner, InlineSpawner, TestDispatch};
 
 struct TestSpan;
 
@@ -27,6 +29,16 @@ impl SpanSpec for InvalidSpan {
 
   fn attributes(&self) -> Attributes {
     Attributes::empty()
+  }
+}
+
+struct PanickingSpan;
+
+impl SpanSpec for PanickingSpan {
+  const NAME: &'static str = "auv.test.panicking_span";
+
+  fn attributes(&self) -> Attributes {
+    panic!("span attribute preparation failed");
   }
 }
 
@@ -60,6 +72,30 @@ impl Serialize for BlockingEvent {
 impl EventPayload for BlockingEvent {
   const NAME: &'static str = TestEvent::NAME;
   const VERSION: u32 = TestEvent::VERSION;
+}
+
+struct PanickingEvent;
+
+impl Serialize for PanickingEvent {
+  fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    panic!("event payload preparation failed");
+  }
+}
+
+impl EventPayload for PanickingEvent {
+  const NAME: &'static str = "auv.test.panicking_event";
+  const VERSION: u32 = 1;
+}
+
+struct WakeCounter(AtomicUsize);
+
+impl futures_util::task::ArcWake for WakeCounter {
+  fn wake_by_ref(counter: &Arc<Self>) {
+    counter.0.fetch_add(1, Ordering::SeqCst);
+  }
 }
 
 fn event_values(requests: &[auv_tracing::RunCommitRequest]) -> Vec<u32> {
@@ -294,6 +330,69 @@ fn dropped_flush_future_does_not_block_a_later_flush() {
 }
 
 #[test]
+fn dropped_flush_does_not_consume_its_later_failure() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store(store.clone());
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+  let blocked = store.fail_next_commit(run_id, auv_tracing::ErrorCode::parse("auv.test.commit_failure").unwrap());
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  blocked.wait_until_entered();
+  let first_flush = fixture.dispatch.flush();
+  drop(first_flush);
+  let later_flush = fixture.dispatch.flush();
+  blocked.release();
+
+  let error = futures_executor::block_on(later_flush).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::AuthorityCommit);
+  assert_eq!(error.first().code().as_str(), "auv.test.commit_failure");
+}
+
+#[test]
+fn overlapping_flushes_complete_in_call_order_not_poll_order() {
+  let fixture = TestDispatch::memory();
+  let root = fixture.root();
+  root.in_scope(|| {
+    let _span = auv_tracing::start_span!(InvalidSpan);
+  });
+  let mut first_flush = fixture.dispatch.flush();
+  let mut second_flush = fixture.dispatch.flush();
+  let waker = futures_util::task::noop_waker();
+  let mut task_context = TaskContext::from_waker(&waker);
+
+  assert!(second_flush.as_mut().poll(&mut task_context).is_pending());
+  let Poll::Ready(Err(first_error)) = first_flush.as_mut().poll(&mut task_context) else {
+    panic!("the first flush must consume the ready failure interval");
+  };
+  assert_eq!(first_error.first().stage(), DispatchStage::Encode);
+  assert!(matches!(second_flush.as_mut().poll(&mut task_context), Poll::Ready(Ok(()))));
+}
+
+#[test]
+fn dropping_ready_front_flush_wakes_successor_and_preserves_interval() {
+  let fixture = TestDispatch::memory();
+  let root = fixture.root();
+  root.in_scope(|| {
+    let _span = auv_tracing::start_span!(InvalidSpan);
+  });
+  let first_flush = fixture.dispatch.flush();
+  let mut second_flush = fixture.dispatch.flush();
+  let counter = Arc::new(WakeCounter(AtomicUsize::new(0)));
+  let waker = futures_util::task::waker_ref(&counter);
+  let mut task_context = TaskContext::from_waker(&waker);
+
+  assert!(second_flush.as_mut().poll(&mut task_context).is_pending());
+  drop(first_flush);
+  assert_eq!(counter.0.load(Ordering::SeqCst), 1);
+  let Poll::Ready(Err(error)) = second_flush.as_mut().poll(&mut task_context) else {
+    panic!("the successor must inherit the canceled front flush interval");
+  };
+  assert_eq!(error.first().stage(), DispatchStage::Encode);
+}
+
+#[test]
 fn spawn_failure_releases_the_run_lane_and_failed_flush_interval_advances() {
   let store = ControlledStore::new();
   let fixture = TestDispatch::with_store_and_spawner(store.clone(), FailFirstSpawner::new());
@@ -329,6 +428,48 @@ fn validation_failure_terminalizes_its_ticket_without_blocking_later_work() {
   assert_eq!(error.failure_count().get(), 1);
   assert_eq!(error.first().stage(), DispatchStage::Encode);
   assert_eq!(event_values(&store.committed_requests(run_id)), [7]);
+}
+
+#[test]
+fn panicking_span_preparation_releases_the_lane_and_reports_encode() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store_and_spawner(store.clone(), InlineSpawner::new());
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+
+  let panic = catch_unwind(AssertUnwindSafe(|| {
+    root.in_scope(|| {
+      let _span = auv_tracing::start_span!(PanickingSpan);
+    });
+  }));
+  assert!(panic.is_err());
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 8 }));
+
+  assert_eq!(store.commit_call_count(run_id), 1, "later same-run work must reach the authority");
+  let error = futures_executor::block_on(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::Encode);
+  assert_eq!(event_values(&store.committed_requests(run_id)), [8]);
+}
+
+#[test]
+fn panicking_event_preparation_releases_the_lane_and_reports_encode() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store_and_spawner(store.clone(), InlineSpawner::new());
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+
+  let panic = catch_unwind(AssertUnwindSafe(|| {
+    root.in_scope(|| auv_tracing::emit_event!(PanickingEvent));
+  }));
+  assert!(panic.is_err());
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 9 }));
+
+  assert_eq!(store.commit_call_count(run_id), 1, "later same-run work must reach the authority");
+  let error = futures_executor::block_on(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::Encode);
+  assert_eq!(event_values(&store.committed_requests(run_id)), [9]);
 }
 
 #[test]
