@@ -56,8 +56,16 @@ impl Context {
   }
 
   /// Clones the innermost thread-local scope or returns a disabled context.
+  ///
+  /// During thread teardown the context stack may already be destroyed. In
+  /// that narrow case this returns a disabled context so later TLS destructors
+  /// can finish without aborting the process.
   pub fn current() -> Self {
-    CURRENT_CONTEXTS.with(|contexts| contexts.borrow().frames.last().map(|frame| frame.context.clone())).unwrap_or_else(Self::disabled)
+    CURRENT_CONTEXTS
+      .try_with(|contexts| contexts.borrow().frames.last().map(|frame| frame.context.clone()))
+      .ok()
+      .flatten()
+      .unwrap_or_else(Self::disabled)
   }
 
   /// Returns the captured local authority or preserved remote authority.
@@ -81,17 +89,22 @@ impl Context {
   }
 
   /// Makes this context current on the calling thread until the guard drops.
+  ///
+  /// If called after the context TLS has been destroyed, the returned guard is
+  /// a no-op. This permits another TLS value to destroy an instrumented future.
   pub fn enter(&self) -> ContextGuard<'_> {
-    let token = CURRENT_CONTEXTS.with(|contexts| {
-      let mut contexts = contexts.borrow_mut();
-      contexts.next_token = contexts.next_token.checked_add(1).expect("context frame token space exhausted");
-      let token = contexts.next_token;
-      contexts.frames.push(ContextFrame {
-        token,
-        context: self.clone(),
-      });
-      token
-    });
+    let token = CURRENT_CONTEXTS
+      .try_with(|contexts| {
+        let mut contexts = contexts.borrow_mut();
+        contexts.next_token = contexts.next_token.checked_add(1).expect("context frame token space exhausted");
+        let token = contexts.next_token;
+        contexts.frames.push(ContextFrame {
+          token,
+          context: self.clone(),
+        });
+        token
+      })
+      .ok();
     ContextGuard {
       token,
       context: PhantomData,
@@ -171,16 +184,21 @@ impl Context {
 ///
 /// Newer frames remain current when guards are dropped out of entry order.
 pub struct ContextGuard<'a> {
-  token: u64,
+  token: Option<u64>,
   context: PhantomData<&'a Context>,
   thread_bound: PhantomData<Rc<()>>,
 }
 
 impl Drop for ContextGuard<'_> {
   fn drop(&mut self) {
-    CURRENT_CONTEXTS.with(|contexts| {
+    let Some(token) = self.token else {
+      return;
+    };
+    // NOTICE: another TLS destructor may run after CURRENT_CONTEXTS itself.
+    // Missing TLS is the unavoidable teardown boundary, so restoration is a no-op.
+    let _ = CURRENT_CONTEXTS.try_with(|contexts| {
       let mut contexts = contexts.borrow_mut();
-      if let Some(position) = contexts.frames.iter().position(|frame| frame.token == self.token) {
+      if let Some(position) = contexts.frames.iter().position(|frame| frame.token == token) {
         contexts.frames.remove(position);
       }
     });
@@ -206,6 +224,7 @@ impl<F: Future> Future for WithContext<F> {
     };
     if poll.is_ready() {
       drop_future_in_context(this.context, this.future.as_mut());
+      this.context.clear_span();
     }
     poll
   }
@@ -216,6 +235,7 @@ impl<F> PinnedDrop for WithContext<F> {
   fn drop(self: Pin<&mut Self>) {
     let mut this = self.project();
     drop_future_in_context(this.context, this.future.as_mut());
+    this.context.clear_span();
   }
 }
 
@@ -288,6 +308,24 @@ struct SpanClose {
   clock: Arc<dyn Clock>,
 }
 
+struct ClockSample {
+  clock: Arc<dyn Clock>,
+  tick: Duration,
+  timestamp: Result<Timestamp, ErrorCode>,
+}
+
+impl SpanState {
+  fn sample_clock(&self) -> Option<ClockSample> {
+    let close = self.close.as_ref()?;
+    let tick = close.clock.monotonic_now();
+    Some(ClockSample {
+      clock: close.clock.clone(),
+      tick,
+      timestamp: crate::dispatch::timestamp_after(close.started_at, close.started_tick, tick),
+    })
+  }
+}
+
 impl Drop for SpanState {
   fn drop(&mut self) {
     let Some(close) = &self.close else {
@@ -319,6 +357,16 @@ impl Clock for SystemClock {
 fn system_clock() -> Arc<dyn Clock> {
   static CLOCK: OnceLock<Arc<dyn Clock>> = OnceLock::new();
   CLOCK.get_or_init(|| Arc::new(SystemClock)).clone()
+}
+
+fn sample_root_clock(clock: Arc<dyn Clock>) -> ClockSample {
+  let timestamp = clock.wall_now();
+  let tick = clock.monotonic_now();
+  ClockSample {
+    clock,
+    tick,
+    timestamp,
+  }
 }
 
 /// A future polled and destroyed inside one consumed span scope.
@@ -381,17 +429,16 @@ fn start_span_with_clock(spec: impl SpanSpec, clock: Arc<dyn Clock>) -> Span {
   };
 
   let span_id = SpanId::new();
-  let started_at = clock.wall_now();
-  let started_tick = clock.monotonic_now();
-  let close_started_at = started_at.as_ref().ok().copied();
+  let sample = parent.span.as_ref().and_then(|span| span.sample_clock()).unwrap_or_else(|| sample_root_clock(clock));
+  let close_started_at = sample.timestamp.as_ref().ok().copied();
   let remote_link = parent.remote_span_id.map(SpanLink::new);
-  let prepared = dispatch.submit_span_start(run_id, parent.span_id().copied(), remote_link, span_id, started_at, spec);
+  let prepared = dispatch.submit_span_start(run_id, parent.span_id().copied(), remote_link, span_id, sample.timestamp, spec);
   let close = close_started_at.filter(|_| prepared).map(|started_at| SpanClose {
     dispatch,
     run_id,
     started_at,
-    started_tick,
-    clock,
+    started_tick: sample.tick,
+    clock: sample.clock,
   });
   let span = Arc::new(SpanState { id: span_id, close });
   Span {
@@ -409,7 +456,9 @@ pub fn emit_event(event: impl EventPayload) {
     return;
   };
 
-  dispatch.submit_event(run_id, context.span_id().copied(), event);
+  let occurred_at =
+    context.span.as_ref().and_then(|span| span.sample_clock()).map(|sample| sample.timestamp).unwrap_or_else(crate::dispatch::timestamp_now);
+  dispatch.submit_event(run_id, context.span_id().copied(), occurred_at, event);
 }
 
 #[cfg(all(test, feature = "memory-store"))]
@@ -428,6 +477,16 @@ mod tests {
     fn attributes(&self) -> Attributes {
       Attributes::empty()
     }
+  }
+
+  #[derive(serde::Serialize)]
+  struct TestEvent {
+    value: u32,
+  }
+
+  impl EventPayload for TestEvent {
+    const NAME: &'static str = "auv.test.clock_event";
+    const VERSION: u32 = 1;
   }
 
   struct ManualClock {
@@ -506,5 +565,46 @@ mod tests {
     assert_eq!(error.first().stage(), DispatchStage::Encode);
     let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).unwrap().unwrap();
     assert!(snapshot.spans().get(&span_id).unwrap().ended().is_none());
+  }
+
+  // ROOT CAUSE:
+  //
+  // If wall time jumped forward, events and children sampled SystemTime while
+  // their parent end stayed on its start-wall-plus-monotonic mapping.
+  //
+  // Before the fix, the authority rejected the parent end as earlier than its
+  // facts. The fix derives all in-span timestamps from one affine clock domain.
+  #[test]
+  fn active_span_clock_orders_events_children_and_ends_across_forward_wall_jump() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().unwrap();
+    let run_id = RunId::new();
+    let clock = ManualClock::new(timestamp(100), Duration::from_secs(10));
+    let parent = dispatcher::with_default(&dispatch, || {
+      let root = Context::root(run_id);
+      root.in_scope(|| start_span_with_clock(TestSpan, clock.clone()))
+    });
+    let parent_id = *parent.id().unwrap();
+
+    clock.set(timestamp(200), Duration::from_secs(12));
+    let child = parent.in_scope(|| {
+      emit_event(TestEvent { value: 1 });
+      start_span(TestSpan)
+    });
+    let child_id = *child.id().unwrap();
+    clock.set(timestamp(250), Duration::from_secs(14));
+    drop(child);
+    clock.set(timestamp(300), Duration::from_secs(15));
+    drop(parent);
+    futures_executor::block_on(dispatch.flush()).unwrap();
+
+    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).unwrap().unwrap();
+    let parent = snapshot.spans().get(&parent_id).unwrap();
+    let child = snapshot.spans().get(&child_id).unwrap();
+    assert_eq!(parent.started().started_at(), timestamp(100));
+    assert_eq!(snapshot.events()[0].occurred_at(), timestamp(102));
+    assert_eq!(child.started().started_at(), timestamp(102));
+    assert_eq!(child.ended().unwrap().ended_at(), timestamp(104));
+    assert_eq!(parent.ended().unwrap().ended_at(), timestamp(105));
   }
 }

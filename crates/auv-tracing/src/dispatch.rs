@@ -254,12 +254,18 @@ impl Dispatch {
     preparation.complete(ended_at.map(|ended_at| RunMutation::EndSpan(SpanEnded::new(span_id, ended_at))));
   }
 
-  pub(crate) fn submit_event<E: EventPayload>(&self, run_id: RunId, span_id: Option<SpanId>, event: E) {
+  pub(crate) fn submit_event<E: EventPayload>(
+    &self,
+    run_id: RunId,
+    span_id: Option<SpanId>,
+    occurred_at: Result<Timestamp, ErrorCode>,
+    event: E,
+  ) {
     let preparation = self.reserve_ticket(run_id);
     let mutation = (|| {
       let schema = EventSchema::for_payload::<E>().map_err(|_| encode_code())?;
       let payload = JsonPayload::encode(&event).map_err(|_| encode_code())?;
-      Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, timestamp_now()?, schema, payload)))
+      Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, occurred_at?, schema, payload)))
     })();
     preparation.complete(mutation);
   }

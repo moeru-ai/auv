@@ -2,14 +2,17 @@
 
 mod support;
 
+use std::cell::RefCell;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
+use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
 
 use auv_tracing::{Attributes, Context, EventPayload, RunId, SpanId, SpanSpec};
 use futures_channel::oneshot;
-use futures_util::future;
 use serde::{Deserialize, Serialize};
 use support::{TestDispatch, block_on_timeout};
 
@@ -60,6 +63,29 @@ struct ContextProbe {
   log: Arc<Mutex<ProbeLog>>,
 }
 
+struct TeardownDropProbe {
+  marker: PathBuf,
+}
+
+impl Future for TeardownDropProbe {
+  type Output = ();
+
+  fn poll(self: Pin<&mut Self>, _context: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    Poll::Pending
+  }
+}
+
+impl Drop for TeardownDropProbe {
+  fn drop(&mut self) {
+    assert!(Context::current().run_id().is_none(), "destroyed context TLS must fall back to a disabled context");
+    std::fs::write(&self.marker, b"dropped").unwrap();
+  }
+}
+
+thread_local! {
+  static TEARDOWN_WRAPPER: RefCell<Option<auv_tracing::WithContext<TeardownDropProbe>>> = const { RefCell::new(None) };
+}
+
 impl ContextProbe {
   fn ready(log: Arc<Mutex<ProbeLog>>) -> Self {
     Self { ready: true, log }
@@ -89,10 +115,83 @@ impl Drop for ContextProbe {
   }
 }
 
+struct InterleavedEventFuture {
+  expected_run_id: RunId,
+  value: u32,
+  returned_pending: bool,
+}
+
+impl Future for InterleavedEventFuture {
+  type Output = ();
+
+  fn poll(mut self: Pin<&mut Self>, task_context: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    assert_eq!(Context::current().run_id(), Some(&self.expected_run_id));
+    if !self.returned_pending {
+      self.returned_pending = true;
+      task_context.waker().wake_by_ref();
+      return Poll::Pending;
+    }
+    auv_tracing::emit_event!(TestEvent { value: self.value });
+    Poll::Ready(())
+  }
+}
+
+struct WakeCounter(AtomicUsize);
+
+impl futures_util::task::ArcWake for WakeCounter {
+  fn wake_by_ref(counter: &Arc<Self>) {
+    counter.0.fetch_add(1, Ordering::SeqCst);
+  }
+}
+
 fn assert_probe_context(log: &Arc<Mutex<ProbeLog>>, expected: ObservedContext) {
   let log = log.lock().unwrap();
   assert_eq!(log.polls, [expected]);
   assert_eq!(log.drops, [expected]);
+}
+
+// ROOT CAUSE:
+//
+// If another TLS value retained a wrapper after CURRENT_CONTEXTS teardown,
+// pinned drop called LocalKey::with and aborted inside a TLS destructor.
+//
+// Before the fix, the child process aborted with AccessError. The fix falls
+// back to disabled context while still destroying the inner future.
+#[test]
+fn tls_teardown_drops_inner_future_without_aborting() {
+  const MARKER_ENV: &str = "AUV_TRACING_TLS_TEARDOWN_MARKER";
+  if let Some(marker) = std::env::var_os(MARKER_ENV) {
+    TEARDOWN_WRAPPER.with(|wrapper| {
+      let root = Context::root(RunId::new());
+      {
+        let _guard = root.enter();
+      }
+      *wrapper.borrow_mut() = Some(root.instrument(TeardownDropProbe {
+        marker: marker.into(),
+      }));
+    });
+    return;
+  }
+
+  let marker = std::env::temp_dir().join(format!("auv-tracing-tls-teardown-{}.marker", std::process::id()));
+  let _ = std::fs::remove_file(&marker);
+  let output = Command::new(std::env::current_exe().unwrap())
+    .arg("--exact")
+    .arg("tls_teardown_drops_inner_future_without_aborting")
+    .arg("--nocapture")
+    .env(MARKER_ENV, &marker)
+    .output()
+    .unwrap();
+
+  assert!(
+    output.status.success(),
+    "TLS teardown child failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+    output.status.code(),
+    String::from_utf8_lossy(&output.stdout),
+    String::from_utf8_lossy(&output.stderr),
+  );
+  assert_eq!(std::fs::read(&marker).unwrap(), b"dropped");
+  std::fs::remove_file(marker).unwrap();
 }
 
 #[test]
@@ -164,6 +263,45 @@ fn context_instrument_drops_cancelled_future_in_captured_context() {
   assert!(Context::current().run_id().is_none());
 }
 
+// ROOT CAUSE:
+//
+// If a completed WithContext remained allocated, its captured Context kept the
+// local SpanState alive even though the inner future and all external handles
+// were gone.
+//
+// Before the fix, no end committed until wrapper drop. The fix releases the
+// wrapper's local span reference immediately after Ready.
+#[test]
+fn completed_context_instrument_releases_span_before_wrapper_drop() {
+  let fixture = TestDispatch::memory();
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+  let span = root.in_scope(|| auv_tracing::start_span!(TestSpan));
+  let span_id = *span.id().unwrap();
+  let context = span.context();
+  let log = Arc::new(Mutex::new(ProbeLog::default()));
+  let mut future = Box::pin(context.instrument(ContextProbe::ready(log.clone())));
+  drop(context);
+  drop(span);
+  let waker = futures_util::task::noop_waker();
+  let mut task_context = TaskContext::from_waker(&waker);
+
+  assert!(matches!(future.as_mut().poll(&mut task_context), Poll::Ready(())));
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+
+  assert_probe_context(
+    &log,
+    ObservedContext {
+      run_id: Some(run_id),
+      span_id: Some(span_id),
+    },
+  );
+  assert_eq!(fixture.span_end_count(run_id), 1);
+  drop(future);
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  assert_eq!(fixture.span_end_count(run_id), 1);
+}
+
 #[test]
 fn span_instrument_drops_ready_future_in_captured_context() {
   let fixture = TestDispatch::memory();
@@ -219,11 +357,29 @@ fn concurrent_instrumented_futures_keep_distinct_run_events() {
   let second = fixture.root();
   let first_run_id = *first.run_id().unwrap();
   let second_run_id = *second.run_id().unwrap();
+  let mut first_future = Box::pin(first.instrument(InterleavedEventFuture {
+    expected_run_id: first_run_id,
+    value: 1,
+    returned_pending: false,
+  }));
+  let mut second_future = Box::pin(second.instrument(InterleavedEventFuture {
+    expected_run_id: second_run_id,
+    value: 2,
+    returned_pending: false,
+  }));
+  let wake_counter = Arc::new(WakeCounter(AtomicUsize::new(0)));
+  let waker = futures_util::task::waker_ref(&wake_counter);
+  let mut task_context = TaskContext::from_waker(&waker);
 
-  block_on_timeout(future::join(
-    first.instrument(async { auv_tracing::emit_event!(TestEvent { value: 1 }) }),
-    second.instrument(async { auv_tracing::emit_event!(TestEvent { value: 2 }) }),
-  ));
+  assert!(first_future.as_mut().poll(&mut task_context).is_pending());
+  assert!(Context::current().run_id().is_none());
+  assert!(second_future.as_mut().poll(&mut task_context).is_pending());
+  assert!(Context::current().run_id().is_none());
+  assert_eq!(wake_counter.0.load(Ordering::SeqCst), 2);
+  assert!(first_future.as_mut().poll(&mut task_context).is_ready());
+  assert!(Context::current().run_id().is_none());
+  assert!(second_future.as_mut().poll(&mut task_context).is_ready());
+  assert!(Context::current().run_id().is_none());
   block_on_timeout(fixture.dispatch.flush()).unwrap();
 
   let first_snapshot = fixture.snapshot(first_run_id).unwrap();
