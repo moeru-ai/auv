@@ -240,10 +240,11 @@ impl Dispatch {
     let preparation = self.reserve_ticket(run_id);
     let mutation = (|| {
       let name = SpanName::parse(S::NAME).map_err(|_| encode_code())?;
-      let attributes = spec.attributes();
+      let attributes = SpanSpec::attributes(&spec);
       serde_json::to_vec(&attributes).map_err(|_| encode_code())?;
       Ok(RunMutation::StartSpan(SpanStarted::new(span_id, parent_span_id, remote_link, name, started_at?, attributes)))
     })();
+    drop(spec);
     let prepared = mutation.is_ok();
     preparation.complete(mutation);
     prepared
@@ -267,6 +268,7 @@ impl Dispatch {
       let payload = JsonPayload::encode(&event).map_err(|_| encode_code())?;
       Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, occurred_at?, schema, payload)))
     })();
+    drop(event);
     preparation.complete(mutation);
   }
 
