@@ -484,7 +484,43 @@ fn panicking_store_future_terminalizes_active_ticket_and_runs_successor() {
 }
 
 #[test]
-fn inline_spawner_propagated_task_panic_does_not_double_terminalize() {
+fn default_pool_survives_two_panicking_lane_tasks() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store(store.clone());
+  let first_run_id = RunId::new();
+  let second_run_id = RunId::new();
+  let third_run_id = RunId::new();
+  let (first_start, first_panic) = store.block_worker_before_panicking_next_commit(first_run_id);
+  let (second_start, second_panic) = store.block_worker_before_panicking_next_commit(second_run_id);
+  let first = fixture.context(first_run_id);
+  let second = fixture.context(second_run_id);
+  let third = fixture.context(third_run_id);
+
+  first.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  second.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  first_start.wait_until_entered();
+  second_start.wait_until_entered();
+  first_start.release();
+  first_panic.wait_until_entered();
+  second_start.release();
+  second_panic.wait_until_entered();
+
+  // Both default workers are blocked inside task polling, so this accepted
+  // task remains queued until the panicking tasks leave those boundaries.
+  third.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 3 }));
+  first_panic.release();
+  second_panic.release();
+
+  store.wait_until_committed(third_run_id);
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 2);
+  assert_eq!(error.first().stage(), DispatchStage::AuthorityCommit);
+  assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
+  assert_eq!(event_values(&store.committed_requests(third_run_id)), [3]);
+}
+
+#[test]
+fn inline_spawner_task_panic_terminalizes_once() {
   let store = ControlledStore::new();
   let root_id = RunId::new();
   let panic_control = store.panic_next_commit(root_id);

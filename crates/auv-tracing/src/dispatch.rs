@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context as TaskContext, Poll, Waker};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures_util::FutureExt;
+
 use crate::{
   AuthorityId, CommitError, ErrorCode, EventId, EventOccurred, EventPayload, EventSchema, IdempotencyKey, JsonPayload, NonEmptyVec,
   RunCommitRequest, RunId, RunMutation, RunStore, SpanId, SpanName, SpanSpec, SpanStarted, Timestamp,
@@ -318,9 +320,14 @@ impl Dispatch {
           let task_admission = admission.clone();
           let dispatch = self.clone();
           let task = Box::pin(async move {
-            if task_admission.start() {
-              dispatch.drain_run(run_id).await;
-            }
+            let admitted = async move {
+              if task_admission.start() {
+                dispatch.drain_run(run_id).await;
+              }
+            };
+            // The lane guard repairs the active ticket while `admitted` unwinds;
+            // this boundary only prevents that panic from terminating a worker.
+            let _ = AssertUnwindSafe(admitted).catch_unwind().await;
           });
           let spawn = catch_unwind(AssertUnwindSafe(|| self.spawner().spawn(task)));
           let failure_code = match spawn {

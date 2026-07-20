@@ -131,6 +131,66 @@ impl CommitGate {
 }
 
 #[derive(Clone)]
+pub struct WorkerPanicGate {
+  state: Arc<WorkerPanicGateState>,
+}
+
+struct WorkerPanicGateState {
+  status: Mutex<WorkerPanicGateStatus>,
+  changed: Condvar,
+}
+
+struct WorkerPanicGateStatus {
+  entered: bool,
+  released: bool,
+}
+
+impl WorkerPanicGate {
+  fn new() -> Self {
+    Self {
+      state: Arc::new(WorkerPanicGateState {
+        status: Mutex::new(WorkerPanicGateStatus {
+          entered: false,
+          released: false,
+        }),
+        changed: Condvar::new(),
+      }),
+    }
+  }
+
+  fn enter_and_wait(&self) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut status = self.state.status.lock().unwrap();
+    status.entered = true;
+    self.state.changed.notify_all();
+    while !status.released {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out holding a default worker at its panic boundary");
+      let (next, timeout) = self.state.changed.wait_timeout(status, remaining).unwrap();
+      status = next;
+      assert!(!timeout.timed_out() || status.released, "timed out holding a default worker at its panic boundary");
+    }
+  }
+
+  pub fn wait_until_entered(&self) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut status = self.state.status.lock().unwrap();
+    while !status.entered {
+      let remaining =
+        deadline.checked_duration_since(Instant::now()).expect("timed out waiting for a default worker to reach its panic boundary");
+      let (next, timeout) = self.state.changed.wait_timeout(status, remaining).unwrap();
+      status = next;
+      assert!(!timeout.timed_out() || status.entered, "timed out waiting for a default worker to reach its panic boundary");
+    }
+  }
+
+  pub fn release(&self) {
+    let mut status = self.state.status.lock().unwrap();
+    status.released = true;
+    self.state.changed.notify_all();
+  }
+}
+
+#[derive(Clone)]
 pub struct ControlledStore {
   inner: Arc<MemoryRunStore>,
   control: Arc<ControlState>,
@@ -153,7 +213,7 @@ struct CommitControl {
 enum CommitOutcome {
   Succeed,
   Fail(ErrorCode),
-  Panic,
+  Panic(Option<WorkerPanicGate>),
 }
 
 impl ControlledStore {
@@ -202,9 +262,19 @@ impl ControlledStore {
     let gate = CommitGate::new();
     self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
       gate: gate.clone(),
-      outcome: CommitOutcome::Panic,
+      outcome: CommitOutcome::Panic(None),
     });
     gate
+  }
+
+  pub fn block_worker_before_panicking_next_commit(&self, run_id: RunId) -> (CommitGate, WorkerPanicGate) {
+    let gate = CommitGate::new();
+    let worker_gate = WorkerPanicGate::new();
+    self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
+      gate: gate.clone(),
+      outcome: CommitOutcome::Panic(Some(worker_gate.clone())),
+    });
+    (gate, worker_gate)
   }
 
   pub fn commit_call_count(&self, run_id: RunId) -> usize {
@@ -291,7 +361,12 @@ impl RunStore for ControlledStore {
       match outcome {
         CommitOutcome::Succeed => {}
         CommitOutcome::Fail(code) => return Err(CommitError::Rejected(code)),
-        CommitOutcome::Panic => panic!("controlled store commit future panicked"),
+        CommitOutcome::Panic(worker_gate) => {
+          if let Some(worker_gate) = worker_gate {
+            worker_gate.enter_and_wait();
+          }
+          panic!("controlled store commit future panicked");
+        }
       }
       let commit = self.inner.commit(request.clone()).await?;
       self.control.committed.lock().unwrap().push((request, commit.clone()));
