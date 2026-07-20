@@ -2,9 +2,10 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Barrier, Condvar, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,7 @@ use auv_tracing::{
   SubscriptionError, TaskSpawnError, TaskSpawner, TelemetryError, TelemetryItem, TelemetryProjector, Timestamp,
 };
 use futures_channel::oneshot;
+use futures_core::Stream;
 use futures_util::StreamExt;
 
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -305,6 +307,7 @@ pub struct CursorStore {
   first_subscription: FirstSubscription,
   fail_snapshot: bool,
   fail_page: Arc<AtomicBool>,
+  zero_gap: Arc<AtomicBool>,
   subscribe_calls: Arc<AtomicUsize>,
   commits_after_calls: Arc<AtomicUsize>,
   calls: Arc<Mutex<Vec<AuthorityCall>>>,
@@ -312,31 +315,36 @@ pub struct CursorStore {
 
 impl CursorStore {
   pub fn normal() -> Arc<Self> {
-    Self::new(FirstSubscription::Normal, false, false)
+    Self::new(FirstSubscription::Normal, false, false, false)
   }
 
   pub fn gap_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Gap, false, false)
+    Self::new(FirstSubscription::Gap, false, false, false)
   }
 
   pub fn pending_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, false, false)
+    Self::new(FirstSubscription::Pending, false, false, false)
   }
 
   pub fn snapshot_failure() -> Arc<Self> {
-    Self::new(FirstSubscription::Normal, true, false)
+    Self::new(FirstSubscription::Normal, true, false, false)
   }
 
   pub fn page_failure() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, false, true)
+    Self::new(FirstSubscription::Pending, false, true, false)
   }
 
-  fn new(first_subscription: FirstSubscription, fail_snapshot: bool, fail_page: bool) -> Arc<Self> {
+  pub fn zero_history_gap_once() -> Arc<Self> {
+    Self::new(FirstSubscription::Pending, false, false, true)
+  }
+
+  fn new(first_subscription: FirstSubscription, fail_snapshot: bool, fail_page: bool, zero_gap: bool) -> Arc<Self> {
     Arc::new(Self {
       inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
       first_subscription,
       fail_snapshot,
       fail_page: Arc::new(AtomicBool::new(fail_page)),
+      zero_gap: Arc::new(AtomicBool::new(zero_gap)),
       subscribe_calls: Arc::new(AtomicUsize::new(0)),
       commits_after_calls: Arc::new(AtomicUsize::new(0)),
       calls: Arc::new(Mutex::new(Vec::new())),
@@ -385,6 +393,14 @@ impl RunStore for CursorStore {
   fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
     self.calls.lock().unwrap().push(AuthorityCall::CommitsAfter);
     self.commits_after_calls.fetch_add(1, Ordering::SeqCst);
+    if self.zero_gap.swap(false, Ordering::SeqCst) {
+      return Box::pin(async move {
+        Err(ReadError::HistoryGap {
+          requested_after: after,
+          earliest_available: RunRevision::new(0).unwrap(),
+        })
+      });
+    }
     if self.fail_page.swap(false, Ordering::SeqCst) {
       return Box::pin(async { Err(ReadError::Unavailable(ErrorCode::parse("auv.test.page_failed").unwrap())) });
     }
@@ -414,6 +430,215 @@ impl RunStore for CursorStore {
       }
       self.inner.subscribe(run_id, after).await
     })
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
+#[derive(Clone)]
+pub struct SubscriptionTrackingStore {
+  inner: Arc<MemoryRunStore>,
+  active_subscriptions: Arc<AtomicUsize>,
+}
+
+impl SubscriptionTrackingStore {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self {
+      inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
+      active_subscriptions: Arc::new(AtomicUsize::new(0)),
+    })
+  }
+
+  pub fn active_subscription_count(&self) -> usize {
+    self.active_subscriptions.load(Ordering::SeqCst)
+  }
+}
+
+struct TrackedSubscription {
+  inner: RunSubscription,
+  active_subscriptions: Arc<AtomicUsize>,
+}
+
+impl Stream for TrackedSubscription {
+  type Item = Result<RunCommit, SubscriptionError>;
+
+  fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    self.inner.as_mut().poll_next(context)
+  }
+}
+
+impl Drop for TrackedSubscription {
+  fn drop(&mut self) {
+    self.active_subscriptions.fetch_sub(1, Ordering::SeqCst);
+  }
+}
+
+impl RunStore for SubscriptionTrackingStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    Box::pin(async move {
+      let inner = self.inner.subscribe(run_id, after).await?;
+      self.active_subscriptions.fetch_add(1, Ordering::SeqCst);
+      Ok(Box::pin(TrackedSubscription {
+        inner,
+        active_subscriptions: self.active_subscriptions.clone(),
+      }) as RunSubscription)
+    })
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum IntegrityFault {
+  DirectResponseMismatch,
+  CursorAuthorityMismatch,
+  CursorRunMismatch,
+  CursorRevisionMismatch,
+  CursorOwnedRequestMismatch,
+  CursorMissingCurrentTicket,
+}
+
+#[derive(Clone)]
+pub struct IntegrityStore {
+  inner: Arc<MemoryRunStore>,
+  affected_run_id: RunId,
+  fault: IntegrityFault,
+  commit_calls: Arc<Mutex<Vec<RunId>>>,
+}
+
+impl IntegrityStore {
+  pub fn new(affected_run_id: RunId, fault: IntegrityFault) -> Arc<Self> {
+    Arc::new(Self {
+      inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
+      affected_run_id,
+      fault,
+      commit_calls: Arc::new(Mutex::new(Vec::new())),
+    })
+  }
+
+  pub fn commit_call_count(&self, run_id: RunId) -> usize {
+    self.commit_calls.lock().unwrap().iter().filter(|candidate| **candidate == run_id).count()
+  }
+
+  fn corrupt(&self, commit: &RunCommit) -> RunCommit {
+    let authority_id = if matches!(self.fault, IntegrityFault::CursorAuthorityMismatch) {
+      AuthorityId::new()
+    } else {
+      commit.authority_id()
+    };
+    let run_id = if matches!(self.fault, IntegrityFault::CursorRunMismatch) {
+      RunId::new()
+    } else {
+      commit.run_id()
+    };
+    let revision = if matches!(self.fault, IntegrityFault::CursorRevisionMismatch) {
+      RunRevision::new(commit.revision().get() + 1).unwrap()
+    } else {
+      commit.revision()
+    };
+    let idempotency_key = if matches!(self.fault, IntegrityFault::CursorMissingCurrentTicket) {
+      IdempotencyKey::new()
+    } else {
+      commit.idempotency_key()
+    };
+    let facts = if matches!(self.fault, IntegrityFault::DirectResponseMismatch | IntegrityFault::CursorOwnedRequestMismatch) {
+      commit
+        .facts()
+        .iter()
+        .cloned()
+        .map(|fact| match fact {
+          RunFact::EventOccurred(value) => RunFact::EventOccurred(auv_tracing::EventOccurred::new(
+            value.event_id(),
+            value.span_id(),
+            value.occurred_at(),
+            value.schema().clone(),
+            auv_tracing::JsonPayload::encode(&serde_json::json!({ "integrity": "mismatch" })).unwrap(),
+          )),
+          other => other,
+        })
+        .collect()
+    } else {
+      commit.facts().to_vec()
+    };
+    RunCommit::new(authority_id, run_id, revision, idempotency_key, commit.committed_at(), facts).unwrap()
+  }
+}
+
+impl RunStore for IntegrityStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+    self.commit_calls.lock().unwrap().push(request.run_id());
+    Box::pin(async move {
+      let commit = self.inner.commit(request).await?;
+      if commit.run_id() == self.affected_run_id && matches!(self.fault, IntegrityFault::DirectResponseMismatch) {
+        Ok(self.corrupt(&commit))
+      } else {
+        Ok(commit)
+      }
+    })
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    Box::pin(async move {
+      let page = self.inner.commits_after(run_id, after, limit).await?;
+      if run_id != self.affected_run_id || matches!(self.fault, IntegrityFault::DirectResponseMismatch) {
+        return Ok(page);
+      }
+      let commit = page.commits().first().expect("the affected commit is available for integrity corruption");
+      let corrupted = self.corrupt(commit);
+      RunCommitPage::new(vec![corrupted.clone()], corrupted.revision(), false)
+        .map_err(|_| ReadError::Integrity(ErrorCode::parse("auv.test.invalid_integrity_page").unwrap()))
+    })
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    if run_id == self.affected_run_id {
+      return Box::pin(async { Ok(Box::pin(futures_util::stream::pending()) as RunSubscription) });
+    }
+    self.inner.subscribe(run_id, after)
   }
 
   fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
@@ -675,6 +900,7 @@ struct CommitControl {
 
 enum CommitOutcome {
   Succeed,
+  CommitThenPending,
   Fail(ErrorCode),
   Panic(Option<WorkerPanicGate>),
 }
@@ -717,6 +943,15 @@ impl ControlledStore {
     self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
       gate: gate.clone(),
       outcome: CommitOutcome::Fail(code),
+    });
+    gate
+  }
+
+  pub fn commit_then_pending_next(&self, run_id: RunId) -> CommitGate {
+    let gate = CommitGate::new();
+    self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
+      gate: gate.clone(),
+      outcome: CommitOutcome::CommitThenPending,
     });
     gate
   }
@@ -833,8 +1068,9 @@ impl RunStore for ControlledStore {
       if let Some(gate) = gate {
         let _ = gate.await;
       }
-      match outcome {
-        CommitOutcome::Succeed => {}
+      let pending_after_commit = match outcome {
+        CommitOutcome::Succeed => false,
+        CommitOutcome::CommitThenPending => true,
         CommitOutcome::Fail(code) => return Err(CommitError::Rejected(code)),
         CommitOutcome::Panic(worker_gate) => {
           if let Some(worker_gate) = worker_gate {
@@ -842,10 +1078,13 @@ impl RunStore for ControlledStore {
           }
           panic!("controlled store commit future panicked");
         }
-      }
+      };
       let commit = self.inner.commit(request.clone()).await?;
       self.control.committed.lock().unwrap().push((request, commit.clone()));
       self.control.committed_changed.notify_all();
+      if pending_after_commit {
+        futures_util::future::pending::<()>().await;
+      }
       Ok(commit)
     })
   }
@@ -911,6 +1150,101 @@ impl TaskSpawner for InlineSpawner {
   fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
     block_on_timeout(task);
     Ok(())
+  }
+}
+
+pub struct FirstThreadThenInlineSpawner {
+  first: AtomicBool,
+  inline_depth: AtomicUsize,
+  max_inline_depth: AtomicUsize,
+}
+
+impl FirstThreadThenInlineSpawner {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self {
+      first: AtomicBool::new(true),
+      inline_depth: AtomicUsize::new(0),
+      max_inline_depth: AtomicUsize::new(0),
+    })
+  }
+
+  pub fn max_inline_depth(&self) -> usize {
+    self.max_inline_depth.load(Ordering::SeqCst)
+  }
+}
+
+impl TaskSpawner for FirstThreadThenInlineSpawner {
+  fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
+    if self.first.swap(false, Ordering::SeqCst) {
+      std::thread::spawn(move || block_on_timeout(task));
+      return Ok(());
+    }
+
+    let depth = self.inline_depth.fetch_add(1, Ordering::SeqCst) + 1;
+    self.max_inline_depth.fetch_max(depth, Ordering::SeqCst);
+    block_on_timeout(task);
+    self.inline_depth.fetch_sub(1, Ordering::SeqCst);
+    Ok(())
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum RacingSpawnResult {
+  Ok,
+  Err,
+}
+
+pub struct AsyncDropRaceSpawner {
+  result: RacingSpawnResult,
+  state: Arc<AsyncDropRaceState>,
+}
+
+struct AsyncDropRaceState {
+  dropped: Mutex<usize>,
+  dropped_changed: Condvar,
+}
+
+impl AsyncDropRaceSpawner {
+  pub fn new(result: RacingSpawnResult) -> Arc<Self> {
+    Arc::new(Self {
+      result,
+      state: Arc::new(AsyncDropRaceState {
+        dropped: Mutex::new(0),
+        dropped_changed: Condvar::new(),
+      }),
+    })
+  }
+
+  pub fn wait_for_drops(&self, expected: usize) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut dropped = self.state.dropped.lock().unwrap();
+    while *dropped < expected {
+      let remaining = deadline.saturating_duration_since(Instant::now());
+      assert!(!remaining.is_zero(), "timed out waiting for asynchronously dropped tasks");
+      let (next, timeout) = self.state.dropped_changed.wait_timeout(dropped, remaining).unwrap();
+      dropped = next;
+      assert!(!timeout.timed_out() || *dropped >= expected, "timed out waiting for asynchronously dropped tasks");
+    }
+  }
+}
+
+impl TaskSpawner for AsyncDropRaceSpawner {
+  fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
+    let start = Arc::new(Barrier::new(2));
+    let task_start = start.clone();
+    let state = self.state.clone();
+    std::thread::spawn(move || {
+      task_start.wait();
+      drop(task);
+      *state.dropped.lock().unwrap() += 1;
+      state.dropped_changed.notify_all();
+    });
+    start.wait();
+
+    match self.result {
+      RacingSpawnResult::Ok => Ok(()),
+      RacingSpawnResult::Err => Err(TaskSpawnError::new(ErrorCode::parse("auv.dispatch.racing_spawn").unwrap())),
+    }
   }
 }
 

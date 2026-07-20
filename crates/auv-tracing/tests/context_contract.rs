@@ -512,24 +512,29 @@ fn spawner_panic_before_task_start_becomes_spawn_failure_and_releases_lane() {
 }
 
 #[test]
-fn panicking_store_future_terminalizes_active_ticket_and_runs_successor() {
+fn panicking_store_future_quarantines_run_and_independent_run_continues() {
   let store = ControlledStore::new();
   let fixture = TestDispatch::with_store(store.clone());
   let root = fixture.root();
   let run_id = *root.run_id().unwrap();
+  let independent_run_id = RunId::new();
+  let independent = fixture.context(independent_run_id);
   let blocked = store.panic_next_commit(run_id);
 
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
   blocked.wait_until_entered();
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
   blocked.release();
+  independent.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 3 }));
 
-  store.wait_until_committed(run_id);
+  store.wait_until_committed(independent_run_id);
   let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
-  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.failure_count().get(), 2);
   assert_eq!(error.first().stage(), DispatchStage::AuthorityCommit);
   assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
-  assert_eq!(event_values(&store.committed_requests(run_id)), [2]);
+  assert_eq!(store.commit_call_count(run_id), 1);
+  assert!(event_values(&store.committed_requests(run_id)).is_empty());
+  assert_eq!(event_values(&store.committed_requests(independent_run_id)), [3]);
 }
 
 #[test]
@@ -569,45 +574,54 @@ fn default_pool_survives_two_panicking_lane_tasks() {
 }
 
 #[test]
-fn inline_spawner_task_panic_terminalizes_once() {
+fn inline_commit_panic_quarantines_run_and_terminalizes_once() {
   let store = ControlledStore::new();
   let root_id = RunId::new();
+  let independent_run_id = RunId::new();
   let panic_control = store.panic_next_commit(root_id);
   panic_control.release();
   let fixture = TestDispatch::with_store_and_spawner(store.clone(), InlineSpawner::new());
   let root = fixture.context(root_id);
+  let independent = fixture.context(independent_run_id);
 
   let emission = catch_unwind(AssertUnwindSafe(|| {
     root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
   }));
   assert!(emission.is_ok(), "a started task owns recovery from its propagated panic");
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  independent.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 3 }));
 
   let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
-  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.failure_count().get(), 2);
   assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
-  assert_eq!(event_values(&store.committed_requests(root_id)), [2]);
+  assert_eq!(store.commit_call_count(root_id), 1);
+  assert!(event_values(&store.committed_requests(root_id)).is_empty());
+  assert_eq!(event_values(&store.committed_requests(independent_run_id)), [3]);
 }
 
 #[test]
-fn dropped_active_lane_task_terminalizes_ticket_and_allows_later_work() {
+fn dropped_in_flight_commit_quarantines_run_and_allows_independent_work() {
   let store = ControlledStore::new();
   let root_id = RunId::new();
+  let independent_run_id = RunId::new();
   let blocked = store.block_next_commit(root_id);
   let fixture = TestDispatch::with_store_and_spawner(store.clone(), DropFirstTaskSpawner::new());
   let root = fixture.context(root_id);
+  let independent = fixture.context(independent_run_id);
 
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
   blocked.wait_until_entered();
   blocked.release();
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  independent.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 3 }));
 
-  assert_eq!(store.commit_call_count(root_id), 2, "the successor must get a new lane task");
+  assert_eq!(store.commit_call_count(root_id), 1, "the same run must remain quarantined after cancellation");
   let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
-  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.failure_count().get(), 2);
   assert_eq!(error.first().stage(), DispatchStage::AuthorityCommit);
   assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
-  assert_eq!(event_values(&store.committed_requests(root_id)), [2]);
+  assert!(event_values(&store.committed_requests(root_id)).is_empty());
+  assert_eq!(event_values(&store.committed_requests(independent_run_id)), [3]);
 }
 
 #[test]
