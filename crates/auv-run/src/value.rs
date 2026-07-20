@@ -438,6 +438,14 @@ impl FailureCode {
     NamespacedName::parse(raw).map(Self)
   }
 
+  /// Returns the closed encoding failure used when stable JSON serialization fails.
+  ///
+  /// NOTICE: This is intentionally not a generic unchecked-name constructor. The
+  /// literal is covered against the public parser by a focused unit test.
+  pub(crate) fn stable_json_failed() -> Self {
+    Self(NamespacedName(BoundedString("auv.payload.stable_json_failed".to_owned())))
+  }
+
   pub fn as_str(&self) -> &str {
     self.0.as_str()
   }
@@ -1381,7 +1389,15 @@ impl<'de> Deserialize<'de> for Attributes {
 
 #[cfg(test)]
 mod tests {
-  use super::stable_json_bytes;
+  use super::{FailureCode, stable_json_bytes};
+
+  #[test]
+  fn stable_json_failure_code_is_the_validated_closed_code() {
+    let code = FailureCode::stable_json_failed();
+
+    assert_eq!(code.as_str(), "auv.payload.stable_json_failed");
+    assert_eq!(code, FailureCode::parse(code.as_str()).unwrap());
+  }
 
   #[test]
   fn stable_json_recursively_sorts_object_keys() {
