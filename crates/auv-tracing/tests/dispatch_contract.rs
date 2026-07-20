@@ -12,8 +12,9 @@ use auv_tracing::{
   RunStore, SpanSpec, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, Timestamp, configure, dispatcher,
 };
 use support::{
-  AuthorityCall, BlockingProjector, CommitUnknownStore, ControlledStore, CursorStore, DiscardFirstTaskSpawner, DropFirstTaskSpawner,
-  FailFirstSpawner, ManualTaskSpawner, PanicFirstSpawner, ProjectorCall, RecordingProjector, RecordingReporter, UnknownLookup,
+  AsyncDropRaceSpawner, AuthorityCall, BlockingProjector, CommitUnknownStore, ControlledStore, CursorStore, DiscardFirstTaskSpawner,
+  DropFirstTaskSpawner, FailFirstSpawner, FirstThreadThenInlineSpawner, IntegrityFault, IntegrityStore, ManualTaskSpawner,
+  PanicFirstSpawner, ProjectorCall, RacingSpawnResult, RecordingProjector, RecordingReporter, SubscriptionTrackingStore, UnknownLookup,
   block_on_timeout,
 };
 
@@ -411,6 +412,37 @@ fn authority_backed_projector_never_receives_a_precommit_mutation() {
   assert_eq!(projector.item_count(), 1);
 }
 
+// ROOT CAUSE:
+//
+// If a commit future accepted its mutation and then remained pending, canceling
+// the lane task terminalized its ticket without quarantining the run.
+//
+// Before the fix, a later same-run mutation reached the authority after an
+// unknown write outcome. The fix arms quarantine for the entire commit future.
+#[test]
+fn canceled_commit_after_authority_acceptance_quarantines_only_that_run() {
+  let store = ControlledStore::new();
+  let affected_run_id = RunId::new();
+  let independent_run_id = RunId::new();
+  let gate = store.commit_then_pending_next(affected_run_id);
+  gate.release();
+  let dispatch = configure().run_store(store.clone()).task_spawner(DropFirstTaskSpawner::new()).build().unwrap();
+  let affected = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(affected_run_id));
+  let independent = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(independent_run_id));
+
+  affected.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  assert_eq!(block_on_timeout(store.load_snapshot(affected_run_id)).unwrap().unwrap().events().len(), 1);
+  affected.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  independent.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 3 }));
+
+  let error = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 2);
+  assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
+  assert_eq!(store.commit_call_count(affected_run_id), 1);
+  assert_eq!(store.commit_call_count(independent_run_id), 1);
+  assert_eq!(block_on_timeout(store.load_snapshot(affected_run_id)).unwrap().unwrap().events().len(), 1);
+}
+
 #[test]
 fn authority_cursor_projects_local_revisions_and_skips_external_writers() {
   let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
@@ -474,6 +506,46 @@ fn permanently_waiting_subscription_does_not_block_observing_a_known_local_revis
 }
 
 #[test]
+fn completed_unique_runs_release_all_authority_subscriptions() {
+  const RUN_COUNT: usize = 64;
+
+  let store = SubscriptionTrackingStore::new();
+  let projector = RecordingProjector::new();
+  let dispatch =
+    configure().run_store(store.clone()).project_telemetry(projector, TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+
+  for value in 0..RUN_COUNT {
+    let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(RunId::new()));
+    root.in_scope(|| {
+      auv_tracing::emit_event!(TestEvent {
+        value: value as u32
+      })
+    });
+  }
+  block_on_timeout(dispatch.flush()).unwrap();
+
+  assert_eq!(store.active_subscription_count(), 0, "idle successful lanes must not retain authority subscriptions");
+}
+
+#[test]
+fn history_gap_at_revision_zero_is_a_stable_read_failure_without_quarantine() {
+  let store = CursorStore::zero_history_gap_once();
+  let projector = RecordingProjector::new();
+  let dispatch =
+    configure().run_store(store).project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+  let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(RunId::new()));
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  let gap = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(gap.first().stage(), DispatchStage::AuthorityRead);
+  assert_eq!(gap.first().code().as_str(), "auv.dispatch.authority_history_gap");
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  block_on_timeout(dispatch.flush()).unwrap();
+  assert_eq!(projector.item_count(), 1);
+}
+
+#[test]
 fn cursor_establishment_failure_reaches_no_commit_or_projector_and_reports_once() {
   let store = CursorStore::snapshot_failure();
   let projector = RecordingProjector::new();
@@ -530,6 +602,59 @@ fn post_commit_cursor_read_failure_preserves_commit_and_skips_projection() {
     panic!("the recovered cursor must project the later event")
   };
   assert_eq!(revision.unwrap().get(), 2);
+}
+
+#[test]
+fn mismatched_direct_commit_response_quarantines_only_that_run() {
+  let affected_run_id = RunId::new();
+  let independent_run_id = RunId::new();
+  let store = IntegrityStore::new(affected_run_id, IntegrityFault::DirectResponseMismatch);
+  let dispatch = configure().run_store(store.clone()).build().unwrap();
+  let affected = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(affected_run_id));
+  let independent = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(independent_run_id));
+
+  affected.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  let mismatch = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(mismatch.first().stage(), DispatchStage::AuthorityCommit);
+  assert_eq!(mismatch.first().code().as_str(), "auv.dispatch.commit_response_mismatch");
+
+  affected.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  independent.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 3 }));
+  let quarantined = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(quarantined.first().code().as_str(), "auv.dispatch.run_lane_indeterminate");
+  assert_eq!(store.commit_call_count(affected_run_id), 1);
+  assert_eq!(store.commit_call_count(independent_run_id), 1);
+}
+
+#[test]
+fn cursor_integrity_contradictions_quarantine_only_the_affected_run() {
+  for fault in [
+    IntegrityFault::CursorAuthorityMismatch,
+    IntegrityFault::CursorRunMismatch,
+    IntegrityFault::CursorRevisionMismatch,
+    IntegrityFault::CursorOwnedRequestMismatch,
+    IntegrityFault::CursorMissingCurrentTicket,
+  ] {
+    let affected_run_id = RunId::new();
+    let independent_run_id = RunId::new();
+    let store = IntegrityStore::new(affected_run_id, fault);
+    let projector = RecordingProjector::new();
+    let dispatch =
+      configure().run_store(store.clone()).project_telemetry(projector, TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+    let affected = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(affected_run_id));
+    let independent = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(independent_run_id));
+
+    affected.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+    let mismatch = block_on_timeout(dispatch.flush()).unwrap_err();
+    assert_eq!(mismatch.first().stage(), DispatchStage::AuthorityRead, "fault: {fault:?}");
+
+    affected.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+    independent.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 3 }));
+    let quarantined = block_on_timeout(dispatch.flush()).unwrap_err();
+    assert_eq!(quarantined.first().code().as_str(), "auv.dispatch.run_lane_indeterminate", "fault: {fault:?}");
+    assert_eq!(store.commit_call_count(affected_run_id), 1, "fault: {fault:?}");
+    assert_eq!(store.commit_call_count(independent_run_id), 1, "fault: {fault:?}");
+  }
 }
 
 #[test]
@@ -760,6 +885,46 @@ fn blocked_projector_does_not_block_later_authority_commits() {
   block_on_timeout(flush).unwrap();
 }
 
+// ROOT CAUSE:
+//
+// If a projection action completed inside an inline spawner, its completion
+// called `wake_projection` before the preceding spawn call returned.
+//
+// Before the fix, queued actions nested one spawn frame per item. The fix keeps
+// one iterative projection drainer across synchronous completions.
+#[test]
+fn hybrid_spawner_drains_inline_projection_backlog_at_bounded_depth() {
+  const BACKLOG: usize = 128;
+
+  let projector = BlockingProjector::new();
+  let spawner = FirstThreadThenInlineSpawner::new();
+  let dispatch = configure()
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .task_spawner(spawner.clone())
+    .build()
+    .unwrap();
+  let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(RunId::new()));
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 0 }));
+  projector.wait_until_project_entered();
+  for value in 1..=BACKLOG {
+    root.in_scope(|| {
+      auv_tracing::emit_event!(TestEvent {
+        value: value as u32
+      })
+    });
+  }
+  let flush = dispatch.flush();
+
+  projector.release_project();
+  projector.wait_until_flush_entered();
+  projector.release_flush();
+  block_on_timeout(flush).unwrap();
+
+  assert_eq!(projector.item_count(), BACKLOG + 1);
+  assert_eq!(spawner.max_inline_depth(), 1, "inline completions must return to one iterative drain frame");
+}
+
 #[test]
 fn projection_spawn_rejection_and_panic_terminalize_without_stranding_flush() {
   for spawner in [
@@ -784,6 +949,61 @@ fn projection_spawn_rejection_and_panic_terminalize_without_stranding_flush() {
     assert_eq!(projector.item_count(), 0);
     assert_eq!(reporter.failures(), [error.first().clone()]);
     block_on_timeout(dispatch.flush()).unwrap();
+  }
+}
+
+// ROOT CAUSE:
+//
+// If an unpolled task drop raced the spawner's return, independent atomics
+// could let each side observe that the other side had not yet published its
+// recovery flag. Before the fix, neither side then owned recovery. The fix
+// makes spawn admission one locked state transition with exactly one owner.
+#[test]
+fn asynchronous_task_drop_racing_spawn_return_never_strands_dispatch() {
+  const ATTEMPTS: usize = 256;
+
+  for spawn_result in [RacingSpawnResult::Ok, RacingSpawnResult::Err] {
+    let spawner = AsyncDropRaceSpawner::new(spawn_result);
+    let reporter = RecordingReporter::new();
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store).on_error(reporter.clone()).task_spawner(spawner.clone()).build().unwrap();
+
+    for value in 0..ATTEMPTS {
+      let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(RunId::new()));
+      root.in_scope(|| {
+        auv_tracing::emit_event!(TestEvent {
+          value: value as u32
+        })
+      });
+    }
+    spawner.wait_for_drops(ATTEMPTS);
+    let error = block_on_timeout(dispatch.flush()).unwrap_err();
+    assert_eq!(error.failure_count().get(), ATTEMPTS);
+    assert_eq!(reporter.failures().len(), ATTEMPTS);
+
+    let spawner = AsyncDropRaceSpawner::new(spawn_result);
+    let reporter = RecordingReporter::new();
+    let dispatch = configure()
+      .project_telemetry(RecordingProjector::new(), TelemetryRoutePolicy::fixed_fields_only())
+      .on_error(reporter.clone())
+      .task_spawner(spawner.clone())
+      .build()
+      .unwrap();
+    let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(RunId::new()));
+
+    for value in 0..ATTEMPTS {
+      root.in_scope(|| {
+        auv_tracing::emit_event!(TestEvent {
+          value: value as u32
+        })
+      });
+    }
+    spawner.wait_for_drops(ATTEMPTS);
+    let flush = dispatch.flush();
+    spawner.wait_for_drops(ATTEMPTS + 1);
+    let error = block_on_timeout(flush).unwrap_err();
+    assert_eq!(error.failure_count().get(), ATTEMPTS + 1);
+    assert_eq!(reporter.failures().len(), ATTEMPTS + 1);
   }
 }
 
