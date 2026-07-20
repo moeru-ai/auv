@@ -10,6 +10,7 @@ mod history;
 mod macros;
 mod propagation;
 mod store;
+mod telemetry;
 mod value;
 
 pub use artifact::*;
@@ -19,4 +20,5 @@ pub use event::*;
 pub use history::*;
 pub use propagation::*;
 pub use store::*;
+pub use telemetry::*;
 pub use value::*;

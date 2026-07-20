@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll};
@@ -10,12 +10,208 @@ use std::time::{Duration, Instant};
 
 use auv_tracing::{
   ArtifactBody, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, Dispatch,
-  DispatchTask, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId,
-  RunRevision, RunSnapshot, RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError, TaskSpawnError, TaskSpawner,
+  DispatchErrorReporter, DispatchFailure, DispatchTask, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit,
+  RunCommitPage, RunCommitRequest, RunFact, RunId, RunMutation, RunRevision, RunSnapshot, RunStore, RunSubscription, StoreArtifactRequest,
+  SubscriptionError, TaskSpawnError, TaskSpawner, TelemetryError, TelemetryItem, TelemetryProjector, Timestamp,
 };
 use futures_channel::oneshot;
+use futures_util::StreamExt;
 
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectorCall {
+  Project,
+  Flush,
+}
+
+#[derive(Clone, Default)]
+pub struct RecordingProjector {
+  state: Arc<RecordingProjectorState>,
+}
+
+#[derive(Default)]
+struct RecordingProjectorState {
+  calls: Mutex<Vec<ProjectorCall>>,
+  items: Mutex<Vec<TelemetryItem>>,
+  project_failures: Mutex<VecDeque<ErrorCode>>,
+  flush_failures: Mutex<VecDeque<ErrorCode>>,
+}
+
+impl RecordingProjector {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self::default())
+  }
+
+  pub fn fail_next_project(&self, code: ErrorCode) {
+    self.state.project_failures.lock().unwrap().push_back(code);
+  }
+
+  pub fn fail_next_flush(&self, code: ErrorCode) {
+    self.state.flush_failures.lock().unwrap().push_back(code);
+  }
+
+  pub fn calls(&self) -> Vec<ProjectorCall> {
+    self.state.calls.lock().unwrap().clone()
+  }
+
+  pub fn items(&self) -> Vec<TelemetryItem> {
+    self.state.items.lock().unwrap().clone()
+  }
+
+  pub fn item_count(&self) -> usize {
+    self.state.items.lock().unwrap().len()
+  }
+}
+
+impl TelemetryProjector for RecordingProjector {
+  fn project(&self, item: TelemetryItem) -> BoxFuture<'_, Result<(), TelemetryError>> {
+    Box::pin(async move {
+      self.state.calls.lock().unwrap().push(ProjectorCall::Project);
+      self.state.items.lock().unwrap().push(item);
+      match self.state.project_failures.lock().unwrap().pop_front() {
+        Some(code) => Err(TelemetryError::new(code)),
+        None => Ok(()),
+      }
+    })
+  }
+
+  fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
+    Box::pin(async move {
+      self.state.calls.lock().unwrap().push(ProjectorCall::Flush);
+      match self.state.flush_failures.lock().unwrap().pop_front() {
+        Some(code) => Err(TelemetryError::new(code)),
+        None => Ok(()),
+      }
+    })
+  }
+}
+
+#[derive(Clone)]
+pub struct BlockingProjector {
+  state: Arc<BlockingProjectorState>,
+}
+
+struct BlockingProjectorState {
+  project_entered: Mutex<bool>,
+  project_entered_changed: Condvar,
+  project_release: Mutex<Option<oneshot::Sender<()>>>,
+  project_receiver: Mutex<Option<oneshot::Receiver<()>>>,
+  flush_entered: Mutex<bool>,
+  flush_entered_changed: Condvar,
+  flush_release: Mutex<Option<oneshot::Sender<()>>>,
+  flush_receiver: Mutex<Option<oneshot::Receiver<()>>>,
+  calls: Mutex<Vec<ProjectorCall>>,
+  items: Mutex<Vec<TelemetryItem>>,
+}
+
+impl BlockingProjector {
+  pub fn new() -> Arc<Self> {
+    let (project_release, project_receiver) = oneshot::channel();
+    let (flush_release, flush_receiver) = oneshot::channel();
+    Arc::new(Self {
+      state: Arc::new(BlockingProjectorState {
+        project_entered: Mutex::new(false),
+        project_entered_changed: Condvar::new(),
+        project_release: Mutex::new(Some(project_release)),
+        project_receiver: Mutex::new(Some(project_receiver)),
+        flush_entered: Mutex::new(false),
+        flush_entered_changed: Condvar::new(),
+        flush_release: Mutex::new(Some(flush_release)),
+        flush_receiver: Mutex::new(Some(flush_receiver)),
+        calls: Mutex::new(Vec::new()),
+        items: Mutex::new(Vec::new()),
+      }),
+    })
+  }
+
+  pub fn wait_until_project_entered(&self) {
+    wait_for_flag(&self.state.project_entered, &self.state.project_entered_changed, "project call");
+  }
+
+  pub fn wait_until_flush_entered(&self) {
+    wait_for_flag(&self.state.flush_entered, &self.state.flush_entered_changed, "projector flush");
+  }
+
+  pub fn release_project(&self) {
+    if let Some(release) = self.state.project_release.lock().unwrap().take() {
+      let _ = release.send(());
+    }
+  }
+
+  pub fn release_flush(&self) {
+    if let Some(release) = self.state.flush_release.lock().unwrap().take() {
+      let _ = release.send(());
+    }
+  }
+
+  pub fn calls(&self) -> Vec<ProjectorCall> {
+    self.state.calls.lock().unwrap().clone()
+  }
+
+  pub fn item_count(&self) -> usize {
+    self.state.items.lock().unwrap().len()
+  }
+}
+
+impl TelemetryProjector for BlockingProjector {
+  fn project(&self, item: TelemetryItem) -> BoxFuture<'_, Result<(), TelemetryError>> {
+    let receiver = self.state.project_receiver.lock().unwrap().take();
+    Box::pin(async move {
+      if let Some(receiver) = receiver {
+        *self.state.project_entered.lock().unwrap() = true;
+        self.state.project_entered_changed.notify_all();
+        let _ = receiver.await;
+      }
+      self.state.items.lock().unwrap().push(item);
+      self.state.calls.lock().unwrap().push(ProjectorCall::Project);
+      Ok(())
+    })
+  }
+
+  fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
+    let receiver = self.state.flush_receiver.lock().unwrap().take().expect("blocking projector accepts one flush call");
+    Box::pin(async move {
+      *self.state.flush_entered.lock().unwrap() = true;
+      self.state.flush_entered_changed.notify_all();
+      let _ = receiver.await;
+      self.state.calls.lock().unwrap().push(ProjectorCall::Flush);
+      Ok(())
+    })
+  }
+}
+
+fn wait_for_flag(flag: &Mutex<bool>, changed: &Condvar, operation: &str) {
+  let deadline = Instant::now() + WAIT_TIMEOUT;
+  let mut entered = flag.lock().unwrap();
+  while !*entered {
+    let remaining = deadline.checked_duration_since(Instant::now()).unwrap_or_else(|| panic!("timed out waiting for {operation}"));
+    let (next, timeout) = changed.wait_timeout(entered, remaining).unwrap();
+    entered = next;
+    assert!(!timeout.timed_out() || *entered, "timed out waiting for {operation}");
+  }
+}
+
+#[derive(Clone, Default)]
+pub struct RecordingReporter {
+  failures: Arc<Mutex<Vec<DispatchFailure>>>,
+}
+
+impl RecordingReporter {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self::default())
+  }
+
+  pub fn failures(&self) -> Vec<DispatchFailure> {
+    self.failures.lock().unwrap().clone()
+  }
+}
+
+impl DispatchErrorReporter for RecordingReporter {
+  fn report(&self, failure: &DispatchFailure) {
+    self.failures.lock().unwrap().push(failure.clone());
+  }
+}
 
 struct ChannelWake(SyncSender<()>);
 
@@ -85,6 +281,265 @@ where
 
   pub fn root(&self) -> auv_tracing::Context {
     self.context(RunId::new())
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityCall {
+  LoadSnapshot,
+  Subscribe,
+  Commit,
+  CommitsAfter,
+}
+
+#[derive(Clone, Copy)]
+enum FirstSubscription {
+  Normal,
+  Gap,
+  Pending,
+}
+
+#[derive(Clone)]
+pub struct CursorStore {
+  inner: Arc<MemoryRunStore>,
+  first_subscription: FirstSubscription,
+  fail_snapshot: bool,
+  fail_page: Arc<AtomicBool>,
+  subscribe_calls: Arc<AtomicUsize>,
+  commits_after_calls: Arc<AtomicUsize>,
+  calls: Arc<Mutex<Vec<AuthorityCall>>>,
+}
+
+impl CursorStore {
+  pub fn normal() -> Arc<Self> {
+    Self::new(FirstSubscription::Normal, false, false)
+  }
+
+  pub fn gap_once() -> Arc<Self> {
+    Self::new(FirstSubscription::Gap, false, false)
+  }
+
+  pub fn pending_once() -> Arc<Self> {
+    Self::new(FirstSubscription::Pending, false, false)
+  }
+
+  pub fn snapshot_failure() -> Arc<Self> {
+    Self::new(FirstSubscription::Normal, true, false)
+  }
+
+  pub fn page_failure() -> Arc<Self> {
+    Self::new(FirstSubscription::Pending, false, true)
+  }
+
+  fn new(first_subscription: FirstSubscription, fail_snapshot: bool, fail_page: bool) -> Arc<Self> {
+    Arc::new(Self {
+      inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
+      first_subscription,
+      fail_snapshot,
+      fail_page: Arc::new(AtomicBool::new(fail_page)),
+      subscribe_calls: Arc::new(AtomicUsize::new(0)),
+      commits_after_calls: Arc::new(AtomicUsize::new(0)),
+      calls: Arc::new(Mutex::new(Vec::new())),
+    })
+  }
+
+  pub fn calls(&self) -> Vec<AuthorityCall> {
+    self.calls.lock().unwrap().clone()
+  }
+
+  pub fn subscribe_call_count(&self) -> usize {
+    self.subscribe_calls.load(Ordering::SeqCst)
+  }
+
+  pub fn commits_after_call_count(&self) -> usize {
+    self.commits_after_calls.load(Ordering::SeqCst)
+  }
+}
+
+impl RunStore for CursorStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+    self.calls.lock().unwrap().push(AuthorityCall::Commit);
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.calls.lock().unwrap().push(AuthorityCall::LoadSnapshot);
+    if self.fail_snapshot {
+      return Box::pin(async { Err(ReadError::Unavailable(ErrorCode::parse("auv.test.snapshot_failed").unwrap())) });
+    }
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.calls.lock().unwrap().push(AuthorityCall::CommitsAfter);
+    self.commits_after_calls.fetch_add(1, Ordering::SeqCst);
+    if self.fail_page.swap(false, Ordering::SeqCst) {
+      return Box::pin(async { Err(ReadError::Unavailable(ErrorCode::parse("auv.test.page_failed").unwrap())) });
+    }
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.calls.lock().unwrap().push(AuthorityCall::Subscribe);
+    let call = self.subscribe_calls.fetch_add(1, Ordering::SeqCst);
+    Box::pin(async move {
+      if call == 0 {
+        match self.first_subscription {
+          FirstSubscription::Normal => {}
+          FirstSubscription::Gap => {
+            let earliest_available = RunRevision::new(after.get() + 1).unwrap();
+            let stream = futures_util::stream::once(async move {
+              Err(SubscriptionError::Gap {
+                requested_after: after,
+                earliest_available,
+              })
+            })
+            .chain(futures_util::stream::pending());
+            return Ok(Box::pin(stream) as RunSubscription);
+          }
+          FirstSubscription::Pending => return Ok(Box::pin(futures_util::stream::pending()) as RunSubscription),
+        }
+      }
+      self.inner.subscribe(run_id, after).await
+    })
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
+#[derive(Clone, Copy)]
+pub enum UnknownLookup {
+  Committed,
+  None,
+  ReadFailure,
+  Mismatch,
+}
+
+#[derive(Clone)]
+pub struct CommitUnknownStore {
+  inner: Arc<MemoryRunStore>,
+  mode: UnknownLookup,
+  first: Arc<AtomicBool>,
+  commit_calls: Arc<AtomicUsize>,
+  lookup_calls: Arc<AtomicUsize>,
+  first_request: Arc<Mutex<Option<RunCommitRequest>>>,
+}
+
+impl CommitUnknownStore {
+  pub fn new(mode: UnknownLookup) -> Arc<Self> {
+    Arc::new(Self {
+      inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
+      mode,
+      first: Arc::new(AtomicBool::new(true)),
+      commit_calls: Arc::new(AtomicUsize::new(0)),
+      lookup_calls: Arc::new(AtomicUsize::new(0)),
+      first_request: Arc::new(Mutex::new(None)),
+    })
+  }
+
+  pub fn commit_calls(&self) -> usize {
+    self.commit_calls.load(Ordering::SeqCst)
+  }
+
+  pub fn lookup_calls(&self) -> usize {
+    self.lookup_calls.load(Ordering::SeqCst)
+  }
+}
+
+impl RunStore for CommitUnknownStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+    self.commit_calls.fetch_add(1, Ordering::SeqCst);
+    let unknown = self.first.swap(false, Ordering::SeqCst);
+    if unknown {
+      *self.first_request.lock().unwrap() = Some(request.clone());
+    }
+    Box::pin(async move {
+      if !unknown {
+        return self.inner.commit(request).await;
+      }
+      if matches!(self.mode, UnknownLookup::Committed) {
+        self.inner.commit(request).await?;
+      }
+      Err(CommitError::CommitUnknown(ErrorCode::parse("auv.test.commit_unknown").unwrap()))
+    })
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.lookup_calls.fetch_add(1, Ordering::SeqCst);
+    Box::pin(async move {
+      match self.mode {
+        UnknownLookup::Committed => self.inner.lookup_commit(run_id, key).await,
+        UnknownLookup::None => Ok(None),
+        UnknownLookup::ReadFailure => Err(ReadError::Unavailable(ErrorCode::parse("auv.test.lookup_failed").unwrap())),
+        UnknownLookup::Mismatch => {
+          let request = self.first_request.lock().unwrap().clone().expect("unknown commit saved its request");
+          let facts = request
+            .mutations()
+            .iter()
+            .cloned()
+            .map(|mutation| match mutation {
+              RunMutation::StartSpan(value) => RunFact::SpanStarted(value),
+              RunMutation::EndSpan(value) => RunFact::SpanEnded(value),
+              RunMutation::EmitEvent(value) => RunFact::EventOccurred(auv_tracing::EventOccurred::new(
+                value.event_id(),
+                value.span_id(),
+                value.occurred_at(),
+                value.schema().clone(),
+                auv_tracing::JsonPayload::encode(&serde_json::json!({ "mismatch": true })).unwrap(),
+              )),
+            })
+            .collect();
+          let mismatch = RunCommit::new(
+            request.authority_id(),
+            request.run_id(),
+            RunRevision::new(1).unwrap(),
+            request.idempotency_key(),
+            Timestamp::new(1, 0).unwrap(),
+            facts,
+          )
+          .unwrap();
+          Ok(Some(mismatch))
+        }
+      }
+    })
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
   }
 }
 
@@ -313,6 +768,18 @@ impl ControlledStore {
     }
   }
 
+  pub fn wait_for_committed_count(&self, run_id: RunId, expected: usize) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut committed = self.control.committed.lock().unwrap();
+    while committed.iter().filter(|(request, _)| request.run_id() == run_id).count() < expected {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for controlled commit completions");
+      let (next, timeout) = self.control.committed_changed.wait_timeout(committed, remaining).unwrap();
+      committed = next;
+      let count = committed.iter().filter(|(request, _)| request.run_id() == run_id).count();
+      assert!(!timeout.timed_out() || count >= expected, "timed out waiting for {expected} committed requests; observed {count}");
+    }
+  }
+
   pub fn committed_requests(&self, run_id: RunId) -> Vec<RunCommitRequest> {
     self
       .control
@@ -471,6 +938,29 @@ impl TaskSpawner for PanicFirstSpawner {
 
 pub struct DropFirstTaskSpawner {
   first: AtomicBool,
+}
+
+pub struct DiscardFirstTaskSpawner {
+  first: AtomicBool,
+}
+
+impl DiscardFirstTaskSpawner {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self {
+      first: AtomicBool::new(true),
+    })
+  }
+}
+
+impl TaskSpawner for DiscardFirstTaskSpawner {
+  fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
+    if self.first.swap(false, Ordering::SeqCst) {
+      drop(task);
+      return Ok(());
+    }
+    std::thread::spawn(move || block_on_timeout(task));
+    Ok(())
+  }
 }
 
 impl DropFirstTaskSpawner {
