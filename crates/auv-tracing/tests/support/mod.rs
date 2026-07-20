@@ -1,7 +1,12 @@
 #![allow(dead_code)]
 
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use auv_tracing::{
   ArtifactBody, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, Dispatch,
@@ -9,6 +14,35 @@ use auv_tracing::{
   RunRevision, RunSnapshot, RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError, TaskSpawnError, TaskSpawner,
 };
 use futures_channel::oneshot;
+
+pub const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+struct ChannelWake(SyncSender<()>);
+
+impl futures_util::task::ArcWake for ChannelWake {
+  fn wake_by_ref(wake: &Arc<Self>) {
+    let _ = wake.0.try_send(());
+  }
+}
+
+pub fn block_on_timeout<F: Future>(future: F) -> F::Output {
+  let deadline = Instant::now() + WAIT_TIMEOUT;
+  let (sender, receiver) = sync_channel(1);
+  let wake = Arc::new(ChannelWake(sender));
+  let waker = futures_util::task::waker_ref(&wake);
+  let mut context = Context::from_waker(&waker);
+  futures_util::pin_mut!(future);
+
+  loop {
+    match future.as_mut().poll(&mut context) {
+      Poll::Ready(output) => return output,
+      Poll::Pending => {
+        let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for test future completion");
+        receiver.recv_timeout(remaining).expect("timed out waiting for test future wakeup");
+      }
+    }
+  }
+}
 
 pub struct TestDispatch<S = MemoryRunStore> {
   pub dispatch: Dispatch,
@@ -79,9 +113,13 @@ impl CommitGate {
   }
 
   pub fn wait_until_entered(&self) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
     let mut entered = self.state.entered.lock().unwrap();
     while !*entered {
-      entered = self.state.entered_changed.wait(entered).unwrap();
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for controlled commit to start");
+      let (next, timeout) = self.state.entered_changed.wait_timeout(entered, remaining).unwrap();
+      entered = next;
+      assert!(!timeout.timed_out() || *entered, "timed out waiting for controlled commit to start");
     }
   }
 
@@ -109,7 +147,13 @@ struct ControlState {
 
 struct CommitControl {
   gate: CommitGate,
-  failure: Option<ErrorCode>,
+  outcome: CommitOutcome,
+}
+
+enum CommitOutcome {
+  Succeed,
+  Fail(ErrorCode),
+  Panic,
 }
 
 impl ControlledStore {
@@ -131,7 +175,7 @@ impl ControlledStore {
     let gate = CommitGate::new();
     *self.control.first_control.lock().unwrap() = Some(CommitControl {
       gate: gate.clone(),
-      failure: None,
+      outcome: CommitOutcome::Succeed,
     });
     gate
   }
@@ -140,7 +184,7 @@ impl ControlledStore {
     let gate = CommitGate::new();
     self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
       gate: gate.clone(),
-      failure: None,
+      outcome: CommitOutcome::Succeed,
     });
     gate
   }
@@ -149,7 +193,16 @@ impl ControlledStore {
     let gate = CommitGate::new();
     self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
       gate: gate.clone(),
-      failure: Some(code),
+      outcome: CommitOutcome::Fail(code),
+    });
+    gate
+  }
+
+  pub fn panic_next_commit(&self, run_id: RunId) -> CommitGate {
+    let gate = CommitGate::new();
+    self.control.controls.lock().unwrap().entry(run_id).or_default().push_back(CommitControl {
+      gate: gate.clone(),
+      outcome: CommitOutcome::Panic,
     });
     gate
   }
@@ -159,16 +212,26 @@ impl ControlledStore {
   }
 
   pub fn wait_for_commit_calls(&self, run_id: RunId, expected: usize) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
     let mut calls = self.control.calls.lock().unwrap();
     while calls.iter().filter(|request| request.run_id() == run_id).count() < expected {
-      calls = self.control.calls_changed.wait(calls).unwrap();
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for controlled commit calls");
+      let (next, timeout) = self.control.calls_changed.wait_timeout(calls, remaining).unwrap();
+      calls = next;
+      let count = calls.iter().filter(|request| request.run_id() == run_id).count();
+      assert!(!timeout.timed_out() || count >= expected, "timed out waiting for {expected} commit calls for run {run_id}; observed {count}");
     }
   }
 
   pub fn wait_until_committed(&self, run_id: RunId) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
     let mut committed = self.control.committed.lock().unwrap();
     while !committed.iter().any(|(request, _)| request.run_id() == run_id) {
-      committed = self.control.committed_changed.wait(committed).unwrap();
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for controlled commit completion");
+      let (next, timeout) = self.control.committed_changed.wait_timeout(committed, remaining).unwrap();
+      committed = next;
+      let found = committed.iter().any(|(request, _)| request.run_id() == run_id);
+      assert!(!timeout.timed_out() || found, "timed out waiting for a committed request for run {run_id}");
     }
   }
 
@@ -220,13 +283,15 @@ impl RunStore for ControlledStore {
     self.control.calls_changed.notify_all();
     let control = self.control_for(request.run_id());
     let gate = control.as_ref().and_then(|control| control.gate.enter());
-    let failure = control.and_then(|control| control.failure);
+    let outcome = control.map(|control| control.outcome).unwrap_or(CommitOutcome::Succeed);
     Box::pin(async move {
       if let Some(gate) = gate {
         let _ = gate.await;
       }
-      if let Some(code) = failure {
-        return Err(CommitError::Rejected(code));
+      match outcome {
+        CommitOutcome::Succeed => {}
+        CommitOutcome::Fail(code) => return Err(CommitError::Rejected(code)),
+        CommitOutcome::Panic => panic!("controlled store commit future panicked"),
       }
       let commit = self.inner.commit(request.clone()).await?;
       self.control.committed.lock().unwrap().push((request, commit.clone()));
@@ -279,7 +344,7 @@ impl TaskSpawner for FailFirstSpawner {
       *failed = true;
       return Err(TaskSpawnError::new(ErrorCode::parse("auv.dispatch.spawn").unwrap()));
     }
-    std::thread::spawn(move || futures_executor::block_on(task));
+    std::thread::spawn(move || block_on_timeout(task));
     Ok(())
   }
 }
@@ -294,7 +359,55 @@ impl InlineSpawner {
 
 impl TaskSpawner for InlineSpawner {
   fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
-    futures_executor::block_on(task);
+    block_on_timeout(task);
+    Ok(())
+  }
+}
+
+pub struct PanicFirstSpawner {
+  first: AtomicBool,
+}
+
+impl PanicFirstSpawner {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self {
+      first: AtomicBool::new(true),
+    })
+  }
+}
+
+impl TaskSpawner for PanicFirstSpawner {
+  fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
+    if self.first.swap(false, Ordering::SeqCst) {
+      panic!("test spawner panicked before polling the task");
+    }
+    block_on_timeout(task);
+    Ok(())
+  }
+}
+
+pub struct DropFirstTaskSpawner {
+  first: AtomicBool,
+}
+
+impl DropFirstTaskSpawner {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self {
+      first: AtomicBool::new(true),
+    })
+  }
+}
+
+impl TaskSpawner for DropFirstTaskSpawner {
+  fn spawn(&self, mut task: DispatchTask) -> Result<(), TaskSpawnError> {
+    if self.first.swap(false, Ordering::SeqCst) {
+      let waker = futures_util::task::noop_waker();
+      let mut context = Context::from_waker(&waker);
+      assert!(matches!(task.as_mut().poll(&mut context), Poll::Pending));
+      drop(task);
+      return Ok(());
+    }
+    block_on_timeout(task);
     Ok(())
   }
 }

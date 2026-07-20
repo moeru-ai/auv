@@ -10,7 +10,9 @@ use std::task::{Context as TaskContext, Poll};
 
 use auv_tracing::{Attributes, Context, DispatchStage, EventPayload, RunId, RunMutation, RunStore, SpanSpec, configure, dispatcher};
 use serde::{Deserialize, Serialize};
-use support::{ControlledStore, FailFirstSpawner, InlineSpawner, TestDispatch};
+use support::{
+  ControlledStore, DropFirstTaskSpawner, FailFirstSpawner, InlineSpawner, PanicFirstSpawner, TestDispatch, WAIT_TIMEOUT, block_on_timeout,
+};
 
 struct TestSpan;
 
@@ -64,7 +66,7 @@ impl Serialize for BlockingEvent {
     S: serde::Serializer,
   {
     self.entered.send(()).unwrap();
-    self.release.recv().unwrap();
+    self.release.recv_timeout(WAIT_TIMEOUT).expect("timed out waiting to release blocking event serialization");
     TestEvent { value: self.value }.serialize(serializer)
   }
 }
@@ -150,8 +152,8 @@ fn disabled_calls_do_not_create_a_run() {
     auv_tracing::emit_event!(TestEvent { value: 1 });
   });
 
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
-  assert!(futures_executor::block_on(fixture.store.load_snapshot(run_id)).unwrap().is_none());
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  assert!(block_on_timeout(fixture.store.load_snapshot(run_id)).unwrap().is_none());
 }
 
 #[test]
@@ -162,8 +164,8 @@ fn enabled_root_without_emissions_creates_no_run() {
 
   assert!(root.is_enabled());
   assert_eq!(root.authority_id(), Some(&fixture.store.authority_id()));
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
-  assert!(futures_executor::block_on(fixture.store.load_snapshot(run_id)).unwrap().is_none());
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  assert!(block_on_timeout(fixture.store.load_snapshot(run_id)).unwrap().is_none());
 }
 
 #[test]
@@ -207,6 +209,35 @@ fn current_context_nests_and_restores_on_unwind() {
 }
 
 #[test]
+fn context_guards_can_drop_out_of_order_without_removing_newer_frames() {
+  let outer = Context::root(RunId::new());
+  let inner = Context::root(RunId::new());
+  let outer_guard = outer.enter();
+  let inner_guard = inner.enter();
+
+  drop(outer_guard);
+  assert_eq!(Context::current().run_id(), inner.run_id());
+  drop(inner_guard);
+  assert!(Context::current().run_id().is_none());
+}
+
+#[test]
+fn out_of_order_context_drop_followed_by_unwind_restores_empty_scope() {
+  let outer = Context::root(RunId::new());
+  let inner = Context::root(RunId::new());
+
+  let panic = catch_unwind(AssertUnwindSafe(|| {
+    let outer_guard = outer.enter();
+    let _inner_guard = inner.enter();
+    drop(outer_guard);
+    panic!("exercise unwind after out-of-order drop");
+  }));
+
+  assert!(panic.is_err());
+  assert!(Context::current().run_id().is_none());
+}
+
+#[test]
 fn span_scope_sets_and_restores_the_current_span() {
   let fixture = TestDispatch::memory();
   let root = fixture.root();
@@ -219,7 +250,7 @@ fn span_scope_sets_and_restores_the_current_span() {
     assert!(Context::current().span_id().is_none());
   });
 
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
 }
 
 #[test]
@@ -238,7 +269,7 @@ fn authority_commits_follow_submission_order() {
   first.wait_until_entered();
   assert_eq!(store.commit_call_count(run_id), 1, "same-run commits must not overlap");
   first.release();
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
   assert_eq!(event_values(&store.committed_requests(run_id)), [1, 2]);
   assert_eq!(store.committed_revisions(run_id), [1, 2]);
 }
@@ -249,8 +280,8 @@ fn same_run_order_is_reserved_before_payload_validation() {
   let fixture = TestDispatch::with_store(store.clone());
   let root = fixture.root();
   let run_id = *root.run_id().unwrap();
-  let (entered_tx, entered_rx) = sync_channel(0);
-  let (release_tx, release_rx) = sync_channel(0);
+  let (entered_tx, entered_rx) = sync_channel(1);
+  let (release_tx, release_rx) = sync_channel(1);
   let first_root = root.clone();
 
   let first = std::thread::spawn(move || {
@@ -262,12 +293,12 @@ fn same_run_order_is_reserved_before_payload_validation() {
       });
     });
   });
-  entered_rx.recv().unwrap();
+  entered_rx.recv_timeout(WAIT_TIMEOUT).expect("timed out waiting for blocking event serialization to start");
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
   release_tx.send(()).unwrap();
   first.join().unwrap();
 
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
   assert_eq!(event_values(&store.committed_requests(run_id)), [1, 2]);
 }
 
@@ -288,7 +319,7 @@ fn blocked_run_does_not_block_an_independent_run() {
   store.wait_until_committed(run_b_id);
   assert_eq!(event_values(&store.committed_requests(run_b_id)), [2]);
   blocked.release();
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
 }
 
 #[test]
@@ -307,10 +338,10 @@ fn flush_captures_its_barrier_when_called() {
   first.release();
   second.wait_until_entered();
 
-  futures_executor::block_on(first_flush).unwrap();
+  block_on_timeout(first_flush).unwrap();
   assert_eq!(store.committed_revisions(run_id), [1]);
   second.release();
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
 }
 
 #[test]
@@ -326,7 +357,7 @@ fn dropped_flush_future_does_not_block_a_later_flush() {
   let later_flush = fixture.dispatch.flush();
   blocked.release();
 
-  futures_executor::block_on(later_flush).unwrap();
+  block_on_timeout(later_flush).unwrap();
 }
 
 #[test]
@@ -344,7 +375,7 @@ fn dropped_flush_does_not_consume_its_later_failure() {
   let later_flush = fixture.dispatch.flush();
   blocked.release();
 
-  let error = futures_executor::block_on(later_flush).unwrap_err();
+  let error = block_on_timeout(later_flush).unwrap_err();
   assert_eq!(error.failure_count().get(), 1);
   assert_eq!(error.first().stage(), DispatchStage::AuthorityCommit);
   assert_eq!(error.first().code().as_str(), "auv.test.commit_failure");
@@ -404,11 +435,94 @@ fn spawn_failure_releases_the_run_lane_and_failed_flush_interval_advances() {
     auv_tracing::emit_event!(TestEvent { value: 2 });
   });
 
-  let error = futures_executor::block_on(fixture.dispatch.flush()).unwrap_err();
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
   assert_eq!(error.failure_count().get(), 1);
   assert_eq!(error.first().stage(), DispatchStage::Spawn);
   assert_eq!(event_values(&store.committed_requests(run_id)), [2]);
-  futures_executor::block_on(fixture.dispatch.flush()).unwrap();
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+}
+
+#[test]
+fn spawner_panic_before_task_start_becomes_spawn_failure_and_releases_lane() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store_and_spawner(store.clone(), PanicFirstSpawner::new());
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+
+  let emission = catch_unwind(AssertUnwindSafe(|| {
+    root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  }));
+  assert!(emission.is_ok(), "instrumentation must contain a pre-start spawner panic");
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::Spawn);
+  assert_eq!(error.first().code().as_str(), "auv.dispatch.spawn_panic");
+  assert_eq!(event_values(&store.committed_requests(run_id)), [2]);
+}
+
+#[test]
+fn panicking_store_future_terminalizes_active_ticket_and_runs_successor() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store(store.clone());
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+  let blocked = store.panic_next_commit(run_id);
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  blocked.wait_until_entered();
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  blocked.release();
+
+  store.wait_until_committed(run_id);
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::AuthorityCommit);
+  assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
+  assert_eq!(event_values(&store.committed_requests(run_id)), [2]);
+}
+
+#[test]
+fn inline_spawner_propagated_task_panic_does_not_double_terminalize() {
+  let store = ControlledStore::new();
+  let root_id = RunId::new();
+  let panic_control = store.panic_next_commit(root_id);
+  panic_control.release();
+  let fixture = TestDispatch::with_store_and_spawner(store.clone(), InlineSpawner::new());
+  let root = fixture.context(root_id);
+
+  let emission = catch_unwind(AssertUnwindSafe(|| {
+    root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  }));
+  assert!(emission.is_ok(), "a started task owns recovery from its propagated panic");
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
+  assert_eq!(event_values(&store.committed_requests(root_id)), [2]);
+}
+
+#[test]
+fn dropped_active_lane_task_terminalizes_ticket_and_allows_later_work() {
+  let store = ControlledStore::new();
+  let root_id = RunId::new();
+  let blocked = store.block_next_commit(root_id);
+  let fixture = TestDispatch::with_store_and_spawner(store.clone(), DropFirstTaskSpawner::new());
+  let root = fixture.context(root_id);
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  blocked.wait_until_entered();
+  blocked.release();
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+
+  assert_eq!(store.commit_call_count(root_id), 2, "the successor must get a new lane task");
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::AuthorityCommit);
+  assert_eq!(error.first().code().as_str(), "auv.dispatch.task_unwind");
+  assert_eq!(event_values(&store.committed_requests(root_id)), [2]);
 }
 
 #[test]
@@ -424,7 +538,7 @@ fn validation_failure_terminalizes_its_ticket_without_blocking_later_work() {
     auv_tracing::emit_event!(TestEvent { value: 7 });
   });
 
-  let error = futures_executor::block_on(fixture.dispatch.flush()).unwrap_err();
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
   assert_eq!(error.failure_count().get(), 1);
   assert_eq!(error.first().stage(), DispatchStage::Encode);
   assert_eq!(event_values(&store.committed_requests(run_id)), [7]);
@@ -446,7 +560,7 @@ fn panicking_span_preparation_releases_the_lane_and_reports_encode() {
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 8 }));
 
   assert_eq!(store.commit_call_count(run_id), 1, "later same-run work must reach the authority");
-  let error = futures_executor::block_on(fixture.dispatch.flush()).unwrap_err();
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
   assert_eq!(error.failure_count().get(), 1);
   assert_eq!(error.first().stage(), DispatchStage::Encode);
   assert_eq!(event_values(&store.committed_requests(run_id)), [8]);
@@ -466,7 +580,7 @@ fn panicking_event_preparation_releases_the_lane_and_reports_encode() {
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 9 }));
 
   assert_eq!(store.commit_call_count(run_id), 1, "later same-run work must reach the authority");
-  let error = futures_executor::block_on(fixture.dispatch.flush()).unwrap_err();
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
   assert_eq!(error.failure_count().get(), 1);
   assert_eq!(error.first().stage(), DispatchStage::Encode);
   assert_eq!(event_values(&store.committed_requests(run_id)), [9]);

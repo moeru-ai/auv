@@ -6,7 +6,22 @@ use std::sync::Arc;
 use crate::{Attributes, AuthorityId, Dispatch, EventPayload, RunId, SpanId, dispatcher};
 
 thread_local! {
-  static CURRENT_CONTEXTS: RefCell<Vec<Context>> = const { RefCell::new(Vec::new()) };
+  static CURRENT_CONTEXTS: RefCell<CurrentContexts> = const {
+    RefCell::new(CurrentContexts {
+      next_token: 0,
+      frames: Vec::new(),
+    })
+  };
+}
+
+struct CurrentContexts {
+  next_token: u64,
+  frames: Vec<ContextFrame>,
+}
+
+struct ContextFrame {
+  token: u64,
+  context: Context,
 }
 
 /// One explicitly propagated AUV run and span scope.
@@ -29,7 +44,7 @@ impl Context {
 
   /// Clones the innermost thread-local scope or returns a disabled context.
   pub fn current() -> Self {
-    CURRENT_CONTEXTS.with(|contexts| contexts.borrow().last().cloned()).unwrap_or_else(Self::disabled)
+    CURRENT_CONTEXTS.with(|contexts| contexts.borrow().frames.last().map(|frame| frame.context.clone())).unwrap_or_else(Self::disabled)
   }
 
   /// Returns the configured authority captured by this context.
@@ -54,14 +69,18 @@ impl Context {
 
   /// Makes this context current on the calling thread until the guard drops.
   pub fn enter(&self) -> ContextGuard<'_> {
-    let depth = CURRENT_CONTEXTS.with(|contexts| {
+    let token = CURRENT_CONTEXTS.with(|contexts| {
       let mut contexts = contexts.borrow_mut();
-      let depth = contexts.len();
-      contexts.push(self.clone());
-      depth
+      contexts.next_token = contexts.next_token.checked_add(1).expect("context frame token space exhausted");
+      let token = contexts.next_token;
+      contexts.frames.push(ContextFrame {
+        token,
+        context: self.clone(),
+      });
+      token
     });
     ContextGuard {
-      depth,
+      token,
       context: PhantomData,
       thread_bound: PhantomData,
     }
@@ -90,9 +109,11 @@ impl Context {
   }
 }
 
-/// Restores the preceding current context when dropped on its creating thread.
+/// Removes its own current-context frame when dropped on its creating thread.
+///
+/// Newer frames remain current when guards are dropped out of entry order.
 pub struct ContextGuard<'a> {
-  depth: usize,
+  token: u64,
   context: PhantomData<&'a Context>,
   thread_bound: PhantomData<Rc<()>>,
 }
@@ -101,8 +122,9 @@ impl Drop for ContextGuard<'_> {
   fn drop(&mut self) {
     CURRENT_CONTEXTS.with(|contexts| {
       let mut contexts = contexts.borrow_mut();
-      debug_assert_eq!(contexts.len(), self.depth + 1, "context guards must drop in nesting order");
-      contexts.truncate(self.depth);
+      if let Some(position) = contexts.frames.iter().position(|frame| frame.token == self.token) {
+        contexts.frames.remove(position);
+      }
     });
   }
 }
@@ -128,7 +150,10 @@ impl Span {
     self.context.span_id()
   }
 
-  /// Reports whether the span is routed by its captured dispatch.
+  /// Reports whether the span has an active captured route and context.
+  ///
+  /// This does not report whether start encoding or an asynchronous authority
+  /// commit later succeeds.
   pub fn is_enabled(&self) -> bool {
     self.id().is_some() && self.context.is_enabled()
   }
