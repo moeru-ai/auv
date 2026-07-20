@@ -385,6 +385,19 @@ impl Dispatch {
   }
 
   fn wake_lane(&self, run_id: RunId) {
+    {
+      let mut lanes = self.inner.lanes.lock().unwrap();
+      let Some(lane) = lanes.get_mut(&run_id) else {
+        return;
+      };
+      // Reentrant wakes only publish lane state; one synchronous owner keeps
+      // draining until async work takes over or the front is unprepared.
+      if lane.draining {
+        return;
+      }
+      lane.draining = true;
+    }
+
     loop {
       let action = {
         let mut lanes = self.inner.lanes.lock().unwrap();
@@ -392,10 +405,14 @@ impl Dispatch {
           return;
         };
         if lane.running {
+          lane.draining = false;
           return;
         }
         match lane.queue.front().map(|entry| &entry.state) {
-          Some(LaneEntryState::Preparing) => return,
+          Some(LaneEntryState::Preparing) => {
+            lane.draining = false;
+            return;
+          }
           Some(LaneEntryState::Ready(_)) => {
             lane.running = true;
             LaneWake::Spawn
@@ -410,6 +427,7 @@ impl Dispatch {
           None => {
             let indeterminate = lane.indeterminate;
             let cursor = lane.cursor.take();
+            lane.draining = false;
             if !indeterminate {
               lanes.remove(&run_id);
             }
@@ -442,16 +460,18 @@ impl Dispatch {
             let _ = AssertUnwindSafe(admitted).catch_unwind().await;
           });
           let spawn = catch_unwind(AssertUnwindSafe(|| self.spawner().spawn(task)));
-          let failure = match spawn {
+          match spawn {
             Ok(Ok(())) if admission.spawn_succeeded_needs_recovery() => {
-              DispatchFailure::new(DispatchStage::AuthorityCommit, task_unwind_code())
+              self.settle_unpolled_lane_task(run_id, DispatchFailure::new(DispatchStage::AuthorityCommit, task_unwind_code()));
             }
-            Ok(Ok(())) => return,
-            Ok(Err(error)) if admission.spawn_failed_needs_recovery() => DispatchFailure::new(DispatchStage::Spawn, error.code),
-            Err(_) if admission.spawn_failed_needs_recovery() => DispatchFailure::new(DispatchStage::Spawn, spawn_panic_code()),
-            Ok(Err(_)) | Err(_) => return,
-          };
-          self.settle_unpolled_lane_task(run_id, failure);
+            Ok(Err(error)) if admission.spawn_failed_needs_recovery() => {
+              self.settle_unpolled_lane_task(run_id, DispatchFailure::new(DispatchStage::Spawn, error.code));
+            }
+            Err(_) if admission.spawn_failed_needs_recovery() => {
+              self.settle_unpolled_lane_task(run_id, DispatchFailure::new(DispatchStage::Spawn, spawn_panic_code()));
+            }
+            Ok(Ok(())) | Ok(Err(_)) | Err(_) => {}
+          }
         }
       }
     }
@@ -492,10 +512,11 @@ impl Dispatch {
           None => {
             lane.running = false;
             let indeterminate = lane.indeterminate;
+            let draining = lane.draining;
             let cursor = guard.take_cursor();
             // TODO(auv-run-contract-v1-task-9): retain an idle cursor only when
             // an accepted detached artifact job owns an unresolved revision.
-            if !indeterminate {
+            if !indeterminate && !draining {
               lanes.remove(&run_id);
             }
             guard.disarm();
@@ -1500,6 +1521,7 @@ impl DispatchErrorReporter for DiscardReporter {
 
 #[derive(Default)]
 struct RunLane {
+  draining: bool,
   running: bool,
   indeterminate: bool,
   queue: VecDeque<LaneEntry>,

@@ -887,6 +887,7 @@ pub struct ControlledStore {
 struct ControlState {
   controls: Mutex<HashMap<RunId, VecDeque<CommitControl>>>,
   first_control: Mutex<Option<CommitControl>>,
+  pending_snapshot_reads: AtomicBool,
   calls: Mutex<Vec<RunCommitRequest>>,
   calls_changed: Condvar,
   committed: Mutex<Vec<(RunCommitRequest, RunCommit)>>,
@@ -912,6 +913,7 @@ impl ControlledStore {
       control: Arc::new(ControlState {
         controls: Mutex::new(HashMap::new()),
         first_control: Mutex::new(None),
+        pending_snapshot_reads: AtomicBool::new(false),
         calls: Mutex::new(Vec::new()),
         calls_changed: Condvar::new(),
         committed: Mutex::new(Vec::new()),
@@ -927,6 +929,10 @@ impl ControlledStore {
       outcome: CommitOutcome::Succeed,
     });
     gate
+  }
+
+  pub fn keep_snapshot_reads_pending(&self) {
+    self.control.pending_snapshot_reads.store(true, Ordering::SeqCst);
   }
 
   pub fn block_next_commit(&self, run_id: RunId) -> CommitGate {
@@ -1098,6 +1104,9 @@ impl RunStore for ControlledStore {
   }
 
   fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    if self.control.pending_snapshot_reads.load(Ordering::SeqCst) {
+      return Box::pin(futures_util::future::pending());
+    }
     self.inner.load_snapshot(run_id)
   }
 
@@ -1186,6 +1195,112 @@ impl TaskSpawner for FirstThreadThenInlineSpawner {
     self.inline_depth.fetch_sub(1, Ordering::SeqCst);
     Ok(())
   }
+}
+
+pub struct FirstThreadThenPollDropSpawner {
+  pending_tasks: usize,
+  spawned: AtomicUsize,
+  depth: Arc<AtomicUsize>,
+  max_depth: Arc<AtomicUsize>,
+  first_pending: Arc<(Mutex<bool>, Condvar)>,
+  first_release: Arc<(Mutex<bool>, Condvar)>,
+  completed: Arc<(Mutex<usize>, Condvar)>,
+}
+
+impl FirstThreadThenPollDropSpawner {
+  pub fn new(pending_tasks: usize) -> Arc<Self> {
+    assert!(pending_tasks > 0);
+    Arc::new(Self {
+      pending_tasks,
+      spawned: AtomicUsize::new(0),
+      depth: Arc::new(AtomicUsize::new(0)),
+      max_depth: Arc::new(AtomicUsize::new(0)),
+      first_pending: Arc::new((Mutex::new(false), Condvar::new())),
+      first_release: Arc::new((Mutex::new(false), Condvar::new())),
+      completed: Arc::new((Mutex::new(0), Condvar::new())),
+    })
+  }
+
+  pub fn wait_until_first_pending(&self) {
+    wait_for_flag(&self.first_pending.0, &self.first_pending.1, "first authority task to become pending");
+  }
+
+  pub fn release_first(&self) {
+    *self.first_release.0.lock().unwrap() = true;
+    self.first_release.1.notify_all();
+  }
+
+  pub fn wait_for_completed(&self, expected: usize) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut completed = self.completed.0.lock().unwrap();
+    while *completed < expected {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for polled tasks to complete or drop");
+      let (next, timeout) = self.completed.1.wait_timeout(completed, remaining).unwrap();
+      completed = next;
+      assert!(!timeout.timed_out() || *completed >= expected, "timed out waiting for {expected} tasks; observed {completed}");
+    }
+  }
+
+  pub fn max_depth(&self) -> usize {
+    self.max_depth.load(Ordering::SeqCst)
+  }
+}
+
+impl TaskSpawner for FirstThreadThenPollDropSpawner {
+  fn spawn(&self, mut task: DispatchTask) -> Result<(), TaskSpawnError> {
+    let index = self.spawned.fetch_add(1, Ordering::SeqCst);
+    let pending = index < self.pending_tasks;
+    let depth = self.depth.clone();
+    let max_depth = self.max_depth.clone();
+    let completed = self.completed.clone();
+
+    if index == 0 {
+      let first_pending = self.first_pending.clone();
+      let first_release = self.first_release.clone();
+      std::thread::spawn(move || {
+        enter_depth(&depth, &max_depth);
+        poll_pending(&mut task);
+        *first_pending.0.lock().unwrap() = true;
+        first_pending.1.notify_all();
+        wait_for_flag(&first_release.0, &first_release.1, "first authority task release");
+        drop(task);
+        leave_depth(&depth);
+        record_completed(&completed);
+      });
+      return Ok(());
+    }
+
+    enter_depth(&depth, &max_depth);
+    if pending {
+      poll_pending(&mut task);
+      drop(task);
+    } else {
+      block_on_timeout(task);
+    }
+    leave_depth(&depth);
+    record_completed(&completed);
+    Ok(())
+  }
+}
+
+fn poll_pending(task: &mut DispatchTask) {
+  let waker = futures_util::task::noop_waker();
+  let mut context = Context::from_waker(&waker);
+  assert!(matches!(task.as_mut().poll(&mut context), Poll::Pending));
+}
+
+fn enter_depth(depth: &AtomicUsize, max_depth: &AtomicUsize) {
+  let current = depth.fetch_add(1, Ordering::SeqCst) + 1;
+  max_depth.fetch_max(current, Ordering::SeqCst);
+}
+
+fn leave_depth(depth: &AtomicUsize) {
+  depth.fetch_sub(1, Ordering::SeqCst);
+}
+
+fn record_completed(completed: &(Mutex<usize>, Condvar)) {
+  *completed.0.lock().unwrap() += 1;
+  completed.1.notify_all();
 }
 
 #[derive(Clone, Copy, Debug)]

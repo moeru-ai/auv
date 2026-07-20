@@ -13,9 +13,9 @@ use auv_tracing::{
 };
 use support::{
   AsyncDropRaceSpawner, AuthorityCall, BlockingProjector, CommitUnknownStore, ControlledStore, CursorStore, DiscardFirstTaskSpawner,
-  DropFirstTaskSpawner, FailFirstSpawner, FirstThreadThenInlineSpawner, IntegrityFault, IntegrityStore, ManualTaskSpawner,
-  PanicFirstSpawner, ProjectorCall, RacingSpawnResult, RecordingProjector, RecordingReporter, SubscriptionTrackingStore, UnknownLookup,
-  block_on_timeout,
+  DropFirstTaskSpawner, FailFirstSpawner, FirstThreadThenInlineSpawner, FirstThreadThenPollDropSpawner, IntegrityFault, IntegrityStore,
+  ManualTaskSpawner, PanicFirstSpawner, ProjectorCall, RacingSpawnResult, RecordingProjector, RecordingReporter, SubscriptionTrackingStore,
+  UnknownLookup, block_on_timeout,
 };
 
 struct SignalWake(SyncSender<()>);
@@ -923,6 +923,56 @@ fn hybrid_spawner_drains_inline_projection_backlog_at_bounded_depth() {
 
   assert_eq!(projector.item_count(), BACKLOG + 1);
   assert_eq!(spawner.max_inline_depth(), 1, "inline completions must return to one iterative drain frame");
+}
+
+// ROOT CAUSE:
+//
+// If a started authority task was dropped during cursor establishment,
+// `LaneDrainGuard` recovered by synchronously waking the same run lane. Before
+// the fix, an inline spawner nested one recovery and spawn frame per queued
+// ticket. The fix keeps one iterative wake owner until async work takes over.
+#[test]
+fn authority_recovery_drains_inline_cancellation_backlog_at_bounded_depth() {
+  const TICKET_COUNT: usize = 256;
+
+  let store = ControlledStore::new();
+  store.keep_snapshot_reads_pending();
+  let projector = RecordingProjector::new();
+  let reporter = RecordingReporter::new();
+  let spawner = FirstThreadThenPollDropSpawner::new(TICKET_COUNT);
+  let dispatch = configure()
+    .run_store(store.clone())
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .on_error(reporter.clone())
+    .task_spawner(spawner.clone())
+    .build()
+    .unwrap();
+  let run_id = RunId::new();
+  let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(run_id));
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 0 }));
+  spawner.wait_until_first_pending();
+  for value in 1..TICKET_COUNT {
+    root.in_scope(|| {
+      auv_tracing::emit_event!(TestEvent {
+        value: value as u32
+      })
+    });
+  }
+
+  spawner.release_first();
+  spawner.wait_for_completed(TICKET_COUNT);
+  let error = block_on_timeout(dispatch.flush()).unwrap_err();
+  let failures = reporter.failures();
+
+  assert_eq!(error.failure_count().get(), TICKET_COUNT);
+  assert_eq!(failures.len(), TICKET_COUNT, "each accepted ticket must terminalize and report exactly once");
+  assert!(failures.iter().all(|failure| failure.stage() == DispatchStage::AuthorityRead));
+  assert!(failures.iter().all(|failure| failure.code().as_str() == "auv.dispatch.task_unwind"));
+  assert_eq!(store.commit_call_count(run_id), 0);
+  assert_eq!(projector.item_count(), 0);
+  assert!(spawner.max_depth() <= 2, "authority wake recovery nested to depth {}", spawner.max_depth());
+  block_on_timeout(dispatch.flush()).unwrap();
 }
 
 #[test]
