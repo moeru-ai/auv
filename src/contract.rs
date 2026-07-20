@@ -97,6 +97,26 @@ pub struct CandidateRef {
   pub candidate_local_id: String,
 }
 
+/// Execution outcome of a typed command — **not** its semantic outcome.
+///
+/// `Completed` means the operation ran to the end of its dispatch path (the
+/// action was delivered, or an observe/verify command executed); `Failed` means
+/// it could not execute (refused before dispatch, a backend/permission error,
+/// or a failed run). Every producer in the codebase derives this from the
+/// execution/dispatch path — via run status, dispatched-vs-refused, or a
+/// backend error — and **never** from whether the world reached the expected
+/// state.
+///
+/// Semantic success is a *separate axis*, carried by
+/// [`VerificationResult::semantic_matched`] (with [`VerificationResult::failure_layer`])
+/// inside [`OperationResult::verifications`]. The two are independent: an
+/// operation can be `Completed` while its verification reports
+/// `semantic_matched == Some(false)` — the action was delivered, but the world
+/// did not match. Consumers MUST NOT read `Completed` as "the operation
+/// succeeded semantically", and producers MUST NOT downgrade to `Failed` on a
+/// semantic mismatch. AUV's value is "the world is in the expected state, and
+/// here is the evidence" — that claim lives in the verification, not in this
+/// status. Keeping the axes separate is the whole point of the seam.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
@@ -129,6 +149,8 @@ pub struct OperationResult {
   #[serde(default = "default_operation_result_api_version")]
   pub api_version: String,
   pub run_id: RunId,
+  /// Execution outcome only — see [`OperationStatus`]. Semantic success is a
+  /// separate axis in [`Self::verifications`], not implied by `Completed`.
   pub status: OperationStatus,
   pub operation_id: String,
   pub evidence_artifacts: Vec<ArtifactRef>,
@@ -1412,5 +1434,47 @@ mod tests {
     assert_eq!(value["verifications"].as_array().map(|a| a.len()), Some(2), "multi-claim verifications must round-trip");
     let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
     assert_eq!(parsed.verifications.len(), 2);
+  }
+
+  // ROOT CAUSE:
+  //
+  // `OperationStatus` had no documentation, so "Completed" could be misread as
+  // "the operation succeeded semantically" and a producer could wrongly
+  // downgrade to `Failed` on a semantic mismatch. Every producer actually
+  // derives status from the execution/dispatch path, never from
+  // `semantic_matched` — status (execution) and semantic outcome are separate
+  // axes. This test locks that invariant into the contract: a delivered action
+  // whose world did not match stays `Completed` with `semantic_matched ==
+  // Some(false)`, so the two axes never collapse into one.
+  #[test]
+  fn operation_status_completed_is_independent_of_semantic_outcome() {
+    let mut mismatch = sample_verification(VerificationMethod::StateChanged);
+    mismatch.state_changed = true; // the action was delivered and the world moved,
+    mismatch.semantic_matched = Some(false); // but it did NOT reach the expected state,
+    mismatch.failure_layer = Some(FailureLayer::StateChangedNoMatch);
+
+    let result = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
+      run_id: RunId::new("run_delivered_no_match"),
+      status: OperationStatus::Completed, // yet the operation still ran to completion.
+      operation_id: "music.result.play".to_string(),
+      evidence_artifacts: vec![artifact_ref()],
+      output: OperationOutput::Acknowledged {
+        message: Some("click delivered".to_string()),
+      },
+      verifications: vec![mismatch],
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+
+    let value = serde_json::to_value(&result).expect("result should serialize");
+    // Execution outcome and semantic outcome are independent fields, not one collapsed flag.
+    assert_eq!(value["status"], json!("completed"), "status reflects execution, not semantic match");
+    assert_eq!(value["verifications"][0]["semantic_matched"], json!(false), "semantic failure lives in the verification");
+    assert_eq!(value["verifications"][0]["failure_layer"], json!("state_changed_no_match"));
+
+    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
+    assert_eq!(parsed.status, OperationStatus::Completed);
+    assert_eq!(parsed.verifications[0].semantic_matched, Some(false));
   }
 }
