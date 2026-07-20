@@ -6,29 +6,55 @@ terms, not stable public API names.
 
 ## Run
 
-A run is AUV's correlation, persistence, inspection, and replay scope. A run
-contains zero or more operation executions. It is not an OpenTelemetry trace.
+A run is an explicitly created correlation, persistence, inspection, and replay
+scope. It has no start, finish, status, or seal fact in V1 and is not an
+OpenTelemetry trace.
 
-## Operation
+## AuthorityId
 
-An operation is a reusable typed capability identified by `OperationName`.
-CLI command names and MCP tool names are frontend routes to an operation, not
-canonical execution identity.
+An `AuthorityId` is the stable, non-secret identity of the sole authority
+`RunStore` selected to persist a run. It prevents one propagated `RunId` from
+silently splitting canonical history across stores.
 
-## Operation Execution
+## Operation Scope
 
-An operation execution is one invocation that actually started. Its direct
-typed result exists independently from persistence and verification.
+An operation scope is an ordinary caller-named AUV span around app or driver
+work. It is not a persisted operation entity and does not require an AUV-owned
+operation trait, runner, execution id, or session object.
 
 ## Run Commit
 
-A run commit is one atomic, ordered history entry accepted by the authority
-`RunStore`. It is the only durable source of truth for run state.
+A run commit is one atomic, ordered set of facts accepted by the authority
+`RunStore`. Accepted commits are the canonical durable truth for a run.
 
 ## Run Snapshot
 
-A run snapshot is a disposable read model reduced from commits through one
-revision. `through_revision` is a read cursor, not a schema version.
+A run snapshot is a disposable read model reduced from accepted commits through
+one revision. `through_revision` is a read cursor, not a schema version.
+
+## Dispatch
+
+`Dispatch` routes typed AUV emissions to configured authority and projection
+destinations. It owns routing policy and does not execute operations, schedule
+application work, or contain an operation catalog.
+
+## Context
+
+`Context` is a cloneable snapshot of the current AUV run and optional span scope
+together with its associated `Dispatch`. It propagates instrumentation scope;
+it is not an operation session or application runtime.
+
+## RunStore
+
+`RunStore` is the authority storage and read port for ordered commits, artifacts,
+snapshots, history, and recovery. It is not an exporter, hook, subscriber,
+application runtime, or operation handler.
+
+## Projection
+
+A projection is a deliberately lossy mapping from canonical AUV run data into
+another read or telemetry model. Projections support presentation and external
+observability; they are not canonical run truth.
 
 ## Verification
 
@@ -77,11 +103,8 @@ A device is the controllable/observable computer target a run executes
 against. Examples include the local macOS host, a remote macOS host, a macOS
 or Windows VM, a container desktop, and future browser-like sandboxes.
 
-Every run carries a `device_id`. When callers do not specify one, the runtime
-uses the default device id `local`. The id is recorded on each run's
-attributes under `auv.device.id` and is threaded into every `DriverRunContext`
-so drivers, evidence artifacts, and future RPC frontends can route correctly
-once remote devices land.
+Device identity is not a required field in the V1 run contract. Callers may
+record it as domain metadata when a workflow needs to distinguish targets.
 
 The current AUV release only executes on the local macOS host. Remote, VM,
 and container devices are a planned protocol direction; they are not
@@ -93,12 +116,9 @@ A session is the automation context on a device. It groups target app/window
 defaults, observation cache, run recording state, and per-session
 permission/capability profile.
 
-Every run carries a `session_id`. When callers do not specify one, the
-runtime uses the default session id `default`. The id is recorded on each
-run's attributes under `auv.session.id` and is threaded into every
-`DriverRunContext`. The id exists so future RPC/JS-SDK/REPL frontends can
-scope cache, namespaces, and action locks per session without changing the
-recording contract again.
+The V1 run contract does not require a `session_id` or an AUV session object.
+Application runtimes may use session concepts for caches, namespaces, and
+action locks without making them canonical run identity.
 
 Today there is one implicit session per CLI invocation for ordinary command
 execution. The first in-process `SessionRuntime` substrate now exists for
@@ -110,10 +130,10 @@ device-level action locks are still planned, not implemented.
 
 ## Span
 
-An AUV span is an optional timed diagnostic fact owned by an operation
-execution. Spans may form a tree through `parent_span_id`, but they do not
-identify the operation or operation execution and do not create an independent
-tracing authority.
+An AUV span is an optional timed diagnostic scope inside a run. Spans may form
+a tree through `parent_span_id`. An operation scope is one ordinary caller-named
+use of this span API; spans need not belong to an operation execution and do not
+create an independent tracing authority.
 
 A span becomes durable only when the run's authority `RunStore` accepts it
 through a `RunCommit`. Until then it is transient diagnostic data.
@@ -121,10 +141,9 @@ OpenTelemetry spans are projections, not AUV persistence identity.
 
 ## Event
 
-An AUV event is an optional timestamped diagnostic fact owned by an operation
-execution. It may be associated with a span, but it does not identify the
-operation or operation execution and does not create an independent event or
-tracing authority.
+An AUV event is an optional typed, timestamped point-in-time fact associated
+with the current run and, optionally, a span. Events need not belong to an
+operation execution and do not create an independent event or tracing authority.
 
 Examples include `command.resolved`, `driver.invoke`, `action.started`,
 `artifact.captured`, `assertion.passed`, and `assertion.failed`.
@@ -135,14 +154,14 @@ large payloads belong in typed values or artifacts.
 
 ## Artifact
 
-An artifact is committed inspection or replay material owned by a run. It
-combines typed metadata with authority-owned bytes and becomes visible only
-when the authority `RunStore` atomically includes it in a `RunCommit` after
-validating the complete byte stream.
+An artifact is committed inspection, evidence, replay, or domain-output
+material owned by a run. It combines typed metadata with authority-owned bytes
+and becomes visible only when the authority `RunStore` atomically includes it
+in a `RunCommit` after validating the complete byte stream.
 
-Artifacts may be scoped to the run, an operation execution, or verification.
-They may contain structured JSON documents, images, reports, logs, media, or
-other files.
+Artifacts may optionally be associated with a span. V1 does not assign artifact
+ownership to an operation execution or verification. Artifacts may contain
+structured JSON documents, images, reports, logs, media, or other files.
 
 Examples include screenshots, click-overlay images, accessibility snapshots,
 driver input/output JSON, distillation reports, validation reports, and video
@@ -349,10 +368,11 @@ image result before it is persisted as an artifact. A capture frame should carry
 image data plus coordinate metadata, capture source, backend, scale, and timing
 information.
 
-Driver crates may produce capture frames. The runtime or recorder decides
-whether to persist them into `.auv/runs` artifacts. This keeps the operation
-path from requiring synchronous filename allocation or image writes when the
-caller only needs pixels for OCR, recognition, or immediate interaction logic.
+Driver crates may produce capture frames. The caller or configured
+instrumentation path decides whether to persist them as artifacts. This keeps
+the operation path from requiring synchronous filename allocation or image
+writes when the caller only needs pixels for OCR, recognition, or immediate
+interaction logic.
 
 ## Input Mode
 
@@ -660,11 +680,22 @@ stay together. It wraps driver operation specs but does not own the operation
 contract itself. It is not the core runtime and should not own run recording
 semantics, recipe execution, or bundle discovery.
 
-## Historical terms
+## Historical Terms
 
 The definitions below record vocabulary used by the legacy run-recording
 implementation. They are retained for migration context and are not the active
 contract.
+
+### Operation
+
+An operation was a reusable typed capability identified by `OperationName`.
+CLI command names and MCP tool names were described as frontend routes to an
+operation rather than canonical execution identity.
+
+### Operation Execution
+
+An operation execution was one invocation that actually started. Its direct
+typed result was defined independently from persistence and verification.
 
 ### Trace
 

@@ -14,7 +14,7 @@ members = [
   "crates/auv-inspect-model",
   "crates/auv-cli",
   "crates/auv-query-readiness",
-  "crates/auv-run",
+  "crates/auv-tracing",
   "crates/auv-scan",
   "crates/auv-stage-status",
   "crates/auv-qqmusic",
@@ -72,6 +72,7 @@ autobins = false
 bytes = "1"
 fs2 = "0.4"
 futures-core = "0.3"
+futures-io = "0.3"
 futures-util = "0.3"
 hex = "0.4"
 mime = "0.3"
@@ -80,6 +81,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 sha2 = "0.10"
 thiserror = "2"
+tempfile = "3"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 tungstenite = "0.29"
 uuid = { version = "1", features = ["serde", "v7"] }
