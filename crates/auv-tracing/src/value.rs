@@ -5,6 +5,7 @@ use std::str::FromStr;
 
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::value::RawValue;
 use uuid::Uuid;
 
 const JAVASCRIPT_EXACT_INTEGER_MAX: u64 = 9_007_199_254_740_991;
@@ -630,58 +631,40 @@ impl<'de> Deserialize<'de> for AttributeValue {
   where
     D: Deserializer<'de>,
   {
-    struct AttributeValueVisitor;
-
-    impl<'de> Visitor<'de> for AttributeValueVisitor {
-      type Value = AttributeValue;
-
-      fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a bounded boolean, integer, finite float, or string")
-      }
-
-      fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(AttributeValue::Bool(value))
-      }
-
-      fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-      where
-        E: de::Error,
-      {
-        AttributeValue::integer(value).map_err(E::custom)
-      }
-
-      fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-      where
-        E: de::Error,
-      {
-        let value = i64::try_from(value).map_err(|_| E::custom("attribute integer exceeds the signed exact range"))?;
-        self.visit_i64(value)
-      }
-
-      fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-      where
-        E: de::Error,
-      {
-        AttributeValue::float(value).map_err(E::custom)
-      }
-
-      fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-      where
-        E: de::Error,
-      {
-        AttributeValue::string(value).map_err(E::custom)
-      }
-
-      fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-      where
-        E: de::Error,
-      {
-        AttributeValue::string(value).map_err(E::custom)
-      }
-    }
-
-    deserializer.deserialize_any(AttributeValueVisitor)
+    let raw = Box::<RawValue>::deserialize(deserializer)?;
+    attribute_value_from_raw(&raw).map_err(de::Error::custom)
   }
+}
+
+fn attribute_value_from_raw(raw: &RawValue) -> Result<AttributeValue, ValidationError> {
+  let value = raw.get().trim();
+  match value.as_bytes().first() {
+    Some(b't' | b'f') => {
+      value.parse::<bool>().map(AttributeValue::boolean).map_err(|_| ValidationError::new("attribute boolean is invalid"))
+    }
+    Some(b'"') => {
+      serde_json::from_str::<String>(value).map_err(|_| ValidationError::new("attribute string is invalid")).and_then(AttributeValue::string)
+    }
+    Some(b'-' | b'0'..=b'9') => attribute_number_from_lexeme(value),
+    _ => Err(ValidationError::new("attribute value must be a boolean, integer, finite float, or string")),
+  }
+}
+
+fn attribute_number_from_lexeme(value: &str) -> Result<AttributeValue, ValidationError> {
+  if value.contains(['.', 'e', 'E']) {
+    return value.parse::<f64>().map_err(|_| ValidationError::new("attribute float is invalid")).and_then(AttributeValue::float);
+  }
+
+  if value.starts_with('-') {
+    return value
+      .parse::<i64>()
+      .map_err(|_| ValidationError::new("attribute integer exceeds the exact range"))
+      .and_then(AttributeValue::integer);
+  }
+
+  let value = value.parse::<u64>().map_err(|_| ValidationError::new("attribute integer exceeds the exact range"))?;
+  let value = i64::try_from(value).map_err(|_| ValidationError::new("attribute integer exceeds the exact range"))?;
+  AttributeValue::integer(value)
 }
 
 /// A deterministic bounded map of searchable scalar metadata.

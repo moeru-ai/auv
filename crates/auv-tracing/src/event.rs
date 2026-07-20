@@ -14,6 +14,7 @@ use serde_json::{Map, Number, Value};
 use crate::{EventName, ValidationError};
 
 const MAX_EVENT_JSON_BYTES: usize = 64 * 1024;
+const MAX_EVENT_JSON_NESTING: usize = 128;
 const JAVASCRIPT_EXACT_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 /// Identifies the name and positive version of a typed event payload.
@@ -63,7 +64,7 @@ impl<'de> Deserialize<'de> for EventSchema {
   }
 }
 
-/// Canonical, duplicate-free JSON bounded for one event.
+/// Canonical, duplicate-free JSON bounded to 64 KiB and 128 nested containers.
 #[derive(Clone, Debug)]
 pub struct JsonPayload(Box<RawValue>);
 
@@ -93,8 +94,8 @@ impl JsonPayload {
     }
 
     let raw = serde_json::from_slice::<Box<RawValue>>(value).map_err(JsonPayloadError::json)?;
-    let parsed = StrictValue::from_raw(&raw)?;
-    let canonical = serde_json::to_string(&parsed.into_json()).map_err(JsonPayloadError::json)?;
+    let parsed = StrictValue::from_raw(&raw, MAX_EVENT_JSON_NESTING)?;
+    let canonical = serde_json::to_string(&parsed.into_json(MAX_EVENT_JSON_NESTING)?).map_err(JsonPayloadError::json)?;
     if canonical.len() > MAX_EVENT_JSON_BYTES {
       return Err(JsonPayloadError::new("event JSON exceeds 65536 bytes"));
     }
@@ -180,11 +181,19 @@ enum StrictValue {
 }
 
 impl StrictValue {
-  fn from_raw(raw: &RawValue) -> Result<Self, JsonPayloadError> {
+  fn from_raw(raw: &RawValue, remaining_depth: usize) -> Result<Self, JsonPayloadError> {
     let token = raw.get().bytes().find(|byte| !byte.is_ascii_whitespace()).ok_or_else(|| JsonPayloadError::new("event JSON is empty"))?;
     match token {
-      b'{' => deserialize_raw_map(raw),
-      b'[' => deserialize_raw_sequence(raw),
+      b'{' => {
+        let remaining_depth =
+          remaining_depth.checked_sub(1).ok_or_else(|| JsonPayloadError::new("event JSON exceeds 128 nested containers"))?;
+        deserialize_raw_map(raw, remaining_depth)
+      }
+      b'[' => {
+        let remaining_depth =
+          remaining_depth.checked_sub(1).ok_or_else(|| JsonPayloadError::new("event JSON exceeds 128 nested containers"))?;
+        deserialize_raw_sequence(raw, remaining_depth)
+      }
       b'"' => serde_json::from_str::<String>(raw.get()).map(Self::String).map_err(JsonPayloadError::json),
       b't' => Ok(Self::Bool(true)),
       b'f' => Ok(Self::Bool(false)),
@@ -194,26 +203,37 @@ impl StrictValue {
     }
   }
 
-  fn into_json(self) -> Value {
-    match self {
+  fn into_json(self, remaining_depth: usize) -> Result<Value, JsonPayloadError> {
+    Ok(match self {
       Self::Null => Value::Null,
       Self::Bool(value) => Value::Bool(value),
       Self::Number(value) => Value::Number(value),
       Self::String(value) => Value::String(value),
-      Self::Array(values) => Value::Array(Self::values_into_json(values)),
+      Self::Array(values) => {
+        let remaining_depth =
+          remaining_depth.checked_sub(1).ok_or_else(|| JsonPayloadError::new("event JSON exceeds 128 nested containers"))?;
+        Value::Array(Self::values_into_json(values, remaining_depth)?)
+      }
       Self::Object(values) => {
-        let values = values.into_iter().map(|(key, value)| (key, value.into_json())).collect::<Map<_, _>>();
+        let remaining_depth =
+          remaining_depth.checked_sub(1).ok_or_else(|| JsonPayloadError::new("event JSON exceeds 128 nested containers"))?;
+        let values = values
+          .into_iter()
+          .map(|(key, value)| value.into_json(remaining_depth).map(|value| (key, value)))
+          .collect::<Result<Map<_, _>, _>>()?;
         Value::Object(values)
       }
-    }
+    })
   }
 
-  fn values_into_json(values: Vec<Self>) -> Vec<Value> {
-    values.into_iter().map(Self::into_json).collect()
+  fn values_into_json(values: Vec<Self>, remaining_depth: usize) -> Result<Vec<Value>, JsonPayloadError> {
+    values.into_iter().map(|value| value.into_json(remaining_depth)).collect()
   }
 }
 
-struct StrictObjectVisitor;
+struct StrictObjectVisitor {
+  remaining_depth: usize,
+}
 
 impl<'de> Visitor<'de> for StrictObjectVisitor {
   type Value = StrictValue;
@@ -226,20 +246,23 @@ impl<'de> Visitor<'de> for StrictObjectVisitor {
   where
     A: MapAccess<'de>,
   {
+    let remaining_depth = self.remaining_depth;
     let mut values = BTreeMap::new();
     while let Some(key) = map.next_key::<String>()? {
       if values.contains_key(&key) {
         return Err(de::Error::custom(format!("duplicate JSON object key `{key}`")));
       }
       let raw = map.next_value::<Box<RawValue>>()?;
-      let value = StrictValue::from_raw(&raw).map_err(de::Error::custom)?;
+      let value = StrictValue::from_raw(&raw, remaining_depth).map_err(de::Error::custom)?;
       values.insert(key, value);
     }
     Ok(StrictValue::Object(values))
   }
 }
 
-struct StrictSequenceVisitor;
+struct StrictSequenceVisitor {
+  remaining_depth: usize,
+}
 
 impl<'de> Visitor<'de> for StrictSequenceVisitor {
   type Value = StrictValue;
@@ -252,24 +275,25 @@ impl<'de> Visitor<'de> for StrictSequenceVisitor {
   where
     A: SeqAccess<'de>,
   {
+    let remaining_depth = self.remaining_depth;
     let mut values = Vec::new();
     while let Some(raw) = sequence.next_element::<Box<RawValue>>()? {
-      values.push(StrictValue::from_raw(&raw).map_err(de::Error::custom)?);
+      values.push(StrictValue::from_raw(&raw, remaining_depth).map_err(de::Error::custom)?);
     }
     Ok(StrictValue::Array(values))
   }
 }
 
-fn deserialize_raw_map(raw: &RawValue) -> Result<StrictValue, JsonPayloadError> {
+fn deserialize_raw_map(raw: &RawValue, remaining_depth: usize) -> Result<StrictValue, JsonPayloadError> {
   let mut deserializer = serde_json::Deserializer::from_str(raw.get());
-  let value = deserializer.deserialize_map(StrictObjectVisitor).map_err(JsonPayloadError::json)?;
+  let value = deserializer.deserialize_map(StrictObjectVisitor { remaining_depth }).map_err(JsonPayloadError::json)?;
   deserializer.end().map_err(JsonPayloadError::json)?;
   Ok(value)
 }
 
-fn deserialize_raw_sequence(raw: &RawValue) -> Result<StrictValue, JsonPayloadError> {
+fn deserialize_raw_sequence(raw: &RawValue, remaining_depth: usize) -> Result<StrictValue, JsonPayloadError> {
   let mut deserializer = serde_json::Deserializer::from_str(raw.get());
-  let value = deserializer.deserialize_seq(StrictSequenceVisitor).map_err(JsonPayloadError::json)?;
+  let value = deserializer.deserialize_seq(StrictSequenceVisitor { remaining_depth }).map_err(JsonPayloadError::json)?;
   deserializer.end().map_err(JsonPayloadError::json)?;
   Ok(value)
 }
