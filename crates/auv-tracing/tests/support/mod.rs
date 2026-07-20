@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Barrier, Condvar, Mutex};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 use auv_tracing::{
@@ -20,6 +20,111 @@ use futures_core::Stream;
 use futures_util::StreamExt;
 
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone)]
+pub struct ReadGate {
+  state: Arc<ReadGateState>,
+}
+
+struct ReadGateState {
+  body: Vec<u8>,
+  status: Mutex<ReadGateStatus>,
+  changed: Condvar,
+}
+
+struct ReadGateStatus {
+  polled: bool,
+  released: bool,
+  consumed: bool,
+  waker: Option<Waker>,
+}
+
+impl ReadGate {
+  pub fn new(body: impl Into<Vec<u8>>) -> Self {
+    Self {
+      state: Arc::new(ReadGateState {
+        body: body.into(),
+        status: Mutex::new(ReadGateStatus {
+          polled: false,
+          released: false,
+          consumed: false,
+          waker: None,
+        }),
+        changed: Condvar::new(),
+      }),
+    }
+  }
+
+  pub fn reader(&self) -> GatedReader {
+    GatedReader {
+      state: self.state.clone(),
+    }
+  }
+
+  pub fn wait_until_polled(&self) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut status = self.state.status.lock().unwrap();
+    while !status.polled {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for artifact body polling");
+      let (next, timeout) = self.state.changed.wait_timeout(status, remaining).unwrap();
+      status = next;
+      assert!(!timeout.timed_out() || status.polled, "timed out waiting for artifact body polling");
+    }
+  }
+
+  pub fn release(&self) {
+    let waker = {
+      let mut status = self.state.status.lock().unwrap();
+      status.released = true;
+      status.waker.take()
+    };
+    if let Some(waker) = waker {
+      waker.wake();
+    }
+  }
+}
+
+pub struct GatedReader {
+  state: Arc<ReadGateState>,
+}
+
+impl futures_io::AsyncRead for GatedReader {
+  fn poll_read(self: Pin<&mut Self>, context: &mut Context<'_>, output: &mut [u8]) -> Poll<std::io::Result<usize>> {
+    let mut status = self.state.status.lock().unwrap();
+    if !status.polled {
+      status.polled = true;
+      self.state.changed.notify_all();
+    }
+    if !status.released {
+      status.waker = Some(context.waker().clone());
+      return Poll::Pending;
+    }
+    if status.consumed {
+      return Poll::Ready(Ok(0));
+    }
+    let length = output.len().min(self.state.body.len());
+    output[..length].copy_from_slice(&self.state.body[..length]);
+    status.consumed = true;
+    Poll::Ready(Ok(length))
+  }
+}
+
+pub struct ProbeReader {
+  polled: Arc<AtomicBool>,
+}
+
+impl ProbeReader {
+  pub fn new(polled: Arc<AtomicBool>) -> Self {
+    Self { polled }
+  }
+}
+
+impl futures_io::AsyncRead for ProbeReader {
+  fn poll_read(self: Pin<&mut Self>, _context: &mut Context<'_>, _output: &mut [u8]) -> Poll<std::io::Result<usize>> {
+    self.polled.store(true, Ordering::SeqCst);
+    Poll::Ready(Ok(0))
+  }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectorCall {
@@ -649,6 +754,7 @@ impl RunStore for IntegrityStore {
 #[derive(Clone, Copy)]
 pub enum UnknownLookup {
   Committed,
+  CommittedButMissing,
   None,
   ReadFailure,
   Mismatch,
@@ -661,6 +767,7 @@ pub struct CommitUnknownStore {
   first: Arc<AtomicBool>,
   commit_calls: Arc<AtomicUsize>,
   lookup_calls: Arc<AtomicUsize>,
+  lookup_gate: Arc<Mutex<Option<CommitGate>>>,
   first_request: Arc<Mutex<Option<RunCommitRequest>>>,
 }
 
@@ -672,6 +779,7 @@ impl CommitUnknownStore {
       first: Arc::new(AtomicBool::new(true)),
       commit_calls: Arc::new(AtomicUsize::new(0)),
       lookup_calls: Arc::new(AtomicUsize::new(0)),
+      lookup_gate: Arc::new(Mutex::new(None)),
       first_request: Arc::new(Mutex::new(None)),
     })
   }
@@ -682,6 +790,12 @@ impl CommitUnknownStore {
 
   pub fn lookup_calls(&self) -> usize {
     self.lookup_calls.load(Ordering::SeqCst)
+  }
+
+  pub fn block_lookup(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    *self.lookup_gate.lock().unwrap() = Some(gate.clone());
+    gate
   }
 }
 
@@ -700,7 +814,7 @@ impl RunStore for CommitUnknownStore {
       if !unknown {
         return self.inner.commit(request).await;
       }
-      if matches!(self.mode, UnknownLookup::Committed) {
+      if matches!(self.mode, UnknownLookup::Committed | UnknownLookup::CommittedButMissing) {
         self.inner.commit(request).await?;
       }
       Err(CommitError::CommitUnknown(ErrorCode::parse("auv.test.commit_unknown").unwrap()))
@@ -713,9 +827,14 @@ impl RunStore for CommitUnknownStore {
 
   fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
     self.lookup_calls.fetch_add(1, Ordering::SeqCst);
+    let gate = self.lookup_gate.lock().unwrap().take().and_then(|gate| gate.enter());
     Box::pin(async move {
+      if let Some(gate) = gate {
+        let _ = gate.await;
+      }
       match self.mode {
         UnknownLookup::Committed => self.inner.lookup_commit(run_id, key).await,
+        UnknownLookup::CommittedButMissing => Ok(None),
         UnknownLookup::None => Ok(None),
         UnknownLookup::ReadFailure => Err(ReadError::Unavailable(ErrorCode::parse("auv.test.lookup_failed").unwrap())),
         UnknownLookup::Mismatch => {
@@ -1123,6 +1242,214 @@ impl RunStore for ControlledStore {
   }
 }
 
+#[derive(Clone)]
+pub struct ArtifactStore {
+  inner: Arc<MemoryRunStore>,
+  state: Arc<ArtifactStoreState>,
+}
+
+struct ArtifactStoreState {
+  write_outcomes: Mutex<VecDeque<ArtifactWriteOutcome>>,
+  lookup_outcomes: Mutex<VecDeque<ArtifactLookupOutcome>>,
+  commit_gates: Mutex<VecDeque<CommitGate>>,
+  page_gates: Mutex<VecDeque<CommitGate>>,
+  pending_subscriptions: AtomicBool,
+  write_calls: Mutex<Vec<StoreArtifactRequest>>,
+  write_calls_changed: Condvar,
+  lookup_calls: AtomicUsize,
+}
+
+enum ArtifactWriteOutcome {
+  Store,
+  StoreThenWaitResponse(CommitGate),
+  StoreThenUnknown(ErrorCode),
+  Unknown(ErrorCode),
+  Fail(ArtifactWriteError),
+  WaitThenFail(CommitGate, ArtifactWriteError),
+  PanicCall,
+}
+
+enum ArtifactLookupOutcome {
+  Store,
+  WaitThenNone(CommitGate),
+}
+
+impl ArtifactStore {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self {
+      inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
+      state: Arc::new(ArtifactStoreState {
+        write_outcomes: Mutex::new(VecDeque::new()),
+        lookup_outcomes: Mutex::new(VecDeque::new()),
+        commit_gates: Mutex::new(VecDeque::new()),
+        page_gates: Mutex::new(VecDeque::new()),
+        pending_subscriptions: AtomicBool::new(false),
+        write_calls: Mutex::new(Vec::new()),
+        write_calls_changed: Condvar::new(),
+        lookup_calls: AtomicUsize::new(0),
+      }),
+    })
+  }
+
+  pub fn store_then_unknown_next(&self, code: ErrorCode) {
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::StoreThenUnknown(code));
+  }
+
+  pub fn store_then_wait_response_next(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::StoreThenWaitResponse(gate.clone()));
+    gate
+  }
+
+  pub fn unknown_next(&self, code: ErrorCode) {
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::Unknown(code));
+  }
+
+  pub fn fail_next(&self, error: ArtifactWriteError) {
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::Fail(error));
+  }
+
+  pub fn block_then_fail_next(&self, error: ArtifactWriteError) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::WaitThenFail(gate.clone(), error));
+    gate
+  }
+
+  pub fn block_lookup_then_none(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.lookup_outcomes.lock().unwrap().push_back(ArtifactLookupOutcome::WaitThenNone(gate.clone()));
+    gate
+  }
+
+  pub fn block_next_observation_page(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.pending_subscriptions.store(true, Ordering::SeqCst);
+    self.state.page_gates.lock().unwrap().push_back(gate.clone());
+    gate
+  }
+
+  pub fn panic_call_next(&self) {
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::PanicCall);
+  }
+
+  pub fn block_next_commit(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.commit_gates.lock().unwrap().push_back(gate.clone());
+    gate
+  }
+
+  pub fn write_call_count(&self) -> usize {
+    self.state.write_calls.lock().unwrap().len()
+  }
+
+  pub fn lookup_call_count(&self) -> usize {
+    self.state.lookup_calls.load(Ordering::SeqCst)
+  }
+
+  pub fn wait_for_write_calls(&self, expected: usize) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut calls = self.state.write_calls.lock().unwrap();
+    while calls.len() < expected {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for artifact writes");
+      let (next, timeout) = self.state.write_calls_changed.wait_timeout(calls, remaining).unwrap();
+      calls = next;
+      assert!(!timeout.timed_out() || calls.len() >= expected, "timed out waiting for {expected} artifact writes");
+    }
+  }
+}
+
+impl RunStore for ArtifactStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+    let gate = self.state.commit_gates.lock().unwrap().pop_front().and_then(|gate| gate.enter());
+    Box::pin(async move {
+      if let Some(gate) = gate {
+        let _ = gate.await;
+      }
+      self.inner.commit(request).await
+    })
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+    self.state.write_calls.lock().unwrap().push(request.clone());
+    self.state.write_calls_changed.notify_all();
+    let outcome = self.state.write_outcomes.lock().unwrap().pop_front().unwrap_or(ArtifactWriteOutcome::Store);
+    let wait = match &outcome {
+      ArtifactWriteOutcome::WaitThenFail(gate, _) => gate.enter(),
+      _ => None,
+    };
+    if matches!(outcome, ArtifactWriteOutcome::PanicCall) {
+      panic!("controlled artifact write panicked before returning its future");
+    }
+    Box::pin(async move {
+      if let Some(wait) = wait {
+        let _ = wait.await;
+      }
+      match outcome {
+        ArtifactWriteOutcome::Store => self.inner.write_artifact(request, body).await,
+        ArtifactWriteOutcome::StoreThenWaitResponse(gate) => {
+          let commit = self.inner.write_artifact(request, body).await?;
+          if let Some(wait) = gate.enter() {
+            let _ = wait.await;
+          }
+          Ok(commit)
+        }
+        ArtifactWriteOutcome::StoreThenUnknown(code) => {
+          self.inner.write_artifact(request, body).await?;
+          Err(ArtifactWriteError::PublicationUnknown(code))
+        }
+        ArtifactWriteOutcome::Unknown(code) => Err(ArtifactWriteError::PublicationUnknown(code)),
+        ArtifactWriteOutcome::Fail(error) | ArtifactWriteOutcome::WaitThenFail(_, error) => Err(error),
+        ArtifactWriteOutcome::PanicCall => unreachable!("panic outcome does not return a future"),
+      }
+    })
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.state.lookup_calls.fetch_add(1, Ordering::SeqCst);
+    let outcome = self.state.lookup_outcomes.lock().unwrap().pop_front().unwrap_or(ArtifactLookupOutcome::Store);
+    Box::pin(async move {
+      match outcome {
+        ArtifactLookupOutcome::Store => self.inner.lookup_commit(run_id, key).await,
+        ArtifactLookupOutcome::WaitThenNone(gate) => {
+          if let Some(wait) = gate.enter() {
+            let _ = wait.await;
+          }
+          Ok(None)
+        }
+      }
+    })
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    let gate = self.state.page_gates.lock().unwrap().pop_front().and_then(|gate| gate.enter());
+    Box::pin(async move {
+      if let Some(gate) = gate {
+        let _ = gate.await;
+      }
+      self.inner.commits_after(run_id, after, limit).await
+    })
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    if self.state.pending_subscriptions.load(Ordering::SeqCst) {
+      return Box::pin(async { Ok(Box::pin(futures_util::stream::pending()) as RunSubscription) });
+    }
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
 pub struct FailFirstSpawner {
   failed: Mutex<bool>,
 }
@@ -1415,6 +1742,35 @@ impl TaskSpawner for PanicFirstSpawner {
 
 pub struct DropFirstTaskSpawner {
   first: AtomicBool,
+}
+
+pub struct DropNthTaskSpawner {
+  target: usize,
+  spawned: AtomicUsize,
+}
+
+impl DropNthTaskSpawner {
+  pub fn new(target: usize) -> Arc<Self> {
+    Arc::new(Self {
+      target,
+      spawned: AtomicUsize::new(0),
+    })
+  }
+}
+
+impl TaskSpawner for DropNthTaskSpawner {
+  fn spawn(&self, mut task: DispatchTask) -> Result<(), TaskSpawnError> {
+    let index = self.spawned.fetch_add(1, Ordering::SeqCst);
+    if index == self.target {
+      let waker = futures_util::task::noop_waker();
+      let mut context = Context::from_waker(&waker);
+      assert!(matches!(task.as_mut().poll(&mut context), Poll::Pending));
+      drop(task);
+      return Ok(());
+    }
+    std::thread::spawn(move || block_on_timeout(task));
+    Ok(())
+  }
 }
 
 pub struct DiscardFirstTaskSpawner {
