@@ -4,9 +4,8 @@ use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::task::{Context as TaskContext, Poll, Waker};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use futures_channel::oneshot;
 
 use crate::{
   AuthorityId, CommitError, ErrorCode, EventId, EventOccurred, EventPayload, EventSchema, IdempotencyKey, JsonPayload, NonEmptyVec,
@@ -34,11 +33,6 @@ impl TaskSpawnError {
   pub fn new(code: ErrorCode) -> Self {
     Self { code }
   }
-
-  /// Returns the stable failure code.
-  pub fn code(&self) -> &ErrorCode {
-    &self.code
-  }
 }
 
 /// Runtime-independent thread-pool scheduling for instrumentation IO.
@@ -48,8 +42,7 @@ pub struct ThreadTaskSpawner {
 }
 
 impl ThreadTaskSpawner {
-  /// Creates the default instrumentation task pool.
-  pub fn new() -> Result<Self, BuildError> {
+  fn new() -> Result<Self, BuildError> {
     futures_executor::ThreadPool::new().map(|pool| Self { pool }).map_err(|_| BuildError::TaskSpawnerInitialization)
   }
 }
@@ -202,55 +195,48 @@ pub struct Dispatch {
 }
 
 impl Dispatch {
-  /// Returns the captured stable authority identity, when configured.
-  pub fn authority_id(&self) -> Option<&AuthorityId> {
+  pub(crate) fn authority_id(&self) -> Option<&AuthorityId> {
     self.inner.route.as_ref().map(|route| &route.authority_id)
   }
 
-  /// Reports whether Task 6 has an active instrumentation route.
-  pub fn is_enabled(&self) -> bool {
+  pub(crate) fn is_enabled(&self) -> bool {
     self.inner.route.is_some()
   }
 
   /// Captures the current ticket barrier and returns its cancellation-safe waiter.
   pub fn flush(&self) -> crate::BoxFuture<'_, Result<(), FlushError>> {
-    let (sender, receiver) = oneshot::channel();
-    {
+    let ordering_id = {
       let mut progress = self.inner.progress.lock().unwrap();
-      let barrier = progress.next_ticket;
-      progress.flushes.push_back(FlushWaiter { barrier, sender });
-      progress.complete_flushes();
-    }
-    let keep_alive = self.clone();
-    Box::pin(async move {
-      let result = receiver.await.expect("dispatch remains alive until its flush resolves");
-      drop(keep_alive);
-      result
+      progress.register_flush()
+    };
+    Box::pin(FlushFuture {
+      dispatch: self.clone(),
+      ordering_id: Some(ordering_id),
     })
   }
 
   pub(crate) fn submit_span<S: SpanSpec>(&self, run_id: RunId, parent_span_id: Option<SpanId>, span_id: SpanId, spec: S) {
-    let ticket = self.reserve_ticket(run_id);
+    let preparation = self.reserve_ticket(run_id);
     let mutation = (|| {
       let name = SpanName::parse(S::NAME).map_err(|_| encode_code())?;
       let attributes = spec.attributes();
       serde_json::to_vec(&attributes).map_err(|_| encode_code())?;
       Ok(RunMutation::StartSpan(SpanStarted::new(span_id, parent_span_id, None, name, now(), attributes)))
     })();
-    self.submit_mutation(ticket, run_id, mutation);
+    preparation.complete(mutation);
   }
 
   pub(crate) fn submit_event<E: EventPayload>(&self, run_id: RunId, span_id: Option<SpanId>, event: E) {
-    let ticket = self.reserve_ticket(run_id);
+    let preparation = self.reserve_ticket(run_id);
     let mutation = (|| {
       let schema = EventSchema::for_payload::<E>().map_err(|_| encode_code())?;
       let payload = JsonPayload::encode(&event).map_err(|_| encode_code())?;
       Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, now(), schema, payload)))
     })();
-    self.submit_mutation(ticket, run_id, mutation);
+    preparation.complete(mutation);
   }
 
-  fn reserve_ticket(&self, run_id: RunId) -> u64 {
+  fn reserve_ticket(&self, run_id: RunId) -> PreparationGuard {
     let mut progress = self.inner.progress.lock().unwrap();
     progress.next_ticket = progress.next_ticket.checked_add(1).expect("dispatch ticket space exhausted");
     let ticket = progress.next_ticket;
@@ -258,10 +244,15 @@ impl Dispatch {
       ticket,
       state: LaneEntryState::Preparing,
     });
-    ticket
+    PreparationGuard {
+      dispatch: self.clone(),
+      run_id,
+      ticket,
+      armed: true,
+    }
   }
 
-  fn submit_mutation(&self, ticket: u64, run_id: RunId, mutation: Result<RunMutation, ErrorCode>) {
+  fn complete_preparation(&self, ticket: u64, run_id: RunId, mutation: Result<RunMutation, ErrorCode>) {
     let request = mutation.and_then(|mutation| {
       let route = self.inner.route.as_ref().expect("enabled dispatch has an authority route");
       RunCommitRequest::new(route.authority_id, run_id, IdempotencyKey::new(), vec![mutation]).map_err(|_| encode_code())
@@ -275,7 +266,6 @@ impl Dispatch {
         Err(code) => LaneEntryState::Failed(DispatchFailure::new(DispatchStage::Encode, code)),
       };
     }
-    self.wake_lane(run_id);
   }
 
   fn wake_lane(&self, run_id: RunId) {
@@ -323,7 +313,7 @@ impl Dispatch {
                 debug_assert!(matches!(entry.state, LaneEntryState::Ready(_)));
                 entry.ticket
               };
-              self.terminalize(ticket, Some(DispatchFailure::new(DispatchStage::Spawn, error.code().clone())));
+              self.terminalize(ticket, Some(DispatchFailure::new(DispatchStage::Spawn, error.code.clone())));
             }
           }
         }
@@ -375,9 +365,95 @@ impl Dispatch {
   }
 
   fn terminalize(&self, ticket: u64, failure: Option<DispatchFailure>) {
-    let mut progress = self.inner.progress.lock().unwrap();
-    progress.terminalize(ticket, failure);
-    progress.complete_flushes();
+    let waker = {
+      let mut progress = self.inner.progress.lock().unwrap();
+      progress.terminalize(ticket, failure);
+      progress.take_ready_front_waker()
+    };
+    if let Some(waker) = waker {
+      waker.wake();
+    }
+  }
+
+  fn fail_preparation(&self, run_id: RunId, ticket: u64) {
+    let changed = {
+      let mut lanes = self.inner.lanes.lock().unwrap();
+      let Some(lane) = lanes.get_mut(&run_id) else {
+        return;
+      };
+      let Some(entry) = lane.queue.iter_mut().find(|entry| entry.ticket == ticket) else {
+        return;
+      };
+      if matches!(entry.state, LaneEntryState::Preparing) {
+        entry.state = LaneEntryState::Failed(DispatchFailure::new(DispatchStage::Encode, encode_code()));
+        true
+      } else {
+        false
+      }
+    };
+    debug_assert!(changed, "preparation guard owns one Preparing lane entry");
+    if changed {
+      self.wake_lane(run_id);
+    }
+  }
+}
+
+struct PreparationGuard {
+  dispatch: Dispatch,
+  run_id: RunId,
+  ticket: u64,
+  armed: bool,
+}
+
+impl PreparationGuard {
+  fn complete(mut self, mutation: Result<RunMutation, ErrorCode>) {
+    self.dispatch.complete_preparation(self.ticket, self.run_id, mutation);
+    self.armed = false;
+    self.dispatch.wake_lane(self.run_id);
+  }
+}
+
+impl Drop for PreparationGuard {
+  fn drop(&mut self) {
+    if self.armed {
+      self.dispatch.fail_preparation(self.run_id, self.ticket);
+    }
+  }
+}
+
+struct FlushFuture {
+  dispatch: Dispatch,
+  ordering_id: Option<u64>,
+}
+
+impl Future for FlushFuture {
+  type Output = Result<(), FlushError>;
+
+  fn poll(mut self: Pin<&mut Self>, context: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    let ordering_id = self.ordering_id.expect("completed flush futures must not be polled again");
+    let (result, waker) = {
+      let mut progress = self.dispatch.inner.progress.lock().unwrap();
+      progress.poll_flush(ordering_id, context)
+    };
+    if result.is_ready() {
+      self.ordering_id = None;
+    }
+    if let Some(waker) = waker {
+      waker.wake();
+    }
+    result
+  }
+}
+
+impl Drop for FlushFuture {
+  fn drop(&mut self) {
+    let Some(ordering_id) = self.ordering_id.take() else {
+      return;
+    };
+    let waker = self.dispatch.inner.progress.lock().unwrap().cancel_flush(ordering_id);
+    if let Some(waker) = waker {
+      waker.wake();
+    }
   }
 }
 
@@ -423,14 +499,26 @@ enum LaneAction {
 #[derive(Default)]
 struct Progress {
   next_ticket: u64,
+  next_flush_id: u64,
   terminal_prefix: u64,
   out_of_order: BTreeMap<u64, Option<DispatchFailure>>,
   failures: BTreeMap<u64, DispatchFailure>,
   reported_through: u64,
-  flushes: VecDeque<FlushWaiter>,
+  flushes: VecDeque<FlushRegistration>,
 }
 
 impl Progress {
+  fn register_flush(&mut self) -> u64 {
+    self.next_flush_id = self.next_flush_id.checked_add(1).expect("flush ordering ID space exhausted");
+    let ordering_id = self.next_flush_id;
+    self.flushes.push_back(FlushRegistration {
+      ordering_id,
+      barrier: self.next_ticket,
+      waker: None,
+    });
+    ordering_id
+  }
+
   fn terminalize(&mut self, ticket: u64, failure: Option<DispatchFailure>) {
     let replaced = self.out_of_order.insert(ticket, failure);
     debug_assert!(replaced.is_none(), "a dispatch ticket terminalized more than once");
@@ -442,25 +530,52 @@ impl Progress {
     }
   }
 
-  fn complete_flushes(&mut self) {
-    while self.flushes.front().is_some_and(|flush| flush.barrier <= self.terminal_prefix) {
-      let flush = self.flushes.pop_front().expect("front was present");
-      let failures = if flush.barrier > self.reported_through {
-        self.failures.range((self.reported_through + 1)..=flush.barrier).map(|(_, failure)| failure.clone()).collect::<Vec<_>>()
-      } else {
-        Vec::new()
-      };
-      self.failures.retain(|ticket, _| *ticket > flush.barrier);
-      self.reported_through = flush.barrier;
-      let result = NonEmptyVec::new(failures).map(|failures| Err(FlushError { failures })).unwrap_or(Ok(()));
-      let _ = flush.sender.send(result);
+  fn poll_flush(&mut self, ordering_id: u64, context: &mut TaskContext<'_>) -> (Poll<Result<(), FlushError>>, Option<Waker>) {
+    let position = self.flushes.iter().position(|flush| flush.ordering_id == ordering_id).expect("live flush future remains registered");
+    if position != 0 || self.flushes[0].barrier > self.terminal_prefix {
+      self.flushes[position].waker = Some(context.waker().clone());
+      return (Poll::Pending, None);
     }
+
+    let flush = self.flushes.pop_front().expect("front was present");
+    let failures = if flush.barrier > self.reported_through {
+      self.failures.range((self.reported_through + 1)..=flush.barrier).map(|(_, failure)| failure.clone()).collect::<Vec<_>>()
+    } else {
+      Vec::new()
+    };
+    self.failures.retain(|ticket, _| *ticket > flush.barrier);
+    self.reported_through = flush.barrier;
+    let waker = self.take_front_waker();
+    (Poll::Ready(NonEmptyVec::new(failures).map(|failures| Err(FlushError { failures })).unwrap_or(Ok(()))), waker)
+  }
+
+  fn cancel_flush(&mut self, ordering_id: u64) -> Option<Waker> {
+    let position = self.flushes.iter().position(|flush| flush.ordering_id == ordering_id)?;
+    self.flushes.remove(position);
+    if position == 0 {
+      self.take_front_waker()
+    } else {
+      None
+    }
+  }
+
+  fn take_ready_front_waker(&mut self) -> Option<Waker> {
+    if self.flushes.front().is_some_and(|flush| flush.barrier <= self.terminal_prefix) {
+      self.take_front_waker()
+    } else {
+      None
+    }
+  }
+
+  fn take_front_waker(&mut self) -> Option<Waker> {
+    self.flushes.front_mut().and_then(|flush| flush.waker.take())
   }
 }
 
-struct FlushWaiter {
+struct FlushRegistration {
+  ordering_id: u64,
   barrier: u64,
-  sender: oneshot::Sender<Result<(), FlushError>>,
+  waker: Option<Waker>,
 }
 
 fn now() -> Timestamp {
@@ -474,7 +589,12 @@ fn encode_code() -> ErrorCode {
 
 fn commit_error_code(error: CommitError) -> ErrorCode {
   match error {
-    CommitError::Rejected(code) | CommitError::Unavailable(code) | CommitError::CommitUnknown(code) => code,
+    CommitError::Rejected(code) | CommitError::Unavailable(code) => code,
+    CommitError::CommitUnknown(code) => {
+      // TODO(auv-run-contract-v1-task-8): resolve unknown authority outcomes
+      // through lookup/quarantine before projector routing is enabled.
+      code
+    }
     CommitError::AuthorityMismatch { .. } => {
       ErrorCode::parse("auv.dispatch.authority_mismatch").expect("static dispatch error code is valid")
     }
@@ -539,7 +659,7 @@ pub mod dispatcher {
   }
 }
 
-// TODO(auv-run-contract-v1-task-7): add non-blocking DispatchErrorReporter
+// TODO(auv-run-contract-v1-task-8): add non-blocking DispatchErrorReporter
 // callbacks without exposing retry policy through the producer API.
 // TODO(auv-run-contract-v1-task-8): add projector routes and authority reads to
 // the existing ticket barrier; a route-less dispatch remains disabled in Task 6.
