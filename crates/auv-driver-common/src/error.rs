@@ -18,6 +18,21 @@ pub enum DriverError {
   InvalidInput {
     message: String,
   },
+  /// A recorded observation (e.g. an AX path or captured tree) no longer
+  /// resolves against the live UI — the tree shifted since it was observed.
+  /// Distinct from `NotFound` (which means a target was never located) and from
+  /// `InvalidInput` (which means the caller supplied a malformed request).
+  StaleObservation {
+    message: String,
+    recovery: Option<String>,
+  },
+  /// A node resolved at the requested location, but its role differs from the
+  /// expected role — a specific, recoverable form of tree drift that callers
+  /// may want to distinguish from a fully unresolved path.
+  RoleMismatch {
+    message: String,
+    recovery: Option<String>,
+  },
   Backend {
     message: String,
   },
@@ -39,6 +54,13 @@ impl fmt::Display for DriverError {
         recovery,
       } => {
         write!(f, "{permission} permission was denied")?;
+        if let Some(recovery) = recovery {
+          write!(f, ": {recovery}")?;
+        }
+        Ok(())
+      }
+      Self::StaleObservation { message, recovery } | Self::RoleMismatch { message, recovery } => {
+        f.write_str(message)?;
         if let Some(recovery) = recovery {
           write!(f, ": {recovery}")?;
         }

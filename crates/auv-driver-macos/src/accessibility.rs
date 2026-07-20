@@ -45,7 +45,10 @@ pub fn capture_app_tree(app: &str, max_depth: i64, max_children: i64) -> DriverR
 }
 
 pub fn focus_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResult<InputActionResult> {
-  let _ = crate::native::ax_tree::set_ax_focused_path(pid, path, expected_role).map_err(backend)?;
+  // `set_ax_focused_path` already returns a classified `DriverError` (stale
+  // path / role mismatch / permission / backend), so propagate it directly
+  // instead of flattening everything through `backend` into `Backend`.
+  let _ = crate::native::ax_tree::set_ax_focused_path(pid, path, expected_role)?;
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
     attempts: vec![InputAttempt {

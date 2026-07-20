@@ -78,7 +78,7 @@ pub fn perform_ax_path_action(_pid: i32, _path: &str, _expected_role: &str, _act
 }
 
 #[cfg(target_os = "macos")]
-pub fn set_ax_focused_path(pid: i32, path: &str, expected_role: &str) -> AuvResult<NativeAxFocus> {
+pub fn set_ax_focused_path(pid: i32, path: &str, expected_role: &str) -> DriverResult<NativeAxFocus> {
   decode_ax_focus_response(DecodedAxFocusResponse::from(set_ax_focused(NativeAxFocusRequest {
     pid: i64::from(pid),
     path: path.to_string(),
@@ -87,8 +87,8 @@ pub fn set_ax_focused_path(pid: i32, path: &str, expected_role: &str) -> AuvResu
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn set_ax_focused_path(_pid: i32, _path: &str, _expected_role: &str) -> AuvResult<NativeAxFocus> {
-  Err("macOS native AX focus dispatch is unsupported on this target".to_string())
+pub fn set_ax_focused_path(_pid: i32, _path: &str, _expected_role: &str) -> DriverResult<NativeAxFocus> {
+  Err(DriverError::unsupported("macos.ax.set_focused_path"))
 }
 
 // NOTICE: unlike the sibling `native` AX helpers (which return `AuvResult` and
@@ -187,6 +187,13 @@ pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<Nat
   })
 }
 
+// TODO(ax-typed-error-fanout): this decode still flattens to `AuvResult`
+// (String) via `native_result`, unlike `decode_ax_focus_response` which now
+// classifies into typed `DriverError` variants (see `classify_ax_native_error`).
+// `perform_ax_path_action` currently has no caller, so it is left un-migrated in
+// this slice; migrate it (and `decode_ax_node_inspection_response`) the same way
+// once a consumer needs classified action errors. See
+// `docs/ai/references/driver/2026-07-19-error-chain-inventory.md`.
 pub fn decode_ax_action_response(response: DecodedAxActionResponse) -> AuvResult<NativeAxAction> {
   if response.error_message.is_some() {
     return super::error::native_result("perform_ax_action", None, response.error_message, response.recovery_hint);
@@ -219,9 +226,66 @@ fn non_negative_count(value: i64) -> usize {
   usize::try_from(value).unwrap_or(0)
 }
 
-pub fn decode_ax_focus_response(response: DecodedAxFocusResponse) -> AuvResult<NativeAxFocus> {
+// Classifies a native AX failure message into a typed `DriverError`.
+//
+// This is the one place allowed to inspect the raw Swift error text: it is the
+// decode boundary that converts the unstructured native response into a
+// structured variant. Callers above this layer match on the variant, never on
+// the message string (AGENTS.md: no `contains("stale")` control flow in the
+// operation/CLI layers). The matched substrings are the observed-path failure
+// contract characterized in
+// `docs/ai/references/driver/2026-07-19-ax-path-resolution-characterization.md`.
+//
+// NOTICE(ax-native-error-kind): the ideal is for Swift to emit a structured
+// error kind over FFI so this layer maps a code, not a substring. That is
+// deferred — it requires a Swift/FFI/bridge change; this Rust-side slice proves
+// the classification pattern first. Unlock when a second native domain (OCR /
+// window) needs the same typing and the Swift-side kind pays for itself.
+//
+// Pure Rust (no AX calls) so it compiles on every target — `decode_ax_focus_response`
+// is not target-gated and its tests run on the CI Linux host too.
+fn classify_ax_native_error(message: Option<String>, recovery: Option<String>) -> DriverError {
+  let message = message.unwrap_or_else(|| "unknown native AX error".to_string());
+  let lowered = message.to_lowercase();
+
+  // Caller supplied a malformed observed path — not a live-tree problem.
+  if lowered.contains("must begin with 0") || lowered.contains("is not a non-negative integer") {
+    return DriverError::InvalidInput {
+      message: join_recovery(message, recovery),
+    };
+  }
+  // Accessibility permission gate.
+  if lowered.contains("permission") || lowered.contains("accessibility") {
+    return DriverError::PermissionDenied {
+      permission: "accessibility",
+      recovery,
+    };
+  }
+  // A node resolved but its role differs from the expected role.
+  if lowered.contains("expected role") {
+    return DriverError::RoleMismatch { message, recovery };
+  }
+  // The recorded path/tree no longer resolves against the live UI.
+  if lowered.contains("is out of range") || lowered.contains("tree likely shifted") || lowered.contains("could not resolve target") {
+    return DriverError::StaleObservation { message, recovery };
+  }
+  DriverError::Backend {
+    message: join_recovery(message, recovery),
+  }
+}
+
+// Folds a recovery hint into the message for variants that carry no dedicated
+// recovery field (`InvalidInput` / `Backend`), so the hint is never dropped.
+fn join_recovery(message: String, recovery: Option<String>) -> String {
+  match recovery {
+    Some(recovery) => format!("{message}; recovery: {recovery}"),
+    None => message,
+  }
+}
+
+pub fn decode_ax_focus_response(response: DecodedAxFocusResponse) -> DriverResult<NativeAxFocus> {
   if response.error_message.is_some() {
-    return super::error::native_result("set_ax_focused", None, response.error_message, response.recovery_hint);
+    return Err(classify_ax_native_error(response.error_message, response.recovery_hint));
   }
 
   Ok(NativeAxFocus {
@@ -564,14 +628,68 @@ mod tests {
   }
 
   #[test]
-  fn decode_ax_focus_rejects_native_error() {
+  fn decode_ax_focus_rejects_native_error_as_backend_and_preserves_detail() {
+    // An unrecognized AX error code falls through to Backend; the message and
+    // recovery hint are still preserved (folded into the Backend message).
     let mut response = base_focus_response();
     response.error_message = Some("AXUIElementSetAttributeValue returned -25204".to_string());
     response.recovery_hint = Some("element may not accept programmatic focus".to_string());
 
     let error = decode_ax_focus_response(response).unwrap_err();
 
-    assert!(error.contains("set_ax_focused failed"));
-    assert!(error.contains("AXUIElementSetAttributeValue returned -25204"));
+    assert!(matches!(error, DriverError::Backend { .. }), "expected Backend, got {error:?}");
+    let rendered = error.to_string();
+    assert!(rendered.contains("AXUIElementSetAttributeValue returned -25204"), "message lost: {rendered}");
+    assert!(rendered.contains("element may not accept programmatic focus"), "recovery lost: {rendered}");
+  }
+
+  // ROOT CAUSE:
+  //
+  // Before PR 5, `decode_ax_focus_response` flattened every native AX failure
+  // into one `Result<_, String>` via `native_result`, so callers could not tell
+  // a malformed path from a shifted tree from a role mismatch without parsing
+  // message text. This slice classifies the native message (the observed-path
+  // contract locked in the AX path characterization) into typed `DriverError`
+  // variants at the decode boundary. These tests pin that mapping.
+  fn focus_error(message: &str) -> DriverError {
+    let mut response = base_focus_response();
+    response.error_message = Some(message.to_string());
+    response.recovery_hint = Some("capture a fresh AX tree and retry the focus request".to_string());
+    decode_ax_focus_response(response).unwrap_err()
+  }
+
+  #[test]
+  fn classify_malformed_path_as_invalid_input() {
+    assert!(matches!(focus_error("AX focus path must begin with 0; got 1.2"), DriverError::InvalidInput { .. }));
+    assert!(matches!(focus_error("AX focus path segment x at offset 0 is not a non-negative integer"), DriverError::InvalidInput { .. }));
+  }
+
+  #[test]
+  fn classify_out_of_range_path_as_stale_observation() {
+    let error = focus_error("AX focus path index 3 is out of range at offset 1; element has 2 child(ren)");
+    assert!(matches!(error, DriverError::StaleObservation { .. }), "got {error:?}");
+    // recovery hint is preserved in the dedicated field (surfaces via Display)
+    assert!(error.to_string().contains("capture a fresh AX tree"));
+  }
+
+  #[test]
+  fn classify_role_mismatch_distinctly_from_stale() {
+    let error = focus_error("AX focus expected role AXTextField at path 0.1, got AXButton");
+    assert!(matches!(error, DriverError::RoleMismatch { .. }), "got {error:?}");
+  }
+
+  #[test]
+  fn classify_permission_denied() {
+    let error = focus_error("Accessibility permission is required to read the AX tree");
+    assert!(
+      matches!(
+        error,
+        DriverError::PermissionDenied {
+          permission: "accessibility",
+          ..
+        }
+      ),
+      "got {error:?}"
+    );
   }
 }
