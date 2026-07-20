@@ -223,8 +223,8 @@ impl<F: Future> Future for WithContext<F> {
       this.future.as_mut().as_pin_mut().expect("completed WithContext futures must not be polled again").poll(task_context)
     };
     if poll.is_ready() {
-      drop_future_in_context(this.context, this.future.as_mut());
-      this.context.clear_span();
+      let release = ReadySpanRelease::with_context(this.context);
+      drop_future_in_context(release.context(), this.future.as_mut());
     }
     poll
   }
@@ -388,8 +388,8 @@ impl<F: Future> Future for Instrumented<F> {
       this.future.as_mut().as_pin_mut().expect("completed Instrumented futures must not be polled again").poll(task_context)
     };
     if poll.is_ready() {
-      drop_future_in_context(this.context, this.future.as_mut());
-      release_instrumented_span(this.context, this.span);
+      let release = ReadySpanRelease::instrumented(this.context, this.span);
+      drop_future_in_context(release.context(), this.future.as_mut());
     }
     poll
   }
@@ -412,6 +412,41 @@ fn drop_future_in_context<F>(context: &Context, mut future: Pin<&mut Option<F>>)
 fn release_instrumented_span(context: &mut Context, span: &mut Option<Span>) {
   context.clear_span();
   span.take();
+}
+
+struct ReadySpanRelease<'a> {
+  context: &'a mut Context,
+  span: Option<&'a mut Option<Span>>,
+}
+
+impl<'a> ReadySpanRelease<'a> {
+  fn with_context(context: &'a mut Context) -> Self {
+    Self {
+      context,
+      span: None,
+    }
+  }
+
+  fn instrumented(context: &'a mut Context, span: &'a mut Option<Span>) -> Self {
+    Self {
+      context,
+      span: Some(span),
+    }
+  }
+
+  fn context(&self) -> &Context {
+    self.context
+  }
+}
+
+impl Drop for ReadySpanRelease<'_> {
+  fn drop(&mut self) {
+    if let Some(span) = self.span.take() {
+      release_instrumented_span(self.context, span);
+    } else {
+      self.context.clear_span();
+    }
+  }
 }
 
 /// Starts a typed span under the current context.

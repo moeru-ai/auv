@@ -4,6 +4,7 @@ mod support;
 
 use std::cell::RefCell;
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::Command;
@@ -61,6 +62,31 @@ struct ProbeLog {
 struct ContextProbe {
   ready: bool,
   log: Arc<Mutex<ProbeLog>>,
+}
+
+struct ReadyDropPanicFuture {
+  expected: ObservedContext,
+  drops: Arc<AtomicUsize>,
+  panic_on_drop: bool,
+}
+
+impl Future for ReadyDropPanicFuture {
+  type Output = ();
+
+  fn poll(self: Pin<&mut Self>, _context: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    Poll::Ready(())
+  }
+}
+
+impl Drop for ReadyDropPanicFuture {
+  fn drop(&mut self) {
+    self.drops.fetch_add(1, Ordering::SeqCst);
+    if self.panic_on_drop {
+      self.panic_on_drop = false;
+      assert_eq!(ObservedContext::current(), self.expected);
+      panic!("ready future destructor failed");
+    }
+  }
 }
 
 struct TeardownDropProbe {
@@ -163,9 +189,7 @@ fn tls_teardown_drops_inner_future_without_aborting() {
   if let Some(marker) = std::env::var_os(MARKER_ENV) {
     TEARDOWN_WRAPPER.with(|wrapper| {
       let root = Context::root(RunId::new());
-      {
-        let _guard = root.enter();
-      }
+      std::mem::forget(root.enter());
       *wrapper.borrow_mut() = Some(root.instrument(TeardownDropProbe {
         marker: marker.into(),
       }));
@@ -302,6 +326,51 @@ fn completed_context_instrument_releases_span_before_wrapper_drop() {
   assert_eq!(fixture.span_end_count(run_id), 1);
 }
 
+// ROOT CAUSE:
+//
+// If a Ready future's destructor panicked, WithContext skipped clearing its
+// captured local span and retained the SpanState after poll unwound.
+//
+// Before the fix, SpanEnded waited for wrapper destruction. The fix releases
+// the captured span on both normal and unwinding Ready cleanup.
+#[test]
+fn ready_drop_panic_releases_with_context_span_before_wrapper_drop() {
+  let fixture = TestDispatch::memory();
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+  let span = root.in_scope(|| auv_tracing::start_span!(TestSpan));
+  let span_id = *span.id().unwrap();
+  let context = span.context();
+  let expected = ObservedContext {
+    run_id: Some(run_id),
+    span_id: Some(span_id),
+  };
+  let drops = Arc::new(AtomicUsize::new(0));
+  let mut future = Box::pin(context.instrument(ReadyDropPanicFuture {
+    expected,
+    drops: drops.clone(),
+    panic_on_drop: true,
+  }));
+  drop(context);
+  drop(span);
+  let waker = futures_util::task::noop_waker();
+  let mut task_context = TaskContext::from_waker(&waker);
+
+  let panic = catch_unwind(AssertUnwindSafe(|| {
+    let _ = future.as_mut().poll(&mut task_context);
+  }));
+  assert!(panic.is_err());
+  assert!(Context::current().run_id().is_none());
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  assert_eq!(fixture.span_end_count(run_id), 1);
+  assert_eq!(drops.load(Ordering::SeqCst), 1);
+
+  drop(future);
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  assert_eq!(fixture.span_end_count(run_id), 1);
+  assert_eq!(drops.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn span_instrument_drops_ready_future_in_captured_context() {
   let fixture = TestDispatch::memory();
@@ -348,6 +417,48 @@ fn span_instrument_drops_cancelled_future_in_captured_context() {
     },
   );
   assert_eq!(fixture.span_end_count(run_id), 1);
+}
+
+// ROOT CAUSE:
+//
+// If a Ready future's destructor panicked, Instrumented skipped releasing both
+// its captured Context and consumed Span handle after poll unwound.
+//
+// Before the fix, SpanEnded waited for wrapper destruction. The fix releases
+// both owning references on normal and unwinding Ready cleanup.
+#[test]
+fn ready_drop_panic_releases_instrumented_span_before_wrapper_drop() {
+  let fixture = TestDispatch::memory();
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+  let span = root.in_scope(|| auv_tracing::start_span!(TestSpan));
+  let span_id = *span.id().unwrap();
+  let expected = ObservedContext {
+    run_id: Some(run_id),
+    span_id: Some(span_id),
+  };
+  let drops = Arc::new(AtomicUsize::new(0));
+  let mut future = Box::pin(span.instrument(ReadyDropPanicFuture {
+    expected,
+    drops: drops.clone(),
+    panic_on_drop: true,
+  }));
+  let waker = futures_util::task::noop_waker();
+  let mut task_context = TaskContext::from_waker(&waker);
+
+  let panic = catch_unwind(AssertUnwindSafe(|| {
+    let _ = future.as_mut().poll(&mut task_context);
+  }));
+  assert!(panic.is_err());
+  assert!(Context::current().run_id().is_none());
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  assert_eq!(fixture.span_end_count(run_id), 1);
+  assert_eq!(drops.load(Ordering::SeqCst), 1);
+
+  drop(future);
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  assert_eq!(fixture.span_end_count(run_id), 1);
+  assert_eq!(drops.load(Ordering::SeqCst), 1);
 }
 
 #[test]

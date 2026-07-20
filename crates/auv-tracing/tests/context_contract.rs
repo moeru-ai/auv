@@ -44,6 +44,27 @@ impl SpanSpec for PanickingSpan {
   }
 }
 
+struct DropPanickingSpan {
+  panic_on_drop: bool,
+}
+
+impl SpanSpec for DropPanickingSpan {
+  const NAME: &'static str = "auv.test.drop_panicking_span";
+
+  fn attributes(&self) -> Attributes {
+    Attributes::empty()
+  }
+}
+
+impl Drop for DropPanickingSpan {
+  fn drop(&mut self) {
+    if self.panic_on_drop {
+      self.panic_on_drop = false;
+      panic!("span specification destructor failed");
+    }
+  }
+}
+
 #[derive(Deserialize, Serialize)]
 struct TestEvent {
   value: u32,
@@ -90,6 +111,34 @@ impl Serialize for PanickingEvent {
 impl EventPayload for PanickingEvent {
   const NAME: &'static str = "auv.test.panicking_event";
   const VERSION: u32 = 1;
+}
+
+struct DropPanickingEvent {
+  value: u32,
+  panic_on_drop: bool,
+}
+
+impl Serialize for DropPanickingEvent {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    TestEvent { value: self.value }.serialize(serializer)
+  }
+}
+
+impl EventPayload for DropPanickingEvent {
+  const NAME: &'static str = "auv.test.drop_panicking_event";
+  const VERSION: u32 = 1;
+}
+
+impl Drop for DropPanickingEvent {
+  fn drop(&mut self) {
+    if self.panic_on_drop {
+      self.panic_on_drop = false;
+      panic!("event payload destructor failed");
+    }
+  }
 }
 
 struct WakeCounter(AtomicUsize);
@@ -620,6 +669,75 @@ fn panicking_event_preparation_releases_the_lane_and_reports_encode() {
   assert_eq!(error.failure_count().get(), 1);
   assert_eq!(error.first().stage(), DispatchStage::Encode);
   assert_eq!(event_values(&store.committed_requests(run_id)), [9]);
+}
+
+// ROOT CAUSE:
+//
+// If a SpanSpec destructor panicked after its preparation ticket completed,
+// the start could commit before start_span constructed the owning SpanState.
+//
+// Before the fix, the store retained an open span with no owner. The fix drops
+// the specification while preparation recovery can still reject the start.
+#[test]
+fn panicking_span_spec_destructor_rejects_start_and_preserves_lane() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store_and_spawner(store.clone(), InlineSpawner::new());
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+
+  let panic = catch_unwind(AssertUnwindSafe(|| {
+    root.in_scope(|| {
+      let _span = auv_tracing::start_span!(DropPanickingSpan {
+        panic_on_drop: true,
+      });
+    });
+  }));
+  assert!(panic.is_err());
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 10 }));
+
+  assert_eq!(store.commit_call_count(run_id), 1, "the rejected start must not reach the authority");
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::Encode);
+  assert_eq!(event_values(&store.committed_requests(run_id)), [10]);
+  let snapshot = block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap();
+  assert!(snapshot.spans().is_empty());
+  assert_eq!(snapshot.events().len(), 1);
+}
+
+// ROOT CAUSE:
+//
+// If an EventPayload destructor panicked after its preparation ticket
+// completed, emit_event unwound even though the event had already committed.
+//
+// Before the fix, callers observed a panic and a stored event. The fix drops
+// the payload while preparation recovery can still reject that event.
+#[test]
+fn panicking_event_payload_destructor_rejects_event_and_preserves_lane() {
+  let store = ControlledStore::new();
+  let fixture = TestDispatch::with_store_and_spawner(store.clone(), InlineSpawner::new());
+  let root = fixture.root();
+  let run_id = *root.run_id().unwrap();
+
+  let panic = catch_unwind(AssertUnwindSafe(|| {
+    root.in_scope(|| {
+      auv_tracing::emit_event!(DropPanickingEvent {
+        value: 11,
+        panic_on_drop: true,
+      });
+    });
+  }));
+  assert!(panic.is_err());
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 12 }));
+
+  assert_eq!(store.commit_call_count(run_id), 1, "the rejected event must not reach the authority");
+  let error = block_on_timeout(fixture.dispatch.flush()).unwrap_err();
+  assert_eq!(error.failure_count().get(), 1);
+  assert_eq!(error.first().stage(), DispatchStage::Encode);
+  assert_eq!(event_values(&store.committed_requests(run_id)), [12]);
+  let snapshot = block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap();
+  assert!(snapshot.spans().is_empty());
+  assert_eq!(snapshot.events().len(), 1);
 }
 
 #[test]
