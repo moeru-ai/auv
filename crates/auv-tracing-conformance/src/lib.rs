@@ -2,6 +2,7 @@
 
 //! Shared public-behavior assertions for every `RunStore` authority backend.
 
+use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -23,31 +24,103 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const CANONICAL_PAGE_BUDGET: usize = 32 * 1024 * 1024;
+const CONTRACT_CASE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Runs the complete V1 store contract against fresh backend instances.
+/// Runs the complete V1 store contract with a fresh run identity for each case.
+///
+/// The synchronous factory may return either a new backend or a shared backend
+/// connection; run identity isolation is the behavior this harness guarantees.
 pub async fn assert_store_contract(make: impl Fn() -> Arc<dyn RunStore>) {
-  authority_is_stable_and_non_nil(make()).await;
-  authority_mismatch_precedes_invalid_mutation(make()).await;
-  authority_mismatch_does_not_poll_artifact_body(make()).await;
-  revisions_start_at_one_and_remain_contiguous(make()).await;
-  equal_commit_replay_returns_the_original_commit(make()).await;
-  mismatched_commit_replay_is_rejected(make()).await;
-  lookup_resolves_an_already_committed_request(make()).await;
-  event_ids_are_unique_across_idempotency_keys(make()).await;
-  snapshot_reduction_is_deterministic(make()).await;
-  page_cursors_cover_pagination_ahead_and_empty(make()).await;
-  pages_stop_at_the_canonical_byte_budget(make()).await;
-  equal_artifact_replay_does_not_poll_replacement_body(make()).await;
-  artifact_id_conflict_cannot_replace_committed_bytes(make()).await;
-  artifact_length_and_digest_are_verified_before_publication(make()).await;
-  interrupted_artifact_body_publishes_no_fact(make()).await;
-  open_artifact_returns_exact_committed_bytes(make()).await;
-  subscription_resumes_after_cursor_without_a_snapshot_race(make()).await;
+  assert_case("authority_is_stable_and_non_nil", async {
+    authority_is_stable_and_non_nil(make()).await;
+  })
+  .await;
+  assert_case("authority_mismatch_precedes_invalid_mutation", async {
+    authority_mismatch_precedes_invalid_mutation(make()).await;
+  })
+  .await;
+  assert_case("authority_mismatch_does_not_poll_artifact_body", async {
+    authority_mismatch_does_not_poll_artifact_body(make()).await;
+  })
+  .await;
+  assert_case("revisions_start_at_one_and_remain_contiguous", async {
+    revisions_start_at_one_and_remain_contiguous(make()).await;
+  })
+  .await;
+  assert_case("equal_commit_replay_returns_the_original_commit", async {
+    equal_commit_replay_returns_the_original_commit(make()).await;
+  })
+  .await;
+  assert_case("mismatched_commit_replay_is_rejected", async {
+    mismatched_commit_replay_is_rejected(make()).await;
+  })
+  .await;
+  assert_case("lookup_resolves_an_already_committed_request", async {
+    lookup_resolves_an_already_committed_request(make()).await;
+  })
+  .await;
+  assert_case("event_ids_are_unique_across_idempotency_keys", async {
+    event_ids_are_unique_across_idempotency_keys(make()).await;
+  })
+  .await;
+  assert_case("snapshot_reduction_is_deterministic", async {
+    snapshot_reduction_is_deterministic(make()).await;
+  })
+  .await;
+  assert_case("page_cursors_cover_pagination_ahead_and_empty", async {
+    page_cursors_cover_pagination_ahead_and_empty(make()).await;
+  })
+  .await;
+  assert_case("pages_stop_at_the_canonical_byte_budget", async {
+    pages_stop_at_the_canonical_byte_budget(make()).await;
+  })
+  .await;
+  assert_case("equal_artifact_replay_does_not_poll_replacement_body", async {
+    equal_artifact_replay_does_not_poll_replacement_body(make()).await;
+  })
+  .await;
+  assert_case("artifact_id_conflict_cannot_replace_committed_bytes", async {
+    artifact_id_conflict_cannot_replace_committed_bytes(make()).await;
+  })
+  .await;
+  assert_case("artifact_length_and_digest_are_verified_before_publication", async {
+    artifact_length_and_digest_are_verified_before_publication(make()).await;
+  })
+  .await;
+  assert_case("interrupted_artifact_body_publishes_no_fact", async {
+    interrupted_artifact_body_publishes_no_fact(make()).await;
+  })
+  .await;
+  assert_case("open_artifact_returns_exact_committed_bytes", async {
+    open_artifact_returns_exact_committed_bytes(make()).await;
+  })
+  .await;
+  assert_case("subscription_resumes_after_cursor_without_a_snapshot_race", async {
+    subscription_resumes_after_cursor_without_a_snapshot_race(make()).await;
+  })
+  .await;
 }
 
 /// Asserts matching page and subscription gaps after fixture-controlled retention.
-pub async fn assert_gap_contract(store: Arc<dyn RunStore>, induce_retention_gap: impl FnOnce()) {
-  page_and_subscription_report_the_same_typed_gap(store, induce_retention_gap).await;
+///
+/// The hook receives the fresh run identity and is awaited after three commits.
+pub async fn assert_gap_contract<F, Fut>(store: Arc<dyn RunStore>, induce_retention_gap: F)
+where
+  F: FnOnce(RunId) -> Fut,
+  Fut: Future<Output = ()>,
+{
+  assert_case("page_and_subscription_report_the_same_typed_gap", async {
+    page_and_subscription_report_the_same_typed_gap(store, induce_retention_gap).await;
+  })
+  .await;
+}
+
+async fn assert_case(name: &'static str, case: impl Future<Output = ()>) {
+  let timeout = Delay::new(CONTRACT_CASE_TIMEOUT);
+  pin_mut!(case, timeout);
+  if matches!(select(case, timeout).await, Either::Right(_)) {
+    panic!("RunStore conformance case `{name}` timed out after 30 seconds");
+  }
 }
 
 async fn authority_is_stable_and_non_nil(store: Arc<dyn RunStore>) {
@@ -206,8 +279,8 @@ async fn page_cursors_cover_pagination_ahead_and_empty(store: Arc<dyn RunStore>)
 async fn pages_stop_at_the_canonical_byte_budget(store: Arc<dyn RunStore>) {
   let run_id = RunId::new();
   let payload = "x".repeat(62 * 1024);
-  for _ in 0..540 {
-    commit_sample(&store, run_id, IdempotencyKey::new(), EventId::new(), &payload).await;
+  for _ in 0..3 {
+    commit_sample_batch(&store, run_id, 180, &payload).await;
   }
 
   let first = page(&store, run_id, revision(0), 1024).await;
@@ -381,12 +454,16 @@ async fn subscription_resumes_after_cursor_without_a_snapshot_race(store: Arc<dy
   assert_eq!(canonical_json(&received_third), canonical_json(&third));
 }
 
-async fn page_and_subscription_report_the_same_typed_gap(store: Arc<dyn RunStore>, induce_retention_gap: impl FnOnce()) {
+async fn page_and_subscription_report_the_same_typed_gap<F, Fut>(store: Arc<dyn RunStore>, induce_retention_gap: F)
+where
+  F: FnOnce(RunId) -> Fut,
+  Fut: Future<Output = ()>,
+{
   let run_id = RunId::new();
   for value in ["one", "two", "three"] {
     commit_sample(&store, run_id, IdempotencyKey::new(), EventId::new(), value).await;
   }
-  induce_retention_gap();
+  induce_retention_gap(run_id).await;
 
   let requested_after = revision(0);
   let page_error =
@@ -447,6 +524,18 @@ async fn commit_sample(
     .commit(sample_event_request(run_id, key, event_id, value).for_authority(store.authority_id()))
     .await
     .expect("sample event commit must succeed")
+}
+
+async fn commit_sample_batch(store: &Arc<dyn RunStore>, run_id: RunId, event_count: usize, value: &str) -> RunCommit {
+  let schema =
+    EventSchema::new(EventName::parse("auv.test.event").expect("sample event name is valid"), 1).expect("sample event schema is valid");
+  let payload = JsonPayload::encode(&serde_json::json!({ "value": value })).expect("sample event payload is valid");
+  let mutations = (0..event_count)
+    .map(|_| RunMutation::EmitEvent(EventOccurred::new(EventId::new(), None, timestamp(1), schema.clone(), payload.clone())))
+    .collect();
+  let request =
+    RunCommitRequest::new(store.authority_id(), run_id, IdempotencyKey::new(), mutations).expect("sample event batch request is valid");
+  store.commit(request).await.expect("sample event batch commit must succeed")
 }
 
 fn artifact_request(
