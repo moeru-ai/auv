@@ -563,8 +563,7 @@ impl<'de> Deserialize<'de> for Timestamp {
 }
 
 /// A bounded scalar attribute value.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AttributeValue {
   /// A boolean scalar.
   Bool(bool),
@@ -598,6 +597,31 @@ impl AttributeValue {
   /// Creates a bounded string value.
   pub fn string(value: impl Into<String>) -> Result<Self, ValidationError> {
     BoundedString::new(value).map(Self::String)
+  }
+
+  fn validate(&self) -> Result<(), ValidationError> {
+    match self {
+      Self::Bool(_) => Ok(()),
+      Self::I64(value) if exact_i64(*value) => Ok(()),
+      Self::I64(_) => Err(ValidationError::new("attribute integer exceeds the JavaScript exact integer range")),
+      Self::F64(value) => FiniteF64::new(value.get()).map(|_| ()),
+      Self::String(value) => BoundedString::new(value.as_str()).map(|_| ()),
+    }
+  }
+}
+
+impl Serialize for AttributeValue {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    self.validate().map_err(serde::ser::Error::custom)?;
+    match self {
+      Self::Bool(value) => serializer.serialize_bool(*value),
+      Self::I64(value) => serializer.serialize_i64(*value),
+      Self::F64(value) => serializer.serialize_f64(value.get()),
+      Self::String(value) => serializer.serialize_str(value.as_str()),
+    }
   }
 }
 
@@ -678,6 +702,7 @@ impl Attributes {
   {
     let mut values = BTreeMap::new();
     for (key, value) in entries {
+      value.validate()?;
       if values.insert(key, value).is_some() {
         return Err(ValidationError::new("attribute keys must be unique"));
       }
