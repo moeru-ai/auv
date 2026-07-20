@@ -914,6 +914,34 @@ impl TaskSpawner for InlineSpawner {
   }
 }
 
+#[derive(Default)]
+pub struct ManualTaskSpawner {
+  tasks: Mutex<VecDeque<DispatchTask>>,
+}
+
+impl ManualTaskSpawner {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self::default())
+  }
+
+  pub fn run_all(&self) {
+    loop {
+      let task = { self.tasks.lock().unwrap().pop_front() };
+      let Some(task) = task else {
+        return;
+      };
+      block_on_timeout(task);
+    }
+  }
+}
+
+impl TaskSpawner for ManualTaskSpawner {
+  fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
+    self.tasks.lock().unwrap().push_back(task);
+    Ok(())
+  }
+}
+
 pub struct PanicFirstSpawner {
   first: AtomicBool,
 }
