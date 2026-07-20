@@ -153,8 +153,9 @@ async fn event_ids_are_unique_across_idempotency_keys(store: Arc<dyn RunStore>) 
   let event_id = EventId::new();
   commit_sample(&store, run_id, IdempotencyKey::new(), event_id, "first").await;
 
+  // Keep the payload equal so only the new idempotency key tests EventId uniqueness.
   let error = store
-    .commit(sample_event_request(run_id, IdempotencyKey::new(), event_id, "duplicate event identity").for_authority(store.authority_id()))
+    .commit(sample_event_request(run_id, IdempotencyKey::new(), event_id, "first").for_authority(store.authority_id()))
     .await
     .expect_err("an event identity cannot be claimed by a new request");
   assert!(matches!(error, CommitError::Rejected(_)));
