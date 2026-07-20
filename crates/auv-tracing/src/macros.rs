@@ -13,3 +13,11 @@ macro_rules! emit_event {
     $crate::emit_event($event)
   };
 }
+
+/// Emits one detached artifact under the current AUV context.
+#[macro_export]
+macro_rules! emit_artifact {
+  ($artifact:expr) => {
+    $crate::emit_artifact($artifact)
+  };
+}

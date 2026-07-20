@@ -88,6 +88,10 @@ impl Context {
     self.run_id.is_some() && self.dispatch.as_ref().is_some_and(Dispatch::is_enabled)
   }
 
+  pub(crate) fn dispatch(&self) -> Option<&Dispatch> {
+    self.dispatch.as_ref()
+  }
+
   /// Makes this context current on the calling thread until the guard drops.
   ///
   /// If called after the context TLS has been destroyed, the returned guard is
