@@ -12,8 +12,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::FutureExt;
 
 use crate::{
-  AuthorityId, CommitError, ErrorCode, EventId, EventOccurred, EventPayload, EventSchema, IdempotencyKey, JsonPayload, NonEmptyVec,
-  RunCommitRequest, RunId, RunMutation, RunStore, SpanEnded, SpanId, SpanLink, SpanName, SpanSpec, SpanStarted, Timestamp,
+  AuthorityId, CommitError, DispatchErrorReporter, ErrorCode, EventId, EventOccurred, EventPayload, EventSchema, IdempotencyKey,
+  JsonPayload, NonEmptyVec, PageLimit, ReadError, RunCommit, RunCommitRequest, RunFact, RunId, RunMutation, RunRevision, RunStore,
+  RunSubscription, SpanEnded, SpanId, SpanLink, SpanName, SpanSpec, SpanStarted, SubscriptionError, TelemetryItem, TelemetryProjector,
+  TelemetryRoutePolicy, Timestamp,
 };
 
 /// A boxed instrumentation IO task accepted by a dispatch spawner.
@@ -36,6 +38,11 @@ impl TaskSpawnError {
   /// Creates a spawn failure with a stable machine-readable code.
   pub fn new(code: ErrorCode) -> Self {
     Self { code }
+  }
+
+  /// Returns the stable machine-readable failure code.
+  pub fn code(&self) -> &ErrorCode {
+    &self.code
   }
 }
 
@@ -73,16 +80,10 @@ pub enum DispatchStage {
   /// Authority mutation commit.
   AuthorityCommit,
   /// Authority snapshot or commit-history read.
-  // TODO(auv-run-contract-v1-task-8): use this stable stage for projector
-  // cursor establishment and gap-recovery reads once those routes are added.
   AuthorityRead,
   /// Telemetry projection.
-  // TODO(auv-run-contract-v1-task-8): report projector failures at this stable
-  // stage once ordered telemetry projection is an approved active route.
   Project,
   /// Projector flush.
-  // TODO(auv-run-contract-v1-task-8): extend ticket barriers with projector
-  // flush completion without replacing Task 6 authority barriers.
   ProjectorFlush,
   /// Detached artifact publication.
   // TODO(auv-run-contract-v1-task-9): report artifact publication failures at
@@ -149,6 +150,8 @@ pub struct DispatchBuilder {
   run_store: Option<Arc<dyn RunStore>>,
   duplicate_run_store: bool,
   task_spawner: Option<Arc<dyn TaskSpawner>>,
+  projector_routes: Vec<ProjectorRoute>,
+  error_reporter: Option<Arc<dyn DispatchErrorReporter>>,
 }
 
 /// Starts configuring an opt-in instrumentation dispatch.
@@ -171,6 +174,18 @@ impl DispatchBuilder {
     self
   }
 
+  /// Adds one ordered telemetry projector and its producer-attribute policy.
+  pub fn project_telemetry(mut self, projector: Arc<dyn TelemetryProjector>, policy: TelemetryRoutePolicy) -> Self {
+    self.projector_routes.push(ProjectorRoute { projector, policy });
+    self
+  }
+
+  /// Selects the non-blocking diagnostic sink for asynchronous failures.
+  pub fn on_error(mut self, reporter: Arc<dyn DispatchErrorReporter>) -> Self {
+    self.error_reporter = Some(reporter);
+    self
+  }
+
   /// Builds a dispatch without installing it as a scoped or global default.
   pub fn build(self) -> Result<Dispatch, BuildError> {
     if self.duplicate_run_store {
@@ -181,7 +196,8 @@ impl DispatchBuilder {
       authority_id: store.authority_id(),
       store,
     });
-    let spawner: Option<Arc<dyn TaskSpawner>> = match (self.task_spawner, route.is_some()) {
+    let has_async_routes = route.is_some() || !self.projector_routes.is_empty();
+    let spawner: Option<Arc<dyn TaskSpawner>> = match (self.task_spawner, has_async_routes) {
       (Some(spawner), _) => Some(spawner),
       (None, true) => Some(Arc::new(ThreadTaskSpawner::new()?)),
       (None, false) => None,
@@ -191,7 +207,10 @@ impl DispatchBuilder {
       inner: Arc::new(DispatchInner {
         route,
         spawner,
+        projector_routes: self.projector_routes,
+        reporter: self.error_reporter.unwrap_or_else(|| Arc::new(DiscardReporter)),
         lanes: Mutex::new(HashMap::new()),
+        projection: Mutex::new(ProjectionState::default()),
         progress: Mutex::new(Progress::default()),
       }),
     })
@@ -210,7 +229,7 @@ impl Dispatch {
   }
 
   pub(crate) fn is_enabled(&self) -> bool {
-    self.inner.route.is_some()
+    self.inner.route.is_some() || !self.inner.projector_routes.is_empty()
   }
 
   /// Captures the current ticket barrier and returns its cancellation-safe waiter.
@@ -218,10 +237,23 @@ impl Dispatch {
   /// Outstanding flushes consume reporting intervals in call order. Callers
   /// must poll or drop each earlier flush before awaiting a later one.
   pub fn flush(&self) -> crate::BoxFuture<'_, Result<(), FlushError>> {
+    let has_projectors = !self.inner.projector_routes.is_empty();
     let ordering_id = {
+      // Ticket allocation uses this same lock, so the projector marker cannot
+      // be overtaken by a post-barrier emission.
       let mut progress = self.inner.progress.lock().unwrap();
-      progress.register_flush()
+      let registration = progress.register_flush(!has_projectors);
+      if has_projectors {
+        self.inner.projection.lock().unwrap().flushes.push_back(ProjectionFlush {
+          ordering_id: registration.0,
+          barrier: registration.1,
+        });
+      }
+      registration.0
     };
+    if has_projectors {
+      self.wake_projection();
+    }
     Box::pin(FlushFuture {
       dispatch: self.clone(),
       ordering_id: Some(ordering_id),
@@ -238,6 +270,11 @@ impl Dispatch {
     spec: S,
   ) -> bool {
     let preparation = self.reserve_ticket(run_id);
+    if preparation.is_rejected() {
+      drop(spec);
+      preparation.finish_rejected();
+      return false;
+    }
     let mutation = (|| {
       let name = SpanName::parse(S::NAME).map_err(|_| encode_code())?;
       let attributes = SpanSpec::attributes(&spec);
@@ -252,6 +289,10 @@ impl Dispatch {
 
   pub(crate) fn submit_span_end(&self, run_id: RunId, span_id: SpanId, ended_at: Result<Timestamp, ErrorCode>) {
     let preparation = self.reserve_ticket(run_id);
+    if preparation.is_rejected() {
+      preparation.finish_rejected();
+      return;
+    }
     preparation.complete(ended_at.map(|ended_at| RunMutation::EndSpan(SpanEnded::new(span_id, ended_at))));
   }
 
@@ -263,6 +304,11 @@ impl Dispatch {
     event: E,
   ) {
     let preparation = self.reserve_ticket(run_id);
+    if preparation.is_rejected() {
+      drop(event);
+      preparation.finish_rejected();
+      return;
+    }
     let mutation = (|| {
       let schema = EventSchema::for_payload::<E>().map_err(|_| encode_code())?;
       let payload = JsonPayload::encode(&event).map_err(|_| encode_code())?;
@@ -273,36 +319,69 @@ impl Dispatch {
   }
 
   fn reserve_ticket(&self, run_id: RunId) -> PreparationGuard {
-    let mut progress = self.inner.progress.lock().unwrap();
-    progress.next_ticket = progress.next_ticket.checked_add(1).expect("dispatch ticket space exhausted");
-    let ticket = progress.next_ticket;
-    // TODO(auv-run-contract-v1-task-8): define bounded admission/backpressure
-    // with DispatchErrorReporter policy before imposing any queue capacity.
-    self.inner.lanes.lock().unwrap().entry(run_id).or_default().queue.push_back(LaneEntry {
-      ticket,
-      state: LaneEntryState::Preparing,
-    });
+    let ticket = {
+      let mut progress = self.inner.progress.lock().unwrap();
+      progress.next_ticket = progress.next_ticket.checked_add(1).expect("dispatch ticket space exhausted");
+      if !self.inner.projector_routes.is_empty() {
+        self.inner.projection.lock().unwrap().entries.insert(progress.next_ticket, ProjectionEntry::Preparing);
+      }
+      progress.next_ticket
+    };
+    // TODO(dispatch-backpressure-v1): admission limits remain deferred because
+    // V1 has no owner-approved capacity policy; add one only with explicit
+    // backpressure and DispatchErrorReporter semantics.
+    let rejected = if self.inner.route.is_some() {
+      let mut lanes = self.inner.lanes.lock().unwrap();
+      let lane = lanes.entry(run_id).or_default();
+      let rejected = lane.indeterminate;
+      let state = if rejected {
+        LaneEntryState::Failed(DispatchFailure::new(DispatchStage::AuthorityCommit, run_lane_indeterminate_code()))
+      } else {
+        LaneEntryState::Preparing
+      };
+      lane.queue.push_back(LaneEntry { ticket, state });
+      rejected
+    } else {
+      false
+    };
     PreparationGuard {
       dispatch: self.clone(),
       run_id,
       ticket,
+      rejected,
       armed: true,
     }
   }
 
   fn complete_preparation(&self, ticket: u64, run_id: RunId, mutation: Result<RunMutation, ErrorCode>) {
-    let request = mutation.and_then(|mutation| {
-      let route = self.inner.route.as_ref().expect("enabled dispatch has an authority route");
-      RunCommitRequest::new(route.authority_id, run_id, IdempotencyKey::new(), vec![mutation]).map_err(|_| encode_code())
-    });
-    {
+    if let Some(route) = &self.inner.route {
+      let request = mutation.and_then(|mutation| {
+        RunCommitRequest::new(route.authority_id, run_id, IdempotencyKey::new(), vec![mutation]).map_err(|_| encode_code())
+      });
       let mut lanes = self.inner.lanes.lock().unwrap();
       let lane = lanes.get_mut(&run_id).expect("ticket reservation creates its run lane");
       let entry = lane.queue.iter_mut().find(|entry| entry.ticket == ticket).expect("reserved ticket remains in its run lane");
-      entry.state = match request {
-        Ok(request) => LaneEntryState::Ready(request),
-        Err(code) => LaneEntryState::Failed(DispatchFailure::new(DispatchStage::Encode, code)),
+      entry.state = if lane.indeterminate {
+        LaneEntryState::Failed(DispatchFailure::new(DispatchStage::AuthorityCommit, run_lane_indeterminate_code()))
+      } else {
+        match request {
+          Ok(request) => LaneEntryState::Ready(request),
+          Err(code) => LaneEntryState::Failed(DispatchFailure::new(DispatchStage::Encode, code)),
+        }
       };
+      drop(lanes);
+      self.wake_lane(run_id);
+      return;
+    }
+
+    match mutation {
+      Ok(mutation) => {
+        self.mark_projection_ready(ticket, projection_for_mutation(None, run_id, None, &mutation, &self.inner.projector_routes))
+      }
+      Err(code) => {
+        self.mark_projection_skipped(ticket);
+        self.terminalize(ticket, vec![DispatchFailure::new(DispatchStage::Encode, code)]);
+      }
     }
   }
 
@@ -330,19 +409,26 @@ impl Dispatch {
             LaneWake::Terminal(entry.ticket, failure)
           }
           None => {
-            lanes.remove(&run_id);
+            if self.inner.projector_routes.is_empty() && !lane.indeterminate {
+              lanes.remove(&run_id);
+            }
             return;
           }
         }
       };
 
       match action {
-        LaneWake::Terminal(ticket, failure) => self.terminalize(ticket, Some(failure)),
+        LaneWake::Terminal(ticket, failure) => {
+          self.mark_projection_skipped(ticket);
+          self.terminalize(ticket, vec![failure]);
+        }
         LaneWake::Spawn => {
           let admission = Arc::new(SpawnAdmission::new());
           let task_admission = admission.clone();
           let dispatch = self.clone();
+          let spawn_guard = LaneSpawnGuard::new(admission.clone(), self.clone(), run_id);
           let task = Box::pin(async move {
+            let _spawn_guard = spawn_guard;
             let admitted = async move {
               if task_admission.start() {
                 dispatch.drain_run(run_id).await;
@@ -353,21 +439,14 @@ impl Dispatch {
             let _ = AssertUnwindSafe(admitted).catch_unwind().await;
           });
           let spawn = catch_unwind(AssertUnwindSafe(|| self.spawner().spawn(task)));
-          let failure_code = match spawn {
+          let failure = match spawn {
+            Ok(Ok(())) if admission.accepted_task_was_dropped() => DispatchFailure::new(DispatchStage::AuthorityCommit, task_unwind_code()),
             Ok(Ok(())) => return,
-            Ok(Err(error)) if admission.cancel_before_start() => error.code,
-            Err(_) if admission.cancel_before_start() => spawn_panic_code(),
+            Ok(Err(error)) if admission.failed_task_needs_recovery() => DispatchFailure::new(DispatchStage::Spawn, error.code),
+            Err(_) if admission.failed_task_needs_recovery() => DispatchFailure::new(DispatchStage::Spawn, spawn_panic_code()),
             Ok(Err(_)) | Err(_) => return,
           };
-          let ticket = {
-            let mut lanes = self.inner.lanes.lock().unwrap();
-            let lane = lanes.get_mut(&run_id).expect("failed spawn leaves its lane registered");
-            lane.running = false;
-            let entry = lane.queue.pop_front().expect("spawn was requested for a ready entry");
-            debug_assert!(matches!(entry.state, LaneEntryState::Ready(_)));
-            entry.ticket
-          };
-          self.terminalize(ticket, Some(DispatchFailure::new(DispatchStage::Spawn, failure_code)));
+          self.settle_unpolled_lane_task(run_id, failure);
         }
       }
     }
@@ -378,7 +457,8 @@ impl Dispatch {
   }
 
   async fn drain_run(&self, run_id: RunId) {
-    let mut guard = LaneDrainGuard::new(self.clone(), run_id);
+    let cursor = self.inner.lanes.lock().unwrap().get_mut(&run_id).and_then(|lane| lane.cursor.take());
+    let mut guard = LaneDrainGuard::new(self.clone(), run_id, cursor);
     loop {
       let action = {
         let mut lanes = self.inner.lanes.lock().unwrap();
@@ -389,19 +469,27 @@ impl Dispatch {
         match lane.queue.front().map(|entry| &entry.state) {
           Some(LaneEntryState::Preparing) => {
             lane.running = false;
+            lane.cursor = guard.take_cursor();
             guard.disarm();
             return;
           }
           Some(LaneEntryState::Ready(_)) | Some(LaneEntryState::Failed(_)) => {
             let entry = lane.queue.pop_front().expect("front was present");
             match entry.state {
+              LaneEntryState::Ready(_) if lane.indeterminate => {
+                LaneAction::Terminal(entry.ticket, DispatchFailure::new(DispatchStage::AuthorityCommit, run_lane_indeterminate_code()))
+              }
               LaneEntryState::Ready(request) => LaneAction::Commit(entry.ticket, request),
               LaneEntryState::Failed(failure) => LaneAction::Terminal(entry.ticket, failure),
               LaneEntryState::Preparing => unreachable!("matched a terminal lane entry"),
             }
           }
           None => {
-            lanes.remove(&run_id);
+            lane.running = false;
+            lane.cursor = guard.take_cursor();
+            if self.inner.projector_routes.is_empty() && !lane.indeterminate {
+              lanes.remove(&run_id);
+            }
             guard.disarm();
             return;
           }
@@ -409,35 +497,156 @@ impl Dispatch {
       };
 
       match action {
-        LaneAction::Terminal(ticket, failure) => self.terminalize(ticket, Some(failure)),
+        LaneAction::Terminal(ticket, failure) => {
+          self.mark_projection_skipped(ticket);
+          self.terminalize(ticket, vec![failure]);
+        }
         LaneAction::Commit(ticket, request) => {
-          guard.activate(ticket);
+          let establishing_cursor = !self.inner.projector_routes.is_empty() && guard.cursor().is_none();
+          if establishing_cursor {
+            guard.activate(ticket, DispatchStage::AuthorityRead);
+            let route = self.inner.route.as_ref().expect("authority lane requires a route");
+            match AuthorityCursor::establish(route, run_id).await {
+              Ok(cursor) => guard.set_cursor(cursor),
+              Err(code) => {
+                guard.complete(ticket);
+                self.mark_projection_skipped(ticket);
+                self.terminalize(ticket, vec![DispatchFailure::new(DispatchStage::AuthorityRead, code)]);
+                continue;
+              }
+            }
+          }
+
+          if let Some(cursor) = guard.cursor_mut() {
+            cursor.register(ticket, request.clone());
+          }
+          if establishing_cursor {
+            guard.set_stage(ticket, DispatchStage::AuthorityCommit);
+          } else {
+            guard.activate(ticket, DispatchStage::AuthorityCommit);
+          }
           let route = self.inner.route.as_ref().expect("authority lane requires a route");
-          let failure = route
-            .store
-            .commit(request)
-            .await
-            .err()
-            .map(|error| DispatchFailure::new(DispatchStage::AuthorityCommit, commit_error_code(error)));
+          let commit = route.store.commit(request.clone()).await;
+          let resolved = match commit {
+            Ok(commit) if commit_matches_request(&commit, &request) => Some(commit),
+            Ok(_) => {
+              if let Some(cursor) = guard.cursor_mut() {
+                cursor.remove(request.idempotency_key());
+              }
+              guard.complete(ticket);
+              self.mark_projection_skipped(ticket);
+              self.terminalize(
+                ticket,
+                vec![DispatchFailure::new(
+                  DispatchStage::AuthorityCommit,
+                  commit_response_mismatch_code(),
+                )],
+              );
+              continue;
+            }
+            Err(CommitError::CommitUnknown(code)) => {
+              guard.quarantine_on_drop = true;
+              match route.store.lookup_commit(run_id, request.idempotency_key()).await {
+                Ok(Some(commit)) if commit_matches_request(&commit, &request) => {
+                  guard.quarantine_on_drop = false;
+                  Some(commit)
+                }
+                Ok(Some(_)) | Ok(None) | Err(_) => {
+                  if let Some(cursor) = guard.cursor_mut() {
+                    cursor.remove(request.idempotency_key());
+                  }
+                  guard.complete(ticket);
+                  guard.quarantine_on_drop = false;
+                  self.quarantine_run(run_id);
+                  self.mark_projection_skipped(ticket);
+                  self.terminalize(ticket, vec![DispatchFailure::new(DispatchStage::AuthorityCommit, code)]);
+                  continue;
+                }
+              }
+            }
+            Err(error) => {
+              if let Some(cursor) = guard.cursor_mut() {
+                cursor.remove(request.idempotency_key());
+              }
+              guard.complete(ticket);
+              self.mark_projection_skipped(ticket);
+              self.terminalize(
+                ticket,
+                vec![DispatchFailure::new(
+                  DispatchStage::AuthorityCommit,
+                  commit_error_code(error),
+                )],
+              );
+              continue;
+            }
+          };
+
+          let Some(commit) = resolved else {
+            unreachable!("successful and looked-up commits resolve to a value")
+          };
+          if self.inner.projector_routes.is_empty() {
+            guard.complete(ticket);
+            self.terminalize(ticket, Vec::new());
+            continue;
+          }
+
+          guard.set_stage(ticket, DispatchStage::AuthorityRead);
+          let projection = guard
+            .cursor_mut()
+            .expect("projected authority lane established its cursor")
+            .observe_through(route, commit.revision(), &self.inner.projector_routes)
+            .await;
           guard.complete(ticket);
-          self.terminalize(ticket, failure);
+          match projection {
+            Ok(projected) if projected.iter().any(|(projected_ticket, _)| *projected_ticket == ticket) => {
+              for (projected_ticket, items) in projected {
+                self.mark_projection_ready(projected_ticket, items);
+              }
+            }
+            Ok(_) => {
+              guard.take_cursor();
+              self.mark_projection_skipped(ticket);
+              self.terminalize(
+                ticket,
+                vec![DispatchFailure::new(
+                  DispatchStage::AuthorityRead,
+                  committed_cursor_mismatch_code(),
+                )],
+              );
+            }
+            Err(code) => {
+              // A failed read may leave the subscription behind its recorded
+              // revision. Re-establish from the next authority snapshot.
+              guard.take_cursor();
+              self.mark_projection_skipped(ticket);
+              self.terminalize(ticket, vec![DispatchFailure::new(DispatchStage::AuthorityRead, code)]);
+            }
+          }
         }
       }
     }
   }
 
-  fn terminalize(&self, ticket: u64, failure: Option<DispatchFailure>) {
-    let waker = {
+  fn terminalize(&self, ticket: u64, failures: Vec<DispatchFailure>) {
+    let (accepted, waker) = {
       let mut progress = self.inner.progress.lock().unwrap();
-      progress.terminalize(ticket, failure);
-      progress.take_ready_front_waker()
+      let accepted = progress.terminalize(ticket, failures.clone());
+      (accepted, progress.take_ready_front_waker())
     };
+    if accepted {
+      self.report_failures(&failures);
+    }
     if let Some(waker) = waker {
       waker.wake();
     }
   }
 
   fn fail_preparation(&self, run_id: RunId, ticket: u64) {
+    if self.inner.route.is_none() {
+      self.mark_projection_skipped(ticket);
+      self.terminalize(ticket, vec![DispatchFailure::new(DispatchStage::Encode, encode_code())]);
+      return;
+    }
     let changed = {
       let mut lanes = self.inner.lanes.lock().unwrap();
       let Some(lane) = lanes.get_mut(&run_id) else {
@@ -459,18 +668,188 @@ impl Dispatch {
     }
   }
 
-  fn recover_lane_task(&self, run_id: RunId, active_ticket: Option<u64>) {
+  fn recover_lane_task(&self, run_id: RunId, active_ticket: Option<(u64, DispatchStage)>, quarantine: bool) {
     if let Some(lane) = self.inner.lanes.lock().unwrap().get_mut(&run_id) {
       lane.running = false;
+      if quarantine {
+        lane.indeterminate = true;
+      }
     }
-    if let Some(ticket) = active_ticket {
-      self.terminalize(ticket, Some(DispatchFailure::new(DispatchStage::AuthorityCommit, task_unwind_code())));
+    if let Some((ticket, stage)) = active_ticket {
+      self.mark_projection_skipped(ticket);
+      self.terminalize(ticket, vec![DispatchFailure::new(stage, task_unwind_code())]);
     }
     self.wake_lane(run_id);
   }
+
+  fn finish_unpolled_lane_task(&self, run_id: RunId) {
+    self.settle_unpolled_lane_task(run_id, DispatchFailure::new(DispatchStage::AuthorityCommit, task_unwind_code()));
+    self.wake_lane(run_id);
+  }
+
+  fn settle_unpolled_lane_task(&self, run_id: RunId, failure: DispatchFailure) {
+    let ticket = {
+      let mut lanes = self.inner.lanes.lock().unwrap();
+      let lane = lanes.get_mut(&run_id).expect("an accepted unpolled task retains its run lane");
+      lane.running = false;
+      let entry = lane.queue.pop_front().expect("an accepted unpolled task retains its ready ticket");
+      debug_assert!(matches!(entry.state, LaneEntryState::Ready(_)));
+      entry.ticket
+    };
+    self.mark_projection_skipped(ticket);
+    self.terminalize(ticket, vec![failure]);
+  }
+
+  fn quarantine_run(&self, run_id: RunId) {
+    // NOTICE: quarantine is scoped to this dispatch's run lane. Replacing the
+    // dispatch does not prove ordering safety; callers must choose a new RunId.
+    if let Some(lane) = self.inner.lanes.lock().unwrap().get_mut(&run_id) {
+      lane.indeterminate = true;
+    }
+  }
+
+  fn mark_projection_ready(&self, ticket: u64, items: ProjectionBatch) {
+    if self.inner.projector_routes.is_empty() {
+      self.terminalize(ticket, Vec::new());
+      return;
+    }
+    self.inner.projection.lock().unwrap().ready(ticket, items);
+    self.wake_projection();
+  }
+
+  fn mark_projection_skipped(&self, ticket: u64) {
+    if self.inner.projector_routes.is_empty() {
+      return;
+    }
+    self.inner.projection.lock().unwrap().skip(ticket);
+    self.wake_projection();
+  }
+
+  fn wake_projection(&self) {
+    loop {
+      let action = {
+        let mut projection = self.inner.projection.lock().unwrap();
+        if projection.running {
+          return;
+        }
+        let Some(action) = projection.next_action() else {
+          return;
+        };
+        projection.running = true;
+        action
+      };
+
+      let recovery = action.recovery();
+      let admission = Arc::new(SpawnAdmission::new());
+      let task_admission = admission.clone();
+      let dispatch = self.clone();
+      let spawn_guard = ProjectionSpawnGuard::new(admission.clone(), self.clone(), recovery);
+      let task = Box::pin(async move {
+        let _spawn_guard = spawn_guard;
+        let admitted = async move {
+          if task_admission.start() {
+            dispatch.run_projection_action(action).await;
+          }
+        };
+        let _ = AssertUnwindSafe(admitted).catch_unwind().await;
+      });
+      let spawn = catch_unwind(AssertUnwindSafe(|| self.spawner().spawn(task)));
+      let failure = match spawn {
+        Ok(Ok(())) if admission.accepted_task_was_dropped() => DispatchFailure::new(recovery.stage(), task_unwind_code()),
+        Ok(Ok(())) => return,
+        Ok(Err(error)) if admission.failed_task_needs_recovery() => DispatchFailure::new(DispatchStage::Spawn, error.code),
+        Err(_) if admission.failed_task_needs_recovery() => DispatchFailure::new(DispatchStage::Spawn, spawn_panic_code()),
+        Ok(Err(_)) | Err(_) => return,
+      };
+      self.settle_projection_action(recovery, vec![failure]);
+    }
+  }
+
+  async fn run_projection_action(&self, action: ProjectionAction) {
+    let recovery = action.recovery();
+    let mut guard = ProjectionTaskGuard::new(self.clone(), recovery);
+    let mut failures = Vec::new();
+    match action {
+      ProjectionAction::Project { items, .. } => {
+        for item in items {
+          debug_assert_eq!(item.route_items.len(), self.inner.projector_routes.len());
+          for (route, route_item) in self.inner.projector_routes.iter().zip(item.route_items) {
+            if let Err(code) = project_one(route, route_item).await {
+              failures.push(DispatchFailure::new(DispatchStage::Project, code));
+            }
+          }
+        }
+      }
+      ProjectionAction::Flush { .. } => {
+        for route in &self.inner.projector_routes {
+          if let Err(code) = flush_one(route).await {
+            failures.push(DispatchFailure::new(DispatchStage::ProjectorFlush, code));
+          }
+        }
+      }
+    }
+    guard.complete(failures);
+  }
+
+  fn finish_projection_action(&self, recovery: ProjectionRecovery, failures: Vec<DispatchFailure>) {
+    self.settle_projection_action(recovery, failures);
+    self.wake_projection();
+  }
+
+  fn settle_projection_action(&self, recovery: ProjectionRecovery, failures: Vec<DispatchFailure>) {
+    {
+      let mut projection = self.inner.projection.lock().unwrap();
+      debug_assert!(projection.running, "one active projection action owns the lane");
+      projection.running = false;
+    }
+    match recovery {
+      ProjectionRecovery::Ticket(ticket) => self.terminalize(ticket, failures),
+      ProjectionRecovery::Flush(ordering_id) => self.complete_projector_flush(ordering_id, failures),
+    }
+  }
+
+  fn complete_projector_flush(&self, ordering_id: u64, failures: Vec<DispatchFailure>) {
+    let waker = {
+      let mut progress = self.inner.progress.lock().unwrap();
+      progress.complete_flush(ordering_id, failures.clone())
+    };
+    self.report_failures(&failures);
+    if let Some(waker) = waker {
+      waker.wake();
+    }
+  }
+
+  fn report_failures(&self, failures: &[DispatchFailure]) {
+    for failure in failures {
+      let _ = catch_unwind(AssertUnwindSafe(|| self.inner.reporter.report(failure)));
+    }
+  }
 }
 
-struct SpawnAdmission(AtomicU8);
+async fn project_one(route: &ProjectorRoute, item: TelemetryItem) -> Result<(), ErrorCode> {
+  let future = catch_unwind(AssertUnwindSafe(|| route.projector.project(item))).map_err(|_| projector_panic_code())?;
+  match AssertUnwindSafe(future).catch_unwind().await {
+    Ok(Ok(())) => Ok(()),
+    Ok(Err(error)) => Err(error.code().clone()),
+    Err(_) => Err(projector_panic_code()),
+  }
+}
+
+async fn flush_one(route: &ProjectorRoute) -> Result<(), ErrorCode> {
+  let future = catch_unwind(AssertUnwindSafe(|| route.projector.flush())).map_err(|_| projector_flush_panic_code())?;
+  match AssertUnwindSafe(future).catch_unwind().await {
+    Ok(Ok(())) => Ok(()),
+    Ok(Err(error)) => Err(error.code().clone()),
+    Err(_) => Err(projector_flush_panic_code()),
+  }
+}
+
+struct SpawnAdmission {
+  state: AtomicU8,
+  returned_ok: std::sync::atomic::AtomicBool,
+  dropped_before_start: std::sync::atomic::AtomicBool,
+  recovery_claimed: std::sync::atomic::AtomicBool,
+}
 
 impl SpawnAdmission {
   const ADMITTING: u8 = 0;
@@ -478,42 +857,415 @@ impl SpawnAdmission {
   const CANCELED: u8 = 2;
 
   fn new() -> Self {
-    Self(AtomicU8::new(Self::ADMITTING))
+    Self {
+      state: AtomicU8::new(Self::ADMITTING),
+      returned_ok: std::sync::atomic::AtomicBool::new(false),
+      dropped_before_start: std::sync::atomic::AtomicBool::new(false),
+      recovery_claimed: std::sync::atomic::AtomicBool::new(false),
+    }
   }
 
   fn start(&self) -> bool {
-    self.0.compare_exchange(Self::ADMITTING, Self::STARTED, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    self.state.compare_exchange(Self::ADMITTING, Self::STARTED, Ordering::AcqRel, Ordering::Acquire).is_ok()
   }
 
   fn cancel_before_start(&self) -> bool {
-    self.0.compare_exchange(Self::ADMITTING, Self::CANCELED, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    self.state.compare_exchange(Self::ADMITTING, Self::CANCELED, Ordering::AcqRel, Ordering::Acquire).is_ok()
   }
+
+  fn task_dropped_before_start(&self) -> bool {
+    if !self.cancel_before_start() {
+      return false;
+    }
+    self.dropped_before_start.store(true, Ordering::Release);
+    self.returned_ok.load(Ordering::Acquire) && self.claim_recovery()
+  }
+
+  fn accepted_task_was_dropped(&self) -> bool {
+    self.returned_ok.store(true, Ordering::Release);
+    self.dropped_before_start.load(Ordering::Acquire) && self.claim_recovery()
+  }
+
+  fn failed_task_needs_recovery(&self) -> bool {
+    if !self.dropped_before_start.load(Ordering::Acquire) && !self.cancel_before_start() {
+      return false;
+    }
+    self.claim_recovery()
+  }
+
+  fn claim_recovery(&self) -> bool {
+    !self.recovery_claimed.swap(true, Ordering::AcqRel)
+  }
+}
+
+struct LaneSpawnGuard {
+  admission: Arc<SpawnAdmission>,
+  dispatch: Dispatch,
+  run_id: RunId,
+}
+
+impl LaneSpawnGuard {
+  fn new(admission: Arc<SpawnAdmission>, dispatch: Dispatch, run_id: RunId) -> Self {
+    Self {
+      admission,
+      dispatch,
+      run_id,
+    }
+  }
+}
+
+impl Drop for LaneSpawnGuard {
+  fn drop(&mut self) {
+    if self.admission.task_dropped_before_start() {
+      self.dispatch.finish_unpolled_lane_task(self.run_id);
+    }
+  }
+}
+
+type ProjectionBatch = Vec<RoutedTelemetryItem>;
+
+struct RoutedTelemetryItem {
+  route_items: Vec<TelemetryItem>,
+}
+
+#[derive(Default)]
+struct ProjectionState {
+  running: bool,
+  consumed_through: u64,
+  entries: BTreeMap<u64, ProjectionEntry>,
+  flushes: VecDeque<ProjectionFlush>,
+}
+
+impl ProjectionState {
+  fn ready(&mut self, ticket: u64, items: ProjectionBatch) {
+    let Some(entry) = self.entries.get_mut(&ticket) else {
+      debug_assert!(false, "a prepared projection ticket remains queued");
+      return;
+    };
+    debug_assert!(matches!(entry, ProjectionEntry::Preparing));
+    *entry = ProjectionEntry::Ready(items);
+  }
+
+  fn skip(&mut self, ticket: u64) {
+    let Some(entry) = self.entries.get_mut(&ticket) else {
+      return;
+    };
+    if matches!(entry, ProjectionEntry::Preparing) {
+      *entry = ProjectionEntry::Skip;
+    }
+  }
+
+  fn next_action(&mut self) -> Option<ProjectionAction> {
+    loop {
+      if self.flushes.front().is_some_and(|flush| flush.barrier <= self.consumed_through) {
+        let flush = self.flushes.pop_front().expect("front flush was present");
+        return Some(ProjectionAction::Flush {
+          ordering_id: flush.ordering_id,
+        });
+      }
+
+      let next = self.consumed_through.checked_add(1)?;
+      match self.entries.get(&next) {
+        Some(ProjectionEntry::Preparing) | None => return None,
+        Some(ProjectionEntry::Skip) => {
+          self.entries.remove(&next);
+          self.consumed_through = next;
+        }
+        Some(ProjectionEntry::Ready(_)) => {
+          let Some(ProjectionEntry::Ready(items)) = self.entries.remove(&next) else {
+            unreachable!("projection entry was matched as ready")
+          };
+          self.consumed_through = next;
+          return Some(ProjectionAction::Project {
+            ticket: next,
+            items,
+          });
+        }
+      }
+    }
+  }
+}
+
+enum ProjectionEntry {
+  Preparing,
+  Ready(ProjectionBatch),
+  Skip,
+}
+
+struct ProjectionFlush {
+  ordering_id: u64,
+  barrier: u64,
+}
+
+enum ProjectionAction {
+  Project { ticket: u64, items: ProjectionBatch },
+  Flush { ordering_id: u64 },
+}
+
+impl ProjectionAction {
+  fn recovery(&self) -> ProjectionRecovery {
+    match self {
+      Self::Project { ticket, .. } => ProjectionRecovery::Ticket(*ticket),
+      Self::Flush { ordering_id } => ProjectionRecovery::Flush(*ordering_id),
+    }
+  }
+}
+
+#[derive(Clone, Copy)]
+enum ProjectionRecovery {
+  Ticket(u64),
+  Flush(u64),
+}
+
+struct ProjectionSpawnGuard {
+  admission: Arc<SpawnAdmission>,
+  dispatch: Dispatch,
+  recovery: ProjectionRecovery,
+}
+
+impl ProjectionSpawnGuard {
+  fn new(admission: Arc<SpawnAdmission>, dispatch: Dispatch, recovery: ProjectionRecovery) -> Self {
+    Self {
+      admission,
+      dispatch,
+      recovery,
+    }
+  }
+}
+
+impl Drop for ProjectionSpawnGuard {
+  fn drop(&mut self) {
+    if self.admission.task_dropped_before_start() {
+      self.dispatch.finish_projection_action(
+        self.recovery,
+        vec![DispatchFailure::new(
+          self.recovery.stage(),
+          task_unwind_code(),
+        )],
+      );
+    }
+  }
+}
+
+impl ProjectionRecovery {
+  fn stage(self) -> DispatchStage {
+    match self {
+      Self::Ticket(_) => DispatchStage::Project,
+      Self::Flush(_) => DispatchStage::ProjectorFlush,
+    }
+  }
+}
+
+struct ProjectionTaskGuard {
+  dispatch: Dispatch,
+  recovery: ProjectionRecovery,
+  armed: bool,
+}
+
+impl ProjectionTaskGuard {
+  fn new(dispatch: Dispatch, recovery: ProjectionRecovery) -> Self {
+    Self {
+      dispatch,
+      recovery,
+      armed: true,
+    }
+  }
+
+  fn complete(&mut self, failures: Vec<DispatchFailure>) {
+    self.armed = false;
+    self.dispatch.finish_projection_action(self.recovery, failures);
+  }
+}
+
+impl Drop for ProjectionTaskGuard {
+  fn drop(&mut self) {
+    if !self.armed {
+      return;
+    }
+    self.dispatch.finish_projection_action(
+      self.recovery,
+      vec![DispatchFailure::new(
+        self.recovery.stage(),
+        task_unwind_code(),
+      )],
+    );
+  }
+}
+
+struct AuthorityCursor {
+  authority_id: AuthorityId,
+  run_id: RunId,
+  through_revision: RunRevision,
+  subscription: RunSubscription,
+  owned: HashMap<IdempotencyKey, OwnedSubmission>,
+}
+
+struct OwnedSubmission {
+  ticket: u64,
+  request: RunCommitRequest,
+}
+
+impl AuthorityCursor {
+  async fn establish(route: &AuthorityRoute, run_id: RunId) -> Result<Self, ErrorCode> {
+    let snapshot = route.store.load_snapshot(run_id).await.map_err(read_error_code)?;
+    let through_revision = match snapshot {
+      Some(snapshot) => {
+        if snapshot.authority_id() != route.authority_id || snapshot.run_id() != run_id {
+          return Err(committed_cursor_mismatch_code());
+        }
+        snapshot.through_revision()
+      }
+      None => zero_revision(),
+    };
+    let subscription = route.store.subscribe(run_id, through_revision).await.map_err(read_error_code)?;
+    Ok(Self {
+      authority_id: route.authority_id,
+      run_id,
+      through_revision,
+      subscription,
+      owned: HashMap::new(),
+    })
+  }
+
+  fn register(&mut self, ticket: u64, request: RunCommitRequest) {
+    let previous = self.owned.insert(request.idempotency_key(), OwnedSubmission { ticket, request });
+    debug_assert!(previous.is_none(), "dispatch idempotency keys are unique within a run cursor");
+  }
+
+  fn remove(&mut self, key: IdempotencyKey) {
+    self.owned.remove(&key);
+  }
+
+  async fn observe_through(
+    &mut self,
+    route: &AuthorityRoute,
+    target: RunRevision,
+    projector_routes: &[ProjectorRoute],
+  ) -> Result<Vec<(u64, ProjectionBatch)>, ErrorCode> {
+    let mut projected = Vec::new();
+    let mut resume = false;
+    while self.through_revision < target {
+      match poll_subscription_once(&mut self.subscription).await {
+        Poll::Ready(Some(Ok(commit))) => self.observe_commit(commit, projector_routes, &mut projected)?,
+        Poll::Ready(Some(Err(SubscriptionError::Gap { .. }))) | Poll::Pending | Poll::Ready(None) => {
+          self.recover_through(route, target, projector_routes, &mut projected).await?;
+          resume = true;
+        }
+        Poll::Ready(Some(Err(SubscriptionError::Store(error)))) => return Err(read_error_code(error)),
+      }
+    }
+    if resume {
+      self.subscription = route.store.subscribe(self.run_id, self.through_revision).await.map_err(read_error_code)?;
+    }
+    Ok(projected)
+  }
+
+  async fn recover_through(
+    &mut self,
+    route: &AuthorityRoute,
+    target: RunRevision,
+    projector_routes: &[ProjectorRoute],
+    projected: &mut Vec<(u64, ProjectionBatch)>,
+  ) -> Result<(), ErrorCode> {
+    let limit = PageLimit::new(1024).expect("the cursor recovery page limit is valid");
+    while self.through_revision < target {
+      let page = match route.store.commits_after(self.run_id, self.through_revision, limit).await {
+        Ok(page) => page,
+        Err(ReadError::HistoryGap {
+          earliest_available, ..
+        }) if earliest_available <= target => {
+          self.through_revision = RunRevision::new(earliest_available.get() - 1).expect("a retained revision has a valid predecessor");
+          continue;
+        }
+        Err(error) => return Err(read_error_code(error)),
+      };
+      if page.commits().is_empty() {
+        return Err(committed_cursor_mismatch_code());
+      }
+      for commit in page.commits().iter().cloned() {
+        self.observe_commit(commit, projector_routes, projected)?;
+      }
+      if self.through_revision < target && !page.has_more() {
+        return Err(committed_cursor_mismatch_code());
+      }
+    }
+    Ok(())
+  }
+
+  fn observe_commit(
+    &mut self,
+    commit: RunCommit,
+    projector_routes: &[ProjectorRoute],
+    projected: &mut Vec<(u64, ProjectionBatch)>,
+  ) -> Result<(), ErrorCode> {
+    let expected_revision = self.through_revision.get().checked_add(1).ok_or_else(committed_cursor_mismatch_code)?;
+    if commit.authority_id() != self.authority_id || commit.run_id() != self.run_id || commit.revision().get() != expected_revision {
+      return Err(committed_cursor_mismatch_code());
+    }
+    self.through_revision = commit.revision();
+    if let Some(owned) = self.owned.remove(&commit.idempotency_key()) {
+      if !commit_matches_request(&commit, &owned.request) {
+        return Err(commit_response_mismatch_code());
+      }
+      projected.push((owned.ticket, projection_for_commit(&commit, projector_routes)));
+    }
+    Ok(())
+  }
+}
+
+async fn poll_subscription_once(subscription: &mut RunSubscription) -> Poll<Option<Result<RunCommit, SubscriptionError>>> {
+  futures_util::future::poll_fn(|context| Poll::Ready(subscription.as_mut().poll_next(context))).await
 }
 
 struct LaneDrainGuard {
   dispatch: Dispatch,
   run_id: RunId,
-  active_ticket: Option<u64>,
+  active_ticket: Option<(u64, DispatchStage)>,
+  cursor: Option<AuthorityCursor>,
+  quarantine_on_drop: bool,
   armed: bool,
 }
 
 impl LaneDrainGuard {
-  fn new(dispatch: Dispatch, run_id: RunId) -> Self {
+  fn new(dispatch: Dispatch, run_id: RunId, cursor: Option<AuthorityCursor>) -> Self {
     Self {
       dispatch,
       run_id,
       active_ticket: None,
+      cursor,
+      quarantine_on_drop: false,
       armed: true,
     }
   }
 
-  fn activate(&mut self, ticket: u64) {
-    debug_assert!(self.active_ticket.replace(ticket).is_none(), "lane task owns at most one active ticket");
+  fn activate(&mut self, ticket: u64, stage: DispatchStage) {
+    debug_assert!(self.active_ticket.replace((ticket, stage)).is_none(), "lane task owns at most one active ticket");
+  }
+
+  fn set_stage(&mut self, ticket: u64, stage: DispatchStage) {
+    debug_assert_eq!(self.active_ticket.map(|active| active.0), Some(ticket));
+    self.active_ticket = Some((ticket, stage));
   }
 
   fn complete(&mut self, ticket: u64) {
-    debug_assert_eq!(self.active_ticket, Some(ticket), "lane task completes its active ticket");
+    debug_assert_eq!(self.active_ticket.map(|active| active.0), Some(ticket), "lane task completes its active ticket");
     self.active_ticket = None;
+  }
+
+  fn cursor(&self) -> Option<&AuthorityCursor> {
+    self.cursor.as_ref()
+  }
+
+  fn cursor_mut(&mut self) -> Option<&mut AuthorityCursor> {
+    self.cursor.as_mut()
+  }
+
+  fn set_cursor(&mut self, cursor: AuthorityCursor) {
+    debug_assert!(self.cursor.replace(cursor).is_none());
+  }
+
+  fn take_cursor(&mut self) -> Option<AuthorityCursor> {
+    self.cursor.take()
   }
 
   fn disarm(&mut self) {
@@ -524,7 +1276,7 @@ impl LaneDrainGuard {
 impl Drop for LaneDrainGuard {
   fn drop(&mut self) {
     if self.armed {
-      self.dispatch.recover_lane_task(self.run_id, self.active_ticket.take());
+      self.dispatch.recover_lane_task(self.run_id, self.active_ticket.take(), self.quarantine_on_drop);
     }
   }
 }
@@ -533,12 +1285,22 @@ struct PreparationGuard {
   dispatch: Dispatch,
   run_id: RunId,
   ticket: u64,
+  rejected: bool,
   armed: bool,
 }
 
 impl PreparationGuard {
+  fn is_rejected(&self) -> bool {
+    self.rejected
+  }
+
   fn complete(mut self, mutation: Result<RunMutation, ErrorCode>) {
     self.dispatch.complete_preparation(self.ticket, self.run_id, mutation);
+    self.armed = false;
+  }
+
+  fn finish_rejected(mut self) {
+    debug_assert!(self.rejected);
     self.armed = false;
     self.dispatch.wake_lane(self.run_id);
   }
@@ -547,7 +1309,11 @@ impl PreparationGuard {
 impl Drop for PreparationGuard {
   fn drop(&mut self) {
     if self.armed {
-      self.dispatch.fail_preparation(self.run_id, self.ticket);
+      if self.rejected {
+        self.dispatch.wake_lane(self.run_id);
+      } else {
+        self.dispatch.fail_preparation(self.run_id, self.ticket);
+      }
     }
   }
 }
@@ -591,7 +1357,10 @@ impl Drop for FlushFuture {
 struct DispatchInner {
   route: Option<AuthorityRoute>,
   spawner: Option<Arc<dyn TaskSpawner>>,
+  projector_routes: Vec<ProjectorRoute>,
+  reporter: Arc<dyn DispatchErrorReporter>,
   lanes: Mutex<HashMap<RunId, RunLane>>,
+  projection: Mutex<ProjectionState>,
   progress: Mutex<Progress>,
 }
 
@@ -600,10 +1369,23 @@ struct AuthorityRoute {
   store: Arc<dyn RunStore>,
 }
 
+struct ProjectorRoute {
+  projector: Arc<dyn TelemetryProjector>,
+  policy: TelemetryRoutePolicy,
+}
+
+struct DiscardReporter;
+
+impl DispatchErrorReporter for DiscardReporter {
+  fn report(&self, _failure: &DispatchFailure) {}
+}
+
 #[derive(Default)]
 struct RunLane {
   running: bool,
+  indeterminate: bool,
   queue: VecDeque<LaneEntry>,
+  cursor: Option<AuthorityCursor>,
 }
 
 struct LaneEntry {
@@ -633,49 +1415,55 @@ struct Progress {
   next_flush_id: u64,
   terminal_prefix: u64,
   success_ranges: BTreeMap<u64, u64>,
-  out_of_order_failures: BTreeMap<u64, DispatchFailure>,
-  failures: BTreeMap<u64, DispatchFailure>,
+  out_of_order_failures: BTreeMap<u64, Vec<DispatchFailure>>,
+  failures: BTreeMap<u64, Vec<DispatchFailure>>,
   reported_through: u64,
   flushes: VecDeque<FlushRegistration>,
+  carried_flush_failures: VecDeque<CarriedFlushFailure>,
 }
 
 impl Progress {
-  fn register_flush(&mut self) -> u64 {
+  fn register_flush(&mut self, operation_complete: bool) -> (u64, u64) {
     self.next_flush_id = self.next_flush_id.checked_add(1).expect("flush ordering ID space exhausted");
     let ordering_id = self.next_flush_id;
+    let barrier = self.next_ticket;
     self.flushes.push_back(FlushRegistration {
       ordering_id,
-      barrier: self.next_ticket,
+      barrier,
+      operation_complete,
+      canceled: false,
+      failures: Vec::new(),
       waker: None,
     });
-    ordering_id
+    (ordering_id, barrier)
   }
 
-  fn terminalize(&mut self, ticket: u64, failure: Option<DispatchFailure>) {
+  fn terminalize(&mut self, ticket: u64, failures: Vec<DispatchFailure>) -> bool {
     if ticket <= self.terminal_prefix
       || self.out_of_order_failures.contains_key(&ticket)
       || self.success_ranges.range(..=ticket).next_back().is_some_and(|(_, end)| *end >= ticket)
     {
       debug_assert!(false, "a dispatch ticket terminalized more than once");
-      return;
+      return false;
     }
 
-    if let Some(failure) = failure {
-      self.out_of_order_failures.insert(ticket, failure);
-    } else {
+    if failures.is_empty() {
       self.insert_success(ticket);
+    } else {
+      self.out_of_order_failures.insert(ticket, failures);
     }
 
     while let Some(next) = self.terminal_prefix.checked_add(1) {
-      if let Some(failure) = self.out_of_order_failures.remove(&next) {
+      if let Some(failures) = self.out_of_order_failures.remove(&next) {
         self.terminal_prefix = next;
-        self.failures.insert(next, failure);
+        self.failures.insert(next, failures);
       } else if let Some(end) = self.success_ranges.remove(&next) {
         self.terminal_prefix = end;
       } else {
         break;
       }
     }
+    true
   }
 
   fn insert_success(&mut self, ticket: u64) {
@@ -698,17 +1486,23 @@ impl Progress {
 
   fn poll_flush(&mut self, ordering_id: u64, context: &mut TaskContext<'_>) -> (Poll<Result<(), FlushError>>, Option<Waker>) {
     let position = self.flushes.iter().position(|flush| flush.ordering_id == ordering_id).expect("live flush future remains registered");
-    if position != 0 || self.flushes[0].barrier > self.terminal_prefix {
+    if position != 0 || !self.flushes[0].operation_complete || self.flushes[0].barrier > self.terminal_prefix {
       self.flushes[position].waker = Some(context.waker().clone());
       return (Poll::Pending, None);
     }
 
     let flush = self.flushes.pop_front().expect("front was present");
-    let failures = if flush.barrier > self.reported_through {
-      self.failures.range((self.reported_through + 1)..=flush.barrier).map(|(_, failure)| failure.clone()).collect::<Vec<_>>()
-    } else {
-      Vec::new()
-    };
+    debug_assert!(!flush.canceled, "a canceled completed front flush is drained eagerly");
+    let mut failures = Vec::new();
+    let mut cursor = self.reported_through;
+    while self.carried_flush_failures.front().is_some_and(|carried| carried.barrier <= flush.barrier) {
+      let carried = self.carried_flush_failures.pop_front().expect("front carried failure was present");
+      self.extend_ticket_failures(cursor, carried.barrier, &mut failures);
+      cursor = cursor.max(carried.barrier);
+      failures.extend(carried.failures);
+    }
+    self.extend_ticket_failures(cursor, flush.barrier, &mut failures);
+    failures.extend(flush.failures);
     self.failures.retain(|ticket, _| *ticket > flush.barrier);
     self.reported_through = flush.barrier;
     let waker = self.take_front_waker();
@@ -716,17 +1510,44 @@ impl Progress {
   }
 
   fn cancel_flush(&mut self, ordering_id: u64) -> Option<Waker> {
-    let position = self.flushes.iter().position(|flush| flush.ordering_id == ordering_id)?;
-    self.flushes.remove(position);
-    if position == 0 {
-      self.take_front_waker()
-    } else {
-      None
+    let flush = self.flushes.iter_mut().find(|flush| flush.ordering_id == ordering_id)?;
+    flush.canceled = true;
+    flush.waker = None;
+    self.drain_canceled_front().or_else(|| self.take_ready_front_waker())
+  }
+
+  fn complete_flush(&mut self, ordering_id: u64, failures: Vec<DispatchFailure>) -> Option<Waker> {
+    let flush = self.flushes.iter_mut().find(|flush| flush.ordering_id == ordering_id).expect("projector flush remains registered");
+    debug_assert!(!flush.operation_complete);
+    flush.operation_complete = true;
+    flush.failures = failures;
+    self.drain_canceled_front().or_else(|| self.take_ready_front_waker())
+  }
+
+  fn drain_canceled_front(&mut self) -> Option<Waker> {
+    let mut drained = false;
+    while self.flushes.front().is_some_and(|flush| flush.canceled && flush.operation_complete) {
+      let flush = self.flushes.pop_front().expect("front canceled flush was present");
+      if !flush.failures.is_empty() {
+        self.carried_flush_failures.push_back(CarriedFlushFailure {
+          barrier: flush.barrier,
+          failures: flush.failures,
+        });
+      }
+      drained = true;
     }
+    drained.then(|| self.take_front_waker()).flatten()
+  }
+
+  fn extend_ticket_failures(&self, after: u64, through: u64, output: &mut Vec<DispatchFailure>) {
+    if through <= after {
+      return;
+    }
+    output.extend(self.failures.range((after + 1)..=through).flat_map(|(_, failures)| failures.iter().cloned()));
   }
 
   fn take_ready_front_waker(&mut self) -> Option<Waker> {
-    if self.flushes.front().is_some_and(|flush| flush.barrier <= self.terminal_prefix) {
+    if self.flushes.front().is_some_and(|flush| !flush.canceled && flush.operation_complete && flush.barrier <= self.terminal_prefix) {
       self.take_front_waker()
     } else {
       None
@@ -741,7 +1562,137 @@ impl Progress {
 struct FlushRegistration {
   ordering_id: u64,
   barrier: u64,
+  operation_complete: bool,
+  canceled: bool,
+  failures: Vec<DispatchFailure>,
   waker: Option<Waker>,
+}
+
+struct CarriedFlushFailure {
+  barrier: u64,
+  failures: Vec<DispatchFailure>,
+}
+
+fn projection_for_mutation(
+  authority_id: Option<AuthorityId>,
+  run_id: RunId,
+  revision: Option<RunRevision>,
+  mutation: &RunMutation,
+  routes: &[ProjectorRoute],
+) -> ProjectionBatch {
+  let item = match mutation {
+    RunMutation::StartSpan(started) => routed_span_start(authority_id, run_id, revision, started, routes),
+    RunMutation::EndSpan(ended) => routed_span_end(authority_id, run_id, revision, ended, routes),
+    RunMutation::EmitEvent(event) => routed_event(authority_id, run_id, revision, event, routes),
+  };
+  vec![item]
+}
+
+fn projection_for_commit(commit: &RunCommit, routes: &[ProjectorRoute]) -> ProjectionBatch {
+  commit
+    .facts()
+    .iter()
+    .filter_map(|fact| match fact {
+      RunFact::SpanStarted(started) => {
+        Some(routed_span_start(Some(commit.authority_id()), commit.run_id(), Some(commit.revision()), started, routes))
+      }
+      RunFact::SpanEnded(ended) => {
+        Some(routed_span_end(Some(commit.authority_id()), commit.run_id(), Some(commit.revision()), ended, routes))
+      }
+      RunFact::EventOccurred(event) => {
+        Some(routed_event(Some(commit.authority_id()), commit.run_id(), Some(commit.revision()), event, routes))
+      }
+      // TODO(auv-run-contract-v1-task-9): emit artifact telemetry only after
+      // detached artifact admission owns and registers publication keys.
+      RunFact::ArtifactPublished(_) => None,
+    })
+    .collect()
+}
+
+fn routed_span_start(
+  authority_id: Option<AuthorityId>,
+  run_id: RunId,
+  revision: Option<RunRevision>,
+  started: &SpanStarted,
+  routes: &[ProjectorRoute],
+) -> RoutedTelemetryItem {
+  RoutedTelemetryItem {
+    route_items: routes
+      .iter()
+      .map(|route| TelemetryItem::SpanStart {
+        authority_id,
+        run_id,
+        span_id: started.span_id(),
+        parent_span_id: started.parent_span_id(),
+        remote_span_id: started.remote_link().map(SpanLink::span_id),
+        name: started.name().clone(),
+        started_at: started.started_at(),
+        start_revision: revision,
+        attributes: route.policy.span_attributes(started.attributes()),
+      })
+      .collect(),
+  }
+}
+
+fn routed_span_end(
+  authority_id: Option<AuthorityId>,
+  run_id: RunId,
+  revision: Option<RunRevision>,
+  ended: &SpanEnded,
+  routes: &[ProjectorRoute],
+) -> RoutedTelemetryItem {
+  RoutedTelemetryItem {
+    route_items: routes
+      .iter()
+      .map(|_| TelemetryItem::SpanEnd {
+        authority_id,
+        run_id,
+        span_id: ended.span_id(),
+        ended_at: ended.ended_at(),
+        end_revision: revision,
+      })
+      .collect(),
+  }
+}
+
+fn routed_event(
+  authority_id: Option<AuthorityId>,
+  run_id: RunId,
+  revision: Option<RunRevision>,
+  event: &EventOccurred,
+  routes: &[ProjectorRoute],
+) -> RoutedTelemetryItem {
+  RoutedTelemetryItem {
+    route_items: routes
+      .iter()
+      .map(|_| TelemetryItem::Event {
+        authority_id,
+        run_id,
+        span_id: event.span_id(),
+        event_id: event.event_id(),
+        schema: event.schema().clone(),
+        occurred_at: event.occurred_at(),
+        revision,
+      })
+      .collect(),
+  }
+}
+
+fn commit_matches_request(commit: &RunCommit, request: &RunCommitRequest) -> bool {
+  commit.authority_id() == request.authority_id()
+    && commit.run_id() == request.run_id()
+    && commit.idempotency_key() == request.idempotency_key()
+    && commit.facts().len() == request.mutations().len()
+    && commit.facts().iter().zip(request.mutations()).all(|(fact, mutation)| match (fact, mutation) {
+      (RunFact::SpanStarted(fact), RunMutation::StartSpan(mutation)) => fact == mutation,
+      (RunFact::SpanEnded(fact), RunMutation::EndSpan(mutation)) => fact == mutation,
+      (RunFact::EventOccurred(fact), RunMutation::EmitEvent(mutation)) => fact == mutation,
+      (RunFact::ArtifactPublished(_), _) | (_, _) => false,
+    })
+}
+
+fn zero_revision() -> RunRevision {
+  RunRevision::new(0).expect("revision zero is the pre-history cursor")
 }
 
 pub(crate) fn timestamp_now() -> Result<Timestamp, ErrorCode> {
@@ -781,14 +1732,40 @@ fn task_unwind_code() -> ErrorCode {
   ErrorCode::parse("auv.dispatch.task_unwind").expect("static dispatch error code is valid")
 }
 
+fn projector_panic_code() -> ErrorCode {
+  ErrorCode::parse("auv.dispatch.projector_panic").expect("static dispatch error code is valid")
+}
+
+fn projector_flush_panic_code() -> ErrorCode {
+  ErrorCode::parse("auv.dispatch.projector_flush_panic").expect("static dispatch error code is valid")
+}
+
+fn run_lane_indeterminate_code() -> ErrorCode {
+  ErrorCode::parse("auv.dispatch.run_lane_indeterminate").expect("static dispatch error code is valid")
+}
+
+fn commit_response_mismatch_code() -> ErrorCode {
+  ErrorCode::parse("auv.dispatch.commit_response_mismatch").expect("static dispatch error code is valid")
+}
+
+fn committed_cursor_mismatch_code() -> ErrorCode {
+  ErrorCode::parse("auv.dispatch.committed_cursor_mismatch").expect("static dispatch error code is valid")
+}
+
+fn read_error_code(error: ReadError) -> ErrorCode {
+  match error {
+    ReadError::InvalidReference(code) | ReadError::Unavailable(code) | ReadError::Integrity(code) => code,
+    ReadError::NotFound => ErrorCode::parse("auv.dispatch.authority_not_found").expect("static dispatch error code is valid"),
+    ReadError::Forbidden => ErrorCode::parse("auv.dispatch.authority_forbidden").expect("static dispatch error code is valid"),
+    ReadError::HistoryGap { .. } => ErrorCode::parse("auv.dispatch.authority_history_gap").expect("static dispatch error code is valid"),
+    ReadError::CursorAhead { .. } => ErrorCode::parse("auv.dispatch.authority_cursor_ahead").expect("static dispatch error code is valid"),
+  }
+}
+
 fn commit_error_code(error: CommitError) -> ErrorCode {
   match error {
     CommitError::Rejected(code) | CommitError::Unavailable(code) => code,
-    CommitError::CommitUnknown(code) => {
-      // TODO(auv-run-contract-v1-task-8): resolve unknown authority outcomes
-      // through lookup/quarantine before projector routing is enabled.
-      code
-    }
+    CommitError::CommitUnknown(code) => code,
     CommitError::AuthorityMismatch { .. } => {
       ErrorCode::parse("auv.dispatch.authority_mismatch").expect("static dispatch error code is valid")
     }
@@ -853,10 +1830,6 @@ pub mod dispatcher {
   }
 }
 
-// TODO(auv-run-contract-v1-task-8): add non-blocking DispatchErrorReporter
-// callbacks without exposing retry policy through the producer API.
-// TODO(auv-run-contract-v1-task-8): add projector routes and authority reads to
-// the existing ticket barrier; a route-less dispatch remains disabled in Task 6.
 // TODO(auv-run-contract-v1-task-9): add detached artifact admission and writes
 // without moving byte transfer into the per-run authority fact lane.
 
@@ -893,19 +1866,25 @@ mod tests {
   fn out_of_order_successes_coalesce_around_preserved_failures() {
     let mut progress = Progress::default();
     for ticket in 2..=5_000 {
-      progress.terminalize(ticket, None);
+      progress.terminalize(ticket, Vec::new());
     }
-    progress.terminalize(5_001, Some(DispatchFailure::new(DispatchStage::Spawn, spawn_panic_code())));
+    progress.terminalize(
+      5_001,
+      vec![DispatchFailure::new(
+        DispatchStage::Spawn,
+        spawn_panic_code(),
+      )],
+    );
     for ticket in 5_002..=10_000 {
-      progress.terminalize(ticket, None);
+      progress.terminalize(ticket, Vec::new());
     }
 
     assert_eq!(progress.success_ranges.len(), 2);
     assert_eq!(progress.out_of_order_failures.len(), 1);
-    progress.terminalize(1, None);
+    progress.terminalize(1, Vec::new());
     assert_eq!(progress.terminal_prefix, 10_000);
     assert!(progress.success_ranges.is_empty());
     assert!(progress.out_of_order_failures.is_empty());
-    assert_eq!(progress.failures.get(&5_001).unwrap().stage(), DispatchStage::Spawn);
+    assert_eq!(progress.failures.get(&5_001).unwrap()[0].stage(), DispatchStage::Spawn);
   }
 }
