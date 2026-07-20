@@ -13,7 +13,7 @@ use crate::{
 const MAX_COMMIT_ITEMS: usize = 256;
 
 /// A propagated span identity that correlates a new local root with remote work.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpanLink {
   span_id: SpanId,
@@ -31,24 +31,8 @@ impl SpanLink {
   }
 }
 
-impl<'de> Deserialize<'de> for SpanLink {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Wire {
-      span_id: SpanId,
-    }
-
-    let wire = Wire::deserialize(deserializer)?;
-    Ok(Self::new(wire.span_id))
-  }
-}
-
 /// The immutable start fact for one named span.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpanStarted {
   span_id: SpanId,
@@ -110,29 +94,8 @@ impl SpanStarted {
   }
 }
 
-impl<'de> Deserialize<'de> for SpanStarted {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Wire {
-      span_id: SpanId,
-      parent_span_id: Option<SpanId>,
-      remote_link: Option<SpanLink>,
-      name: SpanName,
-      started_at: Timestamp,
-      attributes: Attributes,
-    }
-
-    let wire = Wire::deserialize(deserializer)?;
-    Ok(Self::new(wire.span_id, wire.parent_span_id, wire.remote_link, wire.name, wire.started_at, wire.attributes))
-  }
-}
-
 /// The timestamp-only finish fact for one span.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpanEnded {
   span_id: SpanId,
@@ -156,25 +119,8 @@ impl SpanEnded {
   }
 }
 
-impl<'de> Deserialize<'de> for SpanEnded {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Wire {
-      span_id: SpanId,
-      ended_at: Timestamp,
-    }
-
-    let wire = Wire::deserialize(deserializer)?;
-    Ok(Self::new(wire.span_id, wire.ended_at))
-  }
-}
-
 /// One immutable typed point event in a run.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventOccurred {
   event_id: EventId,
@@ -222,28 +168,8 @@ impl EventOccurred {
   }
 }
 
-impl<'de> Deserialize<'de> for EventOccurred {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Wire {
-      event_id: EventId,
-      span_id: Option<SpanId>,
-      occurred_at: Timestamp,
-      schema: EventSchema,
-      payload: JsonPayload,
-    }
-
-    let wire = Wire::deserialize(deserializer)?;
-    Ok(Self::new(wire.event_id, wire.span_id, wire.occurred_at, wire.schema, wire.payload))
-  }
-}
-
 /// Durable metadata for bytes published at one canonical artifact URI.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactMetadata {
   uri: ArtifactUri,
@@ -305,29 +231,8 @@ impl ArtifactMetadata {
   }
 }
 
-impl<'de> Deserialize<'de> for ArtifactMetadata {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Wire {
-      uri: ArtifactUri,
-      purpose: ArtifactPurpose,
-      content_type: ContentType,
-      byte_length: ByteLength,
-      sha256: Sha256Digest,
-      attributes: Attributes,
-    }
-
-    let wire = Wire::deserialize(deserializer)?;
-    Ok(Self::new(wire.uri, wire.purpose, wire.content_type, wire.byte_length, wire.sha256, wire.attributes))
-  }
-}
-
 /// The committed publication fact for one artifact.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactPublished {
   span_id: Option<SpanId>,
@@ -348,23 +253,6 @@ impl ArtifactPublished {
   /// Returns the committed artifact metadata.
   pub fn metadata(&self) -> &ArtifactMetadata {
     &self.metadata
-  }
-}
-
-impl<'de> Deserialize<'de> for ArtifactPublished {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Wire {
-      span_id: Option<SpanId>,
-      metadata: ArtifactMetadata,
-    }
-
-    let wire = Wire::deserialize(deserializer)?;
-    Ok(Self::new(wire.span_id, wire.metadata))
   }
 }
 
@@ -560,15 +448,14 @@ pub struct SpanSnapshot {
 }
 
 impl SpanSnapshot {
-  /// Creates a standalone span snapshot while enforcing span and finish invariants.
-  pub fn new(started: SpanStarted, ended: Option<SpanEnded>) -> Result<Self, ReduceError> {
+  fn new(started: SpanStarted, ended: Option<SpanEnded>) -> Result<Self, SnapshotValidationError> {
     validate_span_links(&started)?;
     if let Some(ended) = &ended {
       if ended.span_id() != started.span_id() {
-        return Err(ReduceError::MismatchedSpanEnd);
+        return Err(SnapshotValidationError::MismatchedSpanEnd);
       }
       if ended.ended_at() < started.started_at() {
-        return Err(ReduceError::EndBeforeStart);
+        return Err(ReduceError::EndBeforeStart.into());
       }
     }
     Ok(Self { started, ended })
@@ -717,6 +604,20 @@ where
   deserializer.deserialize_map(UniqueMapVisitor(PhantomData))
 }
 
+#[derive(Debug, thiserror::Error)]
+enum SnapshotValidationError {
+  #[error(transparent)]
+  History(#[from] ReduceError),
+  #[error("snapshot revision is infeasible for its materialized fact count")]
+  InfeasibleRevision,
+  #[error("span snapshot contains a mismatched end")]
+  MismatchedSpanEnd,
+  #[error("snapshot span key does not match its span identity")]
+  SpanKeyMismatch,
+  #[error("snapshot artifact key does not match its artifact URI")]
+  ArtifactKeyMismatch,
+}
+
 /// Reports a canonical history sequence that cannot produce a valid snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ReduceError {
@@ -726,9 +627,6 @@ pub enum ReduceError {
   /// Revisions do not start at one and increase without gaps.
   #[error("run revisions are not contiguous")]
   NonContiguousRevision,
-  /// The snapshot revision cannot account for its materialized fact count.
-  #[error("snapshot revision is infeasible for its materialized fact count")]
-  InfeasibleSnapshotRevision,
   /// Commits came from more than one authority.
   #[error("run history contains mixed authorities")]
   MixedAuthority,
@@ -744,9 +642,6 @@ pub enum ReduceError {
   /// A finish fact refers to a span that did not start.
   #[error("span end refers to an unknown span")]
   UnknownSpanEnd,
-  /// A finish fact and start fact identify different spans.
-  #[error("span snapshot contains a mismatched end")]
-  MismatchedSpanEnd,
   /// A local parent is absent from the run.
   #[error("span refers to a missing local parent")]
   MissingLocalParent,
@@ -792,12 +687,36 @@ pub enum ReduceError {
   /// An artifact URI embeds a different run identity.
   #[error("artifact URI belongs to a different run")]
   ArtifactRunMismatch,
-  /// A snapshot map key does not match its span value.
-  #[error("snapshot span key does not match its span identity")]
-  SnapshotSpanKeyMismatch,
-  /// A snapshot map key does not match its artifact value.
-  #[error("snapshot artifact key does not match its artifact URI")]
-  SnapshotArtifactKeyMismatch,
+}
+
+#[derive(Default)]
+struct ReducerIndexes {
+  max_event_at_by_span: BTreeMap<SpanId, Timestamp>,
+  max_child_start_at_by_parent: BTreeMap<SpanId, Timestamp>,
+  event_ids: BTreeSet<EventId>,
+}
+
+impl ReducerIndexes {
+  fn claim_event_id(&mut self, event_id: EventId) -> Result<(), ReduceError> {
+    if !self.event_ids.insert(event_id) {
+      return Err(ReduceError::DuplicateEventId);
+    }
+    Ok(())
+  }
+
+  fn record_event_time(&mut self, event: &EventOccurred) {
+    if let Some(span_id) = event.span_id() {
+      record_max_timestamp(&mut self.max_event_at_by_span, span_id, event.occurred_at());
+    }
+  }
+
+  fn record_child_start(&mut self, parent_id: SpanId, started_at: Timestamp) {
+    record_max_timestamp(&mut self.max_child_start_at_by_parent, parent_id, started_at);
+  }
+}
+
+fn record_max_timestamp(index: &mut BTreeMap<SpanId, Timestamp>, span_id: SpanId, timestamp: Timestamp) {
+  index.entry(span_id).and_modify(|current| *current = (*current).max(timestamp)).or_insert(timestamp);
 }
 
 /// Replays a complete canonical commit sequence into one deterministic snapshot.
@@ -815,7 +734,7 @@ pub fn reduce_commits(commits: &[RunCommit]) -> Result<RunSnapshot, ReduceError>
     events: Vec::new(),
     artifacts: BTreeMap::new(),
   };
-  let mut event_ids = BTreeSet::new();
+  let mut indexes = ReducerIndexes::default();
 
   for (index, commit) in commits.iter().enumerate() {
     let expected_revision = u64::try_from(index).ok().and_then(|value| value.checked_add(1));
@@ -829,26 +748,31 @@ pub fn reduce_commits(commits: &[RunCommit]) -> Result<RunSnapshot, ReduceError>
       return Err(ReduceError::MixedRun);
     }
 
-    apply_facts(&mut snapshot, &mut event_ids, commit.facts())?;
+    apply_facts(&mut snapshot, &mut indexes, commit.facts())?;
     snapshot.through_revision = commit.revision();
   }
 
   Ok(snapshot)
 }
 
-fn apply_facts(snapshot: &mut RunSnapshot, event_ids: &mut BTreeSet<EventId>, facts: &[RunFact]) -> Result<(), ReduceError> {
+fn apply_facts(snapshot: &mut RunSnapshot, indexes: &mut ReducerIndexes, facts: &[RunFact]) -> Result<(), ReduceError> {
   let mut pending_starts = BTreeMap::<SpanId, (SpanStarted, usize)>::new();
+  let mut pending_order = Vec::new();
   for (index, fact) in facts.iter().enumerate() {
     let RunFact::SpanStarted(started) = fact else {
       continue;
     };
     validate_span_links(started)?;
-    if snapshot.spans.contains_key(&started.span_id()) || pending_starts.insert(started.span_id(), (started.clone(), index)).is_some() {
+    if snapshot.spans.contains_key(&started.span_id()) || pending_starts.contains_key(&started.span_id()) {
       return Err(ReduceError::DuplicateSpanStart);
     }
+    pending_starts.insert(started.span_id(), (started.clone(), index));
+    pending_order.push(started.span_id());
   }
 
-  validate_pending_parentage(snapshot, &pending_starts)?;
+  // Commit-level graph validity is preflighted before fact-order visibility,
+  // so a forward-reference cycle remains a cycle error.
+  validate_pending_parentage(snapshot, &pending_starts, &pending_order)?;
 
   for (index, fact) in facts.iter().enumerate() {
     match fact {
@@ -861,10 +785,17 @@ fn apply_facts(snapshot: &mut RunSnapshot, event_ids: &mut BTreeSet<EventId>, fa
           if started.started_at() < parent.started().started_at() {
             return Err(ReduceError::ChildBeforeParent);
           }
+          indexes.record_child_start(parent_id, started.started_at());
         }
         let (_, start_index) = pending_starts.get(&started.span_id()).expect("pending starts were collected from the same facts");
         debug_assert_eq!(*start_index, index);
-        snapshot.spans.insert(started.span_id(), SpanSnapshot::new(started.clone(), None)?);
+        snapshot.spans.insert(
+          started.span_id(),
+          SpanSnapshot {
+            started: started.clone(),
+            ended: None,
+          },
+        );
       }
       RunFact::SpanEnded(ended) => {
         let span = snapshot.spans.get(&ended.span_id()).ok_or(ReduceError::UnknownSpanEnd)?;
@@ -874,22 +805,16 @@ fn apply_facts(snapshot: &mut RunSnapshot, event_ids: &mut BTreeSet<EventId>, fa
         if ended.ended_at() < span.started.started_at() {
           return Err(ReduceError::EndBeforeStart);
         }
-        if snapshot.events.iter().any(|event| event.span_id() == Some(ended.span_id()) && event.occurred_at() > ended.ended_at()) {
+        if indexes.max_event_at_by_span.get(&ended.span_id()).is_some_and(|occurred_at| *occurred_at > ended.ended_at()) {
           return Err(ReduceError::EventAfterSpanEnd);
         }
-        if snapshot
-          .spans
-          .values()
-          .any(|child| child.started().parent_span_id() == Some(ended.span_id()) && child.started().started_at() > ended.ended_at())
-        {
+        if indexes.max_child_start_at_by_parent.get(&ended.span_id()).is_some_and(|started_at| *started_at > ended.ended_at()) {
           return Err(ReduceError::ParentSpanEnded);
         }
         snapshot.spans.get_mut(&ended.span_id()).expect("span existence was validated above").ended = Some(ended.clone());
       }
       RunFact::EventOccurred(event) => {
-        if !event_ids.insert(event.event_id()) {
-          return Err(ReduceError::DuplicateEventId);
-        }
+        indexes.claim_event_id(event.event_id())?;
         if let Some(span_id) = event.span_id() {
           let span = snapshot.spans.get(&span_id).ok_or(ReduceError::UnknownEventSpan)?;
           if span.ended().is_some() {
@@ -899,6 +824,7 @@ fn apply_facts(snapshot: &mut RunSnapshot, event_ids: &mut BTreeSet<EventId>, fa
             return Err(ReduceError::EventBeforeSpanStart);
           }
         }
+        indexes.record_event_time(event);
         snapshot.events.push(event.clone());
       }
       RunFact::ArtifactPublished(artifact) => {
@@ -932,33 +858,55 @@ fn validate_span_links(started: &SpanStarted) -> Result<(), ReduceError> {
   Ok(())
 }
 
-fn validate_pending_parentage(snapshot: &RunSnapshot, pending_starts: &BTreeMap<SpanId, (SpanStarted, usize)>) -> Result<(), ReduceError> {
-  for (span_id, (started, _)) in pending_starts {
-    if let Some(parent_id) = started.parent_span_id()
-      && !snapshot.spans.contains_key(&parent_id)
-      && !pending_starts.contains_key(&parent_id)
-    {
-      return Err(ReduceError::MissingLocalParent);
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VisitState {
+  Visiting,
+  Done,
+}
+
+// Iterative path marking completes each supplied graph node once.
+fn validate_pending_parentage(
+  snapshot: &RunSnapshot,
+  pending_starts: &BTreeMap<SpanId, (SpanStarted, usize)>,
+  pending_order: &[SpanId],
+) -> Result<(), ReduceError> {
+  let mut states = BTreeMap::<SpanId, VisitState>::new();
+  for root in pending_order {
+    if states.get(root) == Some(&VisitState::Done) {
+      continue;
     }
 
-    let mut seen = BTreeSet::new();
-    let mut cursor = Some(*span_id);
-    while let Some(current) = cursor {
-      if !seen.insert(current) {
-        return Err(ReduceError::CyclicLocalParent);
+    let mut path = Vec::new();
+    let mut current = *root;
+    loop {
+      match states.get(&current) {
+        Some(VisitState::Done) => break,
+        Some(VisitState::Visiting) => return Err(ReduceError::CyclicLocalParent),
+        None => {
+          states.insert(current, VisitState::Visiting);
+          path.push(current);
+        }
       }
-      cursor = pending_starts
-        .get(&current)
-        .map(|(value, _)| value.parent_span_id())
-        .unwrap_or_else(|| snapshot.spans.get(&current).and_then(|value| value.started().parent_span_id()));
+
+      let parent_id = pending_starts.get(&current).expect("the traversal contains only pending spans").0.parent_span_id();
+      match parent_id {
+        None => break,
+        Some(parent_id) if pending_starts.contains_key(&parent_id) => current = parent_id,
+        Some(parent_id) if snapshot.spans.contains_key(&parent_id) => break,
+        Some(_) => return Err(ReduceError::MissingLocalParent),
+      }
+    }
+
+    for span_id in path {
+      states.insert(span_id, VisitState::Done);
     }
   }
   Ok(())
 }
 
-fn validate_snapshot(snapshot: &RunSnapshot) -> Result<(), ReduceError> {
+fn validate_snapshot(snapshot: &RunSnapshot) -> Result<(), SnapshotValidationError> {
   if snapshot.through_revision.get() == 0 {
-    return Err(ReduceError::NonContiguousRevision);
+    return Err(ReduceError::NonContiguousRevision.into());
   }
   let fact_count = snapshot
     .spans
@@ -966,30 +914,32 @@ fn validate_snapshot(snapshot: &RunSnapshot) -> Result<(), ReduceError> {
     .checked_add(snapshot.spans.values().filter(|span| span.ended().is_some()).count())
     .and_then(|count| count.checked_add(snapshot.events.len()))
     .and_then(|count| count.checked_add(snapshot.artifacts.len()))
-    .ok_or(ReduceError::InfeasibleSnapshotRevision)?;
-  let fact_count = u64::try_from(fact_count).map_err(|_| ReduceError::InfeasibleSnapshotRevision)?;
+    .ok_or(SnapshotValidationError::InfeasibleRevision)?;
+  let fact_count = u64::try_from(fact_count).map_err(|_| SnapshotValidationError::InfeasibleRevision)?;
   let minimum_revision = fact_count.div_ceil(MAX_COMMIT_ITEMS as u64);
   if fact_count == 0 || snapshot.through_revision.get() < minimum_revision || snapshot.through_revision.get() > fact_count {
-    return Err(ReduceError::InfeasibleSnapshotRevision);
+    return Err(SnapshotValidationError::InfeasibleRevision);
   }
 
   let mut pending = BTreeMap::new();
+  let mut pending_order = Vec::new();
   for (span_id, span) in &snapshot.spans {
     if *span_id != span.started().span_id() {
-      return Err(ReduceError::SnapshotSpanKeyMismatch);
+      return Err(SnapshotValidationError::SpanKeyMismatch);
     }
     validate_span_links(span.started())?;
     pending.insert(*span_id, (span.started().clone(), 0));
+    pending_order.push(*span_id);
   }
-  validate_pending_parentage(snapshot, &pending)?;
+  validate_pending_parentage(snapshot, &pending, &pending_order)?;
   for span in snapshot.spans.values() {
     if let Some(parent_id) = span.started().parent_span_id() {
       let parent = snapshot.spans.get(&parent_id).ok_or(ReduceError::MissingLocalParent)?;
       if span.started().started_at() < parent.started().started_at() {
-        return Err(ReduceError::ChildBeforeParent);
+        return Err(ReduceError::ChildBeforeParent.into());
       }
       if parent.ended().is_some_and(|ended| span.started().started_at() > ended.ended_at()) {
-        return Err(ReduceError::ParentSpanEnded);
+        return Err(ReduceError::ParentSpanEnded.into());
       }
     }
   }
@@ -997,28 +947,28 @@ fn validate_snapshot(snapshot: &RunSnapshot) -> Result<(), ReduceError> {
   let mut event_ids = BTreeSet::new();
   for event in &snapshot.events {
     if !event_ids.insert(event.event_id()) {
-      return Err(ReduceError::DuplicateEventId);
+      return Err(ReduceError::DuplicateEventId.into());
     }
     if let Some(span_id) = event.span_id() {
       let span = snapshot.spans.get(&span_id).ok_or(ReduceError::UnknownEventSpan)?;
       if event.occurred_at() < span.started().started_at() {
-        return Err(ReduceError::EventBeforeSpanStart);
+        return Err(ReduceError::EventBeforeSpanStart.into());
       }
       if span.ended().is_some_and(|ended| event.occurred_at() > ended.ended_at()) {
-        return Err(ReduceError::EventAfterSpanEnd);
+        return Err(ReduceError::EventAfterSpanEnd.into());
       }
     }
   }
 
   for (uri, artifact) in &snapshot.artifacts {
     if uri != artifact.metadata().uri() {
-      return Err(ReduceError::SnapshotArtifactKeyMismatch);
+      return Err(SnapshotValidationError::ArtifactKeyMismatch);
     }
     if uri.run_id() != snapshot.run_id {
-      return Err(ReduceError::ArtifactRunMismatch);
+      return Err(ReduceError::ArtifactRunMismatch.into());
     }
     if artifact.span_id().is_some_and(|span_id| !snapshot.spans.contains_key(&span_id)) {
-      return Err(ReduceError::UnknownArtifactSpan);
+      return Err(ReduceError::UnknownArtifactSpan.into());
     }
   }
 

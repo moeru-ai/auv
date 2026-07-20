@@ -689,31 +689,236 @@ fn snapshot_deserialize_rejects_too_few_revisions_for_fact_count() {
   assert!(serde_json::from_value::<RunSnapshot>(wire).is_err());
 }
 
-fn invalid_linked_span_starts() -> Vec<(SpanStarted, ReduceError)> {
+fn invalid_linked_span_starts() -> Vec<SpanStarted> {
   let span = SpanId::new();
   let parent = SpanId::new();
   vec![
-    (span_started_with(span, Some(span), None, 10), ReduceError::SelfParent),
-    (span_started_with(span, None, Some(SpanLink::new(span)), 10), ReduceError::SelfRemoteLink),
-    (span_started_with(span, Some(parent), Some(SpanLink::new(parent)), 10), ReduceError::DuplicateParentLink),
+    span_started_with(span, Some(span), None, 10),
+    span_started_with(span, None, Some(SpanLink::new(span)), 10),
+    span_started_with(span, Some(parent), Some(SpanLink::new(parent)), 10),
   ]
 }
 
 #[test]
-fn standalone_span_snapshot_constructor_rejects_invalid_links() {
+fn standalone_span_snapshot_deserialize_rejects_invalid_links() {
   // ROOT CAUSE:
   //
-  // Standalone snapshot construction validated only the optional end fact,
+  // Standalone snapshot decoding once validated only the optional end fact,
   // bypassing the same link invariants enforced during commit reduction.
-  for (started, expected) in invalid_linked_span_starts() {
-    assert_eq!(SpanSnapshot::new(started, None).unwrap_err(), expected);
+  for started in invalid_linked_span_starts() {
+    let wire = serde_json::json!({ "started": started, "ended": null });
+    assert!(serde_json::from_value::<SpanSnapshot>(wire).is_err());
   }
 }
 
 #[test]
-fn standalone_span_snapshot_deserialize_rejects_invalid_links() {
-  for (started, _) in invalid_linked_span_starts() {
-    let wire = serde_json::json!({ "started": started, "ended": null });
-    assert!(serde_json::from_value::<SpanSnapshot>(wire).is_err());
+fn reducer_replays_many_spans_events_and_ends_without_changing_semantics() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let root = SpanId::new();
+  let children = (0..256).map(|_| SpanId::new()).collect::<Vec<_>>();
+  let mut revision = 1;
+  let mut commits = vec![commit(
+    authority,
+    run,
+    revision,
+    vec![RunFact::SpanStarted(span_started_with(
+      root, None, None, 10,
+    ))],
+  )];
+
+  for chunk in children.chunks(128) {
+    revision += 1;
+    commits.push(commit(
+      authority,
+      run,
+      revision,
+      chunk.iter().map(|span_id| RunFact::SpanStarted(span_started_with(*span_id, Some(root), None, 11))).collect(),
+    ));
   }
+  for chunk in children.chunks(128) {
+    revision += 1;
+    commits.push(commit(
+      authority,
+      run,
+      revision,
+      chunk.iter().map(|span_id| RunFact::EventOccurred(event_occurred(EventId::new(), Some(*span_id), 12))).collect(),
+    ));
+  }
+  for chunk in children.chunks(128) {
+    revision += 1;
+    commits.push(commit(
+      authority,
+      run,
+      revision,
+      chunk.iter().map(|span_id| RunFact::SpanEnded(SpanEnded::new(*span_id, timestamp(13)))).collect(),
+    ));
+  }
+  revision += 1;
+  commits.push(commit(authority, run, revision, vec![RunFact::SpanEnded(SpanEnded::new(root, timestamp(13)))]));
+
+  let snapshot = reduce_commits(&commits).unwrap();
+  assert_eq!(snapshot.spans().len(), 257);
+  assert_eq!(snapshot.events().len(), 256);
+  assert!(snapshot.spans().values().all(|span| span.ended().is_some()));
+  assert_eq!(snapshot.through_revision(), RunRevision::new(revision).unwrap());
+}
+
+#[test]
+fn reducer_accepts_parent_before_child_in_the_same_commit() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let child = SpanId::new();
+  let snapshot = reduce_commits(&[commit(
+    authority,
+    run,
+    1,
+    vec![
+      RunFact::SpanStarted(span_started_with(parent, None, None, 10)),
+      RunFact::SpanStarted(span_started_with(child, Some(parent), None, 11)),
+    ],
+  )])
+  .unwrap();
+
+  assert_eq!(snapshot.spans().len(), 2);
+  assert_eq!(snapshot.spans()[&child].started().parent_span_id(), Some(parent));
+}
+
+#[test]
+fn reducer_rejects_child_before_parent_in_the_same_commit() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let child = SpanId::new();
+  let commit = commit(
+    authority,
+    run,
+    1,
+    vec![
+      RunFact::SpanStarted(span_started_with(child, Some(parent), None, 11)),
+      RunFact::SpanStarted(span_started_with(parent, None, None, 10)),
+    ],
+  );
+
+  assert_eq!(reduce_commits(&[commit]).unwrap_err(), ReduceError::MissingLocalParent);
+}
+
+#[test]
+fn complete_snapshot_json_round_trip_preserves_values_and_event_order() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let child = SpanId::new();
+  let first_event = EventId::new();
+  let second_event = EventId::new();
+  let artifact_id = ArtifactId::new();
+  let snapshot = reduce_commits(&[
+    commit(
+      authority,
+      run,
+      1,
+      vec![RunFact::SpanStarted(span_started_with(
+        parent, None, None, 10,
+      ))],
+    ),
+    commit(
+      authority,
+      run,
+      2,
+      vec![RunFact::SpanStarted(span_started_with(
+        child,
+        Some(parent),
+        None,
+        11,
+      ))],
+    ),
+    commit(
+      authority,
+      run,
+      3,
+      vec![
+        RunFact::EventOccurred(event_occurred(first_event, Some(child), 12)),
+        RunFact::EventOccurred(event_occurred(second_event, Some(child), 13)),
+      ],
+    ),
+    commit(authority, run, 4, vec![RunFact::SpanEnded(SpanEnded::new(parent, timestamp(14)))]),
+    commit(
+      authority,
+      run,
+      5,
+      vec![RunFact::ArtifactPublished(artifact_published(
+        run,
+        artifact_id,
+        Some(parent),
+      ))],
+    ),
+  ])
+  .unwrap();
+
+  let json = serde_json::to_string(&snapshot).unwrap();
+  let decoded = serde_json::from_str::<RunSnapshot>(&json).unwrap();
+  assert_eq!(decoded, snapshot);
+  assert_eq!(decoded.events()[0].event_id(), first_event);
+  assert_eq!(decoded.events()[1].event_id(), second_event);
+}
+
+#[test]
+fn reducer_end_validation_uses_max_event_timestamp_not_last_event() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let span = SpanId::new();
+  let commits = [
+    commit(
+      authority,
+      run,
+      1,
+      vec![RunFact::SpanStarted(span_started_with(
+        span, None, None, 10,
+      ))],
+    ),
+    commit(
+      authority,
+      run,
+      2,
+      vec![
+        RunFact::EventOccurred(event_occurred(EventId::new(), Some(span), 14)),
+        RunFact::EventOccurred(event_occurred(EventId::new(), Some(span), 12)),
+      ],
+    ),
+    commit(authority, run, 3, vec![RunFact::SpanEnded(SpanEnded::new(span, timestamp(13)))]),
+  ];
+
+  assert_eq!(reduce_commits(&commits).unwrap_err(), ReduceError::EventAfterSpanEnd);
+}
+
+#[test]
+fn reducer_end_validation_uses_max_child_start_not_last_child() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let first_child = SpanId::new();
+  let second_child = SpanId::new();
+  let commits = [
+    commit(
+      authority,
+      run,
+      1,
+      vec![RunFact::SpanStarted(span_started_with(
+        parent, None, None, 10,
+      ))],
+    ),
+    commit(
+      authority,
+      run,
+      2,
+      vec![
+        RunFact::SpanStarted(span_started_with(first_child, Some(parent), None, 14)),
+        RunFact::SpanStarted(span_started_with(second_child, Some(parent), None, 12)),
+      ],
+    ),
+    commit(authority, run, 3, vec![RunFact::SpanEnded(SpanEnded::new(parent, timestamp(13)))]),
+  ];
+
+  assert_eq!(reduce_commits(&commits).unwrap_err(), ReduceError::ParentSpanEnded);
 }
