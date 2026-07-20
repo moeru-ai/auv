@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -7,6 +8,7 @@ use std::task::{Context, Poll, Waker};
 use bytes::Bytes;
 use futures_core::Stream;
 use futures_util::AsyncReadExt;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
@@ -15,12 +17,12 @@ use super::{
 };
 use crate::history::IncrementalReducer;
 use crate::{
-  ArtifactMetadata, ArtifactPublished, ArtifactUri, AuthorityId, ErrorCode, IdempotencyKey, PageLimit, RunCommit, RunCommitRequest, RunFact,
-  RunId, RunMutation, RunRevision, RunSnapshot, Sha256Digest, Timestamp,
+  ArtifactMetadata, ArtifactPublished, ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode,
+  IdempotencyKey, PageLimit, RunCommit, RunCommitRequest, RunFact, RunId, RunMutation, RunRevision, RunSnapshot, Sha256Digest, SpanId,
+  Timestamp,
 };
 
 const ARTIFACT_CHUNK_BYTES: usize = 64 * 1024;
-const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Complete in-process run authority with unbounded history by default.
 #[derive(Clone)]
@@ -38,11 +40,14 @@ struct MemoryAuthority {
 struct MemoryState {
   runs: HashMap<RunId, MemoryRun>,
   blobs: HashMap<ArtifactUri, StoredArtifact>,
-  waiters: HashMap<RunId, Vec<Waker>>,
+  subscription_waiters: HashMap<RunId, HashMap<u64, Waker>>,
+  pending_artifacts: HashMap<(RunId, IdempotencyKey), PendingArtifact>,
+  pending_artifact_uris: HashMap<ArtifactUri, PendingArtifactOwner>,
+  next_token: u64,
 }
 
 struct MemoryRun {
-  commits: VecDeque<RunCommit>,
+  commits: VecDeque<Arc<RunCommit>>,
   reducer: IncrementalReducer,
   idempotency: HashMap<IdempotencyKey, StoredRequest>,
 }
@@ -62,21 +67,32 @@ impl MemoryRun {
 }
 
 struct StoredRequest {
-  request: StoredRequestKind,
-  commit: RunCommit,
+  fingerprint: RequestFingerprint,
+  commit: Arc<RunCommit>,
 }
 
-#[derive(PartialEq)]
-enum StoredRequestKind {
-  Commit(RunCommitRequest),
-  Artifact(StoreArtifactRequest),
-}
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RequestFingerprint([u8; 32]);
 
 #[derive(Clone)]
 struct StoredArtifact {
-  bytes: Arc<[u8]>,
-  byte_length: crate::ByteLength,
+  bytes: Bytes,
+  byte_length: ByteLength,
   sha256: Sha256Digest,
+}
+
+struct PendingArtifact {
+  fingerprint: RequestFingerprint,
+  uri: ArtifactUri,
+  reservation_id: u64,
+  waiters: HashMap<u64, Waker>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PendingArtifactOwner {
+  run_id: RunId,
+  key: IdempotencyKey,
+  reservation_id: u64,
 }
 
 impl MemoryRunStore {
@@ -102,16 +118,21 @@ impl MemoryRunStore {
 
   fn commit_ordinary(&self, request: RunCommitRequest) -> Result<RunCommit, CommitError> {
     self.validate_authority(request.authority_id()).map_err(|(expected, received)| CommitError::AuthorityMismatch { expected, received })?;
-
+    let fingerprint = commit_fingerprint(&request).map_err(CommitError::Rejected)?;
     let run_id = request.run_id();
     let key = request.idempotency_key();
     let mut state = self.lock_state().map_err(CommitError::Unavailable)?;
+
     if let Some(stored) = state.runs.get(&run_id).and_then(|run| run.idempotency.get(&key)) {
-      return if stored.request == StoredRequestKind::Commit(request) {
-        Ok(stored.commit.clone())
-      } else {
-        Err(CommitError::IdempotencyMismatch)
-      };
+      if stored.fingerprint != fingerprint {
+        return Err(CommitError::IdempotencyMismatch);
+      }
+      let commit = Arc::clone(&stored.commit);
+      drop(state);
+      return Ok(commit.as_ref().clone());
+    }
+    if state.pending_artifacts.contains_key(&(run_id, key)) {
+      return Err(CommitError::IdempotencyMismatch);
     }
 
     let latest = state.runs.get(&run_id).map(MemoryRun::latest_revision).unwrap_or_else(zero_revision);
@@ -128,105 +149,166 @@ impl MemoryRunStore {
       .collect();
     let commit =
       RunCommit::new(self.inner.authority_id, run_id, revision, key, now(), facts).map_err(|_| CommitError::Rejected(rejected()))?;
-    let stored = StoredRequest {
-      request: StoredRequestKind::Commit(request),
-      commit: commit.clone(),
-    };
+    let shared = Arc::new(commit.clone());
+
     if let Some(run) = state.runs.get_mut(&run_id) {
       run.reducer.apply(&commit).map_err(|_| CommitError::Rejected(rejected()))?;
-      run.commits.push_back(commit.clone());
-      run.idempotency.insert(key, stored);
+      run.commits.push_back(Arc::clone(&shared));
+      run.idempotency.insert(
+        key,
+        StoredRequest {
+          fingerprint,
+          commit: shared,
+        },
+      );
       prune_history(run, self.inner.history_limit);
     } else {
       let mut run = MemoryRun::new(self.inner.authority_id, run_id);
       run.reducer.apply(&commit).map_err(|_| CommitError::Rejected(rejected()))?;
-      run.commits.push_back(commit.clone());
-      run.idempotency.insert(key, stored);
+      run.commits.push_back(Arc::clone(&shared));
+      run.idempotency.insert(
+        key,
+        StoredRequest {
+          fingerprint,
+          commit: shared,
+        },
+      );
       state.runs.insert(run_id, run);
     }
-    let waiters = state.waiters.remove(&run_id).unwrap_or_default();
+    let waiters = take_subscription_waiters(&mut state, run_id);
     drop(state);
     wake(waiters);
     Ok(commit)
   }
 
-  fn preflight_artifact(&self, request: &StoreArtifactRequest) -> Result<Option<RunCommit>, ArtifactWriteError> {
-    self
-      .validate_authority(request.authority_id())
-      .map_err(|(expected, received)| ArtifactWriteError::AuthorityMismatch { expected, received })?;
-    let state = self.lock_state().map_err(ArtifactWriteError::Unavailable)?;
-    if let Some(stored) = state.runs.get(&request.run_id()).and_then(|run| run.idempotency.get(&request.idempotency_key())) {
-      return if stored.request == StoredRequestKind::Artifact(request.clone()) {
-        Ok(Some(stored.commit.clone()))
-      } else {
-        Err(ArtifactWriteError::IdempotencyMismatch)
-      };
-    }
+  fn begin_artifact(&self, request: &StoreArtifactRequest, fingerprint: RequestFingerprint) -> Result<ArtifactAttempt, ArtifactWriteError> {
+    let run_id = request.run_id();
+    let key = request.idempotency_key();
+    let uri = ArtifactUri::from_ids(run_id, request.artifact_id());
+    let mut state = self.lock_state().map_err(ArtifactWriteError::Unavailable)?;
 
-    let uri = ArtifactUri::from_ids(request.run_id(), request.artifact_id());
-    if state.runs.get(&request.run_id()).is_some_and(|run| run.reducer.snapshot().artifacts().contains_key(&uri))
+    if let Some(stored) = state.runs.get(&run_id).and_then(|run| run.idempotency.get(&key)) {
+      if stored.fingerprint != fingerprint {
+        return Err(ArtifactWriteError::IdempotencyMismatch);
+      }
+      return Ok(ArtifactAttempt::Replay(Arc::clone(&stored.commit)));
+    }
+    if let Some(pending) = state.pending_artifacts.get(&(run_id, key)) {
+      if pending.fingerprint != fingerprint {
+        return Err(ArtifactWriteError::IdempotencyMismatch);
+      }
+      let reservation_id = pending.reservation_id;
+      let waiter_id = allocate_token(&mut state).map_err(ArtifactWriteError::Unavailable)?;
+      return Ok(ArtifactAttempt::Wait(ArtifactReservationWait {
+        authority: Arc::clone(&self.inner),
+        run_id,
+        key,
+        reservation_id,
+        waiter_id,
+        armed: true,
+      }));
+    }
+    if state.pending_artifact_uris.contains_key(&uri)
+      || state.runs.get(&run_id).is_some_and(|run| run.reducer.snapshot().artifacts().contains_key(&uri))
       || state.blobs.contains_key(&uri)
     {
       return Err(ArtifactWriteError::Rejected(rejected()));
     }
 
-    if let Some(run) = state.runs.get(&request.run_id()) {
+    if let Some(run) = state.runs.get(&run_id) {
       artifact_candidate(self.inner.authority_id, request, &run.reducer).map_err(ArtifactWriteError::Rejected)?;
     } else {
-      let reducer = IncrementalReducer::new(self.inner.authority_id, request.run_id());
+      let reducer = IncrementalReducer::new(self.inner.authority_id, run_id);
       artifact_candidate(self.inner.authority_id, request, &reducer).map_err(ArtifactWriteError::Rejected)?;
     }
-    Ok(None)
+
+    let reservation_id = allocate_token(&mut state).map_err(ArtifactWriteError::Unavailable)?;
+    let owner = PendingArtifactOwner {
+      run_id,
+      key,
+      reservation_id,
+    };
+    state.pending_artifact_uris.insert(uri.clone(), owner);
+    state.pending_artifacts.insert(
+      (run_id, key),
+      PendingArtifact {
+        fingerprint,
+        uri,
+        reservation_id,
+        waiters: HashMap::new(),
+      },
+    );
+    Ok(ArtifactAttempt::Owner(ArtifactReservation {
+      authority: Arc::clone(&self.inner),
+      run_id,
+      key,
+      reservation_id,
+      armed: true,
+    }))
   }
 
-  fn publish_artifact(&self, request: StoreArtifactRequest, bytes: Arc<[u8]>) -> Result<RunCommit, ArtifactWriteError> {
+  fn publish_artifact(
+    &self,
+    request: &StoreArtifactRequest,
+    fingerprint: RequestFingerprint,
+    bytes: Bytes,
+    reservation: &mut ArtifactReservation,
+  ) -> Result<RunCommit, ArtifactWriteError> {
     let run_id = request.run_id();
     let key = request.idempotency_key();
     let uri = ArtifactUri::from_ids(run_id, request.artifact_id());
     let mut state = self.lock_state().map_err(ArtifactWriteError::Unavailable)?;
-    if let Some(stored) = state.runs.get(&run_id).and_then(|run| run.idempotency.get(&key)) {
-      return if stored.request == StoredRequestKind::Artifact(request) {
-        Ok(stored.commit.clone())
-      } else {
-        Err(ArtifactWriteError::IdempotencyMismatch)
-      };
-    }
-    if state.runs.get(&run_id).is_some_and(|run| run.reducer.snapshot().artifacts().contains_key(&uri)) || state.blobs.contains_key(&uri) {
-      return Err(ArtifactWriteError::Rejected(rejected()));
+    let owns_reservation = state.pending_artifacts.get(&(run_id, key)).is_some_and(|pending| {
+      pending.reservation_id == reservation.reservation_id && pending.fingerprint == fingerprint && pending.uri == uri
+    });
+    if !owns_reservation {
+      return Err(ArtifactWriteError::Unavailable(unavailable()));
     }
 
     let commit = if let Some(run) = state.runs.get(&run_id) {
-      artifact_candidate(self.inner.authority_id, &request, &run.reducer).map_err(ArtifactWriteError::Rejected)?
+      artifact_candidate(self.inner.authority_id, request, &run.reducer).map_err(ArtifactWriteError::Rejected)?
     } else {
       let reducer = IncrementalReducer::new(self.inner.authority_id, run_id);
-      artifact_candidate(self.inner.authority_id, &request, &reducer).map_err(ArtifactWriteError::Rejected)?
+      artifact_candidate(self.inner.authority_id, request, &reducer).map_err(ArtifactWriteError::Rejected)?
     };
+    let shared = Arc::new(commit.clone());
     let stored_artifact = StoredArtifact {
       bytes,
       byte_length: request.expected_byte_length(),
       sha256: request.expected_sha256(),
     };
 
-    let stored = StoredRequest {
-      request: StoredRequestKind::Artifact(request),
-      commit: commit.clone(),
-    };
     if let Some(run) = state.runs.get_mut(&run_id) {
       run.reducer.apply(&commit).map_err(|_| ArtifactWriteError::Rejected(rejected()))?;
-      run.commits.push_back(commit.clone());
-      run.idempotency.insert(key, stored);
+      run.commits.push_back(Arc::clone(&shared));
+      run.idempotency.insert(
+        key,
+        StoredRequest {
+          fingerprint,
+          commit: shared,
+        },
+      );
       prune_history(run, self.inner.history_limit);
     } else {
       let mut run = MemoryRun::new(self.inner.authority_id, run_id);
       run.reducer.apply(&commit).map_err(|_| ArtifactWriteError::Rejected(rejected()))?;
-      run.commits.push_back(commit.clone());
-      run.idempotency.insert(key, stored);
+      run.commits.push_back(Arc::clone(&shared));
+      run.idempotency.insert(
+        key,
+        StoredRequest {
+          fingerprint,
+          commit: shared,
+        },
+      );
       state.runs.insert(run_id, run);
     }
     state.blobs.insert(uri, stored_artifact);
-    let waiters = state.waiters.remove(&run_id).unwrap_or_default();
+    let artifact_waiters = release_artifact_reservation(&mut state, run_id, key, reservation.reservation_id);
+    let subscription_waiters = take_subscription_waiters(&mut state, run_id);
+    reservation.armed = false;
     drop(state);
-    wake(waiters);
+    wake(artifact_waiters);
+    wake(subscription_waiters);
     Ok(commit)
   }
 
@@ -255,47 +337,67 @@ impl RunStore for MemoryRunStore {
 
   fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
     Box::pin(async move {
-      if let Some(commit) = self.preflight_artifact(&request)? {
-        return Ok(commit);
+      self
+        .validate_authority(request.authority_id())
+        .map_err(|(expected, received)| ArtifactWriteError::AuthorityMismatch { expected, received })?;
+      let fingerprint = artifact_fingerprint(&request).map_err(ArtifactWriteError::Rejected)?;
+      let mut body = Some(body);
+      loop {
+        match self.begin_artifact(&request, fingerprint)? {
+          ArtifactAttempt::Replay(commit) => return Ok(commit.as_ref().clone()),
+          ArtifactAttempt::Wait(wait) => wait.await.map_err(ArtifactWriteError::Unavailable)?,
+          ArtifactAttempt::Owner(mut reservation) => {
+            let body = body.take().expect("an artifact body is consumed only by its reservation owner");
+            let bytes = read_artifact(body, request.expected_byte_length().get(), request.expected_sha256()).await?;
+            return self.publish_artifact(&request, fingerprint, bytes, &mut reservation);
+          }
+        }
       }
-      let bytes = read_artifact(body, request.expected_byte_length().get(), request.expected_sha256()).await?;
-      self.publish_artifact(request, bytes)
     })
   }
 
   fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
     Box::pin(async move {
-      let state = self.lock_state().map_err(ReadError::Unavailable)?;
-      Ok(state.runs.get(&run_id).and_then(|run| run.idempotency.get(&key)).map(|stored| stored.commit.clone()))
+      let commit = {
+        let state = self.lock_state().map_err(ReadError::Unavailable)?;
+        state.runs.get(&run_id).and_then(|run| run.idempotency.get(&key)).map(|stored| Arc::clone(&stored.commit))
+      };
+      Ok(commit.map(|commit| commit.as_ref().clone()))
     })
   }
 
   fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
     Box::pin(async move {
-      let state = self.lock_state().map_err(ReadError::Unavailable)?;
-      Ok(state.runs.get(&run_id).map(|run| run.reducer.snapshot().clone()))
+      let snapshot = {
+        let state = self.lock_state().map_err(ReadError::Unavailable)?;
+        state.runs.get(&run_id).map(|run| run.reducer.shared_snapshot())
+      };
+      Ok(snapshot.map(|snapshot| snapshot.as_ref().clone()))
     })
   }
 
   fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
     Box::pin(async move {
-      let state = self.lock_state().map_err(ReadError::Unavailable)?;
-      let Some(run) = state.runs.get(&run_id) else {
-        if after.get() > 0 {
-          return Err(ReadError::CursorAhead {
-            requested_after: after,
-            latest: zero_revision(),
-          });
-        }
-        return RunCommitPage::new(Vec::new(), after, false).map_err(|_| ReadError::Integrity(integrity()));
+      let source = {
+        let state = self.lock_state().map_err(ReadError::Unavailable)?;
+        let Some(run) = state.runs.get(&run_id) else {
+          if after.get() > 0 {
+            return Err(ReadError::CursorAhead {
+              requested_after: after,
+              latest: zero_revision(),
+            });
+          }
+          return RunCommitPage::new(Vec::new(), after, false).map_err(|_| ReadError::Integrity(integrity()));
+        };
+        capture_page(run, after, limit)?
       };
-      page_after(run, after, limit)
+      build_page(source, after)
     })
   }
 
   fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
     Box::pin(async move {
-      let state = self.lock_state().map_err(ReadError::Unavailable)?;
+      let mut state = self.lock_state().map_err(ReadError::Unavailable)?;
       let latest = state.runs.get(&run_id).map(MemoryRun::latest_revision).unwrap_or_else(zero_revision);
       if after > latest {
         return Err(ReadError::CursorAhead {
@@ -303,11 +405,13 @@ impl RunStore for MemoryRunStore {
           latest,
         });
       }
+      let waiter_id = allocate_token(&mut state).map_err(ReadError::Unavailable)?;
       drop(state);
       Ok(Box::pin(MemorySubscription {
         authority: Arc::clone(&self.inner),
         run_id,
         cursor: after,
+        waiter_id,
         terminal: false,
       }) as RunSubscription)
     })
@@ -325,7 +429,7 @@ impl RunStore for MemoryRunStore {
           None
         } else {
           let end = bytes.len().min(offset + ARTIFACT_CHUNK_BYTES);
-          let chunk = Bytes::copy_from_slice(&bytes[offset..end]);
+          let chunk = bytes.slice(offset..end);
           Some((Ok(chunk), (bytes, end)))
         }
       });
@@ -334,10 +438,85 @@ impl RunStore for MemoryRunStore {
   }
 }
 
+enum ArtifactAttempt {
+  Replay(Arc<RunCommit>),
+  Wait(ArtifactReservationWait),
+  Owner(ArtifactReservation),
+}
+
+struct ArtifactReservation {
+  authority: Arc<MemoryAuthority>,
+  run_id: RunId,
+  key: IdempotencyKey,
+  reservation_id: u64,
+  armed: bool,
+}
+
+impl Drop for ArtifactReservation {
+  fn drop(&mut self) {
+    if !self.armed {
+      return;
+    }
+    let waiters = match self.authority.state.lock() {
+      Ok(mut state) => release_artifact_reservation(&mut state, self.run_id, self.key, self.reservation_id),
+      Err(_) => Vec::new(),
+    };
+    wake(waiters);
+  }
+}
+
+struct ArtifactReservationWait {
+  authority: Arc<MemoryAuthority>,
+  run_id: RunId,
+  key: IdempotencyKey,
+  reservation_id: u64,
+  waiter_id: u64,
+  armed: bool,
+}
+
+impl Future for ArtifactReservationWait {
+  type Output = Result<(), ErrorCode>;
+
+  fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    let authority = Arc::clone(&self.authority);
+    let mut state = match authority.state.lock() {
+      Ok(state) => state,
+      Err(_) => {
+        self.armed = false;
+        return Poll::Ready(Err(unavailable()));
+      }
+    };
+    let key = (self.run_id, self.key);
+    let still_pending = state.pending_artifacts.get(&key).is_some_and(|pending| pending.reservation_id == self.reservation_id);
+    if !still_pending {
+      drop(state);
+      self.armed = false;
+      return Poll::Ready(Ok(()));
+    }
+    state.pending_artifacts.get_mut(&key).expect("reservation was checked above").waiters.insert(self.waiter_id, cx.waker().clone());
+    Poll::Pending
+  }
+}
+
+impl Drop for ArtifactReservationWait {
+  fn drop(&mut self) {
+    if !self.armed {
+      return;
+    }
+    if let Ok(mut state) = self.authority.state.lock()
+      && let Some(pending) = state.pending_artifacts.get_mut(&(self.run_id, self.key))
+      && pending.reservation_id == self.reservation_id
+    {
+      pending.waiters.remove(&self.waiter_id);
+    }
+  }
+}
+
 struct MemorySubscription {
   authority: Arc<MemoryAuthority>,
   run_id: RunId,
   cursor: RunRevision,
+  waiter_id: u64,
   terminal: bool,
 }
 
@@ -358,10 +537,11 @@ impl Stream for MemorySubscription {
     };
 
     if let Some(run) = state.runs.get(&self.run_id) {
-      if let Some(earliest) = run.commits.front().map(RunCommit::revision)
+      if let Some(earliest) = run.commits.front().map(|commit| commit.revision())
         && self.cursor.get().saturating_add(1) < earliest.get()
       {
         let requested_after = self.cursor;
+        remove_subscription_waiter(&mut state, self.run_id, self.waiter_id);
         drop(state);
         self.terminal = true;
         return Poll::Ready(Some(Err(SubscriptionError::Gap {
@@ -373,11 +553,12 @@ impl Stream for MemorySubscription {
       if self.cursor < run.latest_revision() {
         let expected = self.cursor.get() + 1;
         let next = run.commits.iter().find(|commit| commit.revision().get() == expected).cloned();
+        remove_subscription_waiter(&mut state, self.run_id, self.waiter_id);
         drop(state);
         return match next {
           Some(commit) => {
             self.cursor = commit.revision();
-            Poll::Ready(Some(Ok(commit)))
+            Poll::Ready(Some(Ok(commit.as_ref().clone())))
           }
           None => {
             self.terminal = true;
@@ -387,19 +568,20 @@ impl Stream for MemorySubscription {
       }
     }
 
-    let waiters = state.waiters.entry(self.run_id).or_default();
-    if !waiters.iter().any(|waker| waker.will_wake(cx.waker())) {
-      waiters.push(cx.waker().clone());
-    }
+    state.subscription_waiters.entry(self.run_id).or_default().insert(self.waiter_id, cx.waker().clone());
     Poll::Pending
   }
 }
 
-async fn read_artifact(
-  mut body: ArtifactBody,
-  expected_length: u64,
-  expected_sha256: Sha256Digest,
-) -> Result<Arc<[u8]>, ArtifactWriteError> {
+impl Drop for MemorySubscription {
+  fn drop(&mut self) {
+    if let Ok(mut state) = self.authority.state.lock() {
+      remove_subscription_waiter(&mut state, self.run_id, self.waiter_id);
+    }
+  }
+}
+
+async fn read_artifact(mut body: ArtifactBody, expected_length: u64, expected_sha256: Sha256Digest) -> Result<Bytes, ArtifactWriteError> {
   let mut bytes = Vec::new();
   let mut hasher = Sha256::new();
   let mut total = 0_u64;
@@ -412,7 +594,7 @@ async fn read_artifact(
       break;
     }
     total = total.checked_add(count as u64).ok_or_else(|| ArtifactWriteError::Integrity(integrity()))?;
-    if total > expected_length || total > MAX_ARTIFACT_BYTES {
+    if total > expected_length {
       return Err(ArtifactWriteError::Integrity(integrity()));
     }
     hasher.update(&chunk[..count]);
@@ -425,7 +607,7 @@ async fn read_artifact(
   if digest != expected_sha256 {
     return Err(ArtifactWriteError::Integrity(integrity()));
   }
-  Ok(Arc::from(bytes))
+  Ok(Bytes::from(bytes))
 }
 
 fn artifact_candidate(
@@ -456,7 +638,12 @@ fn artifact_candidate(
   Ok(commit)
 }
 
-fn page_after(run: &MemoryRun, after: RunRevision, limit: PageLimit) -> Result<RunCommitPage, ReadError> {
+struct PageSource {
+  commits: Vec<Arc<RunCommit>>,
+  latest: RunRevision,
+}
+
+fn capture_page(run: &MemoryRun, after: RunRevision, limit: PageLimit) -> Result<PageSource, ReadError> {
   let latest = run.latest_revision();
   if after > latest {
     return Err(ReadError::CursorAhead {
@@ -464,7 +651,7 @@ fn page_after(run: &MemoryRun, after: RunRevision, limit: PageLimit) -> Result<R
       latest,
     });
   }
-  let earliest = run.commits.front().map(RunCommit::revision).expect("a committed run retains at least one revision");
+  let earliest = run.commits.front().map(|commit| commit.revision()).expect("a committed run retains at least one revision");
   if after.get().saturating_add(1) < earliest.get() {
     return Err(ReadError::HistoryGap {
       requested_after: after,
@@ -472,7 +659,10 @@ fn page_after(run: &MemoryRun, after: RunRevision, limit: PageLimit) -> Result<R
     });
   }
   if after == latest {
-    return RunCommitPage::new(Vec::new(), after, false).map_err(|_| ReadError::Integrity(integrity()));
+    return Ok(PageSource {
+      commits: Vec::new(),
+      latest,
+    });
   }
 
   let start = if after < earliest {
@@ -481,24 +671,34 @@ fn page_after(run: &MemoryRun, after: RunRevision, limit: PageLimit) -> Result<R
     usize::try_from(after.get() - earliest.get() + 1).map_err(|_| ReadError::Integrity(integrity()))?
   };
   let max_count = usize::try_from(limit.get().get()).expect("page limit fits usize");
+  Ok(PageSource {
+    commits: run.commits.iter().skip(start).take(max_count).cloned().collect(),
+    latest,
+  })
+}
+
+fn build_page(source: PageSource, after: RunRevision) -> Result<RunCommitPage, ReadError> {
+  if source.commits.is_empty() {
+    return RunCommitPage::new(Vec::new(), after, false).map_err(|_| ReadError::Integrity(integrity()));
+  }
   let mut selected = Vec::new();
   let mut commit_json_bytes = 0_usize;
-  for (offset, commit) in run.commits.iter().skip(start).take(max_count).enumerate() {
-    let encoded = serde_json::to_vec(commit).map_err(|_| ReadError::Integrity(integrity()))?;
+  for commit in source.commits {
+    let encoded = serde_json::to_vec(commit.as_ref()).map_err(|_| ReadError::Integrity(integrity()))?;
     let candidate_count = selected.len() + 1;
-    let has_more = start + offset + 1 < run.commits.len();
+    let has_more = commit.revision() < source.latest;
     let candidate_bytes = commit_json_bytes + encoded.len();
     if compact_page_len(candidate_bytes, candidate_count, commit.revision(), has_more) > super::MAX_COMMIT_PAGE_JSON_BYTES {
       break;
     }
     commit_json_bytes = candidate_bytes;
-    selected.push(commit.clone());
+    selected.push(commit.as_ref().clone());
   }
   if selected.is_empty() {
     return Err(ReadError::Integrity(integrity()));
   }
   let last_revision = selected.last().expect("the page made progress").revision();
-  let has_more = last_revision < latest;
+  let has_more = last_revision < source.latest;
   RunCommitPage::new(selected, last_revision, has_more).map_err(|_| ReadError::Integrity(integrity()))
 }
 
@@ -518,6 +718,51 @@ fn compact_page_len(commit_bytes: usize, commit_count: usize, last_revision: Run
     + "}".len()
 }
 
+fn commit_fingerprint(request: &RunCommitRequest) -> Result<RequestFingerprint, ErrorCode> {
+  fingerprint(b"auv.memory.commit-request.v1", request)
+}
+
+fn artifact_fingerprint(request: &StoreArtifactRequest) -> Result<RequestFingerprint, ErrorCode> {
+  #[derive(Serialize)]
+  struct Wire<'a> {
+    authority_id: AuthorityId,
+    run_id: RunId,
+    idempotency_key: IdempotencyKey,
+    artifact_id: crate::ArtifactId,
+    span_id: Option<SpanId>,
+    purpose: &'a ArtifactPurpose,
+    content_type: &'a ContentType,
+    expected_byte_length: ByteLength,
+    expected_sha256: Sha256Digest,
+    attributes: &'a Attributes,
+  }
+
+  fingerprint(
+    b"auv.memory.artifact-request.v1",
+    &Wire {
+      authority_id: request.authority_id(),
+      run_id: request.run_id(),
+      idempotency_key: request.idempotency_key(),
+      artifact_id: request.artifact_id(),
+      span_id: request.span_id(),
+      purpose: request.purpose(),
+      content_type: request.content_type(),
+      expected_byte_length: request.expected_byte_length(),
+      expected_sha256: request.expected_sha256(),
+      attributes: request.attributes(),
+    },
+  )
+}
+
+fn fingerprint(domain: &[u8], value: &impl Serialize) -> Result<RequestFingerprint, ErrorCode> {
+  let encoded = serde_json::to_vec(value).map_err(|_| rejected())?;
+  let mut hasher = Sha256::new();
+  hasher.update((domain.len() as u64).to_be_bytes());
+  hasher.update(domain);
+  hasher.update(encoded);
+  Ok(RequestFingerprint(hasher.finalize().into()))
+}
+
 fn verify_artifact(artifact: &StoredArtifact) -> Result<(), ErrorCode> {
   if u64::try_from(artifact.bytes.len()).ok() != Some(artifact.byte_length.get()) {
     return Err(integrity());
@@ -527,6 +772,44 @@ fn verify_artifact(artifact: &StoredArtifact) -> Result<(), ErrorCode> {
     return Err(integrity());
   }
   Ok(())
+}
+
+fn release_artifact_reservation(state: &mut MemoryState, run_id: RunId, key: IdempotencyKey, reservation_id: u64) -> Vec<Waker> {
+  let map_key = (run_id, key);
+  if state.pending_artifacts.get(&map_key).is_none_or(|pending| pending.reservation_id != reservation_id) {
+    return Vec::new();
+  }
+  let pending = state.pending_artifacts.remove(&map_key).expect("reservation was checked above");
+  let owner = PendingArtifactOwner {
+    run_id,
+    key,
+    reservation_id,
+  };
+  if state.pending_artifact_uris.get(&pending.uri) == Some(&owner) {
+    state.pending_artifact_uris.remove(&pending.uri);
+  }
+  pending.waiters.into_values().collect()
+}
+
+fn take_subscription_waiters(state: &mut MemoryState, run_id: RunId) -> Vec<Waker> {
+  state.subscription_waiters.remove(&run_id).map(|waiters| waiters.into_values().collect()).unwrap_or_default()
+}
+
+fn remove_subscription_waiter(state: &mut MemoryState, run_id: RunId, waiter_id: u64) {
+  let remove_run = if let Some(waiters) = state.subscription_waiters.get_mut(&run_id) {
+    waiters.remove(&waiter_id);
+    waiters.is_empty()
+  } else {
+    false
+  };
+  if remove_run {
+    state.subscription_waiters.remove(&run_id);
+  }
+}
+
+fn allocate_token(state: &mut MemoryState) -> Result<u64, ErrorCode> {
+  state.next_token = state.next_token.checked_add(1).ok_or_else(unavailable)?;
+  Ok(state.next_token)
 }
 
 fn prune_history(run: &mut MemoryRun, limit: Option<usize>) {

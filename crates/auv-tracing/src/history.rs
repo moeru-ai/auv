@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -703,21 +704,21 @@ fn record_max_timestamp(index: &mut BTreeMap<SpanId, Timestamp>, span_id: SpanId
 /// Incremental form of the canonical reducer used by stores that retain a
 /// snapshot independently from their readable commit window.
 pub(crate) struct IncrementalReducer {
-  snapshot: RunSnapshot,
+  snapshot: Arc<RunSnapshot>,
   indexes: ReducerIndexes,
 }
 
 impl IncrementalReducer {
   pub(crate) fn new(authority_id: AuthorityId, run_id: RunId) -> Self {
     Self {
-      snapshot: RunSnapshot {
+      snapshot: Arc::new(RunSnapshot {
         authority_id,
         run_id,
         through_revision: RunRevision::new(0).expect("revision zero is the valid pre-history cursor"),
         spans: BTreeMap::new(),
         events: Vec::new(),
         artifacts: BTreeMap::new(),
-      },
+      }),
       indexes: ReducerIndexes::default(),
     }
   }
@@ -726,7 +727,7 @@ impl IncrementalReducer {
     self.validate_header(commit)?;
     let delta = validate_facts(&self.snapshot, &self.indexes, commit.facts())?;
     delta.apply(&mut self.snapshot, &mut self.indexes);
-    self.snapshot.through_revision = commit.revision();
+    Arc::make_mut(&mut self.snapshot).through_revision = commit.revision();
     Ok(())
   }
 
@@ -754,6 +755,15 @@ impl IncrementalReducer {
   pub(crate) fn snapshot(&self) -> &RunSnapshot {
     &self.snapshot
   }
+
+  #[cfg(feature = "memory-store")]
+  pub(crate) fn shared_snapshot(&self) -> Arc<RunSnapshot> {
+    Arc::clone(&self.snapshot)
+  }
+
+  fn into_snapshot(self) -> RunSnapshot {
+    Arc::try_unwrap(self.snapshot).unwrap_or_else(|snapshot| (*snapshot).clone())
+  }
 }
 
 /// Replays a complete canonical commit sequence into one deterministic snapshot.
@@ -765,7 +775,7 @@ pub fn reduce_commits(commits: &[RunCommit]) -> Result<RunSnapshot, ReduceError>
   for commit in commits {
     reducer.apply(commit)?;
   }
-  Ok(reducer.snapshot)
+  Ok(reducer.into_snapshot())
 }
 
 #[derive(Default)]
@@ -783,7 +793,8 @@ impl FactDelta {
     self.spans.get(span_id).or_else(|| snapshot.spans.get(span_id))
   }
 
-  fn apply(self, snapshot: &mut RunSnapshot, indexes: &mut ReducerIndexes) {
+  fn apply(self, snapshot: &mut Arc<RunSnapshot>, indexes: &mut ReducerIndexes) {
+    let snapshot = Arc::make_mut(snapshot);
     snapshot.spans.extend(self.spans);
     snapshot.events.extend(self.events);
     snapshot.artifacts.extend(self.artifacts);
@@ -1039,24 +1050,86 @@ fn validate_snapshot(snapshot: &RunSnapshot) -> Result<(), SnapshotValidationErr
 #[cfg(test)]
 mod incremental_tests {
   use super::*;
-  use crate::{EventName, JsonPayload};
+  use crate::{ArtifactId, EventName, JsonPayload};
 
   #[test]
-  fn incremental_reduction_matches_complete_history_replay() {
+  fn mixed_incremental_commit_is_atomic_after_a_late_invalid_fact() {
     let authority_id = AuthorityId::new();
     let run_id = RunId::new();
-    let commits = vec![
-      event_commit(authority_id, run_id, 1, "first"),
-      event_commit(authority_id, run_id, 2, "second"),
-    ];
-    let expected = reduce_commits(&commits).expect("complete history is valid");
-
+    let parent_id = SpanId::new();
+    let child_id = SpanId::new();
+    let artifact_id = ArtifactId::new();
+    let first_event_id = EventId::new();
     let mut reducer = IncrementalReducer::new(authority_id, run_id);
-    for commit in &commits {
-      reducer.apply(commit).expect("each incremental commit is valid");
-    }
+    let mixed = RunCommit::new(
+      authority_id,
+      run_id,
+      RunRevision::new(1).unwrap(),
+      IdempotencyKey::new(),
+      Timestamp::new(5, 0).unwrap(),
+      vec![
+        RunFact::SpanStarted(span_start(parent_id, None, 1)),
+        RunFact::SpanStarted(span_start(child_id, Some(parent_id), 2)),
+        scoped_event(first_event_id, child_id, 3, "child event"),
+        RunFact::SpanEnded(SpanEnded::new(child_id, Timestamp::new(4, 0).unwrap())),
+        RunFact::ArtifactPublished(ArtifactPublished::new(
+          Some(child_id),
+          ArtifactMetadata::new(
+            ArtifactUri::from_ids(run_id, artifact_id),
+            ArtifactPurpose::parse("auv.test.incremental_artifact").unwrap(),
+            ContentType::parse("application/octet-stream").unwrap(),
+            ByteLength::new(0).unwrap(),
+            Sha256Digest::new([0; 32]),
+            Attributes::empty(),
+          ),
+        )),
+      ],
+    )
+    .unwrap();
+    reducer.apply(&mixed).unwrap();
 
-    assert_eq!(reducer.snapshot(), &expected);
+    let snapshot = reducer.snapshot();
+    assert_eq!(snapshot.through_revision(), RunRevision::new(1).unwrap());
+    assert_eq!(snapshot.spans().len(), 2);
+    assert!(snapshot.spans().get(&parent_id).unwrap().ended().is_none());
+    assert_eq!(snapshot.spans().get(&child_id).unwrap().ended().unwrap().ended_at(), Timestamp::new(4, 0).unwrap());
+    assert_eq!(snapshot.events().iter().map(EventOccurred::event_id).collect::<Vec<_>>(), vec![first_event_id]);
+    assert!(snapshot.artifacts().contains_key(&ArtifactUri::from_ids(run_id, artifact_id)));
+
+    let retry_event_id = EventId::new();
+    let invalid = RunCommit::new(
+      authority_id,
+      run_id,
+      RunRevision::new(2).unwrap(),
+      IdempotencyKey::new(),
+      Timestamp::new(100, 0).unwrap(),
+      vec![
+        scoped_event(retry_event_id, parent_id, 100, "must roll back"),
+        scoped_event(EventId::new(), child_id, 5, "late"),
+      ],
+    )
+    .unwrap();
+    let before = reducer.snapshot().clone();
+    assert_eq!(reducer.apply(&invalid), Err(ReduceError::EventAfterSpanEnd));
+    assert_eq!(reducer.snapshot(), &before);
+
+    let retry = RunCommit::new(
+      authority_id,
+      run_id,
+      RunRevision::new(2).unwrap(),
+      IdempotencyKey::new(),
+      Timestamp::new(5, 0).unwrap(),
+      vec![
+        scoped_event(retry_event_id, parent_id, 3, "accepted retry"),
+        RunFact::SpanEnded(SpanEnded::new(parent_id, Timestamp::new(5, 0).unwrap())),
+      ],
+    )
+    .unwrap();
+    reducer.apply(&retry).unwrap();
+    assert_eq!(reducer.snapshot().through_revision(), RunRevision::new(2).unwrap());
+    assert_eq!(reducer.snapshot().events().len(), 2);
+    assert_eq!(reducer.snapshot().events()[1].event_id(), retry_event_id);
+    assert_eq!(reducer.snapshot().spans().get(&parent_id).unwrap().ended().unwrap().ended_at(), Timestamp::new(5, 0).unwrap());
   }
 
   #[test]
@@ -1102,6 +1175,28 @@ mod incremental_tests {
       event_id,
       None,
       Timestamp::new(revision as i64, 0).unwrap(),
+      schema,
+      JsonPayload::encode(&serde_json::json!({ "value": value })).unwrap(),
+    ))
+  }
+
+  fn span_start(span_id: SpanId, parent_span_id: Option<SpanId>, started_at: i64) -> SpanStarted {
+    SpanStarted::new(
+      span_id,
+      parent_span_id,
+      None,
+      SpanName::parse("auv.test.incremental_span").unwrap(),
+      Timestamp::new(started_at, 0).unwrap(),
+      Attributes::empty(),
+    )
+  }
+
+  fn scoped_event(event_id: EventId, span_id: SpanId, occurred_at: i64, value: &str) -> RunFact {
+    let schema = EventSchema::new(EventName::parse("auv.test.incremental").unwrap(), 1).unwrap();
+    RunFact::EventOccurred(EventOccurred::new(
+      event_id,
+      Some(span_id),
+      Timestamp::new(occurred_at, 0).unwrap(),
       schema,
       JsonPayload::encode(&serde_json::json!({ "value": value })).unwrap(),
     ))
