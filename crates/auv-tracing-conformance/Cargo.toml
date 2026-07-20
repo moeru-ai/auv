@@ -1,0 +1,21 @@
+[package]
+name = "auv-tracing-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-tracing = { path = "../auv-tracing", features = ["memory-store", "file-store"] }
+futures-io.workspace = true
+futures-timer = "3"
+futures-util = { workspace = true, features = ["io"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
