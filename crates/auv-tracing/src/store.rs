@@ -12,6 +12,12 @@ use crate::{
   RunCommit, RunCommitRequest, RunId, RunRevision, RunSnapshot, Sha256Digest, SpanId, ValidationError,
 };
 
+#[cfg(feature = "memory-store")]
+mod memory;
+
+#[cfg(feature = "memory-store")]
+pub use memory::MemoryRunStore;
+
 const MAX_COMMIT_PAGE_JSON_BYTES: usize = 32 * 1024 * 1024;
 
 /// A boxed asynchronous operation returned by the object-safe store port.
@@ -53,8 +59,8 @@ pub trait RunStore: Send + Sync {
   fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>>;
 }
 
-// TODO(run-store-backends-v1): concrete authorities are deferred to the
-// owner-approved backend tasks beginning with Task 5 of the V1 implementation plan.
+// TODO(file-run-store-v1): The durable authority remains deferred until the
+// owner-approved file-store task defines its private persistence layout.
 
 /// Metadata required before an authority consumes a one-shot artifact body.
 #[derive(Clone, Debug, PartialEq)]

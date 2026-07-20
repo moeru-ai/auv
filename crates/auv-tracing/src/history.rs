@@ -696,27 +696,64 @@ struct ReducerIndexes {
   event_ids: BTreeSet<EventId>,
 }
 
-impl ReducerIndexes {
-  fn claim_event_id(&mut self, event_id: EventId) -> Result<(), ReduceError> {
-    if !self.event_ids.insert(event_id) {
-      return Err(ReduceError::DuplicateEventId);
+fn record_max_timestamp(index: &mut BTreeMap<SpanId, Timestamp>, span_id: SpanId, timestamp: Timestamp) {
+  index.entry(span_id).and_modify(|current| *current = (*current).max(timestamp)).or_insert(timestamp);
+}
+
+/// Incremental form of the canonical reducer used by stores that retain a
+/// snapshot independently from their readable commit window.
+pub(crate) struct IncrementalReducer {
+  snapshot: RunSnapshot,
+  indexes: ReducerIndexes,
+}
+
+impl IncrementalReducer {
+  pub(crate) fn new(authority_id: AuthorityId, run_id: RunId) -> Self {
+    Self {
+      snapshot: RunSnapshot {
+        authority_id,
+        run_id,
+        through_revision: RunRevision::new(0).expect("revision zero is the valid pre-history cursor"),
+        spans: BTreeMap::new(),
+        events: Vec::new(),
+        artifacts: BTreeMap::new(),
+      },
+      indexes: ReducerIndexes::default(),
+    }
+  }
+
+  pub(crate) fn apply(&mut self, commit: &RunCommit) -> Result<(), ReduceError> {
+    self.validate_header(commit)?;
+    let delta = validate_facts(&self.snapshot, &self.indexes, commit.facts())?;
+    delta.apply(&mut self.snapshot, &mut self.indexes);
+    self.snapshot.through_revision = commit.revision();
+    Ok(())
+  }
+
+  #[cfg(feature = "memory-store")]
+  pub(crate) fn validate(&self, commit: &RunCommit) -> Result<(), ReduceError> {
+    self.validate_header(commit)?;
+    validate_facts(&self.snapshot, &self.indexes, commit.facts())?;
+    Ok(())
+  }
+
+  fn validate_header(&self, commit: &RunCommit) -> Result<(), ReduceError> {
+    if self.snapshot.through_revision.get().checked_add(1) != Some(commit.revision().get()) {
+      return Err(ReduceError::NonContiguousRevision);
+    }
+    if commit.authority_id() != self.snapshot.authority_id {
+      return Err(ReduceError::MixedAuthority);
+    }
+    if commit.run_id() != self.snapshot.run_id {
+      return Err(ReduceError::MixedRun);
     }
     Ok(())
   }
 
-  fn record_event_time(&mut self, event: &EventOccurred) {
-    if let Some(span_id) = event.span_id() {
-      record_max_timestamp(&mut self.max_event_at_by_span, span_id, event.occurred_at());
-    }
+  #[cfg(any(feature = "memory-store", test))]
+  pub(crate) fn snapshot(&self) -> &RunSnapshot {
+    &self.snapshot
   }
-
-  fn record_child_start(&mut self, parent_id: SpanId, started_at: Timestamp) {
-    record_max_timestamp(&mut self.max_child_start_at_by_parent, parent_id, started_at);
-  }
-}
-
-fn record_max_timestamp(index: &mut BTreeMap<SpanId, Timestamp>, span_id: SpanId, timestamp: Timestamp) {
-  index.entry(span_id).and_modify(|current| *current = (*current).max(timestamp)).or_insert(timestamp);
 }
 
 /// Replays a complete canonical commit sequence into one deterministic snapshot.
@@ -724,38 +761,43 @@ pub fn reduce_commits(commits: &[RunCommit]) -> Result<RunSnapshot, ReduceError>
   let Some(first) = commits.first() else {
     return Err(ReduceError::EmptyHistory);
   };
-  let authority_id = first.authority_id();
-  let run_id = first.run_id();
-  let mut snapshot = RunSnapshot {
-    authority_id,
-    run_id,
-    through_revision: RunRevision::new(0).expect("revision zero is the valid pre-history cursor"),
-    spans: BTreeMap::new(),
-    events: Vec::new(),
-    artifacts: BTreeMap::new(),
-  };
-  let mut indexes = ReducerIndexes::default();
-
-  for (index, commit) in commits.iter().enumerate() {
-    let expected_revision = u64::try_from(index).ok().and_then(|value| value.checked_add(1));
-    if expected_revision != Some(commit.revision().get()) {
-      return Err(ReduceError::NonContiguousRevision);
-    }
-    if commit.authority_id() != authority_id {
-      return Err(ReduceError::MixedAuthority);
-    }
-    if commit.run_id() != run_id {
-      return Err(ReduceError::MixedRun);
-    }
-
-    apply_facts(&mut snapshot, &mut indexes, commit.facts())?;
-    snapshot.through_revision = commit.revision();
+  let mut reducer = IncrementalReducer::new(first.authority_id(), first.run_id());
+  for commit in commits {
+    reducer.apply(commit)?;
   }
-
-  Ok(snapshot)
+  Ok(reducer.snapshot)
 }
 
-fn apply_facts(snapshot: &mut RunSnapshot, indexes: &mut ReducerIndexes, facts: &[RunFact]) -> Result<(), ReduceError> {
+#[derive(Default)]
+struct FactDelta {
+  spans: BTreeMap<SpanId, SpanSnapshot>,
+  events: Vec<EventOccurred>,
+  artifacts: BTreeMap<ArtifactUri, ArtifactPublished>,
+  max_event_at_by_span: BTreeMap<SpanId, Timestamp>,
+  max_child_start_at_by_parent: BTreeMap<SpanId, Timestamp>,
+  event_ids: BTreeSet<EventId>,
+}
+
+impl FactDelta {
+  fn span<'a>(&'a self, snapshot: &'a RunSnapshot, span_id: &SpanId) -> Option<&'a SpanSnapshot> {
+    self.spans.get(span_id).or_else(|| snapshot.spans.get(span_id))
+  }
+
+  fn apply(self, snapshot: &mut RunSnapshot, indexes: &mut ReducerIndexes) {
+    snapshot.spans.extend(self.spans);
+    snapshot.events.extend(self.events);
+    snapshot.artifacts.extend(self.artifacts);
+    for (span_id, timestamp) in self.max_event_at_by_span {
+      record_max_timestamp(&mut indexes.max_event_at_by_span, span_id, timestamp);
+    }
+    for (span_id, timestamp) in self.max_child_start_at_by_parent {
+      record_max_timestamp(&mut indexes.max_child_start_at_by_parent, span_id, timestamp);
+    }
+    indexes.event_ids.extend(self.event_ids);
+  }
+}
+
+fn validate_facts(snapshot: &RunSnapshot, indexes: &ReducerIndexes, facts: &[RunFact]) -> Result<FactDelta, ReduceError> {
   let mut pending_starts = BTreeMap::<SpanId, (SpanStarted, usize)>::new();
   let mut pending_order = Vec::new();
   for (index, fact) in facts.iter().enumerate() {
@@ -774,22 +816,23 @@ fn apply_facts(snapshot: &mut RunSnapshot, indexes: &mut ReducerIndexes, facts: 
   // so a forward-reference cycle remains a cycle error.
   validate_pending_parentage(snapshot, &pending_starts, &pending_order)?;
 
+  let mut delta = FactDelta::default();
   for (index, fact) in facts.iter().enumerate() {
     match fact {
       RunFact::SpanStarted(started) => {
         if let Some(parent_id) = started.parent_span_id() {
-          let parent = snapshot.spans.get(&parent_id).ok_or(ReduceError::MissingLocalParent)?;
+          let parent = delta.span(snapshot, &parent_id).ok_or(ReduceError::MissingLocalParent)?;
           if parent.ended().is_some() {
             return Err(ReduceError::ParentSpanEnded);
           }
           if started.started_at() < parent.started().started_at() {
             return Err(ReduceError::ChildBeforeParent);
           }
-          indexes.record_child_start(parent_id, started.started_at());
+          record_max_timestamp(&mut delta.max_child_start_at_by_parent, parent_id, started.started_at());
         }
         let (_, start_index) = pending_starts.get(&started.span_id()).expect("pending starts were collected from the same facts");
         debug_assert_eq!(*start_index, index);
-        snapshot.spans.insert(
+        delta.spans.insert(
           started.span_id(),
           SpanSnapshot {
             started: started.clone(),
@@ -798,50 +841,68 @@ fn apply_facts(snapshot: &mut RunSnapshot, indexes: &mut ReducerIndexes, facts: 
         );
       }
       RunFact::SpanEnded(ended) => {
-        let span = snapshot.spans.get(&ended.span_id()).ok_or(ReduceError::UnknownSpanEnd)?;
+        let mut span = delta.span(snapshot, &ended.span_id()).cloned().ok_or(ReduceError::UnknownSpanEnd)?;
         if span.ended.is_some() {
           return Err(ReduceError::DuplicateSpanEnd);
         }
         if ended.ended_at() < span.started.started_at() {
           return Err(ReduceError::EndBeforeStart);
         }
-        if indexes.max_event_at_by_span.get(&ended.span_id()).is_some_and(|occurred_at| *occurred_at > ended.ended_at()) {
+        if max_timestamp(indexes.max_event_at_by_span.get(&ended.span_id()), delta.max_event_at_by_span.get(&ended.span_id()))
+          .is_some_and(|occurred_at| occurred_at > ended.ended_at())
+        {
           return Err(ReduceError::EventAfterSpanEnd);
         }
-        if indexes.max_child_start_at_by_parent.get(&ended.span_id()).is_some_and(|started_at| *started_at > ended.ended_at()) {
+        if max_timestamp(
+          indexes.max_child_start_at_by_parent.get(&ended.span_id()),
+          delta.max_child_start_at_by_parent.get(&ended.span_id()),
+        )
+        .is_some_and(|started_at| started_at > ended.ended_at())
+        {
           return Err(ReduceError::ParentSpanEnded);
         }
-        snapshot.spans.get_mut(&ended.span_id()).expect("span existence was validated above").ended = Some(ended.clone());
+        span.ended = Some(ended.clone());
+        delta.spans.insert(ended.span_id(), span);
       }
       RunFact::EventOccurred(event) => {
-        indexes.claim_event_id(event.event_id())?;
+        if indexes.event_ids.contains(&event.event_id()) || !delta.event_ids.insert(event.event_id()) {
+          return Err(ReduceError::DuplicateEventId);
+        }
         if let Some(span_id) = event.span_id() {
-          let span = snapshot.spans.get(&span_id).ok_or(ReduceError::UnknownEventSpan)?;
+          let span = delta.span(snapshot, &span_id).ok_or(ReduceError::UnknownEventSpan)?;
           if span.ended().is_some() {
             return Err(ReduceError::EventAfterSpanEnd);
           }
           if event.occurred_at() < span.started().started_at() {
             return Err(ReduceError::EventBeforeSpanStart);
           }
+          record_max_timestamp(&mut delta.max_event_at_by_span, span_id, event.occurred_at());
         }
-        indexes.record_event_time(event);
-        snapshot.events.push(event.clone());
+        delta.events.push(event.clone());
       }
       RunFact::ArtifactPublished(artifact) => {
         if artifact.metadata().uri().run_id() != snapshot.run_id {
           return Err(ReduceError::ArtifactRunMismatch);
         }
-        if artifact.span_id().is_some_and(|span_id| !snapshot.spans.contains_key(&span_id)) {
+        if artifact.span_id().is_some_and(|span_id| delta.span(snapshot, &span_id).is_none()) {
           return Err(ReduceError::UnknownArtifactSpan);
         }
         let uri = artifact.metadata().uri().clone();
-        if snapshot.artifacts.insert(uri, artifact.clone()).is_some() {
+        if snapshot.artifacts.contains_key(&uri) || delta.artifacts.insert(uri, artifact.clone()).is_some() {
           return Err(ReduceError::DuplicateArtifactUri);
         }
       }
     }
   }
-  Ok(())
+  Ok(delta)
+}
+
+fn max_timestamp(first: Option<&Timestamp>, second: Option<&Timestamp>) -> Option<Timestamp> {
+  match (first, second) {
+    (Some(first), Some(second)) => Some((*first).max(*second)),
+    (Some(timestamp), None) | (None, Some(timestamp)) => Some(*timestamp),
+    (None, None) => None,
+  }
 }
 
 fn validate_span_links(started: &SpanStarted) -> Result<(), ReduceError> {
@@ -973,4 +1034,76 @@ fn validate_snapshot(snapshot: &RunSnapshot) -> Result<(), SnapshotValidationErr
   }
 
   Ok(())
+}
+
+#[cfg(test)]
+mod incremental_tests {
+  use super::*;
+  use crate::{EventName, JsonPayload};
+
+  #[test]
+  fn incremental_reduction_matches_complete_history_replay() {
+    let authority_id = AuthorityId::new();
+    let run_id = RunId::new();
+    let commits = vec![
+      event_commit(authority_id, run_id, 1, "first"),
+      event_commit(authority_id, run_id, 2, "second"),
+    ];
+    let expected = reduce_commits(&commits).expect("complete history is valid");
+
+    let mut reducer = IncrementalReducer::new(authority_id, run_id);
+    for commit in &commits {
+      reducer.apply(commit).expect("each incremental commit is valid");
+    }
+
+    assert_eq!(reducer.snapshot(), &expected);
+  }
+
+  #[test]
+  fn rejected_incremental_commit_leaves_snapshot_unchanged() {
+    let authority_id = AuthorityId::new();
+    let run_id = RunId::new();
+    let mut reducer = IncrementalReducer::new(authority_id, run_id);
+    reducer.apply(&event_commit(authority_id, run_id, 1, "first")).unwrap();
+    let before = reducer.snapshot().clone();
+    let event_id = EventId::new();
+    let duplicate = RunCommit::new(
+      authority_id,
+      run_id,
+      RunRevision::new(2).unwrap(),
+      IdempotencyKey::new(),
+      Timestamp::new(2, 0).unwrap(),
+      vec![
+        event_fact(event_id, 2, "accepted first"),
+        event_fact(event_id, 2, "duplicate"),
+      ],
+    )
+    .unwrap();
+
+    assert_eq!(reducer.apply(&duplicate), Err(ReduceError::DuplicateEventId));
+    assert_eq!(reducer.snapshot(), &before);
+  }
+
+  fn event_commit(authority_id: AuthorityId, run_id: RunId, revision: u64, value: &str) -> RunCommit {
+    RunCommit::new(
+      authority_id,
+      run_id,
+      RunRevision::new(revision).unwrap(),
+      IdempotencyKey::new(),
+      Timestamp::new(revision as i64, 0).unwrap(),
+      vec![event_fact(EventId::new(), revision, value)],
+    )
+    .unwrap()
+  }
+
+  fn event_fact(event_id: EventId, revision: u64, value: &str) -> RunFact {
+    let schema = EventSchema::new(EventName::parse("auv.test.incremental").unwrap(), 1).unwrap();
+    RunFact::EventOccurred(EventOccurred::new(
+      event_id,
+      None,
+      Timestamp::new(revision as i64, 0).unwrap(),
+      schema,
+      JsonPayload::encode(&serde_json::json!({ "value": value })).unwrap(),
+    ))
+  }
 }
