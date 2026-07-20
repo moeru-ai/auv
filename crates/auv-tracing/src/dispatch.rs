@@ -2,10 +2,12 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::num::NonZeroUsize;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context as TaskContext, Poll, Waker};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
   AuthorityId, CommitError, ErrorCode, EventId, EventOccurred, EventPayload, EventSchema, IdempotencyKey, JsonPayload, NonEmptyVec,
@@ -38,12 +40,17 @@ impl TaskSpawnError {
 /// Runtime-independent thread-pool scheduling for instrumentation IO.
 #[derive(Clone)]
 pub struct ThreadTaskSpawner {
-  pool: futures_executor::ThreadPool,
+  pool: Arc<futures_executor::ThreadPool>,
 }
 
 impl ThreadTaskSpawner {
   fn new() -> Result<Self, BuildError> {
-    futures_executor::ThreadPool::new().map(|pool| Self { pool }).map_err(|_| BuildError::TaskSpawnerInitialization)
+    static DEFAULT_POOL: OnceLock<Option<Arc<futures_executor::ThreadPool>>> = OnceLock::new();
+    DEFAULT_POOL
+      .get_or_init(|| futures_executor::ThreadPool::builder().pool_size(2).create().ok().map(Arc::new))
+      .clone()
+      .map(|pool| Self { pool })
+      .ok_or(BuildError::TaskSpawnerInitialization)
   }
 }
 
@@ -172,9 +179,10 @@ impl DispatchBuilder {
       authority_id: store.authority_id(),
       store,
     });
-    let spawner = match self.task_spawner {
-      Some(spawner) => spawner,
-      None => Arc::new(ThreadTaskSpawner::new()?),
+    let spawner: Option<Arc<dyn TaskSpawner>> = match (self.task_spawner, route.is_some()) {
+      (Some(spawner), _) => Some(spawner),
+      (None, true) => Some(Arc::new(ThreadTaskSpawner::new()?)),
+      (None, false) => None,
     };
 
     Ok(Dispatch {
@@ -204,6 +212,9 @@ impl Dispatch {
   }
 
   /// Captures the current ticket barrier and returns its cancellation-safe waiter.
+  ///
+  /// Outstanding flushes consume reporting intervals in call order. Callers
+  /// must poll or drop each earlier flush before awaiting a later one.
   pub fn flush(&self) -> crate::BoxFuture<'_, Result<(), FlushError>> {
     let ordering_id = {
       let mut progress = self.inner.progress.lock().unwrap();
@@ -221,7 +232,7 @@ impl Dispatch {
       let name = SpanName::parse(S::NAME).map_err(|_| encode_code())?;
       let attributes = spec.attributes();
       serde_json::to_vec(&attributes).map_err(|_| encode_code())?;
-      Ok(RunMutation::StartSpan(SpanStarted::new(span_id, parent_span_id, None, name, now(), attributes)))
+      Ok(RunMutation::StartSpan(SpanStarted::new(span_id, parent_span_id, None, name, now()?, attributes)))
     })();
     preparation.complete(mutation);
   }
@@ -231,7 +242,7 @@ impl Dispatch {
     let mutation = (|| {
       let schema = EventSchema::for_payload::<E>().map_err(|_| encode_code())?;
       let payload = JsonPayload::encode(&event).map_err(|_| encode_code())?;
-      Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, now(), schema, payload)))
+      Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, now()?, schema, payload)))
     })();
     preparation.complete(mutation);
   }
@@ -240,6 +251,8 @@ impl Dispatch {
     let mut progress = self.inner.progress.lock().unwrap();
     progress.next_ticket = progress.next_ticket.checked_add(1).expect("dispatch ticket space exhausted");
     let ticket = progress.next_ticket;
+    // TODO(auv-run-contract-v1-task-8): define bounded admission/backpressure
+    // with DispatchErrorReporter policy before imposing any queue capacity.
     self.inner.lanes.lock().unwrap().entry(run_id).or_default().queue.push_back(LaneEntry {
       ticket,
       state: LaneEntryState::Preparing,
@@ -301,36 +314,52 @@ impl Dispatch {
       match action {
         LaneWake::Terminal(ticket, failure) => self.terminalize(ticket, Some(failure)),
         LaneWake::Spawn => {
+          let admission = Arc::new(SpawnAdmission::new());
+          let task_admission = admission.clone();
           let dispatch = self.clone();
-          match self.inner.spawner.spawn(Box::pin(async move { dispatch.drain_run(run_id).await })) {
-            Ok(()) => return,
-            Err(error) => {
-              let ticket = {
-                let mut lanes = self.inner.lanes.lock().unwrap();
-                let lane = lanes.get_mut(&run_id).expect("failed spawn leaves its lane registered");
-                lane.running = false;
-                let entry = lane.queue.pop_front().expect("spawn was requested for a ready entry");
-                debug_assert!(matches!(entry.state, LaneEntryState::Ready(_)));
-                entry.ticket
-              };
-              self.terminalize(ticket, Some(DispatchFailure::new(DispatchStage::Spawn, error.code.clone())));
+          let task = Box::pin(async move {
+            if task_admission.start() {
+              dispatch.drain_run(run_id).await;
             }
-          }
+          });
+          let spawn = catch_unwind(AssertUnwindSafe(|| self.spawner().spawn(task)));
+          let failure_code = match spawn {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) if admission.cancel_before_start() => error.code,
+            Err(_) if admission.cancel_before_start() => spawn_panic_code(),
+            Ok(Err(_)) | Err(_) => return,
+          };
+          let ticket = {
+            let mut lanes = self.inner.lanes.lock().unwrap();
+            let lane = lanes.get_mut(&run_id).expect("failed spawn leaves its lane registered");
+            lane.running = false;
+            let entry = lane.queue.pop_front().expect("spawn was requested for a ready entry");
+            debug_assert!(matches!(entry.state, LaneEntryState::Ready(_)));
+            entry.ticket
+          };
+          self.terminalize(ticket, Some(DispatchFailure::new(DispatchStage::Spawn, failure_code)));
         }
       }
     }
   }
 
+  fn spawner(&self) -> &dyn TaskSpawner {
+    self.inner.spawner.as_deref().expect("authority-backed dispatch has a task spawner")
+  }
+
   async fn drain_run(&self, run_id: RunId) {
+    let mut guard = LaneDrainGuard::new(self.clone(), run_id);
     loop {
       let action = {
         let mut lanes = self.inner.lanes.lock().unwrap();
         let Some(lane) = lanes.get_mut(&run_id) else {
+          guard.disarm();
           return;
         };
         match lane.queue.front().map(|entry| &entry.state) {
           Some(LaneEntryState::Preparing) => {
             lane.running = false;
+            guard.disarm();
             return;
           }
           Some(LaneEntryState::Ready(_)) | Some(LaneEntryState::Failed(_)) => {
@@ -343,6 +372,7 @@ impl Dispatch {
           }
           None => {
             lanes.remove(&run_id);
+            guard.disarm();
             return;
           }
         }
@@ -351,6 +381,7 @@ impl Dispatch {
       match action {
         LaneAction::Terminal(ticket, failure) => self.terminalize(ticket, Some(failure)),
         LaneAction::Commit(ticket, request) => {
+          guard.activate(ticket);
           let route = self.inner.route.as_ref().expect("authority lane requires a route");
           let failure = route
             .store
@@ -358,6 +389,7 @@ impl Dispatch {
             .await
             .err()
             .map(|error| DispatchFailure::new(DispatchStage::AuthorityCommit, commit_error_code(error)));
+          guard.complete(ticket);
           self.terminalize(ticket, failure);
         }
       }
@@ -394,6 +426,75 @@ impl Dispatch {
     debug_assert!(changed, "preparation guard owns one Preparing lane entry");
     if changed {
       self.wake_lane(run_id);
+    }
+  }
+
+  fn recover_lane_task(&self, run_id: RunId, active_ticket: Option<u64>) {
+    if let Some(lane) = self.inner.lanes.lock().unwrap().get_mut(&run_id) {
+      lane.running = false;
+    }
+    if let Some(ticket) = active_ticket {
+      self.terminalize(ticket, Some(DispatchFailure::new(DispatchStage::AuthorityCommit, task_unwind_code())));
+    }
+    self.wake_lane(run_id);
+  }
+}
+
+struct SpawnAdmission(AtomicU8);
+
+impl SpawnAdmission {
+  const ADMITTING: u8 = 0;
+  const STARTED: u8 = 1;
+  const CANCELED: u8 = 2;
+
+  fn new() -> Self {
+    Self(AtomicU8::new(Self::ADMITTING))
+  }
+
+  fn start(&self) -> bool {
+    self.0.compare_exchange(Self::ADMITTING, Self::STARTED, Ordering::AcqRel, Ordering::Acquire).is_ok()
+  }
+
+  fn cancel_before_start(&self) -> bool {
+    self.0.compare_exchange(Self::ADMITTING, Self::CANCELED, Ordering::AcqRel, Ordering::Acquire).is_ok()
+  }
+}
+
+struct LaneDrainGuard {
+  dispatch: Dispatch,
+  run_id: RunId,
+  active_ticket: Option<u64>,
+  armed: bool,
+}
+
+impl LaneDrainGuard {
+  fn new(dispatch: Dispatch, run_id: RunId) -> Self {
+    Self {
+      dispatch,
+      run_id,
+      active_ticket: None,
+      armed: true,
+    }
+  }
+
+  fn activate(&mut self, ticket: u64) {
+    debug_assert!(self.active_ticket.replace(ticket).is_none(), "lane task owns at most one active ticket");
+  }
+
+  fn complete(&mut self, ticket: u64) {
+    debug_assert_eq!(self.active_ticket, Some(ticket), "lane task completes its active ticket");
+    self.active_ticket = None;
+  }
+
+  fn disarm(&mut self) {
+    self.armed = false;
+  }
+}
+
+impl Drop for LaneDrainGuard {
+  fn drop(&mut self) {
+    if self.armed {
+      self.dispatch.recover_lane_task(self.run_id, self.active_ticket.take());
     }
   }
 }
@@ -459,7 +560,7 @@ impl Drop for FlushFuture {
 
 struct DispatchInner {
   route: Option<AuthorityRoute>,
-  spawner: Arc<dyn TaskSpawner>,
+  spawner: Option<Arc<dyn TaskSpawner>>,
   lanes: Mutex<HashMap<RunId, RunLane>>,
   progress: Mutex<Progress>,
 }
@@ -501,7 +602,8 @@ struct Progress {
   next_ticket: u64,
   next_flush_id: u64,
   terminal_prefix: u64,
-  out_of_order: BTreeMap<u64, Option<DispatchFailure>>,
+  success_ranges: BTreeMap<u64, u64>,
+  out_of_order_failures: BTreeMap<u64, DispatchFailure>,
   failures: BTreeMap<u64, DispatchFailure>,
   reported_through: u64,
   flushes: VecDeque<FlushRegistration>,
@@ -520,14 +622,48 @@ impl Progress {
   }
 
   fn terminalize(&mut self, ticket: u64, failure: Option<DispatchFailure>) {
-    let replaced = self.out_of_order.insert(ticket, failure);
-    debug_assert!(replaced.is_none(), "a dispatch ticket terminalized more than once");
-    while let Some(failure) = self.out_of_order.remove(&(self.terminal_prefix + 1)) {
-      self.terminal_prefix += 1;
-      if let Some(failure) = failure {
-        self.failures.insert(self.terminal_prefix, failure);
+    if ticket <= self.terminal_prefix
+      || self.out_of_order_failures.contains_key(&ticket)
+      || self.success_ranges.range(..=ticket).next_back().is_some_and(|(_, end)| *end >= ticket)
+    {
+      debug_assert!(false, "a dispatch ticket terminalized more than once");
+      return;
+    }
+
+    if let Some(failure) = failure {
+      self.out_of_order_failures.insert(ticket, failure);
+    } else {
+      self.insert_success(ticket);
+    }
+
+    while let Some(next) = self.terminal_prefix.checked_add(1) {
+      if let Some(failure) = self.out_of_order_failures.remove(&next) {
+        self.terminal_prefix = next;
+        self.failures.insert(next, failure);
+      } else if let Some(end) = self.success_ranges.remove(&next) {
+        self.terminal_prefix = end;
+      } else {
+        break;
       }
     }
+  }
+
+  fn insert_success(&mut self, ticket: u64) {
+    let mut start = ticket;
+    if let Some((&left_start, &left_end)) = self.success_ranges.range(..ticket).next_back()
+      && left_end.checked_add(1) == Some(ticket)
+    {
+      start = left_start;
+      self.success_ranges.remove(&left_start);
+    }
+
+    let mut end = ticket;
+    if let Some(right_start) = ticket.checked_add(1)
+      && let Some(right_end) = self.success_ranges.remove(&right_start)
+    {
+      end = right_end;
+    }
+    self.success_ranges.insert(start, end);
   }
 
   fn poll_flush(&mut self, ordering_id: u64, context: &mut TaskContext<'_>) -> (Poll<Result<(), FlushError>>, Option<Waker>) {
@@ -578,13 +714,30 @@ struct FlushRegistration {
   waker: Option<Waker>,
 }
 
-fn now() -> Timestamp {
-  let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time is after the Unix epoch");
-  Timestamp::new(now.as_secs() as i64, now.subsec_nanos()).expect("system time is representable by the run contract")
+fn now() -> Result<Timestamp, ErrorCode> {
+  timestamp_from_system_time(SystemTime::now())
+}
+
+fn timestamp_from_system_time(value: SystemTime) -> Result<Timestamp, ErrorCode> {
+  let duration = value.duration_since(UNIX_EPOCH).map_err(|_| encode_code())?;
+  timestamp_from_unix_duration(duration)
+}
+
+fn timestamp_from_unix_duration(value: Duration) -> Result<Timestamp, ErrorCode> {
+  let seconds = i64::try_from(value.as_secs()).map_err(|_| encode_code())?;
+  Timestamp::new(seconds, value.subsec_nanos()).map_err(|_| encode_code())
 }
 
 fn encode_code() -> ErrorCode {
   ErrorCode::parse("auv.dispatch.encode").expect("static dispatch error code is valid")
+}
+
+fn spawn_panic_code() -> ErrorCode {
+  ErrorCode::parse("auv.dispatch.spawn_panic").expect("static dispatch error code is valid")
+}
+
+fn task_unwind_code() -> ErrorCode {
+  ErrorCode::parse("auv.dispatch.task_unwind").expect("static dispatch error code is valid")
 }
 
 fn commit_error_code(error: CommitError) -> ErrorCode {
@@ -665,3 +818,53 @@ pub mod dispatcher {
 // the existing ticket barrier; a route-less dispatch remains disabled in Task 6.
 // TODO(auv-run-contract-v1-task-9): add detached artifact admission and writes
 // without moving byte transfer into the per-run authority fact lane.
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn route_less_dispatch_does_not_allocate_a_default_worker() {
+    let dispatch = configure().build().unwrap();
+    assert!(dispatch.inner.spawner.is_none());
+  }
+
+  #[test]
+  fn authority_defaults_share_one_small_worker_pool() {
+    let first = ThreadTaskSpawner::new().unwrap();
+    let second = ThreadTaskSpawner::new().unwrap();
+    assert!(Arc::ptr_eq(&first.pool, &second.pool));
+  }
+
+  #[test]
+  fn clock_values_before_unix_epoch_are_encode_failures() {
+    let before_epoch = UNIX_EPOCH.checked_sub(std::time::Duration::from_secs(1)).unwrap();
+    assert_eq!(timestamp_from_system_time(before_epoch).unwrap_err().as_str(), "auv.dispatch.encode");
+  }
+
+  #[test]
+  fn clock_seconds_that_do_not_fit_i64_are_encode_failures() {
+    let overflow = std::time::Duration::from_secs(i64::MAX as u64 + 1);
+    assert_eq!(timestamp_from_unix_duration(overflow).unwrap_err().as_str(), "auv.dispatch.encode");
+  }
+
+  #[test]
+  fn out_of_order_successes_coalesce_around_preserved_failures() {
+    let mut progress = Progress::default();
+    for ticket in 2..=5_000 {
+      progress.terminalize(ticket, None);
+    }
+    progress.terminalize(5_001, Some(DispatchFailure::new(DispatchStage::Spawn, spawn_panic_code())));
+    for ticket in 5_002..=10_000 {
+      progress.terminalize(ticket, None);
+    }
+
+    assert_eq!(progress.success_ranges.len(), 2);
+    assert_eq!(progress.out_of_order_failures.len(), 1);
+    progress.terminalize(1, None);
+    assert_eq!(progress.terminal_prefix, 10_000);
+    assert!(progress.success_ranges.is_empty());
+    assert!(progress.out_of_order_failures.is_empty());
+    assert_eq!(progress.failures.get(&5_001).unwrap().stage(), DispatchStage::Spawn);
+  }
+}
