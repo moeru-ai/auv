@@ -167,10 +167,10 @@ Examples include screenshots, click-overlay images, accessibility snapshots,
 driver input/output JSON, distillation reports, validation reports, and video
 segments.
 
-Committed typed facts and resources refer to artifacts through `ArtifactRef`
-metadata. Spans and events may add diagnostic links, but they do not own
-artifacts; large payloads remain authority-owned bytes rather than embedded
-event data.
+Committed typed facts and resources refer to artifacts through `ArtifactUri`.
+An `ArtifactUri` is the transport-independent identity of an artifact. Spans
+and events may add diagnostic links, but they do not own artifacts; large
+payloads remain authority-owned bytes rather than embedded event data.
 
 ## Observation Scope
 
