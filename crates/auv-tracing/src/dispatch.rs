@@ -1505,7 +1505,7 @@ impl Progress {
     failures.extend(flush.failures);
     self.failures.retain(|ticket, _| *ticket > flush.barrier);
     self.reported_through = flush.barrier;
-    let waker = self.take_front_waker();
+    let waker = self.drain_canceled_front().or_else(|| self.take_front_waker());
     (Poll::Ready(NonEmptyVec::new(failures).map(|failures| Err(FlushError { failures })).unwrap_or(Ok(()))), waker)
   }
 

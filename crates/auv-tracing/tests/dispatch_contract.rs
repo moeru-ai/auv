@@ -3,6 +3,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::sync::mpsc::{SyncSender, sync_channel};
 use std::task::{Context as TaskContext, Poll};
 
 use auv_tracing::{
@@ -12,8 +13,17 @@ use auv_tracing::{
 };
 use support::{
   AuthorityCall, BlockingProjector, CommitUnknownStore, ControlledStore, CursorStore, DiscardFirstTaskSpawner, DropFirstTaskSpawner,
-  FailFirstSpawner, PanicFirstSpawner, ProjectorCall, RecordingProjector, RecordingReporter, UnknownLookup, block_on_timeout,
+  FailFirstSpawner, ManualTaskSpawner, PanicFirstSpawner, ProjectorCall, RecordingProjector, RecordingReporter, UnknownLookup,
+  block_on_timeout,
 };
+
+struct SignalWake(SyncSender<()>);
+
+impl futures_util::task::ArcWake for SignalWake {
+  fn wake_by_ref(wake: &Arc<Self>) {
+    let _ = wake.0.try_send(());
+  }
+}
 
 #[derive(Clone, Debug, serde::Serialize)]
 struct TestEvent {
@@ -649,6 +659,81 @@ fn canceled_flush_cannot_consume_its_projector_flush_failure() {
   assert_eq!(error.first().code().as_str(), "auv.test.canceled_flush");
   block_on_timeout(dispatch.flush()).unwrap();
   assert_eq!(reporter.failures().len(), 1);
+}
+
+// ROOT CAUSE:
+//
+// If a completed non-front flush was canceled, popping the preceding live
+// flush exposed an ownerless canceled registration because `poll_flush` did
+// not revisit canceled-front draining.
+//
+// Before the fix, every later flush remained stranded behind that registration.
+// The fix drains newly exposed completed cancellations and carries their
+// failures into the next live interval.
+#[test]
+fn completing_front_flush_drains_canceled_middle_and_wakes_third() {
+  let projector = RecordingProjector::new();
+  projector.fail_next_project(ErrorCode::parse("auv.test.first_ticket").unwrap());
+  projector.fail_next_project(ErrorCode::parse("auv.test.middle_ticket").unwrap());
+  projector.fail_next_flush(ErrorCode::parse("auv.test.first_flush").unwrap());
+  projector.fail_next_flush(ErrorCode::parse("auv.test.middle_flush").unwrap());
+  let reporter = RecordingReporter::new();
+  let spawner = ManualTaskSpawner::new();
+  let dispatch = configure()
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .on_error(reporter.clone())
+    .task_spawner(spawner.clone())
+    .build()
+    .unwrap();
+  let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(RunId::new()));
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+  let first = dispatch.flush();
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 2 }));
+  let middle = dispatch.flush();
+  let mut third = dispatch.flush();
+
+  let (wake_sender, wake_receiver) = sync_channel(1);
+  let wake = Arc::new(SignalWake(wake_sender));
+  let waker = futures_util::task::waker_ref(&wake);
+  let mut task_context = TaskContext::from_waker(&waker);
+  assert!(third.as_mut().poll(&mut task_context).is_pending());
+  drop(middle);
+
+  spawner.run_all();
+  assert_eq!(
+    projector.calls(),
+    [
+      ProjectorCall::Project,
+      ProjectorCall::Flush,
+      ProjectorCall::Project,
+      ProjectorCall::Flush,
+      ProjectorCall::Flush,
+    ]
+  );
+
+  let first_error = block_on_timeout(first).unwrap_err();
+  assert_eq!(first_error.failure_count().get(), 2);
+  assert_eq!(first_error.first().code().as_str(), "auv.test.first_ticket");
+  wake_receiver.try_recv().expect("popping the first flush must wake the third waiter through the canceled middle flush");
+
+  let third_error = block_on_timeout(third).unwrap_err();
+  assert_eq!(third_error.failure_count().get(), 2);
+  assert_eq!(third_error.first().code().as_str(), "auv.test.middle_ticket");
+  assert_eq!(
+    reporter.failures().iter().map(|failure| failure.code().as_str()).collect::<Vec<_>>(),
+    [
+      "auv.test.first_ticket",
+      "auv.test.first_flush",
+      "auv.test.middle_ticket",
+      "auv.test.middle_flush",
+    ]
+  );
+
+  let fourth = dispatch.flush();
+  spawner.run_all();
+  block_on_timeout(fourth).unwrap();
+  assert_eq!(reporter.failures().len(), 4, "carried failures must not be reported twice");
 }
 
 #[test]
