@@ -13,7 +13,7 @@ use futures_util::FutureExt;
 
 use crate::{
   AuthorityId, CommitError, ErrorCode, EventId, EventOccurred, EventPayload, EventSchema, IdempotencyKey, JsonPayload, NonEmptyVec,
-  RunCommitRequest, RunId, RunMutation, RunStore, SpanId, SpanName, SpanSpec, SpanStarted, Timestamp,
+  RunCommitRequest, RunId, RunMutation, RunStore, SpanEnded, SpanId, SpanLink, SpanName, SpanSpec, SpanStarted, Timestamp,
 };
 
 /// A boxed instrumentation IO task accepted by a dispatch spawner.
@@ -228,15 +228,30 @@ impl Dispatch {
     })
   }
 
-  pub(crate) fn submit_span<S: SpanSpec>(&self, run_id: RunId, parent_span_id: Option<SpanId>, span_id: SpanId, spec: S) {
+  pub(crate) fn submit_span_start<S: SpanSpec>(
+    &self,
+    run_id: RunId,
+    parent_span_id: Option<SpanId>,
+    remote_link: Option<SpanLink>,
+    span_id: SpanId,
+    started_at: Result<Timestamp, ErrorCode>,
+    spec: S,
+  ) -> bool {
     let preparation = self.reserve_ticket(run_id);
     let mutation = (|| {
       let name = SpanName::parse(S::NAME).map_err(|_| encode_code())?;
       let attributes = spec.attributes();
       serde_json::to_vec(&attributes).map_err(|_| encode_code())?;
-      Ok(RunMutation::StartSpan(SpanStarted::new(span_id, parent_span_id, None, name, now()?, attributes)))
+      Ok(RunMutation::StartSpan(SpanStarted::new(span_id, parent_span_id, remote_link, name, started_at?, attributes)))
     })();
+    let prepared = mutation.is_ok();
     preparation.complete(mutation);
+    prepared
+  }
+
+  pub(crate) fn submit_span_end(&self, run_id: RunId, span_id: SpanId, ended_at: Result<Timestamp, ErrorCode>) {
+    let preparation = self.reserve_ticket(run_id);
+    preparation.complete(ended_at.map(|ended_at| RunMutation::EndSpan(SpanEnded::new(span_id, ended_at))));
   }
 
   pub(crate) fn submit_event<E: EventPayload>(&self, run_id: RunId, span_id: Option<SpanId>, event: E) {
@@ -244,7 +259,7 @@ impl Dispatch {
     let mutation = (|| {
       let schema = EventSchema::for_payload::<E>().map_err(|_| encode_code())?;
       let payload = JsonPayload::encode(&event).map_err(|_| encode_code())?;
-      Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, now()?, schema, payload)))
+      Ok(RunMutation::EmitEvent(EventOccurred::new(EventId::new(), span_id, timestamp_now()?, schema, payload)))
     })();
     preparation.complete(mutation);
   }
@@ -721,8 +736,19 @@ struct FlushRegistration {
   waker: Option<Waker>,
 }
 
-fn now() -> Result<Timestamp, ErrorCode> {
+pub(crate) fn timestamp_now() -> Result<Timestamp, ErrorCode> {
   timestamp_from_system_time(SystemTime::now())
+}
+
+// Keeps lifecycle duration monotonic while retaining the exact wall timestamp
+// used by the start fact. Every representability failure stays on the encode route.
+pub(crate) fn timestamp_after(started_at: Timestamp, started_tick: Duration, ended_tick: Duration) -> Result<Timestamp, ErrorCode> {
+  let elapsed = ended_tick.checked_sub(started_tick).ok_or_else(encode_code)?;
+  let nanoseconds = u64::from(started_at.nanoseconds()) + u64::from(elapsed.subsec_nanos());
+  let carry_seconds = nanoseconds / 1_000_000_000;
+  let unix_seconds = i128::from(started_at.unix_seconds()) + i128::from(elapsed.as_secs()) + i128::from(carry_seconds);
+  let unix_seconds = i64::try_from(unix_seconds).map_err(|_| encode_code())?;
+  Timestamp::new(unix_seconds, (nanoseconds % 1_000_000_000) as u32).map_err(|_| encode_code())
 }
 
 fn timestamp_from_system_time(value: SystemTime) -> Result<Timestamp, ErrorCode> {

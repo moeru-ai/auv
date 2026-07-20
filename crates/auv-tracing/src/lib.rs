@@ -8,6 +8,7 @@ mod dispatch;
 mod event;
 mod history;
 mod macros;
+mod propagation;
 mod store;
 mod value;
 
@@ -16,5 +17,6 @@ pub use context::*;
 pub use dispatch::*;
 pub use event::*;
 pub use history::*;
+pub use propagation::*;
 pub use store::*;
 pub use value::*;
