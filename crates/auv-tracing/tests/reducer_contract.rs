@@ -521,3 +521,199 @@ fn reducer_rejects_invalid_artifacts_but_allows_publication_after_span_end() {
   assert_eq!(snapshot.events().len(), 0);
   assert_eq!(snapshot.through_revision(), RunRevision::new(3).unwrap());
 }
+
+#[test]
+fn snapshot_deserialize_rejects_duplicate_span_map_keys() {
+  // ROOT CAUSE:
+  //
+  // Derived BTreeMap deserialization replaced an earlier typed key before
+  // snapshot validation could observe the duplicate.
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let span = SpanId::new();
+  let snapshot = reduce_commits(&[commit(
+    authority,
+    run,
+    1,
+    vec![RunFact::SpanStarted(span_started(span))],
+  )])
+  .unwrap();
+  let span_snapshot = serde_json::to_string(snapshot.spans().get(&span).unwrap()).unwrap();
+  let raw = format!(
+    r#"{{"authority_id":"{authority}","run_id":"{run}","through_revision":1,"spans":{{"{span}":{span_snapshot},"{span}":{span_snapshot}}},"events":[],"artifacts":{{}}}}"#,
+  );
+
+  assert!(serde_json::from_str::<RunSnapshot>(&raw).is_err());
+}
+
+#[test]
+fn snapshot_deserialize_rejects_duplicate_artifact_map_keys() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let artifact = artifact_published(run, ArtifactId::new(), None);
+  let uri = artifact.metadata().uri().clone();
+  let artifact_json = serde_json::to_string(&artifact).unwrap();
+  let raw = format!(
+    r#"{{"authority_id":"{authority}","run_id":"{run}","through_revision":1,"spans":{{}},"events":[],"artifacts":{{"{uri}":{artifact_json},"{uri}":{artifact_json}}}}}"#,
+  );
+
+  assert!(serde_json::from_str::<RunSnapshot>(&raw).is_err());
+}
+
+#[test]
+fn reducer_rejects_parent_end_before_an_existing_child_start() {
+  // ROOT CAUSE:
+  //
+  // Parent-end validation checked prior events but not already materialized
+  // direct children, allowing a child start outside the parent interval.
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let child = SpanId::new();
+  let commits = [
+    commit(
+      authority,
+      run,
+      1,
+      vec![RunFact::SpanStarted(span_started_with(
+        parent, None, None, 10,
+      ))],
+    ),
+    commit(
+      authority,
+      run,
+      2,
+      vec![RunFact::SpanStarted(span_started_with(
+        child,
+        Some(parent),
+        None,
+        12,
+      ))],
+    ),
+    commit(authority, run, 3, vec![RunFact::SpanEnded(SpanEnded::new(parent, timestamp(11)))]),
+  ];
+
+  assert_eq!(reduce_commits(&commits).unwrap_err(), ReduceError::ParentSpanEnded);
+}
+
+#[test]
+fn snapshot_deserialize_rejects_child_before_parent_start() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let child = SpanId::new();
+  let snapshot = reduce_commits(&[commit(
+    authority,
+    run,
+    1,
+    vec![
+      RunFact::SpanStarted(span_started_with(parent, None, None, 10)),
+      RunFact::SpanStarted(span_started_with(child, Some(parent), None, 10)),
+    ],
+  )])
+  .unwrap();
+  let mut wire = serde_json::to_value(snapshot).unwrap();
+  wire["spans"].as_object_mut().unwrap()[&child.to_string()]["started"]["started_at"]["unix_seconds"] = 9.into();
+
+  assert!(serde_json::from_value::<RunSnapshot>(wire).is_err());
+}
+
+#[test]
+fn snapshot_deserialize_rejects_child_start_after_parent_end() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let child = SpanId::new();
+  let snapshot = reduce_commits(&[commit(
+    authority,
+    run,
+    1,
+    vec![
+      RunFact::SpanStarted(span_started_with(parent, None, None, 10)),
+      RunFact::SpanStarted(span_started_with(child, Some(parent), None, 12)),
+    ],
+  )])
+  .unwrap();
+  let mut wire = serde_json::to_value(snapshot).unwrap();
+  wire["spans"].as_object_mut().unwrap()[&parent.to_string()]["ended"] =
+    serde_json::to_value(SpanEnded::new(parent, timestamp(11))).unwrap();
+
+  assert!(serde_json::from_value::<RunSnapshot>(wire).is_err());
+}
+
+#[test]
+fn snapshot_deserialize_rejects_revision_without_any_facts() {
+  // ROOT CAUSE:
+  //
+  // Snapshot validation required only a non-zero revision and did not prove
+  // that the revision could have materialized the retained fact count.
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let raw = format!(r#"{{"authority_id":"{authority}","run_id":"{run}","through_revision":1,"spans":{{}},"events":[],"artifacts":{{}}}}"#,);
+
+  assert!(serde_json::from_str::<RunSnapshot>(&raw).is_err());
+}
+
+#[test]
+fn snapshot_deserialize_rejects_more_revisions_than_retained_facts() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let span = SpanId::new();
+  let snapshot = reduce_commits(&[commit(
+    authority,
+    run,
+    1,
+    vec![RunFact::SpanStarted(span_started(span))],
+  )])
+  .unwrap();
+  let mut wire = serde_json::to_value(snapshot).unwrap();
+  wire["through_revision"] = 2.into();
+
+  assert!(serde_json::from_value::<RunSnapshot>(wire).is_err());
+}
+
+#[test]
+fn snapshot_deserialize_rejects_too_few_revisions_for_fact_count() {
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let mut facts = (0..257).map(|index| RunFact::EventOccurred(event_occurred(EventId::new(), None, index))).collect::<Vec<_>>();
+  let final_fact = facts.pop().unwrap();
+  let snapshot = reduce_commits(&[
+    commit(authority, run, 1, facts),
+    commit(authority, run, 2, vec![final_fact]),
+  ])
+  .unwrap();
+  let mut wire = serde_json::to_value(snapshot).unwrap();
+  wire["through_revision"] = 1.into();
+
+  assert!(serde_json::from_value::<RunSnapshot>(wire).is_err());
+}
+
+fn invalid_linked_span_starts() -> Vec<(SpanStarted, ReduceError)> {
+  let span = SpanId::new();
+  let parent = SpanId::new();
+  vec![
+    (span_started_with(span, Some(span), None, 10), ReduceError::SelfParent),
+    (span_started_with(span, None, Some(SpanLink::new(span)), 10), ReduceError::SelfRemoteLink),
+    (span_started_with(span, Some(parent), Some(SpanLink::new(parent)), 10), ReduceError::DuplicateParentLink),
+  ]
+}
+
+#[test]
+fn standalone_span_snapshot_constructor_rejects_invalid_links() {
+  // ROOT CAUSE:
+  //
+  // Standalone snapshot construction validated only the optional end fact,
+  // bypassing the same link invariants enforced during commit reduction.
+  for (started, expected) in invalid_linked_span_starts() {
+    assert_eq!(SpanSnapshot::new(started, None).unwrap_err(), expected);
+  }
+}
+
+#[test]
+fn standalone_span_snapshot_deserialize_rejects_invalid_links() {
+  for (started, _) in invalid_linked_span_starts() {
+    let wire = serde_json::json!({ "started": started, "ended": null });
+    assert!(serde_json::from_value::<SpanSnapshot>(wire).is_err());
+  }
+}
