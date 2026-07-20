@@ -36,6 +36,19 @@ fn attributes_enforce_v1_shape_and_size() {
 }
 
 #[test]
+fn public_attribute_variants_cannot_bypass_integer_validation() {
+  // ROOT CAUSE:
+  //
+  // A public enum variant bypassed the checked constructor because both the
+  // attributes builder and derived serializer trusted the variant payload.
+  let invalid = AttributeValue::I64(9_007_199_254_740_992);
+  assert!(serde_json::to_string(&invalid).is_err());
+
+  let key = AttributeKey::parse("auv.test.count").unwrap();
+  assert!(Attributes::try_from_iter([(key, invalid)]).is_err());
+}
+
+#[test]
 fn event_schema_and_payload_are_bounded() {
   let schema = EventSchema::for_payload::<SampleEvent>().unwrap();
   let payload = JsonPayload::encode(&SampleEvent { count: 4 }).unwrap();
@@ -76,4 +89,20 @@ fn namespaced_names_are_bounded_by_encoded_bytes() {
 #[test]
 fn json_payload_rejects_duplicate_object_keys() {
   assert!(JsonPayload::from_str(r#"{"outer":{"value":1,"value":2}}"#).is_err());
+}
+
+#[test]
+fn json_payload_preserves_single_private_marker_key_as_object_data() {
+  // ROOT CAUSE:
+  //
+  // The recursive visitor guessed that a real object was serde_json's private
+  // arbitrary-precision number map by comparing its first key's text.
+  let payload = JsonPayload::from_str(r#"{"$serde_json::private::Number":"1.5"}"#).unwrap();
+  assert_eq!(payload.get(), r#"{"$serde_json::private::Number":"1.5"}"#);
+}
+
+#[test]
+fn json_payload_preserves_private_marker_key_among_canonical_object_fields() {
+  let payload = JsonPayload::from_str(r#"{"$serde_json::private::Number":"1.5","z":2,"a":1}"#).unwrap();
+  assert_eq!(payload.get(), r#"{"$serde_json::private::Number":"1.5","a":1,"z":2}"#);
 }

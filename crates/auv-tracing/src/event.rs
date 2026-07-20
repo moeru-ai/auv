@@ -15,7 +15,6 @@ use crate::{EventName, ValidationError};
 
 const MAX_EVENT_JSON_BYTES: usize = 64 * 1024;
 const JAVASCRIPT_EXACT_INTEGER_MAX: u64 = 9_007_199_254_740_991;
-const SERDE_JSON_NUMBER_TOKEN: &str = "$serde_json::private::Number";
 
 /// Identifies the name and positive version of a typed event payload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -93,9 +92,8 @@ impl JsonPayload {
       return Err(JsonPayloadError::new("event JSON exceeds 65536 bytes"));
     }
 
-    let mut deserializer = serde_json::Deserializer::from_slice(value);
-    let parsed = StrictValue::deserialize(&mut deserializer).map_err(JsonPayloadError::json)?;
-    deserializer.end().map_err(JsonPayloadError::json)?;
+    let raw = serde_json::from_slice::<Box<RawValue>>(value).map_err(JsonPayloadError::json)?;
+    let parsed = StrictValue::from_raw(&raw)?;
     let canonical = serde_json::to_string(&parsed.into_json()).map_err(JsonPayloadError::json)?;
     if canonical.len() > MAX_EVENT_JSON_BYTES {
       return Err(JsonPayloadError::new("event JSON exceeds 65536 bytes"));
@@ -182,6 +180,20 @@ enum StrictValue {
 }
 
 impl StrictValue {
+  fn from_raw(raw: &RawValue) -> Result<Self, JsonPayloadError> {
+    let token = raw.get().bytes().find(|byte| !byte.is_ascii_whitespace()).ok_or_else(|| JsonPayloadError::new("event JSON is empty"))?;
+    match token {
+      b'{' => deserialize_raw_map(raw),
+      b'[' => deserialize_raw_sequence(raw),
+      b'"' => serde_json::from_str::<String>(raw.get()).map(Self::String).map_err(JsonPayloadError::json),
+      b't' => Ok(Self::Bool(true)),
+      b'f' => Ok(Self::Bool(false)),
+      b'n' => Ok(Self::Null),
+      b'-' | b'0'..=b'9' => parse_number_lexeme(raw.get()).map(Self::Number),
+      _ => Err(JsonPayloadError::new("event JSON has an invalid leading token")),
+    }
+  }
+
   fn into_json(self) -> Value {
     match self {
       Self::Null => Value::Null,
@@ -201,65 +213,39 @@ impl StrictValue {
   }
 }
 
-impl<'de> Deserialize<'de> for StrictValue {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    deserializer.deserialize_any(StrictValueVisitor)
-  }
-}
+struct StrictObjectVisitor;
 
-struct StrictValueVisitor;
-
-impl<'de> Visitor<'de> for StrictValueVisitor {
+impl<'de> Visitor<'de> for StrictObjectVisitor {
   type Value = StrictValue;
 
   fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    formatter.write_str("a JSON value with unique object keys and exact integers")
+    formatter.write_str("a JSON object with unique keys")
   }
 
-  fn visit_unit<E>(self) -> Result<Self::Value, E> {
-    Ok(StrictValue::Null)
-  }
-
-  fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-    Ok(StrictValue::Bool(value))
-  }
-
-  fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+  fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
   where
-    E: de::Error,
+    A: MapAccess<'de>,
   {
-    if value < -(JAVASCRIPT_EXACT_INTEGER_MAX as i64) {
-      return Err(E::custom("JSON integer is below the exact integer range"));
+    let mut values = BTreeMap::new();
+    while let Some(key) = map.next_key::<String>()? {
+      if values.contains_key(&key) {
+        return Err(de::Error::custom(format!("duplicate JSON object key `{key}`")));
+      }
+      let raw = map.next_value::<Box<RawValue>>()?;
+      let value = StrictValue::from_raw(&raw).map_err(de::Error::custom)?;
+      values.insert(key, value);
     }
-    Ok(StrictValue::Number(Number::from(value)))
+    Ok(StrictValue::Object(values))
   }
+}
 
-  fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    if value > JAVASCRIPT_EXACT_INTEGER_MAX {
-      return Err(E::custom("JSON integer exceeds the exact integer range"));
-    }
-    Ok(StrictValue::Number(Number::from(value)))
-  }
+struct StrictSequenceVisitor;
 
-  fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Number::from_f64(value).map(StrictValue::Number).ok_or_else(|| E::custom("JSON floating-point value must be finite"))
-  }
+impl<'de> Visitor<'de> for StrictSequenceVisitor {
+  type Value = StrictValue;
 
-  fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
-    Ok(StrictValue::String(value.to_owned()))
-  }
-
-  fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-    Ok(StrictValue::String(value))
+  fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("a JSON array")
   }
 
   fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
@@ -267,47 +253,46 @@ impl<'de> Visitor<'de> for StrictValueVisitor {
     A: SeqAccess<'de>,
   {
     let mut values = Vec::new();
-    while let Some(value) = sequence.next_element::<StrictValue>()? {
-      values.push(value);
+    while let Some(raw) = sequence.next_element::<Box<RawValue>>()? {
+      values.push(StrictValue::from_raw(&raw).map_err(de::Error::custom)?);
     }
     Ok(StrictValue::Array(values))
   }
-
-  fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-  where
-    A: MapAccess<'de>,
-  {
-    let Some(first_key) = map.next_key::<String>()? else {
-      return Ok(StrictValue::Object(BTreeMap::new()));
-    };
-
-    if first_key == SERDE_JSON_NUMBER_TOKEN {
-      let number_text = map.next_value::<String>()?;
-      if map.next_key::<String>()?.is_some() {
-        return Err(de::Error::custom("invalid arbitrary-precision JSON number"));
-      }
-      return parse_large_number(&number_text).map_err(de::Error::custom);
-    }
-
-    let first_value = map.next_value::<StrictValue>()?;
-    let mut values = BTreeMap::new();
-    values.insert(first_key, first_value);
-    while let Some(key) = map.next_key::<String>()? {
-      if values.contains_key(&key) {
-        return Err(de::Error::custom(format!("duplicate JSON object key `{key}`")));
-      }
-      values.insert(key, map.next_value::<StrictValue>()?);
-    }
-    Ok(StrictValue::Object(values))
-  }
 }
 
-fn parse_large_number(value: &str) -> Result<StrictValue, &'static str> {
+fn deserialize_raw_map(raw: &RawValue) -> Result<StrictValue, JsonPayloadError> {
+  let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+  let value = deserializer.deserialize_map(StrictObjectVisitor).map_err(JsonPayloadError::json)?;
+  deserializer.end().map_err(JsonPayloadError::json)?;
+  Ok(value)
+}
+
+fn deserialize_raw_sequence(raw: &RawValue) -> Result<StrictValue, JsonPayloadError> {
+  let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+  let value = deserializer.deserialize_seq(StrictSequenceVisitor).map_err(JsonPayloadError::json)?;
+  deserializer.end().map_err(JsonPayloadError::json)?;
+  Ok(value)
+}
+
+fn parse_number_lexeme(value: &str) -> Result<Number, JsonPayloadError> {
   if value.contains(['.', 'e', 'E']) {
-    let value = value.parse::<f64>().map_err(|_| "JSON number is not representable as a finite float")?;
-    return Number::from_f64(value).map(StrictValue::Number).ok_or("JSON floating-point value must be finite");
+    let value = value.parse::<f64>().map_err(|_| JsonPayloadError::new("JSON number is not representable as a finite float"))?;
+    return Number::from_f64(value).ok_or_else(|| JsonPayloadError::new("JSON floating-point value must be finite"));
   }
-  Err("JSON integer exceeds the exact integer range")
+
+  if value.starts_with('-') {
+    let value = value.parse::<i64>().map_err(|_| JsonPayloadError::new("JSON integer is below the exact integer range"))?;
+    if value < -(JAVASCRIPT_EXACT_INTEGER_MAX as i64) {
+      return Err(JsonPayloadError::new("JSON integer is below the exact integer range"));
+    }
+    return Ok(Number::from(value));
+  }
+
+  let value = value.parse::<u64>().map_err(|_| JsonPayloadError::new("JSON integer exceeds the exact integer range"))?;
+  if value > JAVASCRIPT_EXACT_INTEGER_MAX {
+    return Err(JsonPayloadError::new("JSON integer exceeds the exact integer range"));
+  }
+  Ok(Number::from(value))
 }
 
 struct ExactJsonSerializer<S>(S);
