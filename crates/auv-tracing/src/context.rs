@@ -1,9 +1,18 @@
 use std::cell::RefCell;
+use std::future::Future;
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::task::{Context as TaskContext, Poll};
+use std::time::{Duration, Instant};
 
-use crate::{Attributes, AuthorityId, Dispatch, EventPayload, RunId, SpanId, dispatcher};
+use pin_project::{pin_project, pinned_drop};
+
+use crate::{
+  Attributes, AuthorityId, Dispatch, ErrorCode, EventPayload, PropagationError, RemoteContext, RunId, SpanId, SpanLink, TextMapWriter,
+  Timestamp, dispatcher,
+};
 
 thread_local! {
   static CURRENT_CONTEXTS: RefCell<CurrentContexts> = const {
@@ -30,6 +39,8 @@ pub struct Context {
   dispatch: Option<Dispatch>,
   run_id: Option<RunId>,
   span: Option<Arc<SpanState>>,
+  remote_authority_id: Option<AuthorityId>,
+  remote_span_id: Option<SpanId>,
 }
 
 impl Context {
@@ -39,6 +50,8 @@ impl Context {
       dispatch: dispatcher::current(),
       run_id: Some(run_id),
       span: None,
+      remote_authority_id: None,
+      remote_span_id: None,
     }
   }
 
@@ -47,9 +60,9 @@ impl Context {
     CURRENT_CONTEXTS.with(|contexts| contexts.borrow().frames.last().map(|frame| frame.context.clone())).unwrap_or_else(Self::disabled)
   }
 
-  /// Returns the configured authority captured by this context.
+  /// Returns the captured local authority or preserved remote authority.
   pub fn authority_id(&self) -> Option<&AuthorityId> {
-    self.dispatch.as_ref().and_then(Dispatch::authority_id)
+    self.dispatch.as_ref().and_then(Dispatch::authority_id).or(self.remote_authority_id.as_ref())
   }
 
   /// Returns the explicitly supplied run ID, including for disabled roots.
@@ -92,11 +105,50 @@ impl Context {
     f()
   }
 
+  /// Wraps a future so this context is current only while it is polled or destroyed.
+  pub fn instrument<F>(&self, future: F) -> WithContext<F> {
+    WithContext {
+      context: self.clone(),
+      future: Some(future),
+    }
+  }
+
+  /// Removes stale AUV fields and injects this context's propagatable values.
+  ///
+  /// A context without a run removes the fields and writes no replacements.
+  pub fn inject(&self, carrier: &mut dyn TextMapWriter) {
+    crate::propagation::inject(carrier, self.authority_id().copied(), self.run_id, self.span_id().copied().or(self.remote_span_id));
+  }
+
+  /// Binds extracted remote correlation to the current local dispatch.
+  ///
+  /// Construction fails when local and remote authorities are both present
+  /// but do not identify the same run history.
+  pub fn from_remote(remote: RemoteContext) -> Result<Self, PropagationError> {
+    let dispatch = dispatcher::current();
+    let local_authority_id = dispatch.as_ref().and_then(Dispatch::authority_id).copied();
+    if let (Some(local), Some(remote_authority)) = (local_authority_id, remote.authority_id)
+      && local != remote_authority
+    {
+      return Err(crate::propagation::authority_mismatch());
+    }
+
+    Ok(Self {
+      dispatch,
+      run_id: Some(remote.run_id),
+      span: None,
+      remote_authority_id: remote.authority_id,
+      remote_span_id: remote.remote_span_id,
+    })
+  }
+
   fn disabled() -> Self {
     Self {
       dispatch: None,
       run_id: None,
       span: None,
+      remote_authority_id: None,
+      remote_span_id: None,
     }
   }
 
@@ -105,7 +157,13 @@ impl Context {
       dispatch: self.dispatch.clone(),
       run_id: self.run_id,
       span: Some(span),
+      remote_authority_id: self.remote_authority_id,
+      remote_span_id: None,
     }
+  }
+
+  fn clear_span(&mut self) {
+    self.span = None;
   }
 }
 
@@ -126,6 +184,38 @@ impl Drop for ContextGuard<'_> {
         contexts.frames.remove(position);
       }
     });
+  }
+}
+
+/// A future polled and destroyed with one explicitly captured context current.
+#[pin_project(PinnedDrop)]
+pub struct WithContext<F> {
+  context: Context,
+  #[pin]
+  future: Option<F>,
+}
+
+impl<F: Future> Future for WithContext<F> {
+  type Output = F::Output;
+
+  fn poll(self: Pin<&mut Self>, task_context: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    let mut this = self.project();
+    let poll = {
+      let _guard = this.context.enter();
+      this.future.as_mut().as_pin_mut().expect("completed WithContext futures must not be polled again").poll(task_context)
+    };
+    if poll.is_ready() {
+      drop_future_in_context(this.context, this.future.as_mut());
+    }
+    poll
+  }
+}
+
+#[pinned_drop]
+impl<F> PinnedDrop for WithContext<F> {
+  fn drop(self: Pin<&mut Self>) {
+    let mut this = self.project();
+    drop_future_in_context(this.context, this.future.as_mut());
   }
 }
 
@@ -172,18 +262,116 @@ impl Span {
   pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
     self.context.in_scope(f)
   }
+
+  /// Wraps a future and consumes this handle as the wrapper's span lifetime.
+  pub fn instrument<F>(self, future: F) -> Instrumented<F> {
+    Instrumented {
+      context: self.context(),
+      span: Some(self),
+      future: Some(future),
+    }
+  }
 }
 
 struct SpanState {
   id: SpanId,
+  // A failed start preparation remains an active context handle but is not
+  // armed to submit an end for a start fact that can never be committed.
+  close: Option<SpanClose>,
 }
 
-// TODO(auv-run-contract-v1-task-7): implement SpanState drop-time SpanEnded
-// submission when the last Span/context reference is released; Task 6 does not
-// add a terminal field or async context wrappers.
+struct SpanClose {
+  dispatch: Dispatch,
+  run_id: RunId,
+  started_at: Timestamp,
+  started_tick: Duration,
+  clock: Arc<dyn Clock>,
+}
+
+impl Drop for SpanState {
+  fn drop(&mut self) {
+    let Some(close) = &self.close else {
+      return;
+    };
+    let ended_at = crate::dispatch::timestamp_after(close.started_at, close.started_tick, close.clock.monotonic_now());
+    close.dispatch.submit_span_end(close.run_id, self.id, ended_at);
+  }
+}
+
+trait Clock: Send + Sync {
+  fn wall_now(&self) -> Result<Timestamp, ErrorCode>;
+  fn monotonic_now(&self) -> Duration;
+}
+
+struct SystemClock;
+
+impl Clock for SystemClock {
+  fn wall_now(&self) -> Result<Timestamp, ErrorCode> {
+    crate::dispatch::timestamp_now()
+  }
+
+  fn monotonic_now(&self) -> Duration {
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN.get_or_init(Instant::now).elapsed()
+  }
+}
+
+fn system_clock() -> Arc<dyn Clock> {
+  static CLOCK: OnceLock<Arc<dyn Clock>> = OnceLock::new();
+  CLOCK.get_or_init(|| Arc::new(SystemClock)).clone()
+}
+
+/// A future polled and destroyed inside one consumed span scope.
+#[pin_project(PinnedDrop)]
+pub struct Instrumented<F> {
+  context: Context,
+  span: Option<Span>,
+  #[pin]
+  future: Option<F>,
+}
+
+impl<F: Future> Future for Instrumented<F> {
+  type Output = F::Output;
+
+  fn poll(self: Pin<&mut Self>, task_context: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    let mut this = self.project();
+    let poll = {
+      let _guard = this.context.enter();
+      this.future.as_mut().as_pin_mut().expect("completed Instrumented futures must not be polled again").poll(task_context)
+    };
+    if poll.is_ready() {
+      drop_future_in_context(this.context, this.future.as_mut());
+      release_instrumented_span(this.context, this.span);
+    }
+    poll
+  }
+}
+
+#[pinned_drop]
+impl<F> PinnedDrop for Instrumented<F> {
+  fn drop(self: Pin<&mut Self>) {
+    let mut this = self.project();
+    drop_future_in_context(this.context, this.future.as_mut());
+    release_instrumented_span(this.context, this.span);
+  }
+}
+
+fn drop_future_in_context<F>(context: &Context, mut future: Pin<&mut Option<F>>) {
+  let _guard = context.enter();
+  future.set(None);
+}
+
+fn release_instrumented_span(context: &mut Context, span: &mut Option<Span>) {
+  context.clear_span();
+  span.take();
+}
 
 /// Starts a typed span under the current context.
 pub fn start_span(spec: impl SpanSpec) -> Span {
+  start_span_with_clock(spec, system_clock())
+}
+
+fn start_span_with_clock(spec: impl SpanSpec, clock: Arc<dyn Clock>) -> Span {
   let parent = Context::current();
   let Some(dispatch) = parent.dispatch.clone().filter(Dispatch::is_enabled) else {
     return Span { context: parent };
@@ -192,8 +380,20 @@ pub fn start_span(spec: impl SpanSpec) -> Span {
     return Span { context: parent };
   };
 
-  let span = Arc::new(SpanState { id: SpanId::new() });
-  dispatch.submit_span(run_id, parent.span_id().copied(), span.id, spec);
+  let span_id = SpanId::new();
+  let started_at = clock.wall_now();
+  let started_tick = clock.monotonic_now();
+  let close_started_at = started_at.as_ref().ok().copied();
+  let remote_link = parent.remote_span_id.map(SpanLink::new);
+  let prepared = dispatch.submit_span_start(run_id, parent.span_id().copied(), remote_link, span_id, started_at, spec);
+  let close = close_started_at.filter(|_| prepared).map(|started_at| SpanClose {
+    dispatch,
+    run_id,
+    started_at,
+    started_tick,
+    clock,
+  });
+  let span = Arc::new(SpanState { id: span_id, close });
   Span {
     context: parent.with_span(span),
   }
@@ -212,5 +412,99 @@ pub fn emit_event(event: impl EventPayload) {
   dispatch.submit_event(run_id, context.span_id().copied(), event);
 }
 
-// TODO(auv-run-contract-v1-task-7): add pinned Context/Span future wrappers and
-// cross-process propagation without using thread-local guards across await.
+#[cfg(all(test, feature = "memory-store"))]
+mod tests {
+  use std::sync::Mutex;
+  use std::time::Duration;
+
+  use super::*;
+  use crate::{DispatchStage, ErrorCode, MemoryRunStore, RunStore, Timestamp, configure};
+
+  struct TestSpan;
+
+  impl SpanSpec for TestSpan {
+    const NAME: &'static str = "auv.test.clock";
+
+    fn attributes(&self) -> Attributes {
+      Attributes::empty()
+    }
+  }
+
+  struct ManualClock {
+    wall: Mutex<Timestamp>,
+    tick: Mutex<Duration>,
+  }
+
+  impl ManualClock {
+    fn new(wall: Timestamp, tick: Duration) -> Arc<Self> {
+      Arc::new(Self {
+        wall: Mutex::new(wall),
+        tick: Mutex::new(tick),
+      })
+    }
+
+    fn set(&self, wall: Timestamp, tick: Duration) {
+      *self.wall.lock().unwrap() = wall;
+      *self.tick.lock().unwrap() = tick;
+    }
+  }
+
+  impl Clock for ManualClock {
+    fn wall_now(&self) -> Result<Timestamp, ErrorCode> {
+      Ok(*self.wall.lock().unwrap())
+    }
+
+    fn monotonic_now(&self) -> Duration {
+      *self.tick.lock().unwrap()
+    }
+  }
+
+  fn timestamp(seconds: i64) -> Timestamp {
+    Timestamp::new(seconds, 0).unwrap()
+  }
+
+  #[test]
+  fn span_end_uses_start_wall_time_plus_monotonic_elapsed() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().unwrap();
+    let run_id = RunId::new();
+    let clock = ManualClock::new(timestamp(100), Duration::from_secs(10));
+    let span = dispatcher::with_default(&dispatch, || {
+      let root = Context::root(run_id);
+      root.in_scope(|| start_span_with_clock(TestSpan, clock.clone()))
+    });
+    let span_id = *span.id().unwrap();
+
+    clock.set(timestamp(50), Duration::from_secs(14));
+    assert_eq!(clock.wall_now().unwrap(), timestamp(50));
+    drop(span);
+    futures_executor::block_on(dispatch.flush()).unwrap();
+
+    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).unwrap().unwrap();
+    let stored = snapshot.spans().get(&span_id).unwrap();
+    assert_eq!(stored.started().started_at(), timestamp(100));
+    assert_eq!(stored.ended().unwrap().ended_at(), timestamp(104));
+  }
+
+  #[test]
+  fn span_end_timestamp_overflow_is_one_encode_failure() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().unwrap();
+    let run_id = RunId::new();
+    let clock = ManualClock::new(timestamp(9_007_199_254_740_991), Duration::ZERO);
+    let span = dispatcher::with_default(&dispatch, || {
+      let root = Context::root(run_id);
+      root.in_scope(|| start_span_with_clock(TestSpan, clock.clone()))
+    });
+    let span_id = *span.id().unwrap();
+
+    clock.set(timestamp(1), Duration::from_secs(1));
+    drop(span);
+    let error = futures_executor::block_on(dispatch.flush()).unwrap_err();
+
+    assert_eq!(error.failure_count().get(), 1);
+    assert_eq!(error.first().stage(), DispatchStage::Encode);
+    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).unwrap().unwrap();
+    assert!(snapshot.spans().get(&span_id).unwrap().ended().is_none());
+  }
+}

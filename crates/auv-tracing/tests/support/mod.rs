@@ -55,6 +55,14 @@ impl TestDispatch {
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().unwrap();
     Self { dispatch, store }
   }
+
+  pub fn snapshot(&self, run_id: RunId) -> Option<RunSnapshot> {
+    block_on_timeout(self.store.load_snapshot(run_id)).unwrap()
+  }
+
+  pub fn span_end_count(&self, run_id: RunId) -> usize {
+    self.snapshot(run_id).map(|snapshot| snapshot.spans().values().filter(|span| span.ended().is_some()).count()).unwrap_or_default()
+  }
 }
 
 impl<S> TestDispatch<S>
