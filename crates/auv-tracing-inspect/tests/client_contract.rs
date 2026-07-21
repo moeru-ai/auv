@@ -13,9 +13,9 @@ use auv_tracing::{
   RunStore, RunSubscription, Sha256Digest, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
-  ARTIFACT_ORIGIN_HEADER, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE,
-  ArtifactApiError, ArtifactUploadDraft, ArtifactUploadId, AuthorityResponse, RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact,
-  RunApiError, RunStreamGap,
+  ARTIFACT_IDENTITY_CONFLICT_ERROR, ARTIFACT_ORIGIN_HEADER, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS,
+  ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactApiError, ArtifactUploadDraft, ArtifactUploadId, AuthorityResponse, IDEMPOTENCY_MISMATCH_ERROR,
+  RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunStreamGap,
 };
 use auv_tracing_inspect::{InspectRunStore, TokioTaskSpawner};
 use axum::Router;
@@ -31,6 +31,7 @@ use futures_util::io::{AsyncRead, Cursor};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use url::Url;
 
 const AUTHORITY: &str = "019f8b1e-4b2d-7a00-8f00-0000000000aa";
@@ -42,19 +43,27 @@ const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff
 
 struct TestServer {
   base_url: Url,
-  task: tokio::task::JoinHandle<()>,
+  shutdown: Option<oneshot::Sender<()>>,
+  task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TestServer {
   async fn start(app: Router) -> Self {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind test server");
     let address = listener.local_addr().expect("test server address");
+    let (shutdown, shutdown_signal) = oneshot::channel();
     let task = tokio::spawn(async move {
-      axum::serve(listener, app).await.expect("test server");
+      axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+          let _ = shutdown_signal.await;
+        })
+        .await
+        .expect("test server");
     });
     Self {
       base_url: Url::parse(&format!("http://{address}/")).expect("base URL"),
-      task,
+      shutdown: Some(shutdown),
+      task: Some(task),
     }
   }
 
@@ -63,16 +72,38 @@ impl TestServer {
     let address = listener.local_addr().expect("test server address");
     let base_url = Url::parse(&format!("http://{address}/")).expect("base URL");
     let app = router_with_artifact_origin(store, base_url.clone()).expect("trusted test origin");
+    let (shutdown, shutdown_signal) = oneshot::channel();
     let task = tokio::spawn(async move {
-      axum::serve(listener, app).await.expect("test server");
+      axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+          let _ = shutdown_signal.await;
+        })
+        .await
+        .expect("test server");
     });
-    Self { base_url, task }
+    Self {
+      base_url,
+      shutdown: Some(shutdown),
+      task: Some(task),
+    }
+  }
+
+  async fn shutdown(mut self) {
+    if let Some(shutdown) = self.shutdown.take() {
+      shutdown.send(()).ok();
+    }
+    self.task.take().expect("live test server task").await.expect("test server task panicked");
   }
 }
 
 impl Drop for TestServer {
   fn drop(&mut self) {
-    self.task.abort();
+    if let Some(shutdown) = self.shutdown.take() {
+      shutdown.send(()).ok();
+    }
+    if let Some(task) = self.task.take() {
+      task.abort();
+    }
   }
 }
 
@@ -590,8 +621,8 @@ async fn client_reconstructs_every_artifact_write_error_class() {
 #[tokio::test]
 async fn artifact_conflict_codes_map_directly_without_lookup_or_snapshot_probes() {
   for (wire_code, expected) in [
-    ("auv.inspect.idempotency_mismatch", ArtifactWriteError::IdempotencyMismatch),
-    ("auv.inspect.artifact_identity_conflict", ArtifactWriteError::Rejected(error_code("auv.inspect.artifact_identity_conflict"))),
+    (IDEMPOTENCY_MISMATCH_ERROR, ArtifactWriteError::IdempotencyMismatch),
+    (ARTIFACT_IDENTITY_CONFLICT_ERROR, ArtifactWriteError::Rejected(error_code(ARTIFACT_IDENTITY_CONFLICT_ERROR))),
   ] {
     let probes = Arc::new(AtomicUsize::new(0));
     let lookup_probes = probes.clone();
@@ -660,6 +691,8 @@ async fn artifact_conflict_codes_map_directly_without_lookup_or_snapshot_probes(
     assert_eq!(error, expected);
     assert_eq!(probes.load(Ordering::SeqCst), 0);
     assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+    drop(store);
+    server.shutdown().await;
   }
 }
 
@@ -981,8 +1014,10 @@ async fn committed_artifact_id_conflict_is_directly_rejected() {
     .await
     .expect_err("a different key cannot replace a committed artifact");
 
-  assert!(matches!(error, ArtifactWriteError::Rejected(_)));
+  assert_eq!(error, ArtifactWriteError::Rejected(error_code(ARTIFACT_IDENTITY_CONFLICT_ERROR)));
   assert_eq!(polls.load(Ordering::SeqCst), 0);
+  drop(store);
+  server.shutdown().await;
 }
 
 // ROOT CAUSE:
@@ -1174,7 +1209,8 @@ async fn lost_draft_response_replays_the_post_with_the_same_admission() {
   });
   let server = TestServer {
     base_url: Url::parse(&format!("http://{address}/")).unwrap(),
-    task,
+    shutdown: None,
+    task: Some(task),
   };
   let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
   let polls = Arc::new(AtomicUsize::new(0));
@@ -1264,7 +1300,8 @@ async fn delayed_busy_draft_replay_rotates_admission_without_polling_the_body() 
   });
   let server = TestServer {
     base_url: Url::parse(&format!("http://{address}/")).unwrap(),
-    task,
+    shutdown: None,
+    task: Some(task),
   };
   let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
   let polls = Arc::new(AtomicUsize::new(0));
@@ -1455,7 +1492,8 @@ async fn raw_success_fault_server(
   });
   TestServer {
     base_url: Url::parse(&format!("http://{address}/")).unwrap(),
-    task,
+    shutdown: None,
+    task: Some(task),
   }
 }
 
@@ -1468,6 +1506,8 @@ async fn truncated_run_resolver_and_snapshot_success_bodies_are_unavailable_not_
     run_store.lookup_commit(run_id(), IdempotencyKey::new()).await.unwrap_err(),
     ReadError::Unavailable(error_code("auv.inspect.transport_unavailable"))
   );
+  drop(run_store);
+  run_server.shutdown().await;
 
   let resolver_server =
     raw_success_fault_server("/v1/resources/artifacts/resolve", "application/json", partial.clone(), Some(partial.len() + 16)).await;
@@ -1476,6 +1516,8 @@ async fn truncated_run_resolver_and_snapshot_success_bodies_are_unavailable_not_
     resolver_store.resolve_artifacts(vec![ArtifactUri::from_ids(run_id(), ArtifactId::new())]).await.unwrap_err(),
     ReadError::Unavailable(error_code("auv.inspect.transport_unavailable"))
   );
+  drop(resolver_store);
+  resolver_server.shutdown().await;
 
   let snapshot_server = raw_success_fault_server("/snapshot", RUN_MEDIA_TYPE, partial.clone(), Some(partial.len() + 16)).await;
   let snapshot_store = InspectRunStore::connect(snapshot_server.base_url.clone()).await.unwrap();
@@ -1483,6 +1525,8 @@ async fn truncated_run_resolver_and_snapshot_success_bodies_are_unavailable_not_
     snapshot_store.load_snapshot(run_id()).await.unwrap_err(),
     ReadError::Unavailable(error_code("auv.inspect.snapshot_transport_unavailable"))
   );
+  drop(snapshot_store);
+  snapshot_server.shutdown().await;
 }
 
 #[tokio::test]
@@ -1493,6 +1537,8 @@ async fn snapshot_content_length_above_the_distinct_cap_is_stable_integrity_with
   let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
   assert_eq!(store.load_snapshot(run_id()).await.unwrap_err(), ReadError::Integrity(error_code("auv.inspect.snapshot_too_large")));
+  drop(store);
+  server.shutdown().await;
 }
 
 #[tokio::test]
@@ -1598,6 +1644,7 @@ async fn client_rejects_malformed_authority_resolver_and_artifact_error_payloads
     );
     let server = TestServer::start(app).await;
     assert!(InspectRunStore::connect(server.base_url.clone()).await.is_err());
+    server.shutdown().await;
   }
 
   let uri = ArtifactUri::from_ids(run_id(), ArtifactId::new());
@@ -1611,6 +1658,8 @@ async fn client_rejects_malformed_authority_resolver_and_artifact_error_payloads
     let server = raw_success_fault_server("/v1/resources/artifacts/resolve", "application/json", body.into_bytes(), None).await;
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
     assert!(matches!(store.resolve_artifacts(vec![uri.clone()]).await, Err(ReadError::Integrity(_))));
+    drop(store);
+    server.shutdown().await;
   }
 
   for body in [
@@ -1641,6 +1690,8 @@ async fn client_rejects_malformed_authority_resolver_and_artifact_error_payloads
     let server = TestServer::start(app).await;
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
     assert!(matches!(store.resolve_artifacts(vec![uri.clone()]).await, Err(ReadError::Integrity(_))));
+    drop(store);
+    server.shutdown().await;
   }
 }
 
@@ -2102,8 +2153,8 @@ async fn busy_replay_refresh_looks_up_once_and_returns_unknown_without_polling_t
 #[tokio::test]
 async fn replay_refresh_maps_conflict_codes_directly_without_polling_the_body() {
   for (wire_code, expected) in [
-    ("auv.inspect.idempotency_mismatch", ArtifactWriteError::IdempotencyMismatch),
-    ("auv.inspect.artifact_identity_conflict", ArtifactWriteError::Rejected(error_code("auv.inspect.artifact_identity_conflict"))),
+    (IDEMPOTENCY_MISMATCH_ERROR, ArtifactWriteError::IdempotencyMismatch),
+    (ARTIFACT_IDENTITY_CONFLICT_ERROR, ArtifactWriteError::Rejected(error_code(ARTIFACT_IDENTITY_CONFLICT_ERROR))),
   ] {
     let artifact_id = ArtifactId::new();
     let key = IdempotencyKey::new();
@@ -2165,6 +2216,8 @@ async fn replay_refresh_maps_conflict_codes_directly_without_polling_the_body() 
     assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 1);
     assert_eq!(state.admissions.lock().unwrap().len(), 2);
     assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+    drop(store);
+    server.shutdown().await;
   }
 }
 
@@ -2690,7 +2743,11 @@ async fn artifact_read_server(mode: ArtifactReadMode) -> TestServer {
       socket.write_all(bytes).await.unwrap();
     }
   });
-  TestServer { base_url, task }
+  TestServer {
+    base_url,
+    shutdown: None,
+    task: Some(task),
+  }
 }
 
 #[derive(Clone)]
@@ -3354,7 +3411,11 @@ async fn resolver_rejects_untrusted_origins_and_noncanonical_artifact_paths() {
         }),
       );
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let server = TestServer { base_url, task };
+    let server = TestServer {
+      base_url,
+      shutdown: None,
+      task: Some(task),
+    };
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
     assert!(matches!(store.resolve_artifacts(vec![requested.clone()]).await, Err(ReadError::Integrity(_))));
@@ -3445,7 +3506,11 @@ async fn resolver_requires_the_configured_base_path_prefix() {
         }),
       );
     let task = tokio::spawn(async move { axum::serve(listener, Router::new().nest("/tenant-a", api)).await.unwrap() });
-    let server = TestServer { base_url, task };
+    let server = TestServer {
+      base_url,
+      shutdown: None,
+      task: Some(task),
+    };
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
     let result = store.resolve_artifacts(vec![requested.clone()]).await;

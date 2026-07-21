@@ -18,10 +18,11 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 use crate::protocol::{
-  ARTIFACT_ORIGIN_HEADER, ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER,
-  ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE, AUTHORITY_ID_HEADER, ArtifactApiError, ArtifactUploadAdmissionId,
-  ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, AuthorityResponse, RUN_MEDIA_TYPE, ResolveArtifactsRequest,
-  ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody, RunStreamGap, decode_strict,
+  ARTIFACT_IDENTITY_CONFLICT_ERROR, ARTIFACT_ORIGIN_HEADER, ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY,
+  ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE, AUTHORITY_ID_HEADER,
+  ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, AuthorityResponse,
+  IDEMPOTENCY_MISMATCH_ERROR, RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError,
+  RunCommitBody, RunStreamGap, decode_strict,
 };
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
@@ -916,8 +917,8 @@ async fn write_artifact_failure(response: Response, connected_authority: Authori
             received: connected_authority,
           }
         }
-        StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_mismatch") => ArtifactWriteError::IdempotencyMismatch,
-        StatusCode::CONFLICT if error_code == code("auv.inspect.artifact_identity_conflict") => ArtifactWriteError::Rejected(error_code),
+        StatusCode::CONFLICT if error_code == code(IDEMPOTENCY_MISMATCH_ERROR) => ArtifactWriteError::IdempotencyMismatch,
+        StatusCode::CONFLICT if error_code == code(ARTIFACT_IDENTITY_CONFLICT_ERROR) => ArtifactWriteError::Rejected(error_code),
         StatusCode::CONFLICT => return Err(code("auv.inspect.artifact_error_status_invalid")),
         StatusCode::UNPROCESSABLE_ENTITY => ArtifactWriteError::Integrity(error_code),
         StatusCode::SERVICE_UNAVAILABLE if error_code == code("auv.inspect.publication_unknown") => {
