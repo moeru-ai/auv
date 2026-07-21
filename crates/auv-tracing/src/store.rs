@@ -15,6 +15,12 @@ use crate::{
 #[cfg(feature = "memory-store")]
 mod memory;
 
+#[cfg(feature = "file-store")]
+mod file;
+
+#[cfg(feature = "file-store")]
+pub use file::FileRunStore;
+
 #[cfg(feature = "memory-store")]
 pub use memory::MemoryRunStore;
 
@@ -58,9 +64,6 @@ pub trait RunStore: Send + Sync {
   /// Opens the verified bytes identified by a canonical artifact URI.
   fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>>;
 }
-
-// TODO(file-run-store-v1): The durable authority remains deferred until the
-// owner-approved file-store task defines its private persistence layout.
 
 /// Metadata required before an authority consumes a one-shot artifact body.
 #[derive(Clone, Debug, PartialEq)]
