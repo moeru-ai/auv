@@ -10,7 +10,7 @@ use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, BoxFuture,
   ByteLength, CommitError, CommitResult, ContentType, ErrorCode, EventId, EventName, EventOccurred, EventSchema, IdempotencyKey,
   JsonPayload, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunFact, RunId, RunMutation, RunRevision,
-  RunStore, RunSubscription, Sha256Digest, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
+  RunStore, RunSubscription, Sha256Digest, SpanName, SpanStarted, StoreArtifactRequest, Timestamp, artifact_identity_conflict_error_code,
 };
 use auv_tracing_inspect::protocol::{
   ARTIFACT_IDENTITY_CONFLICT_ERROR, ARTIFACT_ORIGIN_HEADER, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS,
@@ -638,7 +638,7 @@ async fn client_reconstructs_every_artifact_write_error_class() {
 async fn artifact_conflict_codes_map_directly_without_lookup_or_snapshot_probes() {
   for (wire_code, expected) in [
     (IDEMPOTENCY_MISMATCH_ERROR, ArtifactWriteError::IdempotencyMismatch),
-    (ARTIFACT_IDENTITY_CONFLICT_ERROR, ArtifactWriteError::Rejected(error_code(ARTIFACT_IDENTITY_CONFLICT_ERROR))),
+    (ARTIFACT_IDENTITY_CONFLICT_ERROR, ArtifactWriteError::Rejected(artifact_identity_conflict_error_code())),
   ] {
     let probes = Arc::new(AtomicUsize::new(0));
     let lookup_probes = probes.clone();
@@ -1030,7 +1030,7 @@ async fn committed_artifact_id_conflict_is_directly_rejected() {
     .await
     .expect_err("a different key cannot replace a committed artifact");
 
-  assert_eq!(error, ArtifactWriteError::Rejected(error_code(ARTIFACT_IDENTITY_CONFLICT_ERROR)));
+  assert_eq!(error, ArtifactWriteError::Rejected(artifact_identity_conflict_error_code()));
   assert_eq!(polls.load(Ordering::SeqCst), 0);
   drop(store);
   server.shutdown().await;
@@ -2183,7 +2183,7 @@ async fn busy_replay_refresh_looks_up_once_and_returns_unknown_without_polling_t
 async fn replay_refresh_maps_conflict_codes_directly_without_polling_the_body() {
   for (wire_code, expected) in [
     (IDEMPOTENCY_MISMATCH_ERROR, ArtifactWriteError::IdempotencyMismatch),
-    (ARTIFACT_IDENTITY_CONFLICT_ERROR, ArtifactWriteError::Rejected(error_code(ARTIFACT_IDENTITY_CONFLICT_ERROR))),
+    (ARTIFACT_IDENTITY_CONFLICT_ERROR, ArtifactWriteError::Rejected(artifact_identity_conflict_error_code())),
   ] {
     let artifact_id = ArtifactId::new();
     let key = IdempotencyKey::new();
