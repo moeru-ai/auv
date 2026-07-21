@@ -1301,6 +1301,7 @@ struct ArtifactStoreState {
   pending_subscriptions: AtomicBool,
   write_calls: Mutex<Vec<StoreArtifactRequest>>,
   write_calls_changed: Condvar,
+  commit_calls: AtomicUsize,
   lookup_calls: AtomicUsize,
 }
 
@@ -1332,6 +1333,7 @@ impl ArtifactStore {
         pending_subscriptions: AtomicBool::new(false),
         write_calls: Mutex::new(Vec::new()),
         write_calls_changed: Condvar::new(),
+        commit_calls: AtomicUsize::new(0),
         lookup_calls: AtomicUsize::new(0),
       }),
     })
@@ -1398,6 +1400,10 @@ impl ArtifactStore {
     self.state.lookup_calls.load(Ordering::SeqCst)
   }
 
+  pub fn commit_call_count(&self) -> usize {
+    self.state.commit_calls.load(Ordering::SeqCst)
+  }
+
   pub fn wait_for_write_calls(&self, expected: usize) {
     let deadline = Instant::now() + WAIT_TIMEOUT;
     let mut calls = self.state.write_calls.lock().unwrap();
@@ -1416,6 +1422,7 @@ impl RunStore for ArtifactStore {
   }
 
   fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+    self.state.commit_calls.fetch_add(1, Ordering::SeqCst);
     let gate = self.state.commit_gates.lock().unwrap().pop_front().and_then(|gate| gate.enter());
     Box::pin(async move {
       if let Some(gate) = gate {
@@ -1530,6 +1537,7 @@ pub struct TrackingTaskSpawner {
 struct TrackingTaskState {
   counts: Mutex<TrackingTaskCounts>,
   changed: Condvar,
+  inline: AtomicBool,
 }
 
 #[derive(Default)]
@@ -1558,6 +1566,13 @@ impl TrackingTaskSpawner {
       );
     }
   }
+
+  pub fn with_inline_tasks<T>(&self, operation: impl FnOnce() -> T) -> T {
+    assert!(!self.state.inline.swap(true, Ordering::SeqCst), "inline task mode is not reentrant");
+    let result = operation();
+    self.state.inline.store(false, Ordering::SeqCst);
+    result
+  }
 }
 
 impl TaskSpawner for TrackingTaskSpawner {
@@ -1569,6 +1584,13 @@ impl TaskSpawner for TrackingTaskSpawner {
       self.state.changed.notify_all();
     }
     let state = self.state.clone();
+    if state.inline.load(Ordering::SeqCst) {
+      block_on_timeout(task);
+      let mut counts = state.counts.lock().unwrap();
+      counts.active -= 1;
+      state.changed.notify_all();
+      return Ok(());
+    }
     std::thread::spawn(move || {
       block_on_timeout(task);
       let mut counts = state.counts.lock().unwrap();

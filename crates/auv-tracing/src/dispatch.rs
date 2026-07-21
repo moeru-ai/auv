@@ -1194,11 +1194,15 @@ impl Dispatch {
       }
       Err(error) => {
         let failure = DispatchFailure::new(failure_stage, artifact_error_code(&error));
-        self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
-        self.remove_owned(run_id, idempotency_key);
         if quarantine {
-          self.quarantine_run(run_id);
+          let mut lanes = self.inner.lanes.lock().unwrap();
+          let lane = lanes.entry(run_id).or_default();
+          lane.owned.remove(&idempotency_key);
+          lane.indeterminate = true;
+        } else {
+          self.remove_owned(run_id, idempotency_key);
         }
+        self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
         self.mark_projection_skipped(ticket);
         self.terminalize_unreported(ticket, vec![failure]);
       }
