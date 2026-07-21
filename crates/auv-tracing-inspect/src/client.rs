@@ -27,6 +27,7 @@ const MAX_SSE_FRAME_BYTES: usize = MAX_PROTOCOL_JSON_BYTES + 64 * 1024;
 const MAX_SSE_BUFFER_BYTES: usize = MAX_SSE_FRAME_BYTES + 4;
 const SSE_INGEST_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_DRAFT_POST_ATTEMPTS: usize = 3;
+const DRAFT_ADMISSION_LEASE: Duration = Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS);
 const DRAFT_RESPONSE_REFRESH_THRESHOLD: Duration = Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS / 2);
 
 /// A complete remote implementation of the canonical [`RunStore`] authority port.
@@ -256,7 +257,7 @@ impl RunStore for InspectRunStore {
             }
           }
           Ok(draft) => {
-            validated_draft = Some(draft);
+            validated_draft = Some((draft, tokio::time::Instant::now()));
             break;
           }
           Err(error) => {
@@ -268,7 +269,7 @@ impl RunStore for InspectRunStore {
           }
         }
       }
-      let validated_draft = validated_draft.ok_or(ArtifactWriteError::Unavailable(draft_failure))?;
+      let (validated_draft, grant_observed_at) = validated_draft.ok_or(ArtifactWriteError::Unavailable(draft_failure))?;
       let replayed_draft = validated_draft.replayed;
       let draft = validated_draft.draft;
       if replayed_draft {
@@ -277,6 +278,35 @@ impl RunStore for InspectRunStore {
           Ok(Some(_)) => return Err(ArtifactWriteError::IdempotencyMismatch),
           Ok(None) => {}
           Err(_) => return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_replay_lookup_unavailable"))),
+        }
+        if grant_observed_at.elapsed() >= DRAFT_ADMISSION_LEASE {
+          admission = ArtifactUploadAdmissionId::new();
+        }
+        let refresh_started = tokio::time::Instant::now();
+        let response = self
+          .client
+          .post(draft_url)
+          .header(CONTENT_TYPE, ARTIFACT_UPLOAD_MEDIA_TYPE)
+          .header(ACCEPT, ARTIFACT_UPLOAD_MEDIA_TYPE)
+          .header("Idempotency-Key", request.idempotency_key().to_string())
+          .header(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.to_string())
+          .body(draft_body)
+          .send()
+          .await
+          .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_transport_unavailable")))?;
+        if !matches!(response.status(), StatusCode::CREATED | StatusCode::OK) {
+          return match write_artifact_failure(response, self.authority_id).await {
+            Ok(error) => Err(error),
+            Err(code) => Err(ArtifactWriteError::Unavailable(code)),
+          };
+        }
+        let refreshed =
+          validate_draft_success(response, admission, expected_upload_id, &expected_uri).await.map_err(ArtifactWriteError::Unavailable)?;
+        if !refreshed.admitted {
+          return self.recover_artifact(&request, code("auv.inspect.draft_replay_publication_unknown")).await;
+        }
+        if refresh_started.elapsed() > DRAFT_RESPONSE_REFRESH_THRESHOLD {
+          return Err(ArtifactWriteError::Unavailable(code("auv.inspect.upload_admission_unavailable")));
         }
       }
       let stream = ReaderStream::new(body.compat());

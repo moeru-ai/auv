@@ -97,6 +97,7 @@ struct WriteRedirectState {
   attacker_base_url: Url,
   draft: ArtifactUploadDraft,
   draft_calls: Arc<AtomicUsize>,
+  content_calls: Arc<AtomicUsize>,
 }
 
 impl BlockingArtifactStore {
@@ -442,20 +443,12 @@ async fn write_redirects_never_send_commit_metadata_or_artifact_bytes_to_another
       Timestamp::new(1_784_620_800, 0).unwrap(),
     ),
     draft_calls: Arc::new(AtomicUsize::new(0)),
+    content_calls: Arc::new(AtomicUsize::new(0)),
   };
+  let content_calls = state.content_calls.clone();
   let trusted = TestServer::start(
     Router::new()
-      .route(
-        "/v1/authority",
-        get(|| async {
-          run_json(
-            StatusCode::OK,
-            &AuthorityResponse {
-              authority_id: authority_id(),
-            },
-          )
-        }),
-      )
+      .route("/v1/authority", get(redirect_authority))
       .route("/v1/runs/{run_id}/commits", post(redirecting_commit))
       .route("/v1/runs/{run_id}/artifact-uploads", post(redirecting_draft))
       .route("/v1/runs/{run_id}/artifact-uploads/{upload_id}/content", put(redirecting_content))
@@ -473,6 +466,7 @@ async fn write_redirects_never_send_commit_metadata_or_artifact_bytes_to_another
       .is_err()
   );
   assert!(store.write_artifact(content_request, Box::pin(Cursor::new(b"abc".to_vec()))).await.is_err());
+  assert_eq!(content_calls.load(Ordering::SeqCst), 1, "valid draft must reach the body-bearing PUT redirect");
   assert!(captured.lock().expect("redirect capture").is_empty());
 }
 
@@ -480,15 +474,32 @@ async fn redirecting_commit(State(state): State<WriteRedirectState>) -> Response
   redirect_response(state.attacker_base_url.join("stolen-commit").unwrap())
 }
 
-async fn redirecting_draft(State(state): State<WriteRedirectState>) -> Response {
+async fn redirect_authority(headers: HeaderMap) -> Response {
+  let host = headers.get("Host").expect("authority request host").to_str().expect("valid authority request host");
+  let mut response = run_json(
+    StatusCode::OK,
+    &AuthorityResponse {
+      authority_id: authority_id(),
+    },
+  );
+  response.headers_mut().insert(ARTIFACT_ORIGIN_HEADER, HeaderValue::from_str(&format!("http://{host}/")).expect("trusted artifact origin"));
+  response
+}
+
+async fn redirecting_draft(State(state): State<WriteRedirectState>, headers: HeaderMap) -> Response {
   if state.draft_calls.fetch_add(1, Ordering::SeqCst) == 0 {
     redirect_response(state.attacker_base_url.join("stolen-draft").unwrap())
   } else {
-    response(StatusCode::CREATED, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(serde_json::to_vec(&state.draft).unwrap()))
+    let mut response = response(StatusCode::CREATED, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(serde_json::to_vec(&state.draft).unwrap()));
+    response
+      .headers_mut()
+      .insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).expect("draft request admission").clone());
+    response
   }
 }
 
 async fn redirecting_content(State(state): State<WriteRedirectState>) -> Response {
+  state.content_calls.fetch_add(1, Ordering::SeqCst);
   redirect_response(state.attacker_base_url.join("stolen-content").unwrap())
 }
 
@@ -1025,13 +1036,15 @@ async fn lost_draft_response_replays_the_post_with_the_same_admission() {
     .expect("replayed draft response");
 
   assert!(result.is_appended());
-  assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
+  assert_eq!(probe.calls.load(Ordering::SeqCst), 3);
   let admissions = probe.admissions.lock().expect("admission probe");
-  assert_eq!(admissions.len(), 2);
+  assert_eq!(admissions.len(), 3);
   assert_eq!(admissions[0], admissions[1]);
+  assert_eq!(admissions[1], admissions[2]);
   let bodies = probe.bodies.lock().expect("draft body probe");
-  assert_eq!(bodies.len(), 2);
+  assert_eq!(bodies.len(), 3);
   assert_eq!(bodies[0], bodies[1]);
+  assert_eq!(bodies[1], bodies[2]);
   assert!(polls.load(Ordering::SeqCst) > 0);
 }
 
@@ -1170,11 +1183,12 @@ async fn slow_successful_draft_response_refreshes_before_polling_or_putting_the_
 
   assert!(result.is_appended());
   assert!(body_polls.load(Ordering::SeqCst) > 0);
-  assert_eq!(*state.polls_at_posts.lock().unwrap(), vec![0, 0, 0]);
+  assert_eq!(*state.polls_at_posts.lock().unwrap(), vec![0, 0, 0, 0]);
   let admissions = state.admissions.lock().unwrap();
-  assert_eq!(admissions.len(), 3);
+  assert_eq!(admissions.len(), 4);
   assert_eq!(admissions[0], admissions[1]);
   assert_ne!(admissions[1], admissions[2]);
+  assert_eq!(admissions[2], admissions[3]);
   clock_guard.abort();
 }
 
@@ -1631,6 +1645,200 @@ async fn replayed_draft_preflight_without_a_commit_continues_the_one_shot_upload
   assert_eq!(result.commit().idempotency_key(), key);
   assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 2);
   assert!(polls.load(Ordering::SeqCst) > 0);
+}
+
+#[derive(Clone)]
+struct DelayedReplayLookupState {
+  draft: ArtifactUploadDraft,
+  published: RunCommit,
+  delay_first_lookup: bool,
+  busy_on_refresh: bool,
+  lookup_entered: Arc<tokio::sync::Barrier>,
+  release_lookup: Arc<tokio::sync::Barrier>,
+  lookup_calls: Arc<AtomicUsize>,
+  admissions: Arc<Mutex<Vec<String>>>,
+  put_admissions: Arc<Mutex<Vec<String>>>,
+  body_polls: Arc<AtomicUsize>,
+  polls_at_posts: Arc<Mutex<Vec<usize>>>,
+}
+
+#[tokio::test(start_paused = true)]
+async fn replay_lookup_past_the_lease_reacquires_before_constructing_the_one_shot_body() {
+  let clock_guard = tokio::spawn(async {
+    loop {
+      tokio::task::yield_now().await;
+    }
+  });
+  let artifact_id = ArtifactId::new();
+  let key = IdempotencyKey::new();
+  let request = artifact_request(authority_id(), artifact_id, key);
+  let published = MemoryRunStore::new(authority_id())
+    .write_artifact(request.clone(), Box::pin(Cursor::new(b"abc".to_vec())))
+    .await
+    .expect("sample artifact commit")
+    .commit()
+    .clone();
+  let body_polls = Arc::new(AtomicUsize::new(0));
+  let state = DelayedReplayLookupState {
+    draft: ArtifactUploadDraft::new(
+      ArtifactUploadId::from_idempotency_key(key),
+      ArtifactUri::from_ids(run_id(), artifact_id),
+      Timestamp::new(1_784_620_800, 0).unwrap(),
+    ),
+    published,
+    delay_first_lookup: true,
+    busy_on_refresh: false,
+    lookup_entered: Arc::new(tokio::sync::Barrier::new(2)),
+    release_lookup: Arc::new(tokio::sync::Barrier::new(2)),
+    lookup_calls: Arc::new(AtomicUsize::new(0)),
+    admissions: Arc::new(Mutex::new(Vec::new())),
+    put_admissions: Arc::new(Mutex::new(Vec::new())),
+    body_polls: body_polls.clone(),
+    polls_at_posts: Arc::new(Mutex::new(Vec::new())),
+  };
+  let app = Router::new()
+    .route(
+      "/v1/authority",
+      get(|| async {
+        run_json(
+          StatusCode::OK,
+          &AuthorityResponse {
+            authority_id: authority_id(),
+          },
+        )
+      }),
+    )
+    .route("/v1/runs/{run_id}/artifact-uploads", post(delayed_replay_draft))
+    .route("/v1/runs/{run_id}/artifact-uploads/{upload_id}/content", put(delayed_replay_content))
+    .route("/v1/runs/{run_id}/commits/by-idempotency-key/{key}", get(delayed_replay_lookup))
+    .with_state(state.clone());
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+  let task_polls = body_polls.clone();
+  let upload = tokio::spawn(async move {
+    store
+      .write_artifact(
+        request,
+        Box::pin(CountingReader {
+          inner: Cursor::new(b"abc".to_vec()),
+          polls: task_polls,
+        }),
+      )
+      .await
+  });
+  state.lookup_entered.wait().await;
+
+  tokio::time::advance(std::time::Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS + 1)).await;
+  assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+  state.release_lookup.wait().await;
+  let result = upload.await.unwrap().expect("upload after refreshed replay grant");
+
+  assert!(result.is_appended());
+  assert_eq!(*state.polls_at_posts.lock().unwrap(), vec![0, 0]);
+  let admissions = state.admissions.lock().unwrap();
+  assert_eq!(admissions.len(), 2);
+  assert_ne!(admissions[0], admissions[1]);
+  assert_eq!(*state.put_admissions.lock().unwrap(), vec![admissions[1].clone()]);
+  assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 1);
+  assert!(body_polls.load(Ordering::SeqCst) > 0);
+  clock_guard.abort();
+}
+
+#[tokio::test]
+async fn busy_replay_refresh_looks_up_once_and_returns_unknown_without_polling_the_body() {
+  let artifact_id = ArtifactId::new();
+  let key = IdempotencyKey::new();
+  let request = artifact_request(authority_id(), artifact_id, key);
+  let published = MemoryRunStore::new(authority_id())
+    .write_artifact(request.clone(), Box::pin(Cursor::new(b"abc".to_vec())))
+    .await
+    .expect("sample artifact commit")
+    .commit()
+    .clone();
+  let body_polls = Arc::new(AtomicUsize::new(0));
+  let state = DelayedReplayLookupState {
+    draft: ArtifactUploadDraft::new(
+      ArtifactUploadId::from_idempotency_key(key),
+      ArtifactUri::from_ids(run_id(), artifact_id),
+      Timestamp::new(1_784_620_800, 0).unwrap(),
+    ),
+    published,
+    delay_first_lookup: false,
+    busy_on_refresh: true,
+    lookup_entered: Arc::new(tokio::sync::Barrier::new(2)),
+    release_lookup: Arc::new(tokio::sync::Barrier::new(2)),
+    lookup_calls: Arc::new(AtomicUsize::new(0)),
+    admissions: Arc::new(Mutex::new(Vec::new())),
+    put_admissions: Arc::new(Mutex::new(Vec::new())),
+    body_polls: body_polls.clone(),
+    polls_at_posts: Arc::new(Mutex::new(Vec::new())),
+  };
+  let app = Router::new()
+    .route(
+      "/v1/authority",
+      get(|| async {
+        run_json(
+          StatusCode::OK,
+          &AuthorityResponse {
+            authority_id: authority_id(),
+          },
+        )
+      }),
+    )
+    .route("/v1/runs/{run_id}/artifact-uploads", post(delayed_replay_draft))
+    .route("/v1/runs/{run_id}/artifact-uploads/{upload_id}/content", put(delayed_replay_content))
+    .route("/v1/runs/{run_id}/commits/by-idempotency-key/{key}", get(delayed_replay_lookup))
+    .with_state(state.clone());
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+  let error = store
+    .write_artifact(
+      request,
+      Box::pin(FailingPollProbe {
+        polls: body_polls.clone(),
+      }),
+    )
+    .await
+    .unwrap_err();
+
+  assert!(matches!(error, ArtifactWriteError::PublicationUnknown(_)));
+  assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 2);
+  assert_eq!(state.admissions.lock().unwrap().len(), 2);
+  assert!(state.put_admissions.lock().unwrap().is_empty());
+  assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+}
+
+async fn delayed_replay_draft(State(state): State<DelayedReplayLookupState>, headers: HeaderMap) -> Response {
+  let admission = headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().to_str().unwrap().to_owned();
+  let refresh = {
+    let mut admissions = state.admissions.lock().unwrap();
+    admissions.push(admission);
+    admissions.len() > 1
+  };
+  state.polls_at_posts.lock().unwrap().push(state.body_polls.load(Ordering::SeqCst));
+  if refresh && state.busy_on_refresh {
+    let mut response = response(StatusCode::OK, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(serde_json::to_vec(&state.draft).unwrap()));
+    response.headers_mut().insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, HeaderValue::from_static("busy"));
+    return response;
+  }
+  granted_draft_response(StatusCode::OK, serde_json::to_vec(&state.draft).unwrap(), &headers)
+}
+
+async fn delayed_replay_lookup(State(state): State<DelayedReplayLookupState>) -> Response {
+  let call = state.lookup_calls.fetch_add(1, Ordering::SeqCst);
+  if call == 0 && state.delay_first_lookup {
+    state.lookup_entered.wait().await;
+    state.release_lookup.wait().await;
+  }
+  run_json(StatusCode::NOT_FOUND, &RunApiError::NotFound)
+}
+
+async fn delayed_replay_content(State(state): State<DelayedReplayLookupState>, headers: HeaderMap, request: AxumRequest) -> Response {
+  state.put_admissions.lock().unwrap().push(headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().to_str().unwrap().to_owned());
+  let bytes = to_bytes(request.into_body(), 1024).await.unwrap();
+  assert_eq!(bytes.as_ref(), b"abc");
+  run_json(StatusCode::CREATED, &state.published)
 }
 
 #[derive(Clone, Copy)]
