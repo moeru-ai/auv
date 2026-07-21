@@ -118,6 +118,7 @@ where
 async fn assert_case(name: &'static str, case: impl Future<Output = ()>) {
   let timeout = Delay::new(CONTRACT_CASE_TIMEOUT);
   pin_mut!(case, timeout);
+  // TODO(file-store-lock-timeout): This cooperative timeout cannot interrupt a synchronous OS lock wait; use child isolation once the shared harness has a deterministic process boundary.
   if matches!(select(case, timeout).await, Either::Right(_)) {
     panic!("RunStore conformance case `{name}` timed out after 30 seconds");
   }

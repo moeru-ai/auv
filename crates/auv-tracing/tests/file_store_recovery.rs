@@ -151,6 +151,27 @@ fn open_durably_confirms_an_existing_selected_root_anchor() {
 }
 
 #[test]
+fn oversized_sparse_authority_file_is_rejected_before_json_decode() {
+  let root = tempfile::tempdir().unwrap();
+  drop(FileRunStore::open(root.path()).unwrap());
+  let authority = root.path().join("authority.json");
+  OpenOptions::new().write(true).open(authority).unwrap().set_len(4097).unwrap();
+
+  let error = FileRunStore::open(root.path()).err().expect("oversized authority file was accepted");
+  assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_directory_flush_handles_support_store_open_and_commit() {
+  let parent = tempfile::tempdir().unwrap();
+  let root = parent.path().join("missing").join("store");
+  let store = FileRunStore::open(&root).unwrap();
+  let committed = commit_event(&store, RunId::new(), "windows durable directory handle");
+  assert_eq!(committed.revision().get(), 1);
+}
+
+#[test]
 fn oversized_sparse_frame_is_integrity_without_trusting_declared_length() {
   const FRAME_HEADER_BYTES: u64 = 8 + 2 + 8 + 32;
   const OVERSIZED_PAYLOAD: u64 = 64 * 1024 * 1024;
@@ -333,6 +354,36 @@ fn concurrent_open_creates_one_stable_nested_root() {
 
   assert_eq!(first.join().unwrap(), second.join().unwrap());
   assert!(root.is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_configured_root_allows_a_symlink_in_its_trusted_ancestor() {
+  use std::os::unix::fs::symlink;
+
+  let parent = tempfile::tempdir().unwrap();
+  let target = tempfile::tempdir().unwrap();
+  let trusted_link = parent.path().join("trusted-link");
+  symlink(target.path(), &trusted_link).unwrap();
+  let root = trusted_link.join("missing").join("store");
+
+  let store = FileRunStore::open(&root).unwrap();
+  assert!(!store.authority_id().as_uuid().is_nil());
+  assert!(target.path().join("missing").join("store").join("authority.json").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_root_itself_cannot_be_a_symlink() {
+  use std::os::unix::fs::symlink;
+
+  let parent = tempfile::tempdir().unwrap();
+  let target = tempfile::tempdir().unwrap();
+  let root = parent.path().join("store-link");
+  symlink(target.path(), &root).unwrap();
+
+  assert!(FileRunStore::open(&root).is_err());
+  assert!(!target.path().join("authority.json").exists());
 }
 
 #[cfg(unix)]

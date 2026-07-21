@@ -731,7 +731,7 @@ impl IncrementalReducer {
     Ok(())
   }
 
-  #[cfg(feature = "memory-store")]
+  #[cfg(any(feature = "memory-store", feature = "file-store"))]
   pub(crate) fn validate(&self, commit: &RunCommit) -> Result<(), ReduceError> {
     self.validate_header(commit)?;
     validate_facts(&self.snapshot, &self.indexes, commit.facts())?;
@@ -751,7 +751,7 @@ impl IncrementalReducer {
     Ok(())
   }
 
-  #[cfg(any(feature = "memory-store", test))]
+  #[cfg(any(feature = "memory-store", feature = "file-store", test))]
   pub(crate) fn snapshot(&self) -> &RunSnapshot {
     &self.snapshot
   }

@@ -783,6 +783,7 @@ dependencies = [
  "hex",
  "mime",
  "pin-project",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -792,6 +793,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
