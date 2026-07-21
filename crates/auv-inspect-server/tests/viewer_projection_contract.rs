@@ -161,10 +161,19 @@ fn viewer_uses_snapshot_then_revision_sse_without_websocket_or_status_inference(
   assert!(!source.contains("status_code"));
   assert!(!source.contains("running"));
   assert!(!source.contains("success"));
-  assert!(source.contains("open"));
+  assert!(source.contains("addEventListener(\"open\""));
   assert!(vite.contains(r#""/v1""#));
   assert!(!vite.contains(r#""/runs""#));
   assert!(!vite.contains(r#""/write""#));
+}
+
+#[test]
+fn server_exports_only_the_documented_router_entrypoint() {
+  let library = include_str!("../src/lib.rs");
+  let server = include_str!("../src/server.rs");
+
+  assert!(!library.contains("router_with_projection"));
+  assert!(!server.contains("pub fn router_with_projection"));
 }
 
 #[test]

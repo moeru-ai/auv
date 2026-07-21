@@ -56,11 +56,6 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
 /// [`serve`], which enforces loopback binding, or install an independently
 /// reviewed access-control boundary before exposing it.
 pub fn router(store: Arc<dyn RunStore>) -> Router {
-  router_with_projection(store)
-}
-
-/// Builds the server after the legacy projection boundary has been replaced by snapshot projection.
-pub fn router_with_projection(store: Arc<dyn RunStore>) -> Router {
   let state = Arc::new(InspectServerState { store });
   Router::new()
     .route("/", get(serve_viewer))
