@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use auv_tracing::{
@@ -15,12 +17,12 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, Request, State};
-use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST};
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use base64::Engine;
-use futures_util::TryStreamExt;
+use futures_util::{Stream, TryStreamExt};
 use serde::Serialize;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tokio_util::io::StreamReader;
@@ -43,6 +45,12 @@ impl ArtifactApiState {
       clock: Clock::new(),
     }
   }
+
+  pub(crate) fn reserves(&self, run_id: RunId, key: IdempotencyKey) -> bool {
+    let mut indexes = self.drafts.lock().expect("artifact draft index lock");
+    indexes.expire_unpublished(self.clock.monotonic_now());
+    indexes.by_key.contains_key(&(run_id, key))
+  }
 }
 
 #[derive(Clone)]
@@ -63,12 +71,15 @@ impl Clock {
     tokio::time::Instant::now()
   }
 
-  fn timestamp_after(&self, duration: Duration) -> Timestamp {
-    let elapsed = self.monotonic_now().saturating_duration_since(self.monotonic_anchor);
-    let wall = self.wall_anchor.checked_add(elapsed).and_then(|now| now.checked_add(duration)).unwrap_or(self.wall_anchor);
+  fn deadline_and_timestamp(&self, duration: Duration) -> (tokio::time::Instant, Timestamp) {
+    let now = self.monotonic_now();
+    let deadline = now + duration;
+    let elapsed = deadline.saturating_duration_since(self.monotonic_anchor);
+    let wall = self.wall_anchor.checked_add(elapsed).unwrap_or(self.wall_anchor);
     let since_epoch = wall.duration_since(UNIX_EPOCH).unwrap_or_default();
     let seconds = i64::try_from(since_epoch.as_secs()).unwrap_or(i64::MAX);
-    Timestamp::new(seconds, since_epoch.subsec_nanos()).expect("current artifact draft timestamps satisfy the run contract")
+    let timestamp = Timestamp::new(seconds, since_epoch.subsec_nanos()).expect("current artifact draft timestamps satisfy the run contract");
+    (deadline, timestamp)
   }
 }
 
@@ -93,6 +104,7 @@ struct DraftRecord {
 enum DraftStatus {
   Pending(Box<ArtifactUploadDraftRequest>),
   Uploading(Box<ArtifactUploadDraftRequest>),
+  Indeterminate(Box<ArtifactUploadDraftRequest>),
   Published,
   Expired,
 }
@@ -153,6 +165,7 @@ async fn create_draft(
     return Err(ArtifactFailure::authority_mismatch());
   }
   let uri = ArtifactUri::from_ids(run_id, body.artifact_id());
+  let _mutation = state.mutation_gate.lock().await;
 
   if let Some(existing) = existing_draft(&state, run_id, key, &uri) {
     return resolve_existing_draft(&state, existing, key, &body).await;
@@ -179,8 +192,8 @@ async fn create_draft(
   }
 
   let upload_id = ArtifactUploadId::new();
-  let deadline = state.artifacts.clock.monotonic_now() + DRAFT_LIFETIME;
-  let draft = ArtifactUploadDraft::new(upload_id, uri.clone(), state.artifacts.clock.timestamp_after(DRAFT_LIFETIME));
+  let (deadline, expires_at) = state.artifacts.clock.deadline_and_timestamp(DRAFT_LIFETIME);
+  let draft = ArtifactUploadDraft::new(upload_id, uri.clone(), expires_at);
   let record = DraftRecord {
     draft: draft.clone(),
     run_id,
@@ -225,7 +238,9 @@ async fn resolve_existing_draft(
     return Err(ArtifactFailure::conflict());
   }
   match existing.status {
-    DraftStatus::Pending(ref original) | DraftStatus::Uploading(ref original) if original.as_ref() == request => {
+    DraftStatus::Pending(ref original) | DraftStatus::Uploading(ref original) | DraftStatus::Indeterminate(ref original)
+      if original.as_ref() == request =>
+    {
       Ok(artifact_json(StatusCode::OK, &existing.draft))
     }
     DraftStatus::Published => match state.store.lookup_commit(existing.run_id, existing.key).await.map_err(ArtifactFailure::from_read)? {
@@ -235,7 +250,7 @@ async fn resolve_existing_draft(
       _ => Err(ArtifactFailure::conflict()),
     },
     DraftStatus::Expired => Err(ArtifactFailure::gone()),
-    DraftStatus::Pending(_) | DraftStatus::Uploading(_) => Err(ArtifactFailure::conflict()),
+    DraftStatus::Pending(_) | DraftStatus::Uploading(_) | DraftStatus::Indeterminate(_) => Err(ArtifactFailure::conflict()),
   }
 }
 
@@ -246,13 +261,14 @@ fn install_published_draft(
   authority_id: AuthorityId,
   uri: ArtifactUri,
 ) -> Result<ArtifactUploadDraft, ArtifactFailure> {
-  let draft = ArtifactUploadDraft::new(ArtifactUploadId::new(), uri, state.artifacts.clock.timestamp_after(DRAFT_LIFETIME));
+  let (deadline, expires_at) = state.artifacts.clock.deadline_and_timestamp(DRAFT_LIFETIME);
+  let draft = ArtifactUploadDraft::new(ArtifactUploadId::new(), uri, expires_at);
   let record = DraftRecord {
     draft: draft.clone(),
     run_id,
     key,
     authority_id,
-    deadline: state.artifacts.clock.monotonic_now() + DRAFT_LIFETIME,
+    deadline,
     status: DraftStatus::Published,
   };
   let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
@@ -284,10 +300,11 @@ async fn upload_content(
   if record.authority_id != state.store.authority_id() {
     return Err(ArtifactFailure::authority_mismatch());
   }
-  match record.status {
+  match &record.status {
     DraftStatus::Published => return published_replay(&state, &record).await,
     DraftStatus::Expired => return Err(ArtifactFailure::gone()),
     DraftStatus::Uploading(_) => return Err(ArtifactFailure::conflict()),
+    DraftStatus::Indeterminate(metadata) => return indeterminate_replay(&state, &record, metadata).await,
     DraftStatus::Pending(_) => {}
   }
   let DraftStatus::Pending(metadata) = record.status else {
@@ -306,15 +323,18 @@ async fn upload_content(
   }
   {
     let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
+    indexes.expire_unpublished(state.artifacts.clock.monotonic_now());
     let current = indexes.by_upload.get_mut(&upload_id).ok_or_else(ArtifactFailure::not_found)?;
-    if !matches!(current.status, DraftStatus::Pending(_)) {
-      return Err(ArtifactFailure::conflict());
+    match current.status {
+      DraftStatus::Pending(_) => current.status = DraftStatus::Uploading(metadata.clone()),
+      DraftStatus::Expired => return Err(ArtifactFailure::gone()),
+      _ => return Err(ArtifactFailure::conflict()),
     }
-    current.status = DraftStatus::Uploading(metadata.clone());
   }
-  let _upload_reset = UploadResetGuard {
+  let upload_reset = UploadResetGuard {
     state: state.clone(),
     upload_id,
+    body_complete: Arc::new(AtomicBool::new(false)),
   };
 
   let store_request = StoreArtifactRequest::new(
@@ -329,7 +349,16 @@ async fn upload_content(
     metadata.sha256(),
     metadata.attributes().clone(),
   );
-  let stream = request.into_body().into_data_stream().map_err(io::Error::other);
+  let mut body = Box::pin(request.into_body().into_data_stream());
+  let body_complete = upload_reset.body_complete.clone();
+  let stream = futures_util::stream::poll_fn(move |context| match body.as_mut().poll_next(context) {
+    Poll::Ready(None) => {
+      body_complete.store(true, Ordering::Release);
+      Poll::Ready(None)
+    }
+    polled => polled,
+  })
+  .map_err(io::Error::other);
   let reader = StreamReader::new(stream).compat();
   let result = state.store.write_artifact(store_request, Box::pin(reader)).await;
   match result {
@@ -347,7 +376,7 @@ async fn upload_content(
         Ok(run_json(StatusCode::OK, &commit))
       }
       _ => {
-        reset_pending(&state, upload_id, metadata);
+        mark_indeterminate(&state, upload_id, metadata);
         Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")))
       }
     },
@@ -365,6 +394,21 @@ async fn published_replay(state: &InspectServerState, record: &DraftRecord) -> R
   }
 }
 
+async fn indeterminate_replay(
+  state: &InspectServerState,
+  record: &DraftRecord,
+  metadata: &ArtifactUploadDraftRequest,
+) -> Result<Response, ArtifactFailure> {
+  match state.store.lookup_commit(record.run_id, record.key).await {
+    Ok(Some(commit)) if artifact_commit_matches(&commit, metadata, record.run_id, record.key) => {
+      mark_published(state, record.draft.upload_id());
+      Ok(run_json(StatusCode::OK, &commit))
+    }
+    Ok(Some(_)) => Err(ArtifactFailure::conflict()),
+    Ok(None) | Err(_) => Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown"))),
+  }
+}
+
 fn mark_published(state: &InspectServerState, upload_id: ArtifactUploadId) {
   if let Some(record) = state.artifacts.drafts.lock().expect("artifact draft index lock").by_upload.get_mut(&upload_id) {
     record.status = DraftStatus::Published;
@@ -377,9 +421,16 @@ fn reset_pending(state: &InspectServerState, upload_id: ArtifactUploadId, metada
   }
 }
 
+fn mark_indeterminate(state: &InspectServerState, upload_id: ArtifactUploadId, metadata: Box<ArtifactUploadDraftRequest>) {
+  if let Some(record) = state.artifacts.drafts.lock().expect("artifact draft index lock").by_upload.get_mut(&upload_id) {
+    record.status = DraftStatus::Indeterminate(metadata);
+  }
+}
+
 struct UploadResetGuard {
   state: Arc<InspectServerState>,
   upload_id: ArtifactUploadId,
+  body_complete: Arc<AtomicBool>,
 }
 
 impl Drop for UploadResetGuard {
@@ -392,7 +443,11 @@ impl Drop for UploadResetGuard {
       DraftStatus::Uploading(metadata) => metadata.clone(),
       _ => return,
     };
-    record.status = DraftStatus::Pending(metadata);
+    record.status = if self.body_complete.load(Ordering::Acquire) {
+      DraftStatus::Indeterminate(metadata)
+    } else {
+      DraftStatus::Pending(metadata)
+    };
   }
 }
 
@@ -436,13 +491,8 @@ async fn resolve_artifacts_inner(state: Arc<InspectServerState>, headers: Header
   if request.authority_id() != state.store.authority_id() {
     return Err(ArtifactFailure::authority_mismatch());
   }
-  let request_origin;
-  let base_url = if let Some(configured) = state.artifact_origin.as_ref() {
-    configured
-  } else {
-    request_origin = resolver_request_origin(&headers)?;
-    &request_origin
-  };
+  let base_url =
+    state.artifact_origin.as_ref().ok_or_else(|| ArtifactFailure::unavailable(error_code("auv.inspect.artifact_origin_unavailable")))?;
 
   let mut by_run: HashMap<RunId, Vec<ArtifactUri>> = HashMap::new();
   for uri in request.uris() {
@@ -484,21 +534,6 @@ fn artifact_content_url(base_url: &Url, uri: &ArtifactUri) -> Url {
     .expect("validated IDs form an absolute artifact content URL")
 }
 
-fn resolver_request_origin(headers: &HeaderMap) -> Result<Url, ArtifactFailure> {
-  let host = headers.get(HOST).and_then(|value| value.to_str().ok()).ok_or_else(ArtifactFailure::invalid_reference)?;
-  let origin = Url::parse(&format!("http://{host}/")).map_err(|_| ArtifactFailure::invalid_reference())?;
-  if !origin.username().is_empty()
-    || origin.password().is_some()
-    || origin.host_str().is_none()
-    || origin.path() != "/"
-    || origin.query().is_some()
-    || origin.fragment().is_some()
-  {
-    return Err(ArtifactFailure::invalid_reference());
-  }
-  Ok(origin)
-}
-
 fn artifact_commit_matches(commit: &RunCommit, request: &ArtifactUploadDraftRequest, run_id: RunId, key: IdempotencyKey) -> bool {
   if commit.authority_id() != request.authority_id()
     || commit.run_id() != run_id
@@ -521,16 +556,23 @@ fn artifact_commit_matches(commit: &RunCommit, request: &ArtifactUploadDraftRequ
 }
 
 fn idempotency_key(headers: &HeaderMap) -> Result<IdempotencyKey, ArtifactFailure> {
-  headers
-    .get("Idempotency-Key")
-    .and_then(|value| value.to_str().ok())
+  exactly_one_header(headers, "idempotency-key")?
+    .to_str()
+    .ok()
     .ok_or_else(ArtifactFailure::invalid_reference)?
     .parse()
     .map_err(|_| ArtifactFailure::invalid_reference())
 }
 
 fn require_media_type(headers: &HeaderMap, expected: &str) -> Result<(), ArtifactFailure> {
-  if headers.get(CONTENT_TYPE).and_then(|value| value.to_str().ok()) == Some(expected) {
+  let mut values = headers.get_all(CONTENT_TYPE).iter();
+  let Some(value) = values.next() else {
+    return Err(ArtifactFailure::unsupported_media_type());
+  };
+  if values.next().is_some() {
+    return Err(ArtifactFailure::invalid_reference());
+  }
+  if value.to_str().ok() == Some(expected) {
     Ok(())
   } else {
     Err(ArtifactFailure::unsupported_media_type())
@@ -538,11 +580,20 @@ fn require_media_type(headers: &HeaderMap, expected: &str) -> Result<(), Artifac
 }
 
 fn parse_content_digest(headers: &HeaderMap) -> Result<auv_tracing::Sha256Digest, ArtifactFailure> {
-  let value = headers.get("Content-Digest").and_then(|value| value.to_str().ok()).ok_or_else(ArtifactFailure::invalid_reference)?;
+  let value = exactly_one_header(headers, "content-digest")?.to_str().ok().ok_or_else(ArtifactFailure::invalid_reference)?;
   let encoded = value.strip_prefix("sha-256=:").and_then(|value| value.strip_suffix(':')).ok_or_else(ArtifactFailure::invalid_reference)?;
   let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| ArtifactFailure::invalid_reference())?;
   let bytes: [u8; 32] = bytes.try_into().map_err(|_| ArtifactFailure::invalid_reference())?;
   Ok(auv_tracing::Sha256Digest::new(bytes))
+}
+
+fn exactly_one_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<&'a HeaderValue, ArtifactFailure> {
+  let mut values = headers.get_all(name).iter();
+  let value = values.next().ok_or_else(ArtifactFailure::invalid_reference)?;
+  if values.next().is_some() {
+    return Err(ArtifactFailure::invalid_reference());
+  }
+  Ok(value)
 }
 
 fn content_digest(digest: auv_tracing::Sha256Digest) -> String {
