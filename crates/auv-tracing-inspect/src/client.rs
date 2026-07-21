@@ -26,7 +26,6 @@ use crate::protocol::{
 };
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
-const MAX_SNAPSHOT_JSON_BYTES: usize = 256 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = MAX_PROTOCOL_JSON_BYTES + 64 * 1024;
 const MAX_SSE_BUFFER_BYTES: usize = MAX_SSE_FRAME_BYTES + 4;
 const SSE_INGEST_CHUNK_BYTES: usize = 64 * 1024;
@@ -410,11 +409,11 @@ impl RunStore for InspectRunStore {
       if !has_media_type(&response, RUN_MEDIA_TYPE) {
         return Err(ReadError::Integrity(code("auv.inspect.snapshot_media_type_invalid")));
       }
-      // `load_snapshot` is the deliberate full-materialization API, with a
-      // larger finite cap than pages and individual SSE events.
-      let bytes = bounded_response_bytes_with_limit(response, MAX_SNAPSHOT_JSON_BYTES).await.map_err(|error| match error {
-        BoundedResponseError::Transport => ReadError::Unavailable(code("auv.inspect.snapshot_transport_unavailable")),
-        BoundedResponseError::TooLarge => ReadError::Integrity(code("auv.inspect.snapshot_too_large")),
+      // `load_snapshot` deliberately materializes the complete run. Unlike
+      // bounded protocol responses, its transport has no separate size policy.
+      let bytes = snapshot_response_bytes(response).await.map_err(|error| match error {
+        SnapshotResponseError::Transport => ReadError::Unavailable(code("auv.inspect.snapshot_transport_unavailable")),
+        SnapshotResponseError::Materialization => ReadError::Unavailable(code("auv.inspect.snapshot_materialization_unavailable")),
       })?;
       let snapshot = decode_strict::<RunSnapshot>(&bytes).map_err(|_| ReadError::Integrity(code("auv.inspect.snapshot_invalid")))?;
       if snapshot.authority_id() != self.authority_id || snapshot.run_id() != run_id {
@@ -975,6 +974,14 @@ enum BoundedResponseError {
   TooLarge,
 }
 
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+enum SnapshotResponseError {
+  #[error("Inspect snapshot response transport failed")]
+  Transport,
+  #[error("Inspect snapshot response could not be materialized")]
+  Materialization,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum ResponseDecodeError {
   Transport,
@@ -992,6 +999,19 @@ impl From<BoundedResponseError> for ResponseDecodeError {
 
 async fn bounded_response_bytes(response: Response) -> Result<Vec<u8>, BoundedResponseError> {
   bounded_response_bytes_with_limit(response, MAX_PROTOCOL_JSON_BYTES).await
+}
+
+async fn snapshot_response_bytes(mut response: Response) -> Result<Vec<u8>, SnapshotResponseError> {
+  let initial_capacity = response.content_length().and_then(|length| usize::try_from(length).ok()).unwrap_or(0).min(64 * 1024);
+  let mut bytes = Vec::new();
+  bytes.try_reserve(initial_capacity).map_err(|_| SnapshotResponseError::Materialization)?;
+  while let Some(chunk) = response.chunk().await.map_err(|_| SnapshotResponseError::Transport)? {
+    let next_len = bytes.len().checked_add(chunk.len()).ok_or(SnapshotResponseError::Materialization)?;
+    bytes.try_reserve(chunk.len()).map_err(|_| SnapshotResponseError::Materialization)?;
+    bytes.extend_from_slice(&chunk);
+    debug_assert_eq!(bytes.len(), next_len);
+  }
+  Ok(bytes)
 }
 
 async fn bounded_response_bytes_with_limit(mut response: Response, limit: usize) -> Result<Vec<u8>, BoundedResponseError> {

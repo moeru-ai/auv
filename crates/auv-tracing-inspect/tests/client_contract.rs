@@ -1546,13 +1546,14 @@ async fn truncated_run_resolver_and_snapshot_success_bodies_are_unavailable_not_
 }
 
 #[tokio::test]
-async fn snapshot_content_length_above_the_distinct_cap_is_stable_integrity_without_a_large_fixture() {
-  const SNAPSHOT_CAP: usize = 256 * 1024 * 1024;
-
-  let server = raw_success_fault_server("/snapshot", RUN_MEDIA_TYPE, Vec::new(), Some(SNAPSHOT_CAP + 1)).await;
+async fn snapshot_content_length_above_the_former_cap_does_not_preempt_transport_classification() {
+  let server = raw_success_fault_server("/snapshot", RUN_MEDIA_TYPE, Vec::new(), Some(256 * 1024 * 1024 + 1)).await;
   let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
-  assert_eq!(store.load_snapshot(run_id()).await.unwrap_err(), ReadError::Integrity(error_code("auv.inspect.snapshot_too_large")));
+  assert_eq!(
+    store.load_snapshot(run_id()).await.unwrap_err(),
+    ReadError::Unavailable(error_code("auv.inspect.snapshot_transport_unavailable"))
+  );
   drop(store);
   server.shutdown().await;
 }
@@ -2814,6 +2815,9 @@ async fn invalid_sse_commit_identity_revision_or_size_is_terminal_without_cursor
     let mut stream = store.subscribe(run_id(), RunRevision::new(0).unwrap()).await.unwrap();
     assert!(matches!(stream.next().await, Some(Err(auv_tracing::SubscriptionError::Store(ReadError::Integrity(_))))));
     assert!(stream.next().await.is_none());
+    drop(stream);
+    drop(store);
+    server.shutdown().await;
   }
 }
 
@@ -3047,7 +3051,7 @@ async fn load_snapshot_deliberately_accepts_valid_json_larger_than_thirty_two_mi
   let backing = MemoryRunStore::new(authority_id());
   let payload = JsonPayload::from_str(&format!(r#""{}""#, "x".repeat(65_000))).expect("large payload");
   for batch in 0..3 {
-    let count = if batch < 2 { 256 } else { 16 };
+    let count = if batch < 2 { 256 } else { 128 };
     let mutations = (0..count)
       .map(|offset| {
         let index = batch * 256 + offset;
@@ -3066,13 +3070,17 @@ async fn load_snapshot_deliberately_accepts_valid_json_larger_than_thirty_two_mi
       .expect("commit");
   }
   let snapshot = backing.load_snapshot(run_id()).await.expect("snapshot read").expect("snapshot");
-  assert!(serde_json::to_vec(&snapshot).expect("snapshot JSON").len() > 32 * 1024 * 1024);
+  let snapshot_json_bytes = serde_json::to_vec(&snapshot).expect("snapshot JSON").len();
+  assert!(snapshot_json_bytes > 39 * 1024 * 1024, "snapshot fixture was only {snapshot_json_bytes} bytes");
   let server = TestServer::start(router(Arc::new(backing))).await;
   let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
 
   let loaded = store.load_snapshot(run_id()).await.expect("remote snapshot").expect("snapshot");
 
   assert_eq!(loaded, snapshot);
+  assert_eq!(loaded.events().len(), 640);
+  drop(store);
+  server.shutdown().await;
 }
 
 fn run_json(status: StatusCode, value: &impl serde::Serialize) -> Response {
