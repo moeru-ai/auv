@@ -1097,7 +1097,7 @@ impl Dispatch {
     cursor: Option<AuthorityCursor>,
     settle_target: bool,
   ) {
-    {
+    let target_settlement = {
       let mut lanes = self.inner.lanes.lock().unwrap();
       let Some(lane) = lanes.get_mut(&run_id) else {
         return;
@@ -1115,12 +1115,30 @@ impl Dispatch {
         lane.indeterminate = true;
       }
       if settle_target {
-        lane.owned.remove(&target.idempotency_key);
+        lane.owned.remove(&target.idempotency_key).and_then(|owned| match owned.request {
+          OwnedRequest::Ordinary(_) => Some(ObservationFailureTarget::Ordinary),
+          OwnedRequest::Artifact { settlement, .. } => settlement.claim().map(ObservationFailureTarget::Artifact),
+        })
+      } else {
+        None
       }
-    }
-    if settle_target {
-      self.mark_projection_skipped(target.ticket);
-      self.terminalize(target.ticket, vec![failure]);
+    };
+    match target_settlement {
+      Some(ObservationFailureTarget::Ordinary) => {
+        self.mark_projection_skipped(target.ticket);
+        self.terminalize(target.ticket, vec![failure]);
+      }
+      Some(ObservationFailureTarget::Artifact(receipt)) => {
+        let error = if quarantine {
+          ArtifactWriteError::Integrity(failure.code().clone())
+        } else {
+          ArtifactWriteError::Unavailable(failure.code().clone())
+        };
+        self.mark_projection_skipped(target.ticket);
+        self.terminalize_unreported(target.ticket, vec![failure.clone()]);
+        self.deliver_artifact_receipt(receipt, Err(error), Some(failure));
+      }
+      None => {}
     }
     self.wake_observation(run_id);
     self.wake_lane(run_id);
@@ -2727,6 +2745,11 @@ enum ObservedReady {
     commit: RunCommit,
     receipt: ArtifactReceiptSender,
   },
+}
+
+enum ObservationFailureTarget {
+  Ordinary,
+  Artifact(ArtifactReceiptSender),
 }
 
 struct LaneEntry {
