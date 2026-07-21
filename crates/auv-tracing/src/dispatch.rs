@@ -247,6 +247,7 @@ impl Dispatch {
       artifact.attributes,
     );
     let (receipt, emission) = ArtifactEmission::pending(self.clone());
+    let settlement = ArtifactSettlement::new(receipt);
     let ticket = self.allocate_ticket();
     {
       let mut lanes = self.inner.lanes.lock().unwrap();
@@ -256,7 +257,7 @@ impl Dispatch {
         state: LaneEntryState::Artifact(Box::new(ArtifactAdmission {
           request,
           body: artifact.body,
-          receipt,
+          settlement,
         })),
       });
     }
@@ -598,7 +599,14 @@ impl Dispatch {
             admission.take().expect("artifact admission is available")
           };
 
-          self.register_owned(run_id, ticket, OwnedRequest::Artifact(admission.request.clone()));
+          self.register_owned(
+            run_id,
+            ticket,
+            OwnedRequest::Artifact {
+              request: admission.request.clone(),
+              settlement: admission.settlement.clone(),
+            },
+          );
           self.spawn_artifact_task(run_id, ticket, admission);
         }
         LaneAction::Commit(ticket, request) => {
@@ -740,6 +748,7 @@ impl Dispatch {
         request,
         observed_commit: None,
         response_validated: false,
+        artifact_response_commit: None,
       },
     );
     debug_assert!(previous.is_none(), "owned idempotency keys are unique within a run");
@@ -884,7 +893,7 @@ impl Dispatch {
     if let Some(failure) = failure
       && let Some(work) = recovery.lock().unwrap().take()
     {
-      self.fail_observation(work.run_id, work.target, failure, false, None);
+      self.fail_observation(work.run_id, work.target, failure, false, None, true);
     }
   }
 
@@ -946,31 +955,32 @@ impl Dispatch {
     } = result;
     let skip_target = failure.is_some();
     let observed = self.apply_observed_commits(run_id, &commits, skip_target.then_some(target.idempotency_key));
+    let target_observed = observed.target_observed(target.idempotency_key);
     let mut failure = failure;
-    let mut mismatch_ticket = None;
-    if let Some(mismatch) = observed.mismatch {
-      mismatch_ticket = Some(mismatch.ticket);
-      failure = Some(mismatch.failure);
-    } else if failure.is_none() && !observed.target_observed(target.idempotency_key) {
+    let mismatch = observed.mismatch;
+    if let Some(mismatch) = mismatch.as_ref() {
+      failure = Some(CursorFailure::integrity(mismatch.code.clone()));
+    } else if failure.is_none() && !target_observed {
       failure = Some(CursorFailure::integrity(committed_cursor_mismatch_code()));
     }
 
     if let Some(failure) = failure {
       let integrity = failure.is_integrity();
       let code = failure.into_code();
-      if let Some(ticket) = mismatch_ticket
-        && ticket != target.ticket
-      {
-        self.mark_projection_skipped(ticket);
-        self.terminalize(
-          ticket,
-          vec![DispatchFailure::new(
-            DispatchStage::AuthorityRead,
-            code.clone(),
-          )],
-        );
+      let mut settle_target = true;
+      if let Some(mismatch) = mismatch {
+        let mismatch_failure = DispatchFailure::new(DispatchStage::AuthorityRead, code.clone());
+        self.mark_projection_skipped(mismatch.ticket);
+        match mismatch.receipt {
+          Some(receipt) => {
+            self.terminalize_unreported(mismatch.ticket, vec![mismatch_failure.clone()]);
+            self.deliver_artifact_receipt(receipt, Err(ArtifactWriteError::Integrity(code.clone())), Some(mismatch_failure));
+          }
+          None => self.terminalize(mismatch.ticket, vec![mismatch_failure]),
+        }
+        settle_target = mismatch.ticket != target.ticket;
       }
-      self.fail_observation(run_id, target, DispatchFailure::new(DispatchStage::AuthorityRead, code), integrity, cursor);
+      self.fail_observation(run_id, target, DispatchFailure::new(DispatchStage::AuthorityRead, code), integrity, cursor, settle_target);
       return;
     }
 
@@ -1004,12 +1014,28 @@ impl Dispatch {
         let Some(owned) = lane.owned.get_mut(&key) else {
           continue;
         };
-        if !owned.request.matches(commit) {
+        let mismatch_code = if !owned.request.matches(commit) {
+          Some(committed_cursor_mismatch_code())
+        } else if matches!(&owned.request, OwnedRequest::Artifact { .. })
+          && owned.artifact_response_commit.as_ref().is_some_and(|response| response != commit)
+        {
+          Some(commit_response_mismatch_code())
+        } else {
+          None
+        };
+        if let Some(code) = mismatch_code {
           let ticket = owned.ticket;
-          lane.owned.remove(&key);
+          let owned = lane.owned.remove(&key).expect("the mismatching owned submission is present");
+          lane.observation.targets.retain(|target| target.idempotency_key != key);
+          lane.indeterminate = true;
+          let receipt = match owned.request {
+            OwnedRequest::Ordinary(_) => None,
+            OwnedRequest::Artifact { settlement, .. } => settlement.claim(),
+          };
           mismatch = Some(ObservedCommitMismatch {
             ticket,
-            failure: CursorFailure::integrity(committed_cursor_mismatch_code()),
+            receipt,
+            code,
           });
           break;
         }
@@ -1021,13 +1047,40 @@ impl Dispatch {
         projection.stage(owned.ticket);
         lane.observation.targets.retain(|target| target.idempotency_key != key);
         if owned.response_validated {
-          ready.push((owned.ticket, commit.clone()));
-          lane.owned.remove(&key);
+          let owned = lane.owned.remove(&key).expect("the response-validated owned submission is present");
+          match owned.request {
+            OwnedRequest::Ordinary(_) => ready.push(ObservedReady::Ordinary {
+              ticket: owned.ticket,
+              commit: commit.clone(),
+            }),
+            OwnedRequest::Artifact { settlement, .. } => {
+              if let Some(receipt) = settlement.claim() {
+                ready.push(ObservedReady::Artifact {
+                  ticket: owned.ticket,
+                  commit: commit.clone(),
+                  receipt,
+                });
+              }
+            }
+          }
         }
       }
     }
-    for (ticket, commit) in ready {
-      self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
+    for item in ready {
+      match item {
+        ObservedReady::Ordinary { ticket, commit } => {
+          self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
+        }
+        ObservedReady::Artifact {
+          ticket,
+          commit,
+          receipt,
+        } => {
+          let metadata = artifact_metadata(&commit).expect("validated observed artifact commit contains metadata").clone();
+          self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
+          self.deliver_artifact_receipt(receipt, Ok(metadata), None);
+        }
+      }
     }
     ObservedCommits {
       observed_keys,
@@ -1042,6 +1095,7 @@ impl Dispatch {
     failure: DispatchFailure,
     quarantine: bool,
     cursor: Option<AuthorityCursor>,
+    settle_target: bool,
   ) {
     {
       let mut lanes = self.inner.lanes.lock().unwrap();
@@ -1060,10 +1114,14 @@ impl Dispatch {
       if quarantine {
         lane.indeterminate = true;
       }
-      lane.owned.remove(&target.idempotency_key);
+      if settle_target {
+        lane.owned.remove(&target.idempotency_key);
+      }
     }
-    self.mark_projection_skipped(target.ticket);
-    self.terminalize(target.ticket, vec![failure]);
+    if settle_target {
+      self.mark_projection_skipped(target.ticket);
+      self.terminalize(target.ticket, vec![failure]);
+    }
     self.wake_observation(run_id);
     self.wake_lane(run_id);
   }
@@ -1075,7 +1133,7 @@ impl Dispatch {
       run_id,
       ticket,
       request: request.clone(),
-      receipt: admission.receipt,
+      settlement: admission.settlement,
       lookup_attempted: Arc::new(AtomicBool::new(false)),
     })));
     let spawn_admission = Arc::new(SpawnAdmission::new());
@@ -1168,43 +1226,125 @@ impl Dispatch {
       run_id,
       ticket,
       request,
-      receipt,
+      settlement,
       ..
     } = token;
     let idempotency_key = request.idempotency_key();
-    let (result, quarantine) = match result {
+    let (result, direct_contradiction) = match result {
       ArtifactTaskResult::Authority(result) => (result, false),
       ArtifactTaskResult::DirectResponseContradiction => (Err(ArtifactWriteError::Integrity(commit_response_mismatch_code())), true),
     };
-    match result {
-      Ok(commit) => {
-        let metadata = artifact_metadata(&commit).expect("validated artifact commit contains metadata").clone();
-        self.deliver_artifact_receipt(receipt, Ok(metadata), None);
-        if self.inner.projector_routes.is_empty() {
-          self.remove_owned(run_id, idempotency_key);
-          self.terminalize_unreported(ticket, Vec::new());
-        } else {
-          self.complete_owned_write(run_id, idempotency_key, commit.revision());
+    let completion = {
+      let mut lanes = self.inner.lanes.lock().unwrap();
+      let Some(lane) = lanes.get_mut(&run_id) else {
+        return;
+      };
+      if !lane.owned.contains_key(&idempotency_key) {
+        return;
+      }
+      match result {
+        Ok(commit) => {
+          if self.inner.projector_routes.is_empty() {
+            lane.owned.remove(&idempotency_key);
+            settlement.claim().map(|receipt| ArtifactWorkerCompletion::Success {
+              receipt,
+              metadata: Box::new(artifact_metadata(&commit).expect("validated artifact commit contains metadata").clone()),
+              ready_commit: None,
+              terminal: true,
+            })
+          } else {
+            let observed_commit = lane.owned.get(&idempotency_key).and_then(|owned| owned.observed_commit.clone());
+            if observed_commit.as_ref().is_some_and(|observed| observed != &commit) {
+              lane.owned.remove(&idempotency_key);
+              lane.indeterminate = true;
+              let error = ArtifactWriteError::Integrity(commit_response_mismatch_code());
+              let failure = DispatchFailure::new(failure_stage, artifact_error_code(&error));
+              settlement.claim().map(|receipt| ArtifactWorkerCompletion::Failure {
+                receipt,
+                error,
+                failure,
+              })
+            } else {
+              let owned = lane.owned.get_mut(&idempotency_key).expect("a claimed artifact settlement retains its owned submission");
+              debug_assert!(!owned.response_validated, "an artifact response validates once");
+              owned.response_validated = true;
+              owned.artifact_response_commit = Some(commit.clone());
+              if let Some(ready_commit) = observed_commit {
+                lane.owned.remove(&idempotency_key);
+                settlement.claim().map(|receipt| ArtifactWorkerCompletion::Success {
+                  receipt,
+                  metadata: Box::new(artifact_metadata(&ready_commit).expect("observed artifact commit contains metadata").clone()),
+                  ready_commit: Some(ready_commit),
+                  terminal: false,
+                })
+              } else {
+                lane.observation.targets.push_back(ObservationTarget {
+                  ticket,
+                  idempotency_key,
+                  revision: commit.revision(),
+                });
+                None
+              }
+            }
+          }
         }
-      }
-      Err(ArtifactWriteError::PublicationUnknown(_)) if let Some(commit) = self.observed_commit(run_id, idempotency_key) => {
-        let metadata = artifact_metadata(&commit).expect("observed artifact commit contains metadata").clone();
-        self.deliver_artifact_receipt(receipt, Ok(metadata), None);
-        self.complete_owned_write(run_id, idempotency_key, commit.revision());
-      }
-      Err(error) => {
-        let failure = DispatchFailure::new(failure_stage, artifact_error_code(&error));
-        if quarantine {
-          let mut lanes = self.inner.lanes.lock().unwrap();
-          let lane = lanes.entry(run_id).or_default();
+        Err(ArtifactWriteError::PublicationUnknown(_))
+          if lane.owned.get(&idempotency_key).and_then(|owned| owned.observed_commit.as_ref()).is_some() =>
+        {
+          let owned = lane.owned.remove(&idempotency_key).expect("an observed artifact retains its owned submission");
+          let commit = owned.observed_commit.expect("the guarded artifact commit is present");
+          settlement.claim().map(|receipt| ArtifactWorkerCompletion::Success {
+            receipt,
+            metadata: Box::new(artifact_metadata(&commit).expect("observed artifact commit contains metadata").clone()),
+            ready_commit: Some(commit),
+            terminal: false,
+          })
+        }
+        Err(error) => {
+          let contradiction =
+            direct_contradiction || lane.owned.get(&idempotency_key).and_then(|owned| owned.observed_commit.as_ref()).is_some();
+          let error = if contradiction {
+            ArtifactWriteError::Integrity(commit_response_mismatch_code())
+          } else {
+            error
+          };
+          let failure = DispatchFailure::new(failure_stage, artifact_error_code(&error));
           lane.owned.remove(&idempotency_key);
-          lane.indeterminate = true;
-        } else {
-          self.remove_owned(run_id, idempotency_key);
+          if contradiction {
+            lane.indeterminate = true;
+          }
+          settlement.claim().map(|receipt| ArtifactWorkerCompletion::Failure {
+            receipt,
+            error,
+            failure,
+          })
         }
-        self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
+      }
+    };
+    match completion {
+      None => {}
+      Some(ArtifactWorkerCompletion::Success {
+        receipt,
+        metadata,
+        ready_commit,
+        terminal,
+      }) => {
+        if let Some(commit) = ready_commit {
+          self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
+        }
+        if terminal {
+          self.terminalize_unreported(ticket, Vec::new());
+        }
+        self.deliver_artifact_receipt(receipt, Ok(*metadata), None);
+      }
+      Some(ArtifactWorkerCompletion::Failure {
+        receipt,
+        error,
+        failure,
+      }) => {
         self.mark_projection_skipped(ticket);
-        self.terminalize_unreported(ticket, vec![failure]);
+        self.terminalize_unreported(ticket, vec![failure.clone()]);
+        self.deliver_artifact_receipt(receipt, Err(error), Some(failure));
       }
     }
     self.wake_observation(run_id);
@@ -1266,7 +1406,9 @@ impl Dispatch {
 
   fn finish_unstarted_artifact(&self, ticket: u64, admission: Box<ArtifactAdmission>, failure: DispatchFailure) {
     let error = ArtifactWriteError::Unavailable(failure.code().clone());
-    self.deliver_artifact_receipt(admission.receipt, Err(error), Some(failure.clone()));
+    if let Some(receipt) = admission.settlement.claim() {
+      self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
+    }
     self.mark_projection_skipped(ticket);
     self.terminalize_unreported(ticket, vec![failure]);
   }
@@ -1664,6 +1806,7 @@ impl Drop for ObservationSpawnGuard {
         DispatchFailure::new(DispatchStage::AuthorityRead, task_unwind_code()),
         false,
         None,
+        true,
       );
     }
   }
@@ -1701,6 +1844,7 @@ impl Drop for ObservationTaskGuard {
         DispatchFailure::new(DispatchStage::AuthorityRead, task_unwind_code()),
         false,
         None,
+        true,
       );
     }
   }
@@ -1710,8 +1854,39 @@ struct ArtifactTaskToken {
   run_id: RunId,
   ticket: u64,
   request: StoreArtifactRequest,
-  receipt: ArtifactReceiptSender,
+  settlement: ArtifactSettlement,
   lookup_attempted: Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+struct ArtifactSettlement {
+  receipt: Arc<Mutex<Option<ArtifactReceiptSender>>>,
+}
+
+impl ArtifactSettlement {
+  fn new(receipt: ArtifactReceiptSender) -> Self {
+    Self {
+      receipt: Arc::new(Mutex::new(Some(receipt))),
+    }
+  }
+
+  fn claim(&self) -> Option<ArtifactReceiptSender> {
+    self.receipt.lock().unwrap().take()
+  }
+}
+
+enum ArtifactWorkerCompletion {
+  Success {
+    receipt: ArtifactReceiptSender,
+    metadata: Box<ArtifactMetadata>,
+    ready_commit: Option<RunCommit>,
+    terminal: bool,
+  },
+  Failure {
+    receipt: ArtifactReceiptSender,
+    error: ArtifactWriteError,
+    failure: DispatchFailure,
+  },
 }
 
 enum ArtifactTaskResult {
@@ -2132,25 +2307,29 @@ struct OwnedSubmission {
   request: OwnedRequest,
   observed_commit: Option<RunCommit>,
   response_validated: bool,
+  artifact_response_commit: Option<RunCommit>,
 }
 
 enum OwnedRequest {
   Ordinary(RunCommitRequest),
-  Artifact(StoreArtifactRequest),
+  Artifact {
+    request: StoreArtifactRequest,
+    settlement: ArtifactSettlement,
+  },
 }
 
 impl OwnedRequest {
   fn idempotency_key(&self) -> IdempotencyKey {
     match self {
       Self::Ordinary(request) => request.idempotency_key(),
-      Self::Artifact(request) => request.idempotency_key(),
+      Self::Artifact { request, .. } => request.idempotency_key(),
     }
   }
 
   fn matches(&self, commit: &RunCommit) -> bool {
     match self {
       Self::Ordinary(request) => commit_matches_request(commit, request),
-      Self::Artifact(request) => artifact_commit_matches_request(commit, request),
+      Self::Artifact { request, .. } => artifact_commit_matches_request(commit, request),
     }
   }
 }
@@ -2534,7 +2713,20 @@ impl ObservedCommits {
 
 struct ObservedCommitMismatch {
   ticket: u64,
-  failure: CursorFailure,
+  receipt: Option<ArtifactReceiptSender>,
+  code: ErrorCode,
+}
+
+enum ObservedReady {
+  Ordinary {
+    ticket: u64,
+    commit: RunCommit,
+  },
+  Artifact {
+    ticket: u64,
+    commit: RunCommit,
+    receipt: ArtifactReceiptSender,
+  },
 }
 
 struct LaneEntry {
@@ -2552,7 +2744,7 @@ enum LaneEntryState {
 struct ArtifactAdmission {
   request: StoreArtifactRequest,
   body: crate::ArtifactBody,
-  receipt: ArtifactReceiptSender,
+  settlement: ArtifactSettlement,
 }
 
 enum LaneWake {
