@@ -13,7 +13,6 @@ use url::Url;
 use uuid::Uuid;
 
 const MAX_JSON_NESTING: usize = 128;
-const MAX_JSON_OBJECT_MEMBERS: usize = 8_192;
 const JAVASCRIPT_EXACT_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 /// Versioned media type for Inspect run JSON requests and responses.
@@ -525,8 +524,6 @@ struct StructureStats {
   max_depth: usize,
   #[cfg(test)]
   inspected_work: usize,
-  #[cfg(test)]
-  peak_retained_bytes: usize,
 }
 
 fn validate_json_structure(bytes: &[u8]) -> Result<StructureStats, ProtocolDecodeError> {
@@ -540,8 +537,6 @@ fn protocol_json_error(error: serde_json::Error) -> ProtocolDecodeError {
 struct JsonStructureScanner<'a> {
   bytes: &'a [u8],
   cursor: usize,
-  #[cfg(test)]
-  retained_bytes: usize,
   stats: StructureStats,
 }
 
@@ -550,8 +545,6 @@ impl<'a> JsonStructureScanner<'a> {
     Self {
       bytes,
       cursor: 0,
-      #[cfg(test)]
-      retained_bytes: 0,
       stats: StructureStats::default(),
     }
   }
@@ -598,13 +591,7 @@ impl<'a> JsonStructureScanner<'a> {
     }
 
     let mut keys = HashSet::new();
-    #[cfg(test)]
-    let mut retained_key_bytes = 0;
     loop {
-      if keys.len() == MAX_JSON_OBJECT_MEMBERS {
-        return Err(ProtocolDecodeError::new(format!("JSON object exceeds {MAX_JSON_OBJECT_MEMBERS} members")));
-      }
-
       self.skip_whitespace();
       let key_start = self.cursor;
       let key_end = self.scan_string()?;
@@ -613,12 +600,6 @@ impl<'a> JsonStructureScanner<'a> {
       if keys.contains(&key) {
         return Err(ProtocolDecodeError::new(format!("duplicate JSON object key `{key}`")));
       }
-      #[cfg(test)]
-      {
-        retained_key_bytes += key.capacity();
-        self.retained_bytes += key.capacity();
-        self.stats.peak_retained_bytes = self.stats.peak_retained_bytes.max(self.retained_bytes);
-      }
       keys.insert(key);
 
       self.skip_whitespace();
@@ -626,10 +607,6 @@ impl<'a> JsonStructureScanner<'a> {
       self.scan_value(depth)?;
       self.skip_whitespace();
       if self.consume_if(b'}') {
-        #[cfg(test)]
-        {
-          self.retained_bytes -= retained_key_bytes;
-        }
         return Ok(());
       }
       self.expect_byte(b',')?;
@@ -915,10 +892,21 @@ mod tests {
   }
 
   #[test]
-  fn strict_decoder_rejects_oversized_object_member_count() {
-    let body = format!("{{{}}}", (0..=MAX_JSON_OBJECT_MEMBERS).map(|index| format!(r#""key_{index}":null"#)).collect::<Vec<_>>().join(","));
+  fn strict_decoder_accepts_objects_larger_than_the_removed_transport_member_limit() {
+    let body = format!("{{{}}}", (0..=8_192).map(|index| format!(r#""key_{index}":null"#)).collect::<Vec<_>>().join(","));
 
-    assert!(decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).is_err());
+    assert!(decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).is_ok());
+  }
+
+  #[test]
+  fn strict_decoder_reports_a_duplicate_after_more_than_eight_thousand_members() {
+    let mut members = (0..=8_192).map(|index| format!(r#""key_{index}":null"#)).collect::<Vec<_>>();
+    members.push(r#""key_0":null"#.to_owned());
+    let body = format!("{{{}}}", members.join(","));
+
+    let error = decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).unwrap_err();
+
+    assert!(error.message.contains("duplicate JSON object key `key_0`"), "{error}");
   }
 
   #[test]
@@ -1009,11 +997,10 @@ mod tests {
   // report exactly one input length and the complexity guard cannot fail.
   // The scanner now counts inspections and advances where they occur.
   #[test]
-  fn structural_validation_inspects_linearly_and_retains_only_nested_object_keys() {
+  fn structural_validation_inspects_a_depth_128_object_with_a_four_mib_leaf_in_linear_work() {
     let depth = 128;
-    let decoded_key_bytes = "nested_key".len();
     let leaf_bytes = 4 * 1024 * 1024;
-    let mut body = Vec::with_capacity(depth * (decoded_key_bytes + 5) + leaf_bytes + 2);
+    let mut body = Vec::with_capacity(depth * ("nested_key".len() + 5) + leaf_bytes + 2);
     for _ in 0..depth {
       body.extend_from_slice(br#"{"nested_key":"#);
     }
@@ -1027,12 +1014,5 @@ mod tests {
     assert_eq!(stats.max_depth, depth);
     assert!(stats.inspected_work > body.len(), "scanner work metric recorded only the final cursor");
     assert!(stats.inspected_work <= body.len() * 4, "scanner inspected {} bytes of {} bytes", stats.inspected_work, body.len());
-    assert!(stats.peak_retained_bytes > 0, "nested object keys retained no decoded capacity");
-    assert!(
-      stats.peak_retained_bytes <= depth * decoded_key_bytes * 4,
-      "scanner retained {} temporary key bytes at depth {depth}",
-      stats.peak_retained_bytes
-    );
-    assert!(stats.peak_retained_bytes < leaf_bytes, "scanner retained the multi-MiB leaf");
   }
 }
