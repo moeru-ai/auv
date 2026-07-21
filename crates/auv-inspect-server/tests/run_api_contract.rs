@@ -46,6 +46,14 @@ struct RacingRunStore {
 }
 
 #[derive(Clone)]
+struct BlockingCommitStore {
+  inner: MemoryRunStore,
+  blocked_run: RunId,
+  entered: Arc<tokio::sync::Barrier>,
+  release: Arc<tokio::sync::Notify>,
+}
+
+#[derive(Clone)]
 struct CommitUnknownStore {
   resolved: Option<RunCommit>,
   lookup_calls: Arc<AtomicUsize>,
@@ -207,6 +215,50 @@ impl RunStore for RacingRunStore {
       }
       inner.lookup_commit(run_id, key).await
     })
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: auv_tracing::ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
+impl RunStore for BlockingCommitStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    let inner = self.inner.clone();
+    let blocked = request.run_id() == self.blocked_run;
+    let entered = self.entered.clone();
+    let release = self.release.clone();
+    Box::pin(async move {
+      if blocked {
+        entered.wait().await;
+        release.notified().await;
+      }
+      inner.commit(request).await
+    })
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
   }
 
   fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
@@ -399,6 +451,29 @@ async fn shared_store_classifies_concurrent_cross_router_replay_atomically() {
 
   assert_eq!(statuses, [StatusCode::OK, StatusCode::CREATED]);
   assert_eq!(store.lookup_calls(), 0, "successful commit classification must not pre-read idempotency state");
+}
+
+#[tokio::test]
+async fn blocked_commit_in_one_run_does_not_block_another_run() {
+  let store = BlockingCommitStore {
+    inner: MemoryRunStore::new(authority_id()),
+    blocked_run: run_id(),
+    entered: Arc::new(tokio::sync::Barrier::new(2)),
+    release: Arc::new(tokio::sync::Notify::new()),
+  };
+  let app = router(Arc::new(store.clone()));
+  let blocked = tokio::spawn(app.clone().oneshot(post_commit(RUN, Some(KEY_ONE), commit_body(AUTHORITY, &start_span("auv.test.blocked")))));
+  store.entered.wait().await;
+
+  let independent = tokio::time::timeout(
+    std::time::Duration::from_millis(100),
+    app.oneshot(post_commit(OTHER_RUN, Some(KEY_TWO), commit_body(AUTHORITY, &start_span("auv.test.independent")))),
+  )
+  .await;
+
+  store.release.notify_one();
+  assert_eq!(blocked.await.expect("blocked task").expect("blocked response").status(), StatusCode::CREATED);
+  assert_eq!(independent.expect("run B must not wait for run A").expect("independent response").status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -628,6 +703,28 @@ async fn commit_unknown_resolves_once_by_lookup_without_resubmitting() {
 
   assert_eq!(response.status(), StatusCode::OK);
   assert_eq!(json_body(response).await, serde_json::to_value(committed).unwrap());
+  assert_eq!(lookup_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn commit_unknown_with_a_mismatching_lookup_is_a_conflict() {
+  let memory = MemoryRunStore::new(authority_id());
+  let mismatched = memory
+    .commit(RunCommitRequest::new(authority_id(), run_id(), KEY_ONE.parse().unwrap(), vec![start_span("auv.test.other")]).unwrap())
+    .await
+    .unwrap()
+    .into_commit();
+  let lookup_calls = Arc::new(AtomicUsize::new(0));
+  let store = CommitUnknownStore {
+    resolved: Some(mismatched),
+    lookup_calls: lookup_calls.clone(),
+  };
+
+  let response =
+    router(Arc::new(store)).oneshot(post_commit(RUN, Some(KEY_ONE), commit_body(AUTHORITY, &start_span("auv.test.root")))).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::CONFLICT);
+  assert_eq!(json_body(response).await, json!("idempotency_mismatch"));
   assert_eq!(lookup_calls.load(Ordering::SeqCst), 1);
 }
 

@@ -1,11 +1,12 @@
 //! HTTP composition root for one canonical Inspect [`RunStore`] authority.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::process;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use auv_tracing::RunStore;
+use auv_tracing::{RunId, RunStore};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -32,10 +33,36 @@ pub(crate) struct InspectServerState {
   pub(crate) store: Arc<dyn RunStore>,
   pub(crate) artifacts: ArtifactApiState,
   pub(crate) artifact_origin: Option<Url>,
-  /// Serializes short ordinary-commit and draft-reservation mutations.
-  ///
-  /// Artifact bodies are never streamed while this gate is held.
-  pub(crate) mutation_gate: tokio::sync::Mutex<()>,
+  pub(crate) mutation_arbitrator: RunMutationArbitrator,
+}
+
+pub(crate) struct RunMutationArbitrator {
+  gates: Mutex<HashMap<RunId, Weak<tokio::sync::Mutex<()>>>>,
+}
+
+impl RunMutationArbitrator {
+  fn new() -> Self {
+    Self {
+      gates: Mutex::new(HashMap::new()),
+    }
+  }
+
+  /// Serializes ordinary commits and draft reservations for one run.
+  pub(crate) async fn acquire(&self, run_id: RunId) -> tokio::sync::OwnedMutexGuard<()> {
+    let gate = {
+      let mut gates = self.gates.lock().expect("run mutation arbitration lock");
+      gates.retain(|_, gate| gate.strong_count() > 0);
+      match gates.get(&run_id).and_then(Weak::upgrade) {
+        Some(gate) => gate,
+        None => {
+          let gate = Arc::new(tokio::sync::Mutex::new(()));
+          gates.insert(run_id, Arc::downgrade(&gate));
+          gate
+        }
+      }
+    };
+    gate.lock_owned().await
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -86,7 +113,7 @@ fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>) -> Route
     store,
     artifacts: ArtifactApiState::new(),
     artifact_origin,
-    mutation_gate: tokio::sync::Mutex::new(()),
+    mutation_arbitrator: RunMutationArbitrator::new(),
   });
   Router::new()
     .route("/", get(serve_viewer))
