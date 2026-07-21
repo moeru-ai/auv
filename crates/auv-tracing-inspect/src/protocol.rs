@@ -521,8 +521,11 @@ pub fn decode_strict<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolDec
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct StructureStats {
+  #[cfg(test)]
   max_depth: usize,
-  scanned_bytes: usize,
+  #[cfg(test)]
+  inspected_work: usize,
+  #[cfg(test)]
   peak_retained_bytes: usize,
 }
 
@@ -537,6 +540,7 @@ fn protocol_json_error(error: serde_json::Error) -> ProtocolDecodeError {
 struct JsonStructureScanner<'a> {
   bytes: &'a [u8],
   cursor: usize,
+  #[cfg(test)]
   retained_bytes: usize,
   stats: StructureStats,
 }
@@ -546,6 +550,7 @@ impl<'a> JsonStructureScanner<'a> {
     Self {
       bytes,
       cursor: 0,
+      #[cfg(test)]
       retained_bytes: 0,
       stats: StructureStats::default(),
     }
@@ -561,7 +566,6 @@ impl<'a> JsonStructureScanner<'a> {
     if self.cursor != self.bytes.len() {
       return Err(ProtocolDecodeError::new("JSON has trailing input"));
     }
-    self.stats.scanned_bytes = self.cursor;
     Ok(self.stats)
   }
 
@@ -594,6 +598,7 @@ impl<'a> JsonStructureScanner<'a> {
     }
 
     let mut keys = HashSet::new();
+    #[cfg(test)]
     let mut retained_key_bytes = 0;
     loop {
       if keys.len() == MAX_JSON_OBJECT_MEMBERS {
@@ -603,13 +608,17 @@ impl<'a> JsonStructureScanner<'a> {
       self.skip_whitespace();
       let key_start = self.cursor;
       let key_end = self.scan_string()?;
+      self.record_inspection(key_end - key_start);
       let key = serde_json::from_slice::<String>(&self.bytes[key_start..key_end]).map_err(protocol_json_error)?;
       if keys.contains(&key) {
         return Err(ProtocolDecodeError::new(format!("duplicate JSON object key `{key}`")));
       }
-      retained_key_bytes += key.capacity();
-      self.retained_bytes += key.capacity();
-      self.stats.peak_retained_bytes = self.stats.peak_retained_bytes.max(self.retained_bytes);
+      #[cfg(test)]
+      {
+        retained_key_bytes += key.capacity();
+        self.retained_bytes += key.capacity();
+        self.stats.peak_retained_bytes = self.stats.peak_retained_bytes.max(self.retained_bytes);
+      }
       keys.insert(key);
 
       self.skip_whitespace();
@@ -617,7 +626,10 @@ impl<'a> JsonStructureScanner<'a> {
       self.scan_value(depth)?;
       self.skip_whitespace();
       if self.consume_if(b'}') {
-        self.retained_bytes -= retained_key_bytes;
+        #[cfg(test)]
+        {
+          self.retained_bytes -= retained_key_bytes;
+        }
         return Ok(());
       }
       self.expect_byte(b',')?;
@@ -648,22 +660,23 @@ impl<'a> JsonStructureScanner<'a> {
       match self.current_byte() {
         Some(b'"') => {
           self.validate_utf8(segment_start, self.cursor)?;
-          self.cursor += 1;
+          self.advance(1);
           return Ok(self.cursor);
         }
         Some(b'\\') => {
           self.validate_utf8(segment_start, self.cursor)?;
-          self.cursor += 1;
+          self.advance(1);
           match self.current_byte() {
-            Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => self.cursor += 1,
+            Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => self.advance(1),
             Some(b'u') => {
-              self.cursor += 1;
+              self.advance(1);
               let code_unit = self.scan_hex_quad()?;
               if (0xd800..=0xdbff).contains(&code_unit) {
+                self.record_inspection(2);
                 if self.bytes.get(self.cursor..self.cursor + 2) != Some(b"\\u") {
                   return Err(ProtocolDecodeError::new("JSON string has an unpaired UTF-16 surrogate"));
                 }
-                self.cursor += 2;
+                self.advance(2);
                 let low = self.scan_hex_quad()?;
                 if !(0xdc00..=0xdfff).contains(&low) {
                   return Err(ProtocolDecodeError::new("JSON string has an unpaired UTF-16 surrogate"));
@@ -677,7 +690,7 @@ impl<'a> JsonStructureScanner<'a> {
           segment_start = self.cursor;
         }
         Some(0x00..=0x1f) => return Err(ProtocolDecodeError::new("JSON string contains an unescaped control character")),
-        Some(_) => self.cursor += 1,
+        Some(_) => self.advance(1),
         None => return Err(ProtocolDecodeError::new("JSON string is not terminated")),
       }
     }
@@ -689,13 +702,13 @@ impl<'a> JsonStructureScanner<'a> {
 
     match self.current_byte() {
       Some(b'0') => {
-        self.cursor += 1;
+        self.advance(1);
         if matches!(self.current_byte(), Some(b'0'..=b'9')) {
           return Err(ProtocolDecodeError::new("JSON number has a leading zero"));
         }
       }
       Some(b'1'..=b'9') => {
-        self.cursor += 1;
+        self.advance(1);
         self.consume_digits();
       }
       _ => return Err(ProtocolDecodeError::new("JSON number has no integer digits")),
@@ -708,9 +721,9 @@ impl<'a> JsonStructureScanner<'a> {
       self.consume_digits();
     }
     if matches!(self.current_byte(), Some(b'e' | b'E')) {
-      self.cursor += 1;
+      self.advance(1);
       if matches!(self.current_byte(), Some(b'+' | b'-')) {
-        self.cursor += 1;
+        self.advance(1);
       }
       if !matches!(self.current_byte(), Some(b'0'..=b'9')) {
         return Err(ProtocolDecodeError::new("JSON number has no exponent digits"));
@@ -719,6 +732,7 @@ impl<'a> JsonStructureScanner<'a> {
     }
 
     let lexeme = std::str::from_utf8(&self.bytes[start..self.cursor]).expect("JSON number scanner only accepts ASCII bytes");
+    self.record_inspection(lexeme.len());
     parse_number_lexeme(lexeme).map(|_| ())
   }
 
@@ -732,7 +746,7 @@ impl<'a> JsonStructureScanner<'a> {
         _ => return Err(ProtocolDecodeError::new("JSON string has an invalid Unicode escape")),
       };
       value = (value << 4) | u16::from(digit);
-      self.cursor += 1;
+      self.advance(1);
     }
     Ok(value)
   }
@@ -742,25 +756,30 @@ impl<'a> JsonStructureScanner<'a> {
     if depth > MAX_JSON_NESTING {
       return Err(ProtocolDecodeError::new(format!("JSON exceeds {MAX_JSON_NESTING} nested containers")));
     }
-    self.stats.max_depth = self.stats.max_depth.max(depth);
+    #[cfg(test)]
+    {
+      self.stats.max_depth = self.stats.max_depth.max(depth);
+    }
     Ok(depth)
   }
 
-  fn validate_utf8(&self, start: usize, end: usize) -> Result<(), ProtocolDecodeError> {
+  fn validate_utf8(&mut self, start: usize, end: usize) -> Result<(), ProtocolDecodeError> {
+    self.record_inspection(end - start);
     std::str::from_utf8(&self.bytes[start..end]).map(|_| ()).map_err(|_| ProtocolDecodeError::new("JSON string is not valid UTF-8"))
   }
 
   fn consume_digits(&mut self) {
     while matches!(self.current_byte(), Some(b'0'..=b'9')) {
-      self.cursor += 1;
+      self.advance(1);
     }
   }
 
   fn consume_exact(&mut self, expected: &[u8]) -> Result<(), ProtocolDecodeError> {
+    self.record_inspection(expected.len());
     if self.bytes.get(self.cursor..self.cursor + expected.len()) != Some(expected) {
       return Err(ProtocolDecodeError::new("JSON literal is invalid"));
     }
-    self.cursor += expected.len();
+    self.advance(expected.len());
     Ok(())
   }
 
@@ -773,7 +792,7 @@ impl<'a> JsonStructureScanner<'a> {
 
   fn consume_if(&mut self, expected: u8) -> bool {
     if self.current_byte() == Some(expected) {
-      self.cursor += 1;
+      self.advance(1);
       true
     } else {
       false
@@ -782,13 +801,29 @@ impl<'a> JsonStructureScanner<'a> {
 
   fn skip_whitespace(&mut self) {
     while matches!(self.current_byte(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
-      self.cursor += 1;
+      self.advance(1);
     }
   }
 
-  fn current_byte(&self) -> Option<u8> {
+  fn current_byte(&mut self) -> Option<u8> {
+    self.record_inspection(1);
     self.bytes.get(self.cursor).copied()
   }
+
+  fn advance(&mut self, count: usize) {
+    self.record_inspection(count);
+    self.cursor += count;
+  }
+
+  #[cfg(test)]
+  #[inline(always)]
+  fn record_inspection(&mut self, count: usize) {
+    self.stats.inspected_work = self.stats.inspected_work.checked_add(count).expect("scanner inspection counter overflowed");
+  }
+
+  #[cfg(not(test))]
+  #[inline(always)]
+  fn record_inspection(&mut self, _count: usize) {}
 }
 
 fn parse_number_lexeme(value: &str) -> Result<Number, ProtocolDecodeError> {
@@ -968,21 +1003,36 @@ mod tests {
     assert!(decode_strict::<ResolvedArtifact>(variant).is_err());
   }
 
+  // ROOT CAUSE:
+  //
+  // If scanner work is derived from the final cursor, nested rescans still
+  // report exactly one input length and the complexity guard cannot fail.
+  // The scanner now counts inspections and advances where they occur.
   #[test]
-  fn structural_validation_retains_and_scans_linearly_for_a_large_deep_leaf() {
+  fn structural_validation_inspects_linearly_and_retains_only_nested_object_keys() {
     let depth = 128;
+    let decoded_key_bytes = "nested_key".len();
     let leaf_bytes = 4 * 1024 * 1024;
-    let mut body = Vec::with_capacity(depth * 2 + leaf_bytes + 2);
-    body.extend(std::iter::repeat_n(b'[', depth));
+    let mut body = Vec::with_capacity(depth * (decoded_key_bytes + 5) + leaf_bytes + 2);
+    for _ in 0..depth {
+      body.extend_from_slice(br#"{"nested_key":"#);
+    }
     body.push(b'"');
     body.extend(std::iter::repeat_n(b'a', leaf_bytes));
     body.push(b'"');
-    body.extend(std::iter::repeat_n(b']', depth));
+    body.extend(std::iter::repeat_n(b'}', depth));
 
     let stats = validate_json_structure(&body).expect("valid nested JSON");
 
     assert_eq!(stats.max_depth, depth);
-    assert_eq!(stats.scanned_bytes, body.len());
-    assert!(stats.peak_retained_bytes < 64 * 1024, "scanner retained {} bytes for a {} byte leaf", stats.peak_retained_bytes, leaf_bytes);
+    assert!(stats.inspected_work > body.len(), "scanner work metric recorded only the final cursor");
+    assert!(stats.inspected_work <= body.len() * 4, "scanner inspected {} bytes of {} bytes", stats.inspected_work, body.len());
+    assert!(stats.peak_retained_bytes > 0, "nested object keys retained no decoded capacity");
+    assert!(
+      stats.peak_retained_bytes <= depth * decoded_key_bytes * 4,
+      "scanner retained {} temporary key bytes at depth {depth}",
+      stats.peak_retained_bytes
+    );
+    assert!(stats.peak_retained_bytes < leaf_bytes, "scanner retained the multi-MiB leaf");
   }
 }

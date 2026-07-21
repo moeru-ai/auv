@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use auv_tracing::{
   ArtifactMetadata, ArtifactUri, ArtifactWriteError, AuthorityId, CommitResult, ErrorCode, IdempotencyKey, ReadError, RunCommit, RunFact,
-  RunId, StoreArtifactRequest, Timestamp,
+  RunId, StoreArtifactRequest, Timestamp, artifact_identity_conflict_error_code,
 };
 use auv_tracing_inspect::protocol::{
   ARTIFACT_IDENTITY_CONFLICT_ERROR, ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER,
@@ -977,9 +977,7 @@ async fn publish_upload(
         Ok(None) | Err(_) => Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown"))),
       }
     }
-    // TODO(inspect-artifact-conflict): replace this built-in store code match
-    // when RunStore exposes a typed artifact identity conflict.
-    Err(ArtifactWriteError::Rejected(code)) if code == error_code("auv.store.rejected") => {
+    Err(ArtifactWriteError::Rejected(code)) if code == artifact_identity_conflict_error_code() => {
       clear_upload_reservation(&state, active.run_id, upload_id, admission);
       Err(ArtifactFailure::artifact_identity_conflict())
     }

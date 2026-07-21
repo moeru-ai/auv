@@ -25,6 +25,15 @@ pub use file::FileRunStore;
 pub use memory::MemoryRunStore;
 
 const MAX_COMMIT_PAGE_JSON_BYTES: usize = 32 * 1024 * 1024;
+const ARTIFACT_IDENTITY_CONFLICT_ERROR_CODE: &str = "auv.store.artifact_identity_conflict";
+
+/// Returns the store code reserved for reuse of an already-owned `ArtifactUri`.
+///
+/// Store implementations must not use this code for reducer, revision, request
+/// validation, or other generic rejection failures.
+pub fn artifact_identity_conflict_error_code() -> ErrorCode {
+  ErrorCode::parse(ARTIFACT_IDENTITY_CONFLICT_ERROR_CODE).expect("static error code is valid")
+}
 
 /// A boxed asynchronous operation returned by the object-safe store port.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -379,4 +388,17 @@ pub enum SubscriptionError {
   /// The underlying store read failed.
   #[error(transparent)]
   Store(ReadError),
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn artifact_identity_conflict_has_a_unique_stable_store_code() {
+    let code = artifact_identity_conflict_error_code();
+
+    assert_eq!(code.as_str(), "auv.store.artifact_identity_conflict");
+    assert_ne!(code, ErrorCode::parse("auv.store.rejected").unwrap());
+  }
 }

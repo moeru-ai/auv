@@ -107,6 +107,22 @@ impl Drop for TestServer {
   }
 }
 
+#[tokio::test]
+#[should_panic(expected = "test server task panicked")]
+async fn explicit_test_server_shutdown_surfaces_server_task_panics() {
+  let task = tokio::spawn(async {
+    panic!("intentional test server panic");
+  });
+  tokio::task::yield_now().await;
+  let server = TestServer {
+    base_url: Url::parse("http://127.0.0.1/").unwrap(),
+    shutdown: None,
+    task: Some(task),
+  };
+
+  server.shutdown().await;
+}
+
 #[derive(Clone)]
 struct FaultStore {
   commit_error: Option<CommitError>,
@@ -1546,6 +1562,8 @@ async fn clean_malformed_and_over_limit_responses_remain_integrity_failures() {
   let run_server = raw_success_fault_server("/commits/by-idempotency-key/", RUN_MEDIA_TYPE, b"{".to_vec(), None).await;
   let run_store = InspectRunStore::connect(run_server.base_url.clone()).await.unwrap();
   assert!(matches!(run_store.lookup_commit(run_id(), IdempotencyKey::new()).await, Err(ReadError::Integrity(_))));
+  drop(run_store);
+  run_server.shutdown().await;
 
   let oversized = vec![b' '; 32 * 1024 * 1024 + 1];
   let app = Router::new()
@@ -1573,6 +1591,8 @@ async fn clean_malformed_and_over_limit_responses_remain_integrity_failures() {
     resolver_store.resolve_artifacts(vec![ArtifactUri::from_ids(run_id(), ArtifactId::new())]).await,
     Err(ReadError::Integrity(_))
   ));
+  drop(resolver_store);
+  resolver_server.shutdown().await;
 }
 
 #[tokio::test]
@@ -1591,6 +1611,8 @@ async fn client_rejects_malformed_run_success_and_error_payloads_recursively() {
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
     assert!(matches!(store.lookup_commit(run_id(), key).await, Err(ReadError::Integrity(_))));
+    drop(store);
+    server.shutdown().await;
   }
 
   let malformed_errors = [
@@ -1624,6 +1646,8 @@ async fn client_rejects_malformed_run_success_and_error_payloads_recursively() {
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
     assert!(matches!(store.lookup_commit(run_id(), key).await, Err(ReadError::Integrity(_))));
+    drop(store);
+    server.shutdown().await;
   }
 }
 
@@ -2814,6 +2838,9 @@ async fn malformed_sse_json_payloads_are_terminal_integrity_failures() {
 
     assert!(matches!(stream.next().await, Some(Err(auv_tracing::SubscriptionError::Store(ReadError::Integrity(_))))));
     assert!(stream.next().await.is_none());
+    drop(stream);
+    drop(store);
+    server.shutdown().await;
   }
 }
 

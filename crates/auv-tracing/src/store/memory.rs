@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
   ArtifactBody, ArtifactReader, ArtifactWriteError, BoxFuture, CommitError, CommitResult, ReadError, RunCommitPage, RunStore,
-  RunSubscription, StoreArtifactRequest, SubscriptionError,
+  RunSubscription, StoreArtifactRequest, SubscriptionError, artifact_identity_conflict_error_code,
 };
 use crate::history::IncrementalReducer;
 use crate::{
@@ -213,7 +213,7 @@ impl MemoryRunStore {
       || state.runs.get(&run_id).is_some_and(|run| run.reducer.snapshot().artifacts().contains_key(&uri))
       || state.blobs.contains_key(&uri)
     {
-      return Err(ArtifactWriteError::Rejected(rejected()));
+      return Err(ArtifactWriteError::Rejected(artifact_identity_conflict_error_code()));
     }
 
     if let Some(run) = state.runs.get(&run_id) {
