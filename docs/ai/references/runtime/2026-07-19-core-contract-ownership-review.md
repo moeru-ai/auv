@@ -142,6 +142,6 @@ feature-frozen crates.
    sign-off given the frozen-crate rule.
 3. **`api_version` reader rejection** (`NOTICE(contract-api-version-reader-check)`):
    deferred until a non-additive record version lands.
-4. From PR 6: remove the dead `auv-media-macos` dependency and decide the
-   `auv-driver-macos` root target-gating — dependency-graph concerns, tracked in
-   the crate-tier inventory.
+4. From PR 6: decide the remaining `auv-driver-macos` root target-gating
+   question tracked in the crate-tier inventory. The separate dead
+   `auv-media-macos` root/CLI dependency was already removed in PR #121.
