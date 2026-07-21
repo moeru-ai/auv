@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::time::Duration;
 
@@ -85,6 +85,13 @@ struct CapturedState {
   spans: BTreeMap<u64, usize>,
   span_references: BTreeMap<u64, usize>,
   closed_span_ids: Vec<u64>,
+  signals: Vec<CapturedSignal>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CapturedSignal {
+  Event(CapturedParent),
+  Close(u64),
 }
 
 impl CapturingSubscriber {
@@ -94,6 +101,10 @@ impl CapturingSubscriber {
 
   fn closed_span_ids(&self) -> Vec<u64> {
     self.state.lock().unwrap().closed_span_ids.clone()
+  }
+
+  fn signals(&self) -> Vec<CapturedSignal> {
+    self.state.lock().unwrap().signals.clone()
   }
 
   fn capture(metadata: &'static Metadata<'static>) -> CapturedCallsite {
@@ -156,7 +167,9 @@ impl Subscriber for CapturingSubscriber {
     let mut callsite = Self::capture(event.metadata());
     event.record(&mut ValueVisitor(&mut callsite.values));
     callsite.parent = Self::parent(event.is_root(), event.is_contextual(), event.parent());
-    self.state.lock().unwrap().callsites.push(callsite);
+    let mut state = self.state.lock().unwrap();
+    state.signals.push(CapturedSignal::Event(callsite.parent.clone()));
+    state.callsites.push(callsite);
   }
 
   fn enter(&self, _span: &Id) {}
@@ -177,6 +190,7 @@ impl Subscriber for CapturingSubscriber {
     if *references == 0 {
       state.span_references.remove(&id);
       state.closed_span_ids.push(id);
+      state.signals.push(CapturedSignal::Close(id));
       true
     } else {
       false
@@ -190,7 +204,9 @@ type SubscriberCallback = Arc<dyn Fn() + Send + Sync>;
 struct CallbackSubscriber {
   next_id: Arc<AtomicU64>,
   on_new_span: SubscriberCallback,
+  on_record: SubscriberCallback,
   on_event: SubscriberCallback,
+  on_try_close: SubscriberCallback,
 }
 
 impl CallbackSubscriber {
@@ -198,8 +214,20 @@ impl CallbackSubscriber {
     Self {
       next_id: Arc::new(AtomicU64::new(1)),
       on_new_span,
+      on_record: Arc::new(|| {}),
       on_event,
+      on_try_close: Arc::new(|| {}),
     }
+  }
+
+  fn with_record(mut self, on_record: SubscriberCallback) -> Self {
+    self.on_record = on_record;
+    self
+  }
+
+  fn with_try_close(mut self, on_try_close: SubscriberCallback) -> Self {
+    self.on_try_close = on_try_close;
+    self
   }
 }
 
@@ -217,7 +245,9 @@ impl Subscriber for CallbackSubscriber {
     Id::from_u64(self.next_id.fetch_add(1, Ordering::SeqCst))
   }
 
-  fn record(&self, _span: &Id, _values: &Record<'_>) {}
+  fn record(&self, _span: &Id, _values: &Record<'_>) {
+    (self.on_record)();
+  }
 
   fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
 
@@ -234,6 +264,7 @@ impl Subscriber for CallbackSubscriber {
   }
 
   fn try_close(&self, _id: Id) -> bool {
+    (self.on_try_close)();
     true
   }
 }
@@ -701,7 +732,7 @@ fn rust_tracing_reentrant_subscriber_projection_fails_without_hanging() {
   let dispatch = tracing::Dispatch::new(subscriber);
   let (done_tx, done_rx) = mpsc::channel();
   let worker_projector = Arc::clone(&projector);
-  let worker = std::thread::spawn(move || {
+  std::thread::spawn(move || {
     let result =
       tracing::dispatcher::with_default(&dispatch, || project(&worker_projector, span_start(Some(authority_id), run_id, span_id, None, 10)));
     done_tx.send(result).unwrap();
@@ -710,11 +741,51 @@ fn rust_tracing_reentrant_subscriber_projection_fails_without_hanging() {
   done_rx.recv_timeout(Duration::from_secs(2)).expect("subscriber callback deadlocked").unwrap();
   let reentrant = reentrant_rx.recv_timeout(Duration::from_secs(2)).expect("reentrant projection did not return").unwrap_err();
   assert_eq!(reentrant.code().as_str(), "auv.telemetry.rust_tracing_reentrant_projection");
-  worker.join().unwrap();
 }
 
 #[test]
-fn rust_tracing_subscriber_panic_does_not_poison_projector_state() {
+fn rust_tracing_cross_thread_subscriber_projection_is_promptly_busy() {
+  let _serial = serial_tracing_test();
+  let projector = Arc::new(RustTracingProjector::new());
+  let weak_projector = Arc::downgrade(&projector);
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let other_run_id = RunId::new();
+  let span_id = SpanId::new();
+  let retry_item = event(Some(authority_id), other_run_id, None);
+  let callback_item = retry_item.clone();
+  let event_count = Arc::new(AtomicUsize::new(0));
+  let event_observer = Arc::clone(&event_count);
+  let (callback_tx, callback_rx) = mpsc::channel();
+  let subscriber = CallbackSubscriber::new(
+    Arc::new(move || {
+      let projector = weak_projector.upgrade().unwrap();
+      let item = callback_item.clone();
+      let (done_tx, done_rx) = mpsc::channel();
+      std::thread::spawn(move || {
+        let result = project(&projector, item);
+        done_tx.send(result).unwrap();
+      });
+      let result = done_rx.recv_timeout(Duration::from_secs(2)).expect("cross-thread subscriber projection did not return");
+      callback_tx.send(result).unwrap();
+    }),
+    Arc::new(move || {
+      event_observer.fetch_add(1, Ordering::SeqCst);
+    }),
+  );
+  let dispatch = tracing::Dispatch::new(subscriber);
+
+  tracing::dispatcher::with_default(&dispatch, || {
+    project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+    let busy = callback_rx.recv_timeout(Duration::from_secs(2)).expect("subscriber callback did not complete").unwrap_err();
+    assert_eq!(busy.code().as_str(), "auv.telemetry.rust_tracing_concurrent_projection");
+    project(&projector, retry_item).unwrap();
+    assert_eq!(event_count.load(Ordering::SeqCst), 1);
+  });
+}
+
+#[test]
+fn rust_tracing_subscriber_event_panic_retains_occurrence_time() {
   let _serial = serial_tracing_test();
   let panic_event = Arc::new(AtomicBool::new(true));
   let callback_flag = Arc::clone(&panic_event);
@@ -734,14 +805,60 @@ fn rust_tracing_subscriber_panic_does_not_poison_projector_state() {
 
   tracing::dispatcher::with_default(&dispatch, || {
     project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
-    let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, event(Some(authority_id), run_id, Some(span_id)))));
+    let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, event_at(Some(authority_id), run_id, Some(span_id), 14))));
     assert!(panic.is_err());
-    project(&projector, event(Some(authority_id), run_id, Some(span_id))).unwrap();
+    assert_eq!(
+      project(&projector, span_end(Some(authority_id), run_id, span_id, 13)).unwrap_err().code().as_str(),
+      "auv.telemetry.span_end_before_event"
+    );
+    project(&projector, span_end(Some(authority_id), run_id, span_id, 15)).unwrap();
   });
 }
 
 #[test]
-fn rust_tracing_failed_root_span_does_not_claim_run_authority() {
+fn rust_tracing_record_panic_keeps_end_terminal_and_closes_span() {
+  let _serial = serial_tracing_test();
+  let record_count = Arc::new(AtomicUsize::new(0));
+  let close_count = Arc::new(AtomicUsize::new(0));
+  let record_observer = Arc::clone(&record_count);
+  let close_observer = Arc::clone(&close_count);
+  let subscriber = CallbackSubscriber::new(Arc::new(|| {}), Arc::new(|| {}))
+    .with_record(Arc::new(move || {
+      record_observer.fetch_add(1, Ordering::SeqCst);
+      panic!("test subscriber record panic");
+    }))
+    .with_try_close(Arc::new(move || {
+      close_observer.fetch_add(1, Ordering::SeqCst);
+    }));
+  let dispatch = tracing::Dispatch::new(subscriber);
+  let projector = RustTracingProjector::new();
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let span_id = SpanId::new();
+
+  tracing::dispatcher::with_default(&dispatch, || {
+    project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+    let mut end = span_end(Some(authority_id), run_id, span_id, 11);
+    let TelemetryItem::SpanEnd { end_revision, .. } = &mut end else {
+      unreachable!();
+    };
+    *end_revision = Some(RunRevision::new(2).unwrap());
+
+    let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, end)));
+    assert!(panic.is_err());
+    assert_eq!(record_count.load(Ordering::SeqCst), 1);
+    assert_eq!(close_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+      project(&projector, span_end(Some(authority_id), run_id, span_id, 12)).unwrap_err().code().as_str(),
+      "auv.telemetry.duplicate_span_end"
+    );
+    assert_eq!(record_count.load(Ordering::SeqCst), 1);
+    assert_eq!(close_count.load(Ordering::SeqCst), 1);
+  });
+}
+
+#[test]
+fn rust_tracing_root_span_panic_retains_run_authority_and_start_identity() {
   let _serial = serial_tracing_test();
   let panic_start = Arc::new(AtomicBool::new(true));
   let callback_flag = Arc::clone(&panic_start);
@@ -758,17 +875,26 @@ fn rust_tracing_failed_root_span_does_not_claim_run_authority() {
   let first_authority_id = AuthorityId::new();
   let second_authority_id = AuthorityId::new();
   let run_id = RunId::new();
+  let failed_span_id = SpanId::new();
 
   tracing::dispatcher::with_default(&dispatch, || {
     let panic =
-      catch_unwind(AssertUnwindSafe(|| project(&projector, span_start(Some(first_authority_id), run_id, SpanId::new(), None, 10))));
+      catch_unwind(AssertUnwindSafe(|| project(&projector, span_start(Some(first_authority_id), run_id, failed_span_id, None, 10))));
     assert!(panic.is_err());
-    project(&projector, span_start(Some(second_authority_id), run_id, SpanId::new(), None, 10)).unwrap();
+    assert_eq!(
+      project(&projector, span_start(Some(second_authority_id), run_id, SpanId::new(), None, 10)).unwrap_err().code().as_str(),
+      "auv.telemetry.run_authority_mismatch"
+    );
+    assert_eq!(
+      project(&projector, span_start(Some(first_authority_id), run_id, failed_span_id, None, 10)).unwrap_err().code().as_str(),
+      "auv.telemetry.duplicate_span_start"
+    );
+    project(&projector, span_start(Some(first_authority_id), run_id, SpanId::new(), None, 10)).unwrap();
   });
 }
 
 #[test]
-fn rust_tracing_failed_run_emission_does_not_claim_authority() {
+fn rust_tracing_run_emission_panic_retains_authority() {
   let _serial = serial_tracing_test();
 
   for artifact_projection in [false, true] {
@@ -797,14 +923,34 @@ fn rust_tracing_failed_run_emission_does_not_claim_authority() {
       let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, first)));
       assert!(panic.is_err());
 
-      let second = if artifact_projection {
+      let wrong_authority = if artifact_projection {
         artifact(second_authority_id, run_id, None)
       } else {
         event(Some(second_authority_id), run_id, None)
       };
-      project(&projector, second).unwrap();
+      assert_eq!(project(&projector, wrong_authority).unwrap_err().code().as_str(), "auv.telemetry.run_authority_mismatch");
+
+      let same_authority = if artifact_projection {
+        artifact(first_authority_id, run_id, None)
+      } else {
+        event(Some(first_authority_id), run_id, None)
+      };
+      project(&projector, same_authority).unwrap();
     });
   }
+}
+
+#[test]
+fn rust_tracing_precallback_validation_error_does_not_claim_authority() {
+  let _serial = serial_tracing_test();
+  let projector = RustTracingProjector::new();
+  let run_id = RunId::new();
+
+  assert_eq!(
+    project(&projector, span_start(Some(AuthorityId::new()), run_id, SpanId::new(), Some(SpanId::new()), 10),).unwrap_err().code().as_str(),
+    "auv.telemetry.missing_parent_span"
+  );
+  project(&projector, span_start(Some(AuthorityId::new()), run_id, SpanId::new(), None, 10)).unwrap();
 }
 
 #[test]
@@ -812,32 +958,67 @@ fn rust_tracing_concurrent_direct_span_event_and_end_are_linearized() {
   const ATTEMPTS: usize = 32;
 
   let _serial = serial_tracing_test();
+  let subscriber = CapturingSubscriber::default();
+  let dispatch = tracing::Dispatch::new(subscriber.clone());
   let projector = Arc::new(RustTracingProjector::new());
   let authority_id = AuthorityId::new();
   let run_id = RunId::new();
 
   for _ in 0..ATTEMPTS {
     let span_id = SpanId::new();
-    project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+    tracing::dispatcher::with_default(&dispatch, || {
+      project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+    });
     let barrier = Arc::new(Barrier::new(3));
     let event_projector = Arc::clone(&projector);
     let event_barrier = Arc::clone(&barrier);
-    let event_thread = std::thread::spawn(move || {
+    let event_dispatch = dispatch.clone();
+    let event_item = event_at(Some(authority_id), run_id, Some(span_id), 11);
+    let retry_event = event_item.clone();
+    let (event_tx, event_rx) = mpsc::channel();
+    std::thread::spawn(move || {
       event_barrier.wait();
-      project(&event_projector, event_at(Some(authority_id), run_id, Some(span_id), 11))
+      let result = tracing::dispatcher::with_default(&event_dispatch, || project(&event_projector, event_item));
+      event_tx.send(result).unwrap();
     });
     let end_projector = Arc::clone(&projector);
     let end_barrier = Arc::clone(&barrier);
-    let end_thread = std::thread::spawn(move || {
+    let end_dispatch = dispatch.clone();
+    let end_item = span_end(Some(authority_id), run_id, span_id, 12);
+    let retry_end = end_item.clone();
+    let (end_tx, end_rx) = mpsc::channel();
+    std::thread::spawn(move || {
       end_barrier.wait();
-      project(&end_projector, span_end(Some(authority_id), run_id, span_id, 12))
+      let result = tracing::dispatcher::with_default(&end_dispatch, || project(&end_projector, end_item));
+      end_tx.send(result).unwrap();
     });
     barrier.wait();
 
-    let event_result = event_thread.join().unwrap();
-    end_thread.join().unwrap().unwrap();
-    if let Err(error) = event_result {
-      assert_eq!(error.code().as_str(), "auv.telemetry.ended_event_span");
+    let mut event_result = event_rx.recv_timeout(Duration::from_secs(2)).expect("concurrent event did not return");
+    let mut end_result = end_rx.recv_timeout(Duration::from_secs(2)).expect("concurrent end did not return");
+    if event_result.as_ref().is_err_and(|error| error.code().as_str() == "auv.telemetry.rust_tracing_concurrent_projection") {
+      event_result = tracing::dispatcher::with_default(&dispatch, || project(&projector, retry_event));
+    }
+    if end_result.as_ref().is_err_and(|error| error.code().as_str() == "auv.telemetry.rust_tracing_concurrent_projection") {
+      end_result = tracing::dispatcher::with_default(&dispatch, || project(&projector, retry_end));
+    }
+
+    end_result.unwrap();
+    match event_result {
+      Ok(()) => {}
+      Err(error) => assert_eq!(error.code().as_str(), "auv.telemetry.ended_event_span"),
+    }
+  }
+
+  let signals = subscriber.signals();
+  for span_id in subscriber.closed_span_ids() {
+    let close_index = signals.iter().position(|signal| signal == &CapturedSignal::Close(span_id)).unwrap();
+    for event_index in signals
+      .iter()
+      .enumerate()
+      .filter_map(|(index, signal)| (signal == &CapturedSignal::Event(CapturedParent::Explicit(span_id))).then_some(index))
+    {
+      assert!(event_index < close_index, "successful event must be observed before span close");
     }
   }
 }

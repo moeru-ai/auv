@@ -2,7 +2,7 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -319,6 +319,15 @@ fn artifact(authority_id: AuthorityId, run_id: RunId, span_id: Option<AuvSpanId>
 
 fn project(projector: &OtelProjector, item: TelemetryItem) -> Result<(), auv_tracing::TelemetryError> {
   block_on(projector.project(item))
+}
+
+fn project_from_callback_thread(projector: Arc<OtelProjector>, item: TelemetryItem) -> Result<(), auv_tracing::TelemetryError> {
+  let (done_tx, done_rx) = mpsc::channel();
+  std::thread::spawn(move || {
+    let result = project(&projector, item);
+    done_tx.send(result).unwrap();
+  });
+  done_rx.recv_timeout(Duration::from_secs(2)).expect("cross-thread OTEL callback projection did not return")
 }
 
 struct RouteSpan {
@@ -685,29 +694,40 @@ fn concurrent_direct_span_event_and_end_are_linearized() {
     let end_projector = Arc::clone(&projector);
     let end_barrier = Arc::clone(&barrier);
 
-    let event_thread = std::thread::spawn(move || {
+    let event_item = TelemetryItem::Event {
+      authority_id: Some(authority_id),
+      run_id,
+      span_id: Some(span_id),
+      event_id,
+      schema: EventSchema::new(EventName::parse("auv.test.concurrent_event").unwrap(), 1).unwrap(),
+      occurred_at: timestamp(11, 0),
+      revision: None,
+    };
+    let retry_event = event_item.clone();
+    let (event_tx, event_rx) = mpsc::channel();
+    std::thread::spawn(move || {
       event_barrier.wait();
-      project(
-        &event_projector,
-        TelemetryItem::Event {
-          authority_id: Some(authority_id),
-          run_id,
-          span_id: Some(span_id),
-          event_id,
-          schema: EventSchema::new(EventName::parse("auv.test.concurrent_event").unwrap(), 1).unwrap(),
-          occurred_at: timestamp(11, 0),
-          revision: None,
-        },
-      )
+      event_tx.send(project(&event_projector, event_item)).unwrap();
     });
-    let end_thread = std::thread::spawn(move || {
+    let end_item = span_end(Some(authority_id), run_id, span_id, 12);
+    let retry_end = end_item.clone();
+    let (end_tx, end_rx) = mpsc::channel();
+    std::thread::spawn(move || {
       end_barrier.wait();
-      project(&end_projector, span_end(Some(authority_id), run_id, span_id, 12))
+      end_tx.send(project(&end_projector, end_item)).unwrap();
     });
     barrier.wait();
 
-    let event_result = event_thread.join().unwrap();
-    end_thread.join().unwrap().unwrap();
+    let mut event_result = event_rx.recv_timeout(Duration::from_secs(2)).expect("concurrent OTEL event did not return");
+    let mut end_result = end_rx.recv_timeout(Duration::from_secs(2)).expect("concurrent OTEL end did not return");
+    if event_result.as_ref().is_err_and(|error| error.code().as_str() == "auv.telemetry.otel_concurrent_projection") {
+      event_result = project(&projector, retry_event);
+    }
+    if end_result.as_ref().is_err_and(|error| error.code().as_str() == "auv.telemetry.otel_concurrent_projection") {
+      end_result = project(&projector, retry_end);
+    }
+
+    end_result.unwrap();
     if let Err(error) = &event_result {
       assert_eq!(error.code().as_str(), "auv.telemetry.otel_ended_event_span");
     }
@@ -829,18 +849,85 @@ fn otel_reentrant_processor_projection_fails_without_hanging() {
   *projector_slot.lock().unwrap() = Some(Arc::downgrade(&projector));
   let (done_tx, done_rx) = mpsc::channel();
   let worker_projector = Arc::clone(&projector);
-  let worker = std::thread::spawn(move || {
+  std::thread::spawn(move || {
     done_tx.send(project(&worker_projector, span_start(Some(authority_id), run_id, span_id, None, 10))).unwrap();
   });
 
   done_rx.recv_timeout(Duration::from_secs(2)).expect("OTEL processor callback deadlocked").unwrap();
   let reentrant = reentrant_rx.recv_timeout(Duration::from_secs(2)).expect("reentrant projection did not return").unwrap_err();
   assert_eq!(reentrant.code().as_str(), "auv.telemetry.otel_reentrant_projection");
-  worker.join().unwrap();
 }
 
 #[test]
-fn otel_processor_panics_do_not_poison_projector_state() {
+fn otel_cross_thread_processor_projection_is_promptly_busy() {
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let other_run_id = RunId::new();
+  let span_id = AuvSpanId::new();
+  let retry_item = event(Some(authority_id), other_run_id, None);
+  let callback_item = retry_item.clone();
+  let emit_count = Arc::new(AtomicUsize::new(0));
+  let emit_observer = Arc::clone(&emit_count);
+  let projector_slot = Arc::new(Mutex::new(None::<std::sync::Weak<OtelProjector>>));
+  let callback_slot = Arc::clone(&projector_slot);
+  let (callback_tx, callback_rx) = mpsc::channel();
+  let processor = CallbackSpanProcessor::new(
+    Arc::new(move || {
+      let projector = callback_slot.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
+      callback_tx.send(project_from_callback_thread(projector, callback_item.clone())).unwrap();
+    }),
+    Arc::new(|| {}),
+  );
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(processor).build();
+  let logger_provider = SdkLoggerProvider::builder()
+    .with_log_processor(CallbackLogProcessor::new(Arc::new(move || {
+      emit_observer.fetch_add(1, Ordering::SeqCst);
+    })))
+    .build();
+  let projector = Arc::new(OtelProjector::new(tracer_provider, logger_provider));
+  *projector_slot.lock().unwrap() = Some(Arc::downgrade(&projector));
+
+  project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+  let busy = callback_rx.recv_timeout(Duration::from_secs(2)).expect("OTEL processor callback did not complete").unwrap_err();
+  assert_eq!(busy.code().as_str(), "auv.telemetry.otel_concurrent_projection");
+  project(&projector, retry_item).unwrap();
+  assert_eq!(emit_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn otel_cross_thread_log_projection_is_promptly_busy() {
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let other_run_id = RunId::new();
+  let retry_item = event(Some(authority_id), other_run_id, None);
+  let callback_item = retry_item.clone();
+  let projector_slot = Arc::new(Mutex::new(None::<std::sync::Weak<OtelProjector>>));
+  let callback_slot = Arc::clone(&projector_slot);
+  let first_emit = Arc::new(AtomicBool::new(true));
+  let emit_flag = Arc::clone(&first_emit);
+  let emit_count = Arc::new(AtomicUsize::new(0));
+  let emit_observer = Arc::clone(&emit_count);
+  let (callback_tx, callback_rx) = mpsc::channel();
+  let processor = CallbackLogProcessor::new(Arc::new(move || {
+    emit_observer.fetch_add(1, Ordering::SeqCst);
+    if emit_flag.swap(false, Ordering::SeqCst) {
+      let projector = callback_slot.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
+      callback_tx.send(project_from_callback_thread(projector, callback_item.clone())).unwrap();
+    }
+  }));
+  let logger_provider = SdkLoggerProvider::builder().with_log_processor(processor).build();
+  let projector = Arc::new(OtelProjector::new(SdkTracerProvider::builder().build(), logger_provider));
+  *projector_slot.lock().unwrap() = Some(Arc::downgrade(&projector));
+
+  project(&projector, event(Some(authority_id), run_id, None)).unwrap();
+  let busy = callback_rx.recv_timeout(Duration::from_secs(2)).expect("OTEL log callback did not complete").unwrap_err();
+  assert_eq!(busy.code().as_str(), "auv.telemetry.otel_concurrent_projection");
+  project(&projector, retry_item).unwrap();
+  assert_eq!(emit_count.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn otel_start_panic_retains_run_authority_and_start_identity() {
   let panic_start = Arc::new(AtomicBool::new(true));
   let start_flag = Arc::clone(&panic_start);
   let start_processor = CallbackSpanProcessor::new(
@@ -856,24 +943,39 @@ fn otel_processor_panics_do_not_poison_projector_state() {
   let first_authority_id = AuthorityId::new();
   let second_authority_id = AuthorityId::new();
   let run_id = RunId::new();
-  let panic =
-    catch_unwind(AssertUnwindSafe(|| project(&projector, span_start(Some(first_authority_id), run_id, AuvSpanId::new(), None, 10))));
+  let failed_span_id = AuvSpanId::new();
+  let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, span_start(Some(first_authority_id), run_id, failed_span_id, None, 10))));
   assert!(panic.is_err());
+  assert_eq!(
+    project(&projector, span_start(Some(second_authority_id), run_id, AuvSpanId::new(), None, 10)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_run_authority_mismatch"
+  );
+  assert_eq!(
+    project(&projector, span_start(Some(first_authority_id), run_id, failed_span_id, None, 10)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_duplicate_span_start"
+  );
   let span_id = AuvSpanId::new();
-  project(&projector, span_start(Some(second_authority_id), run_id, span_id, None, 10)).unwrap();
-  project(&projector, span_end(Some(second_authority_id), run_id, span_id, 11)).unwrap();
+  project(&projector, span_start(Some(first_authority_id), run_id, span_id, None, 10)).unwrap();
+  project(&projector, span_end(Some(first_authority_id), run_id, span_id, 11)).unwrap();
+}
 
+#[test]
+fn otel_end_panic_keeps_end_terminal_and_exports_once() {
   let panic_end = Arc::new(AtomicBool::new(true));
   let end_flag = Arc::clone(&panic_end);
+  let end_count = Arc::new(AtomicUsize::new(0));
+  let count_observer = Arc::clone(&end_count);
   let end_processor = CallbackSpanProcessor::new(
     Arc::new(|| {}),
     Arc::new(move || {
+      count_observer.fetch_add(1, Ordering::SeqCst);
       if end_flag.swap(false, Ordering::SeqCst) {
         panic!("test OTEL on_end panic");
       }
     }),
   );
-  let tracer_provider = SdkTracerProvider::builder().with_span_processor(end_processor).build();
+  let span_exporter = BoundedSpanExporter::default();
+  let tracer_provider = SdkTracerProvider::builder().with_batch_exporter(span_exporter.clone()).with_span_processor(end_processor).build();
   let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
   let authority_id = AuthorityId::new();
   let run_id = RunId::new();
@@ -881,7 +983,15 @@ fn otel_processor_panics_do_not_poison_projector_state() {
   project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
   let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, span_end(Some(authority_id), run_id, span_id, 11))));
   assert!(panic.is_err());
-  project(&projector, span_end(Some(authority_id), run_id, span_id, 11)).unwrap();
+  block_on(projector.flush()).unwrap();
+  assert_eq!(end_count.load(Ordering::SeqCst), 1);
+  assert_eq!(span_exporter.spans().len(), 1);
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, span_id, 12)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_duplicate_span_end"
+  );
+  assert_eq!(end_count.load(Ordering::SeqCst), 1);
+  assert_eq!(span_exporter.spans().len(), 1);
 }
 
 #[test]
@@ -898,7 +1008,7 @@ fn otel_invalid_root_context_does_not_claim_run_authority() {
 }
 
 #[test]
-fn otel_failed_run_emission_does_not_claim_authority() {
+fn otel_run_emission_panic_retains_authority() {
   for artifact_projection in [false, true] {
     let panic_emit = Arc::new(AtomicBool::new(true));
     let emit_flag = Arc::clone(&panic_emit);
@@ -921,11 +1031,34 @@ fn otel_failed_run_emission_does_not_claim_authority() {
     let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, first)));
     assert!(panic.is_err());
 
-    let second = if artifact_projection {
+    let wrong_authority = if artifact_projection {
       artifact(second_authority_id, run_id, None)
     } else {
       event(Some(second_authority_id), run_id, None)
     };
-    project(&projector, second).unwrap();
+    assert_eq!(project(&projector, wrong_authority).unwrap_err().code().as_str(), "auv.telemetry.otel_run_authority_mismatch");
+
+    let same_authority = if artifact_projection {
+      artifact(first_authority_id, run_id, None)
+    } else {
+      event(Some(first_authority_id), run_id, None)
+    };
+    project(&projector, same_authority).unwrap();
   }
+}
+
+#[test]
+fn otel_precallback_validation_error_does_not_claim_authority() {
+  let (tracer_provider, logger_provider, _, _) = providers();
+  let projector = OtelProjector::new(tracer_provider, logger_provider);
+  let run_id = RunId::new();
+
+  assert_eq!(
+    project(&projector, span_start(Some(AuthorityId::new()), run_id, AuvSpanId::new(), Some(AuvSpanId::new()), 10),)
+      .unwrap_err()
+      .code()
+      .as_str(),
+    "auv.telemetry.otel_missing_parent_span"
+  );
+  project(&projector, span_start(Some(AuthorityId::new()), run_id, AuvSpanId::new(), None, 10)).unwrap();
 }
