@@ -23,6 +23,9 @@ pub const ARTIFACT_UPLOAD_MEDIA_TYPE: &str = "application/vnd.auv.artifact-uploa
 /// Media type for the Inspect-specific artifact resolver.
 pub const ARTIFACT_RESOLVE_MEDIA_TYPE: &str = "application/json";
 
+/// Strict authority response header carrying the trusted public artifact base.
+pub const ARTIFACT_ORIGIN_HEADER: &str = "Auv-Artifact-Origin";
+
 /// Generation-bound control header used to grant one artifact body upload.
 ///
 /// Inspect V1 requires exactly one canonical admission ID on every artifact
@@ -701,6 +704,7 @@ mod tests {
 
   #[test]
   fn v1_control_headers_and_admission_precondition_are_public_protocol_constants() {
+    assert_eq!(ARTIFACT_ORIGIN_HEADER, "Auv-Artifact-Origin");
     assert_eq!(ARTIFACT_UPLOAD_ADMISSION_HEADER, "Auv-Artifact-Upload-Admission");
     assert_eq!(ARTIFACT_UPLOAD_ADMISSION_BUSY, "busy");
     assert_eq!(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, 30);

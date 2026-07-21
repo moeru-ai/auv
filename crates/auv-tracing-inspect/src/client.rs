@@ -16,10 +16,10 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 use crate::protocol::{
-  ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE,
-  AUTHORITY_ID_HEADER, ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId,
-  AuthorityResponse, RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody,
-  RunStreamGap, decode_strict,
+  ARTIFACT_ORIGIN_HEADER, ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER,
+  ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE, AUTHORITY_ID_HEADER, ArtifactApiError, ArtifactUploadAdmissionId,
+  ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, AuthorityResponse, RUN_MEDIA_TYPE, ResolveArtifactsRequest,
+  ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody, RunStreamGap, decode_strict,
 };
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
@@ -27,12 +27,14 @@ const MAX_SSE_FRAME_BYTES: usize = MAX_PROTOCOL_JSON_BYTES + 64 * 1024;
 const MAX_SSE_BUFFER_BYTES: usize = MAX_SSE_FRAME_BYTES + 4;
 const SSE_INGEST_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_DRAFT_POST_ATTEMPTS: usize = 3;
+const DRAFT_RESPONSE_REFRESH_THRESHOLD: Duration = Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS / 2);
 
 /// A complete remote implementation of the canonical [`RunStore`] authority port.
 #[derive(Clone)]
 pub struct InspectRunStore {
   authority_id: AuthorityId,
   base_url: Url,
+  artifact_base_url: Url,
   client: reqwest::Client,
 }
 
@@ -46,11 +48,13 @@ impl InspectRunStore {
     if response.status() != StatusCode::OK || !has_media_type(&response, RUN_MEDIA_TYPE) {
       return Err(ConnectError::new("Inspect authority returned an invalid identity response"));
     }
+    let artifact_base_url = artifact_base_url(&response, &base_url)?;
     let bytes = bounded_response_bytes(response).await.map_err(|error| ConnectError::new(error.to_string()))?;
     let identity = decode_strict::<AuthorityResponse>(&bytes).map_err(|error| ConnectError::new(error.to_string()))?;
     Ok(Self {
       authority_id: identity.authority_id,
       base_url,
+      artifact_base_url,
       client,
     })
   }
@@ -88,7 +92,7 @@ impl InspectRunStore {
         ResolvedArtifact::Available {
           uri, content_url, ..
         } => {
-          if !valid_content_url(content_url, &self.base_url, requested) {
+          if !valid_content_url(content_url, &self.artifact_base_url, requested) {
             return Err(ReadError::Integrity(code("auv.inspect.resolve_content_url_invalid")));
           }
           uri
@@ -205,6 +209,7 @@ impl RunStore for InspectRunStore {
       let mut draft_failure = code("auv.inspect.draft_transport_unavailable");
       let mut invalid_responses = 0;
       for attempt in 0..MAX_DRAFT_POST_ATTEMPTS {
+        let attempt_started = tokio::time::Instant::now();
         let response = match self
           .client
           .post(draft_url.clone())
@@ -226,7 +231,9 @@ impl RunStore for InspectRunStore {
             Err(code) => Err(ArtifactWriteError::Unavailable(code)),
           };
         }
-        match validate_draft_success(response, admission, expected_upload_id, &expected_uri).await {
+        let validated = validate_draft_success(response, admission, expected_upload_id, &expected_uri).await;
+        let attempt_duration = attempt_started.elapsed();
+        match validated {
           Ok(draft) if !draft.admitted => {
             match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
               Ok(Some(commit)) if artifact_commit_matches(&commit, &request) => return Ok(CommitResult::Replayed(commit)),
@@ -239,6 +246,12 @@ impl RunStore for InspectRunStore {
             draft_failure = code("auv.inspect.upload_admission_unavailable");
             if attempt + 1 < MAX_DRAFT_POST_ATTEMPTS {
               admission = ArtifactUploadAdmissionId::new();
+              continue;
+            }
+          }
+          Ok(_) if attempt_duration > DRAFT_RESPONSE_REFRESH_THRESHOLD => {
+            draft_failure = code("auv.inspect.upload_admission_unavailable");
+            if attempt + 1 < MAX_DRAFT_POST_ATTEMPTS {
               continue;
             }
           }
@@ -849,12 +862,12 @@ async fn write_artifact_failure(response: Response, connected_authority: Authori
       let error_code = error.error().clone();
       Ok(match status {
         StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => {
-          let Ok(received) = response_authority else {
+          let Ok(expected) = response_authority else {
             return Ok(ArtifactWriteError::Unavailable(code("auv.inspect.artifact_error_invalid")));
           };
           ArtifactWriteError::AuthorityMismatch {
-            expected: connected_authority,
-            received,
+            expected,
+            received: connected_authority,
           }
         }
         StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_or_artifact_conflict") => {
@@ -999,6 +1012,34 @@ fn normalize_base_url(mut url: Url) -> Result<Url, ConnectError> {
   Ok(url)
 }
 
+fn artifact_base_url(response: &Response, connection_base: &Url) -> Result<Url, ConnectError> {
+  let mut values = response.headers().get_all(ARTIFACT_ORIGIN_HEADER).iter();
+  let Some(value) = values.next() else {
+    return Ok(connection_base.clone());
+  };
+  if values.next().is_some() {
+    return Err(ConnectError::new("Inspect authority returned duplicate artifact origin headers"));
+  }
+  let value = value.to_str().map_err(|_| ConnectError::new("Inspect authority returned an invalid artifact origin"))?;
+  let mut url = Url::parse(value).map_err(|_| ConnectError::new("Inspect authority returned an invalid artifact origin"))?;
+  if url.as_str() != value
+    || !matches!(url.scheme(), "http" | "https")
+    || !url.username().is_empty()
+    || url.password().is_some()
+    || url.host_str().is_none()
+    || url.query().is_some()
+    || url.fragment().is_some()
+    || url.path().contains(['%', '\\'])
+  {
+    return Err(ConnectError::new("Inspect authority returned an invalid artifact origin"));
+  }
+  if !url.path().ends_with('/') {
+    let path = format!("{}/", url.path());
+    url.set_path(&path);
+  }
+  Ok(url)
+}
+
 fn endpoint(base_url: &Url, relative: &str) -> Url {
   base_url.join(relative).expect("validated base URL accepts relative Inspect endpoints")
 }
@@ -1106,6 +1147,7 @@ mod tests {
       store: InspectRunStore {
         authority_id: "019f8b1e-4b2d-7a00-8f00-0000000000aa".parse().unwrap(),
         base_url: Url::parse("http://127.0.0.1/").unwrap(),
+        artifact_base_url: Url::parse("http://127.0.0.1/").unwrap(),
         client: reqwest::Client::new(),
       },
       run_id: "019f8b1e-4b2d-7a00-8f00-000000000001".parse().unwrap(),

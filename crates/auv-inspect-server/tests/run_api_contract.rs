@@ -3,14 +3,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use auv_inspect_server::{InspectServeConfig, router, serve};
+use auv_inspect_server::{InspectServeConfig, router, router_with_artifact_origin, serve};
 use auv_tracing::{
   ArtifactBody, ArtifactReader, ArtifactWriteError, Attributes, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode, EventId,
   EventName, EventOccurred, EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage,
   RunCommitRequest, RunId, RunMutation, RunRevision, RunStore, RunSubscription, SpanName, SpanStarted, StoreArtifactRequest,
   SubscriptionError, Timestamp,
 };
-use auv_tracing_inspect::protocol::RUN_MEDIA_TYPE;
+use auv_tracing_inspect::protocol::{ARTIFACT_ORIGIN_HEADER, RUN_MEDIA_TYPE};
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Request, StatusCode};
@@ -411,6 +411,19 @@ async fn authority_endpoint_publishes_the_store_identity() {
 
   assert_eq!(response.status(), StatusCode::OK);
   assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+  assert!(response.headers().get(ARTIFACT_ORIGIN_HEADER).is_none());
+  assert_eq!(json_body(response).await, json!({"authority_id": AUTHORITY}));
+}
+
+#[tokio::test]
+async fn authority_endpoint_advertises_one_configured_artifact_base_without_changing_json() {
+  let artifact_origin = url::Url::parse("https://artifacts.example/public/inspect/").unwrap();
+  let app = router_with_artifact_origin(Arc::new(MemoryRunStore::new(authority_id())), artifact_origin.clone()).unwrap();
+  let response = app.oneshot(Request::builder().uri("/v1/authority").body(Body::empty()).unwrap()).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers().get_all(ARTIFACT_ORIGIN_HEADER).iter().count(), 1);
+  assert_eq!(response.headers().get(ARTIFACT_ORIGIN_HEADER).unwrap(), artifact_origin.as_str());
   assert_eq!(json_body(response).await, json!({"authority_id": AUTHORITY}));
 }
 
