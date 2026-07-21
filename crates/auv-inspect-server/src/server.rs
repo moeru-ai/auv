@@ -14,17 +14,24 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio::net::TcpListener;
+use url::Url;
 
 use crate::InspectResult;
 use crate::run_api;
 use crate::session::{InspectServerSession, write_inspect_session};
 use crate::viewer_assets::{VIEWER_HTML, viewer_asset};
 
+#[path = "artifact_api.rs"]
+mod artifact_api;
+use artifact_api::ArtifactApiState;
+
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_INSPECT_PORT: u16 = 8765;
 
 pub(crate) struct InspectServerState {
   pub(crate) store: Arc<dyn RunStore>,
+  pub(crate) artifacts: ArtifactApiState,
+  pub(crate) artifact_origin: Option<Url>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,14 +62,41 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
 /// This router has no authentication layer. Transport callers must use
 /// [`serve`], which enforces loopback binding, or install an independently
 /// reviewed access-control boundary before exposing it.
+///
+/// The artifact resolver treats a request `Host` as trusted composition input
+/// only on this direct router surface. Callers must sanitize it at their access
+/// boundary. [`serve`] instead installs its actual bound origin.
 pub fn router(store: Arc<dyn RunStore>) -> Router {
-  let state = Arc::new(InspectServerState { store });
+  build_router(store, None)
+}
+
+fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>) -> Router {
+  let state = Arc::new(InspectServerState {
+    store,
+    artifacts: ArtifactApiState::new(),
+    artifact_origin,
+  });
   Router::new()
     .route("/", get(serve_viewer))
     .route("/viewer-assets/{*asset_name}", get(serve_viewer_asset))
     .route("/assets/{asset_name}", get(serve_design_asset))
     .merge(run_api::routes())
+    .merge(artifact_api::routes())
     .with_state(state)
+}
+
+fn validate_artifact_origin(origin: &Url) -> InspectResult<()> {
+  if !matches!(origin.scheme(), "http" | "https")
+    || !origin.username().is_empty()
+    || origin.password().is_some()
+    || origin.host_str().is_none()
+    || origin.path() != "/"
+    || origin.query().is_some()
+    || origin.fragment().is_some()
+  {
+    return Err("artifact origin must be an absolute credential-free HTTP(S) origin with no path, query, or fragment".to_string());
+  }
+  Ok(())
 }
 
 /// Binds one loopback-only Inspect authority and publishes its discovery session.
@@ -84,6 +118,10 @@ pub async fn serve(store: Arc<dyn RunStore>, config: InspectServeConfig) -> Insp
   let listener =
     TcpListener::bind(addresses.as_slice()).await.map_err(|error| format!("failed to bind inspect server {display_address}: {error}"))?;
   let local_address = listener.local_addr().map_err(|error| format!("failed to read inspect server address: {error}"))?;
+  let artifact_origin =
+    Url::parse(&format!("http://{local_address}/")).map_err(|error| format!("failed to construct inspect artifact origin: {error}"))?;
+  validate_artifact_origin(&artifact_origin)?;
+  let app = build_router(store.clone(), Some(artifact_origin));
   println!("inspect server: http://{local_address}");
   write_inspect_session(&InspectServerSession {
     url: format!("http://{local_address}"),
@@ -91,7 +129,7 @@ pub async fn serve(store: Arc<dyn RunStore>, config: InspectServeConfig) -> Insp
     pid: process::id(),
     started_at_millis: now_millis(),
   })?;
-  axum::serve(listener, router(store)).await.map_err(|error| format!("inspect server failed: {error}"))?;
+  axum::serve(listener, app).await.map_err(|error| format!("inspect server failed: {error}"))?;
   Ok(local_address)
 }
 

@@ -19,15 +19,18 @@ auv-tracing-inspect = { path = "../auv-tracing-inspect" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
 auv-view = { path = "../auv-view" }
 axum = "0.8"
+base64 = "0.22"
 futures-util.workspace = true
 http-body-util = "0.1"
 libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
-tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["compat", "io"] }
+url = { version = "2", features = ["serde"] }
 
 [dev-dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-util = { workspace = true, features = ["io"] }
-tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 tower = { version = "0.5", features = ["util"] }
