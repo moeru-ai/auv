@@ -16,9 +16,9 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 use crate::protocol::{
-  ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactApiError, ArtifactUploadDraft, ArtifactUploadDraftRequest,
-  AuthorityResponse, RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody,
-  RunStreamGap, decode_strict,
+  ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE,
+  ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, AuthorityResponse, RUN_MEDIA_TYPE,
+  ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody, RunStreamGap, decode_strict,
 };
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
@@ -83,7 +83,7 @@ impl InspectRunStore {
         ResolvedArtifact::Available {
           uri, content_url, ..
         } => {
-          if !valid_content_url(content_url) {
+          if !valid_content_url(content_url, &self.base_url, requested) {
             return Err(ReadError::Integrity(code("auv.inspect.resolve_content_url_invalid")));
           }
           uri
@@ -191,19 +191,32 @@ impl RunStore for InspectRunStore {
         request.expected_sha256(),
         request.attributes().clone(),
       );
-      let draft_response = self
-        .client
-        .post(endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads", request.run_id())))
-        .header(CONTENT_TYPE, ARTIFACT_UPLOAD_MEDIA_TYPE)
-        .header(ACCEPT, ARTIFACT_UPLOAD_MEDIA_TYPE)
-        .header("Idempotency-Key", request.idempotency_key().to_string())
-        .json(&draft_request)
-        .send()
-        .await
-        .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_transport_unavailable")))?;
+      let admission = ArtifactUploadAdmissionId::new();
+      let draft_url = endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads", request.run_id()));
+      let mut draft_response = None;
+      for _ in 0..2 {
+        match self
+          .client
+          .post(draft_url.clone())
+          .header(CONTENT_TYPE, ARTIFACT_UPLOAD_MEDIA_TYPE)
+          .header(ACCEPT, ARTIFACT_UPLOAD_MEDIA_TYPE)
+          .header("Idempotency-Key", request.idempotency_key().to_string())
+          .header(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.to_string())
+          .json(&draft_request)
+          .send()
+          .await
+        {
+          Ok(response) => {
+            draft_response = Some(response);
+            break;
+          }
+          Err(_) => continue,
+        }
+      }
+      let draft_response = draft_response.ok_or_else(|| ArtifactWriteError::Unavailable(code("auv.inspect.draft_transport_unavailable")))?;
       let replayed_draft = draft_response.status() == StatusCode::OK;
       if !matches!(draft_response.status(), StatusCode::CREATED | StatusCode::OK) {
-        return match write_artifact_failure(draft_response).await {
+        return match write_artifact_failure(draft_response, self.authority_id, request.authority_id()).await {
           Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
           Ok(error) => Err(error),
           Err(code) => Err(ArtifactWriteError::Unavailable(code)),
@@ -211,6 +224,11 @@ impl RunStore for InspectRunStore {
       }
       if !has_media_type(&draft_response, ARTIFACT_UPLOAD_MEDIA_TYPE) {
         return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_media_type_invalid")));
+      }
+      let admitted = draft_admission(&draft_response, admission)
+        .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_admission_invalid")))?;
+      if draft_response.status() == StatusCode::CREATED && !admitted {
+        return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_admission_invalid")));
       }
       let draft_bytes = bounded_response_bytes(draft_response)
         .await
@@ -228,6 +246,9 @@ impl RunStore for InspectRunStore {
           Err(_) => return Err(ArtifactWriteError::PublicationUnknown(code("auv.inspect.draft_replay_lookup_unknown"))),
         }
       }
+      if !admitted {
+        return Err(ArtifactWriteError::PublicationUnknown(code("auv.inspect.upload_admission_busy")));
+      }
 
       let stream = ReaderStream::new(body.compat());
       let response = self
@@ -235,6 +256,7 @@ impl RunStore for InspectRunStore {
         .put(endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads/{}/content", request.run_id(), draft.upload_id())))
         .header(CONTENT_TYPE, request.content_type().to_string())
         .header("Content-Digest", content_digest(request.expected_sha256()))
+        .header(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.to_string())
         .header(ACCEPT, RUN_MEDIA_TYPE)
         .body(reqwest::Body::wrap_stream(stream))
         .send()
@@ -264,7 +286,7 @@ impl RunStore for InspectRunStore {
             CommitResult::Replayed(commit)
           })
         }
-        _ => match write_artifact_failure(response).await {
+        _ => match write_artifact_failure(response, self.authority_id, request.authority_id()).await {
           Ok(ArtifactWriteError::PublicationUnknown(code)) | Err(code) => self.recover_artifact(&request, code).await,
           Ok(error) => Err(error),
         },
@@ -381,22 +403,16 @@ impl RunStore for InspectRunStore {
       if response.status() != StatusCode::OK {
         return Err(read_artifact_failure(response, ARTIFACT_UPLOAD_MEDIA_TYPE).await);
       }
-      let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
+      let content_type = exactly_one_response_header(&response, CONTENT_TYPE.as_str())
         .and_then(|value| value.to_str().ok())
         .and_then(|value| ContentType::parse(value).ok())
         .ok_or_else(|| ReadError::Integrity(code("auv.inspect.artifact_content_type_invalid")))?;
-      let expected_length = response
-        .headers()
-        .get(CONTENT_LENGTH)
+      let expected_length = exactly_one_response_header(&response, CONTENT_LENGTH.as_str())
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
         .and_then(|value| ByteLength::new(value).ok())
         .ok_or_else(|| ReadError::Integrity(code("auv.inspect.artifact_content_length_invalid")))?;
-      let expected_sha256 = response
-        .headers()
-        .get("Content-Digest")
+      let expected_sha256 = exactly_one_response_header(&response, "Content-Digest")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| parse_content_digest(value).ok())
         .ok_or_else(|| ReadError::Integrity(code("auv.inspect.artifact_content_digest_invalid")))?;
@@ -751,7 +767,6 @@ fn status_matches_run_error(status: StatusCode, error: &RunApiError) -> bool {
       | (StatusCode::UNPROCESSABLE_ENTITY, RunApiError::Rejected { .. })
       | (StatusCode::GONE, RunApiError::HistoryGap { .. })
       | (StatusCode::INTERNAL_SERVER_ERROR, RunApiError::Integrity { .. })
-      | (StatusCode::SERVICE_UNAVAILABLE, RunApiError::CommitUnknown { .. })
       | (StatusCode::SERVICE_UNAVAILABLE, RunApiError::Unavailable { .. })
   )
 }
@@ -761,8 +776,8 @@ fn map_commit_error(error: RunApiError) -> CommitError {
     RunApiError::AuthorityMismatch { expected, received } => CommitError::AuthorityMismatch { expected, received },
     RunApiError::IdempotencyMismatch => CommitError::IdempotencyMismatch,
     RunApiError::Rejected { code } | RunApiError::InvalidReference { code } => CommitError::Rejected(code),
+    RunApiError::Unavailable { code } if code == self::code("auv.inspect.commit_unknown") => CommitError::CommitUnknown(code),
     RunApiError::Unavailable { code } => CommitError::Unavailable(code),
-    RunApiError::CommitUnknown { code } => CommitError::CommitUnknown(code),
     RunApiError::Integrity { code } => CommitError::CommitUnknown(code),
     RunApiError::NotFound | RunApiError::Forbidden | RunApiError::HistoryGap { .. } | RunApiError::CursorAhead { .. } => {
       CommitError::CommitUnknown(code("auv.inspect.commit_error_unexpected"))
@@ -790,7 +805,6 @@ fn map_read_error(error: RunApiError) -> ReadError {
       latest,
     },
     RunApiError::Integrity { code } => ReadError::Integrity(code),
-    RunApiError::CommitUnknown { code } => ReadError::Unavailable(code),
     RunApiError::Unavailable { code } => ReadError::Unavailable(code),
     RunApiError::AuthorityMismatch { .. } | RunApiError::IdempotencyMismatch => {
       ReadError::InvalidReference(code("auv.inspect.read_conflict"))
@@ -798,36 +812,36 @@ fn map_read_error(error: RunApiError) -> ReadError {
   }
 }
 
-async fn write_artifact_failure(response: Response) -> Result<ArtifactWriteError, ErrorCode> {
+async fn write_artifact_failure(
+  response: Response,
+  expected_authority: AuthorityId,
+  received_authority: AuthorityId,
+) -> Result<ArtifactWriteError, ErrorCode> {
   let status = response.status();
   match decode_artifact_error(response, ARTIFACT_UPLOAD_MEDIA_TYPE).await {
     Ok(error) => {
       let error_code = error.error().clone();
       Ok(match status {
-        StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => {
-          let (expected, received) = error.authority_ids().ok_or_else(|| code("auv.inspect.artifact_error_status_invalid"))?;
-          ArtifactWriteError::AuthorityMismatch { expected, received }
-        }
-        StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_or_artifact_conflict") && error.authority_ids().is_none() => {
+        StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => ArtifactWriteError::AuthorityMismatch {
+          expected: expected_authority,
+          received: received_authority,
+        },
+        StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_or_artifact_conflict") => {
           ArtifactWriteError::IdempotencyMismatch
         }
         StatusCode::CONFLICT => return Err(code("auv.inspect.artifact_error_status_invalid")),
-        StatusCode::UNPROCESSABLE_ENTITY if error.authority_ids().is_none() => ArtifactWriteError::Integrity(error_code),
-        StatusCode::SERVICE_UNAVAILABLE if error_code == code("auv.inspect.publication_unknown") && error.authority_ids().is_none() => {
+        StatusCode::UNPROCESSABLE_ENTITY => ArtifactWriteError::Integrity(error_code),
+        StatusCode::SERVICE_UNAVAILABLE if error_code == code("auv.inspect.publication_unknown") => {
           ArtifactWriteError::PublicationUnknown(error_code)
         }
-        StatusCode::SERVICE_UNAVAILABLE if error.authority_ids().is_none() => ArtifactWriteError::Unavailable(error_code),
+        StatusCode::SERVICE_UNAVAILABLE => ArtifactWriteError::Unavailable(error_code),
         StatusCode::BAD_REQUEST
         | StatusCode::UNAUTHORIZED
         | StatusCode::FORBIDDEN
         | StatusCode::NOT_FOUND
         | StatusCode::GONE
         | StatusCode::PAYLOAD_TOO_LARGE
-        | StatusCode::UNSUPPORTED_MEDIA_TYPE
-          if error.authority_ids().is_none() =>
-        {
-          ArtifactWriteError::Rejected(error_code)
-        }
+        | StatusCode::UNSUPPORTED_MEDIA_TYPE => ArtifactWriteError::Rejected(error_code),
         _ => return Err(code("auv.inspect.artifact_error_status_invalid")),
       })
     }
@@ -928,14 +942,33 @@ fn endpoint(base_url: &Url, relative: &str) -> Url {
 }
 
 fn has_media_type(response: &Response, expected: &str) -> bool {
-  response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()) == Some(expected)
+  exactly_one_response_header(response, CONTENT_TYPE.as_str()).and_then(|value| value.to_str().ok()) == Some(expected)
 }
 
-fn valid_content_url(url: &Url) -> bool {
+fn exactly_one_response_header<'a>(response: &'a Response, name: &'static str) -> Option<&'a reqwest::header::HeaderValue> {
+  let mut values = response.headers().get_all(name).iter();
+  let value = values.next()?;
+  values.next().is_none().then_some(value)
+}
+
+fn draft_admission(response: &Response, expected: ArtifactUploadAdmissionId) -> Result<bool, ()> {
+  let value = exactly_one_response_header(response, ARTIFACT_UPLOAD_ADMISSION_HEADER).and_then(|value| value.to_str().ok()).ok_or(())?;
+  if value == ARTIFACT_UPLOAD_ADMISSION_BUSY {
+    return Ok(false);
+  }
+  let granted = value.parse::<ArtifactUploadAdmissionId>().map_err(|_| ())?;
+  granted.matches(expected).then_some(true).ok_or(())
+}
+
+fn valid_content_url(url: &Url, trusted_base: &Url, requested: &ArtifactUri) -> bool {
+  let canonical_path = format!("/v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id());
   matches!(url.scheme(), "http" | "https")
-    && url.host_str().is_some()
+    && url.scheme() == trusted_base.scheme()
+    && url.host_str() == trusted_base.host_str()
+    && url.port_or_known_default() == trusted_base.port_or_known_default()
     && url.username().is_empty()
     && url.password().is_none()
+    && url.path() == canonical_path
     && url.query().is_none()
     && url.fragment().is_none()
 }

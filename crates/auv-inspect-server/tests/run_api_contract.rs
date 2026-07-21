@@ -669,7 +669,7 @@ async fn commit_failures_map_to_exact_typed_errors() {
     (
       CommitError::CommitUnknown(error_code("auv.test.unknown")),
       StatusCode::SERVICE_UNAVAILABLE,
-      json!({"commit_unknown":{"code":"auv.test.unknown"}}),
+      json!({"unavailable":{"code":"auv.inspect.commit_unknown"}}),
     ),
   ];
 
@@ -887,6 +887,23 @@ async fn sse_reconnect_uses_the_greater_valid_cursor() {
   assert!(event.contains("id: 3\n"), "{event}");
   assert!(event.contains("event: commit\n"), "{event}");
   assert!(event.contains("\"revision\":3"), "{event}");
+}
+
+#[tokio::test]
+async fn sse_rejects_duplicate_last_event_id() {
+  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let mut request = Request::builder()
+    .uri(format!("/v1/runs/{RUN}/commits/stream?after_revision=1"))
+    .header("Last-Event-ID", "2")
+    .body(Body::empty())
+    .unwrap();
+  request.headers_mut().append("Last-Event-ID", "3".parse().unwrap());
+
+  let response = app.oneshot(request).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+  assert_eq!(json_body(response).await, json!({"invalid_reference":{"code":"auv.inspect.invalid_reference"}}));
 }
 
 #[tokio::test]

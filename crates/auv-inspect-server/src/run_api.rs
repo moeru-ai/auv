@@ -81,16 +81,16 @@ async fn commit(
   match state.store.commit(request).await {
     Ok(CommitResult::Appended(commit)) => Ok(run_json(StatusCode::CREATED, &commit)),
     Ok(CommitResult::Replayed(commit)) => Ok(run_json(StatusCode::OK, &commit)),
-    Err(CommitError::CommitUnknown(code)) => resolve_commit_unknown(&state, &recovery_request, code).await,
+    Err(CommitError::CommitUnknown(_)) => resolve_commit_unknown(&state, &recovery_request).await,
     Err(error) => Err(ApiFailure::from_commit(error)),
   }
 }
 
-async fn resolve_commit_unknown(state: &InspectServerState, request: &RunCommitRequest, code: ErrorCode) -> Result<Response, ApiFailure> {
+async fn resolve_commit_unknown(state: &InspectServerState, request: &RunCommitRequest) -> Result<Response, ApiFailure> {
   match state.store.lookup_commit(request.run_id(), request.idempotency_key()).await {
     Ok(Some(commit)) if commit_matches_request(&commit, request) => Ok(run_json(StatusCode::OK, &commit)),
     Ok(Some(_)) => Err(ApiFailure::from_commit(CommitError::IdempotencyMismatch)),
-    Ok(None) | Err(_) => Err(ApiFailure::commit_unknown(code)),
+    Ok(None) | Err(_) => Err(ApiFailure::commit_unknown()),
   }
 }
 
@@ -154,7 +154,7 @@ async fn commit_stream(
   let Path(run_id) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   let Query(query) = query.map_err(|_| ApiFailure::invalid_reference())?;
-  let after = greater_cursor(query.after_revision, headers.get("Last-Event-ID"));
+  let after = greater_cursor(query.after_revision, optional_single_header(&headers, "Last-Event-ID")?);
   let subscription = state.store.subscribe(run_id, after).await.map_err(ApiFailure::from_read)?;
   let stream = futures_util::stream::unfold((subscription, false), |(mut subscription, closed)| async move {
     if closed {
@@ -233,6 +233,15 @@ fn exactly_one_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<
   Ok(value)
 }
 
+fn optional_single_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<Option<&'a HeaderValue>, ApiFailure> {
+  let mut values = headers.get_all(name).iter();
+  let value = values.next();
+  if values.next().is_some() {
+    return Err(ApiFailure::invalid_reference());
+  }
+  Ok(value)
+}
+
 fn run_json(status: StatusCode, value: &impl Serialize) -> Response {
   let bytes = serde_json::to_vec(value).expect("validated run protocol value must encode as JSON");
   let mut response = Response::new(Body::from(bytes));
@@ -294,11 +303,8 @@ impl ApiFailure {
     }
   }
 
-  fn commit_unknown(code: ErrorCode) -> Self {
-    Self {
-      status: StatusCode::SERVICE_UNAVAILABLE,
-      body: RunApiError::CommitUnknown { code },
-    }
+  fn commit_unknown() -> Self {
+    Self::unavailable(ErrorCode::parse("auv.inspect.commit_unknown").expect("static error code"))
   }
 
   fn payload_too_large() -> Self {
@@ -322,7 +328,7 @@ impl ApiFailure {
         body: RunApiError::Rejected { code },
       },
       CommitError::Unavailable(code) => Self::unavailable(code),
-      CommitError::CommitUnknown(code) => Self::commit_unknown(code),
+      CommitError::CommitUnknown(_) => Self::commit_unknown(),
     }
   }
 

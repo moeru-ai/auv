@@ -23,6 +23,12 @@ pub const ARTIFACT_UPLOAD_MEDIA_TYPE: &str = "application/vnd.auv.artifact-uploa
 /// Media type for the Inspect-specific artifact resolver.
 pub const ARTIFACT_RESOLVE_MEDIA_TYPE: &str = "application/json";
 
+/// Generation-bound control header used to grant one artifact body upload.
+pub const ARTIFACT_UPLOAD_ADMISSION_HEADER: &str = "Auv-Artifact-Upload-Admission";
+
+/// Response value used when an equal draft replay does not own body admission.
+pub const ARTIFACT_UPLOAD_ADMISSION_BUSY: &str = "busy";
+
 const MAX_RESOLVED_ARTIFACTS: usize = 256;
 
 /// The stable identity returned by an Inspect authority.
@@ -49,7 +55,7 @@ pub struct RunStreamGap {
 }
 
 /// Metadata accepted before Inspect consumes a one-shot artifact body.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactUploadDraftRequest {
   authority_id: AuthorityId,
@@ -60,6 +66,45 @@ pub struct ArtifactUploadDraftRequest {
   byte_length: ByteLength,
   sha256: Sha256Digest,
   attributes: Attributes,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawArtifactUploadDraftRequest {
+  authority_id: AuthorityId,
+  artifact_id: ArtifactId,
+  span_id: Option<SpanId>,
+  purpose: ArtifactPurpose,
+  content_type: ContentType,
+  byte_length: u64,
+  sha256: Sha256Digest,
+  attributes: Attributes,
+}
+
+impl TryFrom<RawArtifactUploadDraftRequest> for ArtifactUploadDraftRequest {
+  type Error = auv_tracing::ValidationError;
+
+  fn try_from(wire: RawArtifactUploadDraftRequest) -> Result<Self, Self::Error> {
+    Ok(Self::new(
+      wire.authority_id,
+      wire.artifact_id,
+      wire.span_id,
+      wire.purpose,
+      wire.content_type,
+      ByteLength::new(wire.byte_length)?,
+      wire.sha256,
+      wire.attributes,
+    ))
+  }
+}
+
+impl<'de> Deserialize<'de> for ArtifactUploadDraftRequest {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    RawArtifactUploadDraftRequest::deserialize(deserializer)?.try_into().map_err(de::Error::custom)
+  }
 }
 
 impl ArtifactUploadDraftRequest {
@@ -176,6 +221,62 @@ impl<'de> Deserialize<'de> for ArtifactUploadId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("artifact upload ID must be a non-nil canonical UUID")]
 pub struct ArtifactUploadIdError;
+
+/// One client-generated capability for a single upload admission generation.
+#[derive(Clone, Copy, Eq)]
+pub struct ArtifactUploadAdmissionId(Uuid);
+
+impl ArtifactUploadAdmissionId {
+  /// Generates a non-nil UUIDv7 admission capability.
+  pub fn new() -> Self {
+    Self(Uuid::now_v7())
+  }
+
+  /// Compares capability bytes without data-dependent early return.
+  pub fn matches(self, other: Self) -> bool {
+    self.0.as_bytes().iter().zip(other.0.as_bytes()).fold(0_u8, |difference, (left, right)| difference | (left ^ right)) == 0
+  }
+}
+
+impl Default for ArtifactUploadAdmissionId {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl PartialEq for ArtifactUploadAdmissionId {
+  fn eq(&self, other: &Self) -> bool {
+    self.matches(*other)
+  }
+}
+
+impl fmt::Debug for ArtifactUploadAdmissionId {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("ArtifactUploadAdmissionId([REDACTED])")
+  }
+}
+
+impl fmt::Display for ArtifactUploadAdmissionId {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.0.fmt(formatter)
+  }
+}
+
+impl FromStr for ArtifactUploadAdmissionId {
+  type Err = ArtifactUploadAdmissionIdError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    let uuid = Uuid::parse_str(value).map_err(|_| ArtifactUploadAdmissionIdError)?;
+    if uuid.is_nil() || uuid.hyphenated().to_string() != value {
+      return Err(ArtifactUploadAdmissionIdError);
+    }
+    Ok(Self(uuid))
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("artifact upload admission ID must be a non-nil canonical UUID")]
+pub struct ArtifactUploadAdmissionIdError;
 
 /// One temporary upload locator returned by Inspect.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,121 +395,16 @@ impl ResolveArtifactsResponse {
   }
 }
 
-/// Compact artifact endpoint error body.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ArtifactApiError {
-  Code {
-    error: ErrorCode,
-  },
-  AuthorityMismatch {
-    error: ErrorCode,
-    expected: AuthorityId,
-    received: AuthorityId,
-  },
+/// Exact V1 artifact endpoint error body.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactApiError {
+  pub error: ErrorCode,
 }
 
 impl ArtifactApiError {
-  pub fn new(error: ErrorCode) -> Self {
-    Self::Code { error }
-  }
-
-  pub fn authority_mismatch(error: ErrorCode, expected: AuthorityId, received: AuthorityId) -> Self {
-    Self::AuthorityMismatch {
-      error,
-      expected,
-      received,
-    }
-  }
-
   pub fn error(&self) -> &ErrorCode {
-    match self {
-      Self::Code { error } | Self::AuthorityMismatch { error, .. } => error,
-    }
-  }
-
-  pub fn authority_ids(&self) -> Option<(AuthorityId, AuthorityId)> {
-    match self {
-      Self::AuthorityMismatch {
-        expected, received, ..
-      } => Some((*expected, *received)),
-      Self::Code { .. } => None,
-    }
-  }
-}
-
-impl Serialize for ArtifactApiError {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: Serializer,
-  {
-    #[derive(Serialize)]
-    #[serde(deny_unknown_fields)]
-    struct Code<'a> {
-      error: &'a ErrorCode,
-    }
-
-    #[derive(Serialize)]
-    #[serde(deny_unknown_fields)]
-    struct AuthorityMismatch<'a> {
-      error: &'a ErrorCode,
-      expected: AuthorityId,
-      received: AuthorityId,
-    }
-
-    match self {
-      Self::Code { error } => Code { error }.serialize(serializer),
-      Self::AuthorityMismatch {
-        error,
-        expected,
-        received,
-      } => AuthorityMismatch {
-        error,
-        expected: *expected,
-        received: *received,
-      }
-      .serialize(serializer),
-    }
-  }
-}
-
-impl<'de> Deserialize<'de> for ArtifactApiError {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Code {
-      error: ErrorCode,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct AuthorityMismatch {
-      error: ErrorCode,
-      expected: AuthorityId,
-      received: AuthorityId,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-      AuthorityMismatch(AuthorityMismatch),
-      Code(Code),
-    }
-
-    Ok(match Wire::deserialize(deserializer)? {
-      Wire::Code(Code { error }) => Self::Code { error },
-      Wire::AuthorityMismatch(AuthorityMismatch {
-        error,
-        expected,
-        received,
-      }) => Self::AuthorityMismatch {
-        error,
-        expected,
-        received,
-      },
-    })
+    &self.error
   }
 }
 
@@ -440,12 +436,32 @@ pub enum RunApiError {
   Integrity {
     code: ErrorCode,
   },
-  CommitUnknown {
-    code: ErrorCode,
-  },
   Unavailable {
     code: ErrorCode,
   },
+}
+
+/// Reports whether strict draft decoding failed at the V1 byte-size boundary.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid artifact upload draft request")]
+pub struct ArtifactUploadDraftRequestDecodeError {
+  payload_too_large: bool,
+}
+
+impl ArtifactUploadDraftRequestDecodeError {
+  pub fn is_payload_too_large(&self) -> bool {
+    self.payload_too_large
+  }
+}
+
+/// Strictly decodes draft metadata while preserving the 413 size classification.
+pub fn decode_artifact_upload_draft_request(bytes: &[u8]) -> Result<ArtifactUploadDraftRequest, ArtifactUploadDraftRequestDecodeError> {
+  let wire = decode_strict::<RawArtifactUploadDraftRequest>(bytes).map_err(|_| ArtifactUploadDraftRequestDecodeError {
+    payload_too_large: false,
+  })?;
+  ArtifactUploadDraftRequest::try_from(wire).map_err(|_| ArtifactUploadDraftRequestDecodeError {
+    payload_too_large: true,
+  })
 }
 
 /// Reports malformed JSON, duplicate object keys, or a typed DTO mismatch.
@@ -633,6 +649,19 @@ mod tests {
   fn error_variant_payloads_reject_unknown_fields() {
     let body = br#"{"history_gap":{"requested_after":4,"earliest_available":9,"latest":10}}"#;
     assert!(decode_strict::<RunApiError>(body).is_err());
+  }
+
+  #[test]
+  fn v1_error_decoders_reject_unaccepted_wire_extensions() {
+    let artifact_authority_fields = br#"{
+      "error":"auv.inspect.authority_mismatch",
+      "expected":"019f8b1e-4b2d-7a00-8f00-0000000000aa",
+      "received":"019f8b1e-4b2d-7a00-8f00-0000000000ab"
+    }"#;
+    let commit_unknown_variant = br#"{"commit_unknown":{"code":"auv.inspect.commit_unknown"}}"#;
+
+    assert!(decode_strict::<ArtifactApiError>(artifact_authority_fields).is_err());
+    assert!(decode_strict::<RunApiError>(commit_unknown_variant).is_err());
   }
 
   fn nested_arrays(depth: usize) -> Vec<u8> {
