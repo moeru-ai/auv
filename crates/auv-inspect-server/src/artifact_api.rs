@@ -1,5 +1,4 @@
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,9 +10,10 @@ use auv_tracing::{
   RunId, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
-  ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE,
-  ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, RUN_MEDIA_TYPE,
-  ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, decode_artifact_upload_draft_request, decode_strict,
+  ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS,
+  ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR, ARTIFACT_UPLOAD_MEDIA_TYPE, AUTHORITY_ID_HEADER, ArtifactApiError, ArtifactUploadAdmissionId,
+  ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse,
+  ResolvedArtifact, decode_artifact_upload_draft_request, decode_strict,
 };
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -35,14 +35,16 @@ use crate::server::InspectServerState;
 const MAX_ARTIFACT_JSON_BYTES: usize = 32 * 1024 * 1024;
 const V1_MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const DRAFT_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
-const ADMISSION_LEASE: Duration = Duration::from_secs(30);
-const MAX_DRAFT_RECORDS: usize = 4_096;
+const ADMISSION_LEASE: Duration = Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS);
+const MAX_ACTIVE_DRAFTS_PER_RUN: usize = 4_096;
+const MAX_PUBLISHED_RESPONSES: usize = 4_096;
+const MAX_EXPIRED_TOMBSTONES: usize = 4_096;
 
 pub(crate) struct ArtifactApiState {
   drafts: Mutex<DraftIndexes>,
   clock: Clock,
   max_artifact_bytes: u64,
-  max_draft_records: usize,
+  max_active_drafts_per_run: usize,
 }
 
 impl ArtifactApiState {
@@ -51,7 +53,7 @@ impl ArtifactApiState {
       drafts: Mutex::new(DraftIndexes::default()),
       clock: Clock::new(),
       max_artifact_bytes: V1_MAX_ARTIFACT_BYTES,
-      max_draft_records: MAX_DRAFT_RECORDS,
+      max_active_drafts_per_run: MAX_ACTIVE_DRAFTS_PER_RUN,
     }
   }
 
@@ -61,17 +63,17 @@ impl ArtifactApiState {
       drafts: Mutex::new(DraftIndexes::default()),
       clock: Clock::new(),
       max_artifact_bytes,
-      max_draft_records: MAX_DRAFT_RECORDS,
+      max_active_drafts_per_run: MAX_ACTIVE_DRAFTS_PER_RUN,
     }
   }
 
   #[cfg(test)]
-  fn with_limits(max_artifact_bytes: u64, max_draft_records: usize) -> Self {
+  fn with_limits(max_artifact_bytes: u64, max_active_drafts_per_run: usize) -> Self {
     Self {
       drafts: Mutex::new(DraftIndexes::default()),
       clock: Clock::new(),
       max_artifact_bytes,
-      max_draft_records,
+      max_active_drafts_per_run,
     }
   }
 
@@ -122,9 +124,23 @@ struct DraftIndexes {
   by_upload: HashMap<(RunId, ArtifactUploadId), DraftRecord>,
   by_key: HashMap<(RunId, IdempotencyKey), ArtifactUploadId>,
   by_uri: HashMap<ArtifactUri, ArtifactUploadId>,
-  deadlines: BinaryHeap<Reverse<DraftDeadline>>,
+  active_by_run: HashMap<RunId, usize>,
+  published_count: usize,
+  tombstone_count: usize,
+  published_order: BTreeSet<DraftQueueEntry>,
+  tombstone_order: BTreeSet<DraftQueueEntry>,
+  deadlines: BTreeSet<DraftDeadline>,
   next_generation: u64,
+  next_queue_sequence: u64,
   next_deadline_sequence: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct DraftQueueEntry {
+  sequence: u64,
+  run_id: RunId,
+  upload_id: ArtifactUploadId,
+  generation: u64,
 }
 
 #[derive(Clone)]
@@ -133,6 +149,7 @@ struct DraftRecord {
   run_id: RunId,
   key: IdempotencyKey,
   generation: u64,
+  deadline_sequence: u64,
   state: DraftState,
 }
 
@@ -141,10 +158,11 @@ enum DraftState {
   Pending(PendingDraft),
   PublishedCache {
     deadline: tokio::time::Instant,
-    metadata: Box<ArtifactUploadDraftRequest>,
+    order: u64,
   },
   Expired {
     prune_at: tokio::time::Instant,
+    order: u64,
   },
 }
 
@@ -154,13 +172,6 @@ struct DraftDeadline {
   run_id: RunId,
   upload_id: ArtifactUploadId,
   generation: u64,
-  kind: DraftDeadlineKind,
-}
-
-enum DraftDeadlineKind {
-  Pending,
-  PublishedCache,
-  Tombstone,
 }
 
 impl PartialEq for DraftDeadline {
@@ -219,44 +230,46 @@ impl DraftIndexes {
     self.next_generation
   }
 
-  fn schedule(&mut self, at: tokio::time::Instant, run_id: RunId, upload_id: ArtifactUploadId, generation: u64, kind: DraftDeadlineKind) {
+  fn allocate_queue_sequence(&mut self) -> u64 {
+    self.next_queue_sequence = self.next_queue_sequence.checked_add(1).expect("artifact draft queue sequence exhausted");
+    self.next_queue_sequence
+  }
+
+  fn schedule(&mut self, at: tokio::time::Instant, run_id: RunId, upload_id: ArtifactUploadId, generation: u64) -> u64 {
     self.next_deadline_sequence = self.next_deadline_sequence.checked_add(1).expect("artifact draft deadline counter exhausted");
-    self.deadlines.push(Reverse(DraftDeadline {
+    self.deadlines.insert(DraftDeadline {
       at,
       sequence: self.next_deadline_sequence,
       run_id,
       upload_id,
       generation,
-      kind,
-    }));
+    });
+    self.next_deadline_sequence
   }
 
   fn prune_due(&mut self, now: tokio::time::Instant) {
-    while self.deadlines.peek().is_some_and(|entry| entry.0.at <= now) {
-      let Reverse(deadline) = self.deadlines.pop().expect("peeked artifact draft deadline exists");
+    while self.deadlines.first().is_some_and(|entry| entry.at <= now) {
+      let deadline = self.deadlines.pop_first().expect("peeked artifact draft deadline exists");
       let locator = (deadline.run_id, deadline.upload_id);
       let mut expire = false;
       let mut remove = false;
       if let Some(record) = self.by_upload.get_mut(&locator)
         && record.generation == deadline.generation
       {
-        match (&mut record.state, deadline.kind) {
-          (DraftState::Pending(pending), DraftDeadlineKind::Pending)
+        match &mut record.state {
+          DraftState::Pending(pending)
             if pending.deadline == deadline.at
               && matches!(pending.admission, AdmissionState::Admitted { .. } | AdmissionState::Released(_)) =>
           {
             expire = true;
           }
-          (
-            DraftState::PublishedCache {
-              deadline: cache_deadline,
-              ..
-            },
-            DraftDeadlineKind::PublishedCache,
-          ) if *cache_deadline == deadline.at => {
+          DraftState::PublishedCache {
+            deadline: cache_deadline,
+            ..
+          } if *cache_deadline == deadline.at => {
             remove = true;
           }
-          (DraftState::Expired { prune_at }, DraftDeadlineKind::Tombstone) if *prune_at == deadline.at => {
+          DraftState::Expired { prune_at, .. } if *prune_at == deadline.at => {
             remove = true;
           }
           _ => {}
@@ -288,8 +301,8 @@ impl DraftIndexes {
     Some(record)
   }
 
-  fn insert(&mut self, record: DraftRecord, capacity: usize) -> Result<(), ()> {
-    if self.by_upload.len() >= capacity {
+  fn insert(&mut self, mut record: DraftRecord, capacity: usize) -> Result<(), ()> {
+    if self.active_by_run.get(&record.run_id).copied().unwrap_or(0) >= capacity {
       return Err(());
     }
     let upload_id = record.draft.upload_id();
@@ -303,10 +316,11 @@ impl DraftIndexes {
       AdmissionState::Admitted { .. } => {}
       _ => unreachable!("new artifact draft records own an admission"),
     }
+    record.deadline_sequence = self.schedule(deadline, run_id, upload_id, generation);
     self.by_key.insert((record.run_id, record.key), upload_id);
     self.by_uri.insert(record.draft.artifact_uri().clone(), upload_id);
     self.by_upload.insert((run_id, upload_id), record);
-    self.schedule(deadline, run_id, upload_id, generation, DraftDeadlineKind::Pending);
+    *self.active_by_run.entry(run_id).or_default() += 1;
     Ok(())
   }
 
@@ -314,6 +328,39 @@ impl DraftIndexes {
     let Some(record) = self.by_upload.remove(&(run_id, upload_id)) else {
       return;
     };
+    let deadline = match &record.state {
+      DraftState::Pending(pending) => pending.deadline,
+      DraftState::PublishedCache { deadline, .. } => *deadline,
+      DraftState::Expired { prune_at, .. } => *prune_at,
+    };
+    self.deadlines.remove(&DraftDeadline {
+      at: deadline,
+      sequence: record.deadline_sequence,
+      run_id,
+      upload_id,
+      generation: record.generation,
+    });
+    match &record.state {
+      DraftState::Pending(_) => self.decrement_active(run_id),
+      DraftState::PublishedCache { order, .. } => {
+        self.published_count -= 1;
+        self.published_order.remove(&DraftQueueEntry {
+          sequence: *order,
+          run_id,
+          upload_id,
+          generation: record.generation,
+        });
+      }
+      DraftState::Expired { order, .. } => {
+        self.tombstone_count -= 1;
+        self.tombstone_order.remove(&DraftQueueEntry {
+          sequence: *order,
+          run_id,
+          upload_id,
+          generation: record.generation,
+        });
+      }
+    }
     if self.by_key.get(&(record.run_id, record.key)) == Some(&upload_id) {
       self.by_key.remove(&(record.run_id, record.key));
     }
@@ -329,11 +376,21 @@ impl DraftIndexes {
     let DraftState::Pending(pending) = &record.state else {
       return;
     };
-    let prune_at = pending.deadline.checked_add(DRAFT_LIFETIME).unwrap_or(pending.deadline);
+    let pending_deadline = pending.deadline;
+    let prune_at = pending_deadline.checked_add(DRAFT_LIFETIME).unwrap_or(pending_deadline);
     let run_id = record.run_id;
     let key = record.key;
     let uri = record.draft.artifact_uri().clone();
     let generation = record.generation;
+    let deadline_sequence = record.deadline_sequence;
+    let order = self.allocate_queue_sequence();
+    self.deadlines.remove(&DraftDeadline {
+      at: pending_deadline,
+      sequence: deadline_sequence,
+      run_id,
+      upload_id,
+      generation,
+    });
     if self.by_key.get(&(run_id, key)) == Some(&upload_id) {
       self.by_key.remove(&(run_id, key));
     }
@@ -341,9 +398,21 @@ impl DraftIndexes {
       self.by_uri.remove(&uri);
     }
     if let Some(record) = self.by_upload.get_mut(&(run_id, upload_id)) {
-      record.state = DraftState::Expired { prune_at };
+      record.state = DraftState::Expired { prune_at, order };
     }
-    self.schedule(prune_at, run_id, upload_id, generation, DraftDeadlineKind::Tombstone);
+    self.decrement_active(run_id);
+    self.tombstone_count += 1;
+    self.tombstone_order.insert(DraftQueueEntry {
+      sequence: order,
+      run_id,
+      upload_id,
+      generation,
+    });
+    let deadline_sequence = self.schedule(prune_at, run_id, upload_id, generation);
+    if let Some(record) = self.by_upload.get_mut(&(run_id, upload_id)) {
+      record.deadline_sequence = deadline_sequence;
+    }
+    self.evict_oldest_tombstones();
   }
 
   fn cache_published(
@@ -368,10 +437,67 @@ impl DraftIndexes {
       return;
     }
     let deadline = pending.deadline;
-    let metadata = pending.metadata.clone();
     let generation = record.generation;
-    record.state = DraftState::PublishedCache { deadline, metadata };
-    self.schedule(deadline, run_id, upload_id, generation, DraftDeadlineKind::PublishedCache);
+    let order = self.allocate_queue_sequence();
+    let record = self.by_upload.get_mut(&locator).expect("published draft remains indexed");
+    record.state = DraftState::PublishedCache { deadline, order };
+    self.decrement_active(run_id);
+    self.published_count += 1;
+    self.published_order.insert(DraftQueueEntry {
+      sequence: order,
+      run_id,
+      upload_id,
+      generation,
+    });
+    self.evict_oldest_published();
+  }
+
+  fn decrement_active(&mut self, run_id: RunId) {
+    let Some(count) = self.active_by_run.get_mut(&run_id) else {
+      return;
+    };
+    *count -= 1;
+    if *count == 0 {
+      self.active_by_run.remove(&run_id);
+    }
+  }
+
+  fn evict_oldest_published(&mut self) {
+    while self.published_count > MAX_PUBLISHED_RESPONSES {
+      let Some(oldest) = self.published_order.first().copied() else {
+        break;
+      };
+      let is_current = matches!(
+        self.by_upload.get(&(oldest.run_id, oldest.upload_id)),
+        Some(DraftRecord {
+          generation,
+          state: DraftState::PublishedCache { .. },
+          ..
+        }) if *generation == oldest.generation
+      );
+      if is_current {
+        self.remove(oldest.run_id, oldest.upload_id);
+      }
+    }
+  }
+
+  fn evict_oldest_tombstones(&mut self) {
+    while self.tombstone_count > MAX_EXPIRED_TOMBSTONES {
+      let Some(oldest) = self.tombstone_order.first().copied() else {
+        break;
+      };
+      let is_current = matches!(
+        self.by_upload.get(&(oldest.run_id, oldest.upload_id)),
+        Some(DraftRecord {
+          generation,
+          state: DraftState::Expired { .. },
+          ..
+        }) if *generation == oldest.generation
+      );
+      if is_current {
+        self.remove(oldest.run_id, oldest.upload_id);
+      }
+    }
   }
 }
 
@@ -445,6 +571,7 @@ async fn create_draft(
     run_id,
     key,
     generation: 0,
+    deadline_sequence: 0,
     state: DraftState::Pending(PendingDraft {
       authority_id: expected_authority,
       deadline,
@@ -478,7 +605,7 @@ async fn create_draft(
     }
     if existing.is_none() {
       record.generation = indexes.allocate_generation();
-      indexes.insert(record, state.artifacts.max_draft_records).map_err(|_| ArtifactFailure::capacity())?;
+      indexes.insert(record, state.artifacts.max_active_drafts_per_run).map_err(|_| ArtifactFailure::capacity())?;
     }
     existing
   };
@@ -502,16 +629,28 @@ async fn resolve_existing_draft(
   admission: ArtifactUploadAdmissionId,
   request: &ArtifactUploadDraftRequest,
 ) -> Result<Response, ArtifactFailure> {
-  let response = {
+  let resolution = {
     let now = state.artifacts.clock.monotonic_now();
     let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
     indexes.prune_due(now);
     resolve_cached_draft(&mut indexes, upload_id, run_id, key, admission, request, now)?
   };
-  match response {
-    Some(response) => Ok(response),
-    None => reconstruct_published_draft(state, run_id, key, request).await,
+  match resolution {
+    DraftResolution::Immediate(response) => Ok(response),
+    DraftResolution::Lookup(reason) => reconcile_draft_lookup(state, run_id, key, upload_id, request, reason).await,
   }
+}
+
+enum DraftResolution {
+  Immediate(Response),
+  Lookup(DraftLookupReason),
+}
+
+#[derive(Clone, Copy)]
+enum DraftLookupReason {
+  Missing,
+  PublishedCache { generation: u64 },
+  Indeterminate { generation: u64 },
 }
 
 fn resolve_cached_draft(
@@ -522,18 +661,22 @@ fn resolve_cached_draft(
   admission: ArtifactUploadAdmissionId,
   request: &ArtifactUploadDraftRequest,
   now: tokio::time::Instant,
-) -> Result<Option<Response>, ArtifactFailure> {
+) -> Result<DraftResolution, ArtifactFailure> {
   let Some(existing) = indexes.record_mut(run_id, upload_id, now) else {
-    return Ok(None);
+    return Ok(DraftResolution::Lookup(DraftLookupReason::Missing));
   };
   if existing.key != key || existing.draft.artifact_uri() != &ArtifactUri::from_ids(run_id, request.artifact_id()) {
     return Err(ArtifactFailure::conflict());
   }
   let draft = existing.draft.clone();
+  let generation = existing.generation;
   let response = match &mut existing.state {
     DraftState::Pending(pending) => {
       if pending.metadata.as_ref() != request {
         return Err(ArtifactFailure::conflict());
+      }
+      if matches!(pending.admission, AdmissionState::Indeterminate(_)) {
+        return Ok(DraftResolution::Lookup(DraftLookupReason::Indeterminate { generation }));
       }
       let response_admission = match pending.admission {
         AdmissionState::Released(previous) if !previous.matches(admission) => {
@@ -549,34 +692,86 @@ fn resolve_cached_draft(
       };
       draft_response(StatusCode::OK, &draft, response_admission)
     }
-    DraftState::PublishedCache { metadata, .. } => {
-      if metadata.as_ref() != request {
-        return Err(ArtifactFailure::conflict());
-      }
-      draft_response(StatusCode::OK, &draft, DraftAdmission::Busy)
-    }
+    DraftState::PublishedCache { .. } => return Ok(DraftResolution::Lookup(DraftLookupReason::PublishedCache { generation })),
     DraftState::Expired { .. } => return Err(ArtifactFailure::gone()),
   };
-  Ok(Some(response))
+  Ok(DraftResolution::Immediate(response))
 }
 
+// NOTICE(inspect-draft-expiry-reconstruction-v1): RunStore commits do not retain
+// the original draft expiry. Exact replay therefore lasts only while the bounded
+// live response cache survives; store-only reconstruction uses committed_at.
 fn published_draft(commit: &RunCommit, uri: ArtifactUri) -> ArtifactUploadDraft {
   ArtifactUploadDraft::new(ArtifactUploadId::from_idempotency_key(commit.idempotency_key()), uri, commit.committed_at())
 }
 
-async fn reconstruct_published_draft(
+async fn reconcile_draft_lookup(
   state: &InspectServerState,
   run_id: RunId,
   key: IdempotencyKey,
+  upload_id: ArtifactUploadId,
   request: &ArtifactUploadDraftRequest,
+  reason: DraftLookupReason,
 ) -> Result<Response, ArtifactFailure> {
-  match state.store.lookup_commit(run_id, key).await.map_err(ArtifactFailure::from_read)? {
-    Some(commit) if artifact_commit_matches(&commit, request, run_id, key) => {
-      let draft = published_draft(&commit, ArtifactUri::from_ids(run_id, request.artifact_id()));
+  let lookup = state.store.lookup_commit(run_id, key).await;
+  match lookup {
+    Ok(Some(commit)) if artifact_commit_matches(&commit, request, run_id, key) => {
+      let draft = {
+        let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
+        if let DraftLookupReason::Indeterminate { generation } = reason {
+          let admission = indexes.by_upload.get(&(run_id, upload_id)).and_then(|record| {
+            (record.generation == generation).then_some(&record.state).and_then(|state| match state {
+              DraftState::Pending(PendingDraft {
+                admission: AdmissionState::Indeterminate(admission),
+                ..
+              }) => Some(*admission),
+              _ => None,
+            })
+          });
+          if let Some(admission) = admission {
+            indexes.cache_published(run_id, upload_id, admission, state.artifacts.clock.monotonic_now());
+          }
+        }
+        indexes
+          .by_upload
+          .get(&(run_id, upload_id))
+          .filter(|record| {
+            matches!(reason, DraftLookupReason::Missing)
+              || match reason {
+                DraftLookupReason::PublishedCache { generation } | DraftLookupReason::Indeterminate { generation } => {
+                  record.generation == generation
+                }
+                DraftLookupReason::Missing => true,
+              }
+          })
+          .and_then(|record| matches!(record.state, DraftState::PublishedCache { .. }).then(|| record.draft.clone()))
+      }
+      .unwrap_or_else(|| published_draft(&commit, ArtifactUri::from_ids(run_id, request.artifact_id())));
       Ok(draft_response(StatusCode::OK, &draft, DraftAdmission::Busy))
     }
-    Some(_) => Err(ArtifactFailure::conflict()),
-    None => Err(ArtifactFailure::not_found()),
+    Ok(Some(_)) => {
+      clear_reconciled_draft(state, run_id, upload_id, reason);
+      Err(ArtifactFailure::conflict())
+    }
+    Ok(None) if matches!(reason, DraftLookupReason::Indeterminate { .. }) => {
+      Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")))
+    }
+    Ok(None) => Err(ArtifactFailure::not_found()),
+    Err(_) if matches!(reason, DraftLookupReason::Indeterminate { .. }) => {
+      Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")))
+    }
+    Err(error) => Err(ArtifactFailure::from_read(error)),
+  }
+}
+
+fn clear_reconciled_draft(state: &InspectServerState, run_id: RunId, upload_id: ArtifactUploadId, reason: DraftLookupReason) {
+  let generation = match reason {
+    DraftLookupReason::Missing => return,
+    DraftLookupReason::PublishedCache { generation } | DraftLookupReason::Indeterminate { generation } => generation,
+  };
+  let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
+  if indexes.by_upload.get(&(run_id, upload_id)).is_some_and(|record| record.generation == generation) {
+    indexes.remove(run_id, upload_id);
   }
 }
 
@@ -753,7 +948,7 @@ async fn publish_upload(
         Ok(run_json(StatusCode::OK, &commit))
       }
       Ok(Some(_)) => {
-        mark_indeterminate(&state, active.run_id, upload_id, admission);
+        clear_upload_reservation(&state, active.run_id, upload_id, admission);
         Err(ArtifactFailure::conflict())
       }
       Ok(None) | Err(_) => {
@@ -779,7 +974,10 @@ async fn indeterminate_replay(
       cache_published_draft(state, active.run_id, upload_id, admission);
       Ok(run_json(StatusCode::OK, &commit))
     }
-    Ok(Some(_)) => Err(ArtifactFailure::conflict()),
+    Ok(Some(_)) => {
+      clear_upload_reservation(state, active.run_id, upload_id, admission);
+      Err(ArtifactFailure::conflict())
+    }
     Ok(None) | Err(_) => Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown"))),
   }
 }
@@ -860,6 +1058,18 @@ fn mark_indeterminate(state: &InspectServerState, run_id: RunId, upload_id: Arti
     && matches!(pending.admission, AdmissionState::Uploading(current) if current.matches(admission))
   {
     pending.admission = AdmissionState::Indeterminate(admission);
+  }
+}
+
+fn clear_upload_reservation(state: &InspectServerState, run_id: RunId, upload_id: ArtifactUploadId, admission: ArtifactUploadAdmissionId) {
+  let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
+  let remove = matches!(
+    indexes.by_upload.get(&(run_id, upload_id)).map(|record| &record.state),
+    Some(DraftState::Pending(pending))
+      if matches!(pending.admission, AdmissionState::Uploading(current) | AdmissionState::Indeterminate(current) if current.matches(admission))
+  );
+  if remove {
+    indexes.remove(run_id, upload_id);
   }
 }
 
@@ -1025,12 +1235,14 @@ fn idempotency_key(headers: &HeaderMap) -> Result<IdempotencyKey, ArtifactFailur
 }
 
 fn upload_admission(headers: &HeaderMap) -> Result<ArtifactUploadAdmissionId, ArtifactFailure> {
-  exactly_one_header(headers, ARTIFACT_UPLOAD_ADMISSION_HEADER)?
-    .to_str()
-    .ok()
-    .ok_or_else(ArtifactFailure::invalid_reference)?
-    .parse()
-    .map_err(|_| ArtifactFailure::invalid_reference())
+  let mut values = headers.get_all(ARTIFACT_UPLOAD_ADMISSION_HEADER).iter();
+  let Some(value) = values.next() else {
+    return Err(ArtifactFailure::admission_required());
+  };
+  if values.next().is_some() {
+    return Err(ArtifactFailure::invalid_reference());
+  }
+  value.to_str().ok().ok_or_else(ArtifactFailure::invalid_reference)?.parse().map_err(|_| ArtifactFailure::invalid_reference())
 }
 
 fn require_media_type(headers: &HeaderMap, expected: &str) -> Result<(), ArtifactFailure> {
@@ -1157,6 +1369,7 @@ struct ArtifactFailure {
   status: StatusCode,
   body: ArtifactApiError,
   media_type: &'static str,
+  authority_id: Option<AuthorityId>,
 }
 
 impl ArtifactFailure {
@@ -1167,6 +1380,7 @@ impl ArtifactFailure {
         error: error_code(code),
       },
       media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+      authority_id: None,
     }
   }
 
@@ -1178,8 +1392,14 @@ impl ArtifactFailure {
     Self::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, "auv.inspect.unsupported_media_type")
   }
 
-  fn authority_mismatch(_expected: AuthorityId, _received: AuthorityId) -> Self {
-    Self::new(StatusCode::CONFLICT, "auv.inspect.authority_mismatch")
+  fn admission_required() -> Self {
+    Self::new(StatusCode::PRECONDITION_REQUIRED, ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR)
+  }
+
+  fn authority_mismatch(expected: AuthorityId, _received: AuthorityId) -> Self {
+    let mut failure = Self::new(StatusCode::CONFLICT, "auv.inspect.authority_mismatch");
+    failure.authority_id = Some(expected);
+    failure
   }
 
   fn conflict() -> Self {
@@ -1203,6 +1423,7 @@ impl ArtifactFailure {
       status: StatusCode::UNPROCESSABLE_ENTITY,
       body: ArtifactApiError { error: code },
       media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+      authority_id: None,
     }
   }
 
@@ -1211,6 +1432,7 @@ impl ArtifactFailure {
       status: StatusCode::BAD_REQUEST,
       body: ArtifactApiError { error: code },
       media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+      authority_id: None,
     }
   }
 
@@ -1219,6 +1441,7 @@ impl ArtifactFailure {
       status: StatusCode::SERVICE_UNAVAILABLE,
       body: ArtifactApiError { error: code },
       media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+      authority_id: None,
     }
   }
 
@@ -1258,6 +1481,7 @@ impl ArtifactFailure {
         status: StatusCode::BAD_REQUEST,
         body: ArtifactApiError { error: code },
         media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+        authority_id: None,
       },
       ReadError::HistoryGap { .. } => Self::new(StatusCode::GONE, "auv.inspect.history_gap"),
       ReadError::CursorAhead { .. } => Self::new(StatusCode::CONFLICT, "auv.inspect.cursor_ahead"),
@@ -1266,6 +1490,7 @@ impl ArtifactFailure {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         body: ArtifactApiError { error: code },
         media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+        authority_id: None,
       },
     }
   }
@@ -1273,7 +1498,13 @@ impl ArtifactFailure {
 
 impl IntoResponse for ArtifactFailure {
   fn into_response(self) -> Response {
-    json(self.status, self.media_type, &self.body)
+    let mut response = json(self.status, self.media_type, &self.body);
+    if let Some(authority_id) = self.authority_id {
+      response
+        .headers_mut()
+        .insert(AUTHORITY_ID_HEADER, HeaderValue::from_str(&authority_id.to_string()).expect("validated authority ID is a header value"));
+    }
+    response
   }
 }
 
@@ -1340,6 +1571,45 @@ mod tests {
 
   async fn response_json(response: Response) -> serde_json::Value {
     serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+  }
+
+  fn pending_record(
+    indexes: &mut DraftIndexes,
+    run_id: RunId,
+    key: IdempotencyKey,
+    artifact_id: auv_tracing::ArtifactId,
+    admission: ArtifactUploadAdmissionId,
+  ) -> DraftRecord {
+    let deadline = tokio::time::Instant::now() + DRAFT_LIFETIME;
+    DraftRecord {
+      draft: ArtifactUploadDraft::new(
+        ArtifactUploadId::from_idempotency_key(key),
+        ArtifactUri::from_ids(run_id, artifact_id),
+        Timestamp::new(1, 0).unwrap(),
+      ),
+      run_id,
+      key,
+      generation: indexes.allocate_generation(),
+      deadline_sequence: 0,
+      state: DraftState::Pending(PendingDraft {
+        authority_id: AUTHORITY.parse().unwrap(),
+        deadline,
+        metadata: Box::new(ArtifactUploadDraftRequest::new(
+          AUTHORITY.parse().unwrap(),
+          artifact_id,
+          None,
+          auv_tracing::ArtifactPurpose::parse("display.capture").unwrap(),
+          auv_tracing::ContentType::parse("text/plain").unwrap(),
+          auv_tracing::ByteLength::new(3).unwrap(),
+          ABC_SHA256.parse().unwrap(),
+          auv_tracing::Attributes::empty(),
+        )),
+        admission: AdmissionState::Admitted {
+          id: admission,
+          lease_deadline: deadline,
+        },
+      }),
+    }
   }
 
   fn upload_request(draft: &ArtifactUploadDraft, body: Body) -> Request {
@@ -1460,6 +1730,146 @@ mod tests {
         ..
       }))
     ));
+  }
+
+  #[test]
+  fn active_capacity_is_counted_per_run() {
+    let mut indexes = DraftIndexes::default();
+    let first =
+      pending_record(&mut indexes, RunId::new(), IdempotencyKey::new(), auv_tracing::ArtifactId::new(), ArtifactUploadAdmissionId::new());
+    let second =
+      pending_record(&mut indexes, RunId::new(), IdempotencyKey::new(), auv_tracing::ArtifactId::new(), ArtifactUploadAdmissionId::new());
+
+    assert!(indexes.insert(first, 1).is_ok());
+    assert!(indexes.insert(second, 1).is_ok());
+  }
+
+  #[test]
+  fn four_thousand_ninety_six_published_responses_do_not_consume_active_capacity() {
+    let mut indexes = DraftIndexes::default();
+    let run_id = RunId::new();
+    for _ in 0..MAX_PUBLISHED_RESPONSES {
+      let admission = ArtifactUploadAdmissionId::new();
+      let record = pending_record(&mut indexes, run_id, IdempotencyKey::new(), auv_tracing::ArtifactId::new(), admission);
+      let upload_id = record.draft.upload_id();
+      assert!(indexes.insert(record, MAX_ACTIVE_DRAFTS_PER_RUN).is_ok());
+      indexes.cache_published(run_id, upload_id, admission, tokio::time::Instant::now());
+    }
+
+    let next = pending_record(&mut indexes, run_id, IdempotencyKey::new(), auv_tracing::ArtifactId::new(), ArtifactUploadAdmissionId::new());
+    assert!(indexes.insert(next, MAX_ACTIVE_DRAFTS_PER_RUN).is_ok());
+    assert_eq!(indexes.published_count, MAX_PUBLISHED_RESPONSES);
+    assert_eq!(indexes.published_order.len(), MAX_PUBLISHED_RESPONSES);
+    assert_eq!(indexes.deadlines.len(), MAX_PUBLISHED_RESPONSES + 1);
+  }
+
+  #[test]
+  fn tombstones_are_bounded_without_consuming_active_capacity() {
+    let mut indexes = DraftIndexes::default();
+    for _ in 0..=MAX_EXPIRED_TOMBSTONES {
+      let run_id = RunId::new();
+      let record =
+        pending_record(&mut indexes, run_id, IdempotencyKey::new(), auv_tracing::ArtifactId::new(), ArtifactUploadAdmissionId::new());
+      let upload_id = record.draft.upload_id();
+      assert!(indexes.insert(record, 1).is_ok());
+      indexes.expire(run_id, upload_id);
+    }
+
+    assert_eq!(
+      indexes.by_upload.values().filter(|record| matches!(record.state, DraftState::Expired { .. })).count(),
+      MAX_EXPIRED_TOMBSTONES
+    );
+    assert_eq!(indexes.tombstone_count, MAX_EXPIRED_TOMBSTONES);
+    assert_eq!(indexes.tombstone_order.len(), MAX_EXPIRED_TOMBSTONES);
+    assert_eq!(indexes.deadlines.len(), MAX_EXPIRED_TOMBSTONES);
+  }
+
+  #[tokio::test]
+  async fn indeterminate_mismatch_clears_the_run_capacity_before_conflict() {
+    let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
+    let (app, state) = test_app(store.clone(), ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1));
+    let draft = create_test_draft(&app).await;
+    {
+      let mut indexes = state.artifacts.drafts.lock().unwrap();
+      let record = indexes.by_upload.get_mut(&(RUN.parse().unwrap(), draft.upload_id())).unwrap();
+      let DraftState::Pending(pending) = &mut record.state else {
+        panic!("new draft must be pending");
+      };
+      pending.admission = AdmissionState::Indeterminate(ADMISSION.parse().unwrap());
+    }
+    store
+      .commit(
+        auv_tracing::RunCommitRequest::new(
+          AUTHORITY.parse().unwrap(),
+          RUN.parse().unwrap(),
+          KEY.parse().unwrap(),
+          vec![auv_tracing::RunMutation::StartSpan(
+            auv_tracing::SpanStarted::new(
+              auv_tracing::SpanId::new(),
+              None,
+              None,
+              auv_tracing::SpanName::parse("auv.test.mismatch").unwrap(),
+              Timestamp::new(1, 0).unwrap(),
+              auv_tracing::Attributes::empty(),
+            ),
+          )],
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    let conflict = app.clone().oneshot(test_draft_request(ARTIFACT, KEY, ADMISSION)).await.unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+    let artifact_id = auv_tracing::ArtifactId::new().to_string();
+    let key = IdempotencyKey::new().to_string();
+    let admission = ArtifactUploadAdmissionId::new().to_string();
+    let next = app.oneshot(test_draft_request(&artifact_id, &key, &admission)).await.unwrap();
+    assert_eq!(next.status(), StatusCode::CREATED);
+  }
+
+  #[tokio::test]
+  async fn indeterminate_matching_lookup_moves_the_response_out_of_active_capacity() {
+    let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
+    let (app, state) = test_app(store.clone(), ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1));
+    let draft = create_test_draft(&app).await;
+    {
+      let mut indexes = state.artifacts.drafts.lock().unwrap();
+      let record = indexes.by_upload.get_mut(&(RUN.parse().unwrap(), draft.upload_id())).unwrap();
+      let DraftState::Pending(pending) = &mut record.state else {
+        panic!("new draft must be pending");
+      };
+      pending.admission = AdmissionState::Indeterminate(ADMISSION.parse().unwrap());
+    }
+    store
+      .write_artifact(
+        StoreArtifactRequest::new(
+          AUTHORITY.parse().unwrap(),
+          RUN.parse().unwrap(),
+          KEY.parse().unwrap(),
+          ARTIFACT.parse().unwrap(),
+          None,
+          auv_tracing::ArtifactPurpose::parse("display.capture").unwrap(),
+          auv_tracing::ContentType::parse("text/plain").unwrap(),
+          auv_tracing::ByteLength::new(3).unwrap(),
+          ABC_SHA256.parse().unwrap(),
+          auv_tracing::Attributes::empty(),
+        ),
+        Box::pin(Cursor::new(b"abc".to_vec())),
+      )
+      .await
+      .unwrap();
+
+    let replay = app.clone().oneshot(test_draft_request(ARTIFACT, KEY, ADMISSION)).await.unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.headers().get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap(), ARTIFACT_UPLOAD_ADMISSION_BUSY);
+
+    let artifact_id = auv_tracing::ArtifactId::new().to_string();
+    let key = IdempotencyKey::new().to_string();
+    let admission = ArtifactUploadAdmissionId::new().to_string();
+    let next = app.oneshot(test_draft_request(&artifact_id, &key, &admission)).await.unwrap();
+    assert_eq!(next.status(), StatusCode::CREATED);
   }
 
   #[tokio::test]

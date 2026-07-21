@@ -17,15 +17,16 @@ use url::Url;
 
 use crate::protocol::{
   ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE,
-  ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, AuthorityResponse,
-  RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody, RunStreamGap,
-  decode_strict,
+  AUTHORITY_ID_HEADER, ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId,
+  AuthorityResponse, RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody,
+  RunStreamGap, decode_strict,
 };
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = MAX_PROTOCOL_JSON_BYTES + 64 * 1024;
 const MAX_SSE_BUFFER_BYTES: usize = MAX_SSE_FRAME_BYTES + 4;
 const SSE_INGEST_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_DRAFT_POST_ATTEMPTS: usize = 3;
 
 /// A complete remote implementation of the canonical [`RunStore`] authority port.
 #[derive(Clone)]
@@ -45,7 +46,7 @@ impl InspectRunStore {
     if response.status() != StatusCode::OK || !has_media_type(&response, RUN_MEDIA_TYPE) {
       return Err(ConnectError::new("Inspect authority returned an invalid identity response"));
     }
-    let bytes = bounded_response_bytes(response).await.map_err(ConnectError::new)?;
+    let bytes = bounded_response_bytes(response).await.map_err(|error| ConnectError::new(error.to_string()))?;
     let identity = decode_strict::<AuthorityResponse>(&bytes).map_err(|error| ConnectError::new(error.to_string()))?;
     Ok(Self {
       authority_id: identity.authority_id,
@@ -73,7 +74,10 @@ impl InspectRunStore {
     if !has_media_type(&response, ARTIFACT_RESOLVE_MEDIA_TYPE) {
       return Err(ReadError::Integrity(code("auv.inspect.resolve_media_type_invalid")));
     }
-    let bytes = bounded_response_bytes(response).await.map_err(|_| ReadError::Integrity(code("auv.inspect.resolve_response_invalid")))?;
+    let bytes = bounded_response_bytes(response).await.map_err(|error| match error {
+      BoundedResponseError::Transport => ReadError::Unavailable(code("auv.inspect.transport_unavailable")),
+      BoundedResponseError::TooLarge => ReadError::Integrity(code("auv.inspect.resolve_response_invalid")),
+    })?;
     let response =
       decode_strict::<ResolveArtifactsResponse>(&bytes).map_err(|_| ReadError::Integrity(code("auv.inspect.resolve_response_invalid")))?;
     if response.results().len() != requested.uris().len() {
@@ -192,14 +196,15 @@ impl RunStore for InspectRunStore {
         request.expected_sha256(),
         request.attributes().clone(),
       );
-      let admission = ArtifactUploadAdmissionId::new();
+      let mut admission = ArtifactUploadAdmissionId::new();
       let draft_url = endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads", request.run_id()));
       let draft_body = Bytes::from(serde_json::to_vec(&draft_request).expect("validated artifact draft request encodes as JSON"));
       let expected_uri = ArtifactUri::from_ids(request.run_id(), request.artifact_id());
       let expected_upload_id = ArtifactUploadId::from_idempotency_key(request.idempotency_key());
       let mut validated_draft = None;
       let mut draft_failure = code("auv.inspect.draft_transport_unavailable");
-      for _ in 0..2 {
+      let mut invalid_responses = 0;
+      for attempt in 0..MAX_DRAFT_POST_ATTEMPTS {
         let response = match self
           .client
           .post(draft_url.clone())
@@ -215,36 +220,52 @@ impl RunStore for InspectRunStore {
           Err(_) => continue,
         };
         if !matches!(response.status(), StatusCode::CREATED | StatusCode::OK) {
-          return match write_artifact_failure(response).await {
+          return match write_artifact_failure(response, self.authority_id).await {
             Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
             Ok(error) => Err(error),
             Err(code) => Err(ArtifactWriteError::Unavailable(code)),
           };
         }
         match validate_draft_success(response, admission, expected_upload_id, &expected_uri).await {
+          Ok(draft) if !draft.admitted => {
+            match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
+              Ok(Some(commit)) if artifact_commit_matches(&commit, &request) => return Ok(CommitResult::Replayed(commit)),
+              Ok(Some(_)) => return Err(ArtifactWriteError::IdempotencyMismatch),
+              Ok(None) => {}
+              Err(_) => {
+                return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_replay_lookup_unavailable")));
+              }
+            }
+            draft_failure = code("auv.inspect.upload_admission_unavailable");
+            if attempt + 1 < MAX_DRAFT_POST_ATTEMPTS {
+              admission = ArtifactUploadAdmissionId::new();
+              continue;
+            }
+          }
           Ok(draft) => {
             validated_draft = Some(draft);
             break;
           }
-          Err(error) => draft_failure = error,
+          Err(error) => {
+            draft_failure = error;
+            invalid_responses += 1;
+            if invalid_responses == 2 {
+              break;
+            }
+          }
         }
       }
       let validated_draft = validated_draft.ok_or(ArtifactWriteError::Unavailable(draft_failure))?;
       let replayed_draft = validated_draft.replayed;
-      let admitted = validated_draft.admitted;
       let draft = validated_draft.draft;
       if replayed_draft {
         match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
           Ok(Some(commit)) if artifact_commit_matches(&commit, &request) => return Ok(CommitResult::Replayed(commit)),
           Ok(Some(_)) => return Err(ArtifactWriteError::IdempotencyMismatch),
           Ok(None) => {}
-          Err(_) => return Err(ArtifactWriteError::PublicationUnknown(code("auv.inspect.draft_replay_lookup_unknown"))),
+          Err(_) => return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_replay_lookup_unavailable"))),
         }
       }
-      if !admitted {
-        return Err(ArtifactWriteError::PublicationUnknown(code("auv.inspect.upload_admission_busy")));
-      }
-
       let stream = ReaderStream::new(body.compat());
       let response = self
         .client
@@ -281,7 +302,7 @@ impl RunStore for InspectRunStore {
             CommitResult::Replayed(commit)
           })
         }
-        _ => match write_artifact_failure(response).await {
+        _ => match write_artifact_failure(response, self.authority_id).await {
           Ok(ArtifactWriteError::PublicationUnknown(code)) | Err(code) => self.recover_artifact(&request, code).await,
           Ok(error) => Err(error),
         },
@@ -716,7 +737,10 @@ async fn decode_run_success<T: serde::de::DeserializeOwned>(response: Response) 
   if !has_media_type(&response, RUN_MEDIA_TYPE) {
     return Err(ReadError::Integrity(code("auv.inspect.run_media_type_invalid")));
   }
-  let bytes = bounded_response_bytes(response).await.map_err(|_| ReadError::Integrity(code("auv.inspect.run_response_invalid")))?;
+  let bytes = bounded_response_bytes(response).await.map_err(|error| match error {
+    BoundedResponseError::Transport => ReadError::Unavailable(code("auv.inspect.transport_unavailable")),
+    BoundedResponseError::TooLarge => ReadError::Integrity(code("auv.inspect.run_response_invalid")),
+  })?;
   decode_strict(&bytes).map_err(|_| ReadError::Integrity(code("auv.inspect.run_response_invalid")))
 }
 
@@ -724,7 +748,10 @@ async fn ensure_run_error(response: Response, expected: RunApiError) -> Result<(
   if !has_media_type(&response, RUN_MEDIA_TYPE) {
     return Err(ReadError::Integrity(code("auv.inspect.run_error_media_type_invalid")));
   }
-  let bytes = bounded_response_bytes(response).await.map_err(|_| ReadError::Integrity(code("auv.inspect.run_error_invalid")))?;
+  let bytes = bounded_response_bytes(response).await.map_err(|error| match error {
+    BoundedResponseError::Transport => ReadError::Unavailable(code("auv.inspect.transport_unavailable")),
+    BoundedResponseError::TooLarge => ReadError::Integrity(code("auv.inspect.run_error_invalid")),
+  })?;
   let received = decode_strict::<RunApiError>(&bytes).map_err(|_| ReadError::Integrity(code("auv.inspect.run_error_invalid")))?;
   if received != expected {
     return Err(ReadError::Integrity(code("auv.inspect.run_error_status_mismatch")));
@@ -744,16 +771,17 @@ async fn read_failure(response: Response) -> ReadError {
   let status = response.status();
   match decode_run_api_error(response).await {
     Ok(error) if status_matches_run_error(status, &error) => map_read_error(error),
-    _ => ReadError::Integrity(code("auv.inspect.run_error_invalid")),
+    Err(ResponseDecodeError::Transport) => ReadError::Unavailable(code("auv.inspect.transport_unavailable")),
+    Ok(_) | Err(ResponseDecodeError::Invalid) => ReadError::Integrity(code("auv.inspect.run_error_invalid")),
   }
 }
 
-async fn decode_run_api_error(response: Response) -> Result<RunApiError, ()> {
+async fn decode_run_api_error(response: Response) -> Result<RunApiError, ResponseDecodeError> {
   if !has_media_type(&response, RUN_MEDIA_TYPE) {
-    return Err(());
+    return Err(ResponseDecodeError::Invalid);
   }
-  let bytes = bounded_response_bytes(response).await.map_err(|_| ())?;
-  decode_strict(&bytes).map_err(|_| ())
+  let bytes = bounded_response_bytes(response).await.map_err(ResponseDecodeError::from)?;
+  decode_strict(&bytes).map_err(|_| ResponseDecodeError::Invalid)
 }
 
 fn status_matches_run_error(status: StatusCode, error: &RunApiError) -> bool {
@@ -813,13 +841,22 @@ fn map_read_error(error: RunApiError) -> ReadError {
   }
 }
 
-async fn write_artifact_failure(response: Response) -> Result<ArtifactWriteError, ErrorCode> {
+async fn write_artifact_failure(response: Response, connected_authority: AuthorityId) -> Result<ArtifactWriteError, ErrorCode> {
   let status = response.status();
+  let response_authority = authority_response(&response, connected_authority);
   match decode_artifact_error(response, ARTIFACT_UPLOAD_MEDIA_TYPE).await {
     Ok(error) => {
       let error_code = error.error().clone();
       Ok(match status {
-        StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => ArtifactWriteError::Rejected(error_code),
+        StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => {
+          let Ok(received) = response_authority else {
+            return Ok(ArtifactWriteError::Unavailable(code("auv.inspect.artifact_error_invalid")));
+          };
+          ArtifactWriteError::AuthorityMismatch {
+            expected: connected_authority,
+            received,
+          }
+        }
         StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_or_artifact_conflict") => {
           ArtifactWriteError::IdempotencyMismatch
         }
@@ -835,11 +872,12 @@ async fn write_artifact_failure(response: Response) -> Result<ArtifactWriteError
         | StatusCode::NOT_FOUND
         | StatusCode::GONE
         | StatusCode::PAYLOAD_TOO_LARGE
+        | StatusCode::PRECONDITION_REQUIRED
         | StatusCode::UNSUPPORTED_MEDIA_TYPE => ArtifactWriteError::Rejected(error_code),
         _ => return Err(code("auv.inspect.artifact_error_status_invalid")),
       })
     }
-    Err(()) => Err(code("auv.inspect.artifact_error_invalid")),
+    Err(_) => Err(code("auv.inspect.artifact_error_invalid")),
   }
 }
 
@@ -851,33 +889,63 @@ async fn read_artifact_failure(response: Response, expected_media: &str) -> Read
       match status {
         StatusCode::NOT_FOUND => ReadError::NotFound,
         StatusCode::FORBIDDEN => ReadError::Forbidden,
-        StatusCode::BAD_REQUEST | StatusCode::CONFLICT | StatusCode::GONE => ReadError::InvalidReference(error),
+        StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED | StatusCode::CONFLICT | StatusCode::GONE => ReadError::InvalidReference(error),
         StatusCode::INTERNAL_SERVER_ERROR => ReadError::Integrity(error),
         StatusCode::SERVICE_UNAVAILABLE => ReadError::Unavailable(error),
         _ => ReadError::Integrity(code("auv.inspect.artifact_error_status_invalid")),
       }
     }
-    Err(()) => ReadError::Integrity(code("auv.inspect.artifact_error_invalid")),
+    Err(ResponseDecodeError::Transport) => ReadError::Unavailable(code("auv.inspect.transport_unavailable")),
+    Err(ResponseDecodeError::Invalid) => ReadError::Integrity(code("auv.inspect.artifact_error_invalid")),
   }
 }
 
-async fn decode_artifact_error(response: Response, media_type: &str) -> Result<ArtifactApiError, ()> {
+async fn decode_artifact_error(response: Response, media_type: &str) -> Result<ArtifactApiError, ResponseDecodeError> {
   if !has_media_type(&response, media_type) {
-    return Err(());
+    return Err(ResponseDecodeError::Invalid);
   }
-  let bytes = bounded_response_bytes(response).await.map_err(|_| ())?;
-  decode_strict::<ArtifactApiError>(&bytes).map_err(|_| ())
+  let bytes = bounded_response_bytes(response).await.map_err(ResponseDecodeError::from)?;
+  decode_strict::<ArtifactApiError>(&bytes).map_err(|_| ResponseDecodeError::Invalid)
 }
 
-async fn bounded_response_bytes(mut response: Response) -> Result<Vec<u8>, String> {
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+enum BoundedResponseError {
+  #[error("Inspect response transport failed")]
+  Transport,
+  #[error("Inspect JSON response exceeds 32 MiB")]
+  TooLarge,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ResponseDecodeError {
+  Transport,
+  Invalid,
+}
+
+impl From<BoundedResponseError> for ResponseDecodeError {
+  fn from(error: BoundedResponseError) -> Self {
+    match error {
+      BoundedResponseError::Transport => Self::Transport,
+      BoundedResponseError::TooLarge => Self::Invalid,
+    }
+  }
+}
+
+async fn bounded_response_bytes(mut response: Response) -> Result<Vec<u8>, BoundedResponseError> {
   let mut bytes = Vec::new();
-  while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+  while let Some(chunk) = response.chunk().await.map_err(|_| BoundedResponseError::Transport)? {
     if bytes.len().saturating_add(chunk.len()) > MAX_PROTOCOL_JSON_BYTES {
-      return Err("Inspect JSON response exceeds 32 MiB".to_string());
+      return Err(BoundedResponseError::TooLarge);
     }
     bytes.extend_from_slice(&chunk);
   }
   Ok(bytes)
+}
+
+fn authority_response(response: &Response, connected: AuthorityId) -> Result<AuthorityId, ()> {
+  let value = exactly_one_response_header(response, AUTHORITY_ID_HEADER).and_then(|value| value.to_str().ok()).ok_or(())?;
+  let received = value.parse::<AuthorityId>().map_err(|_| ())?;
+  (received != connected).then_some(received).ok_or(())
 }
 
 fn ordinary_commit_matches(commit: &RunCommit, request: &RunCommitRequest) -> bool {

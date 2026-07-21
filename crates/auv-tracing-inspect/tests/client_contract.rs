@@ -479,7 +479,10 @@ async fn client_reconstructs_every_artifact_write_error_class() {
         expected: OTHER_AUTHORITY.parse().unwrap(),
         received: authority_id(),
       },
-      ArtifactWriteError::Rejected(error_code("auv.inspect.authority_mismatch")),
+      ArtifactWriteError::AuthorityMismatch {
+        expected: authority_id(),
+        received: OTHER_AUTHORITY.parse().unwrap(),
+      },
     ),
     (ArtifactWriteError::IdempotencyMismatch, ArtifactWriteError::IdempotencyMismatch),
     (ArtifactWriteError::Rejected(error_code("auv.test.rejected")), ArtifactWriteError::Rejected(error_code("auv.test.rejected"))),
@@ -503,6 +506,150 @@ async fn client_reconstructs_every_artifact_write_error_class() {
 
     assert_eq!(error, expected);
   }
+}
+
+#[tokio::test]
+async fn artifact_authority_mismatch_requires_one_distinct_canonical_authority_header() {
+  let cases: &[&[&str]] = &[
+    &[],
+    &[OTHER_AUTHORITY, AUTHORITY],
+    &["not-an-authority"],
+    &[AUTHORITY],
+  ];
+  for values in cases {
+    let values = values.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+    let app = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route(
+        "/v1/runs/{run_id}/artifact-uploads",
+        post(move || {
+          let values = values.clone();
+          async move {
+            let mut response = response(
+              StatusCode::CONFLICT,
+              ARTIFACT_UPLOAD_MEDIA_TYPE,
+              Body::from(
+                serde_json::to_vec(&ArtifactApiError {
+                  error: error_code("auv.inspect.authority_mismatch"),
+                })
+                .unwrap(),
+              ),
+            );
+            for value in values {
+              response.headers_mut().append("Auv-Authority-Id", HeaderValue::from_str(&value).unwrap());
+            }
+            response
+          }
+        }),
+      );
+    let server = TestServer::start(app).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+    let polls = Arc::new(AtomicUsize::new(0));
+
+    let error = store
+      .write_artifact(
+        artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new()),
+        Box::pin(PollProbe {
+          polls: polls.clone(),
+        }),
+      )
+      .await
+      .unwrap_err();
+
+    assert_eq!(error, ArtifactWriteError::Unavailable(error_code("auv.inspect.artifact_error_invalid")));
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+  }
+}
+
+#[tokio::test]
+async fn unauthorized_artifact_and_resolver_responses_are_confirmed_auth_rejections() {
+  let auth = error_code("auv.inspect.authentication_required");
+  let app = Router::new()
+    .route(
+      "/v1/authority",
+      get(|| async {
+        run_json(
+          StatusCode::OK,
+          &AuthorityResponse {
+            authority_id: authority_id(),
+          },
+        )
+      }),
+    )
+    .route(
+      "/v1/runs/{run_id}/artifact-uploads",
+      post(|| async {
+        response(
+          StatusCode::UNAUTHORIZED,
+          ARTIFACT_UPLOAD_MEDIA_TYPE,
+          Body::from(
+            serde_json::to_vec(&ArtifactApiError {
+              error: error_code("auv.inspect.authentication_required"),
+            })
+            .unwrap(),
+          ),
+        )
+      }),
+    )
+    .route(
+      "/v1/runs/{run_id}/artifacts/{artifact_id}",
+      get(|| async {
+        response(
+          StatusCode::UNAUTHORIZED,
+          ARTIFACT_UPLOAD_MEDIA_TYPE,
+          Body::from(
+            serde_json::to_vec(&ArtifactApiError {
+              error: error_code("auv.inspect.authentication_required"),
+            })
+            .unwrap(),
+          ),
+        )
+      }),
+    )
+    .route(
+      "/v1/resources/artifacts/resolve",
+      post(|| async {
+        response(
+          StatusCode::UNAUTHORIZED,
+          "application/json",
+          Body::from(
+            serde_json::to_vec(&ArtifactApiError {
+              error: error_code("auv.inspect.authentication_required"),
+            })
+            .unwrap(),
+          ),
+        )
+      }),
+    );
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+  let polls = Arc::new(AtomicUsize::new(0));
+
+  let write = store
+    .write_artifact(
+      artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new()),
+      Box::pin(PollProbe {
+        polls: polls.clone(),
+      }),
+    )
+    .await
+    .unwrap_err();
+  assert_eq!(write, ArtifactWriteError::Rejected(auth.clone()));
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+
+  let uri = ArtifactUri::from_ids(run_id(), ArtifactId::new());
+  assert!(matches!(store.open_artifact(uri.clone()).await, Err(ReadError::InvalidReference(code)) if code == auth));
+  assert_eq!(store.resolve_artifacts(vec![uri]).await.unwrap_err(), ReadError::InvalidReference(auth));
 }
 
 async fn assert_read_error<F, Fut>(expected: ReadError, operation: F)
@@ -546,10 +693,14 @@ struct CountingReader {
 struct DraftPostBarrier {
   entered: Arc<tokio::sync::Barrier>,
   decided: Arc<tokio::sync::Barrier>,
+  calls: Arc<AtomicUsize>,
 }
 
 async fn synchronize_draft_posts(State(state): State<DraftPostBarrier>, request: AxumRequest, next: Next) -> Response {
   if request.method() != Method::POST || !request.uri().path().ends_with("/artifact-uploads") {
+    return next.run(request).await;
+  }
+  if state.calls.fetch_add(1, Ordering::SeqCst) >= 2 {
     return next.run(request).await;
   }
   state.entered.wait().await;
@@ -611,6 +762,7 @@ async fn equal_concurrent_upload_posts_admit_one_body_before_either_client_can_p
   let barrier = DraftPostBarrier {
     entered: Arc::new(tokio::sync::Barrier::new(2)),
     decided: Arc::new(tokio::sync::Barrier::new(2)),
+    calls: Arc::new(AtomicUsize::new(0)),
   };
   let app = router(Arc::new(backing.clone())).layer(middleware::from_fn_with_state(barrier, synchronize_draft_posts));
   let server = TestServer::start(app).await;
@@ -658,7 +810,7 @@ async fn equal_concurrent_upload_posts_admit_one_body_before_either_client_can_p
     second.await.expect("second upload task"),
   ];
   assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-  assert_eq!(results.iter().filter(|result| matches!(result, Err(ArtifactWriteError::PublicationUnknown(_)))).count(), 1);
+  assert_eq!(results.iter().filter(|result| matches!(result, Err(ArtifactWriteError::Unavailable(_)))).count(), 1);
   assert!(!results.iter().any(|result| matches!(result, Err(ArtifactWriteError::IdempotencyMismatch))));
   assert_eq!(backing.write_calls.load(Ordering::SeqCst), 1);
   assert_eq!(usize::from(first_polls.load(Ordering::SeqCst) > 0) + usize::from(second_polls.load(Ordering::SeqCst) > 0), 1);
@@ -790,6 +942,90 @@ async fn lost_draft_response_replays_the_post_with_the_same_admission() {
   assert!(polls.load(Ordering::SeqCst) > 0);
 }
 
+#[tokio::test]
+async fn delayed_busy_draft_replay_rotates_admission_without_polling_the_body() {
+  let probe = LostDraftResponseProbe::default();
+  let artifact_id = ArtifactId::new();
+  let key = IdempotencyKey::new();
+  let request = artifact_request(authority_id(), artifact_id, key);
+  let draft = ArtifactUploadDraft::new(
+    ArtifactUploadId::from_idempotency_key(key),
+    ArtifactUri::from_ids(run_id(), artifact_id),
+    Timestamp::new(1_784_620_800, 0).unwrap(),
+  );
+  let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind delayed draft server");
+  let address = listener.local_addr().expect("delayed draft server address");
+  let task_probe = probe.clone();
+  let task = tokio::spawn(async move {
+    loop {
+      let (mut socket, _) = listener.accept().await.expect("accept delayed draft request");
+      let request = read_raw_request(&mut socket).await;
+      if request.path == "/v1/authority" {
+        write_raw_response(
+          &mut socket,
+          "200 OK",
+          RUN_MEDIA_TYPE,
+          &[],
+          &serde_json::to_vec(&AuthorityResponse {
+            authority_id: authority_id(),
+          })
+          .unwrap(),
+          None,
+        )
+        .await;
+      } else if request.path.ends_with("/artifact-uploads") {
+        let admission = request.header(ARTIFACT_UPLOAD_ADMISSION_HEADER).expect("draft admission").to_owned();
+        task_probe.admissions.lock().expect("admission probe").push(admission.clone());
+        let call = task_probe.calls.fetch_add(1, Ordering::SeqCst);
+        let body = serde_json::to_vec(&draft).unwrap();
+        if call == 0 {
+          tokio::task::yield_now().await;
+          write_raw_response(
+            &mut socket,
+            "201 Created",
+            ARTIFACT_UPLOAD_MEDIA_TYPE,
+            &[(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.as_str())],
+            &body[..body.len() / 2],
+            Some(body.len()),
+          )
+          .await;
+        } else {
+          write_raw_response(&mut socket, "200 OK", ARTIFACT_UPLOAD_MEDIA_TYPE, &[(ARTIFACT_UPLOAD_ADMISSION_HEADER, "busy")], &body, None)
+            .await;
+        }
+      } else if request.path.contains("/commits/by-idempotency-key/") {
+        write_raw_response(&mut socket, "404 Not Found", RUN_MEDIA_TYPE, &[], &serde_json::to_vec(&RunApiError::NotFound).unwrap(), None)
+          .await;
+      } else {
+        panic!("unexpected delayed draft request path {}", request.path);
+      }
+    }
+  });
+  let server = TestServer {
+    base_url: Url::parse(&format!("http://{address}/")).unwrap(),
+    task,
+  };
+  let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
+  let polls = Arc::new(AtomicUsize::new(0));
+
+  let error = store
+    .write_artifact(
+      request,
+      Box::pin(PollProbe {
+        polls: polls.clone(),
+      }),
+    )
+    .await
+    .unwrap_err();
+
+  assert_eq!(error, ArtifactWriteError::Unavailable(error_code("auv.inspect.upload_admission_unavailable")));
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+  let admissions = probe.admissions.lock().expect("admission probe");
+  assert_eq!(admissions.len(), 3);
+  assert_eq!(admissions[0], admissions[1]);
+  assert_ne!(admissions[1], admissions[2]);
+}
+
 struct RawRequest {
   path: String,
   headers: Vec<(String, String)>,
@@ -861,6 +1097,98 @@ async fn write_raw_response(
   socket.write_all(head.as_bytes()).await.expect("write raw response headers");
   socket.write_all(body).await.expect("write raw response body");
   socket.flush().await.expect("flush raw response");
+}
+
+async fn raw_success_fault_server(
+  target_path_fragment: &'static str,
+  media_type: &'static str,
+  body: Vec<u8>,
+  declared_length: Option<usize>,
+) -> TestServer {
+  let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind raw response server");
+  let address = listener.local_addr().expect("raw response server address");
+  let task = tokio::spawn(async move {
+    loop {
+      let (mut socket, _) = listener.accept().await.expect("accept raw response request");
+      let request = read_raw_request(&mut socket).await;
+      if request.path == "/v1/authority" {
+        write_raw_response(
+          &mut socket,
+          "200 OK",
+          RUN_MEDIA_TYPE,
+          &[],
+          &serde_json::to_vec(&AuthorityResponse {
+            authority_id: authority_id(),
+          })
+          .unwrap(),
+          None,
+        )
+        .await;
+      } else if request.path.contains(target_path_fragment) {
+        write_raw_response(&mut socket, "200 OK", media_type, &[], &body, declared_length).await;
+        break;
+      } else {
+        panic!("unexpected raw response request path {}", request.path);
+      }
+    }
+  });
+  TestServer {
+    base_url: Url::parse(&format!("http://{address}/")).unwrap(),
+    task,
+  }
+}
+
+#[tokio::test]
+async fn truncated_run_and_resolver_success_bodies_are_unavailable_not_integrity() {
+  let partial = br#"{"results":"#.to_vec();
+  let run_server = raw_success_fault_server("/commits/by-idempotency-key/", RUN_MEDIA_TYPE, partial.clone(), Some(partial.len() + 16)).await;
+  let run_store = InspectRunStore::connect(run_server.base_url.clone()).await.unwrap();
+  assert_eq!(
+    run_store.lookup_commit(run_id(), IdempotencyKey::new()).await.unwrap_err(),
+    ReadError::Unavailable(error_code("auv.inspect.transport_unavailable"))
+  );
+
+  let resolver_server =
+    raw_success_fault_server("/v1/resources/artifacts/resolve", "application/json", partial.clone(), Some(partial.len() + 16)).await;
+  let resolver_store = InspectRunStore::connect(resolver_server.base_url.clone()).await.unwrap();
+  assert_eq!(
+    resolver_store.resolve_artifacts(vec![ArtifactUri::from_ids(run_id(), ArtifactId::new())]).await.unwrap_err(),
+    ReadError::Unavailable(error_code("auv.inspect.transport_unavailable"))
+  );
+}
+
+#[tokio::test]
+async fn clean_malformed_and_over_limit_responses_remain_integrity_failures() {
+  let run_server = raw_success_fault_server("/commits/by-idempotency-key/", RUN_MEDIA_TYPE, b"{".to_vec(), None).await;
+  let run_store = InspectRunStore::connect(run_server.base_url.clone()).await.unwrap();
+  assert!(matches!(run_store.lookup_commit(run_id(), IdempotencyKey::new()).await, Err(ReadError::Integrity(_))));
+
+  let oversized = vec![b' '; 32 * 1024 * 1024 + 1];
+  let app = Router::new()
+    .route(
+      "/v1/authority",
+      get(|| async {
+        run_json(
+          StatusCode::OK,
+          &AuthorityResponse {
+            authority_id: authority_id(),
+          },
+        )
+      }),
+    )
+    .route(
+      "/v1/resources/artifacts/resolve",
+      post(move || {
+        let oversized = oversized.clone();
+        async move { response(StatusCode::OK, "application/json", Body::from(oversized)) }
+      }),
+    );
+  let resolver_server = TestServer::start(app).await;
+  let resolver_store = InspectRunStore::connect(resolver_server.base_url.clone()).await.unwrap();
+  assert!(matches!(
+    resolver_store.resolve_artifacts(vec![ArtifactUri::from_ids(run_id(), ArtifactId::new())]).await,
+    Err(ReadError::Integrity(_))
+  ));
 }
 
 #[tokio::test]
@@ -1095,7 +1423,7 @@ async fn replayed_draft_preflight_mismatch_or_lookup_error_never_polls_the_body(
       .unwrap_err();
 
     assert_eq!(matches!(error, ArtifactWriteError::IdempotencyMismatch), expect_mismatch);
-    assert_eq!(matches!(error, ArtifactWriteError::PublicationUnknown(_)), !expect_mismatch);
+    assert_eq!(matches!(error, ArtifactWriteError::Unavailable(_)), !expect_mismatch);
     assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 0);
   }

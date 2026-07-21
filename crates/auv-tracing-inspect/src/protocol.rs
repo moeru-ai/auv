@@ -24,10 +24,23 @@ pub const ARTIFACT_UPLOAD_MEDIA_TYPE: &str = "application/vnd.auv.artifact-uploa
 pub const ARTIFACT_RESOLVE_MEDIA_TYPE: &str = "application/json";
 
 /// Generation-bound control header used to grant one artifact body upload.
+///
+/// Inspect V1 requires exactly one canonical admission ID on every artifact
+/// draft POST and content PUT. A missing value is a protocol precondition
+/// failure, while an equal replay may return [`ARTIFACT_UPLOAD_ADMISSION_BUSY`].
 pub const ARTIFACT_UPLOAD_ADMISSION_HEADER: &str = "Auv-Artifact-Upload-Admission";
 
 /// Response value used when an equal draft replay does not own body admission.
 pub const ARTIFACT_UPLOAD_ADMISSION_BUSY: &str = "busy";
+
+/// Inspect V1 admission lease in seconds.
+pub const ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS: u64 = 30;
+
+/// Stable error code returned when the required admission header is absent.
+pub const ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR: &str = "auv.inspect.upload_admission_required";
+
+/// Strict response header carrying the authority currently serving a request.
+pub const AUTHORITY_ID_HEADER: &str = "Auv-Authority-Id";
 
 const MAX_RESOLVED_ARTIFACTS: usize = 256;
 
@@ -684,6 +697,15 @@ mod tests {
 
     assert!(decode_strict::<ArtifactApiError>(artifact_authority_fields).is_err());
     assert!(decode_strict::<RunApiError>(commit_unknown_variant).is_err());
+  }
+
+  #[test]
+  fn v1_control_headers_and_admission_precondition_are_public_protocol_constants() {
+    assert_eq!(ARTIFACT_UPLOAD_ADMISSION_HEADER, "Auv-Artifact-Upload-Admission");
+    assert_eq!(ARTIFACT_UPLOAD_ADMISSION_BUSY, "busy");
+    assert_eq!(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, 30);
+    assert_eq!(ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR, "auv.inspect.upload_admission_required");
+    assert_eq!(AUTHORITY_ID_HEADER, "Auv-Authority-Id");
   }
 
   fn nested_arrays(depth: usize) -> Vec<u8> {
