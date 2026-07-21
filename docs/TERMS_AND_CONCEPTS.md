@@ -625,6 +625,27 @@ call the same operation contract without going through CLI parsing.
 
 In code, the current type is `auv_driver::OperationSpec`.
 
+## Operation Status
+
+Operation status is the coarse recorded outcome on an `OperationResult`. It is
+not, by itself, proof that an action was delivered or that the expected world
+state was reached.
+
+`Completed` means the producer did not classify the operation as failed under
+that operation's current policy. `Failed` may represent refusal, backend or
+permission failure, or a required verification that did not match. Producers
+do not yet share one rule for whether semantic mismatch changes the coarse
+status, so consumers must not infer the failure layer from this enum alone.
+
+Action delivery evidence belongs in `InputActionResult` artifacts. Semantic
+evidence belongs in `VerificationResult.semantic_matched` together with its
+failure layer. A `Completed` result can therefore carry
+`semantic_matched = false`, and a `Failed` result can still show that input was
+delivered. The planned TextEdit parity/failure-semantics slice owns any future
+standardization of producer status policy.
+
+In code, the current type is `auv_runtime::contract::OperationStatus`.
+
 ## Operation Disturbance
 
 Operation disturbance is the coarse user-visible disturbance profile attached

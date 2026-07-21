@@ -97,6 +97,26 @@ pub struct CandidateRef {
   pub candidate_local_id: String,
 }
 
+/// Coarse recorded outcome of an operation, not proof of action delivery or
+/// semantic success.
+///
+/// `Completed` means the producer did not classify the operation as failed
+/// under that operation's current policy. `Failed` means it did; the reason may
+/// be refusal before dispatch, a backend or permission error, or a required
+/// verification that did not match. The status alone does not identify which
+/// layer failed.
+///
+/// Consumers must use [`InputActionResult`] artifacts for delivery evidence and
+/// [`VerificationResult::semantic_matched`] together with
+/// [`VerificationResult::failure_layer`] for semantic evidence. In particular,
+/// `Completed` can coexist with `semantic_matched == Some(false)` and therefore
+/// must not be read as semantic success; `Failed` does not imply that no action
+/// was delivered.
+///
+/// TODO(operation-status-policy): producers do not yet share one rule for
+/// whether a semantic mismatch changes this coarse status. Standardize that in
+/// the TextEdit parity/failure-semantics slice, then tighten this contract if
+/// the owner approves one policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
@@ -129,6 +149,8 @@ pub struct OperationResult {
   #[serde(default = "default_operation_result_api_version")]
   pub api_version: String,
   pub run_id: RunId,
+  /// Coarse recorded outcome — see [`OperationStatus`]. Delivery and semantic
+  /// evidence live in artifacts and [`Self::verifications`], respectively.
   pub status: OperationStatus,
   pub operation_id: String,
   pub evidence_artifacts: Vec<ArtifactRef>,
@@ -1412,5 +1434,45 @@ mod tests {
     assert_eq!(value["verifications"].as_array().map(|a| a.len()), Some(2), "multi-claim verifications must round-trip");
     let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
     assert_eq!(parsed.verifications.len(), 2);
+  }
+
+  // ROOT CAUSE:
+  //
+  // `OperationStatus` had no documentation, so `Completed` could be misread as
+  // semantic success. Producers currently use different coarse status policy:
+  // some keep `Completed` when verification does not match, while TextEdit
+  // marks a required semantic mismatch `Failed`. This test locks the invariant
+  // shared by both policies: status never replaces the explicit verification
+  // evidence, and `Completed` alone cannot prove a semantic match.
+  #[test]
+  fn operation_status_completed_does_not_imply_semantic_match() {
+    let mut mismatch = sample_verification(VerificationMethod::StateChanged);
+    mismatch.state_changed = true; // the action was delivered and the world moved,
+    mismatch.semantic_matched = Some(false); // but it did NOT reach the expected state,
+    mismatch.failure_layer = Some(FailureLayer::StateChangedNoMatch);
+
+    let result = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
+      run_id: RunId::new("run_delivered_no_match"),
+      status: OperationStatus::Completed, // this producer keeps a coarse completed status.
+      operation_id: "music.result.play".to_string(),
+      evidence_artifacts: vec![artifact_ref()],
+      output: OperationOutput::Acknowledged {
+        message: Some("click delivered".to_string()),
+      },
+      verifications: vec![mismatch],
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+
+    let value = serde_json::to_value(&result).expect("result should serialize");
+    // Coarse status and semantic evidence remain separate fields, not one collapsed flag.
+    assert_eq!(value["status"], json!("completed"), "status reflects execution, not semantic match");
+    assert_eq!(value["verifications"][0]["semantic_matched"], json!(false), "semantic failure lives in the verification");
+    assert_eq!(value["verifications"][0]["failure_layer"], json!("state_changed_no_match"));
+
+    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
+    assert_eq!(parsed.status, OperationStatus::Completed);
+    assert_eq!(parsed.verifications[0].semantic_matched, Some(false));
   }
 }
