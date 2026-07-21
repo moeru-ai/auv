@@ -3,6 +3,7 @@
 //! Bounded OpenTelemetry projection for AUV run telemetry.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -30,13 +31,32 @@ struct OtelProjectorInner {
   logger_provider: SdkLoggerProvider,
   tracer: SdkTracer,
   logger: SdkLogger,
-  active_spans: Mutex<BTreeMap<(RunId, SpanId), ActiveSpan>>,
+  state: Mutex<ProjectorState>,
+}
+
+#[derive(Default)]
+struct ProjectorState {
+  // TODO(run-ended-v1): Reclaim retained run identities and span tombstones
+  // when TelemetryItem gains a validated RunEnded signal.
+  runs: BTreeMap<RunId, RunState>,
+}
+
+struct RunState {
+  authority_id: Option<AuthorityId>,
+  spans: BTreeMap<SpanId, SpanState>,
+}
+
+enum SpanState {
+  Active(ActiveSpan),
+  Ended,
 }
 
 #[derive(Clone)]
 struct ActiveSpan {
   authority_id: Option<AuthorityId>,
   started_at: Timestamp,
+  parent_span_id: Option<SpanId>,
+  active_children: usize,
   context: Context,
 }
 
@@ -52,7 +72,7 @@ impl OtelProjector {
         logger_provider,
         tracer,
         logger,
-        active_spans: Mutex::new(BTreeMap::new()),
+        state: Mutex::new(ProjectorState::default()),
       }),
     }
   }
@@ -115,29 +135,56 @@ impl OtelProjectorInner {
         schema,
         occurred_at,
         revision,
-      } => {
-        let mut record = self.logger.create_log_record();
-        // NOTICE: OpenTelemetry 0.32 accepts only `&'static str` event names;
-        // keep the owned schema name in `auv.event.schema.name` until that API
-        // accepts owned names. See `opentelemetry-0.32.0/src/logs/record.rs`.
-        record.set_event_name("auv.event");
-        record.set_target(LOG_TARGET);
-        record.set_timestamp(system_time(occurred_at)?);
-        add_optional_authority(&mut record, authority_id);
-        record.add_attribute("auv.run.id", run_id.to_string());
-        add_optional_revision(&mut record, revision);
-        if let Some(span_id) = span_id {
-          record.add_attribute("auv.span.id", span_id.to_string());
-          let context = self.active_context(authority_id, run_id, span_id, "auv.telemetry.otel_missing_event_span")?;
-          let span_context = context.span().span_context().clone();
-          record.set_trace_context(span_context.trace_id(), span_context.span_id(), Some(span_context.trace_flags()));
+      } => match span_id {
+        Some(span_id) => {
+          let timestamp = system_time(occurred_at)?;
+          let context = {
+            let state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+            let run = state.runs.get(&run_id).ok_or_else(|| error("auv.telemetry.otel_missing_event_span"))?;
+            let active = match run.spans.get(&span_id) {
+              Some(SpanState::Active(active)) => active,
+              Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_event_span")),
+              None => return Err(error("auv.telemetry.otel_missing_event_span")),
+            };
+            if active.authority_id != authority_id {
+              return Err(error("auv.telemetry.otel_span_authority_mismatch"));
+            }
+            if run.authority_id != authority_id {
+              return Err(error("auv.telemetry.otel_run_authority_mismatch"));
+            }
+            active.context.clone()
+          };
+          context.span().add_event_with_timestamp(
+            schema.name().as_str().to_owned(),
+            timestamp,
+            event_attributes(authority_id, run_id, Some(span_id), event_id, &schema, revision),
+          );
+          Ok(())
         }
-        record.add_attribute("auv.event.id", event_id.to_string());
-        record.add_attribute("auv.event.schema.name", schema.name().as_str().to_owned());
-        record.add_attribute("auv.event.schema.version", i64::from(schema.version().get()));
-        self.logger.emit(record);
-        Ok(())
-      }
+        None => {
+          {
+            let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+            ensure_run_authority(&mut state, run_id, authority_id)?;
+          }
+          let mut record = self.logger.create_log_record();
+          // NOTICE: OpenTelemetry 0.32 accepts only `&'static str` LogRecord
+          // event names. Keep the exact bounded schema in
+          // `auv.event.schema.name` until the API accepts owned names; leaking
+          // or interning producer strings would create unbounded process state.
+          // See `opentelemetry-0.32.0/src/logs/record.rs`.
+          record.set_event_name("auv.event");
+          record.set_target(LOG_TARGET);
+          record.set_timestamp(system_time(occurred_at)?);
+          add_optional_authority(&mut record, authority_id);
+          record.add_attribute("auv.run.id", run_id.to_string());
+          add_optional_revision(&mut record, revision);
+          record.add_attribute("auv.event.id", event_id.to_string());
+          record.add_attribute("auv.event.schema.name", schema.name().as_str().to_owned());
+          record.add_attribute("auv.event.schema.version", i64::from(schema.version().get()));
+          self.logger.emit(record);
+          Ok(())
+        }
+      },
       TelemetryItem::Artifact {
         authority_id,
         run_id,
@@ -150,6 +197,10 @@ impl OtelProjectorInner {
         attributes,
         revision,
       } => {
+        {
+          let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+          ensure_run_authority(&mut state, run_id, Some(authority_id))?;
+        }
         let mut record = self.logger.create_log_record();
         record.set_event_name("auv.artifact.published");
         record.set_target(LOG_TARGET);
@@ -176,22 +227,39 @@ impl OtelProjectorInner {
       return Err(error("auv.telemetry.otel_conflicting_span_relationship"));
     }
     let start_time = system_time(input.started_at)?;
-    let mut active_spans = self.active_spans.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
-    let key = (input.run_id, input.span_id);
-    if active_spans.contains_key(&key) {
+    let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+    let run = match state.runs.entry(input.run_id) {
+      Entry::Vacant(entry) => {
+        if input.parent_span_id.is_some() {
+          return Err(error("auv.telemetry.otel_missing_parent_span"));
+        }
+        entry.insert(RunState {
+          authority_id: input.authority_id,
+          spans: BTreeMap::new(),
+        })
+      }
+      Entry::Occupied(entry) => entry.into_mut(),
+    };
+    if run.spans.contains_key(&input.span_id) {
       return Err(error("auv.telemetry.otel_duplicate_span_start"));
     }
 
     let parent_context = match input.parent_span_id {
-      Some(parent_span_id) => {
-        let parent = active_spans.get(&(input.run_id, parent_span_id)).ok_or_else(|| error("auv.telemetry.otel_missing_parent_span"))?;
-        if parent.authority_id != input.authority_id {
-          return Err(error("auv.telemetry.otel_parent_authority_mismatch"));
+      Some(parent_span_id) => match run.spans.get(&parent_span_id) {
+        Some(SpanState::Active(parent)) => {
+          if parent.authority_id != input.authority_id {
+            return Err(error("auv.telemetry.otel_parent_authority_mismatch"));
+          }
+          parent.context.clone()
         }
-        parent.context.clone()
-      }
+        Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_parent_span")),
+        None => return Err(error("auv.telemetry.otel_missing_parent_span")),
+      },
       None => Context::new(),
     };
+    if run.authority_id != input.authority_id {
+      return Err(error("auv.telemetry.otel_run_authority_mismatch"));
+    }
 
     let mut attributes = vec![
       KeyValue::new("auv.run.id", input.run_id.to_string()),
@@ -222,13 +290,22 @@ impl OtelProjectorInner {
       return Err(error("auv.telemetry.otel_invalid_span_context"));
     }
     let context = Context::new().with_span(span);
-    active_spans.insert(
-      key,
-      ActiveSpan {
+    if let Some(parent_span_id) = input.parent_span_id {
+      match run.spans.get_mut(&parent_span_id) {
+        Some(SpanState::Active(parent)) => parent.active_children += 1,
+        Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_parent_span")),
+        None => return Err(error("auv.telemetry.otel_missing_parent_span")),
+      }
+    }
+    run.spans.insert(
+      input.span_id,
+      SpanState::Active(ActiveSpan {
         authority_id: input.authority_id,
         started_at: input.started_at,
+        parent_span_id: input.parent_span_id,
+        active_children: 0,
         context,
-      },
+      }),
     );
     Ok(())
   }
@@ -242,38 +319,87 @@ impl OtelProjectorInner {
     end_revision: Option<RunRevision>,
   ) -> Result<(), TelemetryError> {
     let end_time = system_time(ended_at)?;
-    let mut active_spans = self.active_spans.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
-    let key = (run_id, span_id);
-    let active = active_spans.get(&key).ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
+    let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+    let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
+    let active = match run.spans.get(&span_id) {
+      Some(SpanState::Active(active)) => active,
+      Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_duplicate_span_end")),
+      None => return Err(error("auv.telemetry.otel_missing_span_start")),
+    };
     if active.authority_id != authority_id {
       return Err(error("auv.telemetry.otel_span_authority_mismatch"));
+    }
+    if run.authority_id != authority_id {
+      return Err(error("auv.telemetry.otel_run_authority_mismatch"));
     }
     if ended_at < active.started_at {
       return Err(error("auv.telemetry.otel_span_end_before_start"));
     }
-    let active = active_spans.remove(&key).ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
-    drop(active_spans);
+    if active.active_children != 0 {
+      return Err(error("auv.telemetry.otel_span_has_active_children"));
+    }
+    let parent_span_id = active.parent_span_id;
+    if let Some(parent_span_id) = parent_span_id {
+      match run.spans.get_mut(&parent_span_id) {
+        Some(SpanState::Active(parent)) => {
+          parent.active_children =
+            parent.active_children.checked_sub(1).ok_or_else(|| error("auv.telemetry.otel_invalid_parent_child_count"))?;
+        }
+        Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_parent_span")),
+        None => return Err(error("auv.telemetry.otel_missing_parent_span")),
+      }
+    }
+    let previous = run.spans.insert(span_id, SpanState::Ended).ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
+    let SpanState::Active(active) = previous else {
+      return Err(error("auv.telemetry.otel_duplicate_span_end"));
+    };
+    drop(state);
     if let Some(end_revision) = end_revision {
       active.context.span().set_attribute(KeyValue::new("auv.span.end_revision", revision_i64(end_revision)));
     }
     active.context.span().end_with_timestamp(end_time);
     Ok(())
   }
+}
 
-  fn active_context(
-    &self,
-    authority_id: Option<AuthorityId>,
-    run_id: RunId,
-    span_id: SpanId,
-    missing_code: &'static str,
-  ) -> Result<Context, TelemetryError> {
-    let active_spans = self.active_spans.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
-    let active = active_spans.get(&(run_id, span_id)).ok_or_else(|| error(missing_code))?;
-    if active.authority_id != authority_id {
-      return Err(error("auv.telemetry.otel_span_authority_mismatch"));
+fn ensure_run_authority(state: &mut ProjectorState, run_id: RunId, authority_id: Option<AuthorityId>) -> Result<(), TelemetryError> {
+  match state.runs.entry(run_id) {
+    Entry::Vacant(entry) => {
+      entry.insert(RunState {
+        authority_id,
+        spans: BTreeMap::new(),
+      });
+      Ok(())
     }
-    Ok(active.context.clone())
+    Entry::Occupied(entry) if entry.get().authority_id == authority_id => Ok(()),
+    Entry::Occupied(_) => Err(error("auv.telemetry.otel_run_authority_mismatch")),
   }
+}
+
+fn event_attributes(
+  authority_id: Option<AuthorityId>,
+  run_id: RunId,
+  span_id: Option<SpanId>,
+  event_id: auv_tracing::EventId,
+  schema: &auv_tracing::EventSchema,
+  revision: Option<RunRevision>,
+) -> Vec<KeyValue> {
+  let mut attributes = vec![
+    KeyValue::new("auv.run.id", run_id.to_string()),
+    KeyValue::new("auv.event.id", event_id.to_string()),
+    KeyValue::new("auv.event.schema.name", schema.name().as_str().to_owned()),
+    KeyValue::new("auv.event.schema.version", i64::from(schema.version().get())),
+  ];
+  if let Some(authority_id) = authority_id {
+    attributes.push(KeyValue::new("auv.authority.id", authority_id.to_string()));
+  }
+  if let Some(revision) = revision {
+    attributes.push(KeyValue::new("auv.run.revision", revision_i64(revision)));
+  }
+  if let Some(span_id) = span_id {
+    attributes.push(KeyValue::new("auv.span.id", span_id.to_string()));
+  }
+  attributes
 }
 
 struct SpanStartInput {
