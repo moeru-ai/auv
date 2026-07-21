@@ -229,7 +229,7 @@ impl FileRunStore {
     let commit =
       RunCommit::new(self.inner.authority_id, run_id, revision, key, now(), facts).map_err(|_| CommitError::Rejected(rejected()))?;
     let validated = index.validate_commit(commit.clone()).map_err(|_| CommitError::Rejected(rejected()))?;
-    let storage = append_commit(&mut lock, &commit, index.verified_bytes).map_err(|error| match error {
+    let storage = append_commit(&mut lock, &commit, index.verified_bytes, index.verified_digest).map_err(|error| match error {
       AppendError::Unavailable => CommitError::Unavailable(unavailable()),
       AppendError::Integrity => CommitError::Unavailable(integrity()),
       AppendError::Unknown => CommitError::CommitUnknown(unavailable()),
@@ -283,7 +283,7 @@ impl FileRunStore {
     let blob_directory = self.inner.blob_directory(request.expected_sha256()).map_err(map_artifact_io)?;
     publish_blob(&mut temporary, &blob_directory, request.expected_sha256(), request.expected_byte_length())?;
 
-    let storage = append_commit(&mut lock, &commit, index.verified_bytes).map_err(|error| match error {
+    let storage = append_commit(&mut lock, &commit, index.verified_bytes, index.verified_digest).map_err(|error| match error {
       AppendError::Unavailable => ArtifactWriteError::Unavailable(unavailable()),
       AppendError::Integrity => ArtifactWriteError::Integrity(integrity()),
       AppendError::Unknown => ArtifactWriteError::PublicationUnknown(unavailable()),
@@ -738,6 +738,10 @@ fn prepare_root(root: &Path) -> io::Result<Dir> {
     match fs::symlink_metadata(existing) {
       Ok(metadata) => {
         validate_directory_metadata(existing, &metadata)?;
+        if let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) {
+          let parent = Dir::open_ambient_dir(parent, ambient_authority())?;
+          break ensure_durable_directory(&parent, name)?;
+        }
         break Dir::open_ambient_dir(existing, ambient_authority())?;
       }
       Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -995,7 +999,81 @@ fn verify_log_binding(lock: &RunLock) -> Result<LogIdentity, RefreshError> {
   Ok(bound_identity)
 }
 
-fn append_commit(lock: &mut RunLock, commit: &RunCommit, expected_bytes: u64) -> Result<LogStorage, AppendError> {
+fn prove_verified_prefix(file: &mut File, expected_bytes: u64, expected_digest: [u8; 32]) -> Result<(), RefreshError> {
+  if file.metadata().map_err(RefreshError::Io)?.len() != expected_bytes {
+    return Err(RefreshError::Integrity);
+  }
+  if hash_prefix(file, expected_bytes)? != expected_digest {
+    return Err(RefreshError::Integrity);
+  }
+  let mut extra = [0_u8; 1];
+  if file.read(&mut extra).map_err(RefreshError::Io)? != 0 || file.metadata().map_err(RefreshError::Io)?.len() != expected_bytes {
+    return Err(RefreshError::Integrity);
+  }
+  Ok(())
+}
+
+fn prove_appended_frame(
+  file: &mut File,
+  expected_bytes: u64,
+  expected_prefix_digest: [u8; 32],
+  frame: &[u8],
+) -> Result<[u8; 32], RefreshError> {
+  let frame_length = u64::try_from(frame.len()).map_err(|_| RefreshError::Integrity)?;
+  let expected_end = expected_bytes.checked_add(frame_length).ok_or(RefreshError::Integrity)?;
+  if file.metadata().map_err(RefreshError::Io)?.len() != expected_end {
+    return Err(RefreshError::Integrity);
+  }
+
+  file.seek(SeekFrom::Start(0)).map_err(RefreshError::Io)?;
+  let mut hasher = Sha256::new();
+  let mut buffer = [0_u8; ARTIFACT_CHUNK_BYTES];
+  let mut remaining_prefix = expected_bytes;
+  while remaining_prefix != 0 {
+    let count = usize::try_from(remaining_prefix.min(buffer.len() as u64)).expect("bounded proof read fits usize");
+    file.read_exact(&mut buffer[..count]).map_err(RefreshError::Io)?;
+    hasher.update(&buffer[..count]);
+    remaining_prefix -= count as u64;
+  }
+  let actual_prefix_digest: [u8; 32] = hasher.clone().finalize().into();
+  if actual_prefix_digest != expected_prefix_digest {
+    return Err(RefreshError::Integrity);
+  }
+
+  let mut frame_offset = 0_usize;
+  while frame_offset < frame.len() {
+    let count = (frame.len() - frame_offset).min(buffer.len());
+    file.read_exact(&mut buffer[..count]).map_err(RefreshError::Io)?;
+    if buffer[..count] != frame[frame_offset..frame_offset + count] {
+      return Err(RefreshError::Integrity);
+    }
+    hasher.update(&buffer[..count]);
+    frame_offset += count;
+  }
+  let mut extra = [0_u8; 1];
+  if file.read(&mut extra).map_err(RefreshError::Io)? != 0 || file.metadata().map_err(RefreshError::Io)?.len() != expected_end {
+    return Err(RefreshError::Integrity);
+  }
+  Ok(hasher.finalize().into())
+}
+
+fn pre_append_error(error: RefreshError) -> AppendError {
+  match error {
+    RefreshError::Io(_) => AppendError::Unavailable,
+    RefreshError::Integrity => AppendError::Integrity,
+  }
+}
+
+fn post_append_error(_error: RefreshError) -> AppendError {
+  AppendError::Unknown
+}
+
+fn append_commit(
+  lock: &mut RunLock,
+  commit: &RunCommit,
+  expected_bytes: u64,
+  expected_prefix_digest: [u8; 32],
+) -> Result<LogStorage, AppendError> {
   let payload = serde_json::to_vec(commit).map_err(|_| AppendError::Unavailable)?;
   if payload.is_empty() || payload.len() > MAX_FRAME_PAYLOAD_BYTES {
     return Err(AppendError::Unavailable);
@@ -1006,6 +1084,7 @@ fn append_commit(lock: &mut RunLock, commit: &RunCommit, expected_bytes: u64) ->
   frame.extend_from_slice(&(payload.len() as u64).to_be_bytes());
   frame.extend_from_slice(&Sha256::digest(&payload));
   frame.extend_from_slice(&payload);
+  let frame_length = u64::try_from(frame.len()).map_err(|_| AppendError::Unavailable)?;
   if lock.log.is_none() {
     if expected_bytes != 0 {
       return Err(AppendError::Integrity);
@@ -1018,24 +1097,24 @@ fn append_commit(lock: &mut RunLock, commit: &RunCommit, expected_bytes: u64) ->
       }
     })?);
   }
-  let log_identity = verify_log_binding(lock).map_err(|error| match error {
-    RefreshError::Io(_) => AppendError::Unavailable,
-    RefreshError::Integrity => AppendError::Integrity,
-  })?;
-  let file = lock.log.as_mut().ok_or(AppendError::Integrity)?;
-  if file.metadata().map_err(|_| AppendError::Unavailable)?.len() != expected_bytes {
-    return Err(AppendError::Integrity);
+  verify_log_binding(lock).map_err(pre_append_error)?;
+  {
+    let file = lock.log.as_mut().ok_or(AppendError::Integrity)?;
+    prove_verified_prefix(file, expected_bytes, expected_prefix_digest).map_err(pre_append_error)?;
   }
-  file.seek(SeekFrom::Start(expected_bytes)).map_err(|_| AppendError::Unavailable)?;
-  file.write_all(&frame).map_err(|_| AppendError::Unknown)?;
-  file.sync_data().map_err(|_| AppendError::Unknown)?;
+  let log_identity = verify_log_binding(lock).map_err(pre_append_error)?;
+  {
+    let file = lock.log.as_mut().ok_or(AppendError::Integrity)?;
+    file.seek(SeekFrom::Start(expected_bytes)).map_err(|_| AppendError::Unavailable)?;
+    file.write_all(&frame).map_err(|_| AppendError::Unknown)?;
+    file.sync_data().map_err(|_| AppendError::Unknown)?;
+  }
   sync_directory(&lock.directory).map_err(|_| AppendError::Unknown)?;
-  let metadata = file.metadata().map_err(|_| AppendError::Unknown)?;
-  if verify_log_binding(lock).is_err() {
-    return Err(AppendError::Unknown);
-  }
-  let verified_bytes = metadata.len();
-  let verified_digest = hash_prefix(lock.log.as_mut().ok_or(AppendError::Unknown)?, verified_bytes).map_err(|_| AppendError::Unknown)?;
+  verify_log_binding(lock).map_err(post_append_error)?;
+  let verified_digest = prove_appended_frame(lock.log.as_mut().ok_or(AppendError::Unknown)?, expected_bytes, expected_prefix_digest, &frame)
+    .map_err(post_append_error)?;
+  verify_log_binding(lock).map_err(post_append_error)?;
+  let verified_bytes = expected_bytes.checked_add(frame_length).ok_or(AppendError::Unknown)?;
   Ok(LogStorage {
     verified_bytes,
     log_identity,
@@ -1451,4 +1530,50 @@ fn unavailable() -> ErrorCode {
 
 fn integrity() -> ErrorCode {
   ErrorCode::parse("auv.store.integrity").expect("static error code is valid")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn post_write_proof_rejects_wrong_end_length_as_unknown() {
+    let prefix = b"verified prefix";
+    let frame = b"exact frame";
+    let mut file = proof_file(&[prefix.as_slice(), frame.as_slice(), b"extra"].concat());
+
+    let error = prove_appended_frame(&mut file, prefix.len() as u64, Sha256::digest(prefix).into(), frame).unwrap_err();
+    assert!(matches!(post_append_error(error), AppendError::Unknown));
+  }
+
+  #[test]
+  fn post_write_proof_rejects_changed_old_prefix_as_unknown() {
+    let prefix = b"verified prefix";
+    let frame = b"exact frame";
+    let mut changed = prefix.to_vec();
+    changed[0] ^= 0xff;
+    let mut file = proof_file(&[changed.as_slice(), frame.as_slice()].concat());
+
+    let error = prove_appended_frame(&mut file, prefix.len() as u64, Sha256::digest(prefix).into(), frame).unwrap_err();
+    assert!(matches!(post_append_error(error), AppendError::Unknown));
+  }
+
+  #[test]
+  fn post_write_proof_rejects_changed_frame_as_unknown() {
+    let prefix = b"verified prefix";
+    let frame = b"exact frame";
+    let mut changed = frame.to_vec();
+    changed[0] ^= 0xff;
+    let mut file = proof_file(&[prefix.as_slice(), changed.as_slice()].concat());
+
+    let error = prove_appended_frame(&mut file, prefix.len() as u64, Sha256::digest(prefix).into(), frame).unwrap_err();
+    assert!(matches!(post_append_error(error), AppendError::Unknown));
+  }
+
+  fn proof_file(bytes: &[u8]) -> File {
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(bytes).unwrap();
+    file.sync_data().unwrap();
+    file
+  }
 }
