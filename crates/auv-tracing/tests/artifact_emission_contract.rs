@@ -471,6 +471,34 @@ fn recovered_target_projects_when_resubscribe_fails_and_the_next_target_reestabl
 }
 
 #[test]
+fn post_write_observation_failure_settles_the_artifact_receipt_once() {
+  let store = CursorStore::page_failure();
+  let projector = RecordingProjector::new();
+  let reporter = RecordingReporter::new();
+  let dispatch = configure()
+    .run_store(store.clone())
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .on_error(reporter.clone())
+    .build()
+    .unwrap();
+  let run_id = RunId::new();
+  let root = context(&dispatch, run_id);
+
+  let result = root.in_scope(|| block_on_timeout(auv_tracing::emit_artifact(ready_artifact(b"cursor-read-failure"))));
+
+  assert_eq!(result.unwrap_err(), ArtifactWriteError::Unavailable(ErrorCode::parse("auv.test.page_failed").unwrap()));
+  let flush = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(flush.failure_count().get(), 1);
+  assert_eq!(flush.first().stage(), DispatchStage::AuthorityRead);
+  assert_eq!(flush.first().code().as_str(), "auv.test.page_failed");
+  assert_eq!(projector.item_count(), 0);
+  assert!(reporter.failures().is_empty(), "the awaited receipt must own failure observation");
+  assert_eq!(block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap().artifacts().len(), 1);
+  block_on_timeout(dispatch.flush()).unwrap();
+  assert!(reporter.failures().is_empty());
+}
+
+#[test]
 fn artifact_direct_contradiction_after_cursor_proof_fails_without_lookup_or_projection() {
   let store = ArtifactStore::new();
   let response_gate = store.store_then_wait_mismatch_next();
