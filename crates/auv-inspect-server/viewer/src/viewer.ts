@@ -504,6 +504,8 @@ export function mountInspectViewer(document: Document): void {
     source.addEventListener("commit", onCommit as EventListener);
     source.addEventListener("gap", onGap);
     source.addEventListener("error", onStreamError);
+    state.recoveryAttempts = 0;
+    setConnection(document, true, `revision ${snapshot.through_revision}`);
   }
 
   async function reloadSnapshot(): Promise<void> {
@@ -517,13 +519,16 @@ export function mountInspectViewer(document: Document): void {
     try {
       response = await fetch(snapshotEndpoint(runId), { headers: { Accept: RUN_MEDIA_TYPE } });
     } catch {
+      if (generation !== state.generation) return;
       scheduleRecovery(generation, "snapshot transport unavailable");
       return;
     }
+    if (generation !== state.generation) return;
     let value: unknown;
     try {
       value = await response.json() as unknown;
     } catch {
+      if (generation !== state.generation) return;
       stopWith("invalid snapshot response");
       return;
     }
