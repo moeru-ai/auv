@@ -1038,20 +1038,60 @@ fn otel_blocked_force_flush_makes_cross_thread_project_and_flush_promptly_busy()
 }
 
 #[test]
-fn otel_force_flush_panic_releases_projection_reservation() {
+fn trace_force_flush_panic_still_flushes_logs_releases_reservation_and_propagates() {
+  // ROOT CAUSE:
+  //
+  // If trace force_flush panicked, unwinding skipped log force_flush because
+  // the provider calls shared one unguarded call sequence.
+  //
+  // Before the fix, Drop released the reservation but the logger was not
+  // flushed. The fix catches each callback independently, finishes the
+  // reservation after both attempts, and then resumes the trace panic.
   let panic_flush = Arc::new(AtomicBool::new(true));
   let panic_flag = Arc::clone(&panic_flush);
-  let processor = CallbackSpanProcessor::new(Arc::new(|| {}), Arc::new(|| {})).with_force_flush(Arc::new(move || {
+  let span_processor = CallbackSpanProcessor::new(Arc::new(|| {}), Arc::new(|| {})).with_force_flush(Arc::new(move || {
     if panic_flag.swap(false, Ordering::SeqCst) {
-      panic!("test OTEL force_flush panic");
+      panic!("test OTEL trace force_flush panic");
     }
   }));
-  let tracer_provider = SdkTracerProvider::builder().with_span_processor(processor).build();
-  let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
+  let log_flushes = Arc::new(AtomicUsize::new(0));
+  let log_flush_count = Arc::clone(&log_flushes);
+  let panic_log_flush = Arc::new(AtomicBool::new(true));
+  let panic_log_flag = Arc::clone(&panic_log_flush);
+  let log_processor = CallbackLogProcessor::new(Arc::new(|| {})).with_force_flush(Arc::new(move || {
+    log_flush_count.fetch_add(1, Ordering::SeqCst);
+    if panic_log_flag.swap(false, Ordering::SeqCst) {
+      panic!("test OTEL log force_flush panic");
+    }
+  }));
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(span_processor).build();
+  let logger_provider = SdkLoggerProvider::builder().with_log_processor(log_processor).build();
+  let projector = OtelProjector::new(tracer_provider, logger_provider);
 
-  let panic = catch_unwind(AssertUnwindSafe(|| block_on(projector.flush())));
+  let panic = catch_unwind(AssertUnwindSafe(|| block_on(projector.flush()))).unwrap_err();
 
-  assert!(panic.is_err());
+  assert_eq!(panic.downcast_ref::<&str>(), Some(&"test OTEL trace force_flush panic"));
+  assert_eq!(log_flushes.load(Ordering::SeqCst), 1);
+  block_on(projector.flush()).unwrap();
+  assert_eq!(log_flushes.load(Ordering::SeqCst), 2);
+  project(&projector, event(Some(AuthorityId::new()), RunId::new(), None)).unwrap();
+}
+
+#[test]
+fn log_force_flush_panic_releases_projection_reservation_and_propagates() {
+  let panic_flush = Arc::new(AtomicBool::new(true));
+  let panic_flag = Arc::clone(&panic_flush);
+  let log_processor = CallbackLogProcessor::new(Arc::new(|| {})).with_force_flush(Arc::new(move || {
+    if panic_flag.swap(false, Ordering::SeqCst) {
+      panic!("test OTEL log force_flush panic");
+    }
+  }));
+  let logger_provider = SdkLoggerProvider::builder().with_log_processor(log_processor).build();
+  let projector = OtelProjector::new(SdkTracerProvider::builder().build(), logger_provider);
+
+  let panic = catch_unwind(AssertUnwindSafe(|| block_on(projector.flush()))).unwrap_err();
+
+  assert_eq!(panic.downcast_ref::<&str>(), Some(&"test OTEL log force_flush panic"));
   block_on(projector.flush()).unwrap();
   project(&projector, event(Some(AuthorityId::new()), RunId::new(), None)).unwrap();
 }
