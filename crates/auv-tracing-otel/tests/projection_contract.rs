@@ -14,11 +14,13 @@ use auv_tracing::{
 use auv_tracing_otel::OtelProjector;
 use futures_executor::block_on;
 use futures_util::FutureExt;
-use opentelemetry::Value;
 use opentelemetry::logs::AnyValue;
-use opentelemetry::trace::{Event as OtelEvent, SpanId, Status, TraceId};
+use opentelemetry::trace::{Event as OtelEvent, Span as _, SpanId, Status, TraceContextExt, TraceId, Tracer, TracerProvider};
+use opentelemetry::{Context, Value};
 use opentelemetry_sdk::logs::{BatchConfigBuilder as LogBatchConfigBuilder, BatchLogProcessor, SdkLoggerProvider};
-use opentelemetry_sdk::trace::{BatchConfigBuilder as SpanBatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider, SpanData};
+use opentelemetry_sdk::trace::{
+  BatchConfigBuilder as SpanBatchConfigBuilder, BatchSpanProcessor, IdGenerator, Sampler, SdkTracerProvider, SpanData,
+};
 use support::{
   BoundedLogExporter, BoundedSpanExporter, CallbackLogProcessor, CallbackSpanProcessor, FlushProbeLogProcessor, FlushProbeSpanProcessor,
   MAX_EXPORTED_ITEMS,
@@ -30,6 +32,36 @@ fn providers() -> (SdkTracerProvider, SdkLoggerProvider, BoundedSpanExporter, Bo
   let tracer_provider = SdkTracerProvider::builder().with_batch_exporter(span_exporter.clone()).build();
   let logger_provider = SdkLoggerProvider::builder().with_batch_exporter(log_exporter.clone()).build();
   (tracer_provider, logger_provider, span_exporter, log_exporter)
+}
+
+#[derive(Debug)]
+struct InvalidSpanIdGenerator {
+  valid_span_ids: usize,
+  generated_span_ids: AtomicUsize,
+}
+
+impl InvalidSpanIdGenerator {
+  fn after_valid_span_ids(valid_span_ids: usize) -> Self {
+    Self {
+      valid_span_ids,
+      generated_span_ids: AtomicUsize::new(0),
+    }
+  }
+}
+
+impl IdGenerator for InvalidSpanIdGenerator {
+  fn new_trace_id(&self) -> TraceId {
+    TraceId::from(1_u128)
+  }
+
+  fn new_span_id(&self) -> SpanId {
+    let generated = self.generated_span_ids.fetch_add(1, Ordering::SeqCst);
+    if generated < self.valid_span_ids {
+      SpanId::from((generated + 1) as u64)
+    } else {
+      SpanId::INVALID
+    }
+  }
 }
 
 fn timestamp(seconds: i64, nanoseconds: u32) -> Timestamp {
@@ -254,6 +286,74 @@ fn exported_sdk_data_preserves_bounded_auv_semantics() {
       assert!(attributes.keys().all(|key| !key.contains(forbidden)), "exported forbidden log field containing {forbidden}");
     }
   }
+}
+
+#[test]
+fn run_scoped_logs_ignore_ambient_otel_trace_context() {
+  let ambient_tracer_provider = SdkTracerProvider::builder().build();
+  let ambient_tracer = ambient_tracer_provider.tracer("auv.test.ambient");
+  let ambient_span = ambient_tracer.start("auv.test.ambient_span");
+  assert!(ambient_span.span_context().is_valid());
+
+  let (tracer_provider, logger_provider, _span_exporter, log_exporter) = providers();
+  let projector = OtelProjector::new(tracer_provider, logger_provider);
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let span_id = AuvSpanId::new();
+  let event_id = EventId::new();
+  let artifact_uri = ArtifactUri::from_ids(run_id, ArtifactId::new());
+  let ambient_guard = Context::new().with_span(ambient_span).attach();
+
+  project(
+    &projector,
+    TelemetryItem::Event {
+      authority_id: Some(authority_id),
+      run_id,
+      span_id: None,
+      event_id,
+      schema: EventSchema::new(EventName::parse("auv.test.ambient_run_event").unwrap(), 1).unwrap(),
+      occurred_at: timestamp(10, 0),
+      revision: None,
+    },
+  )
+  .unwrap();
+  project(
+    &projector,
+    TelemetryItem::Artifact {
+      authority_id,
+      run_id,
+      span_id: Some(span_id),
+      uri: artifact_uri.clone(),
+      purpose: ArtifactPurpose::parse("auv.test.ambient_artifact").unwrap(),
+      content_type: ContentType::parse("application/octet-stream").unwrap(),
+      byte_length: ByteLength::new(1).unwrap(),
+      sha256: Sha256Digest::new([0; 32]),
+      attributes: Attributes::empty(),
+      revision: RunRevision::new(1).unwrap(),
+    },
+  )
+  .unwrap();
+  drop(ambient_guard);
+  block_on(projector.flush()).unwrap();
+
+  let logs = log_exporter.logs();
+  assert_eq!(logs.len(), 2);
+  let run_event = logs.iter().find(|record| record.event_name() == Some("auv.event")).unwrap();
+  let artifact = logs.iter().find(|record| record.event_name() == Some("auv.artifact.published")).unwrap();
+  assert!(run_event.trace_context().is_none());
+  assert!(artifact.trace_context().is_none());
+
+  let run_event_attributes = log_attributes(run_event);
+  assert_eq!(run_event_attributes["auv.authority.id"], AnyValue::String(authority_id.to_string().into()));
+  assert_eq!(run_event_attributes["auv.run.id"], AnyValue::String(run_id.to_string().into()));
+  assert_eq!(run_event_attributes["auv.event.id"], AnyValue::String(event_id.to_string().into()));
+  assert_eq!(run_event_attributes["auv.event.schema.name"], AnyValue::String("auv.test.ambient_run_event".into()));
+
+  let artifact_attributes = log_attributes(artifact);
+  assert_eq!(artifact_attributes["auv.authority.id"], AnyValue::String(authority_id.to_string().into()));
+  assert_eq!(artifact_attributes["auv.run.id"], AnyValue::String(run_id.to_string().into()));
+  assert_eq!(artifact_attributes["auv.span.id"], AnyValue::String(span_id.to_string().into()));
+  assert_eq!(artifact_attributes["auv.artifact.uri"], AnyValue::String(artifact_uri.to_string().into()));
 }
 
 fn span_start(
@@ -960,6 +1060,90 @@ fn otel_start_panic_retains_run_authority_and_start_identity() {
 }
 
 #[test]
+fn otel_recording_invalid_context_retains_callback_visible_start_state() {
+  let start_count = Arc::new(AtomicUsize::new(0));
+  let start_observer = Arc::clone(&start_count);
+  let processor = CallbackSpanProcessor::new(
+    Arc::new(move || {
+      start_observer.fetch_add(1, Ordering::SeqCst);
+    }),
+    Arc::new(|| {}),
+  );
+  let tracer_provider =
+    SdkTracerProvider::builder().with_id_generator(InvalidSpanIdGenerator::after_valid_span_ids(0)).with_span_processor(processor).build();
+  let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
+  let first_authority_id = AuthorityId::new();
+  let second_authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let failed_span_id = AuvSpanId::new();
+
+  let failed = project(&projector, span_start(Some(first_authority_id), run_id, failed_span_id, None, 10)).unwrap_err();
+  assert_eq!(failed.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+  assert_eq!(start_count.load(Ordering::SeqCst), 1);
+
+  let wrong_authority = project(&projector, span_start(Some(second_authority_id), run_id, AuvSpanId::new(), None, 10)).unwrap_err();
+  let duplicate = project(&projector, span_start(Some(first_authority_id), run_id, failed_span_id, None, 10)).unwrap_err();
+  assert_eq!(start_count.load(Ordering::SeqCst), 1);
+  assert_eq!(wrong_authority.code().as_str(), "auv.telemetry.otel_run_authority_mismatch");
+  assert_eq!(duplicate.code().as_str(), "auv.telemetry.otel_duplicate_span_start");
+}
+
+#[test]
+fn otel_recording_invalid_child_context_retains_parent_child_maximum() {
+  let start_count = Arc::new(AtomicUsize::new(0));
+  let start_observer = Arc::clone(&start_count);
+  let processor = CallbackSpanProcessor::new(
+    Arc::new(move || {
+      start_observer.fetch_add(1, Ordering::SeqCst);
+    }),
+    Arc::new(|| {}),
+  );
+  let tracer_provider =
+    SdkTracerProvider::builder().with_id_generator(InvalidSpanIdGenerator::after_valid_span_ids(1)).with_span_processor(processor).build();
+  let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let parent_id = AuvSpanId::new();
+  let failed_child_id = AuvSpanId::new();
+
+  project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
+  let failed = project(&projector, span_start(Some(authority_id), run_id, failed_child_id, Some(parent_id), 20)).unwrap_err();
+  assert_eq!(failed.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+  assert_eq!(start_count.load(Ordering::SeqCst), 2);
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, parent_id, 19)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_span_end_before_child_start"
+  );
+  project(&projector, span_end(Some(authority_id), run_id, parent_id, 20)).unwrap();
+}
+
+#[test]
+fn otel_nonrecording_invalid_context_releases_authority_and_start_identity() {
+  let start_count = Arc::new(AtomicUsize::new(0));
+  let start_observer = Arc::clone(&start_count);
+  let processor = CallbackSpanProcessor::new(
+    Arc::new(move || {
+      start_observer.fetch_add(1, Ordering::SeqCst);
+    }),
+    Arc::new(|| {}),
+  );
+  let tracer_provider = SdkTracerProvider::builder()
+    .with_id_generator(InvalidSpanIdGenerator::after_valid_span_ids(0))
+    .with_sampler(Sampler::AlwaysOff)
+    .with_span_processor(processor)
+    .build();
+  let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
+  let run_id = RunId::new();
+  let failed_span_id = AuvSpanId::new();
+
+  for authority_id in [AuthorityId::new(), AuthorityId::new()] {
+    let failed = project(&projector, span_start(Some(authority_id), run_id, failed_span_id, None, 10)).unwrap_err();
+    assert_eq!(failed.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+  }
+  assert_eq!(start_count.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn otel_end_panic_keeps_end_terminal_and_exports_once() {
   let panic_end = Arc::new(AtomicBool::new(true));
   let end_flag = Arc::clone(&panic_end);
@@ -1001,6 +1185,7 @@ fn otel_invalid_child_context_restores_parent_child_maximum() {
   let authority_id = AuthorityId::new();
   let run_id = RunId::new();
   let parent_id = AuvSpanId::new();
+  let failed_child_id = AuvSpanId::new();
 
   project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
   project(&projector, span_start(Some(authority_id), run_id, AuvSpanId::new(), Some(parent_id), 14)).unwrap();
@@ -1013,8 +1198,10 @@ fn otel_invalid_child_context_restores_parent_child_maximum() {
   //
   // Before the fix, the failed child at 20 prevented the parent ending at 15.
   // The fix restores the previous maximum at 14 instead of clearing it.
-  let failed_child = project(&projector, span_start(Some(authority_id), run_id, AuvSpanId::new(), Some(parent_id), 20)).unwrap_err();
-  assert_eq!(failed_child.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+  for _ in 0..2 {
+    let failed_child = project(&projector, span_start(Some(authority_id), run_id, failed_child_id, Some(parent_id), 20)).unwrap_err();
+    assert_eq!(failed_child.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+  }
   assert_eq!(
     project(&projector, span_end(Some(authority_id), run_id, parent_id, 13)).unwrap_err().code().as_str(),
     "auv.telemetry.otel_span_end_before_child_start"
@@ -1028,10 +1215,11 @@ fn otel_invalid_root_context_does_not_claim_run_authority() {
   let projector = OtelProjector::new(tracer_provider.clone(), SdkLoggerProvider::builder().build());
   tracer_provider.shutdown().unwrap();
   let run_id = RunId::new();
+  let failed_span_id = AuvSpanId::new();
 
-  let first = project(&projector, span_start(Some(AuthorityId::new()), run_id, AuvSpanId::new(), None, 10)).unwrap_err();
+  let first = project(&projector, span_start(Some(AuthorityId::new()), run_id, failed_span_id, None, 10)).unwrap_err();
   assert_eq!(first.code().as_str(), "auv.telemetry.otel_invalid_span_context");
-  let second = project(&projector, span_start(Some(AuthorityId::new()), run_id, AuvSpanId::new(), None, 10)).unwrap_err();
+  let second = project(&projector, span_start(Some(AuthorityId::new()), run_id, failed_span_id, None, 10)).unwrap_err();
   assert_eq!(second.code().as_str(), "auv.telemetry.otel_invalid_span_context");
 }
 
