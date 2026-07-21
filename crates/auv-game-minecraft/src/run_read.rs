@@ -2,7 +2,7 @@
 //!
 //! Depends on `auv-inspect-model` only (no `auv-cli`). Query-wired adapters stay in product (S3b).
 
-use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json, read_telemetry_artifact_summary};
+use auv_inspect_model::legacy::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json, read_telemetry_artifact_summary};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 use crate::artifact::MinecraftProjectionArtifact;

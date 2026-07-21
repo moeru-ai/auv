@@ -5,7 +5,7 @@
 //! reads, view-parser proof, and scene state. Product frontends inject their
 //! composer rather than adding app wiring here.
 
-use auv_inspect_model::InspectComposer;
+use auv_inspect_model::legacy::InspectComposer;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_view::memory::{ViewMemory, ViewParserInspect, format_view_resolution_summary_text};
 

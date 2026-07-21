@@ -7,7 +7,7 @@ use crate::{
   VisualTruthSemanticInspectReport, VisualTruthSemanticManifest, VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
   derive_visual_truth_spatial_query_action_readiness,
 };
-use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
+use auv_inspect_model::legacy::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 pub(crate) struct OsuVisualTruthSemanticManifestLineage {

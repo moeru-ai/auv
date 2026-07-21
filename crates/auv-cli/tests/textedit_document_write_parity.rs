@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use auv_cli_invoke::InvokeOutputOptions;
-use auv_inspect_server::InspectReadProjection;
+use auv_inspect_server::legacy::InspectReadProjection;
 use auv_runtime::contract::{FailureLayer, OperationStatus};
 use auv_runtime::model::{ExecutionTarget, InvokeRequest};
 use auv_runtime::run_read;

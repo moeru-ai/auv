@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use auv_inspect_model::InspectComposer;
-use auv_inspect_server::InspectReadProjection;
+use auv_inspect_model::legacy::InspectComposer;
+use auv_inspect_server::legacy::InspectReadProjection;
 use auv_runtime::RootInspectReadProjection;
 
 /// Product projection: core enrichment + product composer + named JSON extensions.
@@ -35,12 +35,12 @@ impl ProductInspectReadProjection {
   }
 }
 
-impl auv_inspect_server::InspectReadProjection for ProductInspectReadProjection {
+impl auv_inspect_server::legacy::InspectReadProjection for ProductInspectReadProjection {
   fn run_enrichment(
     &self,
     store: &auv_tracing_driver::store::LocalStore,
     run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> Result<auv_inspect_server::InspectRunEnrichment, String> {
+  ) -> Result<auv_inspect_server::legacy::InspectRunEnrichment, String> {
     InspectReadProjection::run_enrichment(&self.inner, store, run)
   }
 
@@ -65,7 +65,7 @@ impl auv_inspect_server::InspectReadProjection for ProductInspectReadProjection 
     &self,
     store: &auv_tracing_driver::store::LocalStore,
     run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> Result<Option<auv_inspect_model::InspectDocument>, String> {
+  ) -> Result<Option<auv_inspect_model::legacy::InspectDocument>, String> {
     InspectReadProjection::inspect_document(&self.inner, store, run)
   }
 

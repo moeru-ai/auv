@@ -3,11 +3,12 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use auv_inspect_server::router;
+use auv_inspect_server::{InspectServeConfig, router, serve};
 use auv_tracing::{
-  ArtifactBody, ArtifactReader, ArtifactWriteError, Attributes, AuthorityId, BoxFuture, CommitError, ErrorCode, EventId, EventName,
-  EventOccurred, EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest,
-  RunId, RunMutation, RunRevision, RunStore, RunSubscription, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
+  ArtifactBody, ArtifactReader, ArtifactWriteError, Attributes, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode, EventId,
+  EventName, EventOccurred, EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage,
+  RunCommitRequest, RunId, RunMutation, RunRevision, RunStore, RunSubscription, SpanName, SpanStarted, StoreArtifactRequest,
+  SubscriptionError, Timestamp,
 };
 use auv_tracing_inspect::protocol::RUN_MEDIA_TYPE;
 use axum::body::{Body, to_bytes};
@@ -37,6 +38,25 @@ struct FaultingRunStore {
   read_error: Option<ReadError>,
 }
 
+#[derive(Clone)]
+struct RacingRunStore {
+  inner: MemoryRunStore,
+  lookup_barrier: Arc<tokio::sync::Barrier>,
+  lookup_calls: Arc<AtomicUsize>,
+}
+
+#[derive(Clone)]
+struct CommitUnknownStore {
+  resolved: Option<RunCommit>,
+  lookup_calls: Arc<AtomicUsize>,
+}
+
+#[derive(Clone)]
+struct SubscriptionFaultStore {
+  inner: MemoryRunStore,
+  error: ReadError,
+}
+
 impl FaultingRunStore {
   fn commit(error: CommitError) -> Self {
     Self {
@@ -62,12 +82,12 @@ impl RunStore for FaultingRunStore {
     authority_id()
   }
 
-  fn commit(&self, _request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, _request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     let error = self.commit_error.clone().expect("commit error");
     Box::pin(async move { Err(error) })
   }
 
-  fn write_artifact(&self, _request: StoreArtifactRequest, _body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, _request: StoreArtifactRequest, _body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     Box::pin(async { Err(ArtifactWriteError::Unavailable(error_code("auv.test.unavailable"))) })
   }
 
@@ -120,12 +140,12 @@ impl RunStore for CommitProbe {
     self.inner.authority_id()
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     self.commit_calls.fetch_add(1, Ordering::SeqCst);
     self.inner.commit(request)
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     self.inner.write_artifact(request, body)
   }
 
@@ -143,6 +163,133 @@ impl RunStore for CommitProbe {
 
   fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
     self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: auv_tracing::ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
+impl RacingRunStore {
+  fn new() -> Self {
+    Self {
+      inner: MemoryRunStore::new(authority_id()),
+      lookup_barrier: Arc::new(tokio::sync::Barrier::new(2)),
+      lookup_calls: Arc::new(AtomicUsize::new(0)),
+    }
+  }
+
+  fn lookup_calls(&self) -> usize {
+    self.lookup_calls.load(Ordering::SeqCst)
+  }
+}
+
+impl RunStore for RacingRunStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    let inner = self.inner.clone();
+    let barrier = self.lookup_barrier.clone();
+    let calls = self.lookup_calls.fetch_add(1, Ordering::SeqCst);
+    Box::pin(async move {
+      if calls < 2 {
+        barrier.wait().await;
+      }
+      inner.lookup_commit(run_id, key).await
+    })
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: auv_tracing::ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
+impl RunStore for CommitUnknownStore {
+  fn authority_id(&self) -> AuthorityId {
+    authority_id()
+  }
+
+  fn commit(&self, _request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    Box::pin(async { Err(CommitError::CommitUnknown(error_code("auv.test.unknown"))) })
+  }
+
+  fn write_artifact(&self, _request: StoreArtifactRequest, _body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    Box::pin(async { Err(ArtifactWriteError::Unavailable(error_code("auv.test.unavailable"))) })
+  }
+
+  fn lookup_commit(&self, _run_id: RunId, _key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.lookup_calls.fetch_add(1, Ordering::SeqCst);
+    let resolved = self.resolved.clone();
+    Box::pin(async move { Ok(resolved) })
+  }
+
+  fn load_snapshot(&self, _run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+    Box::pin(async { Ok(None) })
+  }
+
+  fn commits_after(&self, _run_id: RunId, _after: RunRevision, _limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    Box::pin(async { Err(ReadError::NotFound) })
+  }
+
+  fn subscribe(&self, _run_id: RunId, _after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    Box::pin(async { Err(ReadError::NotFound) })
+  }
+
+  fn open_artifact(&self, _uri: auv_tracing::ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    Box::pin(async { Err(ReadError::NotFound) })
+  }
+}
+
+impl RunStore for SubscriptionFaultStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, _run_id: RunId, _after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    let error = self.error.clone();
+    Box::pin(async move { Ok(Box::pin(futures_util::stream::once(async move { Err(SubscriptionError::Store(error)) })) as RunSubscription) })
   }
 
   fn open_artifact(&self, uri: auv_tracing::ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
@@ -239,6 +386,22 @@ async fn commit_is_created_then_replayed_and_conflicting_replay_is_rejected() {
 }
 
 #[tokio::test]
+async fn shared_store_classifies_concurrent_cross_router_replay_atomically() {
+  let store = RacingRunStore::new();
+  let first = router(Arc::new(store.clone()));
+  let second = router(Arc::new(store.clone()));
+  let body = commit_body(AUTHORITY, &start_span("auv.test.root"));
+
+  let (first, second) =
+    tokio::join!(first.oneshot(post_commit(RUN, Some(KEY_ONE), body.clone())), second.oneshot(post_commit(RUN, Some(KEY_ONE), body)),);
+  let mut statuses = [first.unwrap().status(), second.unwrap().status()];
+  statuses.sort();
+
+  assert_eq!(statuses, [StatusCode::OK, StatusCode::CREATED]);
+  assert_eq!(store.lookup_calls(), 0, "successful commit classification must not pre-read idempotency state");
+}
+
+#[tokio::test]
 async fn commit_requires_idempotency_key_and_takes_run_id_only_from_path() {
   let app = router(Arc::new(MemoryRunStore::new(authority_id())));
   let missing_key =
@@ -303,6 +466,79 @@ async fn authority_mismatch_is_a_typed_conflict() {
 }
 
 #[tokio::test]
+async fn authority_mismatch_precedes_store_reads_and_commit() {
+  let app = router(Arc::new(FaultingRunStore::read(ReadError::Unavailable(error_code("auv.test.lookup_unavailable")))));
+
+  let response =
+    app.oneshot(post_commit(RUN, Some(KEY_ONE), commit_body(OTHER_AUTHORITY, &start_span("auv.test.root")))).await.expect("response");
+
+  assert_eq!(response.status(), StatusCode::CONFLICT);
+  assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+  assert_eq!(json_body(response).await, json!({"authority_mismatch":{"expected":AUTHORITY,"received":OTHER_AUTHORITY}}));
+}
+
+#[tokio::test]
+async fn unsupported_commit_content_type_returns_415_with_run_media_type() {
+  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let request = Request::builder()
+    .method("POST")
+    .uri(format!("/v1/runs/{RUN}/commits"))
+    .header(CONTENT_TYPE, "application/json")
+    .header("Idempotency-Key", KEY_ONE)
+    .body(Body::from(commit_body(AUTHORITY, &start_span("auv.test.root"))))
+    .unwrap();
+
+  let response = app.oneshot(request).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+  assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+  assert_eq!(json_body(response).await, json!({"invalid_reference":{"code":"auv.inspect.unsupported_media_type"}}));
+}
+
+#[tokio::test]
+async fn path_extractor_rejections_use_the_run_media_type() {
+  let response = router(Arc::new(MemoryRunStore::new(authority_id())))
+    .oneshot(Request::builder().uri("/v1/runs/%FF/snapshot").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+  assert_eq!(json_body(response).await, json!({"invalid_reference":{"code":"auv.inspect.invalid_reference"}}));
+}
+
+#[tokio::test]
+async fn standard_serve_rejects_non_loopback_before_writing_discovery() {
+  let root = std::env::temp_dir().join(format!("auv-inspect-non-loopback-{}", std::process::id()));
+  let session_path = root.join("session.json");
+  let _ = std::fs::remove_dir_all(&root);
+  unsafe {
+    std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+  }
+
+  let result = tokio::time::timeout(
+    std::time::Duration::from_millis(250),
+    serve(
+      Arc::new(MemoryRunStore::new(authority_id())),
+      InspectServeConfig {
+        host: "0.0.0.0".to_string(),
+        port: 0,
+      },
+    ),
+  )
+  .await;
+  let session_written = session_path.exists();
+  unsafe {
+    std::env::remove_var("AUV_INSPECT_SESSION");
+  }
+  let _ = std::fs::remove_dir_all(root);
+
+  let error = result.expect("non-loopback serve must reject instead of serving").expect_err("non-loopback serve must fail");
+  assert!(error.contains("loopback"), "{error}");
+  assert!(!session_written, "rejected serve wrote discovery state");
+}
+
+#[tokio::test]
 async fn commit_failures_map_to_exact_typed_errors() {
   let cases = [
     (
@@ -331,6 +567,28 @@ async fn commit_failures_map_to_exact_typed_errors() {
     assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
     assert_eq!(json_body(response).await, body);
   }
+}
+
+#[tokio::test]
+async fn commit_unknown_resolves_once_by_lookup_without_resubmitting() {
+  let memory = MemoryRunStore::new(authority_id());
+  let committed = memory
+    .commit(RunCommitRequest::new(authority_id(), run_id(), KEY_ONE.parse().unwrap(), vec![start_span("auv.test.root")]).unwrap())
+    .await
+    .unwrap()
+    .into_commit();
+  let lookup_calls = Arc::new(AtomicUsize::new(0));
+  let store = CommitUnknownStore {
+    resolved: Some(committed.clone()),
+    lookup_calls: lookup_calls.clone(),
+  };
+
+  let response =
+    router(Arc::new(store)).oneshot(post_commit(RUN, Some(KEY_ONE), commit_body(AUTHORITY, &start_span("auv.test.root")))).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(json_body(response).await, serde_json::to_value(committed).unwrap());
+  assert_eq!(lookup_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -523,6 +781,26 @@ async fn sse_emits_gap_event_and_closes() {
   let event = std::str::from_utf8(&bytes).unwrap();
   assert!(event.contains("event: gap\n"), "{event}");
   assert!(event.contains(r#"data: {"requested_after":4,"earliest_available":9}"#), "{event}");
+}
+
+#[tokio::test]
+async fn sse_emits_typed_store_error_and_closes() {
+  let store = SubscriptionFaultStore {
+    inner: MemoryRunStore::new(authority_id()),
+    error: ReadError::Integrity(error_code("auv.test.integrity")),
+  };
+  let response = router(Arc::new(store))
+    .oneshot(Request::builder().uri(format!("/v1/runs/{RUN}/commits/stream?after_revision=0")).body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+
+  let bytes = tokio::time::timeout(std::time::Duration::from_secs(1), to_bytes(response.into_body(), 1024 * 1024))
+    .await
+    .expect("error stream should close")
+    .expect("error body");
+  let event = std::str::from_utf8(&bytes).unwrap();
+  assert!(event.contains("event: error\n"), "{event}");
+  assert!(event.contains(r#"data: {"integrity":{"code":"auv.test.integrity"}}"#), "{event}");
 }
 
 #[test]

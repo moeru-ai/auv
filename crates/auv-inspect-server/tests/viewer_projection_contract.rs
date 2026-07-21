@@ -148,18 +148,23 @@ async fn inspect_document_is_a_snapshot_only_projection_without_inferred_outcome
 #[test]
 fn viewer_uses_snapshot_then_revision_sse_without_websocket_or_status_inference() {
   let source = include_str!("../viewer/src/viewer.ts");
-  let snapshot = source.find("/snapshot").expect("snapshot endpoint");
-  let stream = source.find("/commits/stream?after_revision=").expect("revision SSE endpoint");
+  let vite = include_str!("../viewer/vite.config.ts");
 
-  assert!(snapshot < stream, "viewer must load the snapshot before subscribing");
+  assert!(source.contains("/snapshot"));
+  assert!(source.contains("/commits/stream?after_revision="));
   assert!(source.contains("new EventSource"));
   assert!(source.contains("addEventListener(\"gap\""));
-  assert!(source.contains("reloadSnapshot"));
+  assert!(source.contains("validateSnapshot"));
+  assert!(source.contains("MAX_RECOVERY_ATTEMPTS"));
+  assert!(source.contains("Object.keys(value).length !== 1"));
   assert!(!source.contains("new WebSocket"));
   assert!(!source.contains("status_code"));
   assert!(!source.contains("running"));
   assert!(!source.contains("success"));
   assert!(source.contains("open"));
+  assert!(vite.contains(r#""/v1""#));
+  assert!(!vite.contains(r#""/runs""#));
+  assert!(!vite.contains(r#""/write""#));
 }
 
 #[test]

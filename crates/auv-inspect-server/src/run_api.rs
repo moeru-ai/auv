@@ -1,11 +1,14 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use auv_tracing::{CommitError, ErrorCode, IdempotencyKey, PageLimit, ReadError, RunCommitRequest, RunId, RunRevision, SubscriptionError};
+use auv_tracing::{
+  CommitError, CommitResult, ErrorCode, IdempotencyKey, PageLimit, ReadError, RunCommit, RunCommitRequest, RunFact, RunId, RunMutation,
+  RunRevision, SubscriptionError,
+};
 use auv_tracing_inspect::protocol::{AuthorityResponse, RUN_MEDIA_TYPE, RunApiError, RunCommitBody, RunStreamGap, decode_strict};
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::extract::rejection::QueryRejection;
+use axum::extract::rejection::{PathRejection, QueryRejection};
 use axum::extract::{Path, Query, Request, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -56,36 +59,62 @@ async fn authority(State(state): State<Arc<InspectServerState>>) -> Response {
 /// Validates and appends one path-scoped ordinary run commit.
 async fn commit(
   State(state): State<Arc<InspectServerState>>,
-  Path(run_id): Path<String>,
+  path: Result<Path<String>, PathRejection>,
   headers: HeaderMap,
   request: Request,
 ) -> Result<Response, ApiFailure> {
   require_run_media_type(&headers)?;
+  let Path(run_id) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   let key = parse_idempotency_key(&headers)?;
   let bytes = to_bytes(request.into_body(), MAX_RUN_JSON_BYTES).await.map_err(|_| ApiFailure::payload_too_large())?;
   let body = decode_strict::<RunCommitBody>(&bytes).map_err(|_| ApiFailure::invalid_reference())?;
+  let expected = state.store.authority_id();
+  if body.authority_id != expected {
+    return Err(ApiFailure::authority_mismatch(expected, body.authority_id));
+  }
   let request =
     RunCommitRequest::new(body.authority_id, run_id, key, body.mutations.into_vec()).map_err(|_| ApiFailure::invalid_reference())?;
+  let recovery_request = request.clone();
+  match state.store.commit(request).await {
+    Ok(CommitResult::Appended(commit)) => Ok(run_json(StatusCode::CREATED, &commit)),
+    Ok(CommitResult::Replayed(commit)) => Ok(run_json(StatusCode::OK, &commit)),
+    Err(CommitError::CommitUnknown(code)) => resolve_commit_unknown(&state, &recovery_request, code).await,
+    Err(error) => Err(ApiFailure::from_commit(error)),
+  }
+}
 
-  let _guard = state.commit_status_lock().await;
-  let replay = state.store.lookup_commit(run_id, key).await.map_err(ApiFailure::from_read)?.is_some();
-  let commit = state.store.commit(request).await.map_err(ApiFailure::from_commit)?;
-  Ok(run_json(
-    if replay {
-      StatusCode::OK
-    } else {
-      StatusCode::CREATED
-    },
-    &commit,
-  ))
+async fn resolve_commit_unknown(state: &InspectServerState, request: &RunCommitRequest, code: ErrorCode) -> Result<Response, ApiFailure> {
+  // NOTICE(inspect-commit-unknown-v1): The accepted wire error enum has no
+  // CommitUnknown variant. A local authority adapter may resolve uncertainty
+  // with this one lookup and no resubmission. Task 12's remote POST client must
+  // conservatively treat a lost/failed response as uncertain until its own
+  // one-lookup recovery completes; do not infer rejection or replay the POST.
+  match state.store.lookup_commit(request.run_id(), request.idempotency_key()).await {
+    Ok(Some(commit)) if commit_matches_request(&commit, request) => Ok(run_json(StatusCode::OK, &commit)),
+    _ => Err(ApiFailure::unavailable(code)),
+  }
+}
+
+fn commit_matches_request(commit: &RunCommit, request: &RunCommitRequest) -> bool {
+  commit.authority_id() == request.authority_id()
+    && commit.run_id() == request.run_id()
+    && commit.idempotency_key() == request.idempotency_key()
+    && commit.facts().len() == request.mutations().len()
+    && commit.facts().iter().zip(request.mutations()).all(|(fact, mutation)| match (fact, mutation) {
+      (RunFact::SpanStarted(left), RunMutation::StartSpan(right)) => left == right,
+      (RunFact::SpanEnded(left), RunMutation::EndSpan(right)) => left == right,
+      (RunFact::EventOccurred(left), RunMutation::EmitEvent(right)) => left == right,
+      _ => false,
+    })
 }
 
 /// Resolves an accepted commit without replaying application work.
 async fn lookup_commit(
   State(state): State<Arc<InspectServerState>>,
-  Path((run_id, key)): Path<(String, String)>,
+  path: Result<Path<(String, String)>, PathRejection>,
 ) -> Result<Response, ApiFailure> {
+  let Path((run_id, key)) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   let key = key.parse::<IdempotencyKey>().map_err(|_| ApiFailure::invalid_reference())?;
   match state.store.lookup_commit(run_id, key).await.map_err(ApiFailure::from_read)? {
@@ -95,7 +124,8 @@ async fn lookup_commit(
 }
 
 /// Returns the canonical snapshot through its explicit revision cursor.
-async fn snapshot(State(state): State<Arc<InspectServerState>>, Path(run_id): Path<String>) -> Result<Response, ApiFailure> {
+async fn snapshot(State(state): State<Arc<InspectServerState>>, path: Result<Path<String>, PathRejection>) -> Result<Response, ApiFailure> {
+  let Path(run_id) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   match state.store.load_snapshot(run_id).await.map_err(ApiFailure::from_read)? {
     Some(snapshot) => Ok(run_json(StatusCode::OK, &snapshot)),
@@ -106,9 +136,10 @@ async fn snapshot(State(state): State<Arc<InspectServerState>>, Path(run_id): Pa
 /// Returns a bounded canonical commit page after the requested revision.
 async fn commits_after(
   State(state): State<Arc<InspectServerState>>,
-  Path(run_id): Path<String>,
+  path: Result<Path<String>, PathRejection>,
   query: Result<Query<CommitPageQuery>, QueryRejection>,
 ) -> Result<Response, ApiFailure> {
+  let Path(run_id) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   let Query(query) = query.map_err(|_| ApiFailure::invalid_reference())?;
   let page = state.store.commits_after(run_id, query.after_revision, query.limit).await.map_err(ApiFailure::from_read)?;
@@ -118,10 +149,11 @@ async fn commits_after(
 /// Streams ordered commits after the greater valid query/header cursor.
 async fn commit_stream(
   State(state): State<Arc<InspectServerState>>,
-  Path(run_id): Path<String>,
+  path: Result<Path<String>, PathRejection>,
   query: Result<Query<CommitStreamQuery>, QueryRejection>,
   headers: HeaderMap,
 ) -> Result<Response, ApiFailure> {
+  let Path(run_id) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   let Query(query) = query.map_err(|_| ApiFailure::invalid_reference())?;
   let after = greater_cursor(query.after_revision, headers.get("Last-Event-ID"));
@@ -148,7 +180,12 @@ async fn commit_stream(
         .expect("validated gap must encode as JSON");
         Some((Ok(Event::default().event("gap").data(data)), (subscription, true)))
       }
-      Some(Err(SubscriptionError::Store(_))) | None => None,
+      Some(Err(SubscriptionError::Store(error))) => {
+        let failure = ApiFailure::from_read(error);
+        let data = serde_json::to_string(&failure.body).expect("validated run error must encode as JSON");
+        Some((Ok(Event::default().event("error").data(data)), (subscription, true)))
+      }
+      None => None,
     }
   });
   Ok(Sse::new(stream).into_response())
@@ -178,7 +215,7 @@ fn require_run_media_type(headers: &HeaderMap) -> Result<(), ApiFailure> {
   if headers.get(CONTENT_TYPE).and_then(|value| value.to_str().ok()) == Some(RUN_MEDIA_TYPE) {
     Ok(())
   } else {
-    Err(ApiFailure::invalid_reference())
+    Err(ApiFailure::unsupported_media_type())
   }
 }
 
@@ -212,6 +249,29 @@ impl ApiFailure {
     }
   }
 
+  fn unsupported_media_type() -> Self {
+    Self {
+      status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+      body: RunApiError::InvalidReference {
+        code: ErrorCode::parse("auv.inspect.unsupported_media_type").expect("static error code"),
+      },
+    }
+  }
+
+  fn authority_mismatch(expected: auv_tracing::AuthorityId, received: auv_tracing::AuthorityId) -> Self {
+    Self {
+      status: StatusCode::CONFLICT,
+      body: RunApiError::AuthorityMismatch { expected, received },
+    }
+  }
+
+  fn unavailable(code: ErrorCode) -> Self {
+    Self {
+      status: StatusCode::SERVICE_UNAVAILABLE,
+      body: RunApiError::Unavailable { code },
+    }
+  }
+
   fn payload_too_large() -> Self {
     Self {
       status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -223,10 +283,7 @@ impl ApiFailure {
 
   fn from_commit(error: CommitError) -> Self {
     match error {
-      CommitError::AuthorityMismatch { expected, received } => Self {
-        status: StatusCode::CONFLICT,
-        body: RunApiError::AuthorityMismatch { expected, received },
-      },
+      CommitError::AuthorityMismatch { expected, received } => Self::authority_mismatch(expected, received),
       CommitError::IdempotencyMismatch => Self {
         status: StatusCode::CONFLICT,
         body: RunApiError::IdempotencyMismatch,
@@ -235,10 +292,7 @@ impl ApiFailure {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         body: RunApiError::Rejected { code },
       },
-      CommitError::Unavailable(code) | CommitError::CommitUnknown(code) => Self {
-        status: StatusCode::SERVICE_UNAVAILABLE,
-        body: RunApiError::Unavailable { code },
-      },
+      CommitError::Unavailable(code) | CommitError::CommitUnknown(code) => Self::unavailable(code),
     }
   }
 

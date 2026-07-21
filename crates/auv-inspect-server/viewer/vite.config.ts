@@ -24,8 +24,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/runs": "http://127.0.0.1:8765",
-      "/write": "http://127.0.0.1:8765",
+      "/v1": "http://127.0.0.1:8765",
       "/assets": "http://127.0.0.1:8765"
     }
   }
