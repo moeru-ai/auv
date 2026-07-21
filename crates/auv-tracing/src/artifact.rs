@@ -147,6 +147,7 @@ impl Drop for ArtifactEmission {
     let ArtifactReceipt::Pending { receiver, dispatch } = &mut self.receipt else {
       return;
     };
+    receiver.close();
     if let Ok(Some(message)) = receiver.try_recv()
       && let Some(failure) = message.unobserved_failure
     {

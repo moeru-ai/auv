@@ -2,9 +2,9 @@
 
 mod support;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
+use std::sync::{Arc, Barrier};
 use std::task::Context as TaskContext;
 use std::time::{Duration, Instant};
 
@@ -14,8 +14,8 @@ use auv_tracing::{
 };
 use sha2::{Digest, Sha256};
 use support::{
-  ArtifactStore, CommitUnknownStore, ControlledStore, DropFirstTaskSpawner, DropNthTaskSpawner, ProbeReader, ReadGate, RecordingProjector,
-  RecordingReporter, UnknownLookup, WAIT_TIMEOUT, block_on_timeout,
+  ArtifactStore, CommitUnknownStore, ControlledStore, CursorStore, DropFirstTaskSpawner, DropNthTaskSpawner, IntegrityFault, IntegrityStore,
+  ProbeReader, ReadGate, RecordingProjector, RecordingReporter, TrackingTaskSpawner, UnknownLookup, WAIT_TIMEOUT, block_on_timeout,
 };
 
 #[derive(serde::Serialize)]
@@ -364,12 +364,14 @@ fn cursor_proof_overrides_a_later_artifact_publication_unknown() {
     .on_error(reporter.clone())
     .build()
     .unwrap();
-  let root = context(&dispatch, RunId::new());
+  let run_id = RunId::new();
+  let root = context(&dispatch, run_id);
   let receipt = root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(b"cursor-proof")));
   lookup_gate.wait_until_entered();
 
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 15 }));
-  wait_for_projected(projector.as_ref(), 2);
+  wait_for_revision(store.as_ref(), run_id, 2);
+  assert_eq!(projector.item_count(), 0, "cursor proof remains staged until the ambiguous artifact response resolves");
   lookup_gate.release();
 
   assert!(block_on_timeout(receipt).unwrap().is_some());
@@ -385,8 +387,13 @@ fn cursor_proof_overrides_a_later_ordinary_commit_unknown() {
   let store = CommitUnknownStore::new(UnknownLookup::CommittedButMissing);
   let lookup_gate = store.block_lookup();
   let projector = RecordingProjector::new();
-  let dispatch =
-    configure().run_store(store.clone()).project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+  let spawner = TrackingTaskSpawner::new();
+  let dispatch = configure()
+    .run_store(store.clone())
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .task_spawner(spawner.clone())
+    .build()
+    .unwrap();
   let run_id = RunId::new();
   let root = context(&dispatch, run_id);
   let body_gate = ReadGate::new(b"ordinary-proof".to_vec());
@@ -396,10 +403,11 @@ fn cursor_proof_overrides_a_later_ordinary_commit_unknown() {
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 16 }));
   lookup_gate.wait_until_entered();
   body_gate.release();
-  wait_for_projected(projector.as_ref(), 2);
+  assert!(block_on_timeout(receipt).unwrap().is_some());
+  spawner.wait_for_active(1, 4);
+  assert_eq!(projector.item_count(), 0, "cursor proof remains staged until the ambiguous ordinary response resolves");
   lookup_gate.release();
 
-  assert!(block_on_timeout(receipt).unwrap().is_some());
   block_on_timeout(dispatch.flush()).unwrap();
   assert_eq!(store.commit_calls(), 1);
   assert_eq!(store.lookup_calls(), 1);
@@ -407,6 +415,136 @@ fn cursor_proof_overrides_a_later_ordinary_commit_unknown() {
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 17 }));
   block_on_timeout(dispatch.flush()).unwrap();
   assert_eq!(store.commit_calls(), 2, "cursor proof must keep the run lane usable");
+}
+
+#[test]
+fn recovered_target_projects_when_resubscribe_fails_and_the_next_target_reestablishes() {
+  let store = CursorStore::pending_then_resubscribe_failure();
+  let projector = RecordingProjector::new();
+  let dispatch =
+    configure().run_store(store.clone()).project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+  let root = context(&dispatch, RunId::new());
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 18 }));
+  block_on_timeout(dispatch.flush()).unwrap();
+  assert_eq!(projected_revisions(projector.as_ref()), [1]);
+  assert_eq!(store.commits_after_call_count(), 1);
+  assert_eq!(store.subscribe_call_count(), 2, "the failed replacement subscription is attempted once");
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 19 }));
+  block_on_timeout(dispatch.flush()).unwrap();
+  assert_eq!(projected_revisions(projector.as_ref()), [1, 2]);
+  assert!(store.subscribe_call_count() >= 3, "the next target must establish a replacement cursor");
+}
+
+#[test]
+fn artifact_direct_contradiction_after_cursor_proof_fails_without_lookup_or_projection() {
+  let store = ArtifactStore::new();
+  let response_gate = store.store_then_wait_mismatch_next();
+  let page_gate = store.block_next_observation_page();
+  let projector = RecordingProjector::new();
+  let reporter = RecordingReporter::new();
+  let spawner = TrackingTaskSpawner::new();
+  let dispatch = configure()
+    .run_store(store.clone())
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .on_error(reporter.clone())
+    .task_spawner(spawner.clone())
+    .build()
+    .unwrap();
+  let run_id = RunId::new();
+  let root = context(&dispatch, run_id);
+
+  let receipt = root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(b"artifact-contradiction")));
+  response_gate.wait_until_entered();
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 20 }));
+  page_gate.wait_until_entered();
+  page_gate.release();
+  spawner.wait_for_active(1, 4);
+  assert_eq!(projector.item_count(), 0, "cursor proof must remain staged until the artifact response is classified");
+
+  response_gate.release();
+  let error = block_on_timeout(receipt).unwrap_err();
+  assert_eq!(error, ArtifactWriteError::Integrity(ErrorCode::parse("auv.dispatch.commit_response_mismatch").unwrap()));
+  let flush = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(flush.failure_count().get(), 1);
+  assert_eq!(flush.first().stage(), DispatchStage::ArtifactWrite);
+  assert_eq!(store.write_call_count(), 1);
+  assert_eq!(store.lookup_call_count(), 0, "a contradictory direct response must never enter publication lookup");
+  assert_eq!(block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap().artifacts().len(), 1);
+  assert_eq!(projected_kinds(projector.as_ref()), ["event_occurred"]);
+  assert!(reporter.failures().is_empty(), "the awaited receipt owns failure observation");
+  block_on_timeout(dispatch.flush()).unwrap();
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 21 }));
+  let quarantined = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(quarantined.first().code().as_str(), "auv.dispatch.run_lane_indeterminate");
+}
+
+#[test]
+fn artifact_body_integrity_failure_does_not_quarantine_the_run_lane() {
+  let store = ArtifactStore::new();
+  let dispatch = configure().run_store(store.clone()).build().unwrap();
+  let run_id = RunId::new();
+  let root = context(&dispatch, run_id);
+  let artifact = test_artifact(futures_util::io::Cursor::new(b"actual".to_vec()), b"expect");
+
+  let result = root.in_scope(|| block_on_timeout(auv_tracing::emit_artifact(artifact)));
+  assert!(matches!(result, Err(ArtifactWriteError::Integrity(_))));
+  let failed = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(failed.failure_count().get(), 1);
+  assert_eq!(failed.first().stage(), DispatchStage::ArtifactWrite);
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 24 }));
+  block_on_timeout(dispatch.flush()).unwrap();
+  let snapshot = block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap();
+  assert!(snapshot.artifacts().is_empty());
+  assert_eq!(snapshot.events().len(), 1);
+}
+
+#[test]
+fn ordinary_direct_contradiction_after_cursor_proof_skips_that_projection_and_quarantines() {
+  let run_id = RunId::new();
+  let store = IntegrityStore::new(run_id, IntegrityFault::DirectResponseMismatch);
+  let response_gate = store.block_direct_response();
+  let page_gate = store.block_observation_page();
+  let projector = RecordingProjector::new();
+  let reporter = RecordingReporter::new();
+  let spawner = TrackingTaskSpawner::new();
+  let dispatch = configure()
+    .run_store(store.clone())
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .on_error(reporter.clone())
+    .task_spawner(spawner.clone())
+    .build()
+    .unwrap();
+  let root = context(&dispatch, run_id);
+  let body_gate = ReadGate::new(b"ordinary-contradiction".to_vec());
+  let receipt = root.in_scope(|| auv_tracing::emit_artifact(test_artifact(body_gate.reader(), b"ordinary-contradiction")));
+  body_gate.wait_until_polled();
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 22 }));
+  response_gate.wait_until_entered();
+  body_gate.release();
+  assert!(block_on_timeout(receipt).unwrap().is_some());
+  page_gate.wait_until_entered();
+  page_gate.release();
+  spawner.wait_for_active(1, 4);
+  assert_eq!(projector.item_count(), 0, "cursor proof must remain staged until the ordinary response is classified");
+
+  response_gate.release();
+  let flush = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(flush.failure_count().get(), 1);
+  assert_eq!(flush.first().stage(), DispatchStage::AuthorityCommit);
+  assert_eq!(flush.first().code().as_str(), "auv.dispatch.commit_response_mismatch");
+  assert_eq!(projected_kinds(projector.as_ref()), ["artifact_published"]);
+  assert_eq!(reporter.failures(), [flush.first().clone()]);
+  block_on_timeout(dispatch.flush()).unwrap();
+
+  root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 23 }));
+  let quarantined = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(quarantined.first().code().as_str(), "auv.dispatch.run_lane_indeterminate");
+  assert_eq!(store.commit_call_count(run_id), 1);
 }
 
 #[test]
@@ -564,6 +702,40 @@ fn dropped_failure_receipt_reports_and_flushes_exactly_once() {
   assert_eq!(reporter.failures()[0].code(), &code);
   block_on_timeout(dispatch.flush()).unwrap();
   assert_eq!(reporter.failures().len(), 1);
+}
+
+#[test]
+fn synchronized_receipt_send_drop_races_report_each_unobserved_failure_once() {
+  const ATTEMPTS: usize = 128;
+
+  let store = ArtifactStore::new();
+  let code = ErrorCode::parse("auv.test.receipt_send_drop_race").unwrap();
+  let reporter = RecordingReporter::new();
+  let dispatch = configure().run_store(store.clone()).on_error(reporter.clone()).build().unwrap();
+  let root = context(&dispatch, RunId::new());
+
+  for attempt in 0..ATTEMPTS {
+    let failure_gate = store.block_then_fail_next(ArtifactWriteError::Rejected(code.clone()));
+    let receipt = root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(format!("race-{attempt}").as_bytes())));
+    failure_gate.wait_until_entered();
+    let start = Arc::new(Barrier::new(2));
+    let drop_start = start.clone();
+    let drop_thread = std::thread::spawn(move || {
+      drop_start.wait();
+      drop(receipt);
+    });
+    start.wait();
+    failure_gate.release();
+    drop_thread.join().unwrap();
+  }
+
+  let flush = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(flush.failure_count().get(), ATTEMPTS);
+  assert_eq!(flush.first().code(), &code);
+  assert_eq!(reporter.failures().len(), ATTEMPTS);
+  assert!(reporter.failures().iter().all(|failure| failure.code() == &code));
+  block_on_timeout(dispatch.flush()).unwrap();
+  assert_eq!(reporter.failures().len(), ATTEMPTS);
 }
 
 #[test]
