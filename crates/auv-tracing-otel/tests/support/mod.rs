@@ -62,11 +62,20 @@ impl SpanProcessor for CallbackSpanProcessor {
 #[derive(Clone)]
 pub struct CallbackLogProcessor {
   on_emit: Callback,
+  on_force_flush: Callback,
 }
 
 impl CallbackLogProcessor {
   pub fn new(on_emit: Callback) -> Self {
-    Self { on_emit }
+    Self {
+      on_emit,
+      on_force_flush: Arc::new(|| {}),
+    }
+  }
+
+  pub fn with_force_flush(mut self, on_force_flush: Callback) -> Self {
+    self.on_force_flush = on_force_flush;
+    self
   }
 }
 
@@ -82,6 +91,7 @@ impl LogProcessor for CallbackLogProcessor {
   }
 
   fn force_flush(&self) -> OTelSdkResult {
+    (self.on_force_flush)();
     Ok(())
   }
 

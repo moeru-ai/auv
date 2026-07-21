@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -118,10 +119,22 @@ impl OtelProjectorInner {
 
   fn flush(&self) -> Result<(), TelemetryError> {
     let reservation = self.reserve()?;
-    let trace_result = self.tracer_provider.force_flush();
-    let log_result = self.logger_provider.force_flush();
+    let trace_outcome = catch_unwind(AssertUnwindSafe(|| self.tracer_provider.force_flush()));
+    let log_outcome = catch_unwind(AssertUnwindSafe(|| self.logger_provider.force_flush()));
+    let finish_result = reservation.finish();
+
+    // Both providers and the reservation are completed before panic
+    // propagation. Provider order defines precedence if both callbacks panic.
+    let trace_result = match trace_outcome {
+      Ok(result) => result,
+      Err(payload) => resume_unwind(payload),
+    };
+    let log_result = match log_outcome {
+      Ok(result) => result,
+      Err(payload) => resume_unwind(payload),
+    };
     let flush_failed = trace_result.is_err() || log_result.is_err();
-    reservation.finish()?;
+    finish_result?;
     if flush_failed {
       Err(error("auv.telemetry.otel_flush_failed"))
     } else {
