@@ -26,7 +26,11 @@ struct AxPathResolutionFailure: Error {
 /// recovery hint so the caller (action / focus / inspection) reports the right
 /// verb. Returns the parsed indices *after* the leading `0`.
 func axObservedPathIndices(path: String, operation: String, retry: String) -> Result<[Int], AxPathResolutionFailure> {
-  let segments = path.split(separator: ".").map(String.init)
+  // TODO(ax-path-empty-segments): Swift's split currently omits leading,
+  // repeated, and trailing empty segments, so `.0`, `0..1`, and `0.` are
+  // accepted. Rejecting them is a behavior change; keep the current behavior
+  // characterized until the owner approves a path-validation bug-fix slice.
+  let segments = path.split(separator: ".", omittingEmptySubsequences: true).map(String.init)
   guard segments.first == "0" else {
     return .failure(AxPathResolutionFailure(
       message: "AX \(operation) path must begin with 0; got \(path)",

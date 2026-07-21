@@ -64,6 +64,11 @@ struct AxPathCharacterization {
     expectSuccess("0", [], "root-only path yields no child indices")
     expectSuccess("0.1.2", [1, 2], "valid multi-segment path")
     expectSuccess("0.0.0", [0, 0], "zero child indices are valid")
+    // Swift String.split omits empty subsequences. These surprising cases are
+    // current behavior, not an endorsement; AxPath.swift carries the deferral.
+    expectSuccess(".0", [], "leading empty segment is currently omitted")
+    expectSuccess("0..1", [1], "repeated empty segment is currently omitted")
+    expectSuccess("0.", [], "trailing empty segment is currently omitted")
 
     // --- root-marker case ---
     expectFailure(

@@ -30,6 +30,8 @@ compiles that real source file with a standalone `swiftc` invocation (via
 
 - root-only path `0` → no child indices;
 - valid multi-segment `0.1.2` → `[1, 2]`; `0.0.0` → `[0, 0]`;
+- leading, repeated, and trailing empty segments are currently omitted by
+  Swift `String.split`, so `.0` → `[]`, `0..1` → `[1]`, and `0.` → `[]`;
 - non-`0` first segment → `AX <op> path must begin with 0; got <path>`;
 - empty path → same root-marker failure;
 - non-integer segment → `AX <op> path segment <seg> at offset <n> is not a non-negative integer`;
@@ -86,6 +88,9 @@ not in headless CI.
 
 - No change to resolver behavior, error strings, or error *type* (that is the
   later typed-error vertical slice).
+- No tightening of empty-segment validation. `AxPath.swift` carries
+  `TODO(ax-path-empty-segments)` because rejecting the currently accepted forms
+  is a behavior change that needs an owner-approved bug-fix slice.
 - No XCTest target, no `swift test` in CI, no `build.rs` change (see reasons
   above).
 - No automation of the live-AX tree-walk cases.
