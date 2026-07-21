@@ -282,7 +282,7 @@ impl OtelProjectorInner {
     attributes.extend(span_attributes(input.attributes));
 
     let reservation = self.reserve()?;
-    let (parent_context, run_was_new) = {
+    let (parent_context, run_was_new, previous_parent_latest_child_started_at) = {
       let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
       let run_was_new = !state.runs.contains_key(&input.run_id);
       match state.runs.get(&input.run_id) {
@@ -324,20 +324,24 @@ impl OtelProjectorInner {
       });
       commit_run_authority(&mut state, input.run_id, input.authority_id)?;
       let run = state.runs.get_mut(&input.run_id).expect("committed run authority creates run state");
-      if let Some(parent_span_id) = input.parent_span_id {
+      let previous_parent_latest_child_started_at = if let Some(parent_span_id) = input.parent_span_id {
         let Some(SpanState::Active(parent)) = run.spans.get_mut(&parent_span_id) else {
           return Err(error("auv.telemetry.otel_missing_parent_span"));
         };
+        let previous = parent.latest_child_started_at;
         parent.latest_child_started_at =
           Some(parent.latest_child_started_at.map_or(input.started_at, |current| current.max(input.started_at)));
-      }
+        previous
+      } else {
+        None
+      };
       match run.spans.entry(input.span_id) {
         Entry::Vacant(entry) => {
           entry.insert(SpanState::Starting);
         }
         Entry::Occupied(_) => return Err(error("auv.telemetry.otel_duplicate_span_start")),
       }
-      (parent_context.unwrap_or_default(), run_was_new)
+      (parent_context.unwrap_or_default(), run_was_new, previous_parent_latest_child_started_at)
     };
 
     let span = self
@@ -357,6 +361,12 @@ impl OtelProjectorInner {
         match run.spans.remove(&input.span_id) {
           Some(SpanState::Starting) => {}
           _ => return Err(error("auv.telemetry.otel_duplicate_span_start")),
+        }
+        if let Some(parent_span_id) = input.parent_span_id {
+          let Some(SpanState::Active(parent)) = run.spans.get_mut(&parent_span_id) else {
+            return Err(error("auv.telemetry.otel_missing_parent_span"));
+          };
+          parent.latest_child_started_at = previous_parent_latest_child_started_at;
         }
         run_was_new && run.spans.is_empty()
       };
