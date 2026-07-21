@@ -94,15 +94,7 @@ impl TelemetryProjector for OtelProjector {
   }
 
   fn flush(&self) -> auv_tracing::BoxFuture<'_, Result<(), TelemetryError>> {
-    Box::pin(async move {
-      let trace_result = self.inner.tracer_provider.force_flush();
-      let log_result = self.inner.logger_provider.force_flush();
-      if trace_result.is_err() || log_result.is_err() {
-        Err(error("auv.telemetry.otel_flush_failed"))
-      } else {
-        Ok(())
-      }
-    })
+    Box::pin(async move { self.inner.flush() })
   }
 }
 
@@ -121,6 +113,19 @@ impl OtelProjectorInner {
       }
       Some(active_owner) if *active_owner == owner => Err(error("auv.telemetry.otel_reentrant_projection")),
       Some(_) => Err(error("auv.telemetry.otel_concurrent_projection")),
+    }
+  }
+
+  fn flush(&self) -> Result<(), TelemetryError> {
+    let reservation = self.reserve()?;
+    let trace_result = self.tracer_provider.force_flush();
+    let log_result = self.logger_provider.force_flush();
+    let flush_failed = trace_result.is_err() || log_result.is_err();
+    reservation.finish()?;
+    if flush_failed {
+      Err(error("auv.telemetry.otel_flush_failed"))
+    } else {
+      Ok(())
     }
   }
 
@@ -260,7 +265,12 @@ impl OtelProjectorInner {
   fn emit_log_without_trace_context(&self, record: SdkLogRecord) {
     // NOTICE: OpenTelemetry SDK 0.32 fills an absent log trace context from
     // the current context in `opentelemetry_sdk/src/logs/logger.rs`.
-    let _guard = Context::new().attach();
+    let context = if Context::is_current_telemetry_suppressed() {
+      Context::new().with_telemetry_suppressed()
+    } else {
+      Context::new()
+    };
+    let _guard = context.attach();
     self.logger.emit(record);
   }
 
