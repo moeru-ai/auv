@@ -323,11 +323,22 @@ core-adjacent.
    types behind a platform-agnostic trait in `auv-driver-common`, or (c)
    document why runtime is intentionally macOS-specific and accept the coupling
    (contradicts the library-only positioning).
-2. **Confirm `auv-media-macos` tier**: I classified it as **core-adjacent** (a
-   platform capability with a clean contract, not in the exec seam but not
-   experimental either). The owner may prefer **driver-tier / core platform
-   capability** instead. Clarify the distinction between "driver-tier" and
-   "core-adjacent platform capability" for future classification.
+2. ~~**Confirm `auv-media-macos` tier**~~ — **Resolved (owner-confirmed
+   2026-07-21): core-adjacent, not driver-tier.** Driver-tier in this
+   workspace means implementing or extending the `auv-driver-common` contract
+   (`Driver`/`DriverSession`, `DriverError`, `InputActionResult`) that
+   `ActionResolver` and the CLI/library frontends dispatch through — the seam
+   AGENTS.md names explicitly. `auv-media-macos` doesn't participate in it:
+   Cargo exposes an implicit library target from `src/lib.rs` plus the explicit
+   `[[bin]]` companion, but the library returns its own `Result<_, MediaError>`
+   rather than `DriverResult` and does not implement `Driver` or
+   `DriverSession`. It is an app-agnostic system now-playing capability
+   (vendored `mediaremote-adapter` via `/usr/bin/perl`) whose only current
+   consumer is product `auv-netease-music`. Like the other confirmed
+   core-adjacent crates (`auv-file`, `auv-query-readiness`,
+   `auv-stage-status`), it owns a narrow reusable contract outside the active
+   driver execution seam and is not root-owned; consumer count is not the tier
+   criterion. No tier change; table label stands.
 
 Resolved, not an open decision: PR #121 removed the dead root/CLI
 `auv-media-macos` declarations while keeping the product consumer intact.
