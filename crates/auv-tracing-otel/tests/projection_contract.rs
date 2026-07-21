@@ -995,6 +995,34 @@ fn otel_end_panic_keeps_end_terminal_and_exports_once() {
 }
 
 #[test]
+fn otel_invalid_child_context_restores_parent_child_maximum() {
+  let tracer_provider = SdkTracerProvider::builder().build();
+  let projector = OtelProjector::new(tracer_provider.clone(), SdkLoggerProvider::builder().build());
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let parent_id = AuvSpanId::new();
+
+  project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
+  project(&projector, span_start(Some(authority_id), run_id, AuvSpanId::new(), Some(parent_id), 14)).unwrap();
+  tracer_provider.shutdown().unwrap();
+
+  // ROOT CAUSE:
+  //
+  // If the SDK rejected a child before `on_start`, rollback removed its
+  // reservation but left its timestamp as the parent's child maximum.
+  //
+  // Before the fix, the failed child at 20 prevented the parent ending at 15.
+  // The fix restores the previous maximum at 14 instead of clearing it.
+  let failed_child = project(&projector, span_start(Some(authority_id), run_id, AuvSpanId::new(), Some(parent_id), 20)).unwrap_err();
+  assert_eq!(failed_child.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, parent_id, 13)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_span_end_before_child_start"
+  );
+  project(&projector, span_end(Some(authority_id), run_id, parent_id, 15)).unwrap();
+}
+
+#[test]
 fn otel_invalid_root_context_does_not_claim_run_authority() {
   let tracer_provider = SdkTracerProvider::builder().build();
   let projector = OtelProjector::new(tracer_provider.clone(), SdkLoggerProvider::builder().build());
