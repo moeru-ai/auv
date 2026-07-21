@@ -141,6 +141,16 @@ fn open_durably_creates_each_missing_root_component() {
 }
 
 #[test]
+fn open_durably_confirms_an_existing_selected_root_anchor() {
+  let parent = tempfile::tempdir().unwrap();
+  let root = parent.path().join("existing-store");
+  fs::create_dir(&root).unwrap();
+
+  let authority_id = FileRunStore::open(&root).unwrap().authority_id();
+  assert_eq!(FileRunStore::open(&root).unwrap().authority_id(), authority_id);
+}
+
+#[test]
 fn oversized_sparse_frame_is_integrity_without_trusting_declared_length() {
   const FRAME_HEADER_BYTES: u64 = 8 + 2 + 8 + 32;
   const OVERSIZED_PAYLOAD: u64 = 64 * 1024 * 1024;
