@@ -13,8 +13,8 @@ use auv_tracing::{
   RunStore, RunSubscription, Sha256Digest, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
-  ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactApiError, ArtifactUploadDraft, ArtifactUploadId, AuthorityResponse, RUN_MEDIA_TYPE,
-  ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunStreamGap,
+  ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactApiError, ArtifactUploadDraft, ArtifactUploadId, AuthorityResponse,
+  RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunStreamGap,
 };
 use auv_tracing_inspect::{InspectRunStore, TokioTaskSpawner};
 use axum::Router;
@@ -352,7 +352,12 @@ async fn write_redirects_never_send_commit_metadata_or_artifact_bytes_to_another
       response(
         StatusCode::SERVICE_UNAVAILABLE,
         ARTIFACT_UPLOAD_MEDIA_TYPE,
-        Body::from(serde_json::to_vec(&ArtifactApiError::new(error_code("auv.test.redirected"))).unwrap()),
+        Body::from(
+          serde_json::to_vec(&ArtifactApiError {
+            error: error_code("auv.test.redirected"),
+          })
+          .unwrap(),
+        ),
       )
     }
   }))
@@ -468,7 +473,7 @@ async fn client_reconstructs_every_typed_http_error_class() {
 async fn client_reconstructs_every_artifact_write_error_class() {
   let cases = [
     ArtifactWriteError::AuthorityMismatch {
-      expected: OTHER_AUTHORITY.parse().unwrap(),
+      expected: authority_id(),
       received: authority_id(),
     },
     ArtifactWriteError::IdempotencyMismatch,
@@ -660,6 +665,62 @@ async fn same_client_retry_reacquires_after_a_safe_body_failure() {
 
   let retried = store.write_artifact(request, Box::pin(Cursor::new(b"abc".to_vec()))).await.expect("reacquired upload");
   assert!(retried.is_appended());
+}
+
+#[derive(Clone, Default)]
+struct LostDraftResponseProbe {
+  calls: Arc<AtomicUsize>,
+  admissions: Arc<Mutex<Vec<String>>>,
+}
+
+#[tokio::test]
+async fn lost_draft_response_replays_the_post_with_the_same_admission() {
+  let backing = MemoryRunStore::new(authority_id());
+  let probe = LostDraftResponseProbe::default();
+  let app = router(Arc::new(backing)).layer(middleware::from_fn_with_state(probe.clone(), lose_first_draft_response));
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
+  let polls = Arc::new(AtomicUsize::new(0));
+  let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
+
+  let result = store
+    .write_artifact(
+      request,
+      Box::pin(CountingReader {
+        inner: Cursor::new(b"abc".to_vec()),
+        polls: polls.clone(),
+      }),
+    )
+    .await
+    .expect("replayed draft response");
+
+  assert!(result.is_appended());
+  assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
+  let admissions = probe.admissions.lock().expect("admission probe");
+  assert_eq!(admissions.len(), 2);
+  assert_eq!(admissions[0], admissions[1]);
+  assert!(polls.load(Ordering::SeqCst) > 0);
+}
+
+async fn lose_first_draft_response(State(probe): State<LostDraftResponseProbe>, request: AxumRequest, next: Next) -> Response {
+  let is_draft = request.method() == Method::POST && request.uri().path().ends_with("/artifact-uploads");
+  if !is_draft {
+    return next.run(request).await;
+  }
+
+  let admission =
+    request.headers().get(ARTIFACT_UPLOAD_ADMISSION_HEADER).and_then(|value| value.to_str().ok()).expect("draft admission").to_owned();
+  probe.admissions.lock().expect("admission probe").push(admission);
+  let response = next.run(request).await;
+  if probe.calls.fetch_add(1, Ordering::SeqCst) != 0 {
+    return response;
+  }
+
+  let (parts, _) = response.into_parts();
+  let body = Body::from_stream(futures_util::stream::once(async {
+    Err::<bytes::Bytes, _>(io::Error::new(io::ErrorKind::ConnectionReset, "lost draft response"))
+  }));
+  Response::from_parts(parts, body)
 }
 
 #[tokio::test]
@@ -951,6 +1012,82 @@ async fn replayed_draft_preflight_without_a_commit_continues_the_one_shot_upload
   assert!(polls.load(Ordering::SeqCst) > 0);
 }
 
+#[derive(Clone, Copy)]
+enum DraftAdmissionFault {
+  Duplicate,
+  Mismatch,
+}
+
+#[derive(Clone)]
+struct DraftAdmissionFaultState {
+  draft: ArtifactUploadDraft,
+  fault: DraftAdmissionFault,
+}
+
+#[tokio::test]
+async fn duplicate_or_mismatched_draft_admission_responses_never_poll_the_body() {
+  for fault in [
+    DraftAdmissionFault::Duplicate,
+    DraftAdmissionFault::Mismatch,
+  ] {
+    let artifact_id = ArtifactId::new();
+    let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+    let state = DraftAdmissionFaultState {
+      draft: ArtifactUploadDraft::new(
+        ArtifactUploadId::new(),
+        ArtifactUri::from_ids(run_id(), artifact_id),
+        Timestamp::new(1_784_620_800, 0).unwrap(),
+      ),
+      fault,
+    };
+    let app = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route("/v1/runs/{run_id}/artifact-uploads", post(faulty_draft_admission))
+      .with_state(state);
+    let server = TestServer::start(app).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+    let polls = Arc::new(AtomicUsize::new(0));
+
+    let error = store
+      .write_artifact(
+        request,
+        Box::pin(FailingPollProbe {
+          polls: polls.clone(),
+        }),
+      )
+      .await
+      .unwrap_err();
+
+    assert!(matches!(error, ArtifactWriteError::Unavailable(_)));
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+  }
+}
+
+async fn faulty_draft_admission(State(state): State<DraftAdmissionFaultState>, headers: HeaderMap) -> Response {
+  let mut response = response(StatusCode::CREATED, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(serde_json::to_vec(&state.draft).unwrap()));
+  match state.fault {
+    DraftAdmissionFault::Duplicate => {
+      let admission = headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().clone();
+      response.headers_mut().append(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.clone());
+      response.headers_mut().append(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission);
+    }
+    DraftAdmissionFault::Mismatch => {
+      response.headers_mut().insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, "019f8b1e-4b2d-7a00-8f00-000000000099".parse().unwrap());
+    }
+  }
+  response
+}
+
 #[tokio::test]
 async fn ambiguous_artifact_responses_use_one_lookup_and_remain_unknown() {
   for response_mode in 10..=14 {
@@ -994,14 +1131,20 @@ async fn ambiguous_artifact_responses_use_one_lookup_and_remain_unknown() {
   }
 }
 
-async fn lost_draft(State(state): State<LostResponseState>) -> Response {
+async fn lost_draft(State(state): State<LostResponseState>, headers: HeaderMap) -> Response {
   let bytes = serde_json::to_vec(&state.draft).expect("draft JSON");
-  response(StatusCode::CREATED, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(bytes))
+  granted_draft_response(StatusCode::CREATED, bytes, &headers)
 }
 
-async fn replayed_draft(State(state): State<LostResponseState>) -> Response {
+async fn replayed_draft(State(state): State<LostResponseState>, headers: HeaderMap) -> Response {
   let bytes = serde_json::to_vec(&state.draft).expect("draft JSON");
-  response(StatusCode::OK, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(bytes))
+  granted_draft_response(StatusCode::OK, bytes, &headers)
+}
+
+fn granted_draft_response(status: StatusCode, bytes: Vec<u8>, request_headers: &HeaderMap) -> Response {
+  let mut response = response(status, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(bytes));
+  response.headers_mut().insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, request_headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().clone());
+  response
 }
 
 async fn lost_content(State(state): State<LostResponseState>, request: axum::extract::Request) -> Response {
@@ -1010,7 +1153,12 @@ async fn lost_content(State(state): State<LostResponseState>, request: axum::ext
     return response(
       StatusCode::SERVICE_UNAVAILABLE,
       ARTIFACT_UPLOAD_MEDIA_TYPE,
-      Body::from(serde_json::to_vec(&ArtifactApiError::new(error_code("auv.inspect.publication_unknown"))).expect("artifact error JSON")),
+      Body::from(
+        serde_json::to_vec(&ArtifactApiError {
+          error: error_code("auv.inspect.publication_unknown"),
+        })
+        .expect("artifact error JSON"),
+      ),
     );
   }
   state.store.write_artifact(state.request.clone(), Box::pin(Cursor::new(bytes.to_vec()))).await.expect("published before loss");
@@ -1021,7 +1169,10 @@ async fn lost_content(State(state): State<LostResponseState>, request: axum::ext
 
 async fn ambiguous_artifact_content(State(state): State<LostResponseState>, request: axum::extract::Request) -> Response {
   let _ = to_bytes(request.into_body(), 16).await.expect("artifact bytes");
-  let error = serde_json::to_vec(&ArtifactApiError::new(error_code("auv.test.rejected"))).unwrap();
+  let error = serde_json::to_vec(&ArtifactApiError {
+    error: error_code("auv.test.rejected"),
+  })
+  .unwrap();
   match state.lookup_mode {
     10 => response(StatusCode::UNPROCESSABLE_ENTITY, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from("{")),
     11 => response(StatusCode::UNPROCESSABLE_ENTITY, "application/json", Body::from(error)),
@@ -1119,6 +1270,9 @@ enum ArtifactReadMode {
   MissingLength,
   MissingDigest,
   BadDigestHeader,
+  DuplicateContentType,
+  DuplicateLength,
+  DuplicateDigest,
   Short,
   Long,
   Corrupt,
@@ -1132,6 +1286,9 @@ async fn artifact_open_rejects_missing_or_malformed_integrity_headers() {
     ArtifactReadMode::MissingLength,
     ArtifactReadMode::MissingDigest,
     ArtifactReadMode::BadDigestHeader,
+    ArtifactReadMode::DuplicateContentType,
+    ArtifactReadMode::DuplicateLength,
+    ArtifactReadMode::DuplicateDigest,
   ] {
     let server = artifact_read_server(mode).await;
     let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
@@ -1204,6 +1361,9 @@ async fn artifact_read_server(mode: ArtifactReadMode) -> TestServer {
       let mut headers = String::from("HTTP/1.1 200 OK\r\n");
       if !matches!(mode, ArtifactReadMode::MissingContentType) {
         headers.push_str("Content-Type: text/plain\r\n");
+        if matches!(mode, ArtifactReadMode::DuplicateContentType) {
+          headers.push_str("Content-Type: text/plain\r\n");
+        }
       }
       if !matches!(mode, ArtifactReadMode::MissingLength) {
         let length = if matches!(mode, ArtifactReadMode::Long) {
@@ -1212,6 +1372,9 @@ async fn artifact_read_server(mode: ArtifactReadMode) -> TestServer {
           3
         };
         headers.push_str(&format!("Content-Length: {length}\r\n"));
+        if matches!(mode, ArtifactReadMode::DuplicateLength) {
+          headers.push_str(&format!("Content-Length: {length}\r\n"));
+        }
       }
       if !matches!(mode, ArtifactReadMode::MissingDigest) {
         let digest = if matches!(mode, ArtifactReadMode::BadDigestHeader) {
@@ -1220,6 +1383,9 @@ async fn artifact_read_server(mode: ArtifactReadMode) -> TestServer {
           "sha-256=:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=:"
         };
         headers.push_str(&format!("Content-Digest: {digest}\r\n"));
+        if matches!(mode, ArtifactReadMode::DuplicateDigest) {
+          headers.push_str(&format!("Content-Digest: {digest}\r\n"));
+        }
       }
       headers.push_str("Connection: close\r\n\r\n");
       socket.write_all(headers.as_bytes()).await.unwrap();
@@ -1665,7 +1831,7 @@ async fn ordinary_commit_unknown_wire_error_is_preserved_without_reposting() {
         let observed_post_calls = observed_post_calls.clone();
         async move {
           observed_post_calls.fetch_add(1, Ordering::SeqCst);
-          response(StatusCode::SERVICE_UNAVAILABLE, RUN_MEDIA_TYPE, Body::from(r#"{"commit_unknown":{"code":"auv.test.commit_unknown"}}"#))
+          response(StatusCode::SERVICE_UNAVAILABLE, RUN_MEDIA_TYPE, Body::from(r#"{"unavailable":{"code":"auv.inspect.commit_unknown"}}"#))
         }
       }),
     )
@@ -1673,7 +1839,7 @@ async fn ordinary_commit_unknown_wire_error_is_preserved_without_reposting() {
   let server = TestServer::start(app).await;
   let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
-  assert_eq!(store.commit(sample_commit_request()).await.unwrap_err(), CommitError::CommitUnknown(error_code("auv.test.commit_unknown")));
+  assert_eq!(store.commit(sample_commit_request()).await.unwrap_err(), CommitError::CommitUnknown(error_code("auv.inspect.commit_unknown")));
   assert_eq!(post_calls.load(Ordering::SeqCst), 1);
 }
 
@@ -1806,6 +1972,52 @@ async fn client_validates_success_status_media_and_canonical_identities() {
 }
 
 #[tokio::test]
+async fn resolver_rejects_untrusted_origins_and_noncanonical_artifact_paths() {
+  let requested = ArtifactUri::from_ids(run_id(), ArtifactId::new());
+  for malicious_origin in [true, false] {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let base_url = Url::parse(&format!("http://{address}/")).unwrap();
+    let content_url = if malicious_origin {
+      Url::parse(&format!("https://attacker.example/v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id())).unwrap()
+    } else {
+      base_url.join("v1/runs/not-the-requested-run/artifacts/not-the-requested-artifact").unwrap()
+    };
+    let payload = ResolveArtifactsResponse::new(vec![ResolvedArtifact::Available {
+      uri: requested.clone(),
+      content_type: ContentType::parse("text/plain").unwrap(),
+      byte_length: ByteLength::new(3).unwrap(),
+      sha256: Sha256Digest::from_str(ABC_SHA256).unwrap(),
+      content_url,
+    }]);
+    let app = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route(
+        "/v1/resources/artifacts/resolve",
+        post(move || {
+          let payload = payload.clone();
+          async move { response(StatusCode::OK, "application/json", Body::from(serde_json::to_vec(&payload).unwrap())) }
+        }),
+      );
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let server = TestServer { base_url, task };
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+    assert!(matches!(store.resolve_artifacts(vec![requested.clone()]).await, Err(ReadError::Integrity(_))));
+  }
+}
+
+#[tokio::test]
 async fn commit_page_cannot_exceed_the_requested_limit() {
   let page = RunCommitPage::new(
     vec![
@@ -1921,7 +2133,12 @@ async fn resolver_request_error_uses_application_json_and_maps_typed_unavailable
         response(
           StatusCode::SERVICE_UNAVAILABLE,
           "application/json",
-          Body::from(serde_json::to_vec(&ArtifactApiError::new(error_code("auv.test.resolver_unavailable"))).expect("resolver error JSON")),
+          Body::from(
+            serde_json::to_vec(&ArtifactApiError {
+              error: error_code("auv.test.resolver_unavailable"),
+            })
+            .expect("resolver error JSON"),
+          ),
         )
       }),
     );
