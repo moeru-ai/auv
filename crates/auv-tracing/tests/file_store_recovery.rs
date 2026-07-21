@@ -11,9 +11,9 @@ use std::thread;
 use std::time::Duration;
 
 use auv_tracing::{
-  ArtifactId, ArtifactPurpose, ArtifactWriteError, Attributes, ByteLength, CommitError, ContentType, EventId, EventName, EventOccurred,
-  EventSchema, FileRunStore, IdempotencyKey, JsonPayload, PageLimit, ReadError, RunCommitRequest, RunId, RunMutation, RunRevision, RunStore,
-  Sha256Digest, SpanId, StoreArtifactRequest, Timestamp,
+  ArtifactId, ArtifactPurpose, ArtifactWriteError, Attributes, ByteLength, CommitError, CommitResult, ContentType, EventId, EventName,
+  EventOccurred, EventSchema, FileRunStore, IdempotencyKey, JsonPayload, PageLimit, ReadError, RunCommitRequest, RunId, RunMutation,
+  RunRevision, RunStore, Sha256Digest, SpanId, StoreArtifactRequest, Timestamp,
 };
 use futures_io::AsyncRead;
 use futures_util::StreamExt;
@@ -37,8 +37,9 @@ fn truncated_final_frame_is_ignored_then_repaired_before_append_but_prior_corrup
   assert_eq!(recovered.events().len(), 1);
   assert_eq!(fs::metadata(&log).unwrap().len(), complete_length - 3, "a point read repaired the partial tail");
 
-  let repaired = commit_event(&reopened, run_id, "replacement second");
-  assert_eq!(repaired.revision().get(), 2);
+  let repaired =
+    futures_executor::block_on(reopened.commit(event_request(&reopened, run_id, IdempotencyKey::new(), "replacement second"))).unwrap();
+  assert!(matches!(&repaired, CommitResult::Appended(commit) if commit.revision().get() == 2));
   let snapshot = futures_executor::block_on(reopened.load_snapshot(run_id)).unwrap().unwrap();
   assert_eq!(snapshot.events().len(), 2);
 
@@ -86,12 +87,29 @@ fn already_open_point_reads_refresh_from_the_verified_log() {
   let run_id = RunId::new();
   let key = IdempotencyKey::new();
   let request = event_request(&second, run_id, key, "external");
-  let committed = futures_executor::block_on(second.commit(request)).unwrap().into_commit();
+  let result = futures_executor::block_on(second.commit(request)).unwrap();
+  assert!(matches!(&result, CommitResult::Appended(_)));
+  let committed = result.into_commit();
 
   assert_eq!(futures_executor::block_on(first.lookup_commit(run_id, key)).unwrap(), Some(committed.clone()));
   assert_eq!(futures_executor::block_on(first.load_snapshot(run_id)).unwrap().unwrap().through_revision().get(), 1);
   let page = futures_executor::block_on(first.commits_after(run_id, revision(0), PageLimit::new(10).unwrap())).unwrap();
   assert_eq!(page.commits(), &[committed]);
+}
+
+#[test]
+fn equal_ordinary_replay_after_reopen_reports_replayed() {
+  let root = tempfile::tempdir().unwrap();
+  let first = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  let request = event_request(&first, run_id, IdempotencyKey::new(), "reopen replay");
+  let appended = futures_executor::block_on(first.commit(request.clone())).unwrap();
+  assert!(matches!(&appended, CommitResult::Appended(commit) if commit.revision().get() == 1));
+  drop(first);
+
+  let reopened = FileRunStore::open(root.path()).unwrap();
+  let replayed = futures_executor::block_on(reopened.commit(request)).unwrap();
+  assert!(matches!(&replayed, CommitResult::Replayed(commit) if commit == appended.commit()));
 }
 
 #[test]
@@ -125,9 +143,12 @@ fn slow_artifact_body_does_not_block_an_ordinary_same_run_commit() {
   gate.release();
   let artifact_result = artifact.join().unwrap();
   commit.join().unwrap();
-  let ordinary = ordinary.expect("ordinary commit remained blocked on the artifact stream").unwrap().into_commit();
+  let ordinary = ordinary.expect("ordinary commit remained blocked on the artifact stream").unwrap();
+  assert!(matches!(&ordinary, CommitResult::Appended(_)));
+  let ordinary = ordinary.into_commit();
   assert_eq!(ordinary.revision().get(), 1);
-  assert_eq!(artifact_result.unwrap().into_commit().revision().get(), 2);
+  let artifact_result = artifact_result.unwrap();
+  assert!(matches!(&artifact_result, CommitResult::Appended(commit) if commit.revision().get() == 2));
 }
 
 #[test]
@@ -212,9 +233,10 @@ fn rejected_duplicate_event_does_not_grow_log_or_poison_the_next_revision() {
   let store = FileRunStore::open(root.path()).unwrap();
   let run_id = RunId::new();
   let event_id = EventId::new();
-  let first = futures_executor::block_on(store.commit(event_request_with_id(&store, run_id, IdempotencyKey::new(), event_id, "first")))
-    .unwrap()
-    .into_commit();
+  let first =
+    futures_executor::block_on(store.commit(event_request_with_id(&store, run_id, IdempotencyKey::new(), event_id, "first"))).unwrap();
+  assert!(matches!(&first, CommitResult::Appended(_)));
+  let first = first.into_commit();
   assert_eq!(first.revision().get(), 1);
   let log = commit_log(root.path(), run_id);
   let valid_length = fs::metadata(&log).unwrap().len();
@@ -468,7 +490,9 @@ fn artifact_reader_reports_digest_corruption() {
   let artifact_id = ArtifactId::new();
   let bytes = b"integrity protected body".to_vec();
   let request = artifact_request(&store, run_id, artifact_id, IdempotencyKey::new(), &bytes);
-  let commit = futures_executor::block_on(store.write_artifact(request, Box::pin(Cursor::new(bytes.clone())))).unwrap().into_commit();
+  let commit = futures_executor::block_on(store.write_artifact(request, Box::pin(Cursor::new(bytes.clone())))).unwrap();
+  assert!(matches!(&commit, CommitResult::Appended(_)));
+  let commit = commit.into_commit();
   let metadata = commit
     .facts()
     .iter()
@@ -495,7 +519,9 @@ fn artifact_reader_reports_digest_corruption() {
 }
 
 fn commit_event(store: &FileRunStore, run_id: RunId, value: &str) -> auv_tracing::RunCommit {
-  futures_executor::block_on(store.commit(event_request(store, run_id, IdempotencyKey::new(), value))).unwrap().into_commit()
+  let result = futures_executor::block_on(store.commit(event_request(store, run_id, IdempotencyKey::new(), value))).unwrap();
+  assert!(matches!(&result, CommitResult::Appended(_)));
+  result.into_commit()
 }
 
 fn event_request(store: &FileRunStore, run_id: RunId, key: IdempotencyKey, value: &str) -> RunCommitRequest {

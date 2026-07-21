@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use auv_tracing::{ArtifactId, AuthorityId, EventId, FileRunStore, IdempotencyKey, PageLimit, RunFact, RunId, RunRevision, RunStore};
-use auv_tracing_conformance::assert_store_contract;
+use auv_tracing_conformance::{artifact_request, assert_store_contract};
 use futures_timer::Delay;
 use futures_util::future::{Either, select};
 use futures_util::task::noop_waker;
@@ -113,6 +113,73 @@ fn concurrent_equal_idempotency_replay_appends_once() {
 }
 
 #[test]
+fn concurrent_equal_artifact_writers_report_one_append_and_one_replay() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let sync = tempfile::tempdir().unwrap();
+  let run_id = RunId::new();
+  let artifact_id = ArtifactId::new();
+  let key = IdempotencyKey::new();
+  let body = sync.path().join("body");
+  fs::write(&body, b"equal concurrent artifact").unwrap();
+  let ready_one = sync.path().join("ready-one");
+  let ready_two = sync.path().join("ready-two");
+  let go = sync.path().join("go");
+  let mut first = spawn_artifact(root.path(), run_id, artifact_id, key, &body, &ready_one, &go);
+  let mut second = spawn_artifact(root.path(), run_id, artifact_id, key, &body, &ready_two, &go);
+  wait_for_ready(&[&ready_one, &ready_two], &mut [&mut first, &mut second]);
+  release(&go);
+
+  let results = [first.finish(), second.finish()];
+  assert_eq!(results.iter().filter(|result| matches!(result, ChildResult::ArtifactAppended { .. })).count(), 1);
+  assert_eq!(results.iter().filter(|result| matches!(result, ChildResult::ArtifactReplayed { .. })).count(), 1);
+  assert_eq!(results.map(artifact_revision), [1, 1]);
+  let page = futures_executor::block_on(store.commits_after(run_id, revision(0), PageLimit::new(10).unwrap())).unwrap();
+  assert_eq!(page.commits().len(), 1);
+  assert_eq!(blob_count(root.path()), 1);
+}
+
+// ROOT CAUSE:
+//
+// If an equal artifact commit became visible while another writer staged a
+// body that later failed, the loser returned the body error without refreshing
+// the run index. The fix rechecks under the run lock before settling that error.
+#[test]
+fn concurrent_equal_artifact_staging_failure_rechecks_and_replays() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let sync = tempfile::tempdir().unwrap();
+  let run_id = RunId::new();
+  let artifact_id = ArtifactId::new();
+  let key = IdempotencyKey::new();
+  let body = sync.path().join("body");
+  let bytes = b"winner artifact body";
+  fs::write(&body, bytes).unwrap();
+  let ready = sync.path().join("ready");
+  let go = sync.path().join("go");
+  let body_polled = sync.path().join("body-polled");
+  let fail = sync.path().join("fail");
+  let mut loser = spawn_failing_artifact(root.path(), run_id, artifact_id, key, &body, &ready, &go, &body_polled, &fail);
+  wait_for_ready(&[&ready], &mut [&mut loser]);
+  release(&go);
+  wait_for_ready(&[&body_polled], &mut [&mut loser]);
+
+  // The request was not committed at the loser's initial check, so its body is
+  // polled outside the run lock before the winner establishes the replay.
+  let winner = futures_executor::block_on(store.write_artifact(
+    artifact_request(store.authority_id(), run_id, key, artifact_id, bytes),
+    Box::pin(futures_util::io::Cursor::new(bytes)),
+  ))
+  .unwrap();
+  assert!(matches!(winner, auv_tracing::CommitResult::Appended(_)));
+  release(&fail);
+
+  assert!(matches!(loser.finish(), ChildResult::ArtifactReplayed { revision: 1 }));
+  let page = futures_executor::block_on(store.commits_after(run_id, revision(0), PageLimit::new(10).unwrap())).unwrap();
+  assert_eq!(page.commits().len(), 1);
+}
+
+#[test]
 fn concurrent_artifact_id_conflict_keeps_one_blob_and_one_fact() {
   let root = tempfile::tempdir().unwrap();
   let store = FileRunStore::open(root.path()).unwrap();
@@ -132,7 +199,7 @@ fn concurrent_artifact_id_conflict_keeps_one_blob_and_one_fact() {
   release(&go);
 
   let results = [first.finish(), second.finish()];
-  assert_eq!(results.iter().filter(|result| matches!(result, ChildResult::ArtifactCommitted { .. })).count(), 1);
+  assert_eq!(results.iter().filter(|result| matches!(result, ChildResult::ArtifactAppended { .. })).count(), 1);
   assert_eq!(results.iter().filter(|result| matches!(result, ChildResult::ArtifactConflict)).count(), 1);
   let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).unwrap().unwrap();
   assert_eq!(snapshot.artifacts().len(), 1);
@@ -162,7 +229,7 @@ fn point_reads_refresh_after_another_process_writes() {
   let mut child = spawn_artifact(root.path(), run_id, artifact_id, key, &body, &ready, &go);
   wait_for_ready(&[&ready], &mut [&mut child]);
   release(&go);
-  assert!(matches!(child.finish(), ChildResult::ArtifactCommitted { revision: 1 }));
+  assert!(matches!(child.finish(), ChildResult::ArtifactAppended { revision: 1 }));
 
   let lookup = futures_executor::block_on(store.lookup_commit(run_id, key)).unwrap().unwrap();
   assert_eq!(lookup.revision().get(), 1);
@@ -218,7 +285,8 @@ enum ChildResult {
   Authority { authority_id: AuthorityId },
   CommitAppended { revision: u64 },
   CommitReplayed { revision: u64 },
-  ArtifactCommitted { revision: u64 },
+  ArtifactAppended { revision: u64 },
+  ArtifactReplayed { revision: u64 },
   ArtifactConflict,
 }
 
@@ -317,6 +385,33 @@ fn spawn_artifact(
   ChildGuard::spawn(&mut command)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn spawn_failing_artifact(
+  root: &Path,
+  run_id: RunId,
+  artifact_id: ArtifactId,
+  key: IdempotencyKey,
+  body: &Path,
+  ready: &Path,
+  go: &Path,
+  body_polled: &Path,
+  fail: &Path,
+) -> ChildGuard {
+  let mut command = child_command();
+  command
+    .arg("write-artifact-fail-after-poll")
+    .arg(root)
+    .arg(run_id.to_string())
+    .arg(artifact_id.to_string())
+    .arg(key.to_string())
+    .arg(body)
+    .arg(ready)
+    .arg(go)
+    .arg(body_polled)
+    .arg(fail);
+  ChildGuard::spawn(&mut command)
+}
+
 fn child_command() -> Command {
   Command::new(env!("CARGO_BIN_EXE_file_store_child"))
 }
@@ -344,6 +439,13 @@ fn commit_revision(result: ChildResult) -> u64 {
   match result {
     ChildResult::CommitAppended { revision } | ChildResult::CommitReplayed { revision } => revision,
     result => panic!("commit child returned {result:?}"),
+  }
+}
+
+fn artifact_revision(result: ChildResult) -> u64 {
+  match result {
+    ChildResult::ArtifactAppended { revision } | ChildResult::ArtifactReplayed { revision } => revision,
+    result => panic!("artifact child returned {result:?}"),
   }
 }
 

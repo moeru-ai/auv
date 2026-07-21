@@ -284,9 +284,16 @@ impl FileRunStore {
       }
     }
 
-    let (mut temporary, mut file) = self.inner.create_temporary_file("artifact").map_err(map_artifact_io)?;
-    stream_artifact(body, &mut file, request.expected_byte_length().get(), request.expected_sha256()).await?;
-    file.sync_data().map_err(|_| ArtifactWriteError::Unavailable(unavailable()))?;
+    let (mut temporary, mut file) = match self.inner.create_temporary_file("artifact").map_err(map_artifact_io) {
+      Ok(staging) => staging,
+      Err(error) => return self.resolve_artifact_staging_error(run_id, key, fingerprint, error),
+    };
+    if let Err(error) = stream_artifact(body, &mut file, request.expected_byte_length().get(), request.expected_sha256()).await {
+      return self.resolve_artifact_staging_error(run_id, key, fingerprint, error);
+    }
+    if file.sync_data().is_err() {
+      return self.resolve_artifact_staging_error(run_id, key, fingerprint, ArtifactWriteError::Unavailable(unavailable()));
+    }
     drop(file);
 
     let mut lock = self.inner.acquire_run_lock(run_id).map_err(map_artifact_io)?;
@@ -323,6 +330,18 @@ impl FileRunStore {
     drop(index);
     self.inner.wake_run(run_id);
     Ok(result)
+  }
+
+  fn resolve_artifact_staging_error(
+    &self,
+    run_id: RunId,
+    key: IdempotencyKey,
+    fingerprint: RequestFingerprint,
+    original: ArtifactWriteError,
+  ) -> Result<CommitResult, ArtifactWriteError> {
+    let replay =
+      self.inner.with_index(run_id, true, |index| equal_artifact_replay(index, key, fingerprint)).map_err(map_artifact_refresh)?;
+    replay.ok_or(original)
   }
 }
 
@@ -421,17 +440,21 @@ fn precheck_artifact(
   fingerprint: RequestFingerprint,
   uri: &ArtifactUri,
 ) -> Result<Option<CommitResult>, ArtifactWriteError> {
+  if let Some(replay) = equal_artifact_replay(index, key, fingerprint) {
+    return Ok(Some(replay));
+  }
   if let Some(stored) = index.idempotency.get(&key) {
-    return if stored.fingerprint == fingerprint {
-      Ok(Some(CommitResult::Replayed(stored.commit.clone())))
-    } else {
-      Err(ArtifactWriteError::IdempotencyMismatch)
-    };
+    debug_assert!(stored.fingerprint != fingerprint);
+    return Err(ArtifactWriteError::IdempotencyMismatch);
   }
   if index.reducer.snapshot().artifacts().contains_key(uri) {
     return Err(ArtifactWriteError::Rejected(rejected()));
   }
   Ok(None)
+}
+
+fn equal_artifact_replay(index: &RunIndex, key: IdempotencyKey, fingerprint: RequestFingerprint) -> Option<CommitResult> {
+  index.idempotency.get(&key).filter(|stored| stored.fingerprint == fingerprint).map(|stored| CommitResult::Replayed(stored.commit.clone()))
 }
 
 impl FileAuthority {

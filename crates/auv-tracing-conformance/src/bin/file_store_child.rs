@@ -2,14 +2,18 @@
 
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process;
 use std::str::FromStr;
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use auv_tracing::{ArtifactWriteError, CommitResult, FileRunStore, RunStore, SpanId};
 use auv_tracing_conformance::{artifact_request_with_span, event_request};
+use futures_io::AsyncRead;
 use futures_util::io::Cursor;
 use serde::Serialize;
 
@@ -27,7 +31,10 @@ enum ChildResult {
   CommitReplayed {
     revision: u64,
   },
-  ArtifactCommitted {
+  ArtifactAppended {
+    revision: u64,
+  },
+  ArtifactReplayed {
     revision: u64,
   },
   ArtifactConflict,
@@ -90,10 +97,34 @@ fn main() {
       signal_ready(&ready);
       wait_for_go(&go);
       match futures_executor::block_on(store.write_artifact(request, Box::pin(Cursor::new(bytes)))) {
-        Ok(result) => ChildResult::ArtifactCommitted {
-          revision: result.into_commit().revision().get(),
-        },
+        Ok(result) => artifact_result(result),
         Err(ArtifactWriteError::Rejected(_)) => ChildResult::ArtifactConflict,
+        Err(error) => panic!("artifact child failed with unexpected error: {error:?}"),
+      }
+    }
+    "write-artifact-fail-after-poll" => {
+      let root = path_arg(&mut args, "root");
+      let run_id = parse_arg(&mut args, "run-id");
+      let artifact_id = parse_arg(&mut args, "artifact-id");
+      let key = parse_arg(&mut args, "idempotency-key");
+      let body_file = path_arg(&mut args, "body-file");
+      let ready = path_arg(&mut args, "ready-file");
+      let go = path_arg(&mut args, "go-file");
+      let body_polled = path_arg(&mut args, "body-polled-file");
+      let fail = path_arg(&mut args, "fail-file");
+      finish_args(args);
+      let store = FileRunStore::open(root).expect("artifact child failed to open store");
+      let bytes = fs::read(body_file).expect("artifact child failed to read body fixture");
+      let request = artifact_request_with_span(store.authority_id(), run_id, key, artifact_id, None, &bytes);
+      signal_ready(&ready);
+      wait_for_go(&go);
+      let body = GatedFailureBody {
+        body_polled,
+        fail,
+        announced: false,
+      };
+      match futures_executor::block_on(store.write_artifact(request, Box::pin(body))) {
+        Ok(result) => artifact_result(result),
         Err(error) => panic!("artifact child failed with unexpected error: {error:?}"),
       }
     }
@@ -101,6 +132,38 @@ fn main() {
   };
 
   println!("{}", serde_json::to_string(&result).expect("child result is serializable"));
+}
+
+fn artifact_result(result: CommitResult) -> ChildResult {
+  match result {
+    CommitResult::Appended(commit) => ChildResult::ArtifactAppended {
+      revision: commit.revision().get(),
+    },
+    CommitResult::Replayed(commit) => ChildResult::ArtifactReplayed {
+      revision: commit.revision().get(),
+    },
+  }
+}
+
+struct GatedFailureBody {
+  body_polled: PathBuf,
+  fail: PathBuf,
+  announced: bool,
+}
+
+impl AsyncRead for GatedFailureBody {
+  fn poll_read(mut self: Pin<&mut Self>, context: &mut Context<'_>, _buffer: &mut [u8]) -> Poll<io::Result<usize>> {
+    if !self.announced {
+      signal_ready(&self.body_polled);
+      self.announced = true;
+    }
+    if self.fail.exists() {
+      return Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, "gated artifact body failure")));
+    }
+    thread::sleep(Duration::from_millis(1));
+    context.waker().wake_by_ref();
+    Poll::Pending
+  }
 }
 
 fn path_arg(args: &mut impl Iterator<Item = String>, name: &str) -> PathBuf {
