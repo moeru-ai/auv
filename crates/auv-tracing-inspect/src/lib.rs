@@ -1,7 +1,11 @@
 #![forbid(unsafe_code)]
 
-//! Versioned, HTTP-frontend-neutral DTOs for the Inspect run protocol.
+//! Versioned Inspect protocol DTOs and the remote run-authority client.
 
-// TODO(inspect-store-client-v1): The HTTP RunStore client and binary transfer
-// remain deferred to Task 12; Task 11 exports protocol DTOs only.
+mod client;
 pub mod protocol;
+mod task_spawner;
+
+pub use client::{ConnectError, InspectRunStore};
+pub use protocol::ResolvedArtifact;
+pub use task_spawner::{NoCurrentRuntime, TokioTaskSpawner};

@@ -1,15 +1,29 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::str::FromStr;
 
-use auv_tracing::{AuthorityId, ErrorCode, NonEmptyVec, RunMutation, RunRevision};
+use auv_tracing::{
+  ArtifactId, ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode, NonEmptyVec, RunMutation,
+  RunRevision, Sha256Digest, SpanId, Timestamp,
+};
 use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use url::Url;
+use uuid::Uuid;
 
 const MAX_JSON_NESTING: usize = 128;
 const MAX_JSON_OBJECT_MEMBERS: usize = 8_192;
 
 /// Versioned media type for Inspect run JSON requests and responses.
 pub const RUN_MEDIA_TYPE: &str = "application/vnd.auv.run+json; version=1";
+
+/// Versioned media type for Inspect artifact upload metadata and errors.
+pub const ARTIFACT_UPLOAD_MEDIA_TYPE: &str = "application/vnd.auv.artifact-upload+json; version=1";
+
+/// Media type for the Inspect-specific artifact resolver.
+pub const ARTIFACT_RESOLVE_MEDIA_TYPE: &str = "application/json";
+
+const MAX_RESOLVED_ARTIFACTS: usize = 256;
 
 /// The stable identity returned by an Inspect authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +46,269 @@ pub struct RunCommitBody {
 pub struct RunStreamGap {
   pub requested_after: RunRevision,
   pub earliest_available: RunRevision,
+}
+
+/// Metadata accepted before Inspect consumes a one-shot artifact body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUploadDraftRequest {
+  authority_id: AuthorityId,
+  artifact_id: ArtifactId,
+  span_id: Option<SpanId>,
+  purpose: ArtifactPurpose,
+  content_type: ContentType,
+  byte_length: ByteLength,
+  sha256: Sha256Digest,
+  attributes: Attributes,
+}
+
+impl ArtifactUploadDraftRequest {
+  /// Creates upload metadata from validated run-contract values.
+  #[allow(clippy::too_many_arguments)]
+  pub fn new(
+    authority_id: AuthorityId,
+    artifact_id: ArtifactId,
+    span_id: Option<SpanId>,
+    purpose: ArtifactPurpose,
+    content_type: ContentType,
+    byte_length: ByteLength,
+    sha256: Sha256Digest,
+    attributes: Attributes,
+  ) -> Self {
+    Self {
+      authority_id,
+      artifact_id,
+      span_id,
+      purpose,
+      content_type,
+      byte_length,
+      sha256,
+      attributes,
+    }
+  }
+
+  pub fn authority_id(&self) -> AuthorityId {
+    self.authority_id
+  }
+
+  pub fn artifact_id(&self) -> ArtifactId {
+    self.artifact_id
+  }
+
+  pub fn span_id(&self) -> Option<SpanId> {
+    self.span_id
+  }
+
+  pub fn purpose(&self) -> &ArtifactPurpose {
+    &self.purpose
+  }
+
+  pub fn content_type(&self) -> &ContentType {
+    &self.content_type
+  }
+
+  pub fn byte_length(&self) -> ByteLength {
+    self.byte_length
+  }
+
+  pub fn sha256(&self) -> Sha256Digest {
+    self.sha256
+  }
+
+  pub fn attributes(&self) -> &Attributes {
+    &self.attributes
+  }
+}
+
+/// Identifies one temporary Inspect upload resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ArtifactUploadId(Uuid);
+
+impl ArtifactUploadId {
+  /// Generates a non-nil UUIDv7 upload identity.
+  pub fn new() -> Self {
+    Self(Uuid::now_v7())
+  }
+}
+
+impl Default for ArtifactUploadId {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl fmt::Display for ArtifactUploadId {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.0.fmt(formatter)
+  }
+}
+
+impl FromStr for ArtifactUploadId {
+  type Err = ArtifactUploadIdError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    let uuid = Uuid::parse_str(value).map_err(|_| ArtifactUploadIdError)?;
+    if uuid.is_nil() || uuid.hyphenated().to_string() != value {
+      return Err(ArtifactUploadIdError);
+    }
+    Ok(Self(uuid))
+  }
+}
+
+impl Serialize for ArtifactUploadId {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    serializer.collect_str(self)
+  }
+}
+
+impl<'de> Deserialize<'de> for ArtifactUploadId {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    String::deserialize(deserializer)?.parse().map_err(de::Error::custom)
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("artifact upload ID must be a non-nil canonical UUID")]
+pub struct ArtifactUploadIdError;
+
+/// One temporary upload locator returned by Inspect.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUploadDraft {
+  upload_id: ArtifactUploadId,
+  artifact_uri: ArtifactUri,
+  expires_at: Timestamp,
+}
+
+impl ArtifactUploadDraft {
+  pub fn new(upload_id: ArtifactUploadId, artifact_uri: ArtifactUri, expires_at: Timestamp) -> Self {
+    Self {
+      upload_id,
+      artifact_uri,
+      expires_at,
+    }
+  }
+
+  pub fn upload_id(&self) -> ArtifactUploadId {
+    self.upload_id
+  }
+
+  pub fn artifact_uri(&self) -> &ArtifactUri {
+    &self.artifact_uri
+  }
+
+  pub fn expires_at(&self) -> Timestamp {
+    self.expires_at
+  }
+}
+
+/// One validated Inspect-specific artifact resolution request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveArtifactsRequest {
+  authority_id: AuthorityId,
+  uris: Vec<ArtifactUri>,
+}
+
+impl ResolveArtifactsRequest {
+  pub fn new(authority_id: AuthorityId, uris: Vec<ArtifactUri>) -> Result<Self, ResolveArtifactsRequestError> {
+    if uris.len() > MAX_RESOLVED_ARTIFACTS {
+      return Err(ResolveArtifactsRequestError);
+    }
+    Ok(Self { authority_id, uris })
+  }
+
+  pub fn authority_id(&self) -> AuthorityId {
+    self.authority_id
+  }
+
+  pub fn uris(&self) -> &[ArtifactUri] {
+    &self.uris
+  }
+}
+
+impl<'de> Deserialize<'de> for ResolveArtifactsRequest {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wire {
+      authority_id: AuthorityId,
+      uris: Vec<ArtifactUri>,
+    }
+
+    let wire = Wire::deserialize(deserializer)?;
+    Self::new(wire.authority_id, wire.uris).map_err(de::Error::custom)
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("artifact resolution batch exceeds 256 URIs")]
+pub struct ResolveArtifactsRequestError;
+
+/// One position-preserving result from the Inspect artifact resolver.
+// NOTICE(inspect-resolver-wire-v1): The accepted public DTO stores `Url`
+// directly. Remove this lint allowance only with a versioned protocol change.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ResolvedArtifact {
+  Available {
+    uri: ArtifactUri,
+    content_type: ContentType,
+    byte_length: ByteLength,
+    sha256: Sha256Digest,
+    content_url: Url,
+  },
+  NotFound {
+    uri: ArtifactUri,
+  },
+}
+
+/// Position-preserving results for one validated resolution batch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveArtifactsResponse {
+  results: Vec<ResolvedArtifact>,
+}
+
+impl ResolveArtifactsResponse {
+  pub fn new(results: Vec<ResolvedArtifact>) -> Self {
+    Self { results }
+  }
+
+  pub fn results(&self) -> &[ResolvedArtifact] {
+    &self.results
+  }
+
+  pub fn into_results(self) -> Vec<ResolvedArtifact> {
+    self.results
+  }
+}
+
+/// Compact artifact endpoint error body.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactApiError {
+  error: ErrorCode,
+}
+
+impl ArtifactApiError {
+  pub fn new(error: ErrorCode) -> Self {
+    Self { error }
+  }
+
+  pub fn error(&self) -> &ErrorCode {
+    &self.error
+  }
 }
 
 /// Typed error body shared by Inspect run protocol adapters.
