@@ -9,8 +9,8 @@ use auv_tracing::{
   RunRevision, RunStore, RunSubscription, SpanId, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
-  ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactUploadDraft, ArtifactUploadId, RUN_MEDIA_TYPE,
-  ResolveArtifactsResponse, ResolvedArtifact,
+  ARTIFACT_IDENTITY_CONFLICT_ERROR, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactUploadDraft,
+  ArtifactUploadId, IDEMPOTENCY_MISMATCH_ERROR, RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact,
 };
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST};
@@ -371,14 +371,14 @@ async fn draft_creation_reports_equal_admission_busy_and_rejects_both_identity_c
     .await
     .expect("key conflict");
   assert_eq!(key_conflict.status(), StatusCode::CONFLICT);
-  assert_eq!(response_json(key_conflict).await, json!({"error":"auv.inspect.idempotency_mismatch"}));
+  assert_eq!(response_json(key_conflict).await, json!({"error":IDEMPOTENCY_MISMATCH_ERROR}));
 
   let uri_conflict = app
     .oneshot(post_draft(RUN, OTHER_KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256)))
     .await
     .expect("URI conflict");
   assert_eq!(uri_conflict.status(), StatusCode::CONFLICT);
-  assert_eq!(response_json(uri_conflict).await, json!({"error":"auv.inspect.artifact_identity_conflict"}));
+  assert_eq!(response_json(uri_conflict).await, json!({"error":ARTIFACT_IDENTITY_CONFLICT_ERROR}));
 }
 
 #[tokio::test(start_paused = true)]
@@ -776,7 +776,7 @@ async fn artifact_store_error_classes_have_distinct_stable_status_and_code_mappi
       StatusCode::CONFLICT,
       json!({"error":"auv.inspect.authority_mismatch"}),
     ),
-    (ArtifactWriteError::IdempotencyMismatch, StatusCode::CONFLICT, json!({"error":"auv.inspect.idempotency_mismatch"})),
+    (ArtifactWriteError::IdempotencyMismatch, StatusCode::CONFLICT, json!({"error":IDEMPOTENCY_MISMATCH_ERROR})),
     (ArtifactWriteError::Rejected(error_code("auv.test.rejected")), StatusCode::BAD_REQUEST, json!({"error":"auv.test.rejected"})),
     (
       ArtifactWriteError::Integrity(error_code("auv.test.integrity")),
@@ -804,6 +804,21 @@ async fn artifact_store_error_classes_have_distinct_stable_status_and_code_mappi
     assert_eq!(response.status(), status, "{body}");
     assert_eq!(response_json(response).await, body);
   }
+}
+
+#[tokio::test]
+async fn authoritative_store_identity_rejection_uses_the_public_conflict_code_without_polling_the_body() {
+  let store = ProbeStore::new();
+  store.fail_next_write(ArtifactWriteError::Rejected(error_code("auv.store.rejected")));
+  let app = router(Arc::new(store));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  let polls = Arc::new(AtomicUsize::new(0));
+
+  let response = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()))).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::CONFLICT);
+  assert_eq!(response_json(response).await, json!({"error": ARTIFACT_IDENTITY_CONFLICT_ERROR}));
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -854,7 +869,7 @@ async fn immediate_publication_unknown_lookup_mismatch_is_a_conflict() {
   let response = app.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
 
   assert_eq!(response.status(), StatusCode::CONFLICT);
-  assert_eq!(response_json(response).await, json!({"error": "auv.inspect.idempotency_mismatch"}));
+  assert_eq!(response_json(response).await, json!({"error": IDEMPOTENCY_MISMATCH_ERROR}));
   assert_eq!(store.lookup_calls.load(Ordering::SeqCst) - lookups_before, 1);
 }
 

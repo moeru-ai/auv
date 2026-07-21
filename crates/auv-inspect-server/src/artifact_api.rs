@@ -10,10 +10,11 @@ use auv_tracing::{
   RunId, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
-  ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS,
-  ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR, ARTIFACT_UPLOAD_MEDIA_TYPE, AUTHORITY_ID_HEADER, ArtifactApiError, ArtifactUploadAdmissionId,
-  ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse,
-  ResolvedArtifact, decode_artifact_upload_draft_request, decode_strict,
+  ARTIFACT_IDENTITY_CONFLICT_ERROR, ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER,
+  ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR, ARTIFACT_UPLOAD_MEDIA_TYPE, AUTHORITY_ID_HEADER,
+  ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId,
+  IDEMPOTENCY_MISMATCH_ERROR, RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact,
+  decode_artifact_upload_draft_request, decode_strict,
 };
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -976,6 +977,12 @@ async fn publish_upload(
         Ok(None) | Err(_) => Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown"))),
       }
     }
+    // TODO(inspect-artifact-conflict): replace this built-in store code match
+    // when RunStore exposes a typed artifact identity conflict.
+    Err(ArtifactWriteError::Rejected(code)) if code == error_code("auv.store.rejected") => {
+      clear_upload_reservation(&state, active.run_id, upload_id, admission);
+      Err(ArtifactFailure::artifact_identity_conflict())
+    }
     Err(error) => {
       release_upload(&state, active.run_id, upload_id, admission);
       Err(ArtifactFailure::from_write(error))
@@ -1423,11 +1430,11 @@ impl ArtifactFailure {
   }
 
   fn idempotency_mismatch() -> Self {
-    Self::new(StatusCode::CONFLICT, "auv.inspect.idempotency_mismatch")
+    Self::new(StatusCode::CONFLICT, IDEMPOTENCY_MISMATCH_ERROR)
   }
 
   fn artifact_identity_conflict() -> Self {
-    Self::new(StatusCode::CONFLICT, "auv.inspect.artifact_identity_conflict")
+    Self::new(StatusCode::CONFLICT, ARTIFACT_IDENTITY_CONFLICT_ERROR)
   }
 
   fn not_found() -> Self {

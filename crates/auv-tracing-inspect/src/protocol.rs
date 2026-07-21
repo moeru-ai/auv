@@ -6,10 +6,9 @@ use auv_tracing::{
   ArtifactId, ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode, IdempotencyKey, NonEmptyVec,
   RunMutation, RunRevision, Sha256Digest, SpanId, Timestamp,
 };
-use serde::de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, DeserializeOwned};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Number;
-use serde_json::value::RawValue;
 use url::Url;
 use uuid::Uuid;
 
@@ -44,6 +43,12 @@ pub const ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS: u64 = 30;
 
 /// Stable error code returned when the required admission header is absent.
 pub const ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR: &str = "auv.inspect.upload_admission_required";
+
+/// Stable wire code for reuse of an idempotency key with different content.
+pub const IDEMPOTENCY_MISMATCH_ERROR: &str = "auv.inspect.idempotency_mismatch";
+
+/// Stable wire code for reuse of an artifact identity by a different write.
+pub const ARTIFACT_IDENTITY_CONFLICT_ERROR: &str = "auv.inspect.artifact_identity_conflict";
 
 /// Strict response header carrying the authority currently serving a request.
 pub const AUTHORITY_ID_HEADER: &str = "Auv-Authority-Id";
@@ -517,129 +522,273 @@ pub fn decode_strict<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolDec
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct StructureStats {
   max_depth: usize,
-  value_count: usize,
+  scanned_bytes: usize,
+  peak_retained_bytes: usize,
 }
 
 fn validate_json_structure(bytes: &[u8]) -> Result<StructureStats, ProtocolDecodeError> {
-  let mut stats = StructureStats::default();
-  let raw = serde_json::from_slice::<Box<RawValue>>(bytes).map_err(protocol_json_error)?;
-  StrictValue::from_raw(&raw, 0, &mut stats)?;
-  Ok(stats)
+  JsonStructureScanner::new(bytes).scan()
 }
 
 fn protocol_json_error(error: serde_json::Error) -> ProtocolDecodeError {
   ProtocolDecodeError::new(error.to_string())
 }
 
-#[derive(Clone, Copy, Debug)]
-enum StrictValue {
-  Null,
-  Bool,
-  Number,
-  String,
-  Array,
-  Object,
+struct JsonStructureScanner<'a> {
+  bytes: &'a [u8],
+  cursor: usize,
+  retained_bytes: usize,
+  stats: StructureStats,
 }
 
-impl StrictValue {
-  fn from_raw(raw: &RawValue, depth: usize, stats: &mut StructureStats) -> Result<Self, ProtocolDecodeError> {
-    stats.value_count += 1;
-    let token = raw.get().bytes().find(|byte| !byte.is_ascii_whitespace()).ok_or_else(|| ProtocolDecodeError::new("JSON is empty"))?;
-    match token {
-      b'{' => {
-        let depth = container_depth(depth, stats)?;
-        deserialize_raw_map(raw, depth, stats)
-      }
-      b'[' => {
-        let depth = container_depth(depth, stats)?;
-        deserialize_raw_sequence(raw, depth, stats)
-      }
-      b'"' => serde_json::from_str::<String>(raw.get()).map(|_| Self::String).map_err(protocol_json_error),
-      b't' | b'f' => Ok(Self::Bool),
-      b'n' => Ok(Self::Null),
-      b'-' | b'0'..=b'9' => parse_number_lexeme(raw.get()).map(|_| Self::Number),
-      _ => Err(ProtocolDecodeError::new("JSON has an invalid leading token")),
+impl<'a> JsonStructureScanner<'a> {
+  fn new(bytes: &'a [u8]) -> Self {
+    Self {
+      bytes,
+      cursor: 0,
+      retained_bytes: 0,
+      stats: StructureStats::default(),
     }
   }
-}
 
-fn container_depth(depth: usize, stats: &mut StructureStats) -> Result<usize, ProtocolDecodeError> {
-  let depth = depth + 1;
-  if depth > MAX_JSON_NESTING {
-    return Err(ProtocolDecodeError::new(format!("JSON exceeds {MAX_JSON_NESTING} nested containers")));
-  }
-  stats.max_depth = stats.max_depth.max(depth);
-  Ok(depth)
-}
-
-struct StrictObjectVisitor<'a> {
-  depth: usize,
-  stats: &'a mut StructureStats,
-}
-
-impl<'de> Visitor<'de> for StrictObjectVisitor<'_> {
-  type Value = StrictValue;
-
-  fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    formatter.write_str("a JSON object with unique keys within the Inspect protocol limits")
+  fn scan(mut self) -> Result<StructureStats, ProtocolDecodeError> {
+    self.skip_whitespace();
+    if self.cursor == self.bytes.len() {
+      return Err(ProtocolDecodeError::new("JSON is empty"));
+    }
+    self.scan_value(0)?;
+    self.skip_whitespace();
+    if self.cursor != self.bytes.len() {
+      return Err(ProtocolDecodeError::new("JSON has trailing input"));
+    }
+    self.stats.scanned_bytes = self.cursor;
+    Ok(self.stats)
   }
 
-  fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-  where
-    A: MapAccess<'de>,
-  {
-    let depth = self.depth;
+  fn scan_value(&mut self, depth: usize) -> Result<(), ProtocolDecodeError> {
+    self.skip_whitespace();
+    match self.current_byte() {
+      Some(b'{') => {
+        let depth = self.container_depth(depth)?;
+        self.scan_object(depth)
+      }
+      Some(b'[') => {
+        let depth = self.container_depth(depth)?;
+        self.scan_array(depth)
+      }
+      Some(b'"') => self.scan_string().map(|_| ()),
+      Some(b't') => self.consume_exact(b"true"),
+      Some(b'f') => self.consume_exact(b"false"),
+      Some(b'n') => self.consume_exact(b"null"),
+      Some(b'-' | b'0'..=b'9') => self.scan_number(),
+      Some(_) => Err(ProtocolDecodeError::new("JSON has an invalid leading token")),
+      None => Err(ProtocolDecodeError::new("JSON ended before a value")),
+    }
+  }
+
+  fn scan_object(&mut self, depth: usize) -> Result<(), ProtocolDecodeError> {
+    self.expect_byte(b'{')?;
+    self.skip_whitespace();
+    if self.consume_if(b'}') {
+      return Ok(());
+    }
+
     let mut keys = HashSet::new();
-    while let Some(key) = map.next_key::<String>()? {
+    let mut retained_key_bytes = 0;
+    loop {
       if keys.len() == MAX_JSON_OBJECT_MEMBERS {
-        return Err(de::Error::custom(format!("JSON object exceeds {MAX_JSON_OBJECT_MEMBERS} members")));
+        return Err(ProtocolDecodeError::new(format!("JSON object exceeds {MAX_JSON_OBJECT_MEMBERS} members")));
       }
-      if !keys.insert(key.to_owned()) {
-        return Err(de::Error::custom(format!("duplicate JSON object key `{key}`")));
+
+      self.skip_whitespace();
+      let key_start = self.cursor;
+      let key_end = self.scan_string()?;
+      let key = serde_json::from_slice::<String>(&self.bytes[key_start..key_end]).map_err(protocol_json_error)?;
+      if keys.contains(&key) {
+        return Err(ProtocolDecodeError::new(format!("duplicate JSON object key `{key}`")));
       }
-      let raw = map.next_value::<Box<RawValue>>()?;
-      StrictValue::from_raw(&raw, depth, self.stats).map_err(de::Error::custom)?;
+      retained_key_bytes += key.capacity();
+      self.retained_bytes += key.capacity();
+      self.stats.peak_retained_bytes = self.stats.peak_retained_bytes.max(self.retained_bytes);
+      keys.insert(key);
+
+      self.skip_whitespace();
+      self.expect_byte(b':')?;
+      self.scan_value(depth)?;
+      self.skip_whitespace();
+      if self.consume_if(b'}') {
+        self.retained_bytes -= retained_key_bytes;
+        return Ok(());
+      }
+      self.expect_byte(b',')?;
     }
-    Ok(StrictValue::Object)
-  }
-}
-
-struct StrictSequenceVisitor<'a> {
-  depth: usize,
-  stats: &'a mut StructureStats,
-}
-
-impl<'de> Visitor<'de> for StrictSequenceVisitor<'_> {
-  type Value = StrictValue;
-
-  fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    formatter.write_str("a JSON array within the Inspect protocol limits")
   }
 
-  fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-  where
-    A: SeqAccess<'de>,
-  {
-    let depth = self.depth;
-    while let Some(raw) = sequence.next_element::<Box<RawValue>>()? {
-      StrictValue::from_raw(&raw, depth, self.stats).map_err(de::Error::custom)?;
+  fn scan_array(&mut self, depth: usize) -> Result<(), ProtocolDecodeError> {
+    self.expect_byte(b'[')?;
+    self.skip_whitespace();
+    if self.consume_if(b']') {
+      return Ok(());
     }
-    Ok(StrictValue::Array)
+
+    loop {
+      self.scan_value(depth)?;
+      self.skip_whitespace();
+      if self.consume_if(b']') {
+        return Ok(());
+      }
+      self.expect_byte(b',')?;
+    }
   }
-}
 
-fn deserialize_raw_map(raw: &RawValue, depth: usize, stats: &mut StructureStats) -> Result<StrictValue, ProtocolDecodeError> {
-  let mut deserializer = serde_json::Deserializer::from_str(raw.get());
-  let value = deserializer.deserialize_map(StrictObjectVisitor { depth, stats }).map_err(protocol_json_error)?;
-  deserializer.end().map_err(protocol_json_error)?;
-  Ok(value)
-}
+  fn scan_string(&mut self) -> Result<usize, ProtocolDecodeError> {
+    self.expect_byte(b'"')?;
+    let mut segment_start = self.cursor;
+    loop {
+      match self.current_byte() {
+        Some(b'"') => {
+          self.validate_utf8(segment_start, self.cursor)?;
+          self.cursor += 1;
+          return Ok(self.cursor);
+        }
+        Some(b'\\') => {
+          self.validate_utf8(segment_start, self.cursor)?;
+          self.cursor += 1;
+          match self.current_byte() {
+            Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => self.cursor += 1,
+            Some(b'u') => {
+              self.cursor += 1;
+              let code_unit = self.scan_hex_quad()?;
+              if (0xd800..=0xdbff).contains(&code_unit) {
+                if self.bytes.get(self.cursor..self.cursor + 2) != Some(b"\\u") {
+                  return Err(ProtocolDecodeError::new("JSON string has an unpaired UTF-16 surrogate"));
+                }
+                self.cursor += 2;
+                let low = self.scan_hex_quad()?;
+                if !(0xdc00..=0xdfff).contains(&low) {
+                  return Err(ProtocolDecodeError::new("JSON string has an unpaired UTF-16 surrogate"));
+                }
+              } else if (0xdc00..=0xdfff).contains(&code_unit) {
+                return Err(ProtocolDecodeError::new("JSON string has an unpaired UTF-16 surrogate"));
+              }
+            }
+            _ => return Err(ProtocolDecodeError::new("JSON string has an invalid escape")),
+          }
+          segment_start = self.cursor;
+        }
+        Some(0x00..=0x1f) => return Err(ProtocolDecodeError::new("JSON string contains an unescaped control character")),
+        Some(_) => self.cursor += 1,
+        None => return Err(ProtocolDecodeError::new("JSON string is not terminated")),
+      }
+    }
+  }
 
-fn deserialize_raw_sequence(raw: &RawValue, depth: usize, stats: &mut StructureStats) -> Result<StrictValue, ProtocolDecodeError> {
-  let mut deserializer = serde_json::Deserializer::from_str(raw.get());
-  let value = deserializer.deserialize_seq(StrictSequenceVisitor { depth, stats }).map_err(protocol_json_error)?;
-  deserializer.end().map_err(protocol_json_error)?;
-  Ok(value)
+  fn scan_number(&mut self) -> Result<(), ProtocolDecodeError> {
+    let start = self.cursor;
+    self.consume_if(b'-');
+
+    match self.current_byte() {
+      Some(b'0') => {
+        self.cursor += 1;
+        if matches!(self.current_byte(), Some(b'0'..=b'9')) {
+          return Err(ProtocolDecodeError::new("JSON number has a leading zero"));
+        }
+      }
+      Some(b'1'..=b'9') => {
+        self.cursor += 1;
+        self.consume_digits();
+      }
+      _ => return Err(ProtocolDecodeError::new("JSON number has no integer digits")),
+    }
+
+    if self.consume_if(b'.') {
+      if !matches!(self.current_byte(), Some(b'0'..=b'9')) {
+        return Err(ProtocolDecodeError::new("JSON number has no fractional digits"));
+      }
+      self.consume_digits();
+    }
+    if matches!(self.current_byte(), Some(b'e' | b'E')) {
+      self.cursor += 1;
+      if matches!(self.current_byte(), Some(b'+' | b'-')) {
+        self.cursor += 1;
+      }
+      if !matches!(self.current_byte(), Some(b'0'..=b'9')) {
+        return Err(ProtocolDecodeError::new("JSON number has no exponent digits"));
+      }
+      self.consume_digits();
+    }
+
+    let lexeme = std::str::from_utf8(&self.bytes[start..self.cursor]).expect("JSON number scanner only accepts ASCII bytes");
+    parse_number_lexeme(lexeme).map(|_| ())
+  }
+
+  fn scan_hex_quad(&mut self) -> Result<u16, ProtocolDecodeError> {
+    let mut value = 0_u16;
+    for _ in 0..4 {
+      let digit = match self.current_byte() {
+        Some(b'0'..=b'9') => self.current_byte().unwrap() - b'0',
+        Some(b'a'..=b'f') => self.current_byte().unwrap() - b'a' + 10,
+        Some(b'A'..=b'F') => self.current_byte().unwrap() - b'A' + 10,
+        _ => return Err(ProtocolDecodeError::new("JSON string has an invalid Unicode escape")),
+      };
+      value = (value << 4) | u16::from(digit);
+      self.cursor += 1;
+    }
+    Ok(value)
+  }
+
+  fn container_depth(&mut self, depth: usize) -> Result<usize, ProtocolDecodeError> {
+    let depth = depth + 1;
+    if depth > MAX_JSON_NESTING {
+      return Err(ProtocolDecodeError::new(format!("JSON exceeds {MAX_JSON_NESTING} nested containers")));
+    }
+    self.stats.max_depth = self.stats.max_depth.max(depth);
+    Ok(depth)
+  }
+
+  fn validate_utf8(&self, start: usize, end: usize) -> Result<(), ProtocolDecodeError> {
+    std::str::from_utf8(&self.bytes[start..end]).map(|_| ()).map_err(|_| ProtocolDecodeError::new("JSON string is not valid UTF-8"))
+  }
+
+  fn consume_digits(&mut self) {
+    while matches!(self.current_byte(), Some(b'0'..=b'9')) {
+      self.cursor += 1;
+    }
+  }
+
+  fn consume_exact(&mut self, expected: &[u8]) -> Result<(), ProtocolDecodeError> {
+    if self.bytes.get(self.cursor..self.cursor + expected.len()) != Some(expected) {
+      return Err(ProtocolDecodeError::new("JSON literal is invalid"));
+    }
+    self.cursor += expected.len();
+    Ok(())
+  }
+
+  fn expect_byte(&mut self, expected: u8) -> Result<(), ProtocolDecodeError> {
+    if !self.consume_if(expected) {
+      return Err(ProtocolDecodeError::new(format!("JSON expected `{}`", char::from(expected))));
+    }
+    Ok(())
+  }
+
+  fn consume_if(&mut self, expected: u8) -> bool {
+    if self.current_byte() == Some(expected) {
+      self.cursor += 1;
+      true
+    } else {
+      false
+    }
+  }
+
+  fn skip_whitespace(&mut self) {
+    while matches!(self.current_byte(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+      self.cursor += 1;
+    }
+  }
+
+  fn current_byte(&self) -> Option<u8> {
+    self.bytes.get(self.cursor).copied()
+  }
 }
 
 fn parse_number_lexeme(value: &str) -> Result<Number, ProtocolDecodeError> {
@@ -716,6 +865,8 @@ mod tests {
     assert_eq!(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, 30);
     assert_eq!(ARTIFACT_UPLOAD_ADMISSION_REQUIRED_ERROR, "auv.inspect.upload_admission_required");
     assert_eq!(AUTHORITY_ID_HEADER, "Auv-Authority-Id");
+    assert_eq!(IDEMPOTENCY_MISMATCH_ERROR, "auv.inspect.idempotency_mismatch");
+    assert_eq!(ARTIFACT_IDENTITY_CONFLICT_ERROR, "auv.inspect.artifact_identity_conflict");
   }
 
   fn nested_arrays(depth: usize) -> Vec<u8> {
@@ -818,16 +969,20 @@ mod tests {
   }
 
   #[test]
-  fn structural_validation_visits_large_nested_input_once() {
+  fn structural_validation_retains_and_scans_linearly_for_a_large_deep_leaf() {
     let depth = 128;
-    let mut body = "0".to_string();
-    for _ in 0..depth {
-      body = format!("[{body},0]");
-    }
+    let leaf_bytes = 4 * 1024 * 1024;
+    let mut body = Vec::with_capacity(depth * 2 + leaf_bytes + 2);
+    body.extend(std::iter::repeat_n(b'[', depth));
+    body.push(b'"');
+    body.extend(std::iter::repeat_n(b'a', leaf_bytes));
+    body.push(b'"');
+    body.extend(std::iter::repeat_n(b']', depth));
 
-    let stats = validate_json_structure(body.as_bytes()).expect("valid nested JSON");
+    let stats = validate_json_structure(&body).expect("valid nested JSON");
 
     assert_eq!(stats.max_depth, depth);
-    assert_eq!(stats.value_count, depth * 2 + 1);
+    assert_eq!(stats.scanned_bytes, body.len());
+    assert!(stats.peak_retained_bytes < 64 * 1024, "scanner retained {} bytes for a {} byte leaf", stats.peak_retained_bytes, leaf_bytes);
   }
 }

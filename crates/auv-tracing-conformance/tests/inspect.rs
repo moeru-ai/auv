@@ -9,16 +9,23 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use auv_inspect_server::router_with_artifact_origin;
-use auv_tracing::{ArtifactId, ArtifactWriteError, AuthorityId, EventId, IdempotencyKey, MemoryRunStore, RunId, RunStore};
+use auv_tracing::{
+  ArtifactBody, ArtifactId, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, EventId,
+  IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot,
+  RunStore, RunSubscription, StoreArtifactRequest,
+};
 use auv_tracing_conformance::{artifact_request, assert_gap_contract, assert_store_contract, event_request};
 use auv_tracing_inspect::InspectRunStore;
+use auv_tracing_inspect::protocol::ARTIFACT_IDENTITY_CONFLICT_ERROR;
 use futures_util::StreamExt;
 use futures_util::io::{AsyncRead, Cursor};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 
 struct TestAuthority {
   base_url: String,
-  task: tokio::task::JoinHandle<()>,
+  shutdown: Option<oneshot::Sender<()>>,
+  task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TestAuthority {
@@ -28,20 +35,40 @@ impl TestAuthority {
     let base_url = format!("http://{address}/");
     let app =
       router_with_artifact_origin(store, base_url.parse().expect("Inspect conformance base URL")).expect("Inspect conformance router");
+    let (shutdown, shutdown_signal) = oneshot::channel();
     let task = tokio::spawn(async move {
-      axum::serve(listener, app).await.expect("Inspect conformance server");
+      axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+          let _ = shutdown_signal.await;
+        })
+        .await
+        .expect("Inspect conformance server");
     });
-    Self { base_url, task }
+    Self {
+      base_url,
+      shutdown: Some(shutdown),
+      task: Some(task),
+    }
   }
 
   async fn connect(&self) -> InspectRunStore {
     InspectRunStore::connect(self.base_url.parse().expect("Inspect conformance base URL")).await.expect("connect Inspect run store")
   }
+
+  async fn shutdown(mut self) {
+    self.shutdown.take().expect("live Inspect conformance shutdown signal").send(()).ok();
+    self.task.take().expect("live Inspect conformance server task").await.expect("Inspect conformance server task panicked");
+  }
 }
 
 impl Drop for TestAuthority {
   fn drop(&mut self) {
-    self.task.abort();
+    if let Some(shutdown) = self.shutdown.take() {
+      shutdown.send(()).ok();
+    }
+    if let Some(task) = self.task.take() {
+      task.abort();
+    }
   }
 }
 
@@ -57,6 +84,7 @@ async fn inspect_store_satisfies_authority_contract_over_http() {
 
   let remote: Arc<dyn RunStore> = first;
   assert_store_contract(|| remote.clone()).await;
+  server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -84,6 +112,7 @@ async fn inspect_store_round_trips_binary_only_through_artifact_endpoints() {
     received.extend_from_slice(&chunk.expect("read binary artifact chunk"));
   }
   assert_eq!(received, bytes);
+  server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -97,43 +126,42 @@ async fn inspect_store_reports_retention_gaps_over_http_and_sse() {
     backing.commit(request).await.expect("advance retained Inspect history");
   })
   .await;
+  server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn pending_and_published_artifact_identity_conflicts_have_one_stable_http_class() {
-  let backing = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-  let server = TestAuthority::start(backing).await;
-  let remote = server.connect().await;
+async fn two_routers_share_pending_and_published_artifact_identity_conflicts() {
+  let backing = Arc::new(BodyPollingStore::new());
+  let first_server = TestAuthority::start(backing.clone()).await;
+  let second_server = TestAuthority::start(backing.clone()).await;
+  let first_remote = first_server.connect().await;
+  let second_remote = second_server.connect().await;
+  assert_eq!(first_remote.authority_id(), backing.authority_id());
+  assert_eq!(second_remote.authority_id(), backing.authority_id());
   let run_id = RunId::new();
   let artifact_id = ArtifactId::new();
   let gate = BodyGate::new();
-  let first_store = remote.clone();
-  let first_request = artifact_request(remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc");
+  let first_request = artifact_request(first_remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc");
+  let second_request = artifact_request(second_remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc");
   let first_gate = gate.clone();
-  let first = tokio::spawn(async move { first_store.write_artifact(first_request, Box::pin(first_gate.reader(b"abc"))).await });
+  let first = tokio::spawn(async move { first_remote.write_artifact(first_request, Box::pin(first_gate.reader(b"abc"))).await });
   gate.wait_until_polled().await;
 
-  let pending_polls = Arc::new(AtomicUsize::new(0));
-  let pending = remote
-    .write_artifact(
-      artifact_request(remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc"),
-      Box::pin(PollProbe {
-        polls: pending_polls.clone(),
-      }),
-    )
+  let pending = second_remote
+    .write_artifact(second_request.clone(), Box::pin(Cursor::new(b"abc".to_vec())))
     .await
     .expect_err("a live draft owns the artifact identity");
 
-  assert_eq!(pending, ArtifactWriteError::Rejected("auv.inspect.artifact_identity_conflict".parse().expect("artifact conflict code")));
-  assert_eq!(pending_polls.load(Ordering::SeqCst), 0);
+  assert_eq!(pending, ArtifactWriteError::Rejected(ARTIFACT_IDENTITY_CONFLICT_ERROR.parse().expect("artifact conflict code")));
+  assert_eq!(backing.body_polls(1), 0, "the authority must reject the replacement before consuming its body");
 
   gate.release();
   first.await.expect("pending publication task").expect("competing artifact publication");
 
   let published_polls = Arc::new(AtomicUsize::new(0));
-  let published = remote
+  let published = second_remote
     .write_artifact(
-      artifact_request(remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc"),
+      second_request,
       Box::pin(PollProbe {
         polls: published_polls.clone(),
       }),
@@ -143,6 +171,75 @@ async fn pending_and_published_artifact_identity_conflicts_have_one_stable_http_
 
   assert_eq!(published, pending);
   assert_eq!(published_polls.load(Ordering::SeqCst), 0);
+  first_server.shutdown().await;
+  second_server.shutdown().await;
+}
+
+#[derive(Clone)]
+struct BodyPollingStore {
+  inner: MemoryRunStore,
+  body_polls: Arc<Mutex<Vec<Arc<AtomicUsize>>>>,
+}
+
+impl BodyPollingStore {
+  fn new() -> Self {
+    Self {
+      inner: MemoryRunStore::new(AuthorityId::new()),
+      body_polls: Arc::new(Mutex::new(Vec::new())),
+    }
+  }
+
+  fn body_polls(&self, write_index: usize) -> usize {
+    self.body_polls.lock().expect("authority body poll lock")[write_index].load(Ordering::SeqCst)
+  }
+}
+
+impl RunStore for BodyPollingStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    let polls = Arc::new(AtomicUsize::new(0));
+    self.body_polls.lock().expect("authority body poll lock").push(polls.clone());
+    self.inner.write_artifact(request, Box::pin(PollingBody { inner: body, polls }))
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
+}
+
+struct PollingBody {
+  inner: ArtifactBody,
+  polls: Arc<AtomicUsize>,
+}
+
+impl AsyncRead for PollingBody {
+  fn poll_read(mut self: Pin<&mut Self>, context: &mut Context<'_>, buffer: &mut [u8]) -> Poll<io::Result<usize>> {
+    self.polls.fetch_add(1, Ordering::SeqCst);
+    self.inner.as_mut().poll_read(context, buffer)
+  }
 }
 
 #[derive(Clone)]
