@@ -14,15 +14,17 @@ repository.workspace = true
 
 [dependencies]
 auv-inspect-model = { path = "../auv-inspect-model" }
-auv-tracing-driver = { path = "../auv-tracing-driver" }
-auv-view = { path = "../auv-view" }
-axum = { version = "0.8", features = ["ws"] }
+auv-tracing = { path = "../auv-tracing" }
+auv-tracing-inspect = { path = "../auv-tracing-inspect" }
+axum = "0.8"
+futures-util.workspace = true
 libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
-tracing = "0.1"
 
 [dev-dependencies]
+auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+futures-util = { workspace = true, features = ["io"] }
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
