@@ -2,10 +2,11 @@
 
 mod support;
 
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Barrier};
-use std::task::Context as TaskContext;
+use std::task::{Context as TaskContext, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use auv_tracing::{
@@ -101,6 +102,33 @@ fn projected_kinds(projector: &RecordingProjector) -> Vec<&'static str> {
       TelemetryItem::Artifact { .. } => "artifact_published",
     })
     .collect()
+}
+
+struct EmitEventOnWake {
+  root: auv_tracing::Context,
+  spawner: Arc<TrackingTaskSpawner>,
+  woke: AtomicBool,
+}
+
+impl EmitEventOnWake {
+  fn emit_once(&self) {
+    if self.woke.swap(true, Ordering::SeqCst) {
+      return;
+    }
+    self.spawner.with_inline_tasks(|| {
+      self.root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 25 }));
+    });
+  }
+}
+
+impl Wake for EmitEventOnWake {
+  fn wake(self: Arc<Self>) {
+    self.emit_once();
+  }
+
+  fn wake_by_ref(self: &Arc<Self>) {
+    self.emit_once();
+  }
 }
 
 #[test]
@@ -479,6 +507,43 @@ fn artifact_direct_contradiction_after_cursor_proof_fails_without_lookup_or_proj
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 21 }));
   let quarantined = block_on_timeout(dispatch.flush()).unwrap_err();
   assert_eq!(quarantined.first().code().as_str(), "auv.dispatch.run_lane_indeterminate");
+}
+
+#[test]
+fn artifact_contradiction_quarantines_before_receipt_wake_can_reenter_the_run() {
+  let store = ArtifactStore::new();
+  let response_gate = store.store_then_wait_mismatch_next();
+  let spawner = TrackingTaskSpawner::new();
+  let dispatch = configure().run_store(store.clone()).task_spawner(spawner.clone()).build().unwrap();
+  let run_id = RunId::new();
+  let root = context(&dispatch, run_id);
+  let mut receipt = Box::pin(root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(b"reentrant-contradiction"))));
+  response_gate.wait_until_entered();
+  spawner.wait_for_active(1, 2);
+
+  let wake = Arc::new(EmitEventOnWake {
+    root,
+    spawner,
+    woke: AtomicBool::new(false),
+  });
+  let waker = Waker::from(wake.clone());
+  let mut task_context = TaskContext::from_waker(&waker);
+  assert!(receipt.as_mut().poll(&mut task_context).is_pending());
+
+  response_gate.release();
+  let deadline = Instant::now() + WAIT_TIMEOUT;
+  while !wake.woke.load(Ordering::SeqCst) {
+    assert!(Instant::now() < deadline, "timed out waiting for artifact receipt wake reentry");
+    std::thread::yield_now();
+  }
+  let result = block_on_timeout(receipt);
+  assert_eq!(result.unwrap_err(), ArtifactWriteError::Integrity(ErrorCode::parse("auv.dispatch.commit_response_mismatch").unwrap()));
+  let flush = block_on_timeout(dispatch.flush()).unwrap_err();
+  assert_eq!(flush.failure_count().get(), 2);
+  assert_eq!(store.commit_call_count(), 0, "receipt wake reentry must not admit another same-run store commit");
+  let snapshot = block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap();
+  assert_eq!(snapshot.artifacts().len(), 1);
+  assert!(snapshot.events().is_empty());
 }
 
 #[test]
