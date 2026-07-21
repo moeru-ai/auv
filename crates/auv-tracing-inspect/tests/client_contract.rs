@@ -588,6 +588,82 @@ async fn client_reconstructs_every_artifact_write_error_class() {
 }
 
 #[tokio::test]
+async fn artifact_conflict_codes_map_directly_without_lookup_or_snapshot_probes() {
+  for (wire_code, expected) in [
+    ("auv.inspect.idempotency_mismatch", ArtifactWriteError::IdempotencyMismatch),
+    ("auv.inspect.artifact_identity_conflict", ArtifactWriteError::Rejected(error_code("auv.inspect.artifact_identity_conflict"))),
+  ] {
+    let probes = Arc::new(AtomicUsize::new(0));
+    let lookup_probes = probes.clone();
+    let snapshot_probes = probes.clone();
+    let app = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route(
+        "/v1/runs/{run_id}/artifact-uploads",
+        post(move || async move {
+          response(
+            StatusCode::CONFLICT,
+            ARTIFACT_UPLOAD_MEDIA_TYPE,
+            Body::from(
+              serde_json::to_vec(&ArtifactApiError {
+                error: error_code(wire_code),
+              })
+              .unwrap(),
+            ),
+          )
+        }),
+      )
+      .route(
+        "/v1/runs/{run_id}/commits/by-idempotency-key/{key}",
+        get(move || {
+          let probes = lookup_probes.clone();
+          async move {
+            probes.fetch_add(1, Ordering::SeqCst);
+            run_json(StatusCode::NOT_FOUND, &RunApiError::NotFound)
+          }
+        }),
+      )
+      .route(
+        "/v1/runs/{run_id}/snapshot",
+        get(move || {
+          let probes = snapshot_probes.clone();
+          async move {
+            probes.fetch_add(1, Ordering::SeqCst);
+            run_json(StatusCode::NOT_FOUND, &RunApiError::NotFound)
+          }
+        }),
+      );
+    let server = TestServer::start(app).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+    let body_polls = Arc::new(AtomicUsize::new(0));
+
+    let error = store
+      .write_artifact(
+        artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new()),
+        Box::pin(FailingPollProbe {
+          polls: body_polls.clone(),
+        }),
+      )
+      .await
+      .unwrap_err();
+
+    assert_eq!(error, expected);
+    assert_eq!(probes.load(Ordering::SeqCst), 0);
+    assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+  }
+}
+
+#[tokio::test]
 async fn artifact_authority_mismatch_requires_one_distinct_canonical_authority_header() {
   let cases: &[&[&str]] = &[
     &[],
@@ -879,14 +955,13 @@ async fn binary_write_read_resolution_and_published_replay_preserve_one_shot_bod
 
 // ROOT CAUSE:
 //
-// If a different idempotency key reused a committed artifact ID, the Inspect
-// client returned IdempotencyMismatch because Task 12 intentionally uses one
-// HTTP conflict body for both idempotency and artifact identity conflicts.
+// If a different idempotency key reused an artifact ID, one shared HTTP code
+// forced the client to classify the conflict from later store state.
 //
-// Before the fix, the client mapped that shared body without consulting store
-// truth. The fix preserves the wire shape and reconstructs the RunStore class.
+// Before the fix, publication timing could change the resulting error class.
+// Distinct server codes now map directly to stable RunStore classes.
 #[tokio::test]
-async fn committed_artifact_id_conflict_is_reconstructed_as_rejected() {
+async fn committed_artifact_id_conflict_is_directly_rejected() {
   let server = TestServer::start_store(Arc::new(MemoryRunStore::new(authority_id()))).await;
   let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
   let artifact_id = ArtifactId::new();
@@ -1385,7 +1460,7 @@ async fn raw_success_fault_server(
 }
 
 #[tokio::test]
-async fn truncated_run_and_resolver_success_bodies_are_unavailable_not_integrity() {
+async fn truncated_run_resolver_and_snapshot_success_bodies_are_unavailable_not_integrity() {
   let partial = br#"{"results":"#.to_vec();
   let run_server = raw_success_fault_server("/commits/by-idempotency-key/", RUN_MEDIA_TYPE, partial.clone(), Some(partial.len() + 16)).await;
   let run_store = InspectRunStore::connect(run_server.base_url.clone()).await.unwrap();
@@ -1401,6 +1476,23 @@ async fn truncated_run_and_resolver_success_bodies_are_unavailable_not_integrity
     resolver_store.resolve_artifacts(vec![ArtifactUri::from_ids(run_id(), ArtifactId::new())]).await.unwrap_err(),
     ReadError::Unavailable(error_code("auv.inspect.transport_unavailable"))
   );
+
+  let snapshot_server = raw_success_fault_server("/snapshot", RUN_MEDIA_TYPE, partial.clone(), Some(partial.len() + 16)).await;
+  let snapshot_store = InspectRunStore::connect(snapshot_server.base_url.clone()).await.unwrap();
+  assert_eq!(
+    snapshot_store.load_snapshot(run_id()).await.unwrap_err(),
+    ReadError::Unavailable(error_code("auv.inspect.snapshot_transport_unavailable"))
+  );
+}
+
+#[tokio::test]
+async fn snapshot_content_length_above_the_distinct_cap_is_stable_integrity_without_a_large_fixture() {
+  const SNAPSHOT_CAP: usize = 256 * 1024 * 1024;
+
+  let server = raw_success_fault_server("/snapshot", RUN_MEDIA_TYPE, Vec::new(), Some(SNAPSHOT_CAP + 1)).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+  assert_eq!(store.load_snapshot(run_id()).await.unwrap_err(), ReadError::Integrity(error_code("auv.inspect.snapshot_too_large")));
 }
 
 #[tokio::test]
@@ -1509,8 +1601,9 @@ async fn client_rejects_malformed_authority_resolver_and_artifact_error_payloads
   }
 
   let uri = ArtifactUri::from_ids(run_id(), ArtifactId::new());
+  let valid_resolver_result = format!(r#"{{"not_found":{{"uri":"{uri}"}}}}"#);
   let malformed_resolver_successes = [
-    r#"{"results":[],"results":[]}"#.to_string(),
+    format!(r#"{{"results":[{valid_resolver_result}],"results":[{valid_resolver_result}]}}"#),
     format!(r#"{{"results":[{{"not_found":{{"uri":"{uri}","retry":false}}}}]}}"#),
     r#"{"results":[]} false"#.to_string(),
   ];
@@ -1847,6 +1940,7 @@ struct DelayedReplayLookupState {
   published: RunCommit,
   delay_first_lookup: bool,
   busy_on_refresh: bool,
+  refresh_conflict: Option<ErrorCode>,
   lookup_entered: Arc<tokio::sync::Barrier>,
   release_lookup: Arc<tokio::sync::Barrier>,
   lookup_calls: Arc<AtomicUsize>,
@@ -1882,6 +1976,7 @@ async fn replay_lookup_past_the_lease_reacquires_before_constructing_the_one_sho
     published,
     delay_first_lookup: true,
     busy_on_refresh: false,
+    refresh_conflict: None,
     lookup_entered: Arc::new(tokio::sync::Barrier::new(2)),
     release_lookup: Arc::new(tokio::sync::Barrier::new(2)),
     lookup_calls: Arc::new(AtomicUsize::new(0)),
@@ -1959,6 +2054,7 @@ async fn busy_replay_refresh_looks_up_once_and_returns_unknown_without_polling_t
     published,
     delay_first_lookup: false,
     busy_on_refresh: true,
+    refresh_conflict: None,
     lookup_entered: Arc::new(tokio::sync::Barrier::new(2)),
     release_lookup: Arc::new(tokio::sync::Barrier::new(2)),
     lookup_calls: Arc::new(AtomicUsize::new(0)),
@@ -2003,6 +2099,75 @@ async fn busy_replay_refresh_looks_up_once_and_returns_unknown_without_polling_t
   assert_eq!(body_polls.load(Ordering::SeqCst), 0);
 }
 
+#[tokio::test]
+async fn replay_refresh_maps_conflict_codes_directly_without_polling_the_body() {
+  for (wire_code, expected) in [
+    ("auv.inspect.idempotency_mismatch", ArtifactWriteError::IdempotencyMismatch),
+    ("auv.inspect.artifact_identity_conflict", ArtifactWriteError::Rejected(error_code("auv.inspect.artifact_identity_conflict"))),
+  ] {
+    let artifact_id = ArtifactId::new();
+    let key = IdempotencyKey::new();
+    let request = artifact_request(authority_id(), artifact_id, key);
+    let published = MemoryRunStore::new(authority_id())
+      .write_artifact(request.clone(), Box::pin(Cursor::new(b"abc".to_vec())))
+      .await
+      .expect("sample artifact commit")
+      .commit()
+      .clone();
+    let body_polls = Arc::new(AtomicUsize::new(0));
+    let state = DelayedReplayLookupState {
+      draft: ArtifactUploadDraft::new(
+        ArtifactUploadId::from_idempotency_key(key),
+        ArtifactUri::from_ids(run_id(), artifact_id),
+        Timestamp::new(1_784_620_800, 0).unwrap(),
+      ),
+      published,
+      delay_first_lookup: false,
+      busy_on_refresh: false,
+      refresh_conflict: Some(error_code(wire_code)),
+      lookup_entered: Arc::new(tokio::sync::Barrier::new(2)),
+      release_lookup: Arc::new(tokio::sync::Barrier::new(2)),
+      lookup_calls: Arc::new(AtomicUsize::new(0)),
+      admissions: Arc::new(Mutex::new(Vec::new())),
+      put_admissions: Arc::new(Mutex::new(Vec::new())),
+      body_polls: body_polls.clone(),
+      polls_at_posts: Arc::new(Mutex::new(Vec::new())),
+    };
+    let app = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route("/v1/runs/{run_id}/artifact-uploads", post(delayed_replay_draft))
+      .route("/v1/runs/{run_id}/commits/by-idempotency-key/{key}", get(delayed_replay_lookup))
+      .with_state(state.clone());
+    let server = TestServer::start(app).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+    let error = store
+      .write_artifact(
+        request,
+        Box::pin(FailingPollProbe {
+          polls: body_polls.clone(),
+        }),
+      )
+      .await
+      .unwrap_err();
+
+    assert_eq!(error, expected);
+    assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.admissions.lock().unwrap().len(), 2);
+    assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+  }
+}
+
 async fn delayed_replay_draft(State(state): State<DelayedReplayLookupState>, headers: HeaderMap) -> Response {
   let admission = headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().to_str().unwrap().to_owned();
   let refresh = {
@@ -2011,6 +2176,18 @@ async fn delayed_replay_draft(State(state): State<DelayedReplayLookupState>, hea
     admissions.len() > 1
   };
   state.polls_at_posts.lock().unwrap().push(state.body_polls.load(Ordering::SeqCst));
+  if refresh && let Some(error) = &state.refresh_conflict {
+    return response(
+      StatusCode::CONFLICT,
+      ARTIFACT_UPLOAD_MEDIA_TYPE,
+      Body::from(
+        serde_json::to_vec(&ArtifactApiError {
+          error: error.clone(),
+        })
+        .unwrap(),
+      ),
+    );
+  }
   if refresh && state.busy_on_refresh {
     let mut response = response(StatusCode::OK, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(serde_json::to_vec(&state.draft).unwrap()));
     response.headers_mut().insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, HeaderValue::from_static("busy"));

@@ -6,8 +6,10 @@ use auv_tracing::{
   ArtifactId, ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode, IdempotencyKey, NonEmptyVec,
   RunMutation, RunRevision, Sha256Digest, SpanId, Timestamp,
 };
-use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Number;
+use serde_json::value::RawValue;
 use url::Url;
 use uuid::Uuid;
 
@@ -509,11 +511,7 @@ impl ProtocolDecodeError {
 /// Decodes one strict protocol DTO without first coercing it through a JSON value.
 pub fn decode_strict<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolDecodeError> {
   validate_json_structure(bytes)?;
-  let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-  deserializer.disable_recursion_limit();
-  let value = T::deserialize(&mut deserializer).map_err(protocol_json_error)?;
-  deserializer.end().map_err(protocol_json_error)?;
-  Ok(value)
+  serde_json::from_slice(bytes).map_err(protocol_json_error)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -524,15 +522,8 @@ struct StructureStats {
 
 fn validate_json_structure(bytes: &[u8]) -> Result<StructureStats, ProtocolDecodeError> {
   let mut stats = StructureStats::default();
-  let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-  deserializer.disable_recursion_limit();
-  StructureSeed {
-    depth: 0,
-    stats: &mut stats,
-  }
-  .deserialize(&mut deserializer)
-  .map_err(protocol_json_error)?;
-  deserializer.end().map_err(protocol_json_error)?;
+  let raw = serde_json::from_slice::<Box<RawValue>>(bytes).map_err(protocol_json_error)?;
+  StrictValue::from_raw(&raw, 0, &mut stats)?;
   Ok(stats)
 }
 
@@ -540,119 +531,64 @@ fn protocol_json_error(error: serde_json::Error) -> ProtocolDecodeError {
   ProtocolDecodeError::new(error.to_string())
 }
 
-struct StructureSeed<'a> {
-  depth: usize,
-  stats: &'a mut StructureStats,
+#[derive(Clone, Copy, Debug)]
+enum StrictValue {
+  Null,
+  Bool,
+  Number,
+  String,
+  Array,
+  Object,
 }
 
-impl<'de> DeserializeSeed<'de> for StructureSeed<'_> {
-  type Value = ();
-
-  fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    self.stats.value_count += 1;
-    deserializer.deserialize_any(StructureVisitor {
-      depth: self.depth,
-      stats: self.stats,
-    })
-  }
-}
-
-struct StructureVisitor<'a> {
-  depth: usize,
-  stats: &'a mut StructureStats,
-}
-
-impl StructureVisitor<'_> {
-  fn container_depth<E: de::Error>(&mut self) -> Result<usize, E> {
-    let depth = self.depth + 1;
-    if depth > MAX_JSON_NESTING {
-      return Err(E::custom(format!("JSON exceeds {MAX_JSON_NESTING} nested containers")));
+impl StrictValue {
+  fn from_raw(raw: &RawValue, depth: usize, stats: &mut StructureStats) -> Result<Self, ProtocolDecodeError> {
+    stats.value_count += 1;
+    let token = raw.get().bytes().find(|byte| !byte.is_ascii_whitespace()).ok_or_else(|| ProtocolDecodeError::new("JSON is empty"))?;
+    match token {
+      b'{' => {
+        let depth = container_depth(depth, stats)?;
+        deserialize_raw_map(raw, depth, stats)
+      }
+      b'[' => {
+        let depth = container_depth(depth, stats)?;
+        deserialize_raw_sequence(raw, depth, stats)
+      }
+      b'"' => serde_json::from_str::<String>(raw.get()).map(|_| Self::String).map_err(protocol_json_error),
+      b't' | b'f' => Ok(Self::Bool),
+      b'n' => Ok(Self::Null),
+      b'-' | b'0'..=b'9' => parse_number_lexeme(raw.get()).map(|_| Self::Number),
+      _ => Err(ProtocolDecodeError::new("JSON has an invalid leading token")),
     }
-    self.stats.max_depth = self.stats.max_depth.max(depth);
-    Ok(depth)
   }
 }
 
-impl<'de> Visitor<'de> for StructureVisitor<'_> {
-  type Value = ();
+fn container_depth(depth: usize, stats: &mut StructureStats) -> Result<usize, ProtocolDecodeError> {
+  let depth = depth + 1;
+  if depth > MAX_JSON_NESTING {
+    return Err(ProtocolDecodeError::new(format!("JSON exceeds {MAX_JSON_NESTING} nested containers")));
+  }
+  stats.max_depth = stats.max_depth.max(depth);
+  Ok(depth)
+}
+
+struct StrictObjectVisitor<'a> {
+  depth: usize,
+  stats: &'a mut StructureStats,
+}
+
+impl<'de> Visitor<'de> for StrictObjectVisitor<'_> {
+  type Value = StrictValue;
 
   fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    formatter.write_str("a JSON value within the Inspect protocol limits")
+    formatter.write_str("a JSON object with unique keys within the Inspect protocol limits")
   }
 
-  fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
-    Ok(())
-  }
-
-  fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    if value < -(JAVASCRIPT_EXACT_INTEGER_MAX as i64) || value > JAVASCRIPT_EXACT_INTEGER_MAX as i64 {
-      return Err(E::custom("JSON integer exceeds the exact integer range"));
-    }
-    Ok(())
-  }
-
-  fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    if value > JAVASCRIPT_EXACT_INTEGER_MAX {
-      return Err(E::custom("JSON integer exceeds the exact integer range"));
-    }
-    Ok(())
-  }
-
-  fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
-    Ok(())
-  }
-
-  fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Ok(())
-  }
-
-  fn visit_string<E>(self, _value: String) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Ok(())
-  }
-
-  fn visit_none<E>(self) -> Result<Self::Value, E> {
-    Ok(())
-  }
-
-  fn visit_unit<E>(self) -> Result<Self::Value, E> {
-    Ok(())
-  }
-
-  fn visit_seq<A>(mut self, mut sequence: A) -> Result<Self::Value, A::Error>
-  where
-    A: SeqAccess<'de>,
-  {
-    let depth = self.container_depth()?;
-    while sequence
-      .next_element_seed(StructureSeed {
-        depth,
-        stats: self.stats,
-      })?
-      .is_some()
-    {}
-    Ok(())
-  }
-
-  fn visit_map<A>(mut self, mut map: A) -> Result<Self::Value, A::Error>
+  fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
   where
     A: MapAccess<'de>,
   {
-    let depth = self.container_depth()?;
+    let depth = self.depth;
     let mut keys = HashSet::new();
     while let Some(key) = map.next_key::<String>()? {
       if keys.len() == MAX_JSON_OBJECT_MEMBERS {
@@ -661,13 +597,70 @@ impl<'de> Visitor<'de> for StructureVisitor<'_> {
       if !keys.insert(key.to_owned()) {
         return Err(de::Error::custom(format!("duplicate JSON object key `{key}`")));
       }
-      map.next_value_seed(StructureSeed {
-        depth,
-        stats: self.stats,
-      })?;
+      let raw = map.next_value::<Box<RawValue>>()?;
+      StrictValue::from_raw(&raw, depth, self.stats).map_err(de::Error::custom)?;
     }
-    Ok(())
+    Ok(StrictValue::Object)
   }
+}
+
+struct StrictSequenceVisitor<'a> {
+  depth: usize,
+  stats: &'a mut StructureStats,
+}
+
+impl<'de> Visitor<'de> for StrictSequenceVisitor<'_> {
+  type Value = StrictValue;
+
+  fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("a JSON array within the Inspect protocol limits")
+  }
+
+  fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+  where
+    A: SeqAccess<'de>,
+  {
+    let depth = self.depth;
+    while let Some(raw) = sequence.next_element::<Box<RawValue>>()? {
+      StrictValue::from_raw(&raw, depth, self.stats).map_err(de::Error::custom)?;
+    }
+    Ok(StrictValue::Array)
+  }
+}
+
+fn deserialize_raw_map(raw: &RawValue, depth: usize, stats: &mut StructureStats) -> Result<StrictValue, ProtocolDecodeError> {
+  let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+  let value = deserializer.deserialize_map(StrictObjectVisitor { depth, stats }).map_err(protocol_json_error)?;
+  deserializer.end().map_err(protocol_json_error)?;
+  Ok(value)
+}
+
+fn deserialize_raw_sequence(raw: &RawValue, depth: usize, stats: &mut StructureStats) -> Result<StrictValue, ProtocolDecodeError> {
+  let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+  let value = deserializer.deserialize_seq(StrictSequenceVisitor { depth, stats }).map_err(protocol_json_error)?;
+  deserializer.end().map_err(protocol_json_error)?;
+  Ok(value)
+}
+
+fn parse_number_lexeme(value: &str) -> Result<Number, ProtocolDecodeError> {
+  if value.contains(['.', 'e', 'E']) {
+    let value = value.parse::<f64>().map_err(|_| ProtocolDecodeError::new("JSON number is not representable as a finite float"))?;
+    return Number::from_f64(value).ok_or_else(|| ProtocolDecodeError::new("JSON floating-point value must be finite"));
+  }
+
+  if value.starts_with('-') {
+    let value = value.parse::<i64>().map_err(|_| ProtocolDecodeError::new("JSON integer is below the exact integer range"))?;
+    if value < -(JAVASCRIPT_EXACT_INTEGER_MAX as i64) {
+      return Err(ProtocolDecodeError::new("JSON integer is below the exact integer range"));
+    }
+    return Ok(Number::from(value));
+  }
+
+  let value = value.parse::<u64>().map_err(|_| ProtocolDecodeError::new("JSON integer exceeds the exact integer range"))?;
+  if value > JAVASCRIPT_EXACT_INTEGER_MAX {
+    return Err(ProtocolDecodeError::new("JSON integer exceeds the exact integer range"));
+  }
+  Ok(Number::from(value))
 }
 
 #[cfg(test)]
@@ -754,6 +747,52 @@ mod tests {
     ] {
       assert!(decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).is_err(), "accepted `{body}`");
     }
+  }
+
+  #[test]
+  fn strict_decoder_validates_exact_number_lexemes_at_root_and_nested_positions() {
+    // ROOT CAUSE:
+    //
+    // With arbitrary_precision enabled, deserialize_any can expose oversized
+    // numeric lexemes as serde_json's private map instead of a number callback.
+    for body in [
+      "9007199254740992",
+      "-9007199254740992",
+      "18446744073709551615",
+      "18446744073709551616",
+      "170141183460469231731687303715884105727",
+      "-170141183460469231731687303715884105728",
+      "1e400",
+      r#"{"number":18446744073709551616}"#,
+      "[1e400]",
+    ] {
+      assert!(decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).is_err(), "accepted `{body}`");
+    }
+
+    for body in [
+      "9007199254740991",
+      "-9007199254740991",
+      "1.5",
+      "1e3",
+      r#"{"number":-2.5}"#,
+      "[6.25e-2]",
+    ] {
+      assert!(decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).is_ok(), "rejected `{body}`");
+    }
+  }
+
+  #[test]
+  fn strict_decoder_accepts_negative_zero_for_compatible_destinations() {
+    let float = decode_strict::<f64>(b"-0").unwrap();
+    assert_eq!(float, 0.0);
+    assert!(float.is_sign_negative());
+    assert_eq!(decode_strict::<serde_json::Number>(b"-0").unwrap().as_f64(), Some(-0.0));
+    assert_eq!(decode_strict::<Vec<f64>>(b"[-0]").unwrap(), vec![-0.0]);
+  }
+
+  #[test]
+  fn strict_decoder_rejects_escaped_duplicate_keys() {
+    assert!(decode_strict::<serde::de::IgnoredAny>(br#"{"key":1,"\u006bey":2}"#).is_err());
   }
 
   #[test]

@@ -371,12 +371,14 @@ async fn draft_creation_reports_equal_admission_busy_and_rejects_both_identity_c
     .await
     .expect("key conflict");
   assert_eq!(key_conflict.status(), StatusCode::CONFLICT);
+  assert_eq!(response_json(key_conflict).await, json!({"error":"auv.inspect.idempotency_mismatch"}));
 
   let uri_conflict = app
     .oneshot(post_draft(RUN, OTHER_KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256)))
     .await
     .expect("URI conflict");
   assert_eq!(uri_conflict.status(), StatusCode::CONFLICT);
+  assert_eq!(response_json(uri_conflict).await, json!({"error":"auv.inspect.artifact_identity_conflict"}));
 }
 
 #[tokio::test(start_paused = true)]
@@ -774,7 +776,7 @@ async fn artifact_store_error_classes_have_distinct_stable_status_and_code_mappi
       StatusCode::CONFLICT,
       json!({"error":"auv.inspect.authority_mismatch"}),
     ),
-    (ArtifactWriteError::IdempotencyMismatch, StatusCode::CONFLICT, json!({"error":"auv.inspect.idempotency_or_artifact_conflict"})),
+    (ArtifactWriteError::IdempotencyMismatch, StatusCode::CONFLICT, json!({"error":"auv.inspect.idempotency_mismatch"})),
     (ArtifactWriteError::Rejected(error_code("auv.test.rejected")), StatusCode::BAD_REQUEST, json!({"error":"auv.test.rejected"})),
     (
       ArtifactWriteError::Integrity(error_code("auv.test.integrity")),
@@ -852,7 +854,7 @@ async fn immediate_publication_unknown_lookup_mismatch_is_a_conflict() {
   let response = app.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
 
   assert_eq!(response.status(), StatusCode::CONFLICT);
-  assert_eq!(response_json(response).await, json!({"error": "auv.inspect.idempotency_or_artifact_conflict"}));
+  assert_eq!(response_json(response).await, json!({"error": "auv.inspect.idempotency_mismatch"}));
   assert_eq!(store.lookup_calls.load(Ordering::SeqCst) - lookups_before, 1);
 }
 

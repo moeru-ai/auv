@@ -1,14 +1,19 @@
 #![forbid(unsafe_code)]
 
+use std::io;
 use std::num::NonZeroUsize;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::task::{Context, Poll, Waker};
 
 use auv_inspect_server::router_with_artifact_origin;
-use auv_tracing::{ArtifactId, AuthorityId, EventId, IdempotencyKey, MemoryRunStore, RunId, RunStore};
+use auv_tracing::{ArtifactId, ArtifactWriteError, AuthorityId, EventId, IdempotencyKey, MemoryRunStore, RunId, RunStore};
 use auv_tracing_conformance::{artifact_request, assert_gap_contract, assert_store_contract, event_request};
 use auv_tracing_inspect::InspectRunStore;
 use futures_util::StreamExt;
-use futures_util::io::Cursor;
+use futures_util::io::{AsyncRead, Cursor};
 use tokio::net::TcpListener;
 
 struct TestAuthority {
@@ -92,4 +97,121 @@ async fn inspect_store_reports_retention_gaps_over_http_and_sse() {
     backing.commit(request).await.expect("advance retained Inspect history");
   })
   .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pending_and_published_artifact_identity_conflicts_have_one_stable_http_class() {
+  let backing = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+  let server = TestAuthority::start(backing).await;
+  let remote = server.connect().await;
+  let run_id = RunId::new();
+  let artifact_id = ArtifactId::new();
+  let gate = BodyGate::new();
+  let first_store = remote.clone();
+  let first_request = artifact_request(remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc");
+  let first_gate = gate.clone();
+  let first = tokio::spawn(async move { first_store.write_artifact(first_request, Box::pin(first_gate.reader(b"abc"))).await });
+  gate.wait_until_polled().await;
+
+  let pending_polls = Arc::new(AtomicUsize::new(0));
+  let pending = remote
+    .write_artifact(
+      artifact_request(remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc"),
+      Box::pin(PollProbe {
+        polls: pending_polls.clone(),
+      }),
+    )
+    .await
+    .expect_err("a live draft owns the artifact identity");
+
+  assert_eq!(pending, ArtifactWriteError::Rejected("auv.inspect.artifact_identity_conflict".parse().expect("artifact conflict code")));
+  assert_eq!(pending_polls.load(Ordering::SeqCst), 0);
+
+  gate.release();
+  first.await.expect("pending publication task").expect("competing artifact publication");
+
+  let published_polls = Arc::new(AtomicUsize::new(0));
+  let published = remote
+    .write_artifact(
+      artifact_request(remote.authority_id(), run_id, IdempotencyKey::new(), artifact_id, b"abc"),
+      Box::pin(PollProbe {
+        polls: published_polls.clone(),
+      }),
+    )
+    .await
+    .expect_err("a published artifact keeps its identity");
+
+  assert_eq!(published, pending);
+  assert_eq!(published_polls.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Clone)]
+struct BodyGate {
+  entered: Arc<AtomicBool>,
+  released: Arc<AtomicBool>,
+  waker: Arc<Mutex<Option<Waker>>>,
+}
+
+impl BodyGate {
+  fn new() -> Self {
+    Self {
+      entered: Arc::new(AtomicBool::new(false)),
+      released: Arc::new(AtomicBool::new(false)),
+      waker: Arc::new(Mutex::new(None)),
+    }
+  }
+
+  fn reader(&self, bytes: &[u8]) -> GatedBody {
+    GatedBody {
+      gate: self.clone(),
+      inner: Cursor::new(bytes.to_vec()),
+    }
+  }
+
+  async fn wait_until_polled(&self) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+      while !self.entered.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .expect("pending artifact body must be polled");
+  }
+
+  fn release(&self) {
+    self.released.store(true, Ordering::SeqCst);
+    if let Some(waker) = self.waker.lock().expect("body gate waker lock").take() {
+      waker.wake();
+    }
+  }
+}
+
+struct GatedBody {
+  gate: BodyGate,
+  inner: Cursor<Vec<u8>>,
+}
+
+impl AsyncRead for GatedBody {
+  fn poll_read(mut self: Pin<&mut Self>, context: &mut Context<'_>, buffer: &mut [u8]) -> Poll<io::Result<usize>> {
+    if !self.gate.released.load(Ordering::SeqCst) {
+      let mut waker = self.gate.waker.lock().expect("body gate waker lock");
+      if !self.gate.released.load(Ordering::SeqCst) {
+        *waker = Some(context.waker().clone());
+        self.gate.entered.store(true, Ordering::SeqCst);
+        return Poll::Pending;
+      }
+    }
+    Pin::new(&mut self.inner).poll_read(context, buffer)
+  }
+}
+
+struct PollProbe {
+  polls: Arc<AtomicUsize>,
+}
+
+impl AsyncRead for PollProbe {
+  fn poll_read(self: Pin<&mut Self>, _context: &mut Context<'_>, _buffer: &mut [u8]) -> Poll<io::Result<usize>> {
+    self.polls.fetch_add(1, Ordering::SeqCst);
+    Poll::Ready(Ok(0))
+  }
 }
