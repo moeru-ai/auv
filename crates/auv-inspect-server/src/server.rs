@@ -36,44 +36,34 @@ pub(crate) struct InspectServerState {
   pub(crate) mutation_arbitrator: RunMutationArbitrator,
 }
 
-const GATE_CLEANUP_INTERVAL: usize = 64;
-
 pub(crate) struct RunMutationArbitrator {
-  registry: Mutex<RunGateRegistry>,
+  registry: Arc<Mutex<RunGateRegistry>>,
 }
 
 struct RunGateRegistry {
   gates: HashMap<RunId, Weak<tokio::sync::Mutex<()>>>,
-  acquisitions_since_cleanup: usize,
-  #[cfg(test)]
-  cleanup_count: usize,
+}
+
+pub(crate) struct RunMutationGuard {
+  guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+  registry: Arc<Mutex<RunGateRegistry>>,
+  run_id: RunId,
+  gate: Weak<tokio::sync::Mutex<()>>,
 }
 
 impl RunMutationArbitrator {
   fn new() -> Self {
     Self {
-      registry: Mutex::new(RunGateRegistry {
+      registry: Arc::new(Mutex::new(RunGateRegistry {
         gates: HashMap::new(),
-        acquisitions_since_cleanup: 0,
-        #[cfg(test)]
-        cleanup_count: 0,
-      }),
+      })),
     }
   }
 
   /// Serializes ordinary commits and draft reservations for one run.
-  pub(crate) async fn acquire(&self, run_id: RunId) -> tokio::sync::OwnedMutexGuard<()> {
+  pub(crate) async fn acquire(&self, run_id: RunId) -> RunMutationGuard {
     let gate = {
       let mut registry = self.registry.lock().expect("run mutation arbitration lock");
-      registry.acquisitions_since_cleanup += 1;
-      if registry.acquisitions_since_cleanup == GATE_CLEANUP_INTERVAL {
-        registry.gates.retain(|_, gate| gate.strong_count() > 0);
-        registry.acquisitions_since_cleanup = 0;
-        #[cfg(test)]
-        {
-          registry.cleanup_count += 1;
-        }
-      }
       match registry.gates.get(&run_id).and_then(Weak::upgrade) {
         Some(gate) => gate,
         None => {
@@ -83,13 +73,31 @@ impl RunMutationArbitrator {
         }
       }
     };
-    gate.lock_owned().await
+    let identity = Arc::downgrade(&gate);
+    let guard = gate.lock_owned().await;
+    RunMutationGuard {
+      guard: Some(guard),
+      registry: self.registry.clone(),
+      run_id,
+      gate: identity,
+    }
   }
 
   #[cfg(test)]
-  fn registry_stats(&self) -> (usize, usize) {
+  fn registry_len(&self) -> usize {
     let registry = self.registry.lock().expect("run mutation arbitration lock");
-    (registry.gates.len(), registry.cleanup_count)
+    registry.gates.len()
+  }
+}
+
+impl Drop for RunMutationGuard {
+  fn drop(&mut self) {
+    drop(self.guard.take());
+    let mut registry = self.registry.lock().expect("run mutation arbitration lock");
+    let remove = registry.gates.get(&self.run_id).is_some_and(|current| Weak::ptr_eq(current, &self.gate) && current.strong_count() == 0);
+    if remove {
+      registry.gates.remove(&self.run_id);
+    }
   }
 }
 
@@ -235,21 +243,33 @@ mod tests {
   use super::*;
 
   #[tokio::test]
-  async fn run_gate_registry_cleans_dead_run_ids_periodically() {
+  async fn run_gate_registry_drains_after_many_live_run_guards_drop() {
     let arbitrator = RunMutationArbitrator::new();
-    for _ in 0..GATE_CLEANUP_INTERVAL - 1 {
-      drop(arbitrator.acquire(RunId::new()).await);
+    let mut guards = Vec::new();
+    for _ in 0..4_096 {
+      guards.push(arbitrator.acquire(RunId::new()).await);
     }
-    assert_eq!(arbitrator.registry_stats(), (GATE_CLEANUP_INTERVAL - 1, 0));
+    assert_eq!(arbitrator.registry_len(), 4_096);
 
-    drop(arbitrator.acquire(RunId::new()).await);
-    assert_eq!(arbitrator.registry_stats(), (1, 1));
+    drop(guards);
 
-    for _ in 0..GATE_CLEANUP_INTERVAL * 4 {
-      drop(arbitrator.acquire(RunId::new()).await);
-    }
-    let (gate_count, cleanup_count) = arbitrator.registry_stats();
-    assert!(gate_count <= GATE_CLEANUP_INTERVAL);
-    assert_eq!(cleanup_count, 5);
+    assert_eq!(arbitrator.registry_len(), 0);
+  }
+
+  #[tokio::test]
+  async fn run_gate_drop_does_not_remove_a_same_run_waiter() {
+    let arbitrator = Arc::new(RunMutationArbitrator::new());
+    let run_id = RunId::new();
+    let owner = arbitrator.acquire(run_id).await;
+    let waiter_arbitrator = arbitrator.clone();
+    let waiter = tokio::spawn(async move { waiter_arbitrator.acquire(run_id).await });
+    tokio::task::yield_now().await;
+
+    drop(owner);
+    let next_owner = waiter.await.expect("same-run waiter");
+    assert_eq!(arbitrator.registry_len(), 1);
+
+    drop(next_owner);
+    assert_eq!(arbitrator.registry_len(), 0);
   }
 }
