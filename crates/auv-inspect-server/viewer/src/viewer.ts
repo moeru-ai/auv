@@ -72,6 +72,7 @@ interface ViewerState {
   source: EventSource | null;
   generation: number;
   retryTimer: number | null;
+  stabilityTimer: number | null;
   recoveryAttempts: number;
 }
 
@@ -84,6 +85,9 @@ const RUN_MEDIA_TYPE = "application/vnd.auv.run+json; version=1";
 const MAX_RECOVERY_ATTEMPTS = 5;
 const BASE_RETRY_MILLIS = 250;
 const MAX_RETRY_MILLIS = 4_000;
+// NOTICE(inspect-sse-stability-v1): Keep this below the first delayed retry so
+// rapid open/error flapping consumes budget without slowing stable recovery.
+const CONNECTION_STABILITY_MILLIS = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ARTIFACT_URI = /^auv:\/\/runs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifacts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 
@@ -500,17 +504,24 @@ export function mountInspectViewer(document: Document): void {
     source: null,
     generation: 0,
     retryTimer: null,
+    stabilityTimer: null,
     recoveryAttempts: 0,
   };
 
-  function closeSource(): void {
-    state.source?.close();
-    state.source = null;
+  function clearStability(): void {
+    if (state.stabilityTimer !== null) window.clearTimeout(state.stabilityTimer);
+    state.stabilityTimer = null;
   }
 
   function clearRetry(): void {
     if (state.retryTimer !== null) window.clearTimeout(state.retryTimer);
     state.retryTimer = null;
+  }
+
+  function closeSource(): void {
+    clearStability();
+    state.source?.close();
+    state.source = null;
   }
 
   function stopWith(message: string): void {
@@ -560,16 +571,22 @@ export function mountInspectViewer(document: Document): void {
     const source = new EventSource(streamEndpoint(snapshot.run_id, snapshot.through_revision));
     state.source = source;
 
-    /** Marks only a confirmed current SSE connection as live. */
+    /** Marks a current SSE connection live and starts its stability window. */
     function onOpen(): void {
       if (generation !== state.generation || state.source !== source) return;
-      state.recoveryAttempts = 0;
+      clearStability();
       setConnection(document, true, `revision ${snapshot.through_revision}`);
+      const stabilityTimer = window.setTimeout(() => {
+        if (state.stabilityTimer !== stabilityTimer) return;
+        state.stabilityTimer = null;
+        if (generation === state.generation && state.source === source) state.recoveryAttempts = 0;
+      }, CONNECTION_STABILITY_MILLIS);
+      state.stabilityTimer = stabilityTimer;
     }
 
     /** Applies one strictly validated commit or recovers from the snapshot. */
     function onCommit(message: MessageEvent<string>): void {
-      if (generation !== state.generation || state.snapshot === null) return;
+      if (generation !== state.generation || state.source !== source || state.snapshot === null) return;
       let value: unknown;
       try {
         value = JSON.parse(message.data);
@@ -583,17 +600,21 @@ export function mountInspectViewer(document: Document): void {
         return;
       }
       state.snapshot = next;
+      clearStability();
+      state.recoveryAttempts = 0;
       renderSnapshot(document, next);
+      setConnection(document, true, `revision ${next.through_revision}`);
     }
 
     /** Recovers an explicit retention gap from a fresh snapshot. */
     function onGap(): void {
+      if (state.source !== source) return;
       scheduleRecovery(generation, "history gap");
     }
 
     /** Separates typed store failures from EventSource transport failures. */
     function onStreamError(event: Event): void {
-      if (generation !== state.generation) return;
+      if (generation !== state.generation || state.source !== source) return;
       if (event instanceof MessageEvent && typeof event.data === "string") {
         try {
           handleTypedError(generation, JSON.parse(event.data) as unknown);
