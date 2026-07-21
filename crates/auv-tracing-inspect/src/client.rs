@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use auv_tracing::{
@@ -7,7 +9,7 @@ use auv_tracing::{
 };
 use base64::Engine;
 use bytes::Bytes;
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
 use reqwest::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::{Response, StatusCode};
 use sha2::{Digest, Sha256};
@@ -122,6 +124,22 @@ impl InspectRunStore {
       Ok(None) | Err(_) => Err(ArtifactWriteError::PublicationUnknown(unknown)),
     }
   }
+
+  async fn classify_artifact_conflict(&self, request: &StoreArtifactRequest) -> ArtifactWriteError {
+    match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
+      Ok(Some(_)) => ArtifactWriteError::IdempotencyMismatch,
+      Ok(None) => {
+        let uri = ArtifactUri::from_ids(request.run_id(), request.artifact_id());
+        match self.load_snapshot(request.run_id()).await {
+          Ok(Some(snapshot)) if snapshot.artifacts().contains_key(&uri) => {
+            ArtifactWriteError::Rejected(code("auv.inspect.idempotency_or_artifact_conflict"))
+          }
+          Ok(Some(_)) | Ok(None) | Err(_) => ArtifactWriteError::IdempotencyMismatch,
+        }
+      }
+      Err(_) => ArtifactWriteError::IdempotencyMismatch,
+    }
+  }
 }
 
 impl RunStore for InspectRunStore {
@@ -228,6 +246,7 @@ impl RunStore for InspectRunStore {
         if !matches!(response.status(), StatusCode::CREATED | StatusCode::OK) {
           return match write_artifact_failure(response, self.authority_id).await {
             Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
+            Ok(ArtifactWriteError::IdempotencyMismatch) => Err(self.classify_artifact_conflict(&request).await),
             Ok(error) => Err(error),
             Err(code) => Err(ArtifactWriteError::Unavailable(code)),
           };
@@ -309,7 +328,14 @@ impl RunStore for InspectRunStore {
           return Err(ArtifactWriteError::Unavailable(code("auv.inspect.upload_admission_unavailable")));
         }
       }
-      let stream = ReaderStream::new(body.compat());
+      let source_failed = Arc::new(AtomicBool::new(false));
+      let observed_source_failure = source_failed.clone();
+      let stream = ReaderStream::new(body.compat()).map(move |item| {
+        if item.is_err() {
+          observed_source_failure.store(true, Ordering::Release);
+        }
+        item
+      });
       let response = self
         .client
         .put(endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads/{}/content", request.run_id(), draft.upload_id())))
@@ -323,6 +349,9 @@ impl RunStore for InspectRunStore {
       let unknown = code("auv.inspect.publication_transport_unknown");
       let response = match response {
         Ok(response) => response,
+        Err(_) if source_failed.load(Ordering::Acquire) => {
+          return Err(ArtifactWriteError::Unavailable(code("auv.inspect.artifact_body_unavailable")));
+        }
         Err(_) => return self.recover_artifact(&request, unknown).await,
       };
       match response.status() {
@@ -347,6 +376,7 @@ impl RunStore for InspectRunStore {
         }
         _ => match write_artifact_failure(response, self.authority_id).await {
           Ok(ArtifactWriteError::PublicationUnknown(code)) | Err(code) => self.recover_artifact(&request, code).await,
+          Ok(ArtifactWriteError::IdempotencyMismatch) => Err(self.classify_artifact_conflict(&request).await),
           Ok(error) => Err(error),
         },
       }

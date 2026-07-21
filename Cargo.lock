@@ -808,7 +808,10 @@ dependencies = [
 name = "auv-tracing-conformance"
 version = "0.0.1"
 dependencies = [
+ "auv-inspect-server",
  "auv-tracing",
+ "auv-tracing-inspect",
+ "axum",
  "futures-executor",
  "futures-io",
  "futures-timer",
@@ -817,6 +820,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

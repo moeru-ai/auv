@@ -763,6 +763,23 @@ impl AsyncRead for FailingPollProbe {
   }
 }
 
+struct InterruptedUpload {
+  prefix: &'static [u8],
+  offset: usize,
+}
+
+impl AsyncRead for InterruptedUpload {
+  fn poll_read(mut self: Pin<&mut Self>, _context: &mut Context<'_>, buffer: &mut [u8]) -> Poll<io::Result<usize>> {
+    if self.offset == self.prefix.len() {
+      return Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, "injected upload interruption")));
+    }
+    let count = buffer.len().min(self.prefix.len() - self.offset);
+    buffer[..count].copy_from_slice(&self.prefix[self.offset..self.offset + count]);
+    self.offset += count;
+    Poll::Ready(Ok(count))
+  }
+}
+
 struct CountingReader {
   inner: Cursor<Vec<u8>>,
   polls: Arc<AtomicUsize>,
@@ -858,6 +875,69 @@ async fn binary_write_read_resolution_and_published_replay_preserve_one_shot_bod
   assert_eq!(resolved[0], resolved[2]);
   assert!(matches!(&resolved[0], auv_tracing_inspect::ResolvedArtifact::Available { uri: found, .. } if found == &uri));
   assert!(matches!(&resolved[1], auv_tracing_inspect::ResolvedArtifact::NotFound { uri: found } if found == &missing));
+}
+
+// ROOT CAUSE:
+//
+// If a different idempotency key reused a committed artifact ID, the Inspect
+// client returned IdempotencyMismatch because Task 12 intentionally uses one
+// HTTP conflict body for both idempotency and artifact identity conflicts.
+//
+// Before the fix, the client mapped that shared body without consulting store
+// truth. The fix preserves the wire shape and reconstructs the RunStore class.
+#[tokio::test]
+async fn committed_artifact_id_conflict_is_reconstructed_as_rejected() {
+  let server = TestServer::start_store(Arc::new(MemoryRunStore::new(authority_id()))).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
+  let artifact_id = ArtifactId::new();
+  store
+    .write_artifact(artifact_request(authority_id(), artifact_id, IdempotencyKey::new()), Box::pin(Cursor::new(b"abc".to_vec())))
+    .await
+    .expect("publish artifact");
+  let polls = Arc::new(AtomicUsize::new(0));
+
+  let error = store
+    .write_artifact(
+      artifact_request(authority_id(), artifact_id, IdempotencyKey::new()),
+      Box::pin(PollProbe {
+        polls: polls.clone(),
+      }),
+    )
+    .await
+    .expect_err("a different key cannot replace a committed artifact");
+
+  assert!(matches!(error, ArtifactWriteError::Rejected(_)));
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+// ROOT CAUSE:
+//
+// If the caller's artifact body stream failed, Reqwest surfaced the source
+// error from send() and the client treated it as an ambiguous response loss.
+//
+// Before the fix, a known pre-publication interruption became
+// PublicationUnknown. The fix preserves ambiguity only for transport failures
+// that did not originate in the caller's body stream.
+#[tokio::test]
+async fn caller_body_interruption_is_definitively_unavailable() {
+  let backing = MemoryRunStore::new(authority_id());
+  let server = TestServer::start_store(Arc::new(backing.clone())).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
+  let key = IdempotencyKey::new();
+
+  let error = store
+    .write_artifact(
+      artifact_request(authority_id(), ArtifactId::new(), key),
+      Box::pin(InterruptedUpload {
+        prefix: b"a",
+        offset: 0,
+      }),
+    )
+    .await
+    .expect_err("interrupted body must fail before publication");
+
+  assert!(matches!(error, ArtifactWriteError::Unavailable(_)), "{error:?}");
+  assert!(backing.lookup_commit(run_id(), key).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -1355,6 +1435,120 @@ async fn clean_malformed_and_over_limit_responses_remain_integrity_failures() {
     resolver_store.resolve_artifacts(vec![ArtifactUri::from_ids(run_id(), ArtifactId::new())]).await,
     Err(ReadError::Integrity(_))
   ));
+}
+
+#[tokio::test]
+async fn client_rejects_malformed_run_success_and_error_payloads_recursively() {
+  let key = IdempotencyKey::new();
+  let commit = serde_json::to_string(&sample_commit(1, key)).unwrap();
+  let malformed_successes = [
+    commit.replacen('{', &format!(r#"{{"authority_id":"{AUTHORITY}","#), 1),
+    commit.replacen(r#""nanoseconds":0"#, r#""nanoseconds":0,"nanoseconds":0"#, 1),
+    commit.replacen(r#""attributes":{}"#, r#""attributes":{},"retry":false"#, 1),
+    commit.replacen(r#""nanoseconds":0"#, r#""nanoseconds":01"#, 1),
+    format!("{commit} true"),
+  ];
+  for body in malformed_successes {
+    let server = raw_success_fault_server("/commits/by-idempotency-key/", RUN_MEDIA_TYPE, body.into_bytes(), None).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+    assert!(matches!(store.lookup_commit(run_id(), key).await, Err(ReadError::Integrity(_))));
+  }
+
+  let malformed_errors = [
+    r#"{"unavailable":{"code":"auv.test.unavailable","code":"auv.test.other"}}"#,
+    r#"{"unavailable":{"code":"auv.test.unavailable","retry":true}}"#,
+    r#"{"history_gap":{"requested_after":01,"earliest_available":2}}"#,
+    r#"{"unavailable":{"code":"auv.test.unavailable"}} true"#,
+  ];
+  for body in malformed_errors {
+    let body = body.to_string();
+    let app = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route(
+        "/v1/runs/{run_id}/commits/by-idempotency-key/{key}",
+        get(move || {
+          let body = body.clone();
+          async move { response(StatusCode::SERVICE_UNAVAILABLE, RUN_MEDIA_TYPE, Body::from(body)) }
+        }),
+      );
+    let server = TestServer::start(app).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+    assert!(matches!(store.lookup_commit(run_id(), key).await, Err(ReadError::Integrity(_))));
+  }
+}
+
+#[tokio::test]
+async fn client_rejects_malformed_authority_resolver_and_artifact_error_payloads() {
+  let malformed_authorities = [
+    format!(r#"{{"authority_id":"{AUTHORITY}","authority_id":"{AUTHORITY}"}}"#),
+    format!(r#"{{"authority_id":"{AUTHORITY}","retry":false}}"#),
+    format!(r#"{{"authority_id":"{AUTHORITY}"}} true"#),
+  ];
+  for body in malformed_authorities {
+    let app = Router::new().route(
+      "/v1/authority",
+      get(move || {
+        let body = body.clone();
+        async move { response(StatusCode::OK, RUN_MEDIA_TYPE, Body::from(body)) }
+      }),
+    );
+    let server = TestServer::start(app).await;
+    assert!(InspectRunStore::connect(server.base_url.clone()).await.is_err());
+  }
+
+  let uri = ArtifactUri::from_ids(run_id(), ArtifactId::new());
+  let malformed_resolver_successes = [
+    r#"{"results":[],"results":[]}"#.to_string(),
+    format!(r#"{{"results":[{{"not_found":{{"uri":"{uri}","retry":false}}}}]}}"#),
+    r#"{"results":[]} false"#.to_string(),
+  ];
+  for body in malformed_resolver_successes {
+    let server = raw_success_fault_server("/v1/resources/artifacts/resolve", "application/json", body.into_bytes(), None).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+    assert!(matches!(store.resolve_artifacts(vec![uri.clone()]).await, Err(ReadError::Integrity(_))));
+  }
+
+  for body in [
+    r#"{"error":"auv.test.unavailable","error":"auv.test.other"}"#,
+    r#"{"error":"auv.test.unavailable","retry":true}"#,
+    r#"{"error":"auv.test.unavailable"} true"#,
+  ] {
+    let body = body.to_string();
+    let app = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route(
+        "/v1/resources/artifacts/resolve",
+        post(move || {
+          let body = body.clone();
+          async move { response(StatusCode::SERVICE_UNAVAILABLE, "application/json", Body::from(body)) }
+        }),
+      );
+    let server = TestServer::start(app).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+    assert!(matches!(store.resolve_artifacts(vec![uri.clone()]).await, Err(ReadError::Integrity(_))));
+  }
 }
 
 #[tokio::test]
@@ -2366,6 +2560,30 @@ async fn invalid_sse_commit_identity_revision_or_size_is_terminal_without_cursor
 }
 
 #[tokio::test]
+async fn malformed_sse_json_payloads_are_terminal_integrity_failures() {
+  let commit = serde_json::to_string(&sample_commit(1, IdempotencyKey::new())).unwrap();
+  let malformed = [
+    format!("id: 1\nevent: commit\ndata: {}\n\n", commit.replacen(r#""nanoseconds":0"#, r#""nanoseconds":0,"nanoseconds":0"#, 1)),
+    format!("id: 1\nevent: commit\ndata: {}\n\n", commit.replacen(r#""attributes":{}"#, r#""attributes":{},"retry":false"#, 1)),
+    "event: gap\ndata: {\"requested_after\":0,\"earliest_available\":2,\"retry\":false}\n\n".to_string(),
+    "event: error\ndata: {\"unavailable\":{\"code\":\"auv.test.unavailable\",\"code\":\"auv.test.other\"}}\n\n".to_string(),
+    "event: error\ndata: {\"unavailable\":{\"code\":\"auv.test.unavailable\"}} true\n\n".to_string(),
+  ];
+  for body in malformed {
+    let server = raw_sse_server(RawSse {
+      content_type: "text/event-stream",
+      body: Arc::new(body),
+    })
+    .await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+    let mut stream = store.subscribe(run_id(), RunRevision::new(0).unwrap()).await.unwrap();
+
+    assert!(matches!(stream.next().await, Some(Err(auv_tracing::SubscriptionError::Store(ReadError::Integrity(_))))));
+    assert!(stream.next().await.is_none());
+  }
+}
+
+#[tokio::test]
 async fn sse_gap_and_typed_error_events_are_terminal() {
   let gap = RunStreamGap {
     requested_after: RunRevision::new(4).unwrap(),
@@ -3199,4 +3417,5 @@ fn protocol_error_shapes_remain_strict() {
 
   assert!(auv_tracing_inspect::protocol::decode_strict::<RunApiError>(duplicate).is_err());
   assert!(auv_tracing_inspect::protocol::decode_strict::<RunApiError>(unknown).is_err());
+  assert!(auv_tracing_inspect::protocol::decode_strict::<serde::de::IgnoredAny>(b"9007199254740992").is_err());
 }
