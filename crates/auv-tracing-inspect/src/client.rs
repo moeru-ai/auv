@@ -6,6 +6,7 @@ use auv_tracing::{
   ArtifactBody, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, ByteLength, CommitError,
   CommitResult, ContentType, ErrorCode, IdempotencyKey, NonEmptyVec, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest,
   RunFact, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription, Sha256Digest, StoreArtifactRequest, SubscriptionError,
+  artifact_identity_conflict_error_code,
 };
 use base64::Engine;
 use bytes::Bytes;
@@ -917,7 +918,9 @@ async fn write_artifact_failure(response: Response, connected_authority: Authori
           }
         }
         StatusCode::CONFLICT if error_code == code(IDEMPOTENCY_MISMATCH_ERROR) => ArtifactWriteError::IdempotencyMismatch,
-        StatusCode::CONFLICT if error_code == code(ARTIFACT_IDENTITY_CONFLICT_ERROR) => ArtifactWriteError::Rejected(error_code),
+        StatusCode::CONFLICT if error_code == code(ARTIFACT_IDENTITY_CONFLICT_ERROR) => {
+          ArtifactWriteError::Rejected(artifact_identity_conflict_error_code())
+        }
         StatusCode::CONFLICT => return Err(code("auv.inspect.artifact_error_status_invalid")),
         StatusCode::UNPROCESSABLE_ENTITY => ArtifactWriteError::Integrity(error_code),
         StatusCode::SERVICE_UNAVAILABLE if error_code == code("auv.inspect.publication_unknown") => {

@@ -12,11 +12,10 @@ use auv_inspect_server::router_with_artifact_origin;
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, EventId,
   IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot,
-  RunStore, RunSubscription, StoreArtifactRequest,
+  RunStore, RunSubscription, StoreArtifactRequest, artifact_identity_conflict_error_code,
 };
 use auv_tracing_conformance::{artifact_request, assert_gap_contract, assert_store_contract, event_request};
 use auv_tracing_inspect::InspectRunStore;
-use auv_tracing_inspect::protocol::ARTIFACT_IDENTITY_CONFLICT_ERROR;
 use futures_util::StreamExt;
 use futures_util::io::{AsyncRead, Cursor};
 use tokio::net::TcpListener;
@@ -152,7 +151,7 @@ async fn two_routers_share_pending_and_published_artifact_identity_conflicts() {
     .await
     .expect_err("a live draft owns the artifact identity");
 
-  assert_eq!(pending, ArtifactWriteError::Rejected(ARTIFACT_IDENTITY_CONFLICT_ERROR.parse().expect("artifact conflict code")));
+  assert_eq!(pending, ArtifactWriteError::Rejected(artifact_identity_conflict_error_code()));
   assert_eq!(backing.body_polls(1), 0, "the authority must reject the replacement before consuming its body");
 
   gate.release();
