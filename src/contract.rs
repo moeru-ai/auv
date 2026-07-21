@@ -168,8 +168,55 @@ pub struct OperationResult {
   /// alongside its acknowledged output.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub verifications: Vec<VerificationResult>,
+  /// Typed classification for a *control-layer* failure — one that happened
+  /// before (or instead of) any verification, so it cannot be expressed as a
+  /// [`VerificationResult`]. A driver control call (activate / focus / paste)
+  /// that returns a typed `DriverError` lands here as
+  /// [`FailureLayer::ControlFailed`] with the driver's message and any recovery
+  /// hint, keeping the failure classifiable instead of collapsing to free text.
+  ///
+  /// Distinct from [`Self::verifications`]: `failure_layer` there classifies a
+  /// verification that *ran and disagreed* (e.g. `SemanticMismatch`); this
+  /// classifies a control step that never produced a verification at all.
+  /// Serialized as absent when the operation had no control-layer failure, and
+  /// accepted as missing for back-compat with older OperationResult JSON.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub control_failure: Option<ControlFailure>,
   pub freshness_basis: Option<FreshnessBasis>,
   pub known_limits: Vec<String>,
+}
+
+/// A classified control-layer failure attached to an [`OperationResult`].
+///
+/// # Seam role
+///
+/// - **Produced by** command handlers that map a typed driver failure into a
+///   persisted classification (currently `app.textedit.document.write` maps
+///   `DriverError` -> [`FailureLayer::ControlFailed`] at its invoke finalize).
+/// - **Consumed by** the inspect-family read path (`run_read`, core inspect
+///   text render, and the HTTP inspect enrichment) so CLI `inspect`, MCP
+///   `run_inspect`, and the HTTP surface all report the same typed
+///   classification for a driver control failure.
+///
+/// `layer` reuses the shared [`FailureLayer`] taxonomy rather than a private
+/// enum. Today the only producer emits [`FailureLayer::ControlFailed`]; the
+/// wider taxonomy (`GroundingFailed`, `CandidateExpired`, ...) is deliberately
+/// left to future producers on this same field.
+// TODO(control-failure-producers): only `ControlFailed` is produced today
+// (textedit driver-error path). `GroundingFailed` / `CandidateExpired` remain
+// unproduced on purpose — add them when a real grounding/candidate producer
+// needs a persisted control-layer classification, not speculatively.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlFailure {
+  /// Which pipeline layer failed. See [`FailureLayer`].
+  pub layer: FailureLayer,
+  /// Human-readable failure detail, excluding any separately stored recovery
+  /// hint.
+  pub message: String,
+  /// Optional recovery hint carried from the driver error when it had one
+  /// (e.g. `PermissionDenied` / `StaleObservation` / `RoleMismatch`).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub recovery: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1035,15 +1082,72 @@ mod tests {
         notes: vec!["window-scoped OCR rows".to_string()],
       }),
       known_limits: Vec::new(),
+      control_failure: None,
     };
 
     let value = serde_json::to_value(&result).expect("operation result should serialize");
     assert_eq!(value["status"], json!("completed"));
     assert_eq!(value["output"]["kind"], json!("candidates"));
     assert_eq!(value["output"]["candidates"][0]["target_spec"]["grounding"], json!("ocr_anchor"));
+    // A success operation carries no control failure and must not serialize the field.
+    assert!(value.get("control_failure").is_none());
 
     let parsed: OperationResult = serde_json::from_value(value).expect("operation result should deserialize");
     assert_eq!(parsed, result);
+  }
+
+  #[test]
+  fn operation_result_control_failure_round_trips_and_omits_when_absent() {
+    let result = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
+      run_id: RunId::new("run_ctrl"),
+      status: OperationStatus::Failed,
+      operation_id: "app.textedit.document.write".to_string(),
+      evidence_artifacts: Vec::new(),
+      output: OperationOutput::Acknowledged {
+        message: Some("TextEdit document.write control failure".to_string()),
+      },
+      verifications: Vec::new(),
+      control_failure: Some(ControlFailure {
+        layer: FailureLayer::ControlFailed,
+        message: "accessibility permission was denied: not authorized".to_string(),
+        recovery: Some("grant Accessibility in System Settings".to_string()),
+      }),
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+
+    let value = serde_json::to_value(&result).expect("operation result should serialize");
+    assert_eq!(value["status"], json!("failed"));
+    assert_eq!(value["control_failure"]["layer"], json!("control_failed"));
+    assert_eq!(value["control_failure"]["message"], json!("accessibility permission was denied: not authorized"));
+    assert_eq!(value["control_failure"]["recovery"], json!("grant Accessibility in System Settings"));
+
+    let parsed: OperationResult = serde_json::from_value(value).expect("operation result should deserialize");
+    assert_eq!(parsed, result);
+  }
+
+  // ROOT CAUSE:
+  //
+  // `control_failure` is an additive field on the persisted `OperationResult`
+  // wire shape. If it were not `#[serde(default)]`, older `operation-result`
+  // JSON (written before PR8-B) would fail to deserialize once readers upgrade.
+  // This locks the back-compat guarantee: absent field -> `None`.
+  #[test]
+  fn operation_result_without_control_failure_field_parses_as_none() {
+    let legacy = json!({
+      "api_version": OPERATION_RESULT_API_VERSION,
+      "run_id": "run_legacy",
+      "status": "failed",
+      "operation_id": "app.textedit.document.write",
+      "evidence_artifacts": [],
+      "output": { "kind": "acknowledged", "message": "legacy failure" },
+      "freshness_basis": null,
+      "known_limits": []
+    });
+
+    let parsed: OperationResult = serde_json::from_value(legacy).expect("legacy operation result should deserialize");
+    assert_eq!(parsed.control_failure, None);
   }
 
   #[test]
@@ -1375,6 +1479,7 @@ mod tests {
         message: Some("Issued play".to_string()),
       },
       verifications: vec![verification.clone()],
+      control_failure: None,
       freshness_basis: None,
       known_limits: Vec::new(),
     };
@@ -1426,6 +1531,7 @@ mod tests {
         sample_verification(VerificationMethod::StateChanged),
         sample_verification(VerificationMethod::SemanticMatch),
       ],
+      control_failure: None,
       freshness_basis: None,
       known_limits: Vec::new(),
     };
@@ -1461,6 +1567,7 @@ mod tests {
         message: Some("click delivered".to_string()),
       },
       verifications: vec![mismatch],
+      control_failure: None,
       freshness_basis: None,
       known_limits: Vec::new(),
     };

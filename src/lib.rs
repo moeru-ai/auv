@@ -77,6 +77,10 @@ impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
         .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to encode input action result inspect values: {error}"))?,
+      control_failure: run_read::extract_control_failure(store, run)?
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| format!("failed to encode control failure inspect value: {error}"))?,
       view_parser,
       view_parser_summary,
     })

@@ -221,6 +221,7 @@ fn golden_core_only_inspect_run() {
       verification: Box::new(verification.clone()),
     },
     verifications: vec![verification],
+    control_failure: None,
     freshness_basis: None,
     known_limits: Vec::new(),
   };

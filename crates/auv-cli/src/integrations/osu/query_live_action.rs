@@ -62,6 +62,7 @@ pub fn build_osu_query_wired_live_action_operation_result(
       message: Some(message),
     },
     verifications: Vec::new(),
+    control_failure: None,
     freshness_basis,
     known_limits: wiring.known_limits.clone(),
   }

@@ -12,9 +12,9 @@ use auv_cli_invoke::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportSection,
   InvokeResult, invoke_command,
 };
-use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputDeliveryPath};
+use auv_driver::{DriverError, INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputDeliveryPath};
 use auv_runtime::contract::{
-  ArtifactRef, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
+  ArtifactRef, ControlFailure, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
   VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
 };
 use auv_tracing_driver::artifact::ArtifactBytesSource;
@@ -57,24 +57,33 @@ fn document_write_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   // recorded mismatch tests can force a semantic mismatch without live TextEdit.
   // Expose a first-class flag only if the owner approves fixture controls.
   let fixture_observed_text = input.inputs.get("fixture_observed_text").cloned();
-  // TODO(textedit-pr8-b): these `.map_err(|error| error.to_string())` calls are
-  // the intentional String boundary for this slice (PR8-A keeps `DriverError`
-  // typed through `run_document_command`; only the CLI invoke adapter
-  // flattens it, per AGENTS.md's decode-boundary rule). PR8-B is the trigger:
-  // once persisted operation-failure classification exists, replace this with
-  // a `DriverError` -> `ControlFailed` mapping so the CLI/MCP/inspect surfaces
-  // regain the typed variant instead of losing it to `Display` text here.
+  // A typed `DriverError` from a control step (activate / focus / paste / open)
+  // is classified as a `ControlFailed` failure and carried forward on the
+  // `Ok(InvokeCommandOutput)` channel (via signals) rather than flattened to a
+  // String on the handler's `Err` channel. The invoke framework's handler error
+  // type is `String`, so `Err` cannot preserve the variant; finalize reads the
+  // carried classification, flips status to Failed, and persists it as
+  // `OperationResult.control_failure`. This mirrors how a semantic mismatch also
+  // rides `Ok` and is finalized to a typed `FailureLayer`.
   let report = match driver_kind {
     "fixture" => {
       let mut driver = FixtureTextEditDriver::from_write(&command);
       driver.observed_override = fixture_observed_text;
-      run_document_command(&DocumentCommand::Write(command.clone()), &mut driver).map_err(|error| error.to_string())?
+      // NOTICE(textedit-fixture-only): forces a typed control-layer DriverError
+      // so the control-failure path is testable without live macOS.
+      driver.control_error_kind = input.inputs.get("fixture_control_error").cloned();
+      match run_document_command(&DocumentCommand::Write(command.clone()), &mut driver) {
+        Ok(report) => report,
+        Err(error) => return Ok(control_failure_output(&command, &error)),
+      }
     }
     "live" => {
       #[cfg(target_os = "macos")]
       {
-        let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local().map_err(|error| error.to_string())?;
-        run_document_command(&DocumentCommand::Write(command.clone()), &mut driver).map_err(|error| error.to_string())?
+        match open_and_write_live(&command) {
+          Ok(report) => report,
+          Err(error) => return Ok(control_failure_output(&command, &error)),
+        }
       }
       #[cfg(not(target_os = "macos"))]
       {
@@ -85,6 +94,122 @@ fn document_write_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   };
 
   build_invoke_output_from_report(&report, &command)
+}
+
+#[cfg(target_os = "macos")]
+fn open_and_write_live(command: &DocumentWrite) -> auv_driver::DriverResult<DocumentCommandReport> {
+  let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
+  run_document_command(&DocumentCommand::Write(command.clone()), &mut driver)
+}
+
+/// Signal keys used to carry a typed control failure from the handler across the
+/// `Ok(InvokeCommandOutput)` boundary to [`finalize_recorded_invoke`]. They are
+/// namespaced under `textedit.` like the other command signals; the invoke-time
+/// surfaces render them as ordinary signals (the typed persisted classification
+/// lives on `OperationResult.control_failure`, produced in finalize).
+// NOTICE(control-failure-signal-carrier): these live on the generic
+// `InvokeResult.signals` string bag, which the session-API summary path persists
+// into the `operation-summary` artifact (see `OperationSummaryRecord`). That is
+// an untyped string carrier, not the typed `OperationResult.control_failure`
+// field the owner deferred for the RPC surface, so it does not break the
+// inspect-family-only scope — but the same classification text does travel with
+// the summary. Drop these signals if a future slice wants the summary surface to
+// stay classification-free.
+const CONTROL_FAILURE_LAYER_SIGNAL: &str = "textedit.control_failure.layer";
+const CONTROL_FAILURE_MESSAGE_SIGNAL: &str = "textedit.control_failure.message";
+const CONTROL_FAILURE_RECOVERY_SIGNAL: &str = "textedit.control_failure.recovery";
+
+/// Build the invoke output for a control-layer driver failure. Carries the typed
+/// classification on signals so finalize can persist it; the human summary and
+/// `verification` note make the failure legible on the invoke-time surface too.
+fn control_failure_output(command: &DocumentWrite, error: &DriverError) -> InvokeCommandOutput {
+  let failure = classify_control_failure(error);
+  let mut output = InvokeCommandOutput::new(format!("TextEdit document.write control failure: {}", failure.message));
+  output.backend = Some("auv-apple-textedit.DocumentWrite".to_string());
+  output.signals.insert("textedit.command".to_string(), "document.write".to_string());
+  output.signals.insert("textedit.app_id".to_string(), command.app_id.clone());
+  output.signals.insert(CONTROL_FAILURE_LAYER_SIGNAL.to_string(), render_failure_layer_signal(failure.layer));
+  output.signals.insert(CONTROL_FAILURE_MESSAGE_SIGNAL.to_string(), failure.message.clone());
+  if let Some(recovery) = &failure.recovery {
+    output.signals.insert(CONTROL_FAILURE_RECOVERY_SIGNAL.to_string(), recovery.clone());
+  }
+  output.verification = Some("control failure before verification; no semantic VerificationResult was attached".to_string());
+  output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT.to_string());
+  output
+}
+
+/// Map a typed [`DriverError`] to a persisted [`ControlFailure`]. Every driver
+/// control failure is classified as [`FailureLayer::ControlFailed`]; the driver
+/// error supplies the message, and the recovery hint is lifted from variants
+/// that carry one without also embedding it in the message.
+fn classify_control_failure(error: &DriverError) -> ControlFailure {
+  // NOTICE(control-failure-recovery): the recovery hint is read from the
+  // variants that own one so `message` and `recovery` stay non-overlapping in
+  // the persisted record. If `DriverError` grows a
+  // recovery-bearing variant, extend this match. A shared `DriverError::recovery`
+  // accessor in auv-driver-common is the cleaner home once a second consumer
+  // needs it; deferred to avoid widening that crate for one caller.
+  let (message, recovery) = match error {
+    DriverError::PermissionDenied {
+      permission,
+      message,
+      recovery,
+    } => {
+      let message = match message {
+        Some(detail) => format!("{permission} permission was denied: {detail}"),
+        None => format!("{permission} permission was denied"),
+      };
+      (message, recovery.clone())
+    }
+    DriverError::StaleObservation { message, recovery } | DriverError::RoleMismatch { message, recovery } => {
+      (message.clone(), recovery.clone())
+    }
+    DriverError::Unsupported { .. } | DriverError::NotFound { .. } | DriverError::InvalidInput { .. } | DriverError::Backend { .. } => {
+      (error.to_string(), None)
+    }
+  };
+  ControlFailure {
+    layer: FailureLayer::ControlFailed,
+    message,
+    recovery,
+  }
+}
+
+/// Serialize a [`FailureLayer`] to its wire token (`snake_case`) via serde, so
+/// the signal round-trip reuses the contract's own naming rather than a second
+/// hand-written table. `FailureLayer` is a fieldless enum, so this cannot fail.
+fn render_failure_layer_signal(layer: FailureLayer) -> String {
+  serde_json::to_value(layer).ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_else(|| "control_failed".to_string())
+}
+
+/// Inverse of [`render_failure_layer_signal`]; returns `None` if the carried
+/// token is not a known `FailureLayer`.
+fn parse_failure_layer_signal(token: &str) -> Option<FailureLayer> {
+  serde_json::from_value(serde_json::Value::String(token.to_string())).ok()
+}
+
+/// Reconstruct a [`ControlFailure`] carried on the invoke result's signals by
+/// [`control_failure_output`], if the handler recorded one.
+///
+/// The message signal is the single "a control failure occurred" marker: its
+/// presence alone reconstructs the failure so finalize can flip status to
+/// Failed. The layer is best-effort — an absent or unknown token degrades to
+/// [`FailureLayer::ControlFailed`] (the only layer this producer emits) rather
+/// than dropping the whole classification. This deliberately decouples
+/// *failed-ness* from *clean layer parse* so a future signal-shape drift cannot
+/// silently downgrade a real driver failure to a persisted success.
+fn control_failure_from_signals(result: &InvokeResult) -> Option<ControlFailure> {
+  let message = result.signals.get(CONTROL_FAILURE_MESSAGE_SIGNAL)?.clone();
+  let layer = result
+    .signals
+    .get(CONTROL_FAILURE_LAYER_SIGNAL)
+    .and_then(|token| parse_failure_layer_signal(token))
+    .unwrap_or(FailureLayer::ControlFailed);
+  Some(ControlFailure {
+    layer,
+    message,
+    recovery: result.signals.get(CONTROL_FAILURE_RECOVERY_SIGNAL).cloned(),
+  })
 }
 
 /// Stages evidence artifacts only. Canonical `operation-result` is appended by
@@ -161,6 +286,19 @@ pub fn finalize_recorded_invoke(
     return Ok(());
   }
 
+  // A control failure short-circuits before any observation exists: the driver
+  // never delivered input, so there is no AX text to read or verify. Classify,
+  // mark the result failed, and persist the typed classification.
+  if let Some(control_failure) = control_failure_from_signals(result) {
+    apply_control_failure(result, &control_failure);
+    let operation = build_canonical_operation_result_with_control_failure(result, None, Some(control_failure));
+    let rendered = serde_json::to_string_pretty(&operation).map_err(|error| format!("serialize operation-result: {error}"))? + "\n";
+    let (artifact, path) = stage_operation_result_artifact(recording, run, producer_span, rendered.into_bytes())?;
+    result.artifacts.push(artifact);
+    result.artifact_paths.push(path);
+    return Ok(());
+  }
+
   let observation = read_ax_observation(recording, result)?;
   if let Some(verification) = observation.as_ref()
     && !verification.semantic_matched
@@ -177,6 +315,14 @@ pub fn finalize_recorded_invoke(
 }
 
 fn build_canonical_operation_result(result: &InvokeResult, observation: Option<&VerificationOutcome>) -> OperationResult {
+  build_canonical_operation_result_with_control_failure(result, observation, None)
+}
+
+fn build_canonical_operation_result_with_control_failure(
+  result: &InvokeResult,
+  observation: Option<&VerificationOutcome>,
+  control_failure: Option<ControlFailure>,
+) -> OperationResult {
   let run_id = RunId::new(result.run_id.as_str());
   let evidence_artifacts = result
     .artifacts
@@ -242,9 +388,27 @@ fn build_canonical_operation_result(result: &InvokeResult, observation: Option<&
       message: Some(result.output_summary.clone()),
     },
     verifications,
+    control_failure,
     freshness_basis: None,
     known_limits,
   }
+}
+
+/// Mark a control-layer driver failure on the transient result: coarse status
+/// Failed and a human failure string. The typed classification is persisted
+/// separately on `OperationResult.control_failure`.
+///
+// TODO(control-failure-invoke-time-typed): the invoke-time surface (this
+// `InvokeResult` and the CLI/MCP invoke renderers) intentionally stays untyped
+// in PR8-B — it keeps only the human `failure_message`, not a typed
+// `control_failure` field, per the owner's inspect-family-only scope. Trigger:
+// if a future slice wants CLI invoke stdout / the MCP invoke tool JSON to expose
+// the typed classification, add the field to `InvokeResult` in `auv-cli-invoke`
+// and populate it here rather than only on the persisted `OperationResult`.
+fn apply_control_failure(result: &mut InvokeResult, control_failure: &ControlFailure) {
+  result.status = auv_cli_invoke::RunStatus::Failed;
+  result.output_summary = format!("TextEdit document.write control failure: {}", control_failure.message);
+  result.failure_message = Some(control_failure.message.clone());
 }
 
 fn apply_semantic_mismatch(result: &mut InvokeResult, verification: &VerificationOutcome) {
@@ -431,6 +595,12 @@ struct FixtureTextEditDriver {
   role: String,
   /// When set, verify reads this observed body instead of pasted content.
   observed_override: Option<String>,
+  /// NOTICE(textedit-fixture-only): when set, `focus_text_input` returns a
+  /// typed `DriverError` of this kind so hermetic tests can exercise the
+  /// control-failure path without live macOS. `DriverError` is not `Clone`, so
+  /// the injection is stored as a token and the error is built at the failure
+  /// site. Kinds: `permission_denied`, `stale_observation`, `backend`.
+  control_error_kind: Option<String>,
 }
 
 impl FixtureTextEditDriver {
@@ -439,6 +609,25 @@ impl FixtureTextEditDriver {
       content: command.content.clone(),
       role: command.compare_role.clone(),
       observed_override: None,
+      control_error_kind: None,
+    }
+  }
+
+  /// Build the injected typed error for [`Self::control_error_kind`].
+  fn injected_control_error(kind: &str) -> DriverError {
+    match kind {
+      "permission_denied" => DriverError::PermissionDenied {
+        permission: "accessibility",
+        message: Some("fixture: TextEdit AX focus not authorized".to_string()),
+        recovery: Some("grant Accessibility to the terminal in System Settings".to_string()),
+      },
+      "stale_observation" => DriverError::StaleObservation {
+        message: "fixture: AX path 0.1.2 no longer resolves".to_string(),
+        recovery: Some("recapture the AX tree".to_string()),
+      },
+      _ => DriverError::Backend {
+        message: format!("fixture: injected backend control failure ({kind})"),
+      },
     }
   }
 }
@@ -453,6 +642,9 @@ impl TextEditDriver for FixtureTextEditDriver {
   }
 
   fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> auv_driver::DriverResult<StepOutcome> {
+    if let Some(kind) = &self.control_error_kind {
+      return Err(Self::injected_control_error(kind));
+    }
     Ok(StepOutcome {
       step_id: "focus",
       summary: format!("fixture focused {app_id} query={query} candidate={candidate}"),
@@ -584,6 +776,7 @@ mod tests {
       content: "pasted".to_string(),
       role: "AXTextArea".to_string(),
       observed_override: Some("observed-without-expected".to_string()),
+      control_error_kind: None,
     };
     let command = DocumentWrite::defaults_with_content("expected-marker");
     let report = run_document_command(&DocumentCommand::Write(command.clone()), &mut driver).expect("report");
@@ -593,6 +786,59 @@ mod tests {
 
     let output = build_invoke_output_from_report(&report, &command).expect("output");
     assert_eq!(output.signals.get("textedit.semantic_matched").map(String::as_str), Some("false"));
+  }
+
+  fn invoke_result_with_signals(signals: BTreeMap<String, String>) -> InvokeResult {
+    InvokeResult {
+      run_id: "run_ctrl".to_string(),
+      producer_span_id: auv_tracing_driver::trace::SpanId::new("0000000000000001"),
+      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
+      command_summary: "TextEdit document write".to_string(),
+      status: auv_cli_invoke::RunStatus::Completed,
+      output_summary: "ok".to_string(),
+      backend: None,
+      signals,
+      notes: Vec::new(),
+      known_limits: Vec::new(),
+      verification: None,
+      report: None,
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: None,
+    }
+  }
+
+  // ROOT CAUSE:
+  //
+  // If control_failure_from_signals gated failed-ness on a clean layer-token
+  // parse, a real driver control failure whose layer signal was absent or
+  // carried an unknown token would reconstruct as None. Finalize would then fall
+  // through to the observation path and persist the operation as Completed — a
+  // silent success for a genuine failure.
+  //
+  // The fix keeps the message signal as the sole "a control failure occurred"
+  // marker and degrades an absent/unknown layer to ControlFailed, so failed-ness
+  // survives layer-signal drift.
+  #[test]
+  fn control_failure_message_signal_alone_reconstructs_as_control_failed() {
+    let mut signals = BTreeMap::new();
+    signals.insert(CONTROL_FAILURE_MESSAGE_SIGNAL.to_string(), "accessibility permission was denied".to_string());
+    // No layer signal at all.
+    let reconstructed =
+      control_failure_from_signals(&invoke_result_with_signals(signals)).expect("message alone must reconstruct a control failure");
+    assert_eq!(reconstructed.layer, FailureLayer::ControlFailed);
+    assert_eq!(reconstructed.message, "accessibility permission was denied");
+    assert_eq!(reconstructed.recovery, None);
+
+    // An unknown/garbled layer token must also degrade to ControlFailed, never drop the failure.
+    let mut garbled = BTreeMap::new();
+    garbled.insert(CONTROL_FAILURE_MESSAGE_SIGNAL.to_string(), "backend failure".to_string());
+    garbled.insert(CONTROL_FAILURE_LAYER_SIGNAL.to_string(), "not_a_real_layer".to_string());
+    let reconstructed = control_failure_from_signals(&invoke_result_with_signals(garbled)).expect("garbled layer must not drop the failure");
+    assert_eq!(reconstructed.layer, FailureLayer::ControlFailed);
+
+    // No message signal means no control failure was recorded.
+    assert!(control_failure_from_signals(&invoke_result_with_signals(BTreeMap::new())).is_none());
   }
 
   // ROOT CAUSE:

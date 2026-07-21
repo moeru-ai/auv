@@ -116,6 +116,7 @@ pub fn build_query_wired_live_action_operation_result(
       message: Some(message),
     },
     verifications,
+    control_failure: None,
     freshness_basis,
     known_limits,
   }

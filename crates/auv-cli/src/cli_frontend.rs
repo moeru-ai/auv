@@ -1116,6 +1116,7 @@ fn build_minecraft_operation_result(run_id: &auv_tracing_driver::trace::RunId, v
       message: Some("minecraft live click completed".to_string()),
     },
     verifications: vec![verification],
+    control_failure: None,
     freshness_basis: None,
     known_limits: Vec::new(),
   }
@@ -2394,6 +2395,7 @@ mod tests {
         verification: Box::new(verification.clone()),
       },
       verifications: vec![verification],
+      control_failure: None,
       freshness_basis: None,
       known_limits: Vec::new(),
     };
