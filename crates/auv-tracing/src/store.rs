@@ -38,16 +38,46 @@ pub type ArtifactReader = Pin<Box<dyn Stream<Item = Result<Bytes, ArtifactReadEr
 /// A fallible ordered stream of commits after an explicit revision.
 pub type RunSubscription = Pin<Box<dyn Stream<Item = Result<RunCommit, SubscriptionError>> + Send>>;
 
+/// The atomic disposition of an idempotent authority write.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommitResult {
+  /// This request created and appended the commit.
+  Appended(RunCommit),
+  /// This request matched and returned an existing commit.
+  Replayed(RunCommit),
+}
+
+impl CommitResult {
+  /// Returns the appended or replayed commit.
+  pub fn commit(&self) -> &RunCommit {
+    match self {
+      Self::Appended(commit) | Self::Replayed(commit) => commit,
+    }
+  }
+
+  /// Consumes the disposition and returns the appended or replayed commit.
+  pub fn into_commit(self) -> RunCommit {
+    match self {
+      Self::Appended(commit) | Self::Replayed(commit) => commit,
+    }
+  }
+
+  /// Returns whether this request appended the commit.
+  pub fn is_appended(&self) -> bool {
+    matches!(self, Self::Appended(_))
+  }
+}
+
 /// The single authority port for ordered run history and artifact bytes.
 pub trait RunStore: Send + Sync {
   /// Returns the stable identity of this store authority.
   fn authority_id(&self) -> AuthorityId;
 
   /// Atomically validates and appends ordinary run mutations.
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>>;
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>>;
 
   /// Validates, stores, and atomically publishes one artifact.
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>>;
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>>;
 
   /// Resolves an already accepted ordinary or artifact write.
   fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>>;

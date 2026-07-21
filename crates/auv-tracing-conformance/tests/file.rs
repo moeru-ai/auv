@@ -104,8 +104,10 @@ fn concurrent_equal_idempotency_replay_appends_once() {
   wait_for_ready(&[&ready_one, &ready_two], &mut [&mut first, &mut second]);
   release(&go);
 
-  assert_eq!(commit_revision(first.finish()), 1);
-  assert_eq!(commit_revision(second.finish()), 1);
+  let results = [first.finish(), second.finish()];
+  assert_eq!(results.iter().filter(|result| matches!(result, ChildResult::CommitAppended { .. })).count(), 1);
+  assert_eq!(results.iter().filter(|result| matches!(result, ChildResult::CommitReplayed { .. })).count(), 1);
+  assert_eq!(results.map(commit_revision), [1, 1]);
   let page = futures_executor::block_on(store.commits_after(run_id, revision(0), PageLimit::new(10).unwrap())).unwrap();
   assert_eq!(page.commits().len(), 1);
 }
@@ -214,7 +216,8 @@ fn subscription_observes_another_instance_commit() {
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 enum ChildResult {
   Authority { authority_id: AuthorityId },
-  Commit { revision: u64 },
+  CommitAppended { revision: u64 },
+  CommitReplayed { revision: u64 },
   ArtifactCommitted { revision: u64 },
   ArtifactConflict,
 }
@@ -338,10 +341,10 @@ fn release(path: &Path) {
 }
 
 fn commit_revision(result: ChildResult) -> u64 {
-  let ChildResult::Commit { revision } = result else {
-    panic!("commit child returned {result:?}");
-  };
-  revision
+  match result {
+    ChildResult::CommitAppended { revision } | ChildResult::CommitReplayed { revision } => revision,
+    result => panic!("commit child returned {result:?}"),
+  }
 }
 
 fn revision(value: u64) -> RunRevision {

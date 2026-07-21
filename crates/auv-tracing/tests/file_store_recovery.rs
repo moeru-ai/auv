@@ -86,7 +86,7 @@ fn already_open_point_reads_refresh_from_the_verified_log() {
   let run_id = RunId::new();
   let key = IdempotencyKey::new();
   let request = event_request(&second, run_id, key, "external");
-  let committed = futures_executor::block_on(second.commit(request)).unwrap();
+  let committed = futures_executor::block_on(second.commit(request)).unwrap().into_commit();
 
   assert_eq!(futures_executor::block_on(first.lookup_commit(run_id, key)).unwrap(), Some(committed.clone()));
   assert_eq!(futures_executor::block_on(first.load_snapshot(run_id)).unwrap().unwrap().through_revision().get(), 1);
@@ -125,9 +125,9 @@ fn slow_artifact_body_does_not_block_an_ordinary_same_run_commit() {
   gate.release();
   let artifact_result = artifact.join().unwrap();
   commit.join().unwrap();
-  let ordinary = ordinary.expect("ordinary commit remained blocked on the artifact stream").unwrap();
+  let ordinary = ordinary.expect("ordinary commit remained blocked on the artifact stream").unwrap().into_commit();
   assert_eq!(ordinary.revision().get(), 1);
-  assert_eq!(artifact_result.unwrap().revision().get(), 2);
+  assert_eq!(artifact_result.unwrap().into_commit().revision().get(), 2);
 }
 
 #[test]
@@ -212,8 +212,9 @@ fn rejected_duplicate_event_does_not_grow_log_or_poison_the_next_revision() {
   let store = FileRunStore::open(root.path()).unwrap();
   let run_id = RunId::new();
   let event_id = EventId::new();
-  let first =
-    futures_executor::block_on(store.commit(event_request_with_id(&store, run_id, IdempotencyKey::new(), event_id, "first"))).unwrap();
+  let first = futures_executor::block_on(store.commit(event_request_with_id(&store, run_id, IdempotencyKey::new(), event_id, "first")))
+    .unwrap()
+    .into_commit();
   assert_eq!(first.revision().get(), 1);
   let log = commit_log(root.path(), run_id);
   let valid_length = fs::metadata(&log).unwrap().len();
@@ -467,7 +468,7 @@ fn artifact_reader_reports_digest_corruption() {
   let artifact_id = ArtifactId::new();
   let bytes = b"integrity protected body".to_vec();
   let request = artifact_request(&store, run_id, artifact_id, IdempotencyKey::new(), &bytes);
-  let commit = futures_executor::block_on(store.write_artifact(request, Box::pin(Cursor::new(bytes.clone())))).unwrap();
+  let commit = futures_executor::block_on(store.write_artifact(request, Box::pin(Cursor::new(bytes.clone())))).unwrap().into_commit();
   let metadata = commit
     .facts()
     .iter()
@@ -494,7 +495,7 @@ fn artifact_reader_reports_digest_corruption() {
 }
 
 fn commit_event(store: &FileRunStore, run_id: RunId, value: &str) -> auv_tracing::RunCommit {
-  futures_executor::block_on(store.commit(event_request(store, run_id, IdempotencyKey::new(), value))).unwrap()
+  futures_executor::block_on(store.commit(event_request(store, run_id, IdempotencyKey::new(), value))).unwrap().into_commit()
 }
 
 fn event_request(store: &FileRunStore, run_id: RunId, key: IdempotencyKey, value: &str) -> RunCommitRequest {

@@ -28,8 +28,8 @@ use windows_sys::Win32::Foundation::GENERIC_WRITE;
 use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
 
 use super::{
-  ArtifactBody, ArtifactReadError, ArtifactReader, ArtifactWriteError, BoxFuture, CommitError, ReadError, RunCommitPage, RunStore,
-  RunSubscription, StoreArtifactRequest, SubscriptionError,
+  ArtifactBody, ArtifactReadError, ArtifactReader, ArtifactWriteError, BoxFuture, CommitError, CommitResult, ReadError, RunCommitPage,
+  RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError,
 };
 use crate::history::IncrementalReducer;
 use crate::{
@@ -225,7 +225,7 @@ impl FileRunStore {
     }
   }
 
-  fn commit_ordinary(&self, request: RunCommitRequest) -> Result<RunCommit, CommitError> {
+  fn commit_ordinary(&self, request: RunCommitRequest) -> Result<CommitResult, CommitError> {
     self.validate_authority(request.authority_id()).map_err(|(expected, received)| CommitError::AuthorityMismatch { expected, received })?;
     let fingerprint = ordinary_fingerprint(&request).map_err(|_| CommitError::Rejected(rejected()))?;
     let run_id = request.run_id();
@@ -236,7 +236,7 @@ impl FileRunStore {
     self.inner.refresh_locked(&mut lock, true, &mut index).map_err(map_commit_refresh)?;
     if let Some(stored) = index.idempotency.get(&key) {
       return if stored.fingerprint == fingerprint {
-        Ok(stored.commit.clone())
+        Ok(CommitResult::Replayed(stored.commit.clone()))
       } else {
         Err(CommitError::IdempotencyMismatch)
       };
@@ -262,12 +262,13 @@ impl FileRunStore {
       AppendError::Unknown => CommitError::CommitUnknown(unavailable()),
     })?;
     index.install_commit(commit.clone(), fingerprint, storage).map_err(|_| CommitError::CommitUnknown(integrity()))?;
+    let result = CommitResult::Appended(commit);
     drop(index);
     self.inner.wake_run(run_id);
-    Ok(commit)
+    Ok(result)
   }
 
-  async fn write_artifact_inner(&self, request: StoreArtifactRequest, body: ArtifactBody) -> Result<RunCommit, ArtifactWriteError> {
+  async fn write_artifact_inner(&self, request: StoreArtifactRequest, body: ArtifactBody) -> Result<CommitResult, ArtifactWriteError> {
     self
       .validate_authority(request.authority_id())
       .map_err(|(expected, received)| ArtifactWriteError::AuthorityMismatch { expected, received })?;
@@ -318,9 +319,10 @@ impl FileRunStore {
       AppendError::Unknown => ArtifactWriteError::PublicationUnknown(unavailable()),
     })?;
     index.install_commit(commit.clone(), fingerprint, storage).map_err(|_| ArtifactWriteError::PublicationUnknown(integrity()))?;
+    let result = CommitResult::Appended(commit);
     drop(index);
     self.inner.wake_run(run_id);
-    Ok(commit)
+    Ok(result)
   }
 }
 
@@ -329,11 +331,11 @@ impl RunStore for FileRunStore {
     self.inner.authority_id
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     Box::pin(async move { self.commit_ordinary(request) })
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     Box::pin(self.write_artifact_inner(request, body))
   }
 
@@ -418,10 +420,10 @@ fn precheck_artifact(
   key: IdempotencyKey,
   fingerprint: RequestFingerprint,
   uri: &ArtifactUri,
-) -> Result<Option<RunCommit>, ArtifactWriteError> {
+) -> Result<Option<CommitResult>, ArtifactWriteError> {
   if let Some(stored) = index.idempotency.get(&key) {
     return if stored.fingerprint == fingerprint {
-      Ok(Some(stored.commit.clone()))
+      Ok(Some(CommitResult::Replayed(stored.commit.clone())))
     } else {
       Err(ArtifactWriteError::IdempotencyMismatch)
     };

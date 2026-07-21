@@ -644,7 +644,7 @@ impl Dispatch {
           let commit = route.store.commit(request.clone()).await;
           guard.quarantine_on_drop = matches!(&commit, Err(CommitError::CommitUnknown(_)));
           let resolved = match commit {
-            Ok(commit) if commit_matches_request(&commit, &request) => Some(commit),
+            Ok(result) if commit_matches_request(result.commit(), &request) => Some(result.into_commit()),
             Ok(_) => {
               self.remove_owned(run_id, request.idempotency_key());
               guard.complete(ticket);
@@ -1206,7 +1206,7 @@ impl Dispatch {
       }
     };
     match result {
-      Ok(commit) if artifact_commit_matches_request(&commit, &request) => ArtifactTaskResult::authority(Ok(commit)),
+      Ok(result) if artifact_commit_matches_request(result.commit(), &request) => ArtifactTaskResult::authority(Ok(result.into_commit())),
       Ok(_) => ArtifactTaskResult::DirectResponseContradiction,
       Err(ArtifactWriteError::PublicationUnknown(code)) => {
         ArtifactTaskResult::authority(self.resolve_artifact_publication(&request, code, &lookup_attempted).await)

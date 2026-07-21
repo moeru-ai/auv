@@ -11,10 +11,10 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use auv_tracing::{
-  ArtifactId, ArtifactPurpose, ArtifactReader, ArtifactWriteError, Attributes, AuthorityId, ByteLength, CommitError, ContentType, EventId,
-  EventName, EventOccurred, EventSchema, IdempotencyKey, JsonPayload, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest,
-  RunFact, RunId, RunMutation, RunRevision, RunStore, RunSubscription, Sha256Digest, SpanEnded, SpanId, StoreArtifactRequest,
-  SubscriptionError, Timestamp, reduce_commits,
+  ArtifactId, ArtifactPurpose, ArtifactReader, ArtifactWriteError, Attributes, AuthorityId, ByteLength, CommitError, CommitResult,
+  ContentType, EventId, EventName, EventOccurred, EventSchema, IdempotencyKey, JsonPayload, PageLimit, ReadError, RunCommit, RunCommitPage,
+  RunCommitRequest, RunFact, RunId, RunMutation, RunRevision, RunStore, RunSubscription, Sha256Digest, SpanEnded, SpanId,
+  StoreArtifactRequest, SubscriptionError, Timestamp, reduce_commits,
 };
 use futures_io::AsyncRead;
 use futures_timer::Delay;
@@ -187,7 +187,15 @@ async fn equal_commit_replay_returns_the_original_commit(store: Arc<dyn RunStore
   let run_id = RunId::new();
   let request = sample_event_request(run_id, IdempotencyKey::new(), EventId::new(), "same").for_authority(store.authority_id());
   let first = store.commit(request.clone()).await.expect("initial commit must succeed");
+  assert!(matches!(&first, CommitResult::Appended(_)));
+  assert!(first.is_appended());
   let replay = store.commit(request).await.expect("equal replay must succeed");
+  assert!(matches!(&replay, CommitResult::Replayed(_)));
+  assert!(!replay.is_appended());
+  assert_eq!(canonical_json(replay.commit()), canonical_json(first.commit()));
+
+  let first = first.into_commit();
+  let replay = replay.into_commit();
   assert_eq!(canonical_json(&replay), canonical_json(&first));
 
   let page = page(&store, run_id, revision(0), 1024).await;
@@ -216,7 +224,8 @@ async fn lookup_resolves_an_already_committed_request(store: Arc<dyn RunStore>) 
   let committed = store
     .commit(sample_event_request(run_id, key, EventId::new(), "lookup").for_authority(store.authority_id()))
     .await
-    .expect("initial commit must succeed");
+    .expect("initial commit must succeed")
+    .into_commit();
 
   let resolved = store.lookup_commit(run_id, key).await.expect("lookup must be readable").expect("accepted idempotency key must resolve");
   assert_eq!(canonical_json(&resolved), canonical_json(&committed));
@@ -310,11 +319,15 @@ async fn equal_artifact_replay_does_not_poll_replacement_body(store: Arc<dyn Run
     .write_artifact(request.clone(), Box::pin(ProbeArtifactBody::complete(bytes)))
     .await
     .expect("initial artifact publication must succeed");
+  assert!(matches!(&first, CommitResult::Appended(_)));
+  assert!(first.is_appended());
 
   let replacement = ProbeArtifactBody::complete(b"must not be consumed".to_vec());
   let polled = replacement.polled();
   let replay = store.write_artifact(request, Box::pin(replacement)).await.expect("equal artifact replay must return the first commit");
-  assert_eq!(canonical_json(&replay), canonical_json(&first));
+  assert!(matches!(&replay, CommitResult::Replayed(_)));
+  assert!(!replay.is_appended());
+  assert_eq!(canonical_json(replay.commit()), canonical_json(first.commit()));
   assert!(!polled.load(Ordering::SeqCst), "equal replay polled its replacement body");
 
   let page = page(&store, run_id, revision(0), 1024).await;
@@ -420,7 +433,8 @@ async fn open_artifact_returns_exact_committed_bytes(store: Arc<dyn RunStore>) {
       Box::pin(ProbeArtifactBody::complete(bytes.clone())),
     )
     .await
-    .expect("artifact publication must succeed");
+    .expect("artifact publication must succeed")
+    .into_commit();
   let metadata = commit
     .facts()
     .iter()
@@ -536,6 +550,7 @@ async fn commit_sample(
     .commit(sample_event_request(run_id, key, event_id, value).for_authority(store.authority_id()))
     .await
     .expect("sample event commit must succeed")
+    .into_commit()
 }
 
 async fn commit_sample_batch(store: &Arc<dyn RunStore>, run_id: RunId, event_count: usize, value: &str) -> RunCommit {
@@ -547,7 +562,7 @@ async fn commit_sample_batch(store: &Arc<dyn RunStore>, run_id: RunId, event_cou
     .collect();
   let request =
     RunCommitRequest::new(store.authority_id(), run_id, IdempotencyKey::new(), mutations).expect("sample event batch request is valid");
-  store.commit(request).await.expect("sample event batch commit must succeed")
+  store.commit(request).await.expect("sample event batch commit must succeed").into_commit()
 }
 
 /// Builds the canonical binary artifact request used by backend conformance tests.
