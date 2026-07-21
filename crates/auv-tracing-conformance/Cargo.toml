@@ -13,9 +13,17 @@ repository.workspace = true
 
 [dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store", "file-store"] }
+futures-executor = "0.3"
 futures-io.workspace = true
 futures-timer = "3"
 futures-util = { workspace = true, features = ["io"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[bin]]
+name = "file_store_child"
+path = "src/bin/file_store_child.rs"

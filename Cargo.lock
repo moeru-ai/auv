@@ -778,6 +778,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.18",
  "time",
  "tracing",
@@ -790,12 +791,14 @@ name = "auv-tracing-conformance"
 version = "0.0.1"
 dependencies = [
  "auv-tracing",
+ "futures-executor",
  "futures-io",
  "futures-timer",
  "futures-util",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]

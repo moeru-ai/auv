@@ -513,6 +513,17 @@ fn sample_event_request(run_id: RunId, key: IdempotencyKey, event_id: EventId, v
   }
 }
 
+/// Builds the canonical single-event request used by backend conformance tests.
+pub fn event_request(
+  authority_id: AuthorityId,
+  run_id: RunId,
+  event_id: EventId,
+  key: IdempotencyKey,
+  value: impl Serialize,
+) -> RunCommitRequest {
+  sample_event_request(run_id, key, event_id, value).for_authority(authority_id)
+}
+
 async fn commit_sample(
   store: &Arc<dyn RunStore>,
   run_id: RunId,
@@ -538,11 +549,24 @@ async fn commit_sample_batch(store: &Arc<dyn RunStore>, run_id: RunId, event_cou
   store.commit(request).await.expect("sample event batch commit must succeed")
 }
 
-fn artifact_request(
+/// Builds the canonical binary artifact request used by backend conformance tests.
+pub fn artifact_request(
   authority_id: AuthorityId,
   run_id: RunId,
   key: IdempotencyKey,
   artifact_id: ArtifactId,
+  bytes: &[u8],
+) -> StoreArtifactRequest {
+  artifact_request_with_span(authority_id, run_id, key, artifact_id, None, bytes)
+}
+
+/// Builds a span-associated binary artifact request for process conformance tests.
+pub fn artifact_request_with_span(
+  authority_id: AuthorityId,
+  run_id: RunId,
+  key: IdempotencyKey,
+  artifact_id: ArtifactId,
+  span_id: Option<SpanId>,
   bytes: &[u8],
 ) -> StoreArtifactRequest {
   StoreArtifactRequest::new(
@@ -550,7 +574,7 @@ fn artifact_request(
     run_id,
     key,
     artifact_id,
-    None,
+    span_id,
     artifact_purpose(),
     content_type(),
     ByteLength::new(bytes.len() as u64).expect("sample artifact length is bounded"),
