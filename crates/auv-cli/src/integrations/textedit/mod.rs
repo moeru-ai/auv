@@ -57,17 +57,24 @@ fn document_write_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   // recorded mismatch tests can force a semantic mismatch without live TextEdit.
   // Expose a first-class flag only if the owner approves fixture controls.
   let fixture_observed_text = input.inputs.get("fixture_observed_text").cloned();
+  // TODO(textedit-pr8-b): these `.map_err(|error| error.to_string())` calls are
+  // the intentional String boundary for this slice (PR8-A keeps `DriverError`
+  // typed through `run_document_command`; only the CLI invoke adapter
+  // flattens it, per AGENTS.md's decode-boundary rule). PR8-B is the trigger:
+  // once persisted operation-failure classification exists, replace this with
+  // a `DriverError` -> `ControlFailed` mapping so the CLI/MCP/inspect surfaces
+  // regain the typed variant instead of losing it to `Display` text here.
   let report = match driver_kind {
     "fixture" => {
       let mut driver = FixtureTextEditDriver::from_write(&command);
       driver.observed_override = fixture_observed_text;
-      run_document_command(&DocumentCommand::Write(command.clone()), &mut driver)?
+      run_document_command(&DocumentCommand::Write(command.clone()), &mut driver).map_err(|error| error.to_string())?
     }
     "live" => {
       #[cfg(target_os = "macos")]
       {
-        let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
-        run_document_command(&DocumentCommand::Write(command.clone()), &mut driver)?
+        let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local().map_err(|error| error.to_string())?;
+        run_document_command(&DocumentCommand::Write(command.clone()), &mut driver).map_err(|error| error.to_string())?
       }
       #[cfg(not(target_os = "macos"))]
       {
@@ -437,7 +444,7 @@ impl FixtureTextEditDriver {
 }
 
 impl TextEditDriver for FixtureTextEditDriver {
-  fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
+  fn activate_app(&mut self, app_id: &str, settle: Duration) -> auv_driver::DriverResult<StepOutcome> {
     Ok(StepOutcome {
       step_id: "activate",
       summary: format!("fixture activated {app_id} settle_ms={}", settle.as_millis()),
@@ -445,7 +452,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     })
   }
 
-  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, String> {
+  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> auv_driver::DriverResult<StepOutcome> {
     Ok(StepOutcome {
       step_id: "focus",
       summary: format!("fixture focused {app_id} query={query} candidate={candidate}"),
@@ -459,7 +466,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     text: &str,
     replace_existing: bool,
     settle: Duration,
-  ) -> Result<StepOutcome, String> {
+  ) -> auv_driver::DriverResult<StepOutcome> {
     self.content = text.to_string();
     Ok(StepOutcome {
       step_id: "paste",
@@ -468,7 +475,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     })
   }
 
-  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, String> {
+  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> auv_driver::DriverResult<VerificationOutcome> {
     self.role = target_role.to_string();
     let observed = self.observed_override.clone().unwrap_or_else(|| self.content.clone());
     Ok(VerificationOutcome {
