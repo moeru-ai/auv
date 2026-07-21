@@ -128,9 +128,8 @@ impl MemoryRunStore {
         return Err(CommitError::IdempotencyMismatch);
       }
       let commit = Arc::clone(&stored.commit);
-      let result = CommitResult::Replayed(commit.as_ref().clone());
       drop(state);
-      return Ok(result);
+      return Ok(CommitResult::Replayed(commit.as_ref().clone()));
     }
     if state.pending_artifacts.contains_key(&(run_id, key)) {
       return Err(CommitError::IdempotencyMismatch);
@@ -193,7 +192,7 @@ impl MemoryRunStore {
       if stored.fingerprint != fingerprint {
         return Err(ArtifactWriteError::IdempotencyMismatch);
       }
-      return Ok(ArtifactAttempt::Replay(CommitResult::Replayed(stored.commit.as_ref().clone())));
+      return Ok(ArtifactAttempt::Replay(Arc::clone(&stored.commit)));
     }
     if let Some(pending) = state.pending_artifacts.get(&(run_id, key)) {
       if pending.fingerprint != fingerprint {
@@ -347,7 +346,7 @@ impl RunStore for MemoryRunStore {
       let mut body = Some(body);
       loop {
         match self.begin_artifact(&request, fingerprint)? {
-          ArtifactAttempt::Replay(result) => return Ok(result),
+          ArtifactAttempt::Replay(commit) => return Ok(CommitResult::Replayed(commit.as_ref().clone())),
           ArtifactAttempt::Wait(wait) => wait.await.map_err(ArtifactWriteError::Unavailable)?,
           ArtifactAttempt::Owner(mut reservation) => {
             let body = body.take().expect("an artifact body is consumed only by its reservation owner");
@@ -442,7 +441,7 @@ impl RunStore for MemoryRunStore {
 }
 
 enum ArtifactAttempt {
-  Replay(CommitResult),
+  Replay(Arc<RunCommit>),
   Wait(ArtifactReservationWait),
   Owner(ArtifactReservation),
 }
