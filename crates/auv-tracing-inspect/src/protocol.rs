@@ -295,19 +295,120 @@ impl ResolveArtifactsResponse {
 }
 
 /// Compact artifact endpoint error body.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArtifactApiError {
-  error: ErrorCode,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArtifactApiError {
+  Code {
+    error: ErrorCode,
+  },
+  AuthorityMismatch {
+    error: ErrorCode,
+    expected: AuthorityId,
+    received: AuthorityId,
+  },
 }
 
 impl ArtifactApiError {
   pub fn new(error: ErrorCode) -> Self {
-    Self { error }
+    Self::Code { error }
+  }
+
+  pub fn authority_mismatch(error: ErrorCode, expected: AuthorityId, received: AuthorityId) -> Self {
+    Self::AuthorityMismatch {
+      error,
+      expected,
+      received,
+    }
   }
 
   pub fn error(&self) -> &ErrorCode {
-    &self.error
+    match self {
+      Self::Code { error } | Self::AuthorityMismatch { error, .. } => error,
+    }
+  }
+
+  pub fn authority_ids(&self) -> Option<(AuthorityId, AuthorityId)> {
+    match self {
+      Self::AuthorityMismatch {
+        expected, received, ..
+      } => Some((*expected, *received)),
+      Self::Code { .. } => None,
+    }
+  }
+}
+
+impl Serialize for ArtifactApiError {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    #[derive(Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct Code<'a> {
+      error: &'a ErrorCode,
+    }
+
+    #[derive(Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct AuthorityMismatch<'a> {
+      error: &'a ErrorCode,
+      expected: AuthorityId,
+      received: AuthorityId,
+    }
+
+    match self {
+      Self::Code { error } => Code { error }.serialize(serializer),
+      Self::AuthorityMismatch {
+        error,
+        expected,
+        received,
+      } => AuthorityMismatch {
+        error,
+        expected: *expected,
+        received: *received,
+      }
+      .serialize(serializer),
+    }
+  }
+}
+
+impl<'de> Deserialize<'de> for ArtifactApiError {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Code {
+      error: ErrorCode,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct AuthorityMismatch {
+      error: ErrorCode,
+      expected: AuthorityId,
+      received: AuthorityId,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+      AuthorityMismatch(AuthorityMismatch),
+      Code(Code),
+    }
+
+    Ok(match Wire::deserialize(deserializer)? {
+      Wire::Code(Code { error }) => Self::Code { error },
+      Wire::AuthorityMismatch(AuthorityMismatch {
+        error,
+        expected,
+        received,
+      }) => Self::AuthorityMismatch {
+        error,
+        expected,
+        received,
+      },
+    })
   }
 }
 
@@ -337,6 +438,9 @@ pub enum RunApiError {
     latest: RunRevision,
   },
   Integrity {
+    code: ErrorCode,
+  },
+  CommitUnknown {
     code: ErrorCode,
   },
   Unavailable {

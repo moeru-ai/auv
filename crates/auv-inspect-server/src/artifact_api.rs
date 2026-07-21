@@ -97,28 +97,32 @@ struct DraftRecord {
   key: IdempotencyKey,
   authority_id: AuthorityId,
   deadline: tokio::time::Instant,
+  metadata: Box<ArtifactUploadDraftRequest>,
   status: DraftStatus,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DraftStatus {
-  Pending(Box<ArtifactUploadDraftRequest>),
-  Uploading(Box<ArtifactUploadDraftRequest>),
+  /// One successful POST response owns permission to start the PUT.
+  Admitted,
+  /// A definite pre-publication failure released permission for a later POST.
+  Released,
+  Uploading,
   // TODO(inspect-indeterminate-retention-v1): publication-unknown reservations
   // remain authoritative in memory because removing one could admit a duplicate;
   // prune them only after an owner accepts a durable reservation/retention contract.
-  Indeterminate(Box<ArtifactUploadDraftRequest>),
+  Indeterminate,
   Published,
   Expired,
 }
 
 impl DraftIndexes {
   fn prune(&mut self, now: tokio::time::Instant) {
-    let pending_expired = self
+    let unpublished_expired = self
       .by_upload
       .iter()
       .filter_map(|(upload_id, record)| {
-        (record.deadline <= now && matches!(record.status, DraftStatus::Pending(_))).then_some((
+        (record.deadline <= now && matches!(record.status, DraftStatus::Admitted | DraftStatus::Released)).then_some((
           *upload_id,
           record.run_id,
           record.key,
@@ -126,7 +130,7 @@ impl DraftIndexes {
         ))
       })
       .collect::<Vec<_>>();
-    for (upload_id, run_id, key, uri) in pending_expired {
+    for (upload_id, run_id, key, uri) in unpublished_expired {
       if self.by_key.get(&(run_id, key)) == Some(&upload_id) {
         self.by_key.remove(&(run_id, key));
       }
@@ -196,7 +200,7 @@ async fn create_draft(
   let body = decode_strict::<ArtifactUploadDraftRequest>(&bytes).map_err(|_| ArtifactFailure::invalid_reference())?;
   let expected_authority = state.store.authority_id();
   if body.authority_id() != expected_authority {
-    return Err(ArtifactFailure::authority_mismatch());
+    return Err(ArtifactFailure::authority_mismatch(expected_authority, body.authority_id()));
   }
   let uri = ArtifactUri::from_ids(run_id, body.artifact_id());
   let _mutation = state.mutation_arbitrator.acquire(run_id).await;
@@ -207,7 +211,7 @@ async fn create_draft(
 
   match state.store.lookup_commit(run_id, key).await.map_err(ArtifactFailure::from_read)? {
     Some(commit) if artifact_commit_matches(&commit, &body, run_id, key) => {
-      let draft = install_published_draft(&state, run_id, key, expected_authority, uri)?;
+      let draft = install_published_draft(&state, run_id, key, expected_authority, uri, body.clone())?;
       return Ok(artifact_json(StatusCode::OK, &draft));
     }
     Some(_) => return Err(ArtifactFailure::conflict()),
@@ -234,17 +238,13 @@ async fn create_draft(
     key,
     authority_id: expected_authority,
     deadline,
-    status: DraftStatus::Pending(Box::new(body.clone())),
+    metadata: Box::new(body.clone()),
+    status: DraftStatus::Admitted,
   };
   let raced = {
     let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
     indexes.prune(state.artifacts.clock.monotonic_now());
-    let existing = indexes
-      .by_key
-      .get(&(run_id, key))
-      .or_else(|| indexes.by_uri.get(&uri))
-      .and_then(|upload_id| indexes.by_upload.get(upload_id))
-      .cloned();
+    let existing = indexes.by_key.get(&(run_id, key)).or_else(|| indexes.by_uri.get(&uri)).copied();
     if existing.is_none() {
       indexes.insert(record);
     }
@@ -256,34 +256,43 @@ async fn create_draft(
   Ok(artifact_json(StatusCode::CREATED, &draft))
 }
 
-fn existing_draft(state: &InspectServerState, run_id: RunId, key: IdempotencyKey, uri: &ArtifactUri) -> Option<DraftRecord> {
+fn existing_draft(state: &InspectServerState, run_id: RunId, key: IdempotencyKey, uri: &ArtifactUri) -> Option<ArtifactUploadId> {
   let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
   indexes.prune(state.artifacts.clock.monotonic_now());
-  indexes.by_key.get(&(run_id, key)).or_else(|| indexes.by_uri.get(uri)).and_then(|upload_id| indexes.by_upload.get(upload_id)).cloned()
+  indexes.by_key.get(&(run_id, key)).or_else(|| indexes.by_uri.get(uri)).copied()
 }
 
 async fn resolve_existing_draft(
   state: &InspectServerState,
-  existing: DraftRecord,
+  upload_id: ArtifactUploadId,
   key: IdempotencyKey,
   request: &ArtifactUploadDraftRequest,
 ) -> Result<Response, ArtifactFailure> {
-  if existing.run_id != existing.draft.artifact_uri().run_id() || existing.key != key {
-    return Err(ArtifactFailure::conflict());
-  }
-  match existing.status {
-    DraftStatus::Pending(ref original) if original.as_ref() == request => Ok(artifact_json(StatusCode::OK, &existing.draft)),
-    DraftStatus::Uploading(ref original) | DraftStatus::Indeterminate(ref original) if original.as_ref() == request => {
-      Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")))
+  let published = {
+    let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
+    indexes.prune(state.artifacts.clock.monotonic_now());
+    let existing = indexes.by_upload.get_mut(&upload_id).ok_or_else(ArtifactFailure::not_found)?;
+    if existing.run_id != existing.draft.artifact_uri().run_id() || existing.key != key || existing.metadata.as_ref() != request {
+      return Err(ArtifactFailure::conflict());
     }
-    DraftStatus::Published => match state.store.lookup_commit(existing.run_id, existing.key).await.map_err(ArtifactFailure::from_read)? {
-      Some(commit) if artifact_commit_matches(&commit, request, existing.run_id, existing.key) => {
-        Ok(artifact_json(StatusCode::OK, &existing.draft))
+    match existing.status {
+      DraftStatus::Released => {
+        existing.status = DraftStatus::Admitted;
+        return Ok(artifact_json(StatusCode::OK, &existing.draft));
       }
-      _ => Err(ArtifactFailure::conflict()),
-    },
-    DraftStatus::Expired => Err(ArtifactFailure::gone()),
-    DraftStatus::Pending(_) | DraftStatus::Uploading(_) | DraftStatus::Indeterminate(_) => Err(ArtifactFailure::conflict()),
+      DraftStatus::Admitted | DraftStatus::Uploading | DraftStatus::Indeterminate => {
+        return Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")));
+      }
+      DraftStatus::Published => existing.clone(),
+      DraftStatus::Expired => return Err(ArtifactFailure::gone()),
+    }
+  };
+  match state.store.lookup_commit(published.run_id, published.key).await.map_err(ArtifactFailure::from_read)? {
+    Some(commit) if artifact_commit_matches(&commit, request, published.run_id, published.key) => {
+      Ok(artifact_json(StatusCode::OK, &published.draft))
+    }
+    Some(_) => Err(ArtifactFailure::conflict()),
+    None => Err(ArtifactFailure::unavailable(error_code("auv.inspect.published_commit_missing"))),
   }
 }
 
@@ -293,6 +302,7 @@ fn install_published_draft(
   key: IdempotencyKey,
   authority_id: AuthorityId,
   uri: ArtifactUri,
+  metadata: ArtifactUploadDraftRequest,
 ) -> Result<ArtifactUploadDraft, ArtifactFailure> {
   let (deadline, expires_at) = state.artifacts.clock.deadline_and_timestamp(DRAFT_LIFETIME);
   let draft = ArtifactUploadDraft::new(ArtifactUploadId::new(), uri, expires_at);
@@ -302,6 +312,7 @@ fn install_published_draft(
     key,
     authority_id,
     deadline,
+    metadata: Box::new(metadata),
     status: DraftStatus::Published,
   };
   let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
@@ -330,36 +341,34 @@ async fn upload_content(
   if record.run_id != run_id {
     return Err(ArtifactFailure::not_found());
   }
-  if record.authority_id != state.store.authority_id() {
-    return Err(ArtifactFailure::authority_mismatch());
+  let expected_authority = state.store.authority_id();
+  if record.authority_id != expected_authority {
+    return Err(ArtifactFailure::authority_mismatch(expected_authority, record.authority_id));
   }
-  match &record.status {
+  let controls = match parse_upload_control_headers(&headers) {
+    Ok(controls) => controls,
+    Err(error) => {
+      release_unstarted_admission(&state, upload_id);
+      return Err(error);
+    }
+  };
+  if let Err(error) = controls.validate(&record.metadata) {
+    release_unstarted_admission(&state, upload_id);
+    return Err(error);
+  }
+  match record.status {
     DraftStatus::Published => return published_replay(&state, &record).await,
     DraftStatus::Expired => return Err(ArtifactFailure::gone()),
-    DraftStatus::Uploading(_) => return Err(ArtifactFailure::conflict()),
-    DraftStatus::Indeterminate(metadata) => return indeterminate_replay(&state, &record, metadata).await,
-    DraftStatus::Pending(_) => {}
-  }
-  let DraftStatus::Pending(metadata) = record.status else {
-    unreachable!()
-  };
-  require_media_type(&headers, &metadata.content_type().to_string())?;
-  let received_digest = parse_content_digest(&headers)?;
-  if received_digest != metadata.sha256() {
-    return Err(ArtifactFailure::integrity(error_code("auv.inspect.content_digest_mismatch")));
-  }
-  if let Some(content_length) = headers.get(CONTENT_LENGTH).and_then(|value| value.to_str().ok()) {
-    let content_length = content_length.parse::<u64>().map_err(|_| ArtifactFailure::invalid_reference())?;
-    if content_length != metadata.byte_length().get() {
-      return Err(ArtifactFailure::integrity(error_code("auv.inspect.content_length_mismatch")));
-    }
+    DraftStatus::Uploading | DraftStatus::Released => return Err(ArtifactFailure::conflict()),
+    DraftStatus::Indeterminate => return indeterminate_replay(&state, &record).await,
+    DraftStatus::Admitted => {}
   }
   {
     let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
     indexes.prune(state.artifacts.clock.monotonic_now());
     let current = indexes.by_upload.get_mut(&upload_id).ok_or_else(ArtifactFailure::not_found)?;
     match current.status {
-      DraftStatus::Pending(_) => current.status = DraftStatus::Uploading(metadata.clone()),
+      DraftStatus::Admitted => current.status = DraftStatus::Uploading,
       DraftStatus::Expired => return Err(ArtifactFailure::gone()),
       _ => return Err(ArtifactFailure::conflict()),
     }
@@ -378,13 +387,13 @@ async fn upload_content(
     record.authority_id,
     record.run_id,
     record.key,
-    metadata.artifact_id(),
-    metadata.span_id(),
-    metadata.purpose().clone(),
-    metadata.content_type().clone(),
-    metadata.byte_length(),
-    metadata.sha256(),
-    metadata.attributes().clone(),
+    record.metadata.artifact_id(),
+    record.metadata.span_id(),
+    record.metadata.purpose().clone(),
+    record.metadata.content_type().clone(),
+    record.metadata.byte_length(),
+    record.metadata.sha256(),
+    record.metadata.attributes().clone(),
   );
   let mut body = Box::pin(request.into_body().into_data_stream());
   let body_complete = upload_reset.body_complete.clone();
@@ -401,8 +410,12 @@ async fn upload_content(
   let result = match result {
     Ok(result) if state.artifacts.clock.monotonic_now() < record.deadline => result,
     Ok(_) | Err(_) => {
-      mark_indeterminate(&state, upload_id, metadata);
-      return Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")));
+      if upload_reset.body_complete.load(Ordering::Acquire) {
+        mark_indeterminate(&state, upload_id);
+        return Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")));
+      }
+      expire_upload(&state, upload_id);
+      return Err(ArtifactFailure::gone());
     }
   };
   match result {
@@ -415,21 +428,21 @@ async fn upload_content(
       Ok(run_json(StatusCode::OK, &commit))
     }
     Err(ArtifactWriteError::PublicationUnknown(_code)) => match state.store.lookup_commit(record.run_id, record.key).await {
-      Ok(Some(commit)) if artifact_commit_matches(&commit, &metadata, record.run_id, record.key) => {
+      Ok(Some(commit)) if artifact_commit_matches(&commit, &record.metadata, record.run_id, record.key) => {
         mark_published(&state, upload_id);
         Ok(run_json(StatusCode::OK, &commit))
       }
       Ok(Some(_)) => {
-        mark_indeterminate(&state, upload_id, metadata);
+        mark_indeterminate(&state, upload_id);
         Err(ArtifactFailure::conflict())
       }
       Ok(None) | Err(_) => {
-        mark_indeterminate(&state, upload_id, metadata);
+        mark_indeterminate(&state, upload_id);
         Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")))
       }
     },
     Err(error) => {
-      reset_pending(&state, upload_id, metadata);
+      release_upload(&state, upload_id);
       Err(ArtifactFailure::from_write(error))
     }
   }
@@ -437,18 +450,15 @@ async fn upload_content(
 
 async fn published_replay(state: &InspectServerState, record: &DraftRecord) -> Result<Response, ArtifactFailure> {
   match state.store.lookup_commit(record.run_id, record.key).await.map_err(ArtifactFailure::from_read)? {
-    Some(commit) => Ok(run_json(StatusCode::OK, &commit)),
+    Some(commit) if artifact_commit_matches(&commit, &record.metadata, record.run_id, record.key) => Ok(run_json(StatusCode::OK, &commit)),
+    Some(_) => Err(ArtifactFailure::conflict()),
     None => Err(ArtifactFailure::unavailable(error_code("auv.inspect.published_commit_missing"))),
   }
 }
 
-async fn indeterminate_replay(
-  state: &InspectServerState,
-  record: &DraftRecord,
-  metadata: &ArtifactUploadDraftRequest,
-) -> Result<Response, ArtifactFailure> {
+async fn indeterminate_replay(state: &InspectServerState, record: &DraftRecord) -> Result<Response, ArtifactFailure> {
   match state.store.lookup_commit(record.run_id, record.key).await {
-    Ok(Some(commit)) if artifact_commit_matches(&commit, metadata, record.run_id, record.key) => {
+    Ok(Some(commit)) if artifact_commit_matches(&commit, &record.metadata, record.run_id, record.key) => {
       mark_published(state, record.draft.upload_id());
       Ok(run_json(StatusCode::OK, &commit))
     }
@@ -463,15 +473,25 @@ fn mark_published(state: &InspectServerState, upload_id: ArtifactUploadId) {
   }
 }
 
-fn reset_pending(state: &InspectServerState, upload_id: ArtifactUploadId, metadata: Box<ArtifactUploadDraftRequest>) {
-  if let Some(record) = state.artifacts.drafts.lock().expect("artifact draft index lock").by_upload.get_mut(&upload_id) {
-    record.status = DraftStatus::Pending(metadata);
+fn release_unstarted_admission(state: &InspectServerState, upload_id: ArtifactUploadId) {
+  if let Some(record) = state.artifacts.drafts.lock().expect("artifact draft index lock").by_upload.get_mut(&upload_id)
+    && record.status == DraftStatus::Admitted
+  {
+    record.status = DraftStatus::Released;
   }
 }
 
-fn mark_indeterminate(state: &InspectServerState, upload_id: ArtifactUploadId, metadata: Box<ArtifactUploadDraftRequest>) {
+fn release_upload(state: &InspectServerState, upload_id: ArtifactUploadId) {
+  if let Some(record) = state.artifacts.drafts.lock().expect("artifact draft index lock").by_upload.get_mut(&upload_id)
+    && record.status == DraftStatus::Uploading
+  {
+    record.status = DraftStatus::Released;
+  }
+}
+
+fn mark_indeterminate(state: &InspectServerState, upload_id: ArtifactUploadId) {
   if let Some(record) = state.artifacts.drafts.lock().expect("artifact draft index lock").by_upload.get_mut(&upload_id) {
-    record.status = DraftStatus::Indeterminate(metadata);
+    record.status = DraftStatus::Indeterminate;
   }
 }
 
@@ -503,14 +523,13 @@ impl Drop for UploadResetGuard {
     let Some(record) = indexes.by_upload.get_mut(&self.upload_id) else {
       return;
     };
-    let metadata = match &record.status {
-      DraftStatus::Uploading(metadata) => metadata.clone(),
-      _ => return,
-    };
+    if record.status != DraftStatus::Uploading {
+      return;
+    }
     record.status = if self.body_complete.load(Ordering::Acquire) {
-      DraftStatus::Indeterminate(metadata)
+      DraftStatus::Indeterminate
     } else {
-      DraftStatus::Pending(metadata)
+      DraftStatus::Released
     };
   }
 }
@@ -552,8 +571,9 @@ async fn resolve_artifacts_inner(state: Arc<InspectServerState>, headers: Header
   require_media_type(&headers, ARTIFACT_RESOLVE_MEDIA_TYPE)?;
   let bytes = to_bytes(request.into_body(), MAX_ARTIFACT_JSON_BYTES).await.map_err(ArtifactFailure::from_body)?;
   let request = decode_strict::<ResolveArtifactsRequest>(&bytes).map_err(|_| ArtifactFailure::invalid_reference())?;
-  if request.authority_id() != state.store.authority_id() {
-    return Err(ArtifactFailure::authority_mismatch());
+  let expected_authority = state.store.authority_id();
+  if request.authority_id() != expected_authority {
+    return Err(ArtifactFailure::authority_mismatch(expected_authority, request.authority_id()));
   }
   let base_url =
     state.artifact_origin.as_ref().ok_or_else(|| ArtifactFailure::unavailable(error_code("auv.inspect.artifact_origin_unavailable")))?;
@@ -643,6 +663,50 @@ fn require_media_type(headers: &HeaderMap, expected: &str) -> Result<(), Artifac
   }
 }
 
+struct UploadControlHeaders {
+  content_type: String,
+  content_digest: auv_tracing::Sha256Digest,
+  content_length: Option<u64>,
+}
+
+impl UploadControlHeaders {
+  fn validate(&self, metadata: &ArtifactUploadDraftRequest) -> Result<(), ArtifactFailure> {
+    if self.content_type != metadata.content_type().to_string() {
+      return Err(ArtifactFailure::unsupported_media_type());
+    }
+    if self.content_digest != metadata.sha256() {
+      return Err(ArtifactFailure::integrity(error_code("auv.inspect.content_digest_mismatch")));
+    }
+    if self.content_length.is_some_and(|length| length != metadata.byte_length().get()) {
+      return Err(ArtifactFailure::integrity(error_code("auv.inspect.content_length_mismatch")));
+    }
+    Ok(())
+  }
+}
+
+fn parse_upload_control_headers(headers: &HeaderMap) -> Result<UploadControlHeaders, ArtifactFailure> {
+  let mut media_types = headers.get_all(CONTENT_TYPE).iter();
+  let content_type = media_types.next().ok_or_else(ArtifactFailure::unsupported_media_type)?;
+  if media_types.next().is_some() {
+    return Err(ArtifactFailure::invalid_reference());
+  }
+  let content_type = content_type.to_str().map_err(|_| ArtifactFailure::invalid_reference())?.to_owned();
+  let content_digest = parse_content_digest(headers)?;
+  let mut lengths = headers.get_all(CONTENT_LENGTH).iter();
+  let content_length = lengths
+    .next()
+    .map(|value| value.to_str().map_err(|_| ArtifactFailure::invalid_reference())?.parse().map_err(|_| ArtifactFailure::invalid_reference()))
+    .transpose()?;
+  if lengths.next().is_some() {
+    return Err(ArtifactFailure::invalid_reference());
+  }
+  Ok(UploadControlHeaders {
+    content_type,
+    content_digest,
+    content_length,
+  })
+}
+
 fn parse_content_digest(headers: &HeaderMap) -> Result<auv_tracing::Sha256Digest, ArtifactFailure> {
   let value = exactly_one_header(headers, "content-digest")?.to_str().ok().ok_or_else(ArtifactFailure::invalid_reference)?;
   let encoded = value.strip_prefix("sha-256=:").and_then(|value| value.strip_suffix(':')).ok_or_else(ArtifactFailure::invalid_reference)?;
@@ -681,7 +745,7 @@ fn json(status: StatusCode, media_type: &'static str, value: &impl Serialize) ->
 
 struct ArtifactFailure {
   status: StatusCode,
-  code: ErrorCode,
+  body: ArtifactApiError,
   media_type: &'static str,
 }
 
@@ -689,7 +753,7 @@ impl ArtifactFailure {
   fn new(status: StatusCode, code: &str) -> Self {
     Self {
       status,
-      code: error_code(code),
+      body: ArtifactApiError::new(error_code(code)),
       media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
     }
   }
@@ -702,8 +766,12 @@ impl ArtifactFailure {
     Self::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, "auv.inspect.unsupported_media_type")
   }
 
-  fn authority_mismatch() -> Self {
-    Self::new(StatusCode::CONFLICT, "auv.inspect.authority_mismatch")
+  fn authority_mismatch(expected: AuthorityId, received: AuthorityId) -> Self {
+    Self {
+      status: StatusCode::CONFLICT,
+      body: ArtifactApiError::authority_mismatch(error_code("auv.inspect.authority_mismatch"), expected, received),
+      media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+    }
   }
 
   fn conflict() -> Self {
@@ -721,7 +789,15 @@ impl ArtifactFailure {
   fn integrity(code: ErrorCode) -> Self {
     Self {
       status: StatusCode::UNPROCESSABLE_ENTITY,
-      code,
+      body: ArtifactApiError::new(code),
+      media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
+    }
+  }
+
+  fn rejected(code: ErrorCode) -> Self {
+    Self {
+      status: StatusCode::BAD_REQUEST,
+      body: ArtifactApiError::new(code),
       media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
     }
   }
@@ -729,7 +805,7 @@ impl ArtifactFailure {
   fn unavailable(code: ErrorCode) -> Self {
     Self {
       status: StatusCode::SERVICE_UNAVAILABLE,
-      code,
+      body: ArtifactApiError::new(code),
       media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
     }
   }
@@ -749,9 +825,10 @@ impl ArtifactFailure {
 
   fn from_write(error: ArtifactWriteError) -> Self {
     match error {
-      ArtifactWriteError::AuthorityMismatch { .. } => Self::authority_mismatch(),
+      ArtifactWriteError::AuthorityMismatch { expected, received } => Self::authority_mismatch(expected, received),
       ArtifactWriteError::IdempotencyMismatch => Self::conflict(),
-      ArtifactWriteError::Rejected(code) | ArtifactWriteError::Integrity(code) => Self::integrity(code),
+      ArtifactWriteError::Rejected(code) => Self::rejected(code),
+      ArtifactWriteError::Integrity(code) => Self::integrity(code),
       ArtifactWriteError::Unavailable(code) => Self::unavailable(code),
       ArtifactWriteError::PublicationUnknown(_) => Self::unavailable(error_code("auv.inspect.publication_unknown")),
     }
@@ -763,7 +840,7 @@ impl ArtifactFailure {
       ReadError::Forbidden => Self::new(StatusCode::FORBIDDEN, "auv.inspect.forbidden"),
       ReadError::InvalidReference(code) => Self {
         status: StatusCode::BAD_REQUEST,
-        code,
+        body: ArtifactApiError::new(code),
         media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
       },
       ReadError::HistoryGap { .. } => Self::new(StatusCode::GONE, "auv.inspect.history_gap"),
@@ -771,7 +848,7 @@ impl ArtifactFailure {
       ReadError::Unavailable(code) => Self::unavailable(code),
       ReadError::Integrity(code) => Self {
         status: StatusCode::INTERNAL_SERVER_ERROR,
-        code,
+        body: ArtifactApiError::new(code),
         media_type: ARTIFACT_UPLOAD_MEDIA_TYPE,
       },
     }
@@ -780,7 +857,7 @@ impl ArtifactFailure {
 
 impl IntoResponse for ArtifactFailure {
   fn into_response(self) -> Response {
-    json(self.status, self.media_type, &ArtifactApiError::new(self.code))
+    json(self.status, self.media_type, &self.body)
   }
 }
 

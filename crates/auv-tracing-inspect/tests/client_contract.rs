@@ -21,7 +21,8 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::{Path, Query, Request as AxumRequest, State};
 use axum::http::header::CONTENT_TYPE;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{get, post, put};
 use futures_util::StreamExt;
@@ -76,6 +77,7 @@ impl Drop for TestServer {
 #[derive(Clone)]
 struct FaultStore {
   commit_error: Option<CommitError>,
+  artifact_error: Option<ArtifactWriteError>,
   read_error: Option<ReadError>,
 }
 
@@ -111,6 +113,15 @@ impl FaultStore {
   fn commit(error: CommitError) -> Self {
     Self {
       commit_error: Some(error),
+      artifact_error: None,
+      read_error: None,
+    }
+  }
+
+  fn artifact(error: ArtifactWriteError) -> Self {
+    Self {
+      commit_error: None,
+      artifact_error: Some(error),
       read_error: None,
     }
   }
@@ -118,6 +129,7 @@ impl FaultStore {
   fn read(error: ReadError) -> Self {
     Self {
       commit_error: None,
+      artifact_error: None,
       read_error: Some(error),
     }
   }
@@ -138,17 +150,18 @@ impl RunStore for FaultStore {
   }
 
   fn write_artifact(&self, _request: StoreArtifactRequest, _body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
-    Box::pin(async { Err(ArtifactWriteError::Unavailable(error_code("auv.test.unavailable"))) })
+    let error = self.artifact_error.clone().unwrap_or_else(|| ArtifactWriteError::Unavailable(error_code("auv.test.unavailable")));
+    Box::pin(async move { Err(error) })
   }
 
   fn lookup_commit(&self, _run_id: RunId, _key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
-    let error = self.read_failure();
-    Box::pin(async move { Err(error) })
+    let error = self.read_error.clone();
+    Box::pin(async move { error.map_or(Ok(None), Err) })
   }
 
   fn load_snapshot(&self, _run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
-    let error = self.read_failure();
-    Box::pin(async move { Err(error) })
+    let error = self.read_error.clone();
+    Box::pin(async move { error.map_or(Ok(None), Err) })
   }
 
   fn commits_after(&self, _run_id: RunId, _after: RunRevision, _limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
@@ -451,6 +464,31 @@ async fn client_reconstructs_every_typed_http_error_class() {
   }
 }
 
+#[tokio::test]
+async fn client_reconstructs_every_artifact_write_error_class() {
+  let cases = [
+    ArtifactWriteError::AuthorityMismatch {
+      expected: OTHER_AUTHORITY.parse().unwrap(),
+      received: authority_id(),
+    },
+    ArtifactWriteError::IdempotencyMismatch,
+    ArtifactWriteError::Rejected(error_code("auv.test.rejected")),
+    ArtifactWriteError::Integrity(error_code("auv.test.integrity")),
+    ArtifactWriteError::Unavailable(error_code("auv.test.unavailable")),
+    ArtifactWriteError::PublicationUnknown(error_code("auv.inspect.publication_unknown")),
+  ];
+
+  for expected in cases {
+    let server = TestServer::start(router(Arc::new(FaultStore::artifact(expected.clone())))).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect artifact error store");
+    let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
+
+    let error = store.write_artifact(request, Box::pin(Cursor::new(b"abc".to_vec()))).await.unwrap_err();
+
+    assert_eq!(error, expected);
+  }
+}
+
 async fn assert_read_error<F, Fut>(expected: ReadError, operation: F)
 where
   F: FnOnce(InspectRunStore) -> Fut,
@@ -486,6 +524,22 @@ impl AsyncRead for FailingPollProbe {
 struct CountingReader {
   inner: Cursor<Vec<u8>>,
   polls: Arc<AtomicUsize>,
+}
+
+#[derive(Clone)]
+struct DraftPostBarrier {
+  entered: Arc<tokio::sync::Barrier>,
+  decided: Arc<tokio::sync::Barrier>,
+}
+
+async fn synchronize_draft_posts(State(state): State<DraftPostBarrier>, request: AxumRequest, next: Next) -> Response {
+  if request.method() != Method::POST || !request.uri().path().ends_with("/artifact-uploads") {
+    return next.run(request).await;
+  }
+  state.entered.wait().await;
+  let response = next.run(request).await;
+  state.decided.wait().await;
+  response
 }
 
 impl AsyncRead for CountingReader {
@@ -536,33 +590,76 @@ async fn binary_write_read_resolution_and_published_replay_preserve_one_shot_bod
 }
 
 #[tokio::test]
-async fn equal_concurrent_upload_is_lookup_only_before_the_replacement_body_is_constructed() {
+async fn equal_concurrent_upload_posts_admit_one_body_before_either_client_can_put() {
   let backing = BlockingArtifactStore::new();
-  let server = TestServer::start_store(Arc::new(backing.clone())).await;
+  let barrier = DraftPostBarrier {
+    entered: Arc::new(tokio::sync::Barrier::new(2)),
+    decided: Arc::new(tokio::sync::Barrier::new(2)),
+  };
+  let app = router(Arc::new(backing.clone())).layer(middleware::from_fn_with_state(barrier, synchronize_draft_posts));
+  let server = TestServer::start(app).await;
   let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
   let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
   let first_store = store.clone();
   let first_request = request.clone();
-  let first = tokio::spawn(async move { first_store.write_artifact(first_request, Box::pin(Cursor::new(b"abc".to_vec()))).await });
+  let first_polls = Arc::new(AtomicUsize::new(0));
+  let first_reader_polls = first_polls.clone();
+  let first = tokio::spawn(async move {
+    first_store
+      .write_artifact(
+        first_request,
+        Box::pin(CountingReader {
+          inner: Cursor::new(b"abc".to_vec()),
+          polls: first_reader_polls,
+        }),
+      )
+      .await
+  });
+  let second_polls = Arc::new(AtomicUsize::new(0));
+  let second_reader_polls = second_polls.clone();
+  let second = tokio::spawn(async move {
+    store
+      .write_artifact(
+        request,
+        Box::pin(CountingReader {
+          inner: Cursor::new(b"abc".to_vec()),
+          polls: second_reader_polls,
+        }),
+      )
+      .await
+  });
   backing.entered.wait().await;
-  let lookups_before_replay = backing.lookup_calls.load(Ordering::SeqCst);
-  let replacement_polls = Arc::new(AtomicUsize::new(0));
-
-  let replay = store
-    .write_artifact(
-      request,
-      Box::pin(FailingPollProbe {
-        polls: replacement_polls.clone(),
-      }),
-    )
-    .await;
-
+  tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    while !first.is_finished() && !second.is_finished() {
+      tokio::task::yield_now().await;
+    }
+  })
+  .await
+  .expect("busy upload must finish while admitted upload is blocked");
   backing.release.notify_one();
-  first.await.expect("first upload task").expect("first upload");
-  assert!(matches!(replay, Err(ArtifactWriteError::PublicationUnknown(_))));
-  assert_eq!(backing.lookup_calls.load(Ordering::SeqCst), lookups_before_replay + 1);
+  let results = [
+    first.await.expect("first upload task"),
+    second.await.expect("second upload task"),
+  ];
+  assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+  assert_eq!(results.iter().filter(|result| matches!(result, Err(ArtifactWriteError::PublicationUnknown(_)))).count(), 1);
+  assert!(!results.iter().any(|result| matches!(result, Err(ArtifactWriteError::IdempotencyMismatch))));
   assert_eq!(backing.write_calls.load(Ordering::SeqCst), 1);
-  assert_eq!(replacement_polls.load(Ordering::SeqCst), 0);
+  assert_eq!(usize::from(first_polls.load(Ordering::SeqCst) > 0) + usize::from(second_polls.load(Ordering::SeqCst) > 0), 1);
+}
+
+#[tokio::test]
+async fn same_client_retry_reacquires_after_a_safe_body_failure() {
+  let backing = MemoryRunStore::new(authority_id());
+  let server = TestServer::start(router(Arc::new(backing.clone()))).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
+  let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
+
+  let first = store.write_artifact(request.clone(), Box::pin(Cursor::new(b"ab".to_vec()))).await;
+  assert!(matches!(first, Err(ArtifactWriteError::Integrity(_))));
+
+  let retried = store.write_artifact(request, Box::pin(Cursor::new(b"abc".to_vec()))).await.expect("reacquired upload");
+  assert!(retried.is_appended());
 }
 
 #[tokio::test]
@@ -1544,6 +1641,40 @@ async fn ordinary_commit_integrity_response_uses_one_lookup_without_reposting() 
   assert!(!result.is_appended());
   assert_eq!(state.post_calls.load(Ordering::SeqCst), 1);
   assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn ordinary_commit_unknown_wire_error_is_preserved_without_reposting() {
+  let post_calls = Arc::new(AtomicUsize::new(0));
+  let observed_post_calls = post_calls.clone();
+  let app = Router::new()
+    .route(
+      "/v1/authority",
+      get(|| async {
+        run_json(
+          StatusCode::OK,
+          &AuthorityResponse {
+            authority_id: authority_id(),
+          },
+        )
+      }),
+    )
+    .route(
+      "/v1/runs/{run_id}/commits",
+      post(move || {
+        let observed_post_calls = observed_post_calls.clone();
+        async move {
+          observed_post_calls.fetch_add(1, Ordering::SeqCst);
+          response(StatusCode::SERVICE_UNAVAILABLE, RUN_MEDIA_TYPE, Body::from(r#"{"commit_unknown":{"code":"auv.test.commit_unknown"}}"#))
+        }
+      }),
+    )
+    .route("/v1/runs/{run_id}/commits/by-idempotency-key/{key}", get(|| async { run_json(StatusCode::NOT_FOUND, &RunApiError::NotFound) }));
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+  assert_eq!(store.commit(sample_commit_request()).await.unwrap_err(), CommitError::CommitUnknown(error_code("auv.test.commit_unknown")));
+  assert_eq!(post_calls.load(Ordering::SeqCst), 1);
 }
 
 async fn lost_commit(State(state): State<LostCommitState>, headers: HeaderMap, request: axum::extract::Request) -> Response {

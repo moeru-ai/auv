@@ -8,7 +8,7 @@ use auv_tracing::{
 use base64::Engine;
 use bytes::Bytes;
 use futures_util::stream;
-use reqwest::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, EXPECT};
+use reqwest::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::{Response, StatusCode};
 use sha2::{Digest, Sha256};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
@@ -235,7 +235,6 @@ impl RunStore for InspectRunStore {
         .put(endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads/{}/content", request.run_id(), draft.upload_id())))
         .header(CONTENT_TYPE, request.content_type().to_string())
         .header("Content-Digest", content_digest(request.expected_sha256()))
-        .header(EXPECT, "100-continue")
         .header(ACCEPT, RUN_MEDIA_TYPE)
         .body(reqwest::Body::wrap_stream(stream))
         .send()
@@ -752,6 +751,7 @@ fn status_matches_run_error(status: StatusCode, error: &RunApiError) -> bool {
       | (StatusCode::UNPROCESSABLE_ENTITY, RunApiError::Rejected { .. })
       | (StatusCode::GONE, RunApiError::HistoryGap { .. })
       | (StatusCode::INTERNAL_SERVER_ERROR, RunApiError::Integrity { .. })
+      | (StatusCode::SERVICE_UNAVAILABLE, RunApiError::CommitUnknown { .. })
       | (StatusCode::SERVICE_UNAVAILABLE, RunApiError::Unavailable { .. })
   )
 }
@@ -762,6 +762,7 @@ fn map_commit_error(error: RunApiError) -> CommitError {
     RunApiError::IdempotencyMismatch => CommitError::IdempotencyMismatch,
     RunApiError::Rejected { code } | RunApiError::InvalidReference { code } => CommitError::Rejected(code),
     RunApiError::Unavailable { code } => CommitError::Unavailable(code),
+    RunApiError::CommitUnknown { code } => CommitError::CommitUnknown(code),
     RunApiError::Integrity { code } => CommitError::CommitUnknown(code),
     RunApiError::NotFound | RunApiError::Forbidden | RunApiError::HistoryGap { .. } | RunApiError::CursorAhead { .. } => {
       CommitError::CommitUnknown(code("auv.inspect.commit_error_unexpected"))
@@ -789,6 +790,7 @@ fn map_read_error(error: RunApiError) -> ReadError {
       latest,
     },
     RunApiError::Integrity { code } => ReadError::Integrity(code),
+    RunApiError::CommitUnknown { code } => ReadError::Unavailable(code),
     RunApiError::Unavailable { code } => ReadError::Unavailable(code),
     RunApiError::AuthorityMismatch { .. } | RunApiError::IdempotencyMismatch => {
       ReadError::InvalidReference(code("auv.inspect.read_conflict"))
@@ -799,20 +801,36 @@ fn map_read_error(error: RunApiError) -> ReadError {
 async fn write_artifact_failure(response: Response) -> Result<ArtifactWriteError, ErrorCode> {
   let status = response.status();
   match decode_artifact_error(response, ARTIFACT_UPLOAD_MEDIA_TYPE).await {
-    Ok(error) => Ok(match status {
-      StatusCode::CONFLICT => ArtifactWriteError::IdempotencyMismatch,
-      StatusCode::UNPROCESSABLE_ENTITY => ArtifactWriteError::Integrity(error),
-      StatusCode::SERVICE_UNAVAILABLE if error == code("auv.inspect.publication_unknown") => ArtifactWriteError::PublicationUnknown(error),
-      StatusCode::SERVICE_UNAVAILABLE => ArtifactWriteError::Unavailable(error),
-      StatusCode::BAD_REQUEST
-      | StatusCode::UNAUTHORIZED
-      | StatusCode::FORBIDDEN
-      | StatusCode::NOT_FOUND
-      | StatusCode::GONE
-      | StatusCode::PAYLOAD_TOO_LARGE
-      | StatusCode::UNSUPPORTED_MEDIA_TYPE => ArtifactWriteError::Rejected(error),
-      _ => return Err(code("auv.inspect.artifact_error_status_invalid")),
-    }),
+    Ok(error) => {
+      let error_code = error.error().clone();
+      Ok(match status {
+        StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => {
+          let (expected, received) = error.authority_ids().ok_or_else(|| code("auv.inspect.artifact_error_status_invalid"))?;
+          ArtifactWriteError::AuthorityMismatch { expected, received }
+        }
+        StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_or_artifact_conflict") && error.authority_ids().is_none() => {
+          ArtifactWriteError::IdempotencyMismatch
+        }
+        StatusCode::CONFLICT => return Err(code("auv.inspect.artifact_error_status_invalid")),
+        StatusCode::UNPROCESSABLE_ENTITY if error.authority_ids().is_none() => ArtifactWriteError::Integrity(error_code),
+        StatusCode::SERVICE_UNAVAILABLE if error_code == code("auv.inspect.publication_unknown") && error.authority_ids().is_none() => {
+          ArtifactWriteError::PublicationUnknown(error_code)
+        }
+        StatusCode::SERVICE_UNAVAILABLE if error.authority_ids().is_none() => ArtifactWriteError::Unavailable(error_code),
+        StatusCode::BAD_REQUEST
+        | StatusCode::UNAUTHORIZED
+        | StatusCode::FORBIDDEN
+        | StatusCode::NOT_FOUND
+        | StatusCode::GONE
+        | StatusCode::PAYLOAD_TOO_LARGE
+        | StatusCode::UNSUPPORTED_MEDIA_TYPE
+          if error.authority_ids().is_none() =>
+        {
+          ArtifactWriteError::Rejected(error_code)
+        }
+        _ => return Err(code("auv.inspect.artifact_error_status_invalid")),
+      })
+    }
     Err(()) => Err(code("auv.inspect.artifact_error_invalid")),
   }
 }
@@ -820,25 +838,27 @@ async fn write_artifact_failure(response: Response) -> Result<ArtifactWriteError
 async fn read_artifact_failure(response: Response, expected_media: &str) -> ReadError {
   let status = response.status();
   match decode_artifact_error(response, expected_media).await {
-    Ok(error) => match status {
-      StatusCode::NOT_FOUND => ReadError::NotFound,
-      StatusCode::FORBIDDEN => ReadError::Forbidden,
-      StatusCode::BAD_REQUEST | StatusCode::CONFLICT | StatusCode::GONE => ReadError::InvalidReference(error),
-      StatusCode::INTERNAL_SERVER_ERROR => ReadError::Integrity(error),
-      StatusCode::SERVICE_UNAVAILABLE => ReadError::Unavailable(error),
-      _ => ReadError::Integrity(code("auv.inspect.artifact_error_status_invalid")),
-    },
+    Ok(error) => {
+      let error = error.error().clone();
+      match status {
+        StatusCode::NOT_FOUND => ReadError::NotFound,
+        StatusCode::FORBIDDEN => ReadError::Forbidden,
+        StatusCode::BAD_REQUEST | StatusCode::CONFLICT | StatusCode::GONE => ReadError::InvalidReference(error),
+        StatusCode::INTERNAL_SERVER_ERROR => ReadError::Integrity(error),
+        StatusCode::SERVICE_UNAVAILABLE => ReadError::Unavailable(error),
+        _ => ReadError::Integrity(code("auv.inspect.artifact_error_status_invalid")),
+      }
+    }
     Err(()) => ReadError::Integrity(code("auv.inspect.artifact_error_invalid")),
   }
 }
 
-async fn decode_artifact_error(response: Response, media_type: &str) -> Result<ErrorCode, ()> {
+async fn decode_artifact_error(response: Response, media_type: &str) -> Result<ArtifactApiError, ()> {
   if !has_media_type(&response, media_type) {
     return Err(());
   }
   let bytes = bounded_response_bytes(response).await.map_err(|_| ())?;
-  let error = decode_strict::<ArtifactApiError>(&bytes).map_err(|_| ())?;
-  Ok(error.error().clone())
+  decode_strict::<ArtifactApiError>(&bytes).map_err(|_| ())
 }
 
 async fn bounded_response_bytes(mut response: Response) -> Result<Vec<u8>, String> {

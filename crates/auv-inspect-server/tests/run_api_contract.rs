@@ -669,7 +669,7 @@ async fn commit_failures_map_to_exact_typed_errors() {
     (
       CommitError::CommitUnknown(error_code("auv.test.unknown")),
       StatusCode::SERVICE_UNAVAILABLE,
-      json!({"unavailable":{"code":"auv.test.unknown"}}),
+      json!({"commit_unknown":{"code":"auv.test.unknown"}}),
     ),
   ];
 

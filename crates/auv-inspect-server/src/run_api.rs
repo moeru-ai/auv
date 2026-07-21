@@ -87,15 +87,10 @@ async fn commit(
 }
 
 async fn resolve_commit_unknown(state: &InspectServerState, request: &RunCommitRequest, code: ErrorCode) -> Result<Response, ApiFailure> {
-  // NOTICE(inspect-commit-unknown-v1): The accepted wire error enum has no
-  // CommitUnknown variant. A local authority adapter may resolve uncertainty
-  // with this one lookup and no resubmission. The remote POST client must
-  // conservatively treat a lost or failed response as uncertain until its own
-  // one-lookup recovery completes; do not infer rejection or replay the POST.
   match state.store.lookup_commit(request.run_id(), request.idempotency_key()).await {
     Ok(Some(commit)) if commit_matches_request(&commit, request) => Ok(run_json(StatusCode::OK, &commit)),
     Ok(Some(_)) => Err(ApiFailure::from_commit(CommitError::IdempotencyMismatch)),
-    Ok(None) | Err(_) => Err(ApiFailure::unavailable(code)),
+    Ok(None) | Err(_) => Err(ApiFailure::commit_unknown(code)),
   }
 }
 
@@ -299,6 +294,13 @@ impl ApiFailure {
     }
   }
 
+  fn commit_unknown(code: ErrorCode) -> Self {
+    Self {
+      status: StatusCode::SERVICE_UNAVAILABLE,
+      body: RunApiError::CommitUnknown { code },
+    }
+  }
+
   fn payload_too_large() -> Self {
     Self {
       status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -319,7 +321,8 @@ impl ApiFailure {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         body: RunApiError::Rejected { code },
       },
-      CommitError::Unavailable(code) | CommitError::CommitUnknown(code) => Self::unavailable(code),
+      CommitError::Unavailable(code) => Self::unavailable(code),
+      CommitError::CommitUnknown(code) => Self::commit_unknown(code),
     }
   }
 
