@@ -1,4 +1,4 @@
-// File: src/driver/macos/native/ax_tree.rs
+// File: src/driver/macos/native/tree.rs
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
   NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse, NativeAxNodeInspectionRequest,
