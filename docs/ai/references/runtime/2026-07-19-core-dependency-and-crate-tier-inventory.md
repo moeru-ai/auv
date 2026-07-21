@@ -18,9 +18,10 @@ root depends on it." Doc-only: **no crate moved, no workspace member changed**
   **35 crates** under `crates/`.
 - `default-members = [".", "crates/auv-cli"]` — a bare `cargo build` / `cargo
   test` only compiles `auv-runtime` + `auv-cli` and their dependency trees
-  (**27/36 crates** on macOS; 9 excluded: `auv-apple-{music,notes}`,
+  (**25/36 crates** on macOS; 11 excluded: `auv-apple-{music,notes}`,
   `auv-driver-{linux,windows}`, `auv-gnome-control-center`, `auv-netease-music`,
-  `auv-overlay-macos`, `auv-qqmusic`, `auv-steam`). Experimental crates (e.g.
+  `auv-overlay-macos`, `auv-qqmusic`, `auv-steam`, `auv-inference-ort`, and
+  `auv-media-macos`). Experimental crates (e.g.
   `auv-driver-linux`) are **not** built by default, which is why their failing
   tests can survive (see the OCR-stub test noted in the error-chain inventory).
 - **18 internal crates depend on `auv-driver-common`** (the `DriverError` and
@@ -32,7 +33,7 @@ root depends on it." Doc-only: **no crate moved, no workspace member changed**
 
 ## 1. Root's direct internal dependencies (why auv-runtime depends on each)
 
-`auv-runtime` has **10 direct internal dependencies** (verified via
+`auv-runtime` has **9 direct internal dependencies** (verified via
 `Cargo.toml` + grep). For each: **why** root depends on it + whether the dep is
 target-gated + whether it's actually used in code.
 
@@ -47,18 +48,22 @@ target-gated + whether it's actually used in code.
 | `auv-inspect-model` | Artifact readers, `InspectComposer`, `InspectDocument` for run-read | `src/inspect/mod.rs:3`, `src/lib.rs:48` |
 | `auv-scan` | Scene state reading via `ScanFrame` | `src/scene_state_read.rs:10,476` |
 | `auv-view` | View parser memory reading (`ViewBounds`, view memory types) | `src/view_parser_read.rs:12`, `src/inspect/mod.rs:10` |
-| `auv-media-macos` | ⚠️ **UNUSED** — declared at `Cargo.toml:112` (target-gated to macOS) but `grep auv_media_macos:: src/` returns **zero hits**. Only real consumer is product `auv-netease-music`. This is a **dead donor-leak** into core's default deps and should be removed. | root `Cargo.toml:112`; `auv-cli/Cargo.toml:58` (also unused) |
 
-**Actionable anomalies** (flagged for owner decision):
+The review originally found a tenth declaration, `auv-media-macos`, unused by
+both root and `auv-cli`. PR #121 removed those two dead dependencies before this
+inventory landed. `auv-netease-music` keeps its real direct dependency, so no
+feature was removed.
+
+**Actionable anomaly** (flagged for owner decision):
 1. `auv-driver-macos` is an **unconditional** dependency at root `Cargo.toml:92`
    (not target-gated), which forces macOS-specific code (`app/analysis.rs`)
    into `auv-runtime`. Should either: (a) target-gate the root dep, (b)
    abstract the AX types behind a platform-agnostic trait in
    `auv-driver-common`, or (c) document why runtime is intentionally
    macOS-specific (contradicts the library-only positioning).
-2. `auv-media-macos` is declared but **never imported** in root or `auv-cli`;
-   only `auv-netease-music` uses it. Remove the unused deps from root
-   `Cargo.toml:112` and `auv-cli/Cargo.toml:58`.
+
+**Resolved during review:** the unused root/CLI `auv-media-macos` declarations
+were removed in PR #121. This inventory describes the post-removal graph.
 
 ## 2. Forbidden-direction violations
 
@@ -75,10 +80,9 @@ invoke → tracing / persistence → inspect model / server → product frontend
 - ✅ `auv-driver` aggregator only depends on `auv-driver-common` + the 3
   platform drivers.
 
-The one "leak" (root depending on the unused `auv-media-macos`) is not a
-*direction* violation (the dep is target-gated and forward), but a *dead
-dependency* — the crate is declared but never used. See actionable anomalies
-above.
+The only dead donor dependency found during the review was the unused
+root/CLI `auv-media-macos` declaration. PR #121 removed it before this inventory
+landed; the current graph has no such leak.
 
 ## 3. Single-consumer crates (8)
 
@@ -141,7 +145,7 @@ workspace description is empty).
 | auv-scan | **Core-maintained** | Temporal scan wire contracts, frame artifacts, producers, read-side projections (S line); root-only public import path |
 | auv-view | **Core-maintained** | Generic view-parser IR shared by app crates (extracted from netease); framework-level, wide pub-field v0 API |
 | auv-file | **Core-adjacent** (experimental-friendly shared infra) | Narrow JSON artifact file-IO helpers (core-b1 graduation); broader file abstraction deferred |
-| auv-media-macos | **Core-adjacent** (but **dead dep in core** — remove from root/cli) | macOS system now-playing read via vendored mediaremote-adapter through `/usr/bin/perl`; app-agnostic, reports owning bundle id |
+| auv-media-macos | **Core-adjacent** (decoupled from root/CLI in #121) | macOS system now-playing read via vendored mediaremote-adapter through `/usr/bin/perl`; app-agnostic, reports owning bundle id |
 | auv-query-readiness | **Core-adjacent** | Shared derived-action eligibility triad + optional refusal-reason for spatial-query probes (core-a graduation); NOT driver window-probe readiness |
 | auv-stage-status | **Core-adjacent** | Shared status for persisted semantic/witness/quality stages (core-a3 triad); vertical policy stays in producing crate |
 | auv-compare | **Experimental compile-maintained** (single-consumer game helper) | Narrow dual-backend compare policy helpers (core-b2 graduation); broader spatial compare deferred |
@@ -151,9 +155,10 @@ every crate that exists, and every crate is covered by the milestone. No members
 are missing from the milestone, and no milestone name is absent from `members`.
 
 **Tier counts:** Core-maintained **12** (10 milestone-listed + `auv-scan` +
-`auv-view`), Product **1**, Reference **3**, Experimental **15**,
-Core-adjacent **5** (`auv-file`, `auv-media-macos`, `auv-query-readiness`,
-`auv-stage-status`, `auv-compare` — see verdicts below). Total = **36**.
+`auv-view`), Product **1**, Reference **3**, Experimental **16**,
+Core-adjacent **4** (`auv-file`, `auv-media-macos`, `auv-query-readiness`, and
+`auv-stage-status`). `auv-compare` is Experimental, as the table and verdict
+below state. Total = **36**.
 
 ## 5. Ambiguous-crate verdicts (7 crates, 6 questions each, final labels)
 
@@ -218,17 +223,15 @@ framework IR.
 with graduation record (`core-b1`). Games depend on it forward (fine). Not core
 execution seam, but stable shared infra.
 
-### 5.4. auv-media-macos → **Core-adjacent** (BUT: dead dep in core — remove from root/cli)
+### 5.4. auv-media-macos → **Core-adjacent** (decoupled from root/CLI in #121)
 1. **In chain?** No — macOS system now-playing capability (mediaremote-adapter
    wrapper), outside the input-delivery/verification seam.
-2. **Why root depends:** It **shouldn't** — **dead dependency**. Declared at
-   root `Cargo.toml:112` (macOS) and `auv-cli/Cargo.toml:58`, but
-   `rg auv_media_macos::` finds **zero** usage in `src/` or `crates/auv-cli/src/`.
-   This is a donor-leak into core's default deps and should be removed. Only
-   real code consumer is product `auv-netease-music`
+2. **Why root depends:** It no longer does. The review found dead declarations
+   in root and `auv-cli`; PR #121 removed them. The only real code consumer is
+   product `auv-netease-music`
    (`output.rs:411`, `cli.rs:8,200,553`).
-3. **Reverse/donor leak?** Crate deps clean (`serde`, `clap`). The leak is the
-   **unused declaration** in root/cli.
+3. **Reverse/donor leak?** None in the current graph. Crate deps are clean
+   (`serde`, `clap`), and the historical unused root/CLI declarations are gone.
 4. **Stable contract?** Yes — typed `NowPlayingState`, `MediaError`,
    `MediaCommand`, `OutputFormat`; well-documented limitations.
 5. **Can decouple from core?** Yes, and it should be: removing the unused
@@ -238,8 +241,8 @@ execution seam, but stable shared infra.
    already has.
 
 **Verdict:** `保留为 core-adjacent` as a platform capability with a clean
-contract, **but remove the unused root `Cargo.toml:112` and
-`auv-cli/Cargo.toml:58` deps immediately** — they are dead donor-leaks.
+contract. Keep it decoupled from root/CLI; product `auv-netease-music` owns the
+real forward dependency.
 
 ### 5.5. auv-query-readiness → **Core-adjacent**
 1. **In chain?** Adjacent — feeds the CLI run-read projection (readiness_class),
@@ -306,26 +309,25 @@ core-adjacent.
 | auv-scan | yes (used) | root inspect + invoke | typed errors, versioned wire | none (direct core use) | **Core-maintained** |
 | auv-view | yes (used) | root inspect + inspect-server + tracing + netease | IR w/ schema guard | none (direct core use) | **Core-maintained** |
 | auv-file | no | games only | clean generic JSON IO | `core-b1` | **Core-adjacent** |
-| auv-media-macos | yes but **unused (dead)** | netease (product) only | clean capability API | none | **Core-adjacent** (remove dead root+cli deps) |
+| auv-media-macos | no (removed in #121) | netease (product) only | clean capability API | none | **Core-adjacent** |
 | auv-query-readiness | no | cli run-read + 2 games | clean typed triad, no deps | `core-a` | **Core-adjacent** |
 | auv-stage-status | no | cli-integration + 3 games | tiny stable shared enum | `core-a3` | **Core-adjacent** |
 | auv-compare | no | 1 game file only | clean but single-consumer, deferred | `core-b2` (deferred) | **Experimental compile-maintained** |
 
 ## Actionable follow-up (owner decisions required)
 
-1. **Remove the dead `auv-media-macos` dependency** from root `Cargo.toml:112`
-   and `crates/auv-cli/Cargo.toml:58` — it is declared but never imported in
-   either codebase. Only `auv-netease-music` uses it (product forward-dep,
-   fine). This is the only genuine donor-leak into core's default dependency set.
-2. **Decide on `auv-driver-macos` target-gating**: the root dep at
+1. **Decide on `auv-driver-macos` target-gating**: the root dep at
    `Cargo.toml:92` is unconditional (not `[target.'cfg(...)'.dependencies]`),
    which forces macOS-specific code (`app/analysis.rs` using AX types) into
    `auv-runtime`. Options: (a) target-gate the root dep, (b) abstract the AX
    types behind a platform-agnostic trait in `auv-driver-common`, or (c)
    document why runtime is intentionally macOS-specific and accept the coupling
    (contradicts the library-only positioning).
-3. **Confirm `auv-media-macos` tier**: I classified it as **core-adjacent** (a
+2. **Confirm `auv-media-macos` tier**: I classified it as **core-adjacent** (a
    platform capability with a clean contract, not in the exec seam but not
    experimental either). The owner may prefer **driver-tier / core platform
    capability** instead. Clarify the distinction between "driver-tier" and
    "core-adjacent platform capability" for future classification.
+
+Resolved, not an open decision: PR #121 removed the dead root/CLI
+`auv-media-macos` declarations while keeping the product consumer intact.
