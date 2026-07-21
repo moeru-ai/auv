@@ -15,7 +15,7 @@ use auv_tracing::{
 use opentelemetry::logs::{AnyValue, LogRecord, Logger, LoggerProvider};
 use opentelemetry::trace::{Span as _, TraceContextExt, Tracer, TracerProvider};
 use opentelemetry::{Context, Key, KeyValue, Value};
-use opentelemetry_sdk::logs::{SdkLogger, SdkLoggerProvider};
+use opentelemetry_sdk::logs::{SdkLogRecord, SdkLogger, SdkLoggerProvider};
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider};
 
 const INSTRUMENTATION_SCOPE: &str = "auv-tracing";
@@ -215,7 +215,7 @@ impl OtelProjectorInner {
             let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
             commit_run_authority(&mut state, run_id, authority_id)?;
           }
-          self.logger.emit(record);
+          self.emit_log_without_trace_context(record);
           reservation.finish()
         }
       },
@@ -251,10 +251,17 @@ impl OtelProjectorInner {
           let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
           commit_run_authority(&mut state, run_id, Some(authority_id))?;
         }
-        self.logger.emit(record);
+        self.emit_log_without_trace_context(record);
         reservation.finish()
       }
     }
+  }
+
+  fn emit_log_without_trace_context(&self, record: SdkLogRecord) {
+    // NOTICE: OpenTelemetry SDK 0.32 fills an absent log trace context from
+    // the current context in `opentelemetry_sdk/src/logs/logger.rs`.
+    let _guard = Context::new().attach();
+    self.logger.emit(record);
   }
 
   fn start_span(&self, input: SpanStartInput) -> Result<(), TelemetryError> {
@@ -351,10 +358,18 @@ impl OtelProjectorInner {
       .with_attributes(attributes)
       .start_with_context(&self.tracer, &parent_context);
     if !span.span_context().is_valid() {
-      // NOTICE: OpenTelemetry SDK 0.32 returns an invalid span before invoking
-      // `SpanProcessor::on_start` when its provider is shut down. Revisit this
-      // rollback against `opentelemetry_sdk/src/trace/tracer.rs` on SDK upgrade.
+      let is_recording = span.is_recording();
       drop(span);
+      if is_recording {
+        // NOTICE: OpenTelemetry SDK 0.32 invokes `SpanProcessor::on_start` for
+        // recording spans even when a custom ID generator returns invalid IDs.
+        // Retain callback-visible state; revisit against
+        // `opentelemetry_sdk/src/trace/tracer.rs` on SDK upgrade.
+        return Err(error("auv.telemetry.otel_invalid_span_context"));
+      }
+      // NOTICE: OpenTelemetry SDK 0.32 skips `SpanProcessor::on_start` for
+      // non-recording spans returned after shutdown or a sampling drop, so the
+      // unpublished reservation and temporal update can be rolled back.
       let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
       let remove_run = {
         let run = state.runs.get_mut(&input.run_id).expect("reserved span start retains run state");
