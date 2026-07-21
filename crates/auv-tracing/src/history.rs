@@ -655,8 +655,8 @@ pub enum ReduceError {
   /// A span links to its own identity as remote.
   #[error("span cannot link to itself as remote")]
   SelfRemoteLink,
-  /// A local parent was repeated as the remote link.
-  #[error("span cannot repeat its local parent as a remote link")]
+  /// A span combined mutually exclusive local and remote parentage.
+  #[error("span cannot combine a local parent with a remote link")]
   DuplicateParentLink,
   /// A child start falls after its local parent's finish time or committed end.
   #[error("child span started after its local parent ended")]
@@ -924,7 +924,7 @@ fn validate_span_links(started: &SpanStarted) -> Result<(), ReduceError> {
   if remote_span_id == Some(started.span_id()) {
     return Err(ReduceError::SelfRemoteLink);
   }
-  if started.parent_span_id().is_some() && started.parent_span_id() == remote_span_id {
+  if started.parent_span_id().is_some() && remote_span_id.is_some() {
     return Err(ReduceError::DuplicateParentLink);
   }
   Ok(())

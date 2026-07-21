@@ -33,7 +33,7 @@ impl BoundedSpanExporter {
 impl SpanExporter for BoundedSpanExporter {
   async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
     let mut spans = self.state.spans.lock().map_err(|_| OTelSdkError::InternalFailure("bounded span exporter state poisoned".into()))?;
-    if spans.len() + batch.len() > MAX_EXPORTED_ITEMS {
+    if spans.len().checked_add(batch.len()).is_none_or(|count| count > MAX_EXPORTED_ITEMS) {
       return Err(OTelSdkError::InternalFailure("bounded span exporter capacity exceeded".into()));
     }
     spans.extend(batch);
@@ -114,7 +114,7 @@ impl LogExporter for BoundedLogExporter {
   async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
     let mut logs = self.state.logs.lock().map_err(|_| OTelSdkError::InternalFailure("bounded log exporter state poisoned".into()))?;
     let batch = batch.iter().map(|(record, _)| record.clone()).collect::<Vec<_>>();
-    if logs.len() + batch.len() > MAX_EXPORTED_ITEMS {
+    if logs.len().checked_add(batch.len()).is_none_or(|count| count > MAX_EXPORTED_ITEMS) {
       return Err(OTelSdkError::InternalFailure("bounded log exporter capacity exceeded".into()));
     }
     logs.extend(batch);

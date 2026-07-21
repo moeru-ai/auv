@@ -1,21 +1,21 @@
 mod support;
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use auv_tracing::{
   ArtifactId, ArtifactPurpose, ArtifactUri, AttributeKey, AttributeValue, Attributes, AuthorityId, ByteLength, ContentType, EventId,
-  EventName, EventSchema, RunId, RunRevision, Sha256Digest, SpanId as AuvSpanId, SpanName, SpanSpec, TelemetryItem, TelemetryProjector,
-  TelemetryRoutePolicy, Timestamp, configure, dispatcher,
+  EventName, EventSchema, MemoryRunStore, NewArtifact, RunId, RunRevision, Sha256Digest, SpanId as AuvSpanId, SpanName, SpanSpec,
+  TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, Timestamp, configure, dispatcher,
 };
 use auv_tracing_otel::OtelProjector;
 use futures_executor::block_on;
 use opentelemetry::Value;
 use opentelemetry::logs::AnyValue;
 use opentelemetry::trace::{Event as OtelEvent, SpanId, Status, TraceId};
-use opentelemetry_sdk::logs::SdkLoggerProvider;
-use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider, SpanData};
+use opentelemetry_sdk::logs::{BatchConfigBuilder as LogBatchConfigBuilder, BatchLogProcessor, SdkLoggerProvider};
+use opentelemetry_sdk::trace::{BatchConfigBuilder as SpanBatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider, SpanData};
 use support::{BoundedLogExporter, BoundedSpanExporter, FlushProbeLogProcessor, FlushProbeSpanProcessor, MAX_EXPORTED_ITEMS};
 
 fn providers() -> (SdkTracerProvider, SdkLoggerProvider, BoundedSpanExporter, BoundedLogExporter) {
@@ -280,16 +280,20 @@ fn span_end(authority_id: Option<AuthorityId>, run_id: RunId, span_id: AuvSpanId
   }
 }
 
-fn event(authority_id: Option<AuthorityId>, run_id: RunId, span_id: Option<AuvSpanId>) -> TelemetryItem {
+fn event_at(authority_id: Option<AuthorityId>, run_id: RunId, span_id: Option<AuvSpanId>, seconds: i64) -> TelemetryItem {
   TelemetryItem::Event {
     authority_id,
     run_id,
     span_id,
     event_id: EventId::new(),
     schema: EventSchema::new(EventName::parse("auv.test.state_event").unwrap(), 1).unwrap(),
-    occurred_at: timestamp(12, 0),
+    occurred_at: timestamp(seconds, 0),
     revision: None,
   }
+}
+
+fn event(authority_id: Option<AuthorityId>, run_id: RunId, span_id: Option<AuvSpanId>) -> TelemetryItem {
+  event_at(authority_id, run_id, span_id, 12)
 }
 
 fn artifact(authority_id: AuthorityId, run_id: RunId, span_id: Option<AuvSpanId>) -> TelemetryItem {
@@ -350,6 +354,47 @@ fn application_route_controls_otel_attribute_allowlist() {
   assert_eq!(attributes["producer.allowed"], Value::Bool(true));
   assert!(!attributes.contains_key("producer.hidden"));
   assert!(attributes.values().all(|value| value != &Value::String("must-not-export".into())));
+}
+
+#[test]
+fn artifact_route_filters_attributes_from_public_emission() {
+  let (tracer_provider, logger_provider, _span_exporter, log_exporter) = providers();
+  let projector = Arc::new(OtelProjector::new(tracer_provider, logger_provider));
+  let authority_id = AuthorityId::new();
+  let store = Arc::new(MemoryRunStore::new(authority_id));
+  let allowed = AttributeKey::parse("producer.artifact.allowed").unwrap();
+  let hidden = AttributeKey::parse("producer.artifact.hidden").unwrap();
+  let dispatch = configure()
+    .run_store(store)
+    .project_telemetry(projector, TelemetryRoutePolicy::fixed_fields_only().allow_artifact_attribute(allowed.clone()))
+    .build()
+    .unwrap();
+  let run_id = RunId::new();
+  let root = dispatcher::with_default(&dispatch, || auv_tracing::Context::root(run_id));
+  let attributes = Attributes::try_from_iter([
+    (allowed, AttributeValue::boolean(true)),
+    (hidden, AttributeValue::string("must-not-export").unwrap()),
+  ])
+  .unwrap();
+  let artifact = NewArtifact::new(
+    ArtifactPurpose::parse("auv.test.filtered_artifact").unwrap(),
+    ContentType::parse("application/octet-stream").unwrap(),
+    ByteLength::new(0).unwrap(),
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".parse().unwrap(),
+    attributes,
+    futures_util::io::Cursor::new(Vec::new()),
+  );
+
+  let metadata = root.in_scope(|| block_on(auv_tracing::emit_artifact(artifact))).unwrap().unwrap();
+  block_on(dispatch.flush()).unwrap();
+
+  assert_eq!(metadata.uri().run_id(), run_id);
+  let logs = log_exporter.logs();
+  assert_eq!(logs.len(), 1);
+  let attributes = log_attributes(&logs[0]);
+  assert_eq!(attributes["producer.artifact.allowed"], AnyValue::Boolean(true));
+  assert!(!attributes.contains_key("producer.artifact.hidden"));
+  assert!(attributes.values().all(|value| value != &AnyValue::String("must-not-export".into())));
 }
 
 #[test]
@@ -478,8 +523,8 @@ fn same_auv_span_id_is_valid_in_different_otel_runs() {
 }
 
 #[test]
-fn otel_parent_cannot_end_until_child_ends() {
-  let (tracer_provider, logger_provider, _, _) = providers();
+fn otel_parent_end_before_child_exports_both_spans() {
+  let (tracer_provider, logger_provider, span_exporter, _) = providers();
   let projector = OtelProjector::new(tracer_provider, logger_provider);
   let authority_id = AuthorityId::new();
   let run_id = RunId::new();
@@ -488,12 +533,73 @@ fn otel_parent_cannot_end_until_child_ends() {
 
   project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
   project(&projector, span_start(Some(authority_id), run_id, child_id, Some(parent_id), 11)).unwrap();
+  project(&projector, span_end(Some(authority_id), run_id, parent_id, 12)).unwrap();
+  project(&projector, span_end(Some(authority_id), run_id, child_id, 13)).unwrap();
+  block_on(projector.flush()).unwrap();
+
+  let spans = span_exporter.spans();
+  assert_eq!(spans.len(), 2);
+  let parent = spans.iter().find(|span| span.parent_span_id == SpanId::INVALID).unwrap();
+  let child = spans.iter().find(|span| span.parent_span_id == parent.span_context.span_id()).unwrap();
+  assert_eq!(parent.end_time, system_time(12, 0));
+  assert_eq!(child.end_time, system_time(13, 0));
+}
+
+#[test]
+fn otel_rejects_conflicting_local_and_remote_parentage() {
+  let (tracer_provider, logger_provider, _, _) = providers();
+  let projector = OtelProjector::new(tracer_provider, logger_provider);
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let parent_id = AuvSpanId::new();
+  let child_id = AuvSpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
+  let mut child = span_start(Some(authority_id), run_id, child_id, Some(parent_id), 11);
+  let TelemetryItem::SpanStart { remote_span_id, .. } = &mut child else {
+    unreachable!();
+  };
+  *remote_span_id = Some(AuvSpanId::new());
+
+  assert_eq!(project(&projector, child).unwrap_err().code().as_str(), "auv.telemetry.otel_conflicting_span_relationship");
+}
+
+#[test]
+fn otel_temporal_order_errors_are_stable() {
+  let (tracer_provider, logger_provider, _, _) = providers();
+  let projector = OtelProjector::new(tracer_provider, logger_provider);
+  let authority_id = AuthorityId::new();
+
+  let run_id = RunId::new();
+  let parent_id = AuvSpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
   assert_eq!(
-    project(&projector, span_end(Some(authority_id), run_id, parent_id, 12)).unwrap_err().code().as_str(),
-    "auv.telemetry.otel_span_has_active_children"
+    project(&projector, span_start(Some(authority_id), run_id, AuvSpanId::new(), Some(parent_id), 9)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_child_before_parent"
   );
-  project(&projector, span_end(Some(authority_id), run_id, child_id, 12)).unwrap();
-  project(&projector, span_end(Some(authority_id), run_id, parent_id, 13)).unwrap();
+
+  let run_id = RunId::new();
+  let span_id = AuvSpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+  assert_eq!(
+    project(&projector, event_at(Some(authority_id), run_id, Some(span_id), 9)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_event_before_span_start"
+  );
+  project(&projector, event_at(Some(authority_id), run_id, Some(span_id), 14)).unwrap();
+  project(&projector, event_at(Some(authority_id), run_id, Some(span_id), 12)).unwrap();
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, span_id, 13)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_span_end_before_event"
+  );
+
+  let run_id = RunId::new();
+  let parent_id = AuvSpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
+  project(&projector, span_start(Some(authority_id), run_id, AuvSpanId::new(), Some(parent_id), 14)).unwrap();
+  project(&projector, span_start(Some(authority_id), run_id, AuvSpanId::new(), Some(parent_id), 12)).unwrap();
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, parent_id, 13)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_span_end_before_child_start"
+  );
 }
 
 #[test]
@@ -554,6 +660,70 @@ fn otel_span_event_requires_matching_live_span() {
 }
 
 #[test]
+fn concurrent_direct_span_event_and_end_are_linearized() {
+  const ATTEMPTS: usize = 32;
+
+  let (tracer_provider, logger_provider, span_exporter, _) = providers();
+  let projector = Arc::new(OtelProjector::new(tracer_provider, logger_provider));
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let mut outcomes = Vec::with_capacity(ATTEMPTS);
+
+  for _ in 0..ATTEMPTS {
+    let span_id = AuvSpanId::new();
+    let event_id = EventId::new();
+    project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let event_projector = Arc::clone(&projector);
+    let event_barrier = Arc::clone(&barrier);
+    let end_projector = Arc::clone(&projector);
+    let end_barrier = Arc::clone(&barrier);
+
+    let event_thread = std::thread::spawn(move || {
+      event_barrier.wait();
+      project(
+        &event_projector,
+        TelemetryItem::Event {
+          authority_id: Some(authority_id),
+          run_id,
+          span_id: Some(span_id),
+          event_id,
+          schema: EventSchema::new(EventName::parse("auv.test.concurrent_event").unwrap(), 1).unwrap(),
+          occurred_at: timestamp(11, 0),
+          revision: None,
+        },
+      )
+    });
+    let end_thread = std::thread::spawn(move || {
+      end_barrier.wait();
+      project(&end_projector, span_end(Some(authority_id), run_id, span_id, 12))
+    });
+    barrier.wait();
+
+    let event_result = event_thread.join().unwrap();
+    end_thread.join().unwrap().unwrap();
+    if let Err(error) = &event_result {
+      assert_eq!(error.code().as_str(), "auv.telemetry.otel_ended_event_span");
+    }
+    outcomes.push((span_id, event_id, event_result.is_ok()));
+  }
+  block_on(projector.flush()).unwrap();
+
+  let spans = span_exporter.spans();
+  assert_eq!(spans.len(), ATTEMPTS);
+  for (span_id, event_id, event_succeeded) in outcomes {
+    let span_id = Value::String(span_id.to_string().into());
+    let span = spans.iter().find(|span| span_attributes(span).get("auv.span.id") == Some(&span_id)).unwrap();
+    if event_succeeded {
+      assert_eq!(span.events.len(), 1);
+      assert_eq!(event_attributes(&span.events[0])["auv.event.id"], Value::String(event_id.to_string().into()));
+    } else {
+      assert!(span.events.is_empty());
+    }
+  }
+}
+
+#[test]
 fn flush_delegates_to_both_providers_without_shutdown() {
   let span_exporter = BoundedSpanExporter::default();
   let log_exporter = BoundedLogExporter::default();
@@ -580,7 +750,7 @@ fn bounded_span_exporter_overflow_is_reported_by_flush() {
   let span_exporter = BoundedSpanExporter::default();
   let processor = BatchSpanProcessor::builder(span_exporter.clone())
     .with_batch_config(
-      BatchConfigBuilder::default()
+      SpanBatchConfigBuilder::default()
         .with_max_queue_size(MAX_EXPORTED_ITEMS * 2)
         .with_max_export_batch_size(MAX_EXPORTED_ITEMS * 2)
         .with_scheduled_delay(Duration::from_secs(24 * 60 * 60))
@@ -602,4 +772,31 @@ fn bounded_span_exporter_overflow_is_reported_by_flush() {
   let error = block_on(projector.flush()).unwrap_err();
   assert_eq!(error.code().as_str(), "auv.telemetry.otel_flush_failed");
   assert!(span_exporter.spans().is_empty());
+}
+
+#[test]
+fn bounded_log_exporter_overflow_is_reported_by_flush() {
+  let log_exporter = BoundedLogExporter::default();
+  let processor = BatchLogProcessor::builder(log_exporter.clone())
+    .with_batch_config(
+      LogBatchConfigBuilder::default()
+        .with_max_queue_size(MAX_EXPORTED_ITEMS * 2)
+        .with_max_export_batch_size(MAX_EXPORTED_ITEMS * 2)
+        .with_scheduled_delay(Duration::from_secs(24 * 60 * 60))
+        .build(),
+    )
+    .build();
+  let tracer_provider = SdkTracerProvider::builder().with_batch_exporter(BoundedSpanExporter::default()).build();
+  let logger_provider = SdkLoggerProvider::builder().with_log_processor(processor).build();
+  let projector = OtelProjector::new(tracer_provider, logger_provider);
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+
+  for _ in 0..=MAX_EXPORTED_ITEMS {
+    project(&projector, event(Some(authority_id), run_id, None)).unwrap();
+  }
+
+  let error = block_on(projector.flush()).unwrap_err();
+  assert_eq!(error.code().as_str(), "auv.telemetry.otel_flush_failed");
+  assert!(log_exporter.logs().is_empty());
 }
