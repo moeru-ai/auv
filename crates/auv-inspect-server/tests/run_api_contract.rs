@@ -11,7 +11,7 @@ use auv_tracing::{
   SubscriptionError, Timestamp,
 };
 use auv_tracing_inspect::protocol::RUN_MEDIA_TYPE;
-use axum::body::{Body, to_bytes};
+use axum::body::{Body, Bytes, to_bytes};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Request, StatusCode};
 use futures_util::StreamExt;
@@ -443,6 +443,30 @@ async fn run_json_body_over_32_mib_is_rejected_before_decode_or_store() {
   let response = app.oneshot(post_commit(RUN, Some(KEY_ONE), body)).await.expect("response");
 
   assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+  assert_eq!(probe.calls(), 0);
+}
+
+#[tokio::test]
+async fn failing_run_json_body_is_bad_request_before_store_commit() {
+  let probe = CommitProbe::new();
+  let app = router(Arc::new(probe.clone()));
+  let body = Body::from_stream(futures_util::stream::iter([
+    Ok::<_, std::io::Error>(Bytes::from_static(b"{")),
+    Err(std::io::Error::other("request body failed")),
+  ]));
+  let request = Request::builder()
+    .method("POST")
+    .uri(format!("/v1/runs/{RUN}/commits"))
+    .header(CONTENT_TYPE, RUN_MEDIA_TYPE)
+    .header("Idempotency-Key", KEY_ONE)
+    .body(body)
+    .unwrap();
+
+  let response = app.oneshot(request).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+  assert_eq!(json_body(response).await, json!({"invalid_reference":{"code":"auv.inspect.invalid_reference"}}));
   assert_eq!(probe.calls(), 0);
 }
 

@@ -67,7 +67,7 @@ async fn commit(
   let Path(run_id) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   let key = parse_idempotency_key(&headers)?;
-  let bytes = to_bytes(request.into_body(), MAX_RUN_JSON_BYTES).await.map_err(|_| ApiFailure::payload_too_large())?;
+  let bytes = to_bytes(request.into_body(), MAX_RUN_JSON_BYTES).await.map_err(ApiFailure::from_body)?;
   let body = decode_strict::<RunCommitBody>(&bytes).map_err(|_| ApiFailure::invalid_reference())?;
   let expected = state.store.authority_id();
   if body.authority_id != expected {
@@ -233,6 +233,14 @@ struct ApiFailure {
 }
 
 impl ApiFailure {
+  fn from_body(error: axum::Error) -> Self {
+    if std::error::Error::source(&error).is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) {
+      Self::payload_too_large()
+    } else {
+      Self::invalid_reference()
+    }
+  }
+
   fn not_found() -> Self {
     Self {
       status: StatusCode::NOT_FOUND,

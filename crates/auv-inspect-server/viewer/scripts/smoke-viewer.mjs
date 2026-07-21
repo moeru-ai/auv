@@ -5,6 +5,8 @@ import { Window } from "happy-dom";
 
 const AUTHORITY = "019f8b1e-4b2d-7a00-8f00-0000000000aa";
 const RUN = "019f8b1e-4b2d-7a00-8f00-000000000001";
+const STALE_RUN = "019f8b1e-4b2d-7a00-8f00-000000000008";
+const NEWER_RUN = "019f8b1e-4b2d-7a00-8f00-000000000009";
 const PERMANENT_CASES = new Map([
   ["019f8b1e-4b2d-7a00-8f00-000000000002", { status: 404, body: "not_found", message: "not_found" }],
   ["019f8b1e-4b2d-7a00-8f00-000000000003", {
@@ -44,6 +46,17 @@ const operations = [];
 const sources = [];
 let primarySnapshotRequests = 0;
 const permanentSnapshotRequests = new Map();
+let staleSnapshotJson;
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 function timestamp(seconds) {
   return { unix_seconds: seconds, nanoseconds: 0 };
@@ -59,10 +72,10 @@ function eventOccurred() {
   };
 }
 
-function snapshot(revision, includeEvent) {
+function snapshot(revision, includeEvent, runId = RUN) {
   return {
     authority_id: AUTHORITY,
-    run_id: RUN,
+    run_id: runId,
     through_revision: revision,
     spans: {
       [SPAN]: {
@@ -91,6 +104,19 @@ const fetchStub = async (input) => {
   if (url === `/v1/runs/${RUN}/snapshot`) {
     primarySnapshotRequests += 1;
     return Response.json(snapshot(primarySnapshotRequests === 1 ? 1 : 2, primarySnapshotRequests !== 1), {
+      headers: { "content-type": "application/vnd.auv.run+json; version=1" }
+    });
+  }
+  if (url === `/v1/runs/${STALE_RUN}/snapshot`) {
+    staleSnapshotJson = deferred();
+    return {
+      ok: true,
+      status: 200,
+      json: () => staleSnapshotJson.promise
+    };
+  }
+  if (url === `/v1/runs/${NEWER_RUN}/snapshot`) {
+    return Response.json(snapshot(9, false, NEWER_RUN), {
       headers: { "content-type": "application/vnd.auv.run+json; version=1" }
     });
   }
@@ -221,6 +247,8 @@ assert(
   operations[1] === `stream:/v1/runs/${RUN}/commits/stream?after_revision=1`,
   `stream did not use snapshot cursor: ${operations.join(", ")}`
 );
+assert(document.getElementById("conn-label")?.textContent === "live", "validated snapshot stream was not labeled live");
+assert(document.getElementById("conn-endpoint")?.textContent === "revision 1", "validated snapshot did not display its live revision");
 
 sources[0].emit("commit", JSON.stringify({
   authority_id: AUTHORITY,
@@ -369,6 +397,17 @@ await selectPrimaryRun("transport failure");
   assert(primarySnapshotRequests === requestCount + 1, "transport failure did not reload the snapshot");
 }
 
+await selectPrimaryRun("quiet recovery cycles");
+for (let cycle = 1; cycle <= 7; cycle += 1) {
+  const sourceCount = sources.length;
+  const requestCount = primarySnapshotRequests;
+  sources.at(-1).emitTransportError();
+  await waitFor(() => sources.length === sourceCount + 1, `quiet recovery cycle ${cycle}`, 2500);
+  assert(primarySnapshotRequests === requestCount + 1, `quiet recovery cycle ${cycle} did not reload the snapshot`);
+  assert(document.getElementById("conn-label")?.textContent === "live", `quiet recovery cycle ${cycle} did not return live`);
+  assert(document.getElementById("conn-endpoint")?.textContent === "revision 2", `quiet recovery cycle ${cycle} lost the snapshot revision`);
+}
+
 sources.at(-1).emit("error", JSON.stringify({ integrity: { code: "auv.test.integrity" } }));
 await waitFor(() => document.getElementById("conn-endpoint")?.textContent === "integrity: auv.test.integrity", "typed stream error state");
 const requestsAfterIntegrity = primarySnapshotRequests;
@@ -383,4 +422,16 @@ for (const [runId, scenario] of PERMANENT_CASES) {
   await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, 650));
   assert(permanentSnapshotRequests.get(runId) === 1, `${scenario.status} permanent snapshot error retried`);
 }
+
+input.value = STALE_RUN;
+document.getElementById("load-run").click();
+await waitFor(() => staleSnapshotJson !== undefined, "stale snapshot JSON continuation");
+input.value = NEWER_RUN;
+document.getElementById("load-run").click();
+await waitFor(() => sources.at(-1)?.url.includes(NEWER_RUN), "newer selected run stream");
+const newerSource = sources.at(-1);
+staleSnapshotJson.reject(new Error("stale JSON body failed"));
+await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, 25));
+assert(!newerSource.closed, "stale snapshot JSON failure closed the newer selected run stream");
+assert(sources.at(-1) === newerSource, "stale snapshot JSON failure replaced the newer selected run stream");
 assert(operations.every((operation) => !operation.includes("/write")), `legacy write endpoint used: ${operations.join(", ")}`);

@@ -640,6 +640,7 @@ dependencies = [
  "auv-view",
  "axum",
  "futures-util",
+ "http-body-util",
  "libc",
  "serde",
  "serde_json",
