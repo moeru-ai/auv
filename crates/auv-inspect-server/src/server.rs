@@ -424,7 +424,16 @@ async fn write_updates(
 ) -> Result<Response, InspectHttpError> {
   authorize_write(&headers, &state.write)?;
   let _write_guard = state.write_locks.lock(&run_id).await;
-  let mut snapshot = state.store.read_run(&run_id).ok();
+  // A run that has never been started has no `run.json` yet: that is the only
+  // case where a missing snapshot is legitimate. Once `run.json` exists,
+  // `read_run` must succeed; a failure there is a corrupted or unreadable run
+  // record, not an absent one, and must not be treated as "first update".
+  let run_directory = state.store.run_dir(&run_id).map_err(InspectHttpError::from_store)?;
+  let mut snapshot = if run_directory.join("run.json").exists() {
+    Some(state.store.read_run(&run_id).map_err(InspectHttpError::from_store)?)
+  } else {
+    None
+  };
   let updates = request.updates.into_iter().map(|wire| wire.0).collect::<Vec<_>>();
 
   for update in &updates {
@@ -1295,6 +1304,70 @@ mod tests {
     let snapshot = store.read_run("run_write_incremental").expect("incremental run should persist");
     assert_eq!(snapshot.spans.len(), 1);
     assert_eq!(snapshot.spans[0].span_id.as_str(), "0000000000000002");
+    let _ = fs::remove_dir_all(root);
+  }
+
+  // ROOT CAUSE:
+  //
+  // If a run directory exists but one of its record files (spans.jsonl,
+  // events.jsonl, artifacts.jsonl) is corrupted or unreadable,
+  // `write_updates` used to call `state.store.read_run(&run_id).ok()`,
+  // which discards the corruption error and treats the run exactly like a
+  // run that has never started (`None`). A subsequent incremental update
+  // (anything other than `runStarted`) then failed `apply_update`'s
+  // `missingRunStarted` check and was reported as a 409 `runConflict`
+  // ("missing run started") instead of surfacing the real read failure —
+  // a plausible-looking but wrong diagnosis. A `runStarted` update would
+  // instead have silently reconstructed a fresh snapshot over the
+  // corrupted run directory.
+  //
+  // Before the fix, corruption of an existing run was indistinguishable
+  // from that run never having started.
+  // The fix checks for `run.json` explicitly: a missing `run.json` is the
+  // only legitimate "not started yet" case, so `read_run` failures once
+  // `run.json` exists are propagated as real errors.
+  #[tokio::test]
+  async fn write_updates_surfaces_corrupted_existing_run_instead_of_treating_it_as_unstarted() {
+    let root = temp_dir("inspect-write-corrupted-run");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(store.clone(), Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
+
+    let response = post_write_updates(
+      app.clone(),
+      "run_write_corrupted",
+      serde_json::json!({
+        "updates": [{
+          "type": "runStarted",
+          "runId": "run_write_corrupted",
+          "run": test_run_json("run_write_corrupted")
+        }]
+      }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let run_directory = store.run_dir("run_write_corrupted").expect("run dir should resolve");
+    fs::write(run_directory.join("spans.jsonl"), "not valid jsonl {{{").expect("corruption write should succeed");
+
+    let response = post_write_updates(
+      app,
+      "run_write_corrupted",
+      serde_json::json!({
+        "updates": [{
+          "type": "spanStarted",
+          "runId": "run_write_corrupted",
+          "span": test_span_json("0000000000000002", Some("0000000000000001"), "debug.step", "running")
+        }]
+      }),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json error");
+    let message = value["error"].as_str().expect("error message should be a string");
+    assert!(message.contains("spans.jsonl"), "expected the corrupted file to be named in the error, got: {message}");
+
     let _ = fs::remove_dir_all(root);
   }
 
