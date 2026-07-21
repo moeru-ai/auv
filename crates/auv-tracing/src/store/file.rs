@@ -75,26 +75,23 @@ struct RunIndex {
   snapshot: Option<RunSnapshot>,
   idempotency: HashMap<IdempotencyKey, StoredRequest>,
   verified_bytes: u64,
-  observed_bytes: u64,
   log_identity: Option<LogIdentity>,
-  log_change: Option<LogChange>,
+  verified_digest: [u8; 32],
 }
 
 struct ParsedLog {
   commits: Vec<RunCommit>,
   verified_bytes: u64,
   has_partial_tail: bool,
-  observed_bytes: u64,
   log_identity: Option<LogIdentity>,
-  log_change: Option<LogChange>,
+  verified_digest: [u8; 32],
 }
 
 #[derive(Clone, Copy)]
 struct LogStorage {
   verified_bytes: u64,
-  observed_bytes: u64,
   log_identity: LogIdentity,
-  log_change: LogChange,
+  verified_digest: [u8; 32],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,15 +108,6 @@ struct LogIdentity {
   created: Option<SystemTime>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct LogChange {
-  modified: Option<SystemTime>,
-  #[cfg(unix)]
-  changed_seconds: i64,
-  #[cfg(unix)]
-  changed_nanoseconds: i64,
-}
-
 enum RefreshError {
   Io(io::Error),
   Integrity,
@@ -127,12 +115,14 @@ enum RefreshError {
 
 enum AppendError {
   Unavailable,
+  Integrity,
   Unknown,
 }
 
 struct RunLock {
   file: File,
   directory: Dir,
+  log: Option<File>,
 }
 
 struct TemporaryFile {
@@ -215,8 +205,8 @@ impl FileRunStore {
     let fingerprint = ordinary_fingerprint(&request).map_err(|_| CommitError::Rejected(rejected()))?;
     let run_id = request.run_id();
     let key = request.idempotency_key();
-    let lock = self.inner.acquire_run_lock(run_id).map_err(map_commit_io)?;
-    let index = self.inner.refresh_locked(run_id, &lock, true).map_err(map_commit_refresh)?;
+    let mut lock = self.inner.acquire_run_lock(run_id).map_err(map_commit_io)?;
+    let index = self.inner.refresh_locked(run_id, &mut lock, true).map_err(map_commit_refresh)?;
     if let Some(stored) = index.idempotency.get(&key) {
       return if stored.fingerprint == fingerprint {
         Ok(stored.commit.clone())
@@ -238,11 +228,13 @@ impl FileRunStore {
       .collect();
     let commit =
       RunCommit::new(self.inner.authority_id, run_id, revision, key, now(), facts).map_err(|_| CommitError::Rejected(rejected()))?;
-    let storage = append_commit(&lock, &commit).map_err(|error| match error {
+    let validated = index.validate_commit(commit.clone()).map_err(|_| CommitError::Rejected(rejected()))?;
+    let storage = append_commit(&mut lock, &commit, index.verified_bytes).map_err(|error| match error {
       AppendError::Unavailable => CommitError::Unavailable(unavailable()),
+      AppendError::Integrity => CommitError::Unavailable(integrity()),
       AppendError::Unknown => CommitError::CommitUnknown(unavailable()),
     })?;
-    let next_index = index.with_commit(commit.clone(), storage).map_err(|_| CommitError::Rejected(rejected()))?;
+    let next_index = validated.with_storage(storage);
     self.inner.install_index(run_id, next_index);
     self.inner.wake_run(run_id);
     Ok(commit)
@@ -257,8 +249,8 @@ impl FileRunStore {
     let key = request.idempotency_key();
     let uri = ArtifactUri::from_ids(run_id, request.artifact_id());
     {
-      let lock = self.inner.acquire_run_lock(run_id).map_err(map_artifact_io)?;
-      let index = self.inner.refresh_locked(run_id, &lock, true).map_err(map_artifact_refresh)?;
+      let mut lock = self.inner.acquire_run_lock(run_id).map_err(map_artifact_io)?;
+      let index = self.inner.refresh_locked(run_id, &mut lock, true).map_err(map_artifact_refresh)?;
       if let Some(committed) = precheck_artifact(&index, key, fingerprint, &uri)? {
         return Ok(committed);
       }
@@ -269,8 +261,8 @@ impl FileRunStore {
     file.sync_data().map_err(|_| ArtifactWriteError::Unavailable(unavailable()))?;
     drop(file);
 
-    let lock = self.inner.acquire_run_lock(run_id).map_err(map_artifact_io)?;
-    let index = self.inner.refresh_locked(run_id, &lock, true).map_err(map_artifact_refresh)?;
+    let mut lock = self.inner.acquire_run_lock(run_id).map_err(map_artifact_io)?;
+    let index = self.inner.refresh_locked(run_id, &mut lock, true).map_err(map_artifact_refresh)?;
     if let Some(committed) = precheck_artifact(&index, key, fingerprint, &uri)? {
       return Ok(committed);
     }
@@ -287,14 +279,16 @@ impl FileRunStore {
     let publication = ArtifactPublished::new(request.span_id(), metadata);
     let commit = RunCommit::new(self.inner.authority_id, run_id, revision, key, now(), vec![RunFact::ArtifactPublished(publication)])
       .map_err(|_| ArtifactWriteError::Rejected(rejected()))?;
+    let validated = index.validate_commit(commit.clone()).map_err(|_| ArtifactWriteError::Rejected(rejected()))?;
     let blob_directory = self.inner.blob_directory(request.expected_sha256()).map_err(map_artifact_io)?;
     publish_blob(&mut temporary, &blob_directory, request.expected_sha256(), request.expected_byte_length())?;
 
-    let storage = append_commit(&lock, &commit).map_err(|error| match error {
+    let storage = append_commit(&mut lock, &commit, index.verified_bytes).map_err(|error| match error {
       AppendError::Unavailable => ArtifactWriteError::Unavailable(unavailable()),
+      AppendError::Integrity => ArtifactWriteError::Integrity(integrity()),
       AppendError::Unknown => ArtifactWriteError::PublicationUnknown(unavailable()),
     })?;
-    let next_index = index.with_commit(commit.clone(), storage).map_err(|_| ArtifactWriteError::Rejected(rejected()))?;
+    let next_index = validated.with_storage(storage);
     self.inner.install_index(run_id, next_index);
     self.inner.wake_run(run_id);
     Ok(commit)
@@ -373,7 +367,7 @@ impl RunStore for FileRunStore {
         .map(|publication| publication.metadata().clone())
         .ok_or(ReadError::NotFound)?;
       let directory = self.inner.blob_directory(metadata.sha256()).map_err(|_| ReadError::Integrity(integrity()))?;
-      let file = open_private_file(&directory, metadata.sha256().to_string(), true, false, false, false, false).map_err(|error| {
+      let file = open_private_file(&directory, metadata.sha256().to_string(), true, false, false, false).map_err(|error| {
         if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied) {
           ReadError::Integrity(integrity())
         } else {
@@ -418,36 +412,48 @@ impl FileAuthority {
   fn acquire_run_lock(&self, run_id: RunId) -> io::Result<RunLock> {
     let runs = ensure_directory(&self.root, "runs")?;
     let directory = ensure_directory(&runs, run_id.to_string())?;
-    let file = open_private_file(&directory, "commit.lock", true, true, true, false, false)?;
+    let file = open_private_file(&directory, "commit.lock", true, true, true, false)?;
     FileExt::lock_exclusive(&file)?;
-    Ok(RunLock { file, directory })
+    Ok(RunLock {
+      file,
+      directory,
+      log: None,
+    })
   }
 
   fn refresh(&self, run_id: RunId, repair: bool) -> Result<Arc<RunIndex>, RefreshError> {
-    let lock = self.acquire_run_lock(run_id).map_err(RefreshError::Io)?;
-    self.refresh_locked(run_id, &lock, repair)
+    let mut lock = self.acquire_run_lock(run_id).map_err(RefreshError::Io)?;
+    self.refresh_locked(run_id, &mut lock, repair)
   }
 
-  fn refresh_locked(&self, run_id: RunId, lock: &RunLock, repair: bool) -> Result<Arc<RunIndex>, RefreshError> {
+  fn refresh_locked(&self, run_id: RunId, lock: &mut RunLock, repair: bool) -> Result<Arc<RunIndex>, RefreshError> {
     let cached = self.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&run_id).cloned();
-    let mut parsed = read_log(&lock.directory, cached.as_deref())?;
+    if lock.log.is_none() {
+      match open_private_file(&lock.directory, "commits.log", true, repair, false, false) {
+        Ok(file) => lock.log = Some(file),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(RefreshError::Io(error)),
+      }
+    }
+    let mut parsed = read_log(lock.log.as_mut(), cached.as_deref())?;
     if repair && parsed.has_partial_tail {
-      let file = open_private_file(&lock.directory, "commits.log", false, true, false, false, false).map_err(RefreshError::Io)?;
-      file.set_len(parsed.verified_bytes).map_err(RefreshError::Io)?;
-      file.sync_data().map_err(RefreshError::Io)?;
-      let metadata = file.metadata().map_err(RefreshError::Io)?;
-      parsed.observed_bytes = metadata.len();
+      verify_log_binding(lock)?;
+      let metadata = {
+        let file = lock.log.as_mut().ok_or(RefreshError::Integrity)?;
+        file.set_len(parsed.verified_bytes).map_err(RefreshError::Io)?;
+        file.sync_data().map_err(RefreshError::Io)?;
+        file.metadata().map_err(RefreshError::Io)?
+      };
+      verify_log_binding(lock)?;
       parsed.log_identity = Some(LogIdentity::from_metadata(&metadata));
-      parsed.log_change = Some(LogChange::from_metadata(&metadata));
     }
     let index = Arc::new(RunIndex::build(
       self.authority_id,
       run_id,
       parsed.commits,
       parsed.verified_bytes,
-      parsed.observed_bytes,
       parsed.log_identity,
-      parsed.log_change,
+      parsed.verified_digest,
     )?);
     self.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(run_id, Arc::clone(&index));
     Ok(index)
@@ -551,9 +557,8 @@ impl RunIndex {
     run_id: RunId,
     commits: Vec<RunCommit>,
     verified_bytes: u64,
-    observed_bytes: u64,
     log_identity: Option<LogIdentity>,
-    log_change: Option<LogChange>,
+    verified_digest: [u8; 32],
   ) -> Result<Self, RefreshError> {
     let mut idempotency = HashMap::new();
     for commit in &commits {
@@ -584,9 +589,8 @@ impl RunIndex {
       snapshot,
       idempotency,
       verified_bytes,
-      observed_bytes,
       log_identity,
-      log_change,
+      verified_digest,
     })
   }
 
@@ -594,18 +598,17 @@ impl RunIndex {
     self.snapshot.as_ref().map(RunSnapshot::through_revision).unwrap_or_else(zero_revision)
   }
 
-  fn with_commit(&self, commit: RunCommit, storage: LogStorage) -> Result<Self, RefreshError> {
+  fn validate_commit(&self, commit: RunCommit) -> Result<Self, RefreshError> {
     let mut commits = self.commits.clone();
     commits.push(commit.clone());
-    Self::build(
-      commit.authority_id(),
-      commit.run_id(),
-      commits,
-      storage.verified_bytes,
-      storage.observed_bytes,
-      Some(storage.log_identity),
-      Some(storage.log_change),
-    )
+    Self::build(commit.authority_id(), commit.run_id(), commits, self.verified_bytes, self.log_identity, self.verified_digest)
+  }
+
+  fn with_storage(mut self, storage: LogStorage) -> Self {
+    self.verified_bytes = storage.verified_bytes;
+    self.log_identity = Some(storage.log_identity);
+    self.verified_digest = storage.verified_digest;
+    self
   }
 }
 
@@ -631,26 +634,6 @@ impl LogIdentity {
     {
       Self {
         created: metadata.created().ok(),
-      }
-    }
-  }
-}
-
-impl LogChange {
-  fn from_metadata(metadata: &fs::Metadata) -> Self {
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::MetadataExt;
-      Self {
-        modified: metadata.modified().ok(),
-        changed_seconds: metadata.ctime(),
-        changed_nanoseconds: metadata.ctime_nsec(),
-      }
-    }
-    #[cfg(not(unix))]
-    {
-      Self {
-        modified: metadata.modified().ok(),
       }
     }
   }
@@ -770,22 +753,38 @@ fn prepare_root(root: &Path) -> io::Result<Dir> {
   // Every component at or below the requested root is created and opened through
   // directory capabilities, and each newly durable name is synced in its parent.
   for name in missing.iter().rev() {
-    directory = ensure_directory(&directory, name)?;
+    directory = ensure_durable_directory(&directory, name)?;
   }
   Ok(directory)
 }
 
+fn ensure_durable_directory(parent: &Dir, name: impl AsRef<Path>) -> io::Result<Dir> {
+  let (directory, _) = open_or_create_directory(parent, name.as_ref())?;
+  // A concurrent creator may have won before either our initial open or our
+  // create attempt. Sync unconditionally so every requested root component's
+  // parent entry is durable before `FileRunStore::open` returns.
+  sync_directory(parent)?;
+  Ok(directory)
+}
+
 fn ensure_directory(parent: &Dir, name: impl AsRef<Path>) -> io::Result<Dir> {
-  let name = name.as_ref();
+  let (directory, created) = open_or_create_directory(parent, name.as_ref())?;
+  if created {
+    sync_directory(parent)?;
+  }
+  Ok(directory)
+}
+
+fn open_or_create_directory(parent: &Dir, name: &Path) -> io::Result<(Dir, bool)> {
   match parent.open_dir_nofollow(name) {
-    Ok(directory) => Ok(directory),
+    Ok(directory) => Ok((directory, false)),
     Err(error) if error.kind() == io::ErrorKind::NotFound => {
-      match parent.create_dir(name) {
-        Ok(()) => sync_directory(parent)?,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+      let created = match parent.create_dir(name) {
+        Ok(()) => true,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
         Err(error) => return Err(error),
-      }
-      parent.open_dir_nofollow(name).map_err(|error| private_path_error(parent, name, error))
+      };
+      parent.open_dir_nofollow(name).map(|directory| (directory, created)).map_err(|error| private_path_error(parent, name, error))
     }
     Err(error) => Err(private_path_error(parent, name, error)),
   }
@@ -799,19 +798,10 @@ fn validate_directory_metadata(path: &Path, metadata: &fs::Metadata) -> io::Resu
   }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn open_private_file(
-  directory: &Dir,
-  name: impl AsRef<Path>,
-  read: bool,
-  write: bool,
-  create: bool,
-  create_new: bool,
-  append: bool,
-) -> io::Result<File> {
+fn open_private_file(directory: &Dir, name: impl AsRef<Path>, read: bool, write: bool, create: bool, create_new: bool) -> io::Result<File> {
   let name = name.as_ref();
   let mut options = OpenOptions::new();
-  options.read(read).write(write).create(create).create_new(create_new).append(append);
+  options.read(read).write(write).create(create).create_new(create_new);
   options.follow(FollowSymlinks::No);
   let file = directory.open_with(name, &options).map_err(|error| private_path_error(directory, name, error))?;
   if !file.metadata()?.is_file() {
@@ -832,7 +822,7 @@ fn private_path_error(directory: &Dir, name: &Path, error: io::Error) -> io::Err
 }
 
 fn initialize_authority(root: &Dir, tmp: &Dir) -> io::Result<AuthorityId> {
-  let lock = open_private_file(root, "authority.lock", true, true, true, false, false)?;
+  let lock = open_private_file(root, "authority.lock", true, true, true, false)?;
   FileExt::lock_exclusive(&lock)?;
   let result = match read_authority(root)? {
     Some(authority_id) => Ok(authority_id),
@@ -847,7 +837,7 @@ fn initialize_authority(root: &Dir, tmp: &Dir) -> io::Result<AuthorityId> {
 }
 
 fn read_authority(root: &Dir) -> io::Result<Option<AuthorityId>> {
-  let mut file = match open_private_file(root, "authority.json", true, false, false, false, false) {
+  let mut file = match open_private_file(root, "authority.json", true, false, false, false) {
     Ok(file) => file,
     Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
     Err(error) => return Err(error),
@@ -878,52 +868,53 @@ fn write_authority(root: &Dir, tmp: &Dir, authority_id: AuthorityId) -> io::Resu
   Ok(())
 }
 
-fn read_log(directory: &Dir, cached: Option<&RunIndex>) -> Result<ParsedLog, RefreshError> {
-  let mut file = match open_private_file(directory, "commits.log", true, false, false, false, false) {
-    Ok(file) => file,
-    Err(error) if error.kind() == io::ErrorKind::NotFound => {
-      if cached.is_some_and(|index| index.verified_bytes != 0) {
-        return Err(RefreshError::Integrity);
-      }
-      return Ok(ParsedLog {
-        commits: Vec::new(),
-        verified_bytes: 0,
-        has_partial_tail: false,
-        observed_bytes: 0,
-        log_identity: None,
-        log_change: None,
-      });
+fn read_log(file: Option<&mut File>, cached: Option<&RunIndex>) -> Result<ParsedLog, RefreshError> {
+  let Some(file) = file else {
+    if cached.is_some_and(|index| index.log_identity.is_some()) {
+      return Err(RefreshError::Integrity);
     }
-    Err(error) => return Err(RefreshError::Io(error)),
+    return Ok(ParsedLog {
+      commits: Vec::new(),
+      verified_bytes: 0,
+      has_partial_tail: false,
+      log_identity: None,
+      verified_digest: Sha256::digest([]).into(),
+    });
   };
   let metadata = file.metadata().map_err(RefreshError::Io)?;
   let log_identity = LogIdentity::from_metadata(&metadata);
-  let log_change = LogChange::from_metadata(&metadata);
   let total_bytes = metadata.len();
-  let (mut commits, mut offset) = match cached {
-    Some(index)
-      if index.log_identity == Some(log_identity)
-        && (total_bytes > index.observed_bytes || (total_bytes == index.observed_bytes && index.log_change == Some(log_change))) =>
-    {
-      if total_bytes < index.verified_bytes {
+  let (mut commits, mut offset) = if let Some(index) = cached {
+    match index.log_identity {
+      Some(identity) => {
+        if identity != log_identity || total_bytes < index.verified_bytes {
+          return Err(RefreshError::Integrity);
+        }
+        if hash_prefix(file, index.verified_bytes)? != index.verified_digest {
+          return Err(RefreshError::Integrity);
+        }
+        (index.commits.clone(), index.verified_bytes)
+      }
+      None if index.commits.is_empty() && index.verified_bytes == 0 => (Vec::new(), 0),
+      None => {
         return Err(RefreshError::Integrity);
       }
-      (index.commits.clone(), index.verified_bytes)
     }
-    _ => (Vec::new(), 0),
+  } else {
+    (Vec::new(), 0)
   };
   file.seek(SeekFrom::Start(offset)).map_err(RefreshError::Io)?;
 
   while offset < total_bytes {
     let remaining = total_bytes.checked_sub(offset).ok_or(RefreshError::Integrity)?;
     if remaining < FRAME_HEADER_BYTES as u64 {
+      let verified_digest = hash_prefix(file, offset)?;
       return Ok(ParsedLog {
         commits,
         verified_bytes: offset,
         has_partial_tail: true,
-        observed_bytes: total_bytes,
         log_identity: Some(log_identity),
-        log_change: Some(log_change),
+        verified_digest,
       });
     }
     let mut header = [0_u8; FRAME_HEADER_BYTES];
@@ -944,13 +935,13 @@ fn read_log(directory: &Dir, cached: Option<&RunIndex>) -> Result<ParsedLog, Ref
     }
     let frame_length = FRAME_HEADER_BYTES.checked_add(payload_length).ok_or(RefreshError::Integrity)? as u64;
     if remaining < frame_length {
+      let verified_digest = hash_prefix(file, offset)?;
       return Ok(ParsedLog {
         commits,
         verified_bytes: offset,
         has_partial_tail: true,
-        observed_bytes: total_bytes,
         log_identity: Some(log_identity),
-        log_change: Some(log_change),
+        verified_digest,
       });
     }
     let digest_start = length_start + 8;
@@ -964,17 +955,47 @@ fn read_log(directory: &Dir, cached: Option<&RunIndex>) -> Result<ParsedLog, Ref
     commits.push(commit);
     offset = offset.checked_add(frame_length).ok_or(RefreshError::Integrity)?;
   }
+  let verified_digest = hash_prefix(file, offset)?;
   Ok(ParsedLog {
     commits,
     verified_bytes: offset,
     has_partial_tail: false,
-    observed_bytes: total_bytes,
     log_identity: Some(log_identity),
-    log_change: Some(log_change),
+    verified_digest,
   })
 }
 
-fn append_commit(lock: &RunLock, commit: &RunCommit) -> Result<LogStorage, AppendError> {
+fn hash_prefix(file: &mut File, length: u64) -> Result<[u8; 32], RefreshError> {
+  file.seek(SeekFrom::Start(0)).map_err(RefreshError::Io)?;
+  let mut remaining = length;
+  let mut hasher = Sha256::new();
+  let mut buffer = [0_u8; ARTIFACT_CHUNK_BYTES];
+  while remaining != 0 {
+    let count = usize::try_from(remaining.min(buffer.len() as u64)).expect("bounded digest read fits usize");
+    file.read_exact(&mut buffer[..count]).map_err(RefreshError::Io)?;
+    hasher.update(&buffer[..count]);
+    remaining -= count as u64;
+  }
+  Ok(hasher.finalize().into())
+}
+
+fn verify_log_binding(lock: &RunLock) -> Result<LogIdentity, RefreshError> {
+  let bound = lock.log.as_ref().ok_or(RefreshError::Integrity)?;
+  let bound_identity = LogIdentity::from_metadata(&bound.metadata().map_err(RefreshError::Io)?);
+  let current = open_private_file(&lock.directory, "commits.log", true, false, false, false).map_err(|error| {
+    if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied) {
+      RefreshError::Integrity
+    } else {
+      RefreshError::Io(error)
+    }
+  })?;
+  if LogIdentity::from_metadata(&current.metadata().map_err(RefreshError::Io)?) != bound_identity {
+    return Err(RefreshError::Integrity);
+  }
+  Ok(bound_identity)
+}
+
+fn append_commit(lock: &mut RunLock, commit: &RunCommit, expected_bytes: u64) -> Result<LogStorage, AppendError> {
   let payload = serde_json::to_vec(commit).map_err(|_| AppendError::Unavailable)?;
   if payload.is_empty() || payload.len() > MAX_FRAME_PAYLOAD_BYTES {
     return Err(AppendError::Unavailable);
@@ -985,16 +1006,40 @@ fn append_commit(lock: &RunLock, commit: &RunCommit) -> Result<LogStorage, Appen
   frame.extend_from_slice(&(payload.len() as u64).to_be_bytes());
   frame.extend_from_slice(&Sha256::digest(&payload));
   frame.extend_from_slice(&payload);
-  let mut file = open_private_file(&lock.directory, "commits.log", false, false, true, false, true).map_err(|_| AppendError::Unavailable)?;
+  if lock.log.is_none() {
+    if expected_bytes != 0 {
+      return Err(AppendError::Integrity);
+    }
+    lock.log = Some(open_private_file(&lock.directory, "commits.log", true, true, false, true).map_err(|error| {
+      if error.kind() == io::ErrorKind::AlreadyExists {
+        AppendError::Integrity
+      } else {
+        AppendError::Unavailable
+      }
+    })?);
+  }
+  let log_identity = verify_log_binding(lock).map_err(|error| match error {
+    RefreshError::Io(_) => AppendError::Unavailable,
+    RefreshError::Integrity => AppendError::Integrity,
+  })?;
+  let file = lock.log.as_mut().ok_or(AppendError::Integrity)?;
+  if file.metadata().map_err(|_| AppendError::Unavailable)?.len() != expected_bytes {
+    return Err(AppendError::Integrity);
+  }
+  file.seek(SeekFrom::Start(expected_bytes)).map_err(|_| AppendError::Unavailable)?;
   file.write_all(&frame).map_err(|_| AppendError::Unknown)?;
   file.sync_data().map_err(|_| AppendError::Unknown)?;
   sync_directory(&lock.directory).map_err(|_| AppendError::Unknown)?;
   let metadata = file.metadata().map_err(|_| AppendError::Unknown)?;
+  if verify_log_binding(lock).is_err() {
+    return Err(AppendError::Unknown);
+  }
+  let verified_bytes = metadata.len();
+  let verified_digest = hash_prefix(lock.log.as_mut().ok_or(AppendError::Unknown)?, verified_bytes).map_err(|_| AppendError::Unknown)?;
   Ok(LogStorage {
-    verified_bytes: metadata.len(),
-    observed_bytes: metadata.len(),
-    log_identity: LogIdentity::from_metadata(&metadata),
-    log_change: LogChange::from_metadata(&metadata),
+    verified_bytes,
+    log_identity,
+    verified_digest,
   })
 }
 
@@ -1068,7 +1113,7 @@ fn publish_blob(
 }
 
 fn verify_blob(directory: &Dir, name: &Path, expected_length: ByteLength, expected_sha256: Sha256Digest) -> Result<(), RefreshError> {
-  let mut file = open_private_file(directory, name, true, false, false, false, false).map_err(RefreshError::Io)?;
+  let mut file = open_private_file(directory, name, true, false, false, false).map_err(RefreshError::Io)?;
   if file.metadata().map_err(RefreshError::Io)?.len() != expected_length.get() {
     return Err(RefreshError::Integrity);
   }
@@ -1090,7 +1135,7 @@ fn verify_blob(directory: &Dir, name: &Path, expected_length: ByteLength, expect
 fn create_temporary_file(directory: &Dir, prefix: &str) -> io::Result<(TemporaryFile, File)> {
   for _ in 0..8 {
     let name = PathBuf::from(format!("{prefix}-{}.tmp", uuid::Uuid::now_v7()));
-    match open_private_file(directory, &name, false, true, false, true, false) {
+    match open_private_file(directory, &name, false, true, false, true) {
       Ok(file) => {
         return Ok((
           TemporaryFile {
