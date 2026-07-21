@@ -16,7 +16,19 @@ repository.workspace = true
 name = "auv-media-macos"
 path = "src/bin/auv-media-macos.rs"
 
+[features]
+default = []
+tracing = ["dep:auv-tracing"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 clap = { version = "4.5", features = ["derive"] }
+
+[dependencies.auv-tracing]
+path = "../auv-tracing"
+optional = true
+
+[dev-dependencies]
+auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+futures-executor = "0.3"
