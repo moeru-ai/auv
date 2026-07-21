@@ -19,7 +19,7 @@ use auv_tracing_inspect::protocol::{
 use auv_tracing_inspect::{InspectRunStore, TokioTaskSpawner};
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request as AxumRequest, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
@@ -79,6 +79,34 @@ struct FaultStore {
   read_error: Option<ReadError>,
 }
 
+#[derive(Clone)]
+struct BlockingArtifactStore {
+  inner: MemoryRunStore,
+  entered: Arc<tokio::sync::Barrier>,
+  release: Arc<tokio::sync::Notify>,
+  write_calls: Arc<AtomicUsize>,
+  lookup_calls: Arc<AtomicUsize>,
+}
+
+#[derive(Clone)]
+struct WriteRedirectState {
+  attacker_base_url: Url,
+  draft: ArtifactUploadDraft,
+  draft_calls: Arc<AtomicUsize>,
+}
+
+impl BlockingArtifactStore {
+  fn new() -> Self {
+    Self {
+      inner: MemoryRunStore::new(authority_id()),
+      entered: Arc::new(tokio::sync::Barrier::new(2)),
+      release: Arc::new(tokio::sync::Notify::new()),
+      write_calls: Arc::new(AtomicUsize::new(0)),
+      lookup_calls: Arc::new(AtomicUsize::new(0)),
+    }
+  }
+}
+
 impl FaultStore {
   fn commit(error: CommitError) -> Self {
     Self {
@@ -136,6 +164,51 @@ impl RunStore for FaultStore {
   fn open_artifact(&self, _uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
     let error = self.read_failure();
     Box::pin(async move { Err(error) })
+  }
+}
+
+impl RunStore for BlockingArtifactStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    let inner = self.inner.clone();
+    let entered = self.entered.clone();
+    let release = self.release.clone();
+    let call = self.write_calls.fetch_add(1, Ordering::SeqCst);
+    Box::pin(async move {
+      if call == 0 {
+        entered.wait().await;
+        release.notified().await;
+      }
+      inner.write_artifact(request, body).await
+    })
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.lookup_calls.fetch_add(1, Ordering::SeqCst);
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
   }
 }
 
@@ -217,6 +290,125 @@ async fn connect_fetches_authority_before_store_installation_and_all_core_reads_
   drop(span);
   dispatch.flush().await.expect("flush");
   assert!(store.load_snapshot(emitted_run).await.expect("emitted snapshot").is_some());
+}
+
+#[tokio::test]
+async fn connect_rejects_an_authority_redirect_without_contacting_the_new_origin() {
+  let attacker_hits = Arc::new(AtomicUsize::new(0));
+  let observed_hits = attacker_hits.clone();
+  let attacker = TestServer::start(Router::new().route(
+    "/v1/authority",
+    get(move || {
+      let observed_hits = observed_hits.clone();
+      async move {
+        observed_hits.fetch_add(1, Ordering::SeqCst);
+        run_json(
+          StatusCode::OK,
+          &AuthorityResponse {
+            authority_id: authority_id(),
+          },
+        )
+      }
+    }),
+  ))
+  .await;
+  let redirect_target = attacker.base_url.join("v1/authority").unwrap();
+  let trusted = TestServer::start(Router::new().route(
+    "/v1/authority",
+    get(move || {
+      let redirect_target = redirect_target.clone();
+      async move { redirect_response(redirect_target) }
+    }),
+  ))
+  .await;
+
+  assert!(InspectRunStore::connect(trusted.base_url.clone()).await.is_err());
+  assert_eq!(attacker_hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn write_redirects_never_send_commit_metadata_or_artifact_bytes_to_another_origin() {
+  let captured = Arc::new(Mutex::new(Vec::<(String, usize)>::new()));
+  let observed = captured.clone();
+  let attacker = TestServer::start(Router::new().fallback(move |request: AxumRequest| {
+    let observed = observed.clone();
+    async move {
+      let path = request.uri().path().to_string();
+      let bytes = to_bytes(request.into_body(), 1024 * 1024).await.expect("captured redirect body");
+      observed.lock().expect("redirect capture").push((path, bytes.len()));
+      response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        ARTIFACT_UPLOAD_MEDIA_TYPE,
+        Body::from(serde_json::to_vec(&ArtifactApiError::new(error_code("auv.test.redirected"))).unwrap()),
+      )
+    }
+  }))
+  .await;
+  let content_artifact_id = ArtifactId::new();
+  let content_request = artifact_request(authority_id(), content_artifact_id, IdempotencyKey::new());
+  let state = WriteRedirectState {
+    attacker_base_url: attacker.base_url.clone(),
+    draft: ArtifactUploadDraft::new(
+      ArtifactUploadId::new(),
+      ArtifactUri::from_ids(run_id(), content_artifact_id),
+      Timestamp::new(1_784_620_800, 0).unwrap(),
+    ),
+    draft_calls: Arc::new(AtomicUsize::new(0)),
+  };
+  let trusted = TestServer::start(
+    Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route("/v1/runs/{run_id}/commits", post(redirecting_commit))
+      .route("/v1/runs/{run_id}/artifact-uploads", post(redirecting_draft))
+      .route("/v1/runs/{run_id}/artifact-uploads/{upload_id}/content", put(redirecting_content))
+      .route("/v1/runs/{run_id}/commits/by-idempotency-key/{key}", get(|| async { run_json(StatusCode::NOT_FOUND, &RunApiError::NotFound) }))
+      .with_state(state),
+  )
+  .await;
+  let store = InspectRunStore::connect(trusted.base_url.clone()).await.expect("connect");
+
+  assert!(store.commit(sample_commit_request()).await.is_err());
+  assert!(
+    store
+      .write_artifact(artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new()), Box::pin(Cursor::new(b"abc".to_vec())),)
+      .await
+      .is_err()
+  );
+  assert!(store.write_artifact(content_request, Box::pin(Cursor::new(b"abc".to_vec()))).await.is_err());
+  assert!(captured.lock().expect("redirect capture").is_empty());
+}
+
+async fn redirecting_commit(State(state): State<WriteRedirectState>) -> Response {
+  redirect_response(state.attacker_base_url.join("stolen-commit").unwrap())
+}
+
+async fn redirecting_draft(State(state): State<WriteRedirectState>) -> Response {
+  if state.draft_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+    redirect_response(state.attacker_base_url.join("stolen-draft").unwrap())
+  } else {
+    response(StatusCode::CREATED, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(serde_json::to_vec(&state.draft).unwrap()))
+  }
+}
+
+async fn redirecting_content(State(state): State<WriteRedirectState>) -> Response {
+  redirect_response(state.attacker_base_url.join("stolen-content").unwrap())
+}
+
+fn redirect_response(target: Url) -> Response {
+  let mut response = Response::new(Body::empty());
+  *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+  response.headers_mut().insert("Location", HeaderValue::from_str(target.as_str()).unwrap());
+  response
 }
 
 #[tokio::test]
@@ -344,6 +536,36 @@ async fn binary_write_read_resolution_and_published_replay_preserve_one_shot_bod
 }
 
 #[tokio::test]
+async fn equal_concurrent_upload_is_lookup_only_before_the_replacement_body_is_constructed() {
+  let backing = BlockingArtifactStore::new();
+  let server = TestServer::start_store(Arc::new(backing.clone())).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
+  let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
+  let first_store = store.clone();
+  let first_request = request.clone();
+  let first = tokio::spawn(async move { first_store.write_artifact(first_request, Box::pin(Cursor::new(b"abc".to_vec()))).await });
+  backing.entered.wait().await;
+  let lookups_before_replay = backing.lookup_calls.load(Ordering::SeqCst);
+  let replacement_polls = Arc::new(AtomicUsize::new(0));
+
+  let replay = store
+    .write_artifact(
+      request,
+      Box::pin(FailingPollProbe {
+        polls: replacement_polls.clone(),
+      }),
+    )
+    .await;
+
+  backing.release.notify_one();
+  first.await.expect("first upload task").expect("first upload");
+  assert!(matches!(replay, Err(ArtifactWriteError::PublicationUnknown(_))));
+  assert_eq!(backing.lookup_calls.load(Ordering::SeqCst), lookups_before_replay + 1);
+  assert_eq!(backing.write_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(replacement_polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn overlong_one_shot_upload_reaches_the_store_and_publishes_no_fact() {
   let backing = MemoryRunStore::new(authority_id());
   let server = TestServer::start_store(Arc::new(backing.clone())).await;
@@ -437,7 +659,7 @@ async fn unknown_publication_transport_outcome_uses_exactly_one_lookup() {
 }
 
 #[tokio::test]
-async fn unresolved_or_mismatched_publication_lookup_is_publication_unknown() {
+async fn artifact_recovery_distinguishes_missing_and_mismatching_publication_lookups() {
   for lookup_mode in [1, 2] {
     let artifact_id = ArtifactId::new();
     let key = IdempotencyKey::new();
@@ -474,10 +696,12 @@ async fn unresolved_or_mismatched_publication_lookup_is_publication_unknown() {
     let server = TestServer::start(app).await;
     let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
 
-    assert!(matches!(
-      store.write_artifact(request, Box::pin(Cursor::new(b"abc".to_vec()))).await,
-      Err(ArtifactWriteError::PublicationUnknown(_))
-    ));
+    let error = store.write_artifact(request, Box::pin(Cursor::new(b"abc".to_vec()))).await.unwrap_err();
+    if lookup_mode == 1 {
+      assert!(matches!(error, ArtifactWriteError::PublicationUnknown(_)));
+    } else {
+      assert_eq!(error, ArtifactWriteError::IdempotencyMismatch);
+    }
     assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 1);
   }
 }
@@ -1259,7 +1483,7 @@ async fn ordinary_commit_response_loss_uses_one_lookup_without_reposting() {
 }
 
 #[tokio::test]
-async fn ordinary_commit_mismatched_recovery_is_commit_unknown_without_reposting() {
+async fn ordinary_commit_mismatched_recovery_is_idempotency_mismatch_without_reposting() {
   let state = LostCommitState {
     store: MemoryRunStore::new(authority_id()),
     post_calls: Arc::new(AtomicUsize::new(0)),
@@ -1284,7 +1508,7 @@ async fn ordinary_commit_mismatched_recovery_is_commit_unknown_without_reposting
   let server = TestServer::start(app).await;
   let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
 
-  assert!(matches!(store.commit(sample_commit_request()).await, Err(CommitError::CommitUnknown(_))));
+  assert_eq!(store.commit(sample_commit_request()).await.unwrap_err(), CommitError::IdempotencyMismatch);
   assert_eq!(state.post_calls.load(Ordering::SeqCst), 1);
   assert_eq!(state.lookup_calls.load(Ordering::SeqCst), 1);
 }
@@ -1350,7 +1574,23 @@ async fn integrity_commit(State(state): State<LostCommitState>, headers: HeaderM
 async fn lost_commit_lookup(State(state): State<LostCommitState>) -> Response {
   state.lookup_calls.fetch_add(1, Ordering::SeqCst);
   if state.mismatched_lookup {
-    return run_json(StatusCode::OK, &sample_commit(1, IdempotencyKey::new()));
+    let mismatched = RunCommit::new(
+      authority_id(),
+      run_id(),
+      RunRevision::new(1).unwrap(),
+      KEY.parse().unwrap(),
+      Timestamp::new(1, 0).unwrap(),
+      vec![RunFact::SpanStarted(SpanStarted::new(
+        SPAN.parse().unwrap(),
+        None,
+        None,
+        SpanName::parse("auv.test.mismatch").unwrap(),
+        Timestamp::new(1, 0).unwrap(),
+        Attributes::empty(),
+      ))],
+    )
+    .unwrap();
+    return run_json(StatusCode::OK, &mismatched);
   }
   let commit = state.store.lookup_commit(run_id(), KEY.parse().unwrap()).await.unwrap().unwrap();
   run_json(StatusCode::OK, &commit)

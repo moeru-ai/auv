@@ -73,7 +73,7 @@ async fn commit(
   }
   let request =
     RunCommitRequest::new(body.authority_id, run_id, key, body.mutations.into_vec()).map_err(|_| ApiFailure::invalid_reference())?;
-  let _mutation = state.mutation_gate.lock().await;
+  let _mutation = state.mutation_arbitrator.acquire(run_id).await;
   if state.artifacts.reserves(run_id, key) {
     return Err(ApiFailure::from_commit(CommitError::IdempotencyMismatch));
   }
@@ -94,7 +94,8 @@ async fn resolve_commit_unknown(state: &InspectServerState, request: &RunCommitR
   // one-lookup recovery completes; do not infer rejection or replay the POST.
   match state.store.lookup_commit(request.run_id(), request.idempotency_key()).await {
     Ok(Some(commit)) if commit_matches_request(&commit, request) => Ok(run_json(StatusCode::OK, &commit)),
-    _ => Err(ApiFailure::unavailable(code)),
+    Ok(Some(_)) => Err(ApiFailure::from_commit(CommitError::IdempotencyMismatch)),
+    Ok(None) | Err(_) => Err(ApiFailure::unavailable(code)),
   }
 }
 

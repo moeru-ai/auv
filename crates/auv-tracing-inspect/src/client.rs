@@ -23,6 +23,8 @@ use crate::protocol::{
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = MAX_PROTOCOL_JSON_BYTES + 64 * 1024;
+const MAX_SSE_BUFFER_BYTES: usize = MAX_SSE_FRAME_BYTES + 4;
+const SSE_INGEST_CHUNK_BYTES: usize = 64 * 1024;
 
 /// A complete remote implementation of the canonical [`RunStore`] authority port.
 #[derive(Clone)]
@@ -36,7 +38,7 @@ impl InspectRunStore {
   /// Fetches and caches the remote authority identity before returning a usable store.
   pub async fn connect(base_url: Url) -> Result<Self, ConnectError> {
     let base_url = normalize_base_url(base_url)?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().map_err(ConnectError::transport)?;
     let response =
       client.get(endpoint(&base_url, "v1/authority")).header(ACCEPT, RUN_MEDIA_TYPE).send().await.map_err(ConnectError::transport)?;
     if response.status() != StatusCode::OK || !has_media_type(&response, RUN_MEDIA_TYPE) {
@@ -98,14 +100,16 @@ impl InspectRunStore {
   async fn recover_commit(&self, request: &RunCommitRequest, unknown: ErrorCode) -> Result<CommitResult, CommitError> {
     match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
       Ok(Some(commit)) if ordinary_commit_matches(&commit, request) => Ok(CommitResult::Replayed(commit)),
-      Ok(Some(_)) | Ok(None) | Err(_) => Err(CommitError::CommitUnknown(unknown)),
+      Ok(Some(_)) => Err(CommitError::IdempotencyMismatch),
+      Ok(None) | Err(_) => Err(CommitError::CommitUnknown(unknown)),
     }
   }
 
   async fn recover_artifact(&self, request: &StoreArtifactRequest, unknown: ErrorCode) -> Result<CommitResult, ArtifactWriteError> {
     match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
       Ok(Some(commit)) if artifact_commit_matches(&commit, request) => Ok(CommitResult::Replayed(commit)),
-      Ok(Some(_)) | Ok(None) | Err(_) => Err(ArtifactWriteError::PublicationUnknown(unknown)),
+      Ok(Some(_)) => Err(ArtifactWriteError::IdempotencyMismatch),
+      Ok(None) | Err(_) => Err(ArtifactWriteError::PublicationUnknown(unknown)),
     }
   }
 }
@@ -199,7 +203,11 @@ impl RunStore for InspectRunStore {
         .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_transport_unavailable")))?;
       let replayed_draft = draft_response.status() == StatusCode::OK;
       if !matches!(draft_response.status(), StatusCode::CREATED | StatusCode::OK) {
-        return Err(write_artifact_failure(draft_response).await.unwrap_or_else(ArtifactWriteError::Unavailable));
+        return match write_artifact_failure(draft_response).await {
+          Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
+          Ok(error) => Err(error),
+          Err(code) => Err(ArtifactWriteError::Unavailable(code)),
+        };
       }
       if !has_media_type(&draft_response, ARTIFACT_UPLOAD_MEDIA_TYPE) {
         return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_media_type_invalid")));
@@ -354,6 +362,7 @@ impl RunStore for InspectRunStore {
         accepted: after,
         response: Some(response),
         buffer: Vec::new(),
+        pending_chunk: None,
         frame_scan_start: 0,
         reconnect_attempt: 0,
         closed: false,
@@ -461,6 +470,7 @@ struct SseState {
   accepted: RunRevision,
   response: Option<Response>,
   buffer: Vec<u8>,
+  pending_chunk: Option<Bytes>,
   frame_scan_start: usize,
   reconnect_attempt: u32,
   closed: bool,
@@ -475,6 +485,7 @@ async fn next_sse_item(mut state: SseState) -> Option<(Result<RunCommit, Subscri
       Ok(frame) => frame,
       Err(()) => {
         state.closed = true;
+        state.pending_chunk = None;
         return Some((Err(SubscriptionError::Store(ReadError::Integrity(code("auv.inspect.sse_event_too_large")))), state));
       }
     };
@@ -506,6 +517,9 @@ async fn next_sse_item(mut state: SseState) -> Option<(Result<RunCommit, Subscri
         }
       }
     }
+    if append_pending_sse_chunk(&mut state.buffer, &mut state.pending_chunk) {
+      continue;
+    }
     if state.response.is_none() {
       tokio::time::sleep(sse_reconnect_delay(state.reconnect_attempt)).await;
       state.reconnect_attempt = state.reconnect_attempt.saturating_add(1);
@@ -532,14 +546,36 @@ async fn next_sse_item(mut state: SseState) -> Option<(Result<RunCommit, Subscri
     }
     let response = state.response.as_mut().expect("SSE response is installed");
     match response.chunk().await {
-      Ok(Some(bytes)) => state.buffer.extend_from_slice(&bytes),
+      Ok(Some(bytes)) => state.pending_chunk = Some(bytes),
       Ok(None) | Err(_) => {
         state.response = None;
         state.buffer.clear();
+        state.pending_chunk = None;
         state.frame_scan_start = 0;
       }
     }
   }
+}
+
+fn append_pending_sse_chunk(buffer: &mut Vec<u8>, pending_chunk: &mut Option<Bytes>) -> bool {
+  let Some(chunk) = pending_chunk.as_mut() else {
+    return false;
+  };
+  let count = chunk.len().min(SSE_INGEST_CHUNK_BYTES).min(MAX_SSE_BUFFER_BYTES.saturating_sub(buffer.len()));
+  if count == 0 {
+    return false;
+  }
+  let required = buffer.len() + count;
+  if buffer.capacity() < required {
+    let target = required.next_power_of_two().min(MAX_SSE_BUFFER_BYTES);
+    buffer.reserve_exact(target - buffer.len());
+  }
+  let prefix = chunk.split_to(count);
+  buffer.extend_from_slice(&prefix);
+  if chunk.is_empty() {
+    *pending_chunk = None;
+  }
+  true
 }
 
 enum SseFrameResult {
@@ -914,5 +950,50 @@ impl ConnectError {
 
   fn transport(error: reqwest::Error) -> Self {
     Self::new(error.to_string())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[tokio::test]
+  async fn oversized_single_transport_chunk_never_enters_the_frame_buffer_whole() {
+    let chunk = Bytes::from(vec![b'x'; MAX_SSE_FRAME_BYTES + 1024 * 1024]);
+    let response = axum::http::Response::builder().body(reqwest::Body::from(chunk)).unwrap().into();
+    let state = SseState {
+      store: InspectRunStore {
+        authority_id: "019f8b1e-4b2d-7a00-8f00-0000000000aa".parse().unwrap(),
+        base_url: Url::parse("http://127.0.0.1/").unwrap(),
+        client: reqwest::Client::new(),
+      },
+      run_id: "019f8b1e-4b2d-7a00-8f00-000000000001".parse().unwrap(),
+      accepted: RunRevision::new(0).unwrap(),
+      response: Some(response),
+      buffer: Vec::new(),
+      pending_chunk: None,
+      frame_scan_start: 0,
+      reconnect_attempt: 0,
+      closed: false,
+    };
+
+    let (item, state) = next_sse_item(state).await.expect("terminal size error");
+
+    assert!(matches!(item, Err(SubscriptionError::Store(ReadError::Integrity(_)))));
+    assert!(state.buffer.len() <= MAX_SSE_BUFFER_BYTES, "retained {} bytes", state.buffer.len());
+    assert!(state.buffer.capacity() <= MAX_SSE_BUFFER_BYTES, "allocated {} bytes", state.buffer.capacity());
+  }
+
+  #[test]
+  fn bounded_chunk_ingestion_preserves_multiple_complete_frames() {
+    let mut buffer = Vec::new();
+    let mut pending = Some(Bytes::from_static(b"event: first\n\nevent: second\n\n"));
+    let mut scan_start = 0;
+
+    assert!(append_pending_sse_chunk(&mut buffer, &mut pending));
+    assert_eq!(take_sse_frame(&mut buffer, &mut scan_start).unwrap().unwrap(), b"event: first");
+    assert_eq!(take_sse_frame(&mut buffer, &mut scan_start).unwrap().unwrap(), b"event: second");
+    assert!(pending.is_none());
+    assert!(buffer.is_empty());
   }
 }

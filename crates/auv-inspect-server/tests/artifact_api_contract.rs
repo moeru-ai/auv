@@ -285,7 +285,8 @@ async fn draft_creation_replays_equal_metadata_and_rejects_both_identity_conflic
 
 #[tokio::test(start_paused = true)]
 async fn unpublished_draft_expires_after_exactly_twenty_four_hours() {
-  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let store = MemoryRunStore::new(authority_id());
+  let app = router(Arc::new(store.clone()));
   let draft = create_draft(&app, ARTIFACT, KEY).await;
 
   tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60)).await;
@@ -294,6 +295,51 @@ async fn unpublished_draft_expires_after_exactly_twenty_four_hours() {
 
   assert_eq!(response.status(), StatusCode::GONE);
   assert_eq!(polls.load(Ordering::SeqCst), 0, "expired upload must reject before polling content");
+  assert!(store.lookup_commit(RUN.parse().unwrap(), KEY.parse().unwrap()).await.unwrap().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn deadline_during_store_publication_is_indeterminate_and_lookup_only() {
+  let store = ProbeStore::new();
+  let entered = Arc::new(tokio::sync::Barrier::new(2));
+  let release = Arc::new(tokio::sync::Barrier::new(2));
+  store.gate_after_next_write(entered.clone(), release.clone());
+  let app = router(Arc::new(store.clone()));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  let upload = tokio::spawn(app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))));
+  entered.wait().await;
+
+  tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60)).await;
+  tokio::task::yield_now().await;
+  if !upload.is_finished() {
+    release.wait().await;
+  }
+  let response = upload.await.expect("upload task").expect("upload response");
+  assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response_json(response).await, json!({"error":"auv.inspect.publication_unknown"}));
+
+  let lookups_before = store.lookup_calls.load(Ordering::SeqCst);
+  let polls = Arc::new(AtomicUsize::new(0));
+  let replay = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  assert_eq!(replay.status(), StatusCode::OK);
+  assert_eq!(store.lookup_calls.load(Ordering::SeqCst), lookups_before + 1);
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn expired_upload_tombstones_are_pruned_after_a_finite_retention_window() {
+  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60)).await;
+  let expired = app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::empty())).await.unwrap();
+  assert_eq!(expired.status(), StatusCode::GONE);
+
+  tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60)).await;
+  let polls = Arc::new(AtomicUsize::new(0));
+  let forgotten = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()))).await.unwrap();
+  assert_eq!(forgotten.status(), StatusCode::NOT_FOUND);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -399,9 +445,8 @@ async fn unresolved_publication_uses_stable_uncertainty_code_instead_of_confirme
 
   let repeated =
     app.clone().oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256))).await.unwrap();
-  assert_eq!(repeated.status(), StatusCode::OK);
-  let repeated: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(repeated).await).unwrap();
-  assert_eq!(repeated, draft);
+  assert_eq!(repeated.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response_json(repeated).await, json!({"error": "auv.inspect.publication_unknown"}));
 
   let polls = Arc::new(AtomicUsize::new(0));
   let replay = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()))).await.unwrap();
@@ -409,6 +454,43 @@ async fn unresolved_publication_uses_stable_uncertainty_code_instead_of_confirme
   assert_eq!(response_json(replay).await, json!({"error": "auv.inspect.publication_unknown"}));
   assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
   assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn immediate_publication_unknown_lookup_mismatch_is_a_conflict() {
+  let store = ProbeStore::new();
+  store.report_unresolved_publication(true);
+  let app = router(Arc::new(store.clone()));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  store
+    .inner
+    .commit(
+      RunCommitRequest::new(
+        authority_id(),
+        RUN.parse().unwrap(),
+        KEY.parse().unwrap(),
+        vec![auv_tracing::RunMutation::StartSpan(
+          auv_tracing::SpanStarted::new(
+            SPAN.parse().unwrap(),
+            None,
+            None,
+            auv_tracing::SpanName::parse("auv.test.mismatch").unwrap(),
+            auv_tracing::Timestamp::new(1, 0).unwrap(),
+            auv_tracing::Attributes::empty(),
+          ),
+        )],
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  let lookups_before = store.lookup_calls.load(Ordering::SeqCst);
+
+  let response = app.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::CONFLICT);
+  assert_eq!(response_json(response).await, json!({"error": "auv.inspect.idempotency_or_artifact_conflict"}));
+  assert_eq!(store.lookup_calls.load(Ordering::SeqCst) - lookups_before, 1);
 }
 
 #[tokio::test]
@@ -635,7 +717,7 @@ async fn simultaneous_content_puts_poll_exactly_one_body() {
 }
 
 #[tokio::test]
-async fn equal_draft_post_during_content_upload_replays_the_same_draft() {
+async fn equal_draft_post_during_content_upload_is_publication_unknown() {
   let store = ProbeStore::new();
   let entered = Arc::new(tokio::sync::Barrier::new(2));
   let release = Arc::new(tokio::sync::Barrier::new(2));
@@ -647,9 +729,8 @@ async fn equal_draft_post_during_content_upload_replays_the_same_draft() {
   entered.wait().await;
 
   let replay = app.clone().oneshot(post_draft(RUN, KEY, body)).await.expect("draft replay");
-  assert_eq!(replay.status(), StatusCode::OK);
-  let replay: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(replay).await).expect("replayed draft");
-  assert_eq!(replay, draft);
+  assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response_json(replay).await, json!({"error":"auv.inspect.publication_unknown"}));
 
   release.wait().await;
   assert_eq!(upload.await.expect("upload task").expect("upload response").status(), StatusCode::CREATED);
@@ -667,6 +748,15 @@ async fn cancellation_before_body_completion_restores_pending() {
   entered.wait().await;
   upload.abort();
   assert!(upload.await.expect_err("upload must be cancelled").is_cancelled());
+
+  let replay = app
+    .clone()
+    .oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256)))
+    .await
+    .expect("pending draft replay");
+  assert_eq!(replay.status(), StatusCode::OK);
+  let replay: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(replay).await).unwrap();
+  assert_eq!(replay, draft);
 
   let polls = Arc::new(AtomicUsize::new(0));
   let retried = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()))).await.expect("retried upload");
@@ -687,6 +777,14 @@ async fn cancellation_after_body_completion_becomes_lookup_only_indeterminate() 
   entered.wait().await;
   upload.abort();
   assert!(upload.await.expect_err("upload must be cancelled").is_cancelled());
+
+  let replay = app
+    .clone()
+    .oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256)))
+    .await
+    .expect("indeterminate draft replay");
+  assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response_json(replay).await, json!({"error":"auv.inspect.publication_unknown"}));
 
   let polls = Arc::new(AtomicUsize::new(0));
   let retried = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
@@ -785,7 +883,7 @@ async fn failed_integrity_leaves_the_same_draft_reusable() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn draft_replay_does_not_extend_expiry_and_published_identity_never_expires() {
+async fn draft_replay_does_not_extend_expiry_and_published_state_rehydrates_from_store_truth() {
   let app = router(Arc::new(MemoryRunStore::new(authority_id())));
   let body = draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256);
   let created = app.clone().oneshot(post_draft(RUN, KEY, body.clone())).await.unwrap();
@@ -803,9 +901,22 @@ async fn draft_replay_does_not_extend_expiry_and_published_identity_never_expire
   let published_draft = create_draft(&app, OTHER_ARTIFACT, OTHER_KEY).await;
   let published = app.clone().oneshot(put_content(RUN, published_draft.upload_id(), Body::from("abc"))).await.unwrap();
   assert_eq!(published.status(), StatusCode::CREATED);
-  tokio::time::advance(std::time::Duration::from_secs(48 * 60 * 60)).await;
+  tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60)).await;
   let polls = Arc::new(AtomicUsize::new(0));
-  let replayed = app.oneshot(put_content(RUN, published_draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  let forgotten =
+    app.clone().oneshot(put_content(RUN, published_draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  assert_eq!(forgotten.status(), StatusCode::NOT_FOUND);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+
+  let replayed = app
+    .clone()
+    .oneshot(post_draft(RUN, OTHER_KEY, draft_json(AUTHORITY, OTHER_ARTIFACT, None, "display.capture", 3, ABC_SHA256)))
+    .await
+    .unwrap();
+  assert_eq!(replayed.status(), StatusCode::OK);
+  let replayed: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(replayed).await).unwrap();
+  let polls = Arc::new(AtomicUsize::new(0));
+  let replayed = app.oneshot(put_content(RUN, replayed.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
   assert_eq!(replayed.status(), StatusCode::OK);
   assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
