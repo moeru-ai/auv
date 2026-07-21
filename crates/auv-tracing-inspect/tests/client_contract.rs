@@ -364,11 +364,12 @@ async fn write_redirects_never_send_commit_metadata_or_artifact_bytes_to_another
   }))
   .await;
   let content_artifact_id = ArtifactId::new();
-  let content_request = artifact_request(authority_id(), content_artifact_id, IdempotencyKey::new());
+  let content_key = IdempotencyKey::new();
+  let content_request = artifact_request(authority_id(), content_artifact_id, content_key);
   let state = WriteRedirectState {
     attacker_base_url: attacker.base_url.clone(),
     draft: ArtifactUploadDraft::new(
-      ArtifactUploadId::new(),
+      ArtifactUploadId::from_idempotency_key(content_key),
       ArtifactUri::from_ids(run_id(), content_artifact_id),
       Timestamp::new(1_784_620_800, 0).unwrap(),
     ),
@@ -473,19 +474,28 @@ async fn client_reconstructs_every_typed_http_error_class() {
 #[tokio::test]
 async fn client_reconstructs_every_artifact_write_error_class() {
   let cases = [
-    ArtifactWriteError::AuthorityMismatch {
-      expected: authority_id(),
-      received: authority_id(),
-    },
-    ArtifactWriteError::IdempotencyMismatch,
-    ArtifactWriteError::Rejected(error_code("auv.test.rejected")),
-    ArtifactWriteError::Integrity(error_code("auv.test.integrity")),
-    ArtifactWriteError::Unavailable(error_code("auv.test.unavailable")),
-    ArtifactWriteError::PublicationUnknown(error_code("auv.inspect.publication_unknown")),
+    (
+      ArtifactWriteError::AuthorityMismatch {
+        expected: OTHER_AUTHORITY.parse().unwrap(),
+        received: authority_id(),
+      },
+      ArtifactWriteError::Rejected(error_code("auv.inspect.authority_mismatch")),
+    ),
+    (ArtifactWriteError::IdempotencyMismatch, ArtifactWriteError::IdempotencyMismatch),
+    (ArtifactWriteError::Rejected(error_code("auv.test.rejected")), ArtifactWriteError::Rejected(error_code("auv.test.rejected"))),
+    (ArtifactWriteError::Integrity(error_code("auv.test.integrity")), ArtifactWriteError::Integrity(error_code("auv.test.integrity"))),
+    (
+      ArtifactWriteError::Unavailable(error_code("auv.test.unavailable")),
+      ArtifactWriteError::Unavailable(error_code("auv.test.unavailable")),
+    ),
+    (
+      ArtifactWriteError::PublicationUnknown(error_code("auv.inspect.publication_unknown")),
+      ArtifactWriteError::PublicationUnknown(error_code("auv.inspect.publication_unknown")),
+    ),
   ];
 
-  for expected in cases {
-    let server = TestServer::start(router(Arc::new(FaultStore::artifact(expected.clone())))).await;
+  for (server_error, expected) in cases {
+    let server = TestServer::start(router(Arc::new(FaultStore::artifact(server_error)))).await;
     let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect artifact error store");
     let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
 
@@ -679,7 +689,8 @@ struct LostDraftResponseProbe {
 async fn lost_draft_response_replays_the_post_with_the_same_admission() {
   let probe = LostDraftResponseProbe::default();
   let artifact_id = ArtifactId::new();
-  let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+  let key = IdempotencyKey::new();
+  let request = artifact_request(authority_id(), artifact_id, key);
   let published = MemoryRunStore::new(authority_id())
     .write_artifact(request.clone(), Box::pin(Cursor::new(b"abc".to_vec())))
     .await
@@ -687,7 +698,7 @@ async fn lost_draft_response_replays_the_post_with_the_same_admission() {
     .commit()
     .clone();
   let draft = ArtifactUploadDraft::new(
-    ArtifactUploadId::new(),
+    ArtifactUploadId::from_idempotency_key(key),
     ArtifactUri::from_ids(run_id(), artifact_id),
     Timestamp::new(1_784_620_800, 0).unwrap(),
   );
@@ -908,7 +919,7 @@ async fn unknown_publication_transport_outcome_uses_exactly_one_lookup() {
   let key = IdempotencyKey::new();
   let request = artifact_request(authority_id(), artifact_id, key);
   let draft: ArtifactUploadDraft = serde_json::from_value(serde_json::json!({
-    "upload_id": "019f8b1e-4b2d-7a00-8f00-000000000005",
+    "upload_id": key.to_string(),
     "artifact_uri": ArtifactUri::from_ids(run_id(), artifact_id),
     "expires_at": {"unix_seconds": 1_784_620_800_i64, "nanoseconds": 0},
   }))
@@ -952,7 +963,7 @@ async fn artifact_recovery_distinguishes_missing_and_mismatching_publication_loo
     let key = IdempotencyKey::new();
     let request = artifact_request(authority_id(), artifact_id, key);
     let draft: ArtifactUploadDraft = serde_json::from_value(serde_json::json!({
-      "upload_id": ArtifactId::new().to_string(),
+      "upload_id": key.to_string(),
       "artifact_uri": ArtifactUri::from_ids(run_id(), artifact_id),
       "expires_at": {"unix_seconds": 1_784_620_800_i64, "nanoseconds": 0},
     }))
@@ -999,7 +1010,7 @@ async fn server_reported_publication_unknown_triggers_one_client_lookup() {
   let key = IdempotencyKey::new();
   let request = artifact_request(authority_id(), artifact_id, key);
   let draft: ArtifactUploadDraft = serde_json::from_value(serde_json::json!({
-    "upload_id": ArtifactId::new().to_string(),
+    "upload_id": key.to_string(),
     "artifact_uri": ArtifactUri::from_ids(run_id(), artifact_id),
     "expires_at": {"unix_seconds": 1_784_620_800_i64, "nanoseconds": 0},
   }))
@@ -1041,11 +1052,12 @@ async fn server_reported_publication_unknown_triggers_one_client_lookup() {
 async fn replayed_draft_preflight_mismatch_or_lookup_error_never_polls_the_body() {
   for (lookup_mode, expect_mismatch) in [(2, true), (4, false)] {
     let artifact_id = ArtifactId::new();
-    let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+    let key = IdempotencyKey::new();
+    let request = artifact_request(authority_id(), artifact_id, key);
     let state = LostResponseState {
       store: MemoryRunStore::new(authority_id()),
       draft: ArtifactUploadDraft::new(
-        ArtifactUploadId::new(),
+        ArtifactUploadId::from_idempotency_key(key),
         ArtifactUri::from_ids(run_id(), artifact_id),
         Timestamp::new(1_784_620_800, 0).unwrap(),
       ),
@@ -1097,7 +1109,7 @@ async fn replayed_draft_preflight_without_a_commit_continues_the_one_shot_upload
   let state = LostResponseState {
     store: MemoryRunStore::new(authority_id()),
     draft: ArtifactUploadDraft::new(
-      ArtifactUploadId::new(),
+      ArtifactUploadId::from_idempotency_key(key),
       ArtifactUri::from_ids(run_id(), artifact_id),
       Timestamp::new(1_784_620_800, 0).unwrap(),
     ),
@@ -1143,6 +1155,7 @@ async fn replayed_draft_preflight_without_a_commit_continues_the_one_shot_upload
 
 #[derive(Clone, Copy)]
 enum DraftAdmissionFault {
+  Valid,
   Duplicate,
   Mismatch,
   Missing,
@@ -1170,10 +1183,11 @@ async fn duplicate_or_mismatched_draft_admission_responses_never_poll_the_body()
     DraftAdmissionFault::MalformedBody,
   ] {
     let artifact_id = ArtifactId::new();
-    let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+    let key = IdempotencyKey::new();
+    let request = artifact_request(authority_id(), artifact_id, key);
     let state = DraftAdmissionFaultState {
       draft: ArtifactUploadDraft::new(
-        ArtifactUploadId::new(),
+        ArtifactUploadId::from_idempotency_key(key),
         ArtifactUri::from_ids(run_id(), artifact_id),
         Timestamp::new(1_784_620_800, 0).unwrap(),
       ),
@@ -1218,6 +1232,53 @@ async fn duplicate_or_mismatched_draft_admission_responses_never_poll_the_body()
   }
 }
 
+#[tokio::test]
+async fn mismatched_draft_upload_id_never_polls_the_body() {
+  let artifact_id = ArtifactId::new();
+  let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+  let state = DraftAdmissionFaultState {
+    draft: ArtifactUploadDraft::new(
+      ArtifactUploadId::new(),
+      ArtifactUri::from_ids(run_id(), artifact_id),
+      Timestamp::new(1_784_620_800, 0).unwrap(),
+    ),
+    fault: DraftAdmissionFault::Valid,
+    calls: Arc::new(AtomicUsize::new(0)),
+    admissions: Arc::new(Mutex::new(Vec::new())),
+  };
+  let app = Router::new()
+    .route(
+      "/v1/authority",
+      get(|| async {
+        run_json(
+          StatusCode::OK,
+          &AuthorityResponse {
+            authority_id: authority_id(),
+          },
+        )
+      }),
+    )
+    .route("/v1/runs/{run_id}/artifact-uploads", post(faulty_draft_admission))
+    .with_state(state.clone());
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+  let polls = Arc::new(AtomicUsize::new(0));
+
+  let error = store
+    .write_artifact(
+      request,
+      Box::pin(FailingPollProbe {
+        polls: polls.clone(),
+      }),
+    )
+    .await
+    .unwrap_err();
+
+  assert_eq!(error, ArtifactWriteError::Unavailable(error_code("auv.inspect.draft_upload_id_mismatch")));
+  assert_eq!(state.calls.load(Ordering::SeqCst), 2);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
 async fn faulty_draft_admission(State(state): State<DraftAdmissionFaultState>, headers: HeaderMap) -> Response {
   state.calls.fetch_add(1, Ordering::SeqCst);
   state
@@ -1237,6 +1298,9 @@ async fn faulty_draft_admission(State(state): State<DraftAdmissionFaultState>, h
   };
   let mut response = response(StatusCode::CREATED, media_type, body);
   match state.fault {
+    DraftAdmissionFault::Valid => {
+      response.headers_mut().insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().clone());
+    }
     DraftAdmissionFault::Duplicate => {
       let admission = headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().clone();
       response.headers_mut().append(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.clone());
@@ -1257,11 +1321,12 @@ async fn faulty_draft_admission(State(state): State<DraftAdmissionFaultState>, h
 async fn ambiguous_artifact_responses_use_one_lookup_and_remain_unknown() {
   for response_mode in 10..=14 {
     let artifact_id = ArtifactId::new();
-    let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+    let key = IdempotencyKey::new();
+    let request = artifact_request(authority_id(), artifact_id, key);
     let state = LostResponseState {
       store: MemoryRunStore::new(authority_id()),
       draft: ArtifactUploadDraft::new(
-        ArtifactUploadId::new(),
+        ArtifactUploadId::from_idempotency_key(key),
         ArtifactUri::from_ids(run_id(), artifact_id),
         Timestamp::new(1_784_620_800, 0).unwrap(),
       ),
@@ -1464,12 +1529,7 @@ async fn artifact_open_rejects_missing_or_malformed_integrity_headers() {
 
 #[tokio::test]
 async fn artifact_reader_reports_short_long_corrupt_and_interrupted_streams() {
-  for mode in [
-    ArtifactReadMode::Short,
-    ArtifactReadMode::Long,
-    ArtifactReadMode::Corrupt,
-    ArtifactReadMode::Interrupted,
-  ] {
+  for mode in [ArtifactReadMode::Long, ArtifactReadMode::Corrupt] {
     let server = artifact_read_server(mode).await;
     let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
     let mut reader = store.open_artifact(ArtifactUri::from_ids(run_id(), ArtifactId::new())).await.expect("open artifact");
@@ -1481,6 +1541,20 @@ async fn artifact_reader_reports_short_long_corrupt_and_interrupted_streams() {
       }
     };
     assert!(matches!(error, auv_tracing::ArtifactReadError::Integrity(_)));
+  }
+
+  for mode in [ArtifactReadMode::Short, ArtifactReadMode::Interrupted] {
+    let server = artifact_read_server(mode).await;
+    let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
+    let mut reader = store.open_artifact(ArtifactUri::from_ids(run_id(), ArtifactId::new())).await.expect("open artifact");
+    let error = loop {
+      match reader.next().await {
+        Some(Ok(_)) => {}
+        Some(Err(error)) => break error,
+        None => panic!("interrupted artifact stream ended without a typed error"),
+      }
+    };
+    assert!(matches!(error, auv_tracing::ArtifactReadError::Unavailable(_)));
   }
 }
 

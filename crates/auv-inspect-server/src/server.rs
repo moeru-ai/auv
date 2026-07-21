@@ -36,32 +36,60 @@ pub(crate) struct InspectServerState {
   pub(crate) mutation_arbitrator: RunMutationArbitrator,
 }
 
+const GATE_CLEANUP_INTERVAL: usize = 64;
+
 pub(crate) struct RunMutationArbitrator {
-  gates: Mutex<HashMap<RunId, Weak<tokio::sync::Mutex<()>>>>,
+  registry: Mutex<RunGateRegistry>,
+}
+
+struct RunGateRegistry {
+  gates: HashMap<RunId, Weak<tokio::sync::Mutex<()>>>,
+  acquisitions_since_cleanup: usize,
+  #[cfg(test)]
+  cleanup_count: usize,
 }
 
 impl RunMutationArbitrator {
   fn new() -> Self {
     Self {
-      gates: Mutex::new(HashMap::new()),
+      registry: Mutex::new(RunGateRegistry {
+        gates: HashMap::new(),
+        acquisitions_since_cleanup: 0,
+        #[cfg(test)]
+        cleanup_count: 0,
+      }),
     }
   }
 
   /// Serializes ordinary commits and draft reservations for one run.
   pub(crate) async fn acquire(&self, run_id: RunId) -> tokio::sync::OwnedMutexGuard<()> {
     let gate = {
-      let mut gates = self.gates.lock().expect("run mutation arbitration lock");
-      gates.retain(|_, gate| gate.strong_count() > 0);
-      match gates.get(&run_id).and_then(Weak::upgrade) {
+      let mut registry = self.registry.lock().expect("run mutation arbitration lock");
+      registry.acquisitions_since_cleanup += 1;
+      if registry.acquisitions_since_cleanup == GATE_CLEANUP_INTERVAL {
+        registry.gates.retain(|_, gate| gate.strong_count() > 0);
+        registry.acquisitions_since_cleanup = 0;
+        #[cfg(test)]
+        {
+          registry.cleanup_count += 1;
+        }
+      }
+      match registry.gates.get(&run_id).and_then(Weak::upgrade) {
         Some(gate) => gate,
         None => {
           let gate = Arc::new(tokio::sync::Mutex::new(()));
-          gates.insert(run_id, Arc::downgrade(&gate));
+          registry.gates.insert(run_id, Arc::downgrade(&gate));
           gate
         }
       }
     };
     gate.lock_owned().await
+  }
+
+  #[cfg(test)]
+  fn registry_stats(&self) -> (usize, usize) {
+    let registry = self.registry.lock().expect("run mutation arbitration lock");
+    (registry.gates.len(), registry.cleanup_count)
   }
 }
 
@@ -200,4 +228,28 @@ fn response_with_content(body: Body, content_type: &'static str) -> Response {
 
 fn now_millis() -> u64 {
   SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_millis() as u64).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[tokio::test]
+  async fn run_gate_registry_cleans_dead_run_ids_periodically() {
+    let arbitrator = RunMutationArbitrator::new();
+    for _ in 0..GATE_CLEANUP_INTERVAL - 1 {
+      drop(arbitrator.acquire(RunId::new()).await);
+    }
+    assert_eq!(arbitrator.registry_stats(), (GATE_CLEANUP_INTERVAL - 1, 0));
+
+    drop(arbitrator.acquire(RunId::new()).await);
+    assert_eq!(arbitrator.registry_stats(), (1, 1));
+
+    for _ in 0..GATE_CLEANUP_INTERVAL * 4 {
+      drop(arbitrator.acquire(RunId::new()).await);
+    }
+    let (gate_count, cleanup_count) = arbitrator.registry_stats();
+    assert!(gate_count <= GATE_CLEANUP_INTERVAL);
+    assert_eq!(cleanup_count, 5);
+  }
 }
