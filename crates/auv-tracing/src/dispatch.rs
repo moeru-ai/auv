@@ -657,7 +657,7 @@ impl Dispatch {
                 Some(commit)
               }
               Ok(Some(_)) | Ok(None) | Err(_) => {
-                if let Some(commit) = self.take_observed_commit(run_id, request.idempotency_key()) {
+                if let Some(commit) = self.observed_commit(run_id, request.idempotency_key()) {
                   guard.quarantine_on_drop = false;
                   Some(commit)
                 } else {
@@ -739,7 +739,7 @@ impl Dispatch {
         ticket,
         request,
         observed_commit: None,
-        response_complete: false,
+        response_validated: false,
       },
     );
     debug_assert!(previous.is_none(), "owned idempotency keys are unique within a run");
@@ -749,15 +749,12 @@ impl Dispatch {
     self.inner.lanes.lock().unwrap().get_mut(&run_id).and_then(|lane| lane.owned.remove(&idempotency_key))
   }
 
-  fn take_observed_commit(&self, run_id: RunId, idempotency_key: IdempotencyKey) -> Option<RunCommit> {
-    let mut lanes = self.inner.lanes.lock().unwrap();
-    let lane = lanes.get_mut(&run_id)?;
-    lane.owned.get(&idempotency_key)?.observed_commit.as_ref()?;
-    lane.owned.remove(&idempotency_key)?.observed_commit
+  fn observed_commit(&self, run_id: RunId, idempotency_key: IdempotencyKey) -> Option<RunCommit> {
+    self.inner.lanes.lock().unwrap().get(&run_id)?.owned.get(&idempotency_key)?.observed_commit.clone()
   }
 
   fn complete_owned_write(&self, run_id: RunId, idempotency_key: IdempotencyKey, revision: RunRevision) {
-    let enqueue = {
+    let (enqueue, ready) = {
       let mut lanes = self.inner.lanes.lock().unwrap();
       let Some(lane) = lanes.get_mut(&run_id) else {
         return;
@@ -765,20 +762,24 @@ impl Dispatch {
       let Some(owned) = lane.owned.get_mut(&idempotency_key) else {
         return;
       };
-      debug_assert!(!owned.response_complete, "an owned write response completes once");
-      owned.response_complete = true;
-      if owned.observed_commit.is_some() {
+      debug_assert!(!owned.response_validated, "an owned write response validates once");
+      owned.response_validated = true;
+      if let Some(commit) = owned.observed_commit.clone() {
+        let ticket = owned.ticket;
         lane.owned.remove(&idempotency_key);
-        false
+        (false, Some((ticket, commit)))
       } else {
         lane.observation.targets.push_back(ObservationTarget {
           ticket: owned.ticket,
           idempotency_key,
           revision,
         });
-        true
+        (true, None)
       }
     };
+    if let Some((ticket, commit)) = ready {
+      self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
+    }
     if enqueue {
       self.wake_observation(run_id);
     }
@@ -897,6 +898,7 @@ impl Dispatch {
           Err(failure) => {
             return ObservationResult {
               cursor: None,
+              resume_after: work.resume_after,
               commits: Vec::new(),
               failure: Some(failure),
             };
@@ -907,6 +909,7 @@ impl Dispatch {
           Err(failure) => {
             return ObservationResult {
               cursor: None,
+              resume_after: None,
               commits: Vec::new(),
               failure: Some(failure),
             };
@@ -915,15 +918,17 @@ impl Dispatch {
       },
     };
     match cursor.observe_through(route, work.target.revision).await {
-      Ok(commits) => ObservationResult {
-        cursor: Some(cursor),
-        commits,
+      Ok(observation) => ObservationResult {
+        resume_after: Some(cursor.through_revision),
+        cursor: observation.cursor_usable.then_some(cursor),
+        commits: observation.commits,
         failure: None,
       },
       Err(failure) => {
         let CursorObservationFailure { failure, commits } = failure;
         let cursor = (!failure.is_integrity()).then_some(cursor);
         ObservationResult {
+          resume_after: cursor.as_ref().map(|cursor| cursor.through_revision),
           cursor,
           commits,
           failure: Some(failure),
@@ -935,6 +940,7 @@ impl Dispatch {
   fn finish_observation(&self, run_id: RunId, target: ObservationTarget, result: ObservationResult) {
     let ObservationResult {
       cursor,
+      resume_after,
       commits,
       failure,
     } = result;
@@ -973,8 +979,8 @@ impl Dispatch {
       if let Some(lane) = lanes.get_mut(&run_id) {
         lane.observation.running = false;
         lane.observation.establishing = false;
-        lane.observation.initialized = true;
-        lane.observation.resume_after = cursor.as_ref().map(|cursor| cursor.through_revision);
+        lane.observation.initialized = cursor.is_some();
+        lane.observation.resume_after = resume_after;
         lane.observation.cursor = cursor;
       }
     }
@@ -983,12 +989,13 @@ impl Dispatch {
   }
 
   fn apply_observed_commits(&self, run_id: RunId, commits: &[RunCommit], skip: Option<IdempotencyKey>) -> ObservedCommits {
-    let mut projections = Vec::new();
+    let mut ready = Vec::new();
     let mut observed_keys = Vec::new();
     let mut mismatch = None;
     {
       let mut lanes = self.inner.lanes.lock().unwrap();
       let lane = lanes.get_mut(&run_id).expect("active observation retains its run lane");
+      let mut projection = self.inner.projection.lock().unwrap();
       for commit in commits {
         let key = commit.idempotency_key();
         if skip == Some(key) {
@@ -1011,15 +1018,16 @@ impl Dispatch {
         }
         owned.observed_commit = Some(commit.clone());
         observed_keys.push(key);
-        projections.push((owned.ticket, projection_for_commit(commit, &self.inner.projector_routes)));
+        projection.stage(owned.ticket);
         lane.observation.targets.retain(|target| target.idempotency_key != key);
-        if owned.response_complete {
+        if owned.response_validated {
+          ready.push((owned.ticket, commit.clone()));
           lane.owned.remove(&key);
         }
       }
     }
-    for (ticket, items) in projections {
-      self.mark_projection_ready(ticket, items);
+    for (ticket, commit) in ready {
+      self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
     }
     ObservedCommits {
       observed_keys,
@@ -1098,7 +1106,7 @@ impl Dispatch {
     if let Some((stage, code)) = failure
       && let Some(token) = recovery.lock().unwrap().take()
     {
-      self.finish_artifact_result(token, Err(ArtifactWriteError::Unavailable(code)), stage);
+      self.finish_artifact_result(token, ArtifactTaskResult::authority(Err(ArtifactWriteError::Unavailable(code))), stage);
     }
   }
 
@@ -1107,21 +1115,27 @@ impl Dispatch {
     request: StoreArtifactRequest,
     body: crate::ArtifactBody,
     lookup_attempted: Arc<AtomicBool>,
-  ) -> Result<RunCommit, ArtifactWriteError> {
+  ) -> ArtifactTaskResult {
     let route = self.inner.route.as_ref().expect("artifact task requires an authority route");
     let write = catch_unwind(AssertUnwindSafe(|| route.store.write_artifact(request.clone(), body)));
     let result = match write {
       Ok(future) => match AssertUnwindSafe(future).catch_unwind().await {
         Ok(result) => result,
-        Err(_) => return self.resolve_artifact_publication(&request, task_unwind_code(), &lookup_attempted).await,
+        Err(_) => {
+          return ArtifactTaskResult::authority(self.resolve_artifact_publication(&request, task_unwind_code(), &lookup_attempted).await);
+        }
       },
-      Err(_) => return self.resolve_artifact_publication(&request, task_unwind_code(), &lookup_attempted).await,
+      Err(_) => {
+        return ArtifactTaskResult::authority(self.resolve_artifact_publication(&request, task_unwind_code(), &lookup_attempted).await);
+      }
     };
     match result {
-      Ok(commit) if artifact_commit_matches_request(&commit, &request) => Ok(commit),
-      Ok(_) => self.resolve_artifact_publication(&request, commit_response_mismatch_code(), &lookup_attempted).await,
-      Err(ArtifactWriteError::PublicationUnknown(code)) => self.resolve_artifact_publication(&request, code, &lookup_attempted).await,
-      Err(error) => Err(error),
+      Ok(commit) if artifact_commit_matches_request(&commit, &request) => ArtifactTaskResult::authority(Ok(commit)),
+      Ok(_) => ArtifactTaskResult::DirectResponseContradiction,
+      Err(ArtifactWriteError::PublicationUnknown(code)) => {
+        ArtifactTaskResult::authority(self.resolve_artifact_publication(&request, code, &lookup_attempted).await)
+      }
+      Err(error) => ArtifactTaskResult::authority(Err(error)),
     }
   }
 
@@ -1149,7 +1163,7 @@ impl Dispatch {
     }
   }
 
-  fn finish_artifact_result(&self, token: ArtifactTaskToken, result: Result<RunCommit, ArtifactWriteError>, failure_stage: DispatchStage) {
+  fn finish_artifact_result(&self, token: ArtifactTaskToken, result: ArtifactTaskResult, failure_stage: DispatchStage) {
     let ArtifactTaskToken {
       run_id,
       ticket,
@@ -1158,6 +1172,10 @@ impl Dispatch {
       ..
     } = token;
     let idempotency_key = request.idempotency_key();
+    let (result, quarantine) = match result {
+      ArtifactTaskResult::Authority(result) => (result, false),
+      ArtifactTaskResult::DirectResponseContradiction => (Err(ArtifactWriteError::Integrity(commit_response_mismatch_code())), true),
+    };
     match result {
       Ok(commit) => {
         let metadata = artifact_metadata(&commit).expect("validated artifact commit contains metadata").clone();
@@ -1169,14 +1187,18 @@ impl Dispatch {
           self.complete_owned_write(run_id, idempotency_key, commit.revision());
         }
       }
-      Err(ArtifactWriteError::PublicationUnknown(_)) if let Some(commit) = self.take_observed_commit(run_id, idempotency_key) => {
+      Err(ArtifactWriteError::PublicationUnknown(_)) if let Some(commit) = self.observed_commit(run_id, idempotency_key) => {
         let metadata = artifact_metadata(&commit).expect("observed artifact commit contains metadata").clone();
         self.deliver_artifact_receipt(receipt, Ok(metadata), None);
+        self.complete_owned_write(run_id, idempotency_key, commit.revision());
       }
       Err(error) => {
         let failure = DispatchFailure::new(failure_stage, artifact_error_code(&error));
         self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
         self.remove_owned(run_id, idempotency_key);
+        if quarantine {
+          self.quarantine_run(run_id);
+        }
         self.mark_projection_skipped(ticket);
         self.terminalize_unreported(ticket, vec![failure]);
       }
@@ -1208,7 +1230,11 @@ impl Dispatch {
       Ok(Err(_)) | Err(_) => spawn_admission.spawn_failed_needs_recovery(),
     };
     if needs_recovery && let Some(token) = recovery.lock().unwrap().take() {
-      self.finish_artifact_result(token, Err(ArtifactWriteError::PublicationUnknown(task_unwind_code())), DispatchStage::ArtifactWrite);
+      self.finish_artifact_result(
+        token,
+        ArtifactTaskResult::authority(Err(ArtifactWriteError::PublicationUnknown(task_unwind_code()))),
+        DispatchStage::ArtifactWrite,
+      );
     }
   }
 
@@ -1298,8 +1324,8 @@ impl Dispatch {
           ActiveLaneRecovery::Ordinary(Some(key)) => lane.owned.remove(&key),
           ActiveLaneRecovery::Ordinary(None) | ActiveLaneRecovery::ArtifactAdmission(_) => None,
         })
-        .is_some_and(|owned| owned.observed_commit.is_some());
-      if quarantine && !observed {
+        .and_then(|owned| owned.observed_commit);
+      if quarantine && observed.is_none() {
         lane.indeterminate = true;
       }
       observed
@@ -1308,7 +1334,9 @@ impl Dispatch {
       let failure = DispatchFailure::new(active.stage, task_unwind_code());
       match active.recovery {
         ActiveLaneRecovery::Ordinary(_) => {
-          if !observed {
+          if let Some(commit) = observed {
+            self.mark_projection_ready(active.ticket, projection_for_commit(&commit, &self.inner.projector_routes));
+          } else {
             self.mark_projection_skipped(active.ticket);
             self.terminalize(active.ticket, vec![failure]);
           }
@@ -1682,6 +1710,17 @@ struct ArtifactTaskToken {
   lookup_attempted: Arc<AtomicBool>,
 }
 
+enum ArtifactTaskResult {
+  Authority(Result<RunCommit, ArtifactWriteError>),
+  DirectResponseContradiction,
+}
+
+impl ArtifactTaskResult {
+  fn authority(result: Result<RunCommit, ArtifactWriteError>) -> Self {
+    Self::Authority(result)
+  }
+}
+
 struct ArtifactSpawnGuard {
   admission: Arc<SpawnAdmission>,
   dispatch: Dispatch,
@@ -1703,7 +1742,11 @@ impl Drop for ArtifactSpawnGuard {
     if self.admission.task_dropped_before_start()
       && let Some(token) = self.recovery.lock().unwrap().take()
     {
-      self.dispatch.finish_artifact_result(token, Err(ArtifactWriteError::Unavailable(task_unwind_code())), DispatchStage::ArtifactWrite);
+      self.dispatch.finish_artifact_result(
+        token,
+        ArtifactTaskResult::authority(Err(ArtifactWriteError::Unavailable(task_unwind_code()))),
+        DispatchStage::ArtifactWrite,
+      );
     }
   }
 }
@@ -1725,7 +1768,7 @@ impl ArtifactTaskGuard {
     self.token.as_ref().expect("artifact task retains its token")
   }
 
-  fn complete(&mut self, result: Result<RunCommit, ArtifactWriteError>) {
+  fn complete(&mut self, result: ArtifactTaskResult) {
     let token = self.token.take().expect("artifact task completes once");
     self.dispatch.finish_artifact_result(token, result, DispatchStage::ArtifactWrite);
   }
@@ -1762,7 +1805,7 @@ impl Drop for ArtifactLookupSpawnGuard {
     {
       self.dispatch.finish_artifact_result(
         token,
-        Err(ArtifactWriteError::PublicationUnknown(task_unwind_code())),
+        ArtifactTaskResult::authority(Err(ArtifactWriteError::PublicationUnknown(task_unwind_code()))),
         DispatchStage::ArtifactWrite,
       );
     }
@@ -1788,7 +1831,7 @@ impl ArtifactLookupTaskGuard {
 
   fn complete(&mut self, result: Result<RunCommit, ArtifactWriteError>) {
     let token = self.token.take().expect("artifact lookup task completes once");
-    self.dispatch.finish_artifact_result(token, result, DispatchStage::ArtifactWrite);
+    self.dispatch.finish_artifact_result(token, ArtifactTaskResult::authority(result), DispatchStage::ArtifactWrite);
   }
 }
 
@@ -1797,7 +1840,7 @@ impl Drop for ArtifactLookupTaskGuard {
     if let Some(token) = self.token.take() {
       self.dispatch.finish_artifact_result(
         token,
-        Err(ArtifactWriteError::PublicationUnknown(task_unwind_code())),
+        ArtifactTaskResult::authority(Err(ArtifactWriteError::PublicationUnknown(task_unwind_code()))),
         DispatchStage::ArtifactWrite,
       );
     }
@@ -1836,23 +1879,41 @@ impl ProjectionState {
     debug_assert!(previous.is_none(), "dispatch projection tickets are unique");
   }
 
-  fn ready(&mut self, ticket: u64, items: ProjectionBatch) {
+  fn stage(&mut self, ticket: u64) {
+    debug_assert!(self.authority_ordered, "only authority commits have a staged projection state");
     let Some(entry) = self.entries.get_mut(&ticket) else {
       debug_assert!(false, "a prepared projection ticket remains queued");
       return;
     };
     match entry {
-      ProjectionEntry::Preparing => {}
+      ProjectionEntry::Preparing => {
+        self.next_commit_order = self.next_commit_order.checked_add(1).expect("authority projection order exhausted");
+        *entry = ProjectionEntry::Staged {
+          order: self.next_commit_order,
+        };
+      }
+      ProjectionEntry::Staged { .. } | ProjectionEntry::Ready { .. } => {
+        debug_assert!(false, "an authority projection ticket is staged once");
+      }
+    }
+  }
+
+  fn ready(&mut self, ticket: u64, items: ProjectionBatch) {
+    let Some(entry) = self.entries.get_mut(&ticket) else {
+      debug_assert!(false, "a prepared projection ticket remains queued");
+      return;
+    };
+    let order = match entry {
+      ProjectionEntry::Preparing if !self.authority_ordered => ticket,
+      ProjectionEntry::Staged { order } if self.authority_ordered => *order,
+      ProjectionEntry::Preparing | ProjectionEntry::Staged { .. } => {
+        debug_assert!(false, "authority projection readiness follows cursor staging");
+        return;
+      }
       ProjectionEntry::Ready { .. } => {
         debug_assert!(false, "a projection ticket becomes ready once");
         return;
       }
-    }
-    let order = if self.authority_ordered {
-      self.next_commit_order = self.next_commit_order.checked_add(1).expect("authority projection order exhausted");
-      self.next_commit_order
-    } else {
-      ticket
     };
     *entry = ProjectionEntry::Ready { order, items };
   }
@@ -1861,7 +1922,7 @@ impl ProjectionState {
     let Some(entry) = self.entries.get(&ticket) else {
       return;
     };
-    if matches!(entry, ProjectionEntry::Preparing) {
+    if matches!(entry, ProjectionEntry::Preparing | ProjectionEntry::Staged { .. }) {
       self.entries.remove(&ticket);
     }
   }
@@ -1880,19 +1941,23 @@ impl ProjectionState {
     let ticket = if self.authority_ordered {
       // A ready post-barrier commit may precede a pre-barrier commit at the
       // authority. Preserve commit order, but never wait for preparing work.
-      self
+      let candidate = self
         .entries
         .iter()
         .filter_map(|(ticket, entry)| match entry {
-          ProjectionEntry::Ready { order, .. } => Some((*order, *ticket)),
+          ProjectionEntry::Staged { order } => Some((*order, *ticket, false)),
+          ProjectionEntry::Ready { order, .. } => Some((*order, *ticket, true)),
           ProjectionEntry::Preparing => None,
         })
-        .min_by_key(|(order, _)| *order)
-        .map(|(_, ticket)| ticket)?
+        .min_by_key(|(order, _, _)| *order)?;
+      if !candidate.2 {
+        return None;
+      }
+      candidate.1
     } else {
       let eligible = |ticket: &u64| barrier.is_none_or(|barrier| *ticket <= barrier);
       let (&ticket, entry) = self.entries.iter().find(|(ticket, _)| eligible(ticket))?;
-      if matches!(entry, ProjectionEntry::Preparing) {
+      if matches!(entry, ProjectionEntry::Preparing | ProjectionEntry::Staged { .. }) {
         return None;
       }
       ticket
@@ -1906,6 +1971,7 @@ impl ProjectionState {
 
 enum ProjectionEntry {
   Preparing,
+  Staged { order: u64 },
   Ready { order: u64, items: ProjectionBatch },
 }
 
@@ -2052,11 +2118,16 @@ impl CursorObservationFailure {
   }
 }
 
+struct CursorObservation {
+  commits: Vec<RunCommit>,
+  cursor_usable: bool,
+}
+
 struct OwnedSubmission {
   ticket: u64,
   request: OwnedRequest,
   observed_commit: Option<RunCommit>,
-  response_complete: bool,
+  response_validated: bool,
 }
 
 enum OwnedRequest {
@@ -2111,7 +2182,7 @@ impl AuthorityCursor {
     })
   }
 
-  async fn observe_through(&mut self, route: &AuthorityRoute, target: RunRevision) -> Result<Vec<RunCommit>, CursorObservationFailure> {
+  async fn observe_through(&mut self, route: &AuthorityRoute, target: RunRevision) -> Result<CursorObservation, CursorObservationFailure> {
     let mut commits = Vec::new();
     let mut resume = false;
     while self.through_revision < target {
@@ -2135,10 +2206,18 @@ impl AuthorityCursor {
     if resume {
       self.subscription = match route.store.subscribe(self.run_id, self.through_revision).await {
         Ok(subscription) => subscription,
-        Err(error) => return Err(CursorObservationFailure::new(cursor_failure_from_read(error), commits)),
+        Err(_) => {
+          return Ok(CursorObservation {
+            commits,
+            cursor_usable: false,
+          });
+        }
       };
     }
-    Ok(commits)
+    Ok(CursorObservation {
+      commits,
+      cursor_usable: true,
+    })
   }
 
   async fn recover_through(
@@ -2433,6 +2512,7 @@ struct ObservationWork {
 
 struct ObservationResult {
   cursor: Option<AuthorityCursor>,
+  resume_after: Option<RunRevision>,
   commits: Vec<RunCommit>,
   failure: Option<CursorFailure>,
 }

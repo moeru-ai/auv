@@ -410,6 +410,7 @@ enum FirstSubscription {
 pub struct CursorStore {
   inner: Arc<MemoryRunStore>,
   first_subscription: FirstSubscription,
+  fail_subscription_call: Option<usize>,
   fail_snapshot: bool,
   fail_page: Arc<AtomicBool>,
   zero_gap: Arc<AtomicBool>,
@@ -420,33 +421,44 @@ pub struct CursorStore {
 
 impl CursorStore {
   pub fn normal() -> Arc<Self> {
-    Self::new(FirstSubscription::Normal, false, false, false)
+    Self::new(FirstSubscription::Normal, None, false, false, false)
   }
 
   pub fn gap_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Gap, false, false, false)
+    Self::new(FirstSubscription::Gap, None, false, false, false)
   }
 
   pub fn pending_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, false, false, false)
+    Self::new(FirstSubscription::Pending, None, false, false, false)
+  }
+
+  pub fn pending_then_resubscribe_failure() -> Arc<Self> {
+    Self::new(FirstSubscription::Pending, Some(1), false, false, false)
   }
 
   pub fn snapshot_failure() -> Arc<Self> {
-    Self::new(FirstSubscription::Normal, true, false, false)
+    Self::new(FirstSubscription::Normal, None, true, false, false)
   }
 
   pub fn page_failure() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, false, true, false)
+    Self::new(FirstSubscription::Pending, None, false, true, false)
   }
 
   pub fn zero_history_gap_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, false, false, true)
+    Self::new(FirstSubscription::Pending, None, false, false, true)
   }
 
-  fn new(first_subscription: FirstSubscription, fail_snapshot: bool, fail_page: bool, zero_gap: bool) -> Arc<Self> {
+  fn new(
+    first_subscription: FirstSubscription,
+    fail_subscription_call: Option<usize>,
+    fail_snapshot: bool,
+    fail_page: bool,
+    zero_gap: bool,
+  ) -> Arc<Self> {
     Arc::new(Self {
       inner: Arc::new(MemoryRunStore::new(AuthorityId::new())),
       first_subscription,
+      fail_subscription_call,
       fail_snapshot,
       fail_page: Arc::new(AtomicBool::new(fail_page)),
       zero_gap: Arc::new(AtomicBool::new(zero_gap)),
@@ -516,6 +528,9 @@ impl RunStore for CursorStore {
     self.calls.lock().unwrap().push(AuthorityCall::Subscribe);
     let call = self.subscribe_calls.fetch_add(1, Ordering::SeqCst);
     Box::pin(async move {
+      if self.fail_subscription_call == Some(call) {
+        return Err(ReadError::Unavailable(ErrorCode::parse("auv.test.resubscribe_failed").unwrap()));
+      }
       if call == 0 {
         match self.first_subscription {
           FirstSubscription::Normal => {}
@@ -637,6 +652,8 @@ pub struct IntegrityStore {
   affected_run_id: RunId,
   fault: IntegrityFault,
   commit_calls: Arc<Mutex<Vec<RunId>>>,
+  direct_response_gate: Arc<Mutex<Option<CommitGate>>>,
+  observation_page_gate: Arc<Mutex<Option<CommitGate>>>,
 }
 
 impl IntegrityStore {
@@ -646,11 +663,25 @@ impl IntegrityStore {
       affected_run_id,
       fault,
       commit_calls: Arc::new(Mutex::new(Vec::new())),
+      direct_response_gate: Arc::new(Mutex::new(None)),
+      observation_page_gate: Arc::new(Mutex::new(None)),
     })
   }
 
   pub fn commit_call_count(&self, run_id: RunId) -> usize {
     self.commit_calls.lock().unwrap().iter().filter(|candidate| **candidate == run_id).count()
+  }
+
+  pub fn block_direct_response(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    *self.direct_response_gate.lock().unwrap() = Some(gate.clone());
+    gate
+  }
+
+  pub fn block_observation_page(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    *self.observation_page_gate.lock().unwrap() = Some(gate.clone());
+    gate
   }
 
   fn corrupt(&self, commit: &RunCommit) -> RunCommit {
@@ -704,9 +735,17 @@ impl RunStore for IntegrityStore {
 
   fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
     self.commit_calls.lock().unwrap().push(request.run_id());
+    let response_gate = (request.run_id() == self.affected_run_id && matches!(self.fault, IntegrityFault::DirectResponseMismatch))
+      .then(|| self.direct_response_gate.lock().unwrap().take())
+      .flatten();
     Box::pin(async move {
       let commit = self.inner.commit(request).await?;
       if commit.run_id() == self.affected_run_id && matches!(self.fault, IntegrityFault::DirectResponseMismatch) {
+        if let Some(response_gate) = response_gate
+          && let Some(wait) = response_gate.enter()
+        {
+          let _ = wait.await;
+        }
         Ok(self.corrupt(&commit))
       } else {
         Ok(commit)
@@ -727,7 +766,13 @@ impl RunStore for IntegrityStore {
   }
 
   fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    let page_gate = (run_id == self.affected_run_id).then(|| self.observation_page_gate.lock().unwrap().take()).flatten();
     Box::pin(async move {
+      if let Some(page_gate) = page_gate
+        && let Some(wait) = page_gate.enter()
+      {
+        let _ = wait.await;
+      }
       let page = self.inner.commits_after(run_id, after, limit).await?;
       if run_id != self.affected_run_id || matches!(self.fault, IntegrityFault::DirectResponseMismatch) {
         return Ok(page);
@@ -1262,6 +1307,7 @@ struct ArtifactStoreState {
 enum ArtifactWriteOutcome {
   Store,
   StoreThenWaitResponse(CommitGate),
+  StoreThenWaitMismatch(CommitGate),
   StoreThenUnknown(ErrorCode),
   Unknown(ErrorCode),
   Fail(ArtifactWriteError),
@@ -1298,6 +1344,12 @@ impl ArtifactStore {
   pub fn store_then_wait_response_next(&self) -> CommitGate {
     let gate = CommitGate::new();
     self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::StoreThenWaitResponse(gate.clone()));
+    gate
+  }
+
+  pub fn store_then_wait_mismatch_next(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::StoreThenWaitMismatch(gate.clone()));
     gate
   }
 
@@ -1397,6 +1449,13 @@ impl RunStore for ArtifactStore {
           }
           Ok(commit)
         }
+        ArtifactWriteOutcome::StoreThenWaitMismatch(gate) => {
+          let commit = self.inner.write_artifact(request, body).await?;
+          if let Some(wait) = gate.enter() {
+            let _ = wait.await;
+          }
+          Ok(mismatched_artifact_response(&commit))
+        }
         ArtifactWriteOutcome::StoreThenUnknown(code) => {
           self.inner.write_artifact(request, body).await?;
           Err(ArtifactWriteError::PublicationUnknown(code))
@@ -1447,6 +1506,76 @@ impl RunStore for ArtifactStore {
 
   fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
     self.inner.open_artifact(uri)
+  }
+}
+
+fn mismatched_artifact_response(commit: &RunCommit) -> RunCommit {
+  RunCommit::new(
+    commit.authority_id(),
+    commit.run_id(),
+    commit.revision(),
+    IdempotencyKey::new(),
+    commit.committed_at(),
+    commit.facts().to_vec(),
+  )
+  .unwrap()
+}
+
+#[derive(Default)]
+pub struct TrackingTaskSpawner {
+  state: Arc<TrackingTaskState>,
+}
+
+#[derive(Default)]
+struct TrackingTaskState {
+  counts: Mutex<TrackingTaskCounts>,
+  changed: Condvar,
+}
+
+#[derive(Default)]
+struct TrackingTaskCounts {
+  spawned: usize,
+  active: usize,
+}
+
+impl TrackingTaskSpawner {
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self::default())
+  }
+
+  pub fn wait_for_active(&self, expected: usize, minimum_spawned: usize) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut counts = self.state.counts.lock().unwrap();
+    while counts.active != expected || counts.spawned < minimum_spawned {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for tracked task state");
+      let (next, timeout) = self.state.changed.wait_timeout(counts, remaining).unwrap();
+      counts = next;
+      assert!(
+        !timeout.timed_out() || (counts.active == expected && counts.spawned >= minimum_spawned),
+        "timed out waiting for {expected} active tasks and {minimum_spawned} spawned tasks; observed {} active and {} spawned",
+        counts.active,
+        counts.spawned
+      );
+    }
+  }
+}
+
+impl TaskSpawner for TrackingTaskSpawner {
+  fn spawn(&self, task: DispatchTask) -> Result<(), TaskSpawnError> {
+    {
+      let mut counts = self.state.counts.lock().unwrap();
+      counts.spawned += 1;
+      counts.active += 1;
+      self.state.changed.notify_all();
+    }
+    let state = self.state.clone();
+    std::thread::spawn(move || {
+      block_on_timeout(task);
+      let mut counts = state.counts.lock().unwrap();
+      counts.active -= 1;
+      state.changed.notify_all();
+    });
+    Ok(())
   }
 }
 
