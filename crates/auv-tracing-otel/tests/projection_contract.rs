@@ -98,6 +98,9 @@ fn projected_span<'a>(spans: &'a [SpanData], name: &str) -> &'a SpanData {
   spans.iter().find(|span| span.name == name).unwrap_or_else(|| panic!("missing exported span {name}"))
 }
 
+#[derive(Debug, PartialEq)]
+struct AmbientContextMarker(&'static str);
+
 #[test]
 fn exported_sdk_data_preserves_bounded_auv_semantics() {
   let (tracer_provider, logger_provider, span_exporter, log_exporter) = providers();
@@ -354,6 +357,72 @@ fn run_scoped_logs_ignore_ambient_otel_trace_context() {
   assert_eq!(artifact_attributes["auv.run.id"], AnyValue::String(run_id.to_string().into()));
   assert_eq!(artifact_attributes["auv.span.id"], AnyValue::String(span_id.to_string().into()));
   assert_eq!(artifact_attributes["auv.artifact.uri"], AnyValue::String(artifact_uri.to_string().into()));
+}
+
+#[test]
+fn run_scoped_logs_preserve_ambient_telemetry_suppression() {
+  // ROOT CAUSE:
+  //
+  // If a run log was projected from suppressed ambient context, the SDK logger
+  // emitted it because attaching an empty context also cleared suppression.
+  //
+  // Before the fix, trace isolation overrode the caller's suppression state.
+  // The fix carries only suppression into the isolated callback context.
+  let emit_count = Arc::new(AtomicUsize::new(0));
+  let emit_observer = Arc::clone(&emit_count);
+  let log_exporter = BoundedLogExporter::default();
+  let logger_provider = SdkLoggerProvider::builder()
+    .with_batch_exporter(log_exporter.clone())
+    .with_log_processor(CallbackLogProcessor::new(Arc::new(move || {
+      emit_observer.fetch_add(1, Ordering::SeqCst);
+    })))
+    .build();
+  let projector = OtelProjector::new(SdkTracerProvider::builder().build(), logger_provider);
+  let suppression_guard = Context::new().with_telemetry_suppressed().attach();
+
+  assert!(Context::is_current_telemetry_suppressed());
+  project(&projector, event(Some(AuthorityId::new()), RunId::new(), None)).unwrap();
+  assert!(Context::is_current_telemetry_suppressed());
+  drop(suppression_guard);
+  block_on(projector.flush()).unwrap();
+
+  assert_eq!(emit_count.load(Ordering::SeqCst), 0);
+  assert!(log_exporter.logs().is_empty());
+}
+
+#[test]
+fn log_processor_callbacks_restore_exact_ambient_context_after_success_and_panic() {
+  for panic_callback in [false, true] {
+    let processor = CallbackLogProcessor::new(Arc::new(move || {
+      let callback_context = Context::current();
+      assert!(!callback_context.has_active_span());
+      assert_eq!(callback_context.get::<AmbientContextMarker>(), None);
+      assert!(!callback_context.is_telemetry_suppressed());
+      if panic_callback {
+        panic!("test OTEL log processor panic");
+      }
+    }));
+    let logger_provider = SdkLoggerProvider::builder().with_log_processor(processor).build();
+    let projector = OtelProjector::new(SdkTracerProvider::builder().build(), logger_provider);
+    let ambient_tracer_provider = SdkTracerProvider::builder().build();
+    let ambient_span = ambient_tracer_provider.tracer("auv.test.ambient").start("auv.test.ambient_span");
+    let ambient_context = Context::new().with_span(ambient_span).with_value(AmbientContextMarker("ambient"));
+    let ambient_span_context = ambient_context.span().span_context().clone();
+    let ambient_guard = ambient_context.attach();
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| project(&projector, event(Some(AuthorityId::new()), RunId::new(), None))));
+
+    if panic_callback {
+      assert!(outcome.is_err());
+    } else {
+      outcome.unwrap().unwrap();
+    }
+    let restored = Context::current();
+    assert_eq!(restored.span().span_context(), &ambient_span_context);
+    assert_eq!(restored.get::<AmbientContextMarker>(), Some(&AmbientContextMarker("ambient")));
+    assert!(!restored.is_telemetry_suppressed());
+    drop(ambient_guard);
+  }
 }
 
 fn span_start(
@@ -869,6 +938,122 @@ fn flush_delegates_to_both_providers_without_shutdown() {
   assert_eq!(log_exporter.shutdown_count(), 0);
   assert_eq!(span_probe.shutdown_count(), 0);
   assert_eq!(log_probe.shutdown_count(), 0);
+}
+
+#[test]
+fn otel_force_flush_callback_reentrant_calls_fail_without_hanging() {
+  // ROOT CAUSE:
+  //
+  // If force_flush entered an application processor, recursive and concurrent
+  // calls were accepted because flush had not reserved projection.
+  //
+  // Before the fix, flush bypassed the callback guard used by project.
+  // The fix holds that reservation across both provider callbacks.
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let projector_slot = Arc::new(Mutex::new(None::<std::sync::Weak<OtelProjector>>));
+  let callback_slot = Arc::clone(&projector_slot);
+  let first_flush = Arc::new(AtomicBool::new(true));
+  let flush_flag = Arc::clone(&first_flush);
+  let (callback_tx, callback_rx) = mpsc::channel();
+  let processor = CallbackSpanProcessor::new(Arc::new(|| {}), Arc::new(|| {})).with_force_flush(Arc::new(move || {
+    if flush_flag.swap(false, Ordering::SeqCst) {
+      let projector = callback_slot.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
+      let flush_result = projector.flush().now_or_never().expect("projector flush future is immediately ready");
+      let project_result =
+        projector.project(event(Some(authority_id), run_id, None)).now_or_never().expect("projector future is immediately ready");
+      callback_tx.send((flush_result, project_result)).unwrap();
+    }
+  }));
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(processor).build();
+  let projector = Arc::new(OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build()));
+  *projector_slot.lock().unwrap() = Some(Arc::downgrade(&projector));
+  let worker_projector = Arc::clone(&projector);
+  let (done_tx, done_rx) = mpsc::channel();
+  let worker = std::thread::spawn(move || {
+    done_tx.send(block_on(worker_projector.flush())).unwrap();
+  });
+
+  let callback_results = callback_rx.recv_timeout(Duration::from_secs(2)).expect("recursive force_flush callback did not return");
+  let outer_result = done_rx.recv_timeout(Duration::from_secs(2)).expect("outer OTEL flush did not return");
+  worker.join().unwrap();
+
+  outer_result.unwrap();
+  assert_eq!(callback_results.0.unwrap_err().code().as_str(), "auv.telemetry.otel_reentrant_projection");
+  assert_eq!(callback_results.1.unwrap_err().code().as_str(), "auv.telemetry.otel_reentrant_projection");
+}
+
+#[test]
+fn otel_blocked_force_flush_makes_cross_thread_project_and_flush_promptly_busy() {
+  let first_flush = Arc::new(AtomicBool::new(true));
+  let flush_flag = Arc::clone(&first_flush);
+  let (entered_tx, entered_rx) = mpsc::channel();
+  let (release_tx, release_rx) = mpsc::channel();
+  let release_rx = Mutex::new(release_rx);
+  let processor = CallbackSpanProcessor::new(Arc::new(|| {}), Arc::new(|| {})).with_force_flush(Arc::new(move || {
+    if flush_flag.swap(false, Ordering::SeqCst) {
+      entered_tx.send(()).unwrap();
+      release_rx.lock().unwrap().recv_timeout(Duration::from_secs(2)).expect("blocked force_flush callback was not released");
+    }
+  }));
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(processor).build();
+  let projector = Arc::new(OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build()));
+  let worker_projector = Arc::clone(&projector);
+  let (outer_tx, outer_rx) = mpsc::channel();
+  let outer_worker = std::thread::spawn(move || {
+    outer_tx.send(block_on(worker_projector.flush())).unwrap();
+  });
+  entered_rx.recv_timeout(Duration::from_secs(2)).expect("force_flush callback did not block");
+
+  let project_projector = Arc::clone(&projector);
+  let (project_tx, project_rx) = mpsc::channel();
+  let project_worker = std::thread::spawn(move || {
+    project_tx.send(project(&project_projector, event(Some(AuthorityId::new()), RunId::new(), None))).unwrap();
+  });
+  let flush_projector = Arc::clone(&projector);
+  let (flush_tx, flush_rx) = mpsc::channel();
+  let flush_worker = std::thread::spawn(move || {
+    flush_tx.send(block_on(flush_projector.flush())).unwrap();
+  });
+  let project_result = project_rx.recv_timeout(Duration::from_secs(2));
+  let flush_result = flush_rx.recv_timeout(Duration::from_secs(2));
+
+  release_tx.send(()).unwrap();
+  let outer_result = outer_rx.recv_timeout(Duration::from_secs(2));
+  if project_result.is_ok() {
+    project_worker.join().unwrap();
+  }
+  if flush_result.is_ok() {
+    flush_worker.join().unwrap();
+  }
+  if outer_result.is_ok() {
+    outer_worker.join().unwrap();
+  }
+
+  let project_error = project_result.expect("concurrent OTEL projection did not return").unwrap_err();
+  let flush_error = flush_result.expect("concurrent OTEL flush did not return").unwrap_err();
+  outer_result.expect("blocked outer OTEL flush did not return").unwrap();
+  assert_eq!(project_error.code().as_str(), "auv.telemetry.otel_concurrent_projection");
+  assert_eq!(flush_error.code().as_str(), "auv.telemetry.otel_concurrent_projection");
+}
+
+#[test]
+fn otel_force_flush_panic_releases_projection_reservation() {
+  let panic_flush = Arc::new(AtomicBool::new(true));
+  let panic_flag = Arc::clone(&panic_flush);
+  let processor = CallbackSpanProcessor::new(Arc::new(|| {}), Arc::new(|| {})).with_force_flush(Arc::new(move || {
+    if panic_flag.swap(false, Ordering::SeqCst) {
+      panic!("test OTEL force_flush panic");
+    }
+  }));
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(processor).build();
+  let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
+
+  let panic = catch_unwind(AssertUnwindSafe(|| block_on(projector.flush())));
+
+  assert!(panic.is_err());
+  block_on(projector.flush()).unwrap();
+  project(&projector, event(Some(AuthorityId::new()), RunId::new(), None)).unwrap();
 }
 
 #[test]

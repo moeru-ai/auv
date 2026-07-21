@@ -16,11 +16,21 @@ type Callback = Arc<dyn Fn() + Send + Sync>;
 pub struct CallbackSpanProcessor {
   on_start: Callback,
   on_end: Callback,
+  on_force_flush: Callback,
 }
 
 impl CallbackSpanProcessor {
   pub fn new(on_start: Callback, on_end: Callback) -> Self {
-    Self { on_start, on_end }
+    Self {
+      on_start,
+      on_end,
+      on_force_flush: Arc::new(|| {}),
+    }
+  }
+
+  pub fn with_force_flush(mut self, on_force_flush: Callback) -> Self {
+    self.on_force_flush = on_force_flush;
+    self
   }
 }
 
@@ -40,6 +50,7 @@ impl SpanProcessor for CallbackSpanProcessor {
   }
 
   fn force_flush(&self) -> OTelSdkResult {
+    (self.on_force_flush)();
     Ok(())
   }
 
