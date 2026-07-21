@@ -109,7 +109,6 @@ image.workspace = true
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-media-macos = { path = "crates/auv-media-macos" }
 objc2-core-graphics.workspace = true
 objc2-core-foundation.workspace = true
 swift-bridge-build.workspace = true
