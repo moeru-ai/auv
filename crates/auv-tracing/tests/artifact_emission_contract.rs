@@ -5,7 +5,7 @@ mod support;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Condvar, Mutex};
 use std::task::{Context as TaskContext, Wake, Waker};
 use std::time::{Duration, Instant};
 
@@ -130,6 +130,68 @@ impl Wake for EmitEventOnWake {
 
   fn wake_by_ref(self: &Arc<Self>) {
     self.emit_once();
+  }
+}
+
+struct BlockingFlushWake {
+  state: Mutex<BlockingFlushWakeState>,
+  changed: Condvar,
+}
+
+struct BlockingFlushWakeState {
+  entered: bool,
+  released: bool,
+}
+
+impl BlockingFlushWake {
+  fn new() -> Arc<Self> {
+    Arc::new(Self {
+      state: Mutex::new(BlockingFlushWakeState {
+        entered: false,
+        released: false,
+      }),
+      changed: Condvar::new(),
+    })
+  }
+
+  fn wait_until_entered(&self) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut state = self.state.lock().unwrap();
+    while !state.entered {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting for flush wake");
+      let (next, timeout) = self.changed.wait_timeout(state, remaining).unwrap();
+      state = next;
+      assert!(!timeout.timed_out() || state.entered, "timed out waiting for flush wake");
+    }
+  }
+
+  fn release(&self) {
+    let mut state = self.state.lock().unwrap();
+    state.released = true;
+    self.changed.notify_all();
+  }
+
+  fn block(&self) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    let mut state = self.state.lock().unwrap();
+    state.entered = true;
+    self.changed.notify_all();
+    while !state.released {
+      let remaining = deadline.checked_duration_since(Instant::now()).expect("timed out waiting to release flush wake");
+      let (next, timeout) = self.changed.wait_timeout(state, remaining).unwrap();
+      state = next;
+      assert!(!timeout.timed_out() || state.released, "timed out waiting to release flush wake");
+    }
+  }
+}
+
+impl Wake for BlockingFlushWake {
+  fn wake(self: Arc<Self>) {
+    self.block();
+  }
+
+  fn wake_by_ref(self: &Arc<Self>) {
+    self.block();
   }
 }
 
@@ -961,6 +1023,15 @@ fn synchronized_receipt_send_drop_races_report_each_unobserved_failure_once() {
 
 #[test]
 fn canceled_failure_completion_does_not_duplicate_unobserved_reporting() {
+  // ROOT CAUSE:
+  //
+  // If a dropped artifact receipt completed with failure, flush could observe
+  // ticket terminalization before unobserved reporting because completion
+  // terminalized the ticket before sending the closed receipt.
+  //
+  // Before the fix, terminalization woke the flush waiter while the worker had
+  // not yet synchronously reported the failed receipt. The fix keeps reporting
+  // ordered before flush can observe ticket settlement.
   let store = ArtifactStore::new();
   let code = ErrorCode::parse("auv.test.canceled_failure_completion").unwrap();
   let failure_gate = store.block_then_fail_next(ArtifactWriteError::Rejected(code.clone()));
@@ -970,10 +1041,20 @@ fn canceled_failure_completion_does_not_duplicate_unobserved_reporting() {
 
   let receipt = root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(b"failure")));
   failure_gate.wait_until_entered();
+  let flush_wake = BlockingFlushWake::new();
+  let waker = Waker::from(flush_wake.clone());
+  let mut task_context = TaskContext::from_waker(&waker);
+  let mut flush = dispatch.flush();
+  assert!(flush.as_mut().poll(&mut task_context).is_pending());
   drop(receipt);
   failure_gate.release();
-  let flush = block_on_timeout(dispatch.flush()).unwrap_err();
+  flush_wake.wait_until_entered();
+  let reported_before_flush_wake = reporter.failures();
+  flush_wake.release();
+  let flush = block_on_timeout(flush).unwrap_err();
 
+  assert_eq!(reported_before_flush_wake.len(), 1, "failure reporting must happen before flush completion becomes visible");
+  assert_eq!(reported_before_flush_wake[0].code(), &code);
   assert_eq!(flush.failure_count().get(), 1);
   assert_eq!(flush.first().code(), &code);
   assert_eq!(reporter.failures().len(), 1);
