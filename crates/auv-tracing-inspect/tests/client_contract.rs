@@ -1064,6 +1064,10 @@ async fn caller_body_interruption_is_definitively_unavailable() {
 
   assert!(matches!(error, ArtifactWriteError::Unavailable(_)), "{error:?}");
   assert!(backing.lookup_commit(run_id(), key).await.unwrap().is_none());
+
+  drop(error);
+  drop(store);
+  server.shutdown().await;
 }
 
 #[tokio::test]
