@@ -2,13 +2,15 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use auv_inspect_server::router;
+use auv_inspect_server::{router, router_with_artifact_origin};
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode,
   IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunStore,
   RunSubscription, StoreArtifactRequest,
 };
-use auv_tracing_inspect::protocol::{ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactUploadDraft, ResolveArtifactsResponse, ResolvedArtifact};
+use auv_tracing_inspect::protocol::{
+  ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactUploadDraft, RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact,
+};
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST};
 use axum::http::{Request, StatusCode};
@@ -37,8 +39,10 @@ struct ProbeStore {
   write_calls: Arc<AtomicUsize>,
   lookup_calls: Arc<AtomicUsize>,
   snapshot_calls: Arc<AtomicUsize>,
-  lookup_gate: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
+  delay_lookups: Arc<AtomicBool>,
+  fail_lookups: Arc<AtomicBool>,
   write_gate: WriteGate,
+  after_write_gate: WriteGate,
 }
 
 impl ProbeStore {
@@ -51,8 +55,10 @@ impl ProbeStore {
       write_calls: Arc::new(AtomicUsize::new(0)),
       lookup_calls: Arc::new(AtomicUsize::new(0)),
       snapshot_calls: Arc::new(AtomicUsize::new(0)),
-      lookup_gate: Arc::new(Mutex::new(None)),
+      delay_lookups: Arc::new(AtomicBool::new(false)),
+      fail_lookups: Arc::new(AtomicBool::new(false)),
       write_gate: Arc::new(Mutex::new(None)),
+      after_write_gate: Arc::new(Mutex::new(None)),
     }
   }
 
@@ -68,12 +74,20 @@ impl ProbeStore {
     *self.authority_override.lock().expect("authority lock") = Some(authority_id);
   }
 
-  fn gate_lookups(&self, barrier: Arc<tokio::sync::Barrier>) {
-    *self.lookup_gate.lock().expect("lookup gate") = Some(barrier);
+  fn delay_lookups(&self, enabled: bool) {
+    self.delay_lookups.store(enabled, Ordering::SeqCst);
+  }
+
+  fn fail_lookups(&self, enabled: bool) {
+    self.fail_lookups.store(enabled, Ordering::SeqCst);
   }
 
   fn gate_next_write(&self, entered: Arc<tokio::sync::Barrier>, release: Arc<tokio::sync::Barrier>) {
     *self.write_gate.lock().expect("write gate") = Some((entered, release));
+  }
+
+  fn gate_after_next_write(&self, entered: Arc<tokio::sync::Barrier>, release: Arc<tokio::sync::Barrier>) {
+    *self.after_write_gate.lock().expect("after-write gate") = Some((entered, release));
   }
 }
 
@@ -92,6 +106,7 @@ impl RunStore for ProbeStore {
     let unknown_after_write = self.unknown_after_write.clone();
     let unknown_without_write = self.unknown_without_write.clone();
     let write_gate = self.write_gate.lock().expect("write gate").take();
+    let after_write_gate = self.after_write_gate.lock().expect("after-write gate").take();
     Box::pin(async move {
       if let Some((entered, release)) = write_gate {
         entered.wait().await;
@@ -101,6 +116,10 @@ impl RunStore for ProbeStore {
         return Err(ArtifactWriteError::PublicationUnknown(error_code("auv.test.publication_unknown")));
       }
       let result = inner.write_artifact(request, body).await;
+      if let Some((entered, release)) = after_write_gate {
+        entered.wait().await;
+        release.wait().await;
+      }
       if unknown_after_write.load(Ordering::SeqCst) && result.is_ok() {
         Err(ArtifactWriteError::PublicationUnknown(error_code("auv.test.publication_unknown")))
       } else {
@@ -112,10 +131,14 @@ impl RunStore for ProbeStore {
   fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
     self.lookup_calls.fetch_add(1, Ordering::SeqCst);
     let inner = self.inner.clone();
-    let gate = self.lookup_gate.lock().expect("lookup gate").clone();
+    let delay = self.delay_lookups.load(Ordering::SeqCst);
+    let fail = self.fail_lookups.load(Ordering::SeqCst);
     Box::pin(async move {
-      if let Some(gate) = gate {
-        gate.wait().await;
+      if delay {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+      }
+      if fail {
+        return Err(ReadError::Unavailable(error_code("auv.test.lookup_unavailable")));
       }
       inner.lookup_commit(run_id, key).await
     })
@@ -183,6 +206,29 @@ fn put_content(run: &str, upload_id: impl std::fmt::Display, body: Body) -> Requ
     .expect("content request")
 }
 
+fn post_ordinary_commit(key: &str) -> Request<Body> {
+  Request::builder()
+    .method("POST")
+    .uri(format!("/v1/runs/{RUN}/commits"))
+    .header(CONTENT_TYPE, RUN_MEDIA_TYPE)
+    .header("Idempotency-Key", key)
+    .body(Body::from(
+      serde_json::to_vec(&json!({
+        "authority_id": AUTHORITY,
+        "mutations": [{
+          "start_span": {
+            "span_id": SPAN,
+            "name": "auv.test.ordinary",
+            "started_at": {"unix_seconds": 1, "nanoseconds": 0},
+            "attributes": {}
+          }
+        }]
+      }))
+      .unwrap(),
+    ))
+    .unwrap()
+}
+
 fn polled_body(bytes: &'static [u8], polls: Arc<AtomicUsize>) -> Body {
   let mut bytes = Some(Bytes::from_static(bytes));
   Body::from_stream(futures_util::stream::poll_fn(move |_| {
@@ -242,7 +288,7 @@ async fn unpublished_draft_expires_after_exactly_twenty_four_hours() {
   let app = router(Arc::new(MemoryRunStore::new(authority_id())));
   let draft = create_draft(&app, ARTIFACT, KEY).await;
 
-  tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60 + 1)).await;
+  tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60)).await;
   let polls = Arc::new(AtomicUsize::new(0));
   let response = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()))).await.expect("expired response");
 
@@ -345,11 +391,81 @@ async fn unresolved_publication_uses_stable_uncertainty_code_instead_of_confirme
   let draft = create_draft(&app, ARTIFACT, KEY).await;
   let lookups_before = store.lookup_calls.load(Ordering::SeqCst);
 
-  let response = app.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
+  let response = app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
 
   assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
   assert_eq!(response_json(response).await, json!({"error": "auv.inspect.publication_unknown"}));
   assert_eq!(store.lookup_calls.load(Ordering::SeqCst) - lookups_before, 1);
+
+  let repeated =
+    app.clone().oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256))).await.unwrap();
+  assert_eq!(repeated.status(), StatusCode::OK);
+  let repeated: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(repeated).await).unwrap();
+  assert_eq!(repeated, draft);
+
+  let polls = Arc::new(AtomicUsize::new(0));
+  let replay = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()))).await.unwrap();
+  assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response_json(replay).await, json!({"error": "auv.inspect.publication_unknown"}));
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn indeterminate_replay_with_a_mismatching_commit_never_polls_or_republishes() {
+  let store = ProbeStore::new();
+  store.report_unresolved_publication(true);
+  let app = router(Arc::new(store.clone()));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  let first = app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
+  assert_eq!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+  store
+    .inner
+    .commit(
+      RunCommitRequest::new(
+        authority_id(),
+        RUN.parse().unwrap(),
+        KEY.parse().unwrap(),
+        vec![auv_tracing::RunMutation::StartSpan(
+          auv_tracing::SpanStarted::new(
+            SPAN.parse().unwrap(),
+            None,
+            None,
+            auv_tracing::SpanName::parse("auv.test.mismatch").unwrap(),
+            auv_tracing::Timestamp::new(1, 0).unwrap(),
+            auv_tracing::Attributes::empty(),
+          ),
+        )],
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+
+  let polls = Arc::new(AtomicUsize::new(0));
+  let replay = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  assert_eq!(replay.status(), StatusCode::CONFLICT);
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn indeterminate_replay_with_lookup_failure_never_polls_or_republishes() {
+  let store = ProbeStore::new();
+  store.report_unresolved_publication(true);
+  let app = router(Arc::new(store.clone()));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  let first = app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
+  assert_eq!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
+  store.fail_lookups(true);
+
+  let polls = Arc::new(AtomicUsize::new(0));
+  let replay = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response_json(replay).await, json!({"error": "auv.inspect.publication_unknown"}));
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -369,7 +485,8 @@ async fn changed_authority_rejects_content_before_body_polling() {
 
 #[tokio::test]
 async fn resolver_preserves_partial_results_order_and_duplicate_positions() {
-  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let app = router_with_artifact_origin(Arc::new(MemoryRunStore::new(authority_id())), url::Url::parse("https://inspect.example/").unwrap())
+    .unwrap();
   let draft = create_draft(&app, ARTIFACT, KEY).await;
   let published = app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.expect("publication");
   assert_eq!(published.status(), StatusCode::CREATED);
@@ -396,7 +513,7 @@ async fn resolver_preserves_partial_results_order_and_duplicate_positions() {
   let response: ResolveArtifactsResponse = serde_json::from_slice(&response_bytes(response).await).expect("resolver response");
   assert_eq!(response.results().len(), 3);
   assert!(matches!(&response.results()[0], ResolvedArtifact::Available { uri, content_url, .. }
-    if uri == &available && content_url.as_str() == format!("http://inspect.example/v1/runs/{RUN}/artifacts/{ARTIFACT}")));
+    if uri == &available && content_url.as_str() == format!("https://inspect.example/v1/runs/{RUN}/artifacts/{ARTIFACT}")));
   assert!(matches!(&response.results()[1], ResolvedArtifact::NotFound { uri } if uri == &missing));
   assert_eq!(response.results()[0], response.results()[2]);
 }
@@ -404,7 +521,7 @@ async fn resolver_preserves_partial_results_order_and_duplicate_positions() {
 #[tokio::test]
 async fn resolver_validates_authority_and_the_complete_bounded_batch_before_lookup() {
   let store = ProbeStore::new();
-  let app = router(Arc::new(store.clone()));
+  let app = router_with_artifact_origin(Arc::new(store.clone()), url::Url::parse("https://inspect.example/").unwrap()).unwrap();
   let valid_uri = ArtifactUri::from_ids(RUN.parse().expect("run ID"), ARTIFACT.parse().expect("artifact ID"));
 
   let mismatch =
@@ -480,7 +597,7 @@ async fn simultaneous_draft_posts_classify_equal_and_conflicting_requests_atomic
 #[tokio::test]
 async fn draft_indexes_are_rechecked_after_async_store_lookup() {
   let store = ProbeStore::new();
-  store.gate_lookups(Arc::new(tokio::sync::Barrier::new(2)));
+  store.delay_lookups(true);
   let app = router(Arc::new(store));
   let first_key = IdempotencyKey::new();
   let second_key = IdempotencyKey::new();
@@ -539,20 +656,43 @@ async fn equal_draft_post_during_content_upload_replays_the_same_draft() {
 }
 
 #[tokio::test]
-async fn cancelled_content_upload_leaves_the_draft_reusable() {
+async fn cancellation_before_body_completion_restores_pending() {
   let store = ProbeStore::new();
   let entered = Arc::new(tokio::sync::Barrier::new(2));
   let release = Arc::new(tokio::sync::Barrier::new(2));
   store.gate_next_write(entered.clone(), release);
-  let app = router(Arc::new(store));
+  let app = router(Arc::new(store.clone()));
   let draft = create_draft(&app, ARTIFACT, KEY).await;
   let upload = tokio::spawn(app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))));
   entered.wait().await;
   upload.abort();
   assert!(upload.await.expect_err("upload must be cancelled").is_cancelled());
 
-  let retried = app.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.expect("retried upload");
+  let polls = Arc::new(AtomicUsize::new(0));
+  let retried = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()))).await.expect("retried upload");
   assert_eq!(retried.status(), StatusCode::CREATED);
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 2);
+  assert!(polls.load(Ordering::SeqCst) > 0);
+}
+
+#[tokio::test]
+async fn cancellation_after_body_completion_becomes_lookup_only_indeterminate() {
+  let store = ProbeStore::new();
+  let entered = Arc::new(tokio::sync::Barrier::new(2));
+  let release = Arc::new(tokio::sync::Barrier::new(2));
+  store.gate_after_next_write(entered.clone(), release);
+  let app = router(Arc::new(store.clone()));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  let upload = tokio::spawn(app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))));
+  entered.wait().await;
+  upload.abort();
+  assert!(upload.await.expect_err("upload must be cancelled").is_cancelled());
+
+  let polls = Arc::new(AtomicUsize::new(0));
+  let retried = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  assert_eq!(retried.status(), StatusCode::OK);
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -584,6 +724,52 @@ async fn ordinary_commit_key_conflicts_with_draft_without_polling_content() {
   let response = app.oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256))).await.unwrap();
 
   assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn draft_reservation_rejects_a_later_ordinary_commit_with_the_same_key() {
+  let store = MemoryRunStore::new(authority_id());
+  let app = router(Arc::new(store.clone()));
+  create_draft(&app, ARTIFACT, KEY).await;
+
+  let response = app.oneshot(post_ordinary_commit(KEY)).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::CONFLICT);
+  assert!(store.lookup_commit(RUN.parse().unwrap(), KEY.parse().unwrap()).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn simultaneous_draft_and_ordinary_commit_admit_exactly_one_reservation() {
+  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let (draft, commit) = tokio::join!(
+    app.clone().oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256),)),
+    app.oneshot(post_ordinary_commit(KEY)),
+  );
+  let statuses = [draft.unwrap().status(), commit.unwrap().status()];
+
+  assert!(statuses.contains(&StatusCode::CREATED));
+  assert!(statuses.contains(&StatusCode::CONFLICT));
+}
+
+#[tokio::test]
+async fn concurrent_equal_drafts_after_publication_both_replay() {
+  let store = ProbeStore::new();
+  let first = router(Arc::new(store.clone()));
+  let draft = create_draft(&first, ARTIFACT, KEY).await;
+  assert_eq!(first.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap().status(), StatusCode::CREATED);
+
+  store.delay_lookups(true);
+  let second = router(Arc::new(store));
+  let body = draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256);
+  let (left, right) = tokio::join!(second.clone().oneshot(post_draft(RUN, KEY, body.clone())), second.oneshot(post_draft(RUN, KEY, body)),);
+
+  let left = left.unwrap();
+  let right = right.unwrap();
+  assert_eq!(left.status(), StatusCode::OK);
+  assert_eq!(right.status(), StatusCode::OK);
+  let left: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(left).await).unwrap();
+  let right: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(right).await).unwrap();
+  assert_eq!(left, right);
 }
 
 #[tokio::test]
@@ -668,6 +854,37 @@ async fn content_headers_reject_strictly_before_body_polling() {
 }
 
 #[tokio::test]
+async fn duplicate_artifact_control_headers_are_rejected_before_lookup_or_body_polling() {
+  let store = ProbeStore::new();
+  let app = router(Arc::new(store.clone()));
+  let mut duplicate_media = post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256));
+  duplicate_media.headers_mut().append(CONTENT_TYPE, "application/json".parse().unwrap());
+  let response = app.clone().oneshot(duplicate_media).await.unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+  let mut duplicate_key = post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256));
+  duplicate_key.headers_mut().append("Idempotency-Key", OTHER_KEY.parse().unwrap());
+  let response = app.clone().oneshot(duplicate_key).await.unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(store.lookup_calls.load(Ordering::SeqCst), 0);
+
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  for header in [CONTENT_TYPE.as_str(), "Content-Digest"] {
+    let polls = Arc::new(AtomicUsize::new(0));
+    let mut request = put_content(RUN, draft.upload_id(), polled_body(b"abc", polls.clone()));
+    let duplicate = if header == CONTENT_TYPE.as_str() {
+      "application/octet-stream"
+    } else {
+      "sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:"
+    };
+    request.headers_mut().append(header, duplicate.parse().unwrap());
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+  }
+}
+
+#[tokio::test]
 async fn request_stream_failure_publishes_nothing_and_leaves_draft_reusable() {
   let store = MemoryRunStore::new(authority_id());
   let app = router(Arc::new(store.clone()));
@@ -683,8 +900,9 @@ async fn request_stream_failure_publishes_nothing_and_leaves_draft_reusable() {
 }
 
 #[tokio::test]
-async fn trusted_router_host_fallback_is_validated_before_resolution() {
-  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+async fn resolver_uses_only_the_configured_trusted_origin() {
+  let app = router_with_artifact_origin(Arc::new(MemoryRunStore::new(authority_id())), url::Url::parse("https://inspect.example/").unwrap())
+    .unwrap();
   let draft = create_draft(&app, ARTIFACT, KEY).await;
   assert_eq!(app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap().status(), StatusCode::CREATED);
   let uri = ArtifactUri::from_ids(RUN.parse().unwrap(), ARTIFACT.parse().unwrap());
@@ -695,7 +913,7 @@ async fn trusted_router_host_fallback_is_validated_before_resolution() {
         .method("POST")
         .uri("/v1/resources/artifacts/resolve")
         .header(CONTENT_TYPE, "application/json")
-        .header(HOST, "inspect.example")
+        .header(HOST, "poisoned.example")
         .body(Body::from(serde_json::to_vec(&json!({"authority_id": AUTHORITY, "uris": [&uri]})).unwrap()))
         .unwrap(),
     )
@@ -703,19 +921,26 @@ async fn trusted_router_host_fallback_is_validated_before_resolution() {
     .unwrap();
   let response: ResolveArtifactsResponse = serde_json::from_slice(&response_bytes(response).await).unwrap();
   assert!(matches!(&response.results()[0], ResolvedArtifact::Available { content_url, .. }
-    if content_url.as_str() == format!("http://inspect.example/v1/runs/{RUN}/artifacts/{ARTIFACT}")));
+    if content_url.as_str() == format!("https://inspect.example/v1/runs/{RUN}/artifacts/{ARTIFACT}")));
 
-  let invalid = app
+  assert!(
+    router_with_artifact_origin(Arc::new(MemoryRunStore::new(authority_id())), url::Url::parse("https://user@inspect.example/").unwrap(),)
+      .is_err()
+  );
+
+  let unconfigured = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let unavailable = unconfigured
     .oneshot(
       Request::builder()
         .method("POST")
         .uri("/v1/resources/artifacts/resolve")
         .header(CONTENT_TYPE, "application/json")
-        .header(HOST, "user@evil.example")
+        .header(HOST, "poisoned.example")
         .body(Body::from(serde_json::to_vec(&json!({"authority_id": AUTHORITY, "uris": [&uri]})).unwrap()))
         .unwrap(),
     )
     .await
     .unwrap();
-  assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(unavailable.headers().get(CONTENT_TYPE).unwrap(), "application/json");
 }

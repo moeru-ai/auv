@@ -161,7 +161,10 @@ impl RunStore for InspectRunStore {
             CommitResult::Replayed(commit)
           })
         }
-        _ => Err(commit_failure(response).await),
+        _ => match commit_failure(response).await {
+          CommitError::CommitUnknown(code) => self.recover_commit(&request, code).await,
+          error => Err(error),
+        },
       }
     })
   }
@@ -194,8 +197,9 @@ impl RunStore for InspectRunStore {
         .send()
         .await
         .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_transport_unavailable")))?;
+      let replayed_draft = draft_response.status() == StatusCode::OK;
       if !matches!(draft_response.status(), StatusCode::CREATED | StatusCode::OK) {
-        return Err(write_artifact_failure(draft_response).await);
+        return Err(write_artifact_failure(draft_response).await.unwrap_or_else(ArtifactWriteError::Unavailable));
       }
       if !has_media_type(&draft_response, ARTIFACT_UPLOAD_MEDIA_TYPE) {
         return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_media_type_invalid")));
@@ -208,13 +212,20 @@ impl RunStore for InspectRunStore {
       if draft.artifact_uri() != &ArtifactUri::from_ids(request.run_id(), request.artifact_id()) {
         return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_identity_mismatch")));
       }
+      if replayed_draft {
+        match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
+          Ok(Some(commit)) if artifact_commit_matches(&commit, &request) => return Ok(CommitResult::Replayed(commit)),
+          Ok(Some(_)) => return Err(ArtifactWriteError::IdempotencyMismatch),
+          Ok(None) => {}
+          Err(_) => return Err(ArtifactWriteError::PublicationUnknown(code("auv.inspect.draft_replay_lookup_unknown"))),
+        }
+      }
 
       let stream = ReaderStream::new(body.compat());
       let response = self
         .client
         .put(endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads/{}/content", request.run_id(), draft.upload_id())))
         .header(CONTENT_TYPE, request.content_type().to_string())
-        .header(CONTENT_LENGTH, request.expected_byte_length().get())
         .header("Content-Digest", content_digest(request.expected_sha256()))
         .header(EXPECT, "100-continue")
         .header(ACCEPT, RUN_MEDIA_TYPE)
@@ -247,8 +258,8 @@ impl RunStore for InspectRunStore {
           })
         }
         _ => match write_artifact_failure(response).await {
-          ArtifactWriteError::PublicationUnknown(code) => self.recover_artifact(&request, code).await,
-          error => Err(error),
+          Ok(ArtifactWriteError::PublicationUnknown(code)) | Err(code) => self.recover_artifact(&request, code).await,
+          Ok(error) => Err(error),
         },
       }
     })
@@ -323,7 +334,8 @@ impl RunStore for InspectRunStore {
         return Err(read_failure(response).await);
       }
       let page = decode_run_success::<RunCommitPage>(response).await?;
-      if page.commits().iter().any(|commit| commit.authority_id() != self.authority_id || commit.run_id() != run_id)
+      if page.commits().len() > limit.get().get() as usize
+        || page.commits().iter().any(|commit| commit.authority_id() != self.authority_id || commit.run_id() != run_id)
         || page.commits().first().is_some_and(|commit| commit.revision().get() != after.get() + 1)
         || (page.commits().is_empty() && page.last_revision() != after)
       {
@@ -342,6 +354,8 @@ impl RunStore for InspectRunStore {
         accepted: after,
         response: Some(response),
         buffer: Vec::new(),
+        frame_scan_start: 0,
+        reconnect_attempt: 0,
         closed: false,
       };
       Ok(Box::pin(stream::unfold(state, next_sse_item)) as RunSubscription)
@@ -430,7 +444,13 @@ async fn next_artifact_chunk(mut state: ArtifactStreamState) -> Option<(Result<B
     }
     Err(_) => {
       state.done = true;
-      Some((Err(ArtifactReadError::Unavailable(code("auv.inspect.artifact_stream_unavailable"))), state))
+      let digest = Sha256Digest::new(state.hasher.clone().finalize().into());
+      let error = if state.observed_length != state.expected_length.get() || digest != state.expected_sha256 {
+        ArtifactReadError::Integrity(code("auv.inspect.artifact_integrity_mismatch"))
+      } else {
+        ArtifactReadError::Unavailable(code("auv.inspect.artifact_stream_unavailable"))
+      };
+      Some((Err(error), state))
     }
   }
 }
@@ -441,6 +461,8 @@ struct SseState {
   accepted: RunRevision,
   response: Option<Response>,
   buffer: Vec<u8>,
+  frame_scan_start: usize,
+  reconnect_attempt: u32,
   closed: bool,
 }
 
@@ -449,10 +471,18 @@ async fn next_sse_item(mut state: SseState) -> Option<(Result<RunCommit, Subscri
     if state.closed {
       return None;
     }
-    if let Some(frame) = take_sse_frame(&mut state.buffer) {
+    let frame = match take_sse_frame(&mut state.buffer, &mut state.frame_scan_start) {
+      Ok(frame) => frame,
+      Err(()) => {
+        state.closed = true;
+        return Some((Err(SubscriptionError::Store(ReadError::Integrity(code("auv.inspect.sse_event_too_large")))), state));
+      }
+    };
+    if let Some(frame) = frame {
       match parse_sse_frame(&frame, state.store.authority_id, state.run_id, state.accepted) {
         Ok(SseFrameResult::Commit(commit)) => {
           state.accepted = commit.revision();
+          state.reconnect_attempt = 0;
           return Some((Ok(commit), state));
         }
         Ok(SseFrameResult::Gap(gap)) => {
@@ -476,14 +506,24 @@ async fn next_sse_item(mut state: SseState) -> Option<(Result<RunCommit, Subscri
         }
       }
     }
-    if state.buffer.len() > MAX_SSE_FRAME_BYTES {
-      state.closed = true;
-      return Some((Err(SubscriptionError::Store(ReadError::Integrity(code("auv.inspect.sse_event_too_large")))), state));
-    }
     if state.response.is_none() {
-      tokio::time::sleep(Duration::from_millis(10)).await;
+      tokio::time::sleep(sse_reconnect_delay(state.reconnect_attempt)).await;
+      state.reconnect_attempt = state.reconnect_attempt.saturating_add(1);
       match open_sse(&state.store, state.run_id, state.accepted, Some(state.accepted)).await {
         Ok(response) => state.response = Some(response),
+        Err(ReadError::HistoryGap {
+          requested_after,
+          earliest_available,
+        }) => {
+          state.closed = true;
+          return Some((
+            Err(SubscriptionError::Gap {
+              requested_after,
+              earliest_available,
+            }),
+            state,
+          ));
+        }
         Err(error) => {
           state.closed = true;
           return Some((Err(SubscriptionError::Store(error)), state));
@@ -496,6 +536,7 @@ async fn next_sse_item(mut state: SseState) -> Option<(Result<RunCommit, Subscri
       Ok(None) | Err(_) => {
         state.response = None;
         state.buffer.clear();
+        state.frame_scan_start = 0;
       }
     }
   }
@@ -567,17 +608,34 @@ fn parse_sse_frame(bytes: &[u8], authority_id: AuthorityId, run_id: RunId, accep
   }
 }
 
-fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
-  let lf = buffer.windows(2).position(|window| window == b"\n\n").map(|position| (position, 2));
-  let crlf = buffer.windows(4).position(|window| window == b"\r\n\r\n").map(|position| (position, 4));
+fn take_sse_frame(buffer: &mut Vec<u8>, scan_start: &mut usize) -> Result<Option<Vec<u8>>, ()> {
+  let start = (*scan_start).min(buffer.len());
+  let unscanned = &buffer[start..];
+  let lf = unscanned.windows(2).position(|window| window == b"\n\n").map(|position| (start + position, 2));
+  let crlf = unscanned.windows(4).position(|window| window == b"\r\n\r\n").map(|position| (start + position, 4));
   let (position, delimiter) = match (lf, crlf) {
     (Some(left), Some(right)) => left.min(right),
     (Some(found), None) | (None, Some(found)) => found,
-    (None, None) => return None,
+    (None, None) => {
+      if buffer.len() > MAX_SSE_FRAME_BYTES {
+        return Err(());
+      }
+      *scan_start = buffer.len().saturating_sub(3);
+      return Ok(None);
+    }
   };
+  if position > MAX_SSE_FRAME_BYTES {
+    return Err(());
+  }
   let frame = buffer[..position].to_vec();
   buffer.drain(..position + delimiter);
-  Some(frame)
+  *scan_start = 0;
+  Ok(Some(frame))
+}
+
+fn sse_reconnect_delay(attempt: u32) -> Duration {
+  let multiplier = 1_u64 << attempt.min(5);
+  Duration::from_millis((25 * multiplier).min(800))
 }
 
 async fn open_sse(
@@ -702,20 +760,24 @@ fn map_read_error(error: RunApiError) -> ReadError {
   }
 }
 
-async fn write_artifact_failure(response: Response) -> ArtifactWriteError {
+async fn write_artifact_failure(response: Response) -> Result<ArtifactWriteError, ErrorCode> {
   let status = response.status();
   match decode_artifact_error(response, ARTIFACT_UPLOAD_MEDIA_TYPE).await {
-    Ok(error) => match status {
+    Ok(error) => Ok(match status {
       StatusCode::CONFLICT => ArtifactWriteError::IdempotencyMismatch,
       StatusCode::UNPROCESSABLE_ENTITY => ArtifactWriteError::Integrity(error),
       StatusCode::SERVICE_UNAVAILABLE if error == code("auv.inspect.publication_unknown") => ArtifactWriteError::PublicationUnknown(error),
       StatusCode::SERVICE_UNAVAILABLE => ArtifactWriteError::Unavailable(error),
-      StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND | StatusCode::GONE | StatusCode::PAYLOAD_TOO_LARGE => {
-        ArtifactWriteError::Rejected(error)
-      }
-      _ => ArtifactWriteError::Unavailable(code("auv.inspect.artifact_error_status_invalid")),
-    },
-    Err(()) => ArtifactWriteError::Unavailable(code("auv.inspect.artifact_error_invalid")),
+      StatusCode::BAD_REQUEST
+      | StatusCode::UNAUTHORIZED
+      | StatusCode::FORBIDDEN
+      | StatusCode::NOT_FOUND
+      | StatusCode::GONE
+      | StatusCode::PAYLOAD_TOO_LARGE
+      | StatusCode::UNSUPPORTED_MEDIA_TYPE => ArtifactWriteError::Rejected(error),
+      _ => return Err(code("auv.inspect.artifact_error_status_invalid")),
+    }),
+    Err(()) => Err(code("auv.inspect.artifact_error_invalid")),
   }
 }
 

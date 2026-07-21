@@ -32,6 +32,10 @@ pub(crate) struct InspectServerState {
   pub(crate) store: Arc<dyn RunStore>,
   pub(crate) artifacts: ArtifactApiState,
   pub(crate) artifact_origin: Option<Url>,
+  /// Serializes short ordinary-commit and draft-reservation mutations.
+  ///
+  /// Artifact bodies are never streamed while this gate is held.
+  pub(crate) mutation_gate: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,12 +66,19 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
 /// This router has no authentication layer. Transport callers must use
 /// [`serve`], which enforces loopback binding, or install an independently
 /// reviewed access-control boundary before exposing it.
-///
-/// The artifact resolver treats a request `Host` as trusted composition input
-/// only on this direct router surface. Callers must sanitize it at their access
-/// boundary. [`serve`] instead installs its actual bound origin.
 pub fn router(store: Arc<dyn RunStore>) -> Router {
   build_router(store, None)
+}
+
+/// Builds the Inspect router with a trusted public artifact origin.
+///
+/// This router has no authentication layer. Transport callers must use
+/// `serve`, which enforces loopback binding, or install an independently
+/// reviewed access-control boundary before exposing it. The artifact origin
+/// must come from that trusted composition boundary, never request headers.
+pub fn router_with_artifact_origin(store: Arc<dyn RunStore>, artifact_origin: Url) -> InspectResult<Router> {
+  validate_artifact_origin(&artifact_origin)?;
+  Ok(build_router(store, Some(artifact_origin)))
 }
 
 fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>) -> Router {
@@ -75,6 +86,7 @@ fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>) -> Route
     store,
     artifacts: ArtifactApiState::new(),
     artifact_origin,
+    mutation_gate: tokio::sync::Mutex::new(()),
   });
   Router::new()
     .route("/", get(serve_viewer))
@@ -120,8 +132,7 @@ pub async fn serve(store: Arc<dyn RunStore>, config: InspectServeConfig) -> Insp
   let local_address = listener.local_addr().map_err(|error| format!("failed to read inspect server address: {error}"))?;
   let artifact_origin =
     Url::parse(&format!("http://{local_address}/")).map_err(|error| format!("failed to construct inspect artifact origin: {error}"))?;
-  validate_artifact_origin(&artifact_origin)?;
-  let app = build_router(store.clone(), Some(artifact_origin));
+  let app = router_with_artifact_origin(store.clone(), artifact_origin)?;
   println!("inspect server: http://{local_address}");
   write_inspect_session(&InspectServerSession {
     url: format!("http://{local_address}"),

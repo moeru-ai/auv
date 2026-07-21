@@ -13,7 +13,7 @@ mod server;
 mod viewer_assets;
 
 pub use read_projection::project_snapshot;
-pub use server::{DEFAULT_INSPECT_HOST, DEFAULT_INSPECT_PORT, InspectServeConfig, router, serve};
+pub use server::{DEFAULT_INSPECT_HOST, DEFAULT_INSPECT_PORT, InspectServeConfig, router, router_with_artifact_origin, serve};
 pub use session::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
 
 pub type InspectResult<T> = Result<T, String>;

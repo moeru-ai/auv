@@ -434,6 +434,22 @@ async fn unknown_and_duplicate_fields_are_rejected_before_store_commit() {
 }
 
 #[tokio::test]
+async fn duplicate_commit_control_headers_are_rejected_before_store_commit() {
+  let probe = CommitProbe::new();
+  let app = router(Arc::new(probe.clone()));
+  let body = commit_body(AUTHORITY, &start_span("auv.test.root"));
+
+  let mut duplicate_key = post_commit(RUN, Some(KEY_ONE), body.clone());
+  duplicate_key.headers_mut().append("Idempotency-Key", KEY_TWO.parse().unwrap());
+  assert_eq!(app.clone().oneshot(duplicate_key).await.unwrap().status(), StatusCode::BAD_REQUEST);
+
+  let mut duplicate_media = post_commit(RUN, Some(KEY_ONE), body);
+  duplicate_media.headers_mut().append(CONTENT_TYPE, "application/json".parse().unwrap());
+  assert_eq!(app.oneshot(duplicate_media).await.unwrap().status(), StatusCode::BAD_REQUEST);
+  assert_eq!(probe.calls(), 0);
+}
+
+#[tokio::test]
 async fn run_json_body_over_32_mib_is_rejected_before_decode_or_store() {
   let probe = CommitProbe::new();
   let app = router(Arc::new(probe.clone()));

@@ -36,8 +36,6 @@ struct CommitStreamQuery {
 }
 
 pub(crate) fn routes() -> Router<Arc<InspectServerState>> {
-  // TODO(inspect-artifact-transfer-v1): Binary upload/read routes are deferred
-  // to Task 12 and must retain their independent streaming body boundary.
   Router::new()
     .route("/v1/authority", get(authority))
     .route("/v1/runs/{run_id}/commits", get(commits_after).post(commit))
@@ -75,6 +73,10 @@ async fn commit(
   }
   let request =
     RunCommitRequest::new(body.authority_id, run_id, key, body.mutations.into_vec()).map_err(|_| ApiFailure::invalid_reference())?;
+  let _mutation = state.mutation_gate.lock().await;
+  if state.artifacts.reserves(run_id, key) {
+    return Err(ApiFailure::from_commit(CommitError::IdempotencyMismatch));
+  }
   let recovery_request = request.clone();
   match state.store.commit(request).await {
     Ok(CommitResult::Appended(commit)) => Ok(run_json(StatusCode::CREATED, &commit)),
@@ -87,8 +89,8 @@ async fn commit(
 async fn resolve_commit_unknown(state: &InspectServerState, request: &RunCommitRequest, code: ErrorCode) -> Result<Response, ApiFailure> {
   // NOTICE(inspect-commit-unknown-v1): The accepted wire error enum has no
   // CommitUnknown variant. A local authority adapter may resolve uncertainty
-  // with this one lookup and no resubmission. Task 12's remote POST client must
-  // conservatively treat a lost/failed response as uncertain until its own
+  // with this one lookup and no resubmission. The remote POST client must
+  // conservatively treat a lost or failed response as uncertain until its own
   // one-lookup recovery completes; do not infer rejection or replay the POST.
   match state.store.lookup_commit(request.run_id(), request.idempotency_key()).await {
     Ok(Some(commit)) if commit_matches_request(&commit, request) => Ok(run_json(StatusCode::OK, &commit)),
@@ -203,20 +205,36 @@ fn parse_run_id(value: &str) -> Result<RunId, ApiFailure> {
 }
 
 fn parse_idempotency_key(headers: &HeaderMap) -> Result<IdempotencyKey, ApiFailure> {
-  headers
-    .get("Idempotency-Key")
-    .and_then(|value| value.to_str().ok())
+  exactly_one_header(headers, "idempotency-key")?
+    .to_str()
+    .ok()
     .ok_or_else(ApiFailure::invalid_reference)?
     .parse()
     .map_err(|_| ApiFailure::invalid_reference())
 }
 
 fn require_run_media_type(headers: &HeaderMap) -> Result<(), ApiFailure> {
-  if headers.get(CONTENT_TYPE).and_then(|value| value.to_str().ok()) == Some(RUN_MEDIA_TYPE) {
+  let mut values = headers.get_all(CONTENT_TYPE).iter();
+  let Some(value) = values.next() else {
+    return Err(ApiFailure::unsupported_media_type());
+  };
+  if values.next().is_some() {
+    return Err(ApiFailure::invalid_reference());
+  }
+  if value.to_str().ok() == Some(RUN_MEDIA_TYPE) {
     Ok(())
   } else {
     Err(ApiFailure::unsupported_media_type())
   }
+}
+
+fn exactly_one_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<&'a HeaderValue, ApiFailure> {
+  let mut values = headers.get_all(name).iter();
+  let value = values.next().ok_or_else(ApiFailure::invalid_reference)?;
+  if values.next().is_some() {
+    return Err(ApiFailure::invalid_reference());
+  }
+  Ok(value)
 }
 
 fn run_json(status: StatusCode, value: &impl Serialize) -> Response {
