@@ -145,7 +145,8 @@ private func axResolveObservedPath(
   path: String,
   expectedRole: String,
   operation: String,
-  retry: String
+  retry: String,
+  requireTrustedProcess: Bool = false
 ) -> Result<AXUIElement, AxPathResolutionFailure> {
   let indices: [Int]
   switch axObservedPathIndices(path: path, operation: operation, retry: retry) {
@@ -153,6 +154,15 @@ private func axResolveObservedPath(
     indices = parsed
   case .failure(let failure):
     return .failure(failure)
+  }
+
+  // Validate the caller-owned path before checking TCC so malformed input is
+  // classified as InvalidInput even when Accessibility permission is absent.
+  if requireTrustedProcess && !AXIsProcessTrusted() {
+    return .failure(AxPathResolutionFailure(
+      message: "Accessibility permission is required to \(operation) an AX node",
+      recovery: "grant Accessibility permission to the process running AUV, then retry \(retry)"
+    ))
   }
 
   let appElement = AXUIElementCreateApplication(pid)
@@ -483,7 +493,14 @@ func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
   }
 
   let current: AXUIElement
-  switch axResolveObservedPath(pid: pid, path: pathRaw, expectedRole: expectedRole, operation: "focus", retry: "the focus request") {
+  switch axResolveObservedPath(
+    pid: pid,
+    path: pathRaw,
+    expectedRole: expectedRole,
+    operation: "focus",
+    retry: "the focus request",
+    requireTrustedProcess: true
+  ) {
   case .success(let resolved):
     current = resolved
   case .failure(let failure):
