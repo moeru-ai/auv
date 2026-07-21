@@ -414,6 +414,7 @@ pub struct CursorStore {
   fail_subscription_call: Option<usize>,
   fail_snapshot: bool,
   fail_page: Arc<AtomicBool>,
+  page_failure_gate: Option<CommitGate>,
   zero_gap: Arc<AtomicBool>,
   subscribe_calls: Arc<AtomicUsize>,
   commits_after_calls: Arc<AtomicUsize>,
@@ -422,31 +423,36 @@ pub struct CursorStore {
 
 impl CursorStore {
   pub fn normal() -> Arc<Self> {
-    Self::new(FirstSubscription::Normal, None, false, false, false)
+    Self::new(FirstSubscription::Normal, None, false, false, None, false)
   }
 
   pub fn gap_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Gap, None, false, false, false)
+    Self::new(FirstSubscription::Gap, None, false, false, None, false)
   }
 
   pub fn pending_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, None, false, false, false)
+    Self::new(FirstSubscription::Pending, None, false, false, None, false)
   }
 
   pub fn pending_then_resubscribe_failure() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, Some(1), false, false, false)
+    Self::new(FirstSubscription::Pending, Some(1), false, false, None, false)
   }
 
   pub fn snapshot_failure() -> Arc<Self> {
-    Self::new(FirstSubscription::Normal, None, true, false, false)
+    Self::new(FirstSubscription::Normal, None, true, false, None, false)
   }
 
   pub fn page_failure() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, None, false, true, false)
+    Self::new(FirstSubscription::Pending, None, false, true, None, false)
+  }
+
+  pub fn blocked_page_failure() -> (Arc<Self>, CommitGate) {
+    let gate = CommitGate::new();
+    (Self::new(FirstSubscription::Pending, None, false, true, Some(gate.clone()), false), gate)
   }
 
   pub fn zero_history_gap_once() -> Arc<Self> {
-    Self::new(FirstSubscription::Pending, None, false, false, true)
+    Self::new(FirstSubscription::Pending, None, false, false, None, true)
   }
 
   fn new(
@@ -454,6 +460,7 @@ impl CursorStore {
     fail_subscription_call: Option<usize>,
     fail_snapshot: bool,
     fail_page: bool,
+    page_failure_gate: Option<CommitGate>,
     zero_gap: bool,
   ) -> Arc<Self> {
     Arc::new(Self {
@@ -462,6 +469,7 @@ impl CursorStore {
       fail_subscription_call,
       fail_snapshot,
       fail_page: Arc::new(AtomicBool::new(fail_page)),
+      page_failure_gate,
       zero_gap: Arc::new(AtomicBool::new(zero_gap)),
       subscribe_calls: Arc::new(AtomicUsize::new(0)),
       commits_after_calls: Arc::new(AtomicUsize::new(0)),
@@ -520,7 +528,13 @@ impl RunStore for CursorStore {
       });
     }
     if self.fail_page.swap(false, Ordering::SeqCst) {
-      return Box::pin(async { Err(ReadError::Unavailable(ErrorCode::parse("auv.test.page_failed").unwrap())) });
+      let gate = self.page_failure_gate.as_ref().and_then(CommitGate::enter);
+      return Box::pin(async move {
+        if let Some(gate) = gate {
+          let _ = gate.await;
+        }
+        Err(ReadError::Unavailable(ErrorCode::parse("auv.test.page_failed").unwrap()))
+      });
     }
     self.inner.commits_after(run_id, after, limit)
   }
