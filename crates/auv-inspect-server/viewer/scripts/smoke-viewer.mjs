@@ -35,6 +35,7 @@ const PERMANENT_CASES = new Map([
 const SPAN = "019f8b1e-4b2d-7a00-8f00-000000000011";
 const EVENT = "019f8b1e-4b2d-7a00-8f00-000000000021";
 const KEY = "019f8b1e-4b2d-7a00-8f00-000000000031";
+const STABILITY_SETTLE_MILLIS = 125;
 
 const viewerRoot = resolve(import.meta.dirname, "..");
 const html = await readFile(resolve(viewerRoot, "dist/index.html"), "utf8");
@@ -321,6 +322,10 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function waitMillis(milliseconds) {
+  await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, milliseconds));
+}
+
 async function selectPrimaryRun(label, { open = true } = {}) {
   const selectedSourceCount = sources.length;
   document.getElementById("run-id-input").value = RUN;
@@ -373,6 +378,8 @@ sources[0].emit("commit", JSON.stringify({
 }));
 await waitFor(() => document.getElementById("event-count")?.textContent === "1", "commit DOM update");
 assert(document.getElementById("main-crumb")?.textContent === "revision 2", "commit did not advance the rendered revision");
+assert(document.getElementById("conn-label")?.textContent === "live", "accepted commit did not keep the stream live");
+assert(document.getElementById("conn-endpoint")?.textContent === "revision 2", "accepted commit did not advance the live cursor");
 
 sources[0].emit("gap", JSON.stringify({ requested_after: 2, earliest_available: 3 }));
 await waitFor(() => sources.length === 2, "gap snapshot recovery");
@@ -538,13 +545,47 @@ await selectPrimaryRun("transport failure");
   assert(primarySnapshotRequests === requestCount + 1, "transport failure did not reload the snapshot");
 }
 
+const staleTimerSource = await selectPrimaryRun("stale stability timer setup");
+await selectPrimaryRun("commit activity resets flapping budget", { open: false });
+staleTimerSource.emitOpen();
+staleTimerSource.emitTransportError();
+{
+  const sourceCount = sources.length;
+  sources.at(-1).emitTransportError();
+  await waitFor(() => sources.length === sourceCount + 1, "pre-commit transport recovery");
+}
+sources.at(-1).emit("commit", JSON.stringify(commitFor([
+  { artifact_published: artifactFor(RUN, id(0x701)) }
+])));
+await waitFor(() => document.getElementById("artifact-count")?.textContent === "1", "activity-proving commit");
+assert(document.getElementById("conn-label")?.textContent === "live", "activity-proving commit did not mark the stream live");
+assert(document.getElementById("conn-endpoint")?.textContent === "revision 3", "activity-proving commit did not advance the live cursor");
+for (let attempt = 1; attempt <= 5; attempt += 1) {
+  const sourceCount = sources.length;
+  sources.at(-1).emitTransportError();
+  await waitFor(() => sources.length === sourceCount + 1, `rapid open-error recovery ${attempt}`, 2500);
+  sources.at(-1).emitOpen();
+}
+{
+  const sourceCount = sources.length;
+  sources.at(-1).emitTransportError();
+  await waitFor(
+    () => document.getElementById("conn-endpoint")?.textContent === "recovery exhausted: stream unavailable",
+    "rapid open-error recovery exhaustion"
+  );
+  await waitMillis(25);
+  assert(sources.length === sourceCount, "rapid open-error flapping constructed another stream after exhaustion");
+}
+
 await selectPrimaryRun("quiet recovery cycles");
+await waitMillis(STABILITY_SETTLE_MILLIS);
 for (let cycle = 1; cycle <= 7; cycle += 1) {
   const sourceCount = sources.length;
   const requestCount = primarySnapshotRequests;
   sources.at(-1).emitTransportError();
   await waitFor(() => sources.length === sourceCount + 1, `quiet recovery cycle ${cycle}`, 2500);
   sources.at(-1).emitOpen();
+  await waitMillis(STABILITY_SETTLE_MILLIS);
   assert(primarySnapshotRequests === requestCount + 1, `quiet recovery cycle ${cycle} did not reload the snapshot`);
   assert(document.getElementById("conn-label")?.textContent === "live", `quiet recovery cycle ${cycle} did not return live`);
   assert(document.getElementById("conn-endpoint")?.textContent === "revision 2", `quiet recovery cycle ${cycle} lost the snapshot revision`);

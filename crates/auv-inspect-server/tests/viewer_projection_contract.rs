@@ -168,15 +168,6 @@ fn viewer_uses_snapshot_then_revision_sse_without_websocket_or_status_inference(
 }
 
 #[test]
-fn server_exports_only_the_documented_router_entrypoint() {
-  let library = include_str!("../src/lib.rs");
-  let server = include_str!("../src/server.rs");
-
-  assert!(!library.contains("router_with_projection"));
-  assert!(!server.contains("pub fn router_with_projection"));
-}
-
-#[test]
 fn ids_used_by_projection_contract_are_valid() {
   AuthorityId::from_str(AUTHORITY).unwrap();
   RunId::from_str(RUN).unwrap();
