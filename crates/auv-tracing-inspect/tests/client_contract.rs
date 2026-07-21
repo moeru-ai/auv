@@ -28,6 +28,7 @@ use axum::routing::{get, post, put};
 use futures_util::StreamExt;
 use futures_util::io::{AsyncRead, Cursor};
 use serde::Deserialize;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;
 
@@ -671,17 +672,90 @@ async fn same_client_retry_reacquires_after_a_safe_body_failure() {
 struct LostDraftResponseProbe {
   calls: Arc<AtomicUsize>,
   admissions: Arc<Mutex<Vec<String>>>,
+  bodies: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 #[tokio::test]
 async fn lost_draft_response_replays_the_post_with_the_same_admission() {
-  let backing = MemoryRunStore::new(authority_id());
   let probe = LostDraftResponseProbe::default();
-  let app = router(Arc::new(backing)).layer(middleware::from_fn_with_state(probe.clone(), lose_first_draft_response));
-  let server = TestServer::start(app).await;
+  let artifact_id = ArtifactId::new();
+  let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+  let published = MemoryRunStore::new(authority_id())
+    .write_artifact(request.clone(), Box::pin(Cursor::new(b"abc".to_vec())))
+    .await
+    .expect("sample artifact commit")
+    .commit()
+    .clone();
+  let draft = ArtifactUploadDraft::new(
+    ArtifactUploadId::new(),
+    ArtifactUri::from_ids(run_id(), artifact_id),
+    Timestamp::new(1_784_620_800, 0).unwrap(),
+  );
+  let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind partial draft server");
+  let address = listener.local_addr().expect("partial draft server address");
+  let task_probe = probe.clone();
+  let task = tokio::spawn(async move {
+    loop {
+      let (mut socket, _) = listener.accept().await.expect("accept partial draft request");
+      let request = read_raw_request(&mut socket).await;
+      if request.path == "/v1/authority" {
+        write_raw_response(
+          &mut socket,
+          "200 OK",
+          RUN_MEDIA_TYPE,
+          &[],
+          &serde_json::to_vec(&AuthorityResponse {
+            authority_id: authority_id(),
+          })
+          .unwrap(),
+          None,
+        )
+        .await;
+      } else if request.path.ends_with("/artifact-uploads") {
+        let admission = request.header(ARTIFACT_UPLOAD_ADMISSION_HEADER).expect("draft admission").to_owned();
+        task_probe.admissions.lock().expect("admission probe").push(admission.clone());
+        task_probe.bodies.lock().expect("draft body probe").push(request.body);
+        let call = task_probe.calls.fetch_add(1, Ordering::SeqCst);
+        let body = serde_json::to_vec(&draft).unwrap();
+        if call == 0 {
+          let partial = &body[..body.len() / 2];
+          write_raw_response(
+            &mut socket,
+            "201 Created",
+            ARTIFACT_UPLOAD_MEDIA_TYPE,
+            &[(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.as_str())],
+            partial,
+            Some(body.len()),
+          )
+          .await;
+        } else {
+          write_raw_response(
+            &mut socket,
+            "200 OK",
+            ARTIFACT_UPLOAD_MEDIA_TYPE,
+            &[(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.as_str())],
+            &body,
+            None,
+          )
+          .await;
+        }
+      } else if request.path.contains("/commits/by-idempotency-key/") {
+        write_raw_response(&mut socket, "404 Not Found", RUN_MEDIA_TYPE, &[], &serde_json::to_vec(&RunApiError::NotFound).unwrap(), None)
+          .await;
+      } else if request.path.ends_with("/content") {
+        write_raw_response(&mut socket, "201 Created", RUN_MEDIA_TYPE, &[], &serde_json::to_vec(&published).unwrap(), None).await;
+        break;
+      } else {
+        panic!("unexpected raw request path {}", request.path);
+      }
+    }
+  });
+  let server = TestServer {
+    base_url: Url::parse(&format!("http://{address}/")).unwrap(),
+    task,
+  };
   let store = InspectRunStore::connect(server.base_url.clone()).await.expect("connect");
   let polls = Arc::new(AtomicUsize::new(0));
-  let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
 
   let result = store
     .write_artifact(
@@ -699,28 +773,83 @@ async fn lost_draft_response_replays_the_post_with_the_same_admission() {
   let admissions = probe.admissions.lock().expect("admission probe");
   assert_eq!(admissions.len(), 2);
   assert_eq!(admissions[0], admissions[1]);
+  let bodies = probe.bodies.lock().expect("draft body probe");
+  assert_eq!(bodies.len(), 2);
+  assert_eq!(bodies[0], bodies[1]);
   assert!(polls.load(Ordering::SeqCst) > 0);
 }
 
-async fn lose_first_draft_response(State(probe): State<LostDraftResponseProbe>, request: AxumRequest, next: Next) -> Response {
-  let is_draft = request.method() == Method::POST && request.uri().path().ends_with("/artifact-uploads");
-  if !is_draft {
-    return next.run(request).await;
-  }
+struct RawRequest {
+  path: String,
+  headers: Vec<(String, String)>,
+  body: Vec<u8>,
+}
 
-  let admission =
-    request.headers().get(ARTIFACT_UPLOAD_ADMISSION_HEADER).and_then(|value| value.to_str().ok()).expect("draft admission").to_owned();
-  probe.admissions.lock().expect("admission probe").push(admission);
-  let response = next.run(request).await;
-  if probe.calls.fetch_add(1, Ordering::SeqCst) != 0 {
-    return response;
+impl RawRequest {
+  fn header(&self, name: &str) -> Option<&str> {
+    self.headers.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.as_str())
   }
+}
 
-  let (parts, _) = response.into_parts();
-  let body = Body::from_stream(futures_util::stream::once(async {
-    Err::<bytes::Bytes, _>(io::Error::new(io::ErrorKind::ConnectionReset, "lost draft response"))
-  }));
-  Response::from_parts(parts, body)
+async fn read_raw_request(socket: &mut tokio::net::TcpStream) -> RawRequest {
+  let mut received = Vec::new();
+  let header_end = loop {
+    let mut chunk = [0_u8; 4096];
+    let count = socket.read(&mut chunk).await.expect("read raw request");
+    assert_ne!(count, 0, "raw request closed before headers");
+    received.extend_from_slice(&chunk[..count]);
+    if let Some(position) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+      break position + 4;
+    }
+  };
+  let head = std::str::from_utf8(&received[..header_end]).expect("raw request headers");
+  let mut lines = head.split("\r\n");
+  let request_line = lines.next().expect("raw request line");
+  let path = request_line.split_whitespace().nth(1).expect("raw request path").to_owned();
+  let headers = lines
+    .filter(|line| !line.is_empty())
+    .map(|line| {
+      let (name, value) = line.split_once(':').expect("raw request header");
+      (name.to_owned(), value.trim().to_owned())
+    })
+    .collect::<Vec<_>>();
+  let content_length = headers
+    .iter()
+    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+    .and_then(|(_, value)| value.parse::<usize>().ok())
+    .unwrap_or(0);
+  while received.len() - header_end < content_length {
+    let mut chunk = [0_u8; 4096];
+    let count = socket.read(&mut chunk).await.expect("read raw request body");
+    assert_ne!(count, 0, "raw request closed before body");
+    received.extend_from_slice(&chunk[..count]);
+  }
+  RawRequest {
+    path,
+    headers,
+    body: received[header_end..header_end + content_length].to_vec(),
+  }
+}
+
+async fn write_raw_response(
+  socket: &mut tokio::net::TcpStream,
+  status: &str,
+  media_type: &str,
+  headers: &[(&str, &str)],
+  body: &[u8],
+  declared_length: Option<usize>,
+) {
+  let mut head = format!(
+    "HTTP/1.1 {status}\r\nContent-Type: {media_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
+    declared_length.unwrap_or(body.len())
+  );
+  for (name, value) in headers {
+    head.push_str(&format!("{name}: {value}\r\n"));
+  }
+  head.push_str("\r\n");
+  socket.write_all(head.as_bytes()).await.expect("write raw response headers");
+  socket.write_all(body).await.expect("write raw response body");
+  socket.flush().await.expect("flush raw response");
 }
 
 #[tokio::test]
@@ -1016,12 +1145,18 @@ async fn replayed_draft_preflight_without_a_commit_continues_the_one_shot_upload
 enum DraftAdmissionFault {
   Duplicate,
   Mismatch,
+  Missing,
+  Malformed,
+  WrongMediaType,
+  MalformedBody,
 }
 
 #[derive(Clone)]
 struct DraftAdmissionFaultState {
   draft: ArtifactUploadDraft,
   fault: DraftAdmissionFault,
+  calls: Arc<AtomicUsize>,
+  admissions: Arc<Mutex<Vec<String>>>,
 }
 
 #[tokio::test]
@@ -1029,6 +1164,10 @@ async fn duplicate_or_mismatched_draft_admission_responses_never_poll_the_body()
   for fault in [
     DraftAdmissionFault::Duplicate,
     DraftAdmissionFault::Mismatch,
+    DraftAdmissionFault::Missing,
+    DraftAdmissionFault::Malformed,
+    DraftAdmissionFault::WrongMediaType,
+    DraftAdmissionFault::MalformedBody,
   ] {
     let artifact_id = ArtifactId::new();
     let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
@@ -1039,6 +1178,8 @@ async fn duplicate_or_mismatched_draft_admission_responses_never_poll_the_body()
         Timestamp::new(1_784_620_800, 0).unwrap(),
       ),
       fault,
+      calls: Arc::new(AtomicUsize::new(0)),
+      admissions: Arc::new(Mutex::new(Vec::new())),
     };
     let app = Router::new()
       .route(
@@ -1053,7 +1194,7 @@ async fn duplicate_or_mismatched_draft_admission_responses_never_poll_the_body()
         }),
       )
       .route("/v1/runs/{run_id}/artifact-uploads", post(faulty_draft_admission))
-      .with_state(state);
+      .with_state(state.clone());
     let server = TestServer::start(app).await;
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
     let polls = Arc::new(AtomicUsize::new(0));
@@ -1069,12 +1210,32 @@ async fn duplicate_or_mismatched_draft_admission_responses_never_poll_the_body()
       .unwrap_err();
 
     assert!(matches!(error, ArtifactWriteError::Unavailable(_)));
+    assert_eq!(state.calls.load(Ordering::SeqCst), 2);
+    let admissions = state.admissions.lock().expect("admissions");
+    assert_eq!(admissions.len(), 2);
+    assert_eq!(admissions[0], admissions[1]);
     assert_eq!(polls.load(Ordering::SeqCst), 0);
   }
 }
 
 async fn faulty_draft_admission(State(state): State<DraftAdmissionFaultState>, headers: HeaderMap) -> Response {
-  let mut response = response(StatusCode::CREATED, ARTIFACT_UPLOAD_MEDIA_TYPE, Body::from(serde_json::to_vec(&state.draft).unwrap()));
+  state.calls.fetch_add(1, Ordering::SeqCst);
+  state
+    .admissions
+    .lock()
+    .expect("admissions")
+    .push(headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).and_then(|value| value.to_str().ok()).expect("request admission").to_owned());
+  let body = if matches!(state.fault, DraftAdmissionFault::MalformedBody) {
+    Body::from("{")
+  } else {
+    Body::from(serde_json::to_vec(&state.draft).unwrap())
+  };
+  let media_type = if matches!(state.fault, DraftAdmissionFault::WrongMediaType) {
+    "application/json"
+  } else {
+    ARTIFACT_UPLOAD_MEDIA_TYPE
+  };
+  let mut response = response(StatusCode::CREATED, media_type, body);
   match state.fault {
     DraftAdmissionFault::Duplicate => {
       let admission = headers.get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().clone();
@@ -1083,6 +1244,10 @@ async fn faulty_draft_admission(State(state): State<DraftAdmissionFaultState>, h
     }
     DraftAdmissionFault::Mismatch => {
       response.headers_mut().insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, "019f8b1e-4b2d-7a00-8f00-000000000099".parse().unwrap());
+    }
+    DraftAdmissionFault::Missing | DraftAdmissionFault::WrongMediaType | DraftAdmissionFault::MalformedBody => {}
+    DraftAdmissionFault::Malformed => {
+      response.headers_mut().insert(ARTIFACT_UPLOAD_ADMISSION_HEADER, "not-a-uuid".parse().unwrap());
     }
   }
   response
@@ -1974,14 +2139,36 @@ async fn client_validates_success_status_media_and_canonical_identities() {
 #[tokio::test]
 async fn resolver_rejects_untrusted_origins_and_noncanonical_artifact_paths() {
   let requested = ArtifactUri::from_ids(run_id(), ArtifactId::new());
-  for malicious_origin in [true, false] {
+  for mode in 0..6 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let base_url = Url::parse(&format!("http://{address}/")).unwrap();
-    let content_url = if malicious_origin {
-      Url::parse(&format!("https://attacker.example/v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id())).unwrap()
-    } else {
-      base_url.join("v1/runs/not-the-requested-run/artifacts/not-the-requested-artifact").unwrap()
+    let relative = format!("v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id());
+    let canonical = base_url.join(&relative).unwrap();
+    let content_url = match mode {
+      0 => Url::parse(&format!("https://attacker.example/{relative}")).unwrap(),
+      1 => base_url.join("v1/runs/not-the-requested-run/artifacts/not-the-requested-artifact").unwrap(),
+      2 => {
+        let artifact_id = requested.artifact_id().to_string();
+        let encoded_first = format!("%{:02X}{}", artifact_id.as_bytes()[0], &artifact_id[1..]);
+        Url::parse(&format!("http://{address}/v1/runs/{}/artifacts/{encoded_first}", requested.run_id())).unwrap()
+      }
+      3 => {
+        let mut url = canonical.clone();
+        url.set_query(Some("download=1"));
+        url
+      }
+      4 => {
+        let mut url = canonical.clone();
+        url.set_fragment(Some("preview"));
+        url
+      }
+      5 => {
+        let mut url = canonical;
+        url.set_username("user").unwrap();
+        url
+      }
+      _ => unreachable!(),
     };
     let payload = ResolveArtifactsResponse::new(vec![ResolvedArtifact::Available {
       uri: requested.clone(),
@@ -2014,6 +2201,55 @@ async fn resolver_rejects_untrusted_origins_and_noncanonical_artifact_paths() {
     let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
 
     assert!(matches!(store.resolve_artifacts(vec![requested.clone()]).await, Err(ReadError::Integrity(_))));
+  }
+}
+
+#[tokio::test]
+async fn resolver_requires_the_configured_base_path_prefix() {
+  let requested = ArtifactUri::from_ids(run_id(), ArtifactId::new());
+  for root_escape in [false, true] {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let origin = Url::parse(&format!("http://{address}/")).unwrap();
+    let base_url = origin.join("tenant-a/").unwrap();
+    let relative = format!("v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id());
+    let content_url = if root_escape {
+      origin.join(&relative).unwrap()
+    } else {
+      base_url.join(&relative).unwrap()
+    };
+    let payload = ResolveArtifactsResponse::new(vec![ResolvedArtifact::Available {
+      uri: requested.clone(),
+      content_type: ContentType::parse("text/plain").unwrap(),
+      byte_length: ByteLength::new(3).unwrap(),
+      sha256: Sha256Digest::from_str(ABC_SHA256).unwrap(),
+      content_url,
+    }]);
+    let api = Router::new()
+      .route(
+        "/v1/authority",
+        get(|| async {
+          run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          )
+        }),
+      )
+      .route(
+        "/v1/resources/artifacts/resolve",
+        post(move || {
+          let payload = payload.clone();
+          async move { response(StatusCode::OK, "application/json", Body::from(serde_json::to_vec(&payload).unwrap())) }
+        }),
+      );
+    let task = tokio::spawn(async move { axum::serve(listener, Router::new().nest("/tenant-a", api)).await.unwrap() });
+    let server = TestServer { base_url, task };
+    let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+    let result = store.resolve_artifacts(vec![requested.clone()]).await;
+    assert_eq!(result.is_err(), root_escape);
   }
 }
 

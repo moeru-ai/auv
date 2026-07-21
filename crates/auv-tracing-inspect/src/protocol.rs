@@ -3,11 +3,12 @@ use std::fmt;
 use std::str::FromStr;
 
 use auv_tracing::{
-  ArtifactId, ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode, NonEmptyVec, RunMutation,
-  RunRevision, Sha256Digest, SpanId, Timestamp,
+  ArtifactId, ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode, IdempotencyKey, NonEmptyVec, RunId,
+  RunMutation, RunRevision, Sha256Digest, SpanId, Timestamp,
 };
 use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
 use url::Url;
 use uuid::Uuid;
 
@@ -173,6 +174,25 @@ impl ArtifactUploadId {
   /// Generates a non-nil UUIDv7 upload identity.
   pub fn new() -> Self {
     Self(Uuid::now_v7())
+  }
+
+  /// Derives the stable public upload identity for one artifact publication.
+  ///
+  /// The UUID is a domain-separated SHA-256 digest of the authoritative
+  /// store, run, and idempotency identities. It is deterministic for durable
+  /// replay and is not an authentication secret or bearer capability.
+  pub fn for_artifact(authority_id: AuthorityId, run_id: RunId, idempotency_key: IdempotencyKey) -> Self {
+    let mut hasher = Sha256::new();
+    hasher.update(b"auv.inspect.artifact-upload-id.v1\0");
+    hasher.update(authority_id.as_uuid().as_bytes());
+    hasher.update(run_id.as_uuid().as_bytes());
+    hasher.update(idempotency_key.as_uuid().as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Self(Uuid::from_bytes(bytes))
   }
 }
 
@@ -634,6 +654,28 @@ impl<'de> Visitor<'de> for StructureVisitor<'_> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn artifact_upload_id_is_a_deterministic_domain_separated_uuid() {
+    let authority: auv_tracing::AuthorityId = "019f8b1e-4b2d-7a00-8f00-0000000000aa".parse().unwrap();
+    let other_authority: auv_tracing::AuthorityId = "019f8b1e-4b2d-7a00-8f00-0000000000ab".parse().unwrap();
+    let run: auv_tracing::RunId = "019f8b1e-4b2d-7a00-8f00-000000000001".parse().unwrap();
+    let other_run: auv_tracing::RunId = "019f8b1e-4b2d-7a00-8f00-000000000002".parse().unwrap();
+    let key: auv_tracing::IdempotencyKey = "019f8b1e-4b2d-7a00-8f00-000000000006".parse().unwrap();
+    let other_key: auv_tracing::IdempotencyKey = "019f8b1e-4b2d-7a00-8f00-000000000007".parse().unwrap();
+
+    let upload_id = ArtifactUploadId::for_artifact(authority, run, key);
+
+    assert_eq!(upload_id, ArtifactUploadId::for_artifact(authority, run, key));
+    assert_eq!(upload_id.to_string(), "40438152-8e11-81e4-bf89-aaceb17c249e");
+    assert_ne!(upload_id, ArtifactUploadId::for_artifact(other_authority, run, key));
+    assert_ne!(upload_id, ArtifactUploadId::for_artifact(authority, other_run, key));
+    assert_ne!(upload_id, ArtifactUploadId::for_artifact(authority, run, other_key));
+    assert!(!upload_id.0.is_nil());
+    assert_eq!(upload_id.0.get_version_num(), 8);
+    assert_eq!(upload_id.0.get_variant(), uuid::Variant::RFC4122);
+    assert_eq!(upload_id.to_string().parse::<ArtifactUploadId>().unwrap(), upload_id);
+  }
 
   #[test]
   fn strict_decoder_rejects_duplicate_keys_at_every_depth() {
