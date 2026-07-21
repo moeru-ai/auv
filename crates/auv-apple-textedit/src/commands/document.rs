@@ -1,8 +1,9 @@
 use std::time::Duration;
 
+use auv_driver::DriverResult;
 use serde::{Deserialize, Serialize};
 
-use crate::driver::{OperationResult, StepOutcome, TextEditDriver, VerificationOutcome};
+use crate::driver::{StepOutcome, TextEditDriver, VerificationOutcome};
 
 pub const DEFAULT_APP_ID: &str = "com.apple.TextEdit";
 pub const DEFAULT_MARKER_TEXT: &str = "AUV_TEXTEDIT_MARKER_2026_05_17";
@@ -71,7 +72,7 @@ pub struct DocumentCommandReport {
   pub verification: Option<VerificationOutcome>,
 }
 
-pub fn run_document_command(command: &DocumentCommand, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
+pub fn run_document_command(command: &DocumentCommand, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
   match command {
     DocumentCommand::Write(command) => run_write(command, driver),
     DocumentCommand::Compare(command) => run_compare(command, driver),
@@ -79,7 +80,7 @@ pub fn run_document_command(command: &DocumentCommand, driver: &mut impl TextEdi
   }
 }
 
-fn run_write(command: &DocumentWrite, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
+fn run_write(command: &DocumentWrite, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
   let mut outcomes = vec![
     driver.activate_app(&command.app_id, Duration::from_millis(command.activate_settle_ms))?,
     driver.focus_text_input(&command.app_id, &command.focus_query, &command.focus_candidate)?,
@@ -103,7 +104,7 @@ fn run_write(command: &DocumentWrite, driver: &mut impl TextEditDriver) -> Opera
   })
 }
 
-fn run_compare(command: &DocumentCompare, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
+fn run_compare(command: &DocumentCompare, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
   let verification = driver.verify_ax_text(&command.app_id, &command.content, &command.role)?;
   Ok(DocumentCommandReport {
     command: "document.compare",
@@ -112,7 +113,7 @@ fn run_compare(command: &DocumentCompare, driver: &mut impl TextEditDriver) -> O
   })
 }
 
-fn run_focus(command: &DocumentFocus, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
+fn run_focus(command: &DocumentFocus, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
   let outcome = driver.focus_text_input(&command.app_id, &command.query, &command.candidate)?;
   Ok(DocumentCommandReport {
     command: "document.focus",
@@ -135,7 +136,7 @@ fn normalize_write_step_ids(outcomes: &mut [StepOutcome]) {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use auv_driver::{InputActionResult, InputDeliveryPath};
+  use auv_driver::{DriverResult, InputActionResult, InputDeliveryPath};
 
   #[derive(Default)]
   struct RecordingTextEditDriver {
@@ -143,7 +144,7 @@ mod tests {
   }
 
   impl TextEditDriver for RecordingTextEditDriver {
-    fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome> {
+    fn activate_app(&mut self, app_id: &str, settle: Duration) -> DriverResult<StepOutcome> {
       self.calls.push(format!("activate:{app_id}:{}", settle.as_millis()));
       Ok(StepOutcome {
         step_id: "activate",
@@ -152,7 +153,7 @@ mod tests {
       })
     }
 
-    fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> OperationResult<StepOutcome> {
+    fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> DriverResult<StepOutcome> {
       self.calls.push(format!("focus:{app_id}:{query}:{candidate}"));
       Ok(StepOutcome {
         step_id: "focus",
@@ -167,7 +168,7 @@ mod tests {
       text: &str,
       replace_existing: bool,
       settle: Duration,
-    ) -> OperationResult<StepOutcome> {
+    ) -> DriverResult<StepOutcome> {
       self.calls.push(format!("paste:{app_id}:{text}:{replace_existing}:{}", settle.as_millis()));
       Ok(StepOutcome {
         step_id: "paste",
@@ -176,7 +177,7 @@ mod tests {
       })
     }
 
-    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> OperationResult<VerificationOutcome> {
+    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> DriverResult<VerificationOutcome> {
       self.calls.push(format!("compare:{app_id}:{target_text}:{target_role}"));
       Ok(VerificationOutcome {
         matched_role: target_role.to_string(),
@@ -248,5 +249,74 @@ mod tests {
     assert_eq!(report.command, "document.focus");
     assert_eq!(driver.calls, vec!["focus:com.apple.TextEdit:First Text View:"]);
     assert_eq!(report.outcomes.len(), 1);
+  }
+
+  // Regression: typed DriverError variants must propagate through
+  // run_document_command without being flattened to String. These tests
+  // assert on the enum variant directly — no `.contains()` text matching.
+
+  #[test]
+  fn permission_denied_propagates_as_typed_variant() {
+    use auv_driver::DriverError;
+
+    struct PermissionDriver;
+
+    impl TextEditDriver for PermissionDriver {
+      fn activate_app(&mut self, _: &str, _: Duration) -> DriverResult<StepOutcome> {
+        Err(DriverError::PermissionDenied {
+          permission: "accessibility",
+          message: Some("not authorized".to_string()),
+          recovery: Some("grant in System Preferences".to_string()),
+        })
+      }
+      fn focus_text_input(&mut self, _: &str, _: &str, _: &str) -> DriverResult<StepOutcome> {
+        unreachable!()
+      }
+      fn paste_text_preserve_clipboard(&mut self, _: &str, _: &str, _: bool, _: Duration) -> DriverResult<StepOutcome> {
+        unreachable!()
+      }
+      fn verify_ax_text(&mut self, _: &str, _: &str, _: &str) -> DriverResult<VerificationOutcome> {
+        unreachable!()
+      }
+    }
+
+    let command = DocumentCommand::Write(DocumentWrite::marker_defaults());
+    let mut driver = PermissionDriver;
+    let error = run_document_command(&command, &mut driver).expect_err("should fail");
+    assert!(matches!(error, DriverError::PermissionDenied { .. }));
+  }
+
+  #[test]
+  fn stale_observation_propagates_as_typed_variant() {
+    use auv_driver::DriverError;
+
+    struct StaleDriver;
+
+    impl TextEditDriver for StaleDriver {
+      fn activate_app(&mut self, _: &str, _: Duration) -> DriverResult<StepOutcome> {
+        Ok(StepOutcome {
+          step_id: "activate",
+          summary: "ok".to_string(),
+          input_action_result: None,
+        })
+      }
+      fn focus_text_input(&mut self, _: &str, _: &str, _: &str) -> DriverResult<StepOutcome> {
+        Err(DriverError::StaleObservation {
+          message: "AX path 0.1.2 no longer resolves".to_string(),
+          recovery: Some("recapture tree".to_string()),
+        })
+      }
+      fn paste_text_preserve_clipboard(&mut self, _: &str, _: &str, _: bool, _: Duration) -> DriverResult<StepOutcome> {
+        unreachable!()
+      }
+      fn verify_ax_text(&mut self, _: &str, _: &str, _: &str) -> DriverResult<VerificationOutcome> {
+        unreachable!()
+      }
+    }
+
+    let command = DocumentCommand::Write(DocumentWrite::marker_defaults());
+    let mut driver = StaleDriver;
+    let error = run_document_command(&command, &mut driver).expect_err("should fail");
+    assert!(matches!(error, DriverError::StaleObservation { .. }));
   }
 }
