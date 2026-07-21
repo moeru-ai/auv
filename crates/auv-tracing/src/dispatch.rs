@@ -973,8 +973,8 @@ impl Dispatch {
         self.mark_projection_skipped(mismatch.ticket);
         match mismatch.receipt {
           Some(receipt) => {
-            self.terminalize_unreported(mismatch.ticket, vec![mismatch_failure.clone()]);
-            self.deliver_artifact_receipt(receipt, Err(ArtifactWriteError::Integrity(code.clone())), Some(mismatch_failure));
+            self.deliver_artifact_receipt(receipt, Err(ArtifactWriteError::Integrity(code.clone())), Some(mismatch_failure.clone()));
+            self.terminalize_unreported(mismatch.ticket, vec![mismatch_failure]);
           }
           None => self.terminalize(mismatch.ticket, vec![mismatch_failure]),
         }
@@ -1135,8 +1135,8 @@ impl Dispatch {
           ArtifactWriteError::Unavailable(failure.code().clone())
         };
         self.mark_projection_skipped(target.ticket);
-        self.terminalize_unreported(target.ticket, vec![failure.clone()]);
-        self.deliver_artifact_receipt(receipt, Err(error), Some(failure));
+        self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
+        self.terminalize_unreported(target.ticket, vec![failure]);
       }
       None => {}
     }
@@ -1424,10 +1424,10 @@ impl Dispatch {
 
   fn finish_unstarted_artifact(&self, ticket: u64, admission: Box<ArtifactAdmission>, failure: DispatchFailure) {
     let error = ArtifactWriteError::Unavailable(failure.code().clone());
+    self.mark_projection_skipped(ticket);
     if let Some(receipt) = admission.settlement.claim() {
       self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
     }
-    self.mark_projection_skipped(ticket);
     self.terminalize_unreported(ticket, vec![failure]);
   }
 

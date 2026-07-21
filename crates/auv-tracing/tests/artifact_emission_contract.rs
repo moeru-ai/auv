@@ -15,8 +15,9 @@ use auv_tracing::{
 };
 use sha2::{Digest, Sha256};
 use support::{
-  ArtifactStore, CommitUnknownStore, ControlledStore, CursorStore, DropFirstTaskSpawner, DropNthTaskSpawner, IntegrityFault, IntegrityStore,
-  ProbeReader, ReadGate, RecordingProjector, RecordingReporter, TrackingTaskSpawner, UnknownLookup, WAIT_TIMEOUT, block_on_timeout,
+  ArtifactStore, CommitUnknownStore, ControlledStore, CursorStore, DropFirstTaskSpawner, DropNthTaskSpawner, FirstThreadThenInlineSpawner,
+  IntegrityFault, IntegrityStore, ProbeReader, ReadGate, RecordingProjector, RecordingReporter, TrackingTaskSpawner, UnknownLookup,
+  WAIT_TIMEOUT, block_on_timeout,
 };
 
 #[derive(serde::Serialize)]
@@ -152,6 +153,12 @@ impl BlockingFlushWake {
       }),
       changed: Condvar::new(),
     })
+  }
+
+  fn poll_flush_pending(self: &Arc<Self>, flush: &mut auv_tracing::BoxFuture<'_, Result<(), auv_tracing::FlushError>>) {
+    let waker = Waker::from(self.clone());
+    let mut task_context = TaskContext::from_waker(&waker);
+    assert!(flush.as_mut().poll(&mut task_context).is_pending());
   }
 
   fn wait_until_entered(&self) {
@@ -561,6 +568,53 @@ fn post_write_observation_failure_settles_the_artifact_receipt_once() {
 }
 
 #[test]
+fn dropped_post_write_observation_failure_reports_before_flush_completion() {
+  // ROOT CAUSE:
+  //
+  // If a stored artifact's observation failed after its receipt was dropped,
+  // fail_observation exposed terminal progress before sending the failed
+  // receipt and synchronously reporting its unobserved failure.
+  //
+  // Before the fix, an operation-complete projector flush could wake first.
+  // The fix reports the claimed receipt before terminalizing its ticket.
+  let (store, page_gate) = CursorStore::blocked_page_failure();
+  let projector = RecordingProjector::new();
+  let reporter = RecordingReporter::new();
+  let dispatch = configure()
+    .run_store(store.clone())
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .on_error(reporter.clone())
+    .task_spawner(FirstThreadThenInlineSpawner::new())
+    .build()
+    .unwrap();
+  let run_id = RunId::new();
+  let root = context(&dispatch, run_id);
+
+  let receipt = root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(b"dropped-cursor-read-failure")));
+  page_gate.wait_until_entered();
+  let flush_wake = BlockingFlushWake::new();
+  let mut flush = dispatch.flush();
+  flush_wake.poll_flush_pending(&mut flush);
+  drop(receipt);
+  page_gate.release();
+  flush_wake.wait_until_entered();
+  let reported_before_flush_wake = reporter.failures();
+  flush_wake.release();
+  let flush = block_on_timeout(flush).unwrap_err();
+
+  assert_eq!(reported_before_flush_wake.len(), 1, "failure reporting must happen before flush completion becomes visible");
+  assert_eq!(reported_before_flush_wake[0].code().as_str(), "auv.test.page_failed");
+  assert_eq!(flush.failure_count().get(), 1);
+  assert_eq!(flush.first().stage(), DispatchStage::AuthorityRead);
+  assert_eq!(flush.first().code().as_str(), "auv.test.page_failed");
+  assert_eq!(reporter.failures(), reported_before_flush_wake);
+  assert_eq!(projector.item_count(), 0);
+  assert_eq!(block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap().artifacts().len(), 1);
+  block_on_timeout(dispatch.flush()).unwrap();
+  assert_eq!(reporter.failures().len(), 1);
+}
+
+#[test]
 fn artifact_direct_contradiction_after_cursor_proof_fails_without_lookup_or_projection() {
   let store = ArtifactStore::new();
   let response_gate = store.store_then_wait_mismatch_next();
@@ -724,6 +778,53 @@ fn cursor_artifact_mismatch_claims_receipt_and_ignores_the_late_direct_response(
   let quarantined = block_on_timeout(dispatch.flush()).unwrap_err();
   assert_eq!(quarantined.first().code().as_str(), "auv.dispatch.run_lane_indeterminate");
   assert_eq!(store.commit_call_count(), 1, "the quarantined run must reject later ordinary store commits");
+}
+
+#[test]
+fn dropped_cursor_artifact_mismatch_reports_before_flush_completion() {
+  // ROOT CAUSE:
+  //
+  // If cursor observation contradicted its own artifact target after the
+  // receipt was dropped, the mismatch branch exposed terminal progress before
+  // sending the failed receipt and synchronously reporting the failure.
+  //
+  // Before the fix, an operation-complete projector flush could wake first.
+  // The fix reports the claimed receipt before terminalizing its ticket.
+  let store = ArtifactStore::new();
+  store.mismatch_next_observed_artifact();
+  let page_gate = store.block_next_observation_page();
+  let projector = RecordingProjector::new();
+  let reporter = RecordingReporter::new();
+  let dispatch = configure()
+    .run_store(store.clone())
+    .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+    .on_error(reporter.clone())
+    .task_spawner(FirstThreadThenInlineSpawner::new())
+    .build()
+    .unwrap();
+  let root = context(&dispatch, RunId::new());
+
+  let receipt = root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(b"dropped-cursor-artifact-mismatch")));
+  page_gate.wait_until_entered();
+  let flush_wake = BlockingFlushWake::new();
+  let mut flush = dispatch.flush();
+  flush_wake.poll_flush_pending(&mut flush);
+  drop(receipt);
+  page_gate.release();
+  flush_wake.wait_until_entered();
+  let reported_before_flush_wake = reporter.failures();
+  flush_wake.release();
+  let flush = block_on_timeout(flush).unwrap_err();
+
+  assert_eq!(reported_before_flush_wake.len(), 1, "failure reporting must happen before flush completion becomes visible");
+  assert_eq!(reported_before_flush_wake[0].code().as_str(), "auv.dispatch.committed_cursor_mismatch");
+  assert_eq!(flush.failure_count().get(), 1);
+  assert_eq!(flush.first().stage(), DispatchStage::AuthorityRead);
+  assert_eq!(flush.first().code().as_str(), "auv.dispatch.committed_cursor_mismatch");
+  assert_eq!(reporter.failures(), reported_before_flush_wake);
+  assert_eq!(projector.item_count(), 0);
+  block_on_timeout(dispatch.flush()).unwrap();
+  assert_eq!(reporter.failures().len(), 1);
 }
 
 #[test]
@@ -1042,10 +1143,8 @@ fn canceled_failure_completion_does_not_duplicate_unobserved_reporting() {
   let receipt = root.in_scope(|| auv_tracing::emit_artifact(ready_artifact(b"failure")));
   failure_gate.wait_until_entered();
   let flush_wake = BlockingFlushWake::new();
-  let waker = Waker::from(flush_wake.clone());
-  let mut task_context = TaskContext::from_waker(&waker);
   let mut flush = dispatch.flush();
-  assert!(flush.as_mut().poll(&mut task_context).is_pending());
+  flush_wake.poll_flush_pending(&mut flush);
   drop(receipt);
   failure_gate.release();
   flush_wake.wait_until_entered();
