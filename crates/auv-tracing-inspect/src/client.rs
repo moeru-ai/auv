@@ -17,8 +17,9 @@ use url::Url;
 
 use crate::protocol::{
   ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE,
-  ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, AuthorityResponse, RUN_MEDIA_TYPE,
-  ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody, RunStreamGap, decode_strict,
+  ArtifactApiError, ArtifactUploadAdmissionId, ArtifactUploadDraft, ArtifactUploadDraftRequest, ArtifactUploadId, AuthorityResponse,
+  RUN_MEDIA_TYPE, ResolveArtifactsRequest, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunCommitBody, RunStreamGap,
+  decode_strict,
 };
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
@@ -195,6 +196,7 @@ impl RunStore for InspectRunStore {
       let draft_url = endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads", request.run_id()));
       let draft_body = Bytes::from(serde_json::to_vec(&draft_request).expect("validated artifact draft request encodes as JSON"));
       let expected_uri = ArtifactUri::from_ids(request.run_id(), request.artifact_id());
+      let expected_upload_id = ArtifactUploadId::from_idempotency_key(request.idempotency_key());
       let mut validated_draft = None;
       let mut draft_failure = code("auv.inspect.draft_transport_unavailable");
       for _ in 0..2 {
@@ -213,13 +215,13 @@ impl RunStore for InspectRunStore {
           Err(_) => continue,
         };
         if !matches!(response.status(), StatusCode::CREATED | StatusCode::OK) {
-          return match write_artifact_failure(response, self.authority_id, request.authority_id()).await {
+          return match write_artifact_failure(response).await {
             Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
             Ok(error) => Err(error),
             Err(code) => Err(ArtifactWriteError::Unavailable(code)),
           };
         }
-        match validate_draft_success(response, admission, &expected_uri).await {
+        match validate_draft_success(response, admission, expected_upload_id, &expected_uri).await {
           Ok(draft) => {
             validated_draft = Some(draft);
             break;
@@ -279,7 +281,7 @@ impl RunStore for InspectRunStore {
             CommitResult::Replayed(commit)
           })
         }
-        _ => match write_artifact_failure(response, self.authority_id, request.authority_id()).await {
+        _ => match write_artifact_failure(response).await {
           Ok(ArtifactWriteError::PublicationUnknown(code)) | Err(code) => self.recover_artifact(&request, code).await,
           Ok(error) => Err(error),
         },
@@ -452,23 +454,29 @@ async fn next_artifact_chunk(mut state: ArtifactStreamState) -> Option<(Result<B
     }
     Ok(None) => {
       state.done = true;
-      let digest = Sha256Digest::new(state.hasher.clone().finalize().into());
-      if state.observed_length != state.expected_length.get() || digest != state.expected_sha256 {
-        Some((Err(ArtifactReadError::Integrity(code("auv.inspect.artifact_integrity_mismatch"))), state))
-      } else {
-        None
+      match validate_artifact_eof(state.observed_length, state.expected_length, state.hasher.clone(), state.expected_sha256) {
+        Ok(()) => None,
+        Err(error) => Some((Err(error), state)),
       }
     }
     Err(_) => {
       state.done = true;
-      let digest = Sha256Digest::new(state.hasher.clone().finalize().into());
-      let error = if state.observed_length != state.expected_length.get() || digest != state.expected_sha256 {
-        ArtifactReadError::Integrity(code("auv.inspect.artifact_integrity_mismatch"))
-      } else {
-        ArtifactReadError::Unavailable(code("auv.inspect.artifact_stream_unavailable"))
-      };
-      Some((Err(error), state))
+      Some((Err(ArtifactReadError::Unavailable(code("auv.inspect.artifact_stream_unavailable"))), state))
     }
+  }
+}
+
+fn validate_artifact_eof(
+  observed_length: u64,
+  expected_length: ByteLength,
+  hasher: Sha256,
+  expected_sha256: Sha256Digest,
+) -> Result<(), ArtifactReadError> {
+  let digest = Sha256Digest::new(hasher.finalize().into());
+  if observed_length != expected_length.get() || digest != expected_sha256 {
+    Err(ArtifactReadError::Integrity(code("auv.inspect.artifact_integrity_mismatch")))
+  } else {
+    Ok(())
   }
 }
 
@@ -805,20 +813,13 @@ fn map_read_error(error: RunApiError) -> ReadError {
   }
 }
 
-async fn write_artifact_failure(
-  response: Response,
-  expected_authority: AuthorityId,
-  received_authority: AuthorityId,
-) -> Result<ArtifactWriteError, ErrorCode> {
+async fn write_artifact_failure(response: Response) -> Result<ArtifactWriteError, ErrorCode> {
   let status = response.status();
   match decode_artifact_error(response, ARTIFACT_UPLOAD_MEDIA_TYPE).await {
     Ok(error) => {
       let error_code = error.error().clone();
       Ok(match status {
-        StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => ArtifactWriteError::AuthorityMismatch {
-          expected: expected_authority,
-          received: received_authority,
-        },
+        StatusCode::CONFLICT if error_code == code("auv.inspect.authority_mismatch") => ArtifactWriteError::Rejected(error_code),
         StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_or_artifact_conflict") => {
           ArtifactWriteError::IdempotencyMismatch
         }
@@ -962,6 +963,7 @@ struct ValidatedDraft {
 async fn validate_draft_success(
   response: Response,
   admission: ArtifactUploadAdmissionId,
+  expected_upload_id: ArtifactUploadId,
   expected_uri: &ArtifactUri,
 ) -> Result<ValidatedDraft, ErrorCode> {
   let replayed = response.status() == StatusCode::OK;
@@ -974,6 +976,9 @@ async fn validate_draft_success(
   }
   let bytes = bounded_response_bytes(response).await.map_err(|_| code("auv.inspect.draft_response_invalid"))?;
   let draft = decode_strict::<ArtifactUploadDraft>(&bytes).map_err(|_| code("auv.inspect.draft_response_invalid"))?;
+  if draft.upload_id() != expected_upload_id {
+    return Err(code("auv.inspect.draft_upload_id_mismatch"));
+  }
   if draft.artifact_uri() != expected_uri {
     return Err(code("auv.inspect.draft_identity_mismatch"));
   }
@@ -1063,5 +1068,18 @@ mod tests {
     assert_eq!(take_sse_frame(&mut buffer, &mut scan_start).unwrap().unwrap(), b"event: second");
     assert!(pending.is_none());
     assert!(buffer.is_empty());
+  }
+
+  #[test]
+  fn clean_artifact_eof_classifies_length_and_digest_mismatches_as_integrity() {
+    let expected = Sha256Digest::new(Sha256::digest(b"abc").into());
+    for (bytes, observed_length) in [(&b"ab"[..], 2), (&b"abcd"[..], 4), (&b"abd"[..], 3)] {
+      let mut hasher = Sha256::new();
+      hasher.update(bytes);
+      assert!(matches!(
+        validate_artifact_eof(observed_length, ByteLength::new(3).unwrap(), hasher, expected),
+        Err(ArtifactReadError::Integrity(_))
+      ));
+    }
   }
 }
