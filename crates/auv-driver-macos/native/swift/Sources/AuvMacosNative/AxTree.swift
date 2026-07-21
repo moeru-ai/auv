@@ -482,6 +482,13 @@ func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
     )
   }
 
+  guard AXIsProcessTrusted() else {
+    return focusError(
+      "Accessibility permission is required to focus an AX node",
+      "grant Accessibility permission to the process running AUV, then retry the focus request"
+    )
+  }
+
   let current: AXUIElement
   switch axResolveObservedPath(pid: pid, path: pathRaw, expectedRole: expectedRole, operation: "focus", retry: "the focus request") {
   case .success(let resolved):

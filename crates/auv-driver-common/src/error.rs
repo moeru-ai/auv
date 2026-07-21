@@ -13,6 +13,9 @@ pub enum DriverError {
   },
   PermissionDenied {
     permission: &'static str,
+    /// Raw backend detail when the permission failure came from a native
+    /// response. Locally detected gates may leave this empty.
+    message: Option<String>,
     recovery: Option<String>,
   },
   InvalidInput {
@@ -51,11 +54,15 @@ impl fmt::Display for DriverError {
       Self::NotFound { target } => write!(f, "{target} was not found"),
       Self::PermissionDenied {
         permission,
+        message,
         recovery,
       } => {
         write!(f, "{permission} permission was denied")?;
-        if let Some(recovery) = recovery {
-          write!(f, ": {recovery}")?;
+        match (message, recovery) {
+          (Some(message), Some(recovery)) => write!(f, ": {message}; recovery: {recovery}")?,
+          (Some(message), None) => write!(f, ": {message}")?,
+          (None, Some(recovery)) => write!(f, ": {recovery}")?,
+          (None, None) => {}
         }
         Ok(())
       }

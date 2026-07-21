@@ -258,6 +258,7 @@ fn classify_ax_native_error(message: Option<String>, recovery: Option<String>) -
   if lowered.contains("permission") || lowered.contains("accessibility") {
     return DriverError::PermissionDenied {
       permission: "accessibility",
+      message: Some(message),
       recovery,
     };
   }
@@ -680,16 +681,18 @@ mod tests {
 
   #[test]
   fn classify_permission_denied() {
-    let error = focus_error("Accessibility permission is required to read the AX tree");
-    assert!(
-      matches!(
-        error,
-        DriverError::PermissionDenied {
-          permission: "accessibility",
-          ..
-        }
-      ),
-      "got {error:?}"
-    );
+    let error = focus_error("Accessibility permission is required to focus an AX node");
+    match error {
+      DriverError::PermissionDenied {
+        permission,
+        message,
+        recovery,
+      } => {
+        assert_eq!(permission, "accessibility");
+        assert_eq!(message.as_deref(), Some("Accessibility permission is required to focus an AX node"));
+        assert_eq!(recovery.as_deref(), Some("capture a fresh AX tree and retry the focus request"));
+      }
+      other => panic!("expected PermissionDenied, got {other:?}"),
+    }
   }
 }
