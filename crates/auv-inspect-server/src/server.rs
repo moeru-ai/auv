@@ -14,7 +14,6 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, MutexGuard};
 
 use crate::InspectResult;
 use crate::run_api;
@@ -26,17 +25,6 @@ pub const DEFAULT_INSPECT_PORT: u16 = 8765;
 
 pub(crate) struct InspectServerState {
   pub(crate) store: Arc<dyn RunStore>,
-  // NOTICE(run-api-replay-status): RunStore returns a commit without whether
-  // it was newly accepted or replayed. Serialize HTTP lookup+commit pairs to
-  // preserve exact 201/200 responses; remove this when the port returns that
-  // disposition atomically.
-  commit_status_lock: Mutex<()>,
-}
-
-impl InspectServerState {
-  pub(crate) async fn commit_status_lock(&self) -> MutexGuard<'_, ()> {
-    self.commit_status_lock.lock().await
-  }
 }
 
 #[derive(Clone, Debug)]
@@ -62,17 +50,18 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
   ("icon-bin.svg", include_bytes!("../../../docs/design/assets/icon-bin.svg"), "image/svg+xml"),
 ];
 
-/// Builds the Inspect viewer and V1 run protocol around one authority store.
+/// Builds the Inspect viewer and V1 run protocol for trusted in-process composition.
+///
+/// This router has no authentication layer. Transport callers must use
+/// [`serve`], which enforces loopback binding, or install an independently
+/// reviewed access-control boundary before exposing it.
 pub fn router(store: Arc<dyn RunStore>) -> Router {
   router_with_projection(store)
 }
 
 /// Builds the server after the legacy projection boundary has been replaced by snapshot projection.
 pub fn router_with_projection(store: Arc<dyn RunStore>) -> Router {
-  let state = Arc::new(InspectServerState {
-    store,
-    commit_status_lock: Mutex::new(()),
-  });
+  let state = Arc::new(InspectServerState { store });
   Router::new()
     .route("/", get(serve_viewer))
     .route("/viewer-assets/{*asset_name}", get(serve_viewer_asset))
@@ -81,11 +70,24 @@ pub fn router_with_projection(store: Arc<dyn RunStore>) -> Router {
     .with_state(state)
 }
 
-/// Binds and serves one Inspect authority, publishing its discovery session.
+/// Binds one loopback-only Inspect authority and publishes its discovery session.
 pub async fn serve(store: Arc<dyn RunStore>, config: InspectServeConfig) -> InspectResult<SocketAddr> {
-  let address = (config.host.as_str(), config.port);
   let display_address = format!("{}:{}", config.host, config.port);
-  let listener = TcpListener::bind(address).await.map_err(|error| format!("failed to bind inspect server {display_address}: {error}"))?;
+  let addresses = tokio::net::lookup_host((config.host.as_str(), config.port))
+    .await
+    .map_err(|error| format!("failed to resolve inspect server {display_address}: {error}"))?
+    .collect::<Vec<_>>();
+  if addresses.is_empty() {
+    return Err(format!("inspect server {display_address} resolved no listen addresses"));
+  }
+  // NOTICE(inspect-loopback-v1): V1 defines no authentication credential.
+  // Keep the standard transport loopback-only until an accepted auth contract
+  // and its threat-model tests authorize remote binding.
+  if let Some(address) = addresses.iter().find(|address| !address.ip().is_loopback()) {
+    return Err(format!("inspect server V1 is loopback-only; {display_address} resolved non-loopback address {address}"));
+  }
+  let listener =
+    TcpListener::bind(addresses.as_slice()).await.map_err(|error| format!("failed to bind inspect server {display_address}: {error}"))?;
   let local_address = listener.local_addr().map_err(|error| format!("failed to read inspect server address: {error}"))?;
   println!("inspect server: http://{local_address}");
   write_inspect_session(&InspectServerSession {

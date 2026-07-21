@@ -24,7 +24,7 @@ use auv_tracing_driver::store::LocalStore;
 pub struct McpServer {
   project_root: PathBuf,
   tool_router: ToolRouter<Self>,
-  inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+  inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
   invoke_registry: Arc<InvokeRegistry>,
   invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
 }
@@ -38,13 +38,13 @@ impl McpServer {
     Self::with_inspect_composer(project_root, crate::inspect::build_core_inspect_composer().expect("core inspect composer"))
   }
 
-  pub fn with_inspect_composer(project_root: PathBuf, inspect_composer: Arc<auv_inspect_model::InspectComposer>) -> Self {
+  pub fn with_inspect_composer(project_root: PathBuf, inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>) -> Self {
     Self::with_inspect_composer_and_registry(project_root, inspect_composer, Arc::new(default_registry()), None)
   }
 
   pub fn with_inspect_composer_and_registry(
     project_root: PathBuf,
-    inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+    inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
     invoke_registry: Arc<InvokeRegistry>,
     invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
   ) -> Self {
@@ -58,7 +58,7 @@ impl McpServer {
   }
 
   /// Shared composer used by MCP text inspect (same instance as CLI product assembly).
-  pub fn inspect_composer(&self) -> &Arc<auv_inspect_model::InspectComposer> {
+  pub fn inspect_composer(&self) -> &Arc<auv_inspect_model::legacy::InspectComposer> {
     &self.inspect_composer
   }
 
@@ -284,7 +284,7 @@ pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
 /// Serve MCP stdio with an explicit inspect composer (product injects donor sections here).
 pub async fn serve_stdio_with_composer(
   project_root: PathBuf,
-  inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+  inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
 ) -> Result<(), String> {
   serve_stdio_with_composer_and_registry(project_root, inspect_composer, Arc::new(default_registry()), None).await
 }
@@ -292,7 +292,7 @@ pub async fn serve_stdio_with_composer(
 /// Serve MCP stdio with explicit inspect composer + invoke registry (+ optional finalize).
 pub async fn serve_stdio_with_composer_and_registry(
   project_root: PathBuf,
-  inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+  inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
   invoke_registry: Arc<InvokeRegistry>,
   invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
 ) -> Result<(), String> {

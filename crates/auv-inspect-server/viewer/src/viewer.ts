@@ -52,6 +52,8 @@ interface RunCommit {
   authority_id: string;
   run_id: string;
   revision: number;
+  idempotency_key: string;
+  committed_at: Timestamp;
   facts: RunFact[];
 }
 
@@ -70,7 +72,19 @@ interface ViewerState {
   source: EventSource | null;
   generation: number;
   retryTimer: number | null;
+  recoveryAttempts: number;
 }
+
+interface ErrorState {
+  message: string;
+  transient: boolean;
+}
+
+const RUN_MEDIA_TYPE = "application/vnd.auv.run+json; version=1";
+const MAX_RECOVERY_ATTEMPTS = 5;
+const BASE_RETRY_MILLIS = 250;
+const MAX_RETRY_MILLIS = 4_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function snapshotEndpoint(runId: string): string {
   return `/v1/runs/${encodeURIComponent(runId)}/snapshot`;
@@ -82,24 +96,233 @@ function streamEndpoint(runId: string, afterRevision: number): string {
 
 function element<T extends HTMLElement>(document: Document, id: string): T {
   const value = document.getElementById(id);
-  if (value === null) {
-    throw new Error(`viewer element #${id} is missing`);
-  }
+  if (value === null) throw new Error(`viewer element #${id} is missing`);
   return value as T;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value).sort();
+  const required = [...expected].sort();
+  return keys.length === required.length && keys.every((key, index) => key === required[index]);
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID.test(value);
+}
+
+function isRevision(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isTimestamp(value: unknown): value is Timestamp {
+  return isRecord(value)
+    && hasExactKeys(value, ["unix_seconds", "nanoseconds"])
+    && Number.isSafeInteger(value.unix_seconds)
+    && Number.isSafeInteger(value.nanoseconds)
+    && Number(value.nanoseconds) >= 0
+    && Number(value.nanoseconds) < 1_000_000_000;
+}
+
+function isAttributes(value: unknown): value is Record<string, boolean | number | string> {
+  return isRecord(value)
+    && Object.values(value).every((entry) => typeof entry === "boolean" || typeof entry === "string" || (typeof entry === "number" && Number.isFinite(entry)));
+}
+
+function isNullableUuid(value: unknown): value is string | null {
+  return value === null || isUuid(value);
+}
+
+function isSpanStarted(value: unknown): value is SpanStarted {
+  if (!isRecord(value) || !hasExactKeys(value, ["span_id", "parent_span_id", "remote_link", "name", "started_at", "attributes"])) return false;
+  const link = value.remote_link;
+  return isUuid(value.span_id)
+    && isNullableUuid(value.parent_span_id)
+    && (link === null || (isRecord(link) && hasExactKeys(link, ["span_id"]) && isUuid(link.span_id)))
+    && typeof value.name === "string"
+    && value.name.length > 0
+    && isTimestamp(value.started_at)
+    && isAttributes(value.attributes);
+}
+
+function isSpanEnded(value: unknown): value is SpanEnded {
+  return isRecord(value)
+    && hasExactKeys(value, ["span_id", "ended_at"])
+    && isUuid(value.span_id)
+    && isTimestamp(value.ended_at);
+}
+
+function isEventOccurred(value: unknown): value is EventOccurred {
+  if (!isRecord(value) || !hasExactKeys(value, ["event_id", "span_id", "occurred_at", "schema", "payload"])) return false;
+  const schema = value.schema;
+  return isUuid(value.event_id)
+    && isNullableUuid(value.span_id)
+    && isTimestamp(value.occurred_at)
+    && isRecord(schema)
+    && hasExactKeys(schema, ["name", "version"])
+    && typeof schema.name === "string"
+    && schema.name.length > 0
+    && Number.isSafeInteger(schema.version)
+    && Number(schema.version) > 0;
+}
+
+function isArtifactPublished(value: unknown): value is ArtifactPublished {
+  if (!isRecord(value) || !hasExactKeys(value, ["span_id", "metadata"]) || !isNullableUuid(value.span_id)) return false;
+  const metadata = value.metadata;
+  return isRecord(metadata)
+    && hasExactKeys(metadata, ["uri", "purpose", "content_type", "byte_length", "sha256", "attributes"])
+    && typeof metadata.uri === "string"
+    && metadata.uri.length > 0
+    && typeof metadata.purpose === "string"
+    && metadata.purpose.length > 0
+    && typeof metadata.content_type === "string"
+    && metadata.content_type.length > 0
+    && isRevision(metadata.byte_length)
+    && typeof metadata.sha256 === "string"
+    && /^[0-9a-f]{64}$/.test(metadata.sha256)
+    && isAttributes(metadata.attributes);
+}
+
+function validateSnapshot(value: unknown, requestedRunId: string): RunSnapshot | null {
+  if (
+    !isRecord(value)
+    || !hasExactKeys(value, ["authority_id", "run_id", "through_revision", "spans", "events", "artifacts"])
+    || !isUuid(value.authority_id)
+    || value.run_id !== requestedRunId
+    || !isUuid(value.run_id)
+    || !isRevision(value.through_revision)
+    || !isRecord(value.spans)
+    || !Array.isArray(value.events)
+    || !isRecord(value.artifacts)
+  ) return null;
+
+  const spanIds = new Set<string>();
+  for (const [spanId, candidate] of Object.entries(value.spans)) {
+    if (!isRecord(candidate) || !hasExactKeys(candidate, ["started", "ended"]) || !isSpanStarted(candidate.started)) return null;
+    if (spanId !== candidate.started.span_id || spanIds.has(spanId)) return null;
+    if (candidate.ended !== null && (!isSpanEnded(candidate.ended) || candidate.ended.span_id !== spanId)) return null;
+    spanIds.add(spanId);
+  }
+
+  const eventIds = new Set<string>();
+  for (const candidate of value.events) {
+    if (!isEventOccurred(candidate) || eventIds.has(candidate.event_id)) return null;
+    if (candidate.span_id !== null && !spanIds.has(candidate.span_id)) return null;
+    eventIds.add(candidate.event_id);
+  }
+
+  const artifactUris = new Set<string>();
+  for (const [uri, candidate] of Object.entries(value.artifacts)) {
+    if (!isArtifactPublished(candidate) || candidate.metadata.uri !== uri || artifactUris.has(uri)) return null;
+    if (candidate.span_id !== null && !spanIds.has(candidate.span_id)) return null;
+    artifactUris.add(uri);
+  }
+
+  return value as unknown as RunSnapshot;
+}
+
+function parseFact(value: unknown): RunFact | null {
+  if (!isRecord(value) || Object.keys(value).length !== 1) return null;
+  if ("span_started" in value && isSpanStarted(value.span_started)) return { span_started: value.span_started };
+  if ("span_ended" in value && isSpanEnded(value.span_ended)) return { span_ended: value.span_ended };
+  if ("event_occurred" in value && isEventOccurred(value.event_occurred)) return { event_occurred: value.event_occurred };
+  if ("artifact_published" in value && isArtifactPublished(value.artifact_published)) return { artifact_published: value.artifact_published };
+  return null;
+}
+
+function parseCommit(value: unknown): RunCommit | null {
+  if (
+    !isRecord(value)
+    || !hasExactKeys(value, ["authority_id", "run_id", "revision", "idempotency_key", "committed_at", "facts"])
+    || !isUuid(value.authority_id)
+    || !isUuid(value.run_id)
+    || !isRevision(value.revision)
+    || !isUuid(value.idempotency_key)
+    || !isTimestamp(value.committed_at)
+    || !Array.isArray(value.facts)
+    || value.facts.length === 0
+  ) return null;
+  const facts = value.facts.map(parseFact);
+  if (facts.some((fact) => fact === null)) return null;
+  return { ...value, facts } as unknown as RunCommit;
+}
+
+function applyCommit(snapshot: RunSnapshot, value: unknown): RunSnapshot | null {
+  const commit = parseCommit(value);
+  if (
+    commit === null
+    || commit.authority_id !== snapshot.authority_id
+    || commit.run_id !== snapshot.run_id
+    || commit.revision !== snapshot.through_revision + 1
+  ) return null;
+
+  const next: RunSnapshot = {
+    ...snapshot,
+    spans: { ...snapshot.spans },
+    events: [...snapshot.events],
+    artifacts: { ...snapshot.artifacts },
+  };
+  const eventIds = new Set(next.events.map((event) => event.event_id));
+
+  for (const fact of commit.facts) {
+    if ("span_started" in fact) {
+      const started = fact.span_started;
+      if (next.spans[started.span_id] !== undefined) return null;
+      if (started.parent_span_id !== null && next.spans[started.parent_span_id] === undefined) return null;
+      next.spans[started.span_id] = { started, ended: null };
+      continue;
+    }
+    if ("span_ended" in fact) {
+      const ended = fact.span_ended;
+      const span = next.spans[ended.span_id];
+      if (span === undefined || span.ended !== null) return null;
+      next.spans[ended.span_id] = { started: span.started, ended };
+      continue;
+    }
+    if ("event_occurred" in fact) {
+      const event = fact.event_occurred;
+      if (eventIds.has(event.event_id) || (event.span_id !== null && next.spans[event.span_id] === undefined)) return null;
+      eventIds.add(event.event_id);
+      next.events.push(event);
+      continue;
+    }
+    const artifact = fact.artifact_published;
+    if (next.artifacts[artifact.metadata.uri] !== undefined || (artifact.span_id !== null && next.spans[artifact.span_id] === undefined)) return null;
+    next.artifacts[artifact.metadata.uri] = artifact;
+  }
+
+  next.through_revision = commit.revision;
+  return next;
+}
+
+function parseRunApiError(value: unknown): ErrorState | null {
+  if (value === "not_found") return { message: "not_found", transient: false };
+  if (value === "forbidden") return { message: "forbidden", transient: false };
+  if (value === "idempotency_mismatch") return { message: "idempotency_mismatch", transient: false };
+  if (!isRecord(value) || Object.keys(value).length !== 1) return null;
+  const [variant] = Object.keys(value);
+  const payload = value[variant];
+  if (!isRecord(payload)) return null;
+  if (variant === "unavailable" && typeof payload.code === "string") return { message: `unavailable: ${payload.code}`, transient: true };
+  if (variant === "integrity" && typeof payload.code === "string") return { message: `integrity: ${payload.code}`, transient: false };
+  if (variant === "invalid_reference" && typeof payload.code === "string") return { message: `invalid_reference: ${payload.code}`, transient: false };
+  if (variant === "rejected" && typeof payload.code === "string") return { message: `rejected: ${payload.code}`, transient: false };
+  if (variant === "authority_mismatch") return { message: "authority_mismatch", transient: false };
+  if (variant === "history_gap") return { message: "history_gap", transient: false };
+  if (variant === "cursor_ahead") return { message: "cursor_ahead", transient: false };
+  return null;
 }
 
 function timestampText(timestamp: Timestamp | null): string {
   if (timestamp === null) return "-";
-  const millis = timestamp.unix_seconds * 1000 + Math.floor(timestamp.nanoseconds / 1_000_000);
-  return new Date(millis).toISOString();
+  return new Date(timestamp.unix_seconds * 1000 + Math.floor(timestamp.nanoseconds / 1_000_000)).toISOString();
 }
 
 function shortId(value: string): string {
   return value.length > 20 ? `${value.slice(0, 12)}...${value.slice(-6)}` : value;
-}
-
-function clear(node: HTMLElement): void {
-  node.replaceChildren();
 }
 
 function textNode(document: Document, tag: string, className: string, text: string): HTMLElement {
@@ -117,30 +340,27 @@ function renderSnapshot(document: Document, snapshot: RunSnapshot): void {
   element(document, "artifact-count").textContent = String(Object.keys(snapshot.artifacts).length);
 
   const runList = element(document, "run-list");
-  clear(runList);
+  runList.replaceChildren();
   const runRow = textNode(document, "div", "run-row active", snapshot.run_id);
   runRow.appendChild(textNode(document, "span", "row-meta", `through revision ${snapshot.through_revision}`));
   runList.appendChild(runRow);
 
   const spanTree = element(document, "span-tree");
-  clear(spanTree);
+  spanTree.replaceChildren();
   const spans = Object.values(snapshot.spans);
-  if (spans.length === 0) {
-    spanTree.appendChild(textNode(document, "div", "run-row empty", "no spans"));
-  }
+  if (spans.length === 0) spanTree.appendChild(textNode(document, "div", "run-row empty", "no spans"));
   for (const span of spans) {
     const row = document.createElement("div");
     row.className = "span-row";
     row.appendChild(textNode(document, "span", "span-name", span.started.name));
     row.appendChild(textNode(document, "span", "span-id", shortId(span.started.span_id)));
-    const lifecycle = span.ended === null ? "open" : "closed";
-    row.appendChild(textNode(document, "span", "status-pill s-frozen", lifecycle));
+    row.appendChild(textNode(document, "span", "status-pill s-frozen", span.ended === null ? "open" : "closed"));
     row.title = `${timestampText(span.started.started_at)} / ${timestampText(span.ended?.ended_at ?? null)}`;
     spanTree.appendChild(row);
   }
 
   const eventList = element(document, "event-list");
-  clear(eventList);
+  eventList.replaceChildren();
   for (const event of snapshot.events) {
     const row = document.createElement("div");
     row.className = "event-row";
@@ -150,9 +370,9 @@ function renderSnapshot(document: Document, snapshot: RunSnapshot): void {
   }
 
   const artifactList = element(document, "artifact-list");
-  clear(artifactList);
-  // TODO(inspect-artifact-transfer-v1): Binary previews wait for Task 12's
-  // resolver and read endpoints; Task 11 renders committed metadata only.
+  artifactList.replaceChildren();
+  // TODO(inspect-artifact-transfer-v1): Task 12 supplies binary reads; this
+  // viewer intentionally renders committed metadata only.
   for (const artifact of Object.values(snapshot.artifacts)) {
     const row = document.createElement("div");
     row.className = "artifact-row";
@@ -163,31 +383,6 @@ function renderSnapshot(document: Document, snapshot: RunSnapshot): void {
   }
 }
 
-function applyCommit(snapshot: RunSnapshot, commit: RunCommit): boolean {
-  if (
-    commit.authority_id !== snapshot.authority_id
-    || commit.run_id !== snapshot.run_id
-    || commit.revision !== snapshot.through_revision + 1
-  ) {
-    return false;
-  }
-  for (const fact of commit.facts) {
-    if ("span_started" in fact) {
-      snapshot.spans[fact.span_started.span_id] = { started: fact.span_started, ended: null };
-    } else if ("span_ended" in fact) {
-      const span = snapshot.spans[fact.span_ended.span_id];
-      if (span === undefined || span.ended !== null) return false;
-      span.ended = fact.span_ended;
-    } else if ("event_occurred" in fact) {
-      snapshot.events.push(fact.event_occurred);
-    } else if ("artifact_published" in fact) {
-      snapshot.artifacts[fact.artifact_published.metadata.uri] = fact.artifact_published;
-    }
-  }
-  snapshot.through_revision = commit.revision;
-  return true;
-}
-
 function setConnection(document: Document, connected: boolean, endpoint: string): void {
   const pill = element(document, "conn");
   pill.className = connected ? "conn-pill live" : "conn-pill bad";
@@ -195,33 +390,18 @@ function setConnection(document: Document, connected: boolean, endpoint: string)
   element(document, "conn-endpoint").textContent = endpoint;
 }
 
-/**
- * Mounts the snapshot-first Inspect viewer into the server document.
- *
- * Triggering workflow:
- *
- * `App.onMounted`
- *   -> {@link mountInspectViewer}
- *     -> `viewer.mount`
- *       -> {@link reloadSnapshot}
- *
- * Upstream:
- * - Vue `onMounted`
- *
- * Downstream:
- * - `GET /v1/runs/{run_id}/snapshot`
- */
+/** Mounts the snapshot-first Inspect viewer into the server document. */
 export function mountInspectViewer(document: Document): void {
   const defaultView = document.defaultView;
   if (defaultView === null) throw new Error("viewer document has no default window");
   const window: Window = defaultView;
-
   const state: ViewerState = {
     runId: null,
     snapshot: null,
     source: null,
     generation: 0,
     retryTimer: null,
+    recoveryAttempts: 0,
   };
 
   function closeSource(): void {
@@ -229,29 +409,50 @@ export function mountInspectViewer(document: Document): void {
     state.source = null;
   }
 
-  function scheduleReload(generation: number): void {
+  function clearRetry(): void {
     if (state.retryTimer !== null) window.clearTimeout(state.retryTimer);
-    state.retryTimer = window.setTimeout(retrySnapshot, 500);
+    state.retryTimer = null;
+  }
 
-    /**
-     * Re-loads after the current SSE connection can no longer recover itself.
-     *
-     * Triggering workflow:
-     *
-     * `Window.setTimeout`
-     *   -> {@link scheduleReload}
-     *     -> `viewer.retry`
-     *       -> {@link retrySnapshot}
-     *
-     * Upstream:
-     * - {@link scheduleReload}
-     *
-     * Downstream:
-     * - {@link reloadSnapshot}
-     */
-    function retrySnapshot(): void {
+  function stopWith(message: string): void {
+    state.generation += 1;
+    clearRetry();
+    closeSource();
+    setConnection(document, false, message);
+  }
+
+  function scheduleRecovery(generation: number, reason: string): void {
+    if (generation !== state.generation) return;
+    closeSource();
+    clearRetry();
+    if (state.recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+      stopWith(`recovery exhausted: ${reason}`);
+      return;
+    }
+    const delay = state.recoveryAttempts === 0
+      ? 0
+      : Math.min(BASE_RETRY_MILLIS * 2 ** (state.recoveryAttempts - 1), MAX_RETRY_MILLIS);
+    state.recoveryAttempts += 1;
+    const recoveryGeneration = ++state.generation;
+    setConnection(document, false, reason);
+
+    /** Retries a transient snapshot or stream failure with bounded backoff. */
+    function onRetryTimer(): void {
       state.retryTimer = null;
-      if (generation === state.generation) void reloadSnapshot();
+      if (recoveryGeneration === state.generation) void reloadSnapshot();
+    }
+
+    state.retryTimer = window.setTimeout(onRetryTimer, delay);
+  }
+
+  function handleTypedError(generation: number, value: unknown): void {
+    const error = parseRunApiError(value);
+    if (error === null) {
+      stopWith("invalid error payload");
+    } else if (error.transient) {
+      scheduleRecovery(generation, error.message);
+    } else {
+      stopWith(error.message);
     }
   }
 
@@ -260,82 +461,44 @@ export function mountInspectViewer(document: Document): void {
     const source = new EventSource(streamEndpoint(snapshot.run_id, snapshot.through_revision));
     state.source = source;
 
-    /**
-     * Applies the next canonical commit and rejects any revision gap.
-     *
-     * Triggering workflow:
-     *
-     * {@link EventSource}
-     *   -> {@link subscribeAfter}
-     *     -> `commit`
-     *       -> {@link onCommit}
-     *
-     * Upstream:
-     * - {@link subscribeAfter}
-     *
-     * Downstream:
-     * - {@link applyCommit}
-     */
+    /** Applies one strictly validated commit or recovers from the snapshot. */
     function onCommit(message: MessageEvent<string>): void {
       if (generation !== state.generation || state.snapshot === null) return;
+      let value: unknown;
       try {
-        const commit = JSON.parse(message.data) as RunCommit;
-        if (!applyCommit(state.snapshot, commit)) {
-          closeSource();
-          void reloadSnapshot();
-          return;
-        }
-        renderSnapshot(document, state.snapshot);
-        setConnection(document, true, `revision ${state.snapshot.through_revision}`);
+        value = JSON.parse(message.data);
       } catch {
-        closeSource();
-        void reloadSnapshot();
+        scheduleRecovery(generation, "malformed commit");
+        return;
       }
+      const next = applyCommit(state.snapshot, value);
+      if (next === null) {
+        scheduleRecovery(generation, "malformed commit");
+        return;
+      }
+      state.snapshot = next;
+      state.recoveryAttempts = 0;
+      renderSnapshot(document, next);
+      setConnection(document, true, `revision ${next.through_revision}`);
     }
 
-    /**
-     * Recovers an explicit retention gap from the snapshot authority.
-     *
-     * Triggering workflow:
-     *
-     * {@link EventSource}
-     *   -> {@link subscribeAfter}
-     *     -> `gap`
-     *       -> {@link onGap}
-     *
-     * Upstream:
-     * - {@link subscribeAfter}
-     *
-     * Downstream:
-     * - {@link reloadSnapshot}
-     */
+    /** Recovers an explicit retention gap from a fresh snapshot. */
     function onGap(): void {
-      if (generation !== state.generation) return;
-      closeSource();
-      void reloadSnapshot();
+      scheduleRecovery(generation, "history gap");
     }
 
-    /**
-     * Re-establishes snapshot authority after a stream transport failure.
-     *
-     * Triggering workflow:
-     *
-     * {@link EventSource}
-     *   -> {@link subscribeAfter}
-     *     -> `error`
-     *       -> {@link onStreamError}
-     *
-     * Upstream:
-     * - {@link subscribeAfter}
-     *
-     * Downstream:
-     * - {@link scheduleReload}
-     */
-    function onStreamError(): void {
+    /** Separates typed store failures from EventSource transport failures. */
+    function onStreamError(event: Event): void {
       if (generation !== state.generation) return;
-      closeSource();
-      setConnection(document, false, "stream disconnected");
-      scheduleReload(generation);
+      if (event instanceof MessageEvent && typeof event.data === "string") {
+        try {
+          handleTypedError(generation, JSON.parse(event.data) as unknown);
+        } catch {
+          stopWith("invalid error payload");
+        }
+        return;
+      }
+      scheduleRecovery(generation, "stream unavailable");
     }
 
     source.addEventListener("commit", onCommit as EventListener);
@@ -348,46 +511,53 @@ export function mountInspectViewer(document: Document): void {
     if (runId === null || runId.length === 0) return;
     const generation = ++state.generation;
     closeSource();
+    clearRetry();
     setConnection(document, false, "loading snapshot");
+    let response: Response;
     try {
-      const response = await fetch(snapshotEndpoint(runId), {
-        headers: { Accept: "application/vnd.auv.run+json; version=1" },
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const snapshot = await response.json() as RunSnapshot;
-      if (generation !== state.generation) return;
-      state.snapshot = snapshot;
-      renderSnapshot(document, snapshot);
-      subscribeAfter(snapshot, generation);
-    } catch (error) {
-      if (generation !== state.generation) return;
-      state.snapshot = null;
-      setConnection(document, false, error instanceof Error ? error.message : "snapshot unavailable");
-      scheduleReload(generation);
+      response = await fetch(snapshotEndpoint(runId), { headers: { Accept: RUN_MEDIA_TYPE } });
+    } catch {
+      scheduleRecovery(generation, "snapshot transport unavailable");
+      return;
     }
+    let value: unknown;
+    try {
+      value = await response.json() as unknown;
+    } catch {
+      stopWith("invalid snapshot response");
+      return;
+    }
+    if (generation !== state.generation) return;
+    if (!response.ok) {
+      const error = parseRunApiError(value);
+      if (error?.transient === true) {
+        scheduleRecovery(generation, error.message);
+      } else {
+        stopWith(error?.message ?? `HTTP ${response.status}`);
+      }
+      return;
+    }
+    const snapshot = validateSnapshot(value, runId);
+    if (snapshot === null) {
+      stopWith("invalid snapshot");
+      return;
+    }
+    state.snapshot = snapshot;
+    renderSnapshot(document, snapshot);
+    subscribeAfter(snapshot, generation);
   }
 
-  /**
-   * Selects the run entered in the viewer toolbar.
-   *
-   * Triggering workflow:
-   *
-   * `HTMLButtonElement.click`
-   *   -> `#load-run`
-   *     -> `viewer.load`
-   *       -> {@link onLoadRequested}
-   *
-   * Upstream:
-   * - `#load-run`
-   *
-   * Downstream:
-   * - {@link reloadSnapshot}
-   */
+  /** Selects the run entered in the viewer toolbar. */
   function onLoadRequested(): void {
     const input = element<HTMLInputElement>(document, "run-id-input");
     const runId = input.value.trim();
-    if (runId.length === 0) return;
+    if (!isUuid(runId)) {
+      stopWith("invalid run id");
+      return;
+    }
     state.runId = runId;
+    state.snapshot = null;
+    state.recoveryAttempts = 0;
     const url = new URL(window.location.href);
     url.searchParams.set("run_id", runId);
     window.history.replaceState(null, "", url);
@@ -396,10 +566,12 @@ export function mountInspectViewer(document: Document): void {
 
   element<HTMLButtonElement>(document, "load-run").addEventListener("click", onLoadRequested);
   const initialRunId = new URL(window.location.href).searchParams.get("run_id");
-  if (initialRunId !== null && initialRunId.length > 0) {
+  if (initialRunId !== null && isUuid(initialRunId)) {
     element<HTMLInputElement>(document, "run-id-input").value = initialRunId;
     state.runId = initialRunId;
     void reloadSnapshot();
+  } else if (initialRunId !== null) {
+    setConnection(document, false, "invalid run id");
   } else {
     setConnection(document, false, "no run selected");
   }

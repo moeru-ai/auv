@@ -17,7 +17,6 @@ use crate::integrations::minecraft::verification::query_wired_verification_reada
 use crate::integrations::minecraft::{
   QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action,
 };
-use crate::projection::ProductInspectReadProjection;
 use auv_runtime::app::{analyze_app_probe, probe_app};
 use auv_runtime::contract::{OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus, VerificationResult};
 use auv_runtime::model::InvokeRequest;
@@ -81,21 +80,19 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
   } = &command
   {
     let store_root = resolve_store_root(&project_root, store_root.as_ref());
-    let store = auv_tracing_driver::store::LocalStore::new(store_root.clone())?;
-    let recorder = Arc::new(auv_tracing_driver::BroadcastRunRecorder::new(1024));
-    let token = resolve_inspect_serve_write_token(write)?;
+    // TODO(run-contract-task-16): Remove the retired parser fields when the
+    // CLI contract migration reaches `cli.rs`; V1 never consumes them.
+    if write != &crate::cli::InspectServeWriteOptions::default() {
+      return Err(
+        "inspect serve write-token options are retired; the V1 authority is loopback-only and has no credential contract".to_string(),
+      );
+    }
+    let store = open_inspect_authority_store(&store_root)?;
     let config = auv_inspect_server::InspectServeConfig {
       host: host.clone(),
       port: *port,
-      write: auv_inspect_server::InspectWriteConfig {
-        enabled: write.enabled || token.is_some(),
-        token,
-        no_token: write.no_token,
-      },
     };
-    // Inject the same product composer used by CLI text inspect and product MCP.
-    let composer = crate::inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
-    auv_inspect_server::serve(store, recorder, config, Arc::new(ProductInspectReadProjection::with_composer(composer))).await?;
+    auv_inspect_server::serve(store, config).await?;
     return Ok(());
   }
 
@@ -1773,26 +1770,10 @@ fn resolve_store_root(project_root: &Path, explicit: Option<&String>) -> PathBuf
   explicit.map(PathBuf::from).unwrap_or_else(|| auv_runtime::default_project_store_root(project_root.to_path_buf()))
 }
 
-fn resolve_inspect_serve_write_token(write: &crate::cli::InspectServeWriteOptions) -> Result<Option<String>, String> {
-  if write.token.is_some() && write.token_file.is_some() {
-    return Err("--write-token cannot be combined with --write-token-file".to_string());
-  }
-
-  if let Some(token) = &write.token {
-    return normalize_write_token("--write-token", token.clone()).map(Some);
-  }
-
-  if let Some(path) = &write.token_file {
-    let token = fs::read_to_string(path).map_err(|error| format!("failed to read write token file {path}: {error}"))?.trim().to_string();
-    return normalize_write_token("--write-token-file", token).map(Some);
-  }
-
-  if write.enabled && !write.no_token {
-    let token = format!("session-{}-{}", process::id(), auv_runtime::model::now_millis());
-    return normalize_write_token("generated write token", token).map(Some);
-  }
-
-  Ok(None)
+fn open_inspect_authority_store(store_root: &Path) -> Result<Arc<dyn auv_tracing::RunStore>, String> {
+  auv_tracing::FileRunStore::open(store_root)
+    .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
+    .map_err(|error| format!("failed to open Inspect run authority {}: {error}", store_root.display()))
 }
 
 fn normalize_write_token(source: &str, token: String) -> Result<String, String> {
@@ -1866,6 +1847,9 @@ fn should_try_server_write(inspect: &InspectClientOptions) -> bool {
 }
 
 fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Option<(String, Option<String>)>, String> {
+  // TODO(run-contract-task-16): Replace explicit legacy recorder targeting
+  // during general CLI/MCP tracing composition. Task 11 only migrates the
+  // active `inspect serve` adapter and discovered authority session shape.
   let explicit_token = resolve_client_token(inspect)?;
   if let Some(url) = &inspect.server_url {
     return Ok(Some((url.clone(), explicit_token)));
@@ -1873,9 +1857,6 @@ fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Optio
   let Some(session) = read_discovered_inspect_session(inspect)? else {
     return Ok(None);
   };
-  if !session.write_enabled {
-    return Ok(None);
-  }
   if !is_local_inspect_url(&session.url) {
     if inspect.require_server_write {
       return Err(format!("inspect server write is required but discovered inspect server URL is not local: {}", session.url));
@@ -1883,7 +1864,13 @@ fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Optio
     eprintln!("warning: ignoring discovered inspect server with non-local URL: {}", session.url);
     return Ok(None);
   }
-  Ok(Some((session.url, explicit_token.or(session.write_token))))
+  if inspect.require_server_write {
+    return Err(format!(
+      "inspect server write is required but discovered authority {} does not expose the legacy recorder protocol",
+      session.authority_id
+    ));
+  }
+  Ok(None)
 }
 
 fn read_discovered_inspect_session(inspect: &InspectClientOptions) -> Result<Option<auv_inspect_server::InspectServerSession>, String> {
@@ -1926,7 +1913,6 @@ fn temp_runtime_store_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-  use std::collections::BTreeMap;
   use std::sync::Mutex;
 
   use axum::body::{Body, to_bytes};
@@ -1935,20 +1921,6 @@ mod tests {
   use tower::ServiceExt;
 
   use super::*;
-  use auv_runtime::contract::{
-    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionResult, RecognitionScope,
-    RecognitionSource, RecognitionSurface, RecognizedItem, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
-  };
-  use auv_runtime::scroll_scan::{
-    CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster, ScanPageRecord, ScanRegion, ScanTarget,
-    ScrollBoundaryCandidate, ScrollScanArtifact, SectionCandidate, StopEvidence, StopPolicy, StopReason,
-  };
-  use auv_tracing_driver::ArtifactFileSource;
-  use auv_tracing_driver::store::{CanonicalRun, LocalStore};
-  use auv_tracing_driver::trace::{
-    ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
-    SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
-  };
 
   static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -2000,69 +1972,6 @@ mod tests {
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
     assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/(mc20)[store]'` to view verification_outcome");
-  }
-
-  #[test]
-  fn inspect_serve_write_token_rejects_token_and_token_file_conflict() {
-    let write = crate::cli::InspectServeWriteOptions {
-      enabled: true,
-      token: Some("secret".to_string()),
-      token_file: Some("token.txt".to_string()),
-      no_token: false,
-    };
-
-    let error = resolve_inspect_serve_write_token(&write).expect_err("conflicting token sources reject");
-
-    assert!(error.contains("--write-token"));
-    assert!(error.contains("--write-token-file"));
-  }
-
-  #[test]
-  fn inspect_serve_write_token_rejects_empty_token_file() {
-    let path = env::temp_dir().join(format!("auv-empty-write-token-{}.txt", auv_runtime::model::now_millis()));
-    fs::write(&path, " \n\t").expect("token file should write");
-    let write = crate::cli::InspectServeWriteOptions {
-      enabled: true,
-      token: None,
-      token_file: Some(path.display().to_string()),
-      no_token: false,
-    };
-
-    let error = resolve_inspect_serve_write_token(&write).expect_err("empty token file should reject");
-
-    assert!(error.contains("empty"));
-    let _ = fs::remove_file(path);
-  }
-
-  #[test]
-  fn inspect_serve_write_token_rejects_empty_explicit_token() {
-    let write = crate::cli::InspectServeWriteOptions {
-      enabled: true,
-      token: Some(String::new()),
-      token_file: None,
-      no_token: false,
-    };
-
-    let error = resolve_inspect_serve_write_token(&write).expect_err("empty explicit token should reject");
-
-    assert!(error.contains("empty"));
-  }
-
-  #[test]
-  fn inspect_serve_write_token_generates_non_empty_session_token() {
-    let write = crate::cli::InspectServeWriteOptions {
-      enabled: true,
-      token: None,
-      token_file: None,
-      no_token: false,
-    };
-
-    let token = resolve_inspect_serve_write_token(&write)
-      .expect("generated token should resolve")
-      .expect("write-enabled serve should generate a token");
-
-    assert!(token.starts_with("session-"));
-    assert!(!token.is_empty());
   }
 
   #[test]
@@ -2232,9 +2141,7 @@ mod tests {
       &session_path,
       serde_json::to_string(&auv_inspect_server::InspectServerSession {
         url: "http://203.0.113.7:8765".to_string(),
-        store_root: root.display().to_string(),
-        write_enabled: true,
-        write_token: Some("secret".to_string()),
+        authority_id: "019f8b1e-4b2d-7a00-8f00-0000000000aa".parse().expect("authority id"),
         pid: 123,
         started_at_millis: 456,
       })
@@ -2265,325 +2172,29 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn inspect_server_root_projection_keeps_read_side_fields() {
-    let root = env::temp_dir().join(format!("auv-root-projection-contracts-{}", auv_runtime::model::now_millis()));
+  async fn inspect_serve_adapter_uses_file_authority_and_v1_router() {
+    let root = env::temp_dir().join(format!("auv-file-authority-adapter-{}", auv_runtime::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let run_id = RunId::new("run_root_projection_contracts");
-    write_test_run_with_read_side_contracts(&store, &root, run_id.clone());
+    let store = open_inspect_authority_store(&root).expect("file authority should open");
+    let authority_id = store.authority_id();
+    let app = auv_inspect_server::router(store);
 
-    let app = auv_inspect_server::router_with_projection(
-      store,
-      Arc::new(auv_tracing_driver::BroadcastRunRecorder::new(16)),
-      auv_inspect_server::InspectWriteConfig::default(),
-      Arc::new(ProductInspectReadProjection::default()),
-    );
     let response = app
       .clone()
-      .oneshot(Request::builder().uri("/runs/run_root_projection_contracts").body(Body::empty()).expect("request should build"))
+      .oneshot(Request::builder().uri("/v1/authority").body(Body::empty()).expect("request should build"))
       .await
-      .expect("route should respond");
+      .expect("authority route should respond");
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let run: serde_json::Value = serde_json::from_slice(&body).expect("run should be json");
-    assert_eq!(run["run_id"], "run_root_projection_contracts");
-    assert_eq!(run["command_boundary_claims"][0]["kind"], "verification");
-    assert_eq!(run["command_boundary_claims"][1]["kind"], "known_limit");
-    assert_eq!(run["verifications"][0]["method"]["kind"], "semantic_match");
-    assert_eq!(run["observation_snapshots"][0]["snapshot_id"], "snapshot_server_test");
-    assert_eq!(run["detector_recognition_lineage"][0]["status"], "ready");
-    assert!(run.get("view_parser").is_some(), "GET /runs/{{id}} must include view_parser");
-    assert!(run.get("view_parser_summary").is_some(), "GET /runs/{{id}} must include view_parser_summary");
-    assert!(run.get("spans").is_none(), "/runs/{run_id} should not inline spans");
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["authority_id"], authority_id.to_string());
 
-    let inspect_response = app
-      .clone()
-      .oneshot(Request::builder().uri("/runs/run_root_projection_contracts/inspect").body(Body::empty()).expect("request should build"))
-      .await
-      .expect("inspect route should respond");
-    assert_eq!(inspect_response.status(), StatusCode::OK);
-    let inspect_body = to_bytes(inspect_response.into_body(), usize::MAX).await.expect("body");
-    let inspect_json: serde_json::Value = serde_json::from_slice(&inspect_body).expect("json");
-    assert!(
-      inspect_json["text"].as_str().is_some_and(|text| text.contains("Run run_root_projection_contracts")),
-      "product projection inspect text should come from composer"
-    );
-
-    let quality_extension = app
-      .clone()
-      .oneshot(
-        Request::builder()
-          .uri("/runs/run_root_projection_contracts/extensions/minecraft-quality-baseline-report")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("quality extension route should respond");
-    assert_eq!(quality_extension.status(), StatusCode::OK);
-    let quality_body = to_bytes(quality_extension.into_body(), usize::MAX).await.expect("body");
-    let quality_json: serde_json::Value = serde_json::from_slice(&quality_body).expect("quality extension should be json");
-    assert!(quality_json["profile_id"].is_string(), "quality extension should expose its baseline profile");
-    assert!(quality_json["verdicts"]["probe"].is_object(), "quality extension should include the probe verdict");
-    assert!(quality_json["verdicts"]["trained_render"].is_object(), "quality extension should include the trained-render verdict");
-
-    let legacy_minecraft = app
-      .oneshot(
-        Request::builder()
-          .uri("/runs/run_root_projection_contracts/minecraft-quality-baseline-report")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
+    let legacy = app
+      .oneshot(Request::builder().uri("/runs").body(Body::empty()).expect("request should build"))
       .await
       .expect("legacy route should respond");
-    assert_eq!(legacy_minecraft.status(), StatusCode::NOT_FOUND);
-
+    assert_eq!(legacy.status(), StatusCode::NOT_FOUND);
+    assert_eq!(open_inspect_authority_store(&root).unwrap().authority_id(), authority_id);
     let _ = fs::remove_dir_all(root);
-  }
-
-  fn write_test_run_with_read_side_contracts(store: &LocalStore, root: &Path, run_id: RunId) {
-    let span_id = SpanId::new("0000000000000001");
-    let run = RunRecordV1Alpha1 {
-      api_version: RUN_API_VERSION.to_string(),
-      run_id: run_id.clone(),
-      trace_id: TraceId::new("00000000000000000000000000000001"),
-      run_type: RunType::Execute,
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(101),
-      root_span_id: span_id.clone(),
-      attributes: BTreeMap::new(),
-      summary: Some("done".to_string()),
-      failure: None,
-    };
-    let span = SpanRecordV1Alpha1 {
-      api_version: SPAN_API_VERSION.to_string(),
-      span_id: span_id.clone(),
-      parent_span_id: None,
-      name: "auv.inspect.server".to_string(),
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(101),
-      attributes: BTreeMap::new(),
-      summary: None,
-      failure: None,
-    };
-    let verification = VerificationResult {
-      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-      method: VerificationMethod::SemanticMatch,
-      executed: true,
-      state_changed: true,
-      semantic_matched: Some(true),
-      failure_layer: None,
-      evidence: Vec::new(),
-      consumed_candidate_ref: None,
-      consumed_node_ref: None,
-      consumed_recognition_artifact_ref: None,
-      consumed_recognition_id: None,
-      consumed_recognized_item_id: None,
-      observed_label: Some("Now Playing".to_string()),
-    };
-    let operation_result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: run_id.clone(),
-      status: OperationStatus::Completed,
-      operation_id: "music.result.play".to_string(),
-      evidence_artifacts: Vec::new(),
-      output: OperationOutput::Verification {
-        verification: Box::new(verification.clone()),
-      },
-      verifications: vec![verification],
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-    let observation_snapshot = ObservationSnapshot {
-      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
-      snapshot_id: "snapshot_server_test".to_string(),
-      run_id: run_id.clone(),
-      span_id: span_id.clone(),
-      captured_at_millis: 100,
-      source: ObservationSource::Visual,
-      scope: RecognitionScope {
-        surface: RecognitionSurface::Window,
-        display_ref: None,
-        native_display_id: None,
-        app_bundle_id: Some("com.example.music".to_string()),
-        window_title: Some("Example Music".to_string()),
-        window_number: None,
-        region_hint: None,
-        capture_artifact: None,
-        capture_contract_artifact: None,
-      },
-      capture_contract_ref: None,
-      evidence: Vec::new(),
-      nodes: Vec::new(),
-      detail: serde_json::json!({"producer": "scroll_scan"}),
-      known_limits: vec!["visual only".to_string()],
-    };
-    let scroll_scan_artifact = ScrollScanArtifact {
-      scan_id: "scan_server_test".to_string(),
-      target: ScanTarget {
-        application_id: Some("com.example.music".to_string()),
-        window_title: Some("Example Music".to_string()),
-        region: ScanRegion {
-          left_ratio: 0.1,
-          top_ratio: 0.2,
-          right_ratio: 0.9,
-          bottom_ratio: 0.8,
-        },
-      },
-      stop_policy: StopPolicy::Bounded {
-        max_pages: 1,
-        max_scrolls: 0,
-      },
-      pages: Vec::<ScanPageRecord>::new(),
-      observations: Vec::<CollectionObservation>::new(),
-      nodes: Vec::new(),
-      snapshots: vec![observation_snapshot],
-      clusters: Vec::<ObservationCluster>::new(),
-      section_candidates: Vec::<SectionCandidate>::new(),
-      scroll_boundary_candidates: Vec::<ScrollBoundaryCandidate>::new(),
-      hook_decisions: Vec::<HookDecisionRecord>::new(),
-      stop_evidence: StopEvidence {
-        reason: StopReason::MaxPages,
-        message: "bounded for test".to_string(),
-        page_index: 0,
-      },
-      completeness_claim: CompletenessClaim::PartialMaxPages,
-      warnings: Vec::new(),
-    };
-    let artifacts = vec![
-      stage_json_artifact(store, root, &run_id, &span_id, 0, "operation-result", "music-result-play.json", &operation_result),
-      stage_json_artifact(store, root, &run_id, &span_id, 1, "scroll-scan", "scroll-scan.json", &scroll_scan_artifact),
-      stage_json_artifact(store, root, &run_id, &span_id, 3, "capture-image", "capture.json", &serde_json::json!({"capture": "artifact"})),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        4,
-        "detector-recognition",
-        "detector-recognition.json",
-        &RecognitionResult {
-          recognition_id: "recognition_detector_server_test".to_string(),
-          source: RecognitionSource::Custom,
-          scope: RecognitionScope {
-            surface: RecognitionSurface::Region,
-            display_ref: Some("display-main".to_string()),
-            native_display_id: Some("69733248".to_string()),
-            app_bundle_id: Some("com.playstack.balatro".to_string()),
-            window_title: Some("Balatro".to_string()),
-            window_number: Some(7),
-            region_hint: None,
-            capture_artifact: Some(ArtifactRef {
-              run_id: run_id.clone(),
-              artifact_id: ArtifactId::new("artifact_0004"),
-              span_id: span_id.clone(),
-              captured_event_id: None,
-            }),
-            capture_contract_artifact: None,
-          },
-          best: None,
-          filtered: vec![RecognizedItem {
-            item_id: "detector:games-balatro-ui:0".to_string(),
-            kind: "ui_button_play".to_string(),
-            box_: auv_runtime::contract::RecognitionBox {
-              x: 10,
-              y: 20,
-              width: 30,
-              height: 40,
-            },
-            text: None,
-            provider_score: Some(0.98),
-            detail: serde_json::json!({}),
-          }],
-          all: vec![RecognizedItem {
-            item_id: "detector:games-balatro-ui:0".to_string(),
-            kind: "ui_button_play".to_string(),
-            box_: auv_runtime::contract::RecognitionBox {
-              x: 10,
-              y: 20,
-              width: 30,
-              height: 40,
-            },
-            text: None,
-            provider_score: Some(0.98),
-            detail: serde_json::json!({}),
-          }],
-          detail: serde_json::json!({
-            "backend": "ultralytics-inference",
-            "model_id": "games-balatro-ui",
-          }),
-          evidence: vec![ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0004"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          }],
-          known_limits: vec!["detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string()],
-        },
-      ),
-    ];
-
-    store
-      .write_run_snapshot(&CanonicalRun {
-        run,
-        spans: vec![span],
-        events: vec![
-          EventRecordV1Alpha1 {
-            api_version: EVENT_API_VERSION.to_string(),
-            event_id: EventId::new("event_command_verification"),
-            span_id: span_id.clone(),
-            name: "command.verification".to_string(),
-            timestamp_millis: 100,
-            attributes: BTreeMap::new(),
-            message: Some("activation-only; semantic success requires a separate verification result".to_string()),
-            artifact_ids: Vec::new(),
-          },
-          EventRecordV1Alpha1 {
-            api_version: EVENT_API_VERSION.to_string(),
-            event_id: EventId::new("event_command_known_limit"),
-            span_id: span_id.clone(),
-            name: "command.known_limit".to_string(),
-            timestamp_millis: 100,
-            attributes: BTreeMap::new(),
-            message: Some("input delivery does not verify target UI state".to_string()),
-            artifact_ids: Vec::new(),
-          },
-        ],
-        artifacts,
-      })
-      .expect("run should persist");
-  }
-
-  fn stage_json_artifact<T: serde::Serialize>(
-    store: &LocalStore,
-    root: &Path,
-    run_id: &RunId,
-    span_id: &SpanId,
-    index: usize,
-    role: &str,
-    preferred_name: &str,
-    value: &T,
-  ) -> ArtifactRecordV1Alpha1 {
-    let source_path = root.join(format!("source-{index}-{preferred_name}"));
-    let rendered = serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
-    fs::write(&source_path, rendered).expect("artifact source should write");
-    store
-      .stage_artifact_file(
-        run_id,
-        index,
-        span_id,
-        None,
-        ArtifactFileSource {
-          role: role.to_string(),
-          source_path,
-          preferred_name: preferred_name.to_string(),
-          summary: None,
-        },
-      )
-      .expect("artifact should stage")
   }
 
   fn mc2_temp_dir(label: &str) -> PathBuf {

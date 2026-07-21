@@ -2,15 +2,24 @@
 
 //! Disposable viewer DTOs derived only from canonical [`auv_tracing::RunSnapshot`] values.
 
+pub mod legacy;
+
 use auv_tracing::{
   ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, EventId, EventSchema, JsonPayload, RunId, RunRevision,
   RunSnapshot, Sha256Digest, SpanId, SpanLink, SpanName, Timestamp,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+
+// TODO(run-contract-tasks-17-23): Remove these hidden aliases when the
+// out-of-scope CLI reader, Balatro, and root contract imports move to `legacy`.
+#[doc(hidden)]
+pub use legacy::{
+  ArtifactRefView, InspectComposer, InspectError, InspectSection, InspectSectionOutput, TELEMETRY_SAMPLE_ARTIFACT_ROLE,
+  artifact_record_view, is_json_mime, open_artifact_file, read_artifact_json, read_telemetry_artifact_summary,
+};
 
 /// Complete Inspect read projection through one canonical run revision.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct InspectDocument {
   pub authority_id: AuthorityId,
   pub run_id: RunId,
@@ -21,8 +30,7 @@ pub struct InspectDocument {
 }
 
 /// Viewer-oriented span fields without an inferred execution or semantic status.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct InspectSpan {
   pub span_id: SpanId,
   pub parent_span_id: Option<SpanId>,
@@ -34,8 +42,7 @@ pub struct InspectSpan {
 }
 
 /// Typed event data preserved for inspection.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct InspectEvent {
   pub event_id: EventId,
   pub span_id: Option<SpanId>,
@@ -45,8 +52,7 @@ pub struct InspectEvent {
 }
 
 /// Canonical artifact identity and committed metadata only.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct InspectArtifact {
   pub span_id: Option<SpanId>,
   pub uri: ArtifactUri,
@@ -110,24 +116,5 @@ impl From<&RunSnapshot> for InspectDocument {
       events,
       artifacts,
     }
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn inspect_document_wire_shape_denies_unknown_fields() {
-    let value = serde_json::json!({
-      "authority_id": "019f8b1e-4b2d-7a00-8f00-0000000000aa",
-      "run_id": "019f8b1e-4b2d-7a00-8f00-000000000001",
-      "through_revision": 0,
-      "spans": [],
-      "events": [],
-      "artifacts": [],
-      "status": "success"
-    });
-    assert!(serde_json::from_value::<InspectDocument>(value).is_err());
   }
 }

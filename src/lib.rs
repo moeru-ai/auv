@@ -17,7 +17,7 @@ pub mod view_parser_read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use auv_inspect_model::{InspectComposer, InspectDocument};
+use auv_inspect_model::legacy::{InspectComposer, InspectDocument};
 use auv_tracing_driver::store::LocalStore;
 use model::AuvResult;
 use runtime::Runtime;
@@ -47,15 +47,15 @@ impl RootInspectReadProjection {
   }
 }
 
-impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
+impl auv_inspect_server::legacy::InspectReadProjection for RootInspectReadProjection {
   fn run_enrichment(
     &self,
     store: &auv_tracing_driver::store::LocalStore,
     run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> Result<auv_inspect_server::InspectRunEnrichment, String> {
+  ) -> Result<auv_inspect_server::legacy::InspectRunEnrichment, String> {
     let view_parser = view_parser_read::build_view_parser_inspect(store, run)?;
     let view_parser_summary = auv_view::memory::summarize_view_parser_inspect(&view_parser);
-    Ok(auv_inspect_server::InspectRunEnrichment {
+    Ok(auv_inspect_server::legacy::InspectRunEnrichment {
       command_boundary_claims: extract_command_boundary_claims_for_inspect(run),
       verifications: run_read::extract_verifications(store, run)?
         .into_iter()
@@ -107,17 +107,17 @@ impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
 
 fn extract_command_boundary_claims_for_inspect(
   run: &auv_tracing_driver::store::CanonicalRun,
-) -> Vec<auv_inspect_server::CommandBoundaryClaim> {
+) -> Vec<auv_inspect_server::legacy::CommandBoundaryClaim> {
   run
     .events
     .iter()
     .filter_map(|event| match event.name.as_str() {
-      "command.verification" => Some(auv_inspect_server::CommandBoundaryClaim {
+      "command.verification" => Some(auv_inspect_server::legacy::CommandBoundaryClaim {
         span_id: event.span_id.clone(),
         kind: "verification".to_string(),
         message: event.message.clone().unwrap_or_default(),
       }),
-      "command.known_limit" => Some(auv_inspect_server::CommandBoundaryClaim {
+      "command.known_limit" => Some(auv_inspect_server::legacy::CommandBoundaryClaim {
         span_id: event.span_id.clone(),
         kind: "known_limit".to_string(),
         message: event.message.clone().unwrap_or_default(),

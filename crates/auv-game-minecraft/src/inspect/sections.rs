@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use auv_inspect_model::{InspectError, InspectSection, InspectSectionOutput};
+use auv_inspect_model::legacy::{InspectError, InspectSection, InspectSectionOutput};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 use super::render::{append_primary_sections, append_quality_and_spatial_sections};

@@ -56,8 +56,6 @@
         <div id="artifact-list" class="artifact-list"></div>
       </aside>
     </div>
-
-    <div id="netease-select-proof-hint" hidden></div>
   </div>
 </template>
 

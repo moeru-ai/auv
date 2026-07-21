@@ -393,6 +393,7 @@ dependencies = [
  "auv-runtime",
  "auv-stage-status",
  "auv-task-object-detection",
+ "auv-tracing",
  "auv-tracing-driver",
  "axum",
  "image",
@@ -622,8 +623,10 @@ name = "auv-inspect-model"
 version = "0.0.1"
 dependencies = [
  "auv-tracing",
+ "auv-tracing-driver",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -632,7 +635,9 @@ version = "0.0.1"
 dependencies = [
  "auv-inspect-model",
  "auv-tracing",
+ "auv-tracing-driver",
  "auv-tracing-inspect",
+ "auv-view",
  "axum",
  "futures-util",
  "libc",

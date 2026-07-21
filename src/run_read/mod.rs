@@ -17,7 +17,7 @@ use crate::contract::{
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
 use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult};
-use auv_inspect_model::{artifact_record_view, is_json_mime, read_artifact_json};
+use auv_inspect_model::legacy::{artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
@@ -36,7 +36,7 @@ pub enum DetectorRecognitionLineageStatus {
   Malformed,
 }
 
-pub use auv_inspect_model::ArtifactRefView;
+pub use auv_inspect_model::legacy::ArtifactRefView;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct DetectorRecognitionLineage {

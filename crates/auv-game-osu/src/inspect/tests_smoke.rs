@@ -1,4 +1,4 @@
-use auv_inspect_model::InspectComposer;
+use auv_inspect_model::legacy::InspectComposer;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{
   RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,

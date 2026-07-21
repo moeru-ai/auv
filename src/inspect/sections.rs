@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use auv_inspect_model::{InspectComposer, InspectError, InspectSection, InspectSectionOutput};
+use auv_inspect_model::legacy::{InspectComposer, InspectError, InspectSection, InspectSectionOutput};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 use super::{inspect_run_core_prefix_body, inspect_run_core_suffix_body};
