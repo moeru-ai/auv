@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 const MAX_JSON_NESTING: usize = 128;
 const MAX_JSON_OBJECT_MEMBERS: usize = 8_192;
+const JAVASCRIPT_EXACT_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 /// Versioned media type for Inspect run JSON requests and responses.
 pub const RUN_MEDIA_TYPE: &str = "application/vnd.auv.run+json; version=1";
@@ -586,11 +587,23 @@ impl<'de> Visitor<'de> for StructureVisitor<'_> {
     Ok(())
   }
 
-  fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+  fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+  where
+    E: de::Error,
+  {
+    if value < -(JAVASCRIPT_EXACT_INTEGER_MAX as i64) || value > JAVASCRIPT_EXACT_INTEGER_MAX as i64 {
+      return Err(E::custom("JSON integer exceeds the exact integer range"));
+    }
     Ok(())
   }
 
-  fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+  fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+  where
+    E: de::Error,
+  {
+    if value > JAVASCRIPT_EXACT_INTEGER_MAX {
+      return Err(E::custom("JSON integer exceeds the exact integer range"));
+    }
     Ok(())
   }
 
@@ -727,6 +740,42 @@ mod tests {
     let body = format!("{{{}}}", (0..=MAX_JSON_OBJECT_MEMBERS).map(|index| format!(r#""key_{index}":null"#)).collect::<Vec<_>>().join(","));
 
     assert!(decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).is_err());
+  }
+
+  #[test]
+  fn strict_decoder_rejects_non_exact_integers_invalid_numbers_and_trailing_input() {
+    for body in [
+      "9007199254740992",
+      "-9007199254740992",
+      "01",
+      "+1",
+      "NaN",
+      "1 true",
+    ] {
+      assert!(decode_strict::<serde::de::IgnoredAny>(body.as_bytes()).is_err(), "accepted `{body}`");
+    }
+  }
+
+  #[test]
+  fn strict_protocol_types_reject_unknown_fields_at_nested_and_variant_depths() {
+    let nested = br#"{
+      "authority_id":"019f8b1e-4b2d-7a00-8f00-0000000000aa",
+      "mutations":[{"start_span":{
+        "span_id":"019f8b1e-4b2d-7a00-8f00-000000000011",
+        "name":"auv.test.root",
+        "started_at":{"unix_seconds":1,"nanoseconds":0,"clock":"utc"},
+        "attributes":{}
+      }}]
+    }"#;
+    let variant = br#"{
+      "not_found":{
+        "uri":"auv://runs/019f8b1e-4b2d-7a00-8f00-000000000001/artifacts/019f8b1e-4b2d-7a00-8f00-000000000002",
+        "retry":false
+      }
+    }"#;
+
+    assert!(decode_strict::<RunCommitBody>(nested).is_err());
+    assert!(decode_strict::<ResolvedArtifact>(variant).is_err());
   }
 
   #[test]

@@ -507,14 +507,31 @@ async fn commit_requires_idempotency_key_and_takes_run_id_only_from_path() {
 }
 
 #[tokio::test]
-async fn unknown_and_duplicate_fields_are_rejected_before_store_commit() {
+async fn malformed_json_is_rejected_recursively_before_store_commit() {
   let probe = CommitProbe::new();
   let app = router(Arc::new(probe.clone()));
   let mutation = serde_json::to_string(&start_span("auv.test.root")).expect("mutation");
   let unknown = format!(r#"{{"authority_id":"{AUTHORITY}","mutations":[{mutation}],"extra":true}}"#);
   let duplicate = format!(r#"{{"authority_id":"{AUTHORITY}","authority_id":"{AUTHORITY}","mutations":[{mutation}]}}"#);
+  let nested_duplicate = format!(
+    r#"{{"authority_id":"{AUTHORITY}","mutations":[{{"start_span":{{"span_id":"{SPAN}","name":"auv.test.root","started_at":{{"unix_seconds":1,"unix_seconds":1,"nanoseconds":0}},"attributes":{{}}}}}}]}}"#,
+  );
+  let variant_unknown = format!(
+    r#"{{"authority_id":"{AUTHORITY}","mutations":[{{"start_span":{{"span_id":"{SPAN}","name":"auv.test.root","started_at":{{"unix_seconds":1,"nanoseconds":0}},"attributes":{{}},"retry":false}}}}]}}"#,
+  );
+  let invalid_number = format!(
+    r#"{{"authority_id":"{AUTHORITY}","mutations":[{{"start_span":{{"span_id":"{SPAN}","name":"auv.test.root","started_at":{{"unix_seconds":01,"nanoseconds":0}},"attributes":{{}}}}}}]}}"#,
+  );
+  let trailing = format!(r#"{{"authority_id":"{AUTHORITY}","mutations":[{mutation}]}} true"#);
 
-  for body in [unknown, duplicate] {
+  for body in [
+    unknown,
+    duplicate,
+    nested_duplicate,
+    variant_unknown,
+    invalid_number,
+    trailing,
+  ] {
     let response = app.clone().oneshot(post_commit(RUN, Some(KEY_ONE), body.into_bytes())).await.expect("response");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
   }

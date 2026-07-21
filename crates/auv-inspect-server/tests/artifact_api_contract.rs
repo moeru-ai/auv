@@ -990,13 +990,50 @@ async fn resolver_validates_authority_and_the_complete_bounded_batch_before_look
 }
 
 fn resolve_request(body: Value) -> Request<Body> {
+  resolve_request_bytes(serde_json::to_vec(&body).expect("resolver JSON"))
+}
+
+fn resolve_request_bytes(body: Vec<u8>) -> Request<Body> {
   Request::builder()
     .method("POST")
     .uri("/v1/resources/artifacts/resolve")
     .header(CONTENT_TYPE, "application/json")
     .header(HOST, "inspect.example")
-    .body(Body::from(serde_json::to_vec(&body).expect("resolver JSON")))
+    .body(Body::from(body))
     .expect("resolver request")
+}
+
+#[tokio::test]
+async fn malformed_artifact_json_is_rejected_before_store_access() {
+  let store = ProbeStore::new();
+  let app = router_with_artifact_origin(Arc::new(store.clone()), url::Url::parse("https://inspect.example/").unwrap()).unwrap();
+  let draft = String::from_utf8(draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256)).unwrap();
+  let draft_cases = [
+    draft.replacen(&format!(r#""authority_id":"{AUTHORITY}""#), &format!(r#""authority_id":"{AUTHORITY}","authority_id":"{AUTHORITY}""#), 1),
+    draft.replacen(r#""attributes":{}"#, r#""attributes":{"source":"one","source":"two"}"#, 1),
+    draft.replacen(r#""attributes":{}"#, r#""attributes":{},"retry":false"#, 1),
+    draft.replacen(r#""byte_length":3"#, r#""byte_length":9007199254740992"#, 1),
+    format!("{draft} true"),
+  ];
+  for body in draft_cases {
+    let response = app.clone().oneshot(post_draft(RUN, KEY, body.into_bytes())).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  }
+
+  let uri = format!("auv://runs/{RUN}/artifacts/{ARTIFACT}");
+  let resolver_cases = [
+    format!(r#"{{"authority_id":"{AUTHORITY}","authority_id":"{AUTHORITY}","uris":["{uri}"]}}"#),
+    format!(r#"{{"authority_id":"{AUTHORITY}","uris":["{uri}"],"retry":false}}"#),
+    format!(r#"{{"authority_id":"{AUTHORITY}","uris":["{uri}"]}} false"#),
+  ];
+  for body in resolver_cases {
+    let response = app.clone().oneshot(resolve_request_bytes(body.into_bytes())).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  }
+
+  assert_eq!(store.lookup_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(store.snapshot_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

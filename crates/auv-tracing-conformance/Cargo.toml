@@ -22,7 +22,11 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+auv-inspect-server = { path = "../auv-inspect-server" }
+auv-tracing-inspect = { path = "../auv-tracing-inspect" }
+axum = "0.8"
 tempfile.workspace = true
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 
 [[bin]]
 name = "file_store_child"
