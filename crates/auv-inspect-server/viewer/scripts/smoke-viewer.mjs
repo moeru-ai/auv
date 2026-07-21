@@ -5,6 +5,7 @@ import { Window } from "happy-dom";
 
 const AUTHORITY = "019f8b1e-4b2d-7a00-8f00-0000000000aa";
 const RUN = "019f8b1e-4b2d-7a00-8f00-000000000001";
+const OTHER_RUN = "019f8b1e-4b2d-7a00-8f00-0000000000ff";
 const STALE_RUN = "019f8b1e-4b2d-7a00-8f00-000000000008";
 const NEWER_RUN = "019f8b1e-4b2d-7a00-8f00-000000000009";
 const PERMANENT_CASES = new Map([
@@ -46,6 +47,7 @@ const operations = [];
 const sources = [];
 let primarySnapshotRequests = 0;
 const permanentSnapshotRequests = new Map();
+const invalidSnapshotRequests = new Map();
 let staleSnapshotJson;
 
 function deferred() {
@@ -62,14 +64,66 @@ function timestamp(seconds) {
   return { unix_seconds: seconds, nanoseconds: 0 };
 }
 
-function eventOccurred() {
+function id(index) {
+  return `019f8b1e-4b2d-7a00-8f00-${index.toString(16).padStart(12, "0")}`;
+}
+
+function spanStarted(spanId, { parent = null, remote = null, at = 2 } = {}) {
   return {
-    event_id: EVENT,
-    span_id: SPAN,
-    occurred_at: timestamp(2),
+    span_id: spanId,
+    parent_span_id: parent,
+    remote_link: remote === null ? null : { span_id: remote },
+    name: "auv.test.child",
+    started_at: timestamp(at),
+    attributes: {}
+  };
+}
+
+function spanEnded(spanId, at) {
+  return { span_id: spanId, ended_at: timestamp(at) };
+}
+
+function eventFor(eventId, { span = SPAN, at = 2 } = {}) {
+  return {
+    event_id: eventId,
+    span_id: span,
+    occurred_at: timestamp(at),
     schema: { name: "auv.test.event", version: 1 },
     payload: { value: "committed" }
   };
+}
+
+function artifactUri(runId, artifactId) {
+  return `auv://runs/${runId}/artifacts/${artifactId}`;
+}
+
+function artifactFor(runId, artifactId, span = SPAN) {
+  return {
+    span_id: span,
+    metadata: {
+      uri: artifactUri(runId, artifactId),
+      purpose: "auv.test.output",
+      content_type: "text/plain",
+      byte_length: 5,
+      sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      attributes: {}
+    }
+  };
+}
+
+function commitFor(facts) {
+  return {
+    authority_id: AUTHORITY,
+    run_id: RUN,
+    revision: 3,
+    idempotency_key: KEY,
+    committed_at: timestamp(3),
+    facts
+  };
+}
+
+function eventOccurred() {
+  return eventFor(EVENT);
 }
 
 function snapshot(revision, includeEvent, runId = RUN) {
@@ -80,12 +134,8 @@ function snapshot(revision, includeEvent, runId = RUN) {
     spans: {
       [SPAN]: {
         started: {
-          span_id: SPAN,
-          parent_span_id: null,
-          remote_link: null,
-          name: "auv.test.root",
-          started_at: timestamp(1),
-          attributes: {}
+          ...spanStarted(SPAN, { at: 1 }),
+          name: "auv.test.root"
         },
         ended: null
       }
@@ -94,6 +144,45 @@ function snapshot(revision, includeEvent, runId = RUN) {
     artifacts: {}
   };
 }
+
+function invalidSnapshot(runId, mutate) {
+  const candidate = snapshot(1, false, runId);
+  mutate(candidate);
+  return candidate;
+}
+
+const SNAPSHOT_INVARIANT_CASES = new Map([
+  [id(0x101), invalidSnapshot(id(0x101), (value) => { value.spans[SPAN].ended = spanEnded(SPAN, 0); })],
+  [id(0x102), invalidSnapshot(id(0x102), (value) => { value.events = [eventFor(id(0x201), { at: 0 })]; })],
+  [id(0x103), invalidSnapshot(id(0x103), (value) => {
+    value.spans[SPAN].ended = spanEnded(SPAN, 2);
+    value.events = [eventFor(id(0x202), { at: 3 })];
+  })],
+  [id(0x104), invalidSnapshot(id(0x104), (value) => { value.spans[id(0x301)] = { started: spanStarted(id(0x301), { parent: SPAN, at: 0 }), ended: null }; })],
+  [id(0x105), invalidSnapshot(id(0x105), (value) => {
+    value.spans[SPAN].ended = spanEnded(SPAN, 2);
+    value.spans[id(0x302)] = { started: spanStarted(id(0x302), { parent: SPAN, at: 3 }), ended: null };
+  })],
+  [id(0x106), invalidSnapshot(id(0x106), (value) => { value.spans[id(0x303)] = { started: spanStarted(id(0x303), { parent: id(0x303) }), ended: null }; })],
+  [id(0x107), invalidSnapshot(id(0x107), (value) => { value.spans[id(0x304)] = { started: spanStarted(id(0x304), { remote: id(0x304) }), ended: null }; })],
+  [id(0x108), invalidSnapshot(id(0x108), (value) => { value.spans[id(0x305)] = { started: spanStarted(id(0x305), { parent: SPAN, remote: SPAN }), ended: null }; })],
+  [id(0x109), invalidSnapshot(id(0x109), (value) => { value.spans[id(0x306)] = { started: spanStarted(id(0x306), { parent: id(0x399) }), ended: null }; })],
+  [id(0x10a), invalidSnapshot(id(0x10a), (value) => {
+    value.spans[id(0x307)] = { started: spanStarted(id(0x307), { parent: id(0x308) }), ended: null };
+    value.spans[id(0x308)] = { started: spanStarted(id(0x308), { parent: id(0x307) }), ended: null };
+  })],
+  [id(0x10b), invalidSnapshot(id(0x10b), (value) => {
+    value.artifacts[artifactUri(OTHER_RUN, id(0x401))] = artifactFor(OTHER_RUN, id(0x401));
+  })],
+  [id(0x10c), invalidSnapshot(id(0x10c), (value) => {
+    value.spans[id(0x309)] = value.spans[SPAN];
+    delete value.spans[SPAN];
+  })],
+  [id(0x10d), invalidSnapshot(id(0x10d), (value) => {
+    value.artifacts[artifactUri(value.run_id, id(0x402))] = artifactFor(value.run_id, id(0x403));
+  })],
+  [id(0x10e), invalidSnapshot(id(0x10e), (value) => { value.through_revision = 2; })]
+]);
 
 const fetchStub = async (input) => {
   const url = String(input);
@@ -116,7 +205,14 @@ const fetchStub = async (input) => {
     };
   }
   if (url === `/v1/runs/${NEWER_RUN}/snapshot`) {
-    return Response.json(snapshot(9, false, NEWER_RUN), {
+    return Response.json(snapshot(1, false, NEWER_RUN), {
+      headers: { "content-type": "application/vnd.auv.run+json; version=1" }
+    });
+  }
+  const invalidSnapshotRun = [...SNAPSHOT_INVARIANT_CASES.keys()].find((runId) => url === `/v1/runs/${runId}/snapshot`);
+  if (invalidSnapshotRun !== undefined) {
+    invalidSnapshotRequests.set(invalidSnapshotRun, (invalidSnapshotRequests.get(invalidSnapshotRun) ?? 0) + 1);
+    return Response.json(SNAPSHOT_INVARIANT_CASES.get(invalidSnapshotRun), {
       headers: { "content-type": "application/vnd.auv.run+json; version=1" }
     });
   }
@@ -154,6 +250,13 @@ class FakeEventSource {
   emit(type, data) {
     const event = new window.MessageEvent(type, { data });
     for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+
+  emitOpen() {
+    const event = new window.Event("open");
+    for (const listener of this.listeners.get("open") ?? []) {
       listener(event);
     }
   }
@@ -218,11 +321,17 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function selectPrimaryRun(label) {
+async function selectPrimaryRun(label, { open = true } = {}) {
   const selectedSourceCount = sources.length;
   document.getElementById("run-id-input").value = RUN;
   document.getElementById("load-run").click();
   await waitFor(() => sources.length === selectedSourceCount + 1, `${label} selected-run snapshot`);
+  const source = sources.at(-1);
+  if (open) {
+    source.emitOpen();
+    await waitFor(() => document.getElementById("conn-label")?.textContent === "live", `${label} stream open`);
+  }
+  return source;
 }
 
 async function assertMalformedCommitRecovers(commit, label) {
@@ -231,6 +340,7 @@ async function assertMalformedCommitRecovers(commit, label) {
   const requestCount = primarySnapshotRequests;
   sources.at(-1).emit("commit", JSON.stringify(commit));
   await waitFor(() => sources.length === sourceCount + 1, `${label} snapshot recovery`);
+  sources.at(-1).emitOpen();
   assert(primarySnapshotRequests === requestCount + 1, `${label} did not reload exactly one snapshot`);
   assert(document.getElementById("main-crumb")?.textContent === "revision 2", `${label} advanced the rendered cursor`);
   assert(document.getElementById("artifact-count")?.textContent === "0", `${label} partially published an artifact`);
@@ -247,8 +357,11 @@ assert(
   operations[1] === `stream:/v1/runs/${RUN}/commits/stream?after_revision=1`,
   `stream did not use snapshot cursor: ${operations.join(", ")}`
 );
-assert(document.getElementById("conn-label")?.textContent === "live", "validated snapshot stream was not labeled live");
-assert(document.getElementById("conn-endpoint")?.textContent === "revision 1", "validated snapshot did not display its live revision");
+assert(document.getElementById("conn-label")?.textContent === "offline", "stream was labeled live before its open event");
+assert(document.getElementById("conn-endpoint")?.textContent === "loading snapshot", "validated snapshot did not remain connecting before open");
+sources[0].emitOpen();
+await waitFor(() => document.getElementById("conn-label")?.textContent === "live", "initial stream open");
+assert(document.getElementById("conn-endpoint")?.textContent === "revision 1", "open stream did not display its snapshot revision");
 
 sources[0].emit("commit", JSON.stringify({
   authority_id: AUTHORITY,
@@ -263,6 +376,7 @@ assert(document.getElementById("main-crumb")?.textContent === "revision 2", "com
 
 sources[0].emit("gap", JSON.stringify({ requested_after: 2, earliest_available: 3 }));
 await waitFor(() => sources.length === 2, "gap snapshot recovery");
+sources[1].emitOpen();
 assert(primarySnapshotRequests === 2, "gap did not reload exactly one snapshot");
 assert(
   sources[1].url === `/v1/runs/${RUN}/commits/stream?after_revision=2`,
@@ -379,12 +493,38 @@ for (const [label, overrides] of [
   }, label);
 }
 
+const reducerInvariantCases = [
+  ["end before start", [{ span_ended: spanEnded(SPAN, 0) }]],
+  ["event before start", [{ event_occurred: eventFor(id(0x501), { at: 0 }) }]],
+  ["event after end", [{ span_ended: spanEnded(SPAN, 2) }, { event_occurred: eventFor(id(0x502), { at: 2 }) }]],
+  ["child before parent", [{ span_started: spanStarted(id(0x503), { parent: SPAN, at: 0 }) }]],
+  ["child after parent end", [{ span_ended: spanEnded(SPAN, 2) }, { span_started: spanStarted(id(0x504), { parent: SPAN, at: 2 }) }]],
+  ["self parent", [{ span_started: spanStarted(id(0x505), { parent: id(0x505) }) }]],
+  ["self remote link", [{ span_started: spanStarted(id(0x506), { remote: id(0x506) }) }]],
+  ["duplicate parent and remote link", [{ span_started: spanStarted(id(0x507), { parent: SPAN, remote: SPAN }) }]],
+  ["missing local parent", [{ span_started: spanStarted(id(0x508), { parent: id(0x599) }) }]],
+  ["same-commit parent cycle", [
+    { span_started: spanStarted(id(0x509), { parent: id(0x50a) }) },
+    { span_started: spanStarted(id(0x50a), { parent: id(0x509) }) }
+  ]],
+  ["same-commit forward parent", [
+    { span_started: spanStarted(id(0x50b), { parent: id(0x50c) }) },
+    { span_started: spanStarted(id(0x50c)) }
+  ]],
+  ["artifact run mismatch", [{ artifact_published: artifactFor(OTHER_RUN, id(0x50d)) }]]
+];
+for (const [index, [label, invalidFacts]] of reducerInvariantCases.entries()) {
+  const validPrefix = { artifact_published: artifactFor(RUN, id(0x600 + index)) };
+  await assertMalformedCommitRecovers(commitFor([validPrefix, ...invalidFacts]), label);
+}
+
 await selectPrimaryRun("typed unavailable");
 {
   const sourceCount = sources.length;
   const requestCount = primarySnapshotRequests;
   sources.at(-1).emit("error", JSON.stringify({ unavailable: { code: "auv.test.unavailable" } }));
   await waitFor(() => sources.length === sourceCount + 1, "typed unavailable recovery");
+  sources.at(-1).emitOpen();
   assert(primarySnapshotRequests === requestCount + 1, "typed unavailable did not reload the snapshot");
 }
 
@@ -394,6 +534,7 @@ await selectPrimaryRun("transport failure");
   const requestCount = primarySnapshotRequests;
   sources.at(-1).emitTransportError();
   await waitFor(() => sources.length === sourceCount + 1, "transport failure recovery");
+  sources.at(-1).emitOpen();
   assert(primarySnapshotRequests === requestCount + 1, "transport failure did not reload the snapshot");
 }
 
@@ -403,6 +544,7 @@ for (let cycle = 1; cycle <= 7; cycle += 1) {
   const requestCount = primarySnapshotRequests;
   sources.at(-1).emitTransportError();
   await waitFor(() => sources.length === sourceCount + 1, `quiet recovery cycle ${cycle}`, 2500);
+  sources.at(-1).emitOpen();
   assert(primarySnapshotRequests === requestCount + 1, `quiet recovery cycle ${cycle} did not reload the snapshot`);
   assert(document.getElementById("conn-label")?.textContent === "live", `quiet recovery cycle ${cycle} did not return live`);
   assert(document.getElementById("conn-endpoint")?.textContent === "revision 2", `quiet recovery cycle ${cycle} lost the snapshot revision`);
@@ -414,6 +556,24 @@ const requestsAfterIntegrity = primarySnapshotRequests;
 await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, 650));
 assert(primarySnapshotRequests === requestsAfterIntegrity, "permanent typed stream error retried");
 
+await selectPrimaryRun("pre-open retry exhaustion", { open: false });
+for (let attempt = 1; attempt <= 5; attempt += 1) {
+  const sourceCount = sources.length;
+  sources.at(-1).emitTransportError();
+  await waitFor(() => sources.length === sourceCount + 1, `pre-open retry ${attempt}`, 2500);
+  assert(document.getElementById("conn-label")?.textContent === "offline", `pre-open retry ${attempt} was labeled live`);
+}
+{
+  const sourceCount = sources.length;
+  sources.at(-1).emitTransportError();
+  await waitFor(
+    () => document.getElementById("conn-endpoint")?.textContent === "recovery exhausted: stream unavailable",
+    "pre-open retry exhaustion"
+  );
+  await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, 25));
+  assert(sources.length === sourceCount, "pre-open retry exhaustion constructed another stream");
+}
+
 const input = document.getElementById("run-id-input");
 for (const [runId, scenario] of PERMANENT_CASES) {
   input.value = runId;
@@ -423,6 +583,19 @@ for (const [runId, scenario] of PERMANENT_CASES) {
   assert(permanentSnapshotRequests.get(runId) === 1, `${scenario.status} permanent snapshot error retried`);
 }
 
+for (const runId of SNAPSHOT_INVARIANT_CASES.keys()) {
+  const sourceCount = sources.length;
+  input.value = runId;
+  document.getElementById("load-run").click();
+  await waitFor(
+    () => invalidSnapshotRequests.get(runId) === 1 && document.getElementById("conn-endpoint")?.textContent === "invalid snapshot",
+    `snapshot invariant ${runId}`
+  );
+  await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, 25));
+  assert(invalidSnapshotRequests.get(runId) === 1, `invalid snapshot ${runId} retried`);
+  assert(sources.length === sourceCount, `invalid snapshot ${runId} constructed a stream`);
+}
+
 input.value = STALE_RUN;
 document.getElementById("load-run").click();
 await waitFor(() => staleSnapshotJson !== undefined, "stale snapshot JSON continuation");
@@ -430,8 +603,18 @@ input.value = NEWER_RUN;
 document.getElementById("load-run").click();
 await waitFor(() => sources.at(-1)?.url.includes(NEWER_RUN), "newer selected run stream");
 const newerSource = sources.at(-1);
+newerSource.emitOpen();
+await waitFor(() => document.getElementById("conn-label")?.textContent === "live", "newer selected run open");
 staleSnapshotJson.reject(new Error("stale JSON body failed"));
 await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, 25));
 assert(!newerSource.closed, "stale snapshot JSON failure closed the newer selected run stream");
 assert(sources.at(-1) === newerSource, "stale snapshot JSON failure replaced the newer selected run stream");
+const staleSource = sources.find((source) => source !== newerSource && source.closed);
+staleSource.emitOpen();
+staleSource.emitTransportError();
+await new Promise((resolveAfterDelay) => window.setTimeout(resolveAfterDelay, 25));
+assert(!newerSource.closed, "stale stream event closed the newer selected run stream");
+assert(sources.at(-1) === newerSource, "stale stream event replaced the newer selected run stream");
+assert(document.getElementById("conn-label")?.textContent === "live", "stale stream event changed the newer connection state");
+assert(document.getElementById("conn-endpoint")?.textContent === "revision 1", "stale stream event changed the newer revision");
 assert(operations.every((operation) => !operation.includes("/write")), `legacy write endpoint used: ${operations.join(", ")}`);
