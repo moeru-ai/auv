@@ -7,7 +7,7 @@ use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
 use opentelemetry_sdk::logs::{LogBatch, LogExporter, LogProcessor, SdkLogRecord};
 use opentelemetry_sdk::trace::{Span, SpanData, SpanExporter, SpanProcessor};
 
-const MAX_EXPORTED_ITEMS: usize = 64;
+pub const MAX_EXPORTED_ITEMS: usize = 64;
 
 #[derive(Clone, Debug, Default)]
 pub struct BoundedSpanExporter {
