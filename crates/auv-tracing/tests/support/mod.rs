@@ -10,10 +10,11 @@ use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 use auv_tracing::{
-  ArtifactBody, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, Dispatch,
-  DispatchErrorReporter, DispatchFailure, DispatchTask, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit,
-  RunCommitPage, RunCommitRequest, RunFact, RunId, RunMutation, RunRevision, RunSnapshot, RunStore, RunSubscription, StoreArtifactRequest,
-  SubscriptionError, TaskSpawnError, TaskSpawner, TelemetryError, TelemetryItem, TelemetryProjector, Timestamp,
+  ArtifactBody, ArtifactMetadata, ArtifactPublished, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError,
+  AuthorityId, BoxFuture, CommitError, Dispatch, DispatchErrorReporter, DispatchFailure, DispatchTask, ErrorCode, IdempotencyKey,
+  MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunFact, RunId, RunMutation, RunRevision, RunSnapshot,
+  RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError, TaskSpawnError, TaskSpawner, TelemetryError, TelemetryItem,
+  TelemetryProjector, Timestamp,
 };
 use futures_channel::oneshot;
 use futures_core::Stream;
@@ -1299,6 +1300,7 @@ struct ArtifactStoreState {
   commit_gates: Mutex<VecDeque<CommitGate>>,
   page_gates: Mutex<VecDeque<CommitGate>>,
   pending_subscriptions: AtomicBool,
+  corrupt_observed_artifact: AtomicBool,
   write_calls: Mutex<Vec<StoreArtifactRequest>>,
   write_calls_changed: Condvar,
   commit_calls: AtomicUsize,
@@ -1309,6 +1311,8 @@ enum ArtifactWriteOutcome {
   Store,
   StoreThenWaitResponse(CommitGate),
   StoreThenWaitMismatch(CommitGate),
+  StoreThenWaitRevisionMismatch(CommitGate),
+  StoreThenWaitFailure(CommitGate, ArtifactWriteError),
   StoreThenUnknown(ErrorCode),
   Unknown(ErrorCode),
   Fail(ArtifactWriteError),
@@ -1331,6 +1335,7 @@ impl ArtifactStore {
         commit_gates: Mutex::new(VecDeque::new()),
         page_gates: Mutex::new(VecDeque::new()),
         pending_subscriptions: AtomicBool::new(false),
+        corrupt_observed_artifact: AtomicBool::new(false),
         write_calls: Mutex::new(Vec::new()),
         write_calls_changed: Condvar::new(),
         commit_calls: AtomicUsize::new(0),
@@ -1352,6 +1357,18 @@ impl ArtifactStore {
   pub fn store_then_wait_mismatch_next(&self) -> CommitGate {
     let gate = CommitGate::new();
     self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::StoreThenWaitMismatch(gate.clone()));
+    gate
+  }
+
+  pub fn store_then_wait_revision_mismatch_next(&self) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::StoreThenWaitRevisionMismatch(gate.clone()));
+    gate
+  }
+
+  pub fn store_then_wait_failure_next(&self, error: ArtifactWriteError) -> CommitGate {
+    let gate = CommitGate::new();
+    self.state.write_outcomes.lock().unwrap().push_back(ArtifactWriteOutcome::StoreThenWaitFailure(gate.clone(), error));
     gate
   }
 
@@ -1380,6 +1397,10 @@ impl ArtifactStore {
     self.state.pending_subscriptions.store(true, Ordering::SeqCst);
     self.state.page_gates.lock().unwrap().push_back(gate.clone());
     gate
+  }
+
+  pub fn mismatch_next_observed_artifact(&self) {
+    self.state.corrupt_observed_artifact.store(true, Ordering::SeqCst);
   }
 
   pub fn panic_call_next(&self) {
@@ -1463,6 +1484,20 @@ impl RunStore for ArtifactStore {
           }
           Ok(mismatched_artifact_response(&commit))
         }
+        ArtifactWriteOutcome::StoreThenWaitRevisionMismatch(gate) => {
+          let commit = self.inner.write_artifact(request, body).await?;
+          if let Some(wait) = gate.enter() {
+            let _ = wait.await;
+          }
+          Ok(mismatched_artifact_revision_response(&commit))
+        }
+        ArtifactWriteOutcome::StoreThenWaitFailure(gate, error) => {
+          self.inner.write_artifact(request, body).await?;
+          if let Some(wait) = gate.enter() {
+            let _ = wait.await;
+          }
+          Err(error)
+        }
         ArtifactWriteOutcome::StoreThenUnknown(code) => {
           self.inner.write_artifact(request, body).await?;
           Err(ArtifactWriteError::PublicationUnknown(code))
@@ -1500,7 +1535,13 @@ impl RunStore for ArtifactStore {
       if let Some(gate) = gate {
         let _ = gate.await;
       }
-      self.inner.commits_after(run_id, after, limit).await
+      let page = self.inner.commits_after(run_id, after, limit).await?;
+      if !self.state.corrupt_observed_artifact.swap(false, Ordering::SeqCst) {
+        return Ok(page);
+      }
+      let commits = page.commits().iter().map(mismatch_artifact_metadata).collect();
+      RunCommitPage::new(commits, page.last_revision(), page.has_more())
+        .map_err(|_| ReadError::Integrity(ErrorCode::parse("auv.test.invalid_artifact_mismatch_page").unwrap()))
     })
   }
 
@@ -1526,6 +1567,40 @@ fn mismatched_artifact_response(commit: &RunCommit) -> RunCommit {
     commit.facts().to_vec(),
   )
   .unwrap()
+}
+
+fn mismatched_artifact_revision_response(commit: &RunCommit) -> RunCommit {
+  RunCommit::new(
+    commit.authority_id(),
+    commit.run_id(),
+    RunRevision::new(commit.revision().get() + 1).unwrap(),
+    commit.idempotency_key(),
+    commit.committed_at(),
+    commit.facts().to_vec(),
+  )
+  .unwrap()
+}
+
+fn mismatch_artifact_metadata(commit: &RunCommit) -> RunCommit {
+  let facts = commit
+    .facts()
+    .iter()
+    .map(|fact| match fact {
+      RunFact::ArtifactPublished(published) => RunFact::ArtifactPublished(ArtifactPublished::new(
+        published.span_id(),
+        ArtifactMetadata::new(
+          published.metadata().uri().clone(),
+          ArtifactPurpose::parse("auv.test.cursor_mismatch").unwrap(),
+          published.metadata().content_type().clone(),
+          published.metadata().byte_length(),
+          published.metadata().sha256(),
+          published.metadata().attributes().clone(),
+        ),
+      )),
+      other => other.clone(),
+    })
+    .collect();
+  RunCommit::new(commit.authority_id(), commit.run_id(), commit.revision(), commit.idempotency_key(), commit.committed_at(), facts).unwrap()
 }
 
 #[derive(Default)]
