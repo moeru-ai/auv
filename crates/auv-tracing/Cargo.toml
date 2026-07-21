@@ -15,11 +15,13 @@ repository.workspace = true
 [features]
 default = []
 memory-store = []
-file-store = ["dep:fs2"]
+file-store = ["dep:cap-fs-ext", "dep:cap-std", "dep:fs2"]
 rust-tracing = ["dep:tracing"]
 
 [dependencies]
 bytes.workspace = true
+cap-fs-ext = { version = "4.0.2", optional = true }
+cap-std = { version = "4.0.2", optional = true }
 futures-core.workspace = true
 futures-io.workspace = true
 futures-util = { workspace = true, features = ["io", "sink"] }
