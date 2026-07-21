@@ -392,6 +392,33 @@ fn reducer_rejects_invalid_local_parent_graphs() {
 }
 
 #[test]
+fn reducer_rejects_distinct_local_parent_and_remote_link() {
+  // ROOT CAUSE:
+  //
+  // Link validation rejected a local parent plus remote link only when both
+  // IDs matched, even though the relationship modes are mutually exclusive.
+  let authority = AuthorityId::new();
+  let run = RunId::new();
+  let parent = SpanId::new();
+  let child = SpanId::new();
+  let remote = SpanId::new();
+
+  assert_eq!(
+    reduce_commits(&[commit(
+      authority,
+      run,
+      1,
+      vec![
+        RunFact::SpanStarted(span_started(parent)),
+        RunFact::SpanStarted(span_started_with(child, Some(parent), Some(SpanLink::new(remote)), 10)),
+      ],
+    )])
+    .unwrap_err(),
+    ReduceError::DuplicateParentLink,
+  );
+}
+
+#[test]
 fn reducer_rejects_invalid_span_and_event_time_order() {
   let authority = AuthorityId::new();
   let run = RunId::new();

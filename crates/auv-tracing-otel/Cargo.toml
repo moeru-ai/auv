@@ -18,4 +18,6 @@ opentelemetry = { version = "0.32", default-features = false, features = ["logs"
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs", "trace"] }
 
 [dev-dependencies]
+auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
+futures-util = { workspace = true, features = ["io"] }

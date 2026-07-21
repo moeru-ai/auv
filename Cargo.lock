@@ -863,6 +863,7 @@ version = "0.0.1"
 dependencies = [
  "auv-tracing",
  "futures-executor",
+ "futures-util",
  "opentelemetry",
  "opentelemetry_sdk",
 ]

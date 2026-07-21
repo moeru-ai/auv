@@ -51,12 +51,11 @@ enum SpanState {
   Ended,
 }
 
-#[derive(Clone)]
 struct ActiveSpan {
   authority_id: Option<AuthorityId>,
   started_at: Timestamp,
-  parent_span_id: Option<SpanId>,
-  active_children: usize,
+  latest_event_at: Option<Timestamp>,
+  latest_child_started_at: Option<Timestamp>,
   context: Context,
 }
 
@@ -138,27 +137,25 @@ impl OtelProjectorInner {
       } => match span_id {
         Some(span_id) => {
           let timestamp = system_time(occurred_at)?;
-          let context = {
-            let state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
-            let run = state.runs.get(&run_id).ok_or_else(|| error("auv.telemetry.otel_missing_event_span"))?;
-            let active = match run.spans.get(&span_id) {
-              Some(SpanState::Active(active)) => active,
-              Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_event_span")),
-              None => return Err(error("auv.telemetry.otel_missing_event_span")),
-            };
-            if active.authority_id != authority_id {
-              return Err(error("auv.telemetry.otel_span_authority_mismatch"));
-            }
-            if run.authority_id != authority_id {
-              return Err(error("auv.telemetry.otel_run_authority_mismatch"));
-            }
-            active.context.clone()
+          let attributes = event_attributes(authority_id, run_id, Some(span_id), event_id, &schema, revision);
+          let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+          let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.otel_missing_event_span"))?;
+          let active = match run.spans.get_mut(&span_id) {
+            Some(SpanState::Active(active)) => active,
+            Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_event_span")),
+            None => return Err(error("auv.telemetry.otel_missing_event_span")),
           };
-          context.span().add_event_with_timestamp(
-            schema.name().as_str().to_owned(),
-            timestamp,
-            event_attributes(authority_id, run_id, Some(span_id), event_id, &schema, revision),
-          );
+          if active.authority_id != authority_id {
+            return Err(error("auv.telemetry.otel_span_authority_mismatch"));
+          }
+          if run.authority_id != authority_id {
+            return Err(error("auv.telemetry.otel_run_authority_mismatch"));
+          }
+          if occurred_at < active.started_at {
+            return Err(error("auv.telemetry.otel_event_before_span_start"));
+          }
+          active.latest_event_at = Some(active.latest_event_at.map_or(occurred_at, |current| current.max(occurred_at)));
+          active.context.span().add_event_with_timestamp(schema.name().as_str().to_owned(), timestamp, attributes);
           Ok(())
         }
         None => {
@@ -250,6 +247,9 @@ impl OtelProjectorInner {
           if parent.authority_id != input.authority_id {
             return Err(error("auv.telemetry.otel_parent_authority_mismatch"));
           }
+          if input.started_at < parent.started_at {
+            return Err(error("auv.telemetry.otel_child_before_parent"));
+          }
           parent.context.clone()
         }
         Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_parent_span")),
@@ -292,7 +292,10 @@ impl OtelProjectorInner {
     let context = Context::new().with_span(span);
     if let Some(parent_span_id) = input.parent_span_id {
       match run.spans.get_mut(&parent_span_id) {
-        Some(SpanState::Active(parent)) => parent.active_children += 1,
+        Some(SpanState::Active(parent)) => {
+          parent.latest_child_started_at =
+            Some(parent.latest_child_started_at.map_or(input.started_at, |current| current.max(input.started_at)));
+        }
         Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_parent_span")),
         None => return Err(error("auv.telemetry.otel_missing_parent_span")),
       }
@@ -302,8 +305,8 @@ impl OtelProjectorInner {
       SpanState::Active(ActiveSpan {
         authority_id: input.authority_id,
         started_at: input.started_at,
-        parent_span_id: input.parent_span_id,
-        active_children: 0,
+        latest_event_at: None,
+        latest_child_started_at: None,
         context,
       }),
     );
@@ -335,25 +338,16 @@ impl OtelProjectorInner {
     if ended_at < active.started_at {
       return Err(error("auv.telemetry.otel_span_end_before_start"));
     }
-    if active.active_children != 0 {
-      return Err(error("auv.telemetry.otel_span_has_active_children"));
+    if active.latest_event_at.is_some_and(|occurred_at| ended_at < occurred_at) {
+      return Err(error("auv.telemetry.otel_span_end_before_event"));
     }
-    let parent_span_id = active.parent_span_id;
-    if let Some(parent_span_id) = parent_span_id {
-      match run.spans.get_mut(&parent_span_id) {
-        Some(SpanState::Active(parent)) => {
-          parent.active_children =
-            parent.active_children.checked_sub(1).ok_or_else(|| error("auv.telemetry.otel_invalid_parent_child_count"))?;
-        }
-        Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_parent_span")),
-        None => return Err(error("auv.telemetry.otel_missing_parent_span")),
-      }
+    if active.latest_child_started_at.is_some_and(|started_at| ended_at < started_at) {
+      return Err(error("auv.telemetry.otel_span_end_before_child_start"));
     }
     let previous = run.spans.insert(span_id, SpanState::Ended).ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
     let SpanState::Active(active) = previous else {
       return Err(error("auv.telemetry.otel_duplicate_span_end"));
     };
-    drop(state);
     if let Some(end_revision) = end_revision {
       active.context.span().set_attribute(KeyValue::new("auv.span.end_revision", revision_i64(end_revision)));
     }

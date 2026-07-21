@@ -79,11 +79,17 @@ struct CapturedState {
   next_id: u64,
   callsites: Vec<CapturedCallsite>,
   spans: BTreeMap<u64, usize>,
+  span_references: BTreeMap<u64, usize>,
+  closed_span_ids: Vec<u64>,
 }
 
 impl CapturingSubscriber {
   fn callsites(&self) -> Vec<CapturedCallsite> {
     self.state.lock().unwrap().callsites.clone()
+  }
+
+  fn closed_span_ids(&self) -> Vec<u64> {
+    self.state.lock().unwrap().closed_span_ids.clone()
   }
 
   fn capture(metadata: &'static Metadata<'static>) -> CapturedCallsite {
@@ -130,6 +136,7 @@ impl Subscriber for CapturingSubscriber {
     let index = state.callsites.len();
     state.callsites.push(callsite);
     state.spans.insert(id, index);
+    state.span_references.insert(id, 1);
     Id::from_u64(id)
   }
 
@@ -151,6 +158,26 @@ impl Subscriber for CapturingSubscriber {
   fn enter(&self, _span: &Id) {}
 
   fn exit(&self, _span: &Id) {}
+
+  fn clone_span(&self, id: &Id) -> Id {
+    let id = id.into_u64();
+    *self.state.lock().unwrap().span_references.get_mut(&id).unwrap() += 1;
+    Id::from_u64(id)
+  }
+
+  fn try_close(&self, id: Id) -> bool {
+    let id = id.into_u64();
+    let mut state = self.state.lock().unwrap();
+    let references = state.span_references.get_mut(&id).unwrap();
+    *references -= 1;
+    if *references == 0 {
+      state.span_references.remove(&id);
+      state.closed_span_ids.push(id);
+      true
+    } else {
+      false
+    }
+  }
 }
 
 struct ValueVisitor<'a>(&'a mut BTreeMap<&'static str, String>);
@@ -220,16 +247,20 @@ fn span_end(authority_id: Option<AuthorityId>, run_id: RunId, span_id: SpanId, s
   }
 }
 
-fn event(authority_id: Option<AuthorityId>, run_id: RunId, span_id: Option<SpanId>) -> TelemetryItem {
+fn event_at(authority_id: Option<AuthorityId>, run_id: RunId, span_id: Option<SpanId>, seconds: i64) -> TelemetryItem {
   TelemetryItem::Event {
     authority_id,
     run_id,
     span_id,
     event_id: EventId::new(),
     schema: EventSchema::new(EventName::parse("auv.test.state_event").unwrap(), 1).unwrap(),
-    occurred_at: Timestamp::new(12, 0).unwrap(),
+    occurred_at: Timestamp::new(seconds, 0).unwrap(),
     revision: None,
   }
+}
+
+fn event(authority_id: Option<AuthorityId>, run_id: RunId, span_id: Option<SpanId>) -> TelemetryItem {
+  event_at(authority_id, run_id, span_id, 12)
 }
 
 fn artifact(authority_id: AuthorityId, run_id: RunId, span_id: Option<SpanId>) -> TelemetryItem {
@@ -291,7 +322,7 @@ fn rust_tracing_emits_only_the_fixed_vocabulary() {
       authority_id: Some(authority_id),
       run_id,
       span_id,
-      ended_at: Timestamp::new(11, 30).unwrap(),
+      ended_at: Timestamp::new(13, 30).unwrap(),
       end_revision: Some(RunRevision::new(7).unwrap()),
     }))
     .unwrap();
@@ -458,22 +489,81 @@ fn rust_tracing_allows_same_span_id_in_different_runs() {
 }
 
 #[test]
-fn rust_tracing_rejects_parent_end_until_child_ends() {
+fn rust_tracing_parent_end_before_child_closes_both_spans() {
   let _serial = serial_tracing_test();
+  let subscriber = CapturingSubscriber::default();
+  let tracing_dispatch = tracing::Dispatch::new(subscriber.clone());
   let projector = RustTracingProjector::new();
   let authority_id = AuthorityId::new();
   let run_id = RunId::new();
   let parent_id = SpanId::new();
   let child_id = SpanId::new();
 
+  tracing::dispatcher::with_default(&tracing_dispatch, || {
+    project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
+    project(&projector, span_start(Some(authority_id), run_id, child_id, Some(parent_id), 11)).unwrap();
+    project(&projector, span_end(Some(authority_id), run_id, parent_id, 12)).unwrap();
+    project(&projector, span_end(Some(authority_id), run_id, child_id, 13)).unwrap();
+  });
+
+  assert_eq!(subscriber.closed_span_ids(), [1, 2]);
+}
+
+#[test]
+fn rust_tracing_rejects_conflicting_local_and_remote_parentage() {
+  let _serial = serial_tracing_test();
+  let projector = RustTracingProjector::new();
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let parent_id = SpanId::new();
+  let child_id = SpanId::new();
   project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
-  project(&projector, span_start(Some(authority_id), run_id, child_id, Some(parent_id), 11)).unwrap();
+  let mut child = span_start(Some(authority_id), run_id, child_id, Some(parent_id), 11);
+  let TelemetryItem::SpanStart { remote_span_id, .. } = &mut child else {
+    unreachable!();
+  };
+  *remote_span_id = Some(SpanId::new());
+
+  assert_eq!(project(&projector, child).unwrap_err().code().as_str(), "auv.telemetry.conflicting_span_relationship");
+}
+
+#[test]
+fn rust_tracing_temporal_order_errors_are_stable() {
+  let _serial = serial_tracing_test();
+  let projector = RustTracingProjector::new();
+  let authority_id = AuthorityId::new();
+
+  let run_id = RunId::new();
+  let parent_id = SpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
   assert_eq!(
-    project(&projector, span_end(Some(authority_id), run_id, parent_id, 12)).unwrap_err().code().as_str(),
-    "auv.telemetry.span_has_active_children"
+    project(&projector, span_start(Some(authority_id), run_id, SpanId::new(), Some(parent_id), 9)).unwrap_err().code().as_str(),
+    "auv.telemetry.child_before_parent"
   );
-  project(&projector, span_end(Some(authority_id), run_id, child_id, 12)).unwrap();
-  project(&projector, span_end(Some(authority_id), run_id, parent_id, 13)).unwrap();
+
+  let run_id = RunId::new();
+  let span_id = SpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+  assert_eq!(
+    project(&projector, event_at(Some(authority_id), run_id, Some(span_id), 9)).unwrap_err().code().as_str(),
+    "auv.telemetry.event_before_span_start"
+  );
+  project(&projector, event_at(Some(authority_id), run_id, Some(span_id), 14)).unwrap();
+  project(&projector, event_at(Some(authority_id), run_id, Some(span_id), 12)).unwrap();
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, span_id, 13)).unwrap_err().code().as_str(),
+    "auv.telemetry.span_end_before_event"
+  );
+
+  let run_id = RunId::new();
+  let parent_id = SpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, parent_id, None, 10)).unwrap();
+  project(&projector, span_start(Some(authority_id), run_id, SpanId::new(), Some(parent_id), 14)).unwrap();
+  project(&projector, span_start(Some(authority_id), run_id, SpanId::new(), Some(parent_id), 12)).unwrap();
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, parent_id, 13)).unwrap_err().code().as_str(),
+    "auv.telemetry.span_end_before_child_start"
+  );
 }
 
 #[test]
