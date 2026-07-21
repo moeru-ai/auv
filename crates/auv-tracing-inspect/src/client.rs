@@ -193,51 +193,44 @@ impl RunStore for InspectRunStore {
       );
       let admission = ArtifactUploadAdmissionId::new();
       let draft_url = endpoint(&self.base_url, &format!("v1/runs/{}/artifact-uploads", request.run_id()));
-      let mut draft_response = None;
+      let draft_body = Bytes::from(serde_json::to_vec(&draft_request).expect("validated artifact draft request encodes as JSON"));
+      let expected_uri = ArtifactUri::from_ids(request.run_id(), request.artifact_id());
+      let mut validated_draft = None;
+      let mut draft_failure = code("auv.inspect.draft_transport_unavailable");
       for _ in 0..2 {
-        match self
+        let response = match self
           .client
           .post(draft_url.clone())
           .header(CONTENT_TYPE, ARTIFACT_UPLOAD_MEDIA_TYPE)
           .header(ACCEPT, ARTIFACT_UPLOAD_MEDIA_TYPE)
           .header("Idempotency-Key", request.idempotency_key().to_string())
           .header(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission.to_string())
-          .json(&draft_request)
+          .body(draft_body.clone())
           .send()
           .await
         {
-          Ok(response) => {
-            draft_response = Some(response);
+          Ok(response) => response,
+          Err(_) => continue,
+        };
+        if !matches!(response.status(), StatusCode::CREATED | StatusCode::OK) {
+          return match write_artifact_failure(response, self.authority_id, request.authority_id()).await {
+            Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
+            Ok(error) => Err(error),
+            Err(code) => Err(ArtifactWriteError::Unavailable(code)),
+          };
+        }
+        match validate_draft_success(response, admission, &expected_uri).await {
+          Ok(draft) => {
+            validated_draft = Some(draft);
             break;
           }
-          Err(_) => continue,
+          Err(error) => draft_failure = error,
         }
       }
-      let draft_response = draft_response.ok_or_else(|| ArtifactWriteError::Unavailable(code("auv.inspect.draft_transport_unavailable")))?;
-      let replayed_draft = draft_response.status() == StatusCode::OK;
-      if !matches!(draft_response.status(), StatusCode::CREATED | StatusCode::OK) {
-        return match write_artifact_failure(draft_response, self.authority_id, request.authority_id()).await {
-          Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
-          Ok(error) => Err(error),
-          Err(code) => Err(ArtifactWriteError::Unavailable(code)),
-        };
-      }
-      if !has_media_type(&draft_response, ARTIFACT_UPLOAD_MEDIA_TYPE) {
-        return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_media_type_invalid")));
-      }
-      let admitted = draft_admission(&draft_response, admission)
-        .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_admission_invalid")))?;
-      if draft_response.status() == StatusCode::CREATED && !admitted {
-        return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_admission_invalid")));
-      }
-      let draft_bytes = bounded_response_bytes(draft_response)
-        .await
-        .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_response_invalid")))?;
-      let draft = decode_strict::<ArtifactUploadDraft>(&draft_bytes)
-        .map_err(|_| ArtifactWriteError::Unavailable(code("auv.inspect.draft_response_invalid")))?;
-      if draft.artifact_uri() != &ArtifactUri::from_ids(request.run_id(), request.artifact_id()) {
-        return Err(ArtifactWriteError::Unavailable(code("auv.inspect.draft_identity_mismatch")));
-      }
+      let validated_draft = validated_draft.ok_or(ArtifactWriteError::Unavailable(draft_failure))?;
+      let replayed_draft = validated_draft.replayed;
+      let admitted = validated_draft.admitted;
+      let draft = validated_draft.draft;
       if replayed_draft {
         match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
           Ok(Some(commit)) if artifact_commit_matches(&commit, &request) => return Ok(CommitResult::Replayed(commit)),
@@ -960,17 +953,39 @@ fn draft_admission(response: &Response, expected: ArtifactUploadAdmissionId) -> 
   granted.matches(expected).then_some(true).ok_or(())
 }
 
+struct ValidatedDraft {
+  draft: ArtifactUploadDraft,
+  replayed: bool,
+  admitted: bool,
+}
+
+async fn validate_draft_success(
+  response: Response,
+  admission: ArtifactUploadAdmissionId,
+  expected_uri: &ArtifactUri,
+) -> Result<ValidatedDraft, ErrorCode> {
+  let replayed = response.status() == StatusCode::OK;
+  if !has_media_type(&response, ARTIFACT_UPLOAD_MEDIA_TYPE) {
+    return Err(code("auv.inspect.draft_media_type_invalid"));
+  }
+  let admitted = draft_admission(&response, admission).map_err(|_| code("auv.inspect.draft_admission_invalid"))?;
+  if !replayed && !admitted {
+    return Err(code("auv.inspect.draft_admission_invalid"));
+  }
+  let bytes = bounded_response_bytes(response).await.map_err(|_| code("auv.inspect.draft_response_invalid"))?;
+  let draft = decode_strict::<ArtifactUploadDraft>(&bytes).map_err(|_| code("auv.inspect.draft_response_invalid"))?;
+  if draft.artifact_uri() != expected_uri {
+    return Err(code("auv.inspect.draft_identity_mismatch"));
+  }
+  Ok(ValidatedDraft {
+    draft,
+    replayed,
+    admitted,
+  })
+}
+
 fn valid_content_url(url: &Url, trusted_base: &Url, requested: &ArtifactUri) -> bool {
-  let canonical_path = format!("/v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id());
-  matches!(url.scheme(), "http" | "https")
-    && url.scheme() == trusted_base.scheme()
-    && url.host_str() == trusted_base.host_str()
-    && url.port_or_known_default() == trusted_base.port_or_known_default()
-    && url.username().is_empty()
-    && url.password().is_none()
-    && url.path() == canonical_path
-    && url.query().is_none()
-    && url.fragment().is_none()
+  url == &endpoint(trusted_base, &format!("v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id()))
 }
 
 fn parse_content_digest(value: &str) -> Result<Sha256Digest, ()> {

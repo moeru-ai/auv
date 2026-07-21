@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use auv_inspect_server::{router, router_with_artifact_origin};
 use auv_tracing::{
-  ArtifactBody, ArtifactId, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode,
-  IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunStore,
-  RunSubscription, StoreArtifactRequest,
+  ArtifactBody, ArtifactId, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, BoxFuture, CommitError, CommitResult,
+  ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunMutation,
+  RunRevision, RunStore, RunSubscription, SpanId, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
-  ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactUploadDraft, RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact,
+  ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactUploadDraft, ArtifactUploadId, RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact,
 };
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST};
@@ -300,6 +300,20 @@ async fn create_draft(app: &axum::Router, artifact: &str, key: &str) -> Artifact
   serde_json::from_slice(&response_bytes(response).await).expect("draft response")
 }
 
+async fn append_unrelated_history(store: &MemoryRunStore, count: usize) {
+  for ordinal in 0..count {
+    let mutation = RunMutation::StartSpan(SpanStarted::new(
+      SpanId::new(),
+      None,
+      None,
+      SpanName::parse("auv.test.history").unwrap(),
+      Timestamp::new(ordinal as i64 + 1, 0).unwrap(),
+      Attributes::empty(),
+    ));
+    store.commit(RunCommitRequest::new(authority_id(), RUN.parse().unwrap(), IdempotencyKey::new(), vec![mutation]).unwrap()).await.unwrap();
+  }
+}
+
 #[tokio::test]
 async fn draft_creation_reports_equal_admission_busy_and_rejects_both_identity_conflicts() {
   let app = router(Arc::new(MemoryRunStore::new(authority_id())));
@@ -334,6 +348,51 @@ async fn draft_creation_reports_equal_admission_busy_and_rejects_both_identity_c
     .await
     .expect("URI conflict");
   assert_eq!(uri_conflict.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test(start_paused = true)]
+async fn idle_admission_lease_recovers_a_lost_draft_response_without_expiring_the_draft() {
+  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let body = draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256);
+  let created = app.clone().oneshot(post_draft(RUN, KEY, body.clone())).await.unwrap();
+  let created: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(created).await).unwrap();
+
+  tokio::time::advance(std::time::Duration::from_secs(30)).await;
+  let recovered = app.clone().oneshot(post_draft_with_admission(RUN, KEY, OTHER_ADMISSION, body)).await.unwrap();
+
+  assert_eq!(recovered.status(), StatusCode::OK);
+  assert_eq!(recovered.headers().get(ADMISSION_HEADER).unwrap(), OTHER_ADMISSION);
+  let recovered: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(recovered).await).unwrap();
+  assert_eq!(recovered, created);
+
+  let stale_polls = Arc::new(AtomicUsize::new(0));
+  let stale = app.clone().oneshot(put_content(RUN, created.upload_id(), polled_body(b"abc", stale_polls.clone()))).await.unwrap();
+  assert_eq!(stale.status(), StatusCode::CONFLICT);
+  assert_eq!(stale_polls.load(Ordering::SeqCst), 0);
+
+  let published = app.oneshot(put_content_with_admission(RUN, created.upload_id(), OTHER_ADMISSION, Body::from("abc"))).await.unwrap();
+  assert_eq!(published.status(), StatusCode::CREATED);
+}
+
+#[tokio::test(start_paused = true)]
+async fn admission_lease_stops_expiring_after_the_matching_put_starts() {
+  let store = ProbeStore::new();
+  let entered = Arc::new(tokio::sync::Barrier::new(2));
+  let release = Arc::new(tokio::sync::Barrier::new(2));
+  store.gate_next_write(entered.clone(), release.clone());
+  let app = router(Arc::new(store));
+  let body = draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256);
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  let upload = tokio::spawn(app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))));
+  entered.wait().await;
+
+  tokio::time::advance(std::time::Duration::from_secs(30)).await;
+  let replayed = app.clone().oneshot(post_draft_with_admission(RUN, KEY, OTHER_ADMISSION, body)).await.unwrap();
+  assert_eq!(replayed.status(), StatusCode::OK);
+  assert_eq!(replayed.headers().get(ADMISSION_HEADER).unwrap(), "busy");
+
+  release.wait().await;
+  assert_eq!(upload.await.unwrap().unwrap().status(), StatusCode::CREATED);
 }
 
 #[tokio::test(start_paused = true)]
@@ -404,7 +463,7 @@ async fn deadline_before_body_eof_expires_the_admission_and_allows_a_new_draft()
   let reacquired = app.oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256))).await.unwrap();
   assert_eq!(reacquired.status(), StatusCode::CREATED);
   let reacquired: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(reacquired).await).unwrap();
-  assert_ne!(reacquired.upload_id(), draft.upload_id());
+  assert_eq!(reacquired.upload_id(), draft.upload_id());
 }
 
 #[tokio::test(start_paused = true)]
@@ -1170,21 +1229,61 @@ async fn draft_replay_does_not_extend_expiry_and_published_state_rehydrates_from
   assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn published_replay_after_router_recreation_uses_store_truth_without_polling() {
   let store = MemoryRunStore::new(authority_id());
+  append_unrelated_history(&store, 129).await;
   let first = router(Arc::new(store.clone()));
   let draft = create_draft(&first, ARTIFACT, KEY).await;
-  assert_eq!(first.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap().status(), StatusCode::CREATED);
+  let published = first.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
+  assert_eq!(published.status(), StatusCode::CREATED);
+  let published: RunCommit = serde_json::from_slice(&response_bytes(published).await).unwrap();
 
+  tokio::time::advance(std::time::Duration::from_secs(24 * 60 * 60 + 1)).await;
   let second = router(Arc::new(store));
-  let replayed =
-    second.clone().oneshot(post_draft(RUN, KEY, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256))).await.unwrap();
+  let invalid_polls = Arc::new(AtomicUsize::new(0));
+  let mut invalid = put_content(RUN, draft.upload_id(), polled_body(b"replacement", invalid_polls.clone()));
+  invalid.headers_mut().insert("Content-Digest", "sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:".parse().unwrap());
+  let invalid = second.clone().oneshot(invalid).await.unwrap();
+  assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+  assert_eq!(invalid_polls.load(Ordering::SeqCst), 0);
+
+  let polls = Arc::new(AtomicUsize::new(0));
+  let response = second.clone().oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let replayed_commit: RunCommit = serde_json::from_slice(&response_bytes(response).await).unwrap();
+  assert_eq!(replayed_commit, published);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+
+  let replayed = second
+    .clone()
+    .oneshot(post_draft_with_admission(RUN, KEY, OTHER_ADMISSION, draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256)))
+    .await
+    .unwrap();
   assert_eq!(replayed.status(), StatusCode::OK);
   let replayed: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(replayed).await).unwrap();
+  assert_eq!(replayed.upload_id(), draft.upload_id());
   let polls = Arc::new(AtomicUsize::new(0));
-  let response = second.oneshot(put_content(RUN, replayed.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+  let response = second
+    .oneshot(put_content_with_admission(RUN, replayed.upload_id(), OTHER_ADMISSION, polled_body(b"replacement", polls.clone())))
+    .await
+    .unwrap();
   assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn unknown_put_matching_an_ordinary_commit_id_is_rejected_without_body_polling() {
+  let store = MemoryRunStore::new(authority_id());
+  let first = router(Arc::new(store.clone()));
+  assert_eq!(first.oneshot(post_ordinary_commit(KEY)).await.unwrap().status(), StatusCode::CREATED);
+  let second = router(Arc::new(store));
+  let upload_id = ArtifactUploadId::for_artifact(authority_id(), RUN.parse().unwrap(), KEY.parse().unwrap());
+  let polls = Arc::new(AtomicUsize::new(0));
+
+  let response = second.oneshot(put_content(RUN, upload_id, polled_body(b"abc", polls.clone()))).await.unwrap();
+
+  assert_eq!(response.status(), StatusCode::CONFLICT);
   assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
 

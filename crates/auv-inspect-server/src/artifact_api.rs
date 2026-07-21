@@ -6,8 +6,8 @@ use std::task::Poll;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use auv_tracing::{
-  ArtifactMetadata, ArtifactUri, ArtifactWriteError, AuthorityId, CommitResult, ErrorCode, IdempotencyKey, ReadError, RunCommit, RunFact,
-  RunId, StoreArtifactRequest, Timestamp,
+  ArtifactMetadata, ArtifactUri, ArtifactWriteError, AuthorityId, CommitResult, ErrorCode, IdempotencyKey, PageLimit, ReadError, RunCommit,
+  RunFact, RunId, RunRevision, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
   ARTIFACT_RESOLVE_MEDIA_TYPE, ARTIFACT_UPLOAD_ADMISSION_BUSY, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE,
@@ -32,11 +32,15 @@ use url::Url;
 use crate::server::InspectServerState;
 
 const MAX_ARTIFACT_JSON_BYTES: usize = 32 * 1024 * 1024;
+const V1_MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+const PUBLISHED_REPLAY_PAGE_LIMIT: u32 = 128;
 const DRAFT_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+const ADMISSION_LEASE: Duration = Duration::from_secs(30);
 
 pub(crate) struct ArtifactApiState {
   drafts: Mutex<DraftIndexes>,
   clock: Clock,
+  max_artifact_bytes: u64,
 }
 
 impl ArtifactApiState {
@@ -44,13 +48,22 @@ impl ArtifactApiState {
     Self {
       drafts: Mutex::new(DraftIndexes::default()),
       clock: Clock::new(),
+      max_artifact_bytes: V1_MAX_ARTIFACT_BYTES,
+    }
+  }
+
+  #[cfg(test)]
+  fn with_max_artifact_bytes(max_artifact_bytes: u64) -> Self {
+    Self {
+      drafts: Mutex::new(DraftIndexes::default()),
+      clock: Clock::new(),
+      max_artifact_bytes,
     }
   }
 
   pub(crate) fn reserves(&self, run_id: RunId, key: IdempotencyKey) -> bool {
     let mut indexes = self.drafts.lock().expect("artifact draft index lock");
-    indexes.prune(self.clock.monotonic_now());
-    indexes.by_key.contains_key(&(run_id, key))
+    indexes.reserves(run_id, key, self.clock.monotonic_now())
   }
 }
 
@@ -102,12 +115,7 @@ struct DraftRecord {
 #[derive(Clone)]
 enum DraftState {
   Pending(PendingDraft),
-  Published {
-    admission: ArtifactUploadAdmissionId,
-  },
-  Expired {
-    prune_at: tokio::time::Instant,
-  },
+  Expired { prune_at: tokio::time::Instant },
 }
 
 #[derive(Clone)]
@@ -120,7 +128,10 @@ struct PendingDraft {
 
 #[derive(Clone, Copy)]
 enum AdmissionState {
-  Admitted(ArtifactUploadAdmissionId),
+  Admitted {
+    id: ArtifactUploadAdmissionId,
+    lease_deadline: tokio::time::Instant,
+  },
   Released(ArtifactUploadAdmissionId),
   Uploading(ArtifactUploadAdmissionId),
   // TODO(inspect-indeterminate-retention-v1): publication-unknown reservations
@@ -132,40 +143,61 @@ enum AdmissionState {
 impl AdmissionState {
   fn id(self) -> ArtifactUploadAdmissionId {
     match self {
-      Self::Admitted(id) | Self::Released(id) | Self::Uploading(id) | Self::Indeterminate(id) => id,
+      Self::Admitted { id, .. } | Self::Released(id) | Self::Uploading(id) | Self::Indeterminate(id) => id,
     }
   }
 }
 
 impl DraftIndexes {
-  fn prune(&mut self, now: tokio::time::Instant) {
-    let unpublished_expired = self
-      .by_upload
-      .iter()
-      .filter_map(|(upload_id, record)| match &record.state {
-        DraftState::Pending(pending)
-          if pending.deadline <= now && matches!(pending.admission, AdmissionState::Admitted(_) | AdmissionState::Released(_)) =>
-        {
-          Some(*upload_id)
-        }
-        _ => None,
-      })
-      .collect::<Vec<_>>();
-    for upload_id in unpublished_expired {
-      self.expire(upload_id);
+  fn refresh(&mut self, upload_id: ArtifactUploadId, now: tokio::time::Instant) {
+    if let Some(DraftRecord {
+      state: DraftState::Pending(pending),
+      ..
+    }) = self.by_upload.get_mut(&upload_id)
+      && matches!(pending.admission, AdmissionState::Admitted { lease_deadline, .. } if lease_deadline <= now)
+    {
+      pending.admission = AdmissionState::Released(pending.admission.id());
     }
 
-    let removable = self
-      .by_upload
-      .iter()
-      .filter_map(|(upload_id, record)| match record.state {
-        DraftState::Expired { prune_at } if prune_at <= now => Some(*upload_id),
-        _ => None,
-      })
-      .collect::<Vec<_>>();
-    for upload_id in removable {
+    let should_expire = matches!(
+      self.by_upload.get(&upload_id).map(|record| &record.state),
+      Some(DraftState::Pending(pending))
+        if pending.deadline <= now
+          && matches!(pending.admission, AdmissionState::Admitted { .. } | AdmissionState::Released(_))
+    );
+    if should_expire {
+      self.expire(upload_id);
+      return;
+    }
+
+    if matches!(self.by_upload.get(&upload_id).map(|record| &record.state), Some(DraftState::Expired { prune_at }) if *prune_at <= now) {
       self.remove(upload_id);
     }
+  }
+
+  fn reserves(&mut self, run_id: RunId, key: IdempotencyKey, now: tokio::time::Instant) -> bool {
+    let Some(upload_id) = self.by_key.get(&(run_id, key)).copied() else {
+      return false;
+    };
+    self.refresh(upload_id, now);
+    self.by_key.get(&(run_id, key)) == Some(&upload_id)
+  }
+
+  fn existing(&mut self, run_id: RunId, key: IdempotencyKey, uri: &ArtifactUri, now: tokio::time::Instant) -> Option<ArtifactUploadId> {
+    if let Some(upload_id) = self.by_key.get(&(run_id, key)).copied() {
+      self.refresh(upload_id, now);
+      if self.by_key.get(&(run_id, key)) == Some(&upload_id) {
+        return Some(upload_id);
+      }
+    }
+    let upload_id = self.by_uri.get(uri).copied()?;
+    self.refresh(upload_id, now);
+    (self.by_uri.get(uri) == Some(&upload_id)).then_some(upload_id)
+  }
+
+  fn record_mut(&mut self, upload_id: ArtifactUploadId, now: tokio::time::Instant) -> Option<&mut DraftRecord> {
+    self.refresh(upload_id, now);
+    self.by_upload.get_mut(&upload_id)
   }
 
   fn insert(&mut self, record: DraftRecord) {
@@ -237,6 +269,9 @@ async fn create_draft(
       ArtifactFailure::invalid_reference()
     }
   })?;
+  if body.byte_length().get() > state.artifacts.max_artifact_bytes {
+    return Err(ArtifactFailure::artifact_too_large());
+  }
   let expected_authority = state.store.authority_id();
   if body.authority_id() != expected_authority {
     return Err(ArtifactFailure::authority_mismatch(expected_authority, body.authority_id()));
@@ -250,7 +285,7 @@ async fn create_draft(
 
   match state.store.lookup_commit(run_id, key).await.map_err(ArtifactFailure::from_read)? {
     Some(commit) if artifact_commit_matches(&commit, &body, run_id, key) => {
-      let draft = install_published_draft(&state, run_id, key, admission, uri)?;
+      let draft = published_draft(&commit, uri);
       return Ok(draft_response(StatusCode::OK, &draft, DraftAdmission::Granted(admission)));
     }
     Some(_) => return Err(ArtifactFailure::conflict()),
@@ -268,7 +303,7 @@ async fn create_draft(
     return Err(ArtifactFailure::not_found());
   }
 
-  let upload_id = ArtifactUploadId::new();
+  let upload_id = ArtifactUploadId::for_artifact(expected_authority, run_id, key);
   let (deadline, expires_at) = state.artifacts.clock.deadline_and_timestamp(DRAFT_LIFETIME);
   let draft = ArtifactUploadDraft::new(upload_id, uri.clone(), expires_at);
   let record = DraftRecord {
@@ -279,13 +314,31 @@ async fn create_draft(
       authority_id: expected_authority,
       deadline,
       metadata: Box::new(body.clone()),
-      admission: AdmissionState::Admitted(admission),
+      admission: AdmissionState::Admitted {
+        id: admission,
+        lease_deadline: state.artifacts.clock.monotonic_now() + ADMISSION_LEASE,
+      },
     }),
   };
   let raced = {
     let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
-    indexes.prune(state.artifacts.clock.monotonic_now());
-    let existing = indexes.by_key.get(&(run_id, key)).or_else(|| indexes.by_uri.get(&uri)).copied();
+    let mut existing = indexes.existing(run_id, key, &uri, state.artifacts.clock.monotonic_now());
+    if existing.is_none() {
+      let replace_expired = matches!(
+        indexes.by_upload.get(&upload_id),
+        Some(DraftRecord {
+          run_id: existing_run,
+          key: existing_key,
+          draft,
+          state: DraftState::Expired { .. },
+        }) if *existing_run == run_id && *existing_key == key && draft.artifact_uri() == &uri
+      );
+      if replace_expired {
+        indexes.remove(upload_id);
+      } else if indexes.by_upload.contains_key(&upload_id) {
+        existing = Some(upload_id);
+      }
+    }
     if existing.is_none() {
       indexes.insert(record);
     }
@@ -299,8 +352,7 @@ async fn create_draft(
 
 fn existing_draft(state: &InspectServerState, run_id: RunId, key: IdempotencyKey, uri: &ArtifactUri) -> Option<ArtifactUploadId> {
   let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
-  indexes.prune(state.artifacts.clock.monotonic_now());
-  indexes.by_key.get(&(run_id, key)).or_else(|| indexes.by_uri.get(uri)).copied()
+  indexes.existing(run_id, key, uri, state.artifacts.clock.monotonic_now())
 }
 
 async fn resolve_existing_draft(
@@ -311,75 +363,42 @@ async fn resolve_existing_draft(
   admission: ArtifactUploadAdmissionId,
   request: &ArtifactUploadDraftRequest,
 ) -> Result<Response, ArtifactFailure> {
-  let published = {
-    let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
-    indexes.prune(state.artifacts.clock.monotonic_now());
-    let existing = indexes.by_upload.get_mut(&upload_id).ok_or_else(ArtifactFailure::not_found)?;
-    if existing.run_id != run_id
-      || existing.key != key
-      || existing.draft.artifact_uri() != &ArtifactUri::from_ids(run_id, request.artifact_id())
-    {
-      return Err(ArtifactFailure::conflict());
-    }
-    match &mut existing.state {
-      DraftState::Pending(pending) => {
-        if pending.metadata.as_ref() != request {
-          return Err(ArtifactFailure::conflict());
-        }
-        let response_admission = match pending.admission {
-          AdmissionState::Released(previous) if !previous.matches(admission) => {
-            pending.admission = AdmissionState::Admitted(admission);
-            DraftAdmission::Granted(admission)
-          }
-          current if current.id().matches(admission) && !matches!(current, AdmissionState::Released(_)) => {
-            DraftAdmission::Granted(admission)
-          }
-          _ => DraftAdmission::Busy,
-        };
-        return Ok(draft_response(StatusCode::OK, &existing.draft, response_admission));
+  let now = state.artifacts.clock.monotonic_now();
+  let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
+  let existing = indexes.record_mut(upload_id, now).ok_or_else(ArtifactFailure::not_found)?;
+  if existing.run_id != run_id
+    || existing.key != key
+    || existing.draft.artifact_uri() != &ArtifactUri::from_ids(run_id, request.artifact_id())
+  {
+    return Err(ArtifactFailure::conflict());
+  }
+  match &mut existing.state {
+    DraftState::Pending(pending) => {
+      if pending.metadata.as_ref() != request {
+        return Err(ArtifactFailure::conflict());
       }
-      DraftState::Published { admission: granted } => {
-        let response_admission = if granted.matches(admission) {
+      let response_admission = match pending.admission {
+        AdmissionState::Released(previous) if !previous.matches(admission) => {
+          pending.admission = AdmissionState::Admitted {
+            id: admission,
+            lease_deadline: now + ADMISSION_LEASE,
+          };
           DraftAdmission::Granted(admission)
-        } else {
-          DraftAdmission::Busy
-        };
-        (existing.clone(), response_admission)
-      }
-      DraftState::Expired { .. } => return Err(ArtifactFailure::gone()),
+        }
+        current if current.id().matches(admission) && !matches!(current, AdmissionState::Released(_)) => DraftAdmission::Granted(admission),
+        _ => DraftAdmission::Busy,
+      };
+      Ok(draft_response(StatusCode::OK, &existing.draft, response_admission))
     }
-  };
-  match state.store.lookup_commit(published.0.run_id, published.0.key).await.map_err(ArtifactFailure::from_read)? {
-    Some(commit) if artifact_commit_matches(&commit, request, published.0.run_id, published.0.key) => {
-      Ok(draft_response(StatusCode::OK, &published.0.draft, published.1))
-    }
-    Some(_) => Err(ArtifactFailure::conflict()),
-    None => Err(ArtifactFailure::unavailable(error_code("auv.inspect.published_commit_missing"))),
+    DraftState::Expired { .. } => Err(ArtifactFailure::gone()),
   }
 }
 
-fn install_published_draft(
-  state: &InspectServerState,
-  run_id: RunId,
-  key: IdempotencyKey,
-  admission: ArtifactUploadAdmissionId,
-  uri: ArtifactUri,
-) -> Result<ArtifactUploadDraft, ArtifactFailure> {
-  let (_, expires_at) = state.artifacts.clock.deadline_and_timestamp(DRAFT_LIFETIME);
-  let draft = ArtifactUploadDraft::new(ArtifactUploadId::new(), uri, expires_at);
-  let record = DraftRecord {
-    draft: draft.clone(),
-    run_id,
-    key,
-    state: DraftState::Published { admission },
-  };
-  let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
-  indexes.prune(state.artifacts.clock.monotonic_now());
-  if indexes.by_key.contains_key(&(run_id, key)) || indexes.by_uri.contains_key(record.draft.artifact_uri()) {
-    return Err(ArtifactFailure::conflict());
-  }
-  indexes.insert(record);
-  Ok(draft)
+fn published_draft(commit: &RunCommit, uri: ArtifactUri) -> ArtifactUploadDraft {
+  let committed_at = commit.committed_at();
+  let expires_at = Timestamp::new(committed_at.unix_seconds().saturating_add(DRAFT_LIFETIME.as_secs() as i64), committed_at.nanoseconds())
+    .unwrap_or(committed_at);
+  ArtifactUploadDraft::new(ArtifactUploadId::for_artifact(commit.authority_id(), commit.run_id(), commit.idempotency_key()), uri, expires_at)
 }
 
 #[derive(Clone)]
@@ -393,12 +412,8 @@ struct ActiveUpload {
 
 enum UploadAction {
   Start(ActiveUpload),
-  Published {
-    run_id: RunId,
-    key: IdempotencyKey,
-    uri: ArtifactUri,
-  },
   Indeterminate(ActiveUpload),
+  RecoverPublished,
 }
 
 async fn upload_content(
@@ -421,57 +436,50 @@ async fn upload_content(
   let expected_authority = state.store.authority_id();
   let action = {
     let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
-    indexes.prune(state.artifacts.clock.monotonic_now());
-    let record = indexes.by_upload.get_mut(&upload_id).ok_or_else(ArtifactFailure::not_found)?;
-    if record.run_id != run_id {
-      return Err(ArtifactFailure::not_found());
-    }
-    match &mut record.state {
-      DraftState::Published { admission: granted } => {
-        if !granted.matches(admission) {
-          return Err(ArtifactFailure::conflict());
+    match indexes.record_mut(upload_id, state.artifacts.clock.monotonic_now()) {
+      None => UploadAction::RecoverPublished,
+      Some(record) => {
+        if record.run_id != run_id {
+          return Err(ArtifactFailure::not_found());
         }
-        UploadAction::Published {
-          run_id: record.run_id,
-          key: record.key,
-          uri: record.draft.artifact_uri().clone(),
-        }
-      }
-      DraftState::Expired { .. } => return Err(ArtifactFailure::gone()),
-      DraftState::Pending(pending) => {
-        if pending.authority_id != expected_authority {
-          return Err(ArtifactFailure::authority_mismatch(expected_authority, pending.authority_id));
-        }
-        if !pending.admission.id().matches(admission) {
-          return Err(ArtifactFailure::conflict());
-        }
-        if let Err(error) = controls.validate(&pending.metadata) {
-          if matches!(pending.admission, AdmissionState::Admitted(_)) {
-            pending.admission = AdmissionState::Released(admission);
+        match &mut record.state {
+          DraftState::Expired { .. } => return Err(ArtifactFailure::gone()),
+          DraftState::Pending(pending) => {
+            if pending.authority_id != expected_authority {
+              return Err(ArtifactFailure::authority_mismatch(expected_authority, pending.authority_id));
+            }
+            if !pending.admission.id().matches(admission) {
+              return Err(ArtifactFailure::conflict());
+            }
+            if let Err(error) = controls.validate(&pending.metadata) {
+              if matches!(pending.admission, AdmissionState::Admitted { .. }) {
+                pending.admission = AdmissionState::Released(admission);
+              }
+              return Err(error);
+            }
+            let active = ActiveUpload {
+              authority_id: pending.authority_id,
+              run_id: record.run_id,
+              key: record.key,
+              deadline: pending.deadline,
+              metadata: pending.metadata.clone(),
+            };
+            match pending.admission {
+              AdmissionState::Admitted { .. } => {
+                pending.admission = AdmissionState::Uploading(admission);
+                UploadAction::Start(active)
+              }
+              AdmissionState::Indeterminate(_) => UploadAction::Indeterminate(active),
+              AdmissionState::Released(_) | AdmissionState::Uploading(_) => return Err(ArtifactFailure::conflict()),
+            }
           }
-          return Err(error);
-        }
-        let active = ActiveUpload {
-          authority_id: pending.authority_id,
-          run_id: record.run_id,
-          key: record.key,
-          deadline: pending.deadline,
-          metadata: pending.metadata.clone(),
-        };
-        match pending.admission {
-          AdmissionState::Admitted(_) => {
-            pending.admission = AdmissionState::Uploading(admission);
-            UploadAction::Start(active)
-          }
-          AdmissionState::Indeterminate(_) => UploadAction::Indeterminate(active),
-          AdmissionState::Released(_) | AdmissionState::Uploading(_) => return Err(ArtifactFailure::conflict()),
         }
       }
     }
   };
 
   match action {
-    UploadAction::Published { run_id, key, uri } => return published_replay(&state, run_id, key, &uri).await,
+    UploadAction::RecoverPublished => return recover_published_upload(&state, run_id, upload_id, &controls).await,
     UploadAction::Indeterminate(active) => return indeterminate_replay(&state, upload_id, admission, &active).await,
     UploadAction::Start(active) => publish_upload(state, upload_id, admission, active, request).await,
   }
@@ -504,14 +512,30 @@ async fn publish_upload(
   );
   let mut body = Box::pin(request.into_body().into_data_stream());
   let body_complete = upload_reset.body_complete.clone();
+  let limit_exceeded = Arc::new(AtomicBool::new(false));
+  let stream_limit_exceeded = limit_exceeded.clone();
+  let max_artifact_bytes = state.artifacts.max_artifact_bytes;
+  let mut observed_bytes = 0_u64;
   let stream = futures_util::stream::poll_fn(move |context| match body.as_mut().poll_next(context) {
+    Poll::Ready(Some(Ok(bytes))) => {
+      let Some(next_observed) = observed_bytes.checked_add(bytes.len() as u64) else {
+        stream_limit_exceeded.store(true, Ordering::Release);
+        return Poll::Ready(Some(Err(io::Error::other("artifact body exceeds the configured limit"))));
+      };
+      if next_observed > max_artifact_bytes {
+        stream_limit_exceeded.store(true, Ordering::Release);
+        return Poll::Ready(Some(Err(io::Error::other("artifact body exceeds the configured limit"))));
+      }
+      observed_bytes = next_observed;
+      Poll::Ready(Some(Ok(bytes)))
+    }
+    Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(io::Error::other(error)))),
     Poll::Ready(None) => {
       body_complete.store(true, Ordering::Release);
       Poll::Ready(None)
     }
-    polled => polled,
-  })
-  .map_err(io::Error::other);
+    Poll::Pending => Poll::Pending,
+  });
   let reader = StreamReader::new(stream).compat();
   let mut write = state.store.write_artifact(store_request, Box::pin(reader));
   let result = tokio::select! {
@@ -527,18 +551,22 @@ async fn publish_upload(
     expire_upload(&state, upload_id, admission);
     return Err(ArtifactFailure::gone());
   };
+  if limit_exceeded.load(Ordering::Acquire) {
+    release_upload(&state, upload_id, admission);
+    return Err(ArtifactFailure::artifact_too_large());
+  }
   match result {
     Ok(CommitResult::Appended(commit)) => {
-      mark_published(&state, upload_id, admission);
+      remove_published_draft(&state, upload_id, admission);
       Ok(run_json(StatusCode::CREATED, &commit))
     }
     Ok(CommitResult::Replayed(commit)) => {
-      mark_published(&state, upload_id, admission);
+      remove_published_draft(&state, upload_id, admission);
       Ok(run_json(StatusCode::OK, &commit))
     }
     Err(ArtifactWriteError::PublicationUnknown(_)) => match state.store.lookup_commit(active.run_id, active.key).await {
       Ok(Some(commit)) if artifact_commit_matches(&commit, &active.metadata, active.run_id, active.key) => {
-        mark_published(&state, upload_id, admission);
+        remove_published_draft(&state, upload_id, admission);
         Ok(run_json(StatusCode::OK, &commit))
       }
       Ok(Some(_)) => {
@@ -557,19 +585,6 @@ async fn publish_upload(
   }
 }
 
-async fn published_replay(
-  state: &InspectServerState,
-  run_id: RunId,
-  key: IdempotencyKey,
-  uri: &ArtifactUri,
-) -> Result<Response, ArtifactFailure> {
-  match state.store.lookup_commit(run_id, key).await.map_err(ArtifactFailure::from_read)? {
-    Some(commit) if published_commit_matches(&commit, state.store.authority_id(), run_id, key, uri) => Ok(run_json(StatusCode::OK, &commit)),
-    Some(_) => Err(ArtifactFailure::conflict()),
-    None => Err(ArtifactFailure::unavailable(error_code("auv.inspect.published_commit_missing"))),
-  }
-}
-
 async fn indeterminate_replay(
   state: &InspectServerState,
   upload_id: ArtifactUploadId,
@@ -578,7 +593,7 @@ async fn indeterminate_replay(
 ) -> Result<Response, ArtifactFailure> {
   match state.store.lookup_commit(active.run_id, active.key).await {
     Ok(Some(commit)) if artifact_commit_matches(&commit, &active.metadata, active.run_id, active.key) => {
-      mark_published(state, upload_id, admission);
+      remove_published_draft(state, upload_id, admission);
       Ok(run_json(StatusCode::OK, &commit))
     }
     Ok(Some(_)) => Err(ArtifactFailure::conflict()),
@@ -586,14 +601,55 @@ async fn indeterminate_replay(
   }
 }
 
-fn mark_published(state: &InspectServerState, upload_id: ArtifactUploadId, admission: ArtifactUploadAdmissionId) {
-  let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
-  let Some(record) = indexes.by_upload.get_mut(&upload_id) else {
-    return;
+async fn recover_published_upload(
+  state: &InspectServerState,
+  run_id: RunId,
+  upload_id: ArtifactUploadId,
+  controls: &UploadControlHeaders,
+) -> Result<Response, ArtifactFailure> {
+  let authority_id = state.store.authority_id();
+  let mut after = RunRevision::new(0).expect("zero is a valid run revision");
+  let limit = PageLimit::new(PUBLISHED_REPLAY_PAGE_LIMIT).expect("published replay page limit satisfies the run contract");
+  loop {
+    let page = state.store.commits_after(run_id, after, limit).await.map_err(ArtifactFailure::from_read)?;
+    for commit in page.commits() {
+      if commit.authority_id() != authority_id || commit.run_id() != run_id {
+        return Err(ArtifactFailure::from_read(ReadError::Integrity(error_code("auv.inspect.published_commit_identity_invalid"))));
+      }
+      if ArtifactUploadId::for_artifact(authority_id, run_id, commit.idempotency_key()) != upload_id {
+        continue;
+      }
+      let Some(metadata) = published_artifact_metadata(commit, run_id) else {
+        return Err(ArtifactFailure::conflict());
+      };
+      controls.validate_metadata(metadata)?;
+      return Ok(run_json(StatusCode::OK, commit));
+    }
+    if !page.has_more() {
+      return Err(ArtifactFailure::not_found());
+    }
+    if page.last_revision() == after {
+      return Err(ArtifactFailure::from_read(ReadError::Integrity(error_code("auv.inspect.published_commit_page_invalid"))));
+    }
+    after = page.last_revision();
+  }
+}
+
+fn published_artifact_metadata(commit: &RunCommit, run_id: RunId) -> Option<&ArtifactMetadata> {
+  let [RunFact::ArtifactPublished(published)] = commit.facts() else {
+    return None;
   };
-  let should_publish = matches!(&record.state, DraftState::Pending(pending) if pending.admission.id().matches(admission));
-  if should_publish {
-    record.state = DraftState::Published { admission };
+  (published.metadata().uri().run_id() == run_id).then_some(published.metadata())
+}
+
+fn remove_published_draft(state: &InspectServerState, upload_id: ArtifactUploadId, admission: ArtifactUploadAdmissionId) {
+  let mut indexes = state.artifacts.drafts.lock().expect("artifact draft index lock");
+  let should_remove = matches!(
+    indexes.by_upload.get(&upload_id).map(|record| &record.state),
+    Some(DraftState::Pending(pending)) if pending.admission.id().matches(admission)
+  );
+  if should_remove {
+    indexes.remove(upload_id);
   }
 }
 
@@ -603,7 +659,7 @@ fn release_unstarted_admission(state: &InspectServerState, upload_id: ArtifactUp
     return;
   };
   if let DraftState::Pending(pending) = &mut record.state
-    && matches!(pending.admission, AdmissionState::Admitted(current) if current.matches(admission))
+    && matches!(pending.admission, AdmissionState::Admitted { id: current, .. } if current.matches(admission))
   {
     pending.admission = AdmissionState::Released(admission);
   }
@@ -777,13 +833,6 @@ fn artifact_commit_matches(commit: &RunCommit, request: &ArtifactUploadDraftRequ
     && metadata.attributes() == request.attributes()
 }
 
-fn published_commit_matches(commit: &RunCommit, authority_id: AuthorityId, run_id: RunId, key: IdempotencyKey, uri: &ArtifactUri) -> bool {
-  if commit.authority_id() != authority_id || commit.run_id() != run_id || commit.idempotency_key() != key || commit.facts().len() != 1 {
-    return false;
-  }
-  matches!(&commit.facts()[0], RunFact::ArtifactPublished(published) if published.metadata().uri() == uri)
-}
-
 fn idempotency_key(headers: &HeaderMap) -> Result<IdempotencyKey, ArtifactFailure> {
   exactly_one_header(headers, "idempotency-key")?
     .to_str()
@@ -825,13 +874,26 @@ struct UploadControlHeaders {
 
 impl UploadControlHeaders {
   fn validate(&self, metadata: &ArtifactUploadDraftRequest) -> Result<(), ArtifactFailure> {
-    if self.content_type != metadata.content_type().to_string() {
+    self.validate_values(metadata.content_type(), metadata.sha256(), metadata.byte_length())
+  }
+
+  fn validate_metadata(&self, metadata: &ArtifactMetadata) -> Result<(), ArtifactFailure> {
+    self.validate_values(metadata.content_type(), metadata.sha256(), metadata.byte_length())
+  }
+
+  fn validate_values(
+    &self,
+    content_type: &auv_tracing::ContentType,
+    sha256: auv_tracing::Sha256Digest,
+    byte_length: auv_tracing::ByteLength,
+  ) -> Result<(), ArtifactFailure> {
+    if self.content_type != content_type.to_string() {
       return Err(ArtifactFailure::unsupported_media_type());
     }
-    if self.content_digest != metadata.sha256() {
+    if self.content_digest != sha256 {
       return Err(ArtifactFailure::integrity(error_code("auv.inspect.content_digest_mismatch")));
     }
-    if self.content_length.is_some_and(|length| length != metadata.byte_length().get()) {
+    if self.content_length.is_some_and(|length| length != byte_length.get()) {
       return Err(ArtifactFailure::integrity(error_code("auv.inspect.content_length_mismatch")));
     }
     Ok(())
@@ -1031,4 +1093,99 @@ impl IntoResponse for ArtifactFailure {
 
 fn error_code(value: &str) -> ErrorCode {
   ErrorCode::parse(value).expect("static Inspect artifact error code is valid")
+}
+
+#[cfg(test)]
+mod tests {
+  use auv_tracing::{MemoryRunStore, RunStore};
+  use axum::body::Bytes;
+  use serde_json::json;
+  use tower::ServiceExt;
+
+  use super::*;
+  use crate::server::RunMutationArbitrator;
+
+  const AUTHORITY: &str = "019f8b1e-4b2d-7a00-8f00-0000000000aa";
+  const RUN: &str = "019f8b1e-4b2d-7a00-8f00-000000000001";
+  const ARTIFACT: &str = "019f8b1e-4b2d-7a00-8f00-000000000002";
+  const KEY: &str = "019f8b1e-4b2d-7a00-8f00-000000000006";
+  const ADMISSION: &str = "019f8b1e-4b2d-7a00-8f00-000000000008";
+  const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+  const ABC_CONTENT_DIGEST: &str = "sha-256=:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=:";
+
+  fn test_app(store: MemoryRunStore, artifacts: ArtifactApiState) -> (Router, Arc<InspectServerState>) {
+    let state = Arc::new(InspectServerState {
+      store: Arc::new(store.clone()),
+      artifacts,
+      artifact_origin: None,
+      mutation_arbitrator: RunMutationArbitrator::new(),
+    });
+    (routes().with_state(state.clone()), state)
+  }
+
+  async fn create_test_draft(app: &Router) -> ArtifactUploadDraft {
+    let draft_request = Request::builder()
+      .method("POST")
+      .uri(format!("/v1/runs/{RUN}/artifact-uploads"))
+      .header(CONTENT_TYPE, ARTIFACT_UPLOAD_MEDIA_TYPE)
+      .header("Idempotency-Key", KEY)
+      .header(ARTIFACT_UPLOAD_ADMISSION_HEADER, ADMISSION)
+      .body(Body::from(
+        serde_json::to_vec(&json!({
+          "authority_id": AUTHORITY,
+          "artifact_id": ARTIFACT,
+          "purpose": "display.capture",
+          "content_type": "text/plain",
+          "byte_length": 3,
+          "sha256": ABC_SHA256,
+          "attributes": {},
+        }))
+        .unwrap(),
+      ))
+      .unwrap();
+    let draft = app.clone().oneshot(draft_request).await.unwrap();
+    decode_strict::<ArtifactUploadDraft>(&to_bytes(draft.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+  }
+
+  fn upload_request(draft: &ArtifactUploadDraft, body: Body) -> Request {
+    Request::builder()
+      .method("PUT")
+      .uri(format!("/v1/runs/{RUN}/artifact-uploads/{}/content", draft.upload_id()))
+      .header(CONTENT_TYPE, "text/plain")
+      .header("Content-Digest", ABC_CONTENT_DIGEST)
+      .header(ARTIFACT_UPLOAD_ADMISSION_HEADER, ADMISSION)
+      .body(body)
+      .unwrap()
+  }
+
+  #[tokio::test]
+  async fn chunked_body_above_the_deployment_limit_is_413_without_publication() {
+    let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
+    let (app, _) = test_app(store.clone(), ArtifactApiState::with_max_artifact_bytes(3));
+    let draft = create_test_draft(&app).await;
+    let body = Body::from_stream(futures_util::stream::iter([
+      Ok::<_, io::Error>(Bytes::from_static(b"abc")),
+      Ok(Bytes::from_static(b"d")),
+    ]));
+
+    let response = app.oneshot(upload_request(&draft, body)).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(store.lookup_commit(RUN.parse().unwrap(), KEY.parse().unwrap()).await.unwrap().is_none());
+  }
+
+  #[tokio::test]
+  async fn successful_publication_removes_all_temporary_draft_indexes() {
+    let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
+    let (app, state) = test_app(store, ArtifactApiState::new());
+    let draft = create_test_draft(&app).await;
+
+    let response = app.oneshot(upload_request(&draft, Body::from("abc"))).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let indexes = state.artifacts.drafts.lock().unwrap();
+    assert!(indexes.by_upload.is_empty());
+    assert!(indexes.by_key.is_empty());
+    assert!(indexes.by_uri.is_empty());
+  }
 }
