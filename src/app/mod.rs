@@ -164,7 +164,7 @@ pub struct AppWindowContext {
   pub frontmost_app_name: String,
   pub frontmost_window_title: String,
   pub primary_window_title: String,
-  pub primary_window_bounds: Option<AppRect>,
+  pub primary_window_bounds: Option<ObservedRect>,
   pub primary_window_display_scale: Option<f64>,
 }
 
@@ -314,7 +314,7 @@ pub struct AppSurfaceCandidate {
   pub query_value: String,
   #[serde(default)]
   pub coordinate_space: String,
-  pub bounds: Option<AppRect>,
+  pub bounds: Option<ObservedRect>,
   pub click_point: Option<AppPoint>,
   pub confidence: Option<f64>,
   pub evidence_step_id: String,
@@ -374,45 +374,26 @@ pub struct AppRecommendedStrategy {
   pub rationale: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AppRect {
-  pub x: i64,
-  pub y: i64,
-  pub width: i64,
-  pub height: i64,
+pub(crate) fn rect_center(rect: &ObservedRect) -> (i64, i64) {
+  (rect.x + rect.width / 2, rect.y + rect.height / 2)
 }
 
-impl AppRect {
-  fn from_observed(rect: &ObservedRect) -> Self {
-    Self {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-    }
-  }
+pub(crate) fn rect_center_point(rect: &ObservedRect) -> AppPoint {
+  let (x, y) = rect_center(rect);
+  AppPoint { x, y }
+}
 
-  fn center(&self) -> (i64, i64) {
-    (self.x + self.width / 2, self.y + self.height / 2)
-  }
+pub(crate) fn render_compact_rect(rect: &ObservedRect) -> String {
+  format!("{},{},{},{}", rect.x, rect.y, rect.width, rect.height)
+}
 
-  fn center_point(&self) -> AppPoint {
-    let (x, y) = self.center();
-    AppPoint { x, y }
+pub(crate) fn rect_relative_point(rect: &ObservedRect, point: &AppPoint) -> Option<(f64, f64)> {
+  if rect.width <= 0 || rect.height <= 0 {
+    return None;
   }
-
-  fn render_compact(&self) -> String {
-    format!("{},{},{},{}", self.x, self.y, self.width, self.height)
-  }
-
-  fn relative_point(&self, point: &AppPoint) -> Option<(f64, f64)> {
-    if self.width <= 0 || self.height <= 0 {
-      return None;
-    }
-    let relative_x = (point.x - self.x) as f64 / self.width as f64;
-    let relative_y = (point.y - self.y) as f64 / self.height as f64;
-    Some((relative_x, relative_y))
-  }
+  let relative_x = (point.x - rect.x) as f64 / rect.width as f64;
+  let relative_y = (point.y - rect.y) as f64 / rect.height as f64;
+  Some((relative_x, relative_y))
 }
 
 pub fn probe_app(project_root: &Path, runtime: &Runtime, bundle_id: &str, output_dir: Option<PathBuf>) -> AuvResult<AppProbe> {

@@ -230,7 +230,7 @@ fn report_analysis_fixture() -> AppAnalysis {
       frontmost_app_name: "Example".to_string(),
       frontmost_window_title: "Example".to_string(),
       primary_window_title: "Example".to_string(),
-      primary_window_bounds: Some(AppRect {
+      primary_window_bounds: Some(ObservedRect {
         x: 0,
         y: 0,
         width: 100,
@@ -290,7 +290,7 @@ fn report_analysis_fixture() -> AppAnalysis {
       secondary_text: "role=AXTextField path=0.1".to_string(),
       query_value: "Search".to_string(),
       coordinate_space: "global-logical".to_string(),
-      bounds: Some(AppRect {
+      bounds: Some(ObservedRect {
         x: 10,
         y: 10,
         width: 80,

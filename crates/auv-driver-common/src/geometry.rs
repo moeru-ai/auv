@@ -184,6 +184,18 @@ impl RatioRect {
   }
 }
 
+/// An integer-pixel rectangle observed directly from a platform report (for
+/// example, a parsed macOS AX/window/OCR report line). Distinct from `Rect`
+/// (logical f64 coordinates): this type preserves the raw pixel units a
+/// driver observed before any coordinate-space normalization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedRect {
+  pub x: i64,
+  pub y: i64,
+  pub width: i64,
+  pub height: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ProjectionSourceSpace {

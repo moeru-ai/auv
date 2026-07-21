@@ -2,15 +2,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub type AuvResult<T> = Result<T, String>;
+pub use auv_driver_common::ObservedRect;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObservedRect {
-  pub x: i64,
-  pub y: i64,
-  pub width: i64,
-  pub height: i64,
-}
+pub type AuvResult<T> = Result<T, String>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedDisplay {

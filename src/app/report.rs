@@ -1,5 +1,5 @@
 // File: src/app/report.rs
-use super::AppAnalysis;
+use super::{AppAnalysis, render_compact_rect};
 
 pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
   let mut lines = vec![
@@ -38,7 +38,7 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
   }
   lines.push(format!("- current window count: `{}`", analysis.window_context.observed_window_count));
   if let Some(bounds) = analysis.window_context.primary_window_bounds.as_ref() {
-    lines.push(format!("- primary window bounds: `{}`", bounds.render_compact()));
+    lines.push(format!("- primary window bounds: `{}`", render_compact_rect(bounds)));
   }
   if let Some(scale) = analysis.window_context.primary_window_display_scale {
     lines.push(format!("- primary window display scale: `{scale:.3}`"));
@@ -114,7 +114,7 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
         lines.push(format!("  - coordinateSpace: `{}`", candidate.coordinate_space));
       }
       if let Some(bounds) = &candidate.bounds {
-        lines.push(format!("  - bounds: `{}`", bounds.render_compact()));
+        lines.push(format!("  - bounds: `{}`", render_compact_rect(bounds)));
       }
       if let Some(point) = &candidate.click_point {
         lines.push(format!("  - clickPoint: `{}, {}`", point.x, point.y));

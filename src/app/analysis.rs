@@ -29,8 +29,8 @@ use super::infra::first_non_empty_string;
 use super::{
   APP_ANALYSIS_VERSION, AppAnalysis, AppAvailableSurfaces, AppCandidateCompatibility, AppCandidateGroundingTaxonomy,
   AppCandidatePromotionGate, AppCandidatePromotionStatus, AppControlAssessment, AppDisturbanceProfile, AppGroundingAssessment, AppIdentity,
-  AppPermissionState, AppPoint, AppProbe, AppProbeArtifact, AppProbeStep, AppRecommendedStrategy, AppRect, AppSurfaceCandidate,
-  AppVerificationAssessment, AppWindowContext, AssessmentStatus,
+  AppPermissionState, AppPoint, AppProbe, AppProbeArtifact, AppProbeStep, AppRecommendedStrategy, AppSurfaceCandidate,
+  AppVerificationAssessment, AppWindowContext, AssessmentStatus, rect_center, rect_center_point, rect_relative_point, render_compact_rect,
 };
 
 #[derive(Clone, Debug)]
@@ -68,7 +68,7 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
 
   let primary_window = choose_primary_window(&window_snapshot.windows);
   let primary_window_bounds =
-    primary_window.map(|window| AppRect::from_observed(&window.bounds)).or_else(|| primary_window_bounds_from_ax_snapshot(&ax_snapshot));
+    primary_window.map(|window| window.bounds.clone()).or_else(|| primary_window_bounds_from_ax_snapshot(&ax_snapshot));
   let primary_window_display_scale =
     primary_window_bounds.as_ref().and_then(|bounds| display_scale_for_rect_center(&display_snapshot, bounds));
 
@@ -137,7 +137,7 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
   }
   let mut stable_region_candidates = Vec::new();
   if let Some(bounds) = primary_window_bounds.as_ref() {
-    stable_region_candidates.push(format!("primaryWindow={}", bounds.render_compact()));
+    stable_region_candidates.push(format!("primaryWindow={}", render_compact_rect(bounds)));
   }
   stable_region_candidates.push("fullWindowCapture".to_string());
 
@@ -340,7 +340,7 @@ pub(crate) fn summarize_failed_probe_steps(probe: &AppProbe) -> Vec<String> {
 pub(crate) fn build_annotation_candidates(
   app: &AppIdentity,
   primary_window: Option<&ObservedWindow>,
-  primary_window_bounds: Option<&AppRect>,
+  primary_window_bounds: Option<&ObservedRect>,
   ax_snapshot: &ObservedAxTreeSnapshot,
   ocr_snapshot: &OcrTextSnapshot,
   probe_steps: &[AppProbeStep],
@@ -349,8 +349,8 @@ pub(crate) fn build_annotation_candidates(
   let mut candidates = Vec::new();
 
   if let Some(bounds) = primary_window_bounds.cloned() {
-    let compact_bounds = bounds.render_compact();
-    let click_point = bounds.center_point();
+    let compact_bounds = render_compact_rect(&bounds);
+    let click_point = rect_center_point(&bounds);
     let input_bindings = window_region_input_bindings(&compact_bounds, &click_point, &bounds);
     let evidence_step_id = if primary_window.is_some() {
       "list-windows"
@@ -428,7 +428,7 @@ pub(crate) fn build_annotation_candidates(
   }
 
   for matched in ocr_snapshot.matches.iter().take(8) {
-    let bounds = AppRect::from_observed(&matched.bounds);
+    let bounds = matched.bounds.clone();
     let area = "ocr-visible-text";
     let mut notes = vec!["Visible OCR text candidate from the sampled screenshot artifact.".to_string()];
     if matched.text == ocr_snapshot.query {
@@ -454,7 +454,7 @@ pub(crate) fn build_annotation_candidates(
       secondary_text: String::new(),
       query_value: matched.text.clone(),
       coordinate_space: "global-logical".to_string(),
-      click_point: Some(bounds.center_point()),
+      click_point: Some(rect_center_point(&bounds)),
       bounds: Some(bounds),
       confidence: Some(matched.confidence),
       evidence_step_id: "ocr-sample".to_string(),
@@ -479,9 +479,9 @@ pub(crate) fn build_annotation_candidates(
   candidates
 }
 
-fn window_region_input_bindings(compact_bounds: &str, click_point: &AppPoint, bounds: &AppRect) -> BTreeMap<String, String> {
+fn window_region_input_bindings(compact_bounds: &str, click_point: &AppPoint, bounds: &ObservedRect) -> BTreeMap<String, String> {
   let mut bindings = BTreeMap::from([("window_bounds".to_string(), compact_bounds.to_string())]);
-  if let Some((relative_x, relative_y)) = bounds.relative_point(click_point) {
+  if let Some((relative_x, relative_y)) = rect_relative_point(bounds, click_point) {
     bindings.insert("relative_x".to_string(), format!("{relative_x:.6}"));
     bindings.insert("relative_y".to_string(), format!("{relative_y:.6}"));
   }
@@ -499,7 +499,7 @@ fn ax_focus_candidate(
   compatibility: AppCandidateCompatibility,
   note: &str,
 ) -> AppSurfaceCandidate {
-  let bounds = AppRect::from_observed(&node.bounds);
+  let bounds = node.bounds.clone();
   let focus_query = query_value.clone();
   let mut candidate = AppSurfaceCandidate {
     candidate_id: candidate_id.to_string(),
@@ -511,7 +511,7 @@ fn ax_focus_candidate(
     secondary_text: format!("role={} path={}", node.role, node.path),
     query_value: query_value.clone(),
     coordinate_space: "global-logical".to_string(),
-    click_point: Some(bounds.center_point()),
+    click_point: Some(rect_center_point(&bounds)),
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: evidence_step_id.to_string(),
@@ -532,7 +532,7 @@ fn group_ocr_rows_from_ocr_snapshot(snapshot: &OcrTextSnapshot) -> Vec<ObservedO
 }
 
 fn row_candidate(row: ObservedOcrRow, evidence_refs: Vec<crate::contract::ArtifactRef>) -> AppSurfaceCandidate {
-  let bounds = AppRect::from_observed(&row.bounds);
+  let bounds = row.bounds.clone();
   let mut candidate = AppSurfaceCandidate {
     candidate_id: format!("visible-row-{}", row.row_index + 1),
     area: "result-selection".to_string(),
@@ -543,7 +543,7 @@ fn row_candidate(row: ObservedOcrRow, evidence_refs: Vec<crate::contract::Artifa
     secondary_text: format!("rowIndex={}", row.row_index + 1),
     query_value: format!("{}", row.row_index + 1),
     coordinate_space: "global-logical".to_string(),
-    click_point: Some(bounds.center_point()),
+    click_point: Some(rect_center_point(&bounds)),
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: "ocr-sample".to_string(),
@@ -997,7 +997,7 @@ fn choose_primary_window(windows: &[ObservedWindow]) -> Option<&ObservedWindow> 
   })
 }
 
-fn primary_window_bounds_from_ax_snapshot(snapshot: &ObservedAxTreeSnapshot) -> Option<AppRect> {
+fn primary_window_bounds_from_ax_snapshot(snapshot: &ObservedAxTreeSnapshot) -> Option<ObservedRect> {
   snapshot
     .nodes
     .iter()
@@ -1006,11 +1006,11 @@ fn primary_window_bounds_from_ax_snapshot(snapshot: &ObservedAxTreeSnapshot) -> 
         && node.bounds.width > 0
         && node.bounds.height > 0
     })
-    .map(|node| AppRect::from_observed(&node.bounds))
+    .map(|node| node.bounds.clone())
 }
 
-fn display_scale_for_rect_center(snapshot: &ObservedDisplaySnapshot, rect: &AppRect) -> Option<f64> {
-  let (x, y) = rect.center();
+fn display_scale_for_rect_center(snapshot: &ObservedDisplaySnapshot, rect: &ObservedRect) -> Option<f64> {
+  let (x, y) = rect_center(rect);
   snapshot.displays.iter().find(|display| contains_point(&display.bounds, x, y)).map(|display| display.scale_factor)
 }
 
