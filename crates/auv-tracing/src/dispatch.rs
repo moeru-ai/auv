@@ -1361,8 +1361,8 @@ impl Dispatch {
         failure,
       }) => {
         self.mark_projection_skipped(ticket);
-        self.terminalize_unreported(ticket, vec![failure.clone()]);
-        self.deliver_artifact_receipt(receipt, Err(error), Some(failure));
+        self.deliver_artifact_receipt(receipt, Err(error), Some(failure.clone()));
+        self.terminalize_unreported(ticket, vec![failure]);
       }
     }
     self.wake_observation(run_id);
