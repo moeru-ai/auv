@@ -52,6 +52,7 @@ struct ProbeStore {
   next_write_delay: Arc<Mutex<Option<std::time::Duration>>>,
   write_gate: WriteGate,
   after_write_gate: WriteGate,
+  lookup_gate: WriteGate,
 }
 
 impl ProbeStore {
@@ -72,6 +73,7 @@ impl ProbeStore {
       next_write_delay: Arc::new(Mutex::new(None)),
       write_gate: Arc::new(Mutex::new(None)),
       after_write_gate: Arc::new(Mutex::new(None)),
+      lookup_gate: Arc::new(Mutex::new(None)),
     }
   }
 
@@ -113,6 +115,10 @@ impl ProbeStore {
 
   fn gate_after_next_write(&self, entered: Arc<tokio::sync::Barrier>, release: Arc<tokio::sync::Barrier>) {
     *self.after_write_gate.lock().expect("after-write gate") = Some((entered, release));
+  }
+
+  fn gate_next_lookup(&self, entered: Arc<tokio::sync::Barrier>, release: Arc<tokio::sync::Barrier>) {
+    *self.lookup_gate.lock().expect("lookup gate") = Some((entered, release));
   }
 }
 
@@ -166,7 +172,12 @@ impl RunStore for ProbeStore {
     let inner = self.inner.clone();
     let delay = self.delay_lookups.load(Ordering::SeqCst);
     let fail = self.fail_lookups.load(Ordering::SeqCst);
+    let lookup_gate = self.lookup_gate.lock().expect("lookup gate").take();
     Box::pin(async move {
+      if let Some((entered, release)) = lookup_gate {
+        entered.wait().await;
+        release.wait().await;
+      }
       if delay {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
       }
@@ -1183,6 +1194,38 @@ async fn cancellation_after_body_completion_becomes_lookup_only_indeterminate() 
   let polls = Arc::new(AtomicUsize::new(0));
   let retried = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
   assert_eq!(retried.status(), StatusCode::OK);
+  assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+// ROOT CAUSE:
+//
+// If publication recovery was cancelled during lookup, the upload guard released
+// the generation because PublicationUnknown left it Uploading until after await.
+//
+// Before the fix, a body-incomplete write became reusable after cancellation.
+// The fix makes PublicationUnknown indeterminate before recovery can suspend.
+async fn cancellation_during_publication_unknown_lookup_stays_indeterminate_and_lookup_only() {
+  let store = ProbeStore::new();
+  store.report_unresolved_publication(true);
+  let app = router(Arc::new(store.clone()));
+  let draft = create_draft(&app, ARTIFACT, KEY).await;
+  let lookup_entered = Arc::new(tokio::sync::Barrier::new(2));
+  let release_lookup = Arc::new(tokio::sync::Barrier::new(2));
+  store.gate_next_lookup(lookup_entered.clone(), release_lookup);
+  let upload = tokio::spawn(app.clone().oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))));
+  lookup_entered.wait().await;
+
+  upload.abort();
+  assert!(upload.await.expect_err("upload must be cancelled during recovery lookup").is_cancelled());
+  let lookups_before_retry = store.lookup_calls.load(Ordering::SeqCst);
+  let polls = Arc::new(AtomicUsize::new(0));
+  let retried = app.oneshot(put_content(RUN, draft.upload_id(), polled_body(b"replacement", polls.clone()))).await.unwrap();
+
+  assert_eq!(retried.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response_json(retried).await, json!({"error": "auv.inspect.publication_unknown"}));
+  assert_eq!(store.lookup_calls.load(Ordering::SeqCst), lookups_before_retry + 1);
   assert_eq!(store.write_calls.load(Ordering::SeqCst), 1);
   assert_eq!(polls.load(Ordering::SeqCst), 0);
 }

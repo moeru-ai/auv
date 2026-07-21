@@ -957,20 +957,20 @@ async fn publish_upload(
       cache_published_draft(&state, active.run_id, upload_id, admission);
       Ok(run_json(StatusCode::OK, &commit))
     }
-    Err(ArtifactWriteError::PublicationUnknown(_)) => match state.store.lookup_commit(active.run_id, active.key).await {
-      Ok(Some(commit)) if artifact_commit_matches(&commit, &active.metadata, active.run_id, active.key) => {
-        cache_published_draft(&state, active.run_id, upload_id, admission);
-        Ok(run_json(StatusCode::OK, &commit))
+    Err(ArtifactWriteError::PublicationUnknown(_)) => {
+      mark_indeterminate(&state, active.run_id, upload_id, admission);
+      match state.store.lookup_commit(active.run_id, active.key).await {
+        Ok(Some(commit)) if artifact_commit_matches(&commit, &active.metadata, active.run_id, active.key) => {
+          cache_published_draft(&state, active.run_id, upload_id, admission);
+          Ok(run_json(StatusCode::OK, &commit))
+        }
+        Ok(Some(_)) => {
+          clear_upload_reservation(&state, active.run_id, upload_id, admission);
+          Err(ArtifactFailure::conflict())
+        }
+        Ok(None) | Err(_) => Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown"))),
       }
-      Ok(Some(_)) => {
-        clear_upload_reservation(&state, active.run_id, upload_id, admission);
-        Err(ArtifactFailure::conflict())
-      }
-      Ok(None) | Err(_) => {
-        mark_indeterminate(&state, active.run_id, upload_id, admission);
-        Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")))
-      }
-    },
+    }
     Err(error) => {
       release_upload(&state, active.run_id, upload_id, admission);
       Err(ArtifactFailure::from_write(error))
