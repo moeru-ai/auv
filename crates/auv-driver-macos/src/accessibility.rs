@@ -40,7 +40,7 @@ pub struct AxTextObservation {
 }
 
 pub fn capture_app_tree(app: &str, max_depth: i64, max_children: i64) -> DriverResult<ObservedAxTreeSnapshot> {
-  let capture = crate::native::ax_tree::capture_ax_tree_snapshot(app, max_depth, max_children).map_err(backend)?;
+  let capture = crate::native::tree::capture_ax_tree_snapshot(app, max_depth, max_children).map_err(backend)?;
   Ok(capture.snapshot)
 }
 
@@ -48,7 +48,7 @@ pub fn focus_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResul
   // `set_ax_focused_path` already returns a classified `DriverError` (stale
   // path / role mismatch / permission / backend), so propagate it directly
   // instead of flattening everything through `backend` into `Backend`.
-  let _ = crate::native::ax_tree::set_ax_focused_path(pid, path, expected_role)?;
+  let _ = crate::native::tree::set_ax_focused_path(pid, path, expected_role)?;
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
     attempts: vec![InputAttempt {

@@ -400,7 +400,7 @@ Use this root-cause block format in regression tests when relevant:
 ## Platform-Native Interop
 
 - Prefer capability-oriented module names for platform-native interop layers,
-  such as `screen`, `window`, `ax_tree`, `keyboard`, `clipboard`, `app`, and
+  such as `screen`, `window`, `tree`, `keyboard`, `clipboard`, `app`, and
   `permission`.
 - Keep FFI and generated binding details behind narrow modules named `native`,
   `binding`, or `ffi`.
