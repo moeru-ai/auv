@@ -17,6 +17,7 @@ members = [
   "crates/auv-tracing",
   "crates/auv-tracing-conformance",
   "crates/auv-tracing-inspect",
+  "crates/auv-tracing-otel",
   "crates/auv-scan",
   "crates/auv-stage-status",
   "crates/auv-qqmusic",
