@@ -97,26 +97,26 @@ pub struct CandidateRef {
   pub candidate_local_id: String,
 }
 
-/// Execution outcome of a typed command — **not** its semantic outcome.
+/// Coarse recorded outcome of an operation, not proof of action delivery or
+/// semantic success.
 ///
-/// `Completed` means the operation ran to the end of its dispatch path (the
-/// action was delivered, or an observe/verify command executed); `Failed` means
-/// it could not execute (refused before dispatch, a backend/permission error,
-/// or a failed run). Every producer in the codebase derives this from the
-/// execution/dispatch path — via run status, dispatched-vs-refused, or a
-/// backend error — and **never** from whether the world reached the expected
-/// state.
+/// `Completed` means the producer did not classify the operation as failed
+/// under that operation's current policy. `Failed` means it did; the reason may
+/// be refusal before dispatch, a backend or permission error, or a required
+/// verification that did not match. The status alone does not identify which
+/// layer failed.
 ///
-/// Semantic success is a *separate axis*, carried by
-/// [`VerificationResult::semantic_matched`] (with [`VerificationResult::failure_layer`])
-/// inside [`OperationResult::verifications`]. The two are independent: an
-/// operation can be `Completed` while its verification reports
-/// `semantic_matched == Some(false)` — the action was delivered, but the world
-/// did not match. Consumers MUST NOT read `Completed` as "the operation
-/// succeeded semantically", and producers MUST NOT downgrade to `Failed` on a
-/// semantic mismatch. AUV's value is "the world is in the expected state, and
-/// here is the evidence" — that claim lives in the verification, not in this
-/// status. Keeping the axes separate is the whole point of the seam.
+/// Consumers must use [`InputActionResult`] artifacts for delivery evidence and
+/// [`VerificationResult::semantic_matched`] together with
+/// [`VerificationResult::failure_layer`] for semantic evidence. In particular,
+/// `Completed` can coexist with `semantic_matched == Some(false)` and therefore
+/// must not be read as semantic success; `Failed` does not imply that no action
+/// was delivered.
+///
+/// TODO(operation-status-policy): producers do not yet share one rule for
+/// whether a semantic mismatch changes this coarse status. Standardize that in
+/// the TextEdit parity/failure-semantics slice, then tighten this contract if
+/// the owner approves one policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
@@ -149,8 +149,8 @@ pub struct OperationResult {
   #[serde(default = "default_operation_result_api_version")]
   pub api_version: String,
   pub run_id: RunId,
-  /// Execution outcome only — see [`OperationStatus`]. Semantic success is a
-  /// separate axis in [`Self::verifications`], not implied by `Completed`.
+  /// Coarse recorded outcome — see [`OperationStatus`]. Delivery and semantic
+  /// evidence live in artifacts and [`Self::verifications`], respectively.
   pub status: OperationStatus,
   pub operation_id: String,
   pub evidence_artifacts: Vec<ArtifactRef>,
@@ -1438,16 +1438,14 @@ mod tests {
 
   // ROOT CAUSE:
   //
-  // `OperationStatus` had no documentation, so "Completed" could be misread as
-  // "the operation succeeded semantically" and a producer could wrongly
-  // downgrade to `Failed` on a semantic mismatch. Every producer actually
-  // derives status from the execution/dispatch path, never from
-  // `semantic_matched` — status (execution) and semantic outcome are separate
-  // axes. This test locks that invariant into the contract: a delivered action
-  // whose world did not match stays `Completed` with `semantic_matched ==
-  // Some(false)`, so the two axes never collapse into one.
+  // `OperationStatus` had no documentation, so `Completed` could be misread as
+  // semantic success. Producers currently use different coarse status policy:
+  // some keep `Completed` when verification does not match, while TextEdit
+  // marks a required semantic mismatch `Failed`. This test locks the invariant
+  // shared by both policies: status never replaces the explicit verification
+  // evidence, and `Completed` alone cannot prove a semantic match.
   #[test]
-  fn operation_status_completed_is_independent_of_semantic_outcome() {
+  fn operation_status_completed_does_not_imply_semantic_match() {
     let mut mismatch = sample_verification(VerificationMethod::StateChanged);
     mismatch.state_changed = true; // the action was delivered and the world moved,
     mismatch.semantic_matched = Some(false); // but it did NOT reach the expected state,
@@ -1456,7 +1454,7 @@ mod tests {
     let result = OperationResult {
       api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: RunId::new("run_delivered_no_match"),
-      status: OperationStatus::Completed, // yet the operation still ran to completion.
+      status: OperationStatus::Completed, // this producer keeps a coarse completed status.
       operation_id: "music.result.play".to_string(),
       evidence_artifacts: vec![artifact_ref()],
       output: OperationOutput::Acknowledged {
@@ -1468,7 +1466,7 @@ mod tests {
     };
 
     let value = serde_json::to_value(&result).expect("result should serialize");
-    // Execution outcome and semantic outcome are independent fields, not one collapsed flag.
+    // Coarse status and semantic evidence remain separate fields, not one collapsed flag.
     assert_eq!(value["status"], json!("completed"), "status reflects execution, not semantic match");
     assert_eq!(value["verifications"][0]["semantic_matched"], json!(false), "semantic failure lives in the verification");
     assert_eq!(value["verifications"][0]["failure_layer"], json!("state_changed_no_match"));

@@ -75,49 +75,54 @@ success.
 - Single owner; consumed by inspect rendering (`src/inspect/mod.rs`). Not
   redefined in any donor crate. ✅
 
-## The one fix landed here: document + lock the OperationStatus / semantic axis
+## The one fix landed here: define what OperationStatus can and cannot prove
 
 **The clearest inconsistency**: `OperationStatus { Completed, Failed }` had
-**zero documentation**. I verified all four producers derive status from the
-**execution/dispatch** path and never from `semantic_matched`:
+**zero documentation**, and the first review incorrectly assumed every producer
+derived it only from execution/dispatch. A full producer audit found two real
+policies:
 
-- `src/api/session_service/operation_result_store.rs:27` — from `RunStatus`.
-- `crates/auv-cli/src/integrations/query_wired_live_action_status.rs:59`
-  (`operation_status_and_message`) — `Completed` when a click summary exists,
-  `Failed` when refused. Used by both minecraft and osu `query_live_action`.
-- `crates/auv-cli/src/cli_frontend.rs:1107` (`build_minecraft_operation_result`)
-  — `Completed` because it is only reached *after* the click was dispatched
-  (refusal returns `Err` earlier); the semantic verdict is carried separately in
-  `verifications[0]`.
+- `src/api/session_service/operation_result_store.rs` maps persisted
+  `OperationStatus` from `RunStatus`.
+- `crates/auv-cli/src/integrations/query_wired_live_action_status.rs` uses
+  `Completed` when dispatch produced a click summary and `Failed` when refused.
+- `crates/auv-cli/src/cli_frontend.rs` builds a completed Minecraft operation
+  after dispatch and carries semantic mismatch in `verifications[0]`.
+- `crates/auv-cli/src/integrations/textedit/mod.rs` deliberately changes both
+  `RunStatus` and `OperationStatus` to `Failed` when required AX text
+  verification reports `semantic_matched == false`; its parity tests lock that
+  behavior.
 
-So the codebase is **consistent** — `OperationStatus` = execution outcome,
-semantic success = `verifications[].semantic_matched` + `failure_layer` — but
-that load-bearing separation (the milestone's #1 principle, "action delivered ≠
-semantic success") was protected **only by convention**. A future producer
-could set `Failed` on a semantic mismatch, or a consumer could read `Completed`
-as "succeeded", silently collapsing the two axes.
+Therefore `OperationStatus` is **not currently an execution-only axis**. It is a
+coarse producer outcome whose policy is not yet uniform. What is uniform is the
+evidence boundary: status alone proves neither delivery nor semantic success.
+Delivery belongs in `InputActionResult`; semantic evidence belongs in
+`VerificationResult.semantic_matched` plus `failure_layer`.
 
-**Fix** (narrow, core-only, `src/contract.rs`):
-1. Documented `OperationStatus`: `Completed`/`Failed` are the execution/dispatch
-   outcome, **not** semantic success; semantic success is a separate axis in
-   `VerificationResult::semantic_matched` + `failure_layer`. Cross-referenced
-   from `OperationResult::status`.
-2. Added a contract regression test
-   `operation_status_completed_is_independent_of_semantic_outcome`: an
-   `OperationResult` with `status == Completed` and
-   `verifications[0].semantic_matched == Some(false)` (+ `failure_layer =
-   StateChangedNoMatch`) is valid and round-trips — locking the two axes as
-   independent so no future change can collapse them.
+**Fix** (narrow contract clarification, not a producer rewrite):
+1. Documented the actual coarse status semantics in `src/contract.rs` and the
+   shared vocabulary in `docs/TERMS_AND_CONCEPTS.md`.
+2. Added `TODO(operation-status-policy)` at the enum because standardizing
+   whether required semantic mismatch changes status belongs to the planned
+   TextEdit parity/failure-semantics slice, not this review PR.
+3. Renamed the regression test to
+   `operation_status_completed_does_not_imply_semantic_match`: a completed
+   result with `semantic_matched == Some(false)` remains a valid combination,
+   proving consumers cannot treat `Completed` as semantic evidence.
 
-Chosen over the `OperationResult` alias rename because it is **core, narrow, and
-directly answers the milestone review question** ("是否存在成功 action 被误当成
-semantic success?"), whereas the rename is a large mechanical sweep across
+Chosen over silently changing TextEdit's run/trace/operation status parity:
+that behavior is explicitly tested and belongs to PR 8. Also chosen over the
+`OperationResult` alias rename because that is a large mechanical sweep across
 feature-frozen crates.
 
 ## Stable vs provisional fields (summary)
 
 - **Stable**: all six contracts' core identity fields (run/span/operation IDs,
-  `status`, `executed`/`state_changed`/`semantic_matched`, artifact IDs).
+  `OperationStatus` vocabulary, `executed`/`state_changed`/
+  `semantic_matched`, artifact IDs).
+- **Provisional policy**: whether a required semantic mismatch changes coarse
+  `OperationStatus`; producers currently differ and explicit verification
+  evidence remains authoritative.
 - **Provisional / wire-versioned**: `api_version` on `OperationResult`,
   `VerificationResult`, `ObservationSnapshot` — stamped on write, but readers do
   **not** reject unknown values yet (`NOTICE(contract-api-version-reader-check)`
@@ -126,14 +131,17 @@ feature-frozen crates.
 
 ## Follow-ups (NOT done in this PR)
 
-1. **`OperationResult` name collision**: rename the three
+1. **`OperationStatus` producer policy**: decide in the TextEdit parity slice
+   whether required semantic mismatch must change coarse status, then align
+   producers and parity/read-side checks under one approved rule.
+2. **`OperationResult` name collision**: rename the three
    `type OperationResult<T> = Result<T, String>` aliases
    (apple-notes/textedit/qqmusic) to a non-shadowing, non-`Result<_,String>`
    name. ~75 sites, 3 feature-frozen crates. Also ties into the error-chain
    inventory's goal of retiring `Result<T,String>` boundaries. Needs owner
    sign-off given the frozen-crate rule.
-2. **`api_version` reader rejection** (`NOTICE(contract-api-version-reader-check)`):
+3. **`api_version` reader rejection** (`NOTICE(contract-api-version-reader-check)`):
    deferred until a non-additive record version lands.
-3. From PR 6: remove the dead `auv-media-macos` dependency and decide the
+4. From PR 6: remove the dead `auv-media-macos` dependency and decide the
    `auv-driver-macos` root target-gating — dependency-graph concerns, tracked in
    the crate-tier inventory.
