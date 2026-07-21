@@ -46,3 +46,11 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Stora
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[[test]]
+name = "file_store_recovery"
+required-features = ["file-store"]
+
+[[test]]
+name = "rust_tracing_contract"
+required-features = ["rust-tracing"]

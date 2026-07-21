@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -8,6 +9,75 @@ use opentelemetry_sdk::logs::{LogBatch, LogExporter, LogProcessor, SdkLogRecord}
 use opentelemetry_sdk::trace::{Span, SpanData, SpanExporter, SpanProcessor};
 
 pub const MAX_EXPORTED_ITEMS: usize = 64;
+
+type Callback = Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Clone)]
+pub struct CallbackSpanProcessor {
+  on_start: Callback,
+  on_end: Callback,
+}
+
+impl CallbackSpanProcessor {
+  pub fn new(on_start: Callback, on_end: Callback) -> Self {
+    Self { on_start, on_end }
+  }
+}
+
+impl fmt::Debug for CallbackSpanProcessor {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.debug_struct("CallbackSpanProcessor").finish_non_exhaustive()
+  }
+}
+
+impl SpanProcessor for CallbackSpanProcessor {
+  fn on_start(&self, _span: &mut Span, _context: &Context) {
+    (self.on_start)();
+  }
+
+  fn on_end(&self, _span: SpanData) {
+    (self.on_end)();
+  }
+
+  fn force_flush(&self) -> OTelSdkResult {
+    Ok(())
+  }
+
+  fn shutdown_with_timeout(&self, _timeout: std::time::Duration) -> OTelSdkResult {
+    Ok(())
+  }
+}
+
+#[derive(Clone)]
+pub struct CallbackLogProcessor {
+  on_emit: Callback,
+}
+
+impl CallbackLogProcessor {
+  pub fn new(on_emit: Callback) -> Self {
+    Self { on_emit }
+  }
+}
+
+impl fmt::Debug for CallbackLogProcessor {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.debug_struct("CallbackLogProcessor").finish_non_exhaustive()
+  }
+}
+
+impl LogProcessor for CallbackLogProcessor {
+  fn emit(&self, _data: &mut SdkLogRecord, _instrumentation: &InstrumentationScope) {
+    (self.on_emit)();
+  }
+
+  fn force_flush(&self) -> OTelSdkResult {
+    Ok(())
+  }
+
+  fn shutdown_with_timeout(&self, _timeout: std::time::Duration) -> OTelSdkResult {
+    Ok(())
+  }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct BoundedSpanExporter {

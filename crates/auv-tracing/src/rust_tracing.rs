@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, ThreadId};
 
 use tracing::span::Id;
 use tracing::{Level, Span, field};
@@ -17,10 +18,12 @@ const PROJECTION_TARGET: &str = "auv.telemetry.projection";
 /// spans or events.
 pub struct RustTracingProjector {
   state: Mutex<ProjectorState>,
+  projection_finished: Condvar,
 }
 
 #[derive(Default)]
 struct ProjectorState {
+  in_flight: Option<ThreadId>,
   // TODO(run-ended-v1): Reclaim retained run identities and span tombstones
   // when TelemetryItem gains a validated RunEnded signal.
   runs: BTreeMap<RunId, RunState>,
@@ -41,7 +44,14 @@ struct ActiveSpan {
   started_at: Timestamp,
   latest_event_at: Option<Timestamp>,
   latest_child_started_at: Option<Timestamp>,
-  span: Span,
+  tracing_id: Option<Id>,
+  span: Arc<Span>,
+}
+
+struct ProjectionReservation<'a> {
+  projector: &'a RustTracingProjector,
+  owner: ThreadId,
+  active: bool,
 }
 
 impl RustTracingProjector {
@@ -49,6 +59,30 @@ impl RustTracingProjector {
   pub fn new() -> Self {
     Self {
       state: Mutex::new(ProjectorState::default()),
+      projection_finished: Condvar::new(),
+    }
+  }
+
+  fn reserve(&self) -> Result<ProjectionReservation<'_>, TelemetryError> {
+    let owner = thread::current().id();
+    let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+    loop {
+      match state.in_flight.as_ref() {
+        None => {
+          state.in_flight = Some(owner);
+          return Ok(ProjectionReservation {
+            projector: self,
+            owner,
+            active: true,
+          });
+        }
+        Some(active_owner) if *active_owner == owner => {
+          return Err(error("auv.telemetry.rust_tracing_reentrant_projection"));
+        }
+        Some(_) => {
+          state = self.projection_finished.wait(state).map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+        }
+      }
     }
   }
 
@@ -68,43 +102,43 @@ impl RustTracingProjector {
         if parent_span_id.is_some() && remote_span_id.is_some() {
           return Err(error("auv.telemetry.conflicting_span_relationship"));
         }
-        let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
-        let run = match state.runs.entry(run_id) {
-          Entry::Vacant(entry) => {
-            if parent_span_id.is_some() {
-              return Err(error("auv.telemetry.missing_parent_span"));
+        let reservation = self.reserve()?;
+        let parent_id = {
+          let state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+          match state.runs.get(&run_id) {
+            None => {
+              if parent_span_id.is_some() {
+                return Err(error("auv.telemetry.missing_parent_span"));
+              }
+              None
             }
-            entry.insert(RunState {
-              authority_id,
-              spans: BTreeMap::new(),
-            })
+            Some(run) => {
+              if run.spans.contains_key(&span_id) {
+                return Err(error("auv.telemetry.duplicate_span_start"));
+              }
+              let parent_id = match parent_span_id {
+                Some(parent_span_id) => match run.spans.get(&parent_span_id) {
+                  Some(SpanState::Active(parent)) => {
+                    if parent.authority_id != authority_id {
+                      return Err(error("auv.telemetry.parent_authority_mismatch"));
+                    }
+                    if started_at < parent.started_at {
+                      return Err(error("auv.telemetry.child_before_parent"));
+                    }
+                    parent.tracing_id.clone()
+                  }
+                  Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_parent_span")),
+                  None => return Err(error("auv.telemetry.missing_parent_span")),
+                },
+                None => None,
+              };
+              if run.authority_id != authority_id {
+                return Err(error("auv.telemetry.run_authority_mismatch"));
+              }
+              parent_id
+            }
           }
-          Entry::Occupied(entry) => entry.into_mut(),
         };
-        if run.spans.contains_key(&span_id) {
-          return Err(error("auv.telemetry.duplicate_span_start"));
-        }
-
-        let parent = match parent_span_id {
-          Some(parent_span_id) => match run.spans.get(&parent_span_id) {
-            Some(SpanState::Active(parent)) => {
-              if parent.authority_id != authority_id {
-                return Err(error("auv.telemetry.parent_authority_mismatch"));
-              }
-              if started_at < parent.started_at {
-                return Err(error("auv.telemetry.child_before_parent"));
-              }
-              Some(parent.span.clone())
-            }
-            Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_parent_span")),
-            None => return Err(error("auv.telemetry.missing_parent_span")),
-          },
-          None => None,
-        };
-        if run.authority_id != authority_id {
-          return Err(error("auv.telemetry.run_authority_mismatch"));
-        }
-        let parent_id = parent.as_ref().and_then(Span::id);
         let authority = authority_id.as_ref().map(field::display);
         let parent_auv_id = parent_span_id.as_ref().map(field::display);
         let remote_auv_id = remote_span_id.as_ref().map(field::display);
@@ -123,26 +157,38 @@ impl RustTracingProjector {
           "auv.span.start_revision" = start_revision,
           "auv.span.end_revision" = field::Empty,
         );
-        if let Some(parent_span_id) = parent_span_id {
-          match run.spans.get_mut(&parent_span_id) {
-            Some(SpanState::Active(parent)) => {
-              parent.latest_child_started_at = Some(parent.latest_child_started_at.map_or(started_at, |current| current.max(started_at)));
+        let tracing_id = span.id();
+        let active = ActiveSpan {
+          authority_id,
+          started_at,
+          latest_event_at: None,
+          latest_child_started_at: None,
+          tracing_id,
+          span: Arc::new(span),
+        };
+        {
+          let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+          let run = state.runs.entry(run_id).or_insert_with(|| RunState {
+            authority_id,
+            spans: BTreeMap::new(),
+          });
+          if let Some(parent_span_id) = parent_span_id {
+            match run.spans.get_mut(&parent_span_id) {
+              Some(SpanState::Active(parent)) => {
+                parent.latest_child_started_at = Some(parent.latest_child_started_at.map_or(started_at, |current| current.max(started_at)));
+              }
+              Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_parent_span")),
+              None => return Err(error("auv.telemetry.missing_parent_span")),
             }
-            Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_parent_span")),
-            None => return Err(error("auv.telemetry.missing_parent_span")),
+          }
+          match run.spans.entry(span_id) {
+            Entry::Vacant(entry) => {
+              entry.insert(SpanState::Active(active));
+            }
+            Entry::Occupied(_) => return Err(error("auv.telemetry.duplicate_span_start")),
           }
         }
-        run.spans.insert(
-          span_id,
-          SpanState::Active(ActiveSpan {
-            authority_id,
-            started_at,
-            latest_event_at: None,
-            latest_child_started_at: None,
-            span,
-          }),
-        );
-        Ok(())
+        reservation.finish()
       }
       TelemetryItem::SpanEnd {
         authority_id,
@@ -151,37 +197,47 @@ impl RustTracingProjector {
         ended_at,
         end_revision,
       } => {
-        let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
-        let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
-        let active = match run.spans.get(&span_id) {
-          Some(SpanState::Active(active)) => active,
-          Some(SpanState::Ended) => return Err(error("auv.telemetry.duplicate_span_end")),
-          None => return Err(error("auv.telemetry.missing_span_start")),
-        };
-        if active.authority_id != authority_id {
-          return Err(error("auv.telemetry.span_authority_mismatch"));
-        }
-        if run.authority_id != authority_id {
-          return Err(error("auv.telemetry.run_authority_mismatch"));
-        }
-        if ended_at < active.started_at {
-          return Err(error("auv.telemetry.span_end_before_start"));
-        }
-        if active.latest_event_at.is_some_and(|occurred_at| ended_at < occurred_at) {
-          return Err(error("auv.telemetry.span_end_before_event"));
-        }
-        if active.latest_child_started_at.is_some_and(|started_at| ended_at < started_at) {
-          return Err(error("auv.telemetry.span_end_before_child_start"));
-        }
-        let previous = run.spans.insert(span_id, SpanState::Ended).ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
-        let SpanState::Active(active) = previous else {
-          return Err(error("auv.telemetry.duplicate_span_end"));
+        let reservation = self.reserve()?;
+        let span = {
+          let state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+          let run = state.runs.get(&run_id).ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
+          let active = match run.spans.get(&span_id) {
+            Some(SpanState::Active(active)) => active,
+            Some(SpanState::Ended) => return Err(error("auv.telemetry.duplicate_span_end")),
+            None => return Err(error("auv.telemetry.missing_span_start")),
+          };
+          if active.authority_id != authority_id {
+            return Err(error("auv.telemetry.span_authority_mismatch"));
+          }
+          if run.authority_id != authority_id {
+            return Err(error("auv.telemetry.run_authority_mismatch"));
+          }
+          if ended_at < active.started_at {
+            return Err(error("auv.telemetry.span_end_before_start"));
+          }
+          if active.latest_event_at.is_some_and(|occurred_at| ended_at < occurred_at) {
+            return Err(error("auv.telemetry.span_end_before_event"));
+          }
+          if active.latest_child_started_at.is_some_and(|started_at| ended_at < started_at) {
+            return Err(error("auv.telemetry.span_end_before_child_start"));
+          }
+          Arc::clone(&active.span)
         };
         if let Some(end_revision) = end_revision {
-          active.span.record("auv.span.end_revision", end_revision.get());
+          span.record("auv.span.end_revision", end_revision.get());
         }
+        let active = {
+          let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+          let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
+          let previous = run.spans.insert(span_id, SpanState::Ended).ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
+          let SpanState::Active(active) = previous else {
+            return Err(error("auv.telemetry.duplicate_span_end"));
+          };
+          active
+        };
         drop(active);
-        Ok(())
+        drop(span);
+        reservation.finish()
       }
       TelemetryItem::Event {
         authority_id,
@@ -192,6 +248,7 @@ impl RustTracingProjector {
         occurred_at,
         revision,
       } => {
+        let reservation = self.reserve()?;
         let authority = authority_id.as_ref().map(field::display);
         let span = span_id.as_ref().map(field::display);
         let revision = revision.map(crate::RunRevision::get);
@@ -212,34 +269,50 @@ impl RustTracingProjector {
         };
         match span_id {
           Some(span_id) => {
-            let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
-            let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.missing_event_span"))?;
-            let active = match run.spans.get_mut(&span_id) {
-              Some(SpanState::Active(active)) => active,
-              Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_event_span")),
-              None => return Err(error("auv.telemetry.missing_event_span")),
+            let parent_id = {
+              let state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+              let run = state.runs.get(&run_id).ok_or_else(|| error("auv.telemetry.missing_event_span"))?;
+              let active = match run.spans.get(&span_id) {
+                Some(SpanState::Active(active)) => active,
+                Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_event_span")),
+                None => return Err(error("auv.telemetry.missing_event_span")),
+              };
+              if active.authority_id != authority_id {
+                return Err(error("auv.telemetry.span_authority_mismatch"));
+              }
+              if run.authority_id != authority_id {
+                return Err(error("auv.telemetry.run_authority_mismatch"));
+              }
+              if occurred_at < active.started_at {
+                return Err(error("auv.telemetry.event_before_span_start"));
+              }
+              active.tracing_id.clone()
             };
-            if active.authority_id != authority_id {
-              return Err(error("auv.telemetry.span_authority_mismatch"));
+            emit(parent_id);
+            {
+              let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+              let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.missing_event_span"))?;
+              let active = match run.spans.get_mut(&span_id) {
+                Some(SpanState::Active(active)) => active,
+                Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_event_span")),
+                None => return Err(error("auv.telemetry.missing_event_span")),
+              };
+              active.latest_event_at = Some(active.latest_event_at.map_or(occurred_at, |current| current.max(occurred_at)));
             }
-            if run.authority_id != authority_id {
-              return Err(error("auv.telemetry.run_authority_mismatch"));
-            }
-            if occurred_at < active.started_at {
-              return Err(error("auv.telemetry.event_before_span_start"));
-            }
-            active.latest_event_at = Some(active.latest_event_at.map_or(occurred_at, |current| current.max(occurred_at)));
-            emit(active.span.id());
           }
           None => {
             {
-              let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
-              ensure_run_authority(&mut state, run_id, authority_id)?;
+              let state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+              validate_run_authority(&state, run_id, authority_id)?;
             }
             emit(None);
+            {
+              let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+              commit_run_authority(&mut state, run_id, authority_id)?;
+            }
           }
         }
-        Ok(())
+        reservation.finish()
       }
       TelemetryItem::Artifact {
         authority_id,
@@ -253,9 +326,10 @@ impl RustTracingProjector {
         attributes: _,
         revision,
       } => {
+        let reservation = self.reserve()?;
         {
-          let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
-          ensure_run_authority(&mut state, run_id, Some(authority_id))?;
+          let state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+          validate_run_authority(&state, run_id, Some(authority_id))?;
         }
         let span = span_id.as_ref().map(field::display);
         tracing::event!(
@@ -273,13 +347,53 @@ impl RustTracingProjector {
           "auv.artifact.byte_length" = byte_length.get(),
           "auv.artifact.sha256" = %sha256,
         );
-        Ok(())
+        {
+          let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+          commit_run_authority(&mut state, run_id, Some(authority_id))?;
+        }
+        reservation.finish()
       }
     }
   }
 }
 
-fn ensure_run_authority(state: &mut ProjectorState, run_id: RunId, authority_id: Option<AuthorityId>) -> Result<(), TelemetryError> {
+impl ProjectionReservation<'_> {
+  fn finish(mut self) -> Result<(), TelemetryError> {
+    let mut state = self.projector.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+    state.in_flight = None;
+    self.active = false;
+    drop(state);
+    self.projector.projection_finished.notify_all();
+    Ok(())
+  }
+}
+
+impl Drop for ProjectionReservation<'_> {
+  fn drop(&mut self) {
+    if !self.active {
+      return;
+    }
+    let mut state = match self.projector.state.lock() {
+      Ok(state) => state,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    if state.in_flight.as_ref() == Some(&self.owner) {
+      state.in_flight = None;
+    }
+    drop(state);
+    self.projector.projection_finished.notify_all();
+  }
+}
+
+fn validate_run_authority(state: &ProjectorState, run_id: RunId, authority_id: Option<AuthorityId>) -> Result<(), TelemetryError> {
+  match state.runs.get(&run_id) {
+    None => Ok(()),
+    Some(run) if run.authority_id == authority_id => Ok(()),
+    Some(_) => Err(error("auv.telemetry.run_authority_mismatch")),
+  }
+}
+
+fn commit_run_authority(state: &mut ProjectorState, run_id: RunId, authority_id: Option<AuthorityId>) -> Result<(), TelemetryError> {
   match state.runs.entry(run_id) {
     Entry::Vacant(entry) => {
       entry.insert(RunState {
