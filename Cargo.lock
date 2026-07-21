@@ -655,7 +655,9 @@ dependencies = [
 name = "auv-media-macos"
 version = "0.0.1"
 dependencies = [
+ "auv-tracing",
  "clap",
+ "futures-executor",
  "serde",
  "serde_json",
 ]
@@ -669,10 +671,12 @@ dependencies = [
  "auv-driver-macos",
  "auv-driver-windows",
  "auv-media-macos",
+ "auv-tracing",
  "auv-tracing-driver",
  "auv-view",
  "clap",
  "comfy-table",
+ "futures-executor",
  "image",
  "serde",
  "serde_json",

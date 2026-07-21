@@ -11,6 +11,10 @@ documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+tracing = ["dep:auv-tracing"]
+
 [dependencies]
 auv-driver = { path = "../auv-driver" }
 # auv-media-macos compiles on all targets (non-macOS calls return Unsupported),
@@ -26,8 +30,20 @@ serde.workspace = true
 serde_json.workspace = true
 image.workspace = true
 
+[dependencies.auv-tracing]
+path = "../auv-tracing"
+optional = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 auv-driver-windows = { path = "../auv-driver-windows" }
+
+[dev-dependencies]
+auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+futures-executor = "0.3"
+
+[[test]]
+name = "tracing_opt_in"
+required-features = ["tracing"]

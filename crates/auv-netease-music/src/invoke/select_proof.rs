@@ -6,6 +6,32 @@ use auv_cli_invoke::{ArgSpec, InvokeCommandInput, InvokeCommandOutput, InvokeCom
 use crate::commands::playlist::PlaylistSelectResult;
 use crate::recording::{NETEASE_PLAYLIST_SELECT_RESULT_ROLE, persist_playlist_select_proof};
 
+#[cfg(feature = "tracing")]
+mod tracing {
+  use auv_tracing::{Attributes, SpanSpec};
+
+  struct SelectProofSpan;
+
+  impl SpanSpec for SelectProofSpan {
+    const NAME: &'static str = "auv.netease.playlist.select_proof";
+
+    fn attributes(&self) -> Attributes {
+      Attributes::empty()
+    }
+  }
+
+  pub(super) fn select_proof<T>(operation: impl FnOnce() -> T) -> T {
+    auv_tracing::start_span(SelectProofSpan).in_scope(operation)
+  }
+}
+
+#[cfg(not(feature = "tracing"))]
+mod tracing {
+  pub(super) fn select_proof<T>(operation: impl FnOnce() -> T) -> T {
+    operation()
+  }
+}
+
 pub const SELECT_PROOF_COMMAND_ID: &str = "netease.playlist.selectProof";
 pub const SELECT_RESULT_FILE: &str = "select-result.json";
 
@@ -20,24 +46,26 @@ pub const SELECT_PROOF_ARGS: &[ArgSpec] = &[
 ];
 
 pub fn build_select_result_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSelectResult, String> {
-  if !fixture_dir.is_dir() {
-    return Err(format!("fixture directory does not exist: {}", fixture_dir.display()));
-  }
+  tracing::select_proof(|| {
+    if !fixture_dir.is_dir() {
+      return Err(format!("fixture directory does not exist: {}", fixture_dir.display()));
+    }
 
-  let fixture_path = fixture_dir.join(SELECT_RESULT_FILE);
-  if !fixture_path.is_file() {
-    return Err(format!("fixture file missing at {}", fixture_path.display()));
-  }
+    let fixture_path = fixture_dir.join(SELECT_RESULT_FILE);
+    if !fixture_path.is_file() {
+      return Err(format!("fixture file missing at {}", fixture_path.display()));
+    }
 
-  let bytes = fs::read(&fixture_path).map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
-  let mut result: PlaylistSelectResult = serde_json::from_slice(&bytes)
-    .map_err(|error| format!("failed to parse {} as PlaylistSelectResult: {error}", fixture_path.display()))?;
+    let bytes = fs::read(&fixture_path).map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
+    let mut result: PlaylistSelectResult = serde_json::from_slice(&bytes)
+      .map_err(|error| format!("failed to parse {} as PlaylistSelectResult: {error}", fixture_path.display()))?;
 
-  if let Some(query) = read_optional_query_fixture(fixture_dir)? {
-    result.query = query;
-  }
+    if let Some(query) = read_optional_query_fixture(fixture_dir)? {
+      result.query = query;
+    }
 
-  Ok(result)
+    Ok(result)
+  })
 }
 
 fn read_optional_query_fixture(fixture_dir: &Path) -> Result<Option<String>, String> {
