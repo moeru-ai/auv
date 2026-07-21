@@ -50,5 +50,8 @@ jobs:
       - run: cargo test
       - run: cargo run --quiet -- invoke --help
       - run: bash scripts/ci/public-claims-check.sh
+      - name: AX path parse characterization
+        if: runner.os == 'macOS'
+        run: bash scripts/ci/ax-path-characterization.sh
       - run: bash scripts/ci/install-smoke.sh
       - run: git diff --check
