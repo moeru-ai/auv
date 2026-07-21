@@ -46,9 +46,14 @@ struct RunGateRegistry {
 
 pub(crate) struct RunMutationGuard {
   guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+  lease: Option<RunGateLease>,
+}
+
+struct RunGateLease {
   registry: Arc<Mutex<RunGateRegistry>>,
   run_id: RunId,
-  gate: Weak<tokio::sync::Mutex<()>>,
+  gate: Option<Arc<tokio::sync::Mutex<()>>>,
+  identity: Weak<tokio::sync::Mutex<()>>,
 }
 
 impl RunMutationArbitrator {
@@ -73,13 +78,16 @@ impl RunMutationArbitrator {
         }
       }
     };
-    let identity = Arc::downgrade(&gate);
-    let guard = gate.lock_owned().await;
-    RunMutationGuard {
-      guard: Some(guard),
+    let lease = RunGateLease {
       registry: self.registry.clone(),
       run_id,
-      gate: identity,
+      identity: Arc::downgrade(&gate),
+      gate: Some(gate),
+    };
+    let guard = Arc::clone(lease.gate.as_ref().expect("live run gate lease")).lock_owned().await;
+    RunMutationGuard {
+      guard: Some(guard),
+      lease: Some(lease),
     }
   }
 
@@ -93,8 +101,16 @@ impl RunMutationArbitrator {
 impl Drop for RunMutationGuard {
   fn drop(&mut self) {
     drop(self.guard.take());
+    drop(self.lease.take());
+  }
+}
+
+impl Drop for RunGateLease {
+  fn drop(&mut self) {
+    drop(self.gate.take());
     let mut registry = self.registry.lock().expect("run mutation arbitration lock");
-    let remove = registry.gates.get(&self.run_id).is_some_and(|current| Weak::ptr_eq(current, &self.gate) && current.strong_count() == 0);
+    let remove =
+      registry.gates.get(&self.run_id).is_some_and(|current| Weak::ptr_eq(current, &self.identity) && current.strong_count() == 0);
     if remove {
       registry.gates.remove(&self.run_id);
     }
@@ -140,8 +156,7 @@ pub fn router(store: Arc<dyn RunStore>) -> Router {
 /// reviewed access-control boundary before exposing it. The artifact origin
 /// must come from that trusted composition boundary, never request headers.
 pub fn router_with_artifact_origin(store: Arc<dyn RunStore>, artifact_origin: Url) -> InspectResult<Router> {
-  validate_artifact_origin(&artifact_origin)?;
-  Ok(build_router(store, Some(artifact_origin)))
+  Ok(build_router(store, Some(normalize_artifact_origin(artifact_origin)?)))
 }
 
 fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>) -> Router {
@@ -160,18 +175,24 @@ fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>) -> Route
     .with_state(state)
 }
 
-fn validate_artifact_origin(origin: &Url) -> InspectResult<()> {
+fn normalize_artifact_origin(mut origin: Url) -> InspectResult<Url> {
   if !matches!(origin.scheme(), "http" | "https")
     || !origin.username().is_empty()
     || origin.password().is_some()
     || origin.host_str().is_none()
-    || origin.path() != "/"
     || origin.query().is_some()
     || origin.fragment().is_some()
+    || origin.path().contains(['%', '\\'])
   {
-    return Err("artifact origin must be an absolute credential-free HTTP(S) origin with no path, query, or fragment".to_string());
+    return Err(
+      "artifact origin must be an absolute credential-free HTTP(S) URL with a safe base path and no query or fragment".to_string(),
+    );
   }
-  Ok(())
+  if !origin.path().ends_with('/') {
+    let path = format!("{}/", origin.path());
+    origin.set_path(&path);
+  }
+  Ok(origin)
 }
 
 /// Binds one loopback-only Inspect authority and publishes its discovery session.
@@ -270,6 +291,39 @@ mod tests {
     assert_eq!(arbitrator.registry_len(), 1);
 
     drop(next_owner);
+    assert_eq!(arbitrator.registry_len(), 0);
+  }
+
+  #[tokio::test]
+  async fn canceled_waiters_release_many_unique_run_gate_entries() {
+    let arbitrator = RunMutationArbitrator::new();
+    for _ in 0..4_096 {
+      let run_id = RunId::new();
+      let owner = arbitrator.acquire(run_id).await;
+      let mut waiter = Box::pin(arbitrator.acquire(run_id));
+      tokio::select! {
+        biased;
+        _ = &mut waiter => panic!("same-run waiter acquired while the owner was live"),
+        _ = tokio::task::yield_now() => {}
+      }
+
+      drop(owner);
+      drop(waiter);
+    }
+
+    assert_eq!(arbitrator.registry_len(), 0);
+  }
+
+  #[tokio::test]
+  async fn different_run_gates_can_be_owned_concurrently() {
+    let arbitrator = RunMutationArbitrator::new();
+    let first = arbitrator.acquire(RunId::new()).await;
+
+    let second = tokio::time::timeout(std::time::Duration::from_secs(1), arbitrator.acquire(RunId::new()))
+      .await
+      .expect("different-run acquisition must not wait");
+
+    drop((first, second));
     assert_eq!(arbitrator.registry_len(), 0);
   }
 }

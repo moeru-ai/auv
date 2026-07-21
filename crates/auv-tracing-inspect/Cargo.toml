@@ -32,5 +32,5 @@ auv-inspect-server = { path = "../auv-inspect-server" }
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 axum = "0.8"
 futures-util = { workspace = true, features = ["io"] }
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 url = { version = "2", features = ["serde"] }

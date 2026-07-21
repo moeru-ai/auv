@@ -5,7 +5,9 @@ use auv_tracing::{
   CommitError, CommitResult, ErrorCode, IdempotencyKey, PageLimit, ReadError, RunCommit, RunCommitRequest, RunFact, RunId, RunMutation,
   RunRevision, SubscriptionError,
 };
-use auv_tracing_inspect::protocol::{AuthorityResponse, RUN_MEDIA_TYPE, RunApiError, RunCommitBody, RunStreamGap, decode_strict};
+use auv_tracing_inspect::protocol::{
+  ARTIFACT_ORIGIN_HEADER, AuthorityResponse, RUN_MEDIA_TYPE, RunApiError, RunCommitBody, RunStreamGap, decode_strict,
+};
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::rejection::{PathRejection, QueryRejection};
@@ -46,12 +48,18 @@ pub(crate) fn routes() -> Router<Arc<InspectServerState>> {
 
 /// Returns the stable identity of the one store authority installed in server state.
 async fn authority(State(state): State<Arc<InspectServerState>>) -> Response {
-  run_json(
+  let mut response = run_json(
     StatusCode::OK,
     &AuthorityResponse {
       authority_id: state.store.authority_id(),
     },
-  )
+  );
+  if let Some(origin) = &state.artifact_origin {
+    response
+      .headers_mut()
+      .insert(ARTIFACT_ORIGIN_HEADER, HeaderValue::from_str(origin.as_str()).expect("validated artifact origin is a header value"));
+  }
+  response
 }
 
 /// Validates and appends one path-scoped ordinary run commit.

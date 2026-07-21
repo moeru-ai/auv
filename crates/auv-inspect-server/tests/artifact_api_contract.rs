@@ -393,6 +393,24 @@ async fn idle_admission_lease_recovers_a_lost_draft_response_without_expiring_th
 }
 
 #[tokio::test(start_paused = true)]
+async fn same_token_draft_replay_refreshes_its_live_admission_lease() {
+  let app = router(Arc::new(MemoryRunStore::new(authority_id())));
+  let body = draft_json(AUTHORITY, ARTIFACT, None, "display.capture", 3, ABC_SHA256);
+  let created = app.clone().oneshot(post_draft_with_admission(RUN, KEY, ADMISSION, body.clone())).await.unwrap();
+  let draft: ArtifactUploadDraft = serde_json::from_slice(&response_bytes(created).await).unwrap();
+
+  tokio::time::advance(std::time::Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS - 1)).await;
+  let refreshed = app.clone().oneshot(post_draft_with_admission(RUN, KEY, ADMISSION, body)).await.unwrap();
+  assert_eq!(refreshed.status(), StatusCode::OK);
+  assert_eq!(refreshed.headers().get(ADMISSION_HEADER).unwrap(), ADMISSION);
+
+  tokio::time::advance(std::time::Duration::from_secs(2)).await;
+  let published = app.oneshot(put_content(RUN, draft.upload_id(), Body::from("abc"))).await.unwrap();
+
+  assert_eq!(published.status(), StatusCode::CREATED);
+}
+
+#[tokio::test(start_paused = true)]
 async fn delayed_draft_response_past_the_lease_requires_a_fresh_admission_and_rejects_the_stale_body() {
   let app = router(Arc::new(MemoryRunStore::new(authority_id())));
   let delayed = app

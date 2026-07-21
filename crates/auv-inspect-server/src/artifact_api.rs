@@ -37,6 +37,7 @@ const V1_MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const DRAFT_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 const ADMISSION_LEASE: Duration = Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS);
 const MAX_ACTIVE_DRAFTS_PER_RUN: usize = 4_096;
+const MAX_ACTIVE_DRAFTS: usize = 16_384;
 const MAX_PUBLISHED_RESPONSES: usize = 4_096;
 const MAX_EXPIRED_TOMBSTONES: usize = 4_096;
 
@@ -45,6 +46,7 @@ pub(crate) struct ArtifactApiState {
   clock: Clock,
   max_artifact_bytes: u64,
   max_active_drafts_per_run: usize,
+  max_active_drafts: usize,
 }
 
 impl ArtifactApiState {
@@ -54,6 +56,7 @@ impl ArtifactApiState {
       clock: Clock::new(),
       max_artifact_bytes: V1_MAX_ARTIFACT_BYTES,
       max_active_drafts_per_run: MAX_ACTIVE_DRAFTS_PER_RUN,
+      max_active_drafts: MAX_ACTIVE_DRAFTS,
     }
   }
 
@@ -64,16 +67,18 @@ impl ArtifactApiState {
       clock: Clock::new(),
       max_artifact_bytes,
       max_active_drafts_per_run: MAX_ACTIVE_DRAFTS_PER_RUN,
+      max_active_drafts: MAX_ACTIVE_DRAFTS,
     }
   }
 
   #[cfg(test)]
-  fn with_limits(max_artifact_bytes: u64, max_active_drafts_per_run: usize) -> Self {
+  fn with_limits(max_artifact_bytes: u64, max_active_drafts_per_run: usize, max_active_drafts: usize) -> Self {
     Self {
       drafts: Mutex::new(DraftIndexes::default()),
       clock: Clock::new(),
       max_artifact_bytes,
       max_active_drafts_per_run,
+      max_active_drafts,
     }
   }
 
@@ -125,6 +130,7 @@ struct DraftIndexes {
   by_key: HashMap<(RunId, IdempotencyKey), ArtifactUploadId>,
   by_uri: HashMap<ArtifactUri, ArtifactUploadId>,
   active_by_run: HashMap<RunId, usize>,
+  active_count: usize,
   published_count: usize,
   tombstone_count: usize,
   published_order: BTreeSet<DraftQueueEntry>,
@@ -301,8 +307,8 @@ impl DraftIndexes {
     Some(record)
   }
 
-  fn insert(&mut self, mut record: DraftRecord, capacity: usize) -> Result<(), ()> {
-    if self.active_by_run.get(&record.run_id).copied().unwrap_or(0) >= capacity {
+  fn insert(&mut self, mut record: DraftRecord, per_run_capacity: usize, global_capacity: usize) -> Result<(), ()> {
+    if self.active_by_run.get(&record.run_id).copied().unwrap_or(0) >= per_run_capacity || self.active_count >= global_capacity {
       return Err(());
     }
     let upload_id = record.draft.upload_id();
@@ -321,6 +327,7 @@ impl DraftIndexes {
     self.by_uri.insert(record.draft.artifact_uri().clone(), upload_id);
     self.by_upload.insert((run_id, upload_id), record);
     *self.active_by_run.entry(run_id).or_default() += 1;
+    self.active_count += 1;
     Ok(())
   }
 
@@ -453,10 +460,9 @@ impl DraftIndexes {
   }
 
   fn decrement_active(&mut self, run_id: RunId) {
-    let Some(count) = self.active_by_run.get_mut(&run_id) else {
-      return;
-    };
-    *count -= 1;
+    let count = self.active_by_run.get_mut(&run_id).expect("pending artifact draft has an active run count");
+    *count = count.checked_sub(1).expect("artifact draft active run count underflow");
+    self.active_count = self.active_count.checked_sub(1).expect("artifact draft global active count underflow");
     if *count == 0 {
       self.active_by_run.remove(&run_id);
     }
@@ -605,7 +611,9 @@ async fn create_draft(
     }
     if existing.is_none() {
       record.generation = indexes.allocate_generation();
-      indexes.insert(record, state.artifacts.max_active_drafts_per_run).map_err(|_| ArtifactFailure::capacity())?;
+      indexes
+        .insert(record, state.artifacts.max_active_drafts_per_run, state.artifacts.max_active_drafts)
+        .map_err(|_| ArtifactFailure::capacity())?;
     }
     existing
   };
@@ -679,6 +687,13 @@ fn resolve_cached_draft(
         return Ok(DraftResolution::Lookup(DraftLookupReason::Indeterminate { generation }));
       }
       let response_admission = match pending.admission {
+        AdmissionState::Admitted { id, .. } if id.matches(admission) => {
+          pending.admission = AdmissionState::Admitted {
+            id,
+            lease_deadline: now + ADMISSION_LEASE,
+          };
+          DraftAdmission::Granted(admission)
+        }
         AdmissionState::Released(previous) if !previous.matches(admission) => {
           let lease_deadline = now + ADMISSION_LEASE;
           pending.admission = AdmissionState::Admitted {
@@ -1542,9 +1557,13 @@ mod tests {
   }
 
   fn test_draft_request(artifact_id: &str, key: &str, admission: &str) -> Request {
+    test_draft_request_for(RUN, artifact_id, key, admission)
+  }
+
+  fn test_draft_request_for(run_id: &str, artifact_id: &str, key: &str, admission: &str) -> Request {
     Request::builder()
       .method("POST")
-      .uri(format!("/v1/runs/{RUN}/artifact-uploads"))
+      .uri(format!("/v1/runs/{run_id}/artifact-uploads"))
       .header(CONTENT_TYPE, ARTIFACT_UPLOAD_MEDIA_TYPE)
       .header("Idempotency-Key", key)
       .header(ARTIFACT_UPLOAD_ADMISSION_HEADER, admission)
@@ -1685,7 +1704,7 @@ mod tests {
   #[tokio::test(start_paused = true)]
   async fn abandoned_and_indeterminate_drafts_consume_the_hard_capacity() {
     let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
-    let (app, state) = test_app(store, ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1));
+    let (app, state) = test_app(store, ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1, 1));
     let draft = create_test_draft(&app).await;
 
     let abandoned_capacity = app
@@ -1732,6 +1751,76 @@ mod tests {
     ));
   }
 
+  #[tokio::test(start_paused = true)]
+  async fn global_active_capacity_rejects_unrelated_runs_until_expiry_releases_every_slot() {
+    let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
+    let (app, state) = test_app(store, ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 2, 3));
+    for _ in 0..3 {
+      let run_id = RunId::new().to_string();
+      let artifact_id = auv_tracing::ArtifactId::new().to_string();
+      let key = IdempotencyKey::new().to_string();
+      let admission = ArtifactUploadAdmissionId::new().to_string();
+      let response = app.clone().oneshot(test_draft_request_for(&run_id, &artifact_id, &key, &admission)).await.unwrap();
+      assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    assert_eq!(state.artifacts.drafts.lock().unwrap().active_count, 3);
+
+    let blocked = app
+      .clone()
+      .oneshot(test_draft_request_for(
+        &RunId::new().to_string(),
+        &auv_tracing::ArtifactId::new().to_string(),
+        &IdempotencyKey::new().to_string(),
+        &ArtifactUploadAdmissionId::new().to_string(),
+      ))
+      .await
+      .unwrap();
+    assert_eq!(blocked.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response_json(blocked).await, json!({"error":"auv.inspect.upload_capacity_exhausted"}));
+
+    tokio::time::advance(DRAFT_LIFETIME).await;
+    let released = app
+      .oneshot(test_draft_request_for(
+        &RunId::new().to_string(),
+        &auv_tracing::ArtifactId::new().to_string(),
+        &IdempotencyKey::new().to_string(),
+        &ArtifactUploadAdmissionId::new().to_string(),
+      ))
+      .await
+      .unwrap();
+    assert_eq!(released.status(), StatusCode::CREATED);
+    assert_eq!(state.artifacts.drafts.lock().unwrap().active_count, 1);
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn indeterminate_reservation_remains_bounded_by_global_capacity() {
+    let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
+    let (app, state) = test_app(store, ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 2, 1));
+    let draft = create_test_draft(&app).await;
+    {
+      let mut indexes = state.artifacts.drafts.lock().unwrap();
+      let record = indexes.by_upload.get_mut(&(RUN.parse().unwrap(), draft.upload_id())).unwrap();
+      let DraftState::Pending(pending) = &mut record.state else {
+        panic!("new draft must be pending");
+      };
+      pending.admission = AdmissionState::Indeterminate(ADMISSION.parse().unwrap());
+    }
+    tokio::time::advance(DRAFT_LIFETIME + DRAFT_LIFETIME).await;
+
+    let blocked = app
+      .oneshot(test_draft_request_for(
+        &RunId::new().to_string(),
+        &auv_tracing::ArtifactId::new().to_string(),
+        &IdempotencyKey::new().to_string(),
+        &ArtifactUploadAdmissionId::new().to_string(),
+      ))
+      .await
+      .unwrap();
+
+    assert_eq!(blocked.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(state.artifacts.drafts.lock().unwrap().active_count, 1);
+  }
+
   #[test]
   fn active_capacity_is_counted_per_run() {
     let mut indexes = DraftIndexes::default();
@@ -1740,8 +1829,8 @@ mod tests {
     let second =
       pending_record(&mut indexes, RunId::new(), IdempotencyKey::new(), auv_tracing::ArtifactId::new(), ArtifactUploadAdmissionId::new());
 
-    assert!(indexes.insert(first, 1).is_ok());
-    assert!(indexes.insert(second, 1).is_ok());
+    assert!(indexes.insert(first, 1, 2).is_ok());
+    assert!(indexes.insert(second, 1, 2).is_ok());
   }
 
   #[test]
@@ -1752,15 +1841,16 @@ mod tests {
       let admission = ArtifactUploadAdmissionId::new();
       let record = pending_record(&mut indexes, run_id, IdempotencyKey::new(), auv_tracing::ArtifactId::new(), admission);
       let upload_id = record.draft.upload_id();
-      assert!(indexes.insert(record, MAX_ACTIVE_DRAFTS_PER_RUN).is_ok());
+      assert!(indexes.insert(record, MAX_ACTIVE_DRAFTS_PER_RUN, 1).is_ok());
       indexes.cache_published(run_id, upload_id, admission, tokio::time::Instant::now());
     }
 
     let next = pending_record(&mut indexes, run_id, IdempotencyKey::new(), auv_tracing::ArtifactId::new(), ArtifactUploadAdmissionId::new());
-    assert!(indexes.insert(next, MAX_ACTIVE_DRAFTS_PER_RUN).is_ok());
+    assert!(indexes.insert(next, MAX_ACTIVE_DRAFTS_PER_RUN, 1).is_ok());
     assert_eq!(indexes.published_count, MAX_PUBLISHED_RESPONSES);
     assert_eq!(indexes.published_order.len(), MAX_PUBLISHED_RESPONSES);
     assert_eq!(indexes.deadlines.len(), MAX_PUBLISHED_RESPONSES + 1);
+    assert_eq!(indexes.active_count, 1);
   }
 
   #[test]
@@ -1771,7 +1861,7 @@ mod tests {
       let record =
         pending_record(&mut indexes, run_id, IdempotencyKey::new(), auv_tracing::ArtifactId::new(), ArtifactUploadAdmissionId::new());
       let upload_id = record.draft.upload_id();
-      assert!(indexes.insert(record, 1).is_ok());
+      assert!(indexes.insert(record, 1, 1).is_ok());
       indexes.expire(run_id, upload_id);
     }
 
@@ -1782,12 +1872,13 @@ mod tests {
     assert_eq!(indexes.tombstone_count, MAX_EXPIRED_TOMBSTONES);
     assert_eq!(indexes.tombstone_order.len(), MAX_EXPIRED_TOMBSTONES);
     assert_eq!(indexes.deadlines.len(), MAX_EXPIRED_TOMBSTONES);
+    assert_eq!(indexes.active_count, 0);
   }
 
   #[tokio::test]
   async fn indeterminate_mismatch_clears_the_run_capacity_before_conflict() {
     let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
-    let (app, state) = test_app(store.clone(), ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1));
+    let (app, state) = test_app(store.clone(), ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1, 1));
     let draft = create_test_draft(&app).await;
     {
       let mut indexes = state.artifacts.drafts.lock().unwrap();
@@ -1821,6 +1912,7 @@ mod tests {
 
     let conflict = app.clone().oneshot(test_draft_request(ARTIFACT, KEY, ADMISSION)).await.unwrap();
     assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(state.artifacts.drafts.lock().unwrap().active_count, 0);
 
     let artifact_id = auv_tracing::ArtifactId::new().to_string();
     let key = IdempotencyKey::new().to_string();
@@ -1832,7 +1924,7 @@ mod tests {
   #[tokio::test]
   async fn indeterminate_matching_lookup_moves_the_response_out_of_active_capacity() {
     let store = MemoryRunStore::new(AUTHORITY.parse().unwrap());
-    let (app, state) = test_app(store.clone(), ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1));
+    let (app, state) = test_app(store.clone(), ArtifactApiState::with_limits(V1_MAX_ARTIFACT_BYTES, 1, 1));
     let draft = create_test_draft(&app).await;
     {
       let mut indexes = state.artifacts.drafts.lock().unwrap();
@@ -1864,6 +1956,7 @@ mod tests {
     let replay = app.clone().oneshot(test_draft_request(ARTIFACT, KEY, ADMISSION)).await.unwrap();
     assert_eq!(replay.status(), StatusCode::OK);
     assert_eq!(replay.headers().get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap(), ARTIFACT_UPLOAD_ADMISSION_BUSY);
+    assert_eq!(state.artifacts.drafts.lock().unwrap().active_count, 0);
 
     let artifact_id = auv_tracing::ArtifactId::new().to_string();
     let key = IdempotencyKey::new().to_string();

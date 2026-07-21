@@ -13,8 +13,9 @@ use auv_tracing::{
   RunStore, RunSubscription, Sha256Digest, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_inspect::protocol::{
-  ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactApiError, ArtifactUploadDraft, ArtifactUploadId, AuthorityResponse,
-  RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact, RunApiError, RunStreamGap,
+  ARTIFACT_ORIGIN_HEADER, ARTIFACT_UPLOAD_ADMISSION_HEADER, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE,
+  ArtifactApiError, ArtifactUploadDraft, ArtifactUploadId, AuthorityResponse, RUN_MEDIA_TYPE, ResolveArtifactsResponse, ResolvedArtifact,
+  RunApiError, RunStreamGap,
 };
 use auv_tracing_inspect::{InspectRunStore, TokioTaskSpawner};
 use axum::Router;
@@ -307,6 +308,73 @@ async fn connect_fetches_authority_before_store_installation_and_all_core_reads_
 }
 
 #[tokio::test]
+async fn connect_pins_a_separate_artifact_base_path_for_resolution() {
+  let artifact_origin = Url::parse("https://artifacts.example/public/inspect/").unwrap();
+  let server =
+    TestServer::start(router_with_artifact_origin(Arc::new(MemoryRunStore::new(authority_id())), artifact_origin.clone()).unwrap()).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+  let artifact_id = ArtifactId::new();
+  let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+  store.write_artifact(request, Box::pin(Cursor::new(b"abc".to_vec()))).await.unwrap();
+  let uri = ArtifactUri::from_ids(run_id(), artifact_id);
+
+  let resolved = store.resolve_artifacts(vec![uri.clone()]).await.unwrap();
+
+  assert!(matches!(&resolved[0], ResolvedArtifact::Available { content_url, .. }
+    if content_url == &artifact_origin.join(&format!("v1/runs/{}/artifacts/{}", uri.run_id(), uri.artifact_id())).unwrap()));
+}
+
+#[tokio::test]
+async fn connect_rejects_duplicate_or_unsafe_artifact_origin_headers() {
+  let cases: &[&[&str]] = &[
+    &["https://artifacts.example/", "https://artifacts.example/"],
+    &["not-an-absolute-url"],
+    &["ftp://artifacts.example/"],
+    &["https://user@artifacts.example/"],
+    &["https://artifacts.example/base?download=1"],
+    &["https://artifacts.example/base#preview"],
+    &["https://artifacts.example/%2e%2e/"],
+  ];
+  for values in cases {
+    let values = values.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+    let app = Router::new().route(
+      "/v1/authority",
+      get(move || {
+        let values = values.clone();
+        async move {
+          let mut response = run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          );
+          for value in values {
+            response.headers_mut().append(ARTIFACT_ORIGIN_HEADER, HeaderValue::from_str(&value).unwrap());
+          }
+          response
+        }
+      }),
+    );
+    let server = TestServer::start(app).await;
+
+    assert!(InspectRunStore::connect(server.base_url.clone()).await.is_err());
+  }
+}
+
+#[tokio::test]
+async fn missing_artifact_origin_defaults_to_connection_base_but_unconfigured_router_cannot_resolve_available() {
+  let server = TestServer::start(router(Arc::new(MemoryRunStore::new(authority_id())))).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+  let artifact_id = ArtifactId::new();
+  let request = artifact_request(authority_id(), artifact_id, IdempotencyKey::new());
+  store.write_artifact(request, Box::pin(Cursor::new(b"abc".to_vec()))).await.unwrap();
+
+  let error = store.resolve_artifacts(vec![ArtifactUri::from_ids(run_id(), artifact_id)]).await.unwrap_err();
+
+  assert_eq!(error, ReadError::Unavailable(error_code("auv.inspect.artifact_origin_unavailable")));
+}
+
+#[tokio::test]
 async fn connect_rejects_an_authority_redirect_without_contacting_the_new_origin() {
   let attacker_hits = Arc::new(AtomicUsize::new(0));
   let observed_hits = attacker_hits.clone();
@@ -480,8 +548,8 @@ async fn client_reconstructs_every_artifact_write_error_class() {
         received: authority_id(),
       },
       ArtifactWriteError::AuthorityMismatch {
-        expected: authority_id(),
-        received: OTHER_AUTHORITY.parse().unwrap(),
+        expected: OTHER_AUTHORITY.parse().unwrap(),
+        received: authority_id(),
       },
     ),
     (ArtifactWriteError::IdempotencyMismatch, ArtifactWriteError::IdempotencyMismatch),
@@ -696,6 +764,16 @@ struct DraftPostBarrier {
   calls: Arc<AtomicUsize>,
 }
 
+#[derive(Clone)]
+struct SlowDraftResponse {
+  response_ready: Arc<tokio::sync::Barrier>,
+  release_response: Arc<tokio::sync::Barrier>,
+  posts: Arc<AtomicUsize>,
+  admissions: Arc<Mutex<Vec<String>>>,
+  body_polls: Arc<AtomicUsize>,
+  polls_at_posts: Arc<Mutex<Vec<usize>>>,
+}
+
 async fn synchronize_draft_posts(State(state): State<DraftPostBarrier>, request: AxumRequest, next: Next) -> Response {
   if request.method() != Method::POST || !request.uri().path().ends_with("/artifact-uploads") {
     return next.run(request).await;
@@ -706,6 +784,21 @@ async fn synchronize_draft_posts(State(state): State<DraftPostBarrier>, request:
   state.entered.wait().await;
   let response = next.run(request).await;
   state.decided.wait().await;
+  response
+}
+
+async fn delay_first_successful_draft_response(State(state): State<SlowDraftResponse>, request: AxumRequest, next: Next) -> Response {
+  if request.method() != Method::POST || !request.uri().path().ends_with("/artifact-uploads") {
+    return next.run(request).await;
+  }
+  state.admissions.lock().unwrap().push(request.headers().get(ARTIFACT_UPLOAD_ADMISSION_HEADER).unwrap().to_str().unwrap().to_owned());
+  state.polls_at_posts.lock().unwrap().push(state.body_polls.load(Ordering::SeqCst));
+  let call = state.posts.fetch_add(1, Ordering::SeqCst);
+  let response = next.run(request).await;
+  if call == 0 {
+    state.response_ready.wait().await;
+    state.release_response.wait().await;
+  }
   response
 }
 
@@ -1024,6 +1117,65 @@ async fn delayed_busy_draft_replay_rotates_admission_without_polling_the_body() 
   assert_eq!(admissions.len(), 3);
   assert_eq!(admissions[0], admissions[1]);
   assert_ne!(admissions[1], admissions[2]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn slow_successful_draft_response_refreshes_before_polling_or_putting_the_body() {
+  let clock_guard = tokio::spawn(async {
+    loop {
+      tokio::task::yield_now().await;
+    }
+  });
+  let body_polls = Arc::new(AtomicUsize::new(0));
+  let state = SlowDraftResponse {
+    response_ready: Arc::new(tokio::sync::Barrier::new(2)),
+    release_response: Arc::new(tokio::sync::Barrier::new(2)),
+    posts: Arc::new(AtomicUsize::new(0)),
+    admissions: Arc::new(Mutex::new(Vec::new())),
+    body_polls: body_polls.clone(),
+    polls_at_posts: Arc::new(Mutex::new(Vec::new())),
+  };
+  let app = router(Arc::new(MemoryRunStore::new(authority_id())))
+    .layer(middleware::from_fn_with_state(state.clone(), delay_first_successful_draft_response));
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+  let request = artifact_request(authority_id(), ArtifactId::new(), IdempotencyKey::new());
+  let task_polls = body_polls.clone();
+  let upload = tokio::spawn(async move {
+    store
+      .write_artifact(
+        request,
+        Box::pin(CountingReader {
+          inner: Cursor::new(b"abc".to_vec()),
+          polls: task_polls,
+        }),
+      )
+      .await
+  });
+  state.response_ready.wait().await;
+  assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+
+  tokio::time::advance(std::time::Duration::from_secs(ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS + 1)).await;
+  assert_eq!(body_polls.load(Ordering::SeqCst), 0);
+  state.release_response.wait().await;
+  let result = upload.await.unwrap();
+  assert!(
+    result.is_ok(),
+    "{result:?}; posts={}; admissions={:?}; polls_at_posts={:?}",
+    state.posts.load(Ordering::SeqCst),
+    state.admissions.lock().unwrap(),
+    state.polls_at_posts.lock().unwrap()
+  );
+  let result = result.unwrap();
+
+  assert!(result.is_appended());
+  assert!(body_polls.load(Ordering::SeqCst) > 0);
+  assert_eq!(*state.polls_at_posts.lock().unwrap(), vec![0, 0, 0]);
+  let admissions = state.admissions.lock().unwrap();
+  assert_eq!(admissions.len(), 3);
+  assert_eq!(admissions[0], admissions[1]);
+  assert_ne!(admissions[1], admissions[2]);
+  clock_guard.abort();
 }
 
 struct RawRequest {
@@ -2604,6 +2756,49 @@ async fn resolver_rejects_untrusted_origins_and_noncanonical_artifact_paths() {
 
     assert!(matches!(store.resolve_artifacts(vec![requested.clone()]).await, Err(ReadError::Integrity(_))));
   }
+}
+
+#[tokio::test]
+async fn resolver_rejects_cross_scheme_content_under_the_pinned_artifact_origin() {
+  let requested = ArtifactUri::from_ids(run_id(), ArtifactId::new());
+  let artifact_origin = Url::parse("https://artifacts.example/public/").unwrap();
+  let relative = format!("v1/runs/{}/artifacts/{}", requested.run_id(), requested.artifact_id());
+  let payload = ResolveArtifactsResponse::new(vec![ResolvedArtifact::Available {
+    uri: requested.clone(),
+    content_type: ContentType::parse("text/plain").unwrap(),
+    byte_length: ByteLength::new(3).unwrap(),
+    sha256: Sha256Digest::from_str(ABC_SHA256).unwrap(),
+    content_url: Url::parse(&format!("http://artifacts.example/public/{relative}")).unwrap(),
+  }]);
+  let advertised = artifact_origin.to_string();
+  let app = Router::new()
+    .route(
+      "/v1/authority",
+      get(move || {
+        let advertised = advertised.clone();
+        async move {
+          let mut response = run_json(
+            StatusCode::OK,
+            &AuthorityResponse {
+              authority_id: authority_id(),
+            },
+          );
+          response.headers_mut().insert(ARTIFACT_ORIGIN_HEADER, HeaderValue::from_str(&advertised).unwrap());
+          response
+        }
+      }),
+    )
+    .route(
+      "/v1/resources/artifacts/resolve",
+      post(move || {
+        let payload = payload.clone();
+        async move { response(StatusCode::OK, "application/json", Body::from(serde_json::to_vec(&payload).unwrap())) }
+      }),
+    );
+  let server = TestServer::start(app).await;
+  let store = InspectRunStore::connect(server.base_url.clone()).await.unwrap();
+
+  assert!(matches!(store.resolve_artifacts(vec![requested]).await, Err(ReadError::Integrity(_))));
 }
 
 #[tokio::test]
