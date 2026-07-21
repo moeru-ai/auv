@@ -1,5 +1,5 @@
 [package]
-name = "auv-inspect-model"
+name = "auv-tracing-inspect"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ publish.workspace = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Disposable Inspect viewer DTOs derived from canonical run snapshots"
+description = "HTTP-neutral protocol contracts for the AUV Inspect run authority"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -15,6 +15,5 @@ repository.workspace = true
 [dependencies]
 auv-tracing = { path = "../auv-tracing" }
 serde.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror.workspace = true
