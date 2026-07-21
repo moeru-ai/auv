@@ -1,7 +1,9 @@
 mod support;
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Barrier};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use auv_tracing::{
@@ -11,12 +13,16 @@ use auv_tracing::{
 };
 use auv_tracing_otel::OtelProjector;
 use futures_executor::block_on;
+use futures_util::FutureExt;
 use opentelemetry::Value;
 use opentelemetry::logs::AnyValue;
 use opentelemetry::trace::{Event as OtelEvent, SpanId, Status, TraceId};
 use opentelemetry_sdk::logs::{BatchConfigBuilder as LogBatchConfigBuilder, BatchLogProcessor, SdkLoggerProvider};
 use opentelemetry_sdk::trace::{BatchConfigBuilder as SpanBatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider, SpanData};
-use support::{BoundedLogExporter, BoundedSpanExporter, FlushProbeLogProcessor, FlushProbeSpanProcessor, MAX_EXPORTED_ITEMS};
+use support::{
+  BoundedLogExporter, BoundedSpanExporter, CallbackLogProcessor, CallbackSpanProcessor, FlushProbeLogProcessor, FlushProbeSpanProcessor,
+  MAX_EXPORTED_ITEMS,
+};
 
 fn providers() -> (SdkTracerProvider, SdkLoggerProvider, BoundedSpanExporter, BoundedLogExporter) {
   let span_exporter = BoundedSpanExporter::default();
@@ -799,4 +805,127 @@ fn bounded_log_exporter_overflow_is_reported_by_flush() {
   let error = block_on(projector.flush()).unwrap_err();
   assert_eq!(error.code().as_str(), "auv.telemetry.otel_flush_failed");
   assert!(log_exporter.logs().is_empty());
+}
+
+#[test]
+fn otel_reentrant_processor_projection_fails_without_hanging() {
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let span_id = AuvSpanId::new();
+  let projector_slot = Arc::new(Mutex::new(None::<std::sync::Weak<OtelProjector>>));
+  let callback_slot = Arc::clone(&projector_slot);
+  let (reentrant_tx, reentrant_rx) = mpsc::channel();
+  let processor = CallbackSpanProcessor::new(
+    Arc::new(move || {
+      let projector = callback_slot.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
+      let result = projector.project(event(Some(authority_id), run_id, None)).now_or_never().expect("projector future is immediately ready");
+      reentrant_tx.send(result).unwrap();
+    }),
+    Arc::new(|| {}),
+  );
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(processor).build();
+  let logger_provider = SdkLoggerProvider::builder().build();
+  let projector = Arc::new(OtelProjector::new(tracer_provider, logger_provider));
+  *projector_slot.lock().unwrap() = Some(Arc::downgrade(&projector));
+  let (done_tx, done_rx) = mpsc::channel();
+  let worker_projector = Arc::clone(&projector);
+  let worker = std::thread::spawn(move || {
+    done_tx.send(project(&worker_projector, span_start(Some(authority_id), run_id, span_id, None, 10))).unwrap();
+  });
+
+  done_rx.recv_timeout(Duration::from_secs(2)).expect("OTEL processor callback deadlocked").unwrap();
+  let reentrant = reentrant_rx.recv_timeout(Duration::from_secs(2)).expect("reentrant projection did not return").unwrap_err();
+  assert_eq!(reentrant.code().as_str(), "auv.telemetry.otel_reentrant_projection");
+  worker.join().unwrap();
+}
+
+#[test]
+fn otel_processor_panics_do_not_poison_projector_state() {
+  let panic_start = Arc::new(AtomicBool::new(true));
+  let start_flag = Arc::clone(&panic_start);
+  let start_processor = CallbackSpanProcessor::new(
+    Arc::new(move || {
+      if start_flag.swap(false, Ordering::SeqCst) {
+        panic!("test OTEL on_start panic");
+      }
+    }),
+    Arc::new(|| {}),
+  );
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(start_processor).build();
+  let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
+  let first_authority_id = AuthorityId::new();
+  let second_authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let panic =
+    catch_unwind(AssertUnwindSafe(|| project(&projector, span_start(Some(first_authority_id), run_id, AuvSpanId::new(), None, 10))));
+  assert!(panic.is_err());
+  let span_id = AuvSpanId::new();
+  project(&projector, span_start(Some(second_authority_id), run_id, span_id, None, 10)).unwrap();
+  project(&projector, span_end(Some(second_authority_id), run_id, span_id, 11)).unwrap();
+
+  let panic_end = Arc::new(AtomicBool::new(true));
+  let end_flag = Arc::clone(&panic_end);
+  let end_processor = CallbackSpanProcessor::new(
+    Arc::new(|| {}),
+    Arc::new(move || {
+      if end_flag.swap(false, Ordering::SeqCst) {
+        panic!("test OTEL on_end panic");
+      }
+    }),
+  );
+  let tracer_provider = SdkTracerProvider::builder().with_span_processor(end_processor).build();
+  let projector = OtelProjector::new(tracer_provider, SdkLoggerProvider::builder().build());
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let span_id = AuvSpanId::new();
+  project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+  let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, span_end(Some(authority_id), run_id, span_id, 11))));
+  assert!(panic.is_err());
+  project(&projector, span_end(Some(authority_id), run_id, span_id, 11)).unwrap();
+}
+
+#[test]
+fn otel_invalid_root_context_does_not_claim_run_authority() {
+  let tracer_provider = SdkTracerProvider::builder().build();
+  let projector = OtelProjector::new(tracer_provider.clone(), SdkLoggerProvider::builder().build());
+  tracer_provider.shutdown().unwrap();
+  let run_id = RunId::new();
+
+  let first = project(&projector, span_start(Some(AuthorityId::new()), run_id, AuvSpanId::new(), None, 10)).unwrap_err();
+  assert_eq!(first.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+  let second = project(&projector, span_start(Some(AuthorityId::new()), run_id, AuvSpanId::new(), None, 10)).unwrap_err();
+  assert_eq!(second.code().as_str(), "auv.telemetry.otel_invalid_span_context");
+}
+
+#[test]
+fn otel_failed_run_emission_does_not_claim_authority() {
+  for artifact_projection in [false, true] {
+    let panic_emit = Arc::new(AtomicBool::new(true));
+    let emit_flag = Arc::clone(&panic_emit);
+    let processor = CallbackLogProcessor::new(Arc::new(move || {
+      if emit_flag.swap(false, Ordering::SeqCst) {
+        panic!("test OTEL log processor panic");
+      }
+    }));
+    let logger_provider = SdkLoggerProvider::builder().with_log_processor(processor).build();
+    let projector = OtelProjector::new(SdkTracerProvider::builder().build(), logger_provider);
+    let first_authority_id = AuthorityId::new();
+    let second_authority_id = AuthorityId::new();
+    let run_id = RunId::new();
+
+    let first = if artifact_projection {
+      artifact(first_authority_id, run_id, None)
+    } else {
+      event(Some(first_authority_id), run_id, None)
+    };
+    let panic = catch_unwind(AssertUnwindSafe(|| project(&projector, first)));
+    assert!(panic.is_err());
+
+    let second = if artifact_projection {
+      artifact(second_authority_id, run_id, None)
+    } else {
+      event(Some(second_authority_id), run_id, None)
+    };
+    project(&projector, second).unwrap();
+  }
 }
