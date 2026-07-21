@@ -7,6 +7,7 @@ use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, BoxFuture, CommitError, CommitResult,
   ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunMutation,
   RunRevision, RunStore, RunSubscription, SpanId, SpanName, SpanStarted, StoreArtifactRequest, Timestamp,
+  artifact_identity_conflict_error_code,
 };
 use auv_tracing_inspect::protocol::{
   ARTIFACT_IDENTITY_CONFLICT_ERROR, ARTIFACT_UPLOAD_ADMISSION_LEASE_SECONDS, ARTIFACT_UPLOAD_MEDIA_TYPE, ArtifactUploadDraft,
@@ -778,6 +779,7 @@ async fn artifact_store_error_classes_have_distinct_stable_status_and_code_mappi
     ),
     (ArtifactWriteError::IdempotencyMismatch, StatusCode::CONFLICT, json!({"error":IDEMPOTENCY_MISMATCH_ERROR})),
     (ArtifactWriteError::Rejected(error_code("auv.test.rejected")), StatusCode::BAD_REQUEST, json!({"error":"auv.test.rejected"})),
+    (ArtifactWriteError::Rejected(error_code("auv.store.rejected")), StatusCode::BAD_REQUEST, json!({"error":"auv.store.rejected"})),
     (
       ArtifactWriteError::Integrity(error_code("auv.test.integrity")),
       StatusCode::UNPROCESSABLE_ENTITY,
@@ -809,7 +811,7 @@ async fn artifact_store_error_classes_have_distinct_stable_status_and_code_mappi
 #[tokio::test]
 async fn authoritative_store_identity_rejection_uses_the_public_conflict_code_without_polling_the_body() {
   let store = ProbeStore::new();
-  store.fail_next_write(ArtifactWriteError::Rejected(error_code("auv.store.rejected")));
+  store.fail_next_write(ArtifactWriteError::Rejected(artifact_identity_conflict_error_code()));
   let app = router(Arc::new(store));
   let draft = create_draft(&app, ARTIFACT, KEY).await;
   let polls = Arc::new(AtomicUsize::new(0));

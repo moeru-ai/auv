@@ -10,7 +10,7 @@ use std::thread::{self, Thread};
 use auv_tracing::{
   ArtifactId, ArtifactPurpose, ArtifactWriteError, Attributes, AuthorityId, ByteLength, CommitResult, ContentType, EventId, EventName,
   EventOccurred, EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, RunCommitRequest, RunId, RunMutation, RunRevision, RunStore,
-  Sha256Digest, StoreArtifactRequest, Timestamp,
+  Sha256Digest, StoreArtifactRequest, Timestamp, artifact_identity_conflict_error_code,
 };
 use auv_tracing_conformance::{assert_gap_contract, assert_store_contract};
 use futures_io::AsyncRead;
@@ -169,11 +169,31 @@ fn pending_artifact_uri_conflict_rejects_without_polling() {
     let conflicting_body = ProbeBody::new(bytes);
     let conflicting_polled = conflicting_body.polled();
     let mut conflicting_write = store.write_artifact(conflicting, Box::pin(conflicting_body));
-    assert!(matches!(
+    assert_eq!(
       poll_with(conflicting_write.as_mut(), &Arc::new(CountingWake::default())),
-      Poll::Ready(Err(ArtifactWriteError::Rejected(_)))
-    ));
+      Poll::Ready(Err(ArtifactWriteError::Rejected(artifact_identity_conflict_error_code())))
+    );
     assert!(!conflicting_polled.load(Ordering::SeqCst));
+  });
+}
+
+#[test]
+fn published_artifact_uri_conflict_uses_the_identity_code_without_polling() {
+  block_on(async {
+    let store = MemoryRunStore::new(AuthorityId::new());
+    let run_id = RunId::new();
+    let artifact_id = ArtifactId::new();
+    let bytes = b"published bytes".to_vec();
+    let published = artifact_request(&store, run_id, IdempotencyKey::new(), artifact_id, &bytes);
+    store.write_artifact(published, Box::pin(ProbeBody::new(bytes.clone()))).await.unwrap();
+
+    let conflicting = artifact_request(&store, run_id, IdempotencyKey::new(), artifact_id, &bytes);
+    let body = ProbeBody::new(bytes);
+    let polled = body.polled();
+    let error = store.write_artifact(conflicting, Box::pin(body)).await.expect_err("published artifact identity conflict");
+
+    assert_eq!(error, ArtifactWriteError::Rejected(artifact_identity_conflict_error_code()));
+    assert!(!polled.load(Ordering::SeqCst));
   });
 }
 

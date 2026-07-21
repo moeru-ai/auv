@@ -11,7 +11,10 @@ use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use auv_tracing::{ArtifactId, AuthorityId, EventId, FileRunStore, IdempotencyKey, PageLimit, RunFact, RunId, RunRevision, RunStore};
+use auv_tracing::{
+  ArtifactId, ArtifactWriteError, AuthorityId, EventId, FileRunStore, IdempotencyKey, PageLimit, RunFact, RunId, RunRevision, RunStore,
+  artifact_identity_conflict_error_code,
+};
 use auv_tracing_conformance::{artifact_request, assert_store_contract};
 use futures_timer::Delay;
 use futures_util::future::{Either, select};
@@ -27,6 +30,23 @@ fn file_store_satisfies_authority_contract() {
     let root = tempfile::tempdir().unwrap().keep();
     Arc::new(FileRunStore::open(root).unwrap())
   }));
+}
+
+#[test]
+fn published_artifact_uri_conflict_uses_the_identity_code() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  let artifact_id = ArtifactId::new();
+  let bytes = b"published file artifact";
+  let published = artifact_request(store.authority_id(), run_id, IdempotencyKey::new(), artifact_id, bytes);
+  futures_executor::block_on(store.write_artifact(published, Box::pin(futures_util::io::Cursor::new(bytes)))).unwrap();
+
+  let conflicting = artifact_request(store.authority_id(), run_id, IdempotencyKey::new(), artifact_id, bytes);
+  let error = futures_executor::block_on(store.write_artifact(conflicting, Box::pin(futures_util::io::Cursor::new(bytes))))
+    .expect_err("published artifact identity conflict");
+
+  assert_eq!(error, ArtifactWriteError::Rejected(artifact_identity_conflict_error_code()));
 }
 
 #[test]

@@ -29,7 +29,7 @@ use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
 
 use super::{
   ArtifactBody, ArtifactReadError, ArtifactReader, ArtifactWriteError, BoxFuture, CommitError, CommitResult, ReadError, RunCommitPage,
-  RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError,
+  RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError, artifact_identity_conflict_error_code,
 };
 use crate::history::IncrementalReducer;
 use crate::{
@@ -448,7 +448,7 @@ fn precheck_artifact(
     return Err(ArtifactWriteError::IdempotencyMismatch);
   }
   if index.reducer.snapshot().artifacts().contains_key(uri) {
-    return Err(ArtifactWriteError::Rejected(rejected()));
+    return Err(ArtifactWriteError::Rejected(artifact_identity_conflict_error_code()));
   }
   Ok(None)
 }
