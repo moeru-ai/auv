@@ -554,13 +554,13 @@ async fn create_draft(
       let draft = published_draft(&commit, uri);
       return Ok(draft_response(StatusCode::OK, &draft, DraftAdmission::Busy));
     }
-    Some(_) => return Err(ArtifactFailure::conflict()),
+    Some(_) => return Err(ArtifactFailure::idempotency_mismatch()),
     None => {}
   }
 
   if let Some(snapshot) = state.store.load_snapshot(run_id).await.map_err(ArtifactFailure::from_read)? {
     if snapshot.artifacts().contains_key(&uri) {
-      return Err(ArtifactFailure::conflict());
+      return Err(ArtifactFailure::artifact_identity_conflict());
     }
     if body.span_id().is_some_and(|span_id| !snapshot.spans().contains_key(&span_id)) {
       return Err(ArtifactFailure::not_found());
@@ -673,15 +673,18 @@ fn resolve_cached_draft(
   let Some(existing) = indexes.record_mut(run_id, upload_id, now) else {
     return Ok(DraftResolution::Lookup(DraftLookupReason::Missing));
   };
-  if existing.key != key || existing.draft.artifact_uri() != &ArtifactUri::from_ids(run_id, request.artifact_id()) {
-    return Err(ArtifactFailure::conflict());
+  if existing.key != key {
+    return Err(ArtifactFailure::artifact_identity_conflict());
+  }
+  if existing.draft.artifact_uri() != &ArtifactUri::from_ids(run_id, request.artifact_id()) {
+    return Err(ArtifactFailure::idempotency_mismatch());
   }
   let draft = existing.draft.clone();
   let generation = existing.generation;
   let response = match &mut existing.state {
     DraftState::Pending(pending) => {
       if pending.metadata.as_ref() != request {
-        return Err(ArtifactFailure::conflict());
+        return Err(ArtifactFailure::idempotency_mismatch());
       }
       if matches!(pending.admission, AdmissionState::Indeterminate(_)) {
         return Ok(DraftResolution::Lookup(DraftLookupReason::Indeterminate { generation }));
@@ -766,7 +769,7 @@ async fn reconcile_draft_lookup(
     }
     Ok(Some(_)) => {
       clear_reconciled_draft(state, run_id, upload_id, reason);
-      Err(ArtifactFailure::conflict())
+      Err(ArtifactFailure::idempotency_mismatch())
     }
     Ok(None) if matches!(reason, DraftLookupReason::Indeterminate { .. }) => {
       Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown")))
@@ -841,7 +844,7 @@ async fn upload_content(
               return Err(ArtifactFailure::authority_mismatch(expected_authority, pending.authority_id));
             }
             if !pending.admission.id().matches(admission) {
-              return Err(ArtifactFailure::conflict());
+              return Err(ArtifactFailure::artifact_identity_conflict());
             }
             if let Err(error) = controls.validate(&pending.metadata) {
               if matches!(pending.admission, AdmissionState::Admitted { .. }) {
@@ -862,7 +865,9 @@ async fn upload_content(
                 UploadAction::Start(active)
               }
               AdmissionState::Indeterminate(_) => UploadAction::Indeterminate(active),
-              AdmissionState::Released(_) | AdmissionState::Uploading(_) => return Err(ArtifactFailure::conflict()),
+              AdmissionState::Released(_) | AdmissionState::Uploading(_) => {
+                return Err(ArtifactFailure::artifact_identity_conflict());
+              }
             }
           }
         }
@@ -966,7 +971,7 @@ async fn publish_upload(
         }
         Ok(Some(_)) => {
           clear_upload_reservation(&state, active.run_id, upload_id, admission);
-          Err(ArtifactFailure::conflict())
+          Err(ArtifactFailure::idempotency_mismatch())
         }
         Ok(None) | Err(_) => Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown"))),
       }
@@ -991,7 +996,7 @@ async fn indeterminate_replay(
     }
     Ok(Some(_)) => {
       clear_upload_reservation(state, active.run_id, upload_id, admission);
-      Err(ArtifactFailure::conflict())
+      Err(ArtifactFailure::idempotency_mismatch())
     }
     Ok(None) | Err(_) => Err(ArtifactFailure::unavailable(error_code("auv.inspect.publication_unknown"))),
   }
@@ -1012,7 +1017,7 @@ async fn recover_published_upload(
     return Err(ArtifactFailure::from_read(ReadError::Integrity(error_code("auv.inspect.published_commit_identity_invalid"))));
   }
   let Some(metadata) = published_artifact_metadata(&commit, run_id) else {
-    return Err(ArtifactFailure::conflict());
+    return Err(ArtifactFailure::idempotency_mismatch());
   };
   controls.validate_metadata(metadata)?;
   Ok(run_json(StatusCode::OK, &commit))
@@ -1417,8 +1422,12 @@ impl ArtifactFailure {
     failure
   }
 
-  fn conflict() -> Self {
-    Self::new(StatusCode::CONFLICT, "auv.inspect.idempotency_or_artifact_conflict")
+  fn idempotency_mismatch() -> Self {
+    Self::new(StatusCode::CONFLICT, "auv.inspect.idempotency_mismatch")
+  }
+
+  fn artifact_identity_conflict() -> Self {
+    Self::new(StatusCode::CONFLICT, "auv.inspect.artifact_identity_conflict")
   }
 
   fn not_found() -> Self {
@@ -1480,7 +1489,7 @@ impl ArtifactFailure {
   fn from_write(error: ArtifactWriteError) -> Self {
     match error {
       ArtifactWriteError::AuthorityMismatch { expected, received } => Self::authority_mismatch(expected, received),
-      ArtifactWriteError::IdempotencyMismatch => Self::conflict(),
+      ArtifactWriteError::IdempotencyMismatch => Self::idempotency_mismatch(),
       ArtifactWriteError::Rejected(code) => Self::rejected(code),
       ArtifactWriteError::Integrity(code) => Self::integrity(code),
       ArtifactWriteError::Unavailable(code) => Self::unavailable(code),

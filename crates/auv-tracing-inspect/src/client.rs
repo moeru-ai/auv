@@ -25,6 +25,7 @@ use crate::protocol::{
 };
 
 const MAX_PROTOCOL_JSON_BYTES: usize = 32 * 1024 * 1024;
+const MAX_SNAPSHOT_JSON_BYTES: usize = 256 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = MAX_PROTOCOL_JSON_BYTES + 64 * 1024;
 const MAX_SSE_BUFFER_BYTES: usize = MAX_SSE_FRAME_BYTES + 4;
 const SSE_INGEST_CHUNK_BYTES: usize = 64 * 1024;
@@ -122,22 +123,6 @@ impl InspectRunStore {
       Ok(Some(commit)) if artifact_commit_matches(&commit, request) => Ok(CommitResult::Replayed(commit)),
       Ok(Some(_)) => Err(ArtifactWriteError::IdempotencyMismatch),
       Ok(None) | Err(_) => Err(ArtifactWriteError::PublicationUnknown(unknown)),
-    }
-  }
-
-  async fn classify_artifact_conflict(&self, request: &StoreArtifactRequest) -> ArtifactWriteError {
-    match self.lookup_commit(request.run_id(), request.idempotency_key()).await {
-      Ok(Some(_)) => ArtifactWriteError::IdempotencyMismatch,
-      Ok(None) => {
-        let uri = ArtifactUri::from_ids(request.run_id(), request.artifact_id());
-        match self.load_snapshot(request.run_id()).await {
-          Ok(Some(snapshot)) if snapshot.artifacts().contains_key(&uri) => {
-            ArtifactWriteError::Rejected(code("auv.inspect.idempotency_or_artifact_conflict"))
-          }
-          Ok(Some(_)) | Ok(None) | Err(_) => ArtifactWriteError::IdempotencyMismatch,
-        }
-      }
-      Err(_) => ArtifactWriteError::IdempotencyMismatch,
     }
   }
 }
@@ -246,7 +231,6 @@ impl RunStore for InspectRunStore {
         if !matches!(response.status(), StatusCode::CREATED | StatusCode::OK) {
           return match write_artifact_failure(response, self.authority_id).await {
             Ok(ArtifactWriteError::PublicationUnknown(code)) => self.recover_artifact(&request, code).await,
-            Ok(ArtifactWriteError::IdempotencyMismatch) => Err(self.classify_artifact_conflict(&request).await),
             Ok(error) => Err(error),
             Err(code) => Err(ArtifactWriteError::Unavailable(code)),
           };
@@ -376,7 +360,6 @@ impl RunStore for InspectRunStore {
         }
         _ => match write_artifact_failure(response, self.authority_id).await {
           Ok(ArtifactWriteError::PublicationUnknown(code)) | Err(code) => self.recover_artifact(&request, code).await,
-          Ok(ArtifactWriteError::IdempotencyMismatch) => Err(self.classify_artifact_conflict(&request).await),
           Ok(error) => Err(error),
         },
       }
@@ -426,9 +409,12 @@ impl RunStore for InspectRunStore {
       if !has_media_type(&response, RUN_MEDIA_TYPE) {
         return Err(ReadError::Integrity(code("auv.inspect.snapshot_media_type_invalid")));
       }
-      // `load_snapshot` is the deliberate full-materialization API. Unlike
-      // pages and individual SSE events, a valid snapshot has no 32 MiB cap.
-      let bytes = response.bytes().await.map_err(|_| ReadError::Unavailable(code("auv.inspect.snapshot_transport_unavailable")))?;
+      // `load_snapshot` is the deliberate full-materialization API, with a
+      // larger finite cap than pages and individual SSE events.
+      let bytes = bounded_response_bytes_with_limit(response, MAX_SNAPSHOT_JSON_BYTES).await.map_err(|error| match error {
+        BoundedResponseError::Transport => ReadError::Unavailable(code("auv.inspect.snapshot_transport_unavailable")),
+        BoundedResponseError::TooLarge => ReadError::Integrity(code("auv.inspect.snapshot_too_large")),
+      })?;
       let snapshot = decode_strict::<RunSnapshot>(&bytes).map_err(|_| ReadError::Integrity(code("auv.inspect.snapshot_invalid")))?;
       if snapshot.authority_id() != self.authority_id || snapshot.run_id() != run_id {
         return Err(ReadError::Integrity(code("auv.inspect.snapshot_identity_mismatch")));
@@ -930,9 +916,8 @@ async fn write_artifact_failure(response: Response, connected_authority: Authori
             received: connected_authority,
           }
         }
-        StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_or_artifact_conflict") => {
-          ArtifactWriteError::IdempotencyMismatch
-        }
+        StatusCode::CONFLICT if error_code == code("auv.inspect.idempotency_mismatch") => ArtifactWriteError::IdempotencyMismatch,
+        StatusCode::CONFLICT if error_code == code("auv.inspect.artifact_identity_conflict") => ArtifactWriteError::Rejected(error_code),
         StatusCode::CONFLICT => return Err(code("auv.inspect.artifact_error_status_invalid")),
         StatusCode::UNPROCESSABLE_ENTITY => ArtifactWriteError::Integrity(error_code),
         StatusCode::SERVICE_UNAVAILABLE if error_code == code("auv.inspect.publication_unknown") => {
@@ -985,7 +970,7 @@ async fn decode_artifact_error(response: Response, media_type: &str) -> Result<A
 enum BoundedResponseError {
   #[error("Inspect response transport failed")]
   Transport,
-  #[error("Inspect JSON response exceeds 32 MiB")]
+  #[error("Inspect JSON response exceeds its configured limit")]
   TooLarge,
 }
 
@@ -1004,15 +989,27 @@ impl From<BoundedResponseError> for ResponseDecodeError {
   }
 }
 
-async fn bounded_response_bytes(mut response: Response) -> Result<Vec<u8>, BoundedResponseError> {
-  let mut bytes = Vec::new();
+async fn bounded_response_bytes(response: Response) -> Result<Vec<u8>, BoundedResponseError> {
+  bounded_response_bytes_with_limit(response, MAX_PROTOCOL_JSON_BYTES).await
+}
+
+async fn bounded_response_bytes_with_limit(mut response: Response, limit: usize) -> Result<Vec<u8>, BoundedResponseError> {
+  if content_length_exceeds_limit(response.content_length(), limit) {
+    return Err(BoundedResponseError::TooLarge);
+  }
+  let initial_capacity = response.content_length().and_then(|length| usize::try_from(length).ok()).unwrap_or(0).min(64 * 1024);
+  let mut bytes = Vec::with_capacity(initial_capacity);
   while let Some(chunk) = response.chunk().await.map_err(|_| BoundedResponseError::Transport)? {
-    if bytes.len().saturating_add(chunk.len()) > MAX_PROTOCOL_JSON_BYTES {
+    if bytes.len().saturating_add(chunk.len()) > limit {
       return Err(BoundedResponseError::TooLarge);
     }
     bytes.extend_from_slice(&chunk);
   }
   Ok(bytes)
+}
+
+fn content_length_exceeds_limit(content_length: Option<u64>, limit: usize) -> bool {
+  content_length.is_some_and(|content_length| content_length > limit as u64)
 }
 
 fn authority_response(response: &Response, connected: AuthorityId) -> Result<AuthorityId, ()> {
@@ -1251,5 +1248,13 @@ mod tests {
         Err(ArtifactReadError::Integrity(_))
       ));
     }
+  }
+
+  #[test]
+  fn content_length_preflight_rejects_only_lengths_above_the_selected_cap() {
+    assert!(!content_length_exceeds_limit(None, 8));
+    assert!(!content_length_exceeds_limit(Some(8), 8));
+    assert!(content_length_exceeds_limit(Some(9), 8));
+    assert!(content_length_exceeds_limit(Some(u64::MAX), 8));
   }
 }
