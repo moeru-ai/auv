@@ -13,7 +13,7 @@ use std::time::Duration;
 use auv_tracing::{
   ArtifactId, ArtifactPurpose, ArtifactWriteError, Attributes, ByteLength, CommitError, ContentType, EventId, EventName, EventOccurred,
   EventSchema, FileRunStore, IdempotencyKey, JsonPayload, PageLimit, ReadError, RunCommitRequest, RunId, RunMutation, RunRevision, RunStore,
-  Sha256Digest, StoreArtifactRequest, Timestamp,
+  Sha256Digest, SpanId, StoreArtifactRequest, Timestamp,
 };
 use futures_io::AsyncRead;
 use futures_util::StreamExt;
@@ -175,6 +175,156 @@ fn stale_cached_writer_consumes_only_the_new_verified_tail() {
   assert_eq!(futures_executor::block_on(second.load_snapshot(run_id)).unwrap().unwrap().events().len(), 3);
 }
 
+#[test]
+fn rejected_duplicate_event_does_not_grow_log_or_poison_the_next_revision() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  let event_id = EventId::new();
+  let first =
+    futures_executor::block_on(store.commit(event_request_with_id(&store, run_id, IdempotencyKey::new(), event_id, "first"))).unwrap();
+  assert_eq!(first.revision().get(), 1);
+  let log = commit_log(root.path(), run_id);
+  let valid_length = fs::metadata(&log).unwrap().len();
+
+  let duplicate =
+    futures_executor::block_on(store.commit(event_request_with_id(&store, run_id, IdempotencyKey::new(), event_id, "duplicate")));
+  assert!(matches!(duplicate, Err(CommitError::Rejected(_))));
+  assert_eq!(fs::metadata(&log).unwrap().len(), valid_length);
+
+  assert_eq!(commit_event(&store, run_id, "second").revision().get(), 2);
+}
+
+#[test]
+fn rejected_unknown_span_artifact_publishes_neither_frame_nor_blob() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  assert_eq!(commit_event(&store, run_id, "first").revision().get(), 1);
+  let log = commit_log(root.path(), run_id);
+  let valid_length = fs::metadata(&log).unwrap().len();
+  let bytes = b"must not be published".to_vec();
+  let sha256 = digest(&bytes);
+  let request = artifact_request_with_span(&store, run_id, ArtifactId::new(), IdempotencyKey::new(), Some(SpanId::new()), &bytes);
+
+  let rejected = futures_executor::block_on(store.write_artifact(request, Box::pin(Cursor::new(bytes))));
+  assert!(matches!(rejected, Err(ArtifactWriteError::Rejected(_))));
+  assert_eq!(fs::metadata(&log).unwrap().len(), valid_length);
+  assert!(!blob_path(root.path(), sha256).exists());
+  assert_eq!(commit_event(&store, run_id, "second").revision().get(), 2);
+}
+
+#[test]
+fn cached_prefix_mutation_is_integrity_even_when_a_valid_tail_was_appended() {
+  let root = tempfile::tempdir().unwrap();
+  let first = FileRunStore::open(root.path()).unwrap();
+  let second = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  assert_eq!(commit_event(&first, run_id, "one").revision().get(), 1);
+  assert_eq!(commit_event(&second, run_id, "two").revision().get(), 2);
+  let log = commit_log(root.path(), run_id);
+  let mut file = OpenOptions::new().write(true).open(log).unwrap();
+  file.write_all(b"X").unwrap();
+  file.sync_data().unwrap();
+
+  assert!(matches!(futures_executor::block_on(first.load_snapshot(run_id)), Err(ReadError::Integrity(_))));
+}
+
+#[test]
+fn cached_log_shrink_is_integrity_instead_of_accepted_history_rollback() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  assert_eq!(commit_event(&store, run_id, "one").revision().get(), 1);
+  let log = commit_log(root.path(), run_id);
+  let first_length = fs::metadata(&log).unwrap().len();
+  assert_eq!(commit_event(&store, run_id, "two").revision().get(), 2);
+  OpenOptions::new().write(true).open(&log).unwrap().set_len(first_length).unwrap();
+
+  assert!(matches!(futures_executor::block_on(store.load_snapshot(run_id)), Err(ReadError::Integrity(_))));
+}
+
+#[test]
+fn cached_log_inode_replacement_is_integrity_even_with_identical_bytes() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  assert_eq!(commit_event(&store, run_id, "one").revision().get(), 1);
+  let log = commit_log(root.path(), run_id);
+  replace_file(&log);
+
+  assert!(matches!(futures_executor::block_on(store.load_snapshot(run_id)), Err(ReadError::Integrity(_))));
+}
+
+#[test]
+fn replaced_partial_tail_is_not_repaired_or_appended_through_a_new_inode() {
+  let root = tempfile::tempdir().unwrap();
+  let store = FileRunStore::open(root.path()).unwrap();
+  let run_id = RunId::new();
+  assert_eq!(commit_event(&store, run_id, "one").revision().get(), 1);
+  let log = commit_log(root.path(), run_id);
+  let mut file = OpenOptions::new().append(true).open(&log).unwrap();
+  file.write_all(b"AUV").unwrap();
+  file.sync_data().unwrap();
+  drop(file);
+  assert_eq!(futures_executor::block_on(store.load_snapshot(run_id)).unwrap().unwrap().through_revision().get(), 1);
+  replace_file(&log);
+  let partial_length = fs::metadata(&log).unwrap().len();
+
+  assert!(matches!(
+    futures_executor::block_on(store.commit(event_request(&store, run_id, IdempotencyKey::new(), "two"))),
+    Err(CommitError::Unavailable(_))
+  ));
+  assert_eq!(fs::metadata(&log).unwrap().len(), partial_length);
+}
+
+#[test]
+fn artifact_revalidates_the_bound_log_after_streaming() {
+  let root = tempfile::tempdir().unwrap();
+  let store = Arc::new(FileRunStore::open(root.path()).unwrap());
+  let run_id = RunId::new();
+  assert_eq!(commit_event(&store, run_id, "one").revision().get(), 1);
+  let bytes = b"replacement race body".to_vec();
+  let sha256 = digest(&bytes);
+  let gate = Arc::new(BodyGate::default());
+  let request = artifact_request(&store, run_id, ArtifactId::new(), IdempotencyKey::new(), &bytes);
+  let artifact_store = Arc::clone(&store);
+  let artifact_gate = Arc::clone(&gate);
+  let artifact = thread::spawn(move || {
+    let body = GatedBody {
+      bytes: Cursor::new(bytes),
+      gate: artifact_gate,
+      announced: false,
+    };
+    futures_executor::block_on(artifact_store.write_artifact(request, Box::pin(body)))
+  });
+  assert!(gate.wait_until_polled(Duration::from_secs(5)), "artifact body was never polled");
+  replace_file(&commit_log(root.path(), run_id));
+  gate.release();
+
+  assert!(matches!(artifact.join().unwrap(), Err(ArtifactWriteError::Integrity(_))));
+  assert!(!blob_path(root.path(), sha256).exists());
+}
+
+#[test]
+fn concurrent_open_creates_one_stable_nested_root() {
+  let parent = tempfile::tempdir().unwrap();
+  let root = parent.path().join("raced").join("nested").join("store");
+  let barrier = Arc::new(std::sync::Barrier::new(3));
+  let open = |root: PathBuf, barrier: Arc<std::sync::Barrier>| {
+    thread::spawn(move || {
+      barrier.wait();
+      FileRunStore::open(root).unwrap().authority_id()
+    })
+  };
+  let first = open(root.clone(), Arc::clone(&barrier));
+  let second = open(root.clone(), Arc::clone(&barrier));
+  barrier.wait();
+
+  assert_eq!(first.join().unwrap(), second.join().unwrap());
+  assert!(root.is_dir());
+}
+
 #[cfg(unix)]
 #[test]
 fn artifact_publication_rejects_a_symlink_escape_below_root() {
@@ -287,9 +437,13 @@ fn commit_event(store: &FileRunStore, run_id: RunId, value: &str) -> auv_tracing
 }
 
 fn event_request(store: &FileRunStore, run_id: RunId, key: IdempotencyKey, value: &str) -> RunCommitRequest {
+  event_request_with_id(store, run_id, key, EventId::new(), value)
+}
+
+fn event_request_with_id(store: &FileRunStore, run_id: RunId, key: IdempotencyKey, event_id: EventId, value: &str) -> RunCommitRequest {
   let schema = EventSchema::new(EventName::parse("auv.test.file").unwrap(), 1).unwrap();
   let payload = JsonPayload::encode(&serde_json::json!({ "value": value })).unwrap();
-  let event = EventOccurred::new(EventId::new(), None, Timestamp::new(1, 0).unwrap(), schema, payload);
+  let event = EventOccurred::new(event_id, None, Timestamp::new(1, 0).unwrap(), schema, payload);
   RunCommitRequest::new(store.authority_id(), run_id, key, vec![RunMutation::EmitEvent(event)]).unwrap()
 }
 
@@ -300,12 +454,23 @@ fn artifact_request(
   key: IdempotencyKey,
   bytes: &[u8],
 ) -> StoreArtifactRequest {
+  artifact_request_with_span(store, run_id, artifact_id, key, None, bytes)
+}
+
+fn artifact_request_with_span(
+  store: &FileRunStore,
+  run_id: RunId,
+  artifact_id: ArtifactId,
+  key: IdempotencyKey,
+  span_id: Option<SpanId>,
+  bytes: &[u8],
+) -> StoreArtifactRequest {
   StoreArtifactRequest::new(
     store.authority_id(),
     run_id,
     key,
     artifact_id,
-    None,
+    span_id,
     ArtifactPurpose::parse("auv.test.file").unwrap(),
     ContentType::parse("application/octet-stream").unwrap(),
     ByteLength::new(bytes.len() as u64).unwrap(),
@@ -329,6 +494,14 @@ fn commit_log(root: &Path, run_id: RunId) -> PathBuf {
 fn blob_path(root: &Path, digest: Sha256Digest) -> PathBuf {
   let digest = digest.to_string();
   root.join("blobs").join("sha256").join(&digest[..2]).join(digest)
+}
+
+fn replace_file(path: &Path) {
+  let replacement = path.with_extension("replacement");
+  fs::write(&replacement, fs::read(path).unwrap()).unwrap();
+  OpenOptions::new().read(true).open(&replacement).unwrap().sync_data().unwrap();
+  fs::remove_file(path).unwrap();
+  fs::rename(replacement, path).unwrap();
 }
 
 #[derive(Default)]
