@@ -26,7 +26,8 @@ Scope: core crates only — `auv-driver-macos`, `auv-driver-common`,
   `NativeDriverError { operation, message, recovery_hint }` into a formatted
   String at the Swift→Rust decode boundary.
 - **1 read-side silent error discard** (`inspect-server/server.rs:427`
-  `store.read_run().ok()`) collapses genuine read failures to `None`.
+  `store.read_run().ok()`) collapsed genuine read failures to `None` at
+  inventory time; fixed by [#124](https://github.com/moeru-ai/auv/pull/124).
 - **0 production String-matching branches** for error classification — all
   `.contains()` calls are in test assertions, not control flow.
 - **#114 as a half-typed precedent**: `inspect_ax_node_path` signature is
@@ -133,17 +134,27 @@ silently alter behavior.
 ## 5. Silent error discards on evidence paths
 
 Milestone Workstream 2 explicitly forbids `.ok()` / `unwrap_or_default()` on
-evidence/artifact read paths. Found **1 violation**:
+evidence/artifact read paths. Found **1 violation at inventory time**, fixed
+by [#124](https://github.com/moeru-ai/auv/pull/124) (2026-07-21):
 
-- `crates/auv-inspect-server/src/server.rs:427`:
+- `crates/auv-inspect-server/src/server.rs:427` used to read:
   ```rust
   let mut snapshot = state.store.read_run(&run_id).ok();
   ```
   A `LocalStore::read_run` failure (file I/O error, parse error, permission
-  denied) is collapsed to `None`, which the HTTP handler treats as "run not
-  found" — masking the real failure reason. This is the read-side surface
-  (inspect server), not the write-side, so it doesn't lose evidence *writes*,
-  but it does mislead API consumers about failure causes.
+  denied) was collapsed to `None`, which the HTTP handler treated as "run not
+  found" — masking the real failure reason. Concretely, an incremental
+  update against an existing-but-corrupted run failed `apply_update`'s
+  `missingRunStarted` check and was reported as a `409 runConflict`
+  (a plausible-looking but wrong client-protocol diagnosis), and a
+  `runStarted` update would have silently reconstructed a fresh empty
+  snapshot over the corrupted run directory.
+
+  #124 checks for `run.json` explicitly before deciding a run hasn't
+  started — the only case a missing snapshot is legitimate — and propagates
+  `read_run` failures as real errors (`500`, via `InspectHttpError::from_store`)
+  once `run.json` exists. **0 violations remain** for this pattern as of
+  #124.
 
 ## 6. The #114 precedent — half-typed, needs completion
 
