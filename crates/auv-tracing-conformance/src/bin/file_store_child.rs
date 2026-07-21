@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use auv_tracing::{ArtifactWriteError, FileRunStore, RunStore, SpanId};
+use auv_tracing::{ArtifactWriteError, CommitResult, FileRunStore, RunStore, SpanId};
 use auv_tracing_conformance::{artifact_request_with_span, event_request};
 use futures_util::io::Cursor;
 use serde::Serialize;
@@ -21,7 +21,10 @@ enum ChildResult {
   Authority {
     authority_id: auv_tracing::AuthorityId,
   },
-  Commit {
+  CommitAppended {
+    revision: u64,
+  },
+  CommitReplayed {
     revision: u64,
   },
   ArtifactCommitted {
@@ -59,9 +62,13 @@ fn main() {
       signal_ready(&ready);
       wait_for_go(&go);
       let request = event_request(store.authority_id(), run_id, event_id, key, value);
-      let commit = futures_executor::block_on(store.commit(request)).expect("commit child failed to append event");
-      ChildResult::Commit {
-        revision: commit.revision().get(),
+      match futures_executor::block_on(store.commit(request)).expect("commit child failed to append event") {
+        CommitResult::Appended(commit) => ChildResult::CommitAppended {
+          revision: commit.revision().get(),
+        },
+        CommitResult::Replayed(commit) => ChildResult::CommitReplayed {
+          revision: commit.revision().get(),
+        },
       }
     }
     "write-artifact" => {
@@ -83,8 +90,8 @@ fn main() {
       signal_ready(&ready);
       wait_for_go(&go);
       match futures_executor::block_on(store.write_artifact(request, Box::pin(Cursor::new(bytes)))) {
-        Ok(commit) => ChildResult::ArtifactCommitted {
-          revision: commit.revision().get(),
+        Ok(result) => ChildResult::ArtifactCommitted {
+          revision: result.into_commit().revision().get(),
         },
         Err(ArtifactWriteError::Rejected(_)) => ChildResult::ArtifactConflict,
         Err(error) => panic!("artifact child failed with unexpected error: {error:?}"),

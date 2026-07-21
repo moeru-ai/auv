@@ -12,8 +12,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-  ArtifactBody, ArtifactReader, ArtifactWriteError, BoxFuture, CommitError, ReadError, RunCommitPage, RunStore, RunSubscription,
-  StoreArtifactRequest, SubscriptionError,
+  ArtifactBody, ArtifactReader, ArtifactWriteError, BoxFuture, CommitError, CommitResult, ReadError, RunCommitPage, RunStore,
+  RunSubscription, StoreArtifactRequest, SubscriptionError,
 };
 use crate::history::IncrementalReducer;
 use crate::{
@@ -116,7 +116,7 @@ impl MemoryRunStore {
     }
   }
 
-  fn commit_ordinary(&self, request: RunCommitRequest) -> Result<RunCommit, CommitError> {
+  fn commit_ordinary(&self, request: RunCommitRequest) -> Result<CommitResult, CommitError> {
     self.validate_authority(request.authority_id()).map_err(|(expected, received)| CommitError::AuthorityMismatch { expected, received })?;
     let fingerprint = commit_fingerprint(&request).map_err(CommitError::Rejected)?;
     let run_id = request.run_id();
@@ -128,8 +128,9 @@ impl MemoryRunStore {
         return Err(CommitError::IdempotencyMismatch);
       }
       let commit = Arc::clone(&stored.commit);
+      let result = CommitResult::Replayed(commit.as_ref().clone());
       drop(state);
-      return Ok(commit.as_ref().clone());
+      return Ok(result);
     }
     if state.pending_artifacts.contains_key(&(run_id, key)) {
       return Err(CommitError::IdempotencyMismatch);
@@ -176,9 +177,10 @@ impl MemoryRunStore {
       state.runs.insert(run_id, run);
     }
     let waiters = take_subscription_waiters(&mut state, run_id);
+    let result = CommitResult::Appended(commit);
     drop(state);
     wake(waiters);
-    Ok(commit)
+    Ok(result)
   }
 
   fn begin_artifact(&self, request: &StoreArtifactRequest, fingerprint: RequestFingerprint) -> Result<ArtifactAttempt, ArtifactWriteError> {
@@ -191,7 +193,7 @@ impl MemoryRunStore {
       if stored.fingerprint != fingerprint {
         return Err(ArtifactWriteError::IdempotencyMismatch);
       }
-      return Ok(ArtifactAttempt::Replay(Arc::clone(&stored.commit)));
+      return Ok(ArtifactAttempt::Replay(CommitResult::Replayed(stored.commit.as_ref().clone())));
     }
     if let Some(pending) = state.pending_artifacts.get(&(run_id, key)) {
       if pending.fingerprint != fingerprint {
@@ -253,7 +255,7 @@ impl MemoryRunStore {
     fingerprint: RequestFingerprint,
     bytes: Bytes,
     reservation: &mut ArtifactReservation,
-  ) -> Result<RunCommit, ArtifactWriteError> {
+  ) -> Result<CommitResult, ArtifactWriteError> {
     let run_id = request.run_id();
     let key = request.idempotency_key();
     let uri = ArtifactUri::from_ids(run_id, request.artifact_id());
@@ -306,10 +308,11 @@ impl MemoryRunStore {
     let artifact_waiters = release_artifact_reservation(&mut state, run_id, key, reservation.reservation_id);
     let subscription_waiters = take_subscription_waiters(&mut state, run_id);
     reservation.armed = false;
+    let result = CommitResult::Appended(commit);
     drop(state);
     wake(artifact_waiters);
     wake(subscription_waiters);
-    Ok(commit)
+    Ok(result)
   }
 
   fn validate_authority(&self, received: AuthorityId) -> Result<(), (AuthorityId, AuthorityId)> {
@@ -331,11 +334,11 @@ impl RunStore for MemoryRunStore {
     self.inner.authority_id
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     Box::pin(async move { self.commit_ordinary(request) })
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     Box::pin(async move {
       self
         .validate_authority(request.authority_id())
@@ -344,7 +347,7 @@ impl RunStore for MemoryRunStore {
       let mut body = Some(body);
       loop {
         match self.begin_artifact(&request, fingerprint)? {
-          ArtifactAttempt::Replay(commit) => return Ok(commit.as_ref().clone()),
+          ArtifactAttempt::Replay(result) => return Ok(result),
           ArtifactAttempt::Wait(wait) => wait.await.map_err(ArtifactWriteError::Unavailable)?,
           ArtifactAttempt::Owner(mut reservation) => {
             let body = body.take().expect("an artifact body is consumed only by its reservation owner");
@@ -439,7 +442,7 @@ impl RunStore for MemoryRunStore {
 }
 
 enum ArtifactAttempt {
-  Replay(Arc<RunCommit>),
+  Replay(CommitResult),
   Wait(ArtifactReservationWait),
   Owner(ArtifactReservation),
 }

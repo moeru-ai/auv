@@ -8,9 +8,9 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 
 use auv_tracing::{
-  ArtifactId, ArtifactPurpose, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType, EventId, EventName, EventOccurred,
-  EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, RunCommitRequest, RunId, RunMutation, RunRevision, RunStore, Sha256Digest,
-  StoreArtifactRequest, Timestamp,
+  ArtifactId, ArtifactPurpose, ArtifactWriteError, Attributes, AuthorityId, ByteLength, CommitResult, ContentType, EventId, EventName,
+  EventOccurred, EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, RunCommitRequest, RunId, RunMutation, RunRevision, RunStore,
+  Sha256Digest, StoreArtifactRequest, Timestamp,
 };
 use auv_tracing_conformance::{assert_gap_contract, assert_store_contract};
 use futures_io::AsyncRead;
@@ -34,7 +34,7 @@ fn retention_preserves_snapshot_and_idempotency_state() {
     let store = MemoryRunStore::with_history_limit(AuthorityId::new(), NonZeroUsize::new(2).unwrap());
     let run_id = RunId::new();
     let first_key = IdempotencyKey::new();
-    let first = store.commit(event_request(&store, run_id, first_key, "first")).await.unwrap();
+    let first = store.commit(event_request(&store, run_id, first_key, "first")).await.unwrap().into_commit();
     store.commit(event_request(&store, run_id, IdempotencyKey::new(), "second")).await.unwrap();
     store.commit(event_request(&store, run_id, IdempotencyKey::new(), "third")).await.unwrap();
 
@@ -58,7 +58,7 @@ fn pending_subscription_is_woken_by_a_later_commit() {
     let wake = Arc::new(CountingWake::default());
 
     assert!(poll_with(next.as_mut(), &wake).is_pending());
-    let committed = store.commit(event_request(&store, run_id, IdempotencyKey::new(), "wake")).await.unwrap();
+    let committed = store.commit(event_request(&store, run_id, IdempotencyKey::new(), "wake")).await.unwrap().into_commit();
     assert_eq!(wake.count(), 1);
     assert_eq!(next.await.unwrap().unwrap(), committed);
   });
@@ -119,7 +119,10 @@ fn pending_equal_artifact_waits_without_polling_replacement_body() {
 
     gate.release();
     let committed = owner.await.unwrap();
-    assert_eq!(replay.await.unwrap(), committed);
+    assert!(matches!(&committed, CommitResult::Appended(_)));
+    let replayed = replay.await.unwrap();
+    assert!(matches!(&replayed, CommitResult::Replayed(_)));
+    assert_eq!(replayed.commit(), committed.commit());
     assert!(!replacement_polled.load(Ordering::SeqCst));
   });
 }

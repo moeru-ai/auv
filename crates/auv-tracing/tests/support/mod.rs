@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 
 use auv_tracing::{
   ArtifactBody, ArtifactMetadata, ArtifactPublished, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError,
-  AuthorityId, BoxFuture, CommitError, Dispatch, DispatchErrorReporter, DispatchFailure, DispatchTask, ErrorCode, IdempotencyKey,
-  MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunFact, RunId, RunMutation, RunRevision, RunSnapshot,
-  RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError, TaskSpawnError, TaskSpawner, TelemetryError, TelemetryItem,
-  TelemetryProjector, Timestamp,
+  AuthorityId, BoxFuture, CommitError, CommitResult, Dispatch, DispatchErrorReporter, DispatchFailure, DispatchTask, ErrorCode,
+  IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunFact, RunId, RunMutation,
+  RunRevision, RunSnapshot, RunStore, RunSubscription, StoreArtifactRequest, SubscriptionError, TaskSpawnError, TaskSpawner, TelemetryError,
+  TelemetryItem, TelemetryProjector, Timestamp,
 };
 use futures_channel::oneshot;
 use futures_core::Stream;
@@ -495,12 +495,12 @@ impl RunStore for CursorStore {
     self.inner.authority_id()
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     self.calls.lock().unwrap().push(AuthorityCall::Commit);
     self.inner.commit(request)
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     self.inner.write_artifact(request, body)
   }
 
@@ -615,11 +615,11 @@ impl RunStore for SubscriptionTrackingStore {
     self.inner.authority_id()
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     self.inner.commit(request)
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     self.inner.write_artifact(request, body)
   }
 
@@ -748,27 +748,30 @@ impl RunStore for IntegrityStore {
     self.inner.authority_id()
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     self.commit_calls.lock().unwrap().push(request.run_id());
     let response_gate = (request.run_id() == self.affected_run_id && matches!(self.fault, IntegrityFault::DirectResponseMismatch))
       .then(|| self.direct_response_gate.lock().unwrap().take())
       .flatten();
     Box::pin(async move {
-      let commit = self.inner.commit(request).await?;
-      if commit.run_id() == self.affected_run_id && matches!(self.fault, IntegrityFault::DirectResponseMismatch) {
+      let result = self.inner.commit(request).await?;
+      if result.commit().run_id() == self.affected_run_id && matches!(self.fault, IntegrityFault::DirectResponseMismatch) {
         if let Some(response_gate) = response_gate
           && let Some(wait) = response_gate.enter()
         {
           let _ = wait.await;
         }
-        Ok(self.corrupt(&commit))
+        Ok(match result {
+          CommitResult::Appended(commit) => CommitResult::Appended(self.corrupt(&commit)),
+          CommitResult::Replayed(commit) => CommitResult::Replayed(self.corrupt(&commit)),
+        })
       } else {
-        Ok(commit)
+        Ok(result)
       }
     })
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     self.inner.write_artifact(request, body)
   }
 
@@ -864,7 +867,7 @@ impl RunStore for CommitUnknownStore {
     self.inner.authority_id()
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     self.commit_calls.fetch_add(1, Ordering::SeqCst);
     let unknown = self.first.swap(false, Ordering::SeqCst);
     if unknown {
@@ -881,7 +884,7 @@ impl RunStore for CommitUnknownStore {
     })
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     self.inner.write_artifact(request, body)
   }
 
@@ -1243,7 +1246,7 @@ impl RunStore for ControlledStore {
     self.inner.authority_id()
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     self.control.calls.lock().unwrap().push(request.clone());
     self.control.calls_changed.notify_all();
     let control = self.control_for(request.run_id());
@@ -1264,17 +1267,17 @@ impl RunStore for ControlledStore {
           panic!("controlled store commit future panicked");
         }
       };
-      let commit = self.inner.commit(request.clone()).await?;
-      self.control.committed.lock().unwrap().push((request, commit.clone()));
+      let result = self.inner.commit(request.clone()).await?;
+      self.control.committed.lock().unwrap().push((request, result.commit().clone()));
       self.control.committed_changed.notify_all();
       if pending_after_commit {
         futures_util::future::pending::<()>().await;
       }
-      Ok(commit)
+      Ok(result)
     })
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     self.inner.write_artifact(request, body)
   }
 
@@ -1456,7 +1459,7 @@ impl RunStore for ArtifactStore {
     self.inner.authority_id()
   }
 
-  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<RunCommit, CommitError>> {
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
     self.state.commit_calls.fetch_add(1, Ordering::SeqCst);
     let gate = self.state.commit_gates.lock().unwrap().pop_front().and_then(|gate| gate.enter());
     Box::pin(async move {
@@ -1467,7 +1470,7 @@ impl RunStore for ArtifactStore {
     })
   }
 
-  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<RunCommit, ArtifactWriteError>> {
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
     self.state.write_calls.lock().unwrap().push(request.clone());
     self.state.write_calls_changed.notify_all();
     let outcome = self.state.write_outcomes.lock().unwrap().pop_front().unwrap_or(ArtifactWriteOutcome::Store);
@@ -1492,18 +1495,24 @@ impl RunStore for ArtifactStore {
           Ok(commit)
         }
         ArtifactWriteOutcome::StoreThenWaitMismatch(gate) => {
-          let commit = self.inner.write_artifact(request, body).await?;
+          let result = self.inner.write_artifact(request, body).await?;
           if let Some(wait) = gate.enter() {
             let _ = wait.await;
           }
-          Ok(mismatched_artifact_response(&commit))
+          Ok(match result {
+            CommitResult::Appended(commit) => CommitResult::Appended(mismatched_artifact_response(&commit)),
+            CommitResult::Replayed(commit) => CommitResult::Replayed(mismatched_artifact_response(&commit)),
+          })
         }
         ArtifactWriteOutcome::StoreThenWaitRevisionMismatch(gate) => {
-          let commit = self.inner.write_artifact(request, body).await?;
+          let result = self.inner.write_artifact(request, body).await?;
           if let Some(wait) = gate.enter() {
             let _ = wait.await;
           }
-          Ok(mismatched_artifact_revision_response(&commit))
+          Ok(match result {
+            CommitResult::Appended(commit) => CommitResult::Appended(mismatched_artifact_revision_response(&commit)),
+            CommitResult::Replayed(commit) => CommitResult::Replayed(mismatched_artifact_revision_response(&commit)),
+          })
         }
         ArtifactWriteOutcome::StoreThenWaitFailure(gate, error) => {
           self.inner.write_artifact(request, body).await?;
