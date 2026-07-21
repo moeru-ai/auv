@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **21**
+Count: **22**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -25,10 +25,10 @@ Count: **21**
 - [`2026-06-16-tracing-driver-extraction-implementation-plan.md`](2026-06-16-tracing-driver-extraction-implementation-plan.md)
 - [`2026-06-18-driver-windows-v0-implementation.md`](2026-06-18-driver-windows-v0-implementation.md)
 - [`2026-07-19-ax-path-resolution-characterization.md`](2026-07-19-ax-path-resolution-characterization.md)
+- [`2026-07-19-error-chain-inventory.md`](2026-07-19-error-chain-inventory.md)
 
 ## Related
 
 - Parent index: [`../INDEX.md`](../INDEX.md)
 - Docs overview: [`../../../README.md`](../../../README.md)
 - Shared vocabulary: [`../../../TERMS_AND_CONCEPTS.md`](../../../TERMS_AND_CONCEPTS.md)
-- [`2026-07-19-error-chain-inventory.md`](2026-07-19-error-chain-inventory.md)
