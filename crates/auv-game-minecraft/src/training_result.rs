@@ -4,6 +4,7 @@ use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,22 @@ pub type TrainingResultCollectionResult<T> = Result<T, String>;
 
 pub const TRAINING_RESULT_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_RESULT_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const MINECRAFT_TRAINING_RESULT_PURPOSE: &str = "auv.minecraft.training.result";
+
+pub async fn publish_minecraft_training_result(
+  context: Option<&Context>,
+  result: &TrainingResultManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_RESULT_PURPOSE, result, |_| Ok(())).await
+}
+
+pub async fn read_minecraft_training_result(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<TrainingResultManifest, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_RESULT_PURPOSE, |_| Ok(())).await
+}
 const JOB_ENDPOINT_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT";
 const JOB_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";
 const JOB_STATUS_COMMAND_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_STATUS_COMMAND";
@@ -292,7 +309,7 @@ where
     known_limits.insert("local key artifact absence is not a D7 provider failure; use D11 artifact fetch for completeness".to_string());
   }
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-result.json");
   let inspect_report_path = inputs.output_dir.join("minecraft-3dgs-training-result-inspect.json");
   let runbook_path = inputs.output_dir.join("mc7-training-result-runbook.md");

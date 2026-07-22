@@ -238,7 +238,7 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
   let source_result_dir = PathBuf::from(&result_manifest.result_dir);
   let source_result_dir_exists = source_result_dir.is_dir();
   let normalized_result_dir = inputs.output_dir.join(NORMALIZED_RESULT_ROOT_DIR);
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-result-artifact-manifest.json");
   let inspect_report_path = inputs.output_dir.join("minecraft-3dgs-training-result-artifact-inspect.json");
 

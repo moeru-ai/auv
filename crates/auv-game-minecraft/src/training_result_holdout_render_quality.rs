@@ -9,6 +9,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use image::RgbImage;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,22 @@ pub type TrainingResultHoldoutRenderQualityResult<T> = Result<T, String>;
 
 pub const TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE: &str = "auv.minecraft.training.holdout_render_quality";
+
+pub async fn publish_minecraft_training_holdout_render_quality(
+  context: Option<&Context>,
+  quality: &TrainingResultHoldoutRenderQualityManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE, quality, |_| Ok(())).await
+}
+
+pub async fn read_minecraft_training_holdout_render_quality(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<TrainingResultHoldoutRenderQualityManifest, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE, |_| Ok(())).await
+}
 
 pub const MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT: &str =
   "MC-17 v1 records photometric metrics as evidence only; pass/fail thresholds and trained splat usefulness verdicts are deferred";
@@ -282,7 +299,7 @@ pub fn measure_3dgs_holdout_render_quality(
 ) -> TrainingResultHoldoutRenderQualityResult<TrainingResultHoldoutRenderQualityOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let mut known_limits = BTreeSet::new();
   known_limits.insert(MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT.to_string());
   known_limits.insert(METRIC_PARTIAL_KNOWN_LIMIT.to_string());

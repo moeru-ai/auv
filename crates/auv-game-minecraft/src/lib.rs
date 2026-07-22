@@ -54,6 +54,7 @@ pub use prep::{
   TextureSweepRunStep, prepare_texture_sweep_resource_packs,
 };
 pub use projection::MinecraftProjector;
+pub use run_read::{MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, MinecraftArtifactPublishError, MinecraftArtifactReadError};
 pub use sample_builder::{
   TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
   build_texture_sweep_samples_from_bundles,

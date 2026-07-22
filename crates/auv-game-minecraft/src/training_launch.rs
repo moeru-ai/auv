@@ -156,7 +156,7 @@ where
     (TrainingLaunchReadiness::Ready, None)
   };
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-launch-plan.json");
   let inspect_report_path = inputs.output_dir.join("minecraft-3dgs-training-launch-inspect.json");
   let runbook_path = inputs.output_dir.join("mc7-training-launch-runbook.md");

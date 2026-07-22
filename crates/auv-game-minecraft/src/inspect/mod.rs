@@ -1,6 +1,5 @@
 //! Minecraft inspect composition (ordinary readers/renderers).
 
-mod helpers;
 mod render;
 mod sections;
 
