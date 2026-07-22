@@ -1453,10 +1453,8 @@ pub fn run_playlist_play_candidate_id(inputs: &Inputs, candidate_id: &str) -> Re
 fn load_playlist_scan_cache(inputs: &Inputs) -> Result<(crate::PlaylistSidebarScan, Vec<String>), String> {
   let (scan, store_read_limits) = crate::recording::try_load_scan_cache_with_limits(inputs);
   scan.ok_or_else(|| {
-    format!(
-      "failed to read playlist scan cache from store or {}; run `playlist ls <query> --json` first with the same --artifact-dir and --store-root",
-      inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE).display()
-    )
+    "failed to read the canonical playlist scan from its URI lineage; run `playlist ls <query> --json` first with the same --artifact-dir and --store-root"
+      .to_string()
   })
   .map(|scan| (scan, store_read_limits))
 }

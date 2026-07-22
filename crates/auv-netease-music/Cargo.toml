@@ -13,7 +13,7 @@ repository.workspace = true
 
 [features]
 default = []
-tracing = ["dep:auv-tracing", "auv-media-macos/tracing"]
+tracing = ["auv-media-macos/tracing"]
 
 [dependencies]
 auv-driver = { path = "../auv-driver" }
@@ -22,18 +22,17 @@ auv-driver = { path = "../auv-driver" }
 # `MediaCommand` type instead of re-declaring it.
 auv-media-macos = { path = "../auv-media-macos" }
 auv-view = { path = "../auv-view" }
-auv-tracing-driver = { path = "../auv-tracing-driver" }
+auv-tracing = { path = "../auv-tracing", features = ["file-store"] }
 auv-cli-invoke = { path = "../auv-cli-invoke" }
 clap = { version = "4.5", features = ["derive"] }
 comfy-table = "7"
 futures-executor = "0.3"
+futures-util = { workspace = true, features = ["io"] }
 serde.workspace = true
 serde_json.workspace = true
 image.workspace = true
-
-[dependencies.auv-tracing]
-path = "../auv-tracing"
-optional = true
+sha2.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }

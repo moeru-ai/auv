@@ -151,7 +151,7 @@ mod tests {
   }
 
   #[test]
-  fn invoke_run_requires_store_root() {
+  fn invoke_run_without_caller_context_preserves_direct_result() {
     use std::process::ExitCode;
 
     let fixture_dir = crate::invoke::hermetic_select_proof_fixture_dir();
@@ -160,7 +160,7 @@ mod tests {
       "--fixture-dir".to_string(),
       fixture_dir.display().to_string(),
     ]);
-    assert_eq!(exit, ExitCode::from(1));
+    assert_eq!(exit, ExitCode::SUCCESS);
   }
 
   #[test]

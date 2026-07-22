@@ -1525,20 +1525,14 @@ mod tests {
     assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
   }
   #[test]
-  fn select_store_proof_failure_records_known_limit_and_clears_run_id() {
+  fn disabled_select_instrumentation_preserves_direct_result_and_records_limit() {
     use super::apply_playlist_select_store_proof;
     use crate::commands::playlist::{PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification};
     use crate::{Inputs, PlaylistSelectTarget, SidebarSectionKind};
     use auv_view::{ScanAppContext, ScanWindowContext};
 
-    let root = std::env::temp_dir().join(format!("auv-select-store-fail-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("temp root");
-    let blocker = root.join("not-a-directory");
-    std::fs::write(&blocker, "blocker").expect("blocker file");
-
     let mut inputs = Inputs::with_defaults();
-    inputs.store_root = Some(blocker);
+    inputs.store_root = Some(std::env::temp_dir());
 
     let mut result = PlaylistSelectResult {
       command: "playlist.select".into(),
@@ -1578,14 +1572,12 @@ mod tests {
 
     apply_playlist_select_store_proof(&inputs, &mut result);
 
-    assert!(result.run_id.is_none());
+    assert_eq!(result.run_id.as_deref(), Some("partial-run-id"));
     assert!(
-      result.known_limits.iter().any(|limit| limit.contains("store select proof failed")),
+      result.known_limits.iter().any(|limit| limit.contains("artifact instrumentation disabled")),
       "expected known_limits entry, got {:?}",
       result.known_limits
     );
-
-    let _ = std::fs::remove_dir_all(&root);
   }
 }
 
@@ -1607,65 +1599,35 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   let gate_enabled = crate::view_memory::enabled();
   let mut view_memory_write = Ok(());
 
-  if let Some(store_root) = &cmd.inputs.store_root {
-    match crate::recording::persist_playlist_ls_artifacts(store_root, &scan, &cmd.inputs, gate_enabled) {
+  if cmd.inputs.store_root.is_some() {
+    match futures_executor::block_on(crate::recording::persist_playlist_ls_artifacts(&scan, &cmd.inputs, gate_enabled)) {
       Ok(persisted) => {
         match crate::recording::write_lineage_manifest(&cmd.inputs.artifact_dir, &persisted.lineage) {
-          Ok(()) => run_id = Some(persisted.lineage.run_id.clone()),
+          Ok(()) => run_id = Some(persisted.lineage.scan_uri.run_id().to_string()),
           Err(error) => {
-            crate::recording::remove_lineage_manifest(&cmd.inputs.artifact_dir);
-            let message = format!("lineage manifest write failed; store read may require fallback scan: {error}");
+            let _ = std::fs::remove_file(crate::recording::lineage_manifest_path(&cmd.inputs.artifact_dir));
+            let message = format!("canonical URI lineage manifest write failed: {error}");
             eprintln!("warning: {message}");
             ls_known_limits.push(message);
           }
         }
-        if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
-          let message = format!("artifact-dir mirror incomplete; durable source is store run {}", persisted.lineage.run_id);
-          eprintln!("warning: {message}: {error}");
-          ls_known_limits.push(message);
-        }
         if gate_enabled {
-          match persisted.memory.as_ref() {
-            Some(memory) => {
-              if let Err(error) = crate::view_memory::write_memory_mirror(&cmd.inputs, memory) {
-                let message =
-                  format!("artifact-dir view-memory mirror incomplete; durable source is store run {}", persisted.lineage.run_id);
-                eprintln!("warning: {message}: {error}");
-                ls_known_limits.push(message);
-                view_memory_write = Err(error);
-              } else {
-                view_memory_write = Ok(());
-              }
-            }
+          view_memory_write = match persisted.memory {
+            Some(_) => Ok(()),
             None => {
-              if let Err(error) = crate::recording::clear_artifact_dir_view_memory(&cmd.inputs) {
-                let message = format!("failed to clear stale artifact-dir view-memory before skip: {error}");
-                eprintln!("warning: {message}");
-                ls_known_limits.push(message);
-              }
               ls_known_limits
-                .push(format!("view-memory not written; durable store run {} has no memory artifact", persisted.lineage.run_id));
-              view_memory_write = Err("scan did not produce writable ViewMemory".to_string());
+                .push(format!("view-memory not published; canonical scan {} did not produce writable memory", persisted.lineage.scan_uri));
+              Err("scan did not produce writable ViewMemory".to_string())
             }
-          }
+          };
         }
       }
       Err(error) => {
-        let message = format!("store write failed; using artifact-dir bridge only: {error}");
+        let message = format!("run artifact instrumentation failed: {error}");
         eprintln!("warning: {message}");
         ls_known_limits.push(message);
-        if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
-          eprintln!("{error}");
-          return ExitCode::from(1);
-        }
         if gate_enabled {
-          view_memory_write = match crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-              eprintln!("view memory write skipped: {error}");
-              Err(error)
-            }
-          };
+          view_memory_write = Err("view-memory artifact was not published".to_string());
         }
       }
     }
@@ -1790,24 +1752,20 @@ fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
 }
 
 fn apply_playlist_select_store_proof(inputs: &Inputs, result: &mut crate::commands::playlist::PlaylistSelectResult) {
-  let Some(store_root) = &inputs.store_root else {
+  if inputs.store_root.is_none() {
     return;
-  };
-  let memory = crate::view_memory::load_memory_raw(inputs);
-  let evidence = crate::view_memory::ReacquireTraceEvidence::from_select_parts(
-    crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID,
-    &result.target,
-    result.reacquire.as_ref(),
-  );
-  match crate::recording::persist_playlist_select_proof(store_root, evidence.as_ref(), memory.as_ref(), |run_id| {
-    result.run_id = Some(run_id.to_string());
-    serde_json::to_vec_pretty(result).map_err(|error| format!("failed to serialize playlist select result: {error}"))
-  }) {
-    Ok(run_id) => result.run_id = Some(run_id),
-    Err(error) => {
-      eprintln!("warning: store select proof failed: {error}");
-      result.known_limits.push(format!("store select proof failed: {error}"));
-      result.run_id = None;
+  }
+  let publication = futures_executor::block_on(crate::recording::persist_playlist_select_proof(result.clone()));
+  let (published_result, instrumentation) = publication.into_parts();
+  *result = published_result;
+  match instrumentation {
+    crate::recording::PlaylistSelectInstrumentation::Published(_) => {}
+    crate::recording::PlaylistSelectInstrumentation::Disabled => {
+      result.known_limits.push("playlist-select artifact instrumentation disabled; caller did not provide a run authority".to_string());
+    }
+    crate::recording::PlaylistSelectInstrumentation::Failed(error) => {
+      eprintln!("warning: playlist-select artifact instrumentation failed: {error}");
+      result.known_limits.push(format!("playlist-select artifact instrumentation failed: {error}"));
     }
   }
 }

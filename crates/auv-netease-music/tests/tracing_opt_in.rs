@@ -65,7 +65,7 @@ fn tracing_feature_composes_netease_and_media_tracing_without_enabling_defaults(
     .map(|member| member.as_str().expect("feature member should be a string"))
     .collect::<BTreeSet<_>>();
 
-  assert_eq!(tracing, BTreeSet::from(["auv-media-macos/tracing", "dep:auv-tracing"]));
+  assert_eq!(tracing, BTreeSet::from(["auv-media-macos/tracing"]));
   assert!(features["default"].as_array().expect("default feature should be an array").is_empty());
 }
 
