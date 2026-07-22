@@ -88,8 +88,8 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
 }
 
 #[test]
-fn invoke_probe_step_preserves_direct_command_artifact_boundary() {
-  let root = temp_dir("probe-step-direct-command-artifact-boundary");
+fn invoke_probe_step_returns_direct_value_without_legacy_path_artifacts() {
+  let root = temp_dir("probe-step-task22-artifact-boundary");
   let runtime = test_runtime(root.clone());
   let mut run = runtime.recording().handle().start_run(RunSpec::new(RunType::Probe, "auv.probe")).expect("probe run should start");
   let root_span = run.root_span();
@@ -98,9 +98,10 @@ fn invoke_probe_step_preserves_direct_command_artifact_boundary() {
   let step = invoke_probe_step(&runtime, &mut run, &root_span, "artifact-step", "scan.coverage", None, inputs, false)
     .expect("direct invoke step should complete");
 
+  assert_eq!(step.status, RunStatus::Completed.as_str());
   assert!(step.output_summary.starts_with("scan coverage produced from fixture "));
-  assert!(!step.artifact_paths.is_empty());
-  assert!(!step.artifacts.is_empty());
+  assert!(step.artifact_paths.is_empty());
+  assert!(step.artifacts.is_empty());
 
   let _ = runtime
     .recording()
