@@ -16,22 +16,20 @@ use crate::scroll_scan::SCROLL_SCAN_PURPOSE;
 pub struct CorePrefixSection;
 
 struct CorePrefixSectionV1 {
-  canonical_scroll_scan_observations: Option<Vec<ObservationSnapshot>>,
+  canonical_scroll_scan_observations: Vec<ObservationSnapshot>,
 }
 
 impl CorePrefixSectionV1 {
   async fn v1(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<Self, ScrollScanReadError> {
     let mut observations = Vec::new();
-    let mut found_canonical_scroll_scan = false;
     for (uri, published) in snapshot.artifacts() {
       if published.metadata().purpose().as_str() != SCROLL_SCAN_PURPOSE {
         continue;
       }
-      found_canonical_scroll_scan = true;
       observations.extend(read_scroll_scan(store, snapshot, uri).await?.snapshots);
     }
     Ok(Self {
-      canonical_scroll_scan_observations: found_canonical_scroll_scan.then_some(observations),
+      canonical_scroll_scan_observations: observations,
     })
   }
 }
@@ -52,7 +50,7 @@ impl InspectSection for CorePrefixSectionV1 {
   }
 
   fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    collect_core_prefix(store, run, self.canonical_scroll_scan_observations.as_deref(), self.id())
+    collect_core_prefix(store, run, Some(&self.canonical_scroll_scan_observations), self.id())
   }
 }
 

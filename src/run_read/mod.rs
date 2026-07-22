@@ -161,7 +161,7 @@ pub async fn read_scroll_scan(
       uri: uri.clone(),
       source,
     })?;
-    actual_length = actual_length.checked_add(chunk.len() as u64).unwrap_or(u64::MAX);
+    actual_length = actual_length.saturating_add(chunk.len() as u64);
     if actual_length > SCROLL_SCAN_JSON_BYTE_LIMIT {
       return Err(ScrollScanReadError::PayloadTooLarge {
         uri: uri.clone(),
@@ -303,9 +303,9 @@ pub(crate) fn list_observation_snapshots(store: &LocalStore, run_id: &str) -> Au
 }
 
 pub(crate) fn extract_observation_snapshots(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<ObservationSnapshot>> {
-  // TODO(run-contract-task-22): Keep this role/path adapter only for
-  // `list_observation_snapshots` and inspect callers that do not yet supply a
-  // canonical RunSnapshot. V1 scroll-scan inspect uses `read_scroll_scan`.
+  // TODO(scroll-scan-legacy-reader): Keep this role/path adapter for the legacy
+  // list/inspect entrypoints until their migration is explicitly approved. V1
+  // inspect always supplies observations from canonical scroll-scan artifacts.
   let mut snapshots = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != "scroll-scan" || !is_json_mime(&artifact.mime_type) {

@@ -512,7 +512,7 @@ struct ScrollScanJsonBudget {
 impl Write for ScrollScanJsonBudget {
   fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
     let buffer_length = u64::try_from(buffer.len()).map_err(std::io::Error::other)?;
-    let actual = self.written.checked_add(buffer_length).unwrap_or(u64::MAX);
+    let actual = self.written.saturating_add(buffer_length);
     if actual > SCROLL_SCAN_JSON_BYTE_LIMIT {
       return Err(std::io::Error::other(format!(
         "{SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE}: scroll-scan JSON is {actual} bytes, exceeding the {SCROLL_SCAN_JSON_BYTE_LIMIT}-byte limit"

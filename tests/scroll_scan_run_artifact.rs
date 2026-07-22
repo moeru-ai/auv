@@ -9,6 +9,7 @@ use auv_runtime::contract::{
 use auv_runtime::inspect::{InspectRunV1Error, inspect_run_v1};
 use auv_runtime::run_read::read_scroll_scan;
 use auv_runtime::runtime::Runtime;
+use auv_runtime::scene_state_read::SCENE_STATE_INPUT_ARTIFACT_ROLE;
 use auv_runtime::scroll_scan::{
   CompletenessClaim, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE, SCROLL_SCAN_PURPOSE, ScanRegion, ScanTarget,
   ScanWindowRegionOptions, ScrollScanArtifact, StopEvidence, StopPolicy, StopReason, scan_window_region,
@@ -41,6 +42,14 @@ struct LegacyInspectFixture {
 
 impl LegacyInspectFixture {
   fn with_scroll_scan(run_id: &RunId, artifact: &ScrollScanArtifact) -> Self {
+    Self::new(run_id, artifact, false)
+  }
+
+  fn with_scroll_scan_and_unrelated_section(run_id: &RunId, artifact: &ScrollScanArtifact) -> Self {
+    Self::new(run_id, artifact, true)
+  }
+
+  fn new(run_id: &RunId, artifact: &ScrollScanArtifact, include_unrelated_section: bool) -> Self {
     let directory = std::env::temp_dir().join(format!("auv-scroll-scan-inspect-{run_id}"));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("legacy inspect directory");
@@ -49,7 +58,7 @@ impl LegacyInspectFixture {
     let span_id = LegacySpanId::new("0000000000000001");
     let source = directory.join("legacy-scroll-scan.json");
     std::fs::write(&source, serde_json::to_vec(artifact).expect("serialize legacy scroll scan")).expect("write legacy scroll scan");
-    let artifact = store
+    let scroll_scan_artifact = store
       .stage_artifact_file(
         &run_id,
         0,
@@ -63,6 +72,33 @@ impl LegacyInspectFixture {
         },
       )
       .expect("stage legacy scroll scan");
+    let mut artifacts = vec![scroll_scan_artifact];
+    if include_unrelated_section {
+      let source = directory.join("legacy-scene-state.json");
+      let scene_state = serde_json::json!({
+        "schema_version": "unrelated-legacy-scene-state",
+        "frames": [],
+        "observations_by_frame": [],
+        "lifecycle_events": null,
+      });
+      std::fs::write(&source, serde_json::to_vec(&scene_state).expect("serialize legacy scene state")).expect("write legacy scene state");
+      artifacts.push(
+        store
+          .stage_artifact_file(
+            &run_id,
+            1,
+            &span_id,
+            None,
+            auv_tracing_driver::ArtifactFileSource {
+              role: SCENE_STATE_INPUT_ARTIFACT_ROLE.to_string(),
+              source_path: source,
+              preferred_name: "legacy-scene-state.json".to_string(),
+              summary: None,
+            },
+          )
+          .expect("stage legacy scene state"),
+      );
+    }
     store
       .write_run_snapshot(&CanonicalRun {
         run: RunRecordV1Alpha1 {
@@ -93,7 +129,7 @@ impl LegacyInspectFixture {
           failure: None,
         }],
         events: Vec::new(),
-        artifacts: vec![artifact],
+        artifacts,
       })
       .expect("write legacy inspect run");
     Self { directory, store }
@@ -365,17 +401,19 @@ async fn production_v1_inspect_propagates_corrupt_canonical_scroll_scan() {
 }
 
 #[tokio::test]
-async fn production_v1_inspect_preserves_legacy_observations_without_canonical_scroll_scan() {
+async fn production_v1_inspect_excludes_legacy_scroll_scan_without_canonical_artifact() {
   let fixture = RootRunFixture::memory();
   fixture.publish_bytes("auv.runtime.other", "application/json", b"{}".to_vec()).await;
   let snapshot = fixture.snapshot().await;
   let mut legacy_artifact = sample_scroll_scan_artifact();
   legacy_artifact.snapshots[0].snapshot_id = "snapshot_legacy_only".to_string();
-  let legacy = LegacyInspectFixture::with_scroll_scan(&fixture.run_id, &legacy_artifact);
+  let legacy = LegacyInspectFixture::with_scroll_scan_and_unrelated_section(&fixture.run_id, &legacy_artifact);
 
-  let text = inspect_run_v1(fixture.store(), snapshot.as_ref(), &legacy.store).await.expect("legacy-compatible V1 inspect");
+  let text = inspect_run_v1(fixture.store(), snapshot.as_ref(), &legacy.store).await.expect("production V1 inspect");
 
-  assert!(text.contains("snapshot_legacy_only"), "{text}");
+  assert!(text.contains("Observations:\n- none"), "{text}");
+  assert!(!text.contains("snapshot_legacy_only"), "{text}");
+  assert!(text.contains("unrelated-legacy-scene-state"), "{text}");
 }
 
 #[tokio::test]
