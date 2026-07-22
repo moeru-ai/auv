@@ -5,7 +5,8 @@
 //! reads, view-parser proof, and scene state. Product frontends inject their
 //! composer rather than adding app wiring here.
 
-use auv_inspect_model::legacy::InspectComposer;
+use auv_inspect_model::legacy::{InspectComposer, InspectError};
+use auv_tracing::{RunSnapshot, RunStore};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_view::memory::{ViewMemory, ViewParserInspect, format_view_resolution_summary_text};
 
@@ -13,12 +14,20 @@ use auv_driver::{DisturbanceLevel, InputActionResult, InputDeliveryPath};
 
 use crate::contract::{FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
 use crate::model::AuvResult;
-use crate::run_read::DetectorRecognitionLineage;
+use crate::run_read::{DetectorRecognitionLineage, ScrollScanReadError};
 use crate::{scene_state_read, view_parser_read};
 
 mod sections;
 
 pub use sections::{CorePrefixSection, CoreSuffixSection, build_core_inspect_composer};
+
+#[derive(Debug, thiserror::Error)]
+pub enum InspectRunV1Error {
+  #[error(transparent)]
+  ScrollScan(#[from] ScrollScanReadError),
+  #[error(transparent)]
+  Inspect(#[from] InspectError),
+}
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
   crate::run_read::read_run(store, run_id)
@@ -49,7 +58,8 @@ pub fn view_parser_inspect(store: &LocalStore, run_id: &str) -> AuvResult<ViewPa
   view_parser_read::build_view_parser_inspect(store, &run)
 }
 
-/// Core-only inspect text via the shared composer path.
+/// Legacy core-only inspect adapter for callers that have not migrated to a
+/// canonical V1 snapshot yet.
 pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let composer = build_core_inspect_composer().map_err(|error| error.to_string())?;
   inspect_run_with(&composer, store, run_id)
@@ -59,13 +69,35 @@ pub fn inspect_run_with(composer: &InspectComposer, store: &LocalStore, run_id: 
   composer.inspect_text(store, run_id).map_err(|error| error.to_string())
 }
 
+/// Renders the core inspect text from one canonical V1 snapshot while keeping
+/// unrelated legacy sections on their existing read adapters.
+pub async fn inspect_run_v1(store: &dyn RunStore, snapshot: &RunSnapshot, legacy_store: &LocalStore) -> Result<String, InspectRunV1Error> {
+  let composer = sections::build_core_inspect_composer_v1(store, snapshot).await?;
+  Ok(composer.inspect_text(legacy_store, &snapshot.run_id().to_string())?)
+}
+
 pub(crate) fn inspect_run_core_prefix_body(store: &LocalStore, run_id: &str) -> AuvResult<String> {
+  inspect_run_core_prefix_body_with_observations(store, run_id, None)
+}
+
+pub(crate) fn inspect_run_core_prefix_body_with_observations(
+  store: &LocalStore,
+  run_id: &str,
+  canonical_scroll_scan_observations: Option<&[ObservationSnapshot]>,
+) -> AuvResult<String> {
   let canonical = read_run(store, run_id)?;
   let input_action_results = crate::run_read::extract_input_action_results(store, &canonical)?;
   let verifications = crate::run_read::extract_verifications(store, &canonical)?;
-  let observation_snapshots = crate::run_read::extract_observation_snapshots(store, &canonical)?;
+  let legacy_observation_snapshots;
+  let observation_snapshots = match canonical_scroll_scan_observations {
+    Some(observations) => observations,
+    None => {
+      legacy_observation_snapshots = crate::run_read::extract_observation_snapshots(store, &canonical)?;
+      &legacy_observation_snapshots
+    }
+  };
   let detector_recognition_lineage = crate::run_read::extract_detector_recognition_lineage(store, &canonical)?;
-  Ok(render_core_run_text(&canonical, &input_action_results, &verifications, &observation_snapshots, &detector_recognition_lineage))
+  Ok(render_core_run_text(&canonical, &input_action_results, &verifications, observation_snapshots, &detector_recognition_lineage))
 }
 
 pub(crate) fn inspect_run_core_suffix_body(store: &LocalStore, run_id: &str) -> AuvResult<String> {

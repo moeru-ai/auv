@@ -20,6 +20,7 @@ use observation::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -27,14 +28,12 @@ use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::now_millis;
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
 use crate::runtime::Runtime;
-use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, NewArtifact, Sha256Digest};
+use auv_cli_invoke::{ArtifactInstrumentationReceipt, ArtifactPublication};
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::trace::{RunId, SpanId};
-use futures_util::io::Cursor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ScanRegion {
@@ -303,6 +302,11 @@ pub struct ScrollScanArtifact {
 }
 
 pub const SCROLL_SCAN_PURPOSE: &str = "auv.runtime.scroll_scan";
+/// Scroll-scan JSON is inspectable structured evidence, not bulk telemetry.
+/// Eight MiB accommodates thousands of row observations plus their node and
+/// snapshot projections while bounding the producer and every reader.
+pub const SCROLL_SCAN_JSON_BYTE_LIMIT: u64 = 8 * 1024 * 1024;
+pub const SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE: &str = "auv.runtime.scroll_scan.payload_too_large";
 
 #[derive(Clone, Debug)]
 pub struct ScanWindowRegionOptions {
@@ -319,12 +323,16 @@ pub struct ScanWindowRegionOptions {
 // JSON recipe execution. Reintroduce hook composition only as typed Rust
 // interaction hooks once `auv-tracing-interaction` owns macro-operation
 // recording.
-pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<RunId> {
+pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> ArtifactPublication<AuvResult<RunId>> {
   let recording = runtime.recording().handle();
-  let mut run = recording.start_run(RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.scan.window_region"))?;
+  let mut run = match recording.start_run(RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.scan.window_region")) {
+    Ok(run) => run,
+    Err(error) => return ArtifactPublication::new(Err(error), ArtifactInstrumentationReceipt::default()),
+  };
   let root = run.root_span();
 
-  match scan_window_region_into_run(&recording, runtime, &mut run, &root, options).await {
+  let (scan_result, instrumentation) = scan_window_region_into_run(&recording, runtime, &mut run, &root, options).await;
+  let direct_result = match scan_result {
     Ok(summary) => recording.finish_run(
       run,
       auv_tracing_driver::run_builder::RunFinish {
@@ -347,7 +355,8 @@ pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOpti
         Err(finish_error) => Err(format!("{error}; additionally failed to persist failed scan run: {finish_error}")),
       }
     }
-  }
+  };
+  ArtifactPublication::new(direct_result, instrumentation)
 }
 
 async fn scan_window_region_into_run(
@@ -356,7 +365,7 @@ async fn scan_window_region_into_run(
   run: &mut auv_tracing_driver::run_builder::RecordingRun,
   root: &auv_tracing_driver::run_builder::SpanRef,
   options: ScanWindowRegionOptions,
-) -> AuvResult<String> {
+) -> (AuvResult<String>, ArtifactInstrumentationReceipt) {
   // TODO(controller): This scan loop is still a script-shaped orchestration
   // function that mixes observe, evidence accumulation, stop-policy
   // evaluation, hook handling, and scroll progression inline. Refactor it
@@ -465,37 +474,57 @@ async fn scan_window_region_into_run(
     state.warnings.push("scan ended with an error; artifact is partial".to_string());
   }
   let artifact = state.into_artifact(run.id(), root.id(), run.id().to_string(), options.target, options.stop_policy, final_decision);
-  if auv_tracing::Context::current().authority_id().is_some()
-    && let Ok(new_artifact) = new_scroll_scan_artifact(&artifact)
-  {
-    // The direct scan result is authoritative. The frontend-owned dispatch
-    // flush reports publication failures without retrying or replacing it.
-    let _ = auv_tracing::emit_artifact!(new_artifact).await;
-  }
-  if let Some(error) = scan_error {
-    return Err(error);
-  }
-
-  Ok(format!(
-    "Scanned {} page(s), captured {} observation(s), formed {} cluster(s).",
-    artifact.pages.len(),
-    artifact.observations.len(),
-    artifact.clusters.len()
-  ))
+  let mut instrumentation = ArtifactInstrumentationReceipt::default();
+  instrumentation.publish_json(SCROLL_SCAN_PURPOSE, &BoundedScrollScanArtifact(&artifact)).await;
+  let direct_result = match scan_error {
+    Some(error) => Err(error),
+    None => Ok(format!(
+      "Scanned {} page(s), captured {} observation(s), formed {} cluster(s).",
+      artifact.pages.len(),
+      artifact.observations.len(),
+      artifact.clusters.len()
+    )),
+  };
+  (direct_result, instrumentation)
 }
 
-fn new_scroll_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<NewArtifact<Cursor<Vec<u8>>>> {
-  let bytes = serde_json::to_vec(artifact).map_err(|error| format!("failed to serialize {SCROLL_SCAN_PURPOSE} artifact: {error}"))?;
-  let byte_length = u64::try_from(bytes.len()).map_err(|_| format!("{SCROLL_SCAN_PURPOSE} artifact length does not fit u64"))?;
-  let byte_length = ByteLength::new(byte_length).map_err(|error| format!("invalid {SCROLL_SCAN_PURPOSE} artifact length: {error}"))?;
-  Ok(NewArtifact::new(
-    ArtifactPurpose::parse(SCROLL_SCAN_PURPOSE).map_err(|error| format!("invalid {SCROLL_SCAN_PURPOSE} artifact purpose: {error}"))?,
-    ContentType::parse("application/json").map_err(|error| format!("invalid {SCROLL_SCAN_PURPOSE} artifact content type: {error}"))?,
-    byte_length,
-    Sha256Digest::new(Sha256::digest(&bytes).into()),
-    Attributes::empty(),
-    Cursor::new(bytes),
-  ))
+struct BoundedScrollScanArtifact<'a>(&'a ScrollScanArtifact);
+
+impl Serialize for BoundedScrollScanArtifact<'_> {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    // The receipt publisher also uses `to_writer_pretty`. Preflight the exact
+    // deterministic struct shape without allocating, then let the shared
+    // publisher own NewArtifact construction and its failure receipt.
+    let mut budget = ScrollScanJsonBudget::default();
+    serde_json::to_writer_pretty(&mut budget, self.0).map_err(serde::ser::Error::custom)?;
+    self.0.serialize(serializer)
+  }
+}
+
+#[derive(Default)]
+struct ScrollScanJsonBudget {
+  written: u64,
+}
+
+impl Write for ScrollScanJsonBudget {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let buffer_length = u64::try_from(buffer.len()).map_err(std::io::Error::other)?;
+    let actual = self.written.checked_add(buffer_length).unwrap_or(u64::MAX);
+    if actual > SCROLL_SCAN_JSON_BYTE_LIMIT {
+      return Err(std::io::Error::other(format!(
+        "{SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE}: scroll-scan JSON is {actual} bytes, exceeding the {SCROLL_SCAN_JSON_BYTE_LIMIT}-byte limit"
+      )));
+    }
+    self.written = actual;
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
 }
 
 pub fn observations_from_observe_json(page_index: usize, raw: &str, source_artifact: PathBuf) -> AuvResult<Vec<CollectionObservation>> {
@@ -2191,11 +2220,12 @@ mod tests {
     let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
     let options = bounded_scan_options();
 
-    let error =
-      scan_window_region(&runtime, options).await.expect_err("scroll scan should wait for a typed observe-region invoke implementation");
+    let (direct_result, instrumentation) = scan_window_region(&runtime, options).await.into_parts();
+    let error = direct_result.expect_err("scroll scan should wait for a typed observe-region invoke implementation");
 
     assert!(error.contains("window.observeRegion"));
     assert!(error.contains("typed window region observation API"));
+    assert!(instrumentation.failures().is_empty());
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

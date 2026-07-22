@@ -16,7 +16,7 @@ use crate::contract::{
   ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult, RecognitionSource, VerificationResult,
 };
 use crate::model::AuvResult;
-use crate::scroll_scan::{SCROLL_SCAN_PURPOSE, ScrollScanArtifact};
+use crate::scroll_scan::{SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE, SCROLL_SCAN_PURPOSE, ScrollScanArtifact};
 use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult};
 use auv_inspect_model::legacy::{artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing::{ArtifactReadError, ArtifactUri, AuthorityId, ErrorCode, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest};
@@ -47,6 +47,12 @@ pub enum ScrollScanReadError {
   WrongPurpose { uri: ArtifactUri, actual: String },
   #[error("artifact {uri} has content type {actual}, expected application/json")]
   WrongContentType { uri: ArtifactUri, actual: String },
+  #[error("scroll-scan artifact {uri} is {actual} bytes, exceeding the {limit}-byte payload limit")]
+  PayloadTooLarge {
+    uri: ArtifactUri,
+    limit: u64,
+    actual: u64,
+  },
   #[error("failed to open scroll-scan artifact {uri}: {source}")]
   Open {
     uri: ArtifactUri,
@@ -88,6 +94,7 @@ impl ScrollScanReadError {
       Self::DanglingUri { .. } => "auv.runtime.scroll_scan.dangling_uri",
       Self::WrongPurpose { .. } => "auv.runtime.scroll_scan.wrong_purpose",
       Self::WrongContentType { .. } => "auv.runtime.scroll_scan.wrong_content_type",
+      Self::PayloadTooLarge { .. } => SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE,
       Self::Open { .. } => "auv.runtime.scroll_scan.open_failed",
       Self::Stream { .. } => "auv.runtime.scroll_scan.stream_failed",
       Self::LengthMismatch { .. } => "auv.runtime.scroll_scan.length_mismatch",
@@ -136,6 +143,13 @@ pub async fn read_scroll_scan(
   }
 
   let expected_length = metadata.byte_length().get();
+  if expected_length > SCROLL_SCAN_JSON_BYTE_LIMIT {
+    return Err(ScrollScanReadError::PayloadTooLarge {
+      uri: uri.clone(),
+      limit: SCROLL_SCAN_JSON_BYTE_LIMIT,
+      actual: expected_length,
+    });
+  }
   let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| ScrollScanReadError::Open {
     uri: uri.clone(),
     source,
@@ -148,6 +162,13 @@ pub async fn read_scroll_scan(
       source,
     })?;
     actual_length = actual_length.checked_add(chunk.len() as u64).unwrap_or(u64::MAX);
+    if actual_length > SCROLL_SCAN_JSON_BYTE_LIMIT {
+      return Err(ScrollScanReadError::PayloadTooLarge {
+        uri: uri.clone(),
+        limit: SCROLL_SCAN_JSON_BYTE_LIMIT,
+        actual: actual_length,
+      });
+    }
     if actual_length > expected_length {
       return Err(ScrollScanReadError::LengthMismatch {
         uri: uri.clone(),
@@ -282,8 +303,9 @@ pub(crate) fn list_observation_snapshots(store: &LocalStore, run_id: &str) -> Au
 }
 
 pub(crate) fn extract_observation_snapshots(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<ObservationSnapshot>> {
-  // TODO(run-contract-task-22): Keep this role/path adapter only for legacy
-  // root callers until Task 22 moves them to `read_scroll_scan` and RunSnapshot.
+  // TODO(run-contract-task-22): Keep this role/path adapter only for
+  // `list_observation_snapshots` and inspect callers that do not yet supply a
+  // canonical RunSnapshot. V1 scroll-scan inspect uses `read_scroll_scan`.
   let mut snapshots = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != "scroll-scan" || !is_json_mime(&artifact.mime_type) {
