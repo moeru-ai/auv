@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use auv_tracing::{
   ArtifactMetadata, ArtifactReadError, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode,
-  FileRunStore, NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest,
+  NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest,
 };
 use auv_view::memory::ViewMemory;
 use futures_util::StreamExt;
@@ -157,8 +157,6 @@ fn validate_lineage_schema(lineage: &ViewMemoryRunLineage) -> Result<(), Lineage
 
 #[derive(Debug, thiserror::Error)]
 pub enum NeteaseArtifactPublishError {
-  #[error("NetEase artifact publication is disabled because no caller-owned run authority is current")]
-  Disabled,
   #[error("invalid NetEase artifact contract for {purpose}: {message}")]
   InvalidContract {
     purpose: &'static str,
@@ -190,17 +188,6 @@ pub enum NeteaseArtifactPublishError {
     #[source]
     source: ArtifactWriteError,
   },
-}
-
-pub struct PlaylistSelectPublication {
-  value: PlaylistSelectResult,
-  instrumentation: PlaylistSelectInstrumentation,
-}
-
-impl PlaylistSelectPublication {
-  pub fn into_parts(self) -> (PlaylistSelectResult, PlaylistSelectInstrumentation) {
-    (self.value, self.instrumentation)
-  }
 }
 
 pub enum PlaylistSelectInstrumentation {
@@ -236,8 +223,10 @@ pub async fn persist_playlist_ls_artifacts(
   scan: &PlaylistSidebarScan,
   inputs: &Inputs,
   memory_enabled: bool,
-) -> Result<PersistedLineage, NeteaseArtifactPublishError> {
-  let scan_metadata = publish_json(PLAYLIST_SIDEBAR_SCAN_PURPOSE, scan).await?.ok_or(NeteaseArtifactPublishError::Disabled)?;
+) -> Result<Option<PersistedLineage>, NeteaseArtifactPublishError> {
+  let Some(scan_metadata) = publish_json(PLAYLIST_SIDEBAR_SCAN_PURPOSE, scan).await? else {
+    return Ok(None);
+  };
   let scan_uri = scan_metadata.uri().clone();
   let memory = if memory_enabled {
     crate::view_memory::try_build_writable_memory(inputs, scan, &scan_uri)
@@ -245,10 +234,15 @@ pub async fn persist_playlist_ls_artifacts(
     None
   };
   let memory_uri = match &memory {
-    Some(memory) => publish_json(VIEW_MEMORY_PURPOSE, memory).await?.map(|metadata| metadata.uri().clone()),
+    Some(memory) => {
+      let Some(metadata) = publish_json(VIEW_MEMORY_PURPOSE, memory).await? else {
+        return Ok(None);
+      };
+      Some(metadata.uri().clone())
+    }
     None => None,
   };
-  Ok(PersistedLineage {
+  Ok(Some(PersistedLineage {
     lineage: ViewMemoryRunLineage {
       schema_version: VIEW_MEMORY_LINEAGE_SCHEMA_VERSION.to_string(),
       scan_uri,
@@ -259,32 +253,16 @@ pub async fn persist_playlist_ls_artifacts(
       written_at_millis: crate::view_memory::system_time_millis(),
     },
     memory,
-  })
+  }))
 }
 
-/// Returns the existing playlist-select result independently from its
-/// non-authoritative artifact instrumentation receipt.
-pub async fn persist_playlist_select_proof(result: PlaylistSelectResult) -> PlaylistSelectPublication {
-  let context = auv_tracing::Context::current();
-  let mut artifact_result = result.clone();
-  if context.authority_id().is_some()
-    && let Some(run_id) = context.run_id()
-  {
-    artifact_result.run_id = Some(run_id.to_string());
-  }
-  match publish_json(PLAYLIST_SELECT_RESULT_PURPOSE, &artifact_result).await {
-    Ok(Some(metadata)) => PlaylistSelectPublication {
-      value: artifact_result,
-      instrumentation: PlaylistSelectInstrumentation::Published(metadata),
-    },
-    Ok(None) => PlaylistSelectPublication {
-      value: result,
-      instrumentation: PlaylistSelectInstrumentation::Disabled,
-    },
-    Err(error) => PlaylistSelectPublication {
-      value: result,
-      instrumentation: PlaylistSelectInstrumentation::Failed(error),
-    },
+/// Publishes the exact existing playlist-select result without changing the
+/// domain value or coupling its lifetime to instrumentation.
+pub async fn persist_playlist_select_proof(result: &PlaylistSelectResult) -> PlaylistSelectInstrumentation {
+  match publish_json(PLAYLIST_SELECT_RESULT_PURPOSE, result).await {
+    Ok(Some(metadata)) => PlaylistSelectInstrumentation::Published(metadata),
+    Ok(None) => PlaylistSelectInstrumentation::Disabled,
+    Err(error) => PlaylistSelectInstrumentation::Failed(error),
   }
 }
 
@@ -318,44 +296,6 @@ pub async fn read_playlist_select_result(
   uri: &ArtifactUri,
 ) -> Result<PlaylistSelectResult, NeteaseArtifactReadError> {
   read_json(store, snapshot, uri, PLAYLIST_SELECT_RESULT_PURPOSE).await
-}
-
-/// Resolves the app-local lineage pointer against the explicitly selected
-/// file authority. There is no artifact-directory scan fallback.
-pub fn try_load_scan_cache_with_limits(inputs: &Inputs) -> (Option<PlaylistSidebarScan>, Vec<String>) {
-  match load_scan_for_inputs(inputs) {
-    Ok(scan) => (Some(scan), Vec::new()),
-    Err(error) => (None, vec![error]),
-  }
-}
-
-pub fn try_load_view_memory(inputs: &Inputs) -> Option<ViewMemory> {
-  load_memory_for_inputs(inputs).ok().flatten()
-}
-
-fn load_scan_for_inputs(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
-  let store_root = inputs.store_root.as_ref().ok_or_else(|| "canonical playlist scan loading requires --store-root".to_string())?;
-  let lineage = read_lineage_manifest_for_inputs(&inputs.artifact_dir, inputs).map_err(|error| error.to_string())?;
-  let store =
-    FileRunStore::open(store_root).map_err(|error| format!("failed to open NetEase run authority {}: {error}", store_root.display()))?;
-  let snapshot = futures_executor::block_on(store.load_snapshot(lineage.scan_uri.run_id()))
-    .map_err(|error| format!("failed to load NetEase scan snapshot: {error}"))?
-    .ok_or_else(|| format!("NetEase scan snapshot {} is missing", lineage.scan_uri.run_id()))?;
-  futures_executor::block_on(read_playlist_sidebar_scan(&store, &snapshot, &lineage.scan_uri)).map_err(|error| error.to_string())
-}
-
-fn load_memory_for_inputs(inputs: &Inputs) -> Result<Option<ViewMemory>, String> {
-  let store_root = inputs.store_root.as_ref().ok_or_else(|| "canonical view-memory loading requires --store-root".to_string())?;
-  let lineage = read_lineage_manifest_for_inputs(&inputs.artifact_dir, inputs).map_err(|error| error.to_string())?;
-  let Some(memory_uri) = lineage.memory_uri.as_ref() else {
-    return Ok(None);
-  };
-  let store =
-    FileRunStore::open(store_root).map_err(|error| format!("failed to open NetEase run authority {}: {error}", store_root.display()))?;
-  let snapshot = futures_executor::block_on(store.load_snapshot(memory_uri.run_id()))
-    .map_err(|error| format!("failed to load NetEase view-memory snapshot: {error}"))?
-    .ok_or_else(|| format!("NetEase view-memory snapshot {} is missing", memory_uri.run_id()))?;
-  futures_executor::block_on(read_view_memory(&store, &snapshot, memory_uri)).map(Some).map_err(|error| error.to_string())
 }
 
 async fn read_json<T: DeserializeOwned>(
@@ -559,6 +499,10 @@ impl NeteaseArtifactReadError {
 }
 
 async fn publish_json<T: Serialize>(purpose: &'static str, value: &T) -> Result<Option<ArtifactMetadata>, NeteaseArtifactPublishError> {
+  // Disabled instrumentation must not validate or allocate artifact bytes.
+  if !auv_tracing::Context::current().is_enabled() {
+    return Ok(None);
+  }
   let (body, digest) = serialize_json_exact(purpose, value)?;
   let length = ByteLength::new(body.len() as u64).map_err(|error| NeteaseArtifactPublishError::InvalidContract {
     purpose,

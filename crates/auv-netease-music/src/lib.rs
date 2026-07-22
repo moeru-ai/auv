@@ -70,7 +70,6 @@ use auv_view::draw_rect;
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
-pub const PLAYLIST_SCAN_CACHE_FILE: &str = "playlist-scan-cache.json";
 pub const DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR: &str = "/tmp/auv-netease-play-daily-recommended-artifacts";
 // TODO(netease-scroll-completion): this conservative default is only a
 // product-agnostic safety cap, not an account-size estimate or completion
@@ -106,7 +105,6 @@ pub struct Inputs {
   pub sidebar_region: Option<RatioRect>,
   pub ocr_options: TextRecognitionOptions,
   pub category: PlaylistCategory,
-  pub store_root: Option<PathBuf>,
 }
 
 impl Inputs {
@@ -120,7 +118,6 @@ impl Inputs {
       sidebar_region: None,
       ocr_options: TextRecognitionOptions::default(),
       category: PlaylistCategory::All,
-      store_root: None,
     }
   }
 }
@@ -472,7 +469,7 @@ impl PlaylistSidebarScan {
       }
     }
 
-    Err(format!("no playlist candidate_id matched {candidate_id:?}; run `playlist ls <query> --json` first with the same --artifact-dir"))
+    Err(format!("no playlist candidate_id matched {candidate_id:?} in the canonical playlist scan"))
   }
 
   pub fn to_human_readable(&self) -> PlaylistSidebarHumanSummary<'_> {

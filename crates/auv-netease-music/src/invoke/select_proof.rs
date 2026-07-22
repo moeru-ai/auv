@@ -93,8 +93,7 @@ async fn select_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, 
     return Ok(output);
   }
 
-  let publication = persist_playlist_select_proof(preview).await;
-  let (result, instrumentation) = publication.into_parts();
+  let instrumentation = persist_playlist_select_proof(&preview).await;
   let mut output = match instrumentation {
     PlaylistSelectInstrumentation::Published(metadata) => {
       let run_id = metadata.uri().run_id().to_string();
@@ -115,7 +114,7 @@ async fn select_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, 
       output
     }
   };
-  output.signals.insert("query".to_string(), result.query);
+  output.signals.insert("query".to_string(), preview.query);
   output.verification = Some("hermetic fixture proof only; no live scan or semantic success claim".to_string());
   output.known_limits.push("hermetic_fixture_only".to_string());
   output.signals.insert("artifact_purpose".to_string(), PLAYLIST_SELECT_RESULT_PURPOSE.to_string());
