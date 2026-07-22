@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use auv_cli_invoke::ArtifactInstrumentationReceipt;
 use auv_runtime::contract::{
   OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope, RecognitionSurface,
 };
@@ -464,6 +465,51 @@ async fn scroll_scan_reader_reads_an_exact_limit_fragmented_payload() {
 }
 
 #[tokio::test]
+async fn scroll_scan_producer_accepts_pretty_json_at_the_exact_limit() {
+  let fixture = RootRunFixture::memory();
+  let artifact = scroll_scan_with_pretty_json_length(SCROLL_SCAN_JSON_BYTE_LIMIT);
+  let future = fixture.root.in_scope(|| async {
+    let mut instrumentation = ArtifactInstrumentationReceipt::default();
+    instrumentation
+      .publish_json_bounded(SCROLL_SCAN_PURPOSE, &artifact, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
+      .await;
+    instrumentation
+  });
+
+  let instrumentation = fixture.root.instrument(future).await;
+
+  assert!(instrumentation.failures().is_empty());
+  fixture.dispatch.flush().await.expect("flush exact-limit scroll scan");
+  let snapshot = fixture.snapshot().await;
+  let published = snapshot
+    .artifacts()
+    .values()
+    .find(|published| published.metadata().purpose().as_str() == SCROLL_SCAN_PURPOSE)
+    .expect("exact-limit scroll scan publication")
+    .metadata();
+  assert_eq!(published.byte_length().get(), SCROLL_SCAN_JSON_BYTE_LIMIT);
+}
+
+#[tokio::test]
+async fn scroll_scan_producer_rejects_pretty_json_one_byte_over_the_limit() {
+  let fixture = RootRunFixture::memory();
+  let artifact = scroll_scan_with_pretty_json_length(SCROLL_SCAN_JSON_BYTE_LIMIT + 1);
+  let future = fixture.root.in_scope(|| async {
+    let mut instrumentation = ArtifactInstrumentationReceipt::default();
+    instrumentation
+      .publish_json_bounded(SCROLL_SCAN_PURPOSE, &artifact, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
+      .await;
+    instrumentation
+  });
+
+  let instrumentation = fixture.root.instrument(future).await;
+
+  assert_eq!(instrumentation.failures().len(), 1);
+  assert!(instrumentation.failures()[0].message.contains(SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE));
+  fixture.dispatch.flush().await.expect("oversized scroll scan must not emit an artifact job");
+}
+
+#[tokio::test]
 async fn scroll_scan_reader_stops_on_an_oversized_stream_chunk() {
   let fixture = RootRunFixture::memory();
   let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
@@ -591,6 +637,35 @@ fn sample_scroll_scan_artifact() -> ScrollScanArtifact {
     completeness_claim: CompletenessClaim::PartialMaxPages,
     warnings: vec!["fixture warning".to_string()],
   }
+}
+
+fn scroll_scan_with_pretty_json_length(target_length: u64) -> ScrollScanArtifact {
+  let target_length = usize::try_from(target_length).expect("test target length fits usize");
+  let mut artifact = sample_scroll_scan_artifact();
+  artifact.warnings = vec![String::new()];
+  let pretty_json_overhead = pretty_json_length(&artifact);
+  artifact.warnings[0] = "x".repeat(target_length.checked_sub(pretty_json_overhead).expect("scroll scan fixture fits target length"));
+  assert_eq!(pretty_json_length(&artifact), target_length);
+  artifact
+}
+
+fn pretty_json_length<T: serde::Serialize>(value: &T) -> usize {
+  struct ByteCounter(usize);
+
+  impl std::io::Write for ByteCounter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+      self.0 = self.0.checked_add(buffer.len()).ok_or_else(|| std::io::Error::other("pretty JSON length overflow"))?;
+      Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+      Ok(())
+    }
+  }
+
+  let mut counter = ByteCounter(0);
+  serde_json::to_writer_pretty(&mut counter, value).expect("measure pretty scroll scan JSON");
+  counter.0
 }
 
 fn bounded_scan_options() -> ScanWindowRegionOptions {

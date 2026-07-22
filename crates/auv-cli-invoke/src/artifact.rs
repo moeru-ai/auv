@@ -327,9 +327,6 @@ impl ExactArtifactBuffer {
   fn try_new(purpose: &str, measured_length: usize) -> Result<Self, String> {
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(measured_length).map_err(|error| format!("failed to allocate {purpose} artifact bytes: {error}"))?;
-    if bytes.capacity() != measured_length {
-      return Err(format!("failed to allocate {purpose} artifact bytes exactly: measured {measured_length}, reserved {}", bytes.capacity()));
-    }
     Ok(Self {
       bytes,
       measured_length,
@@ -522,33 +519,36 @@ mod tests {
   }
 
   #[test]
-  fn png_encoding_uses_its_exact_measured_allocation() {
+  fn png_encoding_preserves_the_measured_payload() {
     let image = RgbaImage::from_fn(257, 257, |x, y| image::Rgba([x as u8, y as u8, (x ^ y) as u8, 255]));
 
     let body = encode_png_exact("auv.test.png", &image).expect("encode PNG");
 
-    assert_eq!(body.capacity(), body.len());
     assert_eq!(image::load_from_memory_with_format(&body, image::ImageFormat::Png).expect("decode PNG").into_rgba8(), image);
   }
 
   #[test]
-  fn fragmented_json_uses_its_exact_measured_allocation() {
-    let limit = 8 * 1024 * 1024;
-    let fragment = "x".repeat(4 * 1024);
-    let payload = vec![fragment.as_str(); 1_900];
+  fn exact_artifact_buffer_accepts_the_measured_payload() {
+    let expected = b"measured payload";
+    let measured_digest = Sha256Digest::new(Sha256::digest(expected).into());
+    let mut body = ExactArtifactBuffer::try_new("auv.test.measured", expected.len()).expect("bounded buffer");
 
-    let body = serialize_json_exact(
-      "auv.test.fragmented",
-      &payload,
-      JsonArtifactLimit {
-        max_bytes: limit,
-        exceeded_code: "auv.test.payload_too_large",
-      },
-    )
-    .expect("valid fragmented JSON");
+    body.write_all(expected).expect("write measured payload");
 
-    assert!(body.len() < limit as usize);
-    assert_eq!(body.capacity(), body.len());
+    assert_eq!(body.finish(measured_digest), Some(expected.to_vec()));
+  }
+
+  #[test]
+  fn exact_artifact_buffer_rejects_writes_beyond_the_measured_length() {
+    let measured_length = 3;
+    let written = b"four";
+    let written_digest = Sha256Digest::new(Sha256::digest(written).into());
+    let mut body = ExactArtifactBuffer::try_new("auv.test.overlong", measured_length).expect("bounded buffer");
+
+    body.write_all(written).expect("bounded write");
+
+    assert_eq!(body.bytes, written[..measured_length]);
+    assert!(body.finish(written_digest).is_none());
   }
 
   #[test]
