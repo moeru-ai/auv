@@ -122,6 +122,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
 image.workspace = true
+futures-util = { workspace = true, features = ["io"] }
+sha2.workspace = true
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

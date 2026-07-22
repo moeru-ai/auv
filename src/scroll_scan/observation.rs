@@ -279,6 +279,9 @@ pub(crate) fn build_page_observation_snapshot(
   target: &ScanTarget,
   page_observations: &[CollectionObservation],
   screenshot_artifact: Option<&Path>,
+  // TODO(run-contract-task-22): Per-page evidence still arrives as legacy
+  // driver artifact records. Task 17 keeps the exact snapshot payload; Task 22
+  // migrates the remaining root evidence producers to canonical ArtifactUri.
   screenshot_artifact_record: Option<&ArtifactRecordV1Alpha1>,
   evidence_artifacts: &[ArtifactRecordV1Alpha1],
   new_observation_count: usize,

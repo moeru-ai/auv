@@ -5,7 +5,8 @@
 //! scan / compatibility policy:
 //!
 //! - verification claims come from `operation-result` JSON artifacts
-//! - observation snapshots come from `scroll-scan` JSON artifacts
+//! - canonical scroll-scan payloads are read by purpose and `ArtifactUri`
+//! - the legacy observation adapter still reads `scroll-scan` role artifacts
 //! - input delivery evidence comes from standalone `input-action-result`
 //!   JSON artifacts (`auv_driver::InputActionResult`)
 //! - legacy `OperationOutput::Verification` remains readable without
@@ -15,14 +16,167 @@ use crate::contract::{
   ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult, RecognitionSource, VerificationResult,
 };
 use crate::model::AuvResult;
-use crate::scroll_scan::ScrollScanArtifact;
+use crate::scroll_scan::{SCROLL_SCAN_PURPOSE, ScrollScanArtifact};
 use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult};
 use auv_inspect_model::legacy::{artifact_record_view, is_json_mime, read_artifact_json};
+use auv_tracing::{ArtifactReadError, ArtifactUri, AuthorityId, ErrorCode, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
+use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
   store.read_run(run_id)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ScrollScanReadError {
+  #[error("scroll-scan snapshot authority {snapshot_authority} does not match store authority {store_authority}")]
+  SnapshotAuthorityMismatch {
+    snapshot_authority: AuthorityId,
+    store_authority: AuthorityId,
+  },
+  #[error("scroll-scan artifact URI belongs to run {artifact_run_id}, not snapshot run {snapshot_run_id}")]
+  WrongOwner {
+    snapshot_run_id: RunId,
+    artifact_run_id: RunId,
+  },
+  #[error("scroll-scan artifact URI is not committed in the supplied snapshot: {uri}")]
+  DanglingUri { uri: ArtifactUri },
+  #[error("artifact {uri} has purpose {actual}, expected {SCROLL_SCAN_PURPOSE}")]
+  WrongPurpose { uri: ArtifactUri, actual: String },
+  #[error("artifact {uri} has content type {actual}, expected application/json")]
+  WrongContentType { uri: ArtifactUri, actual: String },
+  #[error("failed to open scroll-scan artifact {uri}: {source}")]
+  Open {
+    uri: ArtifactUri,
+    #[source]
+    source: ReadError,
+  },
+  #[error("failed while streaming scroll-scan artifact {uri}: {source}")]
+  Stream {
+    uri: ArtifactUri,
+    #[source]
+    source: ArtifactReadError,
+  },
+  #[error("artifact {uri} byte length is {actual}, expected committed length {expected}")]
+  LengthMismatch {
+    uri: ArtifactUri,
+    expected: u64,
+    actual: u64,
+  },
+  #[error("artifact {uri} SHA-256 digest is {actual}, expected committed digest {expected}")]
+  DigestMismatch {
+    uri: ArtifactUri,
+    expected: Sha256Digest,
+    actual: Sha256Digest,
+  },
+  #[error("artifact {uri} is not a valid ScrollScanArtifact JSON payload: {source}")]
+  MalformedJson {
+    uri: ArtifactUri,
+    #[source]
+    source: serde_json::Error,
+  },
+}
+
+impl ScrollScanReadError {
+  /// Returns a stable machine-readable category for this read failure.
+  pub fn code(&self) -> ErrorCode {
+    let value = match self {
+      Self::SnapshotAuthorityMismatch { .. } => "auv.runtime.scroll_scan.snapshot_authority_mismatch",
+      Self::WrongOwner { .. } => "auv.runtime.scroll_scan.wrong_owner",
+      Self::DanglingUri { .. } => "auv.runtime.scroll_scan.dangling_uri",
+      Self::WrongPurpose { .. } => "auv.runtime.scroll_scan.wrong_purpose",
+      Self::WrongContentType { .. } => "auv.runtime.scroll_scan.wrong_content_type",
+      Self::Open { .. } => "auv.runtime.scroll_scan.open_failed",
+      Self::Stream { .. } => "auv.runtime.scroll_scan.stream_failed",
+      Self::LengthMismatch { .. } => "auv.runtime.scroll_scan.length_mismatch",
+      Self::DigestMismatch { .. } => "auv.runtime.scroll_scan.digest_mismatch",
+      Self::MalformedJson { .. } => "auv.runtime.scroll_scan.malformed_json",
+    };
+    ErrorCode::parse(value).expect("static scroll-scan read error code is valid")
+  }
+}
+
+/// Reads one exact `ScrollScanArtifact` from its committed V1 run record.
+pub async fn read_scroll_scan(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<ScrollScanArtifact, ScrollScanReadError> {
+  if snapshot.authority_id() != store.authority_id() {
+    return Err(ScrollScanReadError::SnapshotAuthorityMismatch {
+      snapshot_authority: snapshot.authority_id(),
+      store_authority: store.authority_id(),
+    });
+  }
+  let artifact_run_id = uri.run_id();
+  if artifact_run_id != snapshot.run_id() {
+    return Err(ScrollScanReadError::WrongOwner {
+      snapshot_run_id: snapshot.run_id(),
+      artifact_run_id,
+    });
+  }
+  let metadata = snapshot
+    .artifacts()
+    .get(uri)
+    .map(|published| published.metadata())
+    .ok_or_else(|| ScrollScanReadError::DanglingUri { uri: uri.clone() })?;
+  if metadata.purpose().as_str() != SCROLL_SCAN_PURPOSE {
+    return Err(ScrollScanReadError::WrongPurpose {
+      uri: uri.clone(),
+      actual: metadata.purpose().as_str().to_string(),
+    });
+  }
+  if metadata.content_type().to_string() != "application/json" {
+    return Err(ScrollScanReadError::WrongContentType {
+      uri: uri.clone(),
+      actual: metadata.content_type().to_string(),
+    });
+  }
+
+  let expected_length = metadata.byte_length().get();
+  let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| ScrollScanReadError::Open {
+    uri: uri.clone(),
+    source,
+  })?;
+  let mut bytes = Vec::new();
+  let mut actual_length = 0_u64;
+  while let Some(chunk) = reader.next().await {
+    let chunk = chunk.map_err(|source| ScrollScanReadError::Stream {
+      uri: uri.clone(),
+      source,
+    })?;
+    actual_length = actual_length.checked_add(chunk.len() as u64).unwrap_or(u64::MAX);
+    if actual_length > expected_length {
+      return Err(ScrollScanReadError::LengthMismatch {
+        uri: uri.clone(),
+        expected: expected_length,
+        actual: actual_length,
+      });
+    }
+    bytes.extend_from_slice(&chunk);
+  }
+  if actual_length != expected_length {
+    return Err(ScrollScanReadError::LengthMismatch {
+      uri: uri.clone(),
+      expected: expected_length,
+      actual: actual_length,
+    });
+  }
+
+  let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
+  if actual_digest != metadata.sha256() {
+    return Err(ScrollScanReadError::DigestMismatch {
+      uri: uri.clone(),
+      expected: metadata.sha256(),
+      actual: actual_digest,
+    });
+  }
+  serde_json::from_slice(&bytes).map_err(|source| ScrollScanReadError::MalformedJson {
+    uri: uri.clone(),
+    source,
+  })
 }
 
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
@@ -128,6 +282,8 @@ pub(crate) fn list_observation_snapshots(store: &LocalStore, run_id: &str) -> Au
 }
 
 pub(crate) fn extract_observation_snapshots(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<ObservationSnapshot>> {
+  // TODO(run-contract-task-22): Keep this role/path adapter only for legacy
+  // root callers until Task 22 moves them to `read_scroll_scan` and RunSnapshot.
   let mut snapshots = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != "scroll-scan" || !is_json_mime(&artifact.mime_type) {
