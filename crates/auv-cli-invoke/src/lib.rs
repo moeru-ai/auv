@@ -26,8 +26,8 @@ pub use arg::ArgSpec;
 pub use artifact::{ArtifactInstrumentationFailure, ArtifactInstrumentationReceipt, ArtifactPublication};
 pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{
-  CommandGroup, CommandNode, InvokeCommand, InvokeCommandFuture, InvokeCommandHandler, InvokeCommandInput, InvokeCommandOutput,
-  InvokeCommandResult, InvokeNamespace,
+  CommandGroup, CommandNode, InvokeCancellation, InvokeCancelled, InvokeCommand, InvokeCommandFuture, InvokeCommandHandler,
+  InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace,
 };
 pub use help::{render_command_help, render_help_index};
 pub use models::{

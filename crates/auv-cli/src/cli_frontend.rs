@@ -8,7 +8,7 @@ use std::env;
 use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, ExitCode};
 use std::sync::Arc;
 
 use image::ImageReader;
@@ -41,16 +41,15 @@ pub async fn run_donor_bin(donor: &'static str) -> Result<i32, String> {
   dispatch(command).await
 }
 
-pub fn exit_on_error(result: Result<i32, String>) {
-  let exit_code = match result {
-    Ok(exit_code) => exit_code,
+pub fn exit_status(result: Result<i32, String>) -> ExitCode {
+  match result {
+    Ok(0) => ExitCode::SUCCESS,
+    Ok(exit_code @ 1..=255) => ExitCode::from(exit_code as u8),
+    Ok(_) => ExitCode::FAILURE,
     Err(error) => {
       eprintln!("error: {error}");
-      1
+      ExitCode::FAILURE
     }
-  };
-  if exit_code != 0 {
-    process::exit(exit_code);
   }
 }
 
@@ -1041,6 +1040,7 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         target_application_id: request.target.application_id,
         inputs: request.inputs,
         dry_run: request.dry_run,
+        cancellation: auv_cli_invoke::InvokeCancellation::new(),
       };
       let invoked_command = command.clone();
       let execution = execute_invoke_frontend(&authority, move || invoked_command.invoke(input)).await?;
@@ -1817,7 +1817,6 @@ fn normalize_write_token(source: &str, token: String) -> Result<String, String> 
 #[derive(Clone)]
 struct InvokeFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
-  store: Arc<dyn auv_tracing::RunStore>,
 }
 
 async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptions) -> Result<InvokeFrontendAuthority, String> {
@@ -1860,7 +1859,7 @@ async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptio
   };
   let dispatch =
     auv_tracing::configure().run_store(store.clone()).build().map_err(|error| format!("failed to configure invoke tracing: {error}"))?;
-  Ok(InvokeFrontendAuthority { dispatch, store })
+  Ok(InvokeFrontendAuthority { dispatch })
 }
 
 #[derive(Debug)]
@@ -1887,32 +1886,20 @@ where
   F: FnOnce() -> Fut + Send + 'static,
   Fut: Future<Output = Result<T, String>> + Send + 'static,
 {
-  let run_id = auv_tracing::RunId::new();
-  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-  root.in_scope(|| {
-    auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-  });
-  let future = root.in_scope(call);
-  let task_dispatch = authority.dispatch.clone();
-  let task_root = root.clone();
-  let runtime = tokio::runtime::Handle::current();
-  let task_result = tokio::task::spawn_blocking(move || {
-    auv_tracing::dispatcher::with_default(&task_dispatch, || runtime.block_on(task_root.instrument(future)))
-  })
-  .await;
-  let tracing_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
-  let snapshot = authority
-    .store
-    .load_snapshot(run_id)
+  let recorded = authority
+    .dispatch
+    .record(|| {
+      auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+      call()
+    })
     .await
-    .map_err(|error| format!("failed to read committed invoke run {run_id}: {error}"))?
-    .ok_or_else(|| format!("invoke run {run_id} was not persisted by its V1 authority"))?;
+    .map_err(|error| error.to_string())?;
+  let (run_id, direct_result, tracing_failure, snapshot) = recorded.into_parts();
   let canonical_artifacts = snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect();
-  let direct_result = task_result.map_err(|error| format!("invoke blocking adapter task failed: {error}"))?;
   Ok(InvokeFrontendExecution {
     run_id,
     direct_result,
-    tracing_failure,
+    tracing_failure: tracing_failure.map(|error| error.to_string()),
     canonical_artifacts,
   })
 }
@@ -2034,6 +2021,13 @@ mod tests {
     }
   }
 
+  #[test]
+  fn library_exit_status_returns_typed_codes_without_terminating_the_process() {
+    assert_eq!(exit_status(Ok(0)), std::process::ExitCode::SUCCESS);
+    assert_eq!(exit_status(Ok(7)), std::process::ExitCode::from(7));
+    assert_eq!(exit_status(Err("failed".to_string())), std::process::ExitCode::FAILURE);
+  }
+
   #[derive(Clone, Default)]
   struct CountingCall {
     calls: Arc<AtomicUsize>,
@@ -2074,10 +2068,7 @@ mod tests {
 
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
-    let authority = InvokeFrontendAuthority {
-      dispatch,
-      store: store.clone(),
-    };
+    let authority = InvokeFrontendAuthority { dispatch };
     let invoked_call = call.clone();
     let execution = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect("persisted execution");
 
@@ -2094,10 +2085,7 @@ mod tests {
     let call = CountingCall::default();
     let store = Arc::new(CommitUnknownStore::new());
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
-    let authority = InvokeFrontendAuthority {
-      dispatch,
-      store: store.clone(),
-    };
+    let authority = InvokeFrontendAuthority { dispatch };
 
     let invoked_call = call.clone();
     let error = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect_err("unknown commit cannot return a run id");
@@ -2120,17 +2108,14 @@ mod tests {
     let _ = fs::remove_dir_all(&store_root);
     let store = Arc::new(auv_tracing::FileRunStore::open(&store_root).expect("file store"));
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("CLI dispatch");
-    let authority = InvokeFrontendAuthority {
-      dispatch,
-      store: store.clone(),
-    };
-    let registry = crate::product_registry();
-    let command = registry.resolve(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID).cloned().expect("TextEdit CLI metadata");
+    let authority = InvokeFrontendAuthority { dispatch };
+    let command = crate::integrations::textedit::test_document_write_invoke_command();
     let input = auv_cli_invoke::InvokeCommandInput {
       command_id: crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID.to_string(),
       target_application_id: Some("com.apple.TextEdit".to_string()),
       inputs: textedit_mismatch_inputs(),
       dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
     };
 
     let invoked_command = command.clone();
@@ -2141,7 +2126,7 @@ mod tests {
     assert_eq!(cli_result.status, auv_cli_invoke::RunStatus::Failed);
     assert!(cli_result.failure_message.as_deref().is_some_and(|message| message.contains("semantic verification failed")));
 
-    let server = crate::mcp::server(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).expect("product MCP server");
+    let server = crate::mcp::server_with_test_textedit(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).expect("test TextEdit MCP server");
     let (server_transport, client_transport) = tokio::io::duplex(16384);
     let server_handle = tokio::spawn(async move {
       let service = server.serve(server_transport).await.expect("MCP server start");
@@ -2192,7 +2177,7 @@ mod tests {
       (&mcp_snapshot, mcp_run_id),
     ] {
       assert!(snapshot.artifacts().values().all(|artifact| artifact.metadata().uri().run_id() == run_id));
-      assert!(!format!("{snapshot:?}").contains("operation-success"));
+      assert_eq!(snapshot.events().iter().map(|event| event.schema().name().as_str()).collect::<Vec<_>>(), vec!["auv.frontend.lifecycle"]);
       assert!(!stored_document_write_semantic_match(store.as_ref(), snapshot).await);
     }
 
@@ -2204,7 +2189,6 @@ mod tests {
   fn textedit_mismatch_inputs() -> std::collections::BTreeMap<String, String> {
     std::collections::BTreeMap::from([
       ("content".to_string(), "AUV_TEXTEDIT_EXPECTED_MARKER".to_string()),
-      ("driver".to_string(), "fixture".to_string()),
       ("fixture_observed_text".to_string(), "observed-without-expected".to_string()),
     ])
   }

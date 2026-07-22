@@ -9,6 +9,7 @@ mod event;
 mod history;
 mod macros;
 mod propagation;
+mod recording;
 #[cfg(feature = "rust-tracing")]
 mod rust_tracing;
 mod store;
@@ -21,6 +22,7 @@ pub use dispatch::*;
 pub use event::*;
 pub use history::*;
 pub use propagation::*;
+pub use recording::*;
 #[cfg(feature = "rust-tracing")]
 pub use rust_tracing::*;
 pub use store::*;

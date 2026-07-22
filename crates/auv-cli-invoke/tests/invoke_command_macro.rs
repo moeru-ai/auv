@@ -24,6 +24,7 @@ fn invoke_command_macro_expands_for_downstream_crates() {
     target_application_id: None,
     inputs: std::collections::BTreeMap::new(),
     dry_run: false,
+    cancellation: auv_cli_invoke::InvokeCancellation::new(),
   }))
   .expect("handler should run");
 

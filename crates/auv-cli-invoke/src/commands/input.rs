@@ -532,11 +532,11 @@ fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
 fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandOutput {
   let mut output = InvokeCommandOutput::new(summary);
   output.backend = Some(backend.to_string());
-  output.signals.insert("input.selected_path".to_string(), format!("{:?}", result.selected_path));
+  output.signals.insert("input.selected_path".to_string(), result.selected_path.as_str().to_string());
   output.signals.insert("input.attempt_count".to_string(), result.attempts.len().to_string());
-  output.signals.insert("input.mouse_disturbance".to_string(), format!("{:?}", result.mouse_disturbance));
-  output.signals.insert("input.focus_disturbance".to_string(), format!("{:?}", result.focus_disturbance));
-  output.signals.insert("input.clipboard_disturbance".to_string(), format!("{:?}", result.clipboard_disturbance));
+  output.signals.insert("input.mouse_disturbance".to_string(), result.mouse_disturbance.as_str().to_string());
+  output.signals.insert("input.focus_disturbance".to_string(), result.focus_disturbance.as_str().to_string());
+  output.signals.insert("input.clipboard_disturbance".to_string(), result.clipboard_disturbance.as_str().to_string());
   if let Some(reason) = &result.fallback_reason {
     output.signals.insert("input.fallback_reason".to_string(), reason.clone());
   }
@@ -558,7 +558,7 @@ fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, resu
     report_field("Result", "delivered"),
     report_field("Key", key),
     report_field("Target", target.unwrap_or("active app")),
-    report_field("Path", format!("{:?}", result.selected_path)),
+    report_field("Path", result.selected_path.as_str()),
   ];
   if let Some(backend) = backend {
     fields.push(report_field("Backend", backend));
@@ -588,6 +588,7 @@ mod click_window_point_tests {
       target_application_id: Some("com.example.App".to_string()),
       inputs,
       dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
     };
     let error = futures_executor::block_on(click_window_point(input)).expect_err("missing point args should fail");
     assert!(error.contains("requires --offset_x/--offset_y or --relative_x/--relative_y"));
@@ -603,6 +604,7 @@ mod click_window_point_tests {
       target_application_id: Some("com.example.App".to_string()),
       inputs,
       dry_run: true,
+      cancellation: crate::InvokeCancellation::new(),
     };
     let output = futures_executor::block_on(click_window_point(input)).expect("dry run should succeed");
     assert!(output.summary.contains("dry run: input.clickWindowPoint"));
@@ -715,6 +717,26 @@ mod click_window_point_tests {
     assert_eq!(field_value(report, "Key"), "Cmd+L");
     assert_eq!(field_value(report, "Target"), "active app");
     assert_eq!(field_value(report, "Backend"), "auv-driver-macos.input");
+    assert_eq!(field_value(report, "Path"), "foreground_system_events");
+  }
+
+  #[test]
+  fn input_action_output_projects_explicit_snake_case_wire_values() {
+    let result = InputActionResult {
+      selected_path: InputDeliveryPath::WindowTargetedKeyboardScroll,
+      attempts: vec![],
+      fallback_reason: None,
+      mouse_disturbance: auv_driver::DisturbanceLevel::None,
+      focus_disturbance: auv_driver::DisturbanceLevel::Foreground,
+      clipboard_disturbance: auv_driver::DisturbanceLevel::Temporary,
+    };
+
+    let output = input_action_output("delivered", "test", &result);
+
+    assert_eq!(output.signals.get("input.selected_path").map(String::as_str), Some("window_targeted_keyboard_scroll"));
+    assert_eq!(output.signals.get("input.mouse_disturbance").map(String::as_str), Some("none"));
+    assert_eq!(output.signals.get("input.focus_disturbance").map(String::as_str), Some("foreground"));
+    assert_eq!(output.signals.get("input.clipboard_disturbance").map(String::as_str), Some("temporary"));
   }
 
   fn field_value<'a>(report: &'a InvokeReport, label: &str) -> &'a str {

@@ -223,6 +223,30 @@ fn telemetry_only_dispatch_projects_volatile_facts_without_authority_revisions()
 }
 
 #[test]
+fn record_polls_the_call_in_context_and_returns_the_committed_snapshot() {
+  let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+  let dispatch = configure().run_store(store).build().unwrap();
+
+  let recorded = block_on_timeout(dispatch.record(|| {
+    let construction_context = auv_tracing::Context::current();
+    assert!(construction_context.is_enabled());
+    auv_tracing::emit_event!(TestEvent { value: 1 });
+    async move {
+      let polling_context = auv_tracing::Context::current();
+      assert_eq!(polling_context.run_id(), construction_context.run_id());
+      auv_tracing::emit_event!(TestEvent { value: 2 });
+      Ok::<_, String>(7)
+    }
+  }))
+  .expect("recorded call");
+
+  assert_eq!(recorded.value(), &Ok(7));
+  assert_eq!(recorded.snapshot().run_id(), recorded.run_id());
+  assert_eq!(recorded.snapshot().events().len(), 2);
+  assert!(recorded.tracing_failure().is_none());
+}
+
+#[test]
 fn route_policies_filter_span_attributes_before_each_projector() {
   let hidden = AttributeKey::parse("auv.test.hidden").unwrap();
   let allowed = AttributeKey::parse("auv.test.allowed").unwrap();

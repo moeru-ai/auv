@@ -209,6 +209,7 @@ mod tests {
       target_application_id: None,
       inputs,
       dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
     }))
     .expect("handler");
 
@@ -237,6 +238,7 @@ mod tests {
       target_application_id: None,
       inputs,
       dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
     }))
     .expect("handler");
 
@@ -262,6 +264,7 @@ mod tests {
       target_application_id: None,
       inputs,
       dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
     }))
     .expect_err("missing store-root should fail");
 

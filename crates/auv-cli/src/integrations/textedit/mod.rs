@@ -2,17 +2,22 @@
 
 use std::fs;
 use std::path::PathBuf;
+#[cfg(test)]
 use std::time::Duration;
 
 use auv_apple_textedit::{
-  DocumentCommand, DocumentCommandReport, DocumentWrite, StepOutcome, TextEditDriver, VerificationOutcome, run_document_command,
+  DocumentCommand, DocumentCommandReport, DocumentWrite, TextEditDriver, VerificationOutcome, run_document_command_with_checkpoint,
 };
+#[cfg(test)]
+use auv_apple_textedit::{StepOutcome, run_document_command};
 use auv_cli_invoke::arg::TEXTEDIT_DOCUMENT_WRITE_ARGS;
 use auv_cli_invoke::{
   ArtifactInstrumentationReceipt, ArtifactPublication, CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   InvokeReport, InvokeReportField, InvokeReportSection, InvokeResult, invoke_command,
 };
-use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputDeliveryPath};
+use auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE;
+#[cfg(test)]
+use auv_driver::{InputActionResult, InputDeliveryPath};
 use auv_runtime::contract::{
   ArtifactRef, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
   VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
@@ -45,6 +50,8 @@ async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
 }
 
 async fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
+  reject_production_fixture_inputs(&input.inputs)?;
+  let command = parse_document_write(&input)?;
   if input.dry_run {
     let mut output = InvokeCommandOutput::new("dry run: app.textedit.document.write");
     output.verification = Some("dry-run; no semantic success claim".to_string());
@@ -52,58 +59,94 @@ async fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
     return Ok(output);
   }
 
-  let command = parse_document_write(&input)?;
-  let driver_kind = input.inputs.get("driver").map(String::as_str).unwrap_or("live");
-  // NOTICE(textedit-fixture-only): this undocumented input exists only so hermetic
-  // recorded mismatch tests can force a semantic mismatch without live TextEdit.
-  // Expose a first-class flag only if the owner approves fixture controls.
-  let fixture_observed_text = input.inputs.get("fixture_observed_text").cloned();
-  let driver = match driver_kind {
-    "fixture" => DocumentWriteDriver::Fixture {
-      observed_text: fixture_observed_text,
-    },
-    "live" => DocumentWriteDriver::Live,
-    other => return Err(format!("app.textedit.document.write unknown --driver {other}; expected live or fixture")),
-  };
-  let (report, instrumentation) = write_document(command.clone(), driver).await?.into_parts();
+  let (report, instrumentation) = write_document(command.clone(), input.cancellation).await?.into_parts();
 
   let mut output = build_invoke_output_from_report(&report, &command)?;
   output.artifact_failures = instrumentation.into_failures();
   Ok(output)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DocumentWriteDriver {
-  Live,
-  Fixture { observed_text: Option<String> },
-}
-
 /// Executes TextEdit document write and returns the app-owned report directly.
 pub async fn write_document(
   command: DocumentWrite,
-  driver: DocumentWriteDriver,
+  cancellation: auv_cli_invoke::InvokeCancellation,
 ) -> Result<ArtifactPublication<DocumentCommandReport>, String> {
-  let report = match driver {
-    DocumentWriteDriver::Fixture { observed_text } => {
-      let mut driver = FixtureTextEditDriver::from_write(&command);
-      driver.observed_override = observed_text;
-      run_document_command(&DocumentCommand::Write(command), &mut driver)?
-    }
-    DocumentWriteDriver::Live => {
-      #[cfg(target_os = "macos")]
-      {
-        let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
-        run_document_command(&DocumentCommand::Write(command), &mut driver)?
-      }
-      #[cfg(not(target_os = "macos"))]
-      {
-        let _ = command;
-        return Err("app.textedit.document.write live driver requires macOS".to_string());
-      }
-    }
-  };
-  let instrumentation = emit_document_write_artifacts(&report).await;
+  #[cfg(target_os = "macos")]
+  {
+    cancellation.check().map_err(|error| error.to_string())?;
+    let driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
+    // TODO(textedit-driver-cancellation): checkpoints cannot interrupt one
+    // synchronous MacosTextEditDriver call already in progress. Thread
+    // cancellation through the driver only after its API gains an
+    // owner-approved cancellable call contract.
+    write_document_with_driver(command, cancellation, driver).await
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (command, cancellation);
+    Err("app.textedit.document.write live driver requires macOS".to_string())
+  }
+}
+
+async fn write_document_with_driver(
+  command: DocumentWrite,
+  cancellation: auv_cli_invoke::InvokeCancellation,
+  mut driver: impl TextEditDriver,
+) -> Result<ArtifactPublication<DocumentCommandReport>, String> {
+  let report = run_document_command_with_checkpoint(&DocumentCommand::Write(command), &mut driver, || {
+    cancellation.check().map_err(|error| error.to_string())
+  })?;
+  cancellation.check().map_err(|error| error.to_string())?;
+  let instrumentation = emit_document_write_artifacts(&report, &cancellation).await?;
   Ok(ArtifactPublication::new(report, instrumentation))
+}
+
+#[cfg(test)]
+pub(crate) async fn write_document_with_test_driver(
+  command: DocumentWrite,
+  observed_text: Option<String>,
+  cancellation: auv_cli_invoke::InvokeCancellation,
+) -> Result<ArtifactPublication<DocumentCommandReport>, String> {
+  let mut driver = FixtureTextEditDriver::from_write(&command);
+  driver.observed_override = observed_text;
+  write_document_with_driver(command, cancellation, driver).await
+}
+
+#[cfg(test)]
+pub(crate) fn test_document_write_invoke_command() -> auv_cli_invoke::InvokeCommand {
+  fn handler(input: InvokeCommandInput) -> auv_cli_invoke::InvokeCommandFuture {
+    Box::pin(async move {
+      let command = parse_document_write(&input)?;
+      if input.dry_run {
+        let mut output = InvokeCommandOutput::new("dry run: app.textedit.document.write");
+        output.verification = Some("dry-run; no semantic success claim".to_string());
+        return Ok(output);
+      }
+      let observed_text = input.inputs.get("fixture_observed_text").cloned();
+      let (report, instrumentation) =
+        write_document_with_test_driver(command.clone(), observed_text, input.cancellation).await?.into_parts();
+      let mut output = build_invoke_output_from_report(&report, &command)?;
+      output.artifact_failures = instrumentation.into_failures();
+      Ok(output)
+    })
+  }
+
+  auv_cli_invoke::command::spec(
+    DOCUMENT_WRITE_COMMAND_ID,
+    auv_cli_invoke::InvokeNamespace::App,
+    "Test-only typed TextEdit document write adapter.",
+    TEXTEDIT_DOCUMENT_WRITE_ARGS,
+    handler,
+  )
+}
+
+fn reject_production_fixture_inputs(inputs: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+  for name in ["driver", "fixture_observed_text"] {
+    if inputs.contains_key(name) {
+      return Err(format!("app.textedit.document.write does not accept --{name}"));
+    }
+  }
+  Ok(())
 }
 
 /// Maps the typed report into CLI presentation.
@@ -156,18 +199,24 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
   Ok(output)
 }
 
-async fn emit_document_write_artifacts(report: &DocumentCommandReport) -> ArtifactInstrumentationReceipt {
+async fn emit_document_write_artifacts(
+  report: &DocumentCommandReport,
+  cancellation: &auv_cli_invoke::InvokeCancellation,
+) -> Result<ArtifactInstrumentationReceipt, String> {
   let mut instrumentation = ArtifactInstrumentationReceipt::default();
   for outcome in &report.outcomes {
     if let Some(result) = &outcome.input_action_result {
+      cancellation.check().map_err(|error| error.to_string())?;
       instrumentation.publish_json("auv.driver.input_action_result", result).await;
     }
   }
   if let Some(verification) = &report.verification {
+    cancellation.check().map_err(|error| error.to_string())?;
     instrumentation.publish_json("auv.textedit.ax_text_observation", verification).await;
   }
+  cancellation.check().map_err(|error| error.to_string())?;
   instrumentation.publish_json("auv.textedit.document_write_result", report).await;
-  instrumentation
+  Ok(instrumentation)
 }
 
 /// Finalizes TextEdit output for the Task22 legacy recorded adapter.
@@ -437,7 +486,8 @@ fn truncate(value: &str, max_chars: usize) -> String {
   }
 }
 
-/// Hermetic TextEdit driver for CI parity (`--driver fixture`).
+/// Hermetic TextEdit driver available only to this module's unit tests.
+#[cfg(test)]
 #[derive(Clone, Debug)]
 struct FixtureTextEditDriver {
   content: String,
@@ -446,6 +496,7 @@ struct FixtureTextEditDriver {
   observed_override: Option<String>,
 }
 
+#[cfg(test)]
 impl FixtureTextEditDriver {
   fn from_write(command: &DocumentWrite) -> Self {
     Self {
@@ -456,6 +507,7 @@ impl FixtureTextEditDriver {
   }
 }
 
+#[cfg(test)]
 impl TextEditDriver for FixtureTextEditDriver {
   fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
     Ok(StepOutcome {
@@ -506,6 +558,7 @@ impl TextEditDriver for FixtureTextEditDriver {
 mod tests {
   use std::collections::BTreeMap;
   use std::sync::Arc;
+  use std::time::Duration;
 
   use auv_cli_invoke::InvokeNamespace;
   use auv_runtime::model::{ExecutionTarget, InvokeRequest};
@@ -513,6 +566,100 @@ mod tests {
 
   use super::*;
   use crate::product_registry;
+
+  fn fixture_registry() -> auv_cli_invoke::InvokeRegistry {
+    auv_cli_invoke::InvokeRegistry::from_groups(vec![
+      auv_cli_invoke::CommandGroup::new("textedit-test", "TEXTEDIT TEST").command(test_document_write_invoke_command()),
+    ])
+  }
+
+  struct ScopedTestFile(PathBuf);
+
+  impl Drop for ScopedTestFile {
+    fn drop(&mut self) {
+      let _ = std::fs::remove_file(&self.0);
+    }
+  }
+
+  struct CancelAfterActivateDriver {
+    cancellation: auv_cli_invoke::InvokeCancellation,
+    resource_path: PathBuf,
+    resource: Option<ScopedTestFile>,
+    phases: Arc<std::sync::Mutex<Vec<&'static str>>>,
+  }
+
+  impl TextEditDriver for CancelAfterActivateDriver {
+    fn activate_app(&mut self, _app_id: &str, _settle: Duration) -> Result<StepOutcome, String> {
+      self.phases.lock().unwrap().push("activate");
+      std::fs::write(&self.resource_path, b"acquired").map_err(|error| error.to_string())?;
+      self.resource = Some(ScopedTestFile(self.resource_path.clone()));
+      self.cancellation.cancel();
+      Ok(StepOutcome {
+        step_id: "activate",
+        summary: "activated".to_string(),
+        input_action_result: None,
+      })
+    }
+
+    fn focus_text_input(&mut self, _app_id: &str, _query: &str, _candidate: &str) -> Result<StepOutcome, String> {
+      self.phases.lock().unwrap().push("focus");
+      unreachable!("focus must not run after cancellation")
+    }
+
+    fn paste_text_preserve_clipboard(
+      &mut self,
+      _app_id: &str,
+      _text: &str,
+      _replace_existing: bool,
+      _settle: Duration,
+    ) -> Result<StepOutcome, String> {
+      self.phases.lock().unwrap().push("paste");
+      unreachable!("paste must not run after cancellation")
+    }
+
+    fn verify_ax_text(&mut self, _app_id: &str, _target_text: &str, _target_role: &str) -> Result<VerificationOutcome, String> {
+      self.phases.lock().unwrap().push("verify");
+      unreachable!("verification must not run after cancellation")
+    }
+  }
+
+  #[tokio::test]
+  async fn production_document_write_rejects_fixture_input() {
+    let input = InvokeCommandInput {
+      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
+      target_application_id: None,
+      inputs: BTreeMap::from([
+        ("content".to_string(), "fixture".to_string()),
+        ("driver".to_string(), "fixture".to_string()),
+      ]),
+      dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
+    };
+
+    let error = document_write_impl(input).await.expect_err("production fixture selection must be rejected");
+    assert!(error.contains("does not accept --driver"));
+  }
+
+  #[tokio::test]
+  async fn cancellation_after_activate_cleans_the_resource_and_skips_later_textedit_phases() {
+    let cancellation = auv_cli_invoke::InvokeCancellation::new();
+    let resource_path = std::env::temp_dir().join(format!("auv-textedit-cancel-resource-{}-{}", std::process::id(), now_millis()));
+    let phases = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let driver = CancelAfterActivateDriver {
+      cancellation: cancellation.clone(),
+      resource_path: resource_path.clone(),
+      resource: None,
+      phases: phases.clone(),
+    };
+
+    let error = write_document_with_driver(DocumentWrite::defaults_with_content("cancel"), cancellation, driver)
+      .await
+      .expect_err("cancellation must stop the TextEdit workflow");
+
+    assert_eq!(error, "invoke cancelled");
+    assert_eq!(*phases.lock().unwrap(), vec!["activate"]);
+    assert!(!resource_path.exists(), "cancellation must drop the acquired scoped resource");
+  }
 
   fn textedit_temp_artifacts() -> Vec<PathBuf> {
     let mut paths = std::fs::read_dir(std::env::temp_dir())
@@ -527,35 +674,25 @@ mod tests {
 
   #[tokio::test]
   async fn fixture_document_write_without_authority_creates_no_path_artifacts() {
-    let mut inputs = BTreeMap::new();
-    inputs.insert("content".to_string(), "hello-fixture".to_string());
-    inputs.insert("driver".to_string(), "fixture".to_string());
-    let input = InvokeCommandInput {
-      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
-      target_application_id: None,
-      inputs,
-      dry_run: false,
-    };
-    let output = document_write_impl(input).await.expect("fixture write");
+    let command = DocumentWrite::defaults_with_content("hello-fixture");
+    let publication =
+      write_document_with_test_driver(command.clone(), None, auv_cli_invoke::InvokeCancellation::new()).await.expect("test driver write");
+    let (report, instrumentation) = publication.into_parts();
+    let output = build_invoke_output_from_report(&report, &command).expect("fixture output");
+
     assert!(output.artifacts.is_empty());
-    assert!(output.artifact_failures.is_empty());
+    assert!(instrumentation.failures().is_empty());
     assert_eq!(output.backend.as_deref(), Some("auv-apple-textedit.DocumentWrite"));
   }
 
   #[tokio::test]
   async fn fixture_document_write_without_ax_verification_omits_state_change_known_limit() {
-    let mut inputs = BTreeMap::new();
-    inputs.insert("content".to_string(), "hello-fixture".to_string());
-    inputs.insert("driver".to_string(), "fixture".to_string());
-    inputs.insert("verify".to_string(), "false".to_string());
-    let input = InvokeCommandInput {
-      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
-      target_application_id: None,
-      inputs,
-      dry_run: false,
-    };
-
-    let output = document_write_impl(input).await.expect("fixture write without verification");
+    let mut command = DocumentWrite::defaults_with_content("hello-fixture");
+    command.verify = false;
+    let report = write_document_with_test_driver(command.clone(), None, auv_cli_invoke::InvokeCancellation::new())
+      .await
+      .expect("test driver write without verification");
+    let output = build_invoke_output_from_report(report.value(), &command).expect("fixture output");
 
     assert!(!output.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
   }
@@ -575,10 +712,9 @@ mod tests {
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(MemoryRunRecorder::new()));
     let mut inputs = BTreeMap::new();
     inputs.insert("content".to_string(), "hello-fixture".to_string());
-    inputs.insert("driver".to_string(), "fixture".to_string());
     let result = crate::invoke::invoke_recorded(
       &recording,
-      &product_registry(),
+      &fixture_registry(),
       InvokeRequest {
         command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
@@ -619,31 +755,21 @@ mod tests {
   #[tokio::test]
   async fn typed_document_write_returns_semantic_mismatch_without_cli_context() {
     let command = DocumentWrite::defaults_with_content("expected-marker");
-    let report = write_document(
-      command,
-      DocumentWriteDriver::Fixture {
-        observed_text: Some("observed-without-expected".to_string()),
-      },
-    )
-    .await
-    .expect("typed TextEdit call");
+    let report =
+      write_document_with_test_driver(command, Some("observed-without-expected".to_string()), auv_cli_invoke::InvokeCancellation::new())
+        .await
+        .expect("typed TextEdit call");
 
     assert_eq!(report.value().verification.as_ref().map(|verification| verification.semantic_matched), Some(false));
   }
 
   #[tokio::test]
-  async fn no_context_success_error_and_cancellation_leave_no_textedit_temp_artifacts() {
+  async fn no_context_success_and_error_leave_no_textedit_temp_artifacts() {
     let before = textedit_temp_artifacts();
     let command = DocumentWrite::defaults_with_content("fixture");
 
-    let publication = write_document(
-      command.clone(),
-      DocumentWriteDriver::Fixture {
-        observed_text: None,
-      },
-    )
-    .await
-    .expect("fixture write");
+    let publication =
+      write_document_with_test_driver(command.clone(), None, auv_cli_invoke::InvokeCancellation::new()).await.expect("fixture write");
     assert!(publication.value().outcomes.iter().any(|outcome| outcome.input_action_result.is_some()));
 
     let invalid = document_write_impl(InvokeCommandInput {
@@ -654,17 +780,11 @@ mod tests {
         ("driver".to_string(), "invalid".to_string()),
       ]),
       dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
     })
     .await;
     assert!(invalid.is_err());
 
-    let cancelled = write_document(
-      command,
-      DocumentWriteDriver::Fixture {
-        observed_text: None,
-      },
-    );
-    drop(cancelled);
     assert_eq!(textedit_temp_artifacts(), before);
   }
 
@@ -684,11 +804,10 @@ mod tests {
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(MemoryRunRecorder::new()));
     let mut inputs = BTreeMap::new();
     inputs.insert("content".to_string(), "expected-marker".to_string());
-    inputs.insert("driver".to_string(), "fixture".to_string());
     inputs.insert("fixture_observed_text".to_string(), "observed-without-expected".to_string());
     let result = crate::invoke::invoke_recorded(
       &recording,
-      &product_registry(),
+      &fixture_registry(),
       InvokeRequest {
         command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
@@ -721,7 +840,7 @@ mod tests {
   }
 
   #[test]
-  fn fixture_document_write_failure_after_run_creation_is_inspectable() {
+  fn rejected_production_fixture_input_after_run_creation_is_inspectable() {
     let root = std::env::temp_dir().join(format!("auv-textedit-failed-run-{}-{}", std::process::id(), now_millis()));
     std::fs::create_dir_all(&root).expect("temp");
     let store = LocalStore::new(root.clone()).expect("store");

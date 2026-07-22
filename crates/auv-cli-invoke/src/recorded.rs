@@ -149,6 +149,7 @@ fn invoke_resolved_recorded_in_span_with_finalize(
     target_application_id: request.target.application_id.clone(),
     inputs: request.inputs.clone(),
     dry_run: request.dry_run,
+    cancellation: crate::InvokeCancellation::new(),
   }));
   let mut result = match command_result {
     Ok(output) => {

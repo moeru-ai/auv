@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::InvokeReport;
 use crate::arg::ArgSpec;
@@ -9,12 +10,63 @@ use crate::ArtifactInstrumentationFailure;
 pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<InvokeCommandOutput, String>> + Send + 'static>>;
 pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
 
+/// Cloneable cancellation shared by one frontend dispatch and its typed command.
+#[derive(Clone, Debug)]
+pub struct InvokeCancellation {
+  token: Arc<tokio_util::sync::CancellationToken>,
+}
+
+impl InvokeCancellation {
+  pub fn new() -> Self {
+    Self {
+      token: Arc::new(tokio_util::sync::CancellationToken::new()),
+    }
+  }
+
+  pub fn from_token(token: tokio_util::sync::CancellationToken) -> Self {
+    Self {
+      token: Arc::new(token),
+    }
+  }
+
+  pub fn cancel(&self) {
+    self.token.cancel();
+  }
+
+  pub fn is_cancelled(&self) -> bool {
+    self.token.is_cancelled()
+  }
+
+  pub fn check(&self) -> Result<(), InvokeCancelled> {
+    if self.is_cancelled() {
+      Err(InvokeCancelled)
+    } else {
+      Ok(())
+    }
+  }
+
+  pub async fn cancelled(&self) {
+    self.token.cancelled().await;
+  }
+}
+
+impl Default for InvokeCancellation {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("invoke cancelled")]
+pub struct InvokeCancelled;
+
 #[derive(Clone, Debug)]
 pub struct InvokeCommandInput {
   pub command_id: String,
   pub target_application_id: Option<String>,
   pub inputs: BTreeMap<String, String>,
   pub dry_run: bool,
+  pub cancellation: InvokeCancellation,
 }
 
 impl InvokeCommandInput {
@@ -123,6 +175,9 @@ pub struct InvokeCommand {
 
 impl InvokeCommand {
   pub fn invoke(&self, input: InvokeCommandInput) -> InvokeCommandFuture {
+    if let Err(error) = input.cancellation.check() {
+      return Box::pin(async move { Err(error.to_string()) });
+    }
     (self.handler)(input)
   }
 }
@@ -181,7 +236,19 @@ pub fn spec(
 
 #[cfg(test)]
 mod tests {
-  use super::InvokeCommandOutput;
+  use super::{InvokeCancellation, InvokeCommandOutput};
+
+  #[test]
+  fn invoke_cancellation_is_typed_cloneable_and_observable() {
+    let cancellation = InvokeCancellation::new();
+    let observer = cancellation.clone();
+
+    assert!(observer.check().is_ok());
+    cancellation.cancel();
+
+    let error = observer.check().expect_err("shared cancellation must be observable");
+    assert_eq!(error.to_string(), "invoke cancelled");
+  }
 
   #[test]
   fn command_output_defaults_evidence_and_report_fields_to_empty() {
