@@ -37,20 +37,6 @@ pub struct OsuQueryWiredLiveActionSummary {
   pub issue: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftQueryWiredLiveActionSummary {
-  pub attempted: bool,
-  pub action_eligibility: String,
-  pub refusal_reason: Option<String>,
-  pub target_app: Option<String>,
-  pub target_title: Option<String>,
-  pub dispatch_command: Option<String>,
-  pub dispatch_outcome: Option<String>,
-  pub verification_outcome: String,
-  pub verification_source: Option<String>,
-  pub verification_reason: Option<String>,
-}
-
 fn parse_event_message_field(message: &str, key: &str) -> Option<String> {
   if key == "refusal_reason" {
     return parse_event_message_field_until(message, key, &["query_manifest_path"]);
@@ -104,19 +90,6 @@ fn query_artifact_id_from_operation_result(operation_result: &OperationResult) -
       .and_then(|basis| basis.source_artifact.as_ref())
       .map(|artifact| artifact.artifact_id.as_str().to_string())
   })
-}
-
-fn find_query_wired_live_action_operation_result(store: &LocalStore, run: &CanonicalRun) -> Option<(ArtifactRefView, OperationResult)> {
-  for artifact in &run.artifacts {
-    if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
-      continue;
-    }
-    let parsed = read_artifact_json::<OperationResult>(store, run.run.run_id.as_str(), artifact, "operation-result").ok()?;
-    if parsed.operation_id == QUERY_WIRED_LIVE_ACTION_OPERATION_ID {
-      return Some((artifact_record_view(run.run.run_id.clone(), artifact), parsed));
-    }
-  }
-  None
 }
 
 fn derive_dispatch_evidence_from_events(run: &CanonicalRun) -> (Option<String>, Option<String>) {
@@ -287,60 +260,6 @@ pub(crate) fn resolve_query_wired_live_action_verification_projection(
   }
 }
 
-pub fn derive_minecraft_query_wired_live_action_summary(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Option<MinecraftQueryWiredLiveActionSummary> {
-  let outcome_event = run.events.iter().find(|event| event.name == "minecraft.query_wired_live_action.outcome");
-  let operation_result_pair = find_query_wired_live_action_operation_result(store, run);
-  if outcome_event.is_none() && operation_result_pair.is_none() {
-    return None;
-  }
-
-  let (attempted, action_eligibility, refusal_reason) = if let Some(event) = outcome_event {
-    let message = event.message.as_deref().unwrap_or("");
-    let attempted = parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
-    let action_eligibility = parse_event_message_field(message, "action_eligibility").unwrap_or_else(|| "n/a".to_string());
-    let refusal_reason = parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
-    (attempted, action_eligibility, refusal_reason)
-  } else {
-    (false, "n/a".to_string(), None)
-  };
-
-  let inputs_event = run.events.iter().find(|event| event.name == "minecraft.query_wired_live_action.inputs");
-  let target_app =
-    inputs_event.and_then(|event| event.message.as_deref()).and_then(|message| parse_event_message_field(message, "target_app"));
-  let target_title =
-    inputs_event.and_then(|event| event.message.as_deref()).and_then(|message| parse_event_message_field(message, "target_title"));
-
-  let operation_result_artifact_id = operation_result_pair.as_ref().map(|(artifact_ref, _)| artifact_ref.artifact_id.as_str().to_string());
-
-  let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
-
-  let run_id = run.run.run_id.as_str();
-  let operation_result_ref = operation_result_pair.as_ref().map(|(_, result)| result);
-  let verification_projection = resolve_query_wired_live_action_verification_projection(
-    attempted,
-    operation_result_artifact_id.as_deref(),
-    operation_result_ref,
-    run_id,
-    refusal_reason.as_deref(),
-  );
-
-  Some(MinecraftQueryWiredLiveActionSummary {
-    attempted,
-    action_eligibility,
-    refusal_reason,
-    target_app,
-    target_title,
-    dispatch_command,
-    dispatch_outcome,
-    verification_outcome: verification_projection.verification_outcome,
-    verification_source: verification_projection.verification_source,
-    verification_reason: verification_projection.verification_reason,
-  })
-}
-
 fn find_osu_query_wired_live_action_operation_result(store: &LocalStore, run: &CanonicalRun) -> Option<(ArtifactRefView, OperationResult)> {
   for artifact in &run.artifacts {
     if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
@@ -466,12 +385,4 @@ pub(crate) fn list_osu_query_wired_live_action_summaries(
 ) -> AuvResult<Vec<OsuQueryWiredLiveActionSummary>> {
   let run = store.read_run(run_id)?;
   Ok(derive_osu_query_wired_live_action_summary(store, &run).into_iter().collect())
-}
-
-pub(crate) fn list_minecraft_query_wired_live_action_summaries(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<MinecraftQueryWiredLiveActionSummary>> {
-  let run = store.read_run(run_id)?;
-  Ok(derive_minecraft_query_wired_live_action_summary(store, &run).into_iter().collect())
 }

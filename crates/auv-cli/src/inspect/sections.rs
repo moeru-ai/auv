@@ -16,9 +16,9 @@ use auv_runtime::inspect::{CorePrefixSection, CoreSuffixSection};
 use auv_tracing::{RunSnapshot, RunStore};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
-use super::query_wired_minecraft::append_minecraft_query_wired_section;
+use super::query_wired_minecraft::{append_minecraft_query_wired_section, collect_minecraft_query_wired_live_action_summaries};
 use super::query_wired_osu::append_osu_query_wired_section;
-use crate::run_read::{list_minecraft_query_wired_live_action_summaries, list_osu_query_wired_live_action_summaries};
+use crate::run_read::list_osu_query_wired_live_action_summaries;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct ProductInspectSection {
@@ -159,14 +159,21 @@ async fn collect_canonical_app_sections(
   let primary = auv_game_minecraft::inspect_sections_primary(store, snapshot).await?;
   let balatro = auv_game_balatro::inspect::render_balatro_card_detection_text(store, snapshot).await?;
   let quality_spatial = auv_game_minecraft::inspect_sections_quality_spatial(store, snapshot).await?;
+  let minecraft_query_wired = collect_minecraft_query_wired_live_action_summaries(store, snapshot).await?;
+  let mut minecraft_query_wired_text = String::new();
+  append_minecraft_query_wired_section(&mut minecraft_query_wired_text, &minecraft_query_wired);
 
-  let mut sections = Vec::with_capacity(primary.len() + 1 + quality_spatial.len());
+  let mut sections = Vec::with_capacity(primary.len() + 2 + quality_spatial.len());
   sections.extend(primary.into_iter().map(minecraft_section));
   sections.push(ProductInspectSection {
     id: auv_game_balatro::inspect::BalatroCardDetectionSection::ID,
     text: balatro,
   });
   sections.extend(quality_spatial.into_iter().map(minecraft_section));
+  sections.push(ProductInspectSection {
+    id: "minecraft_query_wired_live_action",
+    text: minecraft_query_wired_text,
+  });
   Ok(sections)
 }
 
@@ -196,25 +203,6 @@ impl InspectSection for OsuQueryWiredLiveActionSection {
   }
 }
 
-pub struct MinecraftQueryWiredLiveActionSection;
-
-impl InspectSection for MinecraftQueryWiredLiveActionSection {
-  fn id(&self) -> &'static str {
-    "minecraft_query_wired_live_action"
-  }
-
-  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    let summaries = list_minecraft_query_wired_live_action_summaries(store, run.run.run_id.as_str())?;
-    let mut text = String::new();
-    append_minecraft_query_wired_section(&mut text, &summaries);
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text,
-      json: None,
-    }))
-  }
-}
-
 /// LOCKED golden render order (do not invent another).
 pub fn build_product_inspect_composer() -> Result<Arc<InspectComposer>, InspectError> {
   let mut sections: Vec<Arc<dyn InspectSection>> = Vec::new();
@@ -230,9 +218,7 @@ pub fn build_product_inspect_composer() -> Result<Arc<InspectComposer>, InspectE
   sections.push(Arc::new(OsuQueryWiredLiveActionSection));
   // 4. osu B
   sections.extend(auv_game_osu::inspect_sections_detection_eval());
-  // 5. minecraft query-wired (PRODUCT)
-  sections.push(Arc::new(MinecraftQueryWiredLiveActionSection));
-  // 6. core_suffix
+  // 5. core_suffix
   sections.push(Arc::new(CoreSuffixSection));
   InspectComposer::try_new(sections).map(Arc::new)
 }
@@ -265,7 +251,6 @@ mod tests {
         "osu_visual_truth_primary",
         "osu_query_wired_live_action",
         "osu_detection_eval",
-        "minecraft_query_wired_live_action",
         "core_suffix",
       ]
     );
@@ -470,7 +455,10 @@ mod tests {
     publish_minecraft_training_job(Some(&root), &training_job).await.expect("publish training job");
     publish_minecraft_training_result(Some(&root), &training_result).await.expect("publish training result");
     publish_minecraft_training_semantic(Some(&root), &semantic).await.expect("publish semantic");
-    publish_minecraft_training_spatial_query(Some(&root), &spatial_query).await.expect("publish spatial query");
+    let spatial_query_metadata = publish_minecraft_training_spatial_query(Some(&root), &spatial_query)
+      .await
+      .expect("publish spatial query")
+      .expect("canonical spatial query publication enabled");
     publish_minecraft_training_holdout_preview(Some(&root), &holdout_preview).await.expect("publish holdout preview");
     publish_minecraft_training_holdout_render_quality(Some(&root), &render_quality).await.expect("publish render quality");
     dispatch.flush().await.expect("flush canonical artifacts");
@@ -508,6 +496,14 @@ mod tests {
     assert!(text.contains("target_block=511,73,728 status=answered visibility=visible selected_backend=projection_reference"));
     assert!(text.contains("action_eligibility=click_ready"));
     assert!(text.contains("window_point=12,34"));
+    assert!(text.contains("MC-19 Query Wired Live Action:"));
+    assert!(text.contains(&format!("query_artifact={}", spatial_query_metadata.uri())));
+    assert!(text.contains("operation_evidence=not_recorded"));
+    assert!(text.contains("operation_status=n/a operation_message=n/a"));
+    assert!(text.contains("mc14_action_eligibility=click_ready readiness_class=ready window_point=12,34"));
+    assert!(text.contains(&format!("source_readiness=ready source_query_artifact={}", spatial_query_metadata.uri())));
+    assert!(!text.contains("operation_result_artifact="));
+    assert!(!text.contains("source_readiness_ref="));
     assert!(!text.contains("manifest_artifact="));
     assert!(!text.contains("paired_report_artifact="));
     assert!(!text.contains(" role="));

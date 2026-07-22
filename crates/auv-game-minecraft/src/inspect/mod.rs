@@ -9,8 +9,8 @@ pub use quality::{
   QualityRenderEvidenceMode, QualityStage, QualityStageCheck, QualityStageOutcome, QualityVerdictOutcome,
 };
 pub use sections::{
-  MinecraftInspectSection, MinecraftQualitySpatialInspection, inspect_sections_primary, inspect_sections_quality_spatial,
-  read_minecraft_quality_spatial_inspection,
+  MinecraftInspectSection, MinecraftQualitySpatialInspection, MinecraftSpatialQueryInspection, inspect_sections_primary,
+  inspect_sections_quality_spatial, read_minecraft_quality_spatial_inspection,
 };
 
 #[cfg(test)]

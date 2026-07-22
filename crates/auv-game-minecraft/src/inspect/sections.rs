@@ -59,9 +59,15 @@ pub(crate) struct MinecraftPrimaryInspection {
   pub render_quality: Vec<MinecraftInspectedArtifact<TrainingResultHoldoutRenderQualityManifest>>,
 }
 
-pub(crate) struct MinecraftSpatialQueryInspection {
-  pub artifact: MinecraftInspectedArtifact<TrainingResultSpatialQueryManifest>,
-  pub readiness: TrainingResultSpatialQueryActionReadiness,
+pub struct MinecraftSpatialQueryInspection {
+  pub(crate) artifact: MinecraftInspectedArtifact<TrainingResultSpatialQueryManifest>,
+  pub(crate) readiness: TrainingResultSpatialQueryActionReadiness,
+}
+
+impl MinecraftSpatialQueryInspection {
+  pub fn artifact(&self) -> &MinecraftInspectedArtifact<TrainingResultSpatialQueryManifest> {
+    &self.artifact
+  }
 }
 
 pub struct MinecraftQualitySpatialInspection {
@@ -72,6 +78,10 @@ pub struct MinecraftQualitySpatialInspection {
 impl MinecraftQualitySpatialInspection {
   pub fn quality_baseline(&self) -> &MinecraftQualityBaseline {
     &self.baseline
+  }
+
+  pub fn spatial_queries(&self) -> &[MinecraftSpatialQueryInspection] {
+    &self.spatial_queries
   }
 }
 
