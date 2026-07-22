@@ -1894,12 +1894,18 @@ where
     })
     .await
     .map_err(|error| error.to_string())?;
-  let (run_id, direct_result, tracing_failure, snapshot) = recorded.into_parts();
-  let canonical_artifacts = snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect();
+  let (run_id, direct_result, recording) = recorded.into_parts();
+  let (tracing_failure, canonical_artifacts) = match recording {
+    auv_tracing::RecordingState::Committed(recording) => (
+      recording.tracing_failure().map(ToString::to_string),
+      recording.snapshot().artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
+    ),
+    auv_tracing::RecordingState::Failed(failure) => (Some(failure.to_string()), Vec::new()),
+  };
   Ok(InvokeFrontendExecution {
     run_id,
     direct_result,
-    tracing_failure: tracing_failure.map(|error| error.to_string()),
+    tracing_failure,
     canonical_artifacts,
   })
 }
@@ -2081,18 +2087,23 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn cli_commit_unknown_does_not_retry_or_add_canonical_advice() {
+  async fn cli_commit_unknown_preserves_direct_result_without_retry_or_canonical_advice() {
     let call = CountingCall::default();
     let store = Arc::new(CommitUnknownStore::new());
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
     let authority = InvokeFrontendAuthority { dispatch };
 
     let invoked_call = call.clone();
-    let error = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect_err("unknown commit cannot return a run id");
+    let execution =
+      execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect("recording failure must preserve the direct result");
 
     assert_eq!(call.call_count(), 1);
-    assert!(error.contains("was not persisted"));
-    assert_no_canonical_advice(&error);
+    assert_eq!(execution.direct_result, Ok(7));
+    assert_eq!(store.attempted_run_id(), Some(execution.run_id));
+    assert!(execution.canonical_artifacts.is_empty());
+    let failure = execution.tracing_failure.expect("recording failure");
+    assert!(failure.contains("snapshot is missing"));
+    assert_no_canonical_advice(&failure);
   }
 
   // ROOT CAUSE:
@@ -2227,13 +2238,19 @@ mod tests {
 
   struct CommitUnknownStore {
     inner: MemoryRunStore,
+    attempted_run_id: Mutex<Option<RunId>>,
   }
 
   impl CommitUnknownStore {
     fn new() -> Self {
       Self {
         inner: MemoryRunStore::new(AuthorityId::new()),
+        attempted_run_id: Mutex::new(None),
       }
+    }
+
+    fn attempted_run_id(&self) -> Option<RunId> {
+      *self.attempted_run_id.lock().unwrap()
     }
   }
 
@@ -2242,7 +2259,8 @@ mod tests {
       self.inner.authority_id()
     }
 
-    fn commit(&self, _request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      *self.attempted_run_id.lock().unwrap() = Some(request.run_id());
       Box::pin(async { Err(CommitError::CommitUnknown(ErrorCode::parse("auv.test.commit_unknown").unwrap())) })
     }
 
