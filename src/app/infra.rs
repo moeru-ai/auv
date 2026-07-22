@@ -149,6 +149,9 @@ pub(crate) fn invoke_probe_step(
     dry_run: false,
   };
   let registry = auv_cli_invoke::default_registry();
+  // TODO(run-recording-v1-task22): This legacy caller cannot surface artifacts
+  // emitted through auv-tracing until Task22 migrates it to one RunStore
+  // authority. Task16 intentionally adds no dual-write or compatibility shim.
   let result = match auv_cli_invoke::invoke_recorded_in_span(runtime.recording(), &registry, run, &step_span, request) {
     Ok(result) => result,
     Err(error) => {
