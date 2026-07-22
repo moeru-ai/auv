@@ -4,7 +4,7 @@ use crate::{
     KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS, QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS,
     WINDOW_CLICK_POINT_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
   },
-  artifact::{emission_enabled, json_artifact},
+  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
   invoke_command,
 };
 use crate::{InvokeReport, InvokeReportField};
@@ -150,8 +150,10 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let text = input.required_input("text")?.to_string();
-    let result = type_text_into_active_control(text).await?;
-    Ok(input_action_output("typed text into active control", "auv-driver-macos.input", &result))
+    let (result, instrumentation) = type_text_into_active_control(text).await?.into_parts();
+    let mut output = input_action_output("typed text into active control", "auv-driver-macos.input", &result);
+    output.artifact_failures = instrumentation.into_failures();
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -160,13 +162,13 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
+pub async fn type_text_into_active_control(text: String) -> Result<ArtifactPublication<auv_driver::InputActionResult>, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = session.input().type_text(&text, auv_driver::TypeTextOptions::default()).map_err(|error| error.to_string())?;
-    emit_input_action_result(&result).await;
-    Ok(result)
+    let instrumentation = emit_input_action_result(&result).await;
+    Ok(ArtifactPublication::new(result, instrumentation))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -248,9 +250,10 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let key = input.required_input("key")?.to_string();
-    let result = press_key_in_active_app(key.clone()).await?;
+    let (result, instrumentation) = press_key_in_active_app(key.clone()).await?.into_parts();
     let mut output = input_action_output("pressed key in active app", "auv-driver-macos.input", &result);
     attach_input_key_report(&mut output, &key, Some("active app"), &result);
+    output.artifact_failures = instrumentation.into_failures();
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -260,7 +263,7 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
+pub async fn press_key_in_active_app(key: String) -> Result<ArtifactPublication<auv_driver::InputActionResult>, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -271,8 +274,8 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
         ..auv_driver::KeyPressOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    emit_input_action_result(&result).await;
-    Ok(result)
+    let instrumentation = emit_input_action_result(&result).await;
+    Ok(ArtifactPublication::new(result, instrumentation))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -313,21 +316,15 @@ async fn click_window_point(input: InvokeCommandInput) -> InvokeCommandResult {
     // TODO(invoke-input-click-window-point-candidate): --candidate JSON promotion
     // path is documented on the command summary but intentionally deferred; MC-19
     // D4 uses direct offset/relative point inputs only.
+    let point = WindowPointInput::parse(&input.inputs, &input.command_id)?;
     if input.dry_run {
       return Ok(dry_run_output(&input.command_id));
     }
 
-    let point = if input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y") {
-      WindowPointInput::Relative {
-        x: required_number(&input.inputs, "relative_x", &input.command_id)?,
-        y: required_number(&input.inputs, "relative_y", &input.command_id)?,
-      }
-    } else {
-      WindowPointInput::Offset(resolve_click_window_point(&input.inputs, &input.command_id, None)?)
-    };
-    let result = click_point_in_window(click_window_selector(&input), point).await?;
+    let (result, instrumentation) = click_point_in_window(click_window_selector(&input), point).await?.into_parts();
     let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &result.action);
     add_click_window_signals(&mut output, &result.window, result.point);
+    output.artifact_failures = instrumentation.into_failures();
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -338,9 +335,59 @@ async fn click_window_point(input: InvokeCommandInput) -> InvokeCommandResult {
 }
 
 #[derive(Clone, Debug)]
-pub enum WindowPointInput {
+pub struct WindowPointInput(WindowPointKind);
+
+#[derive(Clone, Debug)]
+enum WindowPointKind {
   Offset(auv_driver::geometry::WindowPoint),
-  Relative { x: f64, y: f64 },
+  Relative(RelativeWindowPoint),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RelativeWindowPoint {
+  x: f64,
+  y: f64,
+}
+
+impl WindowPointInput {
+  pub fn parse(inputs: &std::collections::BTreeMap<String, String>, command_id: &str) -> Result<Self, String> {
+    let has_offset_x = inputs.contains_key("offset_x");
+    let has_offset_y = inputs.contains_key("offset_y");
+    let has_relative_x = inputs.contains_key("relative_x");
+    let has_relative_y = inputs.contains_key("relative_y");
+
+    if (has_offset_x || has_offset_y) && (has_relative_x || has_relative_y) {
+      return Err(format!("{command_id} accepts either --offset_x/--offset_y or --relative_x/--relative_y, not both"));
+    }
+    if has_offset_x || has_offset_y {
+      if !has_offset_x || !has_offset_y {
+        return Err(format!("{command_id} requires both --offset_x and --offset_y when using absolute window points"));
+      }
+      let x = required_number(inputs, "offset_x", command_id)?;
+      let y = required_number(inputs, "offset_y", command_id)?;
+      return Ok(Self(WindowPointKind::Offset(auv_driver::geometry::WindowPoint::new(x, y))));
+    }
+    if has_relative_x || has_relative_y {
+      if !has_relative_x || !has_relative_y {
+        return Err(format!("{command_id} requires both --relative_x and --relative_y when using relative window points"));
+      }
+      let x = required_relative_number(inputs, "relative_x", command_id)?;
+      let y = required_relative_number(inputs, "relative_y", command_id)?;
+      return Ok(Self(WindowPointKind::Relative(RelativeWindowPoint { x, y })));
+    }
+
+    Err(format!("{command_id} requires --offset_x/--offset_y or --relative_x/--relative_y"))
+  }
+
+  fn resolve(&self, window: Option<&auv_driver::Window>, command_id: &str) -> Result<auv_driver::geometry::WindowPoint, String> {
+    match self.0 {
+      WindowPointKind::Offset(point) => Ok(point),
+      WindowPointKind::Relative(relative) => {
+        let window = window.ok_or_else(|| format!("{command_id} requires a resolved window for --relative_x/--relative_y"))?;
+        Ok(window_relative_window_point(window, relative.x, relative.y))
+      }
+    }
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -350,22 +397,25 @@ pub struct WindowPointClick {
   pub action: auv_driver::InputActionResult,
 }
 
-pub async fn click_point_in_window(selector: auv_driver::WindowSelector, point: WindowPointInput) -> Result<WindowPointClick, String> {
+pub async fn click_point_in_window(
+  selector: auv_driver::WindowSelector,
+  point: WindowPointInput,
+) -> Result<ArtifactPublication<WindowPointClick>, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
-    let point = match point {
-      WindowPointInput::Offset(point) => point,
-      WindowPointInput::Relative { x, y } => window_relative_window_point(&window, x, y),
-    };
+    let point = point.resolve(Some(&window), "input.clickWindowPoint")?;
     let action = session.window().click(&window, point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
-    emit_input_action_result(&action).await;
-    Ok(WindowPointClick {
-      window,
-      point,
-      action,
-    })
+    let instrumentation = emit_input_action_result(&action).await;
+    Ok(ArtifactPublication::new(
+      WindowPointClick {
+        window,
+        point,
+        action,
+      },
+      instrumentation,
+    ))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -410,46 +460,21 @@ pub async fn scroll_global_point() -> Result<(), String> {
   Err("input.scrollPoint requires direct x/y point and scroll delta inputs".to_string())
 }
 
-fn resolve_click_window_point(
-  inputs: &std::collections::BTreeMap<String, String>,
-  command_id: &str,
-  window: Option<&auv_driver::Window>,
-) -> Result<auv_driver::geometry::WindowPoint, String> {
-  use auv_driver::geometry::WindowPoint;
-
-  let has_offset_x = inputs.contains_key("offset_x");
-  let has_offset_y = inputs.contains_key("offset_y");
-  let has_relative_x = inputs.contains_key("relative_x");
-  let has_relative_y = inputs.contains_key("relative_y");
-
-  if has_offset_x || has_offset_y {
-    if !has_offset_x || !has_offset_y {
-      return Err(format!("{command_id} requires both --offset_x and --offset_y when using absolute window points"));
-    }
-    if has_relative_x || has_relative_y {
-      return Err(format!("{command_id} accepts either --offset_x/--offset_y or --relative_x/--relative_y, not both"));
-    }
-    let offset_x = required_number(inputs, "offset_x", command_id)?;
-    let offset_y = required_number(inputs, "offset_y", command_id)?;
-    return Ok(WindowPoint::new(offset_x, offset_y));
-  }
-
-  if has_relative_x || has_relative_y {
-    if !has_relative_x || !has_relative_y {
-      return Err(format!("{command_id} requires both --relative_x and --relative_y when using relative window points"));
-    }
-    let window = window.ok_or_else(|| format!("{command_id} requires a resolved window for --relative_x/--relative_y"))?;
-    let relative_x = required_number(inputs, "relative_x", command_id)?;
-    let relative_y = required_number(inputs, "relative_y", command_id)?;
-    return Ok(window_relative_window_point(window, relative_x, relative_y));
-  }
-
-  Err(format!("{command_id} requires --offset_x/--offset_y or --relative_x/--relative_y"))
-}
-
 fn required_number(inputs: &std::collections::BTreeMap<String, String>, name: &str, command_id: &str) -> Result<f64, String> {
   let raw = inputs.get(name).ok_or_else(|| format!("{command_id} requires --{name}"))?;
-  raw.parse::<f64>().map_err(|error| format!("{command_id} received invalid --{name}: {error}"))
+  let value = raw.parse::<f64>().map_err(|error| format!("{command_id} received invalid --{name}: {error}"))?;
+  if !value.is_finite() {
+    return Err(format!("{command_id} requires --{name} to be finite"));
+  }
+  Ok(value)
+}
+
+fn required_relative_number(inputs: &std::collections::BTreeMap<String, String>, name: &str, command_id: &str) -> Result<f64, String> {
+  let value = required_number(inputs, name, command_id)?;
+  if !(0.0..=1.0).contains(&value) {
+    return Err(format!("{command_id} requires --{name} to be within 0..=1"));
+  }
+  Ok(value)
 }
 
 fn window_relative_window_point(window: &auv_driver::Window, relative_x: f64, relative_y: f64) -> auv_driver::geometry::WindowPoint {
@@ -522,12 +547,10 @@ fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputA
   output
 }
 
-async fn emit_input_action_result(result: &auv_driver::InputActionResult) {
-  if emission_enabled()
-    && let Ok(artifact) = json_artifact("auv.driver.input_action_result", result, auv_tracing::Attributes::empty())
-  {
-    let _ = auv_tracing::emit_artifact!(artifact).await;
-  }
+async fn emit_input_action_result(result: &auv_driver::InputActionResult) -> ArtifactInstrumentationReceipt {
+  let mut instrumentation = ArtifactInstrumentationReceipt::default();
+  instrumentation.publish_json("auv.driver.input_action_result", result).await;
+  instrumentation
 }
 
 fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, result: &auv_driver::InputActionResult) -> InvokeReport {
@@ -590,8 +613,59 @@ mod click_window_point_tests {
     let mut inputs = BTreeMap::new();
     inputs.insert("offset_x".to_string(), "640".to_string());
     inputs.insert("offset_y".to_string(), "360".to_string());
-    let point = resolve_click_window_point(&inputs, "input.clickWindowPoint", None).expect("offset pair");
+    let point = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
+      .and_then(|point| point.resolve(None, "input.clickWindowPoint"))
+      .expect("offset pair");
     assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
+  }
+
+  #[test]
+  fn window_point_input_rejects_mixed_coordinate_modes() {
+    let inputs = BTreeMap::from([
+      ("offset_x".to_string(), "10".to_string()),
+      ("offset_y".to_string(), "20".to_string()),
+      ("relative_x".to_string(), "0.5".to_string()),
+      ("relative_y".to_string(), "0.5".to_string()),
+    ]);
+
+    let error = WindowPointInput::parse(&inputs, "input.clickWindowPoint").expect_err("mixed modes must fail");
+
+    assert!(error.contains("not both"));
+  }
+
+  #[test]
+  fn window_point_input_rejects_incomplete_pairs() {
+    for inputs in [
+      BTreeMap::from([("offset_x".to_string(), "10".to_string())]),
+      BTreeMap::from([("relative_y".to_string(), "0.5".to_string())]),
+    ] {
+      let error = WindowPointInput::parse(&inputs, "input.clickWindowPoint").expect_err("incomplete pair must fail");
+      assert!(error.contains("requires both"));
+    }
+  }
+
+  #[test]
+  fn window_point_input_rejects_non_finite_values() {
+    for value in ["NaN", "inf", "-inf"] {
+      let inputs = BTreeMap::from([
+        ("offset_x".to_string(), value.to_string()),
+        ("offset_y".to_string(), "20".to_string()),
+      ]);
+      let error = WindowPointInput::parse(&inputs, "input.clickWindowPoint").expect_err("non-finite coordinate must fail");
+      assert!(error.contains("finite"));
+    }
+  }
+
+  #[test]
+  fn window_point_input_rejects_relative_values_outside_unit_interval() {
+    for value in ["-0.01", "1.01"] {
+      let inputs = BTreeMap::from([
+        ("relative_x".to_string(), value.to_string()),
+        ("relative_y".to_string(), "0.5".to_string()),
+      ]);
+      let error = WindowPointInput::parse(&inputs, "input.clickWindowPoint").expect_err("out-of-range relative coordinate must fail");
+      assert!(error.contains("0..=1"));
+    }
   }
 
   #[test]
@@ -618,7 +692,9 @@ mod click_window_point_tests {
       is_main: true,
       is_visible: true,
     };
-    let point = resolve_click_window_point(&inputs, "input.clickWindowPoint", Some(&window)).expect("relative pair");
+    let point = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
+      .and_then(|point| point.resolve(Some(&window), "input.clickWindowPoint"))
+      .expect("relative pair");
     assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
   }
 
@@ -635,10 +711,10 @@ mod click_window_point_tests {
     );
     let report = output.report.as_ref().expect("report should be set");
 
-    assert_eq!(field_value(&report, "Result"), "delivered");
-    assert_eq!(field_value(&report, "Key"), "Cmd+L");
-    assert_eq!(field_value(&report, "Target"), "active app");
-    assert_eq!(field_value(&report, "Backend"), "auv-driver-macos.input");
+    assert_eq!(field_value(report, "Result"), "delivered");
+    assert_eq!(field_value(report, "Key"), "Cmd+L");
+    assert_eq!(field_value(report, "Target"), "active app");
+    assert_eq!(field_value(report, "Backend"), "auv-driver-macos.input");
   }
 
   fn field_value<'a>(report: &'a InvokeReport, label: &str) -> &'a str {

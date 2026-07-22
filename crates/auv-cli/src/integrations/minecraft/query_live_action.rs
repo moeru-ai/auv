@@ -174,7 +174,7 @@ mod click_summary_tests {
   fn sample_invoke(status: RunStatus, output_summary: &str, failure_message: Option<&str>) -> InvokeResult {
     InvokeResult {
       run_id: "run_test".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
+      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "input.clickWindowPoint".to_string(),
       command_summary: "Click a window point.".to_string(),
       status,
@@ -187,6 +187,8 @@ mod click_summary_tests {
       report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
+      canonical_artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       failure_message: failure_message.map(str::to_string),
     }
   }

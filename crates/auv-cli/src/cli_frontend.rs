@@ -25,7 +25,7 @@ use auv_runtime::{build_default_runtime, build_runtime_with_store_root};
 use auv_tracing_driver::run_builder::RunSpec;
 
 #[allow(dead_code)] // used by root bin; donor bins only call run_donor_bin
-pub async fn run_root() -> Result<(), String> {
+pub async fn run_root() -> Result<i32, String> {
   let arguments = env::args().skip(1).collect::<Vec<_>>();
   if let Some(message) = root_donor_tombstone(&arguments) {
     return Err(message);
@@ -35,23 +35,29 @@ pub async fn run_root() -> Result<(), String> {
 }
 
 #[allow(dead_code)] // used by donor bins; root bin only calls run_root
-pub async fn run_donor_bin(donor: &'static str) -> Result<(), String> {
+pub async fn run_donor_bin(donor: &'static str) -> Result<i32, String> {
   let arguments = env::args().skip(1).collect::<Vec<_>>();
   let command = parse_donor_cli(donor, &arguments)?;
   dispatch(command).await
 }
 
-pub fn exit_on_error(result: Result<(), String>) {
-  if let Err(error) = result {
-    eprintln!("error: {error}");
-    process::exit(1);
+pub fn exit_on_error(result: Result<i32, String>) {
+  let exit_code = match result {
+    Ok(exit_code) => exit_code,
+    Err(error) => {
+      eprintln!("error: {error}");
+      1
+    }
+  };
+  if exit_code != 0 {
+    process::exit(exit_code);
   }
 }
 
-async fn dispatch(command: CliCommand) -> Result<(), String> {
+async fn dispatch(command: CliCommand) -> Result<i32, String> {
   if matches!(&command, CliCommand::Version) {
     print!("{}", version_text());
-    return Ok(());
+    return Ok(0);
   }
 
   let project_root = env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
@@ -61,16 +67,17 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     for output in outputs {
       println!("output: {output}");
     }
-    return Ok(());
+    return Ok(0);
   }
 
   if let CliCommand::McpServe = &command {
     crate::mcp::serve_stdio(project_root.clone()).await?;
-    return Ok(());
+    return Ok(0);
   }
 
   if let CliCommand::PermissionCheck { json } = &command {
-    return run_permission_check(*json);
+    run_permission_check(*json)?;
+    return Ok(0);
   }
 
   if let CliCommand::InspectServe {
@@ -94,7 +101,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       port: *port,
     };
     auv_inspect_server::serve(store, config).await?;
-    return Ok(());
+    return Ok(0);
   }
 
   if let CliCommand::SessionServe {
@@ -110,9 +117,10 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       store_root,
     };
     auv_runtime::api::session_service::transport::serve(config).await?;
-    return Ok(());
+    return Ok(0);
   }
 
+  let mut exit_code = 0;
   match command {
     CliCommand::Help => {
       print!("{}", help_text());
@@ -1024,31 +1032,40 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
       output,
     } => {
-      let dispatch = build_invoke_dispatch(&project_root, &inspect).await?;
+      let authority = build_invoke_dispatch(&project_root, &inspect).await?;
       let registry = crate::product_registry();
-      let command = registry.resolve(&request.command_id).ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
+      let command =
+        registry.resolve(&request.command_id).cloned().ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
       let input = auv_cli_invoke::InvokeCommandInput {
         command_id: request.command_id,
         target_application_id: request.target.application_id,
         inputs: request.inputs,
         dry_run: request.dry_run,
       };
-      let execution = execute_invoke_frontend(&dispatch, || command.invoke(input)).await;
+      let invoked_command = command.clone();
+      let execution = execute_invoke_frontend(&authority, move || invoked_command.invoke(input)).await?;
       if let Some(error) = execution.tracing_failure {
         eprintln!("warning: invoke tracing flush failed for run {}: {error}", execution.run_id);
       }
-      let result = auv_cli_invoke::InvokeResult::from_command_result(execution.run_id.to_string(), command, execution.direct_result);
-      let outcome = auv_cli_invoke::render_invoke_result(&result, output)?;
-      if outcome.exit_code != 0 {
-        process::exit(outcome.exit_code);
+      let result = auv_cli_invoke::InvokeResult::from_command_result(execution.run_id.to_string(), &command, execution.direct_result)
+        .with_canonical_artifacts(execution.canonical_artifacts);
+      for failure in &result.artifact_failures {
+        eprintln!("warning: artifact instrumentation failed for {}: {}", failure.purpose, failure.message);
       }
+      let outcome = auv_cli_invoke::render_invoke_result(&result, output)?;
+      exit_code = outcome.exit_code;
     }
     CliCommand::Inspect { run_id, store_root } => {
       let store_root = resolve_store_root(&project_root, store_root.as_ref());
-      let store = auv_tracing_driver::store::LocalStore::new(store_root)?;
-      // CLI shares the same product-assembled composer as MCP.
-      let composer = crate::inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
-      print!("{}", crate::inspect::inspect_run_with(&composer, &store, &run_id)?);
+      let store = open_inspect_authority_store(&store_root)?;
+      let run_id = run_id.parse::<auv_tracing::RunId>().map_err(|error| format!("invalid run id: {error}"))?;
+      let snapshot = store
+        .load_snapshot(run_id)
+        .await
+        .map_err(|error| format!("failed to read run {run_id}: {error}"))?
+        .ok_or_else(|| format!("run not found: {run_id}"))?;
+      let document = auv_inspect_model::InspectDocument::from(&snapshot);
+      println!("{}", serde_json::to_string_pretty(&document).map_err(|error| format!("failed to serialize run inspection: {error}"))?);
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")
@@ -1061,7 +1078,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     }
   }
 
-  Ok(())
+  Ok(exit_code)
 }
 
 #[derive(Debug)]
@@ -1797,7 +1814,13 @@ fn normalize_write_token(source: &str, token: String) -> Result<String, String> 
   }
 }
 
-async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptions) -> Result<auv_tracing::Dispatch, String> {
+#[derive(Clone)]
+struct InvokeFrontendAuthority {
+  dispatch: auv_tracing::Dispatch,
+  store: Arc<dyn auv_tracing::RunStore>,
+}
+
+async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptions) -> Result<InvokeFrontendAuthority, String> {
   let server_target = if should_try_server_write(inspect) {
     if let Some((url, token)) = resolve_inspect_server_target(inspect)? {
       Some((url, token))
@@ -1831,41 +1854,67 @@ async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptio
   };
 
   let store = match store {
-    Some(store) => Some(store),
-    None if should_write_local(inspect) => {
-      Some(open_inspect_authority_store(&resolve_store_root(project_root, inspect.store_root.as_ref()))?)
-    }
-    None => None,
+    Some(store) => store,
+    None if should_write_local(inspect) => open_inspect_authority_store(&resolve_store_root(project_root, inspect.store_root.as_ref()))?,
+    None => return Err("invoke requires one configured V1 run authority".to_string()),
   };
-  let builder = auv_tracing::configure();
-  match store {
-    Some(store) => builder.run_store(store).build(),
-    None => builder.build(),
-  }
-  .map_err(|error| format!("failed to configure invoke tracing: {error}"))
+  let dispatch =
+    auv_tracing::configure().run_store(store.clone()).build().map_err(|error| format!("failed to configure invoke tracing: {error}"))?;
+  Ok(InvokeFrontendAuthority { dispatch, store })
 }
 
+#[derive(Debug)]
 struct InvokeFrontendExecution<T> {
   run_id: auv_tracing::RunId,
   direct_result: Result<T, String>,
   tracing_failure: Option<String>,
+  canonical_artifacts: Vec<auv_tracing::ArtifactMetadata>,
 }
 
-async fn execute_invoke_frontend<T, F, Fut>(dispatch: &auv_tracing::Dispatch, call: F) -> InvokeFrontendExecution<T>
+#[derive(serde::Serialize)]
+struct InvokeFrontendLifecycle {
+  frontend: &'static str,
+}
+
+impl auv_tracing::EventPayload for InvokeFrontendLifecycle {
+  const NAME: &'static str = "auv.frontend.lifecycle";
+  const VERSION: u32 = 1;
+}
+
+async fn execute_invoke_frontend<T, F, Fut>(authority: &InvokeFrontendAuthority, call: F) -> Result<InvokeFrontendExecution<T>, String>
 where
-  F: FnOnce() -> Fut,
-  Fut: Future<Output = Result<T, String>>,
+  T: Send + 'static,
+  F: FnOnce() -> Fut + Send + 'static,
+  Fut: Future<Output = Result<T, String>> + Send + 'static,
 {
   let run_id = auv_tracing::RunId::new();
-  let root = auv_tracing::dispatcher::with_default(dispatch, || auv_tracing::Context::root(run_id));
+  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+  root.in_scope(|| {
+    auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+  });
   let future = root.in_scope(call);
-  let direct_result = root.instrument(future).await;
-  let tracing_failure = dispatch.flush().await.err().map(|error| error.to_string());
-  InvokeFrontendExecution {
+  let task_dispatch = authority.dispatch.clone();
+  let task_root = root.clone();
+  let runtime = tokio::runtime::Handle::current();
+  let task_result = tokio::task::spawn_blocking(move || {
+    auv_tracing::dispatcher::with_default(&task_dispatch, || runtime.block_on(task_root.instrument(future)))
+  })
+  .await;
+  let tracing_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
+  let snapshot = authority
+    .store
+    .load_snapshot(run_id)
+    .await
+    .map_err(|error| format!("failed to read committed invoke run {run_id}: {error}"))?
+    .ok_or_else(|| format!("invoke run {run_id} was not persisted by its V1 authority"))?;
+  let canonical_artifacts = snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect();
+  let direct_result = task_result.map_err(|error| format!("invoke blocking adapter task failed: {error}"))?;
+  Ok(InvokeFrontendExecution {
     run_id,
     direct_result,
     tracing_failure,
-  }
+    canonical_artifacts,
+  })
 }
 
 fn build_runtime_for_inspect(project_root: &Path, inspect: &InspectClientOptions) -> Result<auv_runtime::runtime::Runtime, String> {
@@ -1995,7 +2044,7 @@ mod tests {
       self.calls.load(Ordering::SeqCst)
     }
 
-    fn call(&self) -> impl Future<Output = Result<u32, String>> + Send + 'static {
+    fn call(&self) -> impl Future<Output = Result<u32, String>> + Send + 'static + use<> {
       auv_tracing::emit_event!(FrontendCallEvent {
         phase: "constructed"
       });
@@ -2025,14 +2074,19 @@ mod tests {
 
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
-    let execution = execute_invoke_frontend(&dispatch, || call.call()).await;
+    let authority = InvokeFrontendAuthority {
+      dispatch,
+      store: store.clone(),
+    };
+    let invoked_call = call.clone();
+    let execution = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect("persisted execution");
 
     assert_eq!(execution.direct_result, Ok(7));
     assert_eq!(execution.tracing_failure, None);
     assert_eq!(call.call_count(), 2);
     let snapshot = store.load_snapshot(execution.run_id).await.expect("snapshot").expect("recorded run");
     assert_eq!(snapshot.run_id(), execution.run_id);
-    assert_eq!(snapshot.events().len(), 2);
+    assert_eq!(snapshot.events().len(), 3);
   }
 
   #[tokio::test]
@@ -2040,15 +2094,17 @@ mod tests {
     let call = CountingCall::default();
     let store = Arc::new(CommitUnknownStore::new());
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
+    let authority = InvokeFrontendAuthority {
+      dispatch,
+      store: store.clone(),
+    };
 
-    let execution = execute_invoke_frontend(&dispatch, || call.call()).await;
+    let invoked_call = call.clone();
+    let error = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect_err("unknown commit cannot return a run id");
 
-    assert_eq!(execution.direct_result, Ok(7));
     assert_eq!(call.call_count(), 1);
-    assert!(execution.tracing_failure.is_some());
-    let canonical_facts =
-      store.load_snapshot(execution.run_id).await.expect("snapshot read").map(|snapshot| format!("{snapshot:?}")).unwrap_or_default();
-    assert_no_canonical_advice(&canonical_facts);
+    assert!(error.contains("was not persisted"));
+    assert_no_canonical_advice(&error);
   }
 
   // ROOT CAUSE:
@@ -2064,8 +2120,12 @@ mod tests {
     let _ = fs::remove_dir_all(&store_root);
     let store = Arc::new(auv_tracing::FileRunStore::open(&store_root).expect("file store"));
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("CLI dispatch");
+    let authority = InvokeFrontendAuthority {
+      dispatch,
+      store: store.clone(),
+    };
     let registry = crate::product_registry();
-    let command = registry.resolve(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID).expect("TextEdit CLI metadata");
+    let command = registry.resolve(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID).cloned().expect("TextEdit CLI metadata");
     let input = auv_cli_invoke::InvokeCommandInput {
       command_id: crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID.to_string(),
       target_application_id: Some("com.apple.TextEdit".to_string()),
@@ -2073,10 +2133,11 @@ mod tests {
       dry_run: false,
     };
 
-    let cli_execution = execute_invoke_frontend(&dispatch, || command.invoke(input)).await;
+    let invoked_command = command.clone();
+    let cli_execution = execute_invoke_frontend(&authority, move || invoked_command.invoke(input)).await.expect("persisted CLI execution");
     assert_eq!(cli_execution.tracing_failure, None);
     let cli_result =
-      auv_cli_invoke::InvokeResult::from_command_result(cli_execution.run_id.to_string(), command, cli_execution.direct_result);
+      auv_cli_invoke::InvokeResult::from_command_result(cli_execution.run_id.to_string(), &command, cli_execution.direct_result);
     assert_eq!(cli_result.status, auv_cli_invoke::RunStatus::Failed);
     assert!(cli_result.failure_message.as_deref().is_some_and(|message| message.contains("semantic verification failed")));
 
@@ -2086,7 +2147,7 @@ mod tests {
       let service = server.serve(server_transport).await.expect("MCP server start");
       service.waiting().await.expect("MCP server exit");
     });
-    let client = DummyClientHandler::default().serve(client_transport).await.expect("MCP client");
+    let client = DummyClientHandler.serve(client_transport).await.expect("MCP client");
     let response = client
       .call_tool(CallToolRequestParam {
         name: "invoke".into(),

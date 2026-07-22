@@ -141,9 +141,9 @@ fn invoke_resolved_recorded_in_span_with_finalize(
   )?;
   record_event(run, command_span.id(), "command.resolved", Some(format!("resolved {}", command.id)));
 
-  // NOTICE(run-recording-v1): The synchronous legacy adapter blocks on the
-  // owned command future until Task 22 removes this module. New callers must
-  // await the command directly from their own composition root.
+  // NOTICE(task22-legacy-runtime): This adapter may be called from a runtime
+  // thread, so registered handlers must remain runtime-agnostic until Task 22
+  // removes the synchronous block_on surface. New frontends await handlers.
   let command_result = futures_executor::block_on(command.invoke(InvokeCommandInput {
     command_id: command.id.to_string(),
     target_application_id: request.target.application_id.clone(),
@@ -168,7 +168,7 @@ fn invoke_resolved_recorded_in_span_with_finalize(
       match recording.record_produced_artifacts(run, &command_span, output.artifacts) {
         Ok(recorded) => InvokeResult {
           run_id: run.id().to_string(),
-          producer_span_id: command_span.id().clone(),
+          producer_span_id: Some(command_span.id().clone()),
           command_id: command.id.to_string(),
           command_summary: command.summary.to_string(),
           status: if output.failure_message.is_some() {
@@ -185,6 +185,8 @@ fn invoke_resolved_recorded_in_span_with_finalize(
           report: output.report,
           artifacts: recorded.records,
           artifact_paths: recorded.paths,
+          canonical_artifacts: Vec::new(),
+          artifact_failures: output.artifact_failures,
           failure_message: output.failure_message,
         },
         Err(failure) => {
@@ -193,7 +195,7 @@ fn invoke_resolved_recorded_in_span_with_finalize(
             format!("Command invocation produced output, but artifact recording failed. Inspect {} for the recorded trace.", run.id());
           InvokeResult {
             run_id: run.id().to_string(),
-            producer_span_id: command_span.id().clone(),
+            producer_span_id: Some(command_span.id().clone()),
             command_id: command.id.to_string(),
             command_summary: command.summary.to_string(),
             status: RunStatus::Failed,
@@ -206,6 +208,8 @@ fn invoke_resolved_recorded_in_span_with_finalize(
             report: output.report,
             artifacts: failure.recorded.records,
             artifact_paths: failure.recorded.paths,
+            canonical_artifacts: Vec::new(),
+            artifact_failures: output.artifact_failures,
             failure_message: Some(failure_message),
           }
         }
@@ -217,7 +221,7 @@ fn invoke_resolved_recorded_in_span_with_finalize(
       record_event(run, command_span.id(), "command.failed", Some(failure_message.clone()));
       InvokeResult {
         run_id: run.id().to_string(),
-        producer_span_id: command_span.id().clone(),
+        producer_span_id: Some(command_span.id().clone()),
         command_id: command.id.to_string(),
         command_summary: command.summary.to_string(),
         status: RunStatus::Failed,
@@ -230,27 +234,28 @@ fn invoke_resolved_recorded_in_span_with_finalize(
         report: None,
         artifacts: Vec::new(),
         artifact_paths: Vec::new(),
+        canonical_artifacts: Vec::new(),
+        artifact_failures: Vec::new(),
         failure_message: Some(failure_message),
       }
     }
   };
 
-  if let Some(finalize) = finalize {
-    if let Err(error) = finalize(recording, run, &command_span, &mut result) {
-      let failure_message = format!("command {} finalize failed: {error}", command.id);
-      let output_summary =
-        format!("Command invocation finalization failed after run creation. Inspect {} for the recorded trace.", run.id());
-      record_event(run, command_span.id(), "command.finalize.failed", Some(failure_message.clone()));
-      run.finish_span(
-        &command_span,
-        SpanFinish {
-          status_code: TraceStatusCode::Error,
-          summary: Some(output_summary),
-          failure: Some(failure_message.clone()),
-        },
-      )?;
-      return Err(failure_message);
-    }
+  if let Some(finalize) = finalize
+    && let Err(error) = finalize(recording, run, &command_span, &mut result)
+  {
+    let failure_message = format!("command {} finalize failed: {error}", command.id);
+    let output_summary = format!("Command invocation finalization failed after run creation. Inspect {} for the recorded trace.", run.id());
+    record_event(run, command_span.id(), "command.finalize.failed", Some(failure_message.clone()));
+    run.finish_span(
+      &command_span,
+      SpanFinish {
+        status_code: TraceStatusCode::Error,
+        summary: Some(output_summary),
+        failure: Some(failure_message.clone()),
+      },
+    )?;
+    return Err(failure_message);
   }
 
   let status_code = if result.status == RunStatus::Completed {
@@ -448,11 +453,30 @@ mod tests {
     assert_eq!(canonical.run.run_type, RunType::Command);
     assert_eq!(canonical.run.status_code, TraceStatusCode::Ok);
     let command_span = canonical.spans.iter().find(|span| span.name == "auv.command.invoke").expect("command span should be recorded");
-    assert_eq!(result.producer_span_id, command_span.span_id);
+    assert_eq!(result.producer_span_id, Some(command_span.span_id.clone()));
     assert_eq!(command_span.attributes.get("auv.command.id"), Some(&json!(FIXTURE_COMMAND_ID)));
     assert!(canonical.events.iter().any(|event| event.span_id == command_span.span_id && event.name == "command.resolved"));
     assert!(canonical.events.iter().any(|event| event.span_id == command_span.span_id && event.name == "run.completed"));
 
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[tokio::test(flavor = "current_thread")]
+  async fn runtime_agnostic_recorded_handler_completes_inside_current_thread_tokio() {
+    let (recording, store_root) = recording("current-thread-runtime");
+    let result = super::invoke_recorded(
+      &recording,
+      &fixture_registry(),
+      InvokeRequest {
+        command_id: FIXTURE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+    )
+    .expect("runtime-agnostic legacy handler");
+
+    assert_eq!(result.status, RunStatus::Completed);
     let _ = fs::remove_dir_all(store_root);
   }
 
@@ -592,8 +616,8 @@ mod tests {
     assert_eq!(canonical.run.run_type, RunType::Execute);
     let command_span = canonical.spans.iter().find(|span| span.name == "auv.command.invoke").expect("command span should be recorded");
     assert_eq!(command_span.attributes.get("auv.command.id"), Some(&json!(FIXTURE_COMMAND_ID)));
-    assert!(command_span.attributes.get("auv.driver.id").is_none());
-    assert!(command_span.attributes.get("auv.driver.operation").is_none());
+    assert!(!command_span.attributes.contains_key("auv.driver.id"));
+    assert!(!command_span.attributes.contains_key("auv.driver.operation"));
     assert_eq!(command_span.parent_span_id.as_ref(), Some(parent.id()));
 
     let _ = fs::remove_dir_all(store_root);

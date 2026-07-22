@@ -49,27 +49,20 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
   let operation = run_read::read_operation_result(&store, &run_id).expect("read operation-result").expect("operation-result should exist");
   assert_eq!(operation.operation_id, DOCUMENT_WRITE_COMMAND_ID);
   assert_eq!(operation.run_id.as_str(), run_id.as_str(), "canonical operation must use assigned run_id, not unassigned");
-  assert!(!operation.evidence_artifacts.is_empty(), "canonical operation must reference evidence artifacts");
-  assert!(
-    operation.evidence_artifacts.iter().all(|artifact| artifact.run_id.as_str() == run_id.as_str()),
-    "every evidence ArtifactRef must share the assigned run_id"
-  );
+  assert!(operation.evidence_artifacts.is_empty(), "legacy recorded TextEdit must not fabricate path evidence for frontend-owned bytes");
   assert!(
     operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT),
     "known_limits must include {TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT}"
   );
-  assert_eq!(operation.verifications.len(), 1);
-  assert!(matches!(operation.verifications[0].method, auv_runtime::contract::VerificationMethod::AxText));
-  assert_eq!(operation.verifications[0].semantic_matched, Some(true));
-  assert!(!operation.verifications[0].state_changed);
+  assert!(operation.verifications.is_empty(), "legacy recorded TextEdit must not claim frontend-owned verification evidence");
   assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
 
   let run = store.read_run(&run_id).expect("run");
   let artifact_roles: BTreeMap<String, String> =
     run.artifacts.iter().map(|artifact| (artifact.artifact_id.as_str().to_string(), artifact.role.clone())).collect();
   assert!(artifact_roles.values().any(|role| role == "operation-result"));
-  assert!(artifact_roles.values().any(|role| role == "input-action-result"));
-  assert!(artifact_roles.values().any(|role| role == "ax-text-observation"));
+  assert!(!artifact_roles.values().any(|role| role == "input-action-result"));
+  assert!(!artifact_roles.values().any(|role| role == "ax-text-observation"));
   let operation_artifact_ids: Vec<&str> =
     run.artifacts.iter().filter(|artifact| artifact.role == "operation-result").map(|artifact| artifact.artifact_id.as_str()).collect();
   assert_eq!(operation_artifact_ids.len(), 1);
@@ -77,7 +70,6 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
   let composer = inspect::build_product_inspect_composer().expect("composer");
   let cli_text = inspect::inspect_run_with(&composer, &store, &run_id).expect("cli inspect");
   assert!(cli_text.contains(&run_id), "cli inspect should mention run id");
-  assert!(cli_text.contains("ax_text") || cli_text.contains("AxText") || cli_text.contains("method=ax_text"));
 
   let mcp_document = composer.collect_document(&store, &run).expect("mcp-style document");
   let mcp_text = mcp_document.render_text();
@@ -89,26 +81,13 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
   assert_eq!(extract_section_ids(&cli_text), extract_section_ids(&server_text));
 
   let enrichment = projection.run_enrichment(&store, &run).expect("enrichment");
-  assert_eq!(enrichment.verifications.len(), 1);
-  assert_eq!(enrichment.verifications[0]["method"]["kind"], "ax_text");
-  assert_eq!(enrichment.verifications[0]["semantic_matched"], true);
-  assert_eq!(enrichment.verifications[0]["state_changed"], false);
+  assert!(enrichment.verifications.is_empty());
 
-  // Lock same-run artifact identity: store fingerprint + evidence refs + shared projection sections.
+  // Lock same-run artifact identity and shared projection sections without restoring legacy path evidence.
   let expected_identity = artifact_identity_fingerprint(&run);
   assert_eq!(expected_identity, artifact_identity_fingerprint(&store.read_run(&run_id).expect("re-read")));
-  assert!(
-    expected_identity.iter().any(|(_, role)| role == "operation-result")
-      && expected_identity.iter().any(|(_, role)| role == "ax-text-observation")
-      && expected_identity.iter().any(|(_, role)| role == "input-action-result")
-  );
-  for artifact_ref in &operation.evidence_artifacts {
-    assert_eq!(artifact_ref.run_id.as_str(), run_id.as_str());
-    assert!(
-      expected_identity.iter().any(|(id, _)| id == artifact_ref.artifact_id.as_str()),
-      "evidence ArtifactRef must point at an artifact on the same run"
-    );
-  }
+  assert!(expected_identity.iter().any(|(_, role)| role == "operation-result"));
+  assert!(!expected_identity.iter().any(|(_, role)| role == "ax-text-observation" || role == "input-action-result"));
   for text in [&cli_text, &mcp_text, &server_text] {
     assert!(text.contains(&run_id), "each projection must anchor the same run_id");
   }
@@ -156,9 +135,8 @@ fn textedit_document_write_live_macos_closure() {
   .expect("live invoke");
   let operation = run_read::read_operation_result(&store, &result.run_id).expect("read").expect("operation-result");
   assert_eq!(operation.run_id.as_str(), result.run_id.as_str());
-  assert!(!operation.evidence_artifacts.is_empty());
-  assert_eq!(operation.verifications[0].semantic_matched, Some(true));
-  assert!(!operation.verifications[0].state_changed);
+  assert!(operation.evidence_artifacts.is_empty());
+  assert!(operation.verifications.is_empty());
   let _ = std::fs::remove_dir_all(root);
 }
 

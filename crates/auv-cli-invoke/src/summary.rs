@@ -243,7 +243,7 @@ mod tests {
     signals.insert("fixture".to_string(), "observed".to_string());
     InvokeResult {
       run_id: run_id.to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
+      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "fixture.observe".to_string(),
       command_summary: "Observe fixture.".to_string(),
       status: RunStatus::Completed,
@@ -256,6 +256,8 @@ mod tests {
       report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
+      canonical_artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       failure_message: None,
     }
   }
@@ -274,7 +276,7 @@ mod tests {
   fn invoke_result_summary_source_exposes_failure_message() {
     let result = InvokeResult {
       run_id: "run-summary-failed".to_string(),
-      producer_span_id: SpanId::new("0000000000000002"),
+      producer_span_id: Some(SpanId::new("0000000000000002")),
       command_id: "fixture.fail".to_string(),
       command_summary: "Fail fixture.".to_string(),
       status: RunStatus::Failed,
@@ -287,6 +289,8 @@ mod tests {
       report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
+      canonical_artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       failure_message: Some("boom".to_string()),
     };
 

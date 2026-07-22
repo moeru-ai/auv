@@ -139,7 +139,7 @@ pub fn music_runtime_summary(run_id: &str) -> OperationSummary {
   signals.insert("now_playing".to_string(), "track-x".to_string());
   OperationSummary::capture(&InvokeResult {
     run_id: run_id.to_string(),
-    producer_span_id: SpanId::new("0000000000000001"),
+    producer_span_id: Some(SpanId::new("0000000000000001")),
     command_id: "music.search".to_string(),
     command_summary: "Search music.".to_string(),
     status: RunStatus::Completed,
@@ -152,6 +152,8 @@ pub fn music_runtime_summary(run_id: &str) -> OperationSummary {
     report: None,
     artifacts: Vec::new(),
     artifact_paths: Vec::new(),
+    canonical_artifacts: Vec::new(),
+    artifact_failures: Vec::new(),
     failure_message: None,
   })
 }
@@ -161,7 +163,7 @@ pub fn fixture_observe_invoke_result(run_id: &str) -> InvokeResult {
   signals.insert("fixture.observe".to_string(), "records deterministic fixture output only.".to_string());
   InvokeResult {
     run_id: run_id.to_string(),
-    producer_span_id: SpanId::new("0000000000000001"),
+    producer_span_id: Some(SpanId::new("0000000000000001")),
     command_id: "fixture.observe".to_string(),
     command_summary: "Observe fixture.".to_string(),
     status: RunStatus::Completed,
@@ -174,6 +176,8 @@ pub fn fixture_observe_invoke_result(run_id: &str) -> InvokeResult {
     report: None,
     artifacts: Vec::new(),
     artifact_paths: Vec::new(),
+    canonical_artifacts: Vec::new(),
+    artifact_failures: Vec::new(),
     failure_message: None,
   }
 }
@@ -181,7 +185,7 @@ pub fn fixture_observe_invoke_result(run_id: &str) -> InvokeResult {
 pub fn invoke_result_matching_summary(run_id: &str, summary: &OperationSummary) -> InvokeResult {
   InvokeResult {
     run_id: run_id.to_string(),
-    producer_span_id: SpanId::new("0000000000000001"),
+    producer_span_id: Some(SpanId::new("0000000000000001")),
     command_id: summary.command_id().to_string(),
     command_summary: String::new(),
     status: summary.status(),
@@ -194,6 +198,8 @@ pub fn invoke_result_matching_summary(run_id: &str, summary: &OperationSummary) 
     report: None,
     artifacts: Vec::new(),
     artifact_paths: Vec::new(),
+    canonical_artifacts: Vec::new(),
+    artifact_failures: Vec::new(),
     failure_message: summary.failure_message().map(str::to_string),
   }
 }

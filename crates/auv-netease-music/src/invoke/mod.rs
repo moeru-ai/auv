@@ -105,12 +105,12 @@ pub fn run(tokens: &[String]) -> ExitCode {
     cursor += 2;
   }
 
-  match command.invoke(InvokeCommandInput {
-    command_id: command.id,
+  match futures_executor::block_on(command.invoke(InvokeCommandInput {
+    command_id: command.id.to_string(),
     target_application_id: None,
-    inputs: &inputs,
+    inputs,
     dry_run,
-  }) {
+  })) {
     Ok(output) => {
       println!("{}", output.summary);
       if let Some(run_id) = output.signals.get("run_id") {

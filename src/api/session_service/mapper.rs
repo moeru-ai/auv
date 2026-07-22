@@ -193,7 +193,7 @@ mod tests {
   fn invoke_result_maps_status_operation_and_failure() {
     let result = InvokeResult {
       run_id: "run-1".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
+      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "input.key".to_string(),
       command_summary: "Press a key.".to_string(),
       status: RunStatus::Failed,
@@ -206,6 +206,8 @@ mod tests {
       report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
+      canonical_artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       failure_message: Some("boom".to_string()),
     };
     let response = invoke_result_to_response("input.key", &result, &[]);
@@ -221,7 +223,7 @@ mod tests {
   fn invoke_result_propagates_extra_known_limits() {
     let result = InvokeResult {
       run_id: "run-limits".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
+      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "fixture.observe".to_string(),
       command_summary: "Observe fixture.".to_string(),
       status: RunStatus::Completed,
@@ -234,6 +236,8 @@ mod tests {
       report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
+      canonical_artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       failure_message: None,
     };
     let response = invoke_result_to_response("fixture.observe", &result, &["auv.api.session.operation_summary_persist_failed"]);

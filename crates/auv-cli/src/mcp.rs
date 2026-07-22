@@ -7,25 +7,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use auv_apple_textedit::DocumentWrite;
-use auv_runtime::mcp::{McpInvokeAdapter, McpInvokeInput};
+use auv_runtime::mcp::{McpInvokeAdapter, McpInvokeInput, McpInvokeOutcome};
 
 /// Serve product MCP (CLI `auv mcp serve`) with the shared product inspect composer
 /// and product invoke metadata/adapters.
 pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
-  let composer = crate::inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
   let registry = Arc::new(crate::product_registry());
-  auv_runtime::mcp::serve_stdio_with_composer_and_registry(project_root, composer, registry, product_invoke_adapters()).await
+  auv_runtime::mcp::serve_stdio_with_registry(project_root, registry, product_invoke_adapters()).await
 }
 
 /// Builds the product MCP server for embedded transports and tests.
 pub fn server(project_root: PathBuf) -> Result<auv_runtime::mcp::McpServer, String> {
-  let composer = crate::inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
-  Ok(auv_runtime::mcp::McpServer::with_inspect_composer_and_registry(
-    project_root,
-    composer,
-    Arc::new(crate::product_registry()),
-    product_invoke_adapters(),
-  ))
+  auv_runtime::mcp::McpServer::with_registry(project_root, Arc::new(crate::product_registry()), product_invoke_adapters())
 }
 
 pub(crate) fn product_invoke_adapters() -> Vec<McpInvokeAdapter> {
@@ -36,17 +29,11 @@ pub(crate) fn product_invoke_adapters() -> Vec<McpInvokeAdapter> {
   adapters
 }
 
-async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<serde_json::Value, String> {
+async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<McpInvokeOutcome, String> {
   use crate::integrations::textedit::{DocumentWriteDriver, write_document};
 
   if input.dry_run {
-    return Ok(serde_json::json!({
-      "status": "completed",
-      "output_summary": "dry run: app.textedit.document.write",
-      "signals": {},
-      "artifacts": [],
-      "failure_message": null,
-    }));
+    return Ok(McpInvokeOutcome::completed("dry run: app.textedit.document.write", serde_json::Value::Null));
   }
   let command = parse_document_write(&input)?;
   let driver = match input.inputs.get("driver").map(String::as_str).unwrap_or("live") {
@@ -56,7 +43,7 @@ async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<serde_j
     "live" => DocumentWriteDriver::Live,
     other => return Err(format!("app.textedit.document.write unknown --driver {other}; expected live or fixture")),
   };
-  let report = write_document(command.clone(), driver).await?;
+  let (report, instrumentation) = write_document(command.clone(), driver).await?.into_parts();
   let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
   let evidence = report
     .outcomes
@@ -65,33 +52,27 @@ async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<serde_j
     .chain(report.verification.iter().map(|_| "auv.textedit.ax_text_observation"))
     .chain(std::iter::once("auv.textedit.document_write_result"))
     .collect::<Vec<_>>();
-  let mut value = serde_json::json!({
-    "status": "completed",
-    "output_summary": format!(
+  let mut outcome = McpInvokeOutcome::completed(
+    format!(
       "TextEdit document.write completed ({} steps, verify={}, semantic_matched={semantic_matched:?})",
       report.outcomes.len(),
       report.verification.is_some(),
     ),
-    "signals": {
-      "textedit.app_id": command.app_id,
-      "textedit.semantic_matched": semantic_matched,
-    },
-    "artifacts": evidence,
-    "failure_message": null,
-  });
+    serde_json::json!({ "evidence_kinds": evidence }),
+  );
+  outcome.insert_signal("textedit.app_id", command.app_id);
+  outcome.insert_signal("textedit.semantic_matched", serde_json::to_value(semantic_matched).map_err(|error| error.to_string())?);
   if let Some(verification) = report.verification.as_ref().filter(|verification| !verification.semantic_matched) {
     let observed = truncate(&verification.matched_text, 80);
-    value["status"] = serde_json::Value::String("failed".to_string());
-    value["output_summary"] = serde_json::Value::String(format!(
-      "TextEdit document.write failed semantic verification (role={}, observed={observed})",
-      verification.matched_role
-    ));
-    value["failure_message"] = serde_json::Value::String(format!(
-      "TextEdit semantic verification failed: expected content was not present in observed AX text role={} observed={observed}",
-      verification.matched_role
-    ));
+    outcome.mark_failed(
+      format!("TextEdit document.write failed semantic verification (role={}, observed={observed})", verification.matched_role),
+      format!(
+        "TextEdit semantic verification failed: expected content was not present in observed AX text role={} observed={observed}",
+        verification.matched_role
+      ),
+    );
   }
-  Ok(value)
+  Ok(outcome.with_artifact_instrumentation(instrumentation))
 }
 
 fn parse_document_write(input: &McpInvokeInput) -> Result<DocumentWrite, String> {

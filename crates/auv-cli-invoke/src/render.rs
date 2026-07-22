@@ -58,6 +58,7 @@ pub fn render_recorded_invoke(
 mod tests {
   use std::collections::BTreeMap;
 
+  use auv_tracing::{ArtifactMetadata, ArtifactPurpose, ArtifactUri, Attributes, ByteLength, ContentType, RunId, Sha256Digest};
   use auv_tracing_driver::trace::{ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EventId, SpanId};
   use serde_json::Value;
 
@@ -74,7 +75,7 @@ mod tests {
 
     InvokeResult {
       run_id: "run_fixture".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
+      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "fixture.observe".to_string(),
       command_summary: "Observe fixture".to_string(),
       status,
@@ -132,6 +133,15 @@ mod tests {
         summary: Some("fixture screenshot".to_string()),
       }],
       artifact_paths: vec!["/tmp/auv/artifact_fixture.png".into()],
+      canonical_artifacts: vec![ArtifactMetadata::new(
+        ArtifactUri::from_ids(RunId::new(), auv_tracing::ArtifactId::new()),
+        ArtifactPurpose::parse("auv.test.screenshot").expect("purpose"),
+        ContentType::parse("image/png").expect("content type"),
+        ByteLength::new(1).expect("length"),
+        Sha256Digest::new([0; 32]),
+        Attributes::empty(),
+      )],
+      artifact_failures: Vec::new(),
       failure_message: None,
     }
   }
@@ -187,7 +197,7 @@ mod tests {
     assert!(output.contains("Verification"));
     assert!(output.contains("activation_only"));
     assert!(output.contains("Artifacts"));
-    assert!(output.contains("artifact_fixture"));
+    assert!(output.contains("auv.test.screenshot"));
     assert!(output.contains("Signals"));
     assert!(output.contains("selected_target: Safari address field"));
   }

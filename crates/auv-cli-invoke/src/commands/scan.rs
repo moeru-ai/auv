@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{SCAN_COVERAGE_ARGS, SCAN_FRAME_ARGS},
-  artifact::{emission_enabled, file_artifact},
+  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
   invoke_command,
 };
 use auv_scan::{produce_coverage_from_fixture_dir, produce_frame_from_fixture_dir};
@@ -28,16 +28,17 @@ async fn frame(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 
   let fixture_dir = input.required_input("fixture-dir")?.to_string();
-  produce_scan_frame(PathBuf::from(&fixture_dir)).await?;
+  let (_, instrumentation) = produce_scan_frame(PathBuf::from(&fixture_dir)).await?.into_parts();
 
   let mut output = InvokeCommandOutput::new(format!("scan frame produced from fixture {}", fixture_dir));
   output.backend = Some("auv-scan.produce_frame_from_fixture_dir".to_string());
   output.verification = Some("capture-only; no semantic success claim".to_string());
   output.known_limits.push("scan.frame records a single scan-frame-v0 bundle only; multi-frame invoke is deferred.".to_string());
+  output.artifact_failures = instrumentation.into_failures();
   Ok(output)
 }
 
-pub async fn produce_scan_frame(fixture_dir: PathBuf) -> Result<auv_scan::ScanFrame, String> {
+pub async fn produce_scan_frame(fixture_dir: PathBuf) -> Result<ArtifactPublication<auv_scan::ScanFrame>, String> {
   if !fixture_dir.is_dir() {
     return Err(format!("scan.frame fixture directory does not exist: {}", fixture_dir.display()));
   }
@@ -45,15 +46,10 @@ pub async fn produce_scan_frame(fixture_dir: PathBuf) -> Result<auv_scan::ScanFr
   let producer_out = TempDir::new().map_err(|error| format!("scan.frame failed to create producer output directory: {error}"))?;
   let produced =
     produce_frame_from_fixture_dir(&fixture_dir, producer_out.path()).map_err(|error| format!("scan.frame producer failed: {error}"))?;
-  if emission_enabled() {
-    if let Ok(artifact) = file_artifact("auv.scan.frame", "application/json", &produced.json_path, auv_tracing::Attributes::empty()) {
-      let _ = auv_tracing::emit_artifact!(artifact).await;
-    }
-    if let Ok(artifact) = file_artifact("auv.scan.frame_image", "image/png", &produced.image_path, auv_tracing::Attributes::empty()) {
-      let _ = auv_tracing::emit_artifact!(artifact).await;
-    }
-  }
-  Ok(produced.frame)
+  let mut instrumentation = ArtifactInstrumentationReceipt::default();
+  instrumentation.publish_file("auv.scan.frame", "application/json", &produced.json_path).await;
+  instrumentation.publish_file("auv.scan.frame_image", "image/png", &produced.image_path).await;
+  Ok(ArtifactPublication::new(produced.frame, instrumentation))
 }
 
 #[invoke_command(
@@ -71,7 +67,7 @@ async fn coverage(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 
   let fixture_dir = input.required_input("fixture-dir")?.to_string();
-  produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
+  let (_, instrumentation) = produce_scan_coverage(PathBuf::from(&fixture_dir)).await?.into_parts();
 
   let mut output = InvokeCommandOutput::new(format!("scan coverage produced from fixture {fixture_dir}"));
   output.backend = Some("auv-scan.produce_coverage_from_fixture_dir".to_string());
@@ -80,10 +76,11 @@ async fn coverage(input: InvokeCommandInput) -> InvokeCommandResult {
     "scan.coverage resolves frame PNGs via manifest frame_fixture cross-reference under .../scan/coverage/<scenario>/ layout only."
       .to_string(),
   );
+  output.artifact_failures = instrumentation.into_failures();
   Ok(output)
 }
 
-pub async fn produce_scan_coverage(fixture_dir: PathBuf) -> Result<auv_scan::ScanCoverageWire, String> {
+pub async fn produce_scan_coverage(fixture_dir: PathBuf) -> Result<ArtifactPublication<auv_scan::ScanCoverageWire>, String> {
   if !fixture_dir.is_dir() {
     return Err(format!("scan.coverage fixture directory does not exist: {}", fixture_dir.display()));
   }
@@ -91,13 +88,9 @@ pub async fn produce_scan_coverage(fixture_dir: PathBuf) -> Result<auv_scan::Sca
   let producer_out = TempDir::new().map_err(|error| format!("scan.coverage failed to create producer output directory: {error}"))?;
   let produced = produce_coverage_from_fixture_dir(&fixture_dir, producer_out.path())
     .map_err(|error| format!("scan.coverage producer failed: {error}"))?;
-  if emission_enabled()
-    && let Ok(artifact) =
-      file_artifact("auv.runtime.scan_coverage", "application/json", &produced.json_path, auv_tracing::Attributes::empty())
-  {
-    let _ = auv_tracing::emit_artifact!(artifact).await;
-  }
-  Ok(produced.wire)
+  let mut instrumentation = ArtifactInstrumentationReceipt::default();
+  instrumentation.publish_file("auv.runtime.scan_coverage", "application/json", &produced.json_path).await;
+  Ok(ArtifactPublication::new(produced.wire, instrumentation))
 }
 
 #[cfg(test)]
@@ -174,8 +167,8 @@ mod tests {
     let frame = futures_executor::block_on(produce_scan_frame(single_frame_fixture_dir())).expect("typed frame");
     let coverage = futures_executor::block_on(produce_scan_coverage(coverage_stable_fixture_dir())).expect("typed coverage");
 
-    assert_eq!(frame.schema_version, auv_scan::SCAN_FRAME_SCHEMA_VERSION);
-    assert_eq!(coverage.schema_version, auv_scan::SCAN_COVERAGE_SCHEMA_VERSION);
+    assert_eq!(frame.value().schema_version, auv_scan::SCAN_FRAME_SCHEMA_VERSION);
+    assert_eq!(coverage.value().schema_version, auv_scan::SCAN_COVERAGE_SCHEMA_VERSION);
   }
 
   #[test]

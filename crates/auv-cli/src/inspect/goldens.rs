@@ -425,10 +425,6 @@ fn mcp_and_composer_share_same_text_for_core_fixture() {
   let via_composer = inspect_run_with(&composer, &store, "run_golden_parity").expect("composer");
   let via_entry = inspect_run(&store, "run_golden_parity").expect("entry");
   assert_eq!(via_composer, via_entry);
-  let mcp = auv_runtime::mcp::McpServer::with_inspect_composer(root.clone(), composer.clone());
-  let via_mcp = inspect_run_with(mcp.inspect_composer(), &store, "run_golden_parity").expect("mcp path");
-  assert_eq!(via_composer, via_mcp);
-
   // The product inspect-server projection consumes the same composer for text/document.
   use auv_inspect_server::legacy::InspectReadProjection;
   let projection = crate::projection::ProductInspectReadProjection::with_composer(composer.clone());

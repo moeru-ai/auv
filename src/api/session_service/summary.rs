@@ -281,7 +281,7 @@ mod tests {
     let operation = sample_operation("run-mismatch");
     let summary = OperationSummary::capture(&InvokeResult {
       run_id: "run-mismatch".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
+      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "fixture.observe".to_string(),
       command_summary: "Observe fixture.".to_string(),
       status: RunStatus::Failed,
@@ -294,6 +294,8 @@ mod tests {
       report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
+      canonical_artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       failure_message: Some("boom".to_string()),
     });
     let (command_id, roles) = join_args("fixture.observe");
@@ -377,7 +379,7 @@ mod tests {
       persist_operation_result_and_summary_run("session-summary-override", "run-override", &operation, &stored_summary);
     let override_summary = OperationSummary::capture(&InvokeResult {
       run_id: "run-override".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
+      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "fixture.observe".to_string(),
       command_summary: "Observe fixture.".to_string(),
       status: RunStatus::Completed,
@@ -390,6 +392,8 @@ mod tests {
       report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
+      canonical_artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       failure_message: None,
     });
 

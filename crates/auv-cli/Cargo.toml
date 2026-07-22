@@ -44,7 +44,7 @@ auv-driver-macos = { path = "../auv-driver-macos" }
 auv-cli-invoke = { path = "../auv-cli-invoke" }
 auv-api-proto = { path = "../auv-api-proto" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
-auv-tracing = { path = "../auv-tracing", features = ["file-store", "memory-store"] }
+auv-tracing = { path = "../auv-tracing", features = ["file-store"] }
 auv-tracing-inspect = { path = "../auv-tracing-inspect" }
 auv-inspect-server = { path = "../auv-inspect-server" }
 auv-inspect-model = { path = "../auv-inspect-model" }
@@ -67,6 +67,7 @@ swift-bridge-build.workspace = true
 [dev-dependencies]
 auv-api-proto = { path = "../auv-api-proto" }
 auv-stage-status = { path = "../auv-stage-status" }
+auv-tracing = { path = "../auv-tracing", features = ["file-store", "memory-store"] }
 axum = { version = "0.8", default-features = false }
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }

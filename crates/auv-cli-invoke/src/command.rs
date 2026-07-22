@@ -4,6 +4,8 @@ use crate::InvokeReport;
 use crate::arg::ArgSpec;
 use auv_tracing_driver::ProducedArtifact;
 
+use crate::ArtifactInstrumentationFailure;
+
 pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<InvokeCommandOutput, String>> + Send + 'static>>;
 pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
 
@@ -43,6 +45,8 @@ pub struct InvokeCommandOutput {
   // NOTICE(run-recording-v1): Only the Task 22 legacy adapter consumes this
   // path-based compatibility field. New commands emit owned artifacts directly.
   pub artifacts: Vec<ProducedArtifact>,
+  /// Non-authoritative diagnostics from attempted artifact instrumentation.
+  pub artifact_failures: Vec<ArtifactInstrumentationFailure>,
   pub known_limits: Vec<String>,
   pub report: Option<InvokeReport>,
   /// CLI presentation failure derived from an otherwise successful typed call.
@@ -68,6 +72,7 @@ impl InvokeCommandOutput {
       signals: BTreeMap::new(),
       notes: Vec::new(),
       artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       known_limits: Vec::new(),
       report: None,
       failure_message: None,
@@ -183,6 +188,7 @@ mod tests {
     let output = InvokeCommandOutput::new("observed");
 
     assert!(output.artifacts.is_empty());
+    assert!(output.artifact_failures.is_empty());
     assert!(output.known_limits.is_empty());
     assert!(output.report.is_none());
     assert!(output.failure_message.is_none());
