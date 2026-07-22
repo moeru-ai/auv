@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,7 @@ pub type DetectionEvalWitnessResult<T> = Result<T, String>;
 
 pub const DETECTION_EVAL_WITNESS_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const DETECTION_EVAL_WITNESS_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const OSU_DETECTION_EVAL_WITNESS_PURPOSE: &str = "auv.osu.detection_eval.witness";
 
 pub const OSU_WQ1_V1_WITNESS_KNOWN_LIMIT: &str = "osu WQ1 witness records per-frame detection-vs-truth alignment from visual_eval_report; it is not action verification or gameplay success";
 
@@ -132,11 +134,54 @@ impl DetectionEvalWitnessReason {
   }
 }
 
+pub async fn publish_osu_detection_eval_witness(
+  context: Option<&Context>,
+  witness: &DetectionEvalWitnessManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, OSU_DETECTION_EVAL_WITNESS_PURPOSE, witness, validate_witness_payload).await
+}
+
+pub async fn read_osu_detection_eval_witness(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<DetectionEvalWitnessManifest, crate::run_read::OsuArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_DETECTION_EVAL_WITNESS_PURPOSE, validate_witness_payload).await
+}
+
+fn validate_witness_payload(witness: &DetectionEvalWitnessManifest) -> Result<(), String> {
+  if witness.schema_version != DETECTION_EVAL_WITNESS_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported osu! detection eval witness schema_version {} (expected {DETECTION_EVAL_WITNESS_MANIFEST_SCHEMA_VERSION})",
+      witness.schema_version
+    ));
+  }
+  let label_total = witness.label_matched_frames + witness.label_missing_frames + witness.label_unmapped_frames;
+  if label_total != witness.total_frames {
+    return Err(format!("witness label counts total {label_total}, expected {}", witness.total_frames));
+  }
+  let spatial_total = witness.spatial_matched_frames + witness.spatial_missing_frames + witness.spatial_unscored_frames;
+  if spatial_total != witness.total_frames {
+    return Err(format!("witness spatial counts total {spatial_total}, expected {}", witness.total_frames));
+  }
+  if witness.frame_witnesses.len() != witness.total_frames {
+    return Err(format!("witness contains {} frame records, expected {}", witness.frame_witnesses.len(), witness.total_frames));
+  }
+  let spurious = witness.frame_witnesses.iter().map(|frame| frame.spurious_detection_count).sum::<usize>();
+  if spurious != witness.spurious_detection_count {
+    return Err(format!("witness frame spurious count totals {spurious}, expected {}", witness.spurious_detection_count));
+  }
+  if witness.status == StageStatus::Ready && witness.total_frames == 0 {
+    return Err("ready witness payload must contain at least one frame".to_string());
+  }
+  Ok(())
+}
+
 pub fn build_detection_eval_witness(inputs: &DetectionEvalWitnessInputs) -> DetectionEvalWitnessResult<DetectionEvalWitnessOutput> {
   fs::create_dir_all(&inputs.output_dir)
     .map_err(|error| format!("failed to create detection eval witness output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let source_visual_eval_report_path = inputs.detection_eval_output_dir.join(VISUAL_EVAL_REPORT_FILE);
   let source_detection_eval_manifest_path = inputs.detection_eval_output_dir.join(DETECTION_EVAL_MANIFEST_FILE);
 
@@ -260,7 +305,7 @@ fn evaluate_witness_gate(
     };
   }
 
-  let visual_eval_report = match read_json_file::<VisualEvalReport>(visual_eval_report_path, "osu visual eval report") {
+  let visual_eval_report = match read_visual_eval_report(visual_eval_report_path) {
     Ok(report) => Some(report),
     Err(error) => {
       warnings.insert(error);
@@ -310,6 +355,63 @@ fn evaluate_witness_gate(
     visual_eval_report,
     detection_eval_manifest,
   }
+}
+
+fn read_visual_eval_report(path: &Path) -> Result<VisualEvalReport, String> {
+  let mut value = read_json_file::<serde_json::Value>(path, "osu visual eval report")?;
+  let projection_value = value
+    .as_object_mut()
+    .and_then(|report| report.get_mut("projection"))
+    .map(serde_json::Value::take)
+    .ok_or_else(|| format!("osu visual eval report {} is missing projection", path.display()))?;
+  let projection = decode_eval_projection(&projection_value, path)?;
+
+  // NOTICE: `auv-tracing` enables serde_json `arbitrary_precision`, whose
+  // private number map is incompatible with Serde's internally tagged enum
+  // buffer for `EvalProjection` f32 fields. Remove this split decode when that
+  // combination can deserialize the owning enum directly.
+  value["projection"] = serde_json::json!({"kind": "unavailable", "reason": "decoded separately"});
+  let mut report: VisualEvalReport =
+    serde_json::from_value(value).map_err(|error| format!("failed to parse osu visual eval report {}: {error}", path.display()))?;
+  report.projection = projection;
+  Ok(report)
+}
+
+fn decode_eval_projection(value: &serde_json::Value, path: &Path) -> Result<EvalProjection, String> {
+  let object = value.as_object().ok_or_else(|| format!("osu visual eval report {} projection must be an object", path.display()))?;
+  let kind = object
+    .get("kind")
+    .and_then(serde_json::Value::as_str)
+    .ok_or_else(|| format!("osu visual eval report {} projection is missing kind", path.display()))?;
+  match kind {
+    "unavailable" => Ok(EvalProjection::Unavailable {
+      reason: object
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("osu visual eval report {} unavailable projection is missing reason", path.display()))?
+        .to_string(),
+    }),
+    "playfield_to_pixels" => Ok(EvalProjection::PlayfieldToPixels {
+      scale_x: projection_f32(object, "scale_x", path)?,
+      scale_y: projection_f32(object, "scale_y", path)?,
+      offset_x: projection_f32(object, "offset_x", path)?,
+      offset_y: projection_f32(object, "offset_y", path)?,
+      match_radius_px: projection_f32(object, "match_radius_px", path)?,
+    }),
+    other => Err(format!("osu visual eval report {} has unsupported projection kind {other}", path.display())),
+  }
+}
+
+fn projection_f32(object: &serde_json::Map<String, serde_json::Value>, field: &str, path: &Path) -> Result<f32, String> {
+  let value = object
+    .get(field)
+    .and_then(serde_json::Value::as_f64)
+    .ok_or_else(|| format!("osu visual eval report {} projection field {field} must be a number", path.display()))?;
+  let value = value as f32;
+  if !value.is_finite() {
+    return Err(format!("osu visual eval report {} projection field {field} must be finite", path.display()));
+  }
+  Ok(value)
 }
 
 fn frame_witnesses_from_report(report: &VisualEvalReport) -> Vec<DetectionEvalFrameWitness> {
@@ -405,7 +507,7 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(output.manifest.status, StageStatus::Ready);
+    assert_eq!(output.manifest.status, StageStatus::Ready, "warnings: {:?}", output.inspect_report.warnings);
     assert_eq!(output.manifest.total_frames, 3);
     assert_eq!(output.manifest.label_matched_frames, 1);
     assert_eq!(output.manifest.spatial_matched_frames, 1);

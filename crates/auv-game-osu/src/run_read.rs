@@ -1,38 +1,519 @@
 //! Osu ordinary run_read helpers for inspect composition.
 //!
-//! Depends on `auv-inspect-model` only (no `auv-cli`). Query-wired adapters stay in product (S3b).
+//! Depends on canonical `auv-tracing` run snapshots only (no `auv-cli`).
+//! Query-wired adapters stay in the product crate until Task 22.
 
+use std::collections::TryReserveError;
+use std::io::Write;
+use std::num::TryFromIntError;
+
+use auv_tracing::{
+  ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType,
+  Context, ErrorCode, NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest, ValidationError,
+};
+use futures_util::StreamExt;
+use futures_util::io::Cursor as AsyncCursor;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+pub const OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
+pub const OSU_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE: &str = "auv.osu.structured_artifact.payload_too_large";
+
+const JSON_CONTENT_TYPE: &str = "application/json";
+
+#[derive(Debug, thiserror::Error)]
+pub enum OsuArtifactPublishError {
+  #[error("invalid osu! artifact purpose {value:?}: {source}")]
+  InvalidPurpose {
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("invalid osu! artifact content type {value:?} for {purpose}: {source}")]
+  InvalidContentType {
+    purpose: ArtifactPurpose,
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("osu! artifact {purpose} failed domain validation: {message}")]
+  InvalidPayload {
+    purpose: ArtifactPurpose,
+    message: String,
+  },
+  #[error("osu! artifact {purpose} JSON length {actual} cannot be represented as u64: {source}")]
+  LengthOutOfRange {
+    purpose: ArtifactPurpose,
+    actual: u128,
+    #[source]
+    source: TryFromIntError,
+  },
+  #[error("{OSU_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE}: {purpose} JSON is {actual} bytes, exceeding the {limit}-byte limit")]
+  PayloadTooLarge {
+    purpose: ArtifactPurpose,
+    limit: u64,
+    actual: u64,
+  },
+  #[error("failed to allocate {purpose} JSON bytes: {source}")]
+  Allocation {
+    purpose: ArtifactPurpose,
+    #[source]
+    source: TryReserveError,
+  },
+  #[error("failed to serialize {purpose} as JSON: {source}")]
+  Serialize {
+    purpose: ArtifactPurpose,
+    #[source]
+    source: serde_json::Error,
+  },
+  #[error("invalid byte length for osu! artifact {purpose}: {source}")]
+  InvalidByteLength {
+    purpose: ArtifactPurpose,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("failed to publish osu! artifact {purpose}: {source}")]
+  Publication {
+    purpose: ArtifactPurpose,
+    #[source]
+    source: ArtifactWriteError,
+  },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OsuArtifactReadError {
+  #[error("invalid expected osu! artifact purpose {value:?}: {source}")]
+  InvalidExpectedPurpose {
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("invalid expected osu! artifact content type {value:?}: {source}")]
+  InvalidExpectedContentType {
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("osu! snapshot authority {snapshot_authority} does not match store authority {store_authority}")]
+  SnapshotAuthorityMismatch {
+    snapshot_authority: AuthorityId,
+    store_authority: AuthorityId,
+  },
+  #[error("osu! artifact URI belongs to run {artifact_run_id}, not snapshot run {snapshot_run_id}")]
+  WrongOwner {
+    snapshot_run_id: RunId,
+    artifact_run_id: RunId,
+  },
+  #[error("osu! artifact URI is not committed in the supplied snapshot: {uri}")]
+  DanglingUri { uri: ArtifactUri },
+  #[error("osu! artifact {uri} has purpose {actual}, expected {expected}")]
+  WrongPurpose {
+    uri: Box<ArtifactUri>,
+    expected: ArtifactPurpose,
+    actual: ArtifactPurpose,
+  },
+  #[error("osu! artifact {uri} has content type {actual}, expected {expected}")]
+  WrongContentType {
+    uri: Box<ArtifactUri>,
+    expected: Box<ContentType>,
+    actual: Box<ContentType>,
+  },
+  #[error("osu! artifact {uri} is {actual} bytes, exceeding the {limit}-byte structured-artifact limit")]
+  PayloadTooLarge {
+    uri: ArtifactUri,
+    limit: u64,
+    actual: u64,
+  },
+  #[error("osu! artifact {uri} byte length {actual} cannot be represented by this process")]
+  LengthOutOfRange { uri: ArtifactUri, actual: u64 },
+  #[error("failed to reserve {expected} bytes for osu! artifact {uri}: {source}")]
+  Allocation {
+    uri: ArtifactUri,
+    expected: u64,
+    #[source]
+    source: TryReserveError,
+  },
+  #[error("failed to open osu! artifact {uri}: {source}")]
+  Open {
+    uri: ArtifactUri,
+    #[source]
+    source: ReadError,
+  },
+  #[error("failed to stream osu! artifact {uri}: {source}")]
+  Stream {
+    uri: ArtifactUri,
+    #[source]
+    source: ArtifactReadError,
+  },
+  #[error("osu! artifact {uri} length mismatch: expected {expected}, read {actual}")]
+  LengthMismatch {
+    uri: ArtifactUri,
+    expected: u64,
+    actual: u64,
+  },
+  #[error("osu! artifact {uri} digest mismatch: expected {expected}, read {actual}")]
+  DigestMismatch {
+    uri: Box<ArtifactUri>,
+    expected: Sha256Digest,
+    actual: Sha256Digest,
+  },
+  #[error("osu! artifact {uri} is not the expected JSON type: {source}")]
+  MalformedJson {
+    uri: ArtifactUri,
+    #[source]
+    source: serde_json::Error,
+  },
+  #[error("osu! artifact {uri} failed domain validation: {message}")]
+  InvalidPayload { uri: ArtifactUri, message: String },
+}
+
+impl OsuArtifactReadError {
+  pub fn code(&self) -> ErrorCode {
+    let value = match self {
+      Self::InvalidExpectedPurpose { .. } | Self::InvalidExpectedContentType { .. } => "auv.osu.artifact.invalid_reader_contract",
+      Self::SnapshotAuthorityMismatch { .. } => "auv.osu.artifact.snapshot_authority_mismatch",
+      Self::WrongOwner { .. } => "auv.osu.artifact.wrong_owner",
+      Self::DanglingUri { .. } => "auv.osu.artifact.dangling_uri",
+      Self::WrongPurpose { .. } => "auv.osu.artifact.wrong_purpose",
+      Self::WrongContentType { .. } => "auv.osu.artifact.wrong_content_type",
+      Self::PayloadTooLarge { .. } => OSU_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE,
+      Self::LengthOutOfRange { .. } => "auv.osu.artifact.length_out_of_range",
+      Self::Allocation { .. } => "auv.osu.artifact.allocation_failed",
+      Self::Open { .. } => "auv.osu.artifact.open_failed",
+      Self::Stream { .. } => "auv.osu.artifact.stream_failed",
+      Self::LengthMismatch { .. } => "auv.osu.artifact.length_mismatch",
+      Self::DigestMismatch { .. } => "auv.osu.artifact.digest_mismatch",
+      Self::MalformedJson { .. } => "auv.osu.artifact.malformed_json",
+      Self::InvalidPayload { .. } => "auv.osu.artifact.invalid_payload",
+    };
+    ErrorCode::parse(value).expect("static osu! artifact error code is valid")
+  }
+}
+
+pub(crate) async fn publish_json_artifact<T, V>(
+  context: Option<&Context>,
+  purpose: &'static str,
+  value: &T,
+  validate: V,
+) -> Result<Option<ArtifactMetadata>, OsuArtifactPublishError>
+where
+  T: Serialize,
+  V: FnOnce(&T) -> Result<(), String>,
+{
+  let Some(context) = context.filter(|context| context.can_publish_artifacts()) else {
+    return Ok(None);
+  };
+
+  let purpose = ArtifactPurpose::parse(purpose).map_err(|source| OsuArtifactPublishError::InvalidPurpose {
+    value: purpose,
+    source,
+  })?;
+  validate(value).map_err(|message| OsuArtifactPublishError::InvalidPayload {
+    purpose: purpose.clone(),
+    message,
+  })?;
+  let body = serialize_json_bounded(&purpose, value)?;
+  let byte_length = u64::try_from(body.len()).map_err(|source| OsuArtifactPublishError::LengthOutOfRange {
+    purpose: purpose.clone(),
+    actual: body.len() as u128,
+    source,
+  })?;
+  let artifact = NewArtifact::new(
+    purpose.clone(),
+    ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| OsuArtifactPublishError::InvalidContentType {
+      purpose: purpose.clone(),
+      value: JSON_CONTENT_TYPE,
+      source,
+    })?,
+    ByteLength::new(byte_length).map_err(|source| OsuArtifactPublishError::InvalidByteLength {
+      purpose: purpose.clone(),
+      source,
+    })?,
+    Sha256Digest::new(Sha256::digest(&body).into()),
+    Attributes::empty(),
+    AsyncCursor::new(body),
+  );
+  context.in_scope(|| auv_tracing::emit_artifact!(artifact)).await.map_err(|source| OsuArtifactPublishError::Publication { purpose, source })
+}
+
+pub(crate) async fn read_json_artifact<T, V>(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  expected_purpose: &'static str,
+  validate: V,
+) -> Result<T, OsuArtifactReadError>
+where
+  T: serde::de::DeserializeOwned,
+  V: FnOnce(&T) -> Result<(), String>,
+{
+  let bytes = read_json_artifact_bytes(store, snapshot, uri, expected_purpose).await?;
+  let value = serde_json::from_slice(&bytes).map_err(|source| OsuArtifactReadError::MalformedJson {
+    uri: uri.clone(),
+    source,
+  })?;
+  validate(&value).map_err(|message| OsuArtifactReadError::InvalidPayload {
+    uri: uri.clone(),
+    message,
+  })?;
+  Ok(value)
+}
+
+async fn read_json_artifact_bytes(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  expected_purpose: &'static str,
+) -> Result<Vec<u8>, OsuArtifactReadError> {
+  let store_authority = store.authority_id();
+  if snapshot.authority_id() != store_authority {
+    return Err(OsuArtifactReadError::SnapshotAuthorityMismatch {
+      snapshot_authority: snapshot.authority_id(),
+      store_authority,
+    });
+  }
+  if uri.run_id() != snapshot.run_id() {
+    return Err(OsuArtifactReadError::WrongOwner {
+      snapshot_run_id: snapshot.run_id(),
+      artifact_run_id: uri.run_id(),
+    });
+  }
+  let metadata = snapshot.artifacts().get(uri).ok_or_else(|| OsuArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
+  let expected_purpose = ArtifactPurpose::parse(expected_purpose).map_err(|source| OsuArtifactReadError::InvalidExpectedPurpose {
+    value: expected_purpose,
+    source,
+  })?;
+  if metadata.purpose() != &expected_purpose {
+    return Err(OsuArtifactReadError::WrongPurpose {
+      uri: Box::new(uri.clone()),
+      expected: expected_purpose,
+      actual: metadata.purpose().clone(),
+    });
+  }
+  let expected_content_type = ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| OsuArtifactReadError::InvalidExpectedContentType {
+    value: JSON_CONTENT_TYPE,
+    source,
+  })?;
+  if metadata.content_type() != &expected_content_type {
+    return Err(OsuArtifactReadError::WrongContentType {
+      uri: Box::new(uri.clone()),
+      expected: Box::new(expected_content_type),
+      actual: Box::new(metadata.content_type().clone()),
+    });
+  }
+
+  let expected_length = metadata.byte_length().get();
+  if expected_length > OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+    return Err(OsuArtifactReadError::PayloadTooLarge {
+      uri: uri.clone(),
+      limit: OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+      actual: expected_length,
+    });
+  }
+  let expected_capacity = usize::try_from(expected_length).map_err(|_| OsuArtifactReadError::LengthOutOfRange {
+    uri: uri.clone(),
+    actual: expected_length,
+  })?;
+  let mut bytes = Vec::new();
+  bytes.try_reserve_exact(expected_capacity).map_err(|source| OsuArtifactReadError::Allocation {
+    uri: uri.clone(),
+    expected: expected_length,
+    source,
+  })?;
+  let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| OsuArtifactReadError::Open {
+    uri: uri.clone(),
+    source,
+  })?;
+  let mut actual_length = 0_u64;
+  while let Some(chunk) = reader.next().await {
+    let chunk = chunk.map_err(|source| OsuArtifactReadError::Stream {
+      uri: uri.clone(),
+      source,
+    })?;
+    actual_length = actual_length.checked_add(chunk.len() as u64).ok_or_else(|| OsuArtifactReadError::PayloadTooLarge {
+      uri: uri.clone(),
+      limit: OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+      actual: u64::MAX,
+    })?;
+    if actual_length > OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+      return Err(OsuArtifactReadError::PayloadTooLarge {
+        uri: uri.clone(),
+        limit: OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+        actual: actual_length,
+      });
+    }
+    if actual_length > expected_length {
+      return Err(OsuArtifactReadError::LengthMismatch {
+        uri: uri.clone(),
+        expected: expected_length,
+        actual: actual_length,
+      });
+    }
+    bytes.extend_from_slice(&chunk);
+  }
+  if actual_length != expected_length {
+    return Err(OsuArtifactReadError::LengthMismatch {
+      uri: uri.clone(),
+      expected: expected_length,
+      actual: actual_length,
+    });
+  }
+  let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
+  if actual_digest != metadata.sha256() {
+    return Err(OsuArtifactReadError::DigestMismatch {
+      uri: Box::new(uri.clone()),
+      expected: metadata.sha256(),
+      actual: actual_digest,
+    });
+  }
+  Ok(bytes)
+}
+
+fn serialize_json_bounded<T: Serialize>(purpose: &ArtifactPurpose, value: &T) -> Result<Vec<u8>, OsuArtifactPublishError> {
+  let mut output = BoundedJsonBuffer::new(purpose, OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
+  let result = serde_json::to_writer(&mut output, value);
+  if let Some(failure) = output.failure.take() {
+    return Err(match failure {
+      JsonBufferFailure::LengthOutOfRange { actual, source } => OsuArtifactPublishError::LengthOutOfRange {
+        purpose: purpose.clone(),
+        actual,
+        source,
+      },
+      JsonBufferFailure::PayloadTooLarge { actual } => OsuArtifactPublishError::PayloadTooLarge {
+        purpose: purpose.clone(),
+        limit: output.limit,
+        actual,
+      },
+      JsonBufferFailure::Allocation(source) => OsuArtifactPublishError::Allocation {
+        purpose: purpose.clone(),
+        source,
+      },
+    });
+  }
+  result.map_err(|source| OsuArtifactPublishError::Serialize {
+    purpose: purpose.clone(),
+    source,
+  })?;
+  Ok(output.bytes)
+}
+
+struct BoundedJsonBuffer<'a> {
+  purpose: &'a ArtifactPurpose,
+  limit: u64,
+  bytes: Vec<u8>,
+  failure: Option<JsonBufferFailure>,
+}
+
+enum JsonBufferFailure {
+  LengthOutOfRange {
+    actual: u128,
+    source: TryFromIntError,
+  },
+  PayloadTooLarge {
+    actual: u64,
+  },
+  Allocation(TryReserveError),
+}
+
+impl<'a> BoundedJsonBuffer<'a> {
+  fn new(purpose: &'a ArtifactPurpose, limit: u64) -> Self {
+    Self {
+      purpose,
+      limit,
+      bytes: Vec::new(),
+      failure: None,
+    }
+  }
+
+  fn fail(&mut self, failure: JsonBufferFailure) -> std::io::Error {
+    self.failure = Some(failure);
+    std::io::Error::other(format!("{} JSON exceeded its bounded buffer", self.purpose))
+  }
+}
+
+impl Write for BoundedJsonBuffer<'_> {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let Some(next_length) = self.bytes.len().checked_add(buffer.len()) else {
+      return Err(self.fail(JsonBufferFailure::PayloadTooLarge { actual: u64::MAX }));
+    };
+    let next_length = match u64::try_from(next_length) {
+      Ok(length) => length,
+      Err(source) => {
+        return Err(self.fail(JsonBufferFailure::LengthOutOfRange {
+          actual: next_length as u128,
+          source,
+        }));
+      }
+    };
+    if next_length > self.limit {
+      return Err(self.fail(JsonBufferFailure::PayloadTooLarge {
+        actual: next_length,
+      }));
+    }
+    if let Err(source) = self.bytes.try_reserve(buffer.len()) {
+      return Err(self.fail(JsonBufferFailure::Allocation(source)));
+    }
+    self.bytes.extend_from_slice(buffer);
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+}
+
+pub(crate) fn now_millis() -> u64 {
+  u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)
+}
+
+use crate::detection_eval_quality::{OSU_DETECTION_EVAL_QUALITY_PURPOSE, read_osu_detection_eval_quality};
+use crate::detection_eval_witness::{OSU_DETECTION_EVAL_WITNESS_PURPOSE, read_osu_detection_eval_witness};
+use crate::visual_truth_semantic::{OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE, read_osu_visual_truth_semantic};
+use crate::visual_truth_spatial_query::{OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, read_osu_visual_truth_spatial_query};
 use crate::{
   DetectionEvalQualityInspectReport, DetectionEvalQualityManifest, DetectionEvalWitnessInspectReport, DetectionEvalWitnessManifest,
   VisualTruthSemanticInspectReport, VisualTruthSemanticManifest, VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
   derive_visual_truth_spatial_query_action_readiness,
 };
-use auv_inspect_model::legacy::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
-use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct OsuArtifactView {
+  pub artifact_id: ArtifactUri,
+  pub role: Option<String>,
+  pub path: Option<String>,
+}
+
+fn artifact_view(uri: &ArtifactUri, purpose: &'static str) -> OsuArtifactView {
+  OsuArtifactView {
+    artifact_id: uri.clone(),
+    role: Some(purpose.to_string()),
+    path: None,
+  }
+}
 
 pub(crate) struct OsuVisualTruthSemanticManifestLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub manifest: Option<OsuVisualTruthSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuVisualTruthSemanticInspectReportLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub report: Option<OsuVisualTruthSemanticInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuVisualTruthSpatialQueryManifestLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub manifest: Option<OsuVisualTruthSpatialQueryManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuVisualTruthSpatialQueryInspectReportLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub report: Option<OsuVisualTruthSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -110,28 +591,28 @@ pub(crate) struct OsuVisualTruthSpatialQueryInspectReportSummary {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalWitnessManifestLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub manifest: Option<OsuDetectionEvalWitnessManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalWitnessInspectReportLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub report: Option<OsuDetectionEvalWitnessInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalQualityManifestLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub manifest: Option<OsuDetectionEvalQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalQualityInspectReportLineage {
-  pub artifact: ArtifactRefView,
+  pub artifact: OsuArtifactView,
   pub report: Option<OsuDetectionEvalQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -186,321 +667,99 @@ pub(crate) struct OsuDetectionEvalQualityInspectReportSummary {
   pub label_recall_available: bool,
   pub spatial_recall_available: bool,
 }
+pub(crate) fn validate_snapshot_authority(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<(), OsuArtifactReadError> {
+  let store_authority = store.authority_id();
+  if snapshot.authority_id() != store_authority {
+    return Err(OsuArtifactReadError::SnapshotAuthorityMismatch {
+      snapshot_authority: snapshot.authority_id(),
+      store_authority,
+    });
+  }
+  Ok(())
+}
 
-pub(crate) fn extract_osu_visual_truth_semantic_manifests(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuVisualTruthSemanticManifestLineage>, String> {
+pub(crate) fn artifact_uris_for_purpose(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  purpose: &'static str,
+) -> Result<Vec<ArtifactUri>, OsuArtifactReadError> {
+  validate_snapshot_authority(store, snapshot)?;
+  let purpose = ArtifactPurpose::parse(purpose).map_err(|source| OsuArtifactReadError::InvalidExpectedPurpose {
+    value: purpose,
+    source,
+  })?;
+  Ok(
+    snapshot
+      .artifacts()
+      .values()
+      .filter(|artifact| artifact.metadata().purpose() == &purpose)
+      .map(|artifact| artifact.metadata().uri().clone())
+      .collect(),
+  )
+}
+
+pub(crate) async fn extract_osu_visual_truth_semantic_manifests(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<OsuVisualTruthSemanticManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_VISUAL_TRUTH_SEMANTIC_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      manifests.push(OsuVisualTruthSemanticManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(format!("osu visual truth semantic manifest mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed =
-      read_artifact_json::<VisualTruthSemanticManifest>(store, run.run.run_id.as_str(), artifact, crate::OSU_VISUAL_TRUTH_SEMANTIC_ROLE)
-        .map(|manifest| OsuVisualTruthSemanticManifestSummary::from(&manifest));
-    match parsed {
-      Ok(manifest) => manifests.push(OsuVisualTruthSemanticManifestLineage {
-        artifact: artifact_ref,
-        manifest: Some(manifest),
-        issue: None,
-      }),
-      Err(error) => manifests.push(OsuVisualTruthSemanticManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(error),
-      }),
-    }
+  for uri in artifact_uris_for_purpose(store, snapshot, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE)? {
+    let manifest = read_osu_visual_truth_semantic(store, snapshot, &uri).await?;
+    manifests.push(OsuVisualTruthSemanticManifestLineage {
+      artifact: artifact_view(&uri, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE),
+      manifest: Some(OsuVisualTruthSemanticManifestSummary::from(&manifest)),
+      issue: None,
+    });
   }
   Ok(manifests)
 }
 
-pub(crate) fn extract_osu_visual_truth_semantic_inspect_reports(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuVisualTruthSemanticInspectReportLineage>, String> {
-  let mut reports = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      reports.push(OsuVisualTruthSemanticInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(format!("osu visual truth semantic inspect mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed = read_artifact_json::<VisualTruthSemanticInspectReport>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      crate::OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE,
-    )
-    .map(|report| OsuVisualTruthSemanticInspectReportSummary::from(&report));
-    match parsed {
-      Ok(report) => reports.push(OsuVisualTruthSemanticInspectReportLineage {
-        artifact: artifact_ref,
-        report: Some(report),
-        issue: None,
-      }),
-      Err(error) => reports.push(OsuVisualTruthSemanticInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(error),
-      }),
-    }
-  }
-  Ok(reports)
-}
-
-pub fn extract_osu_visual_truth_spatial_query_manifests(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuVisualTruthSpatialQueryManifestLineage>, String> {
+pub async fn extract_osu_visual_truth_spatial_query_manifests(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<OsuVisualTruthSpatialQueryManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      manifests.push(OsuVisualTruthSpatialQueryManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(format!("osu visual truth spatial query manifest mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed = read_artifact_json::<VisualTruthSpatialQueryManifest>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      crate::OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
-    )
-    .map(|manifest| OsuVisualTruthSpatialQueryManifestSummary::from(&manifest));
-    match parsed {
-      Ok(manifest) => manifests.push(OsuVisualTruthSpatialQueryManifestLineage {
-        artifact: artifact_ref,
-        manifest: Some(manifest),
-        issue: None,
-      }),
-      Err(error) => manifests.push(OsuVisualTruthSpatialQueryManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(error),
-      }),
-    }
+  for uri in artifact_uris_for_purpose(store, snapshot, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE)? {
+    let manifest = read_osu_visual_truth_spatial_query(store, snapshot, &uri).await?;
+    manifests.push(OsuVisualTruthSpatialQueryManifestLineage {
+      artifact: artifact_view(&uri, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE),
+      manifest: Some(OsuVisualTruthSpatialQueryManifestSummary::from(&manifest)),
+      issue: None,
+    });
   }
   Ok(manifests)
 }
 
-pub(crate) fn extract_osu_visual_truth_spatial_query_inspect_reports(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuVisualTruthSpatialQueryInspectReportLineage>, String> {
-  let mut reports = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      reports.push(OsuVisualTruthSpatialQueryInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(format!("osu visual truth spatial query inspect mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed = read_artifact_json::<VisualTruthSpatialQueryInspectReport>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      crate::OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE,
-    )
-    .map(|report| OsuVisualTruthSpatialQueryInspectReportSummary::from(&report));
-    match parsed {
-      Ok(report) => reports.push(OsuVisualTruthSpatialQueryInspectReportLineage {
-        artifact: artifact_ref,
-        report: Some(report),
-        issue: None,
-      }),
-      Err(error) => reports.push(OsuVisualTruthSpatialQueryInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(error),
-      }),
-    }
-  }
-  Ok(reports)
-}
-
-pub(crate) fn extract_osu_detection_eval_witness_manifests(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuDetectionEvalWitnessManifestLineage>, String> {
+pub(crate) async fn extract_osu_detection_eval_witness_manifests(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<OsuDetectionEvalWitnessManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_DETECTION_EVAL_WITNESS_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      manifests.push(OsuDetectionEvalWitnessManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(format!("osu detection eval witness manifest mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed =
-      read_artifact_json::<DetectionEvalWitnessManifest>(store, run.run.run_id.as_str(), artifact, crate::OSU_DETECTION_EVAL_WITNESS_ROLE)
-        .map(|manifest| OsuDetectionEvalWitnessManifestSummary::from(&manifest));
-    match parsed {
-      Ok(manifest) => manifests.push(OsuDetectionEvalWitnessManifestLineage {
-        artifact: artifact_ref,
-        manifest: Some(manifest),
-        issue: None,
-      }),
-      Err(error) => manifests.push(OsuDetectionEvalWitnessManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(error),
-      }),
-    }
+  for uri in artifact_uris_for_purpose(store, snapshot, OSU_DETECTION_EVAL_WITNESS_PURPOSE)? {
+    let manifest = read_osu_detection_eval_witness(store, snapshot, &uri).await?;
+    manifests.push(OsuDetectionEvalWitnessManifestLineage {
+      artifact: artifact_view(&uri, OSU_DETECTION_EVAL_WITNESS_PURPOSE),
+      manifest: Some(OsuDetectionEvalWitnessManifestSummary::from(&manifest)),
+      issue: None,
+    });
   }
   Ok(manifests)
 }
 
-pub(crate) fn extract_osu_detection_eval_witness_inspect_reports(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuDetectionEvalWitnessInspectReportLineage>, String> {
-  let mut reports = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      reports.push(OsuDetectionEvalWitnessInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(format!("osu detection eval witness inspect mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed = read_artifact_json::<DetectionEvalWitnessInspectReport>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      crate::OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
-    )
-    .map(|report| OsuDetectionEvalWitnessInspectReportSummary::from(&report));
-    match parsed {
-      Ok(report) => reports.push(OsuDetectionEvalWitnessInspectReportLineage {
-        artifact: artifact_ref,
-        report: Some(report),
-        issue: None,
-      }),
-      Err(error) => reports.push(OsuDetectionEvalWitnessInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(error),
-      }),
-    }
-  }
-  Ok(reports)
-}
-
-pub(crate) fn extract_osu_detection_eval_quality_manifests(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuDetectionEvalQualityManifestLineage>, String> {
+pub(crate) async fn extract_osu_detection_eval_quality_manifests(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<OsuDetectionEvalQualityManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_DETECTION_EVAL_QUALITY_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      manifests.push(OsuDetectionEvalQualityManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(format!("osu detection eval quality manifest mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed =
-      read_artifact_json::<DetectionEvalQualityManifest>(store, run.run.run_id.as_str(), artifact, crate::OSU_DETECTION_EVAL_QUALITY_ROLE)
-        .map(|manifest| OsuDetectionEvalQualityManifestSummary::from(&manifest));
-    match parsed {
-      Ok(manifest) => manifests.push(OsuDetectionEvalQualityManifestLineage {
-        artifact: artifact_ref,
-        manifest: Some(manifest),
-        issue: None,
-      }),
-      Err(error) => manifests.push(OsuDetectionEvalQualityManifestLineage {
-        artifact: artifact_ref,
-        manifest: None,
-        issue: Some(error),
-      }),
-    }
+  for uri in artifact_uris_for_purpose(store, snapshot, OSU_DETECTION_EVAL_QUALITY_PURPOSE)? {
+    let manifest = read_osu_detection_eval_quality(store, snapshot, &uri).await?;
+    manifests.push(OsuDetectionEvalQualityManifestLineage {
+      artifact: artifact_view(&uri, OSU_DETECTION_EVAL_QUALITY_PURPOSE),
+      manifest: Some(OsuDetectionEvalQualityManifestSummary::from(&manifest)),
+      issue: None,
+    });
   }
   Ok(manifests)
-}
-
-pub(crate) fn extract_osu_detection_eval_quality_inspect_reports(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Vec<OsuDetectionEvalQualityInspectReportLineage>, String> {
-  let mut reports = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != crate::OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE {
-      continue;
-    }
-    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
-    if !is_json_mime(&artifact.mime_type) {
-      reports.push(OsuDetectionEvalQualityInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(format!("osu detection eval quality inspect mime_type {} is not JSON", artifact.mime_type)),
-      });
-      continue;
-    }
-    let parsed = read_artifact_json::<DetectionEvalQualityInspectReport>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      crate::OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE,
-    )
-    .map(|report| OsuDetectionEvalQualityInspectReportSummary::from(&report));
-    match parsed {
-      Ok(report) => reports.push(OsuDetectionEvalQualityInspectReportLineage {
-        artifact: artifact_ref,
-        report: Some(report),
-        issue: None,
-      }),
-      Err(error) => reports.push(OsuDetectionEvalQualityInspectReportLineage {
-        artifact: artifact_ref,
-        report: None,
-        issue: Some(error),
-      }),
-    }
-  }
-  Ok(reports)
 }
 
 pub(crate) fn derive_osu_detection_eval_quality_verdict_summary(lineage: &OsuDetectionEvalQualityManifestLineage) -> String {

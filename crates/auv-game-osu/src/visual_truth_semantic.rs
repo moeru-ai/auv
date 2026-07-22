@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,7 @@ pub type VisualTruthSemanticValidationResult<T> = Result<T, String>;
 
 pub const VISUAL_TRUTH_SEMANTIC_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const VISUAL_TRUTH_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE: &str = "auv.osu.visual_truth.semantic";
 
 const VISUAL_TRUTH_MANIFEST_FILE: &str = "visual_truth_manifest.json";
 const PROJECTION_FILE: &str = "projection.json";
@@ -99,12 +101,45 @@ impl VisualTruthSemanticReason {
   }
 }
 
+pub async fn publish_osu_visual_truth_semantic(
+  context: Option<&Context>,
+  semantic: &VisualTruthSemanticManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE, semantic, validate_semantic_payload).await
+}
+
+pub async fn read_osu_visual_truth_semantic(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<VisualTruthSemanticManifest, crate::run_read::OsuArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE, validate_semantic_payload).await
+}
+
+fn validate_semantic_payload(semantic: &VisualTruthSemanticManifest) -> Result<(), String> {
+  if semantic.schema_version != VISUAL_TRUTH_SEMANTIC_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported osu! visual truth semantic schema_version {} (expected {VISUAL_TRUTH_SEMANTIC_MANIFEST_SCHEMA_VERSION})",
+      semantic.schema_version
+    ));
+  }
+  if semantic.semantic_status == StageStatus::Ready {
+    if semantic.frame_count == 0 {
+      return Err("ready visual truth semantic payload must contain at least one frame".to_string());
+    }
+    if semantic.semantic_reason.is_some() {
+      return Err("ready visual truth semantic payload must not include a failure reason".to_string());
+    }
+  }
+  Ok(())
+}
+
 pub fn validate_visual_truth_semantic(
   inputs: VisualTruthSemanticValidationInputs,
 ) -> VisualTruthSemanticValidationResult<VisualTruthSemanticValidationOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let source_visual_truth_manifest_path = inputs.run_artifact_dir.join(VISUAL_TRUTH_MANIFEST_FILE);
   let source_projection_path = inputs.run_artifact_dir.join(PROJECTION_FILE);
 

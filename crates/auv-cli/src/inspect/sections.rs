@@ -62,6 +62,7 @@ pub enum ProductInspectError {
   Legacy(InspectError),
   Minecraft(auv_game_minecraft::MinecraftArtifactReadError),
   Balatro(auv_game_balatro::BalatroArtifactReadError),
+  Osu(auv_game_osu::run_read::OsuArtifactReadError),
   MissingLegacySection(&'static str),
   UnexpectedSection(&'static str),
 }
@@ -72,6 +73,7 @@ impl std::fmt::Display for ProductInspectError {
       Self::Legacy(error) => write!(formatter, "legacy inspect composition failed: {error}"),
       Self::Minecraft(error) => write!(formatter, "Minecraft inspection failed: {error}"),
       Self::Balatro(error) => write!(formatter, "Balatro inspection failed: {error}"),
+      Self::Osu(error) => write!(formatter, "osu! inspection failed: {error}"),
       Self::MissingLegacySection(id) => write!(formatter, "legacy inspect composition omitted required section {id}"),
       Self::UnexpectedSection(id) => write!(formatter, "product inspect composition returned unexpected section {id}"),
     }
@@ -95,6 +97,12 @@ impl From<auv_game_minecraft::MinecraftArtifactReadError> for ProductInspectErro
 impl From<auv_game_balatro::BalatroArtifactReadError> for ProductInspectError {
   fn from(value: auv_game_balatro::BalatroArtifactReadError) -> Self {
     Self::Balatro(value)
+  }
+}
+
+impl From<auv_game_osu::run_read::OsuArtifactReadError> for ProductInspectError {
+  fn from(value: auv_game_osu::run_read::OsuArtifactReadError) -> Self {
+    Self::Osu(value)
   }
 }
 
@@ -159,17 +167,21 @@ async fn collect_canonical_app_sections(
   let primary = auv_game_minecraft::inspect_sections_primary(store, snapshot).await?;
   let balatro = auv_game_balatro::inspect::render_balatro_card_detection_text(store, snapshot).await?;
   let quality_spatial = auv_game_minecraft::inspect_sections_quality_spatial(store, snapshot).await?;
+  let osu_primary = auv_game_osu::inspect_sections_primary(store, snapshot).await?;
+  let osu_detection_eval = auv_game_osu::inspect_sections_detection_eval(store, snapshot).await?;
   let minecraft_query_wired = collect_minecraft_query_wired_live_action_summaries(store, snapshot).await?;
   let mut minecraft_query_wired_text = String::new();
   append_minecraft_query_wired_section(&mut minecraft_query_wired_text, &minecraft_query_wired);
 
-  let mut sections = Vec::with_capacity(primary.len() + 2 + quality_spatial.len());
+  let mut sections = Vec::with_capacity(primary.len() + quality_spatial.len() + osu_primary.len() + osu_detection_eval.len() + 2);
   sections.extend(primary.into_iter().map(minecraft_section));
   sections.push(ProductInspectSection {
     id: auv_game_balatro::inspect::BalatroCardDetectionSection::ID,
     text: balatro,
   });
   sections.extend(quality_spatial.into_iter().map(minecraft_section));
+  sections.extend(osu_primary.into_iter().map(osu_section));
+  sections.extend(osu_detection_eval.into_iter().map(osu_section));
   sections.push(ProductInspectSection {
     id: "minecraft_query_wired_live_action",
     text: minecraft_query_wired_text,
@@ -178,6 +190,13 @@ async fn collect_canonical_app_sections(
 }
 
 fn minecraft_section(section: auv_game_minecraft::inspect::MinecraftInspectSection) -> ProductInspectSection {
+  ProductInspectSection {
+    id: section.id(),
+    text: section.into_text(),
+  }
+}
+
+fn osu_section(section: auv_game_osu::inspect::OsuInspectSection) -> ProductInspectSection {
   ProductInspectSection {
     id: section.id(),
     text: section.into_text(),
@@ -208,17 +227,12 @@ pub fn build_product_inspect_composer() -> Result<Arc<InspectComposer>, InspectE
   let mut sections: Vec<Arc<dyn InspectSection>> = Vec::new();
   // 1. core_prefix
   sections.push(Arc::new(CorePrefixSection));
-  // TODO(run-contract-task-22): Retire this legacy composer after core, osu!,
-  // and product query-wired readers accept RunStore/RunSnapshot. Canonical
-  // Balatro and Minecraft sections are merged by
-  // build_product_inspect_text_document.
-  // 2. osu A
-  sections.extend(auv_game_osu::inspect_sections_primary());
-  // 3. osu query-wired (PRODUCT)
+  // TODO(run-contract-task-22): Retire this legacy composer after core and
+  // product query-wired readers accept RunStore/RunSnapshot. Canonical app
+  // sections are merged by build_product_inspect_text_document.
+  // 2. osu query-wired (PRODUCT)
   sections.push(Arc::new(OsuQueryWiredLiveActionSection));
-  // 4. osu B
-  sections.extend(auv_game_osu::inspect_sections_detection_eval());
-  // 5. core_suffix
+  // 3. core_suffix
   sections.push(Arc::new(CoreSuffixSection));
   InspectComposer::try_new(sections).map(Arc::new)
 }
@@ -244,16 +258,7 @@ mod tests {
   fn legacy_composer_keeps_remaining_section_order() {
     let composer = build_product_inspect_composer().expect("product composer");
     let ids = composer.sections().iter().map(|section| section.id()).collect::<Vec<_>>();
-    assert_eq!(
-      ids,
-      [
-        "core_prefix",
-        "osu_visual_truth_primary",
-        "osu_query_wired_live_action",
-        "osu_detection_eval",
-        "core_suffix",
-      ]
-    );
+    assert_eq!(ids, ["core_prefix", "osu_query_wired_live_action", "core_suffix",]);
   }
 
   #[tokio::test]
