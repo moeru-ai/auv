@@ -4,7 +4,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, NewArtifact, Sha256Digest};
+use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, ErrorCode, NewArtifact, Sha256Digest};
 use futures_util::io::{AllowStdIo, AsyncRead, Cursor as AsyncCursor};
 use image::{ExtendedColorType, ImageEncoder, RgbaImage, codecs::png::PngEncoder};
 use sha2::{Digest, Sha256};
@@ -48,6 +48,14 @@ impl ArtifactInstrumentationReceipt {
   pub async fn publish_json<T: serde::Serialize>(&mut self, purpose: &str, value: &T) {
     if emission_enabled() {
       self.publish(purpose, json_artifact(purpose, value, Attributes::empty())).await;
+    }
+  }
+
+  /// Publishes pretty JSON only when its exact serialized length fits the
+  /// caller's domain budget and the canonical whole-artifact limit.
+  pub async fn publish_json_bounded<T: serde::Serialize>(&mut self, purpose: &str, value: &T, max_bytes: u64, exceeded_code: &str) {
+    if emission_enabled() {
+      self.publish(purpose, json_artifact_bounded(purpose, value, Attributes::empty(), max_bytes, exceeded_code)).await;
     }
   }
 
@@ -111,21 +119,33 @@ pub(crate) fn emission_enabled() -> bool {
 }
 
 pub(crate) fn json_artifact<T: serde::Serialize>(purpose: &str, value: &T, attributes: Attributes) -> Result<OwnedArtifact, String> {
-  let mut body = BoundedArtifactBuffer::default();
-  serde_json::to_writer_pretty(&mut body, value).map_err(|error| format!("failed to serialize {purpose} artifact: {error}"))?;
-  bytes_artifact(purpose, "application/json", body.into_inner(), attributes)
+  let body = serialize_json_exact(purpose, value, None)?;
+  bytes_artifact(purpose, "application/json", body, attributes)
+}
+
+fn json_artifact_bounded<T: serde::Serialize>(
+  purpose: &str,
+  value: &T,
+  attributes: Attributes,
+  max_bytes: u64,
+  exceeded_code: &str,
+) -> Result<OwnedArtifact, String> {
+  let max_bytes = ByteLength::new(max_bytes).map_err(|error| format!("invalid {purpose} JSON byte limit: {error}"))?.get();
+  let exceeded_code = ErrorCode::parse(exceeded_code).map_err(|error| format!("invalid {purpose} JSON limit error code: {error}"))?;
+  let body = serialize_json_exact(
+    purpose,
+    value,
+    Some(JsonArtifactLimit {
+      max_bytes,
+      exceeded_code: exceeded_code.as_str(),
+    }),
+  )?;
+  bytes_artifact(purpose, "application/json", body, attributes)
 }
 
 pub(crate) fn png_artifact(purpose: &str, image: &RgbaImage, attributes: Attributes) -> Result<OwnedArtifact, String> {
-  // PNG encoding is buffered because RunStore admission requires the exact
-  // digest and byte length up front. Validate the raw source and every encoded
-  // write against the canonical ByteLength policy before growing the buffer.
-  bounded_length(purpose, image.as_raw().len())?;
-  let mut body = BoundedArtifactBuffer::default();
-  PngEncoder::new(&mut body)
-    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
-    .map_err(|error| format!("failed to encode {purpose} artifact: {error}"))?;
-  bytes_artifact(purpose, "image/png", body.into_inner(), attributes)
+  let body = encode_png_exact(purpose, image)?;
+  bytes_artifact(purpose, "image/png", body, attributes)
 }
 
 pub(crate) fn file_artifact(purpose: &str, content_type: &str, path: &Path, attributes: Attributes) -> Result<OwnedArtifact, String> {
@@ -180,22 +200,118 @@ fn bounded_length(purpose: &str, length: usize) -> Result<ByteLength, String> {
   ByteLength::new(length).map_err(|error| format!("invalid {purpose} artifact length: {error}"))
 }
 
-#[derive(Default)]
-struct BoundedArtifactBuffer {
-  bytes: Vec<u8>,
+#[derive(Clone, Copy)]
+struct JsonArtifactLimit<'a> {
+  max_bytes: u64,
+  exceeded_code: &'a str,
 }
 
-impl BoundedArtifactBuffer {
-  fn into_inner(self) -> Vec<u8> {
-    self.bytes
+fn serialize_json_exact<T: serde::Serialize>(purpose: &str, value: &T, limit: Option<JsonArtifactLimit<'_>>) -> Result<Vec<u8>, String> {
+  let mut measurement = ArtifactLengthMeasurement::new(purpose, limit);
+  serde_json::to_writer_pretty(&mut measurement, value).map_err(|error| format!("failed to serialize {purpose} artifact: {error}"))?;
+  let measured_length = usize::try_from(measurement.byte_length()).map_err(|_| format!("{purpose} artifact length does not fit usize"))?;
+  let mut body = ExactArtifactBuffer::try_new(purpose, measured_length)?;
+  serde_json::to_writer_pretty(&mut body, value).map_err(|error| format!("failed to serialize {purpose} artifact: {error}"))?;
+  body.finish(purpose)
+}
+
+fn encode_png_exact(purpose: &str, image: &RgbaImage) -> Result<Vec<u8>, String> {
+  // RunStore admission needs the encoded length and digest up front. Measure
+  // without retaining bytes, then encode once into that fixed allocation.
+  bounded_length(purpose, image.as_raw().len())?;
+  let mut measurement = ArtifactLengthMeasurement::new(purpose, None);
+  PngEncoder::new(&mut measurement)
+    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
+    .map_err(|error| format!("failed to measure encoded {purpose} artifact: {error}"))?;
+  let measured_length = usize::try_from(measurement.byte_length()).map_err(|_| format!("{purpose} artifact length does not fit usize"))?;
+  let mut body = ExactArtifactBuffer::try_new(purpose, measured_length)?;
+  PngEncoder::new(&mut body)
+    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
+    .map_err(|error| format!("failed to encode {purpose} artifact: {error}"))?;
+  body.finish(purpose)
+}
+
+struct ArtifactLengthMeasurement<'a> {
+  purpose: &'a str,
+  byte_length: u64,
+  limit: Option<JsonArtifactLimit<'a>>,
+}
+
+impl<'a> ArtifactLengthMeasurement<'a> {
+  fn new(purpose: &'a str, limit: Option<JsonArtifactLimit<'a>>) -> Self {
+    Self {
+      purpose,
+      byte_length: 0,
+      limit,
+    }
+  }
+
+  fn byte_length(&self) -> u64 {
+    self.byte_length
   }
 }
 
-impl Write for BoundedArtifactBuffer {
+impl Write for ArtifactLengthMeasurement<'_> {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let buffer_length = u64::try_from(buffer.len()).map_err(std::io::Error::other)?;
+    let actual = self
+      .byte_length
+      .checked_add(buffer_length)
+      .ok_or_else(|| std::io::Error::other(format!("{} artifact length overflow", self.purpose)))?;
+    if let Some(limit) = self.limit
+      && actual > limit.max_bytes
+    {
+      return Err(std::io::Error::other(format!(
+        "{}: {} JSON is {actual} bytes, exceeding the {}-byte limit",
+        limit.exceeded_code, self.purpose, limit.max_bytes
+      )));
+    }
+    ByteLength::new(actual).map_err(|error| std::io::Error::other(error.to_string()))?;
+    self.byte_length = actual;
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+}
+
+struct ExactArtifactBuffer {
+  bytes: Vec<u8>,
+  measured_length: usize,
+}
+
+impl ExactArtifactBuffer {
+  fn try_new(purpose: &str, measured_length: usize) -> Result<Self, String> {
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(measured_length).map_err(|error| format!("failed to allocate {purpose} artifact bytes: {error}"))?;
+    if bytes.capacity() != measured_length {
+      return Err(format!("failed to allocate {purpose} artifact bytes exactly: measured {measured_length}, reserved {}", bytes.capacity()));
+    }
+    Ok(Self {
+      bytes,
+      measured_length,
+    })
+  }
+
+  fn finish(self, purpose: &str) -> Result<Vec<u8>, String> {
+    if self.bytes.len() != self.measured_length {
+      return Err(format!(
+        "failed to serialize {purpose} artifact deterministically: measured {} bytes, wrote {}",
+        self.measured_length,
+        self.bytes.len()
+      ));
+    }
+    Ok(self.bytes)
+  }
+}
+
+impl Write for ExactArtifactBuffer {
   fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
     let length = self.bytes.len().checked_add(buffer.len()).ok_or_else(|| std::io::Error::other("artifact buffer length overflow"))?;
-    ByteLength::new(u64::try_from(length).map_err(std::io::Error::other)?).map_err(|error| std::io::Error::other(error.to_string()))?;
-    self.bytes.try_reserve(buffer.len()).map_err(std::io::Error::other)?;
+    if length > self.measured_length {
+      return Err(std::io::Error::other("serialized artifact exceeded its measured length"));
+    }
     self.bytes.extend_from_slice(buffer);
     Ok(buffer.len())
   }
@@ -270,6 +386,36 @@ mod tests {
     assert_eq!(metadata.byte_length().get(), encoded.len() as u64);
     assert_eq!(metadata.sha256(), Sha256Digest::new(Sha256::digest(&encoded).into()));
     assert_eq!(decoded, image);
+  }
+
+  #[test]
+  fn png_encoding_uses_its_exact_measured_allocation() {
+    let image = RgbaImage::from_fn(257, 257, |x, y| image::Rgba([x as u8, y as u8, (x ^ y) as u8, 255]));
+
+    let body = encode_png_exact("auv.test.png", &image).expect("encode PNG");
+
+    assert_eq!(body.capacity(), body.len());
+    assert_eq!(image::load_from_memory_with_format(&body, image::ImageFormat::Png).expect("decode PNG").into_rgba8(), image);
+  }
+
+  #[test]
+  fn fragmented_json_uses_its_exact_measured_allocation() {
+    let limit = 8 * 1024 * 1024;
+    let fragment = "x".repeat(4 * 1024);
+    let payload = vec![fragment.as_str(); 1_900];
+
+    let body = serialize_json_exact(
+      "auv.test.fragmented",
+      &payload,
+      Some(JsonArtifactLimit {
+        max_bytes: limit,
+        exceeded_code: "auv.test.payload_too_large",
+      }),
+    )
+    .expect("valid fragmented JSON");
+
+    assert!(body.len() < limit as usize);
+    assert_eq!(body.capacity(), body.len());
   }
 
   #[test]

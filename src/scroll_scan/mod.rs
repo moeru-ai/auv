@@ -20,7 +20,6 @@ use observation::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -475,7 +474,9 @@ async fn scan_window_region_into_run(
   }
   let artifact = state.into_artifact(run.id(), root.id(), run.id().to_string(), options.target, options.stop_policy, final_decision);
   let mut instrumentation = ArtifactInstrumentationReceipt::default();
-  instrumentation.publish_json(SCROLL_SCAN_PURPOSE, &BoundedScrollScanArtifact(&artifact)).await;
+  instrumentation
+    .publish_json_bounded(SCROLL_SCAN_PURPOSE, &artifact, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
+    .await;
   let direct_result = match scan_error {
     Some(error) => Err(error),
     None => Ok(format!(
@@ -486,45 +487,6 @@ async fn scan_window_region_into_run(
     )),
   };
   (direct_result, instrumentation)
-}
-
-struct BoundedScrollScanArtifact<'a>(&'a ScrollScanArtifact);
-
-impl Serialize for BoundedScrollScanArtifact<'_> {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: serde::Serializer,
-  {
-    // The receipt publisher also uses `to_writer_pretty`. Preflight the exact
-    // deterministic struct shape without allocating, then let the shared
-    // publisher own NewArtifact construction and its failure receipt.
-    let mut budget = ScrollScanJsonBudget::default();
-    serde_json::to_writer_pretty(&mut budget, self.0).map_err(serde::ser::Error::custom)?;
-    self.0.serialize(serializer)
-  }
-}
-
-#[derive(Default)]
-struct ScrollScanJsonBudget {
-  written: u64,
-}
-
-impl Write for ScrollScanJsonBudget {
-  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-    let buffer_length = u64::try_from(buffer.len()).map_err(std::io::Error::other)?;
-    let actual = self.written.saturating_add(buffer_length);
-    if actual > SCROLL_SCAN_JSON_BYTE_LIMIT {
-      return Err(std::io::Error::other(format!(
-        "{SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE}: scroll-scan JSON is {actual} bytes, exceeding the {SCROLL_SCAN_JSON_BYTE_LIMIT}-byte limit"
-      )));
-    }
-    self.written = actual;
-    Ok(buffer.len())
-  }
-
-  fn flush(&mut self) -> std::io::Result<()> {
-    Ok(())
-  }
 }
 
 pub fn observations_from_observe_json(page_index: usize, raw: &str, source_artifact: PathBuf) -> AuvResult<Vec<CollectionObservation>> {
