@@ -48,6 +48,10 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Stora
 tempfile.workspace = true
 
 [[test]]
+name = "dispatch_contract"
+required-features = ["memory-store"]
+
+[[test]]
 name = "file_store_recovery"
 required-features = ["file-store"]
 

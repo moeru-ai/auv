@@ -211,7 +211,7 @@ struct McpInvokePresentation {
   artifacts: Vec<auv_tracing::ArtifactMetadata>,
   artifact_failures: Vec<auv_cli_invoke::ArtifactInstrumentationFailure>,
   failure_message: Option<String>,
-  tracing_failure: Option<String>,
+  recording_failure: Option<String>,
   result: BTreeMap<String, Value>,
 }
 
@@ -257,7 +257,7 @@ fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> R
 struct McpFrontendExecution {
   run_id: auv_tracing::RunId,
   direct_result: Result<McpInvokeOutcome, String>,
-  tracing_failure: Option<String>,
+  recording_failure: Option<String>,
   canonical_artifacts: Vec<auv_tracing::ArtifactMetadata>,
 }
 
@@ -318,7 +318,7 @@ where
     .await
     .map_err(|error| error.to_string())?;
   let (run_id, direct_result, recording) = recorded.into_parts();
-  let (tracing_failure, canonical_artifacts) = match recording {
+  let (recording_failure, canonical_artifacts) = match recording {
     auv_tracing::RecordingState::Committed(recording) => (
       recording.tracing_failure().map(ToString::to_string),
       recording.snapshot().artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
@@ -328,7 +328,7 @@ where
   Ok(McpFrontendExecution {
     run_id,
     direct_result,
-    tracing_failure,
+    recording_failure,
     canonical_artifacts,
   })
 }
@@ -732,7 +732,7 @@ impl McpServer {
       artifacts: execution.canonical_artifacts,
       artifact_failures: outcome.artifact_failures,
       failure_message: outcome.failure_message,
-      tracing_failure: execution.tracing_failure,
+      recording_failure: execution.recording_failure,
       result: outcome.details,
     })
     .map_err(invalid_params)?;
@@ -1081,7 +1081,11 @@ mod tests {
     assert_eq!(completed_value["status"], "completed");
     assert_eq!(completed_value["result"]["value"], 7);
     assert_eq!(completed_value["artifacts"], serde_json::json!([]));
-    assert!(completed_value["tracing_failure"].as_str().is_some_and(|failure| failure.contains("snapshot is missing")));
+    assert_eq!(
+      completed_value["recording_failure"],
+      "recorded run snapshot is missing after execution (flush failed: 1 instrumentation dispatch failure(s))"
+    );
+    assert!(completed_value.get("tracing_failure").is_none());
     let completed_run_id = completed_value["run_id"].as_str().expect("completed run id").parse::<RunId>()?;
     assert_eq!(completed_store.attempted_run_id(), Some(completed_run_id));
     assert_eq!(completed_calls.load(Ordering::SeqCst), 1);
@@ -1094,7 +1098,11 @@ mod tests {
     assert_eq!(failed_value["status"], "failed");
     assert_eq!(failed_value["failure_message"], "direct domain failure");
     assert_eq!(failed_value["artifacts"], serde_json::json!([]));
-    assert!(failed_value["tracing_failure"].as_str().is_some_and(|failure| failure.contains("snapshot is missing")));
+    assert_eq!(
+      failed_value["recording_failure"],
+      "recorded run snapshot is missing after execution (flush failed: 1 instrumentation dispatch failure(s))"
+    );
+    assert!(failed_value.get("tracing_failure").is_none());
     let failed_run_id = failed_value["run_id"].as_str().expect("failed run id").parse::<RunId>()?;
     assert_eq!(failed_store.attempted_run_id(), Some(failed_run_id));
     assert_eq!(failed_calls.load(Ordering::SeqCst), 1);
@@ -1163,7 +1171,8 @@ mod tests {
     assert_eq!(value["artifacts"], serde_json::json!([]));
     assert_eq!(value["result"]["status"], "adapter-status");
     assert_eq!(call.call_count(), 1);
-    assert!(value["tracing_failure"].as_str().is_some());
+    assert_eq!(value["recording_failure"], "3 instrumentation dispatch failure(s)");
+    assert!(value.get("tracing_failure").is_none());
     let snapshot = store.load_snapshot(run_id).await?.expect("recorded run");
     assert_eq!(snapshot.run_id(), run_id);
     assert_eq!(
@@ -1210,6 +1219,7 @@ mod tests {
       ),
       ("incomplete offset pair", serde_json::json!({ "offset_x": "10" }), "requires both --offset_x and --offset_y"),
       ("incomplete relative pair", serde_json::json!({ "relative_y": "0.5" }), "requires both --relative_x and --relative_y"),
+      ("negative offset", serde_json::json!({ "offset_x": "-0.01", "offset_y": "20" }), "non-negative"),
       ("relative coordinate below zero", serde_json::json!({ "relative_x": "-0.01", "relative_y": "0.5" }), "0..=1"),
       ("relative coordinate above one", serde_json::json!({ "relative_x": "1.01", "relative_y": "0.5" }), "0..=1"),
     ];
@@ -1614,7 +1624,8 @@ mod tests {
     assert_eq!(invoke_json.get("status").and_then(|value| value.as_str()), Some("completed"));
     assert_eq!(invoke_json.get("signals"), Some(&Value::Object(Default::default())));
     assert_eq!(invoke_json.get("artifacts").and_then(|value| value.as_array()).map(Vec::len), Some(0));
-    assert!(invoke_json.get("tracing_failure").is_some_and(Value::is_null));
+    assert!(invoke_json.get("recording_failure").is_some_and(Value::is_null));
+    assert!(invoke_json.get("tracing_failure").is_none());
 
     let failed_invoke = client
       .call_tool(CallToolRequestParam {
@@ -1651,7 +1662,8 @@ mod tests {
         .is_some_and(|message| message.contains("typed app activation API"))
     );
 
-    assert!(failed_invoke_json.get("tracing_failure").is_some_and(Value::is_null));
+    assert!(failed_invoke_json.get("recording_failure").is_some_and(Value::is_null));
+    assert!(failed_invoke_json.get("tracing_failure").is_none());
 
     client.cancel().await?;
     server_handle.await??;

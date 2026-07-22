@@ -363,8 +363,8 @@ impl WindowPointInput {
       if !has_offset_x || !has_offset_y {
         return Err(format!("{command_id} requires both --offset_x and --offset_y when using absolute window points"));
       }
-      let x = required_number(inputs, "offset_x", command_id)?;
-      let y = required_number(inputs, "offset_y", command_id)?;
+      let x = required_offset_number(inputs, "offset_x", command_id)?;
+      let y = required_offset_number(inputs, "offset_y", command_id)?;
       return Ok(Self(WindowPointKind::Offset(auv_driver::geometry::WindowPoint::new(x, y))));
     }
     if has_relative_x || has_relative_y {
@@ -379,14 +379,19 @@ impl WindowPointInput {
     Err(format!("{command_id} requires --offset_x/--offset_y or --relative_x/--relative_y"))
   }
 
-  fn resolve(&self, window: Option<&auv_driver::Window>, command_id: &str) -> Result<auv_driver::geometry::WindowPoint, String> {
-    match self.0 {
-      WindowPointKind::Offset(point) => Ok(point),
-      WindowPointKind::Relative(relative) => {
-        let window = window.ok_or_else(|| format!("{command_id} requires a resolved window for --relative_x/--relative_y"))?;
-        Ok(window_relative_window_point(window, relative.x, relative.y))
-      }
+  fn resolve(&self, window: &auv_driver::Window, command_id: &str) -> Result<auv_driver::geometry::WindowPoint, String> {
+    let point = match self.0 {
+      WindowPointKind::Offset(point) => point,
+      WindowPointKind::Relative(relative) => window_relative_window_point(window, relative.x, relative.y),
+    };
+    let coordinates = point.point();
+    if !(0.0..=window.frame.size.width).contains(&coordinates.x) || !(0.0..=window.frame.size.height).contains(&coordinates.y) {
+      return Err(format!(
+        "{command_id} point {},{} is outside target window bounds 0..={},0..={}",
+        coordinates.x, coordinates.y, window.frame.size.width, window.frame.size.height
+      ));
     }
+    Ok(point)
   }
 }
 
@@ -405,7 +410,7 @@ pub async fn click_point_in_window(
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
-    let point = point.resolve(Some(&window), "input.clickWindowPoint")?;
+    let point = point.resolve(&window, "input.clickWindowPoint")?;
     let action = session.window().click(&window, point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
     let instrumentation = emit_input_action_result(&action).await;
     Ok(ArtifactPublication::new(
@@ -465,6 +470,14 @@ fn required_number(inputs: &std::collections::BTreeMap<String, String>, name: &s
   let value = raw.parse::<f64>().map_err(|error| format!("{command_id} received invalid --{name}: {error}"))?;
   if !value.is_finite() {
     return Err(format!("{command_id} requires --{name} to be finite"));
+  }
+  Ok(value)
+}
+
+fn required_offset_number(inputs: &std::collections::BTreeMap<String, String>, name: &str, command_id: &str) -> Result<f64, String> {
+  let value = required_number(inputs, name, command_id)?;
+  if value < 0.0 {
+    return Err(format!("{command_id} requires --{name} to be non-negative"));
   }
   Ok(value)
 }
@@ -611,14 +624,56 @@ mod click_window_point_tests {
   }
 
   #[test]
-  fn resolve_click_window_point_accepts_offset_pair() {
-    let mut inputs = BTreeMap::new();
-    inputs.insert("offset_x".to_string(), "640".to_string());
-    inputs.insert("offset_y".to_string(), "360".to_string());
-    let point = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
-      .and_then(|point| point.resolve(None, "input.clickWindowPoint"))
-      .expect("offset pair");
-    assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
+  fn click_window_point_negative_offset_dry_run_fails_without_driver() {
+    let input = InvokeCommandInput {
+      command_id: "input.clickWindowPoint".to_string(),
+      target_application_id: Some("com.example.App".to_string()),
+      inputs: BTreeMap::from([
+        ("offset_x".to_string(), "-0.01".to_string()),
+        ("offset_y".to_string(), "20".to_string()),
+      ]),
+      dry_run: true,
+      cancellation: crate::InvokeCancellation::new(),
+    };
+
+    let error = futures_executor::block_on(click_window_point(input)).expect_err("negative dry-run offset must fail before driver work");
+
+    assert!(error.contains("offset_x") && error.contains("non-negative"), "{error}");
+  }
+
+  #[test]
+  fn resolve_click_window_point_accepts_inclusive_offset_boundaries() {
+    let window = test_window();
+    for (x, y) in [(0.0, 0.0), (1280.0, 720.0)] {
+      let inputs = BTreeMap::from([
+        ("offset_x".to_string(), x.to_string()),
+        ("offset_y".to_string(), y.to_string()),
+      ]);
+      let point = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
+        .and_then(|point| point.resolve(&window, "input.clickWindowPoint"))
+        .expect("inclusive window boundary");
+      assert_eq!(point, auv_driver::geometry::WindowPoint::new(x, y));
+    }
+  }
+
+  #[test]
+  fn resolve_click_window_point_rejects_offsets_outside_window_bounds() {
+    let window = test_window();
+    for (name, x, y, expected_error) in [
+      ("negative x", -0.01, 20.0, "non-negative"),
+      ("negative y", 10.0, -0.01, "non-negative"),
+      ("oversized x", 1280.01, 20.0, "outside target window"),
+      ("oversized y", 10.0, 720.01, "outside target window"),
+    ] {
+      let inputs = BTreeMap::from([
+        ("offset_x".to_string(), x.to_string()),
+        ("offset_y".to_string(), y.to_string()),
+      ]);
+      let error = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
+        .and_then(|point| point.resolve(&window, "input.clickWindowPoint"))
+        .expect_err("out-of-window offset must fail");
+      assert!(error.contains(expected_error), "{name}: {error}");
+    }
   }
 
   #[test]
@@ -648,13 +703,15 @@ mod click_window_point_tests {
 
   #[test]
   fn window_point_input_rejects_non_finite_values() {
-    for value in ["NaN", "inf", "-inf"] {
-      let inputs = BTreeMap::from([
-        ("offset_x".to_string(), value.to_string()),
-        ("offset_y".to_string(), "20".to_string()),
-      ]);
-      let error = WindowPointInput::parse(&inputs, "input.clickWindowPoint").expect_err("non-finite coordinate must fail");
-      assert!(error.contains("finite"));
+    for (x_name, y_name) in [("offset_x", "offset_y"), ("relative_x", "relative_y")] {
+      for value in ["NaN", "inf", "-inf"] {
+        let inputs = BTreeMap::from([
+          (x_name.to_string(), value.to_string()),
+          (y_name.to_string(), "0.5".to_string()),
+        ]);
+        let error = WindowPointInput::parse(&inputs, "input.clickWindowPoint").expect_err("non-finite coordinate must fail");
+        assert!(error.contains("finite"), "{x_name}={value}: {error}");
+      }
     }
   }
 
@@ -672,13 +729,36 @@ mod click_window_point_tests {
 
   #[test]
   fn resolve_click_window_point_converts_relative_pair() {
-    use auv_driver::geometry::{CoordinateSpace, Point, Rect, Size};
-    use auv_driver::window::{Window, WindowRef};
-
     let mut inputs = BTreeMap::new();
     inputs.insert("relative_x".to_string(), "0.5".to_string());
     inputs.insert("relative_y".to_string(), "0.5".to_string());
-    let window = Window {
+    let window = test_window();
+    let point = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
+      .and_then(|point| point.resolve(&window, "input.clickWindowPoint"))
+      .expect("relative pair");
+    assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
+  }
+
+  #[test]
+  fn resolve_click_window_point_accepts_inclusive_relative_boundaries() {
+    let window = test_window();
+    for (relative_x, relative_y, expected_x, expected_y) in [(0.0, 0.0, 0.0, 0.0), (1.0, 1.0, 1280.0, 720.0)] {
+      let inputs = BTreeMap::from([
+        ("relative_x".to_string(), relative_x.to_string()),
+        ("relative_y".to_string(), relative_y.to_string()),
+      ]);
+      let point = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
+        .and_then(|point| point.resolve(&window, "input.clickWindowPoint"))
+        .expect("inclusive relative boundary");
+      assert_eq!(point, auv_driver::geometry::WindowPoint::new(expected_x, expected_y));
+    }
+  }
+
+  fn test_window() -> auv_driver::Window {
+    use auv_driver::geometry::{CoordinateSpace, Point, Rect, Size};
+    use auv_driver::window::{Window, WindowRef};
+
+    Window {
       reference: WindowRef {
         id: "window-1".to_string(),
       },
@@ -693,11 +773,7 @@ mod click_window_point_tests {
       coordinate_space: CoordinateSpace::Screen,
       is_main: true,
       is_visible: true,
-    };
-    let point = WindowPointInput::parse(&inputs, "input.clickWindowPoint")
-      .and_then(|point| point.resolve(Some(&window), "input.clickWindowPoint"))
-      .expect("relative pair");
-    assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
+    }
   }
 
   #[test]

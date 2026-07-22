@@ -1044,8 +1044,8 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       };
       let invoked_command = command.clone();
       let execution = execute_invoke_frontend(&authority, move || invoked_command.invoke(input)).await?;
-      if let Some(error) = execution.tracing_failure {
-        eprintln!("warning: invoke tracing flush failed for run {}: {error}", execution.run_id);
+      if let Some(error) = execution.recording_failure {
+        eprintln!("warning: invoke recording failure for run {}: {error}", execution.run_id);
       }
       let result = auv_cli_invoke::InvokeResult::from_command_result(execution.run_id.to_string(), &command, execution.direct_result)
         .with_canonical_artifacts(execution.canonical_artifacts);
@@ -1866,7 +1866,7 @@ async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptio
 struct InvokeFrontendExecution<T> {
   run_id: auv_tracing::RunId,
   direct_result: Result<T, String>,
-  tracing_failure: Option<String>,
+  recording_failure: Option<String>,
   canonical_artifacts: Vec<auv_tracing::ArtifactMetadata>,
 }
 
@@ -1895,7 +1895,7 @@ where
     .await
     .map_err(|error| error.to_string())?;
   let (run_id, direct_result, recording) = recorded.into_parts();
-  let (tracing_failure, canonical_artifacts) = match recording {
+  let (recording_failure, canonical_artifacts) = match recording {
     auv_tracing::RecordingState::Committed(recording) => (
       recording.tracing_failure().map(ToString::to_string),
       recording.snapshot().artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
@@ -1905,7 +1905,7 @@ where
   Ok(InvokeFrontendExecution {
     run_id,
     direct_result,
-    tracing_failure,
+    recording_failure,
     canonical_artifacts,
   })
 }
@@ -2079,7 +2079,7 @@ mod tests {
     let execution = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect("persisted execution");
 
     assert_eq!(execution.direct_result, Ok(7));
-    assert_eq!(execution.tracing_failure, None);
+    assert_eq!(execution.recording_failure, None);
     assert_eq!(call.call_count(), 2);
     let snapshot = store.load_snapshot(execution.run_id).await.expect("snapshot").expect("recorded run");
     assert_eq!(snapshot.run_id(), execution.run_id);
@@ -2101,8 +2101,8 @@ mod tests {
     assert_eq!(execution.direct_result, Ok(7));
     assert_eq!(store.attempted_run_id(), Some(execution.run_id));
     assert!(execution.canonical_artifacts.is_empty());
-    let failure = execution.tracing_failure.expect("recording failure");
-    assert!(failure.contains("snapshot is missing"));
+    let failure = execution.recording_failure.expect("recording failure");
+    assert_eq!(failure, "recorded run snapshot is missing after execution (flush failed: 3 instrumentation dispatch failure(s))");
     assert_no_canonical_advice(&failure);
   }
 
@@ -2131,7 +2131,7 @@ mod tests {
 
     let invoked_command = command.clone();
     let cli_execution = execute_invoke_frontend(&authority, move || invoked_command.invoke(input)).await.expect("persisted CLI execution");
-    assert_eq!(cli_execution.tracing_failure, None);
+    assert_eq!(cli_execution.recording_failure, None);
     let cli_result =
       auv_cli_invoke::InvokeResult::from_command_result(cli_execution.run_id.to_string(), &command, cli_execution.direct_result);
     assert_eq!(cli_result.status, auv_cli_invoke::RunStatus::Failed);

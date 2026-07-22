@@ -1,5 +1,3 @@
-#![cfg(feature = "memory-store")]
-
 mod support;
 
 use std::sync::Arc;
