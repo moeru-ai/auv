@@ -141,22 +141,23 @@ impl ProjectionArtifact {
   }
 
   pub fn to_eval_projection(&self) -> Result<EvalProjection, String> {
-    let values = [self.scale_x, self.scale_y, self.offset_x, self.offset_y];
-    if values.iter().any(|value| !value.is_finite()) || !self.match_radius_px.is_finite() {
-      return Err("projection artifact contains non-finite values".to_string());
-    }
     if self.scale_x <= 0.0 || self.scale_y <= 0.0 {
       return Err(format!("projection artifact must have positive scales, got scale_x={} scale_y={}", self.scale_x, self.scale_y));
     }
-    if self.match_radius_px <= 0.0 {
+    if !self.match_radius_px.is_finite() || self.match_radius_px <= 0.0 {
       return Err(format!("projection artifact must have positive match_radius_px, got {}", self.match_radius_px));
     }
 
+    let scale_x = eval_projection_f32("scale_x", self.scale_x)?;
+    let scale_y = eval_projection_f32("scale_y", self.scale_y)?;
+    let offset_x = eval_projection_f32("offset_x", self.offset_x)?;
+    let offset_y = eval_projection_f32("offset_y", self.offset_y)?;
+
     Ok(EvalProjection::PlayfieldToPixels {
-      scale_x: self.scale_x as f32,
-      scale_y: self.scale_y as f32,
-      offset_x: self.offset_x as f32,
-      offset_y: self.offset_y as f32,
+      scale_x,
+      scale_y,
+      offset_x,
+      offset_y,
       match_radius_px: self.match_radius_px,
     })
   }
@@ -237,6 +238,17 @@ impl ProjectionArtifact {
     self.match_radius_px = projection.match_radius_px;
     self
   }
+}
+
+fn eval_projection_f32(field: &str, value: f64) -> Result<f32, String> {
+  if !value.is_finite() {
+    return Err(format!("projection artifact {field} must be finite"));
+  }
+  let converted = value as f32;
+  if !converted.is_finite() {
+    return Err(format!("projection artifact {field} must be representable as a finite f32"));
+  }
+  Ok(converted)
 }
 
 fn circle_radius_playfield(circle_size: f32) -> f64 {
@@ -390,7 +402,7 @@ mod tests {
     };
 
     let error = artifact.to_eval_projection().expect_err("must fail");
-    assert!(error.contains("non-finite values"));
+    assert!(error.contains("scale_x must be finite"));
   }
 
   #[test]

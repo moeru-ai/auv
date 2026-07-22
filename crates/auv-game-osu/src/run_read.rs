@@ -272,6 +272,14 @@ async fn read_json_artifact_bytes(
       store_authority,
     });
   }
+  let expected_purpose = ArtifactPurpose::parse(expected_purpose).map_err(|source| OsuArtifactReadError::InvalidExpectedPurpose {
+    value: expected_purpose,
+    source,
+  })?;
+  let expected_content_type = ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| OsuArtifactReadError::InvalidExpectedContentType {
+    value: JSON_CONTENT_TYPE,
+    source,
+  })?;
   if uri.run_id() != snapshot.run_id() {
     return Err(OsuArtifactReadError::WrongOwner {
       snapshot_run_id: snapshot.run_id(),
@@ -279,10 +287,6 @@ async fn read_json_artifact_bytes(
     });
   }
   let metadata = snapshot.artifacts().get(uri).ok_or_else(|| OsuArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
-  let expected_purpose = ArtifactPurpose::parse(expected_purpose).map_err(|source| OsuArtifactReadError::InvalidExpectedPurpose {
-    value: expected_purpose,
-    source,
-  })?;
   if metadata.purpose() != &expected_purpose {
     return Err(OsuArtifactReadError::WrongPurpose {
       uri: Box::new(uri.clone()),
@@ -290,10 +294,6 @@ async fn read_json_artifact_bytes(
       actual: metadata.purpose().clone(),
     });
   }
-  let expected_content_type = ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| OsuArtifactReadError::InvalidExpectedContentType {
-    value: JSON_CONTENT_TYPE,
-    source,
-  })?;
   if metadata.content_type() != &expected_content_type {
     return Err(OsuArtifactReadError::WrongContentType {
       uri: Box::new(uri.clone()),
@@ -476,44 +476,33 @@ use crate::{
   derive_visual_truth_spatial_query_action_readiness,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct OsuArtifactView {
-  pub artifact_id: ArtifactUri,
-  pub role: Option<String>,
-  pub path: Option<String>,
-}
-
-fn artifact_view(uri: &ArtifactUri, purpose: &'static str) -> OsuArtifactView {
-  OsuArtifactView {
-    artifact_id: uri.clone(),
-    role: Some(purpose.to_string()),
-    path: None,
-  }
-}
-
 pub(crate) struct OsuVisualTruthSemanticManifestLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub manifest: Option<OsuVisualTruthSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuVisualTruthSemanticInspectReportLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub report: Option<OsuVisualTruthSemanticInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuVisualTruthSpatialQueryManifestLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub manifest: Option<OsuVisualTruthSpatialQueryManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuVisualTruthSpatialQueryInspectReportLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub report: Option<OsuVisualTruthSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -591,28 +580,32 @@ pub(crate) struct OsuVisualTruthSpatialQueryInspectReportSummary {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalWitnessManifestLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub manifest: Option<OsuDetectionEvalWitnessManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalWitnessInspectReportLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub report: Option<OsuDetectionEvalWitnessInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalQualityManifestLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub manifest: Option<OsuDetectionEvalQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OsuDetectionEvalQualityInspectReportLineage {
-  pub artifact: OsuArtifactView,
+  pub uri: ArtifactUri,
+  pub purpose: ArtifactPurpose,
   pub report: Option<OsuDetectionEvalQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -678,11 +671,11 @@ pub(crate) fn validate_snapshot_authority(store: &dyn RunStore, snapshot: &RunSn
   Ok(())
 }
 
-pub(crate) fn artifact_uris_for_purpose(
+pub(crate) fn artifacts_for_purpose(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   purpose: &'static str,
-) -> Result<Vec<ArtifactUri>, OsuArtifactReadError> {
+) -> Result<Vec<(ArtifactUri, ArtifactPurpose)>, OsuArtifactReadError> {
   validate_snapshot_authority(store, snapshot)?;
   let purpose = ArtifactPurpose::parse(purpose).map_err(|source| OsuArtifactReadError::InvalidExpectedPurpose {
     value: purpose,
@@ -693,7 +686,7 @@ pub(crate) fn artifact_uris_for_purpose(
       .artifacts()
       .values()
       .filter(|artifact| artifact.metadata().purpose() == &purpose)
-      .map(|artifact| artifact.metadata().uri().clone())
+      .map(|artifact| (artifact.metadata().uri().clone(), artifact.metadata().purpose().clone()))
       .collect(),
   )
 }
@@ -703,10 +696,11 @@ pub(crate) async fn extract_osu_visual_truth_semantic_manifests(
   snapshot: &RunSnapshot,
 ) -> Result<Vec<OsuVisualTruthSemanticManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for uri in artifact_uris_for_purpose(store, snapshot, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE)? {
+  for (uri, purpose) in artifacts_for_purpose(store, snapshot, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE)? {
     let manifest = read_osu_visual_truth_semantic(store, snapshot, &uri).await?;
     manifests.push(OsuVisualTruthSemanticManifestLineage {
-      artifact: artifact_view(&uri, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE),
+      uri,
+      purpose,
       manifest: Some(OsuVisualTruthSemanticManifestSummary::from(&manifest)),
       issue: None,
     });
@@ -719,10 +713,11 @@ pub async fn extract_osu_visual_truth_spatial_query_manifests(
   snapshot: &RunSnapshot,
 ) -> Result<Vec<OsuVisualTruthSpatialQueryManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for uri in artifact_uris_for_purpose(store, snapshot, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE)? {
+  for (uri, purpose) in artifacts_for_purpose(store, snapshot, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE)? {
     let manifest = read_osu_visual_truth_spatial_query(store, snapshot, &uri).await?;
     manifests.push(OsuVisualTruthSpatialQueryManifestLineage {
-      artifact: artifact_view(&uri, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE),
+      uri,
+      purpose,
       manifest: Some(OsuVisualTruthSpatialQueryManifestSummary::from(&manifest)),
       issue: None,
     });
@@ -735,10 +730,11 @@ pub(crate) async fn extract_osu_detection_eval_witness_manifests(
   snapshot: &RunSnapshot,
 ) -> Result<Vec<OsuDetectionEvalWitnessManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for uri in artifact_uris_for_purpose(store, snapshot, OSU_DETECTION_EVAL_WITNESS_PURPOSE)? {
+  for (uri, purpose) in artifacts_for_purpose(store, snapshot, OSU_DETECTION_EVAL_WITNESS_PURPOSE)? {
     let manifest = read_osu_detection_eval_witness(store, snapshot, &uri).await?;
     manifests.push(OsuDetectionEvalWitnessManifestLineage {
-      artifact: artifact_view(&uri, OSU_DETECTION_EVAL_WITNESS_PURPOSE),
+      uri,
+      purpose,
       manifest: Some(OsuDetectionEvalWitnessManifestSummary::from(&manifest)),
       issue: None,
     });
@@ -751,10 +747,11 @@ pub(crate) async fn extract_osu_detection_eval_quality_manifests(
   snapshot: &RunSnapshot,
 ) -> Result<Vec<OsuDetectionEvalQualityManifestLineage>, OsuArtifactReadError> {
   let mut manifests = Vec::new();
-  for uri in artifact_uris_for_purpose(store, snapshot, OSU_DETECTION_EVAL_QUALITY_PURPOSE)? {
+  for (uri, purpose) in artifacts_for_purpose(store, snapshot, OSU_DETECTION_EVAL_QUALITY_PURPOSE)? {
     let manifest = read_osu_detection_eval_quality(store, snapshot, &uri).await?;
     manifests.push(OsuDetectionEvalQualityManifestLineage {
-      artifact: artifact_view(&uri, OSU_DETECTION_EVAL_QUALITY_PURPOSE),
+      uri,
+      purpose,
       manifest: Some(OsuDetectionEvalQualityManifestSummary::from(&manifest)),
       issue: None,
     });
@@ -1029,5 +1026,85 @@ impl From<&VisualTruthSpatialQueryInspectReport> for OsuVisualTruthSpatialQueryI
       warnings: report.warnings.clone(),
       known_limits: report.known_limits.clone(),
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  use auv_tracing::{BoxFuture, RunId, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher};
+  use serde::Serializer;
+
+  use super::*;
+
+  struct PanicOnSerialize;
+
+  impl Serialize for PanicOnSerialize {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+      S: Serializer,
+    {
+      panic!("disabled publication must not serialize or construct an artifact body")
+    }
+  }
+
+  #[derive(Default)]
+  struct CountingProjector {
+    item_count: AtomicUsize,
+  }
+
+  impl TelemetryProjector for CountingProjector {
+    fn project(&self, _item: TelemetryItem) -> BoxFuture<'_, Result<(), TelemetryError>> {
+      self.item_count.fetch_add(1, Ordering::Relaxed);
+      Box::pin(async { Ok(()) })
+    }
+
+    fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
+      Box::pin(async { Ok(()) })
+    }
+  }
+
+  #[test]
+  fn disabled_publication_returns_before_purpose_validation_payload_validation_and_body_construction() {
+    futures_executor::block_on(async {
+      let validation_count = AtomicUsize::new(0);
+
+      let published = publish_json_artifact(None, "not a valid purpose", &PanicOnSerialize, |_| {
+        validation_count.fetch_add(1, Ordering::Relaxed);
+        panic!("disabled publication must not run domain validation")
+      })
+      .await
+      .expect("disabled publication must short-circuit");
+
+      assert!(published.is_none());
+      assert_eq!(validation_count.load(Ordering::Relaxed), 0);
+    });
+  }
+
+  #[test]
+  fn telemetry_only_publication_returns_before_purpose_validation_payload_validation_body_construction_and_polling() {
+    futures_executor::block_on(async {
+      let projector = Arc::new(CountingProjector::default());
+      let dispatch = configure()
+        .project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only())
+        .build()
+        .expect("telemetry-only dispatch");
+      let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+      let validation_count = AtomicUsize::new(0);
+
+      let published = publish_json_artifact(Some(&root), "not a valid purpose", &PanicOnSerialize, |_| {
+        validation_count.fetch_add(1, Ordering::Relaxed);
+        panic!("telemetry-only publication must not run domain validation")
+      })
+      .await
+      .expect("telemetry-only publication must short-circuit");
+      dispatch.flush().await.expect("flush telemetry-only dispatch");
+
+      assert!(published.is_none());
+      assert_eq!(validation_count.load(Ordering::Relaxed), 0);
+      assert_eq!(projector.item_count.load(Ordering::Relaxed), 0);
+    });
   }
 }

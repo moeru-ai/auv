@@ -515,7 +515,148 @@ mod tests {
     assert!(!text.contains(" issue="));
   }
 
+  #[tokio::test]
+  async fn product_snapshot_inspect_uses_canonical_osu_artifact_identity_and_domain_fields() {
+    use auv_game_osu::detection_eval_quality::publish_osu_detection_eval_quality;
+    use auv_game_osu::detection_eval_witness::publish_osu_detection_eval_witness;
+    use auv_game_osu::visual_truth_semantic::publish_osu_visual_truth_semantic;
+    use auv_game_osu::visual_truth_spatial_query::publish_osu_visual_truth_spatial_query;
+
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+
+    let semantic = decode_fixture(json!({
+      "schema_version": 1,
+      "generated_at_millis": 20,
+      "source_run_artifact_dir": "run-artifacts",
+      "source_visual_truth_manifest_path": "visual-truth.json",
+      "source_projection_path": "projection.json",
+      "beatmap_path": "map.osu",
+      "frame_count": 1,
+      "semantic_status": "ready",
+      "known_limits": ["fixture"]
+    }));
+    let spatial_query = decode_fixture(json!({
+      "schema_version": 1,
+      "generated_at_millis": 20,
+      "visual_truth_semantic_manifest_path": "semantic.json",
+      "source_run_artifact_dir": "run-artifacts",
+      "source_visual_truth_manifest_path": "visual-truth.json",
+      "source_projection_path": "projection.json",
+      "object_index": 0,
+      "capture_phase": "before_dispatch",
+      "object_kind": "circle",
+      "query_backend": "playfield_projection_reference",
+      "status": "answered",
+      "pixel_visibility": "inside_capture",
+      "pixel_x": 320.0,
+      "pixel_y": 240.0,
+      "match_radius_px": 20.0,
+      "capture_width": 640,
+      "capture_height": 480,
+      "known_limits": ["fixture"]
+    }));
+    let witness = decode_fixture(json!({
+      "schema_version": 1,
+      "generated_at_millis": 20,
+      "source_visual_eval_report_path": "visual-eval.json",
+      "source_detection_eval_manifest_path": "detection-eval.json",
+      "source_run_artifact_dir": "run-artifacts",
+      "source_visual_truth_manifest_path": "visual-truth.json",
+      "source_projection_path": "projection.json",
+      "detector_model_id": "model-1",
+      "total_frames": 1,
+      "label_matched_frames": 1,
+      "label_missing_frames": 0,
+      "label_unmapped_frames": 0,
+      "spatial_matched_frames": 1,
+      "spatial_missing_frames": 0,
+      "spatial_unscored_frames": 0,
+      "spurious_detection_count": 0,
+      "projection_kind": "playfield_to_pixels",
+      "frame_witnesses": [{
+        "object_index": 0,
+        "capture_phase": "before_dispatch",
+        "capture_file_name": "capture.png",
+        "object_kind": "circle",
+        "expected_label": "hit_circle",
+        "label_outcome": "matched",
+        "spatial_outcome": "matched",
+        "spurious_detection_count": 0
+      }],
+      "status": "ready",
+      "known_limits": ["fixture"]
+    }));
+    let quality = decode_fixture(json!({
+      "schema_version": 1,
+      "generated_at_millis": 20,
+      "detection_eval_witness_manifest_path": "witness.json",
+      "source_visual_eval_report_path": "visual-eval.json",
+      "source_run_artifact_dir": "run-artifacts",
+      "detector_model_id": "model-1",
+      "witness_status": "ready",
+      "status": "ready",
+      "verdict": "measured_only",
+      "metrics": {
+        "total_frames": 1,
+        "label_matched_frames": 1,
+        "label_missing_frames": 0,
+        "label_unmapped_frames": 0,
+        "spatial_matched_frames": 1,
+        "spatial_missing_frames": 0,
+        "spatial_unscored_frames": 0,
+        "spurious_detection_count": 0,
+        "label_recall": 1.0,
+        "spatial_recall": 1.0,
+        "projection_kind": "playfield_to_pixels"
+      },
+      "known_limits": ["fixture"]
+    }));
+
+    let semantic_metadata = publish_osu_visual_truth_semantic(Some(&root), &semantic)
+      .await
+      .expect("publish semantic")
+      .expect("canonical semantic publication enabled");
+    let query_metadata = publish_osu_visual_truth_spatial_query(Some(&root), &spatial_query)
+      .await
+      .expect("publish spatial query")
+      .expect("canonical spatial-query publication enabled");
+    let witness_metadata = publish_osu_detection_eval_witness(Some(&root), &witness)
+      .await
+      .expect("publish witness")
+      .expect("canonical witness publication enabled");
+    let quality_metadata = publish_osu_detection_eval_quality(Some(&root), &quality)
+      .await
+      .expect("publish quality")
+      .expect("canonical quality publication enabled");
+    dispatch.flush().await.expect("flush canonical osu! artifacts");
+    let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("snapshot");
+
+    let document = build_product_inspect_document(store.as_ref(), &snapshot).await.expect("product inspect document");
+    let text =
+      document.sections.iter().filter(|section| section.id.starts_with("osu_")).map(|section| section.text.as_str()).collect::<String>();
+
+    for (metadata, purpose) in [
+      (&semantic_metadata, "auv.osu.visual_truth.semantic"),
+      (&query_metadata, "auv.osu.visual_truth.spatial_query"),
+      (&witness_metadata, "auv.osu.detection_eval.witness"),
+      (&quality_metadata, "auv.osu.detection_eval.quality"),
+    ] {
+      assert!(text.contains(&format!("uri={} purpose={purpose}", metadata.uri())));
+    }
+    assert!(text.contains("semantic_status=ready semantic_reason=n/a frame_count=1 beatmap_path=map.osu"));
+    assert!(text.contains("status=answered reason=n/a pixel_visibility=inside_capture pixel_point=320,240"));
+    assert!(text.contains("action_eligibility=click_ready pixel_point=320,240"));
+    assert!(text.contains("total_frames=1 label_matched=1 spatial_matched=1 spatial_unscored=0"));
+    assert!(text.contains("verdict=measured_only label_recall=1.000 spatial_recall=1.000"));
+    assert!(!text.contains(" role="));
+    assert!(!text.contains(" path="));
+    assert!(!text.contains("artifact_id"));
+  }
+
   fn decode_fixture<T: DeserializeOwned>(value: Value) -> T {
-    serde_json::from_value(value).expect("typed Minecraft fixture")
+    serde_json::from_value(value).expect("typed inspect fixture")
   }
 }

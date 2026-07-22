@@ -24,27 +24,11 @@ use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
   BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError,
   RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription, Sha256Digest,
-  StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
+  StoreArtifactRequest, configure, dispatcher,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-
-#[derive(Default)]
-struct CountingProjector {
-  item_count: AtomicUsize,
-}
-
-impl TelemetryProjector for CountingProjector {
-  fn project(&self, _item: TelemetryItem) -> BoxFuture<'_, Result<(), TelemetryError>> {
-    self.item_count.fetch_add(1, Ordering::Relaxed);
-    Box::pin(async { Ok(()) })
-  }
-
-  fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
-    Box::pin(async { Ok(()) })
-  }
-}
 
 #[test]
 fn osu_artifact_purposes_are_exact() {
@@ -111,22 +95,6 @@ fn all_osu_payloads_round_trip_by_canonical_uri() {
 }
 
 #[test]
-fn disabled_and_telemetry_only_publication_short_circuit_invalid_payloads() {
-  futures_executor::block_on(async {
-    let invalid = invalid_projection();
-    assert!(publish_osu_projection(None, &invalid).await.expect("disabled publication").is_none());
-
-    let projector = Arc::new(CountingProjector::default());
-    let dispatch =
-      configure().project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only()).build().expect("telemetry-only dispatch");
-    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
-    assert!(publish_osu_projection(Some(&root), &invalid).await.expect("telemetry-only publication").is_none());
-    dispatch.flush().await.expect("flush telemetry-only dispatch");
-    assert_eq!(projector.item_count.load(Ordering::Relaxed), 0);
-  });
-}
-
-#[test]
 fn publishers_reject_unsupported_versions_and_domain_invalid_payloads() {
   futures_executor::block_on(async {
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
@@ -170,6 +138,155 @@ fn publishers_reject_unsupported_versions_and_domain_invalid_payloads() {
     }
     dispatch.flush().await.expect("flush rejected publications");
     assert!(store.load_snapshot(run_id).await.expect("load rejected run").is_none());
+  });
+}
+
+#[test]
+fn quality_and_witness_publishers_reject_overflowing_count_invariants() {
+  futures_executor::block_on(async {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+
+    let mut quality = sample_quality();
+    let metrics = quality.metrics.as_mut().expect("quality metrics");
+    metrics.total_frames = usize::MAX;
+    metrics.label_matched_frames = usize::MAX;
+    metrics.label_missing_frames = 1;
+    metrics.spatial_matched_frames = usize::MAX;
+
+    let mut witness_counts = sample_witness();
+    witness_counts.total_frames = 1;
+    witness_counts.label_matched_frames = usize::MAX;
+    witness_counts.label_missing_frames = 1;
+
+    let mut witness_spatial = sample_witness();
+    witness_spatial.total_frames = 1;
+    witness_spatial.spatial_matched_frames = usize::MAX;
+    witness_spatial.spatial_missing_frames = 1;
+
+    let mut witness_spurious = sample_witness();
+    witness_spurious.total_frames = 2;
+    witness_spurious.label_matched_frames = 2;
+    witness_spurious.spatial_matched_frames = 2;
+    let mut second_frame = witness_spurious.frame_witnesses[0].clone();
+    witness_spurious.frame_witnesses[0].spurious_detection_count = usize::MAX;
+    second_frame.spurious_detection_count = 1;
+    witness_spurious.frame_witnesses.push(second_frame);
+
+    for (result, expected_purpose, expected_message) in [
+      (
+        publish_osu_detection_eval_quality(Some(&root), &quality).await,
+        OSU_DETECTION_EVAL_QUALITY_PURPOSE,
+        "quality label counts overflow usize",
+      ),
+      (
+        publish_osu_detection_eval_witness(Some(&root), &witness_counts).await,
+        OSU_DETECTION_EVAL_WITNESS_PURPOSE,
+        "witness label counts overflow usize",
+      ),
+      (
+        publish_osu_detection_eval_witness(Some(&root), &witness_spatial).await,
+        OSU_DETECTION_EVAL_WITNESS_PURPOSE,
+        "witness spatial counts overflow usize",
+      ),
+      (
+        publish_osu_detection_eval_witness(Some(&root), &witness_spurious).await,
+        OSU_DETECTION_EVAL_WITNESS_PURPOSE,
+        "witness frame spurious counts overflow usize",
+      ),
+    ] {
+      match result.expect_err("overflowing counts must not publish") {
+        OsuArtifactPublishError::InvalidPayload { purpose, message } => {
+          assert_eq!(purpose.as_str(), expected_purpose);
+          assert_eq!(message, expected_message);
+        }
+        other => panic!("expected InvalidPayload, got {other:?}"),
+      }
+    }
+  });
+}
+
+#[test]
+fn quality_and_witness_readers_reject_overflowing_count_invariants() {
+  futures_executor::block_on(async {
+    let store = MemoryRunStore::new(AuthorityId::new());
+
+    let mut quality = sample_quality();
+    let metrics = quality.metrics.as_mut().expect("quality metrics");
+    metrics.total_frames = usize::MAX;
+    metrics.label_matched_frames = usize::MAX;
+    metrics.spatial_matched_frames = usize::MAX;
+    metrics.spatial_missing_frames = 1;
+    let (quality_snapshot, quality_uri) = write_json(&store, OSU_DETECTION_EVAL_QUALITY_PURPOSE, &quality).await;
+
+    let mut witness = sample_witness();
+    witness.total_frames = 2;
+    witness.label_matched_frames = 2;
+    witness.spatial_matched_frames = 2;
+    let mut second_frame = witness.frame_witnesses[0].clone();
+    witness.frame_witnesses[0].spurious_detection_count = usize::MAX;
+    second_frame.spurious_detection_count = 1;
+    witness.frame_witnesses.push(second_frame);
+    let (witness_snapshot, witness_uri) = write_json(&store, OSU_DETECTION_EVAL_WITNESS_PURPOSE, &witness).await;
+
+    match read_osu_detection_eval_quality(&store, &quality_snapshot, &quality_uri).await.expect_err("overflowing quality counts must fail") {
+      OsuArtifactReadError::InvalidPayload { uri, message } => {
+        assert_eq!(uri, quality_uri);
+        assert_eq!(message, "quality spatial counts overflow usize");
+      }
+      other => panic!("expected InvalidPayload, got {other:?}"),
+    }
+    match read_osu_detection_eval_witness(&store, &witness_snapshot, &witness_uri).await.expect_err("overflowing witness counts must fail") {
+      OsuArtifactReadError::InvalidPayload { uri, message } => {
+        assert_eq!(uri, witness_uri);
+        assert_eq!(message, "witness frame spurious counts overflow usize");
+      }
+      other => panic!("expected InvalidPayload, got {other:?}"),
+    }
+  });
+}
+
+#[test]
+fn projection_publish_and_read_reject_f64_values_not_representable_as_f32() {
+  futures_executor::block_on(async {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let cases = [
+      ("scale_x", {
+        let mut value = sample_projection();
+        value.scale_x = f64::MAX;
+        value
+      }),
+      ("scale_y", {
+        let mut value = sample_projection();
+        value.scale_y = f64::MAX;
+        value
+      }),
+      ("offset_x", {
+        let mut value = sample_projection();
+        value.offset_x = f64::MAX;
+        value
+      }),
+      ("offset_y", {
+        let mut value = sample_projection();
+        value.offset_y = f64::MAX;
+        value
+      }),
+    ];
+
+    for (field, projection) in cases {
+      assert!(
+        matches!(publish_osu_projection(Some(&root), &projection).await, Err(OsuArtifactPublishError::InvalidPayload { .. })),
+        "publisher accepted {field}=f64::MAX"
+      );
+      let (snapshot, uri) = write_json(store.as_ref(), OSU_PROJECTION_PURPOSE, &projection).await;
+      assert!(
+        matches!(read_osu_projection(store.as_ref(), &snapshot, &uri).await, Err(OsuArtifactReadError::InvalidPayload { .. })),
+        "reader accepted {field}=f64::MAX"
+      );
+    }
   });
 }
 
