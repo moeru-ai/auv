@@ -1,38 +1,3 @@
-Run <RUN_ID>
-Type: execute
-Status: ok
-State: ended
-Summary: osu validate visual truth semantic gate completed
-
-Spans: 2
-- <SPAN_ID> name=auv.osu.validate_visual_truth_semantic parent=n/a status=ok
-- <SPAN_ID> name=osu.validate_visual_truth_semantic.artifacts parent=<SPAN_ID> status=ok
-
-Events: 5
-- <EVENT_ID> span=<SPAN_ID> name=operation.started recorded operation osu validate visual truth semantic gate started
-- <EVENT_ID> span=<SPAN_ID> name=osu.validate_visual_truth_semantic.inputs run_artifact_dir=<TMP> output_dir=<TMP>/semantic-out
-- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0001 kind=osu-visual-truth-semantic path=artifacts/artifact_0001_osu-visual-truth-semantic.json note=osu visual truth semantic artifact osu-visual-truth-semantic.json
-- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0002 kind=osu-visual-truth-semantic-inspect path=artifacts/artifact_0002_osu-visual-truth-semantic-inspect.json note=osu visual truth semantic artifact osu-visual-truth-semantic-inspect.json
-- <EVENT_ID> span=<SPAN_ID> name=operation.completed osu validate visual truth semantic gate completed
-
-Artifacts: 2
-- artifact_0001 span=<SPAN_ID> role=osu-visual-truth-semantic path=artifacts/artifact_0001_osu-visual-truth-semantic.json
-- artifact_0002 span=<SPAN_ID> role=osu-visual-truth-semantic-inspect path=artifacts/artifact_0002_osu-visual-truth-semantic-inspect.json
-
-Command Boundary Claims:
-- none
-
-Input Actions:
-- none
-
-Verifications:
-- none
-
-Observations:
-- none
-
-Detector Recognition Lineage:
-- none
 
 MC-1 Telemetry Samples:
 - none
@@ -96,23 +61,22 @@ MC-14 Training Result Spatial Query Action Readiness:
 - none
 
 Osu Visual Truth Semantic:
-- manifest_uri=<OSU_SEMANTIC_URI> purpose=auv.osu.visual_truth.semantic semantic_status=ready semantic_reason=n/a frame_count=1 beatmap_path=tests/fixtures/probe.osu issue=n/a
+- manifest_uri=<OSU_SEMANTIC_URI> purpose=auv.osu.visual_truth.semantic semantic_status=ready semantic_reason=n/a frame_count=1 beatmap_path=map.osu
 
 Osu Visual Truth Spatial Query:
-- none
+- query_uri=<OSU_QUERY_URI> purpose=auv.osu.visual_truth.spatial_query object_index=0 capture_phase=before_dispatch status=answered reason=n/a pixel_visibility=inside_capture pixel_point=320,240 query_backend=playfield_projection_reference
 
 Osu Visual Truth Spatial Query Action Readiness:
-- none
+- query_uri=<OSU_QUERY_URI> purpose=auv.osu.visual_truth.spatial_query status=answered action_eligibility=click_ready pixel_point=320,240 refusal_reason=n/a
 
 Osu Visual Truth Query Wired Live Action:
-- none
+- query_artifact=<OSU_QUERY_URI> operation_evidence=not_recorded action_eligibility=click_ready readiness_class=ready pixel_point=320,240 refusal_reason=n/a source_readiness=ready source_query_artifact=<OSU_QUERY_URI> verification_evidence=not_recorded
 
 Osu Detection Eval Witness:
-- none
+- witness_uri=<OSU_WITNESS_URI> purpose=auv.osu.detection_eval.witness status=ready reason=n/a total_frames=1 label_matched=1 spatial_matched=1 spatial_unscored=0 spurious=0 projection_kind=playfield_to_pixels frame_witness_count=1 detector_model_id=model-1
 
 Osu Detection Eval Quality:
-- none
+- quality_uri=<OSU_QUALITY_URI> purpose=auv.osu.detection_eval.quality witness_status=ready status=ready verdict=measured_only label_recall=1.000 spatial_recall=1.000 spurious=0 derived_verdict=measured_only
 
 MC-19 Query Wired Live Action:
 - none
-Scene state: missing scan-scene-state-input-v0 artifact

@@ -5,20 +5,19 @@
 //! `auv-game-*` factories.
 //!
 //! Product CLI snapshot inspection uses canonical app readers. The temporary
-//! text projection composes those sections with legacy core/osu readers until
-//! the remaining Task 22 migrations land. Viewer app-specific cards still
+//! text projection composes those sections with legacy core readers until the
+//! remaining Task 22 migration lands. Viewer app-specific cards still
 //! fetch named JSON extensions by key, not first-class Minecraft routes.
 
 use std::sync::Arc;
 
-use auv_inspect_model::{InspectComposer, InspectError, InspectSection, InspectSectionOutput};
+use auv_inspect_model::{InspectComposer, InspectError, InspectSection};
 use auv_runtime::inspect::{CorePrefixSection, CoreSuffixSection};
 use auv_tracing::{RunSnapshot, RunStore};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 use super::query_wired_minecraft::{append_minecraft_query_wired_section, collect_minecraft_query_wired_live_action_summaries};
-use super::query_wired_osu::append_osu_query_wired_section;
-use crate::run_read::list_osu_query_wired_live_action_summaries;
+use super::query_wired_osu::{append_osu_query_wired_section, collect_osu_query_wired_live_action_summaries};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct ProductInspectSection {
@@ -168,12 +167,15 @@ async fn collect_canonical_app_sections(
   let balatro = auv_game_balatro::inspect::render_balatro_card_detection_text(store, snapshot).await?;
   let quality_spatial = auv_game_minecraft::inspect_sections_quality_spatial(store, snapshot).await?;
   let osu_primary = auv_game_osu::inspect_sections_primary(store, snapshot).await?;
+  let osu_query_wired = collect_osu_query_wired_live_action_summaries(store, snapshot).await?;
+  let mut osu_query_wired_text = String::new();
+  append_osu_query_wired_section(&mut osu_query_wired_text, &osu_query_wired);
   let osu_detection_eval = auv_game_osu::inspect_sections_detection_eval(store, snapshot).await?;
   let minecraft_query_wired = collect_minecraft_query_wired_live_action_summaries(store, snapshot).await?;
   let mut minecraft_query_wired_text = String::new();
   append_minecraft_query_wired_section(&mut minecraft_query_wired_text, &minecraft_query_wired);
 
-  let mut sections = Vec::with_capacity(primary.len() + quality_spatial.len() + osu_primary.len() + osu_detection_eval.len() + 2);
+  let mut sections = Vec::with_capacity(primary.len() + quality_spatial.len() + osu_primary.len() + osu_detection_eval.len() + 3);
   sections.extend(primary.into_iter().map(minecraft_section));
   sections.push(ProductInspectSection {
     id: auv_game_balatro::inspect::BalatroCardDetectionSection::ID,
@@ -181,6 +183,10 @@ async fn collect_canonical_app_sections(
   });
   sections.extend(quality_spatial.into_iter().map(minecraft_section));
   sections.extend(osu_primary.into_iter().map(osu_section));
+  sections.push(ProductInspectSection {
+    id: "osu_query_wired_live_action",
+    text: osu_query_wired_text,
+  });
   sections.extend(osu_detection_eval.into_iter().map(osu_section));
   sections.push(ProductInspectSection {
     id: "minecraft_query_wired_live_action",
@@ -203,37 +209,12 @@ fn osu_section(section: auv_game_osu::inspect::OsuInspectSection) -> ProductInsp
   }
 }
 
-pub struct OsuQueryWiredLiveActionSection;
-
-impl InspectSection for OsuQueryWiredLiveActionSection {
-  fn id(&self) -> &'static str {
-    "osu_query_wired_live_action"
-  }
-
-  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    let summaries = list_osu_query_wired_live_action_summaries(store, run.run.run_id.as_str())?;
-    let mut text = String::new();
-    append_osu_query_wired_section(&mut text, &summaries);
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text,
-      json: None,
-    }))
-  }
-}
-
 /// LOCKED golden render order (do not invent another).
 pub fn build_product_inspect_composer() -> Result<Arc<InspectComposer>, InspectError> {
-  let mut sections: Vec<Arc<dyn InspectSection>> = Vec::new();
-  // 1. core_prefix
-  sections.push(Arc::new(CorePrefixSection));
-  // TODO(run-contract-task-22): Retire this legacy composer after core and
-  // product query-wired readers accept RunStore/RunSnapshot. Canonical app
-  // sections are merged by build_product_inspect_text_document.
-  // 2. osu query-wired (PRODUCT)
-  sections.push(Arc::new(OsuQueryWiredLiveActionSection));
-  // 3. core_suffix
-  sections.push(Arc::new(CoreSuffixSection));
+  // TODO(run-contract-task-22): Retire this legacy composer after the core
+  // sections accept RunStore/RunSnapshot. All app and query-wired sections now
+  // use canonical snapshots through build_product_inspect_document.
+  let sections: Vec<Arc<dyn InspectSection>> = vec![Arc::new(CorePrefixSection), Arc::new(CoreSuffixSection)];
   InspectComposer::try_new(sections).map(Arc::new)
 }
 
@@ -255,10 +236,10 @@ mod tests {
   use super::*;
 
   #[test]
-  fn legacy_composer_keeps_remaining_section_order() {
+  fn legacy_composer_keeps_core_section_order() {
     let composer = build_product_inspect_composer().expect("product composer");
     let ids = composer.sections().iter().map(|section| section.id()).collect::<Vec<_>>();
-    assert_eq!(ids, ["core_prefix", "osu_query_wired_live_action", "core_suffix",]);
+    assert_eq!(ids, ["core_prefix", "core_suffix"]);
   }
 
   #[tokio::test]
@@ -654,6 +635,13 @@ mod tests {
     assert!(!text.contains(" role="));
     assert!(!text.contains(" path="));
     assert!(!text.contains("artifact_id"));
+
+    let query_wired =
+      document.sections.iter().find(|section| section.id == "osu_query_wired_live_action").expect("canonical osu! query-wired section");
+    assert!(query_wired.text.contains(&format!("query_artifact={}", query_metadata.uri())));
+    assert!(query_wired.text.contains("operation_evidence=not_recorded"));
+    assert!(query_wired.text.contains("action_eligibility=click_ready readiness_class=ready pixel_point=320,240"));
+    assert!(query_wired.text.contains("verification_evidence=not_recorded"));
   }
 
   fn decode_fixture<T: DeserializeOwned>(value: Value) -> T {

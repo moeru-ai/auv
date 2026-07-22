@@ -26,7 +26,9 @@ use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::inspect::{build_product_inspect_composer, build_product_inspect_text_document, inspect_run, inspect_run_with};
+use crate::inspect::{
+  build_product_inspect_composer, build_product_inspect_document, build_product_inspect_text_document, inspect_run, inspect_run_with,
+};
 use auv_runtime::contract::{
   OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot, ObservationSource, OperationOutput, OperationResult,
   OperationStatus, RecognitionScope, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
@@ -403,42 +405,135 @@ async fn golden_minecraft_training_package_inspect_run() {
 
 #[tokio::test]
 async fn golden_osu_visual_truth_inspect_run() {
-  use auv_tracing_driver::recording::RunRecordingBackend;
+  use auv_game_osu::detection_eval_quality::publish_osu_detection_eval_quality;
+  use auv_game_osu::detection_eval_witness::publish_osu_detection_eval_witness;
+  use auv_game_osu::visual_truth_semantic::publish_osu_visual_truth_semantic;
+  use auv_game_osu::visual_truth_spatial_query::publish_osu_visual_truth_spatial_query;
 
-  use crate::integrations::osu::run_osu_visual_truth_semantic_validation;
-
-  let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-game-osu/tests/fixtures/osu_visual_truth_probe");
-  let work = std::env::temp_dir().join(format!("auv-inspect-golden-osu-work-{}", stamp()));
-  let store_root = std::env::temp_dir().join(format!("auv-inspect-golden-osu-store-{}", stamp()));
-  let _ = fs::remove_dir_all(&work);
-  let _ = fs::remove_dir_all(&store_root);
-  fs::create_dir_all(&work).expect("work");
-  fs::create_dir_all(&store_root).expect("store");
-  for name in ["visual_truth_manifest.json", "projection.json"] {
-    fs::copy(fixture_root.join(name), work.join(name)).expect("copy");
-  }
-  let store = LocalStore::new(store_root.clone()).expect("store");
-  let recording = RunRecordingBackend::local_only(store.clone()).handle();
-  let semantic = run_osu_visual_truth_semantic_validation(&recording, work.clone(), work.join("semantic-out")).expect("semantic");
-  let legacy_run = store.read_run(semantic.run_id.as_str()).expect("legacy run");
   let (canonical_store, dispatch, canonical_run_id, canonical_root) = canonical_inspect_run();
-  let semantic_metadata =
-    auv_game_osu::visual_truth_semantic::publish_osu_visual_truth_semantic(Some(&canonical_root), &semantic.value.manifest)
-      .await
-      .expect("publish canonical osu! semantic")
-      .expect("canonical artifact publication enabled");
-  let snapshot = load_canonical_snapshot(canonical_store.as_ref(), &dispatch, canonical_run_id).await;
-  let text = build_product_inspect_text_document(&store, &legacy_run, canonical_store.as_ref(), &snapshot)
+  let semantic = serde_json::from_value(json!({
+    "schema_version": 1,
+    "generated_at_millis": 20,
+    "source_run_artifact_dir": "run-artifacts",
+    "source_visual_truth_manifest_path": "visual-truth.json",
+    "source_projection_path": "projection.json",
+    "beatmap_path": "map.osu",
+    "frame_count": 1,
+    "semantic_status": "ready",
+    "known_limits": ["golden fixture"]
+  }))
+  .expect("typed osu! semantic fixture");
+  let spatial_query = serde_json::from_value(json!({
+    "schema_version": 1,
+    "generated_at_millis": 21,
+    "visual_truth_semantic_manifest_path": "semantic.json",
+    "source_run_artifact_dir": "run-artifacts",
+    "source_visual_truth_manifest_path": "visual-truth.json",
+    "source_projection_path": "projection.json",
+    "object_index": 0,
+    "capture_phase": "before_dispatch",
+    "object_kind": "circle",
+    "query_backend": "playfield_projection_reference",
+    "status": "answered",
+    "pixel_visibility": "inside_capture",
+    "pixel_x": 320.0,
+    "pixel_y": 240.0,
+    "match_radius_px": 20.0,
+    "capture_width": 640,
+    "capture_height": 480,
+    "known_limits": ["golden fixture"]
+  }))
+  .expect("typed osu! spatial-query fixture");
+  let witness = serde_json::from_value(json!({
+    "schema_version": 1,
+    "generated_at_millis": 22,
+    "source_visual_eval_report_path": "visual-eval.json",
+    "source_detection_eval_manifest_path": "detection-eval.json",
+    "source_run_artifact_dir": "run-artifacts",
+    "source_visual_truth_manifest_path": "visual-truth.json",
+    "source_projection_path": "projection.json",
+    "detector_model_id": "model-1",
+    "total_frames": 1,
+    "label_matched_frames": 1,
+    "label_missing_frames": 0,
+    "label_unmapped_frames": 0,
+    "spatial_matched_frames": 1,
+    "spatial_missing_frames": 0,
+    "spatial_unscored_frames": 0,
+    "spurious_detection_count": 0,
+    "projection_kind": "playfield_to_pixels",
+    "frame_witnesses": [{
+      "object_index": 0,
+      "capture_phase": "before_dispatch",
+      "capture_file_name": "capture.png",
+      "object_kind": "circle",
+      "expected_label": "hit_circle",
+      "label_outcome": "matched",
+      "spatial_outcome": "matched",
+      "spurious_detection_count": 0
+    }],
+    "status": "ready",
+    "known_limits": ["golden fixture"]
+  }))
+  .expect("typed osu! witness fixture");
+  let quality = serde_json::from_value(json!({
+    "schema_version": 1,
+    "generated_at_millis": 23,
+    "detection_eval_witness_manifest_path": "witness.json",
+    "source_visual_eval_report_path": "visual-eval.json",
+    "source_run_artifact_dir": "run-artifacts",
+    "detector_model_id": "model-1",
+    "witness_status": "ready",
+    "status": "ready",
+    "verdict": "measured_only",
+    "metrics": {
+      "total_frames": 1,
+      "label_matched_frames": 1,
+      "label_missing_frames": 0,
+      "label_unmapped_frames": 0,
+      "spatial_matched_frames": 1,
+      "spatial_missing_frames": 0,
+      "spatial_unscored_frames": 0,
+      "spurious_detection_count": 0,
+      "label_recall": 1.0,
+      "spatial_recall": 1.0,
+      "projection_kind": "playfield_to_pixels"
+    },
+    "known_limits": ["golden fixture"]
+  }))
+  .expect("typed osu! quality fixture");
+
+  let semantic_metadata = publish_osu_visual_truth_semantic(Some(&canonical_root), &semantic)
     .await
-    .expect("product inspect text")
-    .render_text();
+    .expect("publish canonical osu! semantic")
+    .expect("canonical artifact publication enabled");
+  let query_metadata = publish_osu_visual_truth_spatial_query(Some(&canonical_root), &spatial_query)
+    .await
+    .expect("publish canonical osu! spatial query")
+    .expect("canonical artifact publication enabled");
+  let witness_metadata = publish_osu_detection_eval_witness(Some(&canonical_root), &witness)
+    .await
+    .expect("publish canonical osu! witness")
+    .expect("canonical artifact publication enabled");
+  let quality_metadata = publish_osu_detection_eval_quality(Some(&canonical_root), &quality)
+    .await
+    .expect("publish canonical osu! quality")
+    .expect("canonical artifact publication enabled");
+  let snapshot = load_canonical_snapshot(canonical_store.as_ref(), &dispatch, canonical_run_id).await;
+  let text =
+    build_product_inspect_document(canonical_store.as_ref(), &snapshot).await.expect("canonical product inspect document").render_text();
   assert!(text.contains("Osu Visual Truth Semantic:"));
-  let mut normalized = normalize_inspect_text(&text, &[&store_root, &work, &fixture_root]);
-  normalized = normalized.replace(semantic.run_id.as_str(), "<RUN_ID>");
-  normalized = normalized.replace(&semantic_metadata.uri().to_string(), "<OSU_SEMANTIC_URI>");
+  assert!(text.contains("Osu Visual Truth Query Wired Live Action:"));
+  let mut normalized = normalize_inspect_text(&text, &[]);
+  for (uri, placeholder) in [
+    (semantic_metadata.uri(), "<OSU_SEMANTIC_URI>"),
+    (query_metadata.uri(), "<OSU_QUERY_URI>"),
+    (witness_metadata.uri(), "<OSU_WITNESS_URI>"),
+    (quality_metadata.uri(), "<OSU_QUALITY_URI>"),
+  ] {
+    normalized = normalized.replace(&uri.to_string(), placeholder);
+  }
   assert_or_update_golden("osu.txt", &normalized);
-  let _ = fs::remove_dir_all(work);
-  let _ = fs::remove_dir_all(store_root);
 }
 
 #[tokio::test]

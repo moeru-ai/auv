@@ -1,16 +1,5 @@
-//! Product read-side helpers: public query-wired adapters plus crate-local
-//! access to ordinary donor readers.
+//! Product read-side helpers shared by canonical inspect projections.
 
 mod query_wired_live_action;
-mod query_wired_projection;
 
-pub use self::query_wired_live_action::*;
-
-use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
-
-pub(crate) use crate::integrations::osu::query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID as OSU_QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
-pub(crate) use auv_runtime::contract::{
-  FailureLayer, OperationOutput, OperationResult, OperationStatus, VerificationMethod, VerificationResult,
-};
-pub(crate) use auv_runtime::model::AuvResult;
-pub(crate) use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+pub(crate) use self::query_wired_live_action::{operation_result_verification_claims, project_verification_outcome_from_claims};
