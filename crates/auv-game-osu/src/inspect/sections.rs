@@ -61,7 +61,7 @@ pub async fn render_osu_primary_text(store: &dyn RunStore, snapshot: &RunSnapsho
   let semantic_manifests = extract_osu_visual_truth_semantic_manifests(store, snapshot).await?;
   let spatial_manifests = extract_osu_visual_truth_spatial_query_manifests(store, snapshot).await?;
   let mut output = String::new();
-  append_sections_a(&mut output, &semantic_manifests, &[], &spatial_manifests, &[]);
+  append_sections_a(&mut output, &semantic_manifests, &spatial_manifests);
   Ok(output)
 }
 
@@ -70,7 +70,7 @@ pub async fn render_osu_detection_eval_text(store: &dyn RunStore, snapshot: &Run
   let witness_manifests = extract_osu_detection_eval_witness_manifests(store, snapshot).await?;
   let quality_manifests = extract_osu_detection_eval_quality_manifests(store, snapshot).await?;
   let mut output = String::new();
-  append_sections_b(&mut output, &witness_manifests, &[], &quality_manifests, &[]);
+  append_sections_b(&mut output, &witness_manifests, &quality_manifests);
   Ok(output)
 }
 
