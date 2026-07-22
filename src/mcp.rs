@@ -457,10 +457,10 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
       )
     }),
     McpInvokeAdapter::new("input.clickWindowPoint", |input| async move {
+      let point = auv_cli_invoke::commands::input::WindowPointInput::parse(&input.inputs, "input.clickWindowPoint")?;
       if input.dry_run {
         return Ok(completed("dry run: input.clickWindowPoint", serde_json::json!({})));
       }
-      let point = auv_cli_invoke::commands::input::WindowPointInput::parse(&input.inputs, "input.clickWindowPoint")?;
       let (result, instrumentation) =
         auv_cli_invoke::commands::input::click_point_in_window(window_selector(&input), point).await?.into_parts();
       Ok(
@@ -1022,6 +1022,131 @@ mod tests {
     client.cancel().await?;
     server_handle.await??;
     Ok(())
+  }
+
+  #[tokio::test]
+  async fn click_window_point_invalid_dry_runs_fail_without_ui_work() -> anyhow::Result<()> {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let store_root = temp_dir("mcp-click-window-point-validation");
+    let store_root_arg = store_root.display().to_string();
+    let (server_transport, client_transport) = tokio::io::duplex(16384);
+    let server = McpServer::new(project_root).map_err(anyhow::Error::msg)?;
+    let server_handle = tokio::spawn(async move {
+      let service = server.serve(server_transport).await?;
+      service.waiting().await?;
+      anyhow::Ok(())
+    });
+    let client = DummyClientHandler.serve(client_transport).await?;
+    let invalid_cases = [
+      ("missing coordinate mode", serde_json::json!({}), "requires --offset_x/--offset_y or --relative_x/--relative_y"),
+      (
+        "mixed coordinate modes",
+        serde_json::json!({
+          "offset_x": "10",
+          "offset_y": "20",
+          "relative_x": "0.5",
+          "relative_y": "0.5"
+        }),
+        "not both",
+      ),
+      ("incomplete offset pair", serde_json::json!({ "offset_x": "10" }), "requires both --offset_x and --offset_y"),
+      ("incomplete relative pair", serde_json::json!({ "relative_y": "0.5" }), "requires both --relative_x and --relative_y"),
+      ("relative coordinate below zero", serde_json::json!({ "relative_x": "-0.01", "relative_y": "0.5" }), "0..=1"),
+      ("relative coordinate above one", serde_json::json!({ "relative_x": "1.01", "relative_y": "0.5" }), "0..=1"),
+    ];
+
+    // ROOT CAUSE:
+    //
+    // If an MCP window-point invocation was a dry-run, malformed coordinates
+    // completed because the adapter returned before shared CLI validation.
+    //
+    // Before the fix, every case below returned `completed`.
+    // The fix validates first, while keeping dry-runs free of UI work.
+    for (case, inputs, expected_error) in invalid_cases {
+      let response = client
+        .call_tool(CallToolRequestParam {
+          name: "invoke".into(),
+          arguments: Some(
+            serde_json::json!({
+              "command_id": "input.clickWindowPoint",
+              "dry_run": true,
+              "inputs": inputs,
+              "inspect": { "store_root": store_root_arg }
+            })
+            .as_object()
+            .expect("invoke arguments")
+            .clone(),
+          ),
+        })
+        .await?;
+      let value: Value =
+        serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("invoke response").text)?;
+      let run_id = value["run_id"].as_str().expect("run id").parse::<auv_tracing::RunId>()?;
+      let store = auv_tracing::FileRunStore::open(&store_root)?;
+      let snapshot = store.load_snapshot(run_id).await?.expect("invalid dry-run V1 snapshot");
+
+      assert_ne!(value["status"], "completed", "{case}");
+      assert_eq!(value["status"], "failed", "{case}");
+      assert!(value["failure_message"].as_str().is_some_and(|message| message.contains(expected_error)), "{case}: {value}");
+      assert_eq!(value["artifacts"], serde_json::json!([]), "{case}");
+      assert!(snapshot.artifacts().is_empty(), "{case}: invalid dry-run must not execute artifact-producing UI work");
+      assert_eq!(snapshot.events().len(), 1, "{case}: invalid dry-run must record only the MCP frontend lifecycle");
+    }
+
+    let response = client
+      .call_tool(CallToolRequestParam {
+        name: "invoke".into(),
+        arguments: Some(
+          serde_json::json!({
+            "command_id": "input.clickWindowPoint",
+            "dry_run": true,
+            "inputs": { "offset_x": "10", "offset_y": "20" },
+            "inspect": { "store_root": store_root_arg }
+          })
+          .as_object()
+          .expect("invoke arguments")
+          .clone(),
+        ),
+      })
+      .await?;
+    let value: Value =
+      serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("invoke response").text)?;
+    let run_id = value["run_id"].as_str().expect("run id").parse::<auv_tracing::RunId>()?;
+    let store = auv_tracing::FileRunStore::open(&store_root)?;
+    let snapshot = store.load_snapshot(run_id).await?.expect("valid dry-run V1 snapshot");
+
+    assert_eq!(value["status"], "completed");
+    assert_eq!(value["output_summary"], "dry run: input.clickWindowPoint");
+    assert_eq!(snapshot.run_id(), run_id);
+    assert!(snapshot.artifacts().is_empty());
+
+    client.cancel().await?;
+    server_handle.await??;
+    let _ = std::fs::remove_dir_all(store_root);
+    Ok(())
+  }
+
+  #[tokio::test]
+  async fn click_window_point_production_adapter_rejects_non_finite_dry_runs() {
+    let adapter = core_invoke_adapters()
+      .into_iter()
+      .find(|adapter| adapter.command_id == "input.clickWindowPoint")
+      .expect("production input.clickWindowPoint adapter");
+
+    for value in ["NaN", "inf", "-inf"] {
+      let input = McpInvokeInput {
+        target_application_id: None,
+        target_label: None,
+        inputs: BTreeMap::from([
+          ("offset_x".to_string(), value.to_string()),
+          ("offset_y".to_string(), "20".to_string()),
+        ]),
+        dry_run: true,
+      };
+
+      let error = adapter.invoke(input).await.expect_err("non-finite dry-run must fail validation");
+      assert!(error.contains("finite"), "{value}: {error}");
+    }
   }
 
   #[tokio::test]
