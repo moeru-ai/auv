@@ -1,58 +1,55 @@
-use auv_inspect_model::InspectComposer;
-use auv_tracing_driver::store::{CanonicalRun, LocalStore};
-use auv_tracing_driver::trace::{
-  RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
-};
+use std::sync::Arc;
 
-fn write_minimal_run(store: &LocalStore, run_id: &RunId) {
-  let span_id = SpanId::new("span_root");
-  store
-    .write_run_snapshot(&CanonicalRun {
-      run: RunRecordV1Alpha1 {
-        api_version: RUN_API_VERSION.to_string(),
-        run_id: run_id.clone(),
-        trace_id: TraceId::new("trace"),
-        run_type: RunType::Command,
-        state: TraceState::Ended,
-        status_code: TraceStatusCode::Ok,
-        started_at_millis: 1,
-        finished_at_millis: Some(2),
-        root_span_id: span_id.clone(),
-        attributes: Default::default(),
-        summary: None,
-        failure: None,
-      },
-      spans: vec![SpanRecordV1Alpha1 {
-        api_version: SPAN_API_VERSION.to_string(),
-        span_id,
-        parent_span_id: None,
-        name: "root".to_string(),
-        state: TraceState::Ended,
-        status_code: TraceStatusCode::Ok,
-        started_at_millis: 1,
-        finished_at_millis: Some(2),
-        attributes: Default::default(),
-        summary: None,
-        failure: None,
-      }],
-      events: Vec::new(),
-      artifacts: Vec::new(),
-    })
-    .expect("snapshot");
+use auv_tracing::{
+  ArtifactPurpose, Attributes, AuthorityId, ByteLength, ContentType, Context, MemoryRunStore, NewArtifact, RunId, RunSnapshot, RunStore,
+  Sha256Digest, configure, dispatcher,
+};
+use sha2::{Digest, Sha256};
+
+#[test]
+fn balatro_section_emits_empty_headers_from_a_canonical_snapshot() {
+  futures_executor::block_on(async {
+    let (store, snapshot) = snapshot_without_balatro_artifacts().await;
+
+    let text = super::render_balatro_card_detection_text(store.as_ref(), &snapshot).await.expect("render canonical Balatro section");
+
+    assert!(text.contains("\nBalatro Card Detection Semantic:\n- none\n"));
+    assert!(text.contains("\nBalatro Card Detection Spatial Query:\n- none\n"));
+    assert!(text.contains("\nBalatro Card Detection Eval Witness:\n- none\n"));
+    assert!(text.contains("\nBalatro Card Detection Quality:\n- none\n"));
+  });
 }
 
 #[test]
-fn balatro_section_emits_legacy_empty_headers() {
-  let root = std::env::temp_dir()
-    .join(format!("auv-balatro-inspect-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-  let store = LocalStore::new(root.clone()).expect("store");
-  let run_id = RunId::new("run_balatro_empty");
-  write_minimal_run(&store, &run_id);
-  let composer = InspectComposer::try_new(crate::inspect_sections()).expect("composer");
-  let text = composer.inspect_text(&store, run_id.as_str()).expect("text");
-  assert!(text.contains("\nBalatro Card Detection Semantic:\n- none\n"));
-  assert!(text.contains("\nBalatro Card Detection Spatial Query:\n- none\n"));
-  assert!(text.contains("\nBalatro Card Detection Eval Witness:\n- none\n"));
-  assert!(text.contains("\nBalatro Card Detection Quality:\n- none\n"));
-  let _ = std::fs::remove_dir_all(root);
+fn balatro_section_checks_authority_even_without_artifacts() {
+  futures_executor::block_on(async {
+    let (_, snapshot) = snapshot_without_balatro_artifacts().await;
+    let other_store = MemoryRunStore::new(AuthorityId::new());
+
+    let error =
+      super::render_balatro_card_detection_text(&other_store, &snapshot).await.expect_err("empty snapshots retain authority checks");
+
+    assert!(matches!(error, crate::BalatroArtifactReadError::SnapshotAuthorityMismatch { .. }));
+  });
+}
+
+async fn snapshot_without_balatro_artifacts() -> (Arc<MemoryRunStore>, RunSnapshot) {
+  let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+  let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+  let run_id = RunId::new();
+  let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+  let body = b"{}".to_vec();
+  let artifact = NewArtifact::new(
+    ArtifactPurpose::parse("auv.test.balatro.unrelated").expect("unrelated artifact purpose"),
+    ContentType::parse("application/json").expect("JSON content type"),
+    ByteLength::new(u64::try_from(body.len()).expect("body length fits u64")).expect("artifact byte length"),
+    Sha256Digest::new(Sha256::digest(&body).into()),
+    Attributes::empty(),
+    futures_util::io::Cursor::new(body),
+  );
+  let published = root.in_scope(|| auv_tracing::emit_artifact!(artifact)).await.expect("publish unrelated artifact");
+  assert!(published.is_some());
+  dispatch.flush().await.expect("flush unrelated artifact");
+  let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("Balatro snapshot");
+  (store, snapshot)
 }

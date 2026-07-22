@@ -17,10 +17,9 @@ default = []
 card-corner-onnx = ["dep:auv-inference-ort"]
 
 [dependencies]
-auv-inspect-model = { path = "../auv-inspect-model" }
 auv-file = { path = "../auv-file" }
 auv-stage-status = { path = "../auv-stage-status" }
-auv-tracing-driver = { path = "../auv-tracing-driver" }
+auv-tracing = { path = "../auv-tracing" }
 auv-driver = { path = "../auv-driver" }
 auv-inference-common = { path = "../auv-inference-common" }
 auv-inference-ort = { path = "../auv-inference-ort", optional = true }
@@ -29,13 +28,16 @@ auv-task-object-detection = { path = "../auv-task-object-detection", features = 
 clap = { version = "4.5", features = ["derive"] }
 hf-hub = { version = "1.0.0-rc.1", features = ["blocking", "rustls-tls"] }
 image.workspace = true
+futures-util = { workspace = true, features = ["io"] }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }
 
 [dev-dependencies]
+auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+futures-executor = "0.3"
 tempfile = "3"

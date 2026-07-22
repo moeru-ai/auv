@@ -1,5 +1,7 @@
 pub mod inspect;
-pub(crate) mod run_read;
+mod run_read;
+
+pub use run_read::{BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, BalatroArtifactPublishError, BalatroArtifactReadError};
 
 pub mod artifact_roles;
 pub mod cache;

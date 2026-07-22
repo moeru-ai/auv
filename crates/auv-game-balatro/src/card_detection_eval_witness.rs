@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,7 @@ pub type CardDetectionEvalWitnessResult<T> = Result<T, String>;
 
 pub const CARD_DETECTION_EVAL_WITNESS_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const CARD_DETECTION_EVAL_WITNESS_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const CARD_DETECTION_EVAL_WITNESS_PURPOSE: &str = "auv.balatro.card_detection.eval_witness";
 pub const BALATRO_X4_WITNESS_KNOWN_LIMIT: &str = "balatro X4 witness records slot-coverage eval payload and spatial-query manifest path for durable lineage; eval scores bundle slots directly and does not require spatial query answered; it is not action verification or gameplay success";
 
 const WITNESS_MANIFEST_FILE: &str = "balatro-card-detection-eval-witness.json";
@@ -158,13 +160,32 @@ impl CardDetectionEvalWitnessReason {
   }
 }
 
+pub async fn publish_card_detection_witness(
+  context: Option<&Context>,
+  witness: &CardDetectionEvalWitnessManifest,
+) -> Result<Option<ArtifactMetadata>, crate::BalatroArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, CARD_DETECTION_EVAL_WITNESS_PURPOSE, witness).await
+}
+
+pub async fn read_card_detection_witness(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<CardDetectionEvalWitnessManifest, crate::BalatroArtifactReadError> {
+  let bytes = crate::run_read::read_json_artifact_bytes(store, snapshot, uri, CARD_DETECTION_EVAL_WITNESS_PURPOSE).await?;
+  serde_json::from_slice(&bytes).map_err(|source| crate::BalatroArtifactReadError::MalformedJson {
+    uri: uri.clone(),
+    source,
+  })
+}
+
 pub fn build_card_detection_eval_witness(
   inputs: &CardDetectionEvalWitnessInputs,
 ) -> CardDetectionEvalWitnessResult<CardDetectionEvalWitnessOutput> {
   fs::create_dir_all(&inputs.output_dir)
     .map_err(|error| format!("failed to create card detection eval witness output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = now_millis();
   let known_limits = BTreeSet::from([BALATRO_X4_WITNESS_KNOWN_LIMIT.to_string()]);
   let mut warnings = BTreeSet::new();
 
@@ -476,7 +497,7 @@ fn build_eval_report(bundle: &LoadedDetectionBundle, expected_slots: &[ExpectedS
 
   CardDetectionEvalReport {
     schema_version: 1,
-    generated_at_millis: auv_tracing_driver::now_millis(),
+    generated_at_millis: now_millis(),
     source_detection_bundle_dir: bundle.bundle_dir.display().to_string(),
     expected_slot_count,
     scored_slot_count,
@@ -519,6 +540,10 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
       format!("failed to serialize {}: {error}", path.display())
     }
   })
+}
+
+fn now_millis() -> u64 {
+  u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

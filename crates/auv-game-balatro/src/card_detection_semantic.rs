@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use auv_file::{JsonFileWriteError, JsonWriteOptions, write_json_file as write_json_file_helper};
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::{Deserialize, Serialize};
 
 use crate::card_detection_producer::{LoadedDetectionBundle, load_detection_bundle, resolve_bundle_manifest_path, total_detection_count};
@@ -12,6 +13,7 @@ pub type CardDetectionSemanticValidationResult<T> = Result<T, String>;
 
 pub const CARD_DETECTION_SEMANTIC_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const CARD_DETECTION_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const CARD_DETECTION_SEMANTIC_PURPOSE: &str = "auv.balatro.card_detection.semantic";
 
 const SEMANTIC_MANIFEST_FILE: &str = "balatro-card-detection-semantic.json";
 const SEMANTIC_INSPECT_FILE: &str = "balatro-card-detection-semantic-inspect.json";
@@ -86,12 +88,31 @@ impl CardDetectionSemanticReason {
   }
 }
 
+pub async fn publish_card_detection_semantic(
+  context: Option<&Context>,
+  semantic: &CardDetectionSemanticManifest,
+) -> Result<Option<ArtifactMetadata>, crate::BalatroArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, CARD_DETECTION_SEMANTIC_PURPOSE, semantic).await
+}
+
+pub async fn read_card_detection_semantic(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<CardDetectionSemanticManifest, crate::BalatroArtifactReadError> {
+  let bytes = crate::run_read::read_json_artifact_bytes(store, snapshot, uri, CARD_DETECTION_SEMANTIC_PURPOSE).await?;
+  serde_json::from_slice(&bytes).map_err(|source| crate::BalatroArtifactReadError::MalformedJson {
+    uri: uri.clone(),
+    source,
+  })
+}
+
 pub fn validate_card_detection_semantic(
   inputs: CardDetectionSemanticValidationInputs,
 ) -> CardDetectionSemanticValidationResult<CardDetectionSemanticValidationOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = now_millis();
   let manifest_path = resolve_bundle_manifest_path(&inputs.bundle_input);
   let known_limits = BTreeSet::from([
     "balatro card detection semantic gate closes fixture consumability only; it does not grade detection quality or claim live gameplay authority".to_string(),
@@ -222,6 +243,10 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
       format!("failed to serialize {}: {error}", path.display())
     }
   })
+}
+
+fn now_millis() -> u64 {
+  u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
