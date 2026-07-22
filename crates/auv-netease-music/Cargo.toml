@@ -13,7 +13,7 @@ repository.workspace = true
 
 [features]
 default = []
-tracing = ["dep:auv-tracing"]
+tracing = ["dep:auv-tracing", "auv-media-macos/tracing"]
 
 [dependencies]
 auv-driver = { path = "../auv-driver" }
