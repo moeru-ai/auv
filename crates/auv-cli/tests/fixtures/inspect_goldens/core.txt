@@ -22,6 +22,9 @@ Input Actions:
 Verifications:
 - method=text_visible executed=true state_changed=true semantic_matched=true failure_layer=n/a evidence=0 observed_label=hello
 
+Control Failure:
+- none
+
 Observations:
 - snapshot_golden span=span_root source=visual nodes=0 evidence=0 limits=1
 

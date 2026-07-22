@@ -48,6 +48,12 @@ fn synthetic_operation_result_from_invoke(command_id: &str, result: &InvokeResul
       message: Some(result.output_summary.clone()),
     },
     verifications: Vec::new(),
+    // TODO(control-failure-session-api): this synthetic OperationResult mirrors
+    // a transient InvokeResult, whose typed control-failure classification is
+    // not carried across the session-API boundary in PR8-B (invoke-time surface
+    // stays untyped by owner decision). Populate once the RPC surface is meant
+    // to expose ControlFailed.
+    control_failure: None,
     evidence_artifacts,
     freshness_basis: None,
     known_limits: vec![INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT.to_string()],

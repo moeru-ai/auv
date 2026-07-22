@@ -129,6 +129,7 @@ pub fn music_search_operation(run_id: &str) -> OperationResult {
     evidence_artifacts: Vec::new(),
     output: OperationOutput::Acknowledged { message: None },
     verifications: Vec::new(),
+    control_failure: None,
     freshness_basis: None,
     known_limits: vec!["semantic_shaping_synthetic".to_string()],
   }

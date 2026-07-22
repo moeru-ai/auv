@@ -12,7 +12,8 @@
 //!   double-counting artifacts that also populate `OperationResult.verifications`
 
 use crate::contract::{
-  ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult, RecognitionSource, VerificationResult,
+  ArtifactRef, ControlFailure, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult, RecognitionSource,
+  VerificationResult,
 };
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
@@ -80,6 +81,26 @@ pub(crate) fn extract_verifications(store: &LocalStore, run: &CanonicalRun) -> A
     }
   }
   Ok(verifications)
+}
+
+/// Lift the typed control-layer failure from a run's `operation-result`
+/// artifacts, if one was recorded.
+///
+/// Mirrors [`extract_verifications`]' role/mime scan so the inspect-family
+/// surfaces (core inspect text render and the HTTP enrichment) read one shared
+/// policy. Returns the first `control_failure` found; a driver control failure
+/// produces exactly one `operation-result`.
+pub(crate) fn extract_control_failure(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Option<ControlFailure>> {
+  for artifact in &run.artifacts {
+    if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
+      continue;
+    }
+    let operation_result: OperationResult = read_artifact_json(store, run.run.run_id.as_str(), artifact, "operation-result")?;
+    if let Some(control_failure) = operation_result.control_failure {
+      return Ok(Some(control_failure));
+    }
+  }
+  Ok(None)
 }
 
 /// Read the persisted `OperationResult` for a run, if one was recorded.

@@ -11,7 +11,7 @@ use auv_view::memory::{ViewMemory, ViewParserInspect, format_view_resolution_sum
 
 use auv_driver::{DisturbanceLevel, InputActionResult, InputDeliveryPath};
 
-use crate::contract::{FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
+use crate::contract::{ControlFailure, FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
 use crate::model::AuvResult;
 use crate::run_read::DetectorRecognitionLineage;
 use crate::{scene_state_read, view_parser_read};
@@ -63,9 +63,17 @@ pub(crate) fn inspect_run_core_prefix_body(store: &LocalStore, run_id: &str) -> 
   let canonical = read_run(store, run_id)?;
   let input_action_results = crate::run_read::extract_input_action_results(store, &canonical)?;
   let verifications = crate::run_read::extract_verifications(store, &canonical)?;
+  let control_failure = crate::run_read::extract_control_failure(store, &canonical)?;
   let observation_snapshots = crate::run_read::extract_observation_snapshots(store, &canonical)?;
   let detector_recognition_lineage = crate::run_read::extract_detector_recognition_lineage(store, &canonical)?;
-  Ok(render_core_run_text(&canonical, &input_action_results, &verifications, &observation_snapshots, &detector_recognition_lineage))
+  Ok(render_core_run_text(
+    &canonical,
+    &input_action_results,
+    &verifications,
+    control_failure.as_ref(),
+    &observation_snapshots,
+    &detector_recognition_lineage,
+  ))
 }
 
 pub(crate) fn inspect_run_core_suffix_body(store: &LocalStore, run_id: &str) -> AuvResult<String> {
@@ -107,6 +115,7 @@ fn render_core_run_text(
   run: &CanonicalRun,
   input_action_results: &[InputActionResult],
   verifications: &[VerificationResult],
+  control_failure: Option<&ControlFailure>,
   observation_snapshots: &[ObservationSnapshot],
   detector_recognition_lineage: &[DetectorRecognitionLineage],
 ) -> String {
@@ -203,6 +212,20 @@ fn render_core_run_text(
         verification.observed_label.as_deref().unwrap_or("n/a")
       ));
     }
+  }
+
+  // Control-layer failure classification (a driver control step that failed
+  // before any verification could run). Separate from Verifications: this is a
+  // failure_layer with no accompanying verification claim.
+  output.push_str("\nControl Failure:\n");
+  match control_failure {
+    None => output.push_str("- none\n"),
+    Some(control_failure) => output.push_str(&format!(
+      "- failure_layer={} message={} recovery={}\n",
+      render_failure_layer(Some(control_failure.layer)),
+      control_failure.message,
+      control_failure.recovery.as_deref().unwrap_or("n/a")
+    )),
   }
 
   output.push_str("\nObservations:\n");

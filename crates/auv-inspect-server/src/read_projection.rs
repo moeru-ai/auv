@@ -54,6 +54,11 @@ pub struct InspectRunEnrichment {
   /// Serialized `InputActionResult` from `input-action-result` artifacts.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub input_action_results: Vec<serde_json::Value>,
+  /// Serialized `ControlFailure` lifted from the run's `operation-result`, when
+  /// a driver control step failed before verification. Absent otherwise, so the
+  /// HTTP surface reports the same typed classification as the inspect text.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub control_failure: Option<serde_json::Value>,
   pub view_parser: ViewParserInspect,
   pub view_parser_summary: ViewParserListSummary,
 }
