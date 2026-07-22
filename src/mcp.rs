@@ -17,7 +17,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
-use auv_cli_invoke::{ArgSpec, InvokeCancellation, InvokeCommand, InvokeRegistry, default_registry};
+use auv_cli_invoke::{
+  ArgSpec, InvokeCancellation, InvokeCommand, InvokeCommandInput, InvokeCommandResult, InvokeRegistry, default_registry,
+};
 
 tokio::task_local! {
   static MCP_REQUEST_CANCELLATION: InvokeCancellation;
@@ -379,6 +381,48 @@ macro_rules! deferred_adapter {
   };
 }
 
+fn click_window_point_adapter() -> McpInvokeAdapter {
+  click_window_point_adapter_with(auv_cli_invoke::commands::input::click_window_point_domain)
+}
+
+fn click_window_point_adapter_with<F, Fut>(execute: F) -> McpInvokeAdapter
+where
+  F: Fn(InvokeCommandInput) -> Fut + Clone + Send + Sync + 'static,
+  Fut: Future<Output = InvokeCommandResult> + Send + 'static,
+{
+  McpInvokeAdapter::new("input.clickWindowPoint", move |input| {
+    let execute = execute.clone();
+    async move {
+      let dry_run = input.dry_run;
+      let output = execute(InvokeCommandInput {
+        command_id: "input.clickWindowPoint".to_string(),
+        target_application_id: input.target_application_id,
+        inputs: input.inputs,
+        dry_run,
+        cancellation: input.cancellation,
+      })
+      .await?;
+      let details = if dry_run {
+        serde_json::json!({})
+      } else {
+        let signal =
+          |name: &str| output.signals.get(name).cloned().ok_or_else(|| format!("input.clickWindowPoint domain output is missing {name}"));
+        let window_x = signal("click.window_x")?.parse::<f64>().map_err(|error| format!("invalid click.window_x domain signal: {error}"))?;
+        let window_y = signal("click.window_y")?.parse::<f64>().map_err(|error| format!("invalid click.window_y domain signal: {error}"))?;
+        serde_json::json!({
+          "window_id": signal("window.id")?,
+          "window_x": window_x,
+          "window_y": window_y,
+          "selected_path": signal("input.selected_path")?,
+        })
+      };
+      let mut outcome = completed(output.summary, details);
+      outcome.artifact_failures = output.artifact_failures;
+      Ok(outcome)
+    }
+  })
+}
+
 pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
   let mut adapters = vec![
     McpInvokeAdapter::new("app.probePermissions", |input| async move {
@@ -486,26 +530,7 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
           .with_artifact_instrumentation(instrumentation),
       )
     }),
-    McpInvokeAdapter::new("input.clickWindowPoint", |input| async move {
-      let point = auv_cli_invoke::commands::input::WindowPointInput::parse(&input.inputs, "input.clickWindowPoint")?;
-      if input.dry_run {
-        return Ok(completed("dry run: input.clickWindowPoint", serde_json::json!({})));
-      }
-      let (result, instrumentation) =
-        auv_cli_invoke::commands::input::click_point_in_window(window_selector(&input), point).await?.into_parts();
-      Ok(
-        completed(
-          "clicked window point",
-          serde_json::json!({
-            "window_id": result.window.reference.id,
-            "window_x": result.point.point().x,
-            "window_y": result.point.point().y,
-            "selected_path": result.action.selected_path.as_str(),
-          }),
-        )
-        .with_artifact_instrumentation(instrumentation),
-      )
-    }),
+    click_window_point_adapter(),
     McpInvokeAdapter::new("screen.captureRegion", |input| async move {
       reject_target_activation(&input, "screen.captureRegion")?;
       let region = auv_cli_invoke::commands::screen::Region::parse(&input.inputs, "screen.captureRegion")?.into_rect();
@@ -1193,75 +1218,36 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn click_window_point_invalid_dry_runs_fail_without_ui_work() -> anyhow::Result<()> {
+  async fn click_window_point_mcp_frontend_preserves_domain_validation_failure() -> anyhow::Result<()> {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let store_root = temp_dir("mcp-click-window-point-validation");
     let store_root_arg = store_root.display().to_string();
     let (server_transport, client_transport) = tokio::io::duplex(16384);
-    let server = McpServer::new(project_root).map_err(anyhow::Error::msg)?;
+    let executor_calls = Arc::new(AtomicUsize::new(0));
+    let adapter_calls = executor_calls.clone();
+    let domain_failure = "input.clickWindowPoint point 1280.01,360 is outside target window bounds 0..=1280,0..=720".to_string();
+    let adapter_failure = domain_failure.clone();
+    let adapter = click_window_point_adapter_with(move |input| {
+      let calls = adapter_calls.clone();
+      let failure = adapter_failure.clone();
+      async move {
+        calls.fetch_add(1, Ordering::SeqCst);
+        assert!(input.dry_run);
+        assert_eq!(input.target_application_id.as_deref(), Some("com.example.App"));
+        assert_eq!(input.inputs.get("offset_x").map(String::as_str), Some("1280.01"));
+        assert_eq!(input.inputs.get("offset_y").map(String::as_str), Some("360"));
+        Err(failure)
+      }
+    });
+    let command = default_registry().resolve("input.clickWindowPoint").expect("click-window-point metadata").clone();
+    let registry = InvokeRegistry::from_groups(vec![auv_cli_invoke::CommandGroup::new("test", "TEST").command(command)]);
+    let server = McpServer::with_registry(project_root, Arc::new(registry), vec![adapter]).map_err(anyhow::Error::msg)?;
     let server_handle = tokio::spawn(async move {
       let service = server.serve(server_transport).await?;
       service.waiting().await?;
       anyhow::Ok(())
     });
     let client = DummyClientHandler.serve(client_transport).await?;
-    let invalid_cases = [
-      ("missing coordinate mode", serde_json::json!({}), "requires --offset_x/--offset_y or --relative_x/--relative_y"),
-      (
-        "mixed coordinate modes",
-        serde_json::json!({
-          "offset_x": "10",
-          "offset_y": "20",
-          "relative_x": "0.5",
-          "relative_y": "0.5"
-        }),
-        "not both",
-      ),
-      ("incomplete offset pair", serde_json::json!({ "offset_x": "10" }), "requires both --offset_x and --offset_y"),
-      ("incomplete relative pair", serde_json::json!({ "relative_y": "0.5" }), "requires both --relative_x and --relative_y"),
-      ("negative offset", serde_json::json!({ "offset_x": "-0.01", "offset_y": "20" }), "non-negative"),
-      ("relative coordinate below zero", serde_json::json!({ "relative_x": "-0.01", "relative_y": "0.5" }), "0..=1"),
-      ("relative coordinate above one", serde_json::json!({ "relative_x": "1.01", "relative_y": "0.5" }), "0..=1"),
-    ];
-
-    // ROOT CAUSE:
-    //
-    // If an MCP window-point invocation was a dry-run, malformed coordinates
-    // completed because the adapter returned before shared CLI validation.
-    //
-    // Before the fix, every case below returned `completed`.
-    // The fix validates first, while keeping dry-runs free of UI work.
-    for (case, inputs, expected_error) in invalid_cases {
-      let response = client
-        .call_tool(CallToolRequestParam {
-          name: "invoke".into(),
-          arguments: Some(
-            serde_json::json!({
-              "command_id": "input.clickWindowPoint",
-              "dry_run": true,
-              "inputs": inputs,
-              "inspect": { "store_root": store_root_arg }
-            })
-            .as_object()
-            .expect("invoke arguments")
-            .clone(),
-          ),
-        })
-        .await?;
-      let value: Value =
-        serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("invoke response").text)?;
-      let run_id = value["run_id"].as_str().expect("run id").parse::<auv_tracing::RunId>()?;
-      let store = auv_tracing::FileRunStore::open(&store_root)?;
-      let snapshot = store.load_snapshot(run_id).await?.expect("invalid dry-run V1 snapshot");
-
-      assert_ne!(value["status"], "completed", "{case}");
-      assert_eq!(value["status"], "failed", "{case}");
-      assert!(value["failure_message"].as_str().is_some_and(|message| message.contains(expected_error)), "{case}: {value}");
-      assert_eq!(value["artifacts"], serde_json::json!([]), "{case}");
-      assert!(snapshot.artifacts().is_empty(), "{case}: invalid dry-run must not execute artifact-producing UI work");
-      assert_eq!(snapshot.events().len(), 1, "{case}: invalid dry-run must record only the MCP frontend lifecycle");
-    }
-
     let response = client
       .call_tool(CallToolRequestParam {
         name: "invoke".into(),
@@ -1269,7 +1255,8 @@ mod tests {
           serde_json::json!({
             "command_id": "input.clickWindowPoint",
             "dry_run": true,
-            "inputs": { "offset_x": "10", "offset_y": "20" },
+            "target": { "application_id": "com.example.App" },
+            "inputs": { "offset_x": "1280.01", "offset_y": "360" },
             "inspect": { "store_root": store_root_arg }
           })
           .as_object()
@@ -1282,12 +1269,16 @@ mod tests {
       serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("invoke response").text)?;
     let run_id = value["run_id"].as_str().expect("run id").parse::<auv_tracing::RunId>()?;
     let store = auv_tracing::FileRunStore::open(&store_root)?;
-    let snapshot = store.load_snapshot(run_id).await?.expect("valid dry-run V1 snapshot");
+    let snapshot = store.load_snapshot(run_id).await?.expect("failed dry-run V1 snapshot");
 
-    assert_eq!(value["status"], "completed");
-    assert_eq!(value["output_summary"], "dry run: input.clickWindowPoint");
+    assert_eq!(response.is_error, Some(true));
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["output_summary"], domain_failure);
+    assert_eq!(value["failure_message"], domain_failure);
+    assert_eq!(executor_calls.load(Ordering::SeqCst), 1);
     assert_eq!(snapshot.run_id(), run_id);
     assert!(snapshot.artifacts().is_empty());
+    assert_eq!(snapshot.events().len(), 1);
 
     client.cancel().await?;
     server_handle.await??;
@@ -1317,6 +1308,63 @@ mod tests {
       let error = adapter.invoke(input).await.expect_err("non-finite dry-run must fail validation");
       assert!(error.contains("finite"), "{value}: {error}");
     }
+  }
+
+  #[tokio::test]
+  async fn click_window_point_adapter_propagates_domain_validation_failure_unchanged() {
+    let adapter = click_window_point_adapter_with(|input| async move {
+      assert!(input.dry_run);
+      Err("domain geometry validation failed".to_string())
+    });
+    let input = McpInvokeInput {
+      target_application_id: Some("com.example.App".to_string()),
+      target_label: None,
+      inputs: BTreeMap::from([
+        ("offset_x".to_string(), "1280.01".to_string()),
+        ("offset_y".to_string(), "360".to_string()),
+      ]),
+      dry_run: true,
+      cancellation: InvokeCancellation::new(),
+    };
+
+    let error = adapter.invoke(input).await.expect_err("domain validation failure must propagate");
+
+    assert_eq!(error, "domain geometry validation failed");
+  }
+
+  #[tokio::test]
+  async fn click_window_point_adapter_forwards_dry_run_to_typed_domain_executor() {
+    let executor_calls = Arc::new(AtomicUsize::new(0));
+    let adapter_calls = executor_calls.clone();
+    let adapter = click_window_point_adapter_with(move |input| {
+      let calls = adapter_calls.clone();
+      async move {
+        calls.fetch_add(1, Ordering::SeqCst);
+        assert!(input.dry_run);
+        assert_eq!(input.command_id, "input.clickWindowPoint");
+        assert_eq!(input.target_application_id.as_deref(), Some("com.example.App"));
+        assert_eq!(input.inputs.get("offset_x").map(String::as_str), Some("640"));
+        assert_eq!(input.inputs.get("offset_y").map(String::as_str), Some("360"));
+        Ok(auv_cli_invoke::InvokeCommandOutput::new("dry run: input.clickWindowPoint"))
+      }
+    });
+    let input = McpInvokeInput {
+      target_application_id: Some("com.example.App".to_string()),
+      target_label: None,
+      inputs: BTreeMap::from([
+        ("offset_x".to_string(), "640".to_string()),
+        ("offset_y".to_string(), "360".to_string()),
+      ]),
+      dry_run: true,
+      cancellation: InvokeCancellation::new(),
+    };
+
+    let outcome = adapter.invoke(input).await.expect("valid MCP dry-run point");
+
+    assert_eq!(outcome.status, McpInvokeStatus::Completed);
+    assert_eq!(outcome.output_summary, "dry run: input.clickWindowPoint");
+    assert!(outcome.details.is_empty());
+    assert_eq!(executor_calls.load(Ordering::SeqCst), 1);
   }
 
   #[tokio::test]

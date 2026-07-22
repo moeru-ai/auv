@@ -309,29 +309,81 @@ pub async fn click_global_point() -> Result<(), String> {
   args = WINDOW_CLICK_POINT_ARGS,
 )]
 async fn click_window_point(input: InvokeCommandInput) -> InvokeCommandResult {
+  click_window_point_domain(input).await
+}
+
+/// Executes `input.clickWindowPoint` through the local window capability.
+pub async fn click_window_point_domain(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
-    use auv_driver::ClickOptions;
-
-    // TODO(invoke-input-click-window-point-candidate): --candidate JSON promotion
-    // path is documented on the command summary but intentionally deferred; MC-19
-    // D4 uses direct offset/relative point inputs only.
-    let point = WindowPointInput::parse(&input.inputs, &input.command_id)?;
-    if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
-    }
-
-    let (result, instrumentation) = click_point_in_window(click_window_selector(&input), point).await?.into_parts();
-    let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &result.action);
-    add_click_window_signals(&mut output, &result.window, result.point);
-    output.artifact_failures = instrumentation.into_failures();
-    Ok(output)
+    let capability = LocalWindowPointCapability::open()?;
+    click_window_point_with_capability(input, &capability).await
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
     Err("input.clickWindowPoint is only available on macOS".to_string())
   }
+}
+
+// Resolves target-window geometry and optionally delivers its validated click.
+trait WindowPointCapability {
+  fn resolve(&self, selector: auv_driver::WindowSelector) -> auv_driver::DriverResult<auv_driver::Window>;
+
+  fn click(
+    &self,
+    window: &auv_driver::Window,
+    point: auv_driver::geometry::WindowPoint,
+  ) -> auv_driver::DriverResult<auv_driver::InputActionResult>;
+}
+
+#[cfg(target_os = "macos")]
+struct LocalWindowPointCapability {
+  session: auv_driver::LocalDriverSession,
+}
+
+#[cfg(target_os = "macos")]
+impl LocalWindowPointCapability {
+  fn open() -> Result<Self, String> {
+    auv_driver::open_local().map(|session| Self { session }).map_err(|error| error.to_string())
+  }
+}
+
+#[cfg(target_os = "macos")]
+impl WindowPointCapability for LocalWindowPointCapability {
+  fn resolve(&self, selector: auv_driver::WindowSelector) -> auv_driver::DriverResult<auv_driver::Window> {
+    self.session.window().resolve(selector)
+  }
+
+  fn click(
+    &self,
+    window: &auv_driver::Window,
+    point: auv_driver::geometry::WindowPoint,
+  ) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
+    self.session.window().click(window, point, auv_driver::ClickOptions::default())
+  }
+}
+
+async fn click_window_point_with_capability<C>(input: InvokeCommandInput, capability: &C) -> InvokeCommandResult
+where
+  C: WindowPointCapability + Sync + ?Sized,
+{
+  // TODO(invoke-input-click-window-point-candidate): --candidate JSON promotion
+  // path is documented on the command summary but intentionally deferred; MC-19
+  // D4 uses direct offset/relative point inputs only.
+  let point = WindowPointInput::parse(&input.inputs, &input.command_id)?;
+  let window = capability.resolve(click_window_selector(&input)).map_err(|error| error.to_string())?;
+  let point = point.resolve(&window, &input.command_id)?;
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  if input.dry_run {
+    return Ok(dry_run_output(&input.command_id));
+  }
+
+  let (result, instrumentation) = click_resolved_window_point(capability, window, point).await?.into_parts();
+  let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &result.action);
+  add_click_window_signals(&mut output, &result.window, result.point);
+  output.artifact_failures = instrumentation.into_failures();
+  Ok(output)
 }
 
 #[derive(Clone, Debug)]
@@ -408,25 +460,36 @@ pub async fn click_point_in_window(
 ) -> Result<ArtifactPublication<WindowPointClick>, String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
+    let capability = LocalWindowPointCapability::open()?;
+    let window = capability.resolve(selector).map_err(|error| error.to_string())?;
     let point = point.resolve(&window, "input.clickWindowPoint")?;
-    let action = session.window().click(&window, point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
-    let instrumentation = emit_input_action_result(&action).await;
-    Ok(ArtifactPublication::new(
-      WindowPointClick {
-        window,
-        point,
-        action,
-      },
-      instrumentation,
-    ))
+    click_resolved_window_point(&capability, window, point).await
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (selector, point);
     Err("input.clickWindowPoint is only available on macOS".to_string())
   }
+}
+
+async fn click_resolved_window_point<C>(
+  capability: &C,
+  window: auv_driver::Window,
+  point: auv_driver::geometry::WindowPoint,
+) -> Result<ArtifactPublication<WindowPointClick>, String>
+where
+  C: WindowPointCapability + Sync + ?Sized,
+{
+  let action = capability.click(&window, point).map_err(|error| error.to_string())?;
+  let instrumentation = emit_input_action_result(&action).await;
+  Ok(ArtifactPublication::new(
+    WindowPointClick {
+      window,
+      point,
+      action,
+    },
+    instrumentation,
+  ))
 }
 
 #[invoke_command(
@@ -494,7 +557,6 @@ fn window_relative_window_point(window: &auv_driver::Window, relative_x: f64, re
   auv_driver::geometry::WindowPoint::new(window.frame.size.width * relative_x, window.frame.size.height * relative_y)
 }
 
-#[cfg(target_os = "macos")]
 fn click_window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelector {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
@@ -511,7 +573,6 @@ fn click_window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelect
   selector
 }
 
-#[cfg(target_os = "macos")]
 fn add_click_window_signals(output: &mut InvokeCommandOutput, window: &auv_driver::Window, window_point: auv_driver::geometry::WindowPoint) {
   output.signals.insert("window.id".to_string(), window.reference.id.clone());
   if let Some(title) = &window.title {
@@ -541,7 +602,6 @@ fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
   InvokeCommandOutput::new(format!("dry run: {command_id}"))
 }
 
-#[cfg(target_os = "macos")]
 fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandOutput {
   let mut output = InvokeCommandOutput::new(summary);
   output.backend = Some(backend.to_string());
@@ -592,6 +652,49 @@ mod click_window_point_tests {
   use super::*;
   use auv_driver::{InputActionResult, InputDeliveryPath};
   use std::collections::BTreeMap;
+  use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  #[derive(Clone)]
+  struct ControlledWindowCapability {
+    window: auv_driver::Window,
+    resolve_calls: Arc<AtomicUsize>,
+    click_calls: Arc<AtomicUsize>,
+  }
+
+  impl ControlledWindowCapability {
+    fn new() -> Self {
+      Self {
+        window: test_window(),
+        resolve_calls: Arc::new(AtomicUsize::new(0)),
+        click_calls: Arc::new(AtomicUsize::new(0)),
+      }
+    }
+
+    fn resolve_count(&self) -> usize {
+      self.resolve_calls.load(Ordering::SeqCst)
+    }
+
+    fn click_count(&self) -> usize {
+      self.click_calls.load(Ordering::SeqCst)
+    }
+  }
+
+  impl WindowPointCapability for ControlledWindowCapability {
+    fn resolve(&self, _selector: auv_driver::WindowSelector) -> auv_driver::DriverResult<auv_driver::Window> {
+      self.resolve_calls.fetch_add(1, Ordering::SeqCst);
+      Ok(self.window.clone())
+    }
+
+    fn click(
+      &self,
+      _window: &auv_driver::Window,
+      _point: auv_driver::geometry::WindowPoint,
+    ) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
+      self.click_calls.fetch_add(1, Ordering::SeqCst);
+      Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
+    }
+  }
 
   #[test]
   fn click_window_point_missing_point_args_returns_error() {
@@ -608,7 +711,8 @@ mod click_window_point_tests {
   }
 
   #[test]
-  fn click_window_point_dry_run_succeeds_without_driver() {
+  fn click_window_point_valid_dry_run_resolves_window_without_clicking() {
+    let capability = ControlledWindowCapability::new();
     let mut inputs = BTreeMap::new();
     inputs.insert("offset_x".to_string(), "640".to_string());
     inputs.insert("offset_y".to_string(), "360".to_string());
@@ -619,8 +723,61 @@ mod click_window_point_tests {
       dry_run: true,
       cancellation: crate::InvokeCancellation::new(),
     };
-    let output = futures_executor::block_on(click_window_point(input)).expect("dry run should succeed");
+    let output = futures_executor::block_on(click_window_point_with_capability(input, &capability)).expect("dry run should succeed");
+
     assert!(output.summary.contains("dry run: input.clickWindowPoint"));
+    assert_eq!(capability.resolve_count(), 1);
+    assert_eq!(capability.click_count(), 0);
+  }
+
+  #[test]
+  fn click_window_point_out_of_bounds_dry_run_fails_without_clicking() {
+    let capability = ControlledWindowCapability::new();
+    let input = InvokeCommandInput {
+      command_id: "input.clickWindowPoint".to_string(),
+      target_application_id: Some("com.example.App".to_string()),
+      inputs: BTreeMap::from([
+        ("offset_x".to_string(), "1280.01".to_string()),
+        ("offset_y".to_string(), "360".to_string()),
+      ]),
+      dry_run: true,
+      cancellation: crate::InvokeCancellation::new(),
+    };
+
+    // ROOT CAUSE:
+    //
+    // If a syntactically valid positive offset exceeded the resolved window,
+    // dry-run completed because the handler returned before window resolution.
+    //
+    // Before the fix, this input completed without consulting window geometry.
+    // The fix resolves containment before dry-run returns and never clicks.
+    let error = futures_executor::block_on(click_window_point_with_capability(input, &capability))
+      .expect_err("out-of-bounds dry-run offset must fail");
+
+    assert!(error.contains("outside target window bounds"), "{error}");
+    assert_eq!(capability.resolve_count(), 1);
+    assert_eq!(capability.click_count(), 0);
+  }
+
+  #[test]
+  fn click_window_point_live_resolves_once_before_clicking() {
+    let capability = ControlledWindowCapability::new();
+    let input = InvokeCommandInput {
+      command_id: "input.clickWindowPoint".to_string(),
+      target_application_id: Some("com.example.App".to_string()),
+      inputs: BTreeMap::from([
+        ("offset_x".to_string(), "640".to_string()),
+        ("offset_y".to_string(), "360".to_string()),
+      ]),
+      dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
+    };
+
+    let output = futures_executor::block_on(click_window_point_with_capability(input, &capability)).expect("valid live point");
+
+    assert_eq!(output.summary, "clicked window point");
+    assert_eq!(capability.resolve_count(), 1);
+    assert_eq!(capability.click_count(), 1);
   }
 
   #[test]
