@@ -18,6 +18,7 @@ use tokio::net::TcpListener;
 use url::Url;
 
 use crate::InspectResult;
+use crate::read_projection::{DefaultInspectRunExtension, InspectRunExtension};
 use crate::run_api;
 use crate::session::{InspectServerSession, write_inspect_session};
 use crate::viewer_assets::{VIEWER_HTML, viewer_asset};
@@ -31,6 +32,7 @@ pub const DEFAULT_INSPECT_PORT: u16 = 8765;
 
 pub(crate) struct InspectServerState {
   pub(crate) store: Arc<dyn RunStore>,
+  pub(crate) extension: Arc<dyn InspectRunExtension>,
   pub(crate) artifacts: ArtifactApiState,
   pub(crate) artifact_origin: Option<Url>,
   pub(crate) mutation_arbitrator: RunMutationArbitrator,
@@ -146,7 +148,12 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
 /// [`serve`], which enforces loopback binding, or install an independently
 /// reviewed access-control boundary before exposing it.
 pub fn router(store: Arc<dyn RunStore>) -> Router {
-  build_router(store, None)
+  router_with_extension(store, Arc::new(DefaultInspectRunExtension))
+}
+
+/// Builds the Inspect router with a named product read extension.
+pub fn router_with_extension(store: Arc<dyn RunStore>, extension: Arc<dyn InspectRunExtension>) -> Router {
+  build_router(store, None, extension)
 }
 
 /// Builds the Inspect router with a trusted public artifact origin.
@@ -156,12 +163,13 @@ pub fn router(store: Arc<dyn RunStore>) -> Router {
 /// reviewed access-control boundary before exposing it. The artifact origin
 /// must come from that trusted composition boundary, never request headers.
 pub fn router_with_artifact_origin(store: Arc<dyn RunStore>, artifact_origin: Url) -> InspectResult<Router> {
-  Ok(build_router(store, Some(normalize_artifact_origin(artifact_origin)?)))
+  Ok(build_router(store, Some(normalize_artifact_origin(artifact_origin)?), Arc::new(DefaultInspectRunExtension)))
 }
 
-fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>) -> Router {
+fn build_router(store: Arc<dyn RunStore>, artifact_origin: Option<Url>, extension: Arc<dyn InspectRunExtension>) -> Router {
   let state = Arc::new(InspectServerState {
     store,
+    extension,
     artifacts: ArtifactApiState::new(),
     artifact_origin,
     mutation_arbitrator: RunMutationArbitrator::new(),
@@ -196,7 +204,11 @@ fn normalize_artifact_origin(mut origin: Url) -> InspectResult<Url> {
 }
 
 /// Binds one loopback-only Inspect authority and publishes its discovery session.
-pub async fn serve(store: Arc<dyn RunStore>, config: InspectServeConfig) -> InspectResult<SocketAddr> {
+pub async fn serve(
+  store: Arc<dyn RunStore>,
+  config: InspectServeConfig,
+  extension: Arc<dyn InspectRunExtension>,
+) -> InspectResult<SocketAddr> {
   let display_address = format!("{}:{}", config.host, config.port);
   let addresses = tokio::net::lookup_host((config.host.as_str(), config.port))
     .await
@@ -216,7 +228,7 @@ pub async fn serve(store: Arc<dyn RunStore>, config: InspectServeConfig) -> Insp
   let local_address = listener.local_addr().map_err(|error| format!("failed to read inspect server address: {error}"))?;
   let artifact_origin =
     Url::parse(&format!("http://{local_address}/")).map_err(|error| format!("failed to construct inspect artifact origin: {error}"))?;
-  let app = router_with_artifact_origin(store.clone(), artifact_origin)?;
+  let app = build_router(store.clone(), Some(normalize_artifact_origin(artifact_origin)?), extension);
   println!("inspect server: http://{local_address}");
   write_inspect_session(&InspectServerSession {
     url: format!("http://{local_address}"),

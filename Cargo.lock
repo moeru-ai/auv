@@ -397,7 +397,6 @@ dependencies = [
  "auv-tracing-driver",
  "auv-tracing-inspect",
  "axum",
- "futures-executor",
  "futures-util",
  "image",
  "objc2-core-foundation",

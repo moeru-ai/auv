@@ -43,6 +43,7 @@ pub(crate) fn routes() -> Router<Arc<InspectServerState>> {
     .route("/v1/runs/{run_id}/commits", get(commits_after).post(commit))
     .route("/v1/runs/{run_id}/commits/by-idempotency-key/{key}", get(lookup_commit))
     .route("/v1/runs/{run_id}/snapshot", get(snapshot))
+    .route("/v1/runs/{run_id}/extensions/{extension}", get(run_extension))
     .route("/v1/runs/{run_id}/commits/stream", get(commit_stream))
 }
 
@@ -135,6 +136,27 @@ async fn snapshot(State(state): State<Arc<InspectServerState>>, path: Result<Pat
   let run_id = parse_run_id(&run_id)?;
   match state.store.load_snapshot(run_id).await.map_err(ApiFailure::from_read)? {
     Some(snapshot) => Ok(run_json(StatusCode::OK, &snapshot)),
+    None => Err(ApiFailure::not_found()),
+  }
+}
+
+/// Projects one named extension from the V1 server's canonical snapshot.
+///
+/// Triggering workflow:
+/// `routes` -> `GET /v1/runs/{run_id}/extensions/{extension}`
+/// -> `run_extension` -> `InspectRunExtension::project_json`
+///
+/// Upstream: `routes` installs this handler on the V1 run router.
+/// Downstream: the installed projection reads through `InspectServerState::store`.
+async fn run_extension(
+  State(state): State<Arc<InspectServerState>>,
+  path: Result<Path<(String, String)>, PathRejection>,
+) -> Result<Response, ApiFailure> {
+  let Path((run_id, extension)) = path.map_err(|_| ApiFailure::invalid_reference())?;
+  let run_id = parse_run_id(&run_id)?;
+  let snapshot = state.store.load_snapshot(run_id).await.map_err(ApiFailure::from_read)?.ok_or_else(ApiFailure::not_found)?;
+  match state.extension.project_json(&extension, &state.store, &snapshot).await.map_err(|_| ApiFailure::extension_failed())? {
+    Some(payload) => Ok(axum::Json(payload).into_response()),
     None => Err(ApiFailure::not_found()),
   }
 }
@@ -313,6 +335,15 @@ impl ApiFailure {
 
   fn commit_unknown() -> Self {
     Self::unavailable(ErrorCode::parse("auv.inspect.commit_unknown").expect("static error code"))
+  }
+
+  fn extension_failed() -> Self {
+    Self {
+      status: StatusCode::INTERNAL_SERVER_ERROR,
+      body: RunApiError::Integrity {
+        code: ErrorCode::parse("auv.inspect.extension_failed").expect("static error code"),
+      },
+    }
   }
 
   fn payload_too_large() -> Self {

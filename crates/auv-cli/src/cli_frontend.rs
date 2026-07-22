@@ -99,7 +99,7 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       host: host.clone(),
       port: *port,
     };
-    auv_inspect_server::serve(store, config).await?;
+    auv_inspect_server::serve(store, config, Arc::new(crate::projection::ProductInspectReadProjection::default())).await?;
     return Ok(0);
   }
 
@@ -2572,7 +2572,7 @@ mod tests {
     let _ = fs::remove_dir_all(&root);
     let store = open_inspect_authority_store(&root).expect("file authority should open");
     let authority_id = store.authority_id();
-    let app = auv_inspect_server::router(store);
+    let app = auv_inspect_server::router_with_extension(store, Arc::new(crate::projection::ProductInspectReadProjection::default()));
 
     let response = app
       .clone()

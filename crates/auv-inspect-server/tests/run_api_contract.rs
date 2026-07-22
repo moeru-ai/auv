@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use auv_inspect_server::{InspectServeConfig, router, router_with_artifact_origin, serve};
+use auv_inspect_server::{InspectRunExtension, InspectServeConfig, router, router_with_artifact_origin, router_with_extension, serve};
 use auv_tracing::{
   ArtifactBody, ArtifactReader, ArtifactWriteError, Attributes, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode, EventId,
   EventName, EventOccurred, EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage,
@@ -63,6 +63,34 @@ struct CommitUnknownStore {
 struct SubscriptionFaultStore {
   inner: MemoryRunStore,
   error: ReadError,
+}
+
+struct ExtensionProbe {
+  expected_store: std::sync::Weak<dyn RunStore>,
+  calls: AtomicUsize,
+}
+
+impl InspectRunExtension for ExtensionProbe {
+  fn project_json<'a>(
+    &'a self,
+    extension: &'a str,
+    store: &'a Arc<dyn RunStore>,
+    snapshot: &'a auv_tracing::RunSnapshot,
+  ) -> BoxFuture<'a, auv_inspect_server::InspectResult<Option<Value>>> {
+    Box::pin(async move {
+      let expected_store = self.expected_store.upgrade().expect("server store remains live during projection");
+      assert!(Arc::ptr_eq(&expected_store, store), "extension must receive the server state's exact RunStore Arc");
+      self.calls.fetch_add(1, Ordering::SeqCst);
+      if extension == "demo-extension" {
+        return Ok(Some(json!({
+          "extension": extension,
+          "run_id": snapshot.run_id(),
+          "through_revision": snapshot.through_revision(),
+        })));
+      }
+      Ok(None)
+    })
+  }
 }
 
 impl FaultingRunStore {
@@ -427,6 +455,62 @@ async fn authority_endpoint_advertises_one_configured_artifact_base_without_chan
   assert_eq!(json_body(response).await, json!({"authority_id": AUTHORITY}));
 }
 
+// ROOT CAUSE:
+//
+// The V1 router state retained only its RunStore, so production had no async
+// path from a run extension request to the canonical RunSnapshot authority.
+// Before the fix, only the retired synchronous projection exposed extensions.
+// The fix invokes the installed extension with the state-owned store and its snapshot.
+#[tokio::test]
+async fn v1_extension_route_invokes_the_installed_extension_with_the_server_authority() {
+  let store: Arc<dyn RunStore> = Arc::new(MemoryRunStore::new(authority_id()));
+  store
+    .commit(RunCommitRequest::new(authority_id(), run_id(), KEY_ONE.parse().unwrap(), vec![start_span("auv.test.root")]).unwrap())
+    .await
+    .expect("seed run");
+  let extension = Arc::new(ExtensionProbe {
+    expected_store: Arc::downgrade(&store),
+    calls: AtomicUsize::new(0),
+  });
+  let app = router_with_extension(store, extension.clone());
+
+  let response = app
+    .oneshot(Request::builder().uri(format!("/v1/runs/{RUN}/extensions/demo-extension")).body(Body::empty()).expect("extension request"))
+    .await
+    .expect("extension response");
+
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), "application/json");
+  assert_eq!(json_body(response).await, json!({"extension":"demo-extension","run_id":RUN,"through_revision":1}));
+  assert_eq!(extension.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn v1_extension_route_preserves_unknown_extension_not_found_behavior() {
+  let store: Arc<dyn RunStore> = Arc::new(MemoryRunStore::new(authority_id()));
+  store
+    .commit(RunCommitRequest::new(authority_id(), run_id(), KEY_ONE.parse().unwrap(), vec![start_span("auv.test.root")]).unwrap())
+    .await
+    .expect("seed run");
+  let extension = Arc::new(ExtensionProbe {
+    expected_store: Arc::downgrade(&store),
+    calls: AtomicUsize::new(0),
+  });
+  let app = router_with_extension(store, extension.clone());
+
+  let response = app
+    .oneshot(
+      Request::builder().uri(format!("/v1/runs/{RUN}/extensions/not-a-real-extension")).body(Body::empty()).expect("extension request"),
+    )
+    .await
+    .expect("extension response");
+
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+  assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+  assert_eq!(json_body(response).await, json!("not_found"));
+  assert_eq!(extension.calls.load(Ordering::SeqCst), 1);
+}
+
 #[tokio::test]
 async fn commit_is_created_then_replayed_and_conflicting_replay_is_rejected() {
   let app = router(Arc::new(MemoryRunStore::new(authority_id())));
@@ -661,14 +745,20 @@ async fn standard_serve_rejects_non_loopback_before_writing_discovery() {
     std::env::set_var("AUV_INSPECT_SESSION", &session_path);
   }
 
+  let store: Arc<dyn RunStore> = Arc::new(MemoryRunStore::new(authority_id()));
+  let extension = Arc::new(ExtensionProbe {
+    expected_store: Arc::downgrade(&store),
+    calls: AtomicUsize::new(0),
+  });
   let result = tokio::time::timeout(
     std::time::Duration::from_millis(250),
     serve(
-      Arc::new(MemoryRunStore::new(authority_id())),
+      store,
       InspectServeConfig {
         host: "0.0.0.0".to_string(),
         port: 0,
       },
+      extension,
     ),
   )
   .await;
