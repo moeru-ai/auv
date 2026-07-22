@@ -116,7 +116,7 @@ pub fn build_texture_sweep_samples_from_bundles(inputs: TextureSweepSampleBuildI
 
   let sample_set = TextureSweepSampleSet {
     source: Some(TextureSweepSampleSource {
-      generated_at_millis: auv_tracing_driver::now_millis(),
+      generated_at_millis: crate::run_read::now_millis(),
       generator: TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR.to_string(),
       source_run_ids: source_run_ids.into_iter().collect(),
       bundle_manifest_paths: inputs.bundle_manifest_paths.iter().map(|path| path.to_string_lossy().into_owned()).collect(),

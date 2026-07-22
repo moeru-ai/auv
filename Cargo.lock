@@ -549,12 +549,16 @@ dependencies = [
  "auv-inspect-model",
  "auv-query-readiness",
  "auv-stage-status",
- "auv-tracing-driver",
+ "auv-tracing",
+ "futures-executor",
+ "futures-util",
  "image",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

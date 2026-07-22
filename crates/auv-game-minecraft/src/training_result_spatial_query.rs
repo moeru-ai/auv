@@ -14,6 +14,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +33,22 @@ pub type TrainingResultSpatialQueryResult<T> = Result<T, String>;
 
 pub const TRAINING_RESULT_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_RESULT_SPATIAL_QUERY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE: &str = "auv.minecraft.training.spatial_query";
+
+pub async fn publish_minecraft_training_spatial_query(
+  context: Option<&Context>,
+  query: &TrainingResultSpatialQueryManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE, query, |_| Ok(())).await
+}
+
+pub async fn read_minecraft_training_spatial_query(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<TrainingResultSpatialQueryManifest, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE, |_| Ok(())).await
+}
 
 const QUERY_MANIFEST_FILE: &str = "minecraft-3dgs-training-result-query.json";
 const QUERY_INSPECT_FILE: &str = "minecraft-3dgs-training-result-query-inspect.json";
@@ -313,7 +330,7 @@ pub fn query_3dgs_training_result(
   let scene_packet_dir =
     scene_packet_manifest_path.parent().ok_or_else(|| "MC-7 scene packet manifest path has no parent directory".to_string())?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let mut known_limits = BTreeSet::new();
   known_limits.extend(semantic_manifest.known_limits.iter().cloned());
   known_limits.insert(

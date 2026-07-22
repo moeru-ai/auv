@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,22 @@ pub type ScenePacketResult<T> = Result<T, String>;
 
 pub const SCENE_PACKET_SCHEMA_VERSION: u32 = 1;
 pub const SCENE_PACKET_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const MINECRAFT_SCENE_PACKET_PURPOSE: &str = "auv.minecraft.scene_packet";
+
+pub async fn publish_minecraft_scene_packet(
+  context: Option<&Context>,
+  packet: &ScenePacketManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, MINECRAFT_SCENE_PACKET_PURPOSE, packet, |_| Ok(())).await
+}
+
+pub async fn read_minecraft_scene_packet(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<ScenePacketManifest, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_SCENE_PACKET_PURPOSE, |_| Ok(())).await
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScenePacketInputs {
@@ -312,7 +329,7 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
 
   let manifest = ScenePacketManifest {
     schema_version: SCENE_PACKET_SCHEMA_VERSION,
-    generated_at_millis: auv_tracing_driver::now_millis(),
+    generated_at_millis: crate::run_read::now_millis(),
     source_bundle_manifest_paths: source_bundle_manifest_paths.clone(),
     source_run_ids: source_run_ids.clone(),
     counts: ScenePacketCounts {
