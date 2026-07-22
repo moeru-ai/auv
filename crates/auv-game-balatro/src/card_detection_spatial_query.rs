@@ -8,6 +8,7 @@ use auv_file::{
 };
 use auv_stage_status::StageStatus;
 use auv_task_object_detection::Detection;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,7 @@ pub type CardDetectionSpatialQueryResult<T> = Result<T, String>;
 
 pub const CARD_DETECTION_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const CARD_DETECTION_SPATIAL_QUERY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const CARD_DETECTION_SPATIAL_QUERY_PURPOSE: &str = "auv.balatro.card_detection.spatial_query";
 
 const QUERY_MANIFEST_FILE: &str = "balatro-card-detection-spatial-query.json";
 const QUERY_INSPECT_FILE: &str = "balatro-card-detection-spatial-query-inspect.json";
@@ -131,12 +133,31 @@ impl CardDetectionSpatialQueryReason {
   }
 }
 
+pub async fn publish_card_detection_spatial_query(
+  context: Option<&Context>,
+  query: &CardDetectionSpatialQueryManifest,
+) -> Result<Option<ArtifactMetadata>, crate::BalatroArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, CARD_DETECTION_SPATIAL_QUERY_PURPOSE, query).await
+}
+
+pub async fn read_card_detection_spatial_query(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<CardDetectionSpatialQueryManifest, crate::BalatroArtifactReadError> {
+  let bytes = crate::run_read::read_json_artifact_bytes(store, snapshot, uri, CARD_DETECTION_SPATIAL_QUERY_PURPOSE).await?;
+  serde_json::from_slice(&bytes).map_err(|source| crate::BalatroArtifactReadError::MalformedJson {
+    uri: uri.clone(),
+    source,
+  })
+}
+
 pub fn query_card_detection_spatial(
   inputs: CardDetectionSpatialQueryInputs,
 ) -> CardDetectionSpatialQueryResult<CardDetectionSpatialQueryOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = now_millis();
   let semantic_manifest = read_json_file::<CardDetectionSemanticManifest>(
     &inputs.card_detection_semantic_manifest_path,
     "balatro card detection semantic manifest",
@@ -357,6 +378,10 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
       format!("failed to serialize {}: {error}", path.display())
     }
   })
+}
+
+fn now_millis() -> u64 {
+  u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
