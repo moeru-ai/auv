@@ -1,3 +1,4 @@
+use std::error::Error as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -20,9 +21,10 @@ use auv_game_balatro::{
 };
 use auv_stage_status::StageStatus;
 use auv_tracing::{
-  ArtifactId, ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, BoxFuture, ByteLength, ContentType, Context, IdempotencyKey,
-  MemoryRunStore, RunId, RunSnapshot, RunStore, Sha256Digest, StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector,
-  TelemetryRoutePolicy, configure, dispatcher,
+  ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
+  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError,
+  RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription, Sha256Digest,
+  StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -162,7 +164,18 @@ fn enabled_publication_rejects_json_over_the_balatro_limit() {
 
     let error = publish_card_detection_witness(Some(&root), &witness).await.expect_err("oversized JSON must not be published");
 
-    assert!(matches!(error, BalatroArtifactPublishError::PayloadTooLarge { .. }));
+    match error {
+      BalatroArtifactPublishError::PayloadTooLarge {
+        purpose,
+        limit,
+        actual,
+      } => {
+        assert_eq!(purpose, ArtifactPurpose::parse(CARD_DETECTION_EVAL_WITNESS_PURPOSE).expect("witness purpose"));
+        assert_eq!(limit, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
+        assert!(actual > limit);
+      }
+      other => panic!("expected typed payload-too-large error, got {other:?}"),
+    }
   });
 }
 
@@ -220,7 +233,18 @@ fn reader_rejects_wrong_committed_purpose() {
       .await
       .expect_err("committed purpose must match the typed reader");
 
-    assert!(matches!(error, BalatroArtifactReadError::WrongPurpose { .. }));
+    match error {
+      BalatroArtifactReadError::WrongPurpose {
+        uri,
+        expected,
+        actual,
+      } => {
+        assert_eq!(*uri, published.uri);
+        assert_eq!(expected, ArtifactPurpose::parse(CARD_DETECTION_EVAL_WITNESS_PURPOSE).expect("witness purpose"));
+        assert_eq!(actual, ArtifactPurpose::parse(CARD_DETECTION_QUALITY_PURPOSE).expect("quality purpose"));
+      }
+      other => panic!("expected typed wrong-purpose error, got {other:?}"),
+    }
   });
 }
 
@@ -236,7 +260,18 @@ fn reader_rejects_wrong_committed_content_type() {
       .await
       .expect_err("committed content type must be application/json");
 
-    assert!(matches!(error, BalatroArtifactReadError::WrongContentType { .. }));
+    match error {
+      BalatroArtifactReadError::WrongContentType {
+        uri,
+        expected,
+        actual,
+      } => {
+        assert_eq!(*uri, published.uri);
+        assert_eq!(*expected, ContentType::parse("application/json").expect("JSON content type"));
+        assert_eq!(*actual, ContentType::parse("text/plain").expect("plain-text content type"));
+      }
+      other => panic!("expected typed wrong-content-type error, got {other:?}"),
+    }
   });
 }
 
@@ -265,6 +300,133 @@ fn reader_rejects_committed_length_mismatches_in_both_directions() {
 }
 
 #[test]
+fn typed_reader_preserves_open_artifact_failures() {
+  futures_executor::block_on(async {
+    let published = published_witness(&sample_witness()).await;
+    let expected_source = ReadError::Unavailable(ErrorCode::parse("auv.test.open_unavailable").expect("open failure code"));
+    let store = ControlledOpenRunStore::new(published.store.clone(), OpenArtifactBehavior::Fail(expected_source.clone()));
+
+    let error =
+      read_card_detection_witness(&store, &published.snapshot, &published.uri).await.expect_err("open failure must reach the typed reader");
+
+    assert_eq!(error.source().and_then(|source| source.downcast_ref::<ReadError>()), Some(&expected_source));
+    match error {
+      BalatroArtifactReadError::Open { uri, source } => {
+        assert_eq!(uri, published.uri);
+        assert_eq!(source, expected_source);
+      }
+      other => panic!("expected typed open error, got {other:?}"),
+    }
+    assert_eq!(store.open_count(), 1);
+  });
+}
+
+#[test]
+fn typed_reader_preserves_mid_stream_artifact_failures() {
+  futures_executor::block_on(async {
+    let published = published_witness(&sample_witness()).await;
+    let body = serde_json::to_vec(&sample_witness()).expect("serialize witness fixture");
+    let expected_source = ArtifactReadError::Unavailable(ErrorCode::parse("auv.test.stream_unavailable").expect("stream failure code"));
+    let store = ControlledOpenRunStore::new(
+      published.store.clone(),
+      OpenArtifactBehavior::Stream(vec![Ok(body[..7].to_vec()), Err(expected_source.clone())]),
+    );
+
+    let error = read_card_detection_witness(&store, &published.snapshot, &published.uri)
+      .await
+      .expect_err("mid-stream failure must reach the typed reader");
+
+    assert_eq!(error.source().and_then(|source| source.downcast_ref::<ArtifactReadError>()), Some(&expected_source));
+    match error {
+      BalatroArtifactReadError::Stream { uri, source } => {
+        assert_eq!(uri, published.uri);
+        assert_eq!(source, expected_source);
+      }
+      other => panic!("expected typed stream error, got {other:?}"),
+    }
+    assert_eq!(store.open_count(), 1);
+  });
+}
+
+#[test]
+fn typed_reader_accepts_a_chunked_normal_stream() {
+  futures_executor::block_on(async {
+    let expected = sample_witness();
+    let published = published_witness(&expected).await;
+    let body = serde_json::to_vec(&expected).expect("serialize witness fixture");
+    let chunks = body.chunks(11).map(|chunk| Ok(chunk.to_vec())).collect();
+    let store = ControlledOpenRunStore::new(published.store.clone(), OpenArtifactBehavior::Stream(chunks));
+
+    let actual = read_card_detection_witness(&store, &published.snapshot, &published.uri).await.expect("read chunked witness stream");
+
+    assert_eq!(actual, expected);
+    assert_eq!(store.open_count(), 1);
+  });
+}
+
+#[test]
+fn typed_reader_reports_a_partial_stream_length() {
+  futures_executor::block_on(async {
+    let expected = sample_witness();
+    let published = published_witness(&expected).await;
+    let mut body = serde_json::to_vec(&expected).expect("serialize witness fixture");
+    body.pop().expect("witness fixture is non-empty");
+    let actual = u64::try_from(body.len()).expect("partial fixture length fits u64");
+    let expected = published.snapshot.artifacts().get(&published.uri).expect("published witness").metadata().byte_length().get();
+    let store = ControlledOpenRunStore::new(published.store.clone(), OpenArtifactBehavior::Stream(vec![Ok(body)]));
+
+    let error = read_card_detection_witness(&store, &published.snapshot, &published.uri)
+      .await
+      .expect_err("partial stream must fail committed length validation");
+
+    match error {
+      BalatroArtifactReadError::LengthMismatch {
+        uri,
+        expected: error_expected,
+        actual: error_actual,
+      } => {
+        assert_eq!(uri, published.uri);
+        assert_eq!(error_expected, expected);
+        assert_eq!(error_actual, actual);
+      }
+      other => panic!("expected typed length mismatch, got {other:?}"),
+    }
+    assert_eq!(store.open_count(), 1);
+  });
+}
+
+#[test]
+fn typed_reader_reports_an_extra_stream_length() {
+  futures_executor::block_on(async {
+    let expected = sample_witness();
+    let published = published_witness(&expected).await;
+    let mut body = serde_json::to_vec(&expected).expect("serialize witness fixture");
+    body.extend_from_slice(b"extra");
+    let actual = u64::try_from(body.len()).expect("extra fixture length fits u64");
+    let expected = published.snapshot.artifacts().get(&published.uri).expect("published witness").metadata().byte_length().get();
+    let store = ControlledOpenRunStore::new(published.store.clone(), OpenArtifactBehavior::Stream(vec![Ok(body)]));
+
+    let error = read_card_detection_witness(&store, &published.snapshot, &published.uri)
+      .await
+      .expect_err("extra stream must fail committed length validation");
+
+    match error {
+      BalatroArtifactReadError::LengthMismatch {
+        uri,
+        expected: error_expected,
+        actual: error_actual,
+      } => {
+        assert_eq!(uri, published.uri);
+        assert_eq!(error_expected, expected);
+        assert_eq!(error_actual, actual);
+      }
+      other => panic!("expected typed length mismatch, got {other:?}"),
+    }
+    assert_eq!(store.open_count(), 1);
+  });
+}
+
+#[test]
 fn reader_rejects_wrong_committed_digest() {
   futures_executor::block_on(async {
     let published = published_witness(&sample_witness()).await;
@@ -276,7 +438,18 @@ fn reader_rejects_wrong_committed_digest() {
       .await
       .expect_err("committed digest must match streamed bytes");
 
-    assert!(matches!(error, BalatroArtifactReadError::DigestMismatch { .. }));
+    match error {
+      BalatroArtifactReadError::DigestMismatch {
+        uri,
+        expected,
+        actual,
+      } => {
+        assert_eq!(*uri, published.uri);
+        assert_eq!(expected, Sha256Digest::new([0; 32]));
+        assert_eq!(actual, published.snapshot.artifacts().get(&published.uri).expect("published witness").metadata().sha256());
+      }
+      other => panic!("expected typed digest-mismatch error, got {other:?}"),
+    }
   });
 }
 
@@ -287,12 +460,19 @@ fn reader_rejects_committed_json_over_the_balatro_limit_before_opening() {
     let snapshot = snapshot_with_metadata(&published.snapshot, &published.uri, |metadata| {
       metadata["byte_length"] = json!(BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1);
     });
+    let store = ControlledOpenRunStore::new(published.store.clone(), OpenArtifactBehavior::Delegate);
 
-    let error = read_card_detection_witness(published.store.as_ref(), &snapshot, &published.uri)
-      .await
-      .expect_err("oversized committed JSON must be rejected");
+    let error = read_card_detection_witness(&store, &snapshot, &published.uri).await.expect_err("oversized committed JSON must be rejected");
 
-    assert!(matches!(error, BalatroArtifactReadError::PayloadTooLarge { .. }));
+    match error {
+      BalatroArtifactReadError::PayloadTooLarge { uri, limit, actual } => {
+        assert_eq!(uri, published.uri);
+        assert_eq!(limit, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
+        assert_eq!(actual, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1);
+      }
+      other => panic!("expected typed payload-too-large error, got {other:?}"),
+    }
+    assert_eq!(store.open_count(), 0);
   });
 }
 
@@ -314,6 +494,81 @@ struct PublishedWitness {
   store: Arc<MemoryRunStore>,
   snapshot: RunSnapshot,
   uri: ArtifactUri,
+}
+
+#[derive(Clone)]
+enum OpenArtifactBehavior {
+  Delegate,
+  Fail(ReadError),
+  Stream(Vec<Result<Vec<u8>, ArtifactReadError>>),
+}
+
+struct ControlledOpenRunStore {
+  inner: Arc<MemoryRunStore>,
+  behavior: OpenArtifactBehavior,
+  open_count: AtomicUsize,
+}
+
+impl ControlledOpenRunStore {
+  fn new(inner: Arc<MemoryRunStore>, behavior: OpenArtifactBehavior) -> Self {
+    Self {
+      inner,
+      behavior,
+      open_count: AtomicUsize::new(0),
+    }
+  }
+
+  fn open_count(&self) -> usize {
+    self.open_count.load(Ordering::Relaxed)
+  }
+}
+
+impl RunStore for ControlledOpenRunStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    self.inner.write_artifact(request, body)
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.open_count.fetch_add(1, Ordering::Relaxed);
+    match &self.behavior {
+      OpenArtifactBehavior::Delegate => self.inner.open_artifact(uri),
+      OpenArtifactBehavior::Fail(source) => {
+        let source = source.clone();
+        Box::pin(async move { Err(source) })
+      }
+      OpenArtifactBehavior::Stream(chunks) => {
+        let chunks = chunks.clone();
+        Box::pin(async move {
+          let reader: ArtifactReader = Box::pin(futures_util::stream::iter(chunks.into_iter().map(|chunk| chunk.map(Into::into))));
+          Ok(reader)
+        })
+      }
+    }
+  }
 }
 
 async fn published_witness(expected: &CardDetectionEvalWitnessManifest) -> PublishedWitness {
