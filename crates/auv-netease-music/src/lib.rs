@@ -640,17 +640,29 @@ enum SidebarScrollbarBoundary {
 
 /// Decode a stored playlist sidebar scan artifact and reject unknown wire
 /// shapes before interpreting the app-specific fields.
-pub fn decode_playlist_sidebar_scan_json(input: &str) -> Result<PlaylistSidebarScan, String> {
-  let value: serde_json::Value = serde_json::from_str(input).map_err(|error| format!("invalid playlist sidebar scan JSON: {error}"))?;
-  let schema_version = value
-    .get("schema_version")
-    .and_then(serde_json::Value::as_str)
-    .ok_or_else(|| "playlist sidebar scan JSON is missing schema_version".to_string())?;
+#[derive(Debug, thiserror::Error)]
+pub enum PlaylistSidebarScanDecodeError {
+  #[error("invalid playlist sidebar scan JSON: {0}")]
+  InvalidJson(#[source] serde_json::Error),
+  #[error("playlist sidebar scan JSON is missing schema_version")]
+  MissingSchemaVersion,
+  #[error("unsupported playlist sidebar scan schema_version {actual:?}; expected {VIEW_IR_SCHEMA_VERSION:?}")]
+  UnsupportedSchemaVersion { actual: String },
+  #[error("invalid playlist sidebar scan shape: {0}")]
+  InvalidShape(#[source] serde_json::Error),
+}
+
+pub fn decode_playlist_sidebar_scan_json(input: &str) -> Result<PlaylistSidebarScan, PlaylistSidebarScanDecodeError> {
+  let value: serde_json::Value = serde_json::from_str(input).map_err(PlaylistSidebarScanDecodeError::InvalidJson)?;
+  let schema_version =
+    value.get("schema_version").and_then(serde_json::Value::as_str).ok_or(PlaylistSidebarScanDecodeError::MissingSchemaVersion)?;
   if schema_version != VIEW_IR_SCHEMA_VERSION {
-    return Err(format!("unsupported playlist sidebar scan schema_version {schema_version:?}; expected {VIEW_IR_SCHEMA_VERSION:?}"));
+    return Err(PlaylistSidebarScanDecodeError::UnsupportedSchemaVersion {
+      actual: schema_version.to_string(),
+    });
   }
 
-  serde_json::from_value(value).map_err(|error| format!("invalid playlist sidebar scan shape: {error}"))
+  serde_json::from_value(value).map_err(PlaylistSidebarScanDecodeError::InvalidShape)
 }
 
 fn optional(value: Option<&str>) -> &str {

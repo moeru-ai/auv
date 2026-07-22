@@ -1039,78 +1039,34 @@ async fn execute_command(command: Command, store: Option<&dyn auv_tracing::RunSt
 async fn read_canonical_playlist_artifacts(
   store: Option<&dyn auv_tracing::RunStore>,
   inputs: &Inputs,
-) -> crate::commands::playlist::CanonicalPlaylistArtifacts {
+) -> crate::recording::CanonicalPlaylistArtifacts {
   let Some(store) = store else {
-    return crate::commands::playlist::CanonicalPlaylistArtifacts::default();
+    return crate::recording::CanonicalPlaylistArtifacts::unavailable(Vec::new());
   };
   let lineage = match crate::recording::read_lineage_manifest_for_inputs(&inputs.artifact_dir, inputs) {
     Ok(lineage) => lineage,
     Err(error) => {
-      return crate::commands::playlist::CanonicalPlaylistArtifacts {
-        read_limits: vec![format!("canonical playlist lineage unavailable: {error}")],
-        ..Default::default()
-      };
+      return crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!("canonical playlist lineage unavailable: {error}")]);
     }
   };
   let scan_snapshot = match store.load_snapshot(lineage.scan_uri.run_id()).await {
     Ok(Some(snapshot)) => snapshot,
     Ok(None) => {
-      return crate::commands::playlist::CanonicalPlaylistArtifacts {
-        read_limits: vec![format!(
-          "canonical playlist run {} is unavailable",
-          lineage.scan_uri.run_id()
-        )],
-        ..Default::default()
-      };
+      return crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!(
+        "canonical playlist run {} is unavailable",
+        lineage.scan_uri.run_id()
+      )]);
     }
     Err(error) => {
-      return crate::commands::playlist::CanonicalPlaylistArtifacts {
-        read_limits: vec![format!("canonical playlist snapshot read failed: {error}")],
-        ..Default::default()
-      };
+      return crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!("canonical playlist snapshot read failed: {error}")]);
     }
   };
-  let scan = match crate::recording::read_playlist_sidebar_scan(store, &scan_snapshot, &lineage.scan_uri).await {
-    Ok(scan) => scan,
+  match crate::recording::read_canonical_playlist_artifacts(store, &scan_snapshot, &lineage, crate::view_memory::enabled()).await {
+    Ok(artifacts) => artifacts,
     Err(error) => {
-      return crate::commands::playlist::CanonicalPlaylistArtifacts {
-        read_limits: vec![format!("canonical playlist artifact read failed: {error}")],
-        ..Default::default()
-      };
+      crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!("canonical playlist artifact read failed: {error}")])
     }
-  };
-  let mut artifacts = crate::commands::playlist::CanonicalPlaylistArtifacts {
-    scan: Some(scan),
-    memory: None,
-    read_limits: Vec::new(),
-  };
-  if !crate::view_memory::enabled() {
-    return artifacts;
   }
-  let Some(memory_uri) = lineage.memory_uri.as_ref() else {
-    return artifacts;
-  };
-  let memory_snapshot = if memory_uri.run_id() == scan_snapshot.run_id() {
-    None
-  } else {
-    match store.load_snapshot(memory_uri.run_id()).await {
-      Ok(Some(snapshot)) => Some(snapshot),
-      Ok(None) => {
-        artifacts.read_limits.push(format!("canonical view-memory run {} is unavailable", memory_uri.run_id()));
-        return artifacts;
-      }
-      Err(error) => {
-        artifacts.read_limits.push(format!("canonical view-memory snapshot read failed: {error}"));
-        return artifacts;
-      }
-    }
-  };
-  let snapshot = memory_snapshot.as_ref().unwrap_or(&scan_snapshot);
-  match crate::recording::read_view_memory(store, snapshot, memory_uri).await {
-    Ok(memory) => artifacts.memory = Some(memory),
-    Err(error) => artifacts.read_limits.push(format!("canonical view-memory artifact read failed: {error}")),
-  }
-  artifacts
 }
 
 #[cfg(test)]
@@ -1654,7 +1610,6 @@ async fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       match crate::recording::write_lineage_manifest(&cmd.inputs.artifact_dir, &persisted.lineage) {
         Ok(()) => {}
         Err(error) => {
-          let _ = std::fs::remove_file(crate::recording::lineage_manifest_path(&cmd.inputs.artifact_dir));
           let message = format!("canonical URI lineage manifest write failed: {error}");
           eprintln!("warning: {message}");
           ls_known_limits.push(message);
@@ -1779,20 +1734,12 @@ fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
 }
 
 async fn publish_playlist_select_result(result: &crate::commands::playlist::PlaylistSelectResult) {
-  let instrumentation = crate::recording::persist_playlist_select_proof(result).await;
-  match instrumentation {
-    crate::recording::PlaylistSelectInstrumentation::Published(_) => {}
-    crate::recording::PlaylistSelectInstrumentation::Disabled => {}
-    crate::recording::PlaylistSelectInstrumentation::Failed(error) => {
-      eprintln!("warning: playlist-select artifact instrumentation failed: {error}");
-    }
+  if let Err(error) = crate::recording::persist_playlist_select_proof(result).await {
+    eprintln!("warning: playlist-select artifact instrumentation failed: {error}");
   }
 }
 
-async fn run_playlist_select_command(
-  cmd: PlaylistSelectCommand,
-  artifacts: &crate::commands::playlist::CanonicalPlaylistArtifacts,
-) -> ExitCode {
+async fn run_playlist_select_command(cmd: PlaylistSelectCommand, artifacts: &crate::recording::CanonicalPlaylistArtifacts) -> ExitCode {
   let result = match crate::commands::playlist::run_playlist_select_with_artifacts(&cmd.inputs, &cmd.query, artifacts) {
     Ok(result) => result,
     Err(error) => {
@@ -1835,7 +1782,7 @@ async fn run_playlist_select_command(
   }
 }
 
-fn run_playlist_play_command(cmd: PlaylistPlayCommand, artifacts: &crate::commands::playlist::CanonicalPlaylistArtifacts) -> ExitCode {
+fn run_playlist_play_command(cmd: PlaylistPlayCommand, artifacts: &crate::recording::CanonicalPlaylistArtifacts) -> ExitCode {
   let result = match &cmd.target {
     PlaylistPlayTarget::Query(query) => crate::commands::playlist::run_playlist_play_with_artifacts(&cmd.inputs, query, artifacts),
     PlaylistPlayTarget::CandidateId(candidate_id) => {

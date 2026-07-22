@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
 
 use auv_netease_music::recording::{
   NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE, NeteaseArtifactPublishError,
-  PLAYLIST_SELECT_RESULT_PURPOSE, PLAYLIST_SIDEBAR_SCAN_PURPOSE, PersistedLineage, PlaylistSelectInstrumentation, VIEW_MEMORY_PURPOSE,
-  persist_playlist_ls_artifacts, persist_playlist_select_proof, read_lineage_manifest, read_playlist_select_result,
-  read_playlist_sidebar_scan, read_view_memory, write_lineage_manifest,
+  NeteaseArtifactReadError, PLAYLIST_SELECT_RESULT_PURPOSE, PLAYLIST_SIDEBAR_SCAN_PURPOSE, PersistedLineage, VIEW_MEMORY_PURPOSE,
+  lineage_manifest_path, persist_playlist_ls_artifacts, persist_playlist_select_proof, read_canonical_playlist_artifacts,
+  read_lineage_manifest, read_playlist_select_result, read_playlist_sidebar_scan, read_view_memory, write_lineage_manifest,
 };
 use auv_netease_music::{
   Inputs, PlaylistSelectResult, PlaylistSidebarScan, decode_playlist_sidebar_scan_json, resolve_playlist_play_candidate,
@@ -57,17 +57,16 @@ impl NeteaseRunFixture {
 
   async fn persist_select_result(&self, result: &PlaylistSelectResult) -> ArtifactMetadata {
     let future = self.root.in_scope(|| persist_playlist_select_proof(result));
-    let instrumentation = self.root.instrument(future).await;
-    let metadata = match instrumentation {
-      auv_netease_music::recording::PlaylistSelectInstrumentation::Published(metadata) => metadata,
-      auv_netease_music::recording::PlaylistSelectInstrumentation::Disabled => panic!("select publication was disabled"),
-      auv_netease_music::recording::PlaylistSelectInstrumentation::Failed(error) => panic!("select publication failed: {error}"),
-    };
+    let metadata = self.root.instrument(future).await.expect("select publication").expect("select publication should be enabled");
     self.dispatch.flush().await.expect("flush playlist-select result");
     metadata
   }
 
   async fn publish_bytes(&self, purpose: &str, content_type: &str, bytes: Vec<u8>) -> ArtifactMetadata {
+    self.publish_bytes_in_run(self.root.clone(), purpose, content_type, bytes).await
+  }
+
+  async fn publish_bytes_in_run(&self, root: Context, purpose: &str, content_type: &str, bytes: Vec<u8>) -> ArtifactMetadata {
     let artifact = NewArtifact::new(
       ArtifactPurpose::parse(purpose).expect("artifact purpose"),
       ContentType::parse(content_type).expect("content type"),
@@ -76,10 +75,14 @@ impl NeteaseRunFixture {
       Attributes::empty(),
       Cursor::new(bytes),
     );
-    let emission = self.root.in_scope(|| auv_tracing::emit_artifact!(artifact));
-    let metadata = self.root.instrument(emission).await.expect("artifact publication").expect("enabled artifact publication");
+    let emission = root.in_scope(|| auv_tracing::emit_artifact!(artifact));
+    let metadata = root.instrument(emission).await.expect("artifact publication").expect("enabled artifact publication");
     self.dispatch.flush().await.expect("flush artifact");
     metadata
+  }
+
+  async fn publish_memory(&self, memory: &ViewMemory) -> ArtifactMetadata {
+    self.publish_bytes(VIEW_MEMORY_PURPOSE, "application/json", serde_json::to_vec(memory).expect("view-memory JSON")).await
   }
 
   async fn snapshot(&self) -> RunSnapshot {
@@ -290,9 +293,25 @@ fn readers_reject_wrong_authority_owner_membership_purpose_and_content_type() {
     assert_eq!(error.code().as_str(), "auv.netease.artifact.dangling_uri");
 
     let error = read_playlist_sidebar_scan(fixture.store(), &snapshot, wrong_purpose.uri()).await.expect_err("wrong purpose");
-    assert_eq!(error.code().as_str(), "auv.netease.artifact.wrong_purpose");
+    match error {
+      NeteaseArtifactReadError::WrongPurpose {
+        expected, actual, ..
+      } => {
+        assert_eq!(expected, ArtifactPurpose::parse(PLAYLIST_SIDEBAR_SCAN_PURPOSE).unwrap());
+        assert_eq!(actual, ArtifactPurpose::parse("auv.netease.other").unwrap());
+      }
+      other => panic!("expected typed wrong-purpose error, got {other:?}"),
+    }
     let error = read_playlist_sidebar_scan(fixture.store(), &snapshot, wrong_content_type.uri()).await.expect_err("wrong content type");
-    assert_eq!(error.code().as_str(), "auv.netease.artifact.wrong_content_type");
+    match error {
+      NeteaseArtifactReadError::WrongContentType {
+        expected, actual, ..
+      } => {
+        assert_eq!(expected, ContentType::parse("application/json").unwrap());
+        assert_eq!(actual, ContentType::parse("application/problem+json").unwrap());
+      }
+      other => panic!("expected typed wrong-content-type error, got {other:?}"),
+    }
   });
 }
 
@@ -357,6 +376,92 @@ fn lineage_manifest_round_trips_only_canonical_uri_references() {
   });
 }
 
+#[cfg(unix)]
+#[test]
+fn lineage_manifest_does_not_follow_predictable_temporary_symlink() {
+  use std::os::unix::fs::symlink;
+
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let persisted = fixture.persist_playlist_scan(&sample_scan()).await;
+    let directory = std::env::temp_dir().join(format!("auv-netease-lineage-symlink-{}", RunId::new()));
+    std::fs::create_dir_all(&directory).expect("create lineage test directory");
+    let victim = directory.join("unrelated.json");
+    std::fs::write(&victim, b"unrelated-content").expect("write symlink victim");
+    let predictable_temporary = directory.join("view-memory-run-lineage.json.tmp");
+    symlink(&victim, &predictable_temporary).expect("install predictable temporary symlink");
+
+    write_lineage_manifest(&directory, &persisted.lineage).expect("publish lineage without following attacker-controlled temp path");
+
+    assert_eq!(std::fs::read(&victim).expect("read symlink victim"), b"unrelated-content");
+    assert!(
+      std::fs::symlink_metadata(&predictable_temporary).expect("predictable temporary symlink metadata").file_type().is_symlink(),
+      "writer must clean only the unique temporary file it created"
+    );
+    assert!(std::fs::symlink_metadata(lineage_manifest_path(&directory)).expect("manifest metadata").file_type().is_file());
+    assert_eq!(read_lineage_manifest(&directory).expect("read published lineage"), persisted.lineage);
+    let _ = std::fs::remove_dir_all(directory);
+  });
+}
+
+#[test]
+fn concurrent_lineage_writers_use_independent_temporary_files() {
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let persisted = fixture.persist_playlist_scan(&sample_scan()).await;
+    let directory = std::env::temp_dir().join(format!("auv-netease-lineage-concurrent-{}", RunId::new()));
+    let writers = 12;
+    let barrier = Arc::new(Barrier::new(writers));
+    let mut handles = Vec::new();
+    for index in 0..writers {
+      let directory = directory.clone();
+      let barrier = barrier.clone();
+      let mut lineage = persisted.lineage.clone();
+      lineage.written_at_millis = index as u64;
+      handles.push(std::thread::spawn(move || {
+        barrier.wait();
+        write_lineage_manifest(&directory, &lineage)
+      }));
+    }
+
+    for handle in handles {
+      handle.join().expect("lineage writer thread").expect("independent atomic lineage update");
+    }
+    let final_lineage = read_lineage_manifest(&directory).expect("read final complete lineage");
+    assert!(final_lineage.written_at_millis < writers as u64);
+    let temporary_files = std::fs::read_dir(&directory)
+      .expect("read lineage directory")
+      .filter_map(Result::ok)
+      .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+      .count();
+    assert_eq!(temporary_files, 0, "successful writers must clean their own temporary files");
+    let _ = std::fs::remove_dir_all(directory);
+  });
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_lineage_update_preserves_last_valid_manifest() {
+  use std::os::unix::fs::PermissionsExt;
+
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let persisted = fixture.persist_playlist_scan(&sample_scan()).await;
+    let directory = std::env::temp_dir().join(format!("auv-netease-lineage-preserve-{}", RunId::new()));
+    write_lineage_manifest(&directory, &persisted.lineage).expect("write initial lineage");
+    let mut replacement = persisted.lineage.clone();
+    replacement.written_at_millis = replacement.written_at_millis.saturating_add(1);
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o500)).expect("make lineage directory read-only");
+
+    let update = write_lineage_manifest(&directory, &replacement);
+
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).expect("restore lineage directory permissions");
+    assert!(update.is_err(), "read-only lineage directory must reject replacement");
+    assert_eq!(read_lineage_manifest(&directory).expect("read retained lineage"), persisted.lineage);
+    let _ = std::fs::remove_dir_all(directory);
+  });
+}
+
 #[test]
 fn disabled_context_preserves_select_result_and_is_not_a_publication_error() {
   futures_executor::block_on(async {
@@ -366,9 +471,8 @@ fn disabled_context_preserves_select_result_and_is_not_a_publication_error() {
     assert!(scan_publication.is_none());
 
     let expected = sample_select_result();
-    let instrumentation = persist_playlist_select_proof(&expected).await;
-    assert!(instrumentation.is_disabled());
-    assert!(instrumentation.failure().is_none());
+    let publication = persist_playlist_select_proof(&expected).await.expect("disabled select publication is not an error");
+    assert!(publication.is_none());
   });
 }
 
@@ -378,12 +482,9 @@ fn disabled_context_skips_artifact_payload_validation() {
     let mut select = sample_select_result();
     select.known_limits.push("x".repeat((NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1) as usize));
 
-    let instrumentation = persist_playlist_select_proof(&select).await;
+    let publication = persist_playlist_select_proof(&select).await;
 
-    assert!(
-      matches!(instrumentation, auv_netease_music::recording::PlaylistSelectInstrumentation::Disabled),
-      "disabled instrumentation must not validate or reject artifact bytes"
-    );
+    assert!(matches!(publication, Ok(None)), "disabled instrumentation must not validate or reject artifact bytes");
   });
 }
 
@@ -400,9 +501,9 @@ fn telemetry_only_context_skips_artifact_payload_validation() {
     let expected = select.clone();
 
     let future = root.in_scope(|| persist_playlist_select_proof(&select));
-    let instrumentation = root.instrument(future).await;
+    let publication = root.instrument(future).await;
 
-    assert!(matches!(instrumentation, PlaylistSelectInstrumentation::Disabled));
+    assert!(matches!(publication, Ok(None)));
     assert_eq!(select, expected);
   });
 }
@@ -416,9 +517,9 @@ fn authority_context_still_rejects_oversized_artifact_payload() {
     let expected = select.clone();
 
     let future = fixture.root.in_scope(|| persist_playlist_select_proof(&select));
-    let instrumentation = fixture.root.instrument(future).await;
+    let publication = fixture.root.instrument(future).await;
 
-    assert!(matches!(instrumentation, PlaylistSelectInstrumentation::Failed(NeteaseArtifactPublishError::PayloadTooLarge { .. })));
+    assert!(matches!(publication, Err(NeteaseArtifactPublishError::PayloadTooLarge { .. })));
     assert_eq!(select, expected);
   });
 }
@@ -438,8 +539,8 @@ fn rejected_publication_is_distinct_from_disabled_publication() {
 
     let select = sample_select_result();
     let select_future = root.in_scope(|| persist_playlist_select_proof(&select));
-    let select_instrumentation = root.instrument(select_future).await;
-    assert!(matches!(select_instrumentation, auv_netease_music::recording::PlaylistSelectInstrumentation::Failed(_)));
+    let select_publication = root.instrument(select_future).await;
+    assert!(matches!(select_publication, Err(NeteaseArtifactPublishError::Publication { .. })));
   });
 }
 
@@ -476,27 +577,119 @@ fn public_typed_candidate_operation_uses_caller_read_scan() {
   futures_executor::block_on(async {
     let fixture = NeteaseRunFixture::memory();
     let scan = sample_scan();
-    let memory = fixture.persist_playlist_scan(&scan).await.memory.expect("typed view memory");
+    let persisted = fixture.persist_playlist_scan(&scan).await;
+    let memory = persisted.memory.clone().expect("typed view memory");
+    let memory_uri = persisted.lineage.memory_uri.as_ref().expect("view-memory URI");
+    assert_eq!(memory_uri.run_id(), persisted.lineage.scan_uri.run_id());
+    assert_eq!(memory.source_run_id, persisted.lineage.scan_uri.run_id().to_string());
+    assert_eq!(memory.source_reconstruction_ref, persisted.lineage.scan_uri.to_string());
+    let snapshot = fixture.snapshot().await;
+    let artifacts = read_canonical_playlist_artifacts(fixture.store(), &snapshot, &persisted.lineage, true)
+      .await
+      .expect("caller-read canonical playlist artifacts");
 
-    let candidate = resolve_playlist_play_candidate(scan.clone(), Some(memory.clone()), "obs1.candidate.hermetic.test")
-      .expect("typed candidate should resolve");
+    let candidate = resolve_playlist_play_candidate(&artifacts, "obs1.candidate.hermetic.test").expect("typed candidate should resolve");
 
-    assert_eq!(candidate.scan, scan);
-    assert_eq!(candidate.memory.as_ref(), Some(&memory));
-    assert_eq!(candidate.target.label, "Hermetic Fixture Playlist");
-    assert_eq!(candidate.target.candidate_id.as_deref(), Some("obs1.candidate.hermetic.test"));
+    assert_eq!(candidate.scan(), &scan);
+    assert_eq!(candidate.memory(), Some(&memory));
+    assert_eq!(candidate.target().label, "Hermetic Fixture Playlist");
+    assert_eq!(candidate.target().candidate_id.as_deref(), Some("obs1.candidate.hermetic.test"));
   });
 }
 
 #[test]
-fn public_api_does_not_export_candidate_play_without_typed_scan() {
-  let crate_root = include_str!("../src/lib.rs");
-  let playlist_commands = include_str!("../src/commands/playlist.rs");
-  let legacy_name = ["run_playlist_play_", "candidate_id"].concat();
-  let legacy_signature = format!("pub fn {legacy_name}(");
+fn canonical_reader_rejects_cross_run_memory_before_candidate_reacquisition() {
+  // ROOT CAUSE:
+  //
+  // A memory artifact from another run could carry source fields copied from
+  // the scan. Payload equality cannot establish same-run artifact provenance.
+  // The reader must reject the memory URI before loading or reacquiring from it.
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let scan = sample_scan();
+    let persisted = fixture.persist_playlist_scan(&scan).await;
+    let matching_memory = persisted.memory.clone().expect("typed view memory");
+    assert_eq!(matching_memory.source_run_id, persisted.lineage.scan_uri.run_id().to_string());
+    assert_eq!(matching_memory.source_reconstruction_ref, persisted.lineage.scan_uri.to_string());
 
-  assert!(!crate_root.contains(&legacy_name));
-  assert!(!playlist_commands.contains(&legacy_signature));
+    let other_run_id = RunId::new();
+    let other_root = dispatcher::with_default(&fixture.dispatch, || Context::root(other_run_id));
+    let other_metadata = fixture
+      .publish_bytes_in_run(
+        other_root,
+        VIEW_MEMORY_PURPOSE,
+        "application/json",
+        serde_json::to_vec(&matching_memory).expect("view-memory JSON"),
+      )
+      .await;
+    let other_snapshot = fixture.store.load_snapshot(other_run_id).await.expect("load other snapshot").expect("other run snapshot");
+    assert_eq!(
+      read_view_memory(fixture.store(), &other_snapshot, other_metadata.uri()).await.expect("read cross-run memory directly"),
+      matching_memory,
+      "the rejected cross-run artifact must otherwise be a valid matching payload"
+    );
+
+    let mut lineage = persisted.lineage;
+    lineage.memory_uri = Some(other_metadata.uri().clone());
+    let snapshot = fixture.snapshot().await;
+
+    let artifacts = read_canonical_playlist_artifacts(fixture.store(), &snapshot, &lineage, true)
+      .await
+      .expect("scan remains usable when memory provenance is rejected");
+    let candidate = resolve_playlist_play_candidate(&artifacts, "obs1.candidate.hermetic.test").expect("candidate from canonical scan");
+
+    assert!(artifacts.memory().is_none());
+    assert!(candidate.memory().is_none());
+    assert!(artifacts.read_limits().iter().any(|limit| limit.contains("cross-run")));
+  });
+}
+
+#[test]
+fn canonical_reader_rejects_unrelated_memory_source_before_candidate_reacquisition() {
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let scan = sample_scan();
+    let persisted = fixture.persist_playlist_scan(&scan).await;
+    let mut memory = persisted.memory.expect("typed view memory");
+    memory.source_reconstruction_ref = ArtifactUri::from_ids(fixture.run_id, ArtifactId::new()).to_string();
+    let metadata = fixture.publish_memory(&memory).await;
+    let mut lineage = persisted.lineage;
+    lineage.memory_uri = Some(metadata.uri().clone());
+    let snapshot = fixture.snapshot().await;
+
+    let artifacts = read_canonical_playlist_artifacts(fixture.store(), &snapshot, &lineage, true)
+      .await
+      .expect("scan remains usable when memory lineage is rejected");
+    let candidate = resolve_playlist_play_candidate(&artifacts, "obs1.candidate.hermetic.test").expect("candidate from canonical scan");
+
+    assert!(artifacts.memory().is_none());
+    assert!(candidate.memory().is_none());
+    assert!(artifacts.read_limits().iter().any(|limit| limit.contains("source reconstruction artifact")));
+  });
+}
+
+#[test]
+fn canonical_reader_rejects_stale_memory_before_candidate_reacquisition() {
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let scan = sample_scan();
+    let persisted = fixture.persist_playlist_scan(&scan).await;
+    let mut memory = persisted.memory.expect("typed view memory");
+    memory.last_reconstructed_at_millis = 1;
+    let metadata = fixture.publish_memory(&memory).await;
+    let mut lineage = persisted.lineage;
+    lineage.memory_uri = Some(metadata.uri().clone());
+    let snapshot = fixture.snapshot().await;
+
+    let artifacts = read_canonical_playlist_artifacts(fixture.store(), &snapshot, &lineage, true)
+      .await
+      .expect("scan remains usable when stale memory is rejected");
+    let candidate = resolve_playlist_play_candidate(&artifacts, "obs1.candidate.hermetic.test").expect("candidate from canonical scan");
+
+    assert!(artifacts.memory().is_none());
+    assert!(candidate.memory().is_none());
+    assert!(artifacts.read_limits().iter().any(|limit| limit.contains("stale")));
+  });
 }
 
 fn sample_scan() -> PlaylistSidebarScan {

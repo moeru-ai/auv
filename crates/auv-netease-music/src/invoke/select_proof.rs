@@ -6,7 +6,7 @@ use auv_cli_invoke::{
 };
 
 use crate::commands::playlist::PlaylistSelectResult;
-use crate::recording::{PLAYLIST_SELECT_RESULT_PURPOSE, PlaylistSelectInstrumentation, persist_playlist_select_proof};
+use crate::recording::{PLAYLIST_SELECT_RESULT_PURPOSE, persist_playlist_select_proof};
 
 #[cfg(feature = "tracing")]
 mod tracing {
@@ -93,19 +93,17 @@ async fn select_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, 
     return Ok(output);
   }
 
-  let instrumentation = persist_playlist_select_proof(&preview).await;
-  let mut output = match instrumentation {
-    PlaylistSelectInstrumentation::Published(metadata) => {
+  let publication = persist_playlist_select_proof(&preview).await;
+  let mut output = match publication {
+    Ok(Some(metadata)) => {
       let run_id = metadata.uri().run_id().to_string();
       let mut output = InvokeCommandOutput::new(format!("persisted hermetic select proof in run {run_id}"));
       output.signals.insert("run_id".to_string(), run_id.clone());
       output.signals.insert("select_result_uri".to_string(), metadata.uri().to_string());
       output
     }
-    PlaylistSelectInstrumentation::Disabled => {
-      InvokeCommandOutput::new("validated hermetic select proof fixture; run artifact publication was disabled")
-    }
-    PlaylistSelectInstrumentation::Failed(error) => {
+    Ok(None) => InvokeCommandOutput::new("validated hermetic select proof fixture; run artifact publication was disabled"),
+    Err(error) => {
       let mut output = InvokeCommandOutput::new("validated hermetic select proof fixture; run artifact was not published");
       output.artifact_failures.push(ArtifactInstrumentationFailure {
         purpose: PLAYLIST_SELECT_RESULT_PURPOSE.to_string(),

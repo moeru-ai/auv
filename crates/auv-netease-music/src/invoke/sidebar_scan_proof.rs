@@ -29,7 +29,7 @@ pub fn build_scan_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSidebar
 
   let bytes = fs::read(&fixture_path).map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
   let json = std::str::from_utf8(&bytes).map_err(|error| format!("fixture {} is not valid UTF-8: {error}", fixture_path.display()))?;
-  decode_playlist_sidebar_scan_json(json)
+  decode_playlist_sidebar_scan_json(json).map_err(|error| error.to_string())
 }
 
 /// Minimal [`Inputs`] used only to derive the persisted app-local lineage.
