@@ -53,6 +53,10 @@ impl ArtifactInstrumentationReceipt {
 
   /// Publishes pretty JSON only when its exact serialized length fits the
   /// caller's domain budget and the canonical whole-artifact limit.
+  ///
+  /// This evaluates `Serialize` twice to allocate the exact encoded length.
+  /// Values must be deterministic, side-effect-free artifact structs so both
+  /// evaluations produce identical bytes.
   pub async fn publish_json_bounded<T: serde::Serialize>(&mut self, purpose: &str, value: &T, max_bytes: u64, exceeded_code: &str) {
     if emission_enabled() {
       self.publish(purpose, json_artifact_bounded(purpose, value, Attributes::empty(), max_bytes, exceeded_code)).await;
@@ -119,8 +123,9 @@ pub(crate) fn emission_enabled() -> bool {
 }
 
 pub(crate) fn json_artifact<T: serde::Serialize>(purpose: &str, value: &T, attributes: Attributes) -> Result<OwnedArtifact, String> {
-  let body = serialize_json_exact(purpose, value, None)?;
-  bytes_artifact(purpose, "application/json", body, attributes)
+  let mut body = BoundedArtifactBuffer::default();
+  serde_json::to_writer_pretty(&mut body, value).map_err(|error| format!("failed to serialize {purpose} artifact: {error}"))?;
+  bytes_artifact(purpose, "application/json", body.into_inner(), attributes)
 }
 
 fn json_artifact_bounded<T: serde::Serialize>(
@@ -135,10 +140,10 @@ fn json_artifact_bounded<T: serde::Serialize>(
   let body = serialize_json_exact(
     purpose,
     value,
-    Some(JsonArtifactLimit {
+    JsonArtifactLimit {
       max_bytes,
       exceeded_code: exceeded_code.as_str(),
-    }),
+    },
   )?;
   bytes_artifact(purpose, "application/json", body, attributes)
 }
@@ -200,19 +205,48 @@ fn bounded_length(purpose: &str, length: usize) -> Result<ByteLength, String> {
   ByteLength::new(length).map_err(|error| format!("invalid {purpose} artifact length: {error}"))
 }
 
+#[derive(Default)]
+struct BoundedArtifactBuffer {
+  bytes: Vec<u8>,
+}
+
+impl BoundedArtifactBuffer {
+  fn into_inner(self) -> Vec<u8> {
+    self.bytes
+  }
+}
+
+impl Write for BoundedArtifactBuffer {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let length = self.bytes.len().checked_add(buffer.len()).ok_or_else(|| std::io::Error::other("artifact buffer length overflow"))?;
+    ByteLength::new(u64::try_from(length).map_err(std::io::Error::other)?).map_err(|error| std::io::Error::other(error.to_string()))?;
+    self.bytes.try_reserve(buffer.len()).map_err(std::io::Error::other)?;
+    self.bytes.extend_from_slice(buffer);
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+}
+
 #[derive(Clone, Copy)]
 struct JsonArtifactLimit<'a> {
   max_bytes: u64,
   exceeded_code: &'a str,
 }
 
-fn serialize_json_exact<T: serde::Serialize>(purpose: &str, value: &T, limit: Option<JsonArtifactLimit<'_>>) -> Result<Vec<u8>, String> {
-  let mut measurement = ArtifactLengthMeasurement::new(purpose, limit);
+fn serialize_json_exact<T: serde::Serialize>(purpose: &str, value: &T, limit: JsonArtifactLimit<'_>) -> Result<Vec<u8>, String> {
+  let mut measurement = ArtifactLengthMeasurement::new(purpose, Some(limit));
   serde_json::to_writer_pretty(&mut measurement, value).map_err(|error| format!("failed to serialize {purpose} artifact: {error}"))?;
-  let measured_length = usize::try_from(measurement.byte_length()).map_err(|_| format!("{purpose} artifact length does not fit usize"))?;
+  let (measured_length, measured_digest) = measurement.finish();
+  let measured_length = usize::try_from(measured_length).map_err(|_| format!("{purpose} artifact length does not fit usize"))?;
   let mut body = ExactArtifactBuffer::try_new(purpose, measured_length)?;
-  serde_json::to_writer_pretty(&mut body, value).map_err(|error| format!("failed to serialize {purpose} artifact: {error}"))?;
-  body.finish(purpose)
+  serde_json::to_writer_pretty(&mut body, value)
+    .map_err(|error| format!("failed to serialize {purpose} artifact on second pass: {error}"))?;
+  body.finish(measured_digest).ok_or_else(|| {
+    format!("auv.invoke.artifact.nondeterministic_serialization: {purpose} JSON serialization changed between measurement and construction")
+  })
 }
 
 fn encode_png_exact(purpose: &str, image: &RgbaImage) -> Result<Vec<u8>, String> {
@@ -223,17 +257,21 @@ fn encode_png_exact(purpose: &str, image: &RgbaImage) -> Result<Vec<u8>, String>
   PngEncoder::new(&mut measurement)
     .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
     .map_err(|error| format!("failed to measure encoded {purpose} artifact: {error}"))?;
-  let measured_length = usize::try_from(measurement.byte_length()).map_err(|_| format!("{purpose} artifact length does not fit usize"))?;
+  let (measured_length, measured_digest) = measurement.finish();
+  let measured_length = usize::try_from(measured_length).map_err(|_| format!("{purpose} artifact length does not fit usize"))?;
   let mut body = ExactArtifactBuffer::try_new(purpose, measured_length)?;
   PngEncoder::new(&mut body)
     .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
     .map_err(|error| format!("failed to encode {purpose} artifact: {error}"))?;
-  body.finish(purpose)
+  body.finish(measured_digest).ok_or_else(|| {
+    format!("failed to encode {purpose} artifact deterministically: encoded bytes changed between measurement and construction")
+  })
 }
 
 struct ArtifactLengthMeasurement<'a> {
   purpose: &'a str,
   byte_length: u64,
+  hasher: Sha256,
   limit: Option<JsonArtifactLimit<'a>>,
 }
 
@@ -242,12 +280,13 @@ impl<'a> ArtifactLengthMeasurement<'a> {
     Self {
       purpose,
       byte_length: 0,
+      hasher: Sha256::new(),
       limit,
     }
   }
 
-  fn byte_length(&self) -> u64 {
-    self.byte_length
+  fn finish(self) -> (u64, Sha256Digest) {
+    (self.byte_length, Sha256Digest::new(self.hasher.finalize().into()))
   }
 }
 
@@ -267,6 +306,7 @@ impl Write for ArtifactLengthMeasurement<'_> {
       )));
     }
     ByteLength::new(actual).map_err(|error| std::io::Error::other(error.to_string()))?;
+    self.hasher.update(buffer);
     self.byte_length = actual;
     Ok(buffer.len())
   }
@@ -279,6 +319,8 @@ impl Write for ArtifactLengthMeasurement<'_> {
 struct ExactArtifactBuffer {
   bytes: Vec<u8>,
   measured_length: usize,
+  actual_length: usize,
+  hasher: Sha256,
 }
 
 impl ExactArtifactBuffer {
@@ -291,28 +333,26 @@ impl ExactArtifactBuffer {
     Ok(Self {
       bytes,
       measured_length,
+      actual_length: 0,
+      hasher: Sha256::new(),
     })
   }
 
-  fn finish(self, purpose: &str) -> Result<Vec<u8>, String> {
-    if self.bytes.len() != self.measured_length {
-      return Err(format!(
-        "failed to serialize {purpose} artifact deterministically: measured {} bytes, wrote {}",
-        self.measured_length,
-        self.bytes.len()
-      ));
+  fn finish(self, measured_digest: Sha256Digest) -> Option<Vec<u8>> {
+    if self.actual_length != self.measured_length || Sha256Digest::new(self.hasher.finalize().into()) != measured_digest {
+      return None;
     }
-    Ok(self.bytes)
+    Some(self.bytes)
   }
 }
 
 impl Write for ExactArtifactBuffer {
   fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-    let length = self.bytes.len().checked_add(buffer.len()).ok_or_else(|| std::io::Error::other("artifact buffer length overflow"))?;
-    if length > self.measured_length {
-      return Err(std::io::Error::other("serialized artifact exceeded its measured length"));
-    }
-    self.bytes.extend_from_slice(buffer);
+    self.actual_length =
+      self.actual_length.checked_add(buffer.len()).ok_or_else(|| std::io::Error::other("artifact buffer length overflow"))?;
+    self.hasher.update(buffer);
+    let remaining = self.measured_length - self.bytes.len();
+    self.bytes.extend_from_slice(&buffer[..buffer.len().min(remaining)]);
     Ok(buffer.len())
   }
 
@@ -323,6 +363,7 @@ impl Write for ExactArtifactBuffer {
 
 #[cfg(test)]
 mod tests {
+  use std::cell::Cell;
   use std::sync::Arc;
 
   use super::*;
@@ -332,6 +373,98 @@ mod tests {
     RunSubscription, StoreArtifactRequest, configure, dispatcher,
   };
   use futures_util::StreamExt;
+
+  enum StatefulSerialization {
+    SameLengthMutation,
+    DifferentLengthMutation,
+    SecondPassError,
+  }
+
+  struct StatefulSerializer {
+    calls: Cell<usize>,
+    behavior: StatefulSerialization,
+  }
+
+  impl StatefulSerializer {
+    fn new(behavior: StatefulSerialization) -> Self {
+      Self {
+        calls: Cell::new(0),
+        behavior,
+      }
+    }
+  }
+
+  impl serde::Serialize for StatefulSerializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+      S: serde::Serializer,
+    {
+      let call = self.calls.get();
+      self.calls.set(call + 1);
+      match (&self.behavior, call) {
+        (StatefulSerialization::SameLengthMutation, 0)
+        | (StatefulSerialization::DifferentLengthMutation, 0)
+        | (StatefulSerialization::SecondPassError, 0) => serializer.serialize_str("a"),
+        (StatefulSerialization::SameLengthMutation, _) => serializer.serialize_str("b"),
+        (StatefulSerialization::DifferentLengthMutation, _) => serializer.serialize_str("longer"),
+        (StatefulSerialization::SecondPassError, _) => Err(serde::ser::Error::custom("stateful serializer failed on second pass")),
+      }
+    }
+  }
+
+  #[test]
+  fn ordinary_json_artifact_serializes_stateful_values_once() {
+    let value = StatefulSerializer::new(StatefulSerialization::SameLengthMutation);
+
+    json_artifact("auv.test.one_pass", &value, Attributes::empty()).expect("ordinary JSON artifact");
+
+    assert_eq!(value.calls.get(), 1);
+  }
+
+  #[test]
+  fn bounded_json_rejects_same_length_serialization_mutation() {
+    let value = StatefulSerializer::new(StatefulSerialization::SameLengthMutation);
+
+    let error = match json_artifact_bounded("auv.test.deterministic", &value, Attributes::empty(), 1024, "auv.test.payload_too_large") {
+      Ok(_) => panic!("same-length mutation must be rejected"),
+      Err(error) => error,
+    };
+
+    assert_eq!(
+      error,
+      "auv.invoke.artifact.nondeterministic_serialization: auv.test.deterministic JSON serialization changed between measurement and construction"
+    );
+    assert_eq!(value.calls.get(), 2);
+  }
+
+  #[test]
+  fn bounded_json_rejects_different_length_serialization_mutation() {
+    let value = StatefulSerializer::new(StatefulSerialization::DifferentLengthMutation);
+
+    let error = match json_artifact_bounded("auv.test.deterministic", &value, Attributes::empty(), 1024, "auv.test.payload_too_large") {
+      Ok(_) => panic!("different-length mutation must be rejected"),
+      Err(error) => error,
+    };
+
+    assert_eq!(
+      error,
+      "auv.invoke.artifact.nondeterministic_serialization: auv.test.deterministic JSON serialization changed between measurement and construction"
+    );
+    assert_eq!(value.calls.get(), 2);
+  }
+
+  #[test]
+  fn bounded_json_preserves_second_pass_serialization_error() {
+    let value = StatefulSerializer::new(StatefulSerialization::SecondPassError);
+
+    let error = match json_artifact_bounded("auv.test.second_pass", &value, Attributes::empty(), 1024, "auv.test.payload_too_large") {
+      Ok(_) => panic!("second-pass failure must be returned"),
+      Err(error) => error,
+    };
+
+    assert!(error.contains("stateful serializer failed on second pass"), "{error}");
+    assert_eq!(value.calls.get(), 2);
+  }
 
   #[test]
   fn file_artifact_streams_owned_reader_with_exact_digest_and_length() {
@@ -407,10 +540,10 @@ mod tests {
     let body = serialize_json_exact(
       "auv.test.fragmented",
       &payload,
-      Some(JsonArtifactLimit {
+      JsonArtifactLimit {
         max_bytes: limit,
         exceeded_code: "auv.test.payload_too_large",
-      }),
+      },
     )
     .expect("valid fragmented JSON");
 

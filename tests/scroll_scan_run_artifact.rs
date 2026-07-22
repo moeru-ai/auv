@@ -13,14 +13,24 @@ use auv_runtime::scroll_scan::{
 };
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError,
-  Attributes, AuthorityId, BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, Dispatch, ErrorCode, IdempotencyKey,
-  MemoryRunStore, NewArtifact, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunStore,
-  RunSubscription, Sha256Digest, StoreArtifactRequest, configure, dispatcher,
+  Attributes, AuthorityId, BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, Dispatch, ErrorCode, EventPayload,
+  IdempotencyKey, MemoryRunStore, NewArtifact, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision,
+  RunStore, RunSubscription, Sha256Digest, StoreArtifactRequest, configure, dispatcher,
 };
 use auv_tracing_driver::store::LocalStore;
 use auv_tracing_driver::trace::{RunId as LegacyRunId, SpanId as LegacySpanId};
 use futures_util::io::Cursor;
 use sha2::{Digest, Sha256};
+
+#[derive(serde::Serialize)]
+struct EmptySnapshotEvent {
+  value: u8,
+}
+
+impl EventPayload for EmptySnapshotEvent {
+  const NAME: &'static str = "auv.test.empty_scroll_scan_snapshot";
+  const VERSION: u32 = 1;
+}
 
 struct RootRunFixture {
   store: Arc<MemoryRunStore>,
@@ -292,6 +302,21 @@ async fn production_v1_inspect_renders_explicit_empty_observations_without_scrol
 }
 
 #[tokio::test]
+async fn production_v1_inspect_rejects_wrong_authority_for_an_empty_snapshot() {
+  let fixture = RootRunFixture::memory();
+  fixture.root.in_scope(|| auv_tracing::emit_event!(EmptySnapshotEvent { value: 1 }));
+  fixture.dispatch.flush().await.expect("flush empty snapshot event");
+  let snapshot = fixture.snapshot().await;
+  assert!(snapshot.artifacts().is_empty());
+  let wrong_store = MemoryRunStore::new(AuthorityId::new());
+
+  let error =
+    inspect_scroll_scan_observations_v1(&wrong_store, snapshot.as_ref()).await.expect_err("empty snapshots must retain authority checking");
+
+  assert_eq!(error.code().as_str(), "auv.runtime.scroll_scan.snapshot_authority_mismatch");
+}
+
+#[tokio::test]
 async fn root_scroll_scan_publishes_partial_result_to_the_current_run() {
   let fixture = RootRunFixture::memory();
   let directory = std::env::temp_dir().join(format!("auv-scroll-scan-v1-{}", fixture.run_id));
@@ -415,6 +440,27 @@ async fn scroll_scan_reader_rejects_oversized_metadata_before_opening() {
 
   assert_eq!(error.code().as_str(), SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE);
   assert_eq!(store.open_count(), 0, "metadata budget must be checked before opening the artifact");
+}
+
+#[tokio::test]
+async fn scroll_scan_reader_reads_an_exact_limit_fragmented_payload() {
+  let fixture = RootRunFixture::memory();
+  let mut artifact = sample_scroll_scan_artifact();
+  artifact.warnings = vec![String::new()];
+  let target_length = usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT).expect("test limit fits usize");
+  let base_length = serde_json::to_vec(&artifact).expect("serialize base scroll scan").len();
+  artifact.warnings[0] = "x".repeat(target_length.checked_sub(base_length).expect("fixture fits within limit"));
+  let bytes = serde_json::to_vec(&artifact).expect("serialize exact-limit scroll scan");
+  assert_eq!(bytes.len(), target_length);
+  let published = fixture.publish_bytes(SCROLL_SCAN_PURPOSE, "application/json", bytes.clone()).await;
+  let snapshot = fixture.snapshot().await;
+  let split = 7 * 1024 * 1024;
+  let store = ArtifactBytesStore::from_chunks(fixture.store.clone(), vec![bytes[..split].to_vec(), bytes[split..].to_vec()]);
+
+  let decoded = read_scroll_scan(&store, snapshot.as_ref(), published.uri()).await.expect("read fragmented exact-limit payload");
+
+  assert_eq!(decoded, artifact);
+  assert_eq!(store.chunk_read_count(), 2);
 }
 
 #[tokio::test]
