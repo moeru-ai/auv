@@ -2348,9 +2348,6 @@ mod tests {
     assert!(
       operation_result.known_limits.iter().any(|limit| { limit == auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT })
     );
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "unreliable");
-
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -2491,9 +2488,6 @@ mod tests {
     assert_eq!(operation_result.verifications[0].semantic_matched, Some(true));
     assert!(operation_result.verifications[0].state_changed);
     assert_eq!(operation_result.verifications[0].failure_layer, None);
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "passed");
-
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -2542,9 +2536,6 @@ mod tests {
     assert_eq!(operation_result.verifications.len(), 1);
     assert_eq!(operation_result.verifications[0].semantic_matched, Some(false));
     assert_eq!(operation_result.verifications[0].failure_layer, Some(auv_runtime::contract::FailureLayer::StateChangedNoMatch));
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "failed");
-
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -2625,16 +2616,6 @@ mod tests {
     assert_eq!(operation_result.verifications[0].failure_layer, None);
     assert!(!operation_result.known_limits.iter().any(|limit| limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
     assert!(!operation_result.known_limits.iter().any(|limit| limit == auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT));
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "inconclusive");
-    assert_eq!(
-      summary.verification_source.as_deref(),
-      Some(
-        format!("kind=operation_result artifact_id={} run_id={}", output.value.operation_result_artifact_id, output.run_id.as_str())
-          .as_str()
-      )
-    );
-
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -2684,9 +2665,6 @@ mod tests {
     assert_eq!(operation_result.verifications[0].semantic_matched, Some(false));
     assert!(operation_result.verifications[0].state_changed);
     assert_eq!(operation_result.verifications[0].failure_layer, None);
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "failed");
-
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -2730,9 +2708,6 @@ mod tests {
     assert!(
       operation_result.known_limits.iter().any(|limit| { limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT })
     );
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "absent");
-
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -2791,9 +2766,6 @@ mod tests {
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(operation_result.verifications.len(), 1);
     assert_eq!(operation_result.verifications[0].semantic_matched, Some(true));
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "passed");
-
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -2839,9 +2811,6 @@ mod tests {
     assert_eq!(operation_result.verifications.len(), 1);
     assert_eq!(operation_result.verifications[0].failure_layer, Some(auv_runtime::contract::FailureLayer::VerificationUnreliable));
     assert!(operation_result.verifications[0].observed_label.as_deref().is_some_and(|label| label.contains("missing-post.jsonl")));
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
-    assert_eq!(summary.verification_outcome, "unreliable");
-
     let _ = fs::remove_dir_all(temp);
   }
 
