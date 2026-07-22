@@ -12,6 +12,8 @@
 //! - legacy `OperationOutput::Verification` remains readable without
 //!   double-counting artifacts that also populate `OperationResult.verifications`
 
+use std::collections::TryReserveError;
+
 use crate::contract::{
   ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult, RecognitionSource, VerificationResult,
 };
@@ -59,6 +61,13 @@ pub enum ScrollScanReadError {
     #[source]
     source: ReadError,
   },
+  #[error("failed to reserve {expected} bytes for scroll-scan artifact {uri}: {source}")]
+  Allocation {
+    uri: ArtifactUri,
+    expected: u64,
+    #[source]
+    source: TryReserveError,
+  },
   #[error("failed while streaming scroll-scan artifact {uri}: {source}")]
   Stream {
     uri: ArtifactUri,
@@ -96,6 +105,7 @@ impl ScrollScanReadError {
       Self::WrongContentType { .. } => "auv.runtime.scroll_scan.wrong_content_type",
       Self::PayloadTooLarge { .. } => SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE,
       Self::Open { .. } => "auv.runtime.scroll_scan.open_failed",
+      Self::Allocation { .. } => "auv.runtime.scroll_scan.allocation_failed",
       Self::Stream { .. } => "auv.runtime.scroll_scan.stream_failed",
       Self::LengthMismatch { .. } => "auv.runtime.scroll_scan.length_mismatch",
       Self::DigestMismatch { .. } => "auv.runtime.scroll_scan.digest_mismatch",
@@ -154,7 +164,17 @@ pub async fn read_scroll_scan(
     uri: uri.clone(),
     source,
   })?;
+  let expected_capacity = usize::try_from(expected_length).map_err(|_| ScrollScanReadError::PayloadTooLarge {
+    uri: uri.clone(),
+    limit: usize::MAX as u64,
+    actual: expected_length,
+  })?;
   let mut bytes = Vec::new();
+  bytes.try_reserve_exact(expected_capacity).map_err(|source| ScrollScanReadError::Allocation {
+    uri: uri.clone(),
+    expected: expected_length,
+    source,
+  })?;
   let mut actual_length = 0_u64;
   while let Some(chunk) = reader.next().await {
     let chunk = chunk.map_err(|source| ScrollScanReadError::Stream {
@@ -498,6 +518,7 @@ mod tests {
   use std::path::{Path, PathBuf};
 
   use auv_driver::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
+  use auv_tracing::{ArtifactId, ArtifactUri};
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
     ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId,
@@ -505,7 +526,7 @@ mod tests {
   };
   use serde::Serialize;
 
-  use super::{extract_input_action_results, list_input_action_results};
+  use super::{ScrollScanReadError, extract_input_action_results, list_input_action_results};
   use auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE;
 
   fn temp_root(label: &str) -> PathBuf {
@@ -604,6 +625,21 @@ mod tests {
       focus_disturbance: DisturbanceLevel::Temporary,
       clipboard_disturbance: DisturbanceLevel::None,
     }
+  }
+
+  #[test]
+  fn scroll_scan_allocation_error_has_stable_code_and_reserve_source() {
+    let mut bytes = Vec::<u8>::new();
+    let source = bytes.try_reserve_exact(usize::MAX).expect_err("usize::MAX must exceed Vec capacity");
+    let source_message = source.to_string();
+    let error = ScrollScanReadError::Allocation {
+      uri: ArtifactUri::from_ids(auv_tracing::RunId::new(), ArtifactId::new()),
+      expected: 1024,
+      source,
+    };
+
+    assert_eq!(error.code().as_str(), "auv.runtime.scroll_scan.allocation_failed");
+    assert_eq!(std::error::Error::source(&error).map(ToString::to_string).as_deref(), Some(source_message.as_str()));
   }
 
   #[test]

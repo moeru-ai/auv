@@ -66,6 +66,12 @@ pub fn inspect_run_with(composer: &InspectComposer, store: &LocalStore, run_id: 
 
 /// Renders scroll-scan observations committed to one canonical V1 snapshot.
 pub async fn inspect_scroll_scan_observations_v1(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<String, ScrollScanReadError> {
+  if snapshot.authority_id() != store.authority_id() {
+    return Err(ScrollScanReadError::SnapshotAuthorityMismatch {
+      snapshot_authority: snapshot.authority_id(),
+      store_authority: store.authority_id(),
+    });
+  }
   let mut observations = Vec::new();
   for (uri, published) in snapshot.artifacts() {
     if published.metadata().purpose().as_str() != SCROLL_SCAN_PURPOSE {
