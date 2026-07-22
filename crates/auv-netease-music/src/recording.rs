@@ -499,8 +499,8 @@ impl NeteaseArtifactReadError {
 }
 
 async fn publish_json<T: Serialize>(purpose: &'static str, value: &T) -> Result<Option<ArtifactMetadata>, NeteaseArtifactPublishError> {
-  // Disabled instrumentation must not validate or allocate artifact bytes.
-  if !auv_tracing::Context::current().is_enabled() {
+  // Contexts without artifact authority must not validate or allocate bytes.
+  if !auv_tracing::Context::current().can_publish_artifacts() {
     return Ok(None);
   }
   let (body, digest) = serialize_json_exact(purpose, value)?;

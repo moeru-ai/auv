@@ -226,6 +226,21 @@ fn telemetry_only_artifact_does_not_poll_body() {
 }
 
 #[test]
+fn artifact_publication_capability_requires_local_authority() {
+  let projector = RecordingProjector::new();
+  let telemetry_dispatch = configure().project_telemetry(projector, TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+  let telemetry_root = context(&telemetry_dispatch, RunId::new());
+
+  assert!(telemetry_root.is_enabled());
+  assert!(!telemetry_root.can_publish_artifacts());
+
+  let store_dispatch = configure().run_store(ArtifactStore::new()).build().unwrap();
+  let store_root = context(&store_dispatch, RunId::new());
+
+  assert!(store_root.can_publish_artifacts());
+}
+
+#[test]
 fn referenced_span_start_is_committed_before_artifact_body_polling() {
   let store = ArtifactStore::new();
   let start_gate = store.block_next_commit();
