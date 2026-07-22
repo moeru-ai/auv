@@ -683,14 +683,16 @@ dependencies = [
  "auv-driver-windows",
  "auv-media-macos",
  "auv-tracing",
- "auv-tracing-driver",
  "auv-view",
  "clap",
  "comfy-table",
  "futures-executor",
+ "futures-util",
  "image",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

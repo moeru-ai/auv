@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_cli_invoke::{ArgSpec, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput, arg::FIXTURE_DIR};
+use auv_cli_invoke::{
+  ArgSpec, ArtifactInstrumentationFailure, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput, arg::FIXTURE_DIR,
+};
 
 use crate::commands::playlist::PlaylistSelectResult;
-use crate::recording::{NETEASE_PLAYLIST_SELECT_RESULT_ROLE, persist_playlist_select_proof};
+use crate::recording::{PLAYLIST_SELECT_RESULT_PURPOSE, PlaylistSelectInstrumentation, persist_playlist_select_proof};
 
 #[cfg(feature = "tracing")]
 mod tracing {
@@ -35,15 +37,7 @@ mod tracing {
 pub const SELECT_PROOF_COMMAND_ID: &str = "netease.playlist.selectProof";
 pub const SELECT_RESULT_FILE: &str = "select-result.json";
 
-pub const SELECT_PROOF_ARGS: &[ArgSpec] = &[
-  FIXTURE_DIR,
-  ArgSpec {
-    flag: "--store-root",
-    value_name: "PATH",
-    required: true,
-    help: "Local store root where the select-proof run is persisted.",
-  },
-];
+pub const SELECT_PROOF_ARGS: &[ArgSpec] = &[FIXTURE_DIR];
 
 pub fn build_select_result_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSelectResult, String> {
   tracing::select_proof(|| {
@@ -82,37 +76,49 @@ fn read_optional_query_fixture(fixture_dir: &Path) -> Result<Option<String>, Str
 }
 
 pub fn select_proof_handler(input: InvokeCommandInput) -> InvokeCommandFuture {
-  Box::pin(async move { select_proof(input) })
+  Box::pin(select_proof(input))
 }
 
-fn select_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, String> {
+async fn select_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, String> {
   let fixture_dir = required_input(&input, "fixture-dir")?.to_string();
-  let store_root = required_input(&input, "store-root")?.to_string();
   let fixture_path = Path::new(&fixture_dir);
-
   let preview = build_select_result_from_fixture_dir(fixture_path)?;
 
   if input.dry_run {
-    let mut output = InvokeCommandOutput::new(format!("validated hermetic select proof fixture at {}", fixture_dir));
-    output.verification = Some("dry-run; no store proof written".to_string());
+    let mut output = InvokeCommandOutput::new(format!("validated hermetic select proof fixture at {fixture_dir}"));
+    output.verification = Some("dry-run; no run artifact written".to_string());
     output.known_limits.push("hermetic_fixture_only".to_string());
-    output.signals.insert("fixture_dir".to_string(), fixture_dir.to_string());
+    output.signals.insert("fixture_dir".to_string(), fixture_dir);
     output.signals.insert("query".to_string(), preview.query.clone());
     return Ok(output);
   }
 
-  let run_id = persist_playlist_select_proof(Path::new(&store_root), None, None, |persisted_run_id| {
-    let mut result = preview.clone();
-    result.run_id = Some(persisted_run_id.to_string());
-    serde_json::to_vec_pretty(&result).map_err(|error| format!("failed to serialize playlist select result: {error}"))
-  })?;
-
-  let mut output = InvokeCommandOutput::new(format!("persisted hermetic select proof run {run_id} under {}", store_root));
+  let publication = persist_playlist_select_proof(preview).await;
+  let (result, instrumentation) = publication.into_parts();
+  let mut output = match instrumentation {
+    PlaylistSelectInstrumentation::Published(metadata) => {
+      let run_id = metadata.uri().run_id().to_string();
+      let mut output = InvokeCommandOutput::new(format!("persisted hermetic select proof in run {run_id}"));
+      output.signals.insert("run_id".to_string(), run_id.clone());
+      output.signals.insert("select_result_uri".to_string(), metadata.uri().to_string());
+      output
+    }
+    PlaylistSelectInstrumentation::Disabled => {
+      InvokeCommandOutput::new("validated hermetic select proof fixture; run artifact publication was disabled")
+    }
+    PlaylistSelectInstrumentation::Failed(error) => {
+      let mut output = InvokeCommandOutput::new("validated hermetic select proof fixture; run artifact was not published");
+      output.artifact_failures.push(ArtifactInstrumentationFailure {
+        purpose: PLAYLIST_SELECT_RESULT_PURPOSE.to_string(),
+        message: error.to_string(),
+      });
+      output
+    }
+  };
+  output.signals.insert("query".to_string(), result.query);
   output.verification = Some("hermetic fixture proof only; no live scan or semantic success claim".to_string());
   output.known_limits.push("hermetic_fixture_only".to_string());
-  output.signals.insert("run_id".to_string(), run_id.clone());
-  output.signals.insert("store_root".to_string(), store_root.to_string());
-  output.signals.insert("artifact_role".to_string(), NETEASE_PLAYLIST_SELECT_RESULT_ROLE.to_string());
+  output.signals.insert("artifact_purpose".to_string(), PLAYLIST_SELECT_RESULT_PURPOSE.to_string());
   Ok(output)
 }
 
@@ -132,10 +138,8 @@ pub fn hermetic_select_proof_fixture_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
-  use std::fs;
 
   use auv_cli_invoke::default_registry;
-  use auv_tracing_driver::LocalStore;
 
   use super::*;
   use crate::invoke::netease_registry;
@@ -193,17 +197,12 @@ mod tests {
   }
 
   #[test]
-  fn select_proof_fixture_writes_run_and_artifact() {
-    let root = std::env::temp_dir().join(format!("auv-acp1-select-proof-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = fs::remove_dir_all(&root);
-
+  fn select_proof_without_context_returns_the_existing_result() {
     let mut inputs = BTreeMap::new();
     inputs.insert("fixture-dir".to_string(), hermetic_select_proof_fixture_dir().display().to_string());
-    inputs.insert("store-root".to_string(), store_root.display().to_string());
-
     let registry = netease_registry();
     let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("command");
+
     let output = futures_executor::block_on(command.invoke(InvokeCommandInput {
       command_id: command.id.to_string(),
       target_application_id: None,
@@ -211,63 +210,26 @@ mod tests {
       dry_run: false,
       cancellation: auv_cli_invoke::InvokeCancellation::new(),
     }))
-    .expect("handler");
+    .expect("direct fixture result");
 
-    let run_id = output.signals.get("run_id").expect("run_id signal");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(run_id).expect("run");
-    assert!(run.artifacts.iter().any(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE));
-
-    let _ = fs::remove_dir_all(&root);
+    assert!(output.summary.contains("publication was disabled"));
+    assert!(output.artifact_failures.is_empty());
+    assert!(!output.signals.contains_key("run_id"));
   }
 
   #[test]
-  fn select_proof_run_uses_netease_runspec() {
-    let root = std::env::temp_dir().join(format!("auv-acp1-runspec-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = fs::remove_dir_all(&root);
-
-    let mut inputs = BTreeMap::new();
-    inputs.insert("fixture-dir".to_string(), hermetic_select_proof_fixture_dir().display().to_string());
-    inputs.insert("store-root".to_string(), store_root.display().to_string());
-
-    let registry = netease_registry();
-    let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("command");
-    futures_executor::block_on(command.invoke(InvokeCommandInput {
-      command_id: command.id.to_string(),
-      target_application_id: None,
-      inputs,
-      dry_run: false,
-      cancellation: auv_cli_invoke::InvokeCancellation::new(),
-    }))
-    .expect("handler");
-
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let runs = store.list_runs().expect("runs");
-    assert_eq!(runs.len(), 1);
-    let run = store.read_run(runs[0].run_id.as_str()).expect("run");
-    let root_span = run.spans.iter().find(|span| span.parent_span_id.is_none()).expect("root span");
-    assert_eq!(root_span.name, "auv.netease.playlist.select");
-
-    let _ = fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn select_proof_requires_store_root() {
-    let mut inputs = BTreeMap::new();
-    inputs.insert("fixture-dir".to_string(), hermetic_select_proof_fixture_dir().display().to_string());
-
+  fn select_proof_requires_fixture_dir() {
     let registry = netease_registry();
     let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("command");
     let error = futures_executor::block_on(command.invoke(InvokeCommandInput {
       command_id: command.id.to_string(),
       target_application_id: None,
-      inputs,
+      inputs: BTreeMap::new(),
       dry_run: false,
       cancellation: auv_cli_invoke::InvokeCancellation::new(),
     }))
-    .expect_err("missing store-root should fail");
+    .expect_err("missing fixture-dir should fail");
 
-    assert!(error.contains("store-root"));
+    assert!(error.contains("fixture-dir"));
   }
 }

@@ -1,11 +1,12 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use auv_tracing::ArtifactUri;
 use auv_view::memory::{
   ARTIFACT_DIR_BRIDGE_RUN_ID, ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND, ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME,
   ATTR_REACQUIRE_SCOPE_ID, ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED, ATTR_REACQUIRE_TARGET_KIND, MemoryReadConfig,
   MemoryWriteInput, ReacquireConfig, ReacquireDriverAdapter, ReacquireOutcome, ReacquireTarget, StaleReason, ViewMemory,
   ViewMemoryScopeSnapshot, memory_file_path, outcome_label, reacquire, reacquire_stage_span_name, strategy_name, try_build_memory,
-  view_memory_lineage_ref_wire, write_memory_file,
+  write_memory_file,
 };
 use auv_view::{ParserDiagnostic, VIEW_IR_SCHEMA_VERSION, ViewBounds};
 use serde::{Deserialize, Serialize};
@@ -177,23 +178,12 @@ pub fn write_from_scan(inputs: &crate::Inputs, scan: &PlaylistSidebarScan) -> Re
   write_from_scan_when_enabled(enabled(), inputs, scan)
 }
 
-pub fn write_from_scan_with_lineage(
-  inputs: &crate::Inputs,
-  scan: &PlaylistSidebarScan,
-  run_id: &str,
-  scan_artifact_id: &str,
-) -> Result<(), String> {
-  let memory = try_build_writable_memory(inputs, scan, run_id, scan_artifact_id)
-    .ok_or_else(|| "scan did not produce writable ViewMemory".to_string())?;
+pub fn write_from_scan_with_lineage(inputs: &crate::Inputs, scan: &PlaylistSidebarScan, scan_uri: &ArtifactUri) -> Result<(), String> {
+  let memory = try_build_writable_memory(inputs, scan, scan_uri).ok_or_else(|| "scan did not produce writable ViewMemory".to_string())?;
   write_memory_mirror(inputs, &memory)
 }
 
-pub(crate) fn try_build_writable_memory(
-  inputs: &crate::Inputs,
-  scan: &PlaylistSidebarScan,
-  run_id: &str,
-  scan_artifact_id: &str,
-) -> Option<ViewMemory> {
+pub(crate) fn try_build_writable_memory(inputs: &crate::Inputs, scan: &PlaylistSidebarScan, scan_uri: &ArtifactUri) -> Option<ViewMemory> {
   let reconstruction = scan.reconstruction();
   let sidebar_bounds = scan.sidebar_region().bounds.unwrap_or_else(|| ViewBounds::new(0.0, 0.0, 240.0, 400.0));
   let baseline_width = sidebar_bounds.width.round().max(1.0) as u32;
@@ -208,8 +198,8 @@ pub(crate) fn try_build_writable_memory(
         baseline_width,
         schema_version_view_ir: VIEW_IR_SCHEMA_VERSION.to_string(),
       },
-      source_reconstruction_ref: view_memory_lineage_ref_wire(run_id, scan_artifact_id),
-      source_run_id: run_id.to_string(),
+      source_reconstruction_ref: scan_uri.to_string(),
+      source_run_id: scan_uri.run_id().to_string(),
       last_reconstructed_at_millis: system_time_millis(),
       clean: diagnostics_allow_memory_write(scan.diagnostics()),
     },
