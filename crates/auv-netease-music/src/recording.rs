@@ -2,6 +2,7 @@
 
 use std::collections::TryReserveError;
 use std::io::Write;
+use std::num::TryFromIntError;
 use std::path::{Path, PathBuf};
 
 use auv_tracing::{
@@ -284,10 +285,18 @@ fn validate_lineage_schema(lineage: &ViewMemoryRunLineage) -> Result<(), Lineage
 
 #[derive(Debug, thiserror::Error)]
 pub enum NeteaseArtifactPublishError {
-  #[error("invalid NetEase artifact contract for {purpose}: {message}")]
+  #[error("invalid NetEase artifact contract for {purpose}: {source}")]
   InvalidContract {
     purpose: &'static str,
-    message: String,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("failed to convert {purpose} JSON byte length {actual} between usize and u64: {source}")]
+  LengthConversion {
+    purpose: &'static str,
+    actual: u128,
+    #[source]
+    source: TryFromIntError,
   },
   #[error("{NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE}: {purpose} JSON is {actual} bytes, exceeding the {limit}-byte limit")]
   PayloadTooLarge {
@@ -774,19 +783,15 @@ async fn publish_json<T: Serialize>(purpose: &'static str, value: &T) -> Result<
     return Ok(None);
   }
   let (body, digest) = serialize_json_exact(purpose, value)?;
-  let length = ByteLength::new(body.len() as u64).map_err(|error| NeteaseArtifactPublishError::InvalidContract {
+  let body_length = u64::try_from(body.len()).map_err(|source| NeteaseArtifactPublishError::LengthConversion {
     purpose,
-    message: error.to_string(),
+    actual: body.len() as u128,
+    source,
   })?;
+  let length = ByteLength::new(body_length).map_err(|source| NeteaseArtifactPublishError::InvalidContract { purpose, source })?;
   let artifact = NewArtifact::new(
-    auv_tracing::ArtifactPurpose::parse(purpose).map_err(|error| NeteaseArtifactPublishError::InvalidContract {
-      purpose,
-      message: error.to_string(),
-    })?,
-    ContentType::parse("application/json").map_err(|error| NeteaseArtifactPublishError::InvalidContract {
-      purpose,
-      message: error.to_string(),
-    })?,
+    auv_tracing::ArtifactPurpose::parse(purpose).map_err(|source| NeteaseArtifactPublishError::InvalidContract { purpose, source })?,
+    ContentType::parse("application/json").map_err(|source| NeteaseArtifactPublishError::InvalidContract { purpose, source })?,
     length,
     digest,
     Attributes::empty(),
@@ -798,6 +803,13 @@ async fn publish_json<T: Serialize>(purpose: &'static str, value: &T) -> Result<
 fn serialize_json_exact<T: Serialize>(purpose: &'static str, value: &T) -> Result<(Vec<u8>, Sha256Digest), NeteaseArtifactPublishError> {
   let mut measurement = JsonMeasurement::default();
   if let Err(source) = serde_json::to_writer(&mut measurement, value) {
+    if let Some((actual, source)) = measurement.length_conversion_error {
+      return Err(NeteaseArtifactPublishError::LengthConversion {
+        purpose,
+        actual,
+        source,
+      });
+    }
     if let Some(actual) = measurement.exceeded_at {
       return Err(NeteaseArtifactPublishError::PayloadTooLarge {
         purpose,
@@ -807,9 +819,10 @@ fn serialize_json_exact<T: Serialize>(purpose: &'static str, value: &T) -> Resul
     }
     return Err(NeteaseArtifactPublishError::Serialize { purpose, source });
   }
-  let measured_length = usize::try_from(measurement.length).map_err(|_| NeteaseArtifactPublishError::InvalidContract {
+  let measured_length = usize::try_from(measurement.length).map_err(|source| NeteaseArtifactPublishError::LengthConversion {
     purpose,
-    message: "measured JSON length does not fit usize".to_string(),
+    actual: u128::from(measurement.length),
+    source,
   })?;
   let measured_digest = Sha256Digest::new(measurement.hasher.finalize().into());
   let mut output = ExactJsonBuffer::new(purpose, measured_length)?;
@@ -822,12 +835,17 @@ fn serialize_json_exact<T: Serialize>(purpose: &'static str, value: &T) -> Resul
 struct JsonMeasurement {
   length: u64,
   hasher: Sha256,
+  length_conversion_error: Option<(u128, TryFromIntError)>,
   exceeded_at: Option<u64>,
 }
 
 impl Write for JsonMeasurement {
   fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-    let length = self.length.checked_add(buffer.len() as u64).ok_or_else(|| std::io::Error::other("NetEase JSON length overflow"))?;
+    let buffer_length = u64::try_from(buffer.len()).map_err(|source| {
+      self.length_conversion_error = Some((buffer.len() as u128, source));
+      std::io::Error::other("NetEase JSON chunk length does not fit u64")
+    })?;
+    let length = self.length.checked_add(buffer_length).ok_or_else(|| std::io::Error::other("NetEase JSON length overflow"))?;
     if length > NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
       self.exceeded_at = Some(length);
       return Err(std::io::Error::other(NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE));
@@ -886,6 +904,10 @@ impl Write for ExactJsonBuffer {
 
 #[cfg(test)]
 mod tests {
+  use std::sync::Arc;
+
+  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, configure, dispatcher};
+
   use super::*;
 
   #[test]
@@ -900,5 +922,50 @@ mod tests {
       other => panic!("expected typed validation error, got {other:?}"),
     }
     assert!(std::error::Error::source(&error).is_some());
+  }
+
+  #[test]
+  fn invalid_publish_contract_retains_validation_error_source() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store).build().expect("memory dispatch should build");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let publication = root.in_scope(|| publish_json("not_namespaced", &"payload"));
+
+    let error = futures_executor::block_on(root.instrument(publication)).expect_err("invalid purpose must fail publication");
+
+    match &error {
+      NeteaseArtifactPublishError::InvalidContract { purpose, source } => {
+        assert_eq!(*purpose, "not_namespaced");
+        assert_eq!(source.to_string(), "namespaced name requires at least two segments");
+      }
+      other => panic!("expected typed contract validation error, got {other:?}"),
+    }
+    let source = std::error::Error::source(&error).expect("validation error source");
+    assert!(source.downcast_ref::<ValidationError>().is_some());
+  }
+
+  #[test]
+  fn publish_length_conversion_retains_value_and_typed_source() {
+    let source = u8::try_from(u16::MAX).expect_err("fixture conversion must overflow");
+    let error = NeteaseArtifactPublishError::LengthConversion {
+      purpose: PLAYLIST_SELECT_RESULT_PURPOSE,
+      actual: u16::MAX.into(),
+      source,
+    };
+
+    match &error {
+      NeteaseArtifactPublishError::LengthConversion {
+        purpose,
+        actual,
+        source,
+      } => {
+        assert_eq!(*purpose, PLAYLIST_SELECT_RESULT_PURPOSE);
+        assert_eq!(*actual, u128::from(u16::MAX));
+        assert_eq!(source.to_string(), "out of range integral type conversion attempted");
+      }
+      other => panic!("expected typed length conversion error, got {other:?}"),
+    }
+    let source = std::error::Error::source(&error).expect("integer conversion error source");
+    assert!(source.downcast_ref::<TryFromIntError>().is_some());
   }
 }
