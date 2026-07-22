@@ -2,7 +2,7 @@ use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
   InvokeReportTableRow, InvokeReportValue, InvokeSignalValue,
   arg::{NO_ARGS, TARGET_ARGS},
-  artifact::{emission_enabled, png_artifact, record_uri},
+  artifact::{emission_enabled, png_artifact},
   invoke_command,
 };
 
@@ -21,15 +21,10 @@ pub fn group() -> CommandGroup {
   args = TARGET_ARGS,
 )]
 async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
-  {
-    if input.dry_run {
-      return Ok(InvokeCommandOutput::new("dry run: display.capture would capture the primary display"));
-    }
-    use auv_driver::CaptureOptions;
-
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let result = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
+  if input.dry_run {
+    return Ok(InvokeCommandOutput::new("dry run: display.capture would capture the primary display"));
+  }
+  capture_primary_display().await.map(|result| {
     let mut output = InvokeCommandOutput::new(format!(
       "Captured {} through {} ({}x{} pixels).",
       display_label(&result.display),
@@ -50,24 +45,28 @@ async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
     // and coordinate signals, but not the old standalone capture-contract
     // artifact. Add the contract artifact after its direct-invoke JSON shape is
     // accepted in `2026-06-18-invoke-direct-command-implementations-handoff.md`.
-    if emission_enabled() {
-      match png_artifact("auv.driver.display_capture", &result.capture.image, auv_tracing::Attributes::empty()) {
-        Ok(artifact) => {
-          let emission = auv_tracing::emit_artifact!(artifact).await;
-          record_uri(&mut output, "artifact.display_capture_uri", emission);
-        }
-        Err(error) => output.notes.push(error),
-      }
-    }
     output.verification = Some("capture-only; no semantic success claim".to_string());
     output
       .known_limits
       .push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
-    Ok(output)
+    output
+  })
+}
+
+pub async fn capture_primary_display() -> Result<auv_driver::DisplayCapture, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let result = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
+    if emission_enabled()
+      && let Ok(artifact) = png_artifact("auv.driver.display_capture", &result.capture.image, auv_tracing::Attributes::empty())
+    {
+      let _ = auv_tracing::emit_artifact!(artifact).await;
+    }
+    Ok(result)
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = input;
     Err("display.capture is only available on macOS through auv-driver-macos".to_string())
   }
 }
@@ -79,18 +78,20 @@ async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
   args = NO_ARGS,
 )]
 async fn list_displays(input: InvokeCommandInput) -> InvokeCommandResult {
+  if input.dry_run {
+    return Ok(InvokeCommandOutput::new("dry run: display.list would enumerate connected displays"));
+  }
+  observe_displays().await.map(|displays| display_list_output(&displays.displays))
+}
+
+pub async fn observe_displays() -> Result<auv_driver::ObservedDisplays, String> {
   #[cfg(target_os = "macos")]
   {
-    if input.dry_run {
-      return Ok(InvokeCommandOutput::new("dry run: display.list would enumerate connected displays"));
-    }
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let displays = session.display().list().map_err(|error| error.to_string())?;
-    Ok(display_list_output(&displays.displays))
+    session.display().list().map_err(|error| error.to_string())
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = input;
     Err("display.list is only available on macOS through auv-driver-macos".to_string())
   }
 }
@@ -102,6 +103,11 @@ async fn list_displays(input: InvokeCommandInput) -> InvokeCommandResult {
   args = NO_ARGS,
 )]
 async fn project_screenshot_point(_input: InvokeCommandInput) -> InvokeCommandResult {
+  project_primary_screenshot_point().await?;
+  Ok(InvokeCommandOutput::new("projected screenshot point"))
+}
+
+pub async fn project_primary_screenshot_point() -> Result<(), String> {
   // TODO(invoke-display-typed-api): projectScreenshotPoint needs a typed
   // display projection API before this invoke command can replace root-driver
   // routing.
@@ -115,6 +121,11 @@ async fn project_screenshot_point(_input: InvokeCommandInput) -> InvokeCommandRe
   args = NO_ARGS,
 )]
 async fn identify_point(_input: InvokeCommandInput) -> InvokeCommandResult {
+  identify_display_point().await?;
+  Ok(InvokeCommandOutput::new("identified display point"))
+}
+
+pub async fn identify_display_point() -> Result<(), String> {
   // TODO(invoke-display-typed-api): identifyPoint needs a typed display point
   // resolution API before this invoke command can replace root-driver routing.
   Err("display.identifyPoint requires a typed display API for point identification".to_string())

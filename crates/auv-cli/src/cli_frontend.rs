@@ -6,6 +6,7 @@
 
 use std::env;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
@@ -1026,20 +1027,17 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       let dispatch = build_invoke_dispatch(&project_root, &inspect).await?;
       let registry = crate::product_registry();
       let command = registry.resolve(&request.command_id).ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&dispatch, || auv_tracing::Context::root(run_id));
       let input = auv_cli_invoke::InvokeCommandInput {
         command_id: request.command_id,
         target_application_id: request.target.application_id,
         inputs: request.inputs,
         dry_run: request.dry_run,
       };
-      let future = root.in_scope(|| command.invoke(input));
-      let direct_result = root.instrument(future).await;
-      if let Err(error) = dispatch.flush().await {
-        eprintln!("warning: invoke tracing flush failed for run {run_id}: {error}");
+      let execution = execute_invoke_frontend(&dispatch, || command.invoke(input)).await;
+      if let Some(error) = execution.tracing_failure {
+        eprintln!("warning: invoke tracing flush failed for run {}: {error}", execution.run_id);
       }
-      let result = auv_cli_invoke::InvokeResult::from_command_result(run_id.to_string(), command, direct_result);
+      let result = auv_cli_invoke::InvokeResult::from_command_result(execution.run_id.to_string(), command, execution.direct_result);
       let outcome = auv_cli_invoke::render_invoke_result(&result, output)?;
       if outcome.exit_code != 0 {
         process::exit(outcome.exit_code);
@@ -1847,6 +1845,29 @@ async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptio
   .map_err(|error| format!("failed to configure invoke tracing: {error}"))
 }
 
+struct InvokeFrontendExecution<T> {
+  run_id: auv_tracing::RunId,
+  direct_result: Result<T, String>,
+  tracing_failure: Option<String>,
+}
+
+async fn execute_invoke_frontend<T, F, Fut>(dispatch: &auv_tracing::Dispatch, call: F) -> InvokeFrontendExecution<T>
+where
+  F: FnOnce() -> Fut,
+  Fut: Future<Output = Result<T, String>>,
+{
+  let run_id = auv_tracing::RunId::new();
+  let root = auv_tracing::dispatcher::with_default(dispatch, || auv_tracing::Context::root(run_id));
+  let future = root.in_scope(call);
+  let direct_result = root.instrument(future).await;
+  let tracing_failure = dispatch.flush().await.err().map(|error| error.to_string());
+  InvokeFrontendExecution {
+    run_id,
+    direct_result,
+    tracing_failure,
+  }
+}
+
 fn build_runtime_for_inspect(project_root: &Path, inspect: &InspectClientOptions) -> Result<auv_runtime::runtime::Runtime, String> {
   let server_target = if should_try_server_write(inspect) {
     resolve_inspect_server_target(inspect)?
@@ -1931,16 +1952,279 @@ fn temp_runtime_store_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+  use std::future::Future;
+  use std::sync::Arc;
   use std::sync::Mutex;
+  use std::sync::atomic::{AtomicUsize, Ordering};
 
+  use auv_tracing::{
+    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode,
+    EventPayload, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision,
+    RunSnapshot, RunStore, RunSubscription, StoreArtifactRequest,
+  };
   use axum::body::{Body, to_bytes};
   use axum::http::{Request, StatusCode};
+  use futures_util::StreamExt;
   use image::{Rgb, RgbImage};
+  use rmcp::{
+    ClientHandler, ServiceExt as RmcpServiceExt,
+    model::{CallToolRequestParam, ClientInfo},
+  };
   use tower::ServiceExt;
 
   use super::*;
 
   static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+  #[derive(Debug, Clone, Default)]
+  struct DummyClientHandler;
+
+  impl ClientHandler for DummyClientHandler {
+    fn get_info(&self) -> ClientInfo {
+      ClientInfo::default()
+    }
+  }
+
+  #[derive(Clone, Default)]
+  struct CountingCall {
+    calls: Arc<AtomicUsize>,
+  }
+
+  impl CountingCall {
+    fn call_count(&self) -> usize {
+      self.calls.load(Ordering::SeqCst)
+    }
+
+    fn call(&self) -> impl Future<Output = Result<u32, String>> + Send + 'static {
+      auv_tracing::emit_event!(FrontendCallEvent {
+        phase: "constructed"
+      });
+      let calls = self.calls.clone();
+      async move {
+        calls.fetch_add(1, Ordering::SeqCst);
+        auv_tracing::emit_event!(FrontendCallEvent { phase: "polled" });
+        Ok(7)
+      }
+    }
+  }
+
+  #[derive(serde::Serialize)]
+  struct FrontendCallEvent {
+    phase: &'static str,
+  }
+
+  impl EventPayload for FrontendCallEvent {
+    const NAME: &'static str = "auv.test.cli_frontend_call";
+    const VERSION: u32 = 1;
+  }
+
+  #[tokio::test]
+  async fn cli_composition_scopes_construction_and_polling_without_changing_library_value() {
+    let call = CountingCall::default();
+    assert_eq!(call.call().await, Ok(7));
+
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
+    let execution = execute_invoke_frontend(&dispatch, || call.call()).await;
+
+    assert_eq!(execution.direct_result, Ok(7));
+    assert_eq!(execution.tracing_failure, None);
+    assert_eq!(call.call_count(), 2);
+    let snapshot = store.load_snapshot(execution.run_id).await.expect("snapshot").expect("recorded run");
+    assert_eq!(snapshot.run_id(), execution.run_id);
+    assert_eq!(snapshot.events().len(), 2);
+  }
+
+  #[tokio::test]
+  async fn cli_commit_unknown_does_not_retry_or_add_canonical_advice() {
+    let call = CountingCall::default();
+    let store = Arc::new(CommitUnknownStore::new());
+    let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
+
+    let execution = execute_invoke_frontend(&dispatch, || call.call()).await;
+
+    assert_eq!(execution.direct_result, Ok(7));
+    assert_eq!(call.call_count(), 1);
+    assert!(execution.tracing_failure.is_some());
+    let canonical_facts =
+      store.load_snapshot(execution.run_id).await.expect("snapshot read").map(|snapshot| format!("{snapshot:?}")).unwrap_or_default();
+    assert_no_canonical_advice(&canonical_facts);
+  }
+
+  // ROOT CAUSE:
+  //
+  // MCP used the CLI InvokeCommand handler and treated every Ok value as
+  // completed, so TextEdit semantic mismatch was silently discarded. The
+  // direct frontends now map the same typed report independently and persist
+  // evidence through their own run roots.
+  // https://github.com/moeru-ai/auv/pull/102#issuecomment-4958351155
+  #[tokio::test]
+  async fn textedit_recorded_mismatch_keeps_cli_mcp_run_and_operation_in_sync() {
+    let store_root = env::temp_dir().join(format!("auv-textedit-direct-parity-{}", auv_runtime::model::now_millis()));
+    let _ = fs::remove_dir_all(&store_root);
+    let store = Arc::new(auv_tracing::FileRunStore::open(&store_root).expect("file store"));
+    let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("CLI dispatch");
+    let registry = crate::product_registry();
+    let command = registry.resolve(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID).expect("TextEdit CLI metadata");
+    let input = auv_cli_invoke::InvokeCommandInput {
+      command_id: crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID.to_string(),
+      target_application_id: Some("com.apple.TextEdit".to_string()),
+      inputs: textedit_mismatch_inputs(),
+      dry_run: false,
+    };
+
+    let cli_execution = execute_invoke_frontend(&dispatch, || command.invoke(input)).await;
+    assert_eq!(cli_execution.tracing_failure, None);
+    let cli_result =
+      auv_cli_invoke::InvokeResult::from_command_result(cli_execution.run_id.to_string(), command, cli_execution.direct_result);
+    assert_eq!(cli_result.status, auv_cli_invoke::RunStatus::Failed);
+    assert!(cli_result.failure_message.as_deref().is_some_and(|message| message.contains("semantic verification failed")));
+
+    let server = crate::mcp::server(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).expect("product MCP server");
+    let (server_transport, client_transport) = tokio::io::duplex(16384);
+    let server_handle = tokio::spawn(async move {
+      let service = server.serve(server_transport).await.expect("MCP server start");
+      service.waiting().await.expect("MCP server exit");
+    });
+    let client = DummyClientHandler::default().serve(client_transport).await.expect("MCP client");
+    let response = client
+      .call_tool(CallToolRequestParam {
+        name: "invoke".into(),
+        arguments: Some(
+          serde_json::json!({
+            "command_id": crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID,
+            "target": { "application_id": "com.apple.TextEdit" },
+            "inputs": textedit_mismatch_inputs(),
+            "inspect": { "store_root": store_root.display().to_string() }
+          })
+          .as_object()
+          .expect("MCP arguments")
+          .clone(),
+        ),
+      })
+      .await
+      .expect("MCP invoke");
+    let mcp_value: serde_json::Value =
+      serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("MCP text response").text)
+        .expect("MCP JSON response");
+    assert_eq!(mcp_value["status"], "failed");
+    assert!(mcp_value["failure_message"].as_str().is_some_and(|message| message.contains("semantic verification failed")));
+    let mcp_run_id = mcp_value["run_id"].as_str().expect("MCP run id").parse::<auv_tracing::RunId>().expect("valid run id");
+    assert_ne!(cli_execution.run_id, mcp_run_id);
+
+    let cli_snapshot = store.load_snapshot(cli_execution.run_id).await.expect("CLI snapshot read").expect("CLI snapshot");
+    let mcp_snapshot = store.load_snapshot(mcp_run_id).await.expect("MCP snapshot read").expect("MCP snapshot");
+    let cli_purposes = artifact_purposes(&cli_snapshot);
+    let mcp_purposes = artifact_purposes(&mcp_snapshot);
+    assert_eq!(cli_purposes, mcp_purposes);
+    assert_eq!(
+      cli_purposes,
+      [
+        "auv.driver.input_action_result",
+        "auv.driver.input_action_result",
+        "auv.textedit.ax_text_observation",
+        "auv.textedit.document_write_result",
+      ]
+    );
+    for (snapshot, run_id) in [
+      (&cli_snapshot, cli_execution.run_id),
+      (&mcp_snapshot, mcp_run_id),
+    ] {
+      assert!(snapshot.artifacts().values().all(|artifact| artifact.metadata().uri().run_id() == run_id));
+      assert!(!format!("{snapshot:?}").contains("operation-success"));
+      assert!(!stored_document_write_semantic_match(store.as_ref(), snapshot).await);
+    }
+
+    client.cancel().await.expect("cancel MCP client");
+    server_handle.await.expect("join MCP server");
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  fn textedit_mismatch_inputs() -> std::collections::BTreeMap<String, String> {
+    std::collections::BTreeMap::from([
+      ("content".to_string(), "AUV_TEXTEDIT_EXPECTED_MARKER".to_string()),
+      ("driver".to_string(), "fixture".to_string()),
+      ("fixture_observed_text".to_string(), "observed-without-expected".to_string()),
+    ])
+  }
+
+  fn artifact_purposes(snapshot: &auv_tracing::RunSnapshot) -> Vec<&str> {
+    let mut purposes = snapshot.artifacts().values().map(|artifact| artifact.metadata().purpose().as_str()).collect::<Vec<_>>();
+    purposes.sort();
+    purposes
+  }
+
+  async fn stored_document_write_semantic_match(store: &dyn RunStore, snapshot: &auv_tracing::RunSnapshot) -> bool {
+    let artifact = snapshot
+      .artifacts()
+      .values()
+      .find(|artifact| artifact.metadata().purpose().as_str() == "auv.textedit.document_write_result")
+      .expect("document-write result artifact");
+    let mut reader = store.open_artifact(artifact.metadata().uri().clone()).await.expect("open document-write artifact");
+    let mut bytes = Vec::new();
+    while let Some(chunk) = reader.next().await {
+      bytes.extend_from_slice(&chunk.expect("read document-write artifact"));
+    }
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("document-write artifact JSON");
+    value["verification"]["semantic_matched"].as_bool().expect("semantic match field")
+  }
+
+  fn assert_no_canonical_advice(facts: &str) {
+    for forbidden in [
+      "operation-success",
+      "verification",
+      "retry",
+      "recommended action",
+    ] {
+      assert!(!facts.contains(forbidden), "canonical facts contain {forbidden}: {facts}");
+    }
+  }
+
+  struct CommitUnknownStore {
+    inner: MemoryRunStore,
+  }
+
+  impl CommitUnknownStore {
+    fn new() -> Self {
+      Self {
+        inner: MemoryRunStore::new(AuthorityId::new()),
+      }
+    }
+  }
+
+  impl RunStore for CommitUnknownStore {
+    fn authority_id(&self) -> AuthorityId {
+      self.inner.authority_id()
+    }
+
+    fn commit(&self, _request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      Box::pin(async { Err(CommitError::CommitUnknown(ErrorCode::parse("auv.test.commit_unknown").unwrap())) })
+    }
+
+    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+      self.inner.write_artifact(request, body)
+    }
+
+    fn lookup_commit(&self, _run_id: RunId, _key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+      Box::pin(async { Ok(None) })
+    }
+
+    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+      self.inner.load_snapshot(run_id)
+    }
+
+    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+      self.inner.commits_after(run_id, after, limit)
+    }
+
+    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+      self.inner.subscribe(run_id, after)
+    }
+
+    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+      self.inner.open_artifact(uri)
+    }
+  }
 
   #[test]
   fn format_query_wired_inspect_hint_omits_store_root_when_default_store() {

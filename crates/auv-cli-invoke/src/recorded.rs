@@ -171,7 +171,11 @@ fn invoke_resolved_recorded_in_span_with_finalize(
           producer_span_id: command_span.id().clone(),
           command_id: command.id.to_string(),
           command_summary: command.summary.to_string(),
-          status: RunStatus::Completed,
+          status: if output.failure_message.is_some() {
+            RunStatus::Failed
+          } else {
+            RunStatus::Completed
+          },
           output_summary: output.summary,
           backend: output.backend,
           signals: output.signals,
@@ -181,7 +185,7 @@ fn invoke_resolved_recorded_in_span_with_finalize(
           report: output.report,
           artifacts: recorded.records,
           artifact_paths: recorded.paths,
-          failure_message: None,
+          failure_message: output.failure_message,
         },
         Err(failure) => {
           let failure_message = format!("command {} artifact recording failed: {}", command.id, failure.message);

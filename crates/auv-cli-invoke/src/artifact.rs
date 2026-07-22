@@ -9,20 +9,6 @@ pub(crate) fn emission_enabled() -> bool {
   auv_tracing::Context::current().authority_id().is_some()
 }
 
-pub(crate) fn record_uri(
-  output: &mut crate::InvokeCommandOutput,
-  signal: &str,
-  emission: Result<Option<auv_tracing::ArtifactMetadata>, auv_tracing::ArtifactWriteError>,
-) {
-  match emission {
-    Ok(Some(metadata)) => {
-      output.signals.insert(signal.to_string(), metadata.uri().to_string());
-    }
-    Ok(None) => {}
-    Err(error) => output.notes.push(format!("artifact instrumentation failed: {error}")),
-  }
-}
-
 pub(crate) fn json_artifact<T: serde::Serialize>(purpose: &str, value: &T, attributes: Attributes) -> Result<OwnedArtifact, String> {
   let body = serde_json::to_vec_pretty(value).map_err(|error| format!("failed to serialize {purpose} artifact: {error}"))?;
   bytes_artifact(purpose, "application/json", body, attributes)

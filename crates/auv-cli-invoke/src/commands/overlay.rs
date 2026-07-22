@@ -1,5 +1,5 @@
 use crate::{
-  CommandGroup, InvokeCommandInput, InvokeCommandResult,
+  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{NO_ARGS, TARGET_ARGS},
   invoke_command,
 };
@@ -27,6 +27,11 @@ pub fn group() -> CommandGroup {
   args = TARGET_ARGS,
 )]
 async fn overlay_click_point(_input: InvokeCommandInput) -> InvokeCommandResult {
+  click_point().await?;
+  Ok(InvokeCommandOutput::new("clicked overlay point"))
+}
+
+pub async fn click_point() -> Result<(), String> {
   // TODO(invoke-overlay-session): overlay click still lives behind the root
   // macOS command adapter; expose a stable overlay session/input API before
   // enabling this direct invoke command.
@@ -40,6 +45,11 @@ async fn overlay_click_point(_input: InvokeCommandInput) -> InvokeCommandResult 
   args = NO_ARGS,
 )]
 async fn overlay_show_cursor(_input: InvokeCommandInput) -> InvokeCommandResult {
+  show_cursor().await?;
+  Ok(InvokeCommandOutput::new("showed overlay cursor"))
+}
+
+pub async fn show_cursor() -> Result<(), String> {
   // TODO(invoke-overlay-session): visual cursor state still lives behind the
   // root overlay adapter; expose a stable overlay session API before enabling
   // this direct invoke command.
@@ -53,6 +63,11 @@ async fn overlay_show_cursor(_input: InvokeCommandInput) -> InvokeCommandResult 
   args = NO_ARGS,
 )]
 async fn overlay_show_dual_cursor(_input: InvokeCommandInput) -> InvokeCommandResult {
+  show_dual_cursor().await?;
+  Ok(InvokeCommandOutput::new("showed dual overlay cursors"))
+}
+
+pub async fn show_dual_cursor() -> Result<(), String> {
   // TODO(invoke-overlay-session): dual-cursor state still lives behind the
   // root overlay adapter; expose a stable overlay session API before enabling
   // this direct invoke command.
@@ -66,6 +81,11 @@ async fn overlay_show_dual_cursor(_input: InvokeCommandInput) -> InvokeCommandRe
   args = NO_ARGS,
 )]
 async fn overlay_apply_cursor_batch(_input: InvokeCommandInput) -> InvokeCommandResult {
+  apply_cursor_batch().await?;
+  Ok(InvokeCommandOutput::new("applied overlay cursor batch"))
+}
+
+pub async fn apply_cursor_batch() -> Result<(), String> {
   // TODO(invoke-overlay-session): batch overlay operations need a stable typed
   // cursor-operation contract before this direct invoke command can run.
   Err("overlay.applyCursorBatch requires a typed overlay batch API".to_string())
@@ -78,6 +98,11 @@ async fn overlay_apply_cursor_batch(_input: InvokeCommandInput) -> InvokeCommand
   args = NO_ARGS,
 )]
 async fn overlay_set_cursor(_input: InvokeCommandInput) -> InvokeCommandResult {
+  set_cursor().await?;
+  Ok(InvokeCommandOutput::new("set overlay cursor"))
+}
+
+pub async fn set_cursor() -> Result<(), String> {
   // TODO(invoke-overlay-session): cursor mutation still lives behind the root
   // overlay adapter; expose a stable overlay session API before enabling this
   // direct invoke command.
@@ -91,6 +116,11 @@ async fn overlay_set_cursor(_input: InvokeCommandInput) -> InvokeCommandResult {
   args = NO_ARGS,
 )]
 async fn overlay_move_cursor(_input: InvokeCommandInput) -> InvokeCommandResult {
+  move_cursor().await?;
+  Ok(InvokeCommandOutput::new("moved overlay cursor"))
+}
+
+pub async fn move_cursor() -> Result<(), String> {
   // TODO(invoke-overlay-session): cursor animation still lives behind the root
   // overlay adapter; expose a stable overlay session API before enabling this
   // direct invoke command.
@@ -104,6 +134,11 @@ async fn overlay_move_cursor(_input: InvokeCommandInput) -> InvokeCommandResult 
   args = NO_ARGS,
 )]
 async fn overlay_move_cursor_by_id(_input: InvokeCommandInput) -> InvokeCommandResult {
+  move_cursor_by_id().await?;
+  Ok(InvokeCommandOutput::new("moved overlay cursor by id"))
+}
+
+pub async fn move_cursor_by_id() -> Result<(), String> {
   // TODO(invoke-overlay-session): cursor-id animation still lives behind the
   // root overlay adapter; expose a stable overlay session API before enabling
   // this direct invoke command.
@@ -117,6 +152,11 @@ async fn overlay_move_cursor_by_id(_input: InvokeCommandInput) -> InvokeCommandR
   args = NO_ARGS,
 )]
 async fn overlay_flash_cursor(_input: InvokeCommandInput) -> InvokeCommandResult {
+  flash_cursor().await?;
+  Ok(InvokeCommandOutput::new("flashed overlay cursor"))
+}
+
+pub async fn flash_cursor() -> Result<(), String> {
   // TODO(invoke-overlay-session): cursor flashing still lives behind the root
   // overlay adapter; expose a stable overlay session API before enabling this
   // direct invoke command.
@@ -130,6 +170,11 @@ async fn overlay_flash_cursor(_input: InvokeCommandInput) -> InvokeCommandResult
   args = NO_ARGS,
 )]
 async fn overlay_flash_cursor_by_id(_input: InvokeCommandInput) -> InvokeCommandResult {
+  flash_cursor_by_id().await?;
+  Ok(InvokeCommandOutput::new("flashed overlay cursor by id"))
+}
+
+pub async fn flash_cursor_by_id() -> Result<(), String> {
   // TODO(invoke-overlay-session): cursor-id flashing still lives behind the
   // root overlay adapter; expose a stable overlay session API before enabling
   // this direct invoke command.
@@ -143,6 +188,11 @@ async fn overlay_flash_cursor_by_id(_input: InvokeCommandInput) -> InvokeCommand
   args = NO_ARGS,
 )]
 async fn overlay_hide_cursor_id(_input: InvokeCommandInput) -> InvokeCommandResult {
+  hide_cursor_by_id().await?;
+  Ok(InvokeCommandOutput::new("hid overlay cursor by id"))
+}
+
+pub async fn hide_cursor_by_id() -> Result<(), String> {
   // TODO(invoke-overlay-session): cursor-id hide still lives behind the root
   // overlay adapter; expose a stable overlay session API before enabling this
   // direct invoke command.
@@ -156,6 +206,11 @@ async fn overlay_hide_cursor_id(_input: InvokeCommandInput) -> InvokeCommandResu
   args = NO_ARGS,
 )]
 async fn overlay_hide_cursor(_input: InvokeCommandInput) -> InvokeCommandResult {
+  hide_cursor().await?;
+  Ok(InvokeCommandOutput::new("hid overlay cursor"))
+}
+
+pub async fn hide_cursor() -> Result<(), String> {
   // TODO(invoke-overlay-session): cursor hide still lives behind the root
   // overlay adapter; expose a stable overlay session API before enabling this
   // direct invoke command.
@@ -169,6 +224,11 @@ async fn overlay_hide_cursor(_input: InvokeCommandInput) -> InvokeCommandResult 
   args = NO_ARGS,
 )]
 async fn overlay_shutdown(_input: InvokeCommandInput) -> InvokeCommandResult {
+  shutdown().await?;
+  Ok(InvokeCommandOutput::new("shut down overlay"))
+}
+
+pub async fn shutdown() -> Result<(), String> {
   // TODO(invoke-overlay-session): overlay lifecycle shutdown still lives
   // behind the root overlay adapter; expose a stable overlay session API
   // before enabling this direct invoke command.

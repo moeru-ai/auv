@@ -12,14 +12,16 @@ use auv_cli_invoke::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportSection,
   InvokeResult, invoke_command,
 };
-use auv_driver::{DriverError, INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputDeliveryPath};
+use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputDeliveryPath};
 use auv_runtime::contract::{
-  ArtifactRef, ControlFailure, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
+  ArtifactRef, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
   VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
 };
 use auv_tracing_driver::artifact::ArtifactBytesSource;
 use auv_tracing_driver::trace::{EVENT_API_VERSION, EventRecordV1Alpha1, new_event_id};
 use auv_tracing_driver::{ProducedArtifact, RecordingRun, RunId, RunRecordingBackend, SpanRef, now_millis};
+use futures_util::io::Cursor as AsyncCursor;
+use sha2::{Digest, Sha256};
 
 pub const DOCUMENT_WRITE_COMMAND_ID: &str = "app.textedit.document.write";
 pub const TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT: &str = "auv.product.textedit.document_write.v0";
@@ -30,8 +32,9 @@ pub fn group() -> CommandGroup {
   CommandGroup::new("textedit", "TEXTEDIT").command(document_write_invoke_command())
 }
 
-/// Product invoke entry is [`crate::invoke::invoke_recorded`].
-/// This module only owns the TextEdit handler + operation finalize.
+/// The typed [`write_document`] function is the shared domain entrypoint. The
+/// generated command is the CLI adapter; the finalizer below is retained only
+/// for the Task22 legacy recorded adapter.
 
 #[invoke_command(
   id = "app.textedit.document.write",
@@ -40,10 +43,10 @@ pub fn group() -> CommandGroup {
   args = TEXTEDIT_DOCUMENT_WRITE_ARGS,
 )]
 async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
-  document_write_impl(input)
+  document_write_impl(input).await
 }
 
-fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
+async fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
   if input.dry_run {
     let mut output = InvokeCommandOutput::new("dry run: app.textedit.document.write");
     output.verification = Some("dry-run; no semantic success claim".to_string());
@@ -57,164 +60,51 @@ fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
   // recorded mismatch tests can force a semantic mismatch without live TextEdit.
   // Expose a first-class flag only if the owner approves fixture controls.
   let fixture_observed_text = input.inputs.get("fixture_observed_text").cloned();
-  // A typed `DriverError` from a control step (activate / focus / paste / open)
-  // is classified as a `ControlFailed` failure and carried forward on the
-  // `Ok(InvokeCommandOutput)` channel (via signals) rather than flattened to a
-  // String on the handler's `Err` channel. The invoke framework's handler error
-  // type is `String`, so `Err` cannot preserve the variant; finalize reads the
-  // carried classification, flips status to Failed, and persists it as
-  // `OperationResult.control_failure`. This mirrors how a semantic mismatch also
-  // rides `Ok` and is finalized to a typed `FailureLayer`.
-  let report = match driver_kind {
-    "fixture" => {
-      let mut driver = FixtureTextEditDriver::from_write(&command);
-      driver.observed_override = fixture_observed_text;
-      // NOTICE(textedit-fixture-only): forces a typed control-layer DriverError
-      // so the control-failure path is testable without live macOS.
-      driver.control_error_kind = input.inputs.get("fixture_control_error").cloned();
-      match run_document_command(&DocumentCommand::Write(command.clone()), &mut driver) {
-        Ok(report) => report,
-        Err(error) => return Ok(control_failure_output(&command, &error)),
-      }
-    }
-    "live" => {
-      #[cfg(target_os = "macos")]
-      {
-        match open_and_write_live(&command) {
-          Ok(report) => report,
-          Err(error) => return Ok(control_failure_output(&command, &error)),
-        }
-      }
-      #[cfg(not(target_os = "macos"))]
-      {
-        return Err("app.textedit.document.write live driver requires macOS".to_string());
-      }
-    }
+  let driver = match driver_kind {
+    "fixture" => DocumentWriteDriver::Fixture {
+      observed_text: fixture_observed_text,
+    },
+    "live" => DocumentWriteDriver::Live,
     other => return Err(format!("app.textedit.document.write unknown --driver {other}; expected live or fixture")),
   };
+  let report = write_document(command.clone(), driver).await?;
 
   build_invoke_output_from_report(&report, &command)
 }
 
-#[cfg(target_os = "macos")]
-fn open_and_write_live(command: &DocumentWrite) -> auv_driver::DriverResult<DocumentCommandReport> {
-  let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
-  run_document_command(&DocumentCommand::Write(command.clone()), &mut driver)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DocumentWriteDriver {
+  Live,
+  Fixture { observed_text: Option<String> },
 }
 
-/// Signal keys used to carry a typed control failure from the handler across the
-/// `Ok(InvokeCommandOutput)` boundary to [`finalize_recorded_invoke`]. They are
-/// namespaced under `textedit.` like the other command signals; the invoke-time
-/// surfaces render them as ordinary signals (the typed persisted classification
-/// lives on `OperationResult.control_failure`, produced in finalize).
-// NOTICE(control-failure-signal-carrier): these live on the generic
-// `InvokeResult.signals` string bag, which the session-API summary path persists
-// into the `operation-summary` artifact (see `OperationSummaryRecord`). That is
-// an untyped string carrier, not the typed `OperationResult.control_failure`
-// field the owner deferred for the RPC surface, so it does not break the
-// inspect-family-only scope — but the same classification text does travel with
-// the summary. Drop these signals if a future slice wants the summary surface to
-// stay classification-free.
-const CONTROL_FAILURE_LAYER_SIGNAL: &str = "textedit.control_failure.layer";
-const CONTROL_FAILURE_MESSAGE_SIGNAL: &str = "textedit.control_failure.message";
-const CONTROL_FAILURE_RECOVERY_SIGNAL: &str = "textedit.control_failure.recovery";
-
-/// Build the invoke output for a control-layer driver failure. Carries the typed
-/// classification on signals so finalize can persist it; the human summary and
-/// `verification` note make the failure legible on the invoke-time surface too.
-fn control_failure_output(command: &DocumentWrite, error: &DriverError) -> InvokeCommandOutput {
-  let failure = classify_control_failure(error);
-  let mut output = InvokeCommandOutput::new(format!("TextEdit document.write control failure: {}", failure.message));
-  output.backend = Some("auv-apple-textedit.DocumentWrite".to_string());
-  output.signals.insert("textedit.command".to_string(), "document.write".to_string());
-  output.signals.insert("textedit.app_id".to_string(), command.app_id.clone());
-  output.signals.insert(CONTROL_FAILURE_LAYER_SIGNAL.to_string(), render_failure_layer_signal(failure.layer));
-  output.signals.insert(CONTROL_FAILURE_MESSAGE_SIGNAL.to_string(), failure.message.clone());
-  if let Some(recovery) = &failure.recovery {
-    output.signals.insert(CONTROL_FAILURE_RECOVERY_SIGNAL.to_string(), recovery.clone());
-  }
-  output.verification = Some("control failure before verification; no semantic VerificationResult was attached".to_string());
-  output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT.to_string());
-  output
-}
-
-/// Map a typed [`DriverError`] to a persisted [`ControlFailure`]. Every driver
-/// control failure is classified as [`FailureLayer::ControlFailed`]; the driver
-/// error supplies the message, and the recovery hint is lifted from variants
-/// that carry one without also embedding it in the message.
-fn classify_control_failure(error: &DriverError) -> ControlFailure {
-  // NOTICE(control-failure-recovery): the recovery hint is read from the
-  // variants that own one so `message` and `recovery` stay non-overlapping in
-  // the persisted record. If `DriverError` grows a
-  // recovery-bearing variant, extend this match. A shared `DriverError::recovery`
-  // accessor in auv-driver-common is the cleaner home once a second consumer
-  // needs it; deferred to avoid widening that crate for one caller.
-  let (message, recovery) = match error {
-    DriverError::PermissionDenied {
-      permission,
-      message,
-      recovery,
-    } => {
-      let message = match message {
-        Some(detail) => format!("{permission} permission was denied: {detail}"),
-        None => format!("{permission} permission was denied"),
-      };
-      (message, recovery.clone())
+/// Executes TextEdit document write and returns the app-owned report directly.
+pub async fn write_document(command: DocumentWrite, driver: DocumentWriteDriver) -> Result<DocumentCommandReport, String> {
+  let report = match driver {
+    DocumentWriteDriver::Fixture { observed_text } => {
+      let mut driver = FixtureTextEditDriver::from_write(&command);
+      driver.observed_override = observed_text;
+      run_document_command(&DocumentCommand::Write(command), &mut driver)?
     }
-    DriverError::StaleObservation { message, recovery } | DriverError::RoleMismatch { message, recovery } => {
-      (message.clone(), recovery.clone())
-    }
-    DriverError::Unsupported { .. } | DriverError::NotFound { .. } | DriverError::InvalidInput { .. } | DriverError::Backend { .. } => {
-      (error.to_string(), None)
+    DocumentWriteDriver::Live => {
+      #[cfg(target_os = "macos")]
+      {
+        let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
+        run_document_command(&DocumentCommand::Write(command), &mut driver)?
+      }
+      #[cfg(not(target_os = "macos"))]
+      {
+        let _ = command;
+        return Err("app.textedit.document.write live driver requires macOS".to_string());
+      }
     }
   };
-  ControlFailure {
-    layer: FailureLayer::ControlFailed,
-    message,
-    recovery,
-  }
+  emit_document_write_artifacts(&report).await;
+  Ok(report)
 }
 
-/// Serialize a [`FailureLayer`] to its wire token (`snake_case`) via serde, so
-/// the signal round-trip reuses the contract's own naming rather than a second
-/// hand-written table. `FailureLayer` is a fieldless enum, so this cannot fail.
-fn render_failure_layer_signal(layer: FailureLayer) -> String {
-  serde_json::to_value(layer).ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_else(|| "control_failed".to_string())
-}
-
-/// Inverse of [`render_failure_layer_signal`]; returns `None` if the carried
-/// token is not a known `FailureLayer`.
-fn parse_failure_layer_signal(token: &str) -> Option<FailureLayer> {
-  serde_json::from_value(serde_json::Value::String(token.to_string())).ok()
-}
-
-/// Reconstruct a [`ControlFailure`] carried on the invoke result's signals by
-/// [`control_failure_output`], if the handler recorded one.
-///
-/// The message signal is the single "a control failure occurred" marker: its
-/// presence alone reconstructs the failure so finalize can flip status to
-/// Failed. The layer is best-effort — an absent or unknown token degrades to
-/// [`FailureLayer::ControlFailed`] (the only layer this producer emits) rather
-/// than dropping the whole classification. This deliberately decouples
-/// *failed-ness* from *clean layer parse* so a future signal-shape drift cannot
-/// silently downgrade a real driver failure to a persisted success.
-fn control_failure_from_signals(result: &InvokeResult) -> Option<ControlFailure> {
-  let message = result.signals.get(CONTROL_FAILURE_MESSAGE_SIGNAL)?.clone();
-  let layer = result
-    .signals
-    .get(CONTROL_FAILURE_LAYER_SIGNAL)
-    .and_then(|token| parse_failure_layer_signal(token))
-    .unwrap_or(FailureLayer::ControlFailed);
-  Some(ControlFailure {
-    layer,
-    message,
-    recovery: result.signals.get(CONTROL_FAILURE_RECOVERY_SIGNAL).cloned(),
-  })
-}
-
-/// Stages evidence artifacts only. Canonical `operation-result` is appended by
-/// the recorded invoke finalize hook after evidence artifacts are recorded and
-/// before the run closes.
+/// Maps the typed report into CLI presentation. The conditional path artifacts
+/// are consumed only by the Task 22 legacy recorded adapter.
 pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, command: &DocumentWrite) -> InvokeCommandResult {
   let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
   let mut output = InvokeCommandOutput::new(format!(
@@ -233,24 +123,7 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
     output.signals.insert("textedit.semantic_matched".to_string(), matched.to_string());
   }
 
-  for outcome in &report.outcomes {
-    if let Some(result) = &outcome.input_action_result {
-      output.artifacts.push(json_artifact(
-        INPUT_ACTION_RESULT_ARTIFACT_ROLE,
-        &format!("textedit-{}-input-action", outcome.step_id.replace('.', "-")),
-        result,
-        "Typed InputActionResult from TextEdit document.write step.",
-      )?);
-    }
-  }
-
   if let Some(verification) = &report.verification {
-    output.artifacts.push(json_artifact(
-      "ax-text-observation",
-      "textedit-ax-text-observation",
-      verification,
-      "AX text observation used for TextEdit semantic verification.",
-    )?);
     output.signals.insert("textedit.matched_role".to_string(), verification.matched_role.clone());
     output.signals.insert("textedit.matched_text_len".to_string(), verification.matched_text.len().to_string());
   }
@@ -265,11 +138,84 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
     output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT.to_string());
   }
   output.report = Some(document_write_report(report, command));
+  if semantic_matched == Some(false) {
+    let verification = report.verification.as_ref().expect("semantic match status requires verification");
+    let observed = truncate(&verification.matched_text, 80);
+    output.summary =
+      format!("TextEdit document.write failed semantic verification (role={}, observed={observed})", verification.matched_role);
+    output.failure_message = Some(format!(
+      "TextEdit semantic verification failed: expected content was not present in observed AX text role={} observed={observed}",
+      verification.matched_role
+    ));
+  }
+  // NOTICE(task22-legacy-recording): path-based artifacts are produced only
+  // when the explicit RunRecordingBackend adapter invokes this CLI handler.
+  if auv_tracing::Context::current().authority_id().is_none() {
+    for outcome in &report.outcomes {
+      if let Some(result) = &outcome.input_action_result {
+        output.artifacts.push(json_artifact(
+          INPUT_ACTION_RESULT_ARTIFACT_ROLE,
+          &format!("textedit-{}-input-action", outcome.step_id.replace('.', "-")),
+          result,
+          "Typed InputActionResult from TextEdit document.write step.",
+        )?);
+      }
+    }
+    if let Some(verification) = &report.verification {
+      output.artifacts.push(json_artifact(
+        "ax-text-observation",
+        "textedit-ax-text-observation",
+        verification,
+        "AX text observation used for TextEdit semantic verification.",
+      )?);
+    }
+  }
   Ok(output)
 }
 
-/// Finalize the recorded invoke inside the shared lifecycle so result status,
-/// run status, and canonical `operation-result` stay in sync.
+async fn emit_document_write_artifacts(report: &DocumentCommandReport) {
+  if auv_tracing::Context::current().authority_id().is_none() {
+    return;
+  }
+  for outcome in &report.outcomes {
+    if let Some(result) = &outcome.input_action_result {
+      emit_json_artifact("auv.driver.input_action_result", result).await;
+    }
+  }
+  if let Some(verification) = &report.verification {
+    emit_json_artifact("auv.textedit.ax_text_observation", verification).await;
+  }
+  emit_json_artifact("auv.textedit.document_write_result", report).await;
+}
+
+async fn emit_json_artifact<T: serde::Serialize>(purpose: &str, value: &T) {
+  let Ok(body) = serde_json::to_vec_pretty(value) else {
+    return;
+  };
+  let Ok(byte_length) = u64::try_from(body.len()) else {
+    return;
+  };
+  let Ok(purpose) = auv_tracing::ArtifactPurpose::parse(purpose) else {
+    return;
+  };
+  let Ok(content_type) = auv_tracing::ContentType::parse("application/json") else {
+    return;
+  };
+  let Ok(byte_length) = auv_tracing::ByteLength::new(byte_length) else {
+    return;
+  };
+  let artifact = auv_tracing::NewArtifact::new(
+    purpose,
+    content_type,
+    byte_length,
+    auv_tracing::Sha256Digest::new(Sha256::digest(&body).into()),
+    auv_tracing::Attributes::empty(),
+    AsyncCursor::new(body),
+  );
+  let _ = auv_tracing::emit_artifact!(artifact).await;
+}
+
+/// Finalizes TextEdit output for the Task22 legacy recorded adapter.
 pub fn finalize_recorded_invoke(
   recording: &RunRecordingBackend,
   run: &mut RecordingRun,
@@ -283,19 +229,6 @@ pub fn finalize_recorded_invoke(
     return Ok(());
   }
   if result.artifacts.iter().any(|artifact| artifact.role == "operation-result") {
-    return Ok(());
-  }
-
-  // A control failure short-circuits before any observation exists: the driver
-  // never delivered input, so there is no AX text to read or verify. Classify,
-  // mark the result failed, and persist the typed classification.
-  if let Some(control_failure) = control_failure_from_signals(result) {
-    apply_control_failure(result, &control_failure);
-    let operation = build_canonical_operation_result_with_control_failure(result, None, Some(control_failure));
-    let rendered = serde_json::to_string_pretty(&operation).map_err(|error| format!("serialize operation-result: {error}"))? + "\n";
-    let (artifact, path) = stage_operation_result_artifact(recording, run, producer_span, rendered.into_bytes())?;
-    result.artifacts.push(artifact);
-    result.artifact_paths.push(path);
     return Ok(());
   }
 
@@ -315,14 +248,6 @@ pub fn finalize_recorded_invoke(
 }
 
 fn build_canonical_operation_result(result: &InvokeResult, observation: Option<&VerificationOutcome>) -> OperationResult {
-  build_canonical_operation_result_with_control_failure(result, observation, None)
-}
-
-fn build_canonical_operation_result_with_control_failure(
-  result: &InvokeResult,
-  observation: Option<&VerificationOutcome>,
-  control_failure: Option<ControlFailure>,
-) -> OperationResult {
   let run_id = RunId::new(result.run_id.as_str());
   let evidence_artifacts = result
     .artifacts
@@ -388,27 +313,9 @@ fn build_canonical_operation_result_with_control_failure(
       message: Some(result.output_summary.clone()),
     },
     verifications,
-    control_failure,
     freshness_basis: None,
     known_limits,
   }
-}
-
-/// Mark a control-layer driver failure on the transient result: coarse status
-/// Failed and a human failure string. The typed classification is persisted
-/// separately on `OperationResult.control_failure`.
-///
-// TODO(control-failure-invoke-time-typed): the invoke-time surface (this
-// `InvokeResult` and the CLI/MCP invoke renderers) intentionally stays untyped
-// in PR8-B — it keeps only the human `failure_message`, not a typed
-// `control_failure` field, per the owner's inspect-family-only scope. Trigger:
-// if a future slice wants CLI invoke stdout / the MCP invoke tool JSON to expose
-// the typed classification, add the field to `InvokeResult` in `auv-cli-invoke`
-// and populate it here rather than only on the persisted `OperationResult`.
-fn apply_control_failure(result: &mut InvokeResult, control_failure: &ControlFailure) {
-  result.status = auv_cli_invoke::RunStatus::Failed;
-  result.output_summary = format!("TextEdit document.write control failure: {}", control_failure.message);
-  result.failure_message = Some(control_failure.message.clone());
 }
 
 fn apply_semantic_mismatch(result: &mut InvokeResult, verification: &VerificationOutcome) {
@@ -595,12 +502,6 @@ struct FixtureTextEditDriver {
   role: String,
   /// When set, verify reads this observed body instead of pasted content.
   observed_override: Option<String>,
-  /// NOTICE(textedit-fixture-only): when set, `focus_text_input` returns a
-  /// typed `DriverError` of this kind so hermetic tests can exercise the
-  /// control-failure path without live macOS. `DriverError` is not `Clone`, so
-  /// the injection is stored as a token and the error is built at the failure
-  /// site. Kinds: `permission_denied`, `stale_observation`, `backend`.
-  control_error_kind: Option<String>,
 }
 
 impl FixtureTextEditDriver {
@@ -609,31 +510,12 @@ impl FixtureTextEditDriver {
       content: command.content.clone(),
       role: command.compare_role.clone(),
       observed_override: None,
-      control_error_kind: None,
-    }
-  }
-
-  /// Build the injected typed error for [`Self::control_error_kind`].
-  fn injected_control_error(kind: &str) -> DriverError {
-    match kind {
-      "permission_denied" => DriverError::PermissionDenied {
-        permission: "accessibility",
-        message: Some("fixture: TextEdit AX focus not authorized".to_string()),
-        recovery: Some("grant Accessibility to the terminal in System Settings".to_string()),
-      },
-      "stale_observation" => DriverError::StaleObservation {
-        message: "fixture: AX path 0.1.2 no longer resolves".to_string(),
-        recovery: Some("recapture the AX tree".to_string()),
-      },
-      _ => DriverError::Backend {
-        message: format!("fixture: injected backend control failure ({kind})"),
-      },
     }
   }
 }
 
 impl TextEditDriver for FixtureTextEditDriver {
-  fn activate_app(&mut self, app_id: &str, settle: Duration) -> auv_driver::DriverResult<StepOutcome> {
+  fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
     Ok(StepOutcome {
       step_id: "activate",
       summary: format!("fixture activated {app_id} settle_ms={}", settle.as_millis()),
@@ -641,10 +523,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     })
   }
 
-  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> auv_driver::DriverResult<StepOutcome> {
-    if let Some(kind) = &self.control_error_kind {
-      return Err(Self::injected_control_error(kind));
-    }
+  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, String> {
     Ok(StepOutcome {
       step_id: "focus",
       summary: format!("fixture focused {app_id} query={query} candidate={candidate}"),
@@ -658,7 +537,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     text: &str,
     replace_existing: bool,
     settle: Duration,
-  ) -> auv_driver::DriverResult<StepOutcome> {
+  ) -> Result<StepOutcome, String> {
     self.content = text.to_string();
     Ok(StepOutcome {
       step_id: "paste",
@@ -667,7 +546,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     })
   }
 
-  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> auv_driver::DriverResult<VerificationOutcome> {
+  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, String> {
     self.role = target_role.to_string();
     let observed = self.observed_override.clone().unwrap_or_else(|| self.content.clone());
     Ok(VerificationOutcome {
@@ -693,8 +572,8 @@ mod tests {
   use super::*;
   use crate::product_registry;
 
-  #[test]
-  fn fixture_document_write_stages_evidence_artifacts_without_unassigned_operation() {
+  #[tokio::test]
+  async fn fixture_document_write_stages_evidence_artifacts_without_unassigned_operation() {
     let mut inputs = BTreeMap::new();
     inputs.insert("content".to_string(), "hello-fixture".to_string());
     inputs.insert("driver".to_string(), "fixture".to_string());
@@ -704,15 +583,15 @@ mod tests {
       inputs,
       dry_run: false,
     };
-    let output = document_write_impl(input).expect("fixture write");
+    let output = document_write_impl(input).await.expect("fixture write");
     assert!(output.artifacts.iter().any(|artifact| artifact.kind == INPUT_ACTION_RESULT_ARTIFACT_ROLE));
     assert!(output.artifacts.iter().any(|artifact| artifact.kind == "ax-text-observation"));
     assert!(!output.artifacts.iter().any(|artifact| artifact.kind == "operation-result"));
     assert_eq!(output.backend.as_deref(), Some("auv-apple-textedit.DocumentWrite"));
   }
 
-  #[test]
-  fn fixture_document_write_without_ax_verification_omits_state_change_known_limit() {
+  #[tokio::test]
+  async fn fixture_document_write_without_ax_verification_omits_state_change_known_limit() {
     let mut inputs = BTreeMap::new();
     inputs.insert("content".to_string(), "hello-fixture".to_string());
     inputs.insert("driver".to_string(), "fixture".to_string());
@@ -724,7 +603,7 @@ mod tests {
       dry_run: false,
     };
 
-    let output = document_write_impl(input).expect("fixture write without verification");
+    let output = document_write_impl(input).await.expect("fixture write without verification");
 
     assert!(!output.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
   }
@@ -776,7 +655,6 @@ mod tests {
       content: "pasted".to_string(),
       role: "AXTextArea".to_string(),
       observed_override: Some("observed-without-expected".to_string()),
-      control_error_kind: None,
     };
     let command = DocumentWrite::defaults_with_content("expected-marker");
     let report = run_document_command(&DocumentCommand::Write(command.clone()), &mut driver).expect("report");
@@ -788,57 +666,19 @@ mod tests {
     assert_eq!(output.signals.get("textedit.semantic_matched").map(String::as_str), Some("false"));
   }
 
-  fn invoke_result_with_signals(signals: BTreeMap<String, String>) -> InvokeResult {
-    InvokeResult {
-      run_id: "run_ctrl".to_string(),
-      producer_span_id: auv_tracing_driver::trace::SpanId::new("0000000000000001"),
-      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
-      command_summary: "TextEdit document write".to_string(),
-      status: auv_cli_invoke::RunStatus::Completed,
-      output_summary: "ok".to_string(),
-      backend: None,
-      signals,
-      notes: Vec::new(),
-      known_limits: Vec::new(),
-      verification: None,
-      report: None,
-      artifacts: Vec::new(),
-      artifact_paths: Vec::new(),
-      failure_message: None,
-    }
-  }
+  #[tokio::test]
+  async fn typed_document_write_returns_semantic_mismatch_without_cli_context() {
+    let command = DocumentWrite::defaults_with_content("expected-marker");
+    let report = write_document(
+      command,
+      DocumentWriteDriver::Fixture {
+        observed_text: Some("observed-without-expected".to_string()),
+      },
+    )
+    .await
+    .expect("typed TextEdit call");
 
-  // ROOT CAUSE:
-  //
-  // If control_failure_from_signals gated failed-ness on a clean layer-token
-  // parse, a real driver control failure whose layer signal was absent or
-  // carried an unknown token would reconstruct as None. Finalize would then fall
-  // through to the observation path and persist the operation as Completed — a
-  // silent success for a genuine failure.
-  //
-  // The fix keeps the message signal as the sole "a control failure occurred"
-  // marker and degrades an absent/unknown layer to ControlFailed, so failed-ness
-  // survives layer-signal drift.
-  #[test]
-  fn control_failure_message_signal_alone_reconstructs_as_control_failed() {
-    let mut signals = BTreeMap::new();
-    signals.insert(CONTROL_FAILURE_MESSAGE_SIGNAL.to_string(), "accessibility permission was denied".to_string());
-    // No layer signal at all.
-    let reconstructed =
-      control_failure_from_signals(&invoke_result_with_signals(signals)).expect("message alone must reconstruct a control failure");
-    assert_eq!(reconstructed.layer, FailureLayer::ControlFailed);
-    assert_eq!(reconstructed.message, "accessibility permission was denied");
-    assert_eq!(reconstructed.recovery, None);
-
-    // An unknown/garbled layer token must also degrade to ControlFailed, never drop the failure.
-    let mut garbled = BTreeMap::new();
-    garbled.insert(CONTROL_FAILURE_MESSAGE_SIGNAL.to_string(), "backend failure".to_string());
-    garbled.insert(CONTROL_FAILURE_LAYER_SIGNAL.to_string(), "not_a_real_layer".to_string());
-    let reconstructed = control_failure_from_signals(&invoke_result_with_signals(garbled)).expect("garbled layer must not drop the failure");
-    assert_eq!(reconstructed.layer, FailureLayer::ControlFailed);
-
-    // No message signal means no control failure was recorded.
-    assert!(control_failure_from_signals(&invoke_result_with_signals(BTreeMap::new())).is_none());
+    assert_eq!(report.verification.as_ref().map(|verification| verification.semantic_matched), Some(false));
   }
 
   // ROOT CAUSE:

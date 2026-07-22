@@ -45,6 +45,8 @@ pub struct InvokeCommandOutput {
   pub artifacts: Vec<ProducedArtifact>,
   pub known_limits: Vec<String>,
   pub report: Option<InvokeReport>,
+  /// CLI presentation failure derived from an otherwise successful typed call.
+  pub failure_message: Option<String>,
   /// Human-readable boundary claim produced by the handler for this execution.
   ///
   /// This is intentionally not a structured `VerificationResult`: direct
@@ -68,6 +70,7 @@ impl InvokeCommandOutput {
       artifacts: Vec::new(),
       known_limits: Vec::new(),
       report: None,
+      failure_message: None,
       verification: None,
     }
   }
@@ -182,6 +185,7 @@ mod tests {
     assert!(output.artifacts.is_empty());
     assert!(output.known_limits.is_empty());
     assert!(output.report.is_none());
+    assert!(output.failure_message.is_none());
     assert!(output.verification.is_none());
   }
 }
