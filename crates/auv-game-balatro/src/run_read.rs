@@ -27,46 +27,47 @@ pub enum BalatroArtifactPublishError {
     #[source]
     source: ValidationError,
   },
-  #[error("invalid Balatro artifact content type {value:?}: {source}")]
+  #[error("invalid Balatro artifact content type {value:?} for {purpose}: {source}")]
   InvalidContentType {
+    purpose: ArtifactPurpose,
     value: &'static str,
     #[source]
     source: ValidationError,
   },
   #[error("Balatro artifact {purpose} JSON length {actual} cannot be represented as u64: {source}")]
   LengthOutOfRange {
-    purpose: &'static str,
+    purpose: ArtifactPurpose,
     actual: u128,
     #[source]
     source: TryFromIntError,
   },
   #[error("{BALATRO_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE}: {purpose} JSON is {actual} bytes, exceeding the {limit}-byte limit")]
   PayloadTooLarge {
-    purpose: &'static str,
+    purpose: ArtifactPurpose,
     limit: u64,
     actual: u64,
   },
   #[error("failed to allocate {purpose} JSON bytes: {source}")]
   Allocation {
-    purpose: &'static str,
+    purpose: ArtifactPurpose,
     #[source]
     source: TryReserveError,
   },
   #[error("failed to serialize {purpose} as JSON: {source}")]
   Serialize {
-    purpose: &'static str,
+    purpose: ArtifactPurpose,
     #[source]
     source: serde_json::Error,
   },
   #[error("invalid byte length for Balatro artifact {purpose}: {source}")]
   InvalidByteLength {
-    purpose: &'static str,
+    purpose: ArtifactPurpose,
     #[source]
     source: ValidationError,
   },
   #[error("failed to publish Balatro artifact {purpose}: {source}")]
   Publication {
-    purpose: &'static str,
+    purpose: ArtifactPurpose,
     #[source]
     source: ArtifactWriteError,
   },
@@ -100,15 +101,15 @@ pub enum BalatroArtifactReadError {
   DanglingUri { uri: ArtifactUri },
   #[error("Balatro artifact {uri} has purpose {actual}, expected {expected}")]
   WrongPurpose {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     expected: ArtifactPurpose,
     actual: ArtifactPurpose,
   },
   #[error("Balatro artifact {uri} has content type {actual}, expected {expected}")]
   WrongContentType {
-    uri: ArtifactUri,
-    expected: ContentType,
-    actual: ContentType,
+    uri: Box<ArtifactUri>,
+    expected: Box<ContentType>,
+    actual: Box<ContentType>,
   },
   #[error("Balatro artifact {uri} is {actual} bytes, exceeding the {limit}-byte structured-artifact limit")]
   PayloadTooLarge {
@@ -145,7 +146,7 @@ pub enum BalatroArtifactReadError {
   },
   #[error("Balatro artifact {uri} digest mismatch: expected {expected}, read {actual}")]
   DigestMismatch {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     expected: Sha256Digest,
     actual: Sha256Digest,
   },
@@ -190,22 +191,27 @@ pub(crate) async fn publish_json_artifact<T: Serialize>(
     return Ok(None);
   };
 
-  let body = serialize_json_bounded(purpose, value)?;
+  let purpose = ArtifactPurpose::parse(purpose).map_err(|source| BalatroArtifactPublishError::InvalidPurpose {
+    value: purpose,
+    source,
+  })?;
+  let body = serialize_json_bounded(&purpose, value)?;
   let byte_length = u64::try_from(body.len()).map_err(|source| BalatroArtifactPublishError::LengthOutOfRange {
-    purpose,
+    purpose: purpose.clone(),
     actual: body.len() as u128,
     source,
   })?;
   let artifact = NewArtifact::new(
-    ArtifactPurpose::parse(purpose).map_err(|source| BalatroArtifactPublishError::InvalidPurpose {
-      value: purpose,
-      source,
-    })?,
+    purpose.clone(),
     ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| BalatroArtifactPublishError::InvalidContentType {
+      purpose: purpose.clone(),
       value: JSON_CONTENT_TYPE,
       source,
     })?,
-    ByteLength::new(byte_length).map_err(|source| BalatroArtifactPublishError::InvalidByteLength { purpose, source })?,
+    ByteLength::new(byte_length).map_err(|source| BalatroArtifactPublishError::InvalidByteLength {
+      purpose: purpose.clone(),
+      source,
+    })?,
     Sha256Digest::new(Sha256::digest(&body).into()),
     Attributes::empty(),
     AsyncCursor::new(body),
@@ -262,16 +268,16 @@ pub(crate) async fn read_json_artifact_bytes(
   let metadata = snapshot.artifacts().get(uri).ok_or_else(|| BalatroArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
   if metadata.purpose() != &expected_purpose {
     return Err(BalatroArtifactReadError::WrongPurpose {
-      uri: uri.clone(),
+      uri: Box::new(uri.clone()),
       expected: expected_purpose,
       actual: metadata.purpose().clone(),
     });
   }
   if metadata.content_type() != &expected_content_type {
     return Err(BalatroArtifactReadError::WrongContentType {
-      uri: uri.clone(),
-      expected: expected_content_type,
-      actual: metadata.content_type().clone(),
+      uri: Box::new(uri.clone()),
+      expected: Box::new(expected_content_type),
+      actual: Box::new(metadata.content_type().clone()),
     });
   }
 
@@ -334,7 +340,7 @@ pub(crate) async fn read_json_artifact_bytes(
   let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
   if actual_digest != metadata.sha256() {
     return Err(BalatroArtifactReadError::DigestMismatch {
-      uri: uri.clone(),
+      uri: Box::new(uri.clone()),
       expected: metadata.sha256(),
       actual: actual_digest,
     });
@@ -353,30 +359,36 @@ fn expected_json_content_type() -> Result<ContentType, BalatroArtifactReadError>
   })
 }
 
-fn serialize_json_bounded<T: Serialize>(purpose: &'static str, value: &T) -> Result<Vec<u8>, BalatroArtifactPublishError> {
+fn serialize_json_bounded<T: Serialize>(purpose: &ArtifactPurpose, value: &T) -> Result<Vec<u8>, BalatroArtifactPublishError> {
   let mut output = BoundedJsonBuffer::new(purpose, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
   let result = serde_json::to_writer(&mut output, value);
   if let Some(failure) = output.failure.take() {
     return Err(match failure {
       JsonBufferFailure::LengthOutOfRange { actual, source } => BalatroArtifactPublishError::LengthOutOfRange {
-        purpose,
+        purpose: purpose.clone(),
         actual,
         source,
       },
       JsonBufferFailure::PayloadTooLarge { actual } => BalatroArtifactPublishError::PayloadTooLarge {
-        purpose,
+        purpose: purpose.clone(),
         limit: output.limit,
         actual,
       },
-      JsonBufferFailure::Allocation(source) => BalatroArtifactPublishError::Allocation { purpose, source },
+      JsonBufferFailure::Allocation(source) => BalatroArtifactPublishError::Allocation {
+        purpose: purpose.clone(),
+        source,
+      },
     });
   }
-  result.map_err(|source| BalatroArtifactPublishError::Serialize { purpose, source })?;
+  result.map_err(|source| BalatroArtifactPublishError::Serialize {
+    purpose: purpose.clone(),
+    source,
+  })?;
   Ok(output.bytes)
 }
 
-struct BoundedJsonBuffer {
-  purpose: &'static str,
+struct BoundedJsonBuffer<'a> {
+  purpose: &'a ArtifactPurpose,
   limit: u64,
   bytes: Vec<u8>,
   failure: Option<JsonBufferFailure>,
@@ -393,8 +405,8 @@ enum JsonBufferFailure {
   Allocation(TryReserveError),
 }
 
-impl BoundedJsonBuffer {
-  fn new(purpose: &'static str, limit: u64) -> Self {
+impl<'a> BoundedJsonBuffer<'a> {
+  fn new(purpose: &'a ArtifactPurpose, limit: u64) -> Self {
     Self {
       purpose,
       limit,
@@ -409,7 +421,7 @@ impl BoundedJsonBuffer {
   }
 }
 
-impl Write for BoundedJsonBuffer {
+impl Write for BoundedJsonBuffer<'_> {
   fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
     let Some(next_length) = self.bytes.len().checked_add(buffer.len()) else {
       return Err(self.fail(JsonBufferFailure::PayloadTooLarge { actual: u64::MAX }));
@@ -437,5 +449,91 @@ impl Write for BoundedJsonBuffer {
 
   fn flush(&mut self) -> std::io::Result<()> {
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::error::Error as _;
+  use std::sync::Arc;
+
+  use auv_tracing::{
+    BoxFuture, Context, MemoryRunStore, RunId, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure,
+    dispatcher,
+  };
+  use serde::Serializer;
+
+  use super::*;
+
+  struct PanicOnSerialize;
+
+  impl Serialize for PanicOnSerialize {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+      S: Serializer,
+    {
+      panic!("serializer must not run")
+    }
+  }
+
+  struct NoopProjector;
+
+  impl TelemetryProjector for NoopProjector {
+    fn project(&self, _item: TelemetryItem) -> BoxFuture<'_, Result<(), TelemetryError>> {
+      Box::pin(async { Ok(()) })
+    }
+
+    fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
+      Box::pin(async { Ok(()) })
+    }
+  }
+
+  #[test]
+  fn disabled_publication_does_not_parse_or_serialize() {
+    futures_executor::block_on(async {
+      let published =
+        publish_json_artifact(None, "not a valid purpose", &PanicOnSerialize).await.expect("disabled publication must short-circuit");
+
+      assert!(published.is_none());
+    });
+  }
+
+  #[test]
+  fn telemetry_only_publication_does_not_parse_or_serialize() {
+    futures_executor::block_on(async {
+      let dispatch = configure()
+        .project_telemetry(Arc::new(NoopProjector), TelemetryRoutePolicy::fixed_fields_only())
+        .build()
+        .expect("telemetry-only dispatch");
+      let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+
+      let published = publish_json_artifact(Some(&root), "not a valid purpose", &PanicOnSerialize)
+        .await
+        .expect("telemetry-only publication must short-circuit");
+
+      assert!(published.is_none());
+    });
+  }
+
+  #[test]
+  fn enabled_publication_validates_purpose_before_serializing() {
+    futures_executor::block_on(async {
+      let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+      let dispatch = configure().run_store(store).build().expect("memory dispatch");
+      let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+
+      let error = publish_json_artifact(Some(&root), "not a valid purpose", &PanicOnSerialize)
+        .await
+        .expect_err("invalid purpose must fail before serialization");
+
+      assert!(error.source().and_then(|source| source.downcast_ref::<ValidationError>()).is_some());
+      match error {
+        BalatroArtifactPublishError::InvalidPurpose { value, source } => {
+          assert_eq!(value, "not a valid purpose");
+          assert_eq!(source, ArtifactPurpose::parse(value).expect_err("fixture purpose is invalid"));
+        }
+        other => panic!("expected invalid-purpose error, got {other:?}"),
+      }
+    });
   }
 }
