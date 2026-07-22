@@ -317,12 +317,18 @@ where
     })
     .await
     .map_err(|error| error.to_string())?;
-  let (run_id, direct_result, tracing_failure, snapshot) = recorded.into_parts();
-  let canonical_artifacts = snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect();
+  let (run_id, direct_result, recording) = recorded.into_parts();
+  let (tracing_failure, canonical_artifacts) = match recording {
+    auv_tracing::RecordingState::Committed(recording) => (
+      recording.tracing_failure().map(ToString::to_string),
+      recording.snapshot().artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
+    ),
+    auv_tracing::RecordingState::Failed(failure) => (Some(failure.to_string()), Vec::new()),
+  };
   Ok(McpFrontendExecution {
     run_id,
     direct_result,
-    tracing_failure: tracing_failure.map(|error| error.to_string()),
+    tracing_failure,
     canonical_artifacts,
   })
 }
@@ -900,8 +906,9 @@ mod tests {
   use super::*;
   use crate::model::now_millis;
   use auv_tracing::{
-    AuthorityId, BoxFuture, ErrorCode, EventPayload, MemoryRunStore, RunStore, TelemetryError, TelemetryItem, TelemetryProjector,
-    TelemetryRoutePolicy,
+    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode,
+    EventPayload, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision,
+    RunSnapshot, RunStore, RunSubscription, StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy,
   };
   use rmcp::{
     ClientHandler, ServiceExt,
@@ -962,6 +969,136 @@ mod tests {
     fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
       Box::pin(async { Ok(()) })
     }
+  }
+
+  struct CommitUnknownStore {
+    inner: MemoryRunStore,
+    attempted_run_id: Mutex<Option<RunId>>,
+  }
+
+  impl CommitUnknownStore {
+    fn new() -> Self {
+      Self {
+        inner: MemoryRunStore::new(AuthorityId::new()),
+        attempted_run_id: Mutex::new(None),
+      }
+    }
+
+    fn attempted_run_id(&self) -> Option<RunId> {
+      *self.attempted_run_id.lock().unwrap()
+    }
+  }
+
+  impl RunStore for CommitUnknownStore {
+    fn authority_id(&self) -> AuthorityId {
+      self.inner.authority_id()
+    }
+
+    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      *self.attempted_run_id.lock().unwrap() = Some(request.run_id());
+      Box::pin(async { Err(CommitError::CommitUnknown(ErrorCode::parse("auv.test.commit_unknown").unwrap())) })
+    }
+
+    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+      self.inner.write_artifact(request, body)
+    }
+
+    fn lookup_commit(&self, _run_id: RunId, _key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+      Box::pin(async { Ok(None) })
+    }
+
+    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+      self.inner.load_snapshot(run_id)
+    }
+
+    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+      self.inner.commits_after(run_id, after, limit)
+    }
+
+    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+      self.inner.subscribe(run_id, after)
+    }
+
+    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+      self.inner.open_artifact(uri)
+    }
+  }
+
+  async fn invoke_with_unknown_commit(
+    direct_result: Result<McpInvokeOutcome, String>,
+  ) -> anyhow::Result<(CallToolResult, Value, Arc<CommitUnknownStore>, Arc<AtomicUsize>)> {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let store = Arc::new(CommitUnknownStore::new());
+    let configure_store = store.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let adapter_calls = calls.clone();
+    let adapter = McpInvokeAdapter::new("scan.frame", move |_input| {
+      let result = direct_result.clone();
+      let calls = adapter_calls.clone();
+      async move {
+        calls.fetch_add(1, Ordering::SeqCst);
+        result
+      }
+    });
+    let command = default_registry().resolve("scan.frame").expect("scan metadata").clone();
+    let registry = InvokeRegistry::from_groups(vec![auv_cli_invoke::CommandGroup::new("test", "TEST").command(command)]);
+    let server = McpServer::with_invoke_dispatch(
+      project_root,
+      Arc::new(registry),
+      vec![adapter],
+      Arc::new(move |_store_root| {
+        let dispatch = auv_tracing::configure().run_store(configure_store.clone()).build().map_err(|error| error.to_string())?;
+        Ok(McpFrontendAuthority { dispatch })
+      }),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let (server_transport, client_transport) = tokio::io::duplex(16384);
+    let server_handle = tokio::spawn(async move {
+      let service = server.serve(server_transport).await?;
+      service.waiting().await?;
+      anyhow::Ok(())
+    });
+    let client = DummyClientHandler.serve(client_transport).await?;
+    let response = client
+      .call_tool(CallToolRequestParam {
+        name: "invoke".into(),
+        arguments: Some(serde_json::json!({ "command_id": "scan.frame" }).as_object().unwrap().clone()),
+      })
+      .await?;
+    let value: Value =
+      serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("invoke response").text)?;
+    client.cancel().await?;
+    server_handle.await??;
+    Ok((response, value, store, calls))
+  }
+
+  #[tokio::test]
+  async fn mcp_commit_unknown_preserves_direct_protocol_status_and_exposes_recording_failure() -> anyhow::Result<()> {
+    let (completed_response, completed_value, completed_store, completed_calls) =
+      invoke_with_unknown_commit(Ok(completed("direct success", serde_json::json!({ "value": 7 })))).await?;
+
+    assert_eq!(completed_response.is_error, Some(false));
+    assert_eq!(completed_value["status"], "completed");
+    assert_eq!(completed_value["result"]["value"], 7);
+    assert_eq!(completed_value["artifacts"], serde_json::json!([]));
+    assert!(completed_value["tracing_failure"].as_str().is_some_and(|failure| failure.contains("snapshot is missing")));
+    let completed_run_id = completed_value["run_id"].as_str().expect("completed run id").parse::<RunId>()?;
+    assert_eq!(completed_store.attempted_run_id(), Some(completed_run_id));
+    assert_eq!(completed_calls.load(Ordering::SeqCst), 1);
+    assert!(!completed_value.to_string().to_ascii_lowercase().contains("retry"));
+
+    let (failed_response, failed_value, failed_store, failed_calls) =
+      invoke_with_unknown_commit(Err("direct domain failure".to_string())).await?;
+
+    assert_eq!(failed_response.is_error, Some(true));
+    assert_eq!(failed_value["status"], "failed");
+    assert_eq!(failed_value["failure_message"], "direct domain failure");
+    assert_eq!(failed_value["artifacts"], serde_json::json!([]));
+    assert!(failed_value["tracing_failure"].as_str().is_some_and(|failure| failure.contains("snapshot is missing")));
+    let failed_run_id = failed_value["run_id"].as_str().expect("failed run id").parse::<RunId>()?;
+    assert_eq!(failed_store.attempted_run_id(), Some(failed_run_id));
+    assert_eq!(failed_calls.load(Ordering::SeqCst), 1);
+    Ok(())
   }
 
   #[tokio::test]

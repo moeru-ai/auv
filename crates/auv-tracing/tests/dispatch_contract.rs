@@ -3,6 +3,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::task::{Context as TaskContext, Poll};
 
@@ -241,9 +242,107 @@ fn record_polls_the_call_in_context_and_returns_the_committed_snapshot() {
   .expect("recorded call");
 
   assert_eq!(recorded.value(), &Ok(7));
-  assert_eq!(recorded.snapshot().run_id(), recorded.run_id());
-  assert_eq!(recorded.snapshot().events().len(), 2);
+  let snapshot = recorded.snapshot().expect("committed snapshot");
+  assert_eq!(snapshot.run_id(), recorded.run_id());
+  assert_eq!(snapshot.events().len(), 2);
   assert!(recorded.tracing_failure().is_none());
+}
+
+// ROOT CAUSE:
+//
+// If the authority could not confirm a snapshot after the domain future
+// completed, Dispatch::record returned Err and discarded the direct value.
+//
+// Before the fix, frontends lost the already-produced result after side effects.
+// The fix keeps post-execution recording state inside Recorded<T>.
+#[test]
+fn record_preserves_the_direct_value_when_commit_state_is_unknown() {
+  let store = CommitUnknownStore::new(UnknownLookup::None);
+  let dispatch = configure().run_store(store.clone()).build().unwrap();
+  let calls = Arc::new(AtomicUsize::new(0));
+  let recorded_calls = calls.clone();
+
+  let recorded = block_on_timeout(dispatch.record(|| async move {
+    recorded_calls.fetch_add(1, Ordering::SeqCst);
+    auv_tracing::emit_event!(TestEvent { value: 1 });
+    Ok::<_, String>(7)
+  }))
+  .expect("post-execution recording failure must preserve the direct value");
+
+  assert_eq!(recorded.value(), &Ok(7));
+  assert!(recorded.snapshot().is_none());
+  let failure = recorded.recording_failure().expect("post-execution recording failure");
+  assert!(matches!(failure, auv_tracing::PostExecutionRecordingFailure::SnapshotMissing { .. }));
+  assert!(failure.tracing_failure().is_some());
+  assert_eq!(calls.load(Ordering::SeqCst), 1);
+  assert_eq!(store.commit_calls(), 1);
+  assert_eq!(store.lookup_calls(), 1);
+}
+
+#[test]
+fn record_keeps_a_committed_snapshot_when_instrumentation_flush_fails() {
+  let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+  let projector = RecordingProjector::new();
+  projector.fail_next_flush(ErrorCode::parse("auv.test.flush_failure").unwrap());
+  let dispatch = configure().run_store(store).project_telemetry(projector, TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+
+  let recorded = block_on_timeout(dispatch.record(|| async {
+    auv_tracing::emit_event!(TestEvent { value: 1 });
+    Ok::<_, String>(7)
+  }))
+  .expect("flush failure is post-execution recording metadata");
+
+  assert_eq!(recorded.value(), &Ok(7));
+  assert_eq!(recorded.snapshot().expect("committed snapshot").events().len(), 1);
+  assert!(recorded.recording_failure().is_none());
+  assert_eq!(recorded.tracing_failure().expect("flush failure").first().stage(), DispatchStage::ProjectorFlush);
+}
+
+#[test]
+fn record_preserves_the_direct_value_when_snapshot_read_fails() {
+  let store = CursorStore::snapshot_failure();
+  let dispatch = configure().run_store(store).build().unwrap();
+
+  let recorded = block_on_timeout(dispatch.record(|| async {
+    auv_tracing::emit_event!(TestEvent { value: 1 });
+    Ok::<_, String>(7)
+  }))
+  .expect("snapshot read failure must preserve the direct value");
+
+  assert_eq!(recorded.value(), &Ok(7));
+  assert!(recorded.snapshot().is_none());
+  assert!(matches!(
+    recorded.recording_failure(),
+    Some(auv_tracing::PostExecutionRecordingFailure::SnapshotRead {
+      source: auv_tracing::ReadError::Unavailable(_),
+      flush: auv_tracing::RecordingFlush::Complete,
+    })
+  ));
+  assert!(recorded.tracing_failure().is_none());
+}
+
+#[test]
+fn record_rejects_unavailable_authority_before_constructing_the_call() {
+  let dispatch = configure().build().unwrap();
+  let constructions = Arc::new(AtomicUsize::new(0));
+  let polls = Arc::new(AtomicUsize::new(0));
+  let recorded_constructions = constructions.clone();
+  let recorded_polls = polls.clone();
+
+  let result = block_on_timeout(dispatch.record(|| {
+    recorded_constructions.fetch_add(1, Ordering::SeqCst);
+    async move {
+      recorded_polls.fetch_add(1, Ordering::SeqCst);
+      Ok::<_, String>(7)
+    }
+  }));
+  let Err(error) = result else {
+    panic!("recording requires an authority before domain work starts")
+  };
+
+  assert!(matches!(error, auv_tracing::RecordingError::AuthorityUnavailable));
+  assert_eq!(constructions.load(Ordering::SeqCst), 0);
+  assert_eq!(polls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
