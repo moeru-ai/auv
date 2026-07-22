@@ -1,24 +1,29 @@
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use auv_runtime::contract::{
   OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope, RecognitionSurface,
 };
-use auv_runtime::inspect::CorePrefixSection;
+use auv_runtime::inspect::{InspectRunV1Error, inspect_run_v1};
 use auv_runtime::run_read::read_scroll_scan;
 use auv_runtime::runtime::Runtime;
 use auv_runtime::scroll_scan::{
-  CompletenessClaim, SCROLL_SCAN_PURPOSE, ScanRegion, ScanTarget, ScanWindowRegionOptions, ScrollScanArtifact, StopEvidence, StopPolicy,
-  StopReason, scan_window_region,
+  CompletenessClaim, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE, SCROLL_SCAN_PURPOSE, ScanRegion, ScanTarget,
+  ScanWindowRegionOptions, ScrollScanArtifact, StopEvidence, StopPolicy, StopReason, scan_window_region,
 };
 use auv_tracing::{
-  ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
-  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, Dispatch, ErrorCode, IdempotencyKey, MemoryRunStore, NewArtifact,
-  PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunStore, RunSubscription, Sha256Digest,
-  StoreArtifactRequest, configure, dispatcher,
+  ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError,
+  Attributes, AuthorityId, BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, Dispatch, ErrorCode, IdempotencyKey,
+  MemoryRunStore, NewArtifact, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunStore,
+  RunSubscription, Sha256Digest, StoreArtifactRequest, configure, dispatcher,
 };
-use auv_tracing_driver::store::LocalStore;
-use auv_tracing_driver::trace::{RunId as LegacyRunId, SpanId as LegacySpanId};
+use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+use auv_tracing_driver::trace::{
+  RUN_API_VERSION, RunId as LegacyRunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId as LegacySpanId, SpanRecordV1Alpha1, TraceId,
+  TraceState, TraceStatusCode,
+};
 use futures_util::io::Cursor;
 use sha2::{Digest, Sha256};
 
@@ -27,6 +32,78 @@ struct RootRunFixture {
   dispatch: Dispatch,
   root: Context,
   run_id: RunId,
+}
+
+struct LegacyInspectFixture {
+  directory: PathBuf,
+  store: LocalStore,
+}
+
+impl LegacyInspectFixture {
+  fn with_scroll_scan(run_id: &RunId, artifact: &ScrollScanArtifact) -> Self {
+    let directory = std::env::temp_dir().join(format!("auv-scroll-scan-inspect-{run_id}"));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).expect("legacy inspect directory");
+    let store = LocalStore::new(directory.join("store")).expect("legacy inspect store");
+    let run_id = LegacyRunId::new(run_id.to_string());
+    let span_id = LegacySpanId::new("0000000000000001");
+    let source = directory.join("legacy-scroll-scan.json");
+    std::fs::write(&source, serde_json::to_vec(artifact).expect("serialize legacy scroll scan")).expect("write legacy scroll scan");
+    let artifact = store
+      .stage_artifact_file(
+        &run_id,
+        0,
+        &span_id,
+        None,
+        auv_tracing_driver::ArtifactFileSource {
+          role: "scroll-scan".to_string(),
+          source_path: source,
+          preferred_name: "legacy-scroll-scan.json".to_string(),
+          summary: None,
+        },
+      )
+      .expect("stage legacy scroll scan");
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: RunRecordV1Alpha1 {
+          api_version: RUN_API_VERSION.to_string(),
+          run_id,
+          trace_id: TraceId::new("trace_scroll_scan_inspect"),
+          run_type: RunType::Command,
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          root_span_id: span_id.clone(),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        },
+        spans: vec![SpanRecordV1Alpha1 {
+          api_version: SPAN_API_VERSION.to_string(),
+          span_id,
+          parent_span_id: None,
+          name: "auv.scan.window_region".to_string(),
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        }],
+        events: Vec::new(),
+        artifacts: vec![artifact],
+      })
+      .expect("write legacy inspect run");
+    Self { directory, store }
+  }
+}
+
+impl Drop for LegacyInspectFixture {
+  fn drop(&mut self) {
+    let _ = std::fs::remove_dir_all(&self.directory);
+  }
 }
 
 impl RootRunFixture {
@@ -76,12 +153,55 @@ impl RootRunFixture {
 
 struct ArtifactBytesStore {
   inner: Arc<MemoryRunStore>,
-  bytes: Vec<u8>,
+  read: ArtifactReadFixture,
+  opens: AtomicUsize,
+  chunk_reads: Arc<AtomicUsize>,
+}
+
+enum ArtifactReadFixture {
+  Chunks(Vec<Vec<u8>>),
+  OpenError(ReadError),
+  StreamError(ArtifactReadError),
 }
 
 impl ArtifactBytesStore {
   fn new(inner: Arc<MemoryRunStore>, bytes: Vec<u8>) -> Self {
-    Self { inner, bytes }
+    Self::from_chunks(inner, vec![bytes])
+  }
+
+  fn from_chunks(inner: Arc<MemoryRunStore>, chunks: Vec<Vec<u8>>) -> Self {
+    Self {
+      inner,
+      read: ArtifactReadFixture::Chunks(chunks),
+      opens: AtomicUsize::new(0),
+      chunk_reads: Arc::new(AtomicUsize::new(0)),
+    }
+  }
+
+  fn open_error(inner: Arc<MemoryRunStore>, error: ReadError) -> Self {
+    Self {
+      inner,
+      read: ArtifactReadFixture::OpenError(error),
+      opens: AtomicUsize::new(0),
+      chunk_reads: Arc::new(AtomicUsize::new(0)),
+    }
+  }
+
+  fn stream_error(inner: Arc<MemoryRunStore>, error: ArtifactReadError) -> Self {
+    Self {
+      inner,
+      read: ArtifactReadFixture::StreamError(error),
+      opens: AtomicUsize::new(0),
+      chunk_reads: Arc::new(AtomicUsize::new(0)),
+    }
+  }
+
+  fn open_count(&self) -> usize {
+    self.opens.load(Ordering::Relaxed)
+  }
+
+  fn chunk_read_count(&self) -> usize {
+    self.chunk_reads.load(Ordering::Relaxed)
   }
 }
 
@@ -115,11 +235,31 @@ impl RunStore for ArtifactBytesStore {
   }
 
   fn open_artifact(&self, _uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
-    let bytes = self.bytes.clone();
-    Box::pin(async move {
-      let reader: ArtifactReader = Box::pin(futures_util::stream::once(async move { Ok(bytes.into()) }));
-      Ok(reader)
-    })
+    self.opens.fetch_add(1, Ordering::Relaxed);
+    let chunk_reads = self.chunk_reads.clone();
+    match &self.read {
+      ArtifactReadFixture::Chunks(chunks) => {
+        let chunks = chunks.clone();
+        Box::pin(async move {
+          let reader: ArtifactReader = Box::pin(futures_util::stream::iter(chunks.into_iter().map(move |chunk| {
+            chunk_reads.fetch_add(1, Ordering::Relaxed);
+            Ok(chunk.into())
+          })));
+          Ok(reader)
+        })
+      }
+      ArtifactReadFixture::OpenError(error) => {
+        let error = error.clone();
+        Box::pin(async move { Err(error) })
+      }
+      ArtifactReadFixture::StreamError(error) => {
+        let error = error.clone();
+        Box::pin(async move {
+          let reader: ArtifactReader = Box::pin(futures_util::stream::once(async move { Err(error) }));
+          Ok(reader)
+        })
+      }
+    }
   }
 }
 
@@ -185,9 +325,57 @@ async fn scroll_scan_round_trips_through_the_run_store() {
   let snapshot = fixture.snapshot().await;
   let decoded = read_scroll_scan(fixture.store(), snapshot.as_ref(), published.uri()).await.expect("read scroll scan");
   assert_eq!(decoded, expected);
-  let section_snapshots =
-    CorePrefixSection.read_scroll_scan_observations(fixture.store(), snapshot.as_ref()).await.expect("read root scroll-scan section");
-  assert_eq!(section_snapshots, expected.snapshots);
+}
+
+#[tokio::test]
+async fn production_v1_inspect_renders_canonical_scroll_scan_observations() {
+  let fixture = RootRunFixture::memory();
+  let mut canonical = sample_scroll_scan_artifact();
+  canonical.snapshots[0].snapshot_id = "snapshot_canonical".to_string();
+  fixture.publish_scroll_scan(&canonical).await;
+  let snapshot = fixture.snapshot().await;
+  let mut legacy = sample_scroll_scan_artifact();
+  legacy.snapshots[0].snapshot_id = "snapshot_legacy".to_string();
+  let legacy = LegacyInspectFixture::with_scroll_scan(&fixture.run_id, &legacy);
+
+  let text = inspect_run_v1(fixture.store(), snapshot.as_ref(), &legacy.store).await.expect("production V1 inspect");
+
+  assert!(text.contains("snapshot_canonical"), "{text}");
+  assert!(!text.contains("snapshot_legacy"), "{text}");
+}
+
+#[tokio::test]
+async fn production_v1_inspect_propagates_corrupt_canonical_scroll_scan() {
+  let fixture = RootRunFixture::memory();
+  let canonical = sample_scroll_scan_artifact();
+  let bytes = serde_json::to_vec(&canonical).expect("serialize canonical scroll scan");
+  fixture.publish_bytes(SCROLL_SCAN_PURPOSE, "application/json", bytes.clone()).await;
+  let snapshot = fixture.snapshot().await;
+  let legacy = LegacyInspectFixture::with_scroll_scan(&fixture.run_id, &canonical);
+  let corrupt_store = ArtifactBytesStore::new(fixture.store.clone(), vec![b' '; bytes.len()]);
+
+  let error = inspect_run_v1(&corrupt_store, snapshot.as_ref(), &legacy.store)
+    .await
+    .expect_err("corrupt canonical artifact must not fall back to legacy");
+
+  match error {
+    InspectRunV1Error::ScrollScan(source) => assert_eq!(source.code().as_str(), "auv.runtime.scroll_scan.digest_mismatch"),
+    other => panic!("expected typed scroll-scan read error, got {other}"),
+  }
+}
+
+#[tokio::test]
+async fn production_v1_inspect_preserves_legacy_observations_without_canonical_scroll_scan() {
+  let fixture = RootRunFixture::memory();
+  fixture.publish_bytes("auv.runtime.other", "application/json", b"{}".to_vec()).await;
+  let snapshot = fixture.snapshot().await;
+  let mut legacy_artifact = sample_scroll_scan_artifact();
+  legacy_artifact.snapshots[0].snapshot_id = "snapshot_legacy_only".to_string();
+  let legacy = LegacyInspectFixture::with_scroll_scan(&fixture.run_id, &legacy_artifact);
+
+  let text = inspect_run_v1(fixture.store(), snapshot.as_ref(), &legacy.store).await.expect("legacy-compatible V1 inspect");
+
+  assert!(text.contains("snapshot_legacy_only"), "{text}");
 }
 
 #[tokio::test]
@@ -199,9 +387,12 @@ async fn root_scroll_scan_publishes_partial_result_to_the_current_run() {
   let runtime = Runtime::new(directory.join("project"), LocalStore::new(directory.join("legacy-store")).expect("legacy store"));
   let future = fixture.root.in_scope(|| scan_window_region(&runtime, bounded_scan_options()));
 
-  let error = fixture.root.instrument(future).await.expect_err("typed observe-region gap remains direct scan truth");
+  let publication = fixture.root.instrument(future).await;
+  let (direct_result, instrumentation) = publication.into_parts();
+  let error = direct_result.expect_err("typed observe-region gap remains direct scan truth");
 
   assert!(error.contains("typed window region observation API"));
+  assert!(instrumentation.failures().is_empty());
   fixture.dispatch.flush().await.expect("flush partial scroll scan");
   let snapshot = fixture.snapshot().await;
   let published = snapshot
@@ -279,6 +470,55 @@ async fn scroll_scan_reader_rejects_malformed_json() {
 }
 
 #[tokio::test]
+async fn scroll_scan_reader_has_stable_open_and_stream_error_codes() {
+  let fixture = RootRunFixture::memory();
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
+  let snapshot = fixture.snapshot().await;
+  let open_store = ArtifactBytesStore::open_error(
+    fixture.store.clone(),
+    ReadError::Unavailable(ErrorCode::parse("auv.test.scroll_scan_open").expect("test code")),
+  );
+
+  let error = read_scroll_scan(&open_store, snapshot.as_ref(), published.uri()).await.expect_err("open failure");
+  assert_eq!(error.code().as_str(), "auv.runtime.scroll_scan.open_failed");
+
+  let stream_store = ArtifactBytesStore::stream_error(
+    fixture.store.clone(),
+    ArtifactReadError::Unavailable(ErrorCode::parse("auv.test.scroll_scan_stream").expect("test code")),
+  );
+  let error = read_scroll_scan(&stream_store, snapshot.as_ref(), published.uri()).await.expect_err("stream failure");
+  assert_eq!(error.code().as_str(), "auv.runtime.scroll_scan.stream_failed");
+}
+
+#[tokio::test]
+async fn scroll_scan_reader_rejects_oversized_metadata_before_opening() {
+  let fixture = RootRunFixture::memory();
+  let oversized = vec![b' '; usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test limit fits usize")];
+  let published = fixture.publish_bytes(SCROLL_SCAN_PURPOSE, "application/json", oversized).await;
+  let snapshot = fixture.snapshot().await;
+  let store = ArtifactBytesStore::new(fixture.store.clone(), Vec::new());
+
+  let error = read_scroll_scan(&store, snapshot.as_ref(), published.uri()).await.expect_err("oversized committed metadata");
+
+  assert_eq!(error.code().as_str(), SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE);
+  assert_eq!(store.open_count(), 0, "metadata budget must be checked before opening the artifact");
+}
+
+#[tokio::test]
+async fn scroll_scan_reader_stops_on_an_oversized_stream_chunk() {
+  let fixture = RootRunFixture::memory();
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
+  let snapshot = fixture.snapshot().await;
+  let oversized_chunk = vec![0; usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test limit fits usize")];
+  let store = ArtifactBytesStore::from_chunks(fixture.store.clone(), vec![oversized_chunk, vec![1]]);
+
+  let error = read_scroll_scan(&store, snapshot.as_ref(), published.uri()).await.expect_err("oversized streamed payload");
+
+  assert_eq!(error.code().as_str(), SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE);
+  assert_eq!(store.chunk_read_count(), 1, "reader must stop before polling subsequent chunks");
+}
+
+#[tokio::test]
 async fn artifact_failure_does_not_replace_or_reexecute_the_scroll_scan() {
   let store = Arc::new(RejectArtifactStore::new());
   let dispatch = configure().run_store(store.clone()).build().expect("rejecting dispatch");
@@ -289,13 +529,50 @@ async fn artifact_failure_does_not_replace_or_reexecute_the_scroll_scan() {
   let runtime = Runtime::new(directory.join("project"), LocalStore::new(directory.join("legacy-store")).expect("legacy store"));
   let future = root.in_scope(|| scan_window_region(&runtime, bounded_scan_options()));
 
-  let error = root.instrument(future).await.expect_err("direct scan error");
+  let publication = root.instrument(future).await;
+  let (direct_result, instrumentation) = publication.into_parts();
+  let error = direct_result.expect_err("direct scan error");
 
   assert!(error.contains("typed window region observation API"));
   assert!(!error.contains("artifact"), "artifact failure replaced direct result: {error}");
   assert_eq!(store.writes.load(Ordering::Relaxed), 1);
-  let flush = dispatch.flush().await.expect_err("artifact failure remains frontend instrumentation state");
+  assert_eq!(instrumentation.failures().len(), 1);
+  assert_eq!(instrumentation.failures()[0].purpose, SCROLL_SCAN_PURPOSE);
+  assert!(instrumentation.failures()[0].message.contains("artifact write rejected"));
+  let flush = dispatch.flush().await.expect_err("emitted artifact failure remains visible to flush");
   assert_eq!(flush.failure_count().get(), 1);
+  let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn producer_oversize_is_an_instrumentation_failure_without_reexecution() {
+  let store = Arc::new(RejectArtifactStore::new());
+  let dispatch = configure().run_store(store.clone()).build().expect("dispatch");
+  let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+  let directory = std::env::temp_dir().join(format!("auv-scroll-scan-oversize-{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&directory);
+  std::fs::create_dir_all(&directory).expect("scroll-scan directory");
+  let legacy_store_root = directory.join("legacy-store");
+  let runtime = Runtime::new(directory.join("project"), LocalStore::new(legacy_store_root.clone()).expect("legacy store"));
+  let mut options = bounded_scan_options();
+  options.target.application_id = Some("x".repeat(usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test limit fits usize")));
+  let future = root.in_scope(|| scan_window_region(&runtime, options));
+
+  let publication = root.instrument(future).await;
+  let (direct_result, instrumentation) = publication.into_parts();
+  let error = direct_result.expect_err("typed observe-region gap remains the direct scan result");
+
+  assert!(error.contains("typed window region observation API"));
+  assert_eq!(instrumentation.failures().len(), 1);
+  assert_eq!(instrumentation.failures()[0].purpose, SCROLL_SCAN_PURPOSE);
+  assert!(instrumentation.failures()[0].message.contains(SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE), "{}", instrumentation.failures()[0].message);
+  assert_eq!(store.writes.load(Ordering::Relaxed), 0, "construction failure must not emit an artifact");
+  dispatch.flush().await.expect("no artifact job was emitted");
+  assert_eq!(
+    std::fs::read_dir(legacy_store_root.join("runs")).expect("recorded runs").count(),
+    1,
+    "the direct scan must execute exactly once"
+  );
   let _ = std::fs::remove_dir_all(directory);
 }
 

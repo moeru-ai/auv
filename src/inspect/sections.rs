@@ -6,7 +6,7 @@ use auv_inspect_model::legacy::{InspectComposer, InspectError, InspectSection, I
 use auv_tracing::{RunSnapshot, RunStore};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
-use super::{inspect_run_core_prefix_body, inspect_run_core_suffix_body};
+use super::{inspect_run_core_prefix_body_with_observations, inspect_run_core_suffix_body};
 use crate::contract::ObservationSnapshot;
 use crate::run_read::{ScrollScanReadError, read_scroll_scan};
 use crate::scroll_scan::SCROLL_SCAN_PURPOSE;
@@ -15,21 +15,24 @@ use crate::scroll_scan::SCROLL_SCAN_PURPOSE;
 /// Detector Recognition Lineage.
 pub struct CorePrefixSection;
 
-impl CorePrefixSection {
-  /// Reads the canonical V1 scroll-scan observations for this root section.
-  pub async fn read_scroll_scan_observations(
-    &self,
-    store: &dyn RunStore,
-    snapshot: &RunSnapshot,
-  ) -> Result<Vec<ObservationSnapshot>, ScrollScanReadError> {
+struct CorePrefixSectionV1 {
+  canonical_scroll_scan_observations: Option<Vec<ObservationSnapshot>>,
+}
+
+impl CorePrefixSectionV1 {
+  async fn v1(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<Self, ScrollScanReadError> {
     let mut observations = Vec::new();
+    let mut found_canonical_scroll_scan = false;
     for (uri, published) in snapshot.artifacts() {
       if published.metadata().purpose().as_str() != SCROLL_SCAN_PURPOSE {
         continue;
       }
+      found_canonical_scroll_scan = true;
       observations.extend(read_scroll_scan(store, snapshot, uri).await?.snapshots);
     }
-    Ok(observations)
+    Ok(Self {
+      canonical_scroll_scan_observations: found_canonical_scroll_scan.then_some(observations),
+    })
   }
 }
 
@@ -39,17 +42,34 @@ impl InspectSection for CorePrefixSection {
   }
 
   fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    // TODO(run-contract-task-22): This legacy composer receives only
-    // LocalStore/CanonicalRun. Replace it with the V1 section method above when
-    // Task 22 migrates the remaining root inspect adapters.
-    let text = inspect_run_core_prefix_body(store, run.run.run_id.as_str()).map_err(InspectError::Message)?;
-    // Prefer always Some(...) matching legacy (headers are never empty).
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text,
-      json: None,
-    }))
+    collect_core_prefix(store, run, None, self.id())
   }
+}
+
+impl InspectSection for CorePrefixSectionV1 {
+  fn id(&self) -> &'static str {
+    "core_prefix"
+  }
+
+  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
+    collect_core_prefix(store, run, self.canonical_scroll_scan_observations.as_deref(), self.id())
+  }
+}
+
+fn collect_core_prefix(
+  store: &LocalStore,
+  run: &CanonicalRun,
+  canonical_scroll_scan_observations: Option<&[ObservationSnapshot]>,
+  id: &'static str,
+) -> Result<Option<InspectSectionOutput>, InspectError> {
+  let text = inspect_run_core_prefix_body_with_observations(store, run.run.run_id.as_str(), canonical_scroll_scan_observations)
+    .map_err(InspectError::Message)?;
+  // Prefer always Some(...) matching legacy (headers are never empty).
+  Ok(Some(InspectSectionOutput {
+    id,
+    text,
+    json: None,
+  }))
 }
 
 /// Core suffix: view-parser proof + scene state (after donor sections).
@@ -73,4 +93,15 @@ impl InspectSection for CoreSuffixSection {
 
 pub fn build_core_inspect_composer() -> Result<Arc<InspectComposer>, InspectError> {
   InspectComposer::try_new(vec![Arc::new(CorePrefixSection), Arc::new(CoreSuffixSection)]).map(Arc::new)
+}
+
+pub(crate) async fn build_core_inspect_composer_v1(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Arc<InspectComposer>, ScrollScanReadError> {
+  let prefix = CorePrefixSectionV1::v1(store, snapshot).await?;
+  Ok(Arc::new(
+    InspectComposer::try_new(vec![Arc::new(prefix), Arc::new(CoreSuffixSection)])
+      .expect("the static core V1 inspect section IDs are unique"),
+  ))
 }
