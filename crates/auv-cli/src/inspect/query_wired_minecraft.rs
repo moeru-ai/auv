@@ -19,26 +19,17 @@ pub fn append_minecraft_query_wired_section(
   } else {
     for summary in minecraft_query_wired_live_action_summaries {
       output.push_str(&format!(
-        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} mc14_action_eligibility={} readiness_class={} source_readiness_ref={} verification_outcome={} verification_source={} verification_reason={} issue={}\n",
-        summary.operation_result_artifact_id.as_deref().unwrap_or("n/a"),
-        summary.query_artifact_id.as_deref().unwrap_or("n/a"),
+        "- attempted={} action_eligibility={} refusal_reason={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} verification_outcome={} verification_source={} verification_reason={}\n",
         summary.attempted,
         summary.action_eligibility,
-        summary.window_point.as_deref().unwrap_or("n/a"),
         summary.refusal_reason.as_deref().unwrap_or("n/a"),
-        summary.operation_status.as_deref().unwrap_or("n/a"),
-        summary.operation_message.as_deref().unwrap_or("n/a"),
         summary.dispatch_command.as_deref().unwrap_or("n/a"),
         summary.dispatch_outcome.as_deref().unwrap_or("n/a"),
         summary.target_app.as_deref().unwrap_or("n/a"),
         summary.target_title.as_deref().unwrap_or("n/a"),
-        summary.mc14_action_eligibility.as_deref().unwrap_or("n/a"),
-        summary.readiness_class.as_deref().unwrap_or("n/a"),
-        summary.source_readiness_ref.as_deref().unwrap_or("n/a"),
         summary.verification_outcome.as_str(),
         summary.verification_source.as_deref().unwrap_or("n/a"),
         summary.verification_reason.as_deref().unwrap_or("n/a"),
-        summary.issue.as_deref().unwrap_or("n/a"),
       ));
     }
   }

@@ -11,7 +11,10 @@ use auv_inspect_model::InspectComposer;
 use auv_runtime::model::AuvResult;
 use auv_tracing_driver::store::LocalStore;
 
-pub use sections::build_product_inspect_composer;
+pub use sections::{
+  ProductInspectDocument, ProductInspectError, ProductInspectSection, ProductInspectTextDocument, build_product_inspect_composer,
+  build_product_inspect_document, build_product_inspect_text_document,
+};
 
 /// Inspect text using an explicit composer shared by CLI and MCP frontends.
 pub fn inspect_run_with(composer: &InspectComposer, store: &LocalStore, run_id: &str) -> AuvResult<String> {

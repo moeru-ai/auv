@@ -6,10 +6,6 @@ mod query_wired_projection;
 
 pub use self::query_wired_live_action::*;
 
-use auv_game_minecraft::run_read::{
-  MinecraftTrainingResultSpatialQueryManifestLineage, derive_minecraft_training_result_spatial_query_action_readiness,
-  extract_minecraft_training_result_spatial_query_manifests,
-};
 use auv_game_osu::run_read::{
   OsuVisualTruthSpatialQueryManifestLineage, derive_osu_visual_truth_spatial_query_action_readiness,
   extract_osu_visual_truth_spatial_query_manifests,

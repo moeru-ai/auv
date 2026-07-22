@@ -1020,7 +1020,10 @@ pub fn texture_sweep_status(report: &TextureSweepReport) -> TraceStatusCode {
 mod tests {
   use super::*;
   use auv_game_minecraft::QueryActionWiringLineage;
+  use auv_game_minecraft::scene_packet::{publish_minecraft_scene_packet, read_minecraft_scene_packet};
   use auv_stage_status::StageStatus;
+  use auv_tracing::dispatcher;
+  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure};
   use auv_tracing_driver::RunRecordingBackend;
   use auv_tracing_driver::recording::NoopRunRecorder;
   use auv_tracing_driver::run_builder::RunSpec;
@@ -1117,8 +1120,8 @@ mod tests {
     manifest_path
   }
 
-  #[test]
-  fn three_dgs_scene_packet_export_records_manifest_artifact() {
+  #[tokio::test]
+  async fn three_dgs_scene_packet_export_round_trips_through_canonical_typed_reader() {
     let temp = temp_dir("mc7-scene-packet");
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
@@ -1134,6 +1137,20 @@ mod tests {
     let run = recording.read_run(output.run_id.as_str()).expect("scene packet run should persist");
     assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE));
     assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE));
+
+    let canonical_store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(canonical_store.clone()).build().expect("memory dispatch");
+    let canonical_run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(canonical_run_id));
+    let metadata = publish_minecraft_scene_packet(Some(&root), &output.value.manifest)
+      .await
+      .expect("publish canonical scene packet")
+      .expect("enabled publication");
+    dispatch.flush().await.expect("flush scene packet");
+    let snapshot = canonical_store.load_snapshot(canonical_run_id).await.expect("load snapshot").expect("snapshot");
+    let decoded =
+      read_minecraft_scene_packet(canonical_store.as_ref(), &snapshot, metadata.uri()).await.expect("read canonical scene packet");
+    assert_eq!(decoded, output.value.manifest);
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1227,11 +1244,7 @@ mod tests {
     assert!(output_dir.join("run.json").is_file());
     let export_run = recording.read_run(output.run_id.as_str()).expect("export run should persist");
     assert!(export_run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE));
-    let manifests =
-      auv_game_minecraft::run_read::list_minecraft_spatial_bundle_manifests(recording.recording_backend().store(), output.run_id.as_str())
-        .expect("spatial bundle manifests should list");
-    assert_eq!(manifests.len(), 1);
-    assert_eq!(manifests[0].manifest.as_ref().expect("manifest should parse").source_run.source_run_id, source.run_id.as_str());
+    assert_eq!(output.value.manifest.source_run.source_run_id, source.run_id.as_str());
 
     let _ = fs::remove_dir_all(temp);
   }
