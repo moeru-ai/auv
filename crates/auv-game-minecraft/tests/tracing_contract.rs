@@ -182,11 +182,15 @@ fn telemetry_only_publication_skips_validation_serialization_and_projection() {
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let mut projection = expected_projection();
     projection.viewport_bounds.width = f64::NAN;
+    let invalid_scene_packet = with_schema_version(sample_scene_packet(), 2);
 
     let published = publish_minecraft_projection(Some(&root), &projection).await.expect("telemetry-only publication is disabled");
+    let scene_packet_published =
+      publish_minecraft_scene_packet(Some(&root), &invalid_scene_packet).await.expect("telemetry-only scene publication is disabled");
     dispatch.flush().await.expect("flush telemetry-only dispatch");
 
     assert!(published.is_none());
+    assert!(scene_packet_published.is_none());
     assert!(projection.viewport_bounds.width.is_nan());
     assert_eq!(projector.item_count.load(Ordering::Relaxed), 0);
   });
@@ -206,6 +210,106 @@ fn enabled_publication_preserves_typed_domain_validation() {
     assert!(matches!(error, MinecraftArtifactPublishError::InvalidPayload { .. }));
   });
 }
+
+macro_rules! unsupported_schema_version_contract {
+  ($test_name:ident, $sample:ident, $purpose:expr, $publish:path, $read:path, $payload_name:literal) => {
+    #[test]
+    fn $test_name() {
+      futures_executor::block_on(async {
+        let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+        let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+        let run_id = RunId::new();
+        let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+        let invalid = with_schema_version($sample(), 2);
+        let expected_message = format!("unsupported {} schema_version 2 (expected 1)", $payload_name);
+
+        let publish_error = $publish(Some(&root), &invalid).await.expect_err("unsupported schema version must not publish");
+        match publish_error {
+          MinecraftArtifactPublishError::InvalidPayload { purpose, message } => {
+            assert_eq!(purpose.as_str(), $purpose);
+            assert_eq!(message, expected_message);
+          }
+          other => panic!("expected InvalidPayload, got {other:?}"),
+        }
+
+        let body = serde_json::to_vec(&invalid).expect("invalid-version fixture JSON");
+        let uri = write_artifact(store.as_ref(), run_id, $purpose, "application/json", body).await;
+        let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("invalid-version artifact snapshot");
+        let read_error = $read(store.as_ref(), &snapshot, &uri).await.expect_err("unsupported stored schema version must not read");
+        assert_eq!(read_error.code().as_str(), "auv.minecraft.artifact.invalid_payload");
+        match read_error {
+          MinecraftArtifactReadError::InvalidPayload { message, .. } => assert_eq!(message, expected_message),
+          other => panic!("expected InvalidPayload, got {other:?}"),
+        }
+      });
+    }
+  };
+}
+
+unsupported_schema_version_contract!(
+  scene_packet_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_scene_packet,
+  MINECRAFT_SCENE_PACKET_PURPOSE,
+  publish_minecraft_scene_packet,
+  read_minecraft_scene_packet,
+  "Minecraft scene packet"
+);
+unsupported_schema_version_contract!(
+  training_job_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_training_job,
+  MINECRAFT_TRAINING_JOB_PURPOSE,
+  publish_minecraft_training_job,
+  read_minecraft_training_job,
+  "Minecraft training job"
+);
+unsupported_schema_version_contract!(
+  training_package_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_training_package,
+  MINECRAFT_TRAINING_PACKAGE_PURPOSE,
+  publish_minecraft_training_package,
+  read_minecraft_training_package,
+  "Minecraft training package"
+);
+unsupported_schema_version_contract!(
+  training_result_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_training_result,
+  MINECRAFT_TRAINING_RESULT_PURPOSE,
+  publish_minecraft_training_result,
+  read_minecraft_training_result,
+  "Minecraft training result"
+);
+unsupported_schema_version_contract!(
+  holdout_preview_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_holdout_preview,
+  MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE,
+  publish_minecraft_training_holdout_preview,
+  read_minecraft_training_holdout_preview,
+  "Minecraft training holdout preview"
+);
+unsupported_schema_version_contract!(
+  render_quality_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_render_quality,
+  MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE,
+  publish_minecraft_training_holdout_render_quality,
+  read_minecraft_training_holdout_render_quality,
+  "Minecraft training holdout render quality"
+);
+unsupported_schema_version_contract!(
+  semantic_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_semantic,
+  MINECRAFT_TRAINING_SEMANTIC_PURPOSE,
+  publish_minecraft_training_semantic,
+  read_minecraft_training_semantic,
+  "Minecraft training semantic"
+);
+unsupported_schema_version_contract!(
+  spatial_query_rejects_unsupported_schema_version_on_publish_and_read,
+  sample_spatial_query,
+  MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE,
+  publish_minecraft_training_spatial_query,
+  read_minecraft_training_spatial_query,
+  "Minecraft training spatial query"
+);
 
 #[test]
 fn enabled_publication_rejects_json_over_the_minecraft_limit() {
@@ -719,6 +823,15 @@ fn sample_spatial_query() -> auv_game_minecraft::TrainingResultSpatialQueryManif
 
 fn decode_fixture<T: serde::de::DeserializeOwned>(value: Value) -> T {
   serde_json::from_value(value).expect("typed Minecraft fixture")
+}
+
+fn with_schema_version<T>(value: T, schema_version: u32) -> T
+where
+  T: serde::Serialize + serde::de::DeserializeOwned,
+{
+  let mut value = serde_json::to_value(value).expect("serialize typed Minecraft fixture");
+  value["schema_version"] = json!(schema_version);
+  decode_fixture(value)
 }
 
 fn expected_projection() -> MinecraftProjectionArtifact {

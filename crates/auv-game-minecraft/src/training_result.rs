@@ -20,7 +20,7 @@ pub async fn publish_minecraft_training_result(
   context: Option<&Context>,
   result: &TrainingResultManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_RESULT_PURPOSE, result, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_RESULT_PURPOSE, result, validate_training_result_payload).await
 }
 
 pub async fn read_minecraft_training_result(
@@ -28,7 +28,19 @@ pub async fn read_minecraft_training_result(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<TrainingResultManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_RESULT_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_RESULT_PURPOSE, validate_training_result_payload).await
+}
+
+fn validate_training_result_payload(result: &TrainingResultManifest) -> Result<(), String> {
+  if result.schema_version != TRAINING_RESULT_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training result schema_version {} (expected {TRAINING_RESULT_MANIFEST_SCHEMA_VERSION})",
+      result.schema_version
+    ));
+  }
+  // TODO(minecraft-training-result-invariants): Add cross-field checks when
+  // the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 const JOB_ENDPOINT_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT";
 const JOB_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";

@@ -20,6 +20,7 @@ use axum::routing::get;
 use futures_util::StreamExt;
 use serde::Serialize;
 
+use crate::InspectRunExtensionErrorCategory;
 use crate::server::InspectServerState;
 
 const MAX_RUN_JSON_BYTES: usize = 32 * 1024 * 1024;
@@ -155,7 +156,7 @@ async fn run_extension(
   let Path((run_id, extension)) = path.map_err(|_| ApiFailure::invalid_reference())?;
   let run_id = parse_run_id(&run_id)?;
   let snapshot = state.store.load_snapshot(run_id).await.map_err(ApiFailure::from_read)?.ok_or_else(ApiFailure::not_found)?;
-  match state.extension.project_json(&extension, &state.store, &snapshot).await.map_err(|_| ApiFailure::extension_failed())? {
+  match state.extension.project_json(&extension, &state.store, &snapshot).await.map_err(ApiFailure::from_extension)? {
     Some(payload) => Ok(axum::Json(payload).into_response()),
     None => Err(ApiFailure::not_found()),
   }
@@ -337,11 +338,22 @@ impl ApiFailure {
     Self::unavailable(ErrorCode::parse("auv.inspect.commit_unknown").expect("static error code"))
   }
 
-  fn extension_failed() -> Self {
-    Self {
-      status: StatusCode::INTERNAL_SERVER_ERROR,
-      body: RunApiError::Integrity {
-        code: ErrorCode::parse("auv.inspect.extension_failed").expect("static error code"),
+  fn from_extension(error: crate::InspectRunExtensionError) -> Self {
+    let category = error.category();
+    let code = error.code().clone();
+    match category {
+      InspectRunExtensionErrorCategory::InvalidReference => Self {
+        status: StatusCode::BAD_REQUEST,
+        body: RunApiError::InvalidReference { code },
+      },
+      InspectRunExtensionErrorCategory::Forbidden => Self {
+        status: StatusCode::FORBIDDEN,
+        body: RunApiError::Forbidden,
+      },
+      InspectRunExtensionErrorCategory::Unavailable => Self::unavailable(code),
+      InspectRunExtensionErrorCategory::Integrity => Self {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        body: RunApiError::Integrity { code },
       },
     }
   }

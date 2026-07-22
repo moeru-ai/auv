@@ -29,7 +29,13 @@ pub async fn publish_minecraft_training_holdout_render_quality(
   context: Option<&Context>,
   quality: &TrainingResultHoldoutRenderQualityManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE, quality, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(
+    context,
+    MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE,
+    quality,
+    validate_training_holdout_render_quality_payload,
+  )
+  .await
 }
 
 pub async fn read_minecraft_training_holdout_render_quality(
@@ -37,7 +43,26 @@ pub async fn read_minecraft_training_holdout_render_quality(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<TrainingResultHoldoutRenderQualityManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(
+    store,
+    snapshot,
+    uri,
+    MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE,
+    validate_training_holdout_render_quality_payload,
+  )
+  .await
+}
+
+fn validate_training_holdout_render_quality_payload(quality: &TrainingResultHoldoutRenderQualityManifest) -> Result<(), String> {
+  if quality.schema_version != TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training holdout render quality schema_version {} (expected {TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_MANIFEST_SCHEMA_VERSION})",
+      quality.schema_version
+    ));
+  }
+  // TODO(minecraft-holdout-render-quality-invariants): Add cross-field checks
+  // when the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 
 pub const MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT: &str =

@@ -20,7 +20,7 @@ pub async fn publish_minecraft_training_package(
   context: Option<&Context>,
   package: &TrainingPackageManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_PACKAGE_PURPOSE, package, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_PACKAGE_PURPOSE, package, validate_training_package_payload).await
 }
 
 pub async fn read_minecraft_training_package(
@@ -28,7 +28,19 @@ pub async fn read_minecraft_training_package(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<TrainingPackageManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_PACKAGE_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_PACKAGE_PURPOSE, validate_training_package_payload).await
+}
+
+fn validate_training_package_payload(package: &TrainingPackageManifest) -> Result<(), String> {
+  if package.schema_version != TRAINING_PACKAGE_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training package schema_version {} (expected {TRAINING_PACKAGE_SCHEMA_VERSION})",
+      package.schema_version
+    ));
+  }
+  // TODO(minecraft-training-package-invariants): Add cross-field checks when
+  // the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -22,7 +22,7 @@ pub async fn publish_minecraft_training_job(
   context: Option<&Context>,
   job: &TrainingLaunchJobManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_JOB_PURPOSE, job, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_JOB_PURPOSE, job, validate_training_job_payload).await
 }
 
 pub async fn read_minecraft_training_job(
@@ -30,7 +30,19 @@ pub async fn read_minecraft_training_job(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<TrainingLaunchJobManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_JOB_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_JOB_PURPOSE, validate_training_job_payload).await
+}
+
+fn validate_training_job_payload(job: &TrainingLaunchJobManifest) -> Result<(), String> {
+  if job.schema_version != TRAINING_JOB_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training job schema_version {} (expected {TRAINING_JOB_MANIFEST_SCHEMA_VERSION})",
+      job.schema_version
+    ));
+  }
+  // TODO(minecraft-training-job-invariants): Add cross-field checks when the
+  // owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 const TRAINER_BACKEND: &str = "nerfstudio.splatfacto";
 const JOB_BACKEND: &str = "remote";

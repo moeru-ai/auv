@@ -7,9 +7,12 @@
 
 use std::sync::Arc;
 
+use auv_game_minecraft::MinecraftArtifactReadError;
 use auv_inspect_model::legacy::InspectComposer;
 use auv_inspect_server::legacy::InspectReadProjection;
+use auv_inspect_server::{InspectRunExtensionError, InspectRunExtensionErrorCategory};
 use auv_runtime::RootInspectReadProjection;
+use auv_tracing::{ArtifactReadError, ErrorCode, ReadError};
 
 /// Product projection: core enrichment + product composer + named JSON extensions.
 #[derive(Clone, Debug)]
@@ -41,21 +44,57 @@ impl auv_inspect_server::InspectRunExtension for ProductInspectReadProjection {
     extension: &'a str,
     store: &'a Arc<dyn auv_tracing::RunStore>,
     snapshot: &'a auv_tracing::RunSnapshot,
-  ) -> auv_tracing::BoxFuture<'a, Result<Option<serde_json::Value>, String>> {
+  ) -> auv_tracing::BoxFuture<'a, Result<Option<serde_json::Value>, InspectRunExtensionError>> {
     Box::pin(async move {
       match extension {
         "minecraft-quality-baseline-report" => {
           let inspection = auv_game_minecraft::inspect::read_minecraft_quality_spatial_inspection(store.as_ref(), snapshot)
             .await
-            .map_err(|error| error.to_string())?;
-          serde_json::to_value(inspection.quality_baseline())
-            .map(Some)
-            .map_err(|error| format!("failed to encode minecraft quality baseline report: {error}"))
+            .map_err(minecraft_artifact_extension_error)?;
+          serde_json::to_value(inspection.quality_baseline()).map(Some).map_err(|_| {
+            InspectRunExtensionError::new(
+              InspectRunExtensionErrorCategory::Integrity,
+              ErrorCode::parse("auv.inspect.minecraft_quality_baseline_encode_failed").expect("static extension error code"),
+            )
+          })
         }
         _ => Ok(None),
       }
     })
   }
+}
+
+fn minecraft_artifact_extension_error(error: MinecraftArtifactReadError) -> InspectRunExtensionError {
+  let category = match &error {
+    MinecraftArtifactReadError::InvalidExpectedPurpose { .. }
+    | MinecraftArtifactReadError::InvalidExpectedContentType { .. }
+    | MinecraftArtifactReadError::SnapshotAuthorityMismatch { .. }
+    | MinecraftArtifactReadError::WrongOwner { .. }
+    | MinecraftArtifactReadError::DanglingUri { .. }
+    | MinecraftArtifactReadError::WrongPurpose { .. }
+    | MinecraftArtifactReadError::WrongContentType { .. }
+    | MinecraftArtifactReadError::PayloadTooLarge { .. }
+    | MinecraftArtifactReadError::LengthOutOfRange { .. }
+    | MinecraftArtifactReadError::LengthMismatch { .. }
+    | MinecraftArtifactReadError::DigestMismatch { .. }
+    | MinecraftArtifactReadError::MalformedJson { .. }
+    | MinecraftArtifactReadError::InvalidPayload { .. } => InspectRunExtensionErrorCategory::Integrity,
+    MinecraftArtifactReadError::Allocation { .. } => InspectRunExtensionErrorCategory::Unavailable,
+    MinecraftArtifactReadError::Open { source, .. } => match source {
+      ReadError::Forbidden => InspectRunExtensionErrorCategory::Forbidden,
+      ReadError::Unavailable(_) => InspectRunExtensionErrorCategory::Unavailable,
+      ReadError::NotFound
+      | ReadError::InvalidReference(_)
+      | ReadError::HistoryGap { .. }
+      | ReadError::CursorAhead { .. }
+      | ReadError::Integrity(_) => InspectRunExtensionErrorCategory::Integrity,
+    },
+    MinecraftArtifactReadError::Stream { source, .. } => match source {
+      ArtifactReadError::Unavailable(_) => InspectRunExtensionErrorCategory::Unavailable,
+      ArtifactReadError::Integrity(_) => InspectRunExtensionErrorCategory::Integrity,
+    },
+  };
+  InspectRunExtensionError::new(category, error.code())
 }
 
 impl auv_inspect_server::legacy::InspectReadProjection for ProductInspectReadProjection {
@@ -86,13 +125,39 @@ mod tests {
 
   use auv_game_minecraft::training_result_spatial_query::publish_minecraft_training_spatial_query;
   use auv_tracing::dispatcher;
-  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, configure};
+  use auv_tracing::{ArtifactUri, RunId};
+  use auv_tracing::{AuthorityId, Context, MemoryRunStore, configure};
   use axum::body::{Body, to_bytes};
   use axum::http::{Request, StatusCode};
   use serde_json::json;
   use tower::ServiceExt;
 
   use super::*;
+
+  #[test]
+  fn minecraft_artifact_errors_map_to_safe_extension_categories_and_codes() {
+    let uri = ArtifactUri::from_ids(RunId::new(), auv_tracing::ArtifactId::new());
+    let invalid_payload = minecraft_artifact_extension_error(MinecraftArtifactReadError::InvalidPayload {
+      uri: uri.clone(),
+      message: "unsafe payload detail".to_string(),
+    });
+    assert_eq!(invalid_payload.category(), InspectRunExtensionErrorCategory::Integrity);
+    assert_eq!(invalid_payload.code().as_str(), "auv.minecraft.artifact.invalid_payload");
+
+    let unavailable = minecraft_artifact_extension_error(MinecraftArtifactReadError::Stream {
+      uri: uri.clone(),
+      source: ArtifactReadError::Unavailable(ErrorCode::parse("auv.internal.backend_detail").unwrap()),
+    });
+    assert_eq!(unavailable.category(), InspectRunExtensionErrorCategory::Unavailable);
+    assert_eq!(unavailable.code().as_str(), "auv.minecraft.artifact.stream_failed");
+
+    let forbidden = minecraft_artifact_extension_error(MinecraftArtifactReadError::Open {
+      uri,
+      source: ReadError::Forbidden,
+    });
+    assert_eq!(forbidden.category(), InspectRunExtensionErrorCategory::Forbidden);
+    assert_eq!(forbidden.code().as_str(), "auv.minecraft.artifact.open_failed");
+  }
 
   #[tokio::test]
   async fn minecraft_quality_extension_reads_typed_snapshot_artifact() {

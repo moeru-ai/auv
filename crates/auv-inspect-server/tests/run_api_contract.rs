@@ -3,7 +3,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use auv_inspect_server::{InspectRunExtension, InspectServeConfig, router, router_with_artifact_origin, router_with_extension, serve};
+use auv_inspect_server::{
+  InspectRunExtension, InspectRunExtensionError, InspectRunExtensionErrorCategory, InspectServeConfig, router, router_with_artifact_origin,
+  router_with_extension, serve,
+};
 use auv_tracing::{
   ArtifactBody, ArtifactReader, ArtifactWriteError, Attributes, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode, EventId,
   EventName, EventOccurred, EventSchema, IdempotencyKey, JsonPayload, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage,
@@ -76,7 +79,7 @@ impl InspectRunExtension for ExtensionProbe {
     extension: &'a str,
     store: &'a Arc<dyn RunStore>,
     snapshot: &'a auv_tracing::RunSnapshot,
-  ) -> BoxFuture<'a, auv_inspect_server::InspectResult<Option<Value>>> {
+  ) -> BoxFuture<'a, Result<Option<Value>, InspectRunExtensionError>> {
     Box::pin(async move {
       let expected_store = self.expected_store.upgrade().expect("server store remains live during projection");
       assert!(Arc::ptr_eq(&expected_store, store), "extension must receive the server state's exact RunStore Arc");
@@ -87,6 +90,24 @@ impl InspectRunExtension for ExtensionProbe {
           "run_id": snapshot.run_id(),
           "through_revision": snapshot.through_revision(),
         })));
+      }
+      if extension == "unavailable-extension" {
+        return Err(InspectRunExtensionError::new(
+          InspectRunExtensionErrorCategory::Unavailable,
+          error_code("auv.test.extension_unavailable"),
+        ));
+      }
+      if extension == "integrity-extension" {
+        return Err(InspectRunExtensionError::new(InspectRunExtensionErrorCategory::Integrity, error_code("auv.test.extension_integrity")));
+      }
+      if extension == "invalid-reference-extension" {
+        return Err(InspectRunExtensionError::new(
+          InspectRunExtensionErrorCategory::InvalidReference,
+          error_code("auv.test.extension_invalid_reference"),
+        ));
+      }
+      if extension == "forbidden-extension" {
+        return Err(InspectRunExtensionError::new(InspectRunExtensionErrorCategory::Forbidden, error_code("auv.test.extension_forbidden")));
       }
       Ok(None)
     })
@@ -509,6 +530,48 @@ async fn v1_extension_route_preserves_unknown_extension_not_found_behavior() {
   assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
   assert_eq!(json_body(response).await, json!("not_found"));
   assert_eq!(extension.calls.load(Ordering::SeqCst), 1);
+}
+
+// ROOT CAUSE:
+//
+// Extension failures were erased into strings and then collapsed into one
+// generic 500 response. The route could not preserve a safe failure category
+// or code supplied by the extension boundary.
+#[tokio::test]
+async fn v1_extension_route_preserves_typed_failure_status_and_code() {
+  let store: Arc<dyn RunStore> = Arc::new(MemoryRunStore::new(authority_id()));
+  store
+    .commit(RunCommitRequest::new(authority_id(), run_id(), KEY_ONE.parse().unwrap(), vec![start_span("auv.test.root")]).unwrap())
+    .await
+    .expect("seed run");
+  let extension = Arc::new(ExtensionProbe {
+    expected_store: Arc::downgrade(&store),
+    calls: AtomicUsize::new(0),
+  });
+  let app = router_with_extension(store, extension.clone());
+
+  for (extension_name, status, body) in [
+    ("unavailable-extension", StatusCode::SERVICE_UNAVAILABLE, json!({"unavailable":{"code":"auv.test.extension_unavailable"}})),
+    ("integrity-extension", StatusCode::INTERNAL_SERVER_ERROR, json!({"integrity":{"code":"auv.test.extension_integrity"}})),
+    ("invalid-reference-extension", StatusCode::BAD_REQUEST, json!({"invalid_reference":{"code":"auv.test.extension_invalid_reference"}})),
+    ("forbidden-extension", StatusCode::FORBIDDEN, json!("forbidden")),
+  ] {
+    let response = app
+      .clone()
+      .oneshot(
+        Request::builder()
+          .uri(format!("/v1/runs/{RUN}/extensions/{extension_name}"))
+          .body(Body::empty())
+          .expect("extension failure request"),
+      )
+      .await
+      .expect("extension failure response");
+
+    assert_eq!(response.status(), status);
+    assert_eq!(response.headers().get(CONTENT_TYPE).unwrap(), RUN_MEDIA_TYPE);
+    assert_eq!(json_body(response).await, body);
+  }
+  assert_eq!(extension.calls.load(Ordering::SeqCst), 4);
 }
 
 #[tokio::test]

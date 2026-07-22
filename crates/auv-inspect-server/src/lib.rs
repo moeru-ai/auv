@@ -12,7 +12,7 @@ mod run_api;
 mod server;
 mod viewer_assets;
 
-pub use read_projection::{InspectRunExtension, project_snapshot};
+pub use read_projection::{InspectRunExtension, InspectRunExtensionError, InspectRunExtensionErrorCategory, project_snapshot};
 pub use server::{
   DEFAULT_INSPECT_HOST, DEFAULT_INSPECT_PORT, InspectServeConfig, router, router_with_artifact_origin, router_with_extension, serve,
 };
