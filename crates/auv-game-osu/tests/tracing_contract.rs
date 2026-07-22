@@ -3,12 +3,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use auv_game_osu::detection_eval_quality::{
-  DETECTION_EVAL_QUALITY_MANIFEST_SCHEMA_VERSION, DetectionEvalQualityManifest, OSU_DETECTION_EVAL_QUALITY_PURPOSE,
-  publish_osu_detection_eval_quality, read_osu_detection_eval_quality,
+  DETECTION_EVAL_QUALITY_MANIFEST_SCHEMA_VERSION, DetectionEvalQualityManifest, DetectionEvalQualityReason, DetectionEvalQualityVerdict,
+  OSU_DETECTION_EVAL_QUALITY_PURPOSE, publish_osu_detection_eval_quality, read_osu_detection_eval_quality,
 };
 use auv_game_osu::detection_eval_witness::{
-  DETECTION_EVAL_WITNESS_MANIFEST_SCHEMA_VERSION, DetectionEvalWitnessManifest, OSU_DETECTION_EVAL_WITNESS_PURPOSE,
-  publish_osu_detection_eval_witness, read_osu_detection_eval_witness,
+  DETECTION_EVAL_WITNESS_MANIFEST_SCHEMA_VERSION, DetectionEvalWitnessManifest, DetectionEvalWitnessReason,
+  OSU_DETECTION_EVAL_WITNESS_PURPOSE, publish_osu_detection_eval_witness, read_osu_detection_eval_witness,
 };
 use auv_game_osu::projection::{OSU_PROJECTION_PURPOSE, ProjectionArtifact, publish_osu_projection, read_osu_projection};
 use auv_game_osu::run_read::{OSU_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, OsuArtifactPublishError, OsuArtifactReadError};
@@ -17,9 +17,10 @@ use auv_game_osu::visual_truth_semantic::{
   publish_osu_visual_truth_semantic, read_osu_visual_truth_semantic,
 };
 use auv_game_osu::visual_truth_spatial_query::{
-  OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, VISUAL_TRUTH_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION, VisualTruthSpatialQueryManifest,
-  publish_osu_visual_truth_spatial_query, read_osu_visual_truth_spatial_query,
+  OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, VISUAL_TRUTH_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION, VisualTruthPixelVisibility,
+  VisualTruthSpatialQueryManifest, publish_osu_visual_truth_spatial_query, read_osu_visual_truth_spatial_query,
 };
+use auv_stage_status::StageStatus;
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
   BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError,
@@ -248,6 +249,148 @@ fn quality_and_witness_readers_reject_overflowing_count_invariants() {
 }
 
 #[test]
+fn quality_and_witness_publish_and_read_reject_status_contradictions() {
+  futures_executor::block_on(async {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+
+    let mut quality = sample_quality();
+    quality.witness_status = StageStatus::Blocked;
+    let mut blocked_with_metrics = sample_quality();
+    blocked_with_metrics.witness_status = StageStatus::Blocked;
+    blocked_with_metrics.status = StageStatus::Blocked;
+    blocked_with_metrics.reason = Some(DetectionEvalQualityReason::WitnessBlocked);
+    blocked_with_metrics.verdict = DetectionEvalQualityVerdict::Blocked;
+    let mut failed_with_blocked_verdict = sample_quality();
+    failed_with_blocked_verdict.witness_status = StageStatus::Failed;
+    failed_with_blocked_verdict.status = StageStatus::Failed;
+    failed_with_blocked_verdict.reason = Some(DetectionEvalQualityReason::WitnessFailed);
+    failed_with_blocked_verdict.verdict = DetectionEvalQualityVerdict::Blocked;
+    failed_with_blocked_verdict.metrics = None;
+    let mut witness = sample_witness();
+    witness.status = StageStatus::Blocked;
+    witness.reason = Some(DetectionEvalWitnessReason::MissingVisualEvalReport);
+
+    for result in [
+      publish_osu_detection_eval_quality(Some(&root), &quality).await,
+      publish_osu_detection_eval_quality(Some(&root), &blocked_with_metrics).await,
+      publish_osu_detection_eval_quality(Some(&root), &failed_with_blocked_verdict).await,
+    ] {
+      assert!(matches!(result, Err(OsuArtifactPublishError::InvalidPayload { .. })));
+    }
+    assert!(matches!(publish_osu_detection_eval_witness(Some(&root), &witness).await, Err(OsuArtifactPublishError::InvalidPayload { .. })));
+
+    let (quality_snapshot, quality_uri) = write_json(store.as_ref(), OSU_DETECTION_EVAL_QUALITY_PURPOSE, &quality).await;
+    let (blocked_snapshot, blocked_uri) = write_json(store.as_ref(), OSU_DETECTION_EVAL_QUALITY_PURPOSE, &blocked_with_metrics).await;
+    let (failed_snapshot, failed_uri) = write_json(store.as_ref(), OSU_DETECTION_EVAL_QUALITY_PURPOSE, &failed_with_blocked_verdict).await;
+    let (witness_snapshot, witness_uri) = write_json(store.as_ref(), OSU_DETECTION_EVAL_WITNESS_PURPOSE, &witness).await;
+    assert!(matches!(
+      read_osu_detection_eval_quality(store.as_ref(), &quality_snapshot, &quality_uri).await,
+      Err(OsuArtifactReadError::InvalidPayload { .. })
+    ));
+    assert!(matches!(
+      read_osu_detection_eval_quality(store.as_ref(), &blocked_snapshot, &blocked_uri).await,
+      Err(OsuArtifactReadError::InvalidPayload { .. })
+    ));
+    assert!(matches!(
+      read_osu_detection_eval_quality(store.as_ref(), &failed_snapshot, &failed_uri).await,
+      Err(OsuArtifactReadError::InvalidPayload { .. })
+    ));
+    assert!(matches!(
+      read_osu_detection_eval_witness(store.as_ref(), &witness_snapshot, &witness_uri).await,
+      Err(OsuArtifactReadError::InvalidPayload { .. })
+    ));
+  });
+}
+
+#[test]
+fn quality_and_witness_publish_and_read_reject_derived_metric_contradictions() {
+  futures_executor::block_on(async {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+
+    let mut witness = sample_witness();
+    witness.label_matched_frames = 0;
+    witness.label_missing_frames = 1;
+
+    let mut quality = sample_quality();
+    quality.metrics.as_mut().expect("quality metrics").label_recall = Some(0.5);
+
+    let mut verdict = sample_quality();
+    verdict.verdict = DetectionEvalQualityVerdict::MetricPartial;
+
+    for result in [
+      publish_osu_detection_eval_quality(Some(&root), &quality).await,
+      publish_osu_detection_eval_quality(Some(&root), &verdict).await,
+    ] {
+      assert!(matches!(result, Err(OsuArtifactPublishError::InvalidPayload { .. })));
+    }
+    assert!(matches!(publish_osu_detection_eval_witness(Some(&root), &witness).await, Err(OsuArtifactPublishError::InvalidPayload { .. })));
+
+    let (witness_snapshot, witness_uri) = write_json(store.as_ref(), OSU_DETECTION_EVAL_WITNESS_PURPOSE, &witness).await;
+    let (quality_snapshot, quality_uri) = write_json(store.as_ref(), OSU_DETECTION_EVAL_QUALITY_PURPOSE, &quality).await;
+    let (verdict_snapshot, verdict_uri) = write_json(store.as_ref(), OSU_DETECTION_EVAL_QUALITY_PURPOSE, &verdict).await;
+    assert!(matches!(
+      read_osu_detection_eval_witness(store.as_ref(), &witness_snapshot, &witness_uri).await,
+      Err(OsuArtifactReadError::InvalidPayload { .. })
+    ));
+    assert!(matches!(
+      read_osu_detection_eval_quality(store.as_ref(), &quality_snapshot, &quality_uri).await,
+      Err(OsuArtifactReadError::InvalidPayload { .. })
+    ));
+    assert!(matches!(
+      read_osu_detection_eval_quality(store.as_ref(), &verdict_snapshot, &verdict_uri).await,
+      Err(OsuArtifactReadError::InvalidPayload { .. })
+    ));
+  });
+}
+
+#[test]
+fn spatial_query_publish_and_read_reject_visibility_and_bounds_contradictions() {
+  futures_executor::block_on(async {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let cases = [
+      {
+        let mut query = sample_spatial_query();
+        query.pixel_x = Some(-1.0);
+        query
+      },
+      {
+        let mut query = sample_spatial_query();
+        query.pixel_y = Some(480.0);
+        query
+      },
+      {
+        let mut query = sample_spatial_query();
+        query.pixel_visibility = Some(VisualTruthPixelVisibility::OutsideCapture);
+        query
+      },
+      {
+        let mut query = sample_spatial_query();
+        query.capture_width = Some(0);
+        query
+      },
+    ];
+
+    for query in cases {
+      assert!(matches!(
+        publish_osu_visual_truth_spatial_query(Some(&root), &query).await,
+        Err(OsuArtifactPublishError::InvalidPayload { .. })
+      ));
+      let (snapshot, uri) = write_json(store.as_ref(), OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, &query).await;
+      assert!(matches!(
+        read_osu_visual_truth_spatial_query(store.as_ref(), &snapshot, &uri).await,
+        Err(OsuArtifactReadError::InvalidPayload { .. })
+      ));
+    }
+  });
+}
+
+#[test]
 fn projection_publish_and_read_reject_f64_values_not_representable_as_f32() {
   futures_executor::block_on(async {
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
@@ -272,6 +415,16 @@ fn projection_publish_and_read_reject_f64_values_not_representable_as_f32() {
       ("offset_y", {
         let mut value = sample_projection();
         value.offset_y = f64::MAX;
+        value
+      }),
+      ("scale_x_underflow", {
+        let mut value = sample_projection();
+        value.scale_x = f64::from(f32::from_bits(1)) / 2.0;
+        value
+      }),
+      ("scale_y_underflow", {
+        let mut value = sample_projection();
+        value.scale_y = f64::from(f32::from_bits(1)) / 2.0;
         value
       }),
     ];
