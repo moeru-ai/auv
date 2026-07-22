@@ -51,6 +51,8 @@ auv-inspect-model = { path = "../auv-inspect-model" }
 auv-query-readiness = { path = "../auv-query-readiness" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+futures-util = { workspace = true, features = ["io"] }
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
 tonic = { version = "0.14", features = ["transport"] }
 image.workspace = true

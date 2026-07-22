@@ -4,7 +4,7 @@ use crate::{
     KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS, QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS,
     WINDOW_CLICK_POINT_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
   },
-  artifact::{emission_enabled, json_artifact, record_uri},
+  artifact::{emission_enabled, json_artifact},
   invoke_command,
 };
 use crate::{InvokeReport, InvokeReportField};
@@ -33,6 +33,11 @@ pub fn group() -> CommandGroup {
   args = QUERY_OR_CANDIDATE_ARGS,
 )]
 async fn focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
+  focus_text().await?;
+  Ok(InvokeCommandOutput::new("focused text input"))
+}
+
+pub async fn focus_text() -> Result<(), String> {
   // TODO(invoke-input-ax-focus): focusText still depends on the archived
   // root AX candidate/action adapter; move a typed focus API before enabling
   // this direct invoke command.
@@ -46,6 +51,11 @@ async fn focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
   args = QUERY_ARGS,
 )]
 async fn press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
+  press_button_by_query().await?;
+  Ok(InvokeCommandOutput::new("pressed button"))
+}
+
+pub async fn press_button_by_query() -> Result<(), String> {
   // TODO(invoke-input-ax-press): pressButton still depends on root AX query
   // resolution; move a typed button press API before enabling this direct
   // invoke command.
@@ -59,6 +69,11 @@ async fn press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
   args = QUERY_OVERLAY_ARGS,
 )]
 async fn ax_press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
+  press_button_with_ax().await?;
+  Ok(InvokeCommandOutput::new("pressed button through AX"))
+}
+
+pub async fn press_button_with_ax() -> Result<(), String> {
   // TODO(invoke-input-ax-press): AXUIElementPerformAction routing has not
   // moved into a stable typed driver API yet; enable this after that boundary
   // exists.
@@ -72,6 +87,11 @@ async fn ax_press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
   args = QUERY_OR_CANDIDATE_OVERLAY_ARGS,
 )]
 async fn ax_focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
+  focus_text_with_ax().await?;
+  Ok(InvokeCommandOutput::new("focused text input through AX"))
+}
+
+pub async fn focus_text_with_ax() -> Result<(), String> {
   // TODO(invoke-input-ax-focus): AX focus-by-query/candidate has not moved
   // into a stable typed driver API yet; enable this after that boundary exists.
   Err("input.axFocusText requires a typed AX focus API".to_string())
@@ -84,6 +104,11 @@ async fn ax_focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult 
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
 async fn ax_click_window_text(_input: InvokeCommandInput) -> InvokeCommandResult {
+  click_window_text_with_ax().await?;
+  Ok(InvokeCommandOutput::new("clicked window text through AX"))
+}
+
+pub async fn click_window_text_with_ax() -> Result<(), String> {
   // TODO(invoke-input-ax-click-window-text): OCR-to-AX click resolution still
   // lives in the root macOS command adapter; move a typed resolver API before
   // enabling this direct invoke command.
@@ -97,6 +122,11 @@ async fn ax_click_window_text(_input: InvokeCommandInput) -> InvokeCommandResult
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
 async fn smart_press(_input: InvokeCommandInput) -> InvokeCommandResult {
+  resolve_and_press().await?;
+  Ok(InvokeCommandOutput::new("resolved and pressed target"))
+}
+
+pub async fn resolve_and_press() -> Result<(), String> {
   // TODO(invoke-input-smart-press): ActionResolver execution still lives in
   // the root macOS command adapter; move the typed resolver boundary before
   // enabling this direct invoke command.
@@ -119,14 +149,28 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
       return Ok(dry_run_output(&input.command_id));
     }
 
-    let text = input.required_input("text")?;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let result = session.input().type_text(text, TypeTextOptions::default()).map_err(|error| error.to_string())?;
-    input_action_output("typed text into active control", "auv-driver-macos.input", &result).await
+    let text = input.required_input("text")?.to_string();
+    let result = type_text_into_active_control(text).await?;
+    Ok(input_action_output("typed text into active control", "auv-driver-macos.input", &result))
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
+    Err("input.typeText is only available on macOS".to_string())
+  }
+}
+
+pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let result = session.input().type_text(&text, auv_driver::TypeTextOptions::default()).map_err(|error| error.to_string())?;
+    emit_input_action_result(&result).await;
+    Ok(result)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = text;
     Err("input.typeText is only available on macOS".to_string())
   }
 }
@@ -147,15 +191,8 @@ async fn paste_text_preserve_clipboard(input: InvokeCommandInput) -> InvokeComma
       return Ok(dry_run_output(&input.command_id));
     }
 
-    let text = input.required_input("text")?;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    session
-      .input()
-      .paste_text(PasteTextOptions {
-        text: text.to_string(),
-        ..PasteTextOptions::default()
-      })
-      .map_err(|error| error.to_string())?;
+    let text = input.required_input("text")?.to_string();
+    paste_text_into_active_control(text).await?;
 
     let mut output = InvokeCommandOutput::new("pasted text into active control");
     output.backend = Some("auv-driver-macos.input".to_string());
@@ -171,6 +208,25 @@ async fn paste_text_preserve_clipboard(input: InvokeCommandInput) -> InvokeComma
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
+    Err("input.pasteText is only available on macOS".to_string())
+  }
+}
+
+pub async fn paste_text_into_active_control(text: String) -> Result<(), String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    session
+      .input()
+      .paste_text(auv_driver::PasteTextOptions {
+        text,
+        ..auv_driver::PasteTextOptions::default()
+      })
+      .map_err(|error| error.to_string())
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = text;
     Err("input.pasteText is only available on macOS".to_string())
   }
 }
@@ -191,23 +247,36 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
       return Ok(dry_run_output(&input.command_id));
     }
 
-    let key = input.required_input("key")?;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let result = session
-      .input()
-      .press_key(KeyPressOptions {
-        key: key.to_string(),
-        ..KeyPressOptions::default()
-      })
-      .map_err(|error| error.to_string())?;
-    input_action_output("pressed key in active app", "auv-driver-macos.input", &result).await.map(|mut output| {
-      attach_input_key_report(&mut output, key, Some("active app"), &result);
-      output
-    })
+    let key = input.required_input("key")?.to_string();
+    let result = press_key_in_active_app(key.clone()).await?;
+    let mut output = input_action_output("pressed key in active app", "auv-driver-macos.input", &result);
+    attach_input_key_report(&mut output, &key, Some("active app"), &result);
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
+    Err("input.key is only available on macOS".to_string())
+  }
+}
+
+pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let result = session
+      .input()
+      .press_key(auv_driver::KeyPressOptions {
+        key,
+        ..auv_driver::KeyPressOptions::default()
+      })
+      .map_err(|error| error.to_string())?;
+    emit_input_action_result(&result).await;
+    Ok(result)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = key;
     Err("input.key is only available on macOS".to_string())
   }
 }
@@ -219,6 +288,11 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
   args = TARGET_ARGS,
 )]
 async fn click_point(_input: InvokeCommandInput) -> InvokeCommandResult {
+  click_global_point().await?;
+  Ok(InvokeCommandOutput::new("clicked global point"))
+}
+
+pub async fn click_global_point() -> Result<(), String> {
   // TODO(invoke-input-click-point): InputApi::click_at exists, but this
   // invoke command exposes no x/y point args; add direct point inputs before
   // enabling this command.
@@ -243,29 +317,59 @@ async fn click_window_point(input: InvokeCommandInput) -> InvokeCommandResult {
       return Ok(dry_run_output(&input.command_id));
     }
 
-    let uses_relative_window_point = input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y");
-    let absolute_window_point = if uses_relative_window_point {
-      None
+    let point = if input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y") {
+      WindowPointInput::Relative {
+        x: required_number(&input.inputs, "relative_x", &input.command_id)?,
+        y: required_number(&input.inputs, "relative_y", &input.command_id)?,
+      }
     } else {
-      Some(resolve_click_window_point(&input.inputs, &input.command_id, None)?)
+      WindowPointInput::Offset(resolve_click_window_point(&input.inputs, &input.command_id, None)?)
     };
-
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let window = session.window().resolve(click_window_selector(&input)).map_err(|error| error.to_string())?;
-    let window_point = if uses_relative_window_point {
-      resolve_click_window_point(&input.inputs, &input.command_id, Some(&window))?
-    } else {
-      absolute_window_point.expect("absolute window point must be present when relative inputs are absent")
-    };
-    let action = session.window().click(&window, window_point, ClickOptions::default()).map_err(|error| error.to_string())?;
-
-    let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &action).await?;
-    add_click_window_signals(&mut output, &window, window_point);
+    let result = click_point_in_window(click_window_selector(&input), point).await?;
+    let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &result.action);
+    add_click_window_signals(&mut output, &result.window, result.point);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
+    Err("input.clickWindowPoint is only available on macOS".to_string())
+  }
+}
+
+#[derive(Clone, Debug)]
+pub enum WindowPointInput {
+  Offset(auv_driver::geometry::WindowPoint),
+  Relative { x: f64, y: f64 },
+}
+
+#[derive(Clone, Debug)]
+pub struct WindowPointClick {
+  pub window: auv_driver::Window,
+  pub point: auv_driver::geometry::WindowPoint,
+  pub action: auv_driver::InputActionResult,
+}
+
+pub async fn click_point_in_window(selector: auv_driver::WindowSelector, point: WindowPointInput) -> Result<WindowPointClick, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
+    let point = match point {
+      WindowPointInput::Offset(point) => point,
+      WindowPointInput::Relative { x, y } => window_relative_window_point(&window, x, y),
+    };
+    let action = session.window().click(&window, point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
+    emit_input_action_result(&action).await;
+    Ok(WindowPointClick {
+      window,
+      point,
+      action,
+    })
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (selector, point);
     Err("input.clickWindowPoint is only available on macOS".to_string())
   }
 }
@@ -277,6 +381,11 @@ async fn click_window_point(input: InvokeCommandInput) -> InvokeCommandResult {
   args = WINDOW_ARGS,
 )]
 async fn teach_click(_input: InvokeCommandInput) -> InvokeCommandResult {
+  teach_click_workflow().await?;
+  Ok(InvokeCommandOutput::new("recorded taught click"))
+}
+
+pub async fn teach_click_workflow() -> Result<(), String> {
   // TODO(invoke-input-teach-click): teach-click is an interactive root
   // adapter workflow, not a stable typed input API; move the workflow boundary
   // before enabling this direct invoke command.
@@ -290,6 +399,11 @@ async fn teach_click(_input: InvokeCommandInput) -> InvokeCommandResult {
   args = TARGET_ARGS,
 )]
 async fn scroll_point(_input: InvokeCommandInput) -> InvokeCommandResult {
+  scroll_global_point().await?;
+  Ok(InvokeCommandOutput::new("scrolled global point"))
+}
+
+pub async fn scroll_global_point() -> Result<(), String> {
   // TODO(invoke-input-scroll-point): InputApi::scroll_global_hid exists, but
   // this invoke command exposes no x/y point or delta args; add direct scroll
   // inputs before enabling this command.
@@ -390,7 +504,7 @@ fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
 }
 
 #[cfg(target_os = "macos")]
-async fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandResult {
+fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandOutput {
   let mut output = InvokeCommandOutput::new(summary);
   output.backend = Some(backend.to_string());
   output.signals.insert("input.selected_path".to_string(), format!("{:?}", result.selected_path));
@@ -401,20 +515,19 @@ async fn input_action_output(summary: &str, backend: &str, result: &auv_driver::
   if let Some(reason) = &result.fallback_reason {
     output.signals.insert("input.fallback_reason".to_string(), reason.clone());
   }
-  if emission_enabled() {
-    match json_artifact("auv.driver.input_action_result", result, auv_tracing::Attributes::empty()) {
-      Ok(artifact) => {
-        let emission = auv_tracing::emit_artifact!(artifact).await;
-        record_uri(&mut output, "artifact.input_action_result_uri", emission);
-      }
-      Err(error) => output.notes.push(error),
-    }
-  }
   output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
   output
     .known_limits
     .push("input delivery records the selected input path and attempts only; it does not verify target UI state.".to_string());
-  Ok(output)
+  output
+}
+
+async fn emit_input_action_result(result: &auv_driver::InputActionResult) {
+  if emission_enabled()
+    && let Ok(artifact) = json_artifact("auv.driver.input_action_result", result, auv_tracing::Attributes::empty())
+  {
+    let _ = auv_tracing::emit_artifact!(artifact).await;
+  }
 }
 
 fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, result: &auv_driver::InputActionResult) -> InvokeReport {

@@ -16,18 +16,20 @@ pub fn group() -> CommandGroup {
   args = NO_ARGS,
 )]
 async fn probe_permissions(input: InvokeCommandInput) -> InvokeCommandResult {
+  if input.dry_run {
+    return Ok(InvokeCommandOutput::new("dry run: app.probePermissions would probe macOS permissions"));
+  }
+  read_permissions().await.map(|permissions| permission_probe_output(&permissions))
+}
+
+pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, String> {
   #[cfg(target_os = "macos")]
   {
-    if input.dry_run {
-      return Ok(InvokeCommandOutput::new("dry run: app.probePermissions would probe macOS permissions"));
-    }
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let permissions = session.permission().probe().map_err(|error| error.to_string())?;
-    Ok(permission_probe_output(&permissions))
+    session.permission().probe().map_err(|error| error.to_string())
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = input;
     Err("app.probePermissions is only available on macOS".to_string())
   }
 }
@@ -38,7 +40,12 @@ async fn probe_permissions(input: InvokeCommandInput) -> InvokeCommandResult {
   summary = "Bring a target macOS app to the foreground before a foreground-dependent step.",
   args = TARGET_ARGS,
 )]
-async fn activate_app(_input: InvokeCommandInput) -> InvokeCommandResult {
+async fn activate_app(input: InvokeCommandInput) -> InvokeCommandResult {
+  activate_application(input.target_application_id).await?;
+  Ok(InvokeCommandOutput::new("activated target app"))
+}
+
+pub async fn activate_application(_target_application_id: Option<String>) -> Result<(), String> {
   // TODO(invoke-app-activation): app activation still lives behind the root
   // macOS command adapter; migrate it to `auv-driver-macos` before enabling
   // this direct invoke command.
@@ -108,6 +115,13 @@ mod tests {
     assert_eq!(field_value(section, "ScreenCaptureKit"), "missing");
     assert_eq!(field_value(section, "Accessibility"), "unknown");
     assert_eq!(field_value(section, "Automation to System Events"), "granted");
+  }
+
+  #[test]
+  fn typed_app_activation_api_is_callable_without_cli_context() {
+    let error = futures_executor::block_on(activate_application(None)).expect_err("deferred activation should fail");
+
+    assert!(error.contains("typed app activation API"));
   }
 
   fn field_value<'a>(section: &'a InvokeReportSection, label: &str) -> &'a str {

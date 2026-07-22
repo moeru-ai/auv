@@ -1,12 +1,14 @@
-//! Product recorded invoke: shared by CLI and MCP.
+//! Task22 legacy recorded invoke adapter.
 
 use auv_cli_invoke::{InvokeCliOutcome, InvokeOutputOptions, InvokeRegistry, InvokeRequest, InvokeResult};
 use auv_tracing_driver::RunRecordingBackend;
 
 use crate::integrations::textedit;
 
-/// Product invoke path: core recording plus TextEdit finalize inside the shared
-/// recorded lifecycle.
+/// Runs the legacy recording backend with the TextEdit finalizer.
+///
+/// New CLI and MCP execution paths call typed domain functions and own their
+/// recording composition independently.
 pub fn invoke_recorded(recording: &RunRecordingBackend, registry: &InvokeRegistry, request: InvokeRequest) -> Result<InvokeResult, String> {
   auv_cli_invoke::invoke_recorded_with_finalize(recording, registry, request, &textedit::finalize_recorded_invoke)
 }

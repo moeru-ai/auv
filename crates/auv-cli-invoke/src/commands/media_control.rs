@@ -1,4 +1,4 @@
-use crate::{CommandGroup, InvokeCommandInput, InvokeCommandResult, arg::NO_ARGS, invoke_command};
+use crate::{CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, arg::NO_ARGS, invoke_command};
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("mediaControl", "MEDIA CONTROL")
@@ -17,6 +17,11 @@ pub fn group() -> CommandGroup {
   args = NO_ARGS,
 )]
 async fn media_control_now_playing(_input: InvokeCommandInput) -> InvokeCommandResult {
+  read_now_playing().await?;
+  Ok(InvokeCommandOutput::new("read now-playing state"))
+}
+
+pub async fn read_now_playing() -> Result<(), String> {
   // TODO(invoke-media-control-typed-api): media report population is deferred
   // with command enablement; Task 4 cannot activate this previously deferred
   // command before a typed media control API is accepted.
@@ -30,6 +35,11 @@ async fn media_control_now_playing(_input: InvokeCommandInput) -> InvokeCommandR
   args = NO_ARGS,
 )]
 async fn media_control_play(_input: InvokeCommandInput) -> InvokeCommandResult {
+  play_media().await?;
+  Ok(InvokeCommandOutput::new("played media"))
+}
+
+pub async fn play_media() -> Result<(), String> {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -43,6 +53,11 @@ async fn media_control_play(_input: InvokeCommandInput) -> InvokeCommandResult {
   args = NO_ARGS,
 )]
 async fn media_control_pause(_input: InvokeCommandInput) -> InvokeCommandResult {
+  pause_media().await?;
+  Ok(InvokeCommandOutput::new("paused media"))
+}
+
+pub async fn pause_media() -> Result<(), String> {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -56,6 +71,11 @@ async fn media_control_pause(_input: InvokeCommandInput) -> InvokeCommandResult 
   args = NO_ARGS,
 )]
 async fn media_control_toggle_play_pause(_input: InvokeCommandInput) -> InvokeCommandResult {
+  toggle_play_pause().await?;
+  Ok(InvokeCommandOutput::new("toggled media playback"))
+}
+
+pub async fn toggle_play_pause() -> Result<(), String> {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -71,6 +91,11 @@ async fn media_control_toggle_play_pause(_input: InvokeCommandInput) -> InvokeCo
   args = NO_ARGS,
 )]
 async fn media_control_next(_input: InvokeCommandInput) -> InvokeCommandResult {
+  next_track().await?;
+  Ok(InvokeCommandOutput::new("advanced to next track"))
+}
+
+pub async fn next_track() -> Result<(), String> {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -84,6 +109,11 @@ async fn media_control_next(_input: InvokeCommandInput) -> InvokeCommandResult {
   args = NO_ARGS,
 )]
 async fn media_control_previous(_input: InvokeCommandInput) -> InvokeCommandResult {
+  previous_track().await?;
+  Ok(InvokeCommandOutput::new("returned to previous track"))
+}
+
+pub async fn previous_track() -> Result<(), String> {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.

@@ -20,6 +20,8 @@ use auv_runtime::contract::{
 use auv_tracing_driver::artifact::ArtifactBytesSource;
 use auv_tracing_driver::trace::{EVENT_API_VERSION, EventRecordV1Alpha1, new_event_id};
 use auv_tracing_driver::{ProducedArtifact, RecordingRun, RunId, RunRecordingBackend, SpanRef, now_millis};
+use futures_util::io::Cursor as AsyncCursor;
+use sha2::{Digest, Sha256};
 
 pub const DOCUMENT_WRITE_COMMAND_ID: &str = "app.textedit.document.write";
 pub const TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT: &str = "auv.product.textedit.document_write.v0";
@@ -30,8 +32,9 @@ pub fn group() -> CommandGroup {
   CommandGroup::new("textedit", "TEXTEDIT").command(document_write_invoke_command())
 }
 
-/// Product invoke entry is [`crate::invoke::invoke_recorded`].
-/// This module only owns the TextEdit handler + operation finalize.
+/// The typed [`write_document`] function is the shared domain entrypoint. The
+/// generated command is the CLI adapter; the finalizer below is retained only
+/// for the Task22 legacy recorded adapter.
 
 #[invoke_command(
   id = "app.textedit.document.write",
@@ -40,10 +43,10 @@ pub fn group() -> CommandGroup {
   args = TEXTEDIT_DOCUMENT_WRITE_ARGS,
 )]
 async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
-  document_write_impl(input)
+  document_write_impl(input).await
 }
 
-fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
+async fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
   if input.dry_run {
     let mut output = InvokeCommandOutput::new("dry run: app.textedit.document.write");
     output.verification = Some("dry-run; no semantic success claim".to_string());
@@ -57,32 +60,51 @@ fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
   // recorded mismatch tests can force a semantic mismatch without live TextEdit.
   // Expose a first-class flag only if the owner approves fixture controls.
   let fixture_observed_text = input.inputs.get("fixture_observed_text").cloned();
-  let report = match driver_kind {
-    "fixture" => {
-      let mut driver = FixtureTextEditDriver::from_write(&command);
-      driver.observed_override = fixture_observed_text;
-      run_document_command(&DocumentCommand::Write(command.clone()), &mut driver)?
-    }
-    "live" => {
-      #[cfg(target_os = "macos")]
-      {
-        let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
-        run_document_command(&DocumentCommand::Write(command.clone()), &mut driver)?
-      }
-      #[cfg(not(target_os = "macos"))]
-      {
-        return Err("app.textedit.document.write live driver requires macOS".to_string());
-      }
-    }
+  let driver = match driver_kind {
+    "fixture" => DocumentWriteDriver::Fixture {
+      observed_text: fixture_observed_text,
+    },
+    "live" => DocumentWriteDriver::Live,
     other => return Err(format!("app.textedit.document.write unknown --driver {other}; expected live or fixture")),
   };
+  let report = write_document(command.clone(), driver).await?;
 
   build_invoke_output_from_report(&report, &command)
 }
 
-/// Stages evidence artifacts only. Canonical `operation-result` is appended by
-/// the recorded invoke finalize hook after evidence artifacts are recorded and
-/// before the run closes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DocumentWriteDriver {
+  Live,
+  Fixture { observed_text: Option<String> },
+}
+
+/// Executes TextEdit document write and returns the app-owned report directly.
+pub async fn write_document(command: DocumentWrite, driver: DocumentWriteDriver) -> Result<DocumentCommandReport, String> {
+  let report = match driver {
+    DocumentWriteDriver::Fixture { observed_text } => {
+      let mut driver = FixtureTextEditDriver::from_write(&command);
+      driver.observed_override = observed_text;
+      run_document_command(&DocumentCommand::Write(command), &mut driver)?
+    }
+    DocumentWriteDriver::Live => {
+      #[cfg(target_os = "macos")]
+      {
+        let mut driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
+        run_document_command(&DocumentCommand::Write(command), &mut driver)?
+      }
+      #[cfg(not(target_os = "macos"))]
+      {
+        let _ = command;
+        return Err("app.textedit.document.write live driver requires macOS".to_string());
+      }
+    }
+  };
+  emit_document_write_artifacts(&report).await;
+  Ok(report)
+}
+
+/// Maps the typed report into CLI presentation. The conditional path artifacts
+/// are consumed only by the Task 22 legacy recorded adapter.
 pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, command: &DocumentWrite) -> InvokeCommandResult {
   let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
   let mut output = InvokeCommandOutput::new(format!(
@@ -101,24 +123,7 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
     output.signals.insert("textedit.semantic_matched".to_string(), matched.to_string());
   }
 
-  for outcome in &report.outcomes {
-    if let Some(result) = &outcome.input_action_result {
-      output.artifacts.push(json_artifact(
-        INPUT_ACTION_RESULT_ARTIFACT_ROLE,
-        &format!("textedit-{}-input-action", outcome.step_id.replace('.', "-")),
-        result,
-        "Typed InputActionResult from TextEdit document.write step.",
-      )?);
-    }
-  }
-
   if let Some(verification) = &report.verification {
-    output.artifacts.push(json_artifact(
-      "ax-text-observation",
-      "textedit-ax-text-observation",
-      verification,
-      "AX text observation used for TextEdit semantic verification.",
-    )?);
     output.signals.insert("textedit.matched_role".to_string(), verification.matched_role.clone());
     output.signals.insert("textedit.matched_text_len".to_string(), verification.matched_text.len().to_string());
   }
@@ -133,11 +138,84 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
     output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT.to_string());
   }
   output.report = Some(document_write_report(report, command));
+  if semantic_matched == Some(false) {
+    let verification = report.verification.as_ref().expect("semantic match status requires verification");
+    let observed = truncate(&verification.matched_text, 80);
+    output.summary =
+      format!("TextEdit document.write failed semantic verification (role={}, observed={observed})", verification.matched_role);
+    output.failure_message = Some(format!(
+      "TextEdit semantic verification failed: expected content was not present in observed AX text role={} observed={observed}",
+      verification.matched_role
+    ));
+  }
+  // NOTICE(task22-legacy-recording): path-based artifacts are produced only
+  // when the explicit RunRecordingBackend adapter invokes this CLI handler.
+  if auv_tracing::Context::current().authority_id().is_none() {
+    for outcome in &report.outcomes {
+      if let Some(result) = &outcome.input_action_result {
+        output.artifacts.push(json_artifact(
+          INPUT_ACTION_RESULT_ARTIFACT_ROLE,
+          &format!("textedit-{}-input-action", outcome.step_id.replace('.', "-")),
+          result,
+          "Typed InputActionResult from TextEdit document.write step.",
+        )?);
+      }
+    }
+    if let Some(verification) = &report.verification {
+      output.artifacts.push(json_artifact(
+        "ax-text-observation",
+        "textedit-ax-text-observation",
+        verification,
+        "AX text observation used for TextEdit semantic verification.",
+      )?);
+    }
+  }
   Ok(output)
 }
 
-/// Finalize the recorded invoke inside the shared lifecycle so result status,
-/// run status, and canonical `operation-result` stay in sync.
+async fn emit_document_write_artifacts(report: &DocumentCommandReport) {
+  if auv_tracing::Context::current().authority_id().is_none() {
+    return;
+  }
+  for outcome in &report.outcomes {
+    if let Some(result) = &outcome.input_action_result {
+      emit_json_artifact("auv.driver.input_action_result", result).await;
+    }
+  }
+  if let Some(verification) = &report.verification {
+    emit_json_artifact("auv.textedit.ax_text_observation", verification).await;
+  }
+  emit_json_artifact("auv.textedit.document_write_result", report).await;
+}
+
+async fn emit_json_artifact<T: serde::Serialize>(purpose: &str, value: &T) {
+  let Ok(body) = serde_json::to_vec_pretty(value) else {
+    return;
+  };
+  let Ok(byte_length) = u64::try_from(body.len()) else {
+    return;
+  };
+  let Ok(purpose) = auv_tracing::ArtifactPurpose::parse(purpose) else {
+    return;
+  };
+  let Ok(content_type) = auv_tracing::ContentType::parse("application/json") else {
+    return;
+  };
+  let Ok(byte_length) = auv_tracing::ByteLength::new(byte_length) else {
+    return;
+  };
+  let artifact = auv_tracing::NewArtifact::new(
+    purpose,
+    content_type,
+    byte_length,
+    auv_tracing::Sha256Digest::new(Sha256::digest(&body).into()),
+    auv_tracing::Attributes::empty(),
+    AsyncCursor::new(body),
+  );
+  let _ = auv_tracing::emit_artifact!(artifact).await;
+}
+
+/// Finalizes TextEdit output for the Task22 legacy recorded adapter.
 pub fn finalize_recorded_invoke(
   recording: &RunRecordingBackend,
   run: &mut RecordingRun,
@@ -494,8 +572,8 @@ mod tests {
   use super::*;
   use crate::product_registry;
 
-  #[test]
-  fn fixture_document_write_stages_evidence_artifacts_without_unassigned_operation() {
+  #[tokio::test]
+  async fn fixture_document_write_stages_evidence_artifacts_without_unassigned_operation() {
     let mut inputs = BTreeMap::new();
     inputs.insert("content".to_string(), "hello-fixture".to_string());
     inputs.insert("driver".to_string(), "fixture".to_string());
@@ -505,15 +583,15 @@ mod tests {
       inputs,
       dry_run: false,
     };
-    let output = document_write_impl(input).expect("fixture write");
+    let output = document_write_impl(input).await.expect("fixture write");
     assert!(output.artifacts.iter().any(|artifact| artifact.kind == INPUT_ACTION_RESULT_ARTIFACT_ROLE));
     assert!(output.artifacts.iter().any(|artifact| artifact.kind == "ax-text-observation"));
     assert!(!output.artifacts.iter().any(|artifact| artifact.kind == "operation-result"));
     assert_eq!(output.backend.as_deref(), Some("auv-apple-textedit.DocumentWrite"));
   }
 
-  #[test]
-  fn fixture_document_write_without_ax_verification_omits_state_change_known_limit() {
+  #[tokio::test]
+  async fn fixture_document_write_without_ax_verification_omits_state_change_known_limit() {
     let mut inputs = BTreeMap::new();
     inputs.insert("content".to_string(), "hello-fixture".to_string());
     inputs.insert("driver".to_string(), "fixture".to_string());
@@ -525,7 +603,7 @@ mod tests {
       dry_run: false,
     };
 
-    let output = document_write_impl(input).expect("fixture write without verification");
+    let output = document_write_impl(input).await.expect("fixture write without verification");
 
     assert!(!output.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
   }
@@ -586,6 +664,21 @@ mod tests {
 
     let output = build_invoke_output_from_report(&report, &command).expect("output");
     assert_eq!(output.signals.get("textedit.semantic_matched").map(String::as_str), Some("false"));
+  }
+
+  #[tokio::test]
+  async fn typed_document_write_returns_semantic_mismatch_without_cli_context() {
+    let command = DocumentWrite::defaults_with_content("expected-marker");
+    let report = write_document(
+      command,
+      DocumentWriteDriver::Fixture {
+        observed_text: Some("observed-without-expected".to_string()),
+      },
+    )
+    .await
+    .expect("typed TextEdit call");
+
+    assert_eq!(report.verification.as_ref().map(|verification| verification.semantic_matched), Some(false));
   }
 
   // ROOT CAUSE:

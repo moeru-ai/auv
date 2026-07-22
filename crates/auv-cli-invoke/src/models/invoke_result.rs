@@ -57,7 +57,11 @@ impl InvokeResult {
         producer_span_id,
         command_id: command.id.to_string(),
         command_summary: command.summary.to_string(),
-        status: RunStatus::Completed,
+        status: if output.failure_message.is_some() {
+          RunStatus::Failed
+        } else {
+          RunStatus::Completed
+        },
         output_summary: output.summary,
         backend: output.backend,
         signals: output.signals,
@@ -67,7 +71,7 @@ impl InvokeResult {
         report: output.report,
         artifacts: Vec::new(),
         artifact_paths: Vec::new(),
-        failure_message: None,
+        failure_message: output.failure_message,
       },
       Err(error) => Self {
         run_id,
