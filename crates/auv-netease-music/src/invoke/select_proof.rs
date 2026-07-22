@@ -145,6 +145,37 @@ mod tests {
     assert!(result.known_limits.iter().any(|limit| limit.contains("hermetic")));
   }
 
+  #[cfg(feature = "tracing")]
+  #[test]
+  fn select_proof_tracing_propagates_panic_and_closes_span() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Arc;
+
+    use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
+
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch should build");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+
+    let panic = root.in_scope(|| {
+      catch_unwind(AssertUnwindSafe(|| {
+        tracing::select_proof(|| panic!("select proof panic"));
+      }))
+    });
+
+    let payload = panic.expect_err("SelectProof panic should propagate");
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"select proof panic"));
+    futures_executor::block_on(dispatch.flush()).expect("span writes should flush");
+    let snapshot =
+      futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read should succeed").expect("instrumented run should exist");
+    let spans = snapshot.spans().values().collect::<Vec<_>>();
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].started().name().as_str(), "auv.netease.playlist.select_proof");
+    assert!(spans[0].ended().is_some());
+    assert!(snapshot.events().is_empty());
+  }
+
   #[test]
   fn netease_playlist_select_proof_is_registered_in_netease_registry() {
     let registry = netease_registry();
