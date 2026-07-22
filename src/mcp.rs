@@ -16,8 +16,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::build_default_store;
-use crate::model::{ExecutionTarget, InvokeRequest};
-use auv_cli_invoke::{ArgSpec, InvokeCommand, InvokeFinalizeHook, InvokeRegistry, default_registry};
+use auv_cli_invoke::{ArgSpec, InvokeCommand, InvokeCommandInput, InvokeFinalizeHook, InvokeRegistry, default_registry};
 use auv_tracing_driver::store::LocalStore;
 
 #[derive(Clone)]
@@ -26,7 +25,6 @@ pub struct McpServer {
   tool_router: ToolRouter<Self>,
   inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
   invoke_registry: Arc<InvokeRegistry>,
-  invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
 }
 
 impl McpServer {
@@ -46,14 +44,13 @@ impl McpServer {
     project_root: PathBuf,
     inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
     invoke_registry: Arc<InvokeRegistry>,
-    invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
+    _invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
   ) -> Self {
     Self {
       project_root,
       tool_router: Self::tool_router(),
       inspect_composer,
       invoke_registry,
-      invoke_finalize,
     }
   }
 
@@ -73,53 +70,58 @@ impl McpServer {
     };
     store.map_err(invalid_params)
   }
+
+  fn invoke_store(&self, store_root: Option<String>) -> Result<Arc<dyn auv_tracing::RunStore>, McpError> {
+    let root = store_root.map(PathBuf::from).unwrap_or_else(|| crate::default_project_store_root(self.project_root.clone()));
+    auv_tracing::FileRunStore::open(&root)
+      .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
+      .map_err(|error| invalid_params(format!("failed to open MCP run authority {}: {error}", root.display())))
+  }
 }
 
 #[tool_router(router = tool_router)]
 impl McpServer {
   #[tool(
-    description = "Invoke one explicit registry-backed AUV command id through the shared invoke wrapper. See input_schema.x-auv-commands for available command metadata.",
+    description = "Invoke one explicit registry-backed AUV command id. See input_schema.x-auv-commands for available command metadata.",
     input_schema = invoke_tool_input_schema()
   )]
   async fn invoke(&self, Parameters(req): Parameters<InvokeToolRequest>) -> Result<CallToolResult, McpError> {
-    let store = self.store(req.inspect.store_root.clone())?;
-    let recording = auv_tracing_driver::RunRecordingBackend::new(store.clone(), Arc::new(auv_tracing_driver::MemoryRunRecorder::new()));
-    let request = InvokeRequest {
+    let store = self.invoke_store(req.inspect.store_root)?;
+    let dispatch = auv_tracing::configure().run_store(store).build().map_err(invalid_params)?;
+    let command =
+      self.invoke_registry.resolve(&req.command_id).ok_or_else(|| invalid_params(format!("unknown invoke command: {}", req.command_id)))?;
+    let run_id = auv_tracing::RunId::new();
+    let root = auv_tracing::dispatcher::with_default(&dispatch, || auv_tracing::Context::root(run_id));
+    let input = InvokeCommandInput {
       command_id: req.command_id,
-      target: ExecutionTarget {
-        application_id: req.target.application_id,
-        target_label: req.target.target_label,
-      },
+      target_application_id: req.target.application_id,
       inputs: req.inputs,
       dry_run: req.dry_run,
     };
-    let result = match &self.invoke_finalize {
-      Some(finalize) => auv_cli_invoke::invoke_recorded_with_finalize(&recording, self.invoke_registry.as_ref(), request, finalize.as_ref()),
-      None => auv_cli_invoke::invoke_recorded(&recording, self.invoke_registry.as_ref(), request),
-    }
-    .map_err(invalid_params)?;
-    let artifacts = result
-      .artifacts
-      .iter()
-      .map(|artifact| {
-        serde_json::json!({
-          "artifact_id": artifact.artifact_id.as_str(),
-          "role": artifact.role,
-          "path": artifact.path,
-        })
-      })
-      .collect::<Vec<_>>();
-    let artifact_paths = result.artifact_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
+    let future = root.in_scope(|| command.invoke(input));
+    let direct_result = root.instrument(future).await;
+    let tracing_failure = dispatch.flush().await.err().map(|error| error.to_string());
 
-    json_result(serde_json::json!({
-      "run_id": result.run_id,
-      "status": result.status.as_str(),
-      "output_summary": result.output_summary,
-      "signals": result.signals,
-      "artifacts": artifacts,
-      "artifact_paths": artifact_paths,
-      "failure_message": result.failure_message,
-    }))
+    match direct_result {
+      Ok(output) => json_result(serde_json::json!({
+        "run_id": run_id.to_string(),
+        "status": "completed",
+        "output_summary": output.summary,
+        "signals": output.signals,
+        "artifacts": [],
+        "failure_message": null,
+        "tracing_failure": tracing_failure,
+      })),
+      Err(error) => json_result(serde_json::json!({
+        "run_id": run_id.to_string(),
+        "status": "failed",
+        "output_summary": error,
+        "signals": {},
+        "artifacts": [],
+        "failure_message": error,
+        "tracing_failure": tracing_failure,
+      })),
+    }
   }
 
   #[tool(description = "Inspect one existing AUV run id.")]
@@ -172,7 +174,7 @@ impl ServerHandler for McpServer {
   fn get_info(&self) -> ServerInfo {
     ServerInfo {
       instructions: Some(
-        "MCP exposes explicit AUV tools, including a registry-backed invoke wrapper for generic commands; no planner or NL parsing is present.".into(),
+        "MCP exposes explicit AUV tools, including registry-backed invoke commands; no planner or NL parsing is present.".into(),
       ),
       capabilities: ServerCapabilities::builder().enable_tools().build(),
       ..Default::default()
@@ -322,7 +324,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn mcp_server_lists_and_invokes_shared_invoke_wrapper() -> anyhow::Result<()> {
+  async fn mcp_server_lists_catalog_and_maps_direct_invoke_values() -> anyhow::Result<()> {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let store_root = temp_dir("mcp-shared-runtime-store");
     let (server_transport, client_transport) = tokio::io::duplex(16384);
@@ -423,29 +425,7 @@ mod tests {
     assert_eq!(invoke_json.get("status").and_then(|value| value.as_str()), Some("completed"));
     assert_eq!(invoke_json.get("signals"), Some(&Value::Object(Default::default())));
     assert_eq!(invoke_json.get("artifacts").and_then(|value| value.as_array()).map(Vec::len), Some(0));
-
-    let inspect = client
-      .call_tool(CallToolRequestParam {
-        name: "run_inspect".into(),
-        arguments: Some(
-          serde_json::json!({
-            "run_id": run_id,
-            "store_root": store_root.display().to_string()
-          })
-          .as_object()
-          .unwrap()
-          .clone(),
-        ),
-      })
-      .await?;
-    let inspect_json: Value = serde_json::from_str(
-      &inspect.content.first().and_then(|content| content.raw.as_text()).expect("inspect should return text content").text,
-    )
-    .expect("inspect text should decode as json");
-    let inspect_text = inspect_json.get("text").and_then(|value| value.as_str()).expect("inspect text should exist");
-    assert!(inspect_text.contains("Summary: scan.coverage dry-run"));
-    assert!(inspect_text.contains("name=auv.command.invoke"));
-    assert!(inspect_text.contains("resolved scan.coverage"));
+    assert!(invoke_json.get("tracing_failure").is_some_and(Value::is_null));
 
     let failed_invoke = client
       .call_tool(CallToolRequestParam {
@@ -470,7 +450,8 @@ mod tests {
       &failed_invoke.content.first().and_then(|content| content.raw.as_text()).expect("failed invoke should return text content").text,
     )
     .expect("failed invoke text should decode as json");
-    let failed_run_id = failed_invoke_json.get("run_id").and_then(|value| value.as_str()).expect("failed run_id should exist").to_string();
+    let failed_run_id = failed_invoke_json.get("run_id").and_then(|value| value.as_str()).expect("failed run_id should exist");
+    assert_ne!(failed_run_id, run_id);
     assert_eq!(failed_invoke_json.get("status").and_then(|value| value.as_str()), Some("failed"));
     assert!(
       failed_invoke_json
@@ -479,28 +460,7 @@ mod tests {
         .is_some_and(|message| message.contains("typed app activation API"))
     );
 
-    let failed_inspect = client
-      .call_tool(CallToolRequestParam {
-        name: "run_inspect".into(),
-        arguments: Some(
-          serde_json::json!({
-            "run_id": failed_run_id,
-            "store_root": store_root.display().to_string()
-          })
-          .as_object()
-          .unwrap()
-          .clone(),
-        ),
-      })
-      .await?;
-    let failed_inspect_json: Value = serde_json::from_str(
-      &failed_inspect.content.first().and_then(|content| content.raw.as_text()).expect("failed inspect should return text content").text,
-    )
-    .expect("failed inspect text should decode as json");
-    let failed_inspect_text = failed_inspect_json.get("text").and_then(|value| value.as_str()).expect("failed inspect text should exist");
-    assert!(failed_inspect_text.contains("Status: error"));
-    assert!(failed_inspect_text.contains("command.failed"));
-    assert!(failed_inspect_text.contains("typed app activation API"));
+    assert!(failed_invoke_json.get("tracing_failure").is_some_and(Value::is_null));
 
     client.cancel().await?;
     server_handle.await??;

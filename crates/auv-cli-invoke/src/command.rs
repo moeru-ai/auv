@@ -4,18 +4,19 @@ use crate::InvokeReport;
 use crate::arg::ArgSpec;
 use auv_tracing_driver::ProducedArtifact;
 
-type InvokeCommandHandler = fn(InvokeCommandInput<'_>) -> InvokeCommandResult;
+pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<InvokeCommandOutput, String>> + Send + 'static>>;
+pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
 
-#[derive(Clone, Copy, Debug)]
-pub struct InvokeCommandInput<'a> {
-  pub command_id: &'a str,
-  pub target_application_id: Option<&'a str>,
-  pub inputs: &'a BTreeMap<String, String>,
+#[derive(Clone, Debug)]
+pub struct InvokeCommandInput {
+  pub command_id: String,
+  pub target_application_id: Option<String>,
+  pub inputs: BTreeMap<String, String>,
   pub dry_run: bool,
 }
 
-impl<'a> InvokeCommandInput<'a> {
-  pub fn required_input(&self, name: &str) -> Result<&'a str, String> {
+impl InvokeCommandInput {
+  pub fn required_input(&self, name: &str) -> Result<&str, String> {
     self
       .inputs
       .get(name)
@@ -28,8 +29,8 @@ impl<'a> InvokeCommandInput<'a> {
     self.required_input(name)?.parse::<f64>().map_err(|error| format!("{} received invalid --{name}: {error}", self.command_id))
   }
 
-  pub fn target_or_input_target(&self) -> Option<&'a str> {
-    self.target_application_id.or_else(|| self.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
+  pub fn target_or_input_target(&self) -> Option<&str> {
+    self.target_application_id.as_deref().or_else(|| self.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
   }
 }
 
@@ -39,6 +40,8 @@ pub struct InvokeCommandOutput {
   pub backend: Option<String>,
   pub signals: BTreeMap<String, String>,
   pub notes: Vec<String>,
+  // NOTICE(run-recording-v1): Only the Task 22 legacy adapter consumes this
+  // path-based compatibility field. New commands emit owned artifacts directly.
   pub artifacts: Vec<ProducedArtifact>,
   pub known_limits: Vec<String>,
   pub report: Option<InvokeReport>,
@@ -111,7 +114,7 @@ pub struct InvokeCommand {
 }
 
 impl InvokeCommand {
-  pub fn invoke(&self, input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+  pub fn invoke(&self, input: InvokeCommandInput) -> InvokeCommandFuture {
     (self.handler)(input)
   }
 }
@@ -157,7 +160,7 @@ pub fn spec(
   namespace: InvokeNamespace,
   summary: &'static str,
   args: &'static [ArgSpec],
-  handler: fn(InvokeCommandInput<'_>) -> InvokeCommandResult,
+  handler: InvokeCommandHandler,
 ) -> InvokeCommand {
   InvokeCommand {
     id,

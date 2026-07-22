@@ -106,6 +106,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 auv-driver = { path = "crates/auv-driver" }
 auv-driver-macos = { path = "crates/auv-driver-macos" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }
+auv-tracing = { path = "crates/auv-tracing", features = ["file-store"] }
 auv-api-proto = { path = "crates/auv-api-proto" }
 auv-tracing-driver = { path = "crates/auv-tracing-driver" }
 auv-inspect-server = { path = "crates/auv-inspect-server" }

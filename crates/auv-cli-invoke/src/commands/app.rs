@@ -15,7 +15,7 @@ pub fn group() -> CommandGroup {
   summary = "Probe macOS screen recording, accessibility, and automation permissions.",
   args = NO_ARGS,
 )]
-fn probe_permissions(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn probe_permissions(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
@@ -38,7 +38,7 @@ fn probe_permissions(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Bring a target macOS app to the foreground before a foreground-dependent step.",
   args = TARGET_ARGS,
 )]
-fn activate_app(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn activate_app(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-app-activation): app activation still lives behind the root
   // macOS command adapter; migrate it to `auv-driver-macos` before enabling
   // this direct invoke command.

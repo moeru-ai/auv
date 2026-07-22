@@ -39,11 +39,11 @@ pub fn group() -> CommandGroup {
   summary = "Write TextEdit document body through typed AX focus, clipboard paste, and optional AX verification.",
   args = TEXTEDIT_DOCUMENT_WRITE_ARGS,
 )]
-fn document_write(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
   document_write_impl(input)
 }
 
-fn document_write_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
   if input.dry_run {
     let mut output = InvokeCommandOutput::new("dry run: app.textedit.document.write");
     output.verification = Some("dry-run; no semantic success claim".to_string());
@@ -367,15 +367,15 @@ fn document_write_report(report: &DocumentCommandReport, command: &DocumentWrite
   )
 }
 
-fn parse_document_write(input: &InvokeCommandInput<'_>) -> Result<DocumentWrite, String> {
+fn parse_document_write(input: &InvokeCommandInput) -> Result<DocumentWrite, String> {
   let content = input
     .inputs
     .get("content")
     .map(String::as_str)
     .ok_or_else(|| "app.textedit.document.write missing required flag --content".to_string())?;
   let mut command = DocumentWrite::defaults_with_content(content);
-  if let Some(target) = input.target_application_id {
-    command.app_id = target.to_string();
+  if let Some(target) = &input.target_application_id {
+    command.app_id = target.clone();
   }
   if let Some(replace) = input.inputs.get("replace") {
     command.replace = parse_bool(replace, "replace")?;
@@ -500,9 +500,9 @@ mod tests {
     inputs.insert("content".to_string(), "hello-fixture".to_string());
     inputs.insert("driver".to_string(), "fixture".to_string());
     let input = InvokeCommandInput {
-      command_id: DOCUMENT_WRITE_COMMAND_ID,
+      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
       target_application_id: None,
-      inputs: &inputs,
+      inputs,
       dry_run: false,
     };
     let output = document_write_impl(input).expect("fixture write");
@@ -519,9 +519,9 @@ mod tests {
     inputs.insert("driver".to_string(), "fixture".to_string());
     inputs.insert("verify".to_string(), "false".to_string());
     let input = InvokeCommandInput {
-      command_id: DOCUMENT_WRITE_COMMAND_ID,
+      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
       target_application_id: None,
-      inputs: &inputs,
+      inputs,
       dry_run: false,
     };
 

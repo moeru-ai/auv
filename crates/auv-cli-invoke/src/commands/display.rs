@@ -2,11 +2,9 @@ use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
   InvokeReportTableRow, InvokeReportValue, InvokeSignalValue,
   arg::{NO_ARGS, TARGET_ARGS},
-  artifact::invoke_artifact_path,
+  artifact::{emission_enabled, png_artifact, record_uri},
   invoke_command,
 };
-#[cfg(target_os = "macos")]
-use auv_tracing_driver::ProducedArtifact;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("display", "DISPLAY")
@@ -22,7 +20,7 @@ pub fn group() -> CommandGroup {
   summary = "Capture one display screenshot with a coordinate contract through xcap. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = TARGET_ARGS,
 )]
-fn capture_display(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
@@ -52,14 +50,15 @@ fn capture_display(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     // and coordinate signals, but not the old standalone capture-contract
     // artifact. Add the contract artifact after its direct-invoke JSON shape is
     // accepted in `2026-06-18-invoke-direct-command-implementations-handoff.md`.
-    let source_path = invoke_artifact_path(input.command_id, "display-capture", "png");
-    result.capture.image.save(&source_path).map_err(|error| format!("failed to write display.capture screenshot artifact: {error}"))?;
-    output.artifacts.push(ProducedArtifact {
-      kind: "display-screenshot".to_string(),
-      source_path,
-      preferred_name: "display-capture.png".to_string(),
-      note: Some("Screenshot captured by display.capture.".to_string()),
-    });
+    if emission_enabled() {
+      match png_artifact("auv.driver.display_capture", &result.capture.image, auv_tracing::Attributes::empty()) {
+        Ok(artifact) => {
+          let emission = auv_tracing::emit_artifact!(artifact).await;
+          record_uri(&mut output, "artifact.display_capture_uri", emission);
+        }
+        Err(error) => output.notes.push(error),
+      }
+    }
     output.verification = Some("capture-only; no semantic success claim".to_string());
     output
       .known_limits
@@ -79,7 +78,7 @@ fn capture_display(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "List connected displays using the normalized AUV coordinate contract.",
   args = NO_ARGS,
 )]
-fn list_displays(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn list_displays(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
@@ -102,7 +101,7 @@ fn list_displays(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Project main-display screenshot pixels back into AUV global logical coordinates.",
   args = NO_ARGS,
 )]
-fn project_screenshot_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn project_screenshot_point(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-display-typed-api): projectScreenshotPoint needs a typed
   // display projection API before this invoke command can replace root-driver
   // routing.
@@ -115,7 +114,7 @@ fn project_screenshot_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResu
   summary = "Resolve a logical desktop point against the current macOS display layout.",
   args = NO_ARGS,
 )]
-fn identify_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn identify_point(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-display-typed-api): identifyPoint needs a typed display point
   // resolution API before this invoke command can replace root-driver routing.
   Err("display.identifyPoint requires a typed display API for point identification".to_string())
@@ -230,11 +229,11 @@ mod tests {
 
   use super::*;
 
-  fn input<'a>(command_id: &'static str, inputs: &'a BTreeMap<String, String>) -> InvokeCommandInput<'a> {
+  fn input(command_id: &str, inputs: &BTreeMap<String, String>) -> InvokeCommandInput {
     InvokeCommandInput {
-      command_id,
+      command_id: command_id.to_string(),
       target_application_id: None,
-      inputs,
+      inputs: inputs.clone(),
       dry_run: false,
     }
   }
@@ -307,11 +306,13 @@ mod tests {
   fn commands_without_typed_display_api_report_explicit_gap() {
     let inputs = BTreeMap::new();
 
-    for (command_id, invoke) in [
-      ("display.identifyPoint", identify_point as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
-      ("display.projectScreenshotPoint", project_screenshot_point as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
+    for command in [
+      identify_point_invoke_command(),
+      project_screenshot_point_invoke_command(),
     ] {
-      let error = invoke(input(command_id, &inputs)).expect_err("command should not route to root driver");
+      let command_id = command.id;
+      let error =
+        futures_executor::block_on(command.invoke(input(command_id, &inputs))).expect_err("command should not route to root driver");
 
       assert!(error.contains("typed display API"), "{command_id} returned unclear error: {error}");
     }

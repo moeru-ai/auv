@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::{InvokeOutputOptions, InvokeReport, InvokeReportField};
 use crate::models::invoke_report::{write_detail_section, write_field_rows};
+use crate::{InvokeCommand, InvokeCommandResult};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +45,50 @@ pub struct InvokeResult {
 }
 
 impl InvokeResult {
+  /// Maps the direct command value into CLI-only presentation state.
+  pub fn from_command_result(run_id: impl Into<String>, command: &InvokeCommand, result: InvokeCommandResult) -> Self {
+    let run_id = run_id.into();
+    // NOTICE(run-recording-v1): This legacy CLI field is not canonical run
+    // truth. Task 22 removes it with the remaining recorded adapter surface.
+    let producer_span_id = SpanId::new(format!("frontend-root:{run_id}"));
+    match result {
+      Ok(output) => Self {
+        run_id,
+        producer_span_id,
+        command_id: command.id.to_string(),
+        command_summary: command.summary.to_string(),
+        status: RunStatus::Completed,
+        output_summary: output.summary,
+        backend: output.backend,
+        signals: output.signals,
+        notes: output.notes,
+        known_limits: output.known_limits,
+        verification: output.verification,
+        report: output.report,
+        artifacts: Vec::new(),
+        artifact_paths: Vec::new(),
+        failure_message: None,
+      },
+      Err(error) => Self {
+        run_id,
+        producer_span_id,
+        command_id: command.id.to_string(),
+        command_summary: command.summary.to_string(),
+        status: RunStatus::Failed,
+        output_summary: error.clone(),
+        backend: None,
+        signals: BTreeMap::new(),
+        notes: Vec::new(),
+        known_limits: Vec::new(),
+        verification: None,
+        report: None,
+        artifacts: Vec::new(),
+        artifact_paths: Vec::new(),
+        failure_message: Some(error),
+      },
+    }
+  }
+
   pub(crate) fn write_rendered<W: Write>(&self, writer: &mut W, options: InvokeOutputOptions) -> Result<(), String> {
     if options.json {
       self.write_json(writer, options)

@@ -1023,9 +1023,24 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
       output,
     } => {
-      let recording = build_recording_for_inspect(&project_root, &inspect)?;
+      let dispatch = build_invoke_dispatch(&project_root, &inspect).await?;
       let registry = crate::product_registry();
-      let outcome = crate::invoke_recorded_and_render(&recording, &registry, request, output)?;
+      let command = registry.resolve(&request.command_id).ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&dispatch, || auv_tracing::Context::root(run_id));
+      let input = auv_cli_invoke::InvokeCommandInput {
+        command_id: request.command_id,
+        target_application_id: request.target.application_id,
+        inputs: request.inputs,
+        dry_run: request.dry_run,
+      };
+      let future = root.in_scope(|| command.invoke(input));
+      let direct_result = root.instrument(future).await;
+      if let Err(error) = dispatch.flush().await {
+        eprintln!("warning: invoke tracing flush failed for run {run_id}: {error}");
+      }
+      let result = auv_cli_invoke::InvokeResult::from_command_result(run_id.to_string(), command, direct_result);
+      let outcome = auv_cli_invoke::render_invoke_result(&result, output)?;
       if outcome.exit_code != 0 {
         process::exit(outcome.exit_code);
       }
@@ -1784,10 +1799,7 @@ fn normalize_write_token(source: &str, token: String) -> Result<String, String> 
   }
 }
 
-fn build_recording_for_inspect(
-  project_root: &Path,
-  inspect: &InspectClientOptions,
-) -> Result<auv_tracing_driver::RunRecordingBackend, String> {
+async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptions) -> Result<auv_tracing::Dispatch, String> {
   let server_target = if should_try_server_write(inspect) {
     if let Some((url, token)) = resolve_inspect_server_target(inspect)? {
       Some((url, token))
@@ -1803,39 +1815,54 @@ fn build_recording_for_inspect(
     None
   };
 
-  let local_write_enabled = should_write_local(inspect);
-  let store_root = if local_write_enabled {
-    resolve_store_root(project_root, inspect.store_root.as_ref())
-  } else {
-    temp_runtime_store_root()
+  let store: Option<Arc<dyn auv_tracing::RunStore>> = match server_target {
+    // NOTICE(run-recording-v1): V1 Inspect authorities are loopback-only and
+    // have no token contract. Parser compatibility fields retire in Task 22.
+    Some((url, _legacy_token)) => {
+      let parsed = reqwest::Url::parse(&url).map_err(|error| format!("invalid inspect authority URL {url}: {error}"))?;
+      match auv_tracing_inspect::InspectRunStore::connect(parsed).await {
+        Ok(store) => Some(Arc::new(store)),
+        Err(error) if inspect.require_server_write => return Err(format!("failed to connect required inspect authority {url}: {error}")),
+        Err(error) => {
+          eprintln!("warning: failed to connect inspect authority {url}: {error}; using local tracing authority");
+          None
+        }
+      }
+    }
+    None => None,
   };
-  let store = auv_tracing_driver::store::LocalStore::new(store_root)?;
-  let mut recorders: Vec<Arc<dyn auv_tracing_driver::RunRecorder>> = Vec::new();
 
-  if let Some((url, token)) = server_target {
-    let warn_optional_failures = inspect.server_url.is_some() || matches!(inspect.server_write, crate::cli::InspectWriteSetting::Enabled);
-    recorders.push(Arc::new(
-      auv_tracing_driver::InspectServerRunRecorder::new(url, token, inspect.require_server_write)
-        .with_optional_failure_warnings(warn_optional_failures),
-    ));
+  let store = match store {
+    Some(store) => Some(store),
+    None if should_write_local(inspect) => {
+      Some(open_inspect_authority_store(&resolve_store_root(project_root, inspect.store_root.as_ref()))?)
+    }
+    None => None,
+  };
+  let builder = auv_tracing::configure();
+  match store {
+    Some(store) => builder.run_store(store).build(),
+    None => builder.build(),
   }
-
-  let recorder: Arc<dyn auv_tracing_driver::RunRecorder> = match recorders.len() {
-    0 => Arc::new(auv_tracing_driver::NoopRunRecorder),
-    1 => recorders.remove(0),
-    _ => Arc::new(auv_tracing_driver::CompositeRunRecorder::new(recorders)),
-  };
-  Ok(
-    auv_tracing_driver::RunRecordingBackend::new(store, recorder)
-      .with_local_snapshot_write_enabled(local_write_enabled)
-      .with_temporary_store_cleanup(!local_write_enabled),
-  )
+  .map_err(|error| format!("failed to configure invoke tracing: {error}"))
 }
 
 fn build_runtime_for_inspect(project_root: &Path, inspect: &InspectClientOptions) -> Result<auv_runtime::runtime::Runtime, String> {
-  let recording = build_recording_for_inspect(project_root, inspect)?;
-  let store_root = recording.store().root().to_path_buf();
-  Ok(build_runtime_with_store_root(project_root.to_path_buf(), store_root)?.with_recording(recording))
+  let server_target = if should_try_server_write(inspect) {
+    resolve_inspect_server_target(inspect)?
+  } else {
+    None
+  };
+  if inspect.require_server_write {
+    return Err(match server_target {
+      Some(_) => "inspect server write is required but only supported by the invoke composition root".to_string(),
+      None => "inspect server write is required but no inspect server is configured".to_string(),
+    });
+  }
+  if !should_write_local(inspect) {
+    return Err("local recording can only be disabled for the invoke composition root".to_string());
+  }
+  build_runtime_with_store_root(project_root.to_path_buf(), resolve_store_root(project_root, inspect.store_root.as_ref()))
 }
 
 fn should_write_local(inspect: &InspectClientOptions) -> bool {
@@ -1847,9 +1874,6 @@ fn should_try_server_write(inspect: &InspectClientOptions) -> bool {
 }
 
 fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Option<(String, Option<String>)>, String> {
-  // TODO(run-contract-task-16): Replace explicit legacy recorder targeting
-  // during general CLI/MCP tracing composition. Task 11 only migrates the
-  // active `inspect serve` adapter and discovered authority session shape.
   let explicit_token = resolve_client_token(inspect)?;
   if let Some(url) = &inspect.server_url {
     return Ok(Some((url.clone(), explicit_token)));
@@ -1864,13 +1888,7 @@ fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Optio
     eprintln!("warning: ignoring discovered inspect server with non-local URL: {}", session.url);
     return Ok(None);
   }
-  if inspect.require_server_write {
-    return Err(format!(
-      "inspect server write is required but discovered authority {} does not expose the legacy recorder protocol",
-      session.authority_id
-    ));
-  }
-  Ok(None)
+  Ok(Some((session.url, None)))
 }
 
 fn read_discovered_inspect_session(inspect: &InspectClientOptions) -> Result<Option<auv_inspect_server::InspectServerSession>, String> {
@@ -2050,22 +2068,22 @@ mod tests {
   }
 
   #[test]
-  fn recording_for_inspect_uses_cleanup_temp_store_when_local_write_disabled() {
+  fn legacy_runtime_rejects_disabled_local_recording_without_allocating_temp_store() {
     let root = env::temp_dir().join(format!("auv-recording-no-local-{}", auv_runtime::model::now_millis()));
+    let prefix = format!("auv-runtime-store-{}-", process::id());
+    let before = temp_runtime_store_entries(&prefix);
     let inspect = InspectClientOptions {
       local_write: crate::cli::InspectWriteSetting::Disabled,
       ..InspectClientOptions::default()
     };
 
-    let recording = build_recording_for_inspect(&root, &inspect).expect("recording backend should build");
-    let store_root = recording.store().root().to_path_buf();
+    let error = match build_runtime_for_inspect(&root, &inspect) {
+      Ok(_) => panic!("legacy runtime should reject disabled local recording"),
+      Err(error) => error,
+    };
 
-    assert!(!store_root.starts_with(&root));
-    assert!(store_root.exists());
-
-    drop(recording);
-
-    assert!(!store_root.exists());
+    assert!(error.contains("only be disabled for the invoke composition root"));
+    assert_eq!(temp_runtime_store_entries(&prefix), before);
   }
 
   #[test]
