@@ -884,6 +884,20 @@ mod tests {
     let scan = scan_with_playlist_labels(&["3"]);
     assert_eq!(playlist_select_target_resolve_source(true, Some(&scan), "3"), PlaylistSelectTargetResolveSource::RunArtifact);
   }
+
+  #[test]
+  fn playlist_select_diagnostics_use_canonical_artifact_terminology() {
+    let source = include_str!("playlist.rs");
+    let legacy_phrase = ["view-memory file ", "missing or unreadable"].concat();
+    let canonical_phrase = [
+      "canonical view-memory artifact ",
+      "unavailable; using rescan replay",
+    ]
+    .concat();
+
+    assert!(!source.contains(&legacy_phrase));
+    assert_eq!(source.matches(&canonical_phrase).count(), 1);
+  }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1062,7 +1076,7 @@ fn run_playlist_select_resolved(
         }
       }
     } else {
-      known_limits.push("view-memory file missing or unreadable — using rescan replay".to_string());
+      known_limits.push("canonical view-memory artifact unavailable; using rescan replay".to_string());
     }
   }
 
