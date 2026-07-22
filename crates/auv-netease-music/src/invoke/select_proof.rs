@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_cli_invoke::{ArgSpec, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, arg::FIXTURE_DIR};
+use auv_cli_invoke::{ArgSpec, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput, arg::FIXTURE_DIR};
 
 use crate::commands::playlist::PlaylistSelectResult;
 use crate::recording::{NETEASE_PLAYLIST_SELECT_RESULT_ROLE, persist_playlist_select_proof};
@@ -81,10 +81,14 @@ fn read_optional_query_fixture(fixture_dir: &Path) -> Result<Option<String>, Str
   Ok(Some(query))
 }
 
-pub fn select_proof_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  let fixture_dir = required_input(&input, "fixture-dir")?;
-  let store_root = required_input(&input, "store-root")?;
-  let fixture_path = Path::new(fixture_dir);
+pub fn select_proof_handler(input: InvokeCommandInput) -> InvokeCommandFuture {
+  Box::pin(async move { select_proof(input) })
+}
+
+fn select_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, String> {
+  let fixture_dir = required_input(&input, "fixture-dir")?.to_string();
+  let store_root = required_input(&input, "store-root")?.to_string();
+  let fixture_path = Path::new(&fixture_dir);
 
   let preview = build_select_result_from_fixture_dir(fixture_path)?;
 
@@ -97,7 +101,7 @@ pub fn select_proof_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResul
     return Ok(output);
   }
 
-  let run_id = persist_playlist_select_proof(Path::new(store_root), None, None, |persisted_run_id| {
+  let run_id = persist_playlist_select_proof(Path::new(&store_root), None, None, |persisted_run_id| {
     let mut result = preview.clone();
     result.run_id = Some(persisted_run_id.to_string());
     serde_json::to_vec_pretty(&result).map_err(|error| format!("failed to serialize playlist select result: {error}"))
@@ -112,7 +116,7 @@ pub fn select_proof_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResul
   Ok(output)
 }
 
-fn required_input<'a>(input: &InvokeCommandInput<'a>, key: &str) -> Result<&'a str, String> {
+fn required_input<'a>(input: &'a InvokeCommandInput, key: &str) -> Result<&'a str, String> {
   input
     .inputs
     .get(key)
@@ -200,14 +204,13 @@ mod tests {
 
     let registry = netease_registry();
     let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("command");
-    let output = command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
+    let output = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+    }))
+    .expect("handler");
 
     let run_id = output.signals.get("run_id").expect("run_id signal");
     let store = LocalStore::new(store_root.clone()).expect("store");
@@ -229,14 +232,13 @@ mod tests {
 
     let registry = netease_registry();
     let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("command");
-    command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
+    futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+    }))
+    .expect("handler");
 
     let store = LocalStore::new(store_root.clone()).expect("store");
     let runs = store.list_runs().expect("runs");
@@ -255,14 +257,13 @@ mod tests {
 
     let registry = netease_registry();
     let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("command");
-    let error = command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect_err("missing store-root should fail");
+    let error = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+    }))
+    .expect_err("missing store-root should fail");
 
     assert!(error.contains("store-root"));
   }

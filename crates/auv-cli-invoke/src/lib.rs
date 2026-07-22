@@ -10,7 +10,7 @@ use clap::{Arg, ArgAction, Command};
 extern crate self as auv_cli_invoke;
 
 pub mod arg;
-pub(crate) mod artifact;
+pub mod artifact;
 pub mod command;
 pub mod commands;
 pub mod help;
@@ -23,6 +23,7 @@ pub mod render;
 pub mod summary;
 
 pub use arg::ArgSpec;
+pub use artifact::{ArtifactInstrumentationFailure, ArtifactInstrumentationReceipt, ArtifactPublication};
 pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{
   CommandGroup, CommandNode, InvokeCommand, InvokeCommandFuture, InvokeCommandHandler, InvokeCommandInput, InvokeCommandOutput,

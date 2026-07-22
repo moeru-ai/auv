@@ -9,8 +9,8 @@ use auv_apple_textedit::{
 };
 use auv_cli_invoke::arg::TEXTEDIT_DOCUMENT_WRITE_ARGS;
 use auv_cli_invoke::{
-  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportSection,
-  InvokeResult, invoke_command,
+  ArtifactInstrumentationReceipt, ArtifactPublication, CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
+  InvokeReport, InvokeReportField, InvokeReportSection, InvokeResult, invoke_command,
 };
 use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputDeliveryPath};
 use auv_runtime::contract::{
@@ -19,9 +19,7 @@ use auv_runtime::contract::{
 };
 use auv_tracing_driver::artifact::ArtifactBytesSource;
 use auv_tracing_driver::trace::{EVENT_API_VERSION, EventRecordV1Alpha1, new_event_id};
-use auv_tracing_driver::{ProducedArtifact, RecordingRun, RunId, RunRecordingBackend, SpanRef, now_millis};
-use futures_util::io::Cursor as AsyncCursor;
-use sha2::{Digest, Sha256};
+use auv_tracing_driver::{RecordingRun, RunId, RunRecordingBackend, SpanRef, now_millis};
 
 pub const DOCUMENT_WRITE_COMMAND_ID: &str = "app.textedit.document.write";
 pub const TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT: &str = "auv.product.textedit.document_write.v0";
@@ -67,9 +65,11 @@ async fn document_write_impl(input: InvokeCommandInput) -> InvokeCommandResult {
     "live" => DocumentWriteDriver::Live,
     other => return Err(format!("app.textedit.document.write unknown --driver {other}; expected live or fixture")),
   };
-  let report = write_document(command.clone(), driver).await?;
+  let (report, instrumentation) = write_document(command.clone(), driver).await?.into_parts();
 
-  build_invoke_output_from_report(&report, &command)
+  let mut output = build_invoke_output_from_report(&report, &command)?;
+  output.artifact_failures = instrumentation.into_failures();
+  Ok(output)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,7 +79,10 @@ pub enum DocumentWriteDriver {
 }
 
 /// Executes TextEdit document write and returns the app-owned report directly.
-pub async fn write_document(command: DocumentWrite, driver: DocumentWriteDriver) -> Result<DocumentCommandReport, String> {
+pub async fn write_document(
+  command: DocumentWrite,
+  driver: DocumentWriteDriver,
+) -> Result<ArtifactPublication<DocumentCommandReport>, String> {
   let report = match driver {
     DocumentWriteDriver::Fixture { observed_text } => {
       let mut driver = FixtureTextEditDriver::from_write(&command);
@@ -99,12 +102,11 @@ pub async fn write_document(command: DocumentWrite, driver: DocumentWriteDriver)
       }
     }
   };
-  emit_document_write_artifacts(&report).await;
-  Ok(report)
+  let instrumentation = emit_document_write_artifacts(&report).await;
+  Ok(ArtifactPublication::new(report, instrumentation))
 }
 
-/// Maps the typed report into CLI presentation. The conditional path artifacts
-/// are consumed only by the Task 22 legacy recorded adapter.
+/// Maps the typed report into CLI presentation.
 pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, command: &DocumentWrite) -> InvokeCommandResult {
   let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
   let mut output = InvokeCommandOutput::new(format!(
@@ -148,71 +150,24 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
       verification.matched_role
     ));
   }
-  // NOTICE(task22-legacy-recording): path-based artifacts are produced only
-  // when the explicit RunRecordingBackend adapter invokes this CLI handler.
-  if auv_tracing::Context::current().authority_id().is_none() {
-    for outcome in &report.outcomes {
-      if let Some(result) = &outcome.input_action_result {
-        output.artifacts.push(json_artifact(
-          INPUT_ACTION_RESULT_ARTIFACT_ROLE,
-          &format!("textedit-{}-input-action", outcome.step_id.replace('.', "-")),
-          result,
-          "Typed InputActionResult from TextEdit document.write step.",
-        )?);
-      }
-    }
-    if let Some(verification) = &report.verification {
-      output.artifacts.push(json_artifact(
-        "ax-text-observation",
-        "textedit-ax-text-observation",
-        verification,
-        "AX text observation used for TextEdit semantic verification.",
-      )?);
-    }
-  }
+  // TODO(task22-textedit-legacy-evidence): the recorded adapter intentionally
+  // receives no path evidence; remove its evidence reconstruction when the
+  // legacy finalizer is retired in Task 22.
   Ok(output)
 }
 
-async fn emit_document_write_artifacts(report: &DocumentCommandReport) {
-  if auv_tracing::Context::current().authority_id().is_none() {
-    return;
-  }
+async fn emit_document_write_artifacts(report: &DocumentCommandReport) -> ArtifactInstrumentationReceipt {
+  let mut instrumentation = ArtifactInstrumentationReceipt::default();
   for outcome in &report.outcomes {
     if let Some(result) = &outcome.input_action_result {
-      emit_json_artifact("auv.driver.input_action_result", result).await;
+      instrumentation.publish_json("auv.driver.input_action_result", result).await;
     }
   }
   if let Some(verification) = &report.verification {
-    emit_json_artifact("auv.textedit.ax_text_observation", verification).await;
+    instrumentation.publish_json("auv.textedit.ax_text_observation", verification).await;
   }
-  emit_json_artifact("auv.textedit.document_write_result", report).await;
-}
-
-async fn emit_json_artifact<T: serde::Serialize>(purpose: &str, value: &T) {
-  let Ok(body) = serde_json::to_vec_pretty(value) else {
-    return;
-  };
-  let Ok(byte_length) = u64::try_from(body.len()) else {
-    return;
-  };
-  let Ok(purpose) = auv_tracing::ArtifactPurpose::parse(purpose) else {
-    return;
-  };
-  let Ok(content_type) = auv_tracing::ContentType::parse("application/json") else {
-    return;
-  };
-  let Ok(byte_length) = auv_tracing::ByteLength::new(byte_length) else {
-    return;
-  };
-  let artifact = auv_tracing::NewArtifact::new(
-    purpose,
-    content_type,
-    byte_length,
-    auv_tracing::Sha256Digest::new(Sha256::digest(&body).into()),
-    auv_tracing::Attributes::empty(),
-    AsyncCursor::new(body),
-  );
-  let _ = auv_tracing::emit_artifact!(artifact).await;
+  instrumentation.publish_json("auv.textedit.document_write_result", report).await;
+  instrumentation
 }
 
 /// Finalizes TextEdit output for the Task22 legacy recorded adapter.
@@ -472,19 +427,6 @@ fn parse_bool(value: &str, name: &str) -> Result<bool, String> {
   }
 }
 
-fn json_artifact<T: serde::Serialize>(kind: &str, label: &str, value: &T, note: &str) -> Result<ProducedArtifact, String> {
-  let source_path =
-    PathBuf::from(std::env::temp_dir()).join(format!("auv-invoke-textedit-{label}-{}-{}.json", std::process::id(), new_event_id()));
-  let body = serde_json::to_vec_pretty(value).map_err(|error| format!("failed to serialize {kind} artifact: {error}"))?;
-  fs::write(&source_path, body).map_err(|error| format!("failed to write {kind} artifact: {error}"))?;
-  Ok(ProducedArtifact {
-    kind: kind.to_string(),
-    source_path,
-    preferred_name: format!("{label}.json"),
-    note: Some(note.to_string()),
-  })
-}
-
 fn truncate(value: &str, max_chars: usize) -> String {
   let mut chars = value.chars();
   let head: String = chars.by_ref().take(max_chars).collect();
@@ -572,8 +514,19 @@ mod tests {
   use super::*;
   use crate::product_registry;
 
+  fn textedit_temp_artifacts() -> Vec<PathBuf> {
+    let mut paths = std::fs::read_dir(std::env::temp_dir())
+      .expect("read temp directory")
+      .filter_map(Result::ok)
+      .map(|entry| entry.path())
+      .filter(|path| path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("auv-invoke-textedit-")))
+      .collect::<Vec<_>>();
+    paths.sort();
+    paths
+  }
+
   #[tokio::test]
-  async fn fixture_document_write_stages_evidence_artifacts_without_unassigned_operation() {
+  async fn fixture_document_write_without_authority_creates_no_path_artifacts() {
     let mut inputs = BTreeMap::new();
     inputs.insert("content".to_string(), "hello-fixture".to_string());
     inputs.insert("driver".to_string(), "fixture".to_string());
@@ -584,9 +537,8 @@ mod tests {
       dry_run: false,
     };
     let output = document_write_impl(input).await.expect("fixture write");
-    assert!(output.artifacts.iter().any(|artifact| artifact.kind == INPUT_ACTION_RESULT_ARTIFACT_ROLE));
-    assert!(output.artifacts.iter().any(|artifact| artifact.kind == "ax-text-observation"));
-    assert!(!output.artifacts.iter().any(|artifact| artifact.kind == "operation-result"));
+    assert!(output.artifacts.is_empty());
+    assert!(output.artifact_failures.is_empty());
     assert_eq!(output.backend.as_deref(), Some("auv-apple-textedit.DocumentWrite"));
   }
 
@@ -638,11 +590,9 @@ mod tests {
 
     let operation = auv_runtime::run_read::read_operation_result(&store, &result.run_id).expect("read").expect("operation-result");
     assert_eq!(operation.run_id.as_str(), result.run_id);
-    assert!(!operation.evidence_artifacts.is_empty());
-    assert!(operation.evidence_artifacts.iter().all(|artifact| artifact.run_id.as_str() == result.run_id));
+    assert!(operation.evidence_artifacts.is_empty());
     assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT));
-    assert_eq!(operation.verifications[0].semantic_matched, Some(true));
-    assert!(!operation.verifications[0].state_changed);
+    assert!(operation.verifications.is_empty());
     assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
     assert!(result.artifacts.iter().any(|artifact| artifact.role == "operation-result"));
     assert_eq!(result.artifacts.len(), result.artifact_paths.len());
@@ -678,22 +628,44 @@ mod tests {
     .await
     .expect("typed TextEdit call");
 
-    assert_eq!(report.verification.as_ref().map(|verification| verification.semantic_matched), Some(false));
+    assert_eq!(report.value().verification.as_ref().map(|verification| verification.semantic_matched), Some(false));
   }
 
-  // ROOT CAUSE:
-  //
-  // Artifact source names used only process id plus millisecond time, so
-  // concurrent invokes could overwrite each other's semantic evidence before
-  // the recorder copied it into the run directory.
-  #[test]
-  fn json_artifact_source_paths_are_unique_within_one_process() {
-    let first = json_artifact("fixture", "same-label", &serde_json::json!({"value": 1}), "first").expect("first artifact");
-    let second = json_artifact("fixture", "same-label", &serde_json::json!({"value": 2}), "second").expect("second artifact");
+  #[tokio::test]
+  async fn no_context_success_error_and_cancellation_leave_no_textedit_temp_artifacts() {
+    let before = textedit_temp_artifacts();
+    let command = DocumentWrite::defaults_with_content("fixture");
 
-    assert_ne!(first.source_path, second.source_path);
-    let _ = fs::remove_file(first.source_path);
-    let _ = fs::remove_file(second.source_path);
+    let publication = write_document(
+      command.clone(),
+      DocumentWriteDriver::Fixture {
+        observed_text: None,
+      },
+    )
+    .await
+    .expect("fixture write");
+    assert!(publication.value().outcomes.iter().any(|outcome| outcome.input_action_result.is_some()));
+
+    let invalid = document_write_impl(InvokeCommandInput {
+      command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
+      target_application_id: None,
+      inputs: BTreeMap::from([
+        ("content".to_string(), "fixture".to_string()),
+        ("driver".to_string(), "invalid".to_string()),
+      ]),
+      dry_run: false,
+    })
+    .await;
+    assert!(invalid.is_err());
+
+    let cancelled = write_document(
+      command,
+      DocumentWriteDriver::Fixture {
+        observed_text: None,
+      },
+    );
+    drop(cancelled);
+    assert_eq!(textedit_temp_artifacts(), before);
   }
 
   // ROOT CAUSE:
@@ -739,14 +711,11 @@ mod tests {
 
     let operation = auv_runtime::run_read::read_operation_result(&store, &result.run_id).expect("read").expect("operation-result");
     assert_eq!(operation.status, OperationStatus::Failed);
-    assert_eq!(operation.verifications.len(), 1);
-    assert_eq!(operation.verifications[0].semantic_matched, Some(false));
-    assert!(!operation.verifications[0].state_changed);
-    assert_eq!(operation.verifications[0].failure_layer, Some(FailureLayer::SemanticMismatch));
-    assert!(operation.evidence_artifacts.iter().all(|artifact| artifact.run_id.as_str() == result.run_id));
+    assert!(operation.verifications.is_empty());
+    assert!(operation.evidence_artifacts.is_empty());
     let operation_artifact =
       canonical.artifacts.iter().find(|artifact| artifact.role == "operation-result").expect("operation-result artifact");
-    assert_eq!(operation_artifact.span_id, result.producer_span_id);
+    assert_eq!(Some(&operation_artifact.span_id), result.producer_span_id.as_ref());
 
     let _ = std::fs::remove_dir_all(root);
   }

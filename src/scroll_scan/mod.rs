@@ -668,9 +668,11 @@ fn scan_window_region_page(
       "observed {observation_count} row(s); {new_observation_count} new page-local signature(s); observe command recorded inside the scan run"
     ),
   });
+  let producer_span_id =
+    observe_result.producer_span_id.as_ref().ok_or_else(|| "recorded scroll-scan observation is missing its producer span".to_string())?;
   state.snapshots.push(build_page_observation_snapshot(
     run.id(),
-    &observe_result.producer_span_id,
+    producer_span_id,
     page_index,
     &options.target,
     &page_observations,

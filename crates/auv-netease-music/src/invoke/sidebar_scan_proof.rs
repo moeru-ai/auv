@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_cli_invoke::{ArgSpec, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult};
+use auv_cli_invoke::{ArgSpec, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput};
 use auv_driver::vision::TextRecognitionOptions;
 
 use crate::recording::{NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE, persist_playlist_ls_artifacts};
@@ -59,11 +59,15 @@ pub fn persist_inputs_for_sidebar_scan_proof(store_root: &Path, scan: &PlaylistS
   }
 }
 
-pub fn sidebar_scan_proof_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  let fixture_dir = required_input(&input, "fixture-dir")?;
-  let store_root = required_input(&input, "store-root")?;
-  let fixture_path = Path::new(fixture_dir);
-  let store_path = Path::new(store_root);
+pub fn sidebar_scan_proof_handler(input: InvokeCommandInput) -> InvokeCommandFuture {
+  Box::pin(async move { sidebar_scan_proof(input) })
+}
+
+fn sidebar_scan_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, String> {
+  let fixture_dir = required_input(&input, "fixture-dir")?.to_string();
+  let store_root = required_input(&input, "store-root")?.to_string();
+  let fixture_path = Path::new(&fixture_dir);
+  let store_path = Path::new(&store_root);
 
   let scan = build_scan_from_fixture_dir(fixture_path)?;
 
@@ -80,7 +84,7 @@ pub fn sidebar_scan_proof_handler(input: InvokeCommandInput<'_>) -> InvokeComman
   }
 
   let inputs = persist_inputs_for_sidebar_scan_proof(store_path, &scan);
-  let persisted = persist_playlist_ls_artifacts(store_path, &scan, &inputs, false).map_err(|error| error)?;
+  let persisted = persist_playlist_ls_artifacts(store_path, &scan, &inputs, false)?;
   let run_id = persisted.lineage.run_id;
 
   let mut output = InvokeCommandOutput::new(format!("persisted hermetic sidebar scan proof run {run_id} under {}", store_root));
@@ -92,7 +96,7 @@ pub fn sidebar_scan_proof_handler(input: InvokeCommandInput<'_>) -> InvokeComman
   Ok(output)
 }
 
-fn required_input<'a>(input: &InvokeCommandInput<'a>, key: &str) -> Result<&'a str, String> {
+fn required_input<'a>(input: &'a InvokeCommandInput, key: &str) -> Result<&'a str, String> {
   input
     .inputs
     .get(key)
@@ -150,14 +154,13 @@ mod tests {
 
     let registry = netease_registry();
     let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    let output = command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
+    let output = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+    }))
+    .expect("handler");
 
     let run_id = output.signals.get("run_id").expect("run_id signal");
     let store = LocalStore::new(store_root.clone()).expect("store");
@@ -179,14 +182,13 @@ mod tests {
 
     let registry = netease_registry();
     let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
+    futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+    }))
+    .expect("handler");
 
     let store = LocalStore::new(store_root.clone()).expect("store");
     let runs = store.list_runs().expect("runs");
@@ -210,14 +212,13 @@ mod tests {
 
     let registry = netease_registry();
     let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
+    futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+    }))
+    .expect("handler");
 
     let store = LocalStore::new(store_root.clone()).expect("store");
     let runs = store.list_runs().expect("runs");
@@ -234,14 +235,13 @@ mod tests {
 
     let registry = netease_registry();
     let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    let error = command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect_err("missing store-root should fail");
+    let error = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+    }))
+    .expect_err("missing store-root should fail");
 
     assert!(error.contains("store-root"));
   }

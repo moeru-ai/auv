@@ -2,7 +2,7 @@ use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
   InvokeReportTableRow, InvokeReportValue, InvokeSignalValue,
   arg::{NO_ARGS, TARGET_ARGS},
-  artifact::{emission_enabled, png_artifact},
+  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
   invoke_command,
 };
 
@@ -24,7 +24,8 @@ async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
   if input.dry_run {
     return Ok(InvokeCommandOutput::new("dry run: display.capture would capture the primary display"));
   }
-  capture_primary_display().await.map(|result| {
+  capture_primary_display().await.map(|publication| {
+    let (result, instrumentation) = publication.into_parts();
     let mut output = InvokeCommandOutput::new(format!(
       "Captured {} through {} ({}x{} pixels).",
       display_label(&result.display),
@@ -49,21 +50,19 @@ async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
     output
       .known_limits
       .push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
+    output.artifact_failures = instrumentation.into_failures();
     output
   })
 }
 
-pub async fn capture_primary_display() -> Result<auv_driver::DisplayCapture, String> {
+pub async fn capture_primary_display() -> Result<ArtifactPublication<auv_driver::DisplayCapture>, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
-    if emission_enabled()
-      && let Ok(artifact) = png_artifact("auv.driver.display_capture", &result.capture.image, auv_tracing::Attributes::empty())
-    {
-      let _ = auv_tracing::emit_artifact!(artifact).await;
-    }
-    Ok(result)
+    let mut instrumentation = ArtifactInstrumentationReceipt::default();
+    instrumentation.publish_png("auv.driver.display_capture", &result.capture.image).await;
+    Ok(ArtifactPublication::new(result, instrumentation))
   }
   #[cfg(not(target_os = "macos"))]
   {

@@ -1,7 +1,7 @@
 use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{IMAGE_TEXT_ARGS, REGION_ARGS, SCREEN_TEXT_ARGS, TARGET_ARGS},
-  artifact::{emission_enabled, png_artifact},
+  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
   invoke_command,
 };
 
@@ -34,7 +34,7 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let region = Rect::new(input.required_f64("x")?, input.required_f64("y")?, input.required_f64("width")?, input.required_f64("height")?);
-    let capture = capture_screen_region(region).await?;
+    let (capture, instrumentation) = capture_screen_region(region).await?.into_parts();
 
     let mut output = InvokeCommandOutput::new("screen region captured");
     output.backend = Some(format!("auv-driver-macos.display.{}", capture.capture.backend));
@@ -47,6 +47,7 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
     // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
     output.verification = Some("capture-only; no semantic success claim".to_string());
     output.known_limits.push("screen.captureRegion records a region screenshot only; it does not verify UI semantics.".to_string());
+    output.artifact_failures = instrumentation.into_failures();
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -56,7 +57,7 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<auv_driver::RegionCapture, String> {
+pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<ArtifactPublication<auv_driver::RegionCapture>, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -67,12 +68,9 @@ pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<auv_drive
         ..auv_driver::CaptureOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    if emission_enabled()
-      && let Ok(artifact) = png_artifact("auv.driver.screen_region_capture", &capture.capture.image, auv_tracing::Attributes::empty())
-    {
-      let _ = auv_tracing::emit_artifact!(artifact).await;
-    }
-    Ok(capture)
+    let mut instrumentation = ArtifactInstrumentationReceipt::default();
+    instrumentation.publish_png("auv.driver.screen_region_capture", &capture.capture.image).await;
+    Ok(ArtifactPublication::new(capture, instrumentation))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -96,8 +94,10 @@ async fn find_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let query = input.required_input("query")?.to_string();
-    let matches = recognize_screen_text(query, false).await?;
-    Ok(screen_text_matches_output(&input.command_id, &matches))
+    let (matches, instrumentation) = recognize_screen_text(query, false).await?.into_parts();
+    let mut output = screen_text_matches_output(&input.command_id, &matches);
+    output.artifact_failures = instrumentation.into_failures();
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -121,8 +121,10 @@ async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult 
     }
 
     let query = input.required_input("query")?.to_string();
-    let matches = recognize_screen_text(query, true).await?;
-    Ok(screen_text_matches_output(&input.command_id, &matches))
+    let (matches, instrumentation) = recognize_screen_text(query, true).await?.into_parts();
+    let mut output = screen_text_matches_output(&input.command_id, &matches);
+    output.artifact_failures = instrumentation.into_failures();
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -132,7 +134,7 @@ async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult 
 }
 
 #[cfg(target_os = "macos")]
-pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, String> {
+pub async fn recognize_screen_text(query: String, wait: bool) -> Result<ArtifactPublication<auv_driver::OcrMatches>, String> {
   use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
   use std::{thread, time::Instant};
 
@@ -153,19 +155,16 @@ pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driv
       // screenshot and scalar match signals, but not a structured
       // recognition-result artifact with query/bounds/confidence. Add that
       // after the artifact shape is accepted in the direct-command handoff.
-      if emission_enabled()
-        && let Ok(artifact) = png_artifact("auv.driver.screen_ocr_source", &capture.capture.image, auv_tracing::Attributes::empty())
-      {
-        let _ = auv_tracing::emit_artifact!(artifact).await;
-      }
-      return Ok(matches);
+      let mut instrumentation = ArtifactInstrumentationReceipt::default();
+      instrumentation.publish_png("auv.driver.screen_ocr_source", &capture.capture.image).await;
+      return Ok(ArtifactPublication::new(matches, instrumentation));
     }
     thread::sleep(wait_options.poll_interval);
   }
 }
 
 #[cfg(not(target_os = "macos"))]
-pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_driver::OcrMatches, String> {
+pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<ArtifactPublication<auv_driver::OcrMatches>, String> {
   Err("screen text OCR is only available on macOS".to_string())
 }
 
@@ -250,7 +249,7 @@ async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let query = input.required_input("query")?.to_string();
-    let result = click_recognized_screen_text(query).await?;
+    let (result, instrumentation) = click_recognized_screen_text(query).await?.into_parts();
 
     let mut output = text_matches_output(&input.command_id, "auv-driver-macos.input", &result.matches.matches, Some(0));
     // TODO(invoke-recognition-result-artifacts): clickText records the OCR
@@ -263,6 +262,7 @@ async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
     output
       .known_limits
       .push("screen.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
+    output.artifact_failures = instrumentation.into_failures();
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -278,7 +278,7 @@ pub struct ScreenTextClick {
   pub point: auv_driver::geometry::Point,
 }
 
-pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, String> {
+pub async fn click_recognized_screen_text(query: String) -> Result<ArtifactPublication<ScreenTextClick>, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -289,12 +289,9 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
       .map_err(|error| error.to_string())?;
     let point = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?.action_point();
     session.input().click_at(point, auv_driver::Click::Single).map_err(|error| error.to_string())?;
-    if emission_enabled()
-      && let Ok(artifact) = png_artifact("auv.driver.screen_ocr_source", &capture.capture.image, auv_tracing::Attributes::empty())
-    {
-      let _ = auv_tracing::emit_artifact!(artifact).await;
-    }
-    Ok(ScreenTextClick { matches, point })
+    let mut instrumentation = ArtifactInstrumentationReceipt::default();
+    instrumentation.publish_png("auv.driver.screen_ocr_source", &capture.capture.image).await;
+    Ok(ArtifactPublication::new(ScreenTextClick { matches, point }, instrumentation))
   }
   #[cfg(not(target_os = "macos"))]
   {

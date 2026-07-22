@@ -26,6 +26,7 @@ auv-tracing-driver = { path = "../auv-tracing-driver" }
 auv-cli-invoke = { path = "../auv-cli-invoke" }
 clap = { version = "4.5", features = ["derive"] }
 comfy-table = "7"
+futures-executor = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 image.workspace = true
@@ -42,7 +43,6 @@ auv-driver-windows = { path = "../auv-driver-windows" }
 
 [dev-dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
-futures-executor = "0.3"
 
 [[test]]
 name = "tracing_opt_in"

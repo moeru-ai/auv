@@ -29,6 +29,10 @@ pub const OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT: &str = "auv.api.session.
 /// mirroring [`crate::run_read::read_operation_result`].
 pub fn persist_operation_summary(store: &LocalStore, result: &InvokeResult, summary: &OperationSummary) -> Result<(), SessionApiError> {
   let run_id = result.run_id.as_str();
+  let producer_span_id = result
+    .producer_span_id
+    .as_ref()
+    .ok_or_else(|| SessionApiError::Storage(format!("cannot persist operation-summary for direct run {run_id} without a recorded span")))?;
   let mut canonical = store.read_run(run_id).map_err(SessionApiError::Storage)?;
 
   let record = summary.to_record(OPERATION_SUMMARY_API_VERSION);
@@ -38,7 +42,7 @@ pub fn persist_operation_summary(store: &LocalStore, result: &InvokeResult, summ
     .stage_artifact_bytes(
       &RunId::new(run_id),
       canonical.artifacts.len(),
-      &result.producer_span_id,
+      producer_span_id,
       None,
       ArtifactBytesSource {
         role: OPERATION_SUMMARY_ARTIFACT_ROLE.to_string(),

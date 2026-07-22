@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -17,12 +17,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::build_default_store;
 use auv_cli_invoke::{ArgSpec, InvokeCommand, InvokeRegistry, default_registry};
-use auv_tracing_driver::store::LocalStore;
 
-type McpInvokeFuture = Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'static>>;
-type InvokeDispatch = Arc<dyn Fn(Option<String>) -> Result<auv_tracing::Dispatch, String> + Send + Sync>;
+type McpInvokeFuture = Pin<Box<dyn Future<Output = Result<McpInvokeOutcome, String>> + Send + 'static>>;
+type InvokeDispatch = Arc<dyn Fn(Option<String>) -> Result<McpFrontendAuthority, String> + Send + Sync>;
 
 #[derive(Clone, Debug)]
 pub struct McpInvokeInput {
@@ -57,7 +55,7 @@ impl McpInvokeAdapter {
   pub fn new<F, Fut>(command_id: &'static str, handler: F) -> Self
   where
     F: Fn(McpInvokeInput) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<Value, String>> + Send + 'static,
+    Fut: Future<Output = Result<McpInvokeOutcome, String>> + Send + 'static,
   {
     Self {
       command_id,
@@ -70,40 +68,102 @@ impl McpInvokeAdapter {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum McpInvokeStatus {
+  Completed,
+  Failed,
+}
+
+impl McpInvokeStatus {
+  fn as_str(self) -> &'static str {
+    match self {
+      Self::Completed => "completed",
+      Self::Failed => "failed",
+    }
+  }
+}
+
+#[derive(Clone, Debug)]
+pub struct McpInvokeOutcome {
+  status: McpInvokeStatus,
+  output_summary: String,
+  signals: BTreeMap<String, Value>,
+  details: BTreeMap<String, Value>,
+  artifact_failures: Vec<auv_cli_invoke::ArtifactInstrumentationFailure>,
+  failure_message: Option<String>,
+}
+
+impl McpInvokeOutcome {
+  pub fn completed(summary: impl Into<String>, details: Value) -> Self {
+    Self {
+      status: McpInvokeStatus::Completed,
+      output_summary: summary.into(),
+      signals: BTreeMap::new(),
+      details: object_fields(details),
+      artifact_failures: Vec::new(),
+      failure_message: None,
+    }
+  }
+
+  pub fn failed(summary: impl Into<String>, failure: impl Into<String>, details: Value) -> Self {
+    Self {
+      status: McpInvokeStatus::Failed,
+      output_summary: summary.into(),
+      signals: BTreeMap::new(),
+      details: object_fields(details),
+      artifact_failures: Vec::new(),
+      failure_message: Some(failure.into()),
+    }
+  }
+
+  pub fn insert_signal(&mut self, name: impl Into<String>, value: impl Into<Value>) {
+    self.signals.insert(name.into(), value.into());
+  }
+
+  pub fn mark_failed(&mut self, summary: impl Into<String>, failure: impl Into<String>) {
+    self.status = McpInvokeStatus::Failed;
+    self.output_summary = summary.into();
+    self.failure_message = Some(failure.into());
+  }
+
+  pub fn with_artifact_instrumentation(mut self, receipt: auv_cli_invoke::ArtifactInstrumentationReceipt) -> Self {
+    self.artifact_failures = receipt.into_failures();
+    self
+  }
+}
+
+fn object_fields(value: Value) -> BTreeMap<String, Value> {
+  match value {
+    Value::Object(fields) => fields.into_iter().collect(),
+    Value::Null => BTreeMap::new(),
+    other => BTreeMap::from([("value".to_string(), other)]),
+  }
+}
+
 #[derive(Clone)]
 pub struct McpServer {
   project_root: PathBuf,
   tool_router: ToolRouter<Self>,
-  inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
   /// Read-only command metadata used to build the MCP tool schema.
   invoke_registry: Arc<InvokeRegistry>,
-  invoke_adapters: Arc<Vec<McpInvokeAdapter>>,
+  invoke_adapters: Arc<BTreeMap<&'static str, McpInvokeAdapter>>,
   invoke_dispatch: InvokeDispatch,
 }
 
 impl McpServer {
   /// Builds the core-only MCP server.
-  ///
-  /// Product callers inject composer + registry through
-  /// [`Self::with_inspect_composer_and_registry`].
-  pub fn new(project_root: PathBuf) -> Self {
-    Self::with_inspect_composer(project_root, crate::inspect::build_core_inspect_composer().expect("core inspect composer"))
+  pub fn new(project_root: PathBuf) -> Result<Self, String> {
+    Self::with_registry(project_root, Arc::new(default_registry()), core_invoke_adapters())
   }
 
-  pub fn with_inspect_composer(project_root: PathBuf, inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>) -> Self {
-    Self::with_inspect_composer_and_registry(project_root, inspect_composer, Arc::new(default_registry()), core_invoke_adapters())
-  }
-
-  pub fn with_inspect_composer_and_registry(
+  pub fn with_registry(
     project_root: PathBuf,
-    inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
     invoke_registry: Arc<InvokeRegistry>,
     invoke_adapters: Vec<McpInvokeAdapter>,
-  ) -> Self {
+  ) -> Result<Self, String> {
     let dispatch_project_root = project_root.clone();
     Self::with_invoke_dispatch(
       project_root,
-      inspect_composer,
       invoke_registry,
       invoke_adapters,
       Arc::new(move |store_root| build_invoke_dispatch(dispatch_project_root.clone(), store_root)),
@@ -112,82 +172,139 @@ impl McpServer {
 
   fn with_invoke_dispatch(
     project_root: PathBuf,
-    inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
     invoke_registry: Arc<InvokeRegistry>,
     invoke_adapters: Vec<McpInvokeAdapter>,
     invoke_dispatch: InvokeDispatch,
-  ) -> Self {
-    Self {
+  ) -> Result<Self, String> {
+    let invoke_adapters = validated_adapter_catalog(invoke_registry.as_ref(), invoke_adapters)?;
+    Ok(Self {
       project_root,
       tool_router: Self::tool_router(),
-      inspect_composer,
       invoke_registry,
       invoke_adapters: Arc::new(invoke_adapters),
       invoke_dispatch,
-    }
-  }
-
-  /// Shared composer used by MCP text inspect (same instance as CLI product assembly).
-  pub fn inspect_composer(&self) -> &Arc<auv_inspect_model::legacy::InspectComposer> {
-    &self.inspect_composer
+    })
   }
 
   pub fn invoke_registry(&self) -> &Arc<InvokeRegistry> {
     &self.invoke_registry
   }
 
-  fn store(&self, store_root: Option<String>) -> Result<LocalStore, McpError> {
-    let store = match store_root {
-      Some(root) => LocalStore::new(PathBuf::from(root)),
-      None => build_default_store(self.project_root.clone()),
-    };
-    store.map_err(invalid_params)
+  fn authority_store(&self, store_root: Option<String>) -> Result<Arc<dyn auv_tracing::RunStore>, McpError> {
+    let root = store_root.map(PathBuf::from).unwrap_or_else(|| crate::default_project_store_root(self.project_root.clone()));
+    auv_tracing::FileRunStore::open(&root)
+      .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
+      .map_err(|error| invalid_params(format!("failed to open MCP run authority {}: {error}", root.display())))
   }
 }
 
-fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> Result<auv_tracing::Dispatch, String> {
+#[derive(Serialize)]
+struct McpInvokePresentation {
+  run_id: String,
+  status: &'static str,
+  output_summary: String,
+  signals: BTreeMap<String, Value>,
+  artifacts: Vec<auv_tracing::ArtifactMetadata>,
+  artifact_failures: Vec<auv_cli_invoke::ArtifactInstrumentationFailure>,
+  failure_message: Option<String>,
+  tracing_failure: Option<String>,
+  result: BTreeMap<String, Value>,
+}
+
+fn validated_adapter_catalog(
+  registry: &InvokeRegistry,
+  adapters: Vec<McpInvokeAdapter>,
+) -> Result<BTreeMap<&'static str, McpInvokeAdapter>, String> {
+  let mut catalog = BTreeMap::new();
+  for adapter in adapters {
+    let command_id = adapter.command_id;
+    if catalog.insert(command_id, adapter).is_some() {
+      return Err(format!("duplicate MCP invoke adapter id: {command_id}"));
+    }
+  }
+
+  let metadata_ids = registry.all().iter().map(|command| command.id).collect::<BTreeSet<_>>();
+  let adapter_ids = catalog.keys().copied().collect::<BTreeSet<_>>();
+  let missing = metadata_ids.difference(&adapter_ids).copied().collect::<Vec<_>>();
+  if !missing.is_empty() {
+    return Err(format!("missing MCP invoke adapter ids: {}", missing.join(", ")));
+  }
+  let extra = adapter_ids.difference(&metadata_ids).copied().collect::<Vec<_>>();
+  if !extra.is_empty() {
+    return Err(format!("extra MCP invoke adapter ids: {}", extra.join(", ")));
+  }
+  Ok(catalog)
+}
+
+#[derive(Clone)]
+struct McpFrontendAuthority {
+  dispatch: auv_tracing::Dispatch,
+  store: Arc<dyn auv_tracing::RunStore>,
+}
+
+fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
   let root = store_root.map(PathBuf::from).unwrap_or_else(|| crate::default_project_store_root(project_root));
   let store = auv_tracing::FileRunStore::open(&root)
     .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
     .map_err(|error| format!("failed to open MCP run authority {}: {error}", root.display()))?;
-  auv_tracing::configure().run_store(store).build().map_err(|error| error.to_string())
+  let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
+  Ok(McpFrontendAuthority { dispatch, store })
 }
 
 struct McpFrontendExecution {
   run_id: auv_tracing::RunId,
-  direct_result: Result<Value, String>,
+  direct_result: Result<McpInvokeOutcome, String>,
   tracing_failure: Option<String>,
+  canonical_artifacts: Vec<auv_tracing::ArtifactMetadata>,
 }
 
-async fn execute_mcp_frontend<F, Fut>(dispatch: &auv_tracing::Dispatch, call: F) -> McpFrontendExecution
+#[derive(Serialize)]
+struct McpFrontendLifecycle {
+  frontend: &'static str,
+}
+
+impl auv_tracing::EventPayload for McpFrontendLifecycle {
+  const NAME: &'static str = "auv.frontend.lifecycle";
+  const VERSION: u32 = 1;
+}
+
+async fn execute_mcp_frontend<F, Fut>(authority: &McpFrontendAuthority, call: F) -> Result<McpFrontendExecution, String>
 where
-  F: FnOnce() -> Fut,
-  Fut: Future<Output = Result<Value, String>>,
+  F: FnOnce() -> Fut + Send + 'static,
+  Fut: Future<Output = Result<McpInvokeOutcome, String>> + Send + 'static,
 {
   let run_id = auv_tracing::RunId::new();
-  let root = auv_tracing::dispatcher::with_default(dispatch, || auv_tracing::Context::root(run_id));
+  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+  root.in_scope(|| {
+    auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
+  });
   let future = root.in_scope(call);
-  let direct_result = root.instrument(future).await;
-  let tracing_failure = dispatch.flush().await.err().map(|error| error.to_string());
-  McpFrontendExecution {
+  let task_dispatch = authority.dispatch.clone();
+  let task_root = root.clone();
+  let runtime = tokio::runtime::Handle::current();
+  let task_result = tokio::task::spawn_blocking(move || {
+    auv_tracing::dispatcher::with_default(&task_dispatch, || runtime.block_on(task_root.instrument(future)))
+  })
+  .await;
+  let tracing_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
+  let snapshot = authority
+    .store
+    .load_snapshot(run_id)
+    .await
+    .map_err(|error| format!("failed to read committed MCP invoke run {run_id}: {error}"))?
+    .ok_or_else(|| format!("MCP invoke run {run_id} was not persisted by its V1 authority"))?;
+  let canonical_artifacts = snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect();
+  let direct_result = task_result.map_err(|error| format!("MCP blocking adapter task failed: {error}"))?;
+  Ok(McpFrontendExecution {
     run_id,
     direct_result,
     tracing_failure,
-  }
+    canonical_artifacts,
+  })
 }
 
-fn completed(summary: impl Into<String>, fields: Value) -> Value {
-  let mut value = serde_json::json!({
-    "status": "completed",
-    "output_summary": summary.into(),
-    "signals": {},
-    "artifacts": [],
-    "failure_message": null,
-  });
-  if let (Some(output), Some(fields)) = (value.as_object_mut(), fields.as_object()) {
-    output.extend(fields.clone());
-  }
-  value
+fn completed(summary: impl Into<String>, fields: Value) -> McpInvokeOutcome {
+  McpInvokeOutcome::completed(summary, fields)
 }
 
 fn reject_target_activation(input: &McpInvokeInput, command_id: &str) -> Result<(), String> {
@@ -260,31 +377,41 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("scan.frame dry-run", serde_json::json!({})));
       }
       let fixture_dir = input.required_input("scan.frame", "fixture-dir")?.to_string();
-      let frame = auv_cli_invoke::commands::scan::produce_scan_frame(PathBuf::from(&fixture_dir)).await?;
-      Ok(completed(format!("scan frame produced from fixture {fixture_dir}"), serde_json::json!({ "frame": frame })))
+      let (frame, instrumentation) = auv_cli_invoke::commands::scan::produce_scan_frame(PathBuf::from(&fixture_dir)).await?.into_parts();
+      Ok(
+        completed(format!("scan frame produced from fixture {fixture_dir}"), serde_json::json!({ "frame": frame }))
+          .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("scan.coverage", |input| async move {
       if input.dry_run {
         return Ok(completed("scan.coverage dry-run", serde_json::json!({})));
       }
       let fixture_dir = input.required_input("scan.coverage", "fixture-dir")?.to_string();
-      let coverage = auv_cli_invoke::commands::scan::produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
-      Ok(completed(format!("scan coverage produced from fixture {fixture_dir}"), serde_json::json!({ "coverage": coverage })))
+      let (coverage, instrumentation) =
+        auv_cli_invoke::commands::scan::produce_scan_coverage(PathBuf::from(&fixture_dir)).await?.into_parts();
+      Ok(
+        completed(format!("scan coverage produced from fixture {fixture_dir}"), serde_json::json!({ "coverage": coverage }))
+          .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("display.capture", |input| async move {
       if input.dry_run {
         return Ok(completed("dry run: display.capture would capture the primary display", serde_json::json!({})));
       }
-      let result = auv_cli_invoke::commands::display::capture_primary_display().await?;
-      Ok(completed(
-        "display captured",
-        serde_json::json!({
-          "display_id": result.display.id,
-          "backend": result.capture.backend,
-          "pixel_width": result.capture.image.width(),
-          "pixel_height": result.capture.image.height(),
-        }),
-      ))
+      let (result, instrumentation) = auv_cli_invoke::commands::display::capture_primary_display().await?.into_parts();
+      Ok(
+        completed(
+          "display captured",
+          serde_json::json!({
+            "display_id": result.display.id,
+            "backend": result.capture.backend,
+            "pixel_width": result.capture.image.width(),
+            "pixel_height": result.capture.image.height(),
+          }),
+        )
+        .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("display.list", |input| async move {
       if input.dry_run {
@@ -302,8 +429,11 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: input.typeText", serde_json::json!({})));
       }
       let text = input.required_input("input.typeText", "text")?.to_string();
-      let result = auv_cli_invoke::commands::input::type_text_into_active_control(text).await?;
-      Ok(completed("typed text into active control", serde_json::json!({ "selected_path": format!("{:?}", result.selected_path) })))
+      let (result, instrumentation) = auv_cli_invoke::commands::input::type_text_into_active_control(text).await?.into_parts();
+      Ok(
+        completed("typed text into active control", serde_json::json!({ "selected_path": format!("{:?}", result.selected_path) }))
+          .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("input.pasteText", |input| async move {
       reject_target_activation(&input, "input.pasteText")?;
@@ -320,41 +450,31 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: input.key", serde_json::json!({})));
       }
       let key = input.required_input("input.key", "key")?.to_string();
-      let result = auv_cli_invoke::commands::input::press_key_in_active_app(key.clone()).await?;
-      Ok(completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": format!("{:?}", result.selected_path) })))
+      let (result, instrumentation) = auv_cli_invoke::commands::input::press_key_in_active_app(key.clone()).await?.into_parts();
+      Ok(
+        completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": format!("{:?}", result.selected_path) }))
+          .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("input.clickWindowPoint", |input| async move {
       if input.dry_run {
         return Ok(completed("dry run: input.clickWindowPoint", serde_json::json!({})));
       }
-      let has_offset = input.inputs.contains_key("offset_x") || input.inputs.contains_key("offset_y");
-      let has_relative = input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y");
-      let point = match (has_offset, has_relative) {
-        (true, false) => auv_cli_invoke::commands::input::WindowPointInput::Offset(auv_driver::geometry::WindowPoint::new(
-          input.required_f64("input.clickWindowPoint", "offset_x")?,
-          input.required_f64("input.clickWindowPoint", "offset_y")?,
-        )),
-        (false, true) => auv_cli_invoke::commands::input::WindowPointInput::Relative {
-          x: input.required_f64("input.clickWindowPoint", "relative_x")?,
-          y: input.required_f64("input.clickWindowPoint", "relative_y")?,
-        },
-        (true, true) => {
-          return Err("input.clickWindowPoint accepts either --offset_x/--offset_y or --relative_x/--relative_y, not both".to_string());
-        }
-        (false, false) => {
-          return Err("input.clickWindowPoint requires --offset_x/--offset_y or --relative_x/--relative_y".to_string());
-        }
-      };
-      let result = auv_cli_invoke::commands::input::click_point_in_window(window_selector(&input), point).await?;
-      Ok(completed(
-        "clicked window point",
-        serde_json::json!({
-          "window_id": result.window.reference.id,
-          "window_x": result.point.point().x,
-          "window_y": result.point.point().y,
-          "selected_path": format!("{:?}", result.action.selected_path),
-        }),
-      ))
+      let point = auv_cli_invoke::commands::input::WindowPointInput::parse(&input.inputs, "input.clickWindowPoint")?;
+      let (result, instrumentation) =
+        auv_cli_invoke::commands::input::click_point_in_window(window_selector(&input), point).await?.into_parts();
+      Ok(
+        completed(
+          "clicked window point",
+          serde_json::json!({
+            "window_id": result.window.reference.id,
+            "window_x": result.point.point().x,
+            "window_y": result.point.point().y,
+            "selected_path": format!("{:?}", result.action.selected_path),
+          }),
+        )
+        .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("screen.captureRegion", |input| async move {
       reject_target_activation(&input, "screen.captureRegion")?;
@@ -367,15 +487,18 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         input.required_f64("screen.captureRegion", "width")?,
         input.required_f64("screen.captureRegion", "height")?,
       );
-      let result = auv_cli_invoke::commands::screen::capture_screen_region(region).await?;
-      Ok(completed(
-        "screen region captured",
-        serde_json::json!({
-          "display_id": result.display.id,
-          "pixel_width": result.capture.image.width(),
-          "pixel_height": result.capture.image.height(),
-        }),
-      ))
+      let (result, instrumentation) = auv_cli_invoke::commands::screen::capture_screen_region(region).await?.into_parts();
+      Ok(
+        completed(
+          "screen region captured",
+          serde_json::json!({
+            "display_id": result.display.id,
+            "pixel_width": result.capture.image.width(),
+            "pixel_height": result.capture.image.height(),
+          }),
+        )
+        .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("screen.findText", |input| async move {
       reject_target_activation(&input, "screen.findText")?;
@@ -383,8 +506,8 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: screen.findText", serde_json::json!({})));
       }
       let query = input.required_input("screen.findText", "query")?.to_string();
-      let matches = auv_cli_invoke::commands::screen::recognize_screen_text(query, false).await?;
-      Ok(completed("screen text recognized", ocr_fields(&matches)))
+      let (matches, instrumentation) = auv_cli_invoke::commands::screen::recognize_screen_text(query, false).await?.into_parts();
+      Ok(completed("screen text recognized", ocr_fields(&matches)).with_artifact_instrumentation(instrumentation))
     }),
     McpInvokeAdapter::new("screen.waitForText", |input| async move {
       reject_target_activation(&input, "screen.waitForText")?;
@@ -392,8 +515,8 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: screen.waitForText", serde_json::json!({})));
       }
       let query = input.required_input("screen.waitForText", "query")?.to_string();
-      let matches = auv_cli_invoke::commands::screen::recognize_screen_text(query, true).await?;
-      Ok(completed("screen text recognized after waiting", ocr_fields(&matches)))
+      let (matches, instrumentation) = auv_cli_invoke::commands::screen::recognize_screen_text(query, true).await?.into_parts();
+      Ok(completed("screen text recognized after waiting", ocr_fields(&matches)).with_artifact_instrumentation(instrumentation))
     }),
     McpInvokeAdapter::new("screen.clickText", |input| async move {
       reject_target_activation(&input, "screen.clickText")?;
@@ -401,15 +524,18 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: screen.clickText", serde_json::json!({})));
       }
       let query = input.required_input("screen.clickText", "query")?.to_string();
-      let result = auv_cli_invoke::commands::screen::click_recognized_screen_text(query).await?;
-      Ok(completed(
-        "clicked recognized screen text",
-        serde_json::json!({
-          "match_count": result.matches.matches.len(),
-          "click_x": result.point.x,
-          "click_y": result.point.y,
-        }),
-      ))
+      let (result, instrumentation) = auv_cli_invoke::commands::screen::click_recognized_screen_text(query).await?.into_parts();
+      Ok(
+        completed(
+          "clicked recognized screen text",
+          serde_json::json!({
+            "match_count": result.matches.matches.len(),
+            "click_x": result.point.x,
+            "click_y": result.point.y,
+          }),
+        )
+        .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("window.list", |input| async move {
       if input.dry_run {
@@ -422,52 +548,61 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
       if input.dry_run {
         return Ok(completed("dry run: window.capture", serde_json::json!({})));
       }
-      let result = auv_cli_invoke::commands::window::capture_selected_window(window_selector(&input)).await?;
-      Ok(completed(
-        "window captured",
-        serde_json::json!({
-          "window_id": result.window.reference.id,
-          "pixel_width": result.capture.image.width(),
-          "pixel_height": result.capture.image.height(),
-        }),
-      ))
+      let (result, instrumentation) = auv_cli_invoke::commands::window::capture_selected_window(window_selector(&input)).await?.into_parts();
+      Ok(
+        completed(
+          "window captured",
+          serde_json::json!({
+            "window_id": result.window.reference.id,
+            "pixel_width": result.capture.image.width(),
+            "pixel_height": result.capture.image.height(),
+          }),
+        )
+        .with_artifact_instrumentation(instrumentation),
+      )
     }),
     McpInvokeAdapter::new("window.findText", |input| async move {
       if input.dry_run {
         return Ok(completed("dry run: window.findText", serde_json::json!({})));
       }
       let query = input.required_input("window.findText", "query")?.to_string();
-      let result = auv_cli_invoke::commands::window::recognize_window_text(window_selector(&input), query, false).await?;
+      let (result, instrumentation) =
+        auv_cli_invoke::commands::window::recognize_window_text(window_selector(&input), query, false).await?.into_parts();
       let mut fields = ocr_fields(&result.matches);
       fields.as_object_mut().expect("OCR fields are an object").insert("window_id".to_string(), Value::String(result.window.reference.id));
-      Ok(completed("window text recognized", fields))
+      Ok(completed("window text recognized", fields).with_artifact_instrumentation(instrumentation))
     }),
     McpInvokeAdapter::new("window.waitForText", |input| async move {
       if input.dry_run {
         return Ok(completed("dry run: window.waitForText", serde_json::json!({})));
       }
       let query = input.required_input("window.waitForText", "query")?.to_string();
-      let result = auv_cli_invoke::commands::window::recognize_window_text(window_selector(&input), query, true).await?;
+      let (result, instrumentation) =
+        auv_cli_invoke::commands::window::recognize_window_text(window_selector(&input), query, true).await?.into_parts();
       let mut fields = ocr_fields(&result.matches);
       fields.as_object_mut().expect("OCR fields are an object").insert("window_id".to_string(), Value::String(result.window.reference.id));
-      Ok(completed("window text recognized after waiting", fields))
+      Ok(completed("window text recognized after waiting", fields).with_artifact_instrumentation(instrumentation))
     }),
     McpInvokeAdapter::new("window.clickText", |input| async move {
       if input.dry_run {
         return Ok(completed("dry run: window.clickText", serde_json::json!({})));
       }
       let query = input.required_input("window.clickText", "query")?.to_string();
-      let result = auv_cli_invoke::commands::window::click_recognized_window_text(window_selector(&input), query).await?;
-      Ok(completed(
-        "clicked recognized window text",
-        serde_json::json!({
-          "window_id": result.window.reference.id,
-          "match_count": result.matches.matches.len(),
-          "window_x": result.point.point().x,
-          "window_y": result.point.point().y,
-          "selected_path": format!("{:?}", result.action.selected_path),
-        }),
-      ))
+      let (result, instrumentation) =
+        auv_cli_invoke::commands::window::click_recognized_window_text(window_selector(&input), query).await?.into_parts();
+      Ok(
+        completed(
+          "clicked recognized window text",
+          serde_json::json!({
+            "window_id": result.window.reference.id,
+            "match_count": result.matches.matches.len(),
+            "window_x": result.point.point().x,
+            "window_y": result.point.point().y,
+            "selected_path": format!("{:?}", result.action.selected_path),
+          }),
+        )
+        .with_artifact_instrumentation(instrumentation),
+      )
     }),
   ];
 
@@ -546,55 +681,44 @@ impl McpServer {
   async fn invoke(&self, Parameters(req): Parameters<InvokeToolRequest>) -> Result<CallToolResult, McpError> {
     let adapter = self
       .invoke_adapters
-      .iter()
-      .find(|adapter| adapter.command_id == req.command_id)
+      .get(req.command_id.as_str())
+      .cloned()
       .ok_or_else(|| invalid_params(format!("unknown invoke command: {}", req.command_id)))?;
-    let dispatch = (self.invoke_dispatch)(req.inspect.store_root).map_err(invalid_params)?;
+    let authority = (self.invoke_dispatch)(req.inspect.store_root).map_err(invalid_params)?;
     let input = McpInvokeInput {
       target_application_id: req.target.application_id,
       target_label: req.target.target_label,
       inputs: req.inputs,
       dry_run: req.dry_run,
     };
-    let execution = execute_mcp_frontend(&dispatch, || adapter.invoke(input)).await;
-    let mut value = match execution.direct_result {
-      Ok(value) => value,
-      Err(error) => serde_json::json!({
-        "status": "failed",
-        "output_summary": error,
-        "signals": {},
-        "artifacts": [],
-        "failure_message": error,
-      }),
+    let execution = execute_mcp_frontend(&authority, move || adapter.invoke(input)).await.map_err(invalid_params)?;
+    let outcome = match execution.direct_result {
+      Ok(outcome) => outcome,
+      Err(error) => McpInvokeOutcome::failed(error.clone(), error, Value::Null),
     };
-    let object = value.as_object_mut().ok_or_else(|| invalid_params("MCP invoke adapter returned non-object presentation"))?;
-    object.insert("run_id".to_string(), Value::String(execution.run_id.to_string()));
-    object.insert("tracing_failure".to_string(), execution.tracing_failure.map(Value::String).unwrap_or(Value::Null));
-    json_result(value)
+    json_result(
+      serde_json::to_value(McpInvokePresentation {
+        run_id: execution.run_id.to_string(),
+        status: outcome.status.as_str(),
+        output_summary: outcome.output_summary,
+        signals: outcome.signals,
+        artifacts: execution.canonical_artifacts,
+        artifact_failures: outcome.artifact_failures,
+        failure_message: outcome.failure_message,
+        tracing_failure: execution.tracing_failure,
+        result: outcome.details,
+      })
+      .map_err(invalid_params)?,
+    )
   }
 
   #[tool(description = "Inspect one existing AUV run id.")]
   async fn run_inspect(&self, Parameters(req): Parameters<RunInspectRequest>) -> Result<CallToolResult, McpError> {
-    let store = self.store(req.store_root.clone())?;
-    let run = store.read_run(&req.run_id).map_err(invalid_params)?;
-    let document = self.inspect_composer.collect_document(&store, &run).map_err(|error| invalid_params(error.to_string()))?;
-    let text = document.render_text();
-    let sections = document
-      .sections
-      .iter()
-      .map(|section| {
-        serde_json::json!({
-          "id": section.id,
-          "text": section.text,
-          "json": section.json,
-        })
-      })
-      .collect::<Vec<_>>();
-    json_result(serde_json::json!({
-      "run_id": req.run_id,
-      "text": text,
-      "sections": sections,
-    }))
+    let store = self.authority_store(req.store_root)?;
+    let run_id = req.run_id.parse::<auv_tracing::RunId>().map_err(invalid_params)?;
+    let snapshot =
+      store.load_snapshot(run_id).await.map_err(invalid_params)?.ok_or_else(|| invalid_params(format!("run not found: {run_id}")))?;
+    json_result(serde_json::to_value(auv_inspect_model::InspectDocument::from(&snapshot)).map_err(invalid_params)?)
   }
 }
 
@@ -729,26 +853,16 @@ fn invalid_params(message: impl ToString) -> McpError {
 }
 
 pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
-  let composer = crate::inspect::build_core_inspect_composer().map_err(|error| error.to_string())?;
-  serve_stdio_with_composer(project_root, composer).await
+  serve_stdio_with_registry(project_root, Arc::new(default_registry()), core_invoke_adapters()).await
 }
 
-/// Serve MCP stdio with an explicit inspect composer (product injects donor sections here).
-pub async fn serve_stdio_with_composer(
+/// Serve MCP stdio with explicit invoke metadata and MCP-owned command adapters.
+pub async fn serve_stdio_with_registry(
   project_root: PathBuf,
-  inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
-) -> Result<(), String> {
-  serve_stdio_with_composer_and_registry(project_root, inspect_composer, Arc::new(default_registry()), core_invoke_adapters()).await
-}
-
-/// Serve MCP stdio with explicit inspect metadata and MCP-owned command adapters.
-pub async fn serve_stdio_with_composer_and_registry(
-  project_root: PathBuf,
-  inspect_composer: Arc<auv_inspect_model::legacy::InspectComposer>,
   invoke_registry: Arc<InvokeRegistry>,
   invoke_adapters: Vec<McpInvokeAdapter>,
 ) -> Result<(), String> {
-  let service = McpServer::with_inspect_composer_and_registry(project_root, inspect_composer, invoke_registry, invoke_adapters)
+  let service = McpServer::with_registry(project_root, invoke_registry, invoke_adapters)?
     .serve(stdio())
     .await
     .map_err(|error| format!("failed to serve MCP stdio transport: {error}"))?;
@@ -833,53 +947,67 @@ mod tests {
     let configure_store = store.clone();
     let call = CountingCall::default();
     let adapter_call = call.clone();
-    let adapter = McpInvokeAdapter::new("test.counting", move |_input| {
+    let adapter = McpInvokeAdapter::new("scan.frame", move |_input| {
       let future = adapter_call.call();
       async move {
         let value = future.await?;
-        Ok(serde_json::json!({
-          "status": "completed",
-          "value": value,
-          "failure_message": null,
-        }))
+        Ok(completed(
+          "counted fixture call",
+          serde_json::json!({
+            "value": value,
+            "status": "adapter-status",
+            "run_id": "adapter-run",
+            "artifacts": ["adapter-artifact"]
+          }),
+        ))
       }
     });
+    let command = default_registry().resolve("scan.frame").expect("scan metadata").clone();
+    let registry = InvokeRegistry::from_groups(vec![auv_cli_invoke::CommandGroup::new("test", "TEST").command(command)]);
     let server = McpServer::with_invoke_dispatch(
       project_root,
-      crate::inspect::build_core_inspect_composer()?,
-      Arc::new(default_registry()),
+      Arc::new(registry),
       vec![adapter],
       Arc::new(move |_store_root| {
-        auv_tracing::configure()
+        let dispatch = auv_tracing::configure()
           .run_store(configure_store.clone())
           .project_telemetry(Arc::new(FailingProjector), TelemetryRoutePolicy::fixed_fields_only())
           .build()
-          .map_err(|error| error.to_string())
+          .map_err(|error| error.to_string())?;
+        Ok(McpFrontendAuthority {
+          dispatch,
+          store: configure_store.clone(),
+        })
       }),
-    );
+    )
+    .map_err(anyhow::Error::msg)?;
     let (server_transport, client_transport) = tokio::io::duplex(16384);
     let server_handle = tokio::spawn(async move {
       let service = server.serve(server_transport).await?;
       service.waiting().await?;
       anyhow::Ok(())
     });
-    let client = DummyClientHandler::default().serve(client_transport).await?;
+    let client = DummyClientHandler.serve(client_transport).await?;
 
     let response = client
       .call_tool(CallToolRequestParam {
         name: "invoke".into(),
-        arguments: Some(serde_json::json!({ "command_id": "test.counting" }).as_object().unwrap().clone()),
+        arguments: Some(serde_json::json!({ "command_id": "scan.frame" }).as_object().unwrap().clone()),
       })
       .await?;
     let value: Value =
       serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("invoke response").text)?;
     let run_id = value["run_id"].as_str().expect("run id").parse::<auv_tracing::RunId>()?;
 
-    assert_eq!(value["value"], 7);
+    assert_eq!(value["result"]["value"], 7);
+    assert_eq!(value["status"], "completed");
+    assert_ne!(value["run_id"], "adapter-run");
+    assert_eq!(value["artifacts"], serde_json::json!([]));
+    assert_eq!(value["result"]["status"], "adapter-status");
     assert_eq!(call.call_count(), 1);
     assert!(value["tracing_failure"].as_str().is_some());
     let snapshot = store.load_snapshot(run_id).await?.expect("recorded run");
-    assert_eq!(snapshot.events().len(), 2);
+    assert_eq!(snapshot.events().len(), 3);
     assert_eq!(snapshot.run_id(), run_id);
     let facts = format!("{snapshot:?}");
     for forbidden in [
@@ -902,14 +1030,14 @@ mod tests {
     let store_root = temp_dir("mcp-shared-runtime-store");
     let (server_transport, client_transport) = tokio::io::duplex(16384);
 
-    let server = McpServer::new(project_root.clone());
+    let server = McpServer::new(project_root.clone()).map_err(anyhow::Error::msg)?;
     let server_handle = tokio::spawn(async move {
       let service = server.serve(server_transport).await?;
       service.waiting().await?;
       anyhow::Ok(())
     });
 
-    let client = DummyClientHandler::default().serve(client_transport).await?;
+    let client = DummyClientHandler.serve(client_transport).await?;
 
     let tools = client.list_tools(Default::default()).await?;
     let tool_names = tools.tools.iter().map(|tool| tool.name.as_ref()).collect::<Vec<_>>();
@@ -1050,6 +1178,42 @@ mod tests {
     for command in registry.all() {
       assert!(adapters.iter().any(|adapter| adapter.command_id == command.id), "missing MCP adapter for {}", command.id);
     }
+  }
+
+  #[test]
+  fn mcp_server_rejects_duplicate_adapter_ids() {
+    let registry = Arc::new(default_registry());
+    let mut adapters = core_invoke_adapters();
+    adapters.push(adapters[0].clone());
+
+    let result = McpServer::with_registry(PathBuf::from(env!("CARGO_MANIFEST_DIR")), registry, adapters);
+
+    assert!(result.is_err());
+    assert!(result.err().is_some_and(|error| error.contains("duplicate")));
+  }
+
+  #[test]
+  fn mcp_server_rejects_missing_adapter_ids() {
+    let registry = Arc::new(default_registry());
+    let mut adapters = core_invoke_adapters();
+    let missing = adapters.pop().expect("core adapter").command_id;
+
+    let result = McpServer::with_registry(PathBuf::from(env!("CARGO_MANIFEST_DIR")), registry, adapters);
+
+    assert!(result.is_err());
+    assert!(result.err().is_some_and(|error| error.contains("missing") && error.contains(missing)));
+  }
+
+  #[test]
+  fn mcp_server_rejects_extra_adapter_ids() {
+    let registry = Arc::new(default_registry());
+    let mut adapters = core_invoke_adapters();
+    adapters.push(McpInvokeAdapter::new("test.hidden", |_input| async move { Ok(completed("hidden", serde_json::json!({}))) }));
+
+    let result = McpServer::with_registry(PathBuf::from(env!("CARGO_MANIFEST_DIR")), registry, adapters);
+
+    assert!(result.is_err());
+    assert!(result.err().is_some_and(|error| error.contains("extra") && error.contains("test.hidden")));
   }
 
   fn temp_dir(label: &str) -> PathBuf {
