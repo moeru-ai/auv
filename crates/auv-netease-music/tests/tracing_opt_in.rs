@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use auv_netease_music::invoke::{build_select_result_from_fixture_dir, hermetic_select_proof_fixture_dir};
-use auv_netease_music::recording::{PlaylistSelectInstrumentation, persist_playlist_select_proof};
+use auv_netease_music::recording::persist_playlist_select_proof;
 use auv_tracing::{AuthorityId, Context, Dispatch, MemoryRunStore, RunId, RunSnapshot, RunStore, configure, dispatcher};
 
 struct TestTracing {
@@ -76,14 +76,14 @@ fn direct_result_is_identical_with_and_without_active_dispatch() {
   let without = build_select_result_from_fixture_dir(&fixture).expect("fixture should parse without dispatch");
   let expected = without.clone();
   let disabled = futures_executor::block_on(persist_playlist_select_proof(&without));
-  assert!(matches!(disabled, PlaylistSelectInstrumentation::Disabled));
+  assert!(matches!(disabled, Ok(None)));
   assert_eq!(without, expected);
 
   let tracing = TestTracing::memory();
   let with = tracing.root.in_scope(|| build_select_result_from_fixture_dir(&fixture)).expect("fixture should parse with dispatch");
   let publication = tracing.root.in_scope(|| persist_playlist_select_proof(&with));
   let enabled = futures_executor::block_on(tracing.root.instrument(publication));
-  assert!(matches!(enabled, PlaylistSelectInstrumentation::Published(_)));
+  assert!(matches!(enabled, Ok(Some(_))));
 
   assert_eq!(with, expected);
   assert_eq!(with.run_id, without.run_id);

@@ -5,10 +5,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use auv_tracing::{
-  ArtifactMetadata, ArtifactReadError, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType, ErrorCode,
-  NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest,
+  ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType,
+  ErrorCode, NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest, ValidationError,
 };
-use auv_view::memory::ViewMemory;
+use auv_view::memory::{MemoryReadConfig, MemoryReadOutcome, StaleReason, ViewMemory};
 use futures_util::StreamExt;
 use futures_util::io::Cursor as AsyncCursor;
 use serde::de::DeserializeOwned;
@@ -51,6 +51,100 @@ pub struct PersistedLineage {
   pub memory: Option<ViewMemory>,
 }
 
+/// Caller-read canonical playlist data whose optional memory has been checked
+/// against the scan's authority, run, app, scope, and source artifact.
+#[derive(Clone, Debug)]
+pub struct CanonicalPlaylistArtifacts {
+  state: CanonicalPlaylistArtifactState,
+  read_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+enum CanonicalPlaylistArtifactState {
+  Unavailable,
+  Available {
+    scan: PlaylistSidebarScan,
+    memory: Option<ViewMemory>,
+  },
+}
+
+impl CanonicalPlaylistArtifacts {
+  fn from_scan(scan: PlaylistSidebarScan) -> Self {
+    Self {
+      state: CanonicalPlaylistArtifactState::Available { scan, memory: None },
+      read_limits: Vec::new(),
+    }
+  }
+
+  pub fn scan(&self) -> Option<&PlaylistSidebarScan> {
+    match &self.state {
+      CanonicalPlaylistArtifactState::Unavailable => None,
+      CanonicalPlaylistArtifactState::Available { scan, .. } => Some(scan),
+    }
+  }
+
+  pub fn memory(&self) -> Option<&ViewMemory> {
+    match &self.state {
+      CanonicalPlaylistArtifactState::Unavailable => None,
+      CanonicalPlaylistArtifactState::Available { memory, .. } => memory.as_ref(),
+    }
+  }
+
+  pub fn read_limits(&self) -> &[String] {
+    &self.read_limits
+  }
+
+  pub(crate) fn unavailable(read_limits: Vec<String>) -> Self {
+    Self {
+      state: CanonicalPlaylistArtifactState::Unavailable,
+      read_limits,
+    }
+  }
+
+  fn attach_memory(&mut self, memory: ViewMemory) {
+    let CanonicalPlaylistArtifactState::Available { memory: slot, .. } = &mut self.state else {
+      unreachable!("memory can only be attached to a canonical scan")
+    };
+    *slot = Some(memory);
+  }
+
+  fn push_read_limit(&mut self, limit: String) {
+    self.read_limits.push(limit);
+  }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CanonicalArtifactLineageError {
+  #[error("unsupported canonical playlist lineage schema {actual:?}; expected {VIEW_MEMORY_LINEAGE_SCHEMA_VERSION:?}")]
+  UnsupportedSchema { actual: String },
+  #[error("canonical playlist scan app {actual:?} does not match lineage app {expected:?}")]
+  ScanAppMismatch {
+    expected: String,
+    actual: Option<String>,
+  },
+  #[error("canonical playlist lineage scope {actual:?} does not match {expected:?}")]
+  ScopeMismatch { expected: String, actual: String },
+  #[error("cross-run canonical view-memory URI belongs to {memory_run_id}, not scan run {scan_run_id}")]
+  CrossRunMemory {
+    scan_run_id: RunId,
+    memory_run_id: RunId,
+  },
+  #[error("canonical view-memory source run {actual:?} does not match scan run {expected:?}")]
+  MemorySourceRunMismatch { expected: String, actual: String },
+  #[error("canonical view-memory source reconstruction artifact {actual:?} does not match scan artifact {expected:?}")]
+  MemorySourceArtifactMismatch { expected: String, actual: String },
+  #[error("canonical view-memory app {actual:?} does not match lineage app {expected:?}")]
+  MemoryAppMismatch { expected: String, actual: String },
+  #[error("canonical view-memory scope {actual:?} does not match lineage scope {expected:?}")]
+  MemoryScopeMismatch { expected: String, actual: String },
+  #[error("canonical view-memory region {actual:?} does not match lineage scope {expected:?}")]
+  MemoryRegionMismatch { expected: String, actual: String },
+  #[error("canonical view-memory ID {actual:?} does not match lineage ID {expected:?}")]
+  MemoryIdMismatch { expected: String, actual: String },
+  #[error("canonical view-memory is stale ({reason:?})")]
+  StaleMemory { reason: StaleReason },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum LineageManifestError {
   #[error("failed to read NetEase lineage manifest {path}: {source}")]
@@ -79,14 +173,32 @@ pub enum LineageManifestError {
   },
   #[error("failed to encode NetEase lineage manifest: {0}")]
   Encode(#[source] serde_json::Error),
+  #[error("failed to create a temporary NetEase lineage manifest in {directory}: {source}")]
+  CreateTemporary {
+    directory: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
   #[error("failed to write NetEase lineage manifest {path}: {source}")]
   Write {
     path: PathBuf,
     #[source]
     source: std::io::Error,
   },
-  #[error("failed to publish NetEase lineage manifest {from} as {to}: {source}")]
-  Rename {
+  #[error("failed to flush NetEase lineage manifest {path}: {source}")]
+  Flush {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to sync NetEase lineage manifest {path}: {source}")]
+  Sync {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to atomically replace NetEase lineage manifest {to} from {from}: {source}")]
+  Replace {
     from: PathBuf,
     to: PathBuf,
     #[source]
@@ -134,15 +246,30 @@ pub fn write_lineage_manifest(artifact_dir: &Path, lineage: &ViewMemoryRunLineag
   })?;
   let path = lineage_manifest_path(artifact_dir);
   let bytes = serde_json::to_vec_pretty(lineage).map_err(LineageManifestError::Encode)?;
-  let temporary = path.with_extension("json.tmp");
-  std::fs::write(&temporary, bytes).map_err(|source| LineageManifestError::Write {
-    path: temporary.clone(),
+  let mut temporary =
+    tempfile::Builder::new().prefix(".view-memory-run-lineage.").suffix(".tmp").tempfile_in(artifact_dir).map_err(|source| {
+      LineageManifestError::CreateTemporary {
+        directory: artifact_dir.to_path_buf(),
+        source,
+      }
+    })?;
+  let temporary_path = temporary.path().to_path_buf();
+  temporary.write_all(&bytes).map_err(|source| LineageManifestError::Write {
+    path: temporary_path.clone(),
     source,
   })?;
-  std::fs::rename(&temporary, &path).map_err(|source| LineageManifestError::Rename {
-    from: temporary,
-    to: path,
+  temporary.flush().map_err(|source| LineageManifestError::Flush {
+    path: temporary_path.clone(),
     source,
+  })?;
+  temporary.as_file().sync_all().map_err(|source| LineageManifestError::Sync {
+    path: temporary_path.clone(),
+    source,
+  })?;
+  temporary.persist(&path).map(|_| ()).map_err(|error| LineageManifestError::Replace {
+    from: error.file.path().to_path_buf(),
+    to: path,
+    source: error.error,
   })
 }
 
@@ -190,32 +317,6 @@ pub enum NeteaseArtifactPublishError {
   },
 }
 
-pub enum PlaylistSelectInstrumentation {
-  Published(ArtifactMetadata),
-  Disabled,
-  Failed(NeteaseArtifactPublishError),
-}
-
-impl PlaylistSelectInstrumentation {
-  pub fn metadata(&self) -> Option<&ArtifactMetadata> {
-    match self {
-      Self::Published(metadata) => Some(metadata),
-      Self::Disabled | Self::Failed(_) => None,
-    }
-  }
-
-  pub fn failure(&self) -> Option<&NeteaseArtifactPublishError> {
-    match self {
-      Self::Failed(error) => Some(error),
-      Self::Published(_) | Self::Disabled => None,
-    }
-  }
-
-  pub fn is_disabled(&self) -> bool {
-    matches!(self, Self::Disabled)
-  }
-}
-
 /// Publishes the scan and its optional view memory into the caller's current
 /// run. The domain scan has already completed; publication errors never cause
 /// the scan to execute again.
@@ -258,12 +359,8 @@ pub async fn persist_playlist_ls_artifacts(
 
 /// Publishes the exact existing playlist-select result without changing the
 /// domain value or coupling its lifetime to instrumentation.
-pub async fn persist_playlist_select_proof(result: &PlaylistSelectResult) -> PlaylistSelectInstrumentation {
-  match publish_json(PLAYLIST_SELECT_RESULT_PURPOSE, result).await {
-    Ok(Some(metadata)) => PlaylistSelectInstrumentation::Published(metadata),
-    Ok(None) => PlaylistSelectInstrumentation::Disabled,
-    Err(error) => PlaylistSelectInstrumentation::Failed(error),
-  }
+pub async fn persist_playlist_select_proof(result: &PlaylistSelectResult) -> Result<Option<ArtifactMetadata>, NeteaseArtifactPublishError> {
+  publish_json(PLAYLIST_SELECT_RESULT_PURPOSE, result).await
 }
 
 pub async fn read_playlist_sidebar_scan(
@@ -272,13 +369,13 @@ pub async fn read_playlist_sidebar_scan(
   uri: &ArtifactUri,
 ) -> Result<PlaylistSidebarScan, NeteaseArtifactReadError> {
   let bytes = read_json_bytes(store, snapshot, uri, PLAYLIST_SIDEBAR_SCAN_PURPOSE).await?;
-  let json = std::str::from_utf8(&bytes).map_err(|source| NeteaseArtifactReadError::MalformedJson {
+  let json = std::str::from_utf8(&bytes).map_err(|source| NeteaseArtifactReadError::InvalidUtf8 {
     uri: uri.clone(),
-    message: source.to_string(),
+    source,
   })?;
-  crate::decode_playlist_sidebar_scan_json(json).map_err(|message| NeteaseArtifactReadError::MalformedJson {
+  crate::decode_playlist_sidebar_scan_json(json).map_err(|source| NeteaseArtifactReadError::MalformedPlaylistScan {
     uri: uri.clone(),
-    message,
+    source,
   })
 }
 
@@ -298,6 +395,125 @@ pub async fn read_playlist_select_result(
   read_json(store, snapshot, uri, PLAYLIST_SELECT_RESULT_PURPOSE).await
 }
 
+/// Reads canonical playlist inputs from one caller-owned run snapshot.
+/// Invalid optional memory is omitted and reported as a read limit so it
+/// cannot drive reacquisition while the independently valid scan remains usable.
+pub async fn read_canonical_playlist_artifacts(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  lineage: &ViewMemoryRunLineage,
+  memory_enabled: bool,
+) -> Result<CanonicalPlaylistArtifacts, NeteaseArtifactReadError> {
+  let scan = read_playlist_sidebar_scan(store, snapshot, &lineage.scan_uri).await?;
+  validate_scan_lineage(&scan, lineage).map_err(|source| NeteaseArtifactReadError::InvalidLineage { source })?;
+  let mut artifacts = CanonicalPlaylistArtifacts::from_scan(scan);
+  if !memory_enabled {
+    return Ok(artifacts);
+  }
+  let Some(memory_uri) = lineage.memory_uri.as_ref() else {
+    return Ok(artifacts);
+  };
+
+  if memory_uri.run_id() != lineage.scan_uri.run_id() {
+    // TODO(netease-cross-run-view-memory): cross-run memory remains rejected
+    // until an owner-approved provenance contract supplies authority and source
+    // proof beyond V1 same-run lineage.
+    artifacts.push_read_limit(
+      CanonicalArtifactLineageError::CrossRunMemory {
+        scan_run_id: lineage.scan_uri.run_id(),
+        memory_run_id: memory_uri.run_id(),
+      }
+      .to_string(),
+    );
+    return Ok(artifacts);
+  }
+
+  let memory = match read_view_memory(store, snapshot, memory_uri).await {
+    Ok(memory) => memory,
+    Err(error) => {
+      artifacts.push_read_limit(format!("canonical view-memory artifact read failed: {error}"));
+      return Ok(artifacts);
+    }
+  };
+  match validate_memory_lineage(memory, lineage) {
+    Ok(memory) => artifacts.attach_memory(memory),
+    Err(error) => artifacts.push_read_limit(error.to_string()),
+  }
+  Ok(artifacts)
+}
+
+fn validate_scan_lineage(scan: &PlaylistSidebarScan, lineage: &ViewMemoryRunLineage) -> Result<(), CanonicalArtifactLineageError> {
+  if lineage.schema_version != VIEW_MEMORY_LINEAGE_SCHEMA_VERSION {
+    return Err(CanonicalArtifactLineageError::UnsupportedSchema {
+      actual: lineage.schema_version.clone(),
+    });
+  }
+  if lineage.scope_id != crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID {
+    return Err(CanonicalArtifactLineageError::ScopeMismatch {
+      expected: crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID.to_string(),
+      actual: lineage.scope_id.clone(),
+    });
+  }
+  let actual = scan.app().app_id.clone();
+  if actual.as_deref() != Some(lineage.app_bundle_id.as_str()) {
+    return Err(CanonicalArtifactLineageError::ScanAppMismatch {
+      expected: lineage.app_bundle_id.clone(),
+      actual,
+    });
+  }
+  Ok(())
+}
+
+fn validate_memory_lineage(memory: ViewMemory, lineage: &ViewMemoryRunLineage) -> Result<ViewMemory, CanonicalArtifactLineageError> {
+  let expected_run_id = lineage.scan_uri.run_id().to_string();
+  if memory.source_run_id != expected_run_id {
+    return Err(CanonicalArtifactLineageError::MemorySourceRunMismatch {
+      expected: expected_run_id,
+      actual: memory.source_run_id,
+    });
+  }
+  let expected_source = lineage.scan_uri.to_string();
+  if memory.source_reconstruction_ref != expected_source {
+    return Err(CanonicalArtifactLineageError::MemorySourceArtifactMismatch {
+      expected: expected_source,
+      actual: memory.source_reconstruction_ref,
+    });
+  }
+  if memory.app_bundle_id != lineage.app_bundle_id {
+    return Err(CanonicalArtifactLineageError::MemoryAppMismatch {
+      expected: lineage.app_bundle_id.clone(),
+      actual: memory.app_bundle_id,
+    });
+  }
+  if memory.scope_id != lineage.scope_id {
+    return Err(CanonicalArtifactLineageError::MemoryScopeMismatch {
+      expected: lineage.scope_id.clone(),
+      actual: memory.scope_id,
+    });
+  }
+  if memory.scope_snapshot.region_id != lineage.scope_id {
+    return Err(CanonicalArtifactLineageError::MemoryRegionMismatch {
+      expected: lineage.scope_id.clone(),
+      actual: memory.scope_snapshot.region_id,
+    });
+  }
+  if memory.memory_id != lineage.memory_id {
+    return Err(CanonicalArtifactLineageError::MemoryIdMismatch {
+      expected: lineage.memory_id.clone(),
+      actual: memory.memory_id,
+    });
+  }
+
+  let config = MemoryReadConfig {
+    now_millis: crate::view_memory::system_time_millis(),
+    ..MemoryReadConfig::default()
+  };
+  match auv_view::memory::read_memory(memory, &config, None) {
+    MemoryReadOutcome::Accepted(memory) => Ok(memory),
+    MemoryReadOutcome::Rejected { reason } => Err(CanonicalArtifactLineageError::StaleMemory { reason }),
+  }
+}
+
 async fn read_json<T: DeserializeOwned>(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -307,7 +523,7 @@ async fn read_json<T: DeserializeOwned>(
   let bytes = read_json_bytes(store, snapshot, uri, purpose).await?;
   serde_json::from_slice(&bytes).map_err(|source| NeteaseArtifactReadError::MalformedJson {
     uri: uri.clone(),
-    message: source.to_string(),
+    source,
   })
 }
 
@@ -317,6 +533,8 @@ async fn read_json_bytes(
   uri: &ArtifactUri,
   expected_purpose: &'static str,
 ) -> Result<Vec<u8>, NeteaseArtifactReadError> {
+  let expected_purpose = expected_artifact_purpose(expected_purpose)?;
+  let expected_content_type = expected_json_content_type()?;
   let store_authority = store.authority_id();
   if snapshot.authority_id() != store_authority {
     return Err(NeteaseArtifactReadError::SnapshotAuthorityMismatch {
@@ -331,17 +549,18 @@ async fn read_json_bytes(
     });
   }
   let metadata = snapshot.artifacts().get(uri).ok_or_else(|| NeteaseArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
-  if metadata.purpose().as_str() != expected_purpose {
+  if metadata.purpose() != &expected_purpose {
     return Err(NeteaseArtifactReadError::WrongPurpose {
       uri: uri.clone(),
       expected: expected_purpose,
-      actual: metadata.purpose().as_str().to_string(),
+      actual: metadata.purpose().clone(),
     });
   }
-  if metadata.content_type().to_string() != "application/json" {
+  if metadata.content_type() != &expected_content_type {
     return Err(NeteaseArtifactReadError::WrongContentType {
       uri: uri.clone(),
-      actual: metadata.content_type().to_string(),
+      expected: expected_content_type,
+      actual: metadata.content_type().clone(),
     });
   }
 
@@ -412,8 +631,32 @@ async fn read_json_bytes(
   Ok(bytes)
 }
 
+fn expected_artifact_purpose(value: &'static str) -> Result<ArtifactPurpose, NeteaseArtifactReadError> {
+  ArtifactPurpose::parse(value).map_err(|source| NeteaseArtifactReadError::InvalidExpectedPurpose { value, source })
+}
+
+fn expected_json_content_type() -> Result<ContentType, NeteaseArtifactReadError> {
+  const JSON_CONTENT_TYPE: &str = "application/json";
+  ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| NeteaseArtifactReadError::InvalidExpectedContentType {
+    value: JSON_CONTENT_TYPE,
+    source,
+  })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum NeteaseArtifactReadError {
+  #[error("invalid expected NetEase artifact purpose {value:?}: {source}")]
+  InvalidExpectedPurpose {
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("invalid expected NetEase artifact content type {value:?}: {source}")]
+  InvalidExpectedContentType {
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
   #[error("NetEase snapshot authority {snapshot_authority} does not match store authority {store_authority}")]
   SnapshotAuthorityMismatch {
     snapshot_authority: AuthorityId,
@@ -429,11 +672,15 @@ pub enum NeteaseArtifactReadError {
   #[error("NetEase artifact {uri} has purpose {actual}, expected {expected}")]
   WrongPurpose {
     uri: ArtifactUri,
-    expected: &'static str,
-    actual: String,
+    expected: ArtifactPurpose,
+    actual: ArtifactPurpose,
   },
-  #[error("NetEase artifact {uri} has content type {actual}, expected application/json")]
-  WrongContentType { uri: ArtifactUri, actual: String },
+  #[error("NetEase artifact {uri} has content type {actual}, expected {expected}")]
+  WrongContentType {
+    uri: ArtifactUri,
+    expected: ContentType,
+    actual: ContentType,
+  },
   #[error("NetEase artifact {uri} is {actual} bytes, exceeding the {limit}-byte structured-artifact limit")]
   PayloadTooLarge {
     uri: ArtifactUri,
@@ -473,13 +720,35 @@ pub enum NeteaseArtifactReadError {
     expected: Sha256Digest,
     actual: Sha256Digest,
   },
-  #[error("NetEase artifact {uri} is not the expected JSON type: {message}")]
-  MalformedJson { uri: ArtifactUri, message: String },
+  #[error("NetEase artifact {uri} is not valid UTF-8: {source}")]
+  InvalidUtf8 {
+    uri: ArtifactUri,
+    #[source]
+    source: std::str::Utf8Error,
+  },
+  #[error("NetEase playlist scan artifact {uri} is invalid: {source}")]
+  MalformedPlaylistScan {
+    uri: ArtifactUri,
+    #[source]
+    source: crate::PlaylistSidebarScanDecodeError,
+  },
+  #[error("NetEase artifact {uri} is not the expected JSON type: {source}")]
+  MalformedJson {
+    uri: ArtifactUri,
+    #[source]
+    source: serde_json::Error,
+  },
+  #[error("invalid canonical NetEase artifact lineage: {source}")]
+  InvalidLineage {
+    #[source]
+    source: CanonicalArtifactLineageError,
+  },
 }
 
 impl NeteaseArtifactReadError {
   pub fn code(&self) -> ErrorCode {
     let code = match self {
+      Self::InvalidExpectedPurpose { .. } | Self::InvalidExpectedContentType { .. } => "auv.netease.artifact.invalid_reader_contract",
       Self::SnapshotAuthorityMismatch { .. } => "auv.netease.artifact.snapshot_authority_mismatch",
       Self::WrongOwner { .. } => "auv.netease.artifact.wrong_owner",
       Self::DanglingUri { .. } => "auv.netease.artifact.dangling_uri",
@@ -492,7 +761,8 @@ impl NeteaseArtifactReadError {
       Self::Stream { .. } => "auv.netease.artifact.stream_failed",
       Self::LengthMismatch { .. } => "auv.netease.artifact.length_mismatch",
       Self::DigestMismatch { .. } => "auv.netease.artifact.digest_mismatch",
-      Self::MalformedJson { .. } => "auv.netease.artifact.malformed_json",
+      Self::InvalidUtf8 { .. } | Self::MalformedPlaylistScan { .. } | Self::MalformedJson { .. } => "auv.netease.artifact.malformed_json",
+      Self::InvalidLineage { .. } => "auv.netease.artifact.invalid_lineage",
     };
     ErrorCode::parse(code).expect("static NetEase artifact error code is valid")
   }
@@ -611,5 +881,24 @@ impl Write for ExactJsonBuffer {
 
   fn flush(&mut self) -> std::io::Result<()> {
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn invalid_reader_contract_retains_validation_error_source() {
+    let error = expected_artifact_purpose("not_namespaced").expect_err("invalid purpose must retain its validation error");
+
+    match &error {
+      NeteaseArtifactReadError::InvalidExpectedPurpose { value, source } => {
+        assert_eq!(*value, "not_namespaced");
+        assert_eq!(source.to_string(), "namespaced name requires at least two segments");
+      }
+      other => panic!("expected typed validation error, got {other:?}"),
+    }
+    assert!(std::error::Error::source(&error).is_some());
   }
 }
