@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::benchmark::{CapturePhase, ObjectKind};
 use crate::projection::ProjectionArtifact;
-use crate::visual_eval::{EvalProjection, pixel_point_inside_capture, project_playfield_point};
+use crate::visual_eval::{EvalProjection, project_playfield_point};
 use crate::visual_truth::{VisualTruthFrame, VisualTruthManifest};
 use crate::visual_truth_semantic::VisualTruthSemanticManifest;
 
@@ -172,6 +172,9 @@ fn validate_spatial_query_payload(query: &VisualTruthSpatialQueryManifest) -> Re
   if query.pixel_x.is_some() != query.pixel_y.is_some() {
     return Err("spatial query pixel coordinates must both be present or absent".to_string());
   }
+  if query.capture_width.is_some() != query.capture_height.is_some() {
+    return Err("spatial query capture dimensions must both be present or absent".to_string());
+  }
   if [query.pixel_x, query.pixel_y, query.match_radius_px].into_iter().flatten().any(|value| !value.is_finite()) {
     return Err("spatial query contains non-finite pixel values".to_string());
   }
@@ -182,20 +185,59 @@ fn validate_spatial_query_payload(query: &VisualTruthSpatialQueryManifest) -> Re
     return Err("spatial query capture dimensions must be positive".to_string());
   }
   if query.status == VisualTruthSpatialQueryStatus::Answered {
-    if query.reason.is_some() {
-      return Err("answered spatial query must not include a refusal reason".to_string());
-    }
-    if query.pixel_visibility.is_none()
-      || query.pixel_x.is_none()
-      || query.pixel_y.is_none()
-      || query.match_radius_px.is_none()
-      || query.capture_width.is_none()
-      || query.capture_height.is_none()
-    {
-      return Err("answered spatial query must include visibility, pixel, radius, and capture dimensions".to_string());
-    }
+    validate_answered_spatial_query(query)?;
   }
   Ok(())
+}
+
+pub(crate) fn validate_answered_spatial_query(
+  query: &VisualTruthSpatialQueryManifest,
+) -> Result<(f32, f32, VisualTruthPixelVisibility), String> {
+  if query.status != VisualTruthSpatialQueryStatus::Answered {
+    return Err(format!("spatial query status {} is not answered", query.status.as_str()));
+  }
+  if query.reason.is_some() {
+    return Err("answered spatial query must not include a refusal reason".to_string());
+  }
+  let (Some(visibility), Some(pixel_x), Some(pixel_y), Some(match_radius_px), Some(capture_width), Some(capture_height)) =
+    (query.pixel_visibility, query.pixel_x, query.pixel_y, query.match_radius_px, query.capture_width, query.capture_height)
+  else {
+    return Err("answered spatial query must include visibility, pixel, radius, and capture dimensions".to_string());
+  };
+  if !pixel_x.is_finite() || !pixel_y.is_finite() || !match_radius_px.is_finite() {
+    return Err("answered spatial query contains non-finite pixel values".to_string());
+  }
+  if match_radius_px <= 0.0 {
+    return Err("answered spatial query match radius must be positive".to_string());
+  }
+  if capture_width == 0 || capture_height == 0 {
+    return Err("answered spatial query capture dimensions must be positive".to_string());
+  }
+
+  let inside_capture = pixel_coordinates_inside_capture(pixel_x, pixel_y, capture_width, capture_height);
+  let expected_visibility = if inside_capture {
+    VisualTruthPixelVisibility::InsideCapture
+  } else {
+    VisualTruthPixelVisibility::OutsideCapture
+  };
+  if visibility != expected_visibility {
+    return Err(format!(
+      "answered spatial query pixel_visibility={} contradicts capture bounds {}x{} for point ({pixel_x}, {pixel_y})",
+      visibility.as_str(),
+      capture_width,
+      capture_height
+    ));
+  }
+  Ok((pixel_x, pixel_y, visibility))
+}
+
+fn pixel_coordinates_inside_capture(pixel_x: f32, pixel_y: f32, capture_width: u32, capture_height: u32) -> bool {
+  pixel_x.is_finite()
+    && pixel_y.is_finite()
+    && pixel_x >= 0.0
+    && pixel_y >= 0.0
+    && pixel_x < capture_width as f32
+    && pixel_y < capture_height as f32
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,7 +371,7 @@ fn answer_for_frame(frame: &VisualTruthFrame, projection: &EvalProjection) -> Qu
     };
   };
 
-  let pixel_visibility = if pixel_point_inside_capture(&point, capture_width, capture_height) {
+  let pixel_visibility = if pixel_coordinates_inside_capture(point.x, point.y, capture_width, capture_height) {
     VisualTruthPixelVisibility::InsideCapture
   } else {
     VisualTruthPixelVisibility::OutsideCapture
@@ -391,6 +433,8 @@ fn write_query_output(
     capture_height: answer.capture_height,
     known_limits: known_limits.iter().cloned().collect(),
   };
+
+  validate_spatial_query_payload(&manifest)?;
 
   let manifest_path = inputs.output_dir.join(QUERY_MANIFEST_FILE);
   write_json_file(&manifest_path, &manifest)?;

@@ -81,13 +81,15 @@ impl PlayfieldProjection {
     let offset_x = (capture_width - playfield_width) / 2.0;
     let offset_y = (capture_height - playfield_height) / 2.0;
     let circle_radius_px = circle_radius_playfield(circle_size) * scale;
+    positive_projection_f32("playfield projection", "scale", scale)?;
+    let match_radius_px = positive_projection_f32("playfield projection", "match radius", circle_radius_px)?;
 
     Ok(Self {
       scale_x: scale,
       scale_y: scale,
       offset_x,
       offset_y,
-      match_radius_px: circle_radius_px as f32,
+      match_radius_px,
     })
   }
 
@@ -148,10 +150,10 @@ impl ProjectionArtifact {
       return Err(format!("projection artifact must have positive match_radius_px, got {}", self.match_radius_px));
     }
 
-    let scale_x = eval_projection_f32("scale_x", self.scale_x)?;
-    let scale_y = eval_projection_f32("scale_y", self.scale_y)?;
-    let offset_x = eval_projection_f32("offset_x", self.offset_x)?;
-    let offset_y = eval_projection_f32("offset_y", self.offset_y)?;
+    let scale_x = positive_projection_f32("projection artifact", "scale_x", self.scale_x)?;
+    let scale_y = positive_projection_f32("projection artifact", "scale_y", self.scale_y)?;
+    let offset_x = finite_projection_f32("projection artifact", "offset_x", self.offset_x)?;
+    let offset_y = finite_projection_f32("projection artifact", "offset_y", self.offset_y)?;
 
     Ok(EvalProjection::PlayfieldToPixels {
       scale_x,
@@ -240,13 +242,24 @@ impl ProjectionArtifact {
   }
 }
 
-fn eval_projection_f32(field: &str, value: f64) -> Result<f32, String> {
+fn finite_projection_f32(subject: &str, field: &str, value: f64) -> Result<f32, String> {
   if !value.is_finite() {
-    return Err(format!("projection artifact {field} must be finite"));
+    return Err(format!("{subject} {field} must be finite"));
   }
   let converted = value as f32;
   if !converted.is_finite() {
-    return Err(format!("projection artifact {field} must be representable as a finite f32"));
+    return Err(format!("{subject} {field} must be representable as a finite f32"));
+  }
+  Ok(converted)
+}
+
+fn positive_projection_f32(subject: &str, field: &str, value: f64) -> Result<f32, String> {
+  if value <= 0.0 {
+    return Err(format!("{subject} {field} must be positive"));
+  }
+  let converted = finite_projection_f32(subject, field, value)?;
+  if converted <= 0.0 {
+    return Err(format!("{subject} {field} must remain positive when represented as f32"));
   }
   Ok(converted)
 }
@@ -403,6 +416,31 @@ mod tests {
 
     let error = artifact.to_eval_projection().expect_err("must fail");
     assert!(error.contains("scale_x must be finite"));
+  }
+
+  #[test]
+  fn projection_artifact_rejects_positive_scale_that_underflows_to_zero_f32() {
+    let mut artifact = sample_projection_artifact_with_capture();
+    artifact.scale_x = f64::from(f32::from_bits(1)) / 2.0;
+
+    let error = artifact.to_eval_projection().expect_err("underflowing scale must fail");
+    assert!(error.contains("scale_x"));
+  }
+
+  #[test]
+  fn projection_constructor_rejects_scale_that_underflows_to_zero_f32() {
+    let scale = f64::from(f32::from_bits(1)) / 2.0;
+    let error =
+      PlayfieldProjection::for_capture(PLAYFIELD_WIDTH * scale, PLAYFIELD_HEIGHT * scale, 4.0).expect_err("underflowing scale must fail");
+
+    assert!(error.contains("scale"));
+  }
+
+  #[test]
+  fn projection_constructor_rejects_non_positive_radius() {
+    let error = PlayfieldProjection::for_capture(1024.0, 768.0, 13.0).expect_err("negative radius must fail");
+
+    assert!(error.contains("match radius"));
   }
 
   #[test]

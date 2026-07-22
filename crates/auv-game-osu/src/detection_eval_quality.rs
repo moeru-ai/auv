@@ -11,7 +11,7 @@ use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore}
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::detection_eval_witness::{DetectionEvalWitnessManifest, DetectionEvalWitnessReason};
+use crate::detection_eval_witness::{DetectionEvalWitnessManifest, DetectionEvalWitnessReason, validate_witness_payload};
 
 pub type DetectionEvalQualityResult<T> = Result<T, String>;
 
@@ -158,7 +158,7 @@ fn validate_quality_payload(quality: &DetectionEvalQualityManifest) -> Result<()
       quality.schema_version
     ));
   }
-  if let Some(metrics) = &quality.metrics {
+  let expected_verdict = if let Some(metrics) = &quality.metrics {
     let label_total = metrics
       .label_matched_frames
       .checked_add(metrics.label_missing_frames)
@@ -183,11 +183,78 @@ fn validate_quality_payload(quality: &DetectionEvalQualityManifest) -> Result<()
         return Err(format!("quality {name} must be finite and between 0 and 1"));
       }
     }
+    let expected_label_recall = recall_from_counts(metrics.label_matched_frames, metrics.label_missing_frames)?;
+    if metrics.label_recall != expected_label_recall {
+      return Err(format!("quality label_recall {:?}, expected {expected_label_recall:?}", metrics.label_recall));
+    }
+    let expected_spatial_recall = recall_from_counts(metrics.spatial_matched_frames, metrics.spatial_missing_frames)?;
+    if metrics.spatial_recall != expected_spatial_recall {
+      return Err(format!("quality spatial_recall {:?}, expected {expected_spatial_recall:?}", metrics.spatial_recall));
+    }
+    Some(metrics_verdict(metrics))
+  } else {
+    None
+  };
+
+  if quality.status != quality.witness_status {
+    return Err(format!("quality status {} must match witness_status {}", quality.status, quality.witness_status));
   }
-  if quality.status == StageStatus::Ready && quality.metrics.is_none() {
-    return Err("ready quality payload must include metrics".to_string());
+  match quality.status {
+    StageStatus::Ready => {
+      if quality.reason.is_some() {
+        return Err("ready quality payload must not include a reason".to_string());
+      }
+      let Some(metrics) = quality.metrics.as_ref() else {
+        return Err("ready quality payload must include metrics".to_string());
+      };
+      if metrics.total_frames == 0 {
+        return Err("ready quality payload must contain at least one frame".to_string());
+      }
+      if Some(quality.verdict) != expected_verdict {
+        return Err(format!("quality verdict {} is inconsistent with metrics", quality.verdict.as_str()));
+      }
+    }
+    StageStatus::Blocked => {
+      if !matches!(
+        quality.reason,
+        Some(
+          DetectionEvalQualityReason::MissingWitnessManifest
+            | DetectionEvalQualityReason::WitnessNotReady
+            | DetectionEvalQualityReason::WitnessBlocked
+        )
+      ) {
+        return Err("blocked quality payload must include a blocked reason".to_string());
+      }
+      if quality.verdict != DetectionEvalQualityVerdict::Blocked || quality.metrics.is_some() {
+        return Err("blocked quality payload must have blocked verdict and no metrics".to_string());
+      }
+    }
+    StageStatus::Failed => {
+      if !matches!(quality.reason, Some(DetectionEvalQualityReason::WitnessManifestParseFailed | DetectionEvalQualityReason::WitnessFailed))
+      {
+        return Err("failed quality payload must include a failed reason".to_string());
+      }
+      if quality.verdict != DetectionEvalQualityVerdict::Failed || quality.metrics.is_some() {
+        return Err("failed quality payload must have failed verdict and no metrics".to_string());
+      }
+    }
   }
   Ok(())
+}
+
+fn recall_from_counts(matched: usize, missing: usize) -> Result<Option<f32>, String> {
+  let scorable = matched.checked_add(missing).ok_or_else(|| "quality scorable counts overflow usize".to_string())?;
+  Ok((scorable != 0).then(|| matched as f32 / scorable as f32))
+}
+
+fn metrics_verdict(metrics: &DetectionEvalQualityMetrics) -> DetectionEvalQualityVerdict {
+  if metrics.projection_kind == "playfield_to_pixels" && metrics.spatial_unscored_frames == 0 && metrics.total_frames > 0 {
+    DetectionEvalQualityVerdict::MeasuredOnly
+  } else if metrics.total_frames > 0 {
+    DetectionEvalQualityVerdict::MetricPartial
+  } else {
+    DetectionEvalQualityVerdict::Blocked
+  }
 }
 
 pub fn build_detection_eval_quality(inputs: &DetectionEvalQualityInputs) -> DetectionEvalQualityResult<DetectionEvalQualityOutput> {
@@ -218,13 +285,15 @@ pub fn build_detection_eval_quality(inputs: &DetectionEvalQualityInputs) -> Dete
     source_visual_eval_report_path: witness.map(|w| w.source_visual_eval_report_path.clone()).unwrap_or_default(),
     source_run_artifact_dir: witness.map(|w| w.source_run_artifact_dir.clone()).unwrap_or_default(),
     detector_model_id: witness.and_then(|w| w.detector_model_id.clone()),
-    witness_status: witness.map(|w| w.status).unwrap_or(StageStatus::Blocked),
+    witness_status: witness.map(|w| w.status).unwrap_or(gate.quality_status),
     status: outcome.status,
     reason: outcome.reason,
     verdict: outcome.verdict,
     metrics: outcome.metrics.clone(),
     known_limits: known_limits.into_iter().collect(),
   };
+
+  validate_quality_payload(&manifest)?;
 
   let manifest_path = inputs.output_dir.join(QUALITY_MANIFEST_FILE);
   write_json_file(&manifest_path, &manifest)?;
@@ -345,46 +414,55 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
 }
 
 fn quality_verdict(witness: &DetectionEvalWitnessManifest) -> DetectionEvalQualityVerdict {
-  if witness.projection_kind == "playfield_to_pixels" && witness.spatial_unscored_frames == 0 && witness.total_frames > 0 {
-    DetectionEvalQualityVerdict::MeasuredOnly
-  } else if witness.total_frames > 0 {
-    DetectionEvalQualityVerdict::MetricPartial
-  } else {
-    DetectionEvalQualityVerdict::Blocked
+  match witness.status {
+    StageStatus::Blocked => DetectionEvalQualityVerdict::Blocked,
+    StageStatus::Failed => DetectionEvalQualityVerdict::Failed,
+    StageStatus::Ready => {
+      if witness.projection_kind == "playfield_to_pixels" && witness.spatial_unscored_frames == 0 && witness.total_frames > 0 {
+        DetectionEvalQualityVerdict::MeasuredOnly
+      } else if witness.total_frames > 0 {
+        DetectionEvalQualityVerdict::MetricPartial
+      } else {
+        DetectionEvalQualityVerdict::Blocked
+      }
+    }
   }
 }
 
 fn derive_quality_outcome(witness: &DetectionEvalWitnessManifest) -> DetectionEvalQualityResult<QualityOutcome> {
-  let metrics = metrics_from_witness(witness)?;
-
-  Ok(QualityOutcome {
-    status: StageStatus::Ready,
-    reason: None,
-    verdict: quality_verdict(witness),
-    metrics: Some(metrics),
-  })
+  validate_witness_payload(witness)?;
+  match witness.status {
+    StageStatus::Blocked => Ok(QualityOutcome {
+      status: StageStatus::Blocked,
+      reason: Some(match witness.reason {
+        Some(
+          DetectionEvalWitnessReason::MissingVisualEvalReport
+          | DetectionEvalWitnessReason::MissingDetectionEvalManifest
+          | DetectionEvalWitnessReason::EmptyFrames,
+        ) => DetectionEvalQualityReason::WitnessBlocked,
+        _ => DetectionEvalQualityReason::WitnessNotReady,
+      }),
+      verdict: DetectionEvalQualityVerdict::Blocked,
+      metrics: None,
+    }),
+    StageStatus::Failed => Ok(QualityOutcome {
+      status: StageStatus::Failed,
+      reason: Some(DetectionEvalQualityReason::WitnessFailed),
+      verdict: DetectionEvalQualityVerdict::Failed,
+      metrics: None,
+    }),
+    StageStatus::Ready => Ok(QualityOutcome {
+      status: StageStatus::Ready,
+      reason: None,
+      verdict: quality_verdict(witness),
+      metrics: Some(metrics_from_witness(witness)?),
+    }),
+  }
 }
 
 fn metrics_from_witness(witness: &DetectionEvalWitnessManifest) -> DetectionEvalQualityResult<DetectionEvalQualityMetrics> {
-  let label_scorable = witness
-    .label_matched_frames
-    .checked_add(witness.label_missing_frames)
-    .ok_or_else(|| "witness label scorable counts overflow usize".to_string())?;
-  let label_recall = if label_scorable == 0 {
-    None
-  } else {
-    Some(witness.label_matched_frames as f32 / label_scorable as f32)
-  };
-
-  let spatial_scorable = witness
-    .spatial_matched_frames
-    .checked_add(witness.spatial_missing_frames)
-    .ok_or_else(|| "witness spatial scorable counts overflow usize".to_string())?;
-  let spatial_recall = if spatial_scorable == 0 {
-    None
-  } else {
-    Some(witness.spatial_matched_frames as f32 / spatial_scorable as f32)
-  };
+  let label_recall = recall_from_counts(witness.label_matched_frames, witness.label_missing_frames)?;
+  let spatial_recall = recall_from_counts(witness.spatial_matched_frames, witness.spatial_missing_frames)?;
 
   Ok(DetectionEvalQualityMetrics {
     total_frames: witness.total_frames,
@@ -426,7 +504,9 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::detection_eval_witness::{DetectionEvalWitnessInputs, DetectionEvalWitnessManifest, build_detection_eval_witness};
+  use crate::detection_eval_witness::{
+    DetectionEvalWitnessInputs, DetectionEvalWitnessManifest, DetectionEvalWitnessReason, build_detection_eval_witness,
+  };
   use std::path::PathBuf;
 
   fn fixture_witness_manifest() -> (tempfile::TempDir, PathBuf) {
@@ -518,6 +598,55 @@ mod tests {
   }
 
   #[test]
+  fn blocked_witness_cannot_derive_ready_quality() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let witness = build_detection_eval_witness(&DetectionEvalWitnessInputs {
+      detection_eval_output_dir: temp.path().join("missing-eval"),
+      output_dir: temp.path().join("blocked-witness"),
+    })
+    .expect("blocked witness");
+
+    // ROOT CAUSE:
+    //
+    // If a witness parsed successfully, quality derivation ignored its blocked
+    // gate and unconditionally returned Ready with metrics.
+    //
+    // Before the fix, this produced Ready. The fix preserves the witness gate.
+    let output = build_detection_eval_quality(&DetectionEvalQualityInputs {
+      witness_manifest_path: witness.manifest_path,
+      output_dir: temp.path().join("blocked-quality"),
+    })
+    .expect("blocked quality");
+
+    assert_eq!(output.manifest.witness_status, StageStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(DetectionEvalQualityReason::WitnessBlocked));
+    assert_eq!(output.manifest.verdict, DetectionEvalQualityVerdict::Blocked);
+    assert!(output.manifest.metrics.is_none());
+  }
+
+  #[test]
+  fn failed_witness_cannot_derive_ready_quality() {
+    let (temp, witness_path) = fixture_witness_manifest();
+    let mut witness = read_json_file::<DetectionEvalWitnessManifest>(&witness_path, "witness fixture").expect("read witness fixture");
+    witness.status = StageStatus::Failed;
+    witness.reason = Some(DetectionEvalWitnessReason::DetectionEvalManifestParseFailed);
+    write_json_file(&witness_path, &witness).expect("write failed witness fixture");
+
+    let output = build_detection_eval_quality(&DetectionEvalQualityInputs {
+      witness_manifest_path: witness_path,
+      output_dir: temp.path().join("failed-quality"),
+    })
+    .expect("failed quality");
+
+    assert_eq!(output.manifest.witness_status, StageStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
+    assert_eq!(output.manifest.reason, Some(DetectionEvalQualityReason::WitnessFailed));
+    assert_eq!(output.manifest.verdict, DetectionEvalQualityVerdict::Failed);
+    assert!(output.manifest.metrics.is_none());
+  }
+
+  #[test]
   fn quality_build_rejects_overflowing_witness_scorable_counts() {
     let temp = tempfile::tempdir().expect("tempdir");
     let witness_path = temp.path().join("witness.json");
@@ -552,6 +681,6 @@ mod tests {
     })
     .expect_err("overflowing witness counts must fail");
 
-    assert!(error.contains("label scorable counts overflow usize"));
+    assert!(error.contains("witness label counts overflow usize"));
   }
 }
