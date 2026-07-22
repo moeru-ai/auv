@@ -156,18 +156,30 @@ fn validate_witness_payload(witness: &DetectionEvalWitnessManifest) -> Result<()
       witness.schema_version
     ));
   }
-  let label_total = witness.label_matched_frames + witness.label_missing_frames + witness.label_unmapped_frames;
+  let label_total = witness
+    .label_matched_frames
+    .checked_add(witness.label_missing_frames)
+    .and_then(|total| total.checked_add(witness.label_unmapped_frames))
+    .ok_or_else(|| "witness label counts overflow usize".to_string())?;
   if label_total != witness.total_frames {
     return Err(format!("witness label counts total {label_total}, expected {}", witness.total_frames));
   }
-  let spatial_total = witness.spatial_matched_frames + witness.spatial_missing_frames + witness.spatial_unscored_frames;
+  let spatial_total = witness
+    .spatial_matched_frames
+    .checked_add(witness.spatial_missing_frames)
+    .and_then(|total| total.checked_add(witness.spatial_unscored_frames))
+    .ok_or_else(|| "witness spatial counts overflow usize".to_string())?;
   if spatial_total != witness.total_frames {
     return Err(format!("witness spatial counts total {spatial_total}, expected {}", witness.total_frames));
   }
   if witness.frame_witnesses.len() != witness.total_frames {
     return Err(format!("witness contains {} frame records, expected {}", witness.frame_witnesses.len(), witness.total_frames));
   }
-  let spurious = witness.frame_witnesses.iter().map(|frame| frame.spurious_detection_count).sum::<usize>();
+  let spurious = witness
+    .frame_witnesses
+    .iter()
+    .try_fold(0_usize, |total, frame| total.checked_add(frame.spurious_detection_count))
+    .ok_or_else(|| "witness frame spurious counts overflow usize".to_string())?;
   if spurious != witness.spurious_detection_count {
     return Err(format!("witness frame spurious count totals {spurious}, expected {}", witness.spurious_detection_count));
   }

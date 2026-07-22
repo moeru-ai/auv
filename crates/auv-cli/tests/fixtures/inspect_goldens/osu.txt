@@ -96,7 +96,7 @@ MC-14 Training Result Spatial Query Action Readiness:
 - none
 
 Osu Visual Truth Semantic:
-- manifest_artifact=<OSU_SEMANTIC_URI> role=auv.osu.visual_truth.semantic path=n/a semantic_status=ready semantic_reason=n/a frame_count=1 beatmap_path=tests/fixtures/probe.osu issue=n/a
+- manifest_uri=<OSU_SEMANTIC_URI> purpose=auv.osu.visual_truth.semantic semantic_status=ready semantic_reason=n/a frame_count=1 beatmap_path=tests/fixtures/probe.osu issue=n/a
 
 Osu Visual Truth Spatial Query:
 - none

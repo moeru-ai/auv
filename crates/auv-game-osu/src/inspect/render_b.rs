@@ -19,8 +19,9 @@ pub(crate) fn append_sections_b(
     for manifest_lineage in osu_detection_eval_witness_manifests {
       if let Some(manifest) = &manifest_lineage.manifest {
         output.push_str(&format!(
-          "- witness_artifact={} status={} reason={} total_frames={} label_matched={} spatial_matched={} spatial_unscored={} spurious={} projection_kind={} frame_witness_count={} detector_model_id={} issue={}\n",
-          manifest_lineage.artifact.artifact_id,
+          "- witness_uri={} purpose={} status={} reason={} total_frames={} label_matched={} spatial_matched={} spatial_unscored={} spurious={} projection_kind={} frame_witness_count={} detector_model_id={} issue={}\n",
+          manifest_lineage.uri,
+          manifest_lineage.purpose,
           manifest.status,
           manifest.reason.as_deref().unwrap_or("n/a"),
           manifest.total_frames,
@@ -38,8 +39,9 @@ pub(crate) fn append_sections_b(
     for report_lineage in osu_detection_eval_witness_inspect_reports {
       if let Some(report) = &report_lineage.report {
         output.push_str(&format!(
-          "- witness_inspect_artifact={} status={} frame_witness_count={} warnings={} issue={}\n",
-          report_lineage.artifact.artifact_id,
+          "- witness_inspect_uri={} purpose={} status={} frame_witness_count={} warnings={} issue={}\n",
+          report_lineage.uri,
+          report_lineage.purpose,
           report.status,
           report.frame_witness_count,
           report.warnings.len(),
@@ -57,8 +59,9 @@ pub(crate) fn append_sections_b(
       if let Some(manifest) = &manifest_lineage.manifest {
         let derived = derive_osu_detection_eval_quality_verdict_summary(manifest_lineage);
         output.push_str(&format!(
-          "- quality_artifact={} witness_status={} status={} verdict={} label_recall={} spatial_recall={} spurious={} derived_verdict={} issue={}\n",
-          manifest_lineage.artifact.artifact_id,
+          "- quality_uri={} purpose={} witness_status={} status={} verdict={} label_recall={} spatial_recall={} spurious={} derived_verdict={} issue={}\n",
+          manifest_lineage.uri,
+          manifest_lineage.purpose,
           manifest.witness_status,
           manifest.status,
           manifest.verdict,
@@ -82,8 +85,9 @@ pub(crate) fn append_sections_b(
     for report_lineage in osu_detection_eval_quality_inspect_reports {
       if let Some(report) = &report_lineage.report {
         output.push_str(&format!(
-          "- quality_inspect_artifact={} verdict={} label_recall_available={} spatial_recall_available={} issue={}\n",
-          report_lineage.artifact.artifact_id,
+          "- quality_inspect_uri={} purpose={} verdict={} label_recall_available={} spatial_recall_available={} issue={}\n",
+          report_lineage.uri,
+          report_lineage.purpose,
           report.verdict,
           report.label_recall_available,
           report.spatial_recall_available,
