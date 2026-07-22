@@ -39,25 +39,16 @@ pub struct OsuQueryWiredLiveActionSummary {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftQueryWiredLiveActionSummary {
-  pub operation_result_artifact_id: Option<String>,
-  pub query_artifact_id: Option<String>,
   pub attempted: bool,
   pub action_eligibility: String,
-  pub window_point: Option<String>,
   pub refusal_reason: Option<String>,
-  pub operation_status: Option<String>,
-  pub operation_message: Option<String>,
   pub target_app: Option<String>,
   pub target_title: Option<String>,
   pub dispatch_command: Option<String>,
   pub dispatch_outcome: Option<String>,
-  pub mc14_action_eligibility: Option<String>,
-  pub readiness_class: Option<String>,
-  pub source_readiness_ref: Option<String>,
   pub verification_outcome: String,
   pub verification_source: Option<String>,
   pub verification_reason: Option<String>,
-  pub issue: Option<String>,
 }
 
 fn parse_event_message_field(message: &str, key: &str) -> Option<String> {
@@ -306,7 +297,6 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     return None;
   }
 
-  let mut issue = None;
   let (attempted, action_eligibility, refusal_reason) = if let Some(event) = outcome_event {
     let message = event.message.as_deref().unwrap_or("");
     let attempted = parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
@@ -323,58 +313,11 @@ pub fn derive_minecraft_query_wired_live_action_summary(
   let target_title =
     inputs_event.and_then(|event| event.message.as_deref()).and_then(|message| parse_event_message_field(message, "target_title"));
 
-  let (operation_result_artifact_id, query_artifact_id, operation_status, operation_message) =
-    if let Some((ref artifact_ref, ref operation_result)) = operation_result_pair {
-      (
-        Some(artifact_ref.artifact_id.as_str().to_string()),
-        query_artifact_id_from_operation_result(operation_result),
-        Some(operation_status_label(operation_result.status).to_string()),
-        operation_acknowledged_message(&operation_result.output),
-      )
-    } else {
-      (None, None, None, None)
-    };
+  let operation_result_artifact_id = operation_result_pair.as_ref().map(|(artifact_ref, _)| artifact_ref.artifact_id.as_str().to_string());
 
   let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
 
   let run_id = run.run.run_id.as_str();
-  let manifest_extract = query_artifact_id.as_deref().map(|_| extract_minecraft_training_result_spatial_query_manifests(store, run));
-
-  let mut window_point = None;
-  let mut mc14_action_eligibility = None;
-  if let Some(query_id) = query_artifact_id.as_deref() {
-    if let Some(Ok(ref manifests)) = manifest_extract {
-      if let Some(lineage) = manifests.iter().find(|manifest| manifest.artifact.artifact_id.as_str() == query_id) {
-        let readiness = derive_minecraft_training_result_spatial_query_action_readiness(lineage);
-        mc14_action_eligibility = Some(readiness.action_eligibility);
-        window_point = readiness.window_point;
-        if readiness.issue.is_some() {
-          issue = readiness.issue;
-        }
-      }
-    }
-  }
-
-  let readiness_donor = mc14_action_eligibility.as_deref().unwrap_or(action_eligibility.as_str());
-  let readiness_class = map_action_eligibility_to_readiness_class(readiness_donor);
-  let manifest_lookup = query_artifact_id.as_deref().and_then(|query_id| {
-    manifest_extract.as_ref().and_then(|extract_result| {
-      classify_manifest_source_readiness_lookup(
-        query_id,
-        extract_result,
-        |lineage: &MinecraftTrainingResultSpatialQueryManifestLineage| lineage.artifact.artifact_id.as_str(),
-        |lineage| lineage.manifest.is_some(),
-      )
-    })
-  });
-  let source_readiness_ref = resolve_query_wired_live_action_source_readiness_ref(
-    run_id,
-    query_artifact_id.as_deref(),
-    operation_result_artifact_id.as_deref(),
-    "minecraft.query_wired_live_action.outcome",
-    outcome_event.is_some(),
-    manifest_lookup,
-  );
   let operation_result_ref = operation_result_pair.as_ref().map(|(_, result)| result);
   let verification_projection = resolve_query_wired_live_action_verification_projection(
     attempted,
@@ -385,25 +328,16 @@ pub fn derive_minecraft_query_wired_live_action_summary(
   );
 
   Some(MinecraftQueryWiredLiveActionSummary {
-    operation_result_artifact_id,
-    query_artifact_id,
     attempted,
     action_eligibility,
-    window_point,
     refusal_reason,
-    operation_status,
-    operation_message,
     target_app,
     target_title,
     dispatch_command,
     dispatch_outcome,
-    mc14_action_eligibility,
-    readiness_class,
-    source_readiness_ref,
     verification_outcome: verification_projection.verification_outcome,
     verification_source: verification_projection.verification_source,
     verification_reason: verification_projection.verification_reason,
-    issue,
   })
 }
 

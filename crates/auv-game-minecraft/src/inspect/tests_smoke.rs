@@ -8,11 +8,17 @@ use futures_util::io::Cursor as AsyncCursor;
 use sha2::{Digest, Sha256};
 
 #[test]
-fn minecraft_sections_emit_empty_canonical_headers_without_query_artifacts() {
+fn minecraft_sections_are_non_empty_without_minecraft_artifacts() {
   futures_executor::block_on(async {
     let (store, snapshot) = snapshot_without_minecraft_artifacts().await;
-    let mut text = crate::inspect::render_minecraft_primary_text(store.as_ref(), &snapshot).await.expect("primary text");
-    text.push_str(&crate::inspect::render_minecraft_quality_spatial_text(store.as_ref(), &snapshot).await.expect("quality/spatial text"));
+    let mut sections = crate::inspect::inspect_sections_primary(store.as_ref(), &snapshot).await.expect("primary sections");
+    sections.extend(crate::inspect::inspect_sections_quality_spatial(store.as_ref(), &snapshot).await.expect("quality/spatial sections"));
+    assert_eq!(
+      sections.iter().map(crate::inspect::MinecraftInspectSection::id).collect::<Vec<_>>(),
+      ["minecraft_primary", "minecraft_quality_spatial"]
+    );
+    assert!(sections.iter().all(|section| !section.text().is_empty()));
+    let text = sections.into_iter().map(crate::inspect::MinecraftInspectSection::into_text).collect::<String>();
 
     assert!(text.contains("\nMC-1 Telemetry Samples:\n- none\n"));
     assert!(text.contains("\nMC-17 Quality Baseline Report:\n"));

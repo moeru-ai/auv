@@ -1064,7 +1064,9 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         .await
         .map_err(|error| format!("failed to read run {run_id}: {error}"))?
         .ok_or_else(|| format!("run not found: {run_id}"))?;
-      let document = auv_inspect_model::InspectDocument::from(&snapshot);
+      let document = crate::inspect::build_product_inspect_document(store.as_ref(), &snapshot)
+        .await
+        .map_err(|error| format!("failed to inspect Minecraft artifacts for run {run_id}: {error}"))?;
       println!("{}", serde_json::to_string_pretty(&document).map_err(|error| format!("failed to serialize run inspection: {error}"))?);
     }
     CliCommand::InspectServe { .. } => {
@@ -2210,6 +2212,34 @@ mod tests {
     purposes
   }
 
+  fn read_recorded_minecraft_projection(
+    runtime: &auv_runtime::runtime::Runtime,
+    run: &auv_tracing_driver::store::CanonicalRun,
+  ) -> auv_game_minecraft::MinecraftProjectionArtifact {
+    let artifact = run
+      .artifacts
+      .iter()
+      .find(|artifact| artifact.role == crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE)
+      .expect("recorded projection artifact");
+    let path = runtime.recording().run_dir(run.run.run_id.as_str()).expect("recorded run directory").join(&artifact.path);
+    let bytes = fs::read(path).expect("recorded projection bytes");
+    serde_json::from_slice(&bytes).expect("typed recorded projection")
+  }
+
+  async fn render_typed_minecraft_projection_inspect(projection: &auv_game_minecraft::MinecraftProjectionArtifact) -> String {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("canonical projection dispatch");
+    let run_id = RunId::new();
+    let root = auv_tracing::dispatcher::with_default(&dispatch, || auv_tracing::Context::root(run_id));
+    auv_game_minecraft::artifact::publish_minecraft_projection(Some(&root), projection)
+      .await
+      .expect("publish typed projection")
+      .expect("canonical artifact publication enabled");
+    dispatch.flush().await.expect("flush typed projection");
+    let snapshot = store.load_snapshot(run_id).await.expect("load projection snapshot").expect("projection snapshot");
+    crate::inspect::build_product_inspect_document(store.as_ref(), &snapshot).await.expect("product projection inspect").render_text()
+  }
+
   async fn stored_document_write_semantic_match(store: &dyn RunStore, snapshot: &auv_tracing::RunSnapshot) -> bool {
     let artifact = snapshot
       .artifacts()
@@ -2800,8 +2830,8 @@ mod tests {
     Ok(format!("fixture clicked at ({:.3},{:.3})", window_point.point().x, window_point.point().y))
   }
 
-  #[test]
-  fn minecraft_bridge_run_persists_telemetry_and_projection_artifacts() {
+  #[tokio::test]
+  async fn minecraft_bridge_run_persists_telemetry_and_projection_artifacts() {
     let project_root = mc2_temp_dir("mc2-bridge-project");
     let store_root = mc2_temp_dir("mc2-bridge-store");
     let telemetry_path = project_root.join("telemetry.jsonl");
@@ -2820,12 +2850,8 @@ mod tests {
     assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "minecraft-overlay");
 
-    let inspect_text = crate::inspect::inspect_run_with(
-      &crate::inspect::build_product_inspect_composer().expect("product composer"),
-      runtime.recording().store(),
-      output.run_id.as_str(),
-    )
-    .expect("inspect should render run");
+    let projection = read_recorded_minecraft_projection(&runtime, &run);
+    let inspect_text = render_typed_minecraft_projection_inspect(&projection).await;
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=0"));
     assert_eq!(output.value.overlay_artifact_id.is_some(), true);
@@ -2835,8 +2861,8 @@ mod tests {
     let _ = fs::remove_dir_all(store_root);
   }
 
-  #[test]
-  fn minecraft_bridge_refusal_run_still_persists_telemetry_and_projection_artifacts() {
+  #[tokio::test]
+  async fn minecraft_bridge_refusal_run_still_persists_telemetry_and_projection_artifacts() {
     let project_root = mc2_temp_dir("mc2-bridge-refusal-project");
     let store_root = mc2_temp_dir("mc2-bridge-refusal-store");
     let telemetry_path = project_root.join("telemetry.jsonl");
@@ -2854,12 +2880,8 @@ mod tests {
     assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
 
-    let inspect_text = crate::inspect::inspect_run_with(
-      &crate::inspect::build_product_inspect_composer().expect("product composer"),
-      runtime.recording().store(),
-      output.run_id.as_str(),
-    )
-    .expect("inspect should render run");
+    let projection = read_recorded_minecraft_projection(&runtime, &run);
+    let inspect_text = render_typed_minecraft_projection_inspect(&projection).await;
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=999"));
     assert_eq!(output.value.refusal_reason.as_deref(), Some("CaptureSkewUnreliable"));

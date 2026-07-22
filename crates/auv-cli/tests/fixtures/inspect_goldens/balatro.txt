@@ -80,29 +80,25 @@ MC-17 Holdout Render Quality:
 - none
 
 Balatro Card Detection Semantic:
-- manifest_artifact=artifact_0001 semantic_status=ready semantic_reason=n/a ui_detection_count=2 entities_detection_count=4 frame_source=sample.png issue=n/a
-- inspect_artifact=artifact_0002 semantic_status=ready detection_bundle_readable=true detection_sets_non_empty=true warnings=0 issue=n/a
+- manifest_artifact=<BALATRO_SEMANTIC_URI> semantic_status=ready semantic_reason=n/a ui_detection_count=2 entities_detection_count=4 frame_source=sample.png
 
 Balatro Card Detection Spatial Query:
-- query_artifact=artifact_0003 target_slot=hand:0 status=answered reason=n/a pixel_point=440,560 query_backend=detection_bundle_reference issue=n/a
-- inspect_artifact=artifact_0004 status=answered semantic_status=ready warnings=0 issue=n/a
+- query_artifact=<BALATRO_QUERY_URI> target_slot=hand:0 status=answered reason=n/a pixel_point=440,560 query_backend=detection_bundle_reference
 
 Balatro Card Detection Eval Witness:
-- witness_artifact=artifact_0005 status=ready reason=n/a expected_slot_count=3 scored_slot_count=3 unscored_slot_count=0 below_confidence_slot_count=0 quality_backend=ultralytics_onnx_entities semantic_manifest=<TMP>/semantic/balatro-card-detection-semantic.json spatial_query_manifest=<TMP>/query/balatro-card-detection-spatial-query.json issue=n/a
-- witness_inspect_artifact=artifact_0006 status=ready slot_score_count=3 semantic_readable=true spatial_query_readable=true expected_slots_readable=true warnings=0 issue=n/a
+- witness_artifact=<BALATRO_WITNESS_URI> status=ready reason=n/a expected_slot_count=3 scored_slot_count=3 unscored_slot_count=0 below_confidence_slot_count=0 quality_backend=ultralytics_onnx_entities semantic_manifest=<TMP>/semantic/balatro-card-detection-semantic.json spatial_query_manifest=<TMP>/query/balatro-card-detection-spatial-query.json
 
 Balatro Card Detection Quality:
-- quality_artifact=artifact_0007 witness_status=ready status=ready verdict=measured_only quality_backend=ultralytics_onnx_entities expected_slot_count=3 scored_slot_count=3 unscored_slot_count=0 slot_coverage_ratio=1.000 issue=n/a
-- quality_inspect_artifact=artifact_0008 verdict=measured_only quality_backend=ultralytics_onnx_entities slot_coverage_ratio_available=true issue=n/a
+- quality_artifact=<BALATRO_QUALITY_URI> witness_status=ready status=ready verdict=measured_only quality_backend=ultralytics_onnx_entities expected_slot_count=3 scored_slot_count=3 unscored_slot_count=0 slot_coverage_ratio=1.000
 
 MC-17 Quality Baseline Report:
-- profile_id=mc17-d2-primary-v1 evidence_coverage=missing_stage training_result_semantic_manifest=.tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json spatial_query_status=n/a visibility=n/a screen_point=n/a holdout_status=n/a holdout_frame_index=n/a basis_checkpoint_path=n/a render_quality_status=n/a verdict=n/a image_size_match=n/a l1_mean=n/a mse=n/a psnr=n/a issue=n/a
+- profile_id=mc17-d2-primary-v1 evidence_coverage=missing_stage spatial_query_artifact=n/a spatial_query_status=n/a visibility=n/a screen_point=n/a holdout_artifact=n/a holdout_status=n/a holdout_frame_index=n/a checkpoint=n/a render_quality_artifact=n/a render_quality_status=n/a verdict=n/a image_size_match=n/a l1_mean=n/a mse=n/a psnr=n/a profile_mismatches=none
   trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence
 
 MC-17 Quality Verdict:
-- profile_id=mc17-d2-primary-v1 render_evidence_mode=screenshot_copy_probe evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=screenshot_copy_probe evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing
   trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | screenshot_copy_probe thresholds judge pipeline wiring only, not splat usefulness
-- profile_id=mc17-d2-primary-v1 render_evidence_mode=trained_render evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=trained_render evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing
   trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | trained_render thresholds are provisional v1 photometric gates; tune only via fixture revision plus new closure, not inline code | pass under trained_render profile means metrics met pre-committed bounds, not downstream action eligibility
 
 MC-12 Training Result Spatial Query:

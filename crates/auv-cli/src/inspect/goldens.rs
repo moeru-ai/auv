@@ -9,8 +9,13 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use auv_tracing::{
+  ArtifactPurpose, Attributes, AuthorityId, ByteLength, ContentType, Context, Dispatch, MemoryRunStore, NewArtifact,
+  RunId as CanonicalRunId, RunSnapshot, RunStore, Sha256Digest, configure, dispatcher,
+};
 use auv_tracing_driver::ArtifactFileSource;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{
@@ -19,8 +24,9 @@ use auv_tracing_driver::trace::{
 };
 use serde::Serialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
-use crate::inspect::{build_product_inspect_composer, inspect_run, inspect_run_with};
+use crate::inspect::{build_product_inspect_composer, build_product_inspect_text_document, inspect_run, inspect_run_with};
 use auv_runtime::contract::{
   OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot, ObservationSource, OperationOutput, OperationResult,
   OperationStatus, RecognitionScope, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
@@ -97,6 +103,36 @@ fn assert_or_update_golden(name: &str, normalized: &str) {
 
 fn stamp() -> u128 {
   SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos()
+}
+
+fn canonical_inspect_run() -> (Arc<MemoryRunStore>, Dispatch, CanonicalRunId, Context) {
+  let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+  let dispatch = configure().run_store(store.clone()).build().expect("canonical inspect dispatch");
+  let run_id = CanonicalRunId::new();
+  let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+  (store, dispatch, run_id, root)
+}
+
+async fn publish_unrelated_canonical_artifact(root: &Context) {
+  let body = b"{}".to_vec();
+  let artifact = NewArtifact::new(
+    ArtifactPurpose::parse("auv.test.inspect.unrelated").expect("artifact purpose"),
+    ContentType::parse("application/json").expect("content type"),
+    ByteLength::new(u64::try_from(body.len()).expect("body length fits u64")).expect("byte length"),
+    Sha256Digest::new(Sha256::digest(&body).into()),
+    Attributes::empty(),
+    futures_util::io::Cursor::new(body),
+  );
+  root
+    .in_scope(|| auv_tracing::emit_artifact!(artifact))
+    .await
+    .expect("publish unrelated canonical artifact")
+    .expect("canonical artifact publication enabled");
+}
+
+async fn load_canonical_snapshot(store: &MemoryRunStore, dispatch: &Dispatch, run_id: CanonicalRunId) -> RunSnapshot {
+  dispatch.flush().await.expect("flush canonical inspect artifacts");
+  store.load_snapshot(run_id).await.expect("load canonical inspect snapshot").expect("canonical inspect snapshot")
 }
 
 fn dummy_run(run_id: &str) -> RunRecordV1Alpha1 {
@@ -188,8 +224,8 @@ fn dummy_observation_snapshot(run_id: &RunId, span_id: &SpanId) -> ObservationSn
   }
 }
 
-#[test]
-fn golden_core_only_inspect_run() {
+#[tokio::test]
+async fn golden_core_only_inspect_run() {
   let root = std::env::temp_dir().join(format!("auv-inspect-golden-core-{}", stamp()));
   let _ = fs::remove_dir_all(&root);
   fs::create_dir_all(&root).expect("root");
@@ -276,13 +312,22 @@ fn golden_core_only_inspect_run() {
   let via_entry = inspect_run(&store, "run_golden_core").expect("entry inspect");
   assert_eq!(via_composer, via_entry, "CLI entry and composer path must match");
 
-  let normalized = normalize_inspect_text(&via_composer, &[&root]);
+  let legacy_run = store.read_run("run_golden_core").expect("legacy run");
+  let (canonical_store, dispatch, canonical_run_id, canonical_root) = canonical_inspect_run();
+  publish_unrelated_canonical_artifact(&canonical_root).await;
+  let snapshot = load_canonical_snapshot(canonical_store.as_ref(), &dispatch, canonical_run_id).await;
+  let text = build_product_inspect_text_document(&store, &legacy_run, canonical_store.as_ref(), &snapshot)
+    .await
+    .expect("product inspect text")
+    .render_text();
+  let normalized = normalize_inspect_text(&text, &[&root]);
   assert_or_update_golden("core.txt", &normalized);
   let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn golden_minecraft_training_package_inspect_run() {
+#[tokio::test]
+async fn golden_minecraft_training_package_inspect_run() {
+  use auv_game_minecraft::training_package::publish_minecraft_training_package;
   use auv_game_minecraft::{TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts, TrainingPackageManifest};
 
   let root = std::env::temp_dir().join(format!("auv-inspect-golden-mc-{}", stamp()));
@@ -338,14 +383,26 @@ fn golden_minecraft_training_package_inspect_run() {
       artifacts,
     })
     .expect("snapshot");
-  let text = inspect_run(&store, "run_golden_minecraft").expect("inspect");
+
+  let legacy_run = store.read_run("run_golden_minecraft").expect("legacy run");
+  let (canonical_store, dispatch, canonical_run_id, canonical_root) = canonical_inspect_run();
+  let metadata = publish_minecraft_training_package(Some(&canonical_root), &manifest)
+    .await
+    .expect("publish typed Minecraft training package")
+    .expect("canonical artifact publication enabled");
+  let snapshot = load_canonical_snapshot(canonical_store.as_ref(), &dispatch, canonical_run_id).await;
+  let text = build_product_inspect_text_document(&store, &legacy_run, canonical_store.as_ref(), &snapshot)
+    .await
+    .expect("product inspect text")
+    .render_text();
   assert!(text.contains("MC-7 Training Packages:"));
-  assert_or_update_golden("minecraft.txt", &normalize_inspect_text(&text, &[&root]));
+  let normalized = normalize_inspect_text(&text, &[&root]).replace(&metadata.uri().to_string(), "<MC_TRAINING_PACKAGE_URI>");
+  assert_or_update_golden("minecraft.txt", &normalized);
   let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn golden_osu_visual_truth_inspect_run() {
+#[tokio::test]
+async fn golden_osu_visual_truth_inspect_run() {
   use auv_tracing_driver::recording::RunRecordingBackend;
 
   use crate::integrations::osu::run_osu_visual_truth_semantic_validation;
@@ -363,7 +420,14 @@ fn golden_osu_visual_truth_inspect_run() {
   let store = LocalStore::new(store_root.clone()).expect("store");
   let recording = RunRecordingBackend::local_only(store.clone()).handle();
   let semantic = run_osu_visual_truth_semantic_validation(&recording, work.clone(), work.join("semantic-out")).expect("semantic");
-  let text = inspect_run(&store, semantic.run_id.as_str()).expect("inspect");
+  let legacy_run = store.read_run(semantic.run_id.as_str()).expect("legacy run");
+  let (canonical_store, dispatch, canonical_run_id, canonical_root) = canonical_inspect_run();
+  publish_unrelated_canonical_artifact(&canonical_root).await;
+  let snapshot = load_canonical_snapshot(canonical_store.as_ref(), &dispatch, canonical_run_id).await;
+  let text = build_product_inspect_text_document(&store, &legacy_run, canonical_store.as_ref(), &snapshot)
+    .await
+    .expect("product inspect text")
+    .render_text();
   assert!(text.contains("Osu Visual Truth Semantic:"));
   let mut normalized = normalize_inspect_text(&text, &[&store_root, &work, &fixture_root]);
   normalized = normalized.replace(semantic.run_id.as_str(), "<RUN_ID>");
@@ -372,8 +436,8 @@ fn golden_osu_visual_truth_inspect_run() {
   let _ = fs::remove_dir_all(store_root);
 }
 
-#[test]
-fn golden_balatro_card_detection_inspect_run() {
+#[tokio::test]
+async fn golden_balatro_card_detection_inspect_run() {
   use auv_game_balatro::ObjectZone;
   use auv_tracing_driver::recording::RunRecordingBackend;
 
@@ -396,10 +460,44 @@ fn golden_balatro_card_detection_inspect_run() {
     work_dir.clone(),
   )
   .expect("probe");
-  let text = inspect_run(&store, chain.run_id.as_str()).expect("inspect");
+  let legacy_run = store.read_run(chain.run_id.as_str()).expect("legacy run");
+  let (canonical_store, dispatch, canonical_run_id, canonical_root) = canonical_inspect_run();
+  let semantic_metadata =
+    auv_game_balatro::card_detection_semantic::publish_card_detection_semantic(Some(&canonical_root), &chain.value.semantic.manifest)
+      .await
+      .expect("publish Balatro semantic")
+      .expect("canonical artifact publication enabled");
+  let query_metadata =
+    auv_game_balatro::card_detection_spatial_query::publish_card_detection_spatial_query(Some(&canonical_root), &chain.value.query.manifest)
+      .await
+      .expect("publish Balatro spatial query")
+      .expect("canonical artifact publication enabled");
+  let witness_metadata =
+    auv_game_balatro::card_detection_eval_witness::publish_card_detection_witness(Some(&canonical_root), &chain.value.witness.manifest)
+      .await
+      .expect("publish Balatro witness")
+      .expect("canonical artifact publication enabled");
+  let quality_metadata =
+    auv_game_balatro::card_detection_quality::publish_card_detection_quality(Some(&canonical_root), &chain.value.quality.manifest)
+      .await
+      .expect("publish Balatro quality")
+      .expect("canonical artifact publication enabled");
+  let snapshot = load_canonical_snapshot(canonical_store.as_ref(), &dispatch, canonical_run_id).await;
+  let text = build_product_inspect_text_document(&store, &legacy_run, canonical_store.as_ref(), &snapshot)
+    .await
+    .expect("product inspect text")
+    .render_text();
   assert!(text.contains("Balatro Card Detection Semantic:"));
   let mut normalized = normalize_inspect_text(&text, &[&store_root, &work_dir, &fixture_root]);
   normalized = normalized.replace(chain.run_id.as_str(), "<RUN_ID>");
+  for (uri, placeholder) in [
+    (semantic_metadata.uri(), "<BALATRO_SEMANTIC_URI>"),
+    (query_metadata.uri(), "<BALATRO_QUERY_URI>"),
+    (witness_metadata.uri(), "<BALATRO_WITNESS_URI>"),
+    (quality_metadata.uri(), "<BALATRO_QUALITY_URI>"),
+  ] {
+    normalized = normalized.replace(&uri.to_string(), placeholder);
+  }
   assert_or_update_golden("balatro.txt", &normalized);
   let _ = fs::remove_dir_all(store_root);
   let _ = fs::remove_dir_all(work_dir);
