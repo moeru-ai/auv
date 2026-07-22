@@ -19,8 +19,8 @@ pub use commands::playback::{
   PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson, run_playback_status_probe,
 };
 pub use commands::playlist::{
-  PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification,
-  run_playlist_play, run_playlist_play_candidate_id, run_playlist_select,
+  PlaylistPlayCandidate, PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectStep,
+  PlaylistSelectVerification, resolve_playlist_play_candidate, run_playlist_play, run_playlist_select,
 };
 pub use commands::transport::{TransportAction, TransportInputs, TransportResult, run_transport_action};
 pub use interaction::{InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction};

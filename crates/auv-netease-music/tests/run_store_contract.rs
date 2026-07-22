@@ -2,16 +2,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use auv_netease_music::recording::{
-  NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE, PLAYLIST_SELECT_RESULT_PURPOSE,
-  PLAYLIST_SIDEBAR_SCAN_PURPOSE, PersistedLineage, VIEW_MEMORY_PURPOSE, persist_playlist_ls_artifacts, persist_playlist_select_proof,
-  read_lineage_manifest, read_playlist_select_result, read_playlist_sidebar_scan, read_view_memory, write_lineage_manifest,
+  NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE, NeteaseArtifactPublishError,
+  PLAYLIST_SELECT_RESULT_PURPOSE, PLAYLIST_SIDEBAR_SCAN_PURPOSE, PersistedLineage, PlaylistSelectInstrumentation, VIEW_MEMORY_PURPOSE,
+  persist_playlist_ls_artifacts, persist_playlist_select_proof, read_lineage_manifest, read_playlist_select_result,
+  read_playlist_sidebar_scan, read_view_memory, write_lineage_manifest,
 };
-use auv_netease_music::{Inputs, PlaylistSelectResult, PlaylistSidebarScan, decode_playlist_sidebar_scan_json};
+use auv_netease_music::{
+  Inputs, PlaylistSelectResult, PlaylistSidebarScan, decode_playlist_sidebar_scan_json, resolve_playlist_play_candidate,
+};
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
   BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, Dispatch, ErrorCode, IdempotencyKey, MemoryRunStore, NewArtifact,
   PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription,
-  Sha256Digest, StoreArtifactRequest, configure, dispatcher,
+  Sha256Digest, StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
 };
 use auv_view::memory::ViewMemory;
 use futures_util::io::Cursor;
@@ -100,6 +103,18 @@ struct ArtifactBytesStore {
 
 struct RejectArtifactStore {
   inner: MemoryRunStore,
+}
+
+struct NoopTelemetryProjector;
+
+impl TelemetryProjector for NoopTelemetryProjector {
+  fn project(&self, _item: TelemetryItem) -> BoxFuture<'_, Result<(), TelemetryError>> {
+    Box::pin(async { Ok(()) })
+  }
+
+  fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
+    Box::pin(async { Ok(()) })
+  }
 }
 
 impl RejectArtifactStore {
@@ -373,6 +388,42 @@ fn disabled_context_skips_artifact_payload_validation() {
 }
 
 #[test]
+fn telemetry_only_context_skips_artifact_payload_validation() {
+  futures_executor::block_on(async {
+    let dispatch = configure()
+      .project_telemetry(Arc::new(NoopTelemetryProjector), TelemetryRoutePolicy::fixed_fields_only())
+      .build()
+      .expect("telemetry-only dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let mut select = sample_select_result();
+    select.known_limits.push("x".repeat((NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1) as usize));
+    let expected = select.clone();
+
+    let future = root.in_scope(|| persist_playlist_select_proof(&select));
+    let instrumentation = root.instrument(future).await;
+
+    assert!(matches!(instrumentation, PlaylistSelectInstrumentation::Disabled));
+    assert_eq!(select, expected);
+  });
+}
+
+#[test]
+fn authority_context_still_rejects_oversized_artifact_payload() {
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let mut select = sample_select_result();
+    select.known_limits.push("x".repeat((NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1) as usize));
+    let expected = select.clone();
+
+    let future = fixture.root.in_scope(|| persist_playlist_select_proof(&select));
+    let instrumentation = fixture.root.instrument(future).await;
+
+    assert!(matches!(instrumentation, PlaylistSelectInstrumentation::Failed(NeteaseArtifactPublishError::PayloadTooLarge { .. })));
+    assert_eq!(select, expected);
+  });
+}
+
+#[test]
 fn rejected_publication_is_distinct_from_disabled_publication() {
   futures_executor::block_on(async {
     let store = Arc::new(RejectArtifactStore::new());
@@ -418,6 +469,34 @@ fn standalone_cli_store_root_installs_current_run_context() {
   assert!(stdout.lines().any(|line| line.starts_with("scan_uri=auv://runs/")), "missing canonical scan URI in {stdout:?}");
 
   let _ = std::fs::remove_dir_all(store_root);
+}
+
+#[test]
+fn public_typed_candidate_operation_uses_caller_read_scan() {
+  futures_executor::block_on(async {
+    let fixture = NeteaseRunFixture::memory();
+    let scan = sample_scan();
+    let memory = fixture.persist_playlist_scan(&scan).await.memory.expect("typed view memory");
+
+    let candidate = resolve_playlist_play_candidate(scan.clone(), Some(memory.clone()), "obs1.candidate.hermetic.test")
+      .expect("typed candidate should resolve");
+
+    assert_eq!(candidate.scan, scan);
+    assert_eq!(candidate.memory.as_ref(), Some(&memory));
+    assert_eq!(candidate.target.label, "Hermetic Fixture Playlist");
+    assert_eq!(candidate.target.candidate_id.as_deref(), Some("obs1.candidate.hermetic.test"));
+  });
+}
+
+#[test]
+fn public_api_does_not_export_candidate_play_without_typed_scan() {
+  let crate_root = include_str!("../src/lib.rs");
+  let playlist_commands = include_str!("../src/commands/playlist.rs");
+  let legacy_name = ["run_playlist_play_", "candidate_id"].concat();
+  let legacy_signature = format!("pub fn {legacy_name}(");
+
+  assert!(!crate_root.contains(&legacy_name));
+  assert!(!playlist_commands.contains(&legacy_signature));
 }
 
 fn sample_scan() -> PlaylistSidebarScan {

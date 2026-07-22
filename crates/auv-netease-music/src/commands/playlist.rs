@@ -69,6 +69,28 @@ pub(crate) struct CanonicalPlaylistArtifacts {
   pub read_limits: Vec<String>,
 }
 
+/// Caller-owned typed inputs resolved for candidate-based playlist playback.
+#[derive(Clone, Debug)]
+pub struct PlaylistPlayCandidate {
+  pub scan: crate::PlaylistSidebarScan,
+  pub target: PlaylistSelectTarget,
+  pub memory: Option<auv_view::memory::ViewMemory>,
+}
+
+/// Resolves a candidate from caller-read canonical artifacts without acquiring storage authority.
+pub fn resolve_playlist_play_candidate(
+  scan: crate::PlaylistSidebarScan,
+  memory: Option<auv_view::memory::ViewMemory>,
+  candidate_id: &str,
+) -> Result<PlaylistPlayCandidate, String> {
+  let target = scan.select_target_by_candidate_id(candidate_id)?;
+  Ok(PlaylistPlayCandidate {
+    scan,
+    target,
+    memory,
+  })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlaylistSelectTargetResolveSource {
   RunArtifact,
@@ -893,17 +915,15 @@ pub(crate) fn run_playlist_play_with_artifacts(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn run_playlist_play_candidate_id(_inputs: &Inputs, _candidate_id: &str) -> Result<PlaylistPlayResult, String> {
-  Err("live NetEase playlist play is only supported on macOS".to_string())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn run_playlist_play_candidate_id_with_artifacts(
-  inputs: &Inputs,
+pub(crate) fn run_playlist_play_candidate_with_artifacts(
+  _inputs: &Inputs,
   candidate_id: &str,
-  _artifacts: &CanonicalPlaylistArtifacts,
+  artifacts: &CanonicalPlaylistArtifacts,
 ) -> Result<PlaylistPlayResult, String> {
-  run_playlist_play_candidate_id(inputs, candidate_id)
+  let scan =
+    artifacts.scan.clone().ok_or_else(|| "playlist play --candidate-id requires a caller-read canonical playlist scan URI".to_string())?;
+  let _candidate = resolve_playlist_play_candidate(scan, artifacts.memory.clone(), candidate_id)?;
+  Err("live NetEase playlist play is only supported on macOS".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -1501,20 +1521,19 @@ pub(crate) fn run_playlist_play_with_artifacts(
 }
 
 #[cfg(target_os = "macos")]
-pub fn run_playlist_play_candidate_id(inputs: &Inputs, candidate_id: &str) -> Result<PlaylistPlayResult, String> {
-  run_playlist_play_candidate_id_with_artifacts(inputs, candidate_id, &CanonicalPlaylistArtifacts::default())
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn run_playlist_play_candidate_id_with_artifacts(
+pub(crate) fn run_playlist_play_candidate_with_artifacts(
   inputs: &Inputs,
   candidate_id: &str,
   artifacts: &CanonicalPlaylistArtifacts,
 ) -> Result<PlaylistPlayResult, String> {
   let scan =
     artifacts.scan.clone().ok_or_else(|| "playlist play --candidate-id requires a caller-read canonical playlist scan URI".to_string())?;
-  let target = scan.select_target_by_candidate_id(candidate_id)?;
-  run_playlist_play_resolved(inputs, candidate_id, scan, target, true, artifacts.memory.as_ref(), artifacts.read_limits.clone())
+  let PlaylistPlayCandidate {
+    scan,
+    target,
+    memory,
+  } = resolve_playlist_play_candidate(scan, artifacts.memory.clone(), candidate_id)?;
+  run_playlist_play_resolved(inputs, candidate_id, scan, target, true, memory.as_ref(), artifacts.read_limits.clone())
 }
 
 #[cfg(target_os = "macos")]

@@ -88,6 +88,14 @@ impl Context {
     self.run_id.is_some() && self.dispatch.as_ref().is_some_and(Dispatch::is_enabled)
   }
 
+  /// Reports whether this context can publish artifacts to a local run authority.
+  ///
+  /// Telemetry-only dispatches and remotely propagated correlation remain
+  /// enabled contexts, but neither supplies writable artifact authority.
+  pub fn can_publish_artifacts(&self) -> bool {
+    self.run_id.is_some() && self.dispatch.as_ref().is_some_and(|dispatch| dispatch.authority_id().is_some())
+  }
+
   pub(crate) fn dispatch(&self) -> Option<&Dispatch> {
     self.dispatch.as_ref()
   }

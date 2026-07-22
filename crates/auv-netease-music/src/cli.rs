@@ -1839,7 +1839,7 @@ fn run_playlist_play_command(cmd: PlaylistPlayCommand, artifacts: &crate::comman
   let result = match &cmd.target {
     PlaylistPlayTarget::Query(query) => crate::commands::playlist::run_playlist_play_with_artifacts(&cmd.inputs, query, artifacts),
     PlaylistPlayTarget::CandidateId(candidate_id) => {
-      crate::commands::playlist::run_playlist_play_candidate_id_with_artifacts(&cmd.inputs, candidate_id, artifacts)
+      crate::commands::playlist::run_playlist_play_candidate_with_artifacts(&cmd.inputs, candidate_id, artifacts)
     }
   };
   let result = match result {
