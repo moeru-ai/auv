@@ -13,7 +13,9 @@ mod tests {
   use std::collections::HashMap;
 
   use crate::v1::session::session_service_client::SessionServiceClient;
-  use crate::v1::session::{ArtifactRef, FILE_DESCRIPTOR_SET, GetOperationResponse, InvokeRequest, OperationRef, SessionRef};
+  use crate::v1::session::{
+    ArtifactRef, ControlFailure, FILE_DESCRIPTOR_SET, GetOperationResponse, InvokeRequest, OperationRef, SessionRef,
+  };
   use prost::Message;
   use prost_types::FileDescriptorSet;
 
@@ -53,6 +55,11 @@ mod tests {
       }],
       failure_message: "invalid payload".to_string(),
       known_limits: vec!["json_payload_max_bytes".to_string()],
+      control_failure: Some(ControlFailure {
+        layer: "control_failed".to_string(),
+        message: "accessibility permission was denied".to_string(),
+        recovery: "grant Accessibility in System Settings".to_string(),
+      }),
     };
 
     let encoded = response.encode_to_vec();
@@ -66,6 +73,10 @@ mod tests {
     assert_eq!(operation.operation_id, "minecraft.query");
     assert_eq!(decoded.artifacts.len(), 1);
     assert_eq!(decoded.signals.get("exit_code"), Some(&"1".to_string()));
+    let control_failure = decoded.control_failure.expect("control_failure should round-trip");
+    assert_eq!(control_failure.layer, "control_failed");
+    assert_eq!(control_failure.message, "accessibility permission was denied");
+    assert_eq!(control_failure.recovery, "grant Accessibility in System Settings");
   }
 
   #[test]

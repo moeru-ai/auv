@@ -202,6 +202,29 @@ fn textedit_control_failure_persists_typed_classification_across_inspect_surface
     control_failure.message
   );
 
+  // Reload through a fresh SessionService handler: the GetOperation projection
+  // must read the canonical persisted OperationResult, not a process-local cache
+  // or the transient InvokeResult signal carrier.
+  let reloaded_handler = auv_runtime::api::session_service::handler::SessionApiHandler::new(root.clone());
+  let get_operation = reloaded_handler
+    .get_operation(auv_api_proto::v1::session::GetOperationRequest {
+      operation: Some(auv_api_proto::v1::session::OperationRef {
+        run_id: run_id.clone(),
+        operation_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
+      }),
+    })
+    .expect("GetOperation should reload the persisted TextEdit control failure");
+  assert_eq!(get_operation.status, "failed");
+  let get_control_failure = get_operation.control_failure.expect("GetOperation must expose persisted control_failure");
+  assert_eq!(get_control_failure.layer, "control_failed");
+  assert!(
+    !get_control_failure.message.contains("grant Accessibility to the terminal in System Settings"),
+    "GetOperation message must exclude the separately stored recovery hint: {}",
+    get_control_failure.message
+  );
+  assert_eq!(get_control_failure.message, control_failure.message);
+  assert_eq!(get_control_failure.recovery, "grant Accessibility to the terminal in System Settings");
+
   let run = store.read_run(&run_id).expect("run");
   assert_eq!(run.run.status_code, TraceStatusCode::Error);
 

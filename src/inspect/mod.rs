@@ -327,12 +327,7 @@ fn render_optional_bool(value: Option<bool>) -> &'static str {
 
 fn render_failure_layer(layer: Option<FailureLayer>) -> &'static str {
   match layer {
-    Some(FailureLayer::GroundingFailed) => "grounding_failed",
-    Some(FailureLayer::CandidateExpired) => "candidate_expired",
-    Some(FailureLayer::ControlFailed) => "control_failed",
-    Some(FailureLayer::VerificationUnreliable) => "verification_unreliable",
-    Some(FailureLayer::StateChangedNoMatch) => "state_changed_no_match",
-    Some(FailureLayer::SemanticMismatch) => "semantic_mismatch",
+    Some(layer) => layer.as_str(),
     None => "n/a",
   }
 }

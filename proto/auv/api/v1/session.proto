@@ -65,6 +65,19 @@ message GetOperationRequest {
   OperationRef operation = 1;
 }
 
+// Typed control-layer failure classification, projected read-side from the
+// persisted OperationResult.control_failure. Present only when a control step
+// (activate / focus / paste, etc.) failed before any verification ran, so the
+// failure cannot be expressed as a verification outcome.
+message ControlFailure {
+  // Which pipeline layer failed, as a snake_case string from the internal
+  // FailureLayer taxonomy (e.g. "control_failed"). String, not enum, matching
+  // the experimental status-as-string convention on this surface.
+  string layer = 1;
+  string message = 2; // human-readable failure detail
+  string recovery = 3; // optional recovery hint; empty when absent
+}
+
 message GetOperationResponse {
   OperationRef operation = 1;
   string status = 2; // same vocabulary as InvokeResponse: "completed" | "failed"
@@ -73,6 +86,9 @@ message GetOperationResponse {
   repeated ArtifactRef artifacts = 5;
   string failure_message = 6; // empty when absent
   repeated string known_limits = 7; // aligns with InvokeResponse / internal OperationResult
+  // Typed control-layer failure from the persisted OperationResult; unset when
+  // the operation had no control-layer failure (proto3 message presence).
+  ControlFailure control_failure = 8;
 }
 
 message StreamSessionEventsRequest {

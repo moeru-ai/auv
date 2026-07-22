@@ -10,7 +10,7 @@ use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
 use crate::api::session_service::SessionApiError;
 use crate::api::session_service::summary::{ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary};
-use crate::contract::{ArtifactRef as ContractArtifactRef, OperationStatus};
+use crate::contract::{ArtifactRef as ContractArtifactRef, ControlFailure, OperationStatus};
 
 /// Status string shared by `InvokeResponse` and `GetOperationResponse`
 /// (`"completed"` | `"failed"`).
@@ -119,6 +119,18 @@ pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult, extra_
   }
 }
 
+// API-R2 read side: project the persisted typed control-layer failure onto the
+// proto surface. `layer` uses the shared `FailureLayer::as_str` snake_case wire
+// spelling (single source of truth, also used by inspect text render); recovery
+// collapses `None` to the empty string per the proto "empty when absent" rule.
+fn control_failure_to_proto(control_failure: &ControlFailure) -> proto::ControlFailure {
+  proto::ControlFailure {
+    layer: control_failure.layer.as_str().to_string(),
+    message: control_failure.message.clone(),
+    recovery: control_failure.recovery.clone().unwrap_or_default(),
+  }
+}
+
 /// Map a joined two-source summary (API-P7) to a proto `GetOperationResponse`.
 pub fn joined_to_get_operation_response(joined: &JoinedOperationSummary) -> proto::GetOperationResponse {
   let mut known_limits = joined.known_limits.clone();
@@ -150,6 +162,7 @@ pub fn joined_to_get_operation_response(joined: &JoinedOperationSummary) -> prot
       .collect(),
     failure_message,
     known_limits,
+    control_failure: joined.control_failure.as_ref().map(control_failure_to_proto),
   }
 }
 
@@ -162,7 +175,7 @@ mod tests {
   use super::{decode_invoke_payload, invoke_result_to_response, joined_to_get_operation_response};
   use crate::api::session_service::SessionApiError;
   use crate::api::session_service::summary::{ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary, RuntimeOperationSummary};
-  use crate::contract::{ArtifactRef as ContractArtifactRef, OperationStatus};
+  use crate::contract::{ArtifactRef as ContractArtifactRef, ControlFailure, FailureLayer, OperationStatus};
   use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
 
   #[test]
@@ -251,6 +264,7 @@ mod tests {
       known_limits: vec!["lim".to_string()],
       artifacts: Vec::new(),
       artifact_roles: BTreeMap::new(),
+      control_failure: None,
       runtime: Some(RuntimeOperationSummary {
         output_summary: "did the thing".to_string(),
         signals: BTreeMap::from([("k".to_string(), "v".to_string())]),
@@ -275,6 +289,7 @@ mod tests {
       known_limits: Vec::new(),
       artifacts: Vec::new(),
       artifact_roles: BTreeMap::new(),
+      control_failure: None,
       runtime: None,
     };
     let response = joined_to_get_operation_response(&joined);
@@ -295,6 +310,7 @@ mod tests {
       ],
       artifacts: Vec::new(),
       artifact_roles: BTreeMap::new(),
+      control_failure: None,
       runtime: Some(RuntimeOperationSummary {
         output_summary: "runtime failed".to_string(),
         signals: BTreeMap::new(),
@@ -323,6 +339,7 @@ mod tests {
         captured_event_id: None,
       }],
       artifact_roles: BTreeMap::from([(artifact_id.as_str().to_string(), "evidence-pack".to_string())]),
+      control_failure: None,
       runtime: None,
     };
     let response = joined_to_get_operation_response(&joined);
@@ -346,10 +363,52 @@ mod tests {
         captured_event_id: None,
       }],
       artifact_roles: BTreeMap::new(),
+      control_failure: None,
       runtime: None,
     };
     let response = joined_to_get_operation_response(&joined);
     assert!(response.artifacts[0].role.is_empty());
     assert!(response.known_limits.iter().any(|limit| limit == ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT));
+  }
+
+  #[test]
+  fn joined_surfaces_persisted_control_failure() {
+    let joined = JoinedOperationSummary {
+      run_id: "run-cf".to_string(),
+      domain_operation_id: "app.textedit.document.write".to_string(),
+      command_id: Some("app.textedit.document.write".to_string()),
+      status: OperationStatus::Failed,
+      known_limits: Vec::new(),
+      artifacts: Vec::new(),
+      artifact_roles: BTreeMap::new(),
+      control_failure: Some(ControlFailure {
+        layer: FailureLayer::ControlFailed,
+        message: "accessibility permission was denied".to_string(),
+        recovery: Some("grant Accessibility in System Settings".to_string()),
+      }),
+      runtime: None,
+    };
+    let response = joined_to_get_operation_response(&joined);
+    let control_failure = response.control_failure.expect("control_failure should be surfaced");
+    assert_eq!(control_failure.layer, "control_failed");
+    assert_eq!(control_failure.message, "accessibility permission was denied");
+    assert_eq!(control_failure.recovery, "grant Accessibility in System Settings");
+  }
+
+  #[test]
+  fn joined_without_control_failure_leaves_proto_field_unset() {
+    let joined = JoinedOperationSummary {
+      run_id: "run-no-cf".to_string(),
+      domain_operation_id: "op".to_string(),
+      command_id: Some("music.search".to_string()),
+      status: OperationStatus::Completed,
+      known_limits: Vec::new(),
+      artifacts: Vec::new(),
+      artifact_roles: BTreeMap::new(),
+      control_failure: None,
+      runtime: None,
+    };
+    let response = joined_to_get_operation_response(&joined);
+    assert!(response.control_failure.is_none());
   }
 }

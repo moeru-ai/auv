@@ -598,6 +598,23 @@ pub enum FailureLayer {
   SemanticMismatch,
 }
 
+impl FailureLayer {
+  /// Stable snake_case wire string for this layer, matching the serde
+  /// `rename_all = "snake_case"` representation. Shared by the inspect text
+  /// render and the session-API proto mapper so the taxonomy has one wire
+  /// spelling rather than a hand-written copy per consumer.
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::GroundingFailed => "grounding_failed",
+      Self::CandidateExpired => "candidate_expired",
+      Self::ControlFailed => "control_failed",
+      Self::VerificationUnreliable => "verification_unreliable",
+      Self::StateChangedNoMatch => "state_changed_no_match",
+      Self::SemanticMismatch => "semantic_mismatch",
+    }
+  }
+}
+
 /// Coarse evidence source for an [`ObservationSnapshot`]. AX trees, OCR
 /// fragments, visual detectors, and fused outputs all project into one
 /// [`SurfaceNode`] shape — the snapshot still tags its origin so downstream
@@ -1581,5 +1598,32 @@ mod tests {
     let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
     assert_eq!(parsed.status, OperationStatus::Completed);
     assert_eq!(parsed.verifications[0].semantic_matched, Some(false));
+  }
+
+  // ROOT CAUSE:
+  //
+  // `FailureLayer::as_str` is a hand-written token table used by the proto
+  // mapper and the inspect text render, while the persisted `OperationResult`
+  // JSON, the HTTP inspect enrichment, and the textedit signal round-trip use
+  // serde's `rename_all = "snake_case"` spelling. If the two ever disagree, the
+  // RPC/inspect-text layer string would silently diverge from the JSON spelling
+  // for the same failure.
+  //
+  // This pins `as_str()` to the serde token for every variant so the "single
+  // wire spelling" invariant is enforced, not just asserted in a doc comment.
+  // The match is exhaustive, so a new variant forces a new arm here too.
+  #[test]
+  fn failure_layer_as_str_matches_serde_token_for_every_variant() {
+    for layer in [
+      FailureLayer::GroundingFailed,
+      FailureLayer::CandidateExpired,
+      FailureLayer::ControlFailed,
+      FailureLayer::VerificationUnreliable,
+      FailureLayer::StateChangedNoMatch,
+      FailureLayer::SemanticMismatch,
+    ] {
+      let serde_token = serde_json::to_value(layer).expect("layer serializes").as_str().expect("layer serializes as a string").to_string();
+      assert_eq!(layer.as_str(), serde_token, "as_str must equal the serde snake_case token for {layer:?}");
+    }
   }
 }

@@ -375,6 +375,47 @@ mod tests {
     let _ = std::fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn get_operation_after_new_handler_reads_persisted_control_failure_without_runtime_cache() {
+    use crate::api::session_service::test_fixtures::{music_search_operation, persist_operation_result_on_store};
+    use crate::contract::{ControlFailure, FailureLayer, OperationStatus};
+
+    let root = unique_temp_dir("session-api-persisted-control-failure");
+    let handler = SessionApiHandler::new(root.clone());
+    let store = handler.open_store().expect("open store");
+    let run_id = "run-persisted-control-failure";
+    let mut operation = music_search_operation(run_id);
+    operation.operation_id = "app.textedit.document.write".to_string();
+    operation.status = OperationStatus::Failed;
+    operation.control_failure = Some(ControlFailure {
+      layer: FailureLayer::ControlFailed,
+      message: "accessibility permission was denied".to_string(),
+      recovery: Some("grant Accessibility in System Settings".to_string()),
+    });
+    persist_operation_result_on_store(&store, &root, run_id, &operation);
+
+    // A fresh handler has no process-local runtime summary cache. The typed
+    // classification must still come from the persisted OperationResult.
+    let reloaded_handler = SessionApiHandler::new(root.clone());
+    assert!(reloaded_handler.summaries.lock().expect("summary cache mutex poisoned").is_empty());
+    let response = reloaded_handler
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: run_id.to_string(),
+          operation_id: String::new(),
+        }),
+      })
+      .expect("get_operation should reload persisted control failure");
+
+    assert_eq!(response.status, "failed");
+    let control_failure = response.control_failure.expect("persisted control failure should survive reload");
+    assert_eq!(control_failure.layer, "control_failed");
+    assert_eq!(control_failure.message, "accessibility permission was denied");
+    assert_eq!(control_failure.recovery, "grant Accessibility in System Settings");
+
+    let _ = std::fs::remove_dir_all(root);
+  }
+
   #[cfg(unix)]
   #[test]
   fn get_operation_reads_preseeded_skeleton_when_invoke_durability_writes_fail() {

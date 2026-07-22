@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use auv_cli_invoke::{OperationSummary, OperationSummarySource, RunStatus};
 use auv_tracing_driver::store::LocalStore;
 
-use crate::contract::{ArtifactRef, OperationResult, OperationStatus};
+use crate::contract::{ArtifactRef, ControlFailure, OperationResult, OperationStatus};
 use crate::model::AuvResult;
 use crate::run_read;
 
@@ -87,6 +87,11 @@ pub struct JoinedOperationSummary {
   pub artifacts: Vec<ArtifactRef>,
   /// Run artifact catalog `artifact_id` → `role` (API-P12).
   pub artifact_roles: BTreeMap<String, String>,
+  /// Typed control-layer failure lifted from the persisted `OperationResult`
+  /// (`None` when the operation had no control-layer failure). The read
+  /// projection carries it through to the `GetOperation` response rather than
+  /// dropping the persisted classification.
+  pub control_failure: Option<ControlFailure>,
   // InvokeResult-sourced (runtime return value, may be absent).
   pub runtime: Option<RuntimeOperationSummary>,
 }
@@ -125,6 +130,7 @@ pub fn join_operation_summary(
     known_limits,
     artifacts: operation.evidence_artifacts.clone(),
     artifact_roles,
+    control_failure: operation.control_failure.clone(),
     runtime: runtime.map(RuntimeOperationSummary::from_source),
   }
 }
@@ -304,6 +310,24 @@ mod tests {
     assert!(joined.known_limits.iter().any(|limit| limit == "auv.api.session.runtime_status_mismatch"));
     let runtime = joined.runtime.expect("runtime summary should be present");
     assert_eq!(runtime.failure_message.as_deref(), Some("boom"));
+  }
+
+  #[test]
+  fn join_carries_persisted_control_failure() {
+    let mut operation = sample_operation("run-cf");
+    operation.control_failure = Some(crate::contract::ControlFailure {
+      layer: crate::contract::FailureLayer::ControlFailed,
+      message: "accessibility permission was denied".to_string(),
+      recovery: Some("grant Accessibility in System Settings".to_string()),
+    });
+    let (command_id, roles) = join_args("app.textedit.document.write");
+
+    let joined = join_operation_summary(&operation, None, command_id, roles);
+
+    let control_failure = joined.control_failure.expect("control_failure should carry through the join");
+    assert_eq!(control_failure.layer, crate::contract::FailureLayer::ControlFailed);
+    assert_eq!(control_failure.message, "accessibility permission was denied");
+    assert_eq!(control_failure.recovery.as_deref(), Some("grant Accessibility in System Settings"));
   }
 
   #[test]
