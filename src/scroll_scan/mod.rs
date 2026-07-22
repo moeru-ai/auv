@@ -27,11 +27,14 @@ use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::now_millis;
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
 use crate::runtime::Runtime;
+use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, NewArtifact, Sha256Digest};
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::trace::{RunId, SpanId};
+use futures_util::io::Cursor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ScanRegion {
@@ -299,6 +302,8 @@ pub struct ScrollScanArtifact {
   pub warnings: Vec<String>,
 }
 
+pub const SCROLL_SCAN_PURPOSE: &str = "auv.runtime.scroll_scan";
+
 #[derive(Clone, Debug)]
 pub struct ScanWindowRegionOptions {
   pub target: ScanTarget,
@@ -314,12 +319,12 @@ pub struct ScanWindowRegionOptions {
 // JSON recipe execution. Reintroduce hook composition only as typed Rust
 // interaction hooks once `auv-tracing-interaction` owns macro-operation
 // recording.
-pub fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<RunId> {
+pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<RunId> {
   let recording = runtime.recording().handle();
   let mut run = recording.start_run(RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.scan.window_region"))?;
   let root = run.root_span();
 
-  match scan_window_region_into_run(&recording, runtime, &mut run, &root, options) {
+  match scan_window_region_into_run(&recording, runtime, &mut run, &root, options).await {
     Ok(summary) => recording.finish_run(
       run,
       auv_tracing_driver::run_builder::RunFinish {
@@ -345,7 +350,7 @@ pub fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -
   }
 }
 
-fn scan_window_region_into_run(
+async fn scan_window_region_into_run(
   recording: &RecordingHandle,
   runtime: &Runtime,
   run: &mut auv_tracing_driver::run_builder::RecordingRun,
@@ -460,11 +465,12 @@ fn scan_window_region_into_run(
     state.warnings.push("scan ended with an error; artifact is partial".to_string());
   }
   let artifact = state.into_artifact(run.id(), root.id(), run.id().to_string(), options.target, options.stop_policy, final_decision);
-  if let Err(stage_error) = stage_scan_artifact(recording, run, root, &artifact) {
-    if let Some(error) = scan_error {
-      return Err(format!("{error}; additionally failed to stage partial scroll-scan artifact: {stage_error}"));
-    }
-    return Err(stage_error);
+  if auv_tracing::Context::current().authority_id().is_some()
+    && let Ok(new_artifact) = new_scroll_scan_artifact(&artifact)
+  {
+    // The direct scan result is authoritative. The frontend-owned dispatch
+    // flush reports publication failures without retrying or replacing it.
+    let _ = auv_tracing::emit_artifact!(new_artifact).await;
   }
   if let Some(error) = scan_error {
     return Err(error);
@@ -475,6 +481,20 @@ fn scan_window_region_into_run(
     artifact.pages.len(),
     artifact.observations.len(),
     artifact.clusters.len()
+  ))
+}
+
+fn new_scroll_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<NewArtifact<Cursor<Vec<u8>>>> {
+  let bytes = serde_json::to_vec(artifact).map_err(|error| format!("failed to serialize {SCROLL_SCAN_PURPOSE} artifact: {error}"))?;
+  let byte_length = u64::try_from(bytes.len()).map_err(|_| format!("{SCROLL_SCAN_PURPOSE} artifact length does not fit u64"))?;
+  let byte_length = ByteLength::new(byte_length).map_err(|error| format!("invalid {SCROLL_SCAN_PURPOSE} artifact length: {error}"))?;
+  Ok(NewArtifact::new(
+    ArtifactPurpose::parse(SCROLL_SCAN_PURPOSE).map_err(|error| format!("invalid {SCROLL_SCAN_PURPOSE} artifact purpose: {error}"))?,
+    ContentType::parse("application/json").map_err(|error| format!("invalid {SCROLL_SCAN_PURPOSE} artifact content type: {error}"))?,
+    byte_length,
+    Sha256Digest::new(Sha256::digest(&bytes).into()),
+    Attributes::empty(),
+    Cursor::new(bytes),
   ))
 }
 
@@ -1334,36 +1354,6 @@ fn sanitize_scan_artifact_component(raw: &str) -> String {
   }
 }
 
-fn stage_scan_artifact(
-  recording: &RecordingHandle,
-  run: &mut auv_tracing_driver::run_builder::RecordingRun,
-  root: &auv_tracing_driver::run_builder::SpanRef,
-  artifact: &ScrollScanArtifact,
-) -> AuvResult<PathBuf> {
-  let temp_path = write_scan_artifact(artifact)?;
-  let stage_result = recording.stage_artifact_file(
-    run,
-    root,
-    "scroll-scan",
-    &temp_path,
-    "scroll-scan.json",
-    Some("Runtime window-region scroll scan artifact.".to_string()),
-  );
-  let cleanup_result = fs::remove_file(&temp_path);
-  match (stage_result, cleanup_result) {
-    (Ok(staged_path), Ok(())) => Ok(staged_path),
-    (Ok(staged_path), Err(_)) => Ok(staged_path),
-    (Err(error), Ok(())) | (Err(error), Err(_)) => Err(error),
-  }
-}
-
-fn write_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<PathBuf> {
-  let path = env::temp_dir().join(format!("auv-scroll-scan-{}-{}-{}.json", artifact.scan_id, process::id(), now_millis()));
-  let rendered = serde_json::to_string_pretty(artifact).map_err(|error| format!("failed to render scan artifact JSON: {error}"))?;
-  fs::write(&path, format!("{rendered}\n")).map_err(|error| format!("failed to write scan artifact {}: {error}", path.display()))?;
-  Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2194,14 +2184,15 @@ mod tests {
     assert_eq!(count_new_observations(&[visual], &mut known), 0);
   }
 
-  #[test]
-  fn scan_window_region_reports_missing_typed_observe_region_api() {
+  #[tokio::test]
+  async fn scan_window_region_reports_missing_typed_observe_region_api() {
     let project_root = temp_dir("scroll-scan-snapshot-project");
     let store_root = temp_dir("scroll-scan-snapshot-store");
     let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
     let options = bounded_scan_options();
 
-    let error = scan_window_region(&runtime, options).expect_err("scroll scan should wait for a typed observe-region invoke implementation");
+    let error =
+      scan_window_region(&runtime, options).await.expect_err("scroll scan should wait for a typed observe-region invoke implementation");
 
     assert!(error.contains("window.observeRegion"));
     assert!(error.contains("typed window region observation API"));
