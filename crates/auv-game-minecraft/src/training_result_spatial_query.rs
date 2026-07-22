@@ -39,7 +39,8 @@ pub async fn publish_minecraft_training_spatial_query(
   context: Option<&Context>,
   query: &TrainingResultSpatialQueryManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE, query, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE, query, validate_training_spatial_query_payload)
+    .await
 }
 
 pub async fn read_minecraft_training_spatial_query(
@@ -47,7 +48,26 @@ pub async fn read_minecraft_training_spatial_query(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<TrainingResultSpatialQueryManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(
+    store,
+    snapshot,
+    uri,
+    MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE,
+    validate_training_spatial_query_payload,
+  )
+  .await
+}
+
+fn validate_training_spatial_query_payload(query: &TrainingResultSpatialQueryManifest) -> Result<(), String> {
+  if query.schema_version != TRAINING_RESULT_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training spatial query schema_version {} (expected {TRAINING_RESULT_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION})",
+      query.schema_version
+    ));
+  }
+  // TODO(minecraft-training-spatial-query-invariants): Add cross-field checks
+  // when the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 
 const QUERY_MANIFEST_FILE: &str = "minecraft-3dgs-training-result-query.json";

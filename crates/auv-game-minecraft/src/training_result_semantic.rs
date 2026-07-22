@@ -25,7 +25,7 @@ pub async fn publish_minecraft_training_semantic(
   context: Option<&Context>,
   semantic: &TrainingResultSemanticManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_SEMANTIC_PURPOSE, semantic, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_SEMANTIC_PURPOSE, semantic, validate_training_semantic_payload).await
 }
 
 pub async fn read_minecraft_training_semantic(
@@ -33,7 +33,19 @@ pub async fn read_minecraft_training_semantic(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<TrainingResultSemanticManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_SEMANTIC_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_SEMANTIC_PURPOSE, validate_training_semantic_payload).await
+}
+
+fn validate_training_semantic_payload(semantic: &TrainingResultSemanticManifest) -> Result<(), String> {
+  if semantic.schema_version != TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training semantic schema_version {} (expected {TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION})",
+      semantic.schema_version
+    ));
+  }
+  // TODO(minecraft-training-semantic-invariants): Add cross-field checks when
+  // the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 
 const RESULT_CONFIG_FILE: &str = "config.yml";

@@ -20,7 +20,7 @@ pub async fn publish_minecraft_scene_packet(
   context: Option<&Context>,
   packet: &ScenePacketManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_SCENE_PACKET_PURPOSE, packet, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(context, MINECRAFT_SCENE_PACKET_PURPOSE, packet, validate_scene_packet_payload).await
 }
 
 pub async fn read_minecraft_scene_packet(
@@ -28,7 +28,19 @@ pub async fn read_minecraft_scene_packet(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<ScenePacketManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_SCENE_PACKET_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_SCENE_PACKET_PURPOSE, validate_scene_packet_payload).await
+}
+
+fn validate_scene_packet_payload(packet: &ScenePacketManifest) -> Result<(), String> {
+  if packet.schema_version != SCENE_PACKET_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft scene packet schema_version {} (expected {SCENE_PACKET_SCHEMA_VERSION})",
+      packet.schema_version
+    ));
+  }
+  // TODO(minecraft-scene-packet-invariants): Add cross-field checks when the
+  // owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -208,18 +208,28 @@ pub(crate) fn derive_quality_baseline(
     holdout_frame_index: 6,
   };
 
-  let spatial_query = spatial_queries.iter().find(|artifact| spatial_query_matches_profile(&artifact.payload, profile)).cloned();
-  let holdout_witness = holdout_previews.iter().find(|artifact| holdout_matches_profile(&artifact.payload, profile)).cloned();
+  let exact_spatial_query = spatial_queries.iter().find(|artifact| spatial_query_matches_profile(&artifact.payload, profile)).cloned();
+  let spatial_query = exact_spatial_query.or_else(|| {
+    spatial_queries.iter().find(|artifact| artifact.payload.training_result_semantic_manifest_path == SEMANTIC_MANIFEST).cloned()
+  });
+  let exact_holdout_witness = holdout_previews.iter().find(|artifact| holdout_matches_profile(&artifact.payload, profile)).cloned();
+  let holdout_witness = exact_holdout_witness.or_else(|| {
+    holdout_previews.iter().find(|artifact| artifact.payload.training_result_semantic_manifest_path == SEMANTIC_MANIFEST).cloned()
+  });
   let exact_render = render_quality.iter().find(|artifact| render_matches_profile(&artifact.payload, profile)).cloned();
   let render_quality = exact_render.or_else(|| {
     render_quality.iter().find(|artifact| artifact.payload.training_result_semantic_manifest_path == SEMANTIC_MANIFEST).cloned()
   });
 
   let mut mismatched_stages = Vec::new();
-  if let Some(artifact) = &render_quality {
-    if !render_matches_profile(&artifact.payload, profile) {
-      mismatched_stages.push(QualityStage::RenderQuality);
-    }
+  if spatial_query.as_ref().is_some_and(|artifact| !spatial_query_matches_profile(&artifact.payload, profile)) {
+    mismatched_stages.push(QualityStage::SpatialQuery);
+  }
+  if holdout_witness.as_ref().is_some_and(|artifact| !holdout_matches_profile(&artifact.payload, profile)) {
+    mismatched_stages.push(QualityStage::HoldoutWitness);
+  }
+  if render_quality.as_ref().is_some_and(|artifact| !render_matches_profile(&artifact.payload, profile)) {
+    mismatched_stages.push(QualityStage::RenderQuality);
   }
 
   let stage_count = usize::from(spatial_query.is_some()) + usize::from(holdout_witness.is_some()) + usize::from(render_quality.is_some());
@@ -516,5 +526,172 @@ fn visibility_label(visibility: ProjectionVisibility) -> &'static str {
     ProjectionVisibility::BehindCamera => "behind_camera",
     ProjectionVisibility::OutOfFrustum => "out_of_frustum",
     ProjectionVisibility::OutsideWindow => "outside_window",
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use auv_tracing::{ArtifactId, ArtifactUri, RunId};
+  use serde::de::DeserializeOwned;
+  use serde_json::json;
+
+  use super::*;
+
+  #[test]
+  fn spatial_profile_mismatch_is_retained_and_blocks_verdicts() {
+    let mut spatial = sample_spatial_query();
+    spatial.target_block = BlockPosition::new(512, 73, 728);
+
+    let baseline = derive_quality_baseline(&[inspected(spatial)], &[inspected(sample_holdout())], &[inspected(sample_render_quality())]);
+
+    assert!(baseline.spatial_query.is_some());
+    assert_eq!(baseline.mismatched_stages, [QualityStage::SpatialQuery]);
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Partial);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+    assert_eq!(baseline.verdicts.trained_render.quality_verdict, QualityVerdictOutcome::Blocked);
+  }
+
+  #[test]
+  fn holdout_profile_mismatch_is_retained_and_blocks_verdicts() {
+    let mut holdout = sample_holdout();
+    holdout.holdout_frame_index = 7;
+
+    let baseline =
+      derive_quality_baseline(&[inspected(sample_spatial_query())], &[inspected(holdout)], &[inspected(sample_render_quality())]);
+
+    assert!(baseline.holdout_witness.is_some());
+    assert_eq!(baseline.mismatched_stages, [QualityStage::HoldoutWitness]);
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Partial);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+  }
+
+  #[test]
+  fn blocked_stage_produces_blocked_quality_verdict() {
+    let mut spatial = sample_spatial_query();
+    spatial.status = TrainingResultSpatialQueryStatus::Blocked;
+
+    let baseline = derive_quality_baseline(&[inspected(spatial)], &[inspected(sample_holdout())], &[inspected(sample_render_quality())]);
+
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Complete);
+    assert_eq!(baseline.verdicts.probe.stage_checks[0].outcome, QualityStageOutcome::Blocked);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+  }
+
+  #[test]
+  fn partial_render_evidence_produces_partial_quality_verdict() {
+    let mut render = sample_render_quality();
+    render.verdict = HoldoutRenderQualityVerdict::MetricPartial;
+
+    let baseline = derive_quality_baseline(&[inspected(sample_spatial_query())], &[inspected(sample_holdout())], &[inspected(render)]);
+
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Complete);
+    assert_eq!(baseline.verdicts.probe.stage_checks[2].outcome, QualityStageOutcome::Partial);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Partial);
+  }
+
+  #[test]
+  fn metric_threshold_failures_produce_failed_quality_verdicts() {
+    let mut render = sample_render_quality();
+    let metrics = render.metrics.as_mut().expect("render metrics");
+    metrics.l1_mean = Some(0.1);
+    metrics.mse = Some(0.1);
+    metrics.psnr = Some(10.0);
+
+    let baseline = derive_quality_baseline(&[inspected(sample_spatial_query())], &[inspected(sample_holdout())], &[inspected(render)]);
+
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Fail);
+    assert_eq!(baseline.verdicts.trained_render.quality_verdict, QualityVerdictOutcome::Fail);
+    assert!(baseline.verdicts.trained_render.stage_checks[2].reasons.iter().any(|reason| reason.contains("below psnr_min=20")));
+  }
+
+  fn inspected<T>(payload: T) -> MinecraftInspectedArtifact<T> {
+    MinecraftInspectedArtifact::new(ArtifactUri::from_ids(RunId::new(), ArtifactId::new()), payload)
+  }
+
+  fn sample_spatial_query() -> TrainingResultSpatialQueryManifest {
+    decode(json!({
+      "schema_version": 1,
+      "generated_at_millis": 20,
+      "training_result_semantic_manifest_path": SEMANTIC_MANIFEST,
+      "source_training_result_artifact_manifest_path": "result-artifacts.json",
+      "source_training_result_manifest_path": "result.json",
+      "source_training_job_manifest_path": "job.json",
+      "source_training_launch_plan_path": "launch.json",
+      "source_training_package_manifest_path": "package.json",
+      "source_scene_packet_manifest_path": "scene.json",
+      "source_bundle_manifest_paths": ["bundle.json"],
+      "source_run_ids": ["run-source"],
+      "trainer_backend": "nerfstudio",
+      "job_backend": "fixture",
+      "normalized_result_dir": "normalized",
+      "query_kind": "block_projection",
+      "target_block": {"x": 511, "y": 73, "z": 728},
+      "target_face": "north",
+      "target_semantics": "hit_face_center",
+      "selected_backend": "projection_reference",
+      "status": "answered",
+      "visibility": "visible",
+      "screen_point": {"x": 12.0, "y": 34.0},
+      "match_radius_px": 8.0,
+      "confidence": 1.0,
+      "basis_frame_id": "frame-20",
+      "comparison_verdict": "match",
+      "known_limits": ["fixture"]
+    }))
+  }
+
+  fn sample_holdout() -> TrainingResultHoldoutPreviewManifest {
+    decode(json!({
+      "schema_version": 1,
+      "generated_at_millis": 20,
+      "training_result_semantic_manifest_path": SEMANTIC_MANIFEST,
+      "source_training_result_artifact_manifest_path": "result-artifacts.json",
+      "source_training_result_manifest_path": "result.json",
+      "source_training_job_manifest_path": "job.json",
+      "source_training_launch_plan_path": "launch.json",
+      "source_training_package_manifest_path": "package.json",
+      "source_scene_packet_manifest_path": "scene.json",
+      "source_bundle_manifest_paths": ["bundle.json"],
+      "source_run_ids": ["run-source"],
+      "trainer_backend": "nerfstudio",
+      "job_backend": "fixture",
+      "normalized_result_dir": "normalized",
+      "holdout_frame_index": 6,
+      "basis_checkpoint_path": "checkpoints/step-000001.ckpt",
+      "status": "ready",
+      "known_limits": ["fixture"]
+    }))
+  }
+
+  fn sample_render_quality() -> TrainingResultHoldoutRenderQualityManifest {
+    decode(json!({
+      "schema_version": 1,
+      "generated_at_millis": 20,
+      "training_result_semantic_manifest_path": SEMANTIC_MANIFEST,
+      "holdout_preview_manifest_path": "preview.json",
+      "source_training_result_artifact_manifest_path": "result-artifacts.json",
+      "source_training_result_manifest_path": "result.json",
+      "source_training_job_manifest_path": "job.json",
+      "source_training_launch_plan_path": "launch.json",
+      "source_training_package_manifest_path": "package.json",
+      "source_scene_packet_manifest_path": "scene.json",
+      "source_bundle_manifest_paths": ["bundle.json"],
+      "source_run_ids": ["run-source"],
+      "trainer_backend": "nerfstudio",
+      "job_backend": "fixture",
+      "normalized_result_dir": "normalized",
+      "holdout_frame_index": 6,
+      "basis_checkpoint_path": "checkpoints/step-000001.ckpt",
+      "render_backend": "external_command",
+      "image_size_match": true,
+      "metrics": {"l1_mean": 0.0, "mse": 0.0, "psnr": 30.0},
+      "status": "ready",
+      "verdict": "measured_only",
+      "known_limits": ["fixture"]
+    }))
+  }
+
+  fn decode<T: DeserializeOwned>(value: serde_json::Value) -> T {
+    serde_json::from_value(value).expect("typed quality fixture")
   }
 }

@@ -29,7 +29,13 @@ pub async fn publish_minecraft_training_holdout_preview(
   context: Option<&Context>,
   preview: &TrainingResultHoldoutPreviewManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
-  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE, preview, |_| Ok(())).await
+  crate::run_read::publish_json_artifact(
+    context,
+    MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE,
+    preview,
+    validate_training_holdout_preview_payload,
+  )
+  .await
 }
 
 pub async fn read_minecraft_training_holdout_preview(
@@ -37,7 +43,26 @@ pub async fn read_minecraft_training_holdout_preview(
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<TrainingResultHoldoutPreviewManifest, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE, |_| Ok(())).await
+  crate::run_read::read_json_artifact(
+    store,
+    snapshot,
+    uri,
+    MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE,
+    validate_training_holdout_preview_payload,
+  )
+  .await
+}
+
+fn validate_training_holdout_preview_payload(preview: &TrainingResultHoldoutPreviewManifest) -> Result<(), String> {
+  if preview.schema_version != TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training holdout preview schema_version {} (expected {TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION})",
+      preview.schema_version
+    ));
+  }
+  // TODO(minecraft-holdout-preview-invariants): Add cross-field checks when
+  // the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
 }
 
 pub const MC16_V1_HOLDOUT_PREVIEW_KNOWN_LIMIT: &str = "MC-16 v1 holdout preview records scene-packet holdout witness and checkpoint basis; trained splat holdout render and photometric quality judgment are deferred";
