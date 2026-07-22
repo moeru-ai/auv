@@ -15,7 +15,7 @@ use auv_cli::integrations::textedit::{
 use auv_cli::{inspect, invoke_recorded, product_registry, projection::ProductInspectReadProjection};
 
 #[test]
-fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
+fn textedit_rejected_fixture_input_same_run_cli_mcp_inspect_parity() {
   let root = tempfile_dir("textedit-same-run-parity");
   let store = LocalStore::new(root.clone()).expect("store");
   let recording = RunRecordingBackend::new(store.clone(), Arc::new(MemoryRunRecorder::new()));
@@ -39,10 +39,14 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
       dry_run: false,
     },
   )
-  .expect("fixture invoke should succeed");
+  .expect("rejected fixture input should still produce an inspectable failed run");
 
   assert_eq!(result.command_id, DOCUMENT_WRITE_COMMAND_ID);
-  assert!(result.failure_message.is_none(), "{:?}", result.failure_message);
+  assert_eq!(result.status, auv_cli_invoke::RunStatus::Failed);
+  assert_eq!(
+    result.failure_message.as_deref(),
+    Some("command app.textedit.document.write handler failed: app.textedit.document.write does not accept --driver")
+  );
   assert_ne!(result.run_id, "unassigned");
   let run_id = result.run_id.clone();
 
@@ -55,7 +59,7 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
     "known_limits must include {TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT}"
   );
   assert!(operation.verifications.is_empty(), "legacy recorded TextEdit must not claim frontend-owned verification evidence");
-  assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
+  assert!(!operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
 
   let run = store.read_run(&run_id).expect("run");
   let artifact_roles: BTreeMap<String, String> =
@@ -104,6 +108,8 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
 fn product_help_lists_textedit_command_once() {
   let help = auv_cli_invoke::render_help_index(&product_registry());
   assert_eq!(help.matches(DOCUMENT_WRITE_COMMAND_ID).count(), 1);
+  let command = product_registry().resolve(DOCUMENT_WRITE_COMMAND_ID).expect("TextEdit command").clone();
+  assert!(!auv_cli_invoke::render_command_help(&command).contains("--driver"));
   assert!(!auv_cli_invoke::render_help_index(&auv_cli_invoke::default_registry()).contains(DOCUMENT_WRITE_COMMAND_ID));
 }
 
@@ -118,7 +124,6 @@ fn textedit_document_write_live_macos_closure() {
   let recording = RunRecordingBackend::new(store.clone(), Arc::new(MemoryRunRecorder::new()));
   let mut inputs = BTreeMap::new();
   inputs.insert("content".to_string(), "AUV_TEXTEDIT_LIVE_MARKER".to_string());
-  inputs.insert("driver".to_string(), "live".to_string());
   let result = invoke_recorded(
     &recording,
     &product_registry(),

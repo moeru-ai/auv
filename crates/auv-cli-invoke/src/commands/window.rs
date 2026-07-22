@@ -337,7 +337,7 @@ async fn click_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
     // screenshot used for target resolution, but not the structured
     // recognition-result artifact. Add it with window.findText once the
     // direct-invoke recognition artifact shape is accepted.
-    output.signals.insert("input.selected_path".to_string(), format!("{:?}", result.action.selected_path));
+    output.signals.insert("input.selected_path".to_string(), result.action.selected_path.as_str().to_string());
     output.signals.insert("click.window_x".to_string(), result.point.point().x.to_string());
     output.signals.insert("click.window_y".to_string(), result.point.point().y.to_string());
     output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());

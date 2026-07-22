@@ -5,6 +5,44 @@ use crate::{
   invoke_command,
 };
 
+/// A complete, finite capture region with a strictly positive size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Region(auv_driver::Rect);
+
+impl Region {
+  pub fn parse(inputs: &std::collections::BTreeMap<String, String>, command_id: &str) -> Result<Self, String> {
+    fn field(inputs: &std::collections::BTreeMap<String, String>, command_id: &str, name: &str) -> Result<f64, String> {
+      let value = inputs
+        .get(name)
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{command_id} requires --{name}"))?
+        .parse::<f64>()
+        .map_err(|error| format!("{command_id} received invalid --{name}: {error}"))?;
+      if !value.is_finite() {
+        return Err(format!("{command_id} requires finite --{name}"));
+      }
+      Ok(value)
+    }
+
+    let x = field(inputs, command_id, "x")?;
+    let y = field(inputs, command_id, "y")?;
+    let width = field(inputs, command_id, "width")?;
+    let height = field(inputs, command_id, "height")?;
+    if width <= 0.0 {
+      return Err(format!("{command_id} requires --width greater than zero"));
+    }
+    if height <= 0.0 {
+      return Err(format!("{command_id} requires --height greater than zero"));
+    }
+    Ok(Self(auv_driver::Rect::new(x, y, width, height)))
+  }
+
+  pub fn into_rect(self) -> auv_driver::Rect {
+    self.0
+  }
+}
+
 pub fn group() -> CommandGroup {
   CommandGroup::new("screen", "SCREEN")
     .command(capture_region_invoke_command())
@@ -24,16 +62,15 @@ pub fn group() -> CommandGroup {
   args = REGION_ARGS,
 )]
 async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
+  reject_target_activation(&input, "screen.captureRegion")?;
+  let region = Region::parse(&input.inputs, &input.command_id)?.into_rect();
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  if input.dry_run {
+    return Ok(dry_run_output(&input.command_id));
+  }
+
   #[cfg(target_os = "macos")]
   {
-    use auv_driver::{CaptureOptions, Rect};
-
-    reject_target_activation(&input, "screen.captureRegion")?;
-    if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
-    }
-
-    let region = Rect::new(input.required_f64("x")?, input.required_f64("y")?, input.required_f64("width")?, input.required_f64("height")?);
     let (capture, instrumentation) = capture_screen_region(region).await?.into_parts();
 
     let mut output = InvokeCommandOutput::new("screen region captured");
@@ -52,7 +89,7 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = input;
+    let _ = region;
     Err("screen.captureRegion is only available on macOS".to_string())
   }
 }
@@ -348,4 +385,74 @@ fn text_matches_output(
   }
   output.report = Some(crate::commands::ocr::match_report(matches, selected_index));
   output
+}
+
+#[cfg(test)]
+mod region_tests {
+  use std::collections::BTreeMap;
+
+  use super::*;
+  use crate::InvokeCancellation;
+
+  fn inputs(values: [(&str, &str); 4]) -> BTreeMap<String, String> {
+    values.into_iter().map(|(name, value)| (name.to_string(), value.to_string())).collect()
+  }
+
+  #[test]
+  fn region_rejects_incomplete_non_finite_and_non_positive_fields() {
+    let invalid = [
+      (BTreeMap::new(), "screen.captureRegion requires --x"),
+      (BTreeMap::from([("x".to_string(), "1".to_string())]), "screen.captureRegion requires --y"),
+      (inputs([("x", "NaN"), ("y", "2"), ("width", "3"), ("height", "4")]), "screen.captureRegion requires finite --x"),
+      (inputs([("x", "1"), ("y", "inf"), ("width", "3"), ("height", "4")]), "screen.captureRegion requires finite --y"),
+      (inputs([("x", "1"), ("y", "2"), ("width", "0"), ("height", "4")]), "screen.captureRegion requires --width greater than zero"),
+      (inputs([("x", "1"), ("y", "2"), ("width", "-3"), ("height", "4")]), "screen.captureRegion requires --width greater than zero"),
+      (inputs([("x", "1"), ("y", "2"), ("width", "3"), ("height", "0")]), "screen.captureRegion requires --height greater than zero"),
+      (inputs([("x", "1"), ("y", "2"), ("width", "3"), ("height", "-4")]), "screen.captureRegion requires --height greater than zero"),
+      (inputs([("x", "1"), ("y", "2"), ("width", "3"), ("height", "-inf")]), "screen.captureRegion requires finite --height"),
+    ];
+
+    for (fields, expected) in invalid {
+      assert_eq!(Region::parse(&fields, "screen.captureRegion").expect_err("invalid region must fail"), expected);
+    }
+  }
+
+  #[test]
+  fn region_accepts_finite_origin_and_positive_size() {
+    let region = Region::parse(
+      &inputs([
+        ("x", "-12.5"),
+        ("y", "0"),
+        ("width", "640.25"),
+        ("height", "480"),
+      ]),
+      "screen.captureRegion",
+    )
+    .expect("valid region")
+    .into_rect();
+
+    assert_eq!(region, auv_driver::Rect::new(-12.5, 0.0, 640.25, 480.0));
+  }
+
+  #[test]
+  fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
+    let valid_dry_run = InvokeCommandInput {
+      command_id: "screen.captureRegion".to_string(),
+      target_application_id: None,
+      inputs: inputs([("x", "1"), ("y", "2"), ("width", "3"), ("height", "4")]),
+      dry_run: true,
+      cancellation: InvokeCancellation::new(),
+    };
+    assert!(futures_executor::block_on(capture_region(valid_dry_run)).is_ok());
+
+    let invalid_live = InvokeCommandInput {
+      command_id: "screen.captureRegion".to_string(),
+      target_application_id: None,
+      inputs: inputs([("x", "1"), ("y", "2"), ("width", "0"), ("height", "4")]),
+      dry_run: false,
+      cancellation: InvokeCancellation::new(),
+    };
+    let error = futures_executor::block_on(capture_region(invalid_live)).expect_err("invalid live region must fail before capture");
+    assert!(error.contains("width") && error.contains("greater than zero"));
+  }
 }

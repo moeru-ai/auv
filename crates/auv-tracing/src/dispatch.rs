@@ -224,6 +224,10 @@ pub struct Dispatch {
 }
 
 impl Dispatch {
+  pub(crate) fn run_store(&self) -> Option<Arc<dyn RunStore>> {
+    self.inner.route.as_ref().map(|route| route.store.clone())
+  }
+
   pub(crate) fn authority_id(&self) -> Option<&AuthorityId> {
     self.inner.route.as_ref().map(|route| &route.authority_id)
   }

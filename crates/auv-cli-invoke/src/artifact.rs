@@ -246,13 +246,30 @@ mod tests {
   }
 
   #[test]
-  fn png_artifact_encodes_without_consuming_source_image() {
-    let image = RgbaImage::from_pixel(2, 3, image::Rgba([1, 2, 3, 255]));
+  fn png_artifact_stream_decodes_to_the_exact_source_pixels() {
+    let image = RgbaImage::from_fn(2, 3, |x, y| image::Rgba([x as u8, y as u8, (x + y) as u8, 255]));
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
 
     let artifact = png_artifact("auv.test.png", &image, Attributes::empty()).expect("artifact");
+    let metadata = futures_executor::block_on(root.in_scope(|| auv_tracing::emit_artifact!(artifact)))
+      .expect("publication")
+      .expect("enabled publication");
+    futures_executor::block_on(dispatch.flush()).expect("flush");
+    let mut reader = futures_executor::block_on(store.open_artifact(metadata.uri().clone())).expect("open PNG artifact");
+    let mut encoded = Vec::new();
+    futures_executor::block_on(async {
+      while let Some(chunk) = reader.next().await {
+        encoded.extend_from_slice(&chunk.expect("PNG chunk"));
+      }
+    });
+    let decoded = image::load_from_memory_with_format(&encoded, image::ImageFormat::Png).expect("decode PNG").into_rgba8();
 
-    assert_eq!(image.dimensions(), (2, 3));
-    let _ = artifact;
+    assert_eq!(metadata.byte_length().get(), encoded.len() as u64);
+    assert_eq!(metadata.sha256(), Sha256Digest::new(Sha256::digest(&encoded).into()));
+    assert_eq!(decoded, image);
   }
 
   #[test]

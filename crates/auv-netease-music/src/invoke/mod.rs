@@ -110,6 +110,7 @@ pub fn run(tokens: &[String]) -> ExitCode {
     target_application_id: None,
     inputs,
     dry_run,
+    cancellation: auv_cli_invoke::InvokeCancellation::new(),
   })) {
     Ok(output) => {
       println!("{}", output.summary);

@@ -132,6 +132,7 @@ mod tests {
       target_application_id: None,
       inputs: inputs.clone(),
       dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
     }
   }
 

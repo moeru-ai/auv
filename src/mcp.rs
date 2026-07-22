@@ -7,7 +7,7 @@ use std::sync::Arc;
 use rmcp::{
   ErrorData as McpError, ServerHandler, ServiceExt,
   handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-  model::{CallToolResult, Content, JsonObject, ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo},
+  model::{CallToolResult, JsonObject, ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo},
   service::{RequestContext, RoleServer},
   tool, tool_router,
   transport::stdio,
@@ -17,7 +17,11 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
-use auv_cli_invoke::{ArgSpec, InvokeCommand, InvokeRegistry, default_registry};
+use auv_cli_invoke::{ArgSpec, InvokeCancellation, InvokeCommand, InvokeRegistry, default_registry};
+
+tokio::task_local! {
+  static MCP_REQUEST_CANCELLATION: InvokeCancellation;
+}
 
 type McpInvokeFuture = Pin<Box<dyn Future<Output = Result<McpInvokeOutcome, String>> + Send + 'static>>;
 type InvokeDispatch = Arc<dyn Fn(Option<String>) -> Result<McpFrontendAuthority, String> + Send + Sync>;
@@ -28,6 +32,7 @@ pub struct McpInvokeInput {
   pub target_label: Option<String>,
   pub inputs: BTreeMap<String, String>,
   pub dry_run: bool,
+  pub cancellation: InvokeCancellation,
 }
 
 impl McpInvokeInput {
@@ -38,10 +43,6 @@ impl McpInvokeInput {
       .map(String::as_str)
       .filter(|value| !value.trim().is_empty())
       .ok_or_else(|| format!("{command_id} requires --{name}"))
-  }
-
-  fn required_f64(&self, command_id: &str, name: &str) -> Result<f64, String> {
-    self.required_input(command_id, name)?.parse::<f64>().map_err(|error| format!("{command_id} received invalid --{name}: {error}"))
   }
 }
 
@@ -64,6 +65,9 @@ impl McpInvokeAdapter {
   }
 
   fn invoke(&self, input: McpInvokeInput) -> McpInvokeFuture {
+    if let Err(error) = input.cancellation.check() {
+      return Box::pin(async move { Err(error.to_string()) });
+    }
     (self.handler)(input)
   }
 }
@@ -239,7 +243,6 @@ fn validated_adapter_catalog(
 #[derive(Clone)]
 struct McpFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
-  store: Arc<dyn auv_tracing::RunStore>,
 }
 
 fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
@@ -248,7 +251,7 @@ fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> R
     .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
     .map_err(|error| format!("failed to open MCP run authority {}: {error}", root.display()))?;
   let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
-  Ok(McpFrontendAuthority { dispatch, store })
+  Ok(McpFrontendAuthority { dispatch })
 }
 
 struct McpFrontendExecution {
@@ -268,37 +271,58 @@ impl auv_tracing::EventPayload for McpFrontendLifecycle {
   const VERSION: u32 = 1;
 }
 
-async fn execute_mcp_frontend<F, Fut>(authority: &McpFrontendAuthority, call: F) -> Result<McpFrontendExecution, String>
+#[derive(Serialize)]
+struct McpFrontendCancellation {
+  frontend: &'static str,
+  reason: &'static str,
+}
+
+impl auv_tracing::EventPayload for McpFrontendCancellation {
+  const NAME: &'static str = "auv.frontend.cancelled";
+  const VERSION: u32 = 1;
+}
+
+async fn execute_mcp_frontend<F, Fut>(
+  authority: &McpFrontendAuthority,
+  cancellation: InvokeCancellation,
+  call: F,
+) -> Result<McpFrontendExecution, String>
 where
   F: FnOnce() -> Fut + Send + 'static,
   Fut: Future<Output = Result<McpInvokeOutcome, String>> + Send + 'static,
 {
-  let run_id = auv_tracing::RunId::new();
-  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-  root.in_scope(|| {
-    auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
-  });
-  let future = root.in_scope(call);
-  let task_dispatch = authority.dispatch.clone();
-  let task_root = root.clone();
-  let runtime = tokio::runtime::Handle::current();
-  let task_result = tokio::task::spawn_blocking(move || {
-    auv_tracing::dispatcher::with_default(&task_dispatch, || runtime.block_on(task_root.instrument(future)))
-  })
-  .await;
-  let tracing_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
-  let snapshot = authority
-    .store
-    .load_snapshot(run_id)
+  let recorded = authority
+    .dispatch
+    .record(|| {
+      auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
+      let future = call();
+      async move {
+        tokio::pin!(future);
+        // TODO(invoke-driver-cancellation): request cancellation drops the
+        // command future between polls, but cannot interrupt one synchronous
+        // driver call already in progress. Add deeper cancellation only after
+        // the owning driver exposes an owner-approved cancellable call API.
+        tokio::select! {
+          biased;
+          _ = cancellation.cancelled() => {
+            auv_tracing::emit_event!(McpFrontendCancellation {
+              frontend: "mcp",
+              reason: "request_cancelled",
+            });
+            Err("invoke cancelled".to_string())
+          }
+          result = &mut future => result,
+        }
+      }
+    })
     .await
-    .map_err(|error| format!("failed to read committed MCP invoke run {run_id}: {error}"))?
-    .ok_or_else(|| format!("MCP invoke run {run_id} was not persisted by its V1 authority"))?;
+    .map_err(|error| error.to_string())?;
+  let (run_id, direct_result, tracing_failure, snapshot) = recorded.into_parts();
   let canonical_artifacts = snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect();
-  let direct_result = task_result.map_err(|error| format!("MCP blocking adapter task failed: {error}"))?;
   Ok(McpFrontendExecution {
     run_id,
     direct_result,
-    tracing_failure,
+    tracing_failure: tracing_failure.map(|error| error.to_string()),
     canonical_artifacts,
   })
 }
@@ -431,7 +455,7 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
       let text = input.required_input("input.typeText", "text")?.to_string();
       let (result, instrumentation) = auv_cli_invoke::commands::input::type_text_into_active_control(text).await?.into_parts();
       Ok(
-        completed("typed text into active control", serde_json::json!({ "selected_path": format!("{:?}", result.selected_path) }))
+        completed("typed text into active control", serde_json::json!({ "selected_path": result.selected_path.as_str() }))
           .with_artifact_instrumentation(instrumentation),
       )
     }),
@@ -452,7 +476,7 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
       let key = input.required_input("input.key", "key")?.to_string();
       let (result, instrumentation) = auv_cli_invoke::commands::input::press_key_in_active_app(key.clone()).await?.into_parts();
       Ok(
-        completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": format!("{:?}", result.selected_path) }))
+        completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": result.selected_path.as_str() }))
           .with_artifact_instrumentation(instrumentation),
       )
     }),
@@ -470,7 +494,7 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
             "window_id": result.window.reference.id,
             "window_x": result.point.point().x,
             "window_y": result.point.point().y,
-            "selected_path": format!("{:?}", result.action.selected_path),
+            "selected_path": result.action.selected_path.as_str(),
           }),
         )
         .with_artifact_instrumentation(instrumentation),
@@ -478,15 +502,10 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
     }),
     McpInvokeAdapter::new("screen.captureRegion", |input| async move {
       reject_target_activation(&input, "screen.captureRegion")?;
+      let region = auv_cli_invoke::commands::screen::Region::parse(&input.inputs, "screen.captureRegion")?.into_rect();
       if input.dry_run {
         return Ok(completed("dry run: screen.captureRegion", serde_json::json!({})));
       }
-      let region = auv_driver::Rect::new(
-        input.required_f64("screen.captureRegion", "x")?,
-        input.required_f64("screen.captureRegion", "y")?,
-        input.required_f64("screen.captureRegion", "width")?,
-        input.required_f64("screen.captureRegion", "height")?,
-      );
       let (result, instrumentation) = auv_cli_invoke::commands::screen::capture_screen_region(region).await?.into_parts();
       Ok(
         completed(
@@ -598,7 +617,7 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
             "match_count": result.matches.matches.len(),
             "window_x": result.point.point().x,
             "window_y": result.point.point().y,
-            "selected_path": format!("{:?}", result.action.selected_path),
+            "selected_path": result.action.selected_path.as_str(),
           }),
         )
         .with_artifact_instrumentation(instrumentation),
@@ -685,31 +704,37 @@ impl McpServer {
       .cloned()
       .ok_or_else(|| invalid_params(format!("unknown invoke command: {}", req.command_id)))?;
     let authority = (self.invoke_dispatch)(req.inspect.store_root).map_err(invalid_params)?;
+    let cancellation = MCP_REQUEST_CANCELLATION.try_with(Clone::clone).unwrap_or_default();
     let input = McpInvokeInput {
       target_application_id: req.target.application_id,
       target_label: req.target.target_label,
       inputs: req.inputs,
       dry_run: req.dry_run,
+      cancellation: cancellation.clone(),
     };
-    let execution = execute_mcp_frontend(&authority, move || adapter.invoke(input)).await.map_err(invalid_params)?;
+    let execution = execute_mcp_frontend(&authority, cancellation, move || adapter.invoke(input)).await.map_err(invalid_params)?;
     let outcome = match execution.direct_result {
       Ok(outcome) => outcome,
       Err(error) => McpInvokeOutcome::failed(error.clone(), error, Value::Null),
     };
-    json_result(
-      serde_json::to_value(McpInvokePresentation {
-        run_id: execution.run_id.to_string(),
-        status: outcome.status.as_str(),
-        output_summary: outcome.output_summary,
-        signals: outcome.signals,
-        artifacts: execution.canonical_artifacts,
-        artifact_failures: outcome.artifact_failures,
-        failure_message: outcome.failure_message,
-        tracing_failure: execution.tracing_failure,
-        result: outcome.details,
-      })
-      .map_err(invalid_params)?,
-    )
+    let failed = outcome.status == McpInvokeStatus::Failed;
+    let value = serde_json::to_value(McpInvokePresentation {
+      run_id: execution.run_id.to_string(),
+      status: outcome.status.as_str(),
+      output_summary: outcome.output_summary,
+      signals: outcome.signals,
+      artifacts: execution.canonical_artifacts,
+      artifact_failures: outcome.artifact_failures,
+      failure_message: outcome.failure_message,
+      tracing_failure: execution.tracing_failure,
+      result: outcome.details,
+    })
+    .map_err(invalid_params)?;
+    Ok(if failed {
+      CallToolResult::structured_error(value)
+    } else {
+      CallToolResult::structured(value)
+    })
   }
 
   #[tool(description = "Inspect one existing AUV run id.")]
@@ -718,7 +743,7 @@ impl McpServer {
     let run_id = req.run_id.parse::<auv_tracing::RunId>().map_err(invalid_params)?;
     let snapshot =
       store.load_snapshot(run_id).await.map_err(invalid_params)?.ok_or_else(|| invalid_params(format!("run not found: {run_id}")))?;
-    json_result(serde_json::to_value(auv_inspect_model::InspectDocument::from(&snapshot)).map_err(invalid_params)?)
+    Ok(CallToolResult::structured(serde_json::to_value(auv_inspect_model::InspectDocument::from(&snapshot)).map_err(invalid_params)?))
   }
 }
 
@@ -728,8 +753,9 @@ impl ServerHandler for McpServer {
     request: rmcp::model::CallToolRequestParam,
     context: RequestContext<RoleServer>,
   ) -> Result<CallToolResult, McpError> {
+    let cancellation = InvokeCancellation::from_token(context.ct.clone());
     let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-    self.tool_router.call(tcc).await
+    MCP_REQUEST_CANCELLATION.scope(cancellation, self.tool_router.call(tcc)).await
   }
 
   async fn list_tools(
@@ -844,10 +870,6 @@ struct RunInspectRequest {
   store_root: Option<String>,
 }
 
-fn json_result(value: Value) -> Result<CallToolResult, McpError> {
-  Ok(CallToolResult::success(vec![Content::json(value)?]))
-}
-
 fn invalid_params(message: impl ToString) -> McpError {
   McpError::invalid_params(message.to_string(), None::<Value>)
 }
@@ -872,7 +894,8 @@ pub async fn serve_stdio_with_registry(
 #[cfg(test)]
 mod tests {
   use std::future::Future;
-  use std::sync::atomic::{AtomicUsize, Ordering};
+  use std::sync::Mutex;
+  use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
   use super::*;
   use crate::model::now_millis;
@@ -882,7 +905,8 @@ mod tests {
   };
   use rmcp::{
     ClientHandler, ServiceExt,
-    model::{CallToolRequestParam, ClientInfo},
+    model::{CallToolRequestParam, ClientInfo, ClientRequest, Request},
+    service::PeerRequestOptions,
   };
 
   #[derive(Debug, Clone, Default)]
@@ -974,10 +998,7 @@ mod tests {
           .project_telemetry(Arc::new(FailingProjector), TelemetryRoutePolicy::fixed_fields_only())
           .build()
           .map_err(|error| error.to_string())?;
-        Ok(McpFrontendAuthority {
-          dispatch,
-          store: configure_store.clone(),
-        })
+        Ok(McpFrontendAuthority { dispatch })
       }),
     )
     .map_err(anyhow::Error::msg)?;
@@ -1007,17 +1028,18 @@ mod tests {
     assert_eq!(call.call_count(), 1);
     assert!(value["tracing_failure"].as_str().is_some());
     let snapshot = store.load_snapshot(run_id).await?.expect("recorded run");
-    assert_eq!(snapshot.events().len(), 3);
     assert_eq!(snapshot.run_id(), run_id);
-    let facts = format!("{snapshot:?}");
-    for forbidden in [
-      "operation-success",
-      "verification",
-      "retry",
-      "recommended action",
-    ] {
-      assert!(!facts.contains(forbidden), "canonical facts contain {forbidden}: {facts}");
-    }
+    assert_eq!(
+      snapshot.events().iter().map(|event| event.schema().name().as_str()).collect::<Vec<_>>(),
+      vec![
+        "auv.frontend.lifecycle",
+        "auv.test.mcp_frontend_call",
+        "auv.test.mcp_frontend_call"
+      ]
+    );
+    assert_eq!(serde_json::from_str::<Value>(snapshot.events()[0].payload().get())?, serde_json::json!({ "frontend": "mcp" }));
+    assert_eq!(serde_json::from_str::<Value>(snapshot.events()[1].payload().get())?, serde_json::json!({ "phase": "constructed" }));
+    assert_eq!(serde_json::from_str::<Value>(snapshot.events()[2].payload().get())?, serde_json::json!({ "phase": "polled" }));
 
     client.cancel().await?;
     server_handle.await??;
@@ -1142,11 +1164,213 @@ mod tests {
           ("offset_y".to_string(), "20".to_string()),
         ]),
         dry_run: true,
+        cancellation: InvokeCancellation::new(),
       };
 
       let error = adapter.invoke(input).await.expect_err("non-finite dry-run must fail validation");
       assert!(error.contains("finite"), "{value}: {error}");
     }
+  }
+
+  #[tokio::test]
+  async fn capture_region_production_adapter_uses_shared_validation_before_dry_run() {
+    let adapter = core_invoke_adapters()
+      .into_iter()
+      .find(|adapter| adapter.command_id == "screen.captureRegion")
+      .expect("production screen.captureRegion adapter");
+    let invalid = [
+      (BTreeMap::new(), "screen.captureRegion requires --x"),
+      (BTreeMap::from([("x".to_string(), "1".to_string())]), "screen.captureRegion requires --y"),
+      (
+        BTreeMap::from([
+          ("x".to_string(), "NaN".to_string()),
+          ("y".to_string(), "2".to_string()),
+          ("width".to_string(), "3".to_string()),
+          ("height".to_string(), "4".to_string()),
+        ]),
+        "screen.captureRegion requires finite --x",
+      ),
+      (
+        BTreeMap::from([
+          ("x".to_string(), "1".to_string()),
+          ("y".to_string(), "inf".to_string()),
+          ("width".to_string(), "3".to_string()),
+          ("height".to_string(), "4".to_string()),
+        ]),
+        "screen.captureRegion requires finite --y",
+      ),
+      (
+        BTreeMap::from([
+          ("x".to_string(), "1".to_string()),
+          ("y".to_string(), "2".to_string()),
+          ("width".to_string(), "0".to_string()),
+          ("height".to_string(), "4".to_string()),
+        ]),
+        "screen.captureRegion requires --width greater than zero",
+      ),
+      (
+        BTreeMap::from([
+          ("x".to_string(), "1".to_string()),
+          ("y".to_string(), "2".to_string()),
+          ("width".to_string(), "-3".to_string()),
+          ("height".to_string(), "4".to_string()),
+        ]),
+        "screen.captureRegion requires --width greater than zero",
+      ),
+      (
+        BTreeMap::from([
+          ("x".to_string(), "1".to_string()),
+          ("y".to_string(), "2".to_string()),
+          ("width".to_string(), "3".to_string()),
+          ("height".to_string(), "0".to_string()),
+        ]),
+        "screen.captureRegion requires --height greater than zero",
+      ),
+      (
+        BTreeMap::from([
+          ("x".to_string(), "1".to_string()),
+          ("y".to_string(), "2".to_string()),
+          ("width".to_string(), "3".to_string()),
+          ("height".to_string(), "-4".to_string()),
+        ]),
+        "screen.captureRegion requires --height greater than zero",
+      ),
+    ];
+
+    for (inputs, expected) in invalid {
+      let error = adapter
+        .invoke(McpInvokeInput {
+          target_application_id: None,
+          target_label: None,
+          inputs,
+          dry_run: true,
+          cancellation: InvokeCancellation::new(),
+        })
+        .await
+        .expect_err("invalid region must fail before the dry-run branch");
+      assert_eq!(error, expected);
+    }
+
+    let valid = adapter
+      .invoke(McpInvokeInput {
+        target_application_id: None,
+        target_label: None,
+        inputs: BTreeMap::from([
+          ("x".to_string(), "-1".to_string()),
+          ("y".to_string(), "2".to_string()),
+          ("width".to_string(), "3".to_string()),
+          ("height".to_string(), "4".to_string()),
+        ]),
+        dry_run: true,
+        cancellation: InvokeCancellation::new(),
+      })
+      .await
+      .expect("valid dry-run region");
+    assert_eq!(valid.status, McpInvokeStatus::Completed);
+  }
+
+  struct ResourceCleanup(Arc<AtomicBool>);
+
+  impl Drop for ResourceCleanup {
+    fn drop(&mut self) {
+      self.0.store(true, Ordering::SeqCst);
+    }
+  }
+
+  #[tokio::test]
+  async fn mcp_request_cancellation_drops_the_polled_call_before_later_side_effects() -> anyhow::Result<()> {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let configured_store = store.clone();
+    let acquired = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let cleaned = Arc::new(AtomicBool::new(false));
+    let later_side_effect = Arc::new(AtomicBool::new(false));
+    let (run_id_sender, run_id_receiver) = tokio::sync::oneshot::channel();
+    let run_id_sender = Arc::new(Mutex::new(Some(run_id_sender)));
+    let adapter = McpInvokeAdapter::new("scan.frame", {
+      let acquired = acquired.clone();
+      let release = release.clone();
+      let cleaned = cleaned.clone();
+      let later_side_effect = later_side_effect.clone();
+      move |_input| {
+        let acquired = acquired.clone();
+        let release = release.clone();
+        let cleanup = ResourceCleanup(cleaned.clone());
+        let later_side_effect = later_side_effect.clone();
+        let run_id_sender = run_id_sender.clone();
+        async move {
+          let _cleanup = cleanup;
+          let run_id = *auv_tracing::Context::current().run_id().expect("request run context");
+          if let Some(sender) = run_id_sender.lock().unwrap().take() {
+            let _ = sender.send(run_id);
+          }
+          acquired.notify_one();
+          release.notified().await;
+          later_side_effect.store(true, Ordering::SeqCst);
+          Ok(completed("released", serde_json::json!({})))
+        }
+      }
+    });
+    let command = default_registry().resolve("scan.frame").expect("scan metadata").clone();
+    let registry = InvokeRegistry::from_groups(vec![auv_cli_invoke::CommandGroup::new("test", "TEST").command(command)]);
+    let server = McpServer::with_invoke_dispatch(
+      PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+      Arc::new(registry),
+      vec![adapter],
+      Arc::new(move |_store_root| {
+        let dispatch = auv_tracing::configure().run_store(configured_store.clone()).build().map_err(|error| error.to_string())?;
+        Ok(McpFrontendAuthority { dispatch })
+      }),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let (server_transport, client_transport) = tokio::io::duplex(16384);
+    let server_handle = tokio::spawn(async move {
+      let service = server.serve(server_transport).await?;
+      service.waiting().await?;
+      anyhow::Ok(())
+    });
+    let client = DummyClientHandler.serve(client_transport).await?;
+    let request = client
+      .send_cancellable_request(
+        ClientRequest::CallToolRequest(Request::new(CallToolRequestParam {
+          name: "invoke".into(),
+          arguments: Some(serde_json::json!({ "command_id": "scan.frame" }).as_object().unwrap().clone()),
+        })),
+        PeerRequestOptions::no_options(),
+      )
+      .await?;
+    acquired.notified().await;
+    let run_id = run_id_receiver.await?;
+
+    request.cancel(Some("test cancellation".to_string())).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+      while !cleaned.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await?;
+    let cleaned_before_release = cleaned.load(Ordering::SeqCst);
+    release.notify_waiters();
+    tokio::task::yield_now().await;
+
+    assert!(cleaned_before_release, "request cancellation must drop acquired resources without manually releasing the call");
+    assert!(!later_side_effect.load(Ordering::SeqCst), "no later side effect may run after cancellation");
+    let snapshot = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+      loop {
+        if let Some(snapshot) = store.load_snapshot(run_id).await.expect("snapshot read")
+          && snapshot.events().iter().any(|event| event.schema().name().as_str() == "auv.frontend.cancelled")
+        {
+          break snapshot;
+        }
+        tokio::task::yield_now().await;
+      }
+    })
+    .await?;
+    assert_eq!(snapshot.run_id(), run_id);
+
+    client.cancel().await?;
+    server_handle.await??;
+    Ok(())
   }
 
   #[tokio::test]
@@ -1246,6 +1470,8 @@ mod tests {
       &invoke.content.first().and_then(|content| content.raw.as_text()).expect("invoke should return text content").text,
     )
     .expect("invoke text should decode as json");
+    assert_eq!(invoke.is_error, Some(false));
+    assert_eq!(invoke.structured_content.as_ref(), Some(&invoke_json));
     let run_id = invoke_json.get("run_id").and_then(|value| value.as_str()).expect("run_id should exist").to_string();
     assert_eq!(invoke_json.get("output_summary").and_then(|value| value.as_str()), Some("scan.coverage dry-run"));
     assert_eq!(invoke_json.get("status").and_then(|value| value.as_str()), Some("completed"));
@@ -1276,6 +1502,8 @@ mod tests {
       &failed_invoke.content.first().and_then(|content| content.raw.as_text()).expect("failed invoke should return text content").text,
     )
     .expect("failed invoke text should decode as json");
+    assert_eq!(failed_invoke.is_error, Some(true));
+    assert_eq!(failed_invoke.structured_content.as_ref(), Some(&failed_invoke_json));
     let failed_run_id = failed_invoke_json.get("run_id").and_then(|value| value.as_str()).expect("failed run_id should exist");
     assert_ne!(failed_run_id, run_id);
     assert_eq!(failed_invoke_json.get("status").and_then(|value| value.as_str()), Some("failed"));

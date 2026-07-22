@@ -178,6 +178,7 @@ mod tests {
       target_application_id: None,
       inputs: BTreeMap::new(),
       dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
     }))
     .expect_err("missing fixture-dir should fail");
 
@@ -191,6 +192,7 @@ mod tests {
       target_application_id: None,
       inputs: BTreeMap::new(),
       dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
     }))
     .expect_err("missing fixture-dir should fail");
 
@@ -204,6 +206,7 @@ mod tests {
       target_application_id: None,
       inputs: BTreeMap::from([("fixture-dir".to_string(), "/tmp/unused".to_string())]),
       dry_run: true,
+      cancellation: crate::InvokeCancellation::new(),
     }))
     .expect("dry-run should succeed");
 
@@ -218,6 +221,7 @@ mod tests {
       target_application_id: None,
       inputs: BTreeMap::from([("fixture-dir".to_string(), "/tmp/unused".to_string())]),
       dry_run: true,
+      cancellation: crate::InvokeCancellation::new(),
     }))
     .expect("dry-run should succeed");
 
@@ -235,6 +239,7 @@ mod tests {
         target_application_id: None,
         inputs: BTreeMap::from([("fixture-dir".to_string(), fixture_dir.to_string_lossy().into_owned())]),
         dry_run: false,
+        cancellation: crate::InvokeCancellation::new(),
       },
     ));
 
@@ -256,6 +261,7 @@ mod tests {
         target_application_id: None,
         inputs: BTreeMap::from([("fixture-dir".to_string(), fixture_dir.to_string_lossy().into_owned())]),
         dry_run: false,
+        cancellation: crate::InvokeCancellation::new(),
       },
     ));
 
