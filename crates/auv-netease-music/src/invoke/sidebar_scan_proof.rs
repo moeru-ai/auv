@@ -45,7 +45,6 @@ pub fn persist_inputs_for_sidebar_scan_proof(scan: &PlaylistSidebarScan) -> Inpu
     sidebar_region: None,
     ocr_options: TextRecognitionOptions::default(),
     category: PlaylistCategory::All,
-    store_root: None,
   }
 }
 
@@ -72,13 +71,14 @@ async fn sidebar_scan_proof(input: InvokeCommandInput) -> Result<InvokeCommandOu
 
   let inputs = persist_inputs_for_sidebar_scan_proof(&scan);
   let mut output = match persist_playlist_ls_artifacts(&scan, &inputs, false).await {
-    Ok(persisted) => {
+    Ok(Some(persisted)) => {
       let run_id = persisted.lineage.scan_uri.run_id().to_string();
       let mut output = InvokeCommandOutput::new(format!("persisted hermetic sidebar scan proof in run {run_id}"));
       output.signals.insert("run_id".to_string(), run_id);
       output.signals.insert("scan_uri".to_string(), persisted.lineage.scan_uri.to_string());
       output
     }
+    Ok(None) => InvokeCommandOutput::new("validated hermetic sidebar scan proof fixture; run artifact publication was disabled"),
     Err(error) => {
       let mut output = InvokeCommandOutput::new("validated hermetic sidebar scan proof fixture; run artifact was not published");
       output.artifact_failures.push(ArtifactInstrumentationFailure {
@@ -152,9 +152,8 @@ mod tests {
     }))
     .expect("fixture validation remains the direct result");
 
-    assert!(output.summary.contains("validated hermetic sidebar scan proof fixture"));
-    assert_eq!(output.artifact_failures.len(), 1);
-    assert!(output.artifact_failures[0].message.contains("no caller-owned run authority"));
+    assert!(output.summary.contains("publication was disabled"));
+    assert!(output.artifact_failures.is_empty());
   }
 
   #[test]

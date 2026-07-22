@@ -9,9 +9,9 @@ use auv_netease_music::recording::{
 use auv_netease_music::{Inputs, PlaylistSelectResult, PlaylistSidebarScan, decode_playlist_sidebar_scan_json};
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
-  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, Dispatch, IdempotencyKey, MemoryRunStore, NewArtifact, PageLimit,
-  ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription, Sha256Digest,
-  StoreArtifactRequest, configure, dispatcher,
+  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, Dispatch, ErrorCode, IdempotencyKey, MemoryRunStore, NewArtifact,
+  PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription,
+  Sha256Digest, StoreArtifactRequest, configure, dispatcher,
 };
 use auv_view::memory::ViewMemory;
 use futures_util::io::Cursor;
@@ -46,19 +46,22 @@ impl NeteaseRunFixture {
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = scan.app().app_id.clone().expect("fixture app id");
     let future = self.root.in_scope(|| persist_playlist_ls_artifacts(scan, &inputs, true));
-    let persisted = self.root.instrument(future).await.expect("publish playlist scan and view memory");
+    let persisted =
+      self.root.instrument(future).await.expect("publish playlist scan and view memory").expect("publication should be enabled");
     self.dispatch.flush().await.expect("flush playlist artifacts");
     persisted
   }
 
-  async fn persist_select_result(&self, result: PlaylistSelectResult) -> PlaylistSelectResult {
+  async fn persist_select_result(&self, result: &PlaylistSelectResult) -> ArtifactMetadata {
     let future = self.root.in_scope(|| persist_playlist_select_proof(result));
-    let publication = self.root.instrument(future).await;
-    let (result, instrumentation) = publication.into_parts();
-    assert!(!instrumentation.is_disabled(), "select publication was disabled");
-    assert!(instrumentation.failure().is_none(), "select publication failed: {}", instrumentation.failure().unwrap());
+    let instrumentation = self.root.instrument(future).await;
+    let metadata = match instrumentation {
+      auv_netease_music::recording::PlaylistSelectInstrumentation::Published(metadata) => metadata,
+      auv_netease_music::recording::PlaylistSelectInstrumentation::Disabled => panic!("select publication was disabled"),
+      auv_netease_music::recording::PlaylistSelectInstrumentation::Failed(error) => panic!("select publication failed: {error}"),
+    };
     self.dispatch.flush().await.expect("flush playlist-select result");
-    result
+    metadata
   }
 
   async fn publish_bytes(&self, purpose: &str, content_type: &str, bytes: Vec<u8>) -> ArtifactMetadata {
@@ -93,6 +96,52 @@ struct ArtifactBytesStore {
   inner: Arc<MemoryRunStore>,
   bytes: Vec<u8>,
   opens: AtomicUsize,
+}
+
+struct RejectArtifactStore {
+  inner: MemoryRunStore,
+}
+
+impl RejectArtifactStore {
+  fn new() -> Self {
+    Self {
+      inner: MemoryRunStore::new(AuthorityId::new()),
+    }
+  }
+}
+
+impl RunStore for RejectArtifactStore {
+  fn authority_id(&self) -> AuthorityId {
+    self.inner.authority_id()
+  }
+
+  fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+    self.inner.commit(request)
+  }
+
+  fn write_artifact(&self, _request: StoreArtifactRequest, _body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    Box::pin(async { Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.netease_artifact_rejected").unwrap())) })
+  }
+
+  fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+    self.inner.lookup_commit(run_id, key)
+  }
+
+  fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+    self.inner.load_snapshot(run_id)
+  }
+
+  fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+    self.inner.commits_after(run_id, after, limit)
+  }
+
+  fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+    self.inner.subscribe(run_id, after)
+  }
+
+  fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+    self.inner.open_artifact(uri)
+  }
 }
 
 impl ArtifactBytesStore {
@@ -170,14 +219,8 @@ fn playlist_select_result_round_trips_by_uri() {
     let fixture = NeteaseRunFixture::memory();
     let expected = sample_select_result();
 
-    let expected = fixture.persist_select_result(expected).await;
+    let published = fixture.persist_select_result(&expected).await;
     let snapshot = fixture.snapshot().await;
-    let published = snapshot
-      .artifacts()
-      .values()
-      .find(|published| published.metadata().purpose().as_str() == PLAYLIST_SELECT_RESULT_PURPOSE)
-      .expect("playlist-select publication")
-      .metadata();
 
     let decoded = read_playlist_select_result(fixture.store(), &snapshot, published.uri()).await.expect("read playlist-select result");
     assert_eq!(decoded, expected);
@@ -189,7 +232,7 @@ fn canonical_artifacts_use_exact_purposes_and_json_content_type() {
   futures_executor::block_on(async {
     let fixture = NeteaseRunFixture::memory();
     let persisted = fixture.persist_playlist_scan(&sample_scan()).await;
-    fixture.persist_select_result(sample_select_result()).await;
+    fixture.persist_select_result(&sample_select_result()).await;
     let snapshot = fixture.snapshot().await;
 
     let scan = snapshot.artifacts().get(&persisted.lineage.scan_uri).expect("scan metadata").metadata();
@@ -276,6 +319,12 @@ fn lineage_manifest_round_trips_only_canonical_uri_references() {
 
     write_lineage_manifest(&directory, &persisted.lineage).expect("write URI lineage");
     assert_eq!(read_lineage_manifest(&directory).expect("read URI lineage"), persisted.lineage);
+    let canonical = serde_json::to_value(&persisted.lineage).expect("canonical lineage JSON");
+    assert_eq!(canonical["scan_uri"], persisted.lineage.scan_uri.to_string());
+    assert_eq!(canonical["memory_uri"], persisted.lineage.memory_uri.as_ref().expect("memory URI").to_string());
+    for forbidden in ["run_id", "scan_artifact_id", "memory_artifact_id"] {
+      assert!(canonical.get(forbidden).is_none(), "canonical lineage exposed legacy field {forbidden:?}");
+    }
 
     let legacy = serde_json::json!({
       "schema_version": "view-memory-lineage-v0",
@@ -294,20 +343,81 @@ fn lineage_manifest_round_trips_only_canonical_uri_references() {
 }
 
 #[test]
-fn disabled_context_preserves_select_result_and_exposes_scan_publication_failure() {
+fn disabled_context_preserves_select_result_and_is_not_a_publication_error() {
   futures_executor::block_on(async {
-    let scan_error = persist_playlist_ls_artifacts(&sample_scan(), &Inputs::with_defaults(), true)
+    let scan_publication = persist_playlist_ls_artifacts(&sample_scan(), &Inputs::with_defaults(), true)
       .await
-      .expect_err("scan publication needs caller authority");
-    assert!(scan_error.to_string().contains("no caller-owned run authority"));
+      .expect("disabled scan publication is not an error");
+    assert!(scan_publication.is_none());
 
     let expected = sample_select_result();
-    let publication = persist_playlist_select_proof(expected.clone()).await;
-    let (actual, instrumentation) = publication.into_parts();
-    assert_eq!(actual, expected);
+    let instrumentation = persist_playlist_select_proof(&expected).await;
     assert!(instrumentation.is_disabled());
     assert!(instrumentation.failure().is_none());
   });
+}
+
+#[test]
+fn disabled_context_skips_artifact_payload_validation() {
+  futures_executor::block_on(async {
+    let mut select = sample_select_result();
+    select.known_limits.push("x".repeat((NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1) as usize));
+
+    let instrumentation = persist_playlist_select_proof(&select).await;
+
+    assert!(
+      matches!(instrumentation, auv_netease_music::recording::PlaylistSelectInstrumentation::Disabled),
+      "disabled instrumentation must not validate or reject artifact bytes"
+    );
+  });
+}
+
+#[test]
+fn rejected_publication_is_distinct_from_disabled_publication() {
+  futures_executor::block_on(async {
+    let store = Arc::new(RejectArtifactStore::new());
+    let dispatch = configure().run_store(store).build().expect("rejecting dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+
+    let scan = sample_scan();
+    let inputs = Inputs::with_defaults();
+    let scan_future = root.in_scope(|| persist_playlist_ls_artifacts(&scan, &inputs, true));
+    let scan_error = root.instrument(scan_future).await.expect_err("rejected scan publication must be an error");
+    assert!(scan_error.to_string().contains("auv.test.netease_artifact_rejected"));
+
+    let select = sample_select_result();
+    let select_future = root.in_scope(|| persist_playlist_select_proof(&select));
+    let select_instrumentation = root.instrument(select_future).await;
+    assert!(matches!(select_instrumentation, auv_netease_music::recording::PlaylistSelectInstrumentation::Failed(_)));
+  });
+}
+
+#[test]
+fn standalone_cli_store_root_installs_current_run_context() {
+  let store_root = std::env::temp_dir().join(format!("auv-netease-cli-context-{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&store_root);
+  let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sidebar-scan-proof/hermetic_v0");
+
+  let output = std::process::Command::new(env!("CARGO_BIN_EXE_auv-netease-music"))
+    .arg("--store-root")
+    .arg(&store_root)
+    .arg("invoke")
+    .arg("netease.playlist.sidebarScanProof")
+    .arg("--fixture-dir")
+    .arg(&fixture_dir)
+    .output()
+    .expect("standalone NetEase CLI should run");
+
+  assert!(
+    output.status.success(),
+    "standalone CLI failed:\nstdout:\n{}\nstderr:\n{}",
+    String::from_utf8_lossy(&output.stdout),
+    String::from_utf8_lossy(&output.stderr)
+  );
+  let stdout = String::from_utf8(output.stdout).expect("CLI stdout should be UTF-8");
+  assert!(stdout.lines().any(|line| line.starts_with("scan_uri=auv://runs/")), "missing canonical scan URI in {stdout:?}");
+
+  let _ = std::fs::remove_dir_all(store_root);
 }
 
 fn sample_scan() -> PlaylistSidebarScan {

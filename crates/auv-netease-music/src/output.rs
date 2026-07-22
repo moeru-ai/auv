@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::path::PathBuf;
 
 use crate::views::query_match::{PlaylistQueryMatchMode, PlaylistQueryResolution};
 use crate::views::sidebar::SidebarView;
@@ -45,7 +44,8 @@ pub struct PlaylistJsonResult {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PlaylistJsonArtifacts {
-  pub scan_cache_path: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub scan_uri: Option<String>,
 }
 
 /// Agent-facing exact-first query resolution tier for `playlist ls --json`.
@@ -116,8 +116,6 @@ pub struct PlaylistJsonOutput {
   pub query_resolution: Option<QueryResolutionKind>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub view_memory: Option<ViewMemoryWriteReport>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub run_id: Option<String>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub known_limits: Vec<String>,
 }
@@ -127,9 +125,8 @@ pub fn build_playlist_json_output(
   scan: &PlaylistSidebarScan,
   keyword: Option<&str>,
   min_confidence: Option<Confidence>,
-  scan_cache_path: PathBuf,
+  scan_uri: Option<String>,
   view_memory: Option<ViewMemoryWriteReport>,
-  run_id: Option<String>,
   known_limits: Vec<String>,
 ) -> PlaylistJsonOutput {
   let sidebar = SidebarView::from_projection(scan.projection().clone());
@@ -154,12 +151,9 @@ pub fn build_playlist_json_output(
       filtered_count,
       matches: assign_scan_refs(matches),
     },
-    artifacts: PlaylistJsonArtifacts {
-      scan_cache_path: scan_cache_path.display().to_string(),
-    },
+    artifacts: PlaylistJsonArtifacts { scan_uri },
     query_resolution,
     view_memory,
-    run_id,
     known_limits,
   }
 }
@@ -264,9 +258,8 @@ pub(crate) fn render_playlist_human_output(
   keyword: Option<&str>,
   min_confidence: Option<Confidence>,
   detail: bool,
-  run_id: Option<&str>,
+  scan_uri: Option<&str>,
   known_limits: &[String],
-  scan_cache_path: Option<&str>,
 ) -> String {
   let sidebar = SidebarView::from_projection(scan.projection().clone());
   let item_count = collect_matches_from_sidebar(&sidebar, None).len();
@@ -304,7 +297,7 @@ pub(crate) fn render_playlist_human_output(
             query_resolution_name(query_resolution_kind(sidebar.playlist_query_resolution(query)))
           ));
         }
-        append_detail_footer(&mut output, scan, run_id, known_limits, scan_cache_path);
+        append_detail_footer(&mut output, scan, scan_uri, known_limits);
       } else if let Some(candidate_id) = matches.iter().find_map(|match_ref| match_ref.candidate_id.as_deref()) {
         output.push_str(&format!("\nUse: auv-netease-music playlist play --candidate-id {candidate_id}\nMore: --detail, --json\n"));
       } else if !matches.is_empty() {
@@ -330,7 +323,7 @@ pub(crate) fn render_playlist_human_output(
             optional(candidate.anchor_id.as_deref())
           ));
         }
-        append_detail_footer(&mut output, scan, run_id, known_limits, scan_cache_path);
+        append_detail_footer(&mut output, scan, scan_uri, known_limits);
       } else {
         output.push_str("\nMore: use a keyword, --detail, or --json.\n");
       }
@@ -344,18 +337,9 @@ fn section_counts(scan: &PlaylistSidebarScan) -> Vec<(SidebarSectionKind, usize)
   scan.projection().sections.iter().map(|section| (section.kind, section.items.len())).collect()
 }
 
-fn append_detail_footer(
-  output: &mut String,
-  scan: &PlaylistSidebarScan,
-  run_id: Option<&str>,
-  known_limits: &[String],
-  scan_cache_path: Option<&str>,
-) {
-  if let Some(path) = scan_cache_path {
-    output.push_str(&format!("scan_cache_path={path}\n"));
-  }
-  if let Some(run_id) = run_id {
-    output.push_str(&format!("run_id={run_id}\n"));
+fn append_detail_footer(output: &mut String, scan: &PlaylistSidebarScan, scan_uri: Option<&str>, known_limits: &[String]) {
+  if let Some(scan_uri) = scan_uri {
+    output.push_str(&format!("scan_uri={scan_uri}\n"));
   }
   output.push_str("diagnostics:\n");
   if scan.diagnostics().is_empty() {
@@ -527,7 +511,7 @@ mod tests {
   fn build_playlist_json_output_counts_all_items_and_matches() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, Some("daily"), None, "/tmp/playlist-scan-cache.json".into(), None, None, Vec::new());
+    let output = build_playlist_json_output(&scan, Some("daily"), None, None, None, Vec::new());
 
     assert_eq!(output.command, "playlist.ls");
     assert_eq!(output.query.as_deref(), Some("daily"));
@@ -535,15 +519,35 @@ mod tests {
     assert_eq!(output.result.match_count, 1);
     assert_eq!(output.result.matches[0].item_id, "i1");
     assert_eq!(output.result.matches[0].candidate_id.as_deref(), Some("obs1.candidate.daily"));
-    assert_eq!(output.artifacts.scan_cache_path, "/tmp/playlist-scan-cache.json");
+    assert!(output.artifacts.scan_uri.is_none());
     assert!(output.view_memory.is_none());
+  }
+
+  #[test]
+  fn playlist_output_does_not_advertise_legacy_cache_paths() {
+    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
+    let output = build_playlist_json_output(&scan, None, None, Some("auv://runs/run_abc/artifacts/scan_abc".to_string()), None, Vec::new());
+    let json = serde_json::to_value(&output).expect("playlist JSON output");
+    let encoded = serde_json::to_string(&output).expect("encoded playlist JSON output");
+
+    assert!(json["artifacts"].get("scan_cache_path").is_none());
+    assert_eq!(json["artifacts"]["scan_uri"], "auv://runs/run_abc/artifacts/scan_abc");
+    assert!(json.get("run_id").is_none());
+    for forbidden in [
+      "playlist-scan-cache",
+      "scan_artifact_id",
+      "memory_artifact_id",
+      "artifact_id=",
+    ] {
+      assert!(!encoded.contains(forbidden), "playlist output advertised legacy reference {forbidden:?}");
+    }
   }
 
   #[test]
   fn build_playlist_json_output_has_no_query_resolution_without_keyword() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, None, None, "/tmp/playlist-scan-cache.json".into(), None, None, Vec::new());
+    let output = build_playlist_json_output(&scan, None, None, None, None, Vec::new());
 
     assert_eq!(output.query_resolution, None);
   }
@@ -591,15 +595,7 @@ mod tests {
       }],
     });
 
-    let output = build_playlist_json_output(
-      &scan,
-      Some("daily"),
-      Some(Confidence::Medium),
-      "/tmp/playlist-scan-cache.json".into(),
-      None,
-      None,
-      Vec::new(),
-    );
+    let output = build_playlist_json_output(&scan, Some("daily"), Some(Confidence::Medium), None, None, Vec::new());
 
     assert_eq!(output.result.match_count, 2);
     assert_eq!(output.result.filtered_count, 1);
@@ -613,20 +609,20 @@ mod tests {
       &scan,
       Some("daily"),
       None,
-      "/tmp/playlist-scan-cache.json".into(),
+      Some("auv://runs/run_abc/artifacts/scan_abc".to_string()),
       Some(ViewMemoryWriteReport {
         written: true,
         skip_reason: None,
       }),
-      Some("run_abc".to_string()),
       vec!["scan stopped after max_scrolls=2".to_string()],
     );
 
     let json: serde_json::Value = serde_json::to_value(output).expect("serialize output");
 
     assert!(json.get("scan").is_none());
-    assert_eq!(json["artifacts"]["scan_cache_path"], "/tmp/playlist-scan-cache.json");
-    assert_eq!(json["run_id"], "run_abc");
+    assert_eq!(json["artifacts"]["scan_uri"], "auv://runs/run_abc/artifacts/scan_abc");
+    assert!(json.get("run_id").is_none());
+    assert!(json["artifacts"].get("scan_cache_path").is_none());
     assert_eq!(json["known_limits"][0], "scan stopped after max_scrolls=2");
     assert_eq!(json["query_resolution"], "unique_contains");
     assert_eq!(json["view_memory"]["written"], true);
@@ -641,7 +637,7 @@ mod tests {
   fn no_query_human_output_is_bounded_summary() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let rendered = render_playlist_human_output(&scan, None, None, false, None, &[], None);
+    let rendered = render_playlist_human_output(&scan, None, None, false, None, &[]);
 
     assert!(rendered.contains("2 playlists observed."));
     assert!(rendered.contains("Sections:"));
@@ -679,7 +675,7 @@ mod tests {
       }],
     });
 
-    let rendered = render_playlist_human_output(&scan, Some("daily"), Some(Confidence::Medium), false, None, &[], None);
+    let rendered = render_playlist_human_output(&scan, Some("daily"), Some(Confidence::Medium), false, None, &[]);
 
     assert!(rendered.contains("2 playlists observed. 1 matches for \"daily\"."));
     assert!(rendered.contains("filtered 1 below min-confidence medium"));
@@ -707,7 +703,7 @@ mod tests {
       }],
     });
 
-    let rendered = render_playlist_human_output(&scan, Some("daily"), None, false, None, &[], None);
+    let rendered = render_playlist_human_output(&scan, Some("daily"), None, false, None, &[]);
 
     assert!(rendered.contains("Daily High"));
     assert!(!rendered.contains("playlist play --candidate-id"));
@@ -724,17 +720,17 @@ mod tests {
       Some("daily"),
       None,
       true,
-      Some("run_abc"),
+      Some("auv://runs/run_abc/artifacts/scan_abc"),
       &["limit one".to_string()],
-      Some("/tmp/playlist-scan-cache.json"),
     );
 
     assert!(rendered.contains("section=MyPlaylists"));
     assert!(rendered.contains("candidate_id=obs1.candidate.daily"));
     assert!(rendered.contains("anchor_id=a1"));
     assert!(rendered.contains("query_resolution=unique_contains"));
-    assert!(rendered.contains("scan_cache_path=/tmp/playlist-scan-cache.json"));
-    assert!(rendered.contains("run_id=run_abc"));
+    assert!(rendered.contains("scan_uri=auv://runs/run_abc/artifacts/scan_abc"));
+    assert!(!rendered.contains("scan_cache_path="));
+    assert!(!rendered.contains("run_id="));
     assert!(rendered.contains("known_limits:"));
     assert!(!rendered.contains("observations:"));
   }
@@ -789,7 +785,7 @@ mod tests {
   fn build_playlist_json_output_reports_unique_exact_resolution() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(numeric_playlist_projection());
 
-    let output = build_playlist_json_output(&scan, Some("3"), None, "/tmp/playlist-scan-cache.json".into(), None, None, Vec::new());
+    let output = build_playlist_json_output(&scan, Some("3"), None, None, None, Vec::new());
 
     assert_eq!(output.result.match_count, 1);
     assert_eq!(output.result.matches[0].item_id, "p3");
@@ -800,7 +796,7 @@ mod tests {
   fn build_playlist_json_output_reports_unique_contains_resolution() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, Some("daily"), None, "/tmp/playlist-scan-cache.json".into(), None, None, Vec::new());
+    let output = build_playlist_json_output(&scan, Some("daily"), None, None, None, Vec::new());
 
     assert_eq!(output.result.match_count, 1);
     assert_eq!(output.query_resolution, Some(QueryResolutionKind::UniqueContains));
@@ -835,7 +831,7 @@ mod tests {
     };
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection);
 
-    let output = build_playlist_json_output(&scan, Some("3"), None, "/tmp/playlist-scan-cache.json".into(), None, None, Vec::new());
+    let output = build_playlist_json_output(&scan, Some("3"), None, None, None, Vec::new());
 
     assert_eq!(output.result.match_count, 2);
     assert_eq!(output.query_resolution, Some(QueryResolutionKind::Ambiguous));
@@ -845,7 +841,7 @@ mod tests {
   fn build_playlist_json_output_reports_not_found_resolution() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, Some("zzz"), None, "/tmp/playlist-scan-cache.json".into(), None, None, Vec::new());
+    let output = build_playlist_json_output(&scan, Some("zzz"), None, None, None, Vec::new());
 
     assert_eq!(output.result.match_count, 0);
     assert_eq!(output.query_resolution, Some(QueryResolutionKind::NotFound));
@@ -853,129 +849,33 @@ mod tests {
 
   #[test]
   fn playlist_ls_json_includes_view_memory_write_report() {
-    use auv_view::VIEW_IR_SCHEMA_VERSION;
-    use auv_view::memory::{VIEW_MEMORY_SCHEMA_VERSION, memory_file_path, parse_memory_file};
-
-    use crate::view_memory::{PLAYLIST_SIDEBAR_SCOPE_ID, enabled_with_env, write_from_scan_when_enabled};
-
-    fn minimal_writable_scan_json(diagnostics: serde_json::Value) -> String {
-      serde_json::json!({
-        "schema_version": VIEW_IR_SCHEMA_VERSION,
-        "app": {},
-        "window": {},
-        "sidebar_region": {
-          "bounds": {"x": 0.0, "y": 220.0, "width": 240.0, "height": 400.0}
-        },
-        "observations": [],
-        "reconstruction": {
-          "root": {
-            "id": "root.sidebar",
-            "kind": "collection",
-            "bounds": {"x": 0.0, "y": 0.0, "width": 240.0, "height": 400.0},
-            "anchors": [],
-            "landmarks": [],
-            "actions": [],
-            "evidence": [],
-            "children": [{
-              "id": "item.test",
-              "kind": "item",
-              "label": "Test Playlist",
-              "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
-              "anchors": [{
-                "id": "anchor.test",
-                "label": "Test Playlist",
-                "strength": "strong",
-                "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
-                "evidence_ids": []
-              }],
-              "landmarks": [],
-              "actions": [],
-              "evidence": [],
-              "children": []
-            }]
-          },
-          "anchor_index": [{
-            "id": "anchor.test",
-            "label": "Test Playlist",
-            "strength": "strong",
-            "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
-            "evidence_ids": []
-          }],
-          "landmark_index": []
-        },
-        "projection": {"sections": []},
-        "boundary": {
-          "top": "unknown",
-          "bottom": "unknown",
-          "left": "unknown",
-          "right": "unknown"
-        },
-        "diagnostics": diagnostics,
-        "known_limits": []
-      })
-      .to_string()
-    }
-
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_writable_scan_json(serde_json::json!([]))).expect("writable scan");
-
-    let artifact_dir = std::env::temp_dir().join(format!("auv-netease-playlist-ls-json-vm-{}", std::process::id()));
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let inputs = crate::Inputs {
-      artifact_dir: artifact_dir.clone(),
-      ..crate::Inputs::with_defaults()
-    };
-
-    let write_result = write_from_scan_when_enabled(true, &inputs, &scan);
-    let view_memory =
-      playlist_view_memory_report(enabled_with_env(Some("1")), write_result.clone()).expect("gate on should emit view_memory");
+    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
+    let view_memory = playlist_view_memory_report(true, Ok(())).expect("enabled publication should emit view_memory");
     assert!(view_memory.written);
     assert!(view_memory.skip_reason.is_none());
 
-    let output =
-      build_playlist_json_output(&scan, Some("Test"), None, "/tmp/playlist-scan-cache.json".into(), Some(view_memory), None, Vec::new());
+    let output = build_playlist_json_output(&scan, Some("daily"), None, None, Some(view_memory), Vec::new());
     let json: serde_json::Value = serde_json::to_value(&output).expect("serialize output");
     assert_eq!(json["view_memory"]["written"], true);
     assert!(json["view_memory"].get("skip_reason").is_none());
 
-    let path = memory_file_path(&artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
-    let memory = parse_memory_file(&path).expect("written memory should parse");
-    assert_eq!(memory.schema_version, VIEW_MEMORY_SCHEMA_VERSION);
-
-    let blocking_scan = crate::decode_playlist_sidebar_scan_json(&minimal_writable_scan_json(serde_json::json!([{
-      "code": "parser_no_reliable_candidates",
-      "message": "blocking",
-      "node_id": null
-    }])))
-    .expect("blocking scan");
-
-    let fail_result = write_from_scan_when_enabled(true, &inputs, &blocking_scan).expect_err("blocking diagnostics should not write");
+    let fail_result = "view-memory publication rejected".to_string();
     let fail_report = playlist_view_memory_report(true, Err(fail_result.clone())).expect("gate on");
     assert!(!fail_report.written);
     assert_eq!(fail_report.skip_reason.as_deref(), Some(fail_result.as_str()));
 
-    let fail_output =
-      build_playlist_json_output(&blocking_scan, None, None, "/tmp/playlist-scan-cache.json".into(), Some(fail_report), None, Vec::new());
+    let fail_output = build_playlist_json_output(&scan, None, None, None, Some(fail_report), Vec::new());
     let fail_json: serde_json::Value = serde_json::to_value(&fail_output).expect("serialize fail");
     assert_eq!(fail_json["view_memory"]["written"], false);
     assert_eq!(fail_json["view_memory"]["skip_reason"].as_str(), Some(fail_result.as_str()));
 
-    let gate_off = build_playlist_json_output(
-      &scan,
-      None,
-      None,
-      "/tmp/playlist-scan-cache.json".into(),
-      playlist_view_memory_report(false, Ok(())),
-      None,
-      Vec::new(),
-    );
+    let gate_off = build_playlist_json_output(&scan, None, None, None, playlist_view_memory_report(false, Ok(())), Vec::new());
     let gate_off_json: serde_json::Value = serde_json::to_value(&gate_off).expect("gate off json");
     assert!(gate_off_json.get("view_memory").is_none());
-
-    let _ = std::fs::remove_dir_all(&artifact_dir);
   }
 
   #[test]
-  fn build_playlist_json_output_includes_run_id_and_known_limits() {
+  fn build_playlist_json_output_includes_scan_uri_and_known_limits() {
     let scan = {
       let json = serde_json::json!({
         "schema_version": "view-ir-v0",
@@ -1004,20 +904,13 @@ mod tests {
       });
       crate::decode_playlist_sidebar_scan_json(&json.to_string()).expect("scan")
     };
-    let limits = vec!["artifact-dir mirror incomplete; durable source is store run run_abc".to_string()];
-    let output = build_playlist_json_output(
-      &scan,
-      None,
-      None,
-      "/tmp/playlist-scan-cache.json".into(),
-      None,
-      Some("run_abc".to_string()),
-      limits.clone(),
-    );
-    assert_eq!(output.run_id.as_deref(), Some("run_abc"));
+    let limits = vec!["scan stopped after max_scrolls=2".to_string()];
+    let output =
+      build_playlist_json_output(&scan, None, None, Some("auv://runs/run_abc/artifacts/scan_abc".to_string()), None, limits.clone());
+    assert_eq!(output.artifacts.scan_uri.as_deref(), Some("auv://runs/run_abc/artifacts/scan_abc"));
     assert_eq!(output.known_limits, limits);
     let json = serde_json::to_string(&output).expect("json");
     assert!(json.contains("known_limits"));
-    assert!(json.contains("run_abc"));
+    assert!(json.contains("auv://runs/run_abc/artifacts/scan_abc"));
   }
 }

@@ -38,7 +38,7 @@ pub fn netease_registry() -> InvokeRegistry {
 }
 
 /// Dispatch `auv-netease-music invoke …` without touching root `default_registry()`.
-pub fn run(tokens: &[String]) -> ExitCode {
+pub async fn run(tokens: &[String]) -> ExitCode {
   let registry = netease_registry();
 
   if tokens.is_empty() || tokens == ["--help"] || tokens == ["-h"] {
@@ -105,20 +105,23 @@ pub fn run(tokens: &[String]) -> ExitCode {
     cursor += 2;
   }
 
-  match futures_executor::block_on(command.invoke(InvokeCommandInput {
-    command_id: command.id.to_string(),
-    target_application_id: None,
-    inputs,
-    dry_run,
-    cancellation: auv_cli_invoke::InvokeCancellation::new(),
-  })) {
+  match command
+    .invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
+    })
+    .await
+  {
     Ok(output) => {
       println!("{}", output.summary);
       if let Some(run_id) = output.signals.get("run_id") {
         println!("run_id={run_id}");
       }
-      if let Some(store_root) = output.signals.get("store_root") {
-        println!("store_root={store_root}");
+      if let Some(scan_uri) = output.signals.get("scan_uri") {
+        println!("scan_uri={scan_uri}");
       }
       for limit in &output.known_limits {
         println!("known_limit: {limit}");
@@ -155,11 +158,11 @@ mod tests {
     use std::process::ExitCode;
 
     let fixture_dir = crate::invoke::hermetic_select_proof_fixture_dir();
-    let exit = run(&[
+    let exit = futures_executor::block_on(run(&[
       SELECT_PROOF_COMMAND_ID.to_string(),
       "--fixture-dir".to_string(),
       fixture_dir.display().to_string(),
-    ]);
+    ]));
     assert_eq!(exit, ExitCode::SUCCESS);
   }
 
@@ -168,12 +171,12 @@ mod tests {
     use std::process::ExitCode;
 
     let fixture_dir = crate::invoke::hermetic_select_proof_fixture_dir();
-    let exit = run(&[
+    let exit = futures_executor::block_on(run(&[
       SELECT_PROOF_COMMAND_ID.to_string(),
       "--fixture-dir".to_string(),
       fixture_dir.display().to_string(),
       "--help".to_string(),
-    ]);
+    ]));
     assert_eq!(exit, ExitCode::SUCCESS);
   }
 }

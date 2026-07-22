@@ -60,37 +60,41 @@ const PLAYLIST_SELECT_VERIFICATION_OCR_FULL_WINDOW: &str = "main_title_ocr_full_
 const PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO: &str = "sidebar_row_echo_detail_chrome_v1";
 const PLAYLIST_SELECT_VERIFICATION_SIDEBAR_ECHO_LIMIT: &str = "verification_used_sidebar_row_echo_for_numeric_title";
 const PLAYLIST_SELECT_VERIFICATION_ROW_ECHO_MARGIN: f64 = 16.0;
-const PLAYLIST_SELECT_TARGET_FROM_SCAN_CACHE_MARKER: &str = "playlist_select_target_from_scan_cache_v1";
+const PLAYLIST_SELECT_TARGET_FROM_RUN_ARTIFACT_MARKER: &str = "playlist_select_target_from_run_artifact_v1";
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CanonicalPlaylistArtifacts {
+  pub scan: Option<crate::PlaylistSidebarScan>,
+  pub memory: Option<auv_view::memory::ViewMemory>,
+  pub read_limits: Vec<String>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlaylistSelectTargetResolveSource {
-  ScanCache,
+  RunArtifact,
   LiveScan,
 }
 
 fn playlist_select_target_resolve_source(
   gate_enabled: bool,
-  cache: Option<&crate::PlaylistSidebarScan>,
+  run_artifact: Option<&crate::PlaylistSidebarScan>,
   query: &str,
 ) -> PlaylistSelectTargetResolveSource {
   if gate_enabled {
-    if let Some(scan) = cache {
+    if let Some(scan) = run_artifact {
       let sidebar = crate::views::sidebar::SidebarView::from_projection(scan.projection().clone());
       let resolution = sidebar.playlist_query_resolution(query);
-      // NOTICE(a7b-cache-resolve-v1): run-storage/store-backed query resolve only
-      // trusts a cached sidebar when the query is unique-exact. Unique-contains
-      // cache hits still fall back to live scan so A7 does not silently widen
-      // `playlist select/play <query>` semantics relative to `playlist ls`.
+      // NOTICE(a7b-run-artifact-resolve-v1): query resolve only trusts a
+      // canonical run artifact when the query is unique-exact. A
+      // unique-contains match still falls back to live scan so A7 does not
+      // silently widen `playlist select/play <query>` semantics relative to
+      // `playlist ls`.
       if crate::views::query_match::playlist_query_resolution_is_unique_exact(resolution) {
-        return PlaylistSelectTargetResolveSource::ScanCache;
+        return PlaylistSelectTargetResolveSource::RunArtifact;
       }
     }
   }
   PlaylistSelectTargetResolveSource::LiveScan
-}
-
-fn try_load_playlist_scan_cache_optional(inputs: &Inputs) -> (Option<crate::PlaylistSidebarScan>, Vec<String>) {
-  crate::recording::try_load_scan_cache_with_limits(inputs)
 }
 
 pub struct PlaylistSelectHumanSummary<'a> {
@@ -817,9 +821,9 @@ mod tests {
   }
 
   #[test]
-  fn playlist_select_target_resolve_source_uses_cache_when_gate_and_unique_match() {
+  fn playlist_select_target_resolve_source_uses_run_artifact_when_gate_and_unique_match() {
     let scan = scan_with_playlist_labels(&["43", "3"]);
-    assert_eq!(playlist_select_target_resolve_source(true, Some(&scan), "3"), PlaylistSelectTargetResolveSource::ScanCache);
+    assert_eq!(playlist_select_target_resolve_source(true, Some(&scan), "3"), PlaylistSelectTargetResolveSource::RunArtifact);
   }
 
   #[test]
@@ -829,7 +833,7 @@ mod tests {
   }
 
   #[test]
-  fn playlist_select_target_resolve_source_live_scan_when_cache_missing() {
+  fn playlist_select_target_resolve_source_live_scan_when_run_artifact_missing() {
     assert_eq!(playlist_select_target_resolve_source(true, None, "3"), PlaylistSelectTargetResolveSource::LiveScan);
   }
 
@@ -853,10 +857,10 @@ mod tests {
 
   #[test]
   fn playlist_select_target_resolve_source_ignores_memory_presence() {
-    // `playlist_select_target_resolve_source` only reads gate + scan cache + query;
-    // view-memory file presence is not an input to this resolver.
+    // `playlist_select_target_resolve_source` only reads gate + canonical scan + query;
+    // view-memory presence is not an input to this resolver.
     let scan = scan_with_playlist_labels(&["3"]);
-    assert_eq!(playlist_select_target_resolve_source(true, Some(&scan), "3"), PlaylistSelectTargetResolveSource::ScanCache);
+    assert_eq!(playlist_select_target_resolve_source(true, Some(&scan), "3"), PlaylistSelectTargetResolveSource::RunArtifact);
   }
 }
 
@@ -866,8 +870,26 @@ pub fn run_playlist_select(_inputs: &Inputs, _query: &str) -> Result<PlaylistSel
 }
 
 #[cfg(not(target_os = "macos"))]
+pub(crate) fn run_playlist_select_with_artifacts(
+  inputs: &Inputs,
+  query: &str,
+  _artifacts: &CanonicalPlaylistArtifacts,
+) -> Result<PlaylistSelectResult, String> {
+  run_playlist_select(inputs, query)
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn run_playlist_play(_inputs: &Inputs, _query: &str) -> Result<PlaylistPlayResult, String> {
   Err("live NetEase playlist play is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn run_playlist_play_with_artifacts(
+  inputs: &Inputs,
+  query: &str,
+  _artifacts: &CanonicalPlaylistArtifacts,
+) -> Result<PlaylistPlayResult, String> {
+  run_playlist_play(inputs, query)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -875,31 +897,57 @@ pub fn run_playlist_play_candidate_id(_inputs: &Inputs, _candidate_id: &str) -> 
   Err("live NetEase playlist play is only supported on macOS".to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn run_playlist_play_candidate_id_with_artifacts(
+  inputs: &Inputs,
+  candidate_id: &str,
+  _artifacts: &CanonicalPlaylistArtifacts,
+) -> Result<PlaylistPlayResult, String> {
+  run_playlist_play_candidate_id(inputs, candidate_id)
+}
+
 #[cfg(target_os = "macos")]
 pub fn run_playlist_select(inputs: &Inputs, query: &str) -> Result<PlaylistSelectResult, String> {
-  let (scan, target, target_from_scan_cache, store_read_limits) = resolve_playlist_target_for_query(inputs, query)?;
-  run_playlist_select_resolved(inputs, query, scan, target, target_from_scan_cache, store_read_limits)
+  run_playlist_select_with_artifacts(inputs, query, &CanonicalPlaylistArtifacts::default())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn run_playlist_select_with_artifacts(
+  inputs: &Inputs,
+  query: &str,
+  artifacts: &CanonicalPlaylistArtifacts,
+) -> Result<PlaylistSelectResult, String> {
+  let (scan, target, target_from_run_artifact) = resolve_playlist_target_for_query(inputs, query, artifacts)?;
+  run_playlist_select_resolved(
+    inputs,
+    query,
+    scan,
+    target,
+    target_from_run_artifact,
+    artifacts.memory.as_ref(),
+    artifacts.read_limits.clone(),
+  )
 }
 
 #[cfg(target_os = "macos")]
 fn resolve_playlist_target_for_query(
   inputs: &Inputs,
   query: &str,
-) -> Result<(crate::PlaylistSidebarScan, PlaylistSelectTarget, bool, Vec<String>), String> {
+  artifacts: &CanonicalPlaylistArtifacts,
+) -> Result<(crate::PlaylistSidebarScan, PlaylistSelectTarget, bool), String> {
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
 
   let gate_enabled = crate::view_memory::enabled();
-  let (cache, store_read_limits) = try_load_playlist_scan_cache_optional(inputs);
-  match playlist_select_target_resolve_source(gate_enabled, cache.as_ref(), query) {
-    PlaylistSelectTargetResolveSource::ScanCache => {
-      let scan = cache.expect("ScanCache path requires loaded cache");
+  match playlist_select_target_resolve_source(gate_enabled, artifacts.scan.as_ref(), query) {
+    PlaylistSelectTargetResolveSource::RunArtifact => {
+      let scan = artifacts.scan.clone().expect("RunArtifact path requires caller-read scan");
       let target = scan.select_target(query)?;
-      Ok((scan, target, true, store_read_limits))
+      Ok((scan, target, true))
     }
     PlaylistSelectTargetResolveSource::LiveScan => {
       let scan = run_live_scan_until_query(inputs, query)?;
       let target = scan.select_target(query)?;
-      Ok((scan, target, false, store_read_limits))
+      Ok((scan, target, false))
     }
   }
 }
@@ -910,8 +958,9 @@ fn run_playlist_select_resolved(
   query: &str,
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
-  target_from_scan_cache: bool,
-  store_read_limits: Vec<String>,
+  target_from_run_artifact: bool,
+  memory: Option<&auv_view::memory::ViewMemory>,
+  artifact_read_limits: Vec<String>,
 ) -> Result<PlaylistSelectResult, String> {
   use crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
   use crate::delivery_path_label;
@@ -938,16 +987,16 @@ fn run_playlist_select_resolved(
   let mut steps = Vec::new();
   let mut diagnostics = scan.diagnostics().to_vec();
   let mut known_limits = scan.known_limits().to_vec();
-  known_limits.extend(store_read_limits);
-  if target_from_scan_cache {
-    known_limits.insert(0, PLAYLIST_SELECT_TARGET_FROM_SCAN_CACHE_MARKER.to_string());
+  known_limits.extend(artifact_read_limits);
+  if target_from_run_artifact {
+    known_limits.insert(0, PLAYLIST_SELECT_TARGET_FROM_RUN_ARTIFACT_MARKER.to_string());
   }
   let mut reacquire_summary = None;
   let mut skip_rescan_replay = false;
   let mut click_bounds = target_bounds;
 
   if crate::view_memory::enabled() {
-    if let Some(memory) = crate::view_memory::load_memory_raw(inputs) {
+    if let Some(memory) = memory {
       let reacquire_bounds = memory
         .scope_snapshot
         .region_bounds_window_local
@@ -1438,25 +1487,34 @@ fn verify_playlist_select_title(
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_play(inputs: &Inputs, query: &str) -> Result<PlaylistPlayResult, String> {
-  let (scan, target, target_from_scan_cache, store_read_limits) = resolve_playlist_target_for_query(inputs, query)?;
-  run_playlist_play_resolved(inputs, query, scan, target, target_from_scan_cache, store_read_limits)
+  run_playlist_play_with_artifacts(inputs, query, &CanonicalPlaylistArtifacts::default())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn run_playlist_play_with_artifacts(
+  inputs: &Inputs,
+  query: &str,
+  artifacts: &CanonicalPlaylistArtifacts,
+) -> Result<PlaylistPlayResult, String> {
+  let (scan, target, target_from_run_artifact) = resolve_playlist_target_for_query(inputs, query, artifacts)?;
+  run_playlist_play_resolved(inputs, query, scan, target, target_from_run_artifact, artifacts.memory.as_ref(), artifacts.read_limits.clone())
 }
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_play_candidate_id(inputs: &Inputs, candidate_id: &str) -> Result<PlaylistPlayResult, String> {
-  let (scan, store_read_limits) = load_playlist_scan_cache(inputs)?;
-  let target = scan.select_target_by_candidate_id(candidate_id)?;
-  run_playlist_play_resolved(inputs, candidate_id, scan, target, true, store_read_limits)
+  run_playlist_play_candidate_id_with_artifacts(inputs, candidate_id, &CanonicalPlaylistArtifacts::default())
 }
 
 #[cfg(target_os = "macos")]
-fn load_playlist_scan_cache(inputs: &Inputs) -> Result<(crate::PlaylistSidebarScan, Vec<String>), String> {
-  let (scan, store_read_limits) = crate::recording::try_load_scan_cache_with_limits(inputs);
-  scan.ok_or_else(|| {
-    "failed to read the canonical playlist scan from its URI lineage; run `playlist ls <query> --json` first with the same --artifact-dir and --store-root"
-      .to_string()
-  })
-  .map(|scan| (scan, store_read_limits))
+pub(crate) fn run_playlist_play_candidate_id_with_artifacts(
+  inputs: &Inputs,
+  candidate_id: &str,
+  artifacts: &CanonicalPlaylistArtifacts,
+) -> Result<PlaylistPlayResult, String> {
+  let scan =
+    artifacts.scan.clone().ok_or_else(|| "playlist play --candidate-id requires a caller-read canonical playlist scan URI".to_string())?;
+  let target = scan.select_target_by_candidate_id(candidate_id)?;
+  run_playlist_play_resolved(inputs, candidate_id, scan, target, true, artifacts.memory.as_ref(), artifacts.read_limits.clone())
 }
 
 #[cfg(target_os = "macos")]
@@ -1465,15 +1523,16 @@ fn run_playlist_play_resolved(
   query: &str,
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
-  target_from_scan_cache: bool,
-  store_read_limits: Vec<String>,
+  target_from_run_artifact: bool,
+  memory: Option<&auv_view::memory::ViewMemory>,
+  artifact_read_limits: Vec<String>,
 ) -> Result<PlaylistPlayResult, String> {
   use crate::commands::daily_recommended::best_text_match;
   use crate::delivery_path_label;
   use auv_driver::selector::{App, Window};
   use auv_driver::{ActivationPolicy, Click, PrepareForInputOptions, RatioRect, Size, WindowPoint};
 
-  let select = run_playlist_select_resolved(inputs, query, scan, target, target_from_scan_cache, store_read_limits)?;
+  let select = run_playlist_select_resolved(inputs, query, scan, target, target_from_run_artifact, memory, artifact_read_limits)?;
   if select.verification.status != "passed" {
     return Err(format!("playlist select verification failed before play: observed_title={:?}", select.verification.observed_title));
   }
