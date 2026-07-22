@@ -15,6 +15,8 @@ pub mod command;
 pub mod commands;
 pub mod help;
 pub mod models;
+// NOTICE(run-recording-v1): This synchronous adapter remains only for legacy
+// callers scheduled for Task 22. New callsites must compose tracing themselves.
 pub mod recorded;
 pub mod registry;
 pub mod render;
@@ -22,7 +24,10 @@ pub mod summary;
 
 pub use arg::ArgSpec;
 pub use auv_cli_invoke_macros::invoke_command;
-pub use command::{CommandGroup, CommandNode, InvokeCommand, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace};
+pub use command::{
+  CommandGroup, CommandNode, InvokeCommand, InvokeCommandFuture, InvokeCommandHandler, InvokeCommandInput, InvokeCommandOutput,
+  InvokeCommandResult, InvokeNamespace,
+};
 pub use help::{render_command_help, render_help_index};
 pub use models::{
   ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
@@ -34,7 +39,7 @@ pub use recorded::{
   invoke_resolved_recorded_in_span,
 };
 pub use registry::{InvokeRegistry, default_registry};
-pub use render::{InvokeCliOutcome, render_recorded_invoke};
+pub use render::{InvokeCliOutcome, render_invoke_result, render_recorded_invoke};
 pub use summary::{OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

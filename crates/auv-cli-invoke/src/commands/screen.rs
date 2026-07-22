@@ -1,11 +1,9 @@
 use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{IMAGE_TEXT_ARGS, REGION_ARGS, SCREEN_TEXT_ARGS, TARGET_ARGS},
-  artifact::invoke_artifact_path,
+  artifact::{emission_enabled, png_artifact, record_uri},
   invoke_command,
 };
-#[cfg(target_os = "macos")]
-use auv_tracing_driver::ProducedArtifact;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("screen", "SCREEN")
@@ -25,14 +23,14 @@ pub fn group() -> CommandGroup {
   summary = "Capture one display-contained region and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = REGION_ARGS,
 )]
-fn capture_region(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     use auv_driver::{CaptureOptions, Rect};
 
     reject_target_activation(&input, "screen.captureRegion")?;
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let region = Rect::new(input.required_f64("x")?, input.required_f64("y")?, input.required_f64("width")?, input.required_f64("height")?);
@@ -54,14 +52,15 @@ fn capture_region(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     // and basic dimensions, but not the standalone capture-contract artifact.
     // Add it after the direct-invoke contract JSON shape is accepted in
     // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
-    let source_path = invoke_artifact_path(input.command_id, "region-capture", "png");
-    capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen.captureRegion artifact: {error}"))?;
-    output.artifacts.push(ProducedArtifact {
-      kind: "screen-region-capture".to_string(),
-      source_path,
-      preferred_name: format!("{}-region-capture.png", input.command_id.replace('.', "-")),
-      note: Some("Region screenshot captured by screen.captureRegion.".to_string()),
-    });
+    if emission_enabled() {
+      match png_artifact("auv.driver.screen_region_capture", &capture.capture.image, auv_tracing::Attributes::empty()) {
+        Ok(artifact) => {
+          let emission = auv_tracing::emit_artifact!(artifact).await;
+          record_uri(&mut output, "artifact.screen_region_capture_uri", emission);
+        }
+        Err(error) => output.notes.push(error),
+      }
+    }
     output.verification = Some("capture-only; no semantic success claim".to_string());
     output.known_limits.push("screen.captureRegion records a region screenshot only; it does not verify UI semantics.".to_string());
     Ok(output)
@@ -79,17 +78,17 @@ fn capture_region(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Capture a screenshot and locate OCR text anchors in screenshot pixel space. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = SCREEN_TEXT_ARGS,
 )]
-fn find_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn find_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     reject_target_activation(&input, "screen.findText")?;
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let query = input.required_input("query")?;
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    screen_text_matches(input.command_id, &session, query, false)
+    screen_text_matches(&input.command_id, &session, query, false).await
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -104,17 +103,17 @@ fn find_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Poll live-desktop OCR until a target text anchor appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
   args = SCREEN_TEXT_ARGS,
 )]
-fn wait_for_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     reject_target_activation(&input, "screen.waitForText")?;
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let query = input.required_input("query")?;
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    screen_text_matches(input.command_id, &session, query, true)
+    screen_text_matches(&input.command_id, &session, query, true).await
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -124,7 +123,7 @@ fn wait_for_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 }
 
 #[cfg(target_os = "macos")]
-fn screen_text_matches(command_id: &str, session: &auv_driver::LocalDriverSession, query: &str, wait: bool) -> InvokeCommandResult {
+async fn screen_text_matches(command_id: &str, session: &auv_driver::LocalDriverSession, query: &str, wait: bool) -> InvokeCommandResult {
   use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
   use std::{thread, time::Instant};
 
@@ -145,14 +144,15 @@ fn screen_text_matches(command_id: &str, session: &auv_driver::LocalDriverSessio
       // screenshot and scalar match signals, but not a structured
       // recognition-result artifact with query/bounds/confidence. Add that
       // after the artifact shape is accepted in the direct-command handoff.
-      let source_path = invoke_artifact_path(command_id, "ocr-screenshot", "png");
-      capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen OCR screenshot artifact: {error}"))?;
-      output.artifacts.push(ProducedArtifact {
-        kind: "screen-ocr-screenshot".to_string(),
-        source_path,
-        preferred_name: format!("{}-ocr-screenshot.png", command_id.replace('.', "-")),
-        note: Some("Screenshot used for screen OCR matching.".to_string()),
-      });
+      if emission_enabled() {
+        match png_artifact("auv.driver.screen_ocr_source", &capture.capture.image, auv_tracing::Attributes::empty()) {
+          Ok(artifact) => {
+            let emission = auv_tracing::emit_artifact!(artifact).await;
+            record_uri(&mut output, "artifact.screen_ocr_source_uri", emission);
+          }
+          Err(error) => output.notes.push(error),
+        }
+      }
       output.verification = Some("recognition-only; no semantic success claim".to_string());
       output
         .known_limits
@@ -169,7 +169,7 @@ fn screen_text_matches(command_id: &str, session: &auv_driver::LocalDriverSessio
   summary = "Detect visible OCR row bands inside a constrained screen region without depending on one exact anchor string. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = TARGET_ARGS,
 )]
-fn find_screen_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn find_screen_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-screen-rows): row-band detection still lives in the root
   // macOS command adapter; move a typed screen-row API before enabling this
   // direct invoke command.
@@ -182,7 +182,7 @@ fn find_screen_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Poll live-desktop OCR row detection until at least a target number of visible rows appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
   args = TARGET_ARGS,
 )]
-fn wait_for_screen_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn wait_for_screen_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-screen-rows): row wait/polling still lives in the root macOS
   // command adapter; move a typed screen-row API before enabling this direct
   // invoke command.
@@ -195,7 +195,7 @@ fn wait_for_screen_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Locate OCR text anchors inside an existing image artifact without touching the live desktop.",
   args = IMAGE_TEXT_ARGS,
 )]
-fn find_image_text(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn find_image_text(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-image-ocr): the invoke crate cannot yet decode an image path
   // into the typed VisionApi capture/image contract without adding a stable
   // image-artifact boundary; add that API before enabling this command.
@@ -208,14 +208,14 @@ fn find_image_text(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
   args = SCREEN_TEXT_ARGS,
 )]
-fn click_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     use auv_driver::{CaptureOptions, Click, RatioRect};
 
     reject_target_activation(&input, "screen.clickText")?;
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let query = input.required_input("query")?;
@@ -229,19 +229,20 @@ fn click_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     let point = matched.action_point();
     session.input().click_at(point, Click::Single).map_err(|error| error.to_string())?;
 
-    let mut output = text_matches_output(input.command_id, "auv-driver-macos.input", &matches.matches, Some(0));
+    let mut output = text_matches_output(&input.command_id, "auv-driver-macos.input", &matches.matches, Some(0));
     // TODO(invoke-recognition-result-artifacts): clickText records the OCR
     // source screenshot used for target resolution, but not the structured
     // recognition-result artifact. Add it with screen.findText once the
     // direct-invoke recognition artifact shape is accepted.
-    let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
-    capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen click OCR screenshot artifact: {error}"))?;
-    output.artifacts.push(ProducedArtifact {
-      kind: "screen-ocr-screenshot".to_string(),
-      source_path,
-      preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
-      note: Some("Screenshot used to resolve screen.clickText OCR target.".to_string()),
-    });
+    if emission_enabled() {
+      match png_artifact("auv.driver.screen_ocr_source", &capture.capture.image, auv_tracing::Attributes::empty()) {
+        Ok(artifact) => {
+          let emission = auv_tracing::emit_artifact!(artifact).await;
+          record_uri(&mut output, "artifact.screen_ocr_source_uri", emission);
+        }
+        Err(error) => output.notes.push(error),
+      }
+    }
     output.signals.insert("click.x".to_string(), point.x.to_string());
     output.signals.insert("click.y".to_string(), point.y.to_string());
     output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
@@ -263,14 +264,14 @@ fn click_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Detect visible OCR row bands inside a constrained screen region and click a chosen row-derived point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
   args = TARGET_ARGS,
 )]
-fn click_screen_row(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn click_screen_row(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-screen-rows): click-row depends on the same typed row-band
   // detector plus row-to-click-point policy; move that API before enabling
   // this direct invoke command.
   Err("screen.clickRow requires a typed screen row click API".to_string())
 }
 
-fn reject_target_activation(input: &InvokeCommandInput<'_>, command_id: &str) -> Result<(), String> {
+fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
   if input.target_application_id.is_some() {
     // TODO(invoke-screen-activation): target activation for screen capture/OCR
     // needs a typed app activation lease before these handlers can honor

@@ -141,12 +141,16 @@ fn invoke_resolved_recorded_in_span_with_finalize(
   )?;
   record_event(run, command_span.id(), "command.resolved", Some(format!("resolved {}", command.id)));
 
-  let mut result = match command.invoke(InvokeCommandInput {
-    command_id: command.id,
-    target_application_id: request.target.application_id.as_deref(),
-    inputs: &request.inputs,
+  // NOTICE(run-recording-v1): The synchronous legacy adapter blocks on the
+  // owned command future until Task 22 removes this module. New callers must
+  // await the command directly from their own composition root.
+  let command_result = futures_executor::block_on(command.invoke(InvokeCommandInput {
+    command_id: command.id.to_string(),
+    target_application_id: request.target.application_id.clone(),
+    inputs: request.inputs.clone(),
     dry_run: request.dry_run,
-  }) {
+  }));
+  let mut result = match command_result {
     Ok(output) => {
       if let Some(backend) = &output.backend {
         record_event(run, command_span.id(), "command.backend", Some(format!("backend={backend}")));
@@ -299,7 +303,7 @@ mod tests {
   use serde_json::json;
 
   use crate::{
-    CommandGroup, ExecutionTarget, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace, InvokeRegistry,
+    CommandGroup, ExecutionTarget, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput, InvokeNamespace, InvokeRegistry,
     InvokeReport, InvokeReportField, InvokeReportSection, InvokeRequest, RunStatus, arg::NO_ARGS,
   };
 
@@ -320,59 +324,63 @@ mod tests {
     (backend, store_root)
   }
 
-  fn fixture_handler(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-    let mut output = InvokeCommandOutput::new("fixture observed");
-    output.backend = Some("fixture.backend".to_string());
-    output.notes.push("fixture note".to_string());
-    output.known_limits.push("fixture limit".to_string());
-    output.verification = Some("read-only; no semantic success claim".to_string());
-    output.report = Some(InvokeReport::new(
-      vec![InvokeReportField {
-        label: "Result".to_string(),
-        value: "Observed".to_string(),
-      }],
-      vec![InvokeReportSection {
-        title: "Fixture".to_string(),
-        fields: vec![InvokeReportField {
-          label: "Signal".to_string(),
-          value: "observed".to_string(),
+  fn fixture_handler(_input: InvokeCommandInput) -> InvokeCommandFuture {
+    Box::pin(async {
+      let mut output = InvokeCommandOutput::new("fixture observed");
+      output.backend = Some("fixture.backend".to_string());
+      output.notes.push("fixture note".to_string());
+      output.known_limits.push("fixture limit".to_string());
+      output.verification = Some("read-only; no semantic success claim".to_string());
+      output.report = Some(InvokeReport::new(
+        vec![InvokeReportField {
+          label: "Result".to_string(),
+          value: "Observed".to_string(),
         }],
-      }],
-    ));
-    output.signals.insert("fixture".to_string(), "observed".to_string());
-    Ok(output)
+        vec![InvokeReportSection {
+          title: "Fixture".to_string(),
+          fields: vec![InvokeReportField {
+            label: "Signal".to_string(),
+            value: "observed".to_string(),
+          }],
+        }],
+      ));
+      output.signals.insert("fixture".to_string(), "observed".to_string());
+      Ok(output)
+    })
   }
 
-  fn failing_handler(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-    Err("boom".to_string())
+  fn failing_handler(_input: InvokeCommandInput) -> InvokeCommandFuture {
+    Box::pin(async { Err("boom".to_string()) })
   }
 
-  fn artifact_failing_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-    let mut output = InvokeCommandOutput::new("artifact output");
-    output.backend = Some("fixture.artifact.backend".to_string());
-    output.notes.push("artifact failure fixture note".to_string());
-    output.known_limits.push("artifact failure fixture limit".to_string());
-    output.verification = Some("capture-only; no semantic success claim".to_string());
-    output.report = Some(InvokeReport::new(
-      vec![InvokeReportField {
-        label: "Result".to_string(),
-        value: "Artifact pending".to_string(),
-      }],
-      vec![InvokeReportSection {
-        title: "Artifact Failure Fixture".to_string(),
-        fields: vec![InvokeReportField {
-          label: "Backend".to_string(),
-          value: "fixture.artifact.backend".to_string(),
+  fn artifact_failing_handler(input: InvokeCommandInput) -> InvokeCommandFuture {
+    Box::pin(async move {
+      let mut output = InvokeCommandOutput::new("artifact output");
+      output.backend = Some("fixture.artifact.backend".to_string());
+      output.notes.push("artifact failure fixture note".to_string());
+      output.known_limits.push("artifact failure fixture limit".to_string());
+      output.verification = Some("capture-only; no semantic success claim".to_string());
+      output.report = Some(InvokeReport::new(
+        vec![InvokeReportField {
+          label: "Result".to_string(),
+          value: "Artifact pending".to_string(),
         }],
-      }],
-    ));
-    output.artifacts.push(ProducedArtifact {
-      kind: "missing-fixture-artifact".to_string(),
-      source_path: temp_dir("missing-artifact-source").join("missing.txt"),
-      preferred_name: format!("{}-artifact.txt", input.command_id.replace('.', "-")),
-      note: Some("Missing artifact source used to cover recording failure.".to_string()),
-    });
-    Ok(output)
+        vec![InvokeReportSection {
+          title: "Artifact Failure Fixture".to_string(),
+          fields: vec![InvokeReportField {
+            label: "Backend".to_string(),
+            value: "fixture.artifact.backend".to_string(),
+          }],
+        }],
+      ));
+      output.artifacts.push(ProducedArtifact {
+        kind: "missing-fixture-artifact".to_string(),
+        source_path: temp_dir("missing-artifact-source").join("missing.txt"),
+        preferred_name: format!("{}-artifact.txt", input.command_id.replace('.', "-")),
+        note: Some("Missing artifact source used to cover recording failure.".to_string()),
+      });
+      Ok(output)
+    })
   }
 
   fn fixture_registry() -> InvokeRegistry {

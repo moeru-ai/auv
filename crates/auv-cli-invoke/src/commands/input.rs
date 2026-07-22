@@ -4,7 +4,7 @@ use crate::{
     KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS, QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS,
     WINDOW_CLICK_POINT_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
   },
-  artifact::json_artifact,
+  artifact::{emission_enabled, json_artifact, record_uri},
   invoke_command,
 };
 use crate::{InvokeReport, InvokeReportField};
@@ -32,7 +32,7 @@ pub fn group() -> CommandGroup {
   summary = "Focus a target macOS text input through AX, either by --query text or by a promoted --candidate JSON payload.",
   args = QUERY_OR_CANDIDATE_ARGS,
 )]
-fn focus_text_input(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-ax-focus): focusText still depends on the archived
   // root AX candidate/action adapter; move a typed focus API before enabling
   // this direct invoke command.
@@ -45,7 +45,7 @@ fn focus_text_input(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Press a known macOS button-like control by query through AX.",
   args = QUERY_ARGS,
 )]
-fn press_button(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-ax-press): pressButton still depends on root AX query
   // resolution; move a typed button press API before enabling this direct
   // invoke command.
@@ -58,7 +58,7 @@ fn press_button(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Press a control by query via AXUIElementPerformAction without moving the real cursor. Pass --overlay true to draw a visual AUV cursor over the target. Falls back with an error when the AX target has no matching action; use input.pressButton for non-AX-pressable targets.",
   args = QUERY_OVERLAY_ARGS,
 )]
-fn ax_press_button(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn ax_press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-ax-press): AXUIElementPerformAction routing has not
   // moved into a stable typed driver API yet; enable this after that boundary
   // exists.
@@ -71,7 +71,7 @@ fn ax_press_button(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Focus a text input by query or promoted --candidate JSON via AXUIElementSetAttributeValue(kAXFocusedAttribute) without moving the real cursor. Pass --overlay true for the dual-cursor visual. Errors when the target does not accept programmatic focus; use input.focusText if pointer movement is acceptable.",
   args = QUERY_OR_CANDIDATE_OVERLAY_ARGS,
 )]
-fn ax_focus_text_input(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn ax_focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-ax-focus): AX focus-by-query/candidate has not moved
   // into a stable typed driver API yet; enable this after that boundary exists.
   Err("input.axFocusText requires a typed AX focus API".to_string())
@@ -83,7 +83,7 @@ fn ax_focus_text_input(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Find visible text in a window via Vision OCR, resolve the AX node at that point, then press it via AXUIElementPerformAction without moving the real cursor. Pass --overlay true for the dual-cursor visual. Errors with a hint to window.clickText when the OCR anchor maps to a canvas-rendered or non-AX-pressable region.",
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
-fn ax_click_window_text(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn ax_click_window_text(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-ax-click-window-text): OCR-to-AX click resolution still
   // lives in the root macOS command adapter; move a typed resolver API before
   // enabling this direct invoke command.
@@ -96,7 +96,7 @@ fn ax_click_window_text(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "ActionResolver v0 diagnostic press: try OCR-to-AX press first; if it fails and pointer fallback is allowed, fall back to pointer click.",
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
-fn smart_press(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn smart_press(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-smart-press): ActionResolver execution still lives in
   // the root macOS command adapter; move the typed resolver boundary before
   // enabling this direct invoke command.
@@ -109,20 +109,20 @@ fn smart_press(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Type text into the active macOS control through System Events.",
   args = TEXT_ARGS,
 )]
-fn type_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     use auv_driver::TypeTextOptions;
 
     reject_target_activation(&input, "input.typeText")?;
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let text = input.required_input("text")?;
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = session.input().type_text(text, TypeTextOptions::default()).map_err(|error| error.to_string())?;
-    input_action_output("typed text into active control", "auv-driver-macos.input", &result)
+    input_action_output("typed text into active control", "auv-driver-macos.input", &result).await
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -137,14 +137,14 @@ fn type_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Paste text into the active macOS control through the clipboard, then restore the prior clipboard snapshot.",
   args = TEXT_ARGS,
 )]
-fn paste_text_preserve_clipboard(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn paste_text_preserve_clipboard(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     use auv_driver::PasteTextOptions;
 
     reject_target_activation(&input, "input.pasteText")?;
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let text = input.required_input("text")?;
@@ -181,14 +181,14 @@ fn paste_text_preserve_clipboard(input: InvokeCommandInput<'_>) -> InvokeCommand
   summary = "Press a keyboard key or shortcut in the active macOS app through System Events.",
   args = KEY_ARGS,
 )]
-fn press_key(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     use auv_driver::KeyPressOptions;
 
     reject_target_activation(&input, "input.key")?;
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let key = input.required_input("key")?;
@@ -200,7 +200,7 @@ fn press_key(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
         ..KeyPressOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    input_action_output("pressed key in active app", "auv-driver-macos.input", &result).map(|mut output| {
+    input_action_output("pressed key in active app", "auv-driver-macos.input", &result).await.map(|mut output| {
       attach_input_key_report(&mut output, key, Some("active app"), &result);
       output
     })
@@ -218,7 +218,7 @@ fn press_key(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Click a macOS global logical point through Quartz.",
   args = TARGET_ARGS,
 )]
-fn click_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn click_point(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-click-point): InputApi::click_at exists, but this
   // invoke command exposes no x/y point args; add direct point inputs before
   // enabling this command.
@@ -231,7 +231,7 @@ fn click_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Click a point relative to a target macOS window, either from --relative_x/--relative_y inputs or from a promoted --candidate JSON payload.",
   args = WINDOW_CLICK_POINT_ARGS,
 )]
-fn click_window_point(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn click_window_point(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     use auv_driver::ClickOptions;
@@ -240,26 +240,26 @@ fn click_window_point(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     // path is documented on the command summary but intentionally deferred; MC-19
     // D4 uses direct offset/relative point inputs only.
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
     let uses_relative_window_point = input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y");
     let absolute_window_point = if uses_relative_window_point {
       None
     } else {
-      Some(resolve_click_window_point(input.inputs, input.command_id, None)?)
+      Some(resolve_click_window_point(&input.inputs, &input.command_id, None)?)
     };
 
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let window = session.window().resolve(click_window_selector(&input)).map_err(|error| error.to_string())?;
     let window_point = if uses_relative_window_point {
-      resolve_click_window_point(input.inputs, input.command_id, Some(&window))?
+      resolve_click_window_point(&input.inputs, &input.command_id, Some(&window))?
     } else {
       absolute_window_point.expect("absolute window point must be present when relative inputs are absent")
     };
     let action = session.window().click(&window, window_point, ClickOptions::default()).map_err(|error| error.to_string())?;
 
-    let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &action)?;
+    let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &action).await?;
     add_click_window_signals(&mut output, &window, window_point);
     Ok(output)
   }
@@ -276,7 +276,7 @@ fn click_window_point(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Capture a target window before and after a human-taught click, recording global and window-local click coordinates for automation debugging.",
   args = WINDOW_ARGS,
 )]
-fn teach_click(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn teach_click(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-teach-click): teach-click is an interactive root
   // adapter workflow, not a stable typed input API; move the workflow boundary
   // before enabling this direct invoke command.
@@ -289,7 +289,7 @@ fn teach_click(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Scroll at a macOS global logical point through Quartz.",
   args = TARGET_ARGS,
 )]
-fn scroll_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn scroll_point(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-input-scroll-point): InputApi::scroll_global_hid exists, but
   // this invoke command exposes no x/y point or delta args; add direct scroll
   // inputs before enabling this command.
@@ -343,7 +343,7 @@ fn window_relative_window_point(window: &auv_driver::Window, relative_x: f64, re
 }
 
 #[cfg(target_os = "macos")]
-fn click_window_selector(input: &InvokeCommandInput<'_>) -> auv_driver::WindowSelector {
+fn click_window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelector {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
   let mut selector = WindowSelector {
@@ -375,7 +375,7 @@ fn add_click_window_signals(output: &mut InvokeCommandOutput, window: &auv_drive
   output.signals.insert("click.window_y".to_string(), window_point.point().y.to_string());
 }
 
-fn reject_target_activation(input: &InvokeCommandInput<'_>, command_id: &str) -> Result<(), String> {
+fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
   if input.target_application_id.is_some() {
     // TODO(invoke-input-target-activation): foreground input APIs currently
     // act on the active control; add a typed app/window input lease before
@@ -390,7 +390,7 @@ fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
 }
 
 #[cfg(target_os = "macos")]
-fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandResult {
+async fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandResult {
   let mut output = InvokeCommandOutput::new(summary);
   output.backend = Some(backend.to_string());
   output.signals.insert("input.selected_path".to_string(), format!("{:?}", result.selected_path));
@@ -401,7 +401,15 @@ fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputA
   if let Some(reason) = &result.fallback_reason {
     output.signals.insert("input.fallback_reason".to_string(), reason.clone());
   }
-  output.artifacts.push(input_action_artifact(result, auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE)?);
+  if emission_enabled() {
+    match json_artifact("auv.driver.input_action_result", result, auv_tracing::Attributes::empty()) {
+      Ok(artifact) => {
+        let emission = auv_tracing::emit_artifact!(artifact).await;
+        record_uri(&mut output, "artifact.input_action_result_uri", emission);
+      }
+      Err(error) => output.notes.push(error),
+    }
+  }
   output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
   output
     .known_limits
@@ -430,11 +438,6 @@ fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
   InvokeReportField::new(label, value)
 }
 
-#[cfg(target_os = "macos")]
-fn input_action_artifact(result: &auv_driver::InputActionResult, label: &str) -> Result<auv_tracing_driver::ProducedArtifact, String> {
-  json_artifact(auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE, label, result, "Typed InputActionResult recorded by the invoke handler.")
-}
-
 #[cfg(test)]
 mod click_window_point_tests {
   use super::*;
@@ -445,12 +448,12 @@ mod click_window_point_tests {
   fn click_window_point_missing_point_args_returns_error() {
     let inputs = BTreeMap::new();
     let input = InvokeCommandInput {
-      command_id: "input.clickWindowPoint",
-      target_application_id: Some("com.example.App"),
-      inputs: &inputs,
+      command_id: "input.clickWindowPoint".to_string(),
+      target_application_id: Some("com.example.App".to_string()),
+      inputs,
       dry_run: false,
     };
-    let error = click_window_point(input).expect_err("missing point args should fail");
+    let error = futures_executor::block_on(click_window_point(input)).expect_err("missing point args should fail");
     assert!(error.contains("requires --offset_x/--offset_y or --relative_x/--relative_y"));
   }
 
@@ -460,12 +463,12 @@ mod click_window_point_tests {
     inputs.insert("offset_x".to_string(), "640".to_string());
     inputs.insert("offset_y".to_string(), "360".to_string());
     let input = InvokeCommandInput {
-      command_id: "input.clickWindowPoint",
-      target_application_id: Some("com.example.App"),
-      inputs: &inputs,
+      command_id: "input.clickWindowPoint".to_string(),
+      target_application_id: Some("com.example.App".to_string()),
+      inputs,
       dry_run: true,
     };
-    let output = click_window_point(input).expect("dry run should succeed");
+    let output = futures_executor::block_on(click_window_point(input)).expect("dry run should succeed");
     assert!(output.summary.contains("dry run: input.clickWindowPoint"));
   }
 

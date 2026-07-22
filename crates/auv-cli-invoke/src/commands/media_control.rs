@@ -16,7 +16,7 @@ pub fn group() -> CommandGroup {
   summary = "Read structured now-playing media state from the desktop backend.",
   args = NO_ARGS,
 )]
-fn media_control_now_playing(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn media_control_now_playing(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-media-control-typed-api): media report population is deferred
   // with command enablement; Task 4 cannot activate this previously deferred
   // command before a typed media control API is accepted.
@@ -29,7 +29,7 @@ fn media_control_now_playing(_input: InvokeCommandInput<'_>) -> InvokeCommandRes
   summary = "Send a generic system media play command and read now-playing state for verification.",
   args = NO_ARGS,
 )]
-fn media_control_play(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn media_control_play(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -42,7 +42,7 @@ fn media_control_play(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Send a generic system media pause command and read now-playing state for verification.",
   args = NO_ARGS,
 )]
-fn media_control_pause(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn media_control_pause(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -55,7 +55,7 @@ fn media_control_pause(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Send a generic system media play/pause toggle command and compare now-playing state before and after.",
   args = NO_ARGS,
 )]
-fn media_control_toggle_play_pause(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn media_control_toggle_play_pause(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -70,7 +70,7 @@ fn media_control_toggle_play_pause(_input: InvokeCommandInput<'_>) -> InvokeComm
   summary = "Send a generic system media next-track command and compare now-playing identity before and after.",
   args = NO_ARGS,
 )]
-fn media_control_next(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn media_control_next(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -83,7 +83,7 @@ fn media_control_next(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Send a generic system media previous-track command and compare now-playing identity before and after.",
   args = NO_ARGS,
 )]
-fn media_control_previous(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn media_control_previous(_input: InvokeCommandInput) -> InvokeCommandResult {
   // TODO(invoke-media-control-typed-api): media control still depends on root
   // driver/media crate routing. Move a typed API out of the root driver and
   // back it with `auv_media_macos` before enabling this invoke command.
@@ -96,11 +96,11 @@ mod tests {
 
   use super::*;
 
-  fn input<'a>(command_id: &'static str, inputs: &'a BTreeMap<String, String>) -> InvokeCommandInput<'a> {
+  fn input(command_id: &str, inputs: &BTreeMap<String, String>) -> InvokeCommandInput {
     InvokeCommandInput {
-      command_id,
+      command_id: command_id.to_string(),
       target_application_id: None,
-      inputs,
+      inputs: inputs.clone(),
       dry_run: false,
     }
   }
@@ -109,15 +109,17 @@ mod tests {
   fn media_control_commands_report_typed_api_migration_gap() {
     let inputs = BTreeMap::new();
 
-    for (command_id, invoke) in [
-      ("mediaControl.nowPlaying", media_control_now_playing as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
-      ("mediaControl.play", media_control_play as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
-      ("mediaControl.pause", media_control_pause as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
-      ("mediaControl.togglePlayPause", media_control_toggle_play_pause as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
-      ("mediaControl.next", media_control_next as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
-      ("mediaControl.previous", media_control_previous as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
+    for command in [
+      media_control_now_playing_invoke_command(),
+      media_control_play_invoke_command(),
+      media_control_pause_invoke_command(),
+      media_control_toggle_play_pause_invoke_command(),
+      media_control_next_invoke_command(),
+      media_control_previous_invoke_command(),
     ] {
-      let error = invoke(input(command_id, &inputs)).expect_err("command should not route to root driver");
+      let command_id = command.id;
+      let error =
+        futures_executor::block_on(command.invoke(input(command_id, &inputs))).expect_err("command should not route to root driver");
 
       assert!(error.contains("typed media control API"), "{command_id} returned unclear error: {error}");
     }

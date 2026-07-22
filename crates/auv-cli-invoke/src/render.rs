@@ -3,7 +3,7 @@ use std::io;
 use anstream::{AutoStream, ColorChoice};
 use auv_tracing_driver::{AuvResult, RunRecordingBackend};
 
-use crate::{InvokeFinalizeHook, InvokeOutputOptions, InvokeRegistry, InvokeRequest, RunStatus};
+use crate::{InvokeFinalizeHook, InvokeOutputOptions, InvokeRegistry, InvokeRequest, InvokeResult, RunStatus};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvokeCliOutcome {
@@ -18,6 +18,20 @@ impl InvokeCliOutcome {
   }
 }
 
+pub fn render_invoke_result(result: &InvokeResult, options: InvokeOutputOptions) -> Result<InvokeCliOutcome, String> {
+  if options.json {
+    let mut stdout = io::stdout().lock();
+    result.write_json(&mut stdout, options)?;
+  } else {
+    let stdout = io::stdout();
+    let mut stream = AutoStream::new(stdout.lock(), ColorChoice::Auto);
+    result.write_human(&mut stream, options, true)?;
+  }
+  Ok(InvokeCliOutcome::from_status(result.status.clone()))
+}
+
+// NOTICE(run-recording-v1): Temporary synchronous compatibility adapter for
+// existing non-Task-16 callers. No new frontend may call it; remove in Task 22.
 pub fn render_recorded_invoke(
   recording: &RunRecordingBackend,
   registry: &InvokeRegistry,
