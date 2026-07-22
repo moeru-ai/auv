@@ -14,6 +14,65 @@ use super::query_wired_projection::{
 };
 use super::*;
 
+struct ProductOsuSpatialQueryLineage {
+  artifact: ArtifactRefView,
+  manifest: Option<auv_game_osu::VisualTruthSpatialQueryManifest>,
+  issue: Option<String>,
+}
+
+// TODO(run-contract-task-22): Replace this product-local legacy extraction
+// with the canonical osu! reader when the query-wired CLI path itself moves to
+// RunStore/RunSnapshot; Task 21 only removes this boundary from auv-game-osu.
+fn extract_product_osu_spatial_query_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> Result<Vec<ProductOsuSpatialQueryLineage>, String> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != auv_game_osu::OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(ProductOsuSpatialQueryLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!("osu visual truth spatial query manifest mime_type {} is not JSON", artifact.mime_type)),
+      });
+      continue;
+    }
+    match read_artifact_json::<auv_game_osu::VisualTruthSpatialQueryManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      auv_game_osu::OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
+    ) {
+      Ok(manifest) => manifests.push(ProductOsuSpatialQueryLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(ProductOsuSpatialQueryLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+fn product_osu_spatial_query_readiness(lineage: &ProductOsuSpatialQueryLineage) -> (String, Option<String>) {
+  if let Some(issue) = &lineage.issue {
+    return ("n/a".to_string(), Some(issue.clone()));
+  }
+  let Some(manifest) = &lineage.manifest else {
+    return ("n/a".to_string(), Some("osu visual truth spatial query manifest missing".to_string()));
+  };
+  let readiness = auv_game_osu::derive_visual_truth_spatial_query_action_readiness(manifest);
+  (readiness.eligibility.as_str().to_string(), None)
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuQueryWiredLiveActionSummary {
   pub operation_result_artifact_id: Option<String>,
@@ -314,16 +373,16 @@ pub fn derive_osu_query_wired_live_action_summary(store: &LocalStore, run: &Cano
   let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
 
   let run_id = run.run.run_id.as_str();
-  let manifest_extract = query_artifact_id.as_deref().map(|_| extract_osu_visual_truth_spatial_query_manifests(store, run));
+  let manifest_extract = query_artifact_id.as_deref().map(|_| extract_product_osu_spatial_query_manifests(store, run));
 
   let mut readiness_class = map_action_eligibility_to_readiness_class(&action_eligibility);
   if let Some(query_id) = query_artifact_id.as_deref() {
     if let Some(Ok(ref manifests)) = manifest_extract {
       if let Some(lineage) = manifests.iter().find(|manifest| manifest.artifact.artifact_id.as_str() == query_id) {
-        let readiness = derive_osu_visual_truth_spatial_query_action_readiness(lineage);
-        readiness_class = map_action_eligibility_to_readiness_class(&readiness.action_eligibility);
-        if readiness.issue.is_some() {
-          issue = readiness.issue;
+        let (action_eligibility, readiness_issue) = product_osu_spatial_query_readiness(lineage);
+        readiness_class = map_action_eligibility_to_readiness_class(&action_eligibility);
+        if readiness_issue.is_some() {
+          issue = readiness_issue;
         }
       }
     }
@@ -334,7 +393,7 @@ pub fn derive_osu_query_wired_live_action_summary(store: &LocalStore, run: &Cano
       classify_manifest_source_readiness_lookup(
         query_id,
         extract_result,
-        |lineage: &OsuVisualTruthSpatialQueryManifestLineage| lineage.artifact.artifact_id.as_str(),
+        |lineage: &ProductOsuSpatialQueryLineage| lineage.artifact.artifact_id.as_str(),
         |lineage| lineage.manifest.is_some(),
       )
     })

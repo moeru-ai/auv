@@ -5,7 +5,7 @@ mod render_b;
 mod sections;
 
 pub use sections::{
-  OsuDetectionEvalSection, OsuVisualTruthPrimarySection, inspect_sections_detection_eval, inspect_sections_primary,
+  OsuDetectionEvalSection, OsuInspectSection, OsuVisualTruthPrimarySection, inspect_sections_detection_eval, inspect_sections_primary,
   render_osu_detection_eval_text, render_osu_primary_text,
 };
 

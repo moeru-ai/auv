@@ -568,16 +568,19 @@ dependencies = [
  "auv-driver",
  "auv-driver-macos",
  "auv-file",
- "auv-inspect-model",
  "auv-query-readiness",
  "auv-stage-status",
  "auv-task-object-detection",
- "auv-tracing-driver",
+ "auv-tracing",
+ "futures-executor",
+ "futures-util",
  "image",
  "rosu-map",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

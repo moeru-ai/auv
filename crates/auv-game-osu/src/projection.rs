@@ -1,13 +1,30 @@
 use auv_driver::CaptureBinding;
 use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};
 use auv_driver::window::Window;
-use auv_tracing_driver::EvidenceCorrelationKey;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::{Deserialize, Serialize};
 
 use crate::visual_eval::EvalProjection;
 
 const PLAYFIELD_WIDTH: f64 = 512.0;
 const PLAYFIELD_HEIGHT: f64 = 384.0;
+
+pub const OSU_PROJECTION_PURPOSE: &str = "auv.osu.projection";
+
+pub async fn publish_osu_projection(
+  context: Option<&Context>,
+  projection: &ProjectionArtifact,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, OSU_PROJECTION_PURPOSE, projection, ProjectionArtifact::validate).await
+}
+
+pub async fn read_osu_projection(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<ProjectionArtifact, crate::run_read::OsuArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_PROJECTION_PURPOSE, ProjectionArtifact::validate).await
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -144,6 +161,29 @@ impl ProjectionArtifact {
     })
   }
 
+  pub fn validate(&self) -> Result<(), String> {
+    let bounds = [
+      &self.source_window_bounds,
+      self.capture_bounds.as_ref().unwrap_or(&self.source_window_bounds),
+    ];
+    if bounds.iter().flat_map(|bounds| [bounds.x, bounds.y, bounds.width, bounds.height]).any(|value| !value.is_finite()) {
+      return Err("projection artifact contains non-finite bounds".to_string());
+    }
+    if self.source_window_bounds.width <= 0.0 || self.source_window_bounds.height <= 0.0 {
+      return Err("projection artifact source window bounds must have positive size".to_string());
+    }
+    if self.capture_bounds.as_ref().is_some_and(|bounds| bounds.width <= 0.0 || bounds.height <= 0.0) {
+      return Err("projection artifact capture bounds must have positive size".to_string());
+    }
+    if self.capture_width.is_some_and(|value| value == 0) || self.capture_height.is_some_and(|value| value == 0) {
+      return Err("projection artifact capture dimensions must be positive".to_string());
+    }
+    if self.capture_scale_factor.is_some_and(|value| !value.is_finite() || value <= 0.0) {
+      return Err("projection artifact capture scale factor must be positive and finite".to_string());
+    }
+    self.to_eval_projection().map(|_| ())
+  }
+
   pub fn to_core_projection_basis(&self, basis_id: impl Into<String>, timestamp_millis: u64) -> ProjectionBasis {
     let mut basis = ProjectionBasis::new(
       basis_id,
@@ -162,10 +202,6 @@ impl ProjectionArtifact {
       basis = basis.with_known_limit("osu projection basis has no bound capture rectangle");
     }
     basis
-  }
-
-  pub fn to_core_evidence_correlation_key(&self, basis_id: impl Into<String>) -> EvidenceCorrelationKey {
-    EvidenceCorrelationKey::new(basis_id)
   }
 
   pub fn to_core_capture_binding(
@@ -281,17 +317,6 @@ mod tests {
     );
     assert_eq!(basis.derivation_family, ProjectionDerivationFamily::LayoutRule);
     assert_eq!(basis.match_radius_px, Some(f64::from(artifact.match_radius_px)));
-  }
-
-  #[test]
-  fn projection_artifact_exposes_core_evidence_correlation_key() {
-    let artifact = sample_projection_artifact_with_capture();
-
-    let key = artifact.to_core_evidence_correlation_key("osu-frame-1");
-
-    assert_eq!(key.basis_frame_id, "osu-frame-1");
-    assert!(key.action_artifact_id.is_none());
-    assert!(key.verification_artifact_id.is_none());
   }
 
   #[test]

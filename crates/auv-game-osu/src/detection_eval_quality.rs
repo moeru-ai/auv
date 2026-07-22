@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,7 @@ pub type DetectionEvalQualityResult<T> = Result<T, String>;
 
 pub const DETECTION_EVAL_QUALITY_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const DETECTION_EVAL_QUALITY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const OSU_DETECTION_EVAL_QUALITY_PURPOSE: &str = "auv.osu.detection_eval.quality";
 
 pub const OSU_WQ1_V1_QUALITY_KNOWN_LIMIT: &str = "osu WQ1 quality records detection measurement evidence only; it does not claim model usefulness, gameplay success, or pass/fail thresholds";
 
@@ -134,11 +136,57 @@ impl DetectionEvalQualityVerdict {
   }
 }
 
+pub async fn publish_osu_detection_eval_quality(
+  context: Option<&Context>,
+  quality: &DetectionEvalQualityManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, OSU_DETECTION_EVAL_QUALITY_PURPOSE, quality, validate_quality_payload).await
+}
+
+pub async fn read_osu_detection_eval_quality(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<DetectionEvalQualityManifest, crate::run_read::OsuArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_DETECTION_EVAL_QUALITY_PURPOSE, validate_quality_payload).await
+}
+
+fn validate_quality_payload(quality: &DetectionEvalQualityManifest) -> Result<(), String> {
+  if quality.schema_version != DETECTION_EVAL_QUALITY_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported osu! detection eval quality schema_version {} (expected {DETECTION_EVAL_QUALITY_MANIFEST_SCHEMA_VERSION})",
+      quality.schema_version
+    ));
+  }
+  if let Some(metrics) = &quality.metrics {
+    let label_total = metrics.label_matched_frames + metrics.label_missing_frames + metrics.label_unmapped_frames;
+    if label_total != metrics.total_frames {
+      return Err(format!("quality label counts total {label_total}, expected {}", metrics.total_frames));
+    }
+    let spatial_total = metrics.spatial_matched_frames + metrics.spatial_missing_frames + metrics.spatial_unscored_frames;
+    if spatial_total != metrics.total_frames {
+      return Err(format!("quality spatial counts total {spatial_total}, expected {}", metrics.total_frames));
+    }
+    for (name, recall) in [
+      ("label_recall", metrics.label_recall),
+      ("spatial_recall", metrics.spatial_recall),
+    ] {
+      if recall.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+        return Err(format!("quality {name} must be finite and between 0 and 1"));
+      }
+    }
+  }
+  if quality.status == StageStatus::Ready && quality.metrics.is_none() {
+    return Err("ready quality payload must include metrics".to_string());
+  }
+  Ok(())
+}
+
 pub fn build_detection_eval_quality(inputs: &DetectionEvalQualityInputs) -> DetectionEvalQualityResult<DetectionEvalQualityOutput> {
   fs::create_dir_all(&inputs.output_dir)
     .map_err(|error| format!("failed to create detection eval quality output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let known_limits = BTreeSet::from([OSU_WQ1_V1_QUALITY_KNOWN_LIMIT.to_string()]);
   let mut warnings = BTreeSet::new();
 
@@ -394,7 +442,12 @@ mod tests {
     .expect("quality");
 
     assert_eq!(quality_output.manifest.status, StageStatus::Ready);
-    assert_eq!(quality_output.manifest.verdict, DetectionEvalQualityVerdict::MeasuredOnly);
+    assert_eq!(
+      quality_output.manifest.verdict,
+      DetectionEvalQualityVerdict::MeasuredOnly,
+      "warnings: {:?}",
+      quality_output.inspect_report.warnings
+    );
     let metrics = quality_output.manifest.metrics.as_ref().expect("metrics");
     assert_eq!(metrics.total_frames, 3);
     assert_eq!(metrics.label_matched_frames, 1);

@@ -422,7 +422,11 @@ async fn golden_osu_visual_truth_inspect_run() {
   let semantic = run_osu_visual_truth_semantic_validation(&recording, work.clone(), work.join("semantic-out")).expect("semantic");
   let legacy_run = store.read_run(semantic.run_id.as_str()).expect("legacy run");
   let (canonical_store, dispatch, canonical_run_id, canonical_root) = canonical_inspect_run();
-  publish_unrelated_canonical_artifact(&canonical_root).await;
+  let semantic_metadata =
+    auv_game_osu::visual_truth_semantic::publish_osu_visual_truth_semantic(Some(&canonical_root), &semantic.value.manifest)
+      .await
+      .expect("publish canonical osu! semantic")
+      .expect("canonical artifact publication enabled");
   let snapshot = load_canonical_snapshot(canonical_store.as_ref(), &dispatch, canonical_run_id).await;
   let text = build_product_inspect_text_document(&store, &legacy_run, canonical_store.as_ref(), &snapshot)
     .await
@@ -431,6 +435,7 @@ async fn golden_osu_visual_truth_inspect_run() {
   assert!(text.contains("Osu Visual Truth Semantic:"));
   let mut normalized = normalize_inspect_text(&text, &[&store_root, &work, &fixture_root]);
   normalized = normalized.replace(semantic.run_id.as_str(), "<RUN_ID>");
+  normalized = normalized.replace(&semantic_metadata.uri().to_string(), "<OSU_SEMANTIC_URI>");
   assert_or_update_golden("osu.txt", &normalized);
   let _ = fs::remove_dir_all(work);
   let _ = fs::remove_dir_all(store_root);
