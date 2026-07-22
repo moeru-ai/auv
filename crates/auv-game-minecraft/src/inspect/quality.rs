@@ -217,37 +217,47 @@ pub(crate) fn derive_quality_baseline(
     holdout_previews.iter().find(|artifact| artifact.payload.training_result_semantic_manifest_path == SEMANTIC_MANIFEST).cloned()
   });
   let exact_render = render_quality.iter().find(|artifact| render_matches_profile(&artifact.payload, profile)).cloned();
-  let render_quality = exact_render.or_else(|| {
+  let selected_render_quality = exact_render.or_else(|| {
     render_quality.iter().find(|artifact| artifact.payload.training_result_semantic_manifest_path == SEMANTIC_MANIFEST).cloned()
   });
 
   let mut mismatched_stages = Vec::new();
-  if spatial_query.as_ref().is_some_and(|artifact| !spatial_query_matches_profile(&artifact.payload, profile)) {
+  if spatial_query.as_ref().is_some_and(|artifact| !spatial_query_matches_profile(&artifact.payload, profile))
+    || (spatial_query.is_none()
+      && spatial_queries.iter().any(|artifact| spatial_query_matches_profile_except_semantic_manifest(&artifact.payload, profile)))
+  {
     mismatched_stages.push(QualityStage::SpatialQuery);
   }
-  if holdout_witness.as_ref().is_some_and(|artifact| !holdout_matches_profile(&artifact.payload, profile)) {
+  if holdout_witness.as_ref().is_some_and(|artifact| !holdout_matches_profile(&artifact.payload, profile))
+    || (holdout_witness.is_none()
+      && holdout_previews.iter().any(|artifact| holdout_matches_profile_except_semantic_manifest(&artifact.payload, profile)))
+  {
     mismatched_stages.push(QualityStage::HoldoutWitness);
   }
-  if render_quality.as_ref().is_some_and(|artifact| !render_matches_profile(&artifact.payload, profile)) {
+  if selected_render_quality.as_ref().is_some_and(|artifact| !render_matches_profile(&artifact.payload, profile))
+    || (selected_render_quality.is_none()
+      && render_quality.iter().any(|artifact| render_matches_profile_except_semantic_manifest(&artifact.payload, profile)))
+  {
     mismatched_stages.push(QualityStage::RenderQuality);
   }
 
-  let stage_count = usize::from(spatial_query.is_some()) + usize::from(holdout_witness.is_some()) + usize::from(render_quality.is_some());
-  let evidence_coverage = if stage_count == 0 {
+  let stage_count =
+    usize::from(spatial_query.is_some()) + usize::from(holdout_witness.is_some()) + usize::from(selected_render_quality.is_some());
+  let evidence_coverage = if stage_count == 0 && mismatched_stages.is_empty() {
     QualityEvidenceCoverage::MissingStage
   } else if stage_count == 3 && mismatched_stages.is_empty() {
     QualityEvidenceCoverage::Complete
   } else {
     QualityEvidenceCoverage::Partial
   };
-  let trust_notes = build_trust_notes(render_quality.as_ref().map(|artifact| &artifact.payload));
+  let trust_notes = build_trust_notes(selected_render_quality.as_ref().map(|artifact| &artifact.payload));
 
   let mut baseline = MinecraftQualityBaseline {
     profile_id: PROFILE_ID,
     evidence_coverage,
     spatial_query,
     holdout_witness,
-    render_quality,
+    render_quality: selected_render_quality,
     mismatched_stages,
     trust_notes,
     verdicts: MinecraftQualityVerdicts {
@@ -264,20 +274,39 @@ pub(crate) fn derive_quality_baseline(
 
 fn spatial_query_matches_profile(manifest: &TrainingResultSpatialQueryManifest, profile: QualityBaselineProfile) -> bool {
   manifest.training_result_semantic_manifest_path == SEMANTIC_MANIFEST
-    && manifest.target_block == profile.target_block
+    && spatial_query_matches_profile_except_semantic_manifest(manifest, profile)
+}
+
+fn spatial_query_matches_profile_except_semantic_manifest(
+  manifest: &TrainingResultSpatialQueryManifest,
+  profile: QualityBaselineProfile,
+) -> bool {
+  manifest.target_block == profile.target_block
     && manifest.target_face == profile.target_face
     && manifest.target_semantics == profile.target_semantics
 }
 
 fn holdout_matches_profile(manifest: &TrainingResultHoldoutPreviewManifest, profile: QualityBaselineProfile) -> bool {
-  manifest.training_result_semantic_manifest_path == SEMANTIC_MANIFEST
-    && manifest.holdout_frame_index == profile.holdout_frame_index
+  manifest.training_result_semantic_manifest_path == SEMANTIC_MANIFEST && holdout_matches_profile_except_semantic_manifest(manifest, profile)
+}
+
+fn holdout_matches_profile_except_semantic_manifest(
+  manifest: &TrainingResultHoldoutPreviewManifest,
+  profile: QualityBaselineProfile,
+) -> bool {
+  manifest.holdout_frame_index == profile.holdout_frame_index
     && manifest.basis_checkpoint_path.as_deref().is_some_and(|path| path.ends_with(BASIS_CHECKPOINT_SUFFIX))
 }
 
 fn render_matches_profile(manifest: &TrainingResultHoldoutRenderQualityManifest, profile: QualityBaselineProfile) -> bool {
-  manifest.training_result_semantic_manifest_path == SEMANTIC_MANIFEST
-    && manifest.holdout_frame_index == profile.holdout_frame_index
+  manifest.training_result_semantic_manifest_path == SEMANTIC_MANIFEST && render_matches_profile_except_semantic_manifest(manifest, profile)
+}
+
+fn render_matches_profile_except_semantic_manifest(
+  manifest: &TrainingResultHoldoutRenderQualityManifest,
+  profile: QualityBaselineProfile,
+) -> bool {
+  manifest.holdout_frame_index == profile.holdout_frame_index
     && manifest.basis_checkpoint_path.as_deref().is_some_and(|path| path.ends_with(BASIS_CHECKPOINT_SUFFIX))
 }
 
@@ -563,6 +592,81 @@ mod tests {
     assert_eq!(baseline.mismatched_stages, [QualityStage::HoldoutWitness]);
     assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Partial);
     assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+  }
+
+  // ROOT CAUSE:
+  //
+  // Semantic-path-only mismatches were discarded by the path-pinned fallback selectors before mismatch diagnostics ran.
+  //
+  // Before the fix, those artifacts appeared missing. The fix diagnoses near-profile artifacts without selecting unrelated lineage as evidence.
+  #[test]
+  fn spatial_semantic_path_mismatch_is_diagnosed_without_selecting_artifact() {
+    let mut spatial = sample_spatial_query();
+    spatial.training_result_semantic_manifest_path = "other-semantic.json".to_string();
+
+    let baseline = derive_quality_baseline(&[inspected(spatial)], &[inspected(sample_holdout())], &[inspected(sample_render_quality())]);
+
+    assert!(baseline.spatial_query.is_none());
+    assert_eq!(baseline.mismatched_stages, [QualityStage::SpatialQuery]);
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Partial);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+    assert_eq!(baseline.verdicts.trained_render.quality_verdict, QualityVerdictOutcome::Blocked);
+  }
+
+  #[test]
+  fn holdout_semantic_path_mismatch_is_diagnosed_without_selecting_artifact() {
+    let mut holdout = sample_holdout();
+    holdout.training_result_semantic_manifest_path = "other-semantic.json".to_string();
+
+    let baseline =
+      derive_quality_baseline(&[inspected(sample_spatial_query())], &[inspected(holdout)], &[inspected(sample_render_quality())]);
+
+    assert!(baseline.holdout_witness.is_none());
+    assert_eq!(baseline.mismatched_stages, [QualityStage::HoldoutWitness]);
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Partial);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+    assert_eq!(baseline.verdicts.trained_render.quality_verdict, QualityVerdictOutcome::Blocked);
+  }
+
+  #[test]
+  fn render_semantic_path_mismatch_is_diagnosed_without_selecting_artifact() {
+    let mut render = sample_render_quality();
+    render.training_result_semantic_manifest_path = "other-semantic.json".to_string();
+
+    let baseline = derive_quality_baseline(&[inspected(sample_spatial_query())], &[inspected(sample_holdout())], &[inspected(render)]);
+
+    assert!(baseline.render_quality.is_none());
+    assert_eq!(baseline.mismatched_stages, [QualityStage::RenderQuality]);
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Partial);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+    assert_eq!(baseline.verdicts.trained_render.quality_verdict, QualityVerdictOutcome::Blocked);
+  }
+
+  #[test]
+  fn all_semantic_path_mismatches_are_partial_without_selecting_unrelated_lineage() {
+    let mut spatial = sample_spatial_query();
+    spatial.training_result_semantic_manifest_path = "other-spatial-semantic.json".to_string();
+    let mut holdout = sample_holdout();
+    holdout.training_result_semantic_manifest_path = "other-holdout-semantic.json".to_string();
+    let mut render = sample_render_quality();
+    render.training_result_semantic_manifest_path = "other-render-semantic.json".to_string();
+
+    let baseline = derive_quality_baseline(&[inspected(spatial)], &[inspected(holdout)], &[inspected(render)]);
+
+    assert!(baseline.spatial_query.is_none());
+    assert!(baseline.holdout_witness.is_none());
+    assert!(baseline.render_quality.is_none());
+    assert_eq!(
+      baseline.mismatched_stages,
+      [
+        QualityStage::SpatialQuery,
+        QualityStage::HoldoutWitness,
+        QualityStage::RenderQuality
+      ]
+    );
+    assert_eq!(baseline.evidence_coverage, QualityEvidenceCoverage::Partial);
+    assert_eq!(baseline.verdicts.probe.quality_verdict, QualityVerdictOutcome::Blocked);
+    assert_eq!(baseline.verdicts.trained_render.quality_verdict, QualityVerdictOutcome::Blocked);
   }
 
   #[test]
