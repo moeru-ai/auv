@@ -38,7 +38,6 @@ members = [
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",
   "crates/auv-steam",
-  "crates/auv-tracing-driver",
   "crates/auv-view",
 ]
 default-members = [".", "crates/auv-cli"]

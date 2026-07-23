@@ -641,10 +641,8 @@ name = "auv-inspect-model"
 version = "0.0.1"
 dependencies = [
  "auv-tracing",
- "auv-tracing-driver",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -653,9 +651,7 @@ version = "0.0.1"
 dependencies = [
  "auv-inspect-model",
  "auv-tracing",
- "auv-tracing-driver",
  "auv-tracing-inspect",
- "auv-view",
  "axum",
  "base64",
  "futures-util",
@@ -848,19 +844,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
-]
-
-[[package]]
-name = "auv-tracing-driver"
-version = "0.0.1"
-dependencies = [
- "auv-view",
- "axum",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]

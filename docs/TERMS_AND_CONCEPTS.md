@@ -61,38 +61,33 @@ observability; they are not canonical run truth.
 Verification evaluates asserted external state. It is independent from target
 resolution, input delivery, operation completion, and persistence.
 
-## InspectSection / InspectDocument / InspectComposer (provisional)
+## Inspect Document
 
-Provisional core vocabulary for shared inspect composition across frontends
-(owned by `crates/auv-inspect-model`):
+`auv_inspect_model::InspectDocument` is the disposable viewer projection of one
+canonical `RunSnapshot`. It carries the authority, run, and through-revision
+identity together with projected spans, events, and committed artifact
+metadata. It is not a second persistence model and does not own artifact bytes.
 
-- **InspectSection** — one collectible inspect unit (`id` + `collect` → optional
-  type-erased `InspectSectionOutput { id, text, json }`).
-- **InspectDocument** — ordered list of collected section outputs; `render_text`
-  concatenates section text in registration order.
-- **InspectComposer** — explicit value holding registered sections; product CLI,
-  product MCP, and product inspect-server projection use the same product factory
-  and section set, with each frontend explicitly injecting its composer `Arc`
-  into all text / document paths for that lifecycle. Core library default
-  composer is core-only (prefix+suffix). Named JSON extensions (e.g. quality
-  baseline) are served via generic `/runs/{id}/extensions/{extension}` keys
-  registered by the product projection — not first-class donor routes in the
-  shared server.
+Core projection is deterministic from the snapshot. Product-specific text
+documents may wrap this canonical projection with app-owned sections, but there
+is no shared section registry or composer in `auv-inspect-model`.
 
-Semantics: registration order is render order; duplicate registered ids fail
-assembly; after `collect` returns `Some(output)`, `output.id` must equal the
-registered `section.id()` (mismatch aborts the document); `collect` returning
-`None` omits the section; a section error aborts the document. Product assembly
-(not the core library default) owns donor-including composers.
+## Inspect Run Extension
+
+`auv_inspect_server::InspectRunExtension` is the optional read-side contract for
+named product JSON at `/v1/runs/{run_id}/extensions/{extension}`. An extension
+receives the selected authority `RunStore` and canonical `RunSnapshot`; it may
+derive product data but cannot create another authority or alter run history.
 
 ## Product CLI package / auv-cli (provisional)
 
 Provisional packaging term for the app-integration composition package
 (`auv-cli`, located at `crates/auv-cli`):
 
-- Owns root `auv` and app-specific bins, CLI frontend, integration wiring, product
-  `InspectComposer`, query-wired OperationResult adapters (S3b; stay in product
-  until contract ownership moves), and product inspect-server projection wrappers.
+- Owns root `auv` and app-specific bins, CLI frontend, integration wiring,
+  app-owned text inspection sections, query-wired OperationResult adapters (S3b;
+  stay in product until contract ownership moves), and the product
+  `InspectRunExtension` implementation.
 - Depends on library-only `auv-runtime` plus `auv-game-*` / `auv-godot`.
 - Must not be confused with core `auv-runtime`; game crates must not depend on
   `auv-cli` to reach product types.
@@ -132,8 +127,8 @@ device-level action locks are still planned, not implemented.
 
 An AUV span is an optional timed diagnostic scope inside a run. Spans may form
 a tree through `parent_span_id`. An operation scope is one ordinary caller-named
-use of this span API; spans need not belong to an operation execution and do not
-create an independent tracing authority.
+use of this span API; spans need not belong to a persisted operation entity and
+do not create an independent tracing authority.
 
 A span becomes durable only when the run's authority `RunStore` accepts it
 through a `RunCommit`. Until then it is transient diagnostic data.
@@ -142,8 +137,9 @@ OpenTelemetry spans are projections, not AUV persistence identity.
 ## Event
 
 An AUV event is an optional typed, timestamped point-in-time fact associated
-with the current run and, optionally, a span. Events need not belong to an
-operation execution and do not create an independent event or tracing authority.
+with the current run and, optionally, a span. Events need not belong to a
+persisted operation entity and do not create an independent event or tracing
+authority.
 
 Examples include `command.resolved`, `driver.invoke`, `action.started`,
 `artifact.captured`, `assertion.passed`, and `assertion.failed`.
@@ -160,8 +156,8 @@ and becomes visible only when the authority `RunStore` atomically includes it
 in a `RunCommit` after validating the complete byte stream.
 
 Artifacts may optionally be associated with a span. V1 does not assign artifact
-ownership to an operation execution or verification. Artifacts may contain
-structured JSON documents, images, reports, logs, media, or other files.
+ownership to a persisted operation entity or verification. Artifacts may
+contain structured JSON documents, images, reports, logs, media, or other files.
 
 Examples include screenshots, click-overlay images, accessibility snapshots,
 driver input/output JSON, distillation reports, validation reports, and video
@@ -619,8 +615,9 @@ a surface, scrolls, observes again, and records merged evidence as one
 interaction-level trace structure.
 
 The working crate name for this boundary is `auv-tracing-interaction`.
-Interaction tracing may call the driver tracing boundary, but it should not
-become a command catalog, recipe runtime, or platform driver implementation.
+Interaction tracing may instrument typed driver calls through `auv-tracing`,
+but it should not become a command catalog, recipe runtime, or platform driver
+implementation.
 
 ## Operation Spec
 
@@ -682,84 +679,11 @@ semantics, recipe execution, or bundle discovery.
 
 ## Historical Terms
 
-The definitions below record vocabulary used by the legacy run-recording
-implementation. They are retained for migration context and are not the active
-contract.
-
-### Operation
-
-An operation was a reusable typed capability identified by `OperationName`.
-CLI command names and MCP tool names were described as frontend routes to an
-operation rather than canonical execution identity.
-
-### Operation Execution
-
-An operation execution was one invocation that actually started. Its direct
-typed result was defined independently from persistence and verification.
-
-### Trace
-
-A trace is one complete inspectable workflow. Examples include one Rust
-orchestration workflow, one app probe, one validation pass, or one ad-hoc
-command invocation. Historical JSON recipe execution produced traces before
-the recipe lane was retired.
-
-A trace is the unit that inspection tools load as a whole. It should contain
-enough structure to reconstruct what AUV attempted, what happened, what state
-was observed, and which captured materials support that account.
-
-### Run
-
-A run is the user-visible top-level record for a trace. The `run_id` is the
-stable handle used by CLI commands, storage paths, and viewer APIs.
-
-A run is scoped to one `device_id` and one `session_id`. Both identifiers are
-recorded on the run's attributes (`auv.device.id`, `auv.session.id`) so
-historical runs remain self-describing once multi-device and multi-session
-land. Runs from different devices or sessions never share local state.
-
-For local storage, a run is expected to live under `.auv/runs/{run_id}/`. The
-on-disk layout is independent of device/session — those are run-record
-attributes, not path components — so existing run directories remain readable
-across the protocol skeleton expansion.
-
-Internally, a run may also carry an OpenTelemetry-compatible trace identifier so
-the recorded data can later be exported to OTLP without treating the human
-readable `run_id` as the telemetry trace id.
-
-### Run Recording Backend
-
-A run recording backend is a dependency of execution surfaces, not of the
-legacy `Runtime` type specifically. It owns run recording effects by combining
-one store for canonical snapshots and artifact staging with one or more run
-recorders for incremental updates.
-
-The backend lets CLI, library calls, and future frontends share the same runtime
-execution model while choosing different recording policies. Examples include
-local-only recording, local plus inspect server reporting, server-required
-reporting, and library-supplied recorders.
-
-### Driver Tracing Boundary
-
-The driver tracing boundary is implemented by `auv-tracing-driver`. It owns
-durable AUV run/span/event/artifact recording and may emit Rust `tracing`
-spans/events for observability. It does not install global subscribers or
-OpenTelemetry exporters; binaries and servers configure those layers.
-
-Typed driver calls and Rust orchestration should use this boundary when they
-need inspectable artifacts without depending on command catalog or CLI argument
-parsing code. The root `Runtime` still exposes temporary facade methods for
-remaining invoke and historical callers.
-
-### Run Recorder
-
-A run recorder receives incremental run updates such as `runStarted`,
-`spanStarted`, `eventAppended`, `artifactCreated`, `spanFinished`, and
-`runFinished`.
-
-Recorder implementations may persist updates locally, broadcast them to
-same-process viewers, report them to an inspect server, fan them out to multiple
-targets, or intentionally discard them.
+Before V1, AUV experimented with persisted operation/execution entities,
+recorder fan-out, and a driver-specific tracing boundary. Those surfaces are
+retired rather than compatibility-supported. The repository audit and migration
+record remain in
+[`docs/ai/references/inspect/2026-07-17-auv-tracing-contract-and-invoke-output-design.md`](ai/references/inspect/2026-07-17-auv-tracing-contract-and-invoke-output-design.md).
 
 ## Inspect Server Session
 

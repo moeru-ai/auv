@@ -4,7 +4,6 @@
 //! execute operations, own application control flow, or maintain a second run
 //! recording model.
 
-pub mod legacy;
 pub mod read_projection;
 pub mod session;
 
