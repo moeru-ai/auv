@@ -44,9 +44,6 @@ impl Default for InspectClientOptions {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct InspectServeWriteOptions {
   pub enabled: bool,
-  pub token: Option<String>,
-  pub token_file: Option<String>,
-  pub no_token: bool,
 }
 
 #[derive(Debug)]
@@ -351,7 +348,7 @@ USAGE
   auv-minecraft … (see `auv-minecraft --help`)
   auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>]
   auv inspect <run-id> [--store-root <path>]
-  auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
+  auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write]
   auv session serve [--host <host>] [--port <port>] [--store-root <path>]
   auv mcp serve
 
@@ -820,26 +817,6 @@ fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
       }
       "--enable-write" => {
         write.enabled = true;
-        index += 1;
-      }
-      "--write-token" => {
-        if index + 1 >= arguments.len() {
-          return Err("--write-token requires a value".to_string());
-        }
-        write.enabled = true;
-        write.token = Some(arguments[index + 1].clone());
-        index += 2;
-      }
-      "--write-token-file" => {
-        if index + 1 >= arguments.len() {
-          return Err("--write-token-file requires a value".to_string());
-        }
-        write.enabled = true;
-        write.token_file = Some(arguments[index + 1].clone());
-        index += 2;
-      }
-      "--no-write-token" => {
-        write.no_token = true;
         index += 1;
       }
       other => {
@@ -2157,13 +2134,16 @@ mod tests {
       "auv-minecraft",
       "auv invoke <command-id>",
       "auv inspect <run-id> [--store-root <path>]",
-      "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]",
+      "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write]",
       "auv session serve [--host <host>] [--port <port>] [--store-root <path>]",
       "auv mcp serve",
     ] {
       assert!(help.contains(expected), "top-level help should keep core path visible: {expected}");
     }
     assert!(!help.contains("--inspect-server-token"));
+    for retired in ["--write-token", "--write-token-file", "--no-write-token"] {
+      assert!(!help.contains(retired), "top-level help must omit retired Inspect serve option {retired}");
+    }
   }
 
   #[test]
@@ -3865,15 +3845,13 @@ mod tests {
   }
 
   #[test]
-  fn parse_inspect_serve_write_options() {
+  fn parse_inspect_serve_enable_write_option() {
     let command = parse_cli(&[
       "inspect".to_string(),
       "serve".to_string(),
       "--store-root".to_string(),
       "/tmp/auv-store".to_string(),
       "--enable-write".to_string(),
-      "--write-token".to_string(),
-      "secret".to_string(),
     ])
     .expect("inspect serve options should parse");
 
@@ -3888,10 +3866,22 @@ mod tests {
         assert_eq!(port, auv_inspect_server::DEFAULT_INSPECT_PORT);
         assert_eq!(store_root.as_deref(), Some("/tmp/auv-store"));
         assert!(write.enabled);
-        assert_eq!(write.token.as_deref(), Some("secret"));
-        assert!(!write.no_token);
       }
       other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_inspect_serve_rejects_retired_write_token_flags_as_unknown() {
+    for flag in ["--write-token", "--write-token-file", "--no-write-token"] {
+      let mut arguments = vec!["inspect".to_string(), "serve".to_string(), flag.to_string()];
+      if flag != "--no-write-token" {
+        arguments.push("secret".to_string());
+      }
+
+      let error = parse_cli(&arguments).expect_err("retired Inspect serve token flag must fail");
+
+      assert_eq!(error, format!("unexpected inspect-serve argument {flag}"));
     }
   }
 
