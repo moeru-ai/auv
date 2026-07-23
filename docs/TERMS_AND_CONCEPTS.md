@@ -22,6 +22,13 @@ An operation scope is an ordinary caller-named AUV span around app or driver
 work. It is not a persisted operation entity and does not require an AUV-owned
 operation trait, runner, execution id, or session object.
 
+## Direct Result
+
+A direct result is the typed result returned by an app or driver operation
+directly to its CLI, MCP, or library caller. Recording consumes facts and
+artifacts emitted by that execution; `RunStore`, run snapshots, and inspection
+projections never reconstruct, gate, or replace the synchronous result path.
+
 ## Run Commit
 
 A run commit is one atomic, ordered set of facts accepted by the authority
@@ -581,26 +588,24 @@ They are inspection artifacts, not screenshots.
 
 ## Inspect Server
 
-The inspect server is an HTTP and WebSocket access layer over stored and live
-run data. It is not the runtime execution API.
+The inspect server is an HTTP and SSE access layer over stored and live run
+data. It is not the runtime execution API.
 
 The server exists so browser viewers, Android WebViews, IDE integrations, and
 other tools can list runs, fetch run structure, load artifacts, and subscribe to
 live run events.
 
-V1 selects exactly one authority `RunStore` for each run. An inspect server may
-have one of three explicit relationships to that authority:
+V1 selects exactly one authority `RunStore` for each run. An inspect
+implementation has one of two relationships to that authority:
 
-- read snapshots, commits, subscriptions, and artifacts from the selected
-  `RunStore`;
-- receive best-effort `InspectPublisher` projections whose delivery failures do
-  not alter committed truth; or
-- explicitly implement `RunStore`, making the inspect server the authority for
-  that run.
+- it reads snapshots, commits, subscriptions, and artifacts from the selected
+  authority `RunStore`; or
+- it is selected as the authority `RunStore`, with `InspectRunStore` carrying
+  the store contract over the Inspect HTTP/SSE protocol.
 
 Only `RunCommit` values accepted by the selected authority define durable run
-truth. Inspect rendering, broadcasting, and best-effort publication cannot
-change already committed history.
+truth. Inspect projections, rendering, and live broadcasts, including SSE
+delivery, are non-authoritative and cannot change committed history.
 
 Reliable replication between authorities requires a separate protocol with an
 outbox, acknowledgement, resume cursor, and conflict policy; that protocol is
