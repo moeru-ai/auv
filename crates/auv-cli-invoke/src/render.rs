@@ -1,9 +1,8 @@
 use std::io;
 
 use anstream::{AutoStream, ColorChoice};
-use auv_tracing_driver::{AuvResult, RunRecordingBackend};
 
-use crate::{InvokeFinalizeHook, InvokeOutputOptions, InvokeRegistry, InvokeRequest, InvokeResult, RunStatus};
+use crate::{InvokeOutputOptions, InvokeResult, RunStatus};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvokeCliOutcome {
@@ -30,36 +29,11 @@ pub fn render_invoke_result(result: &InvokeResult, options: InvokeOutputOptions)
   Ok(InvokeCliOutcome::from_status(result.status.clone()))
 }
 
-// NOTICE(run-recording-v1): Temporary synchronous compatibility adapter for
-// existing non-Task-16 callers. No new frontend may call it; remove in Task 22.
-pub fn render_recorded_invoke(
-  recording: &RunRecordingBackend,
-  registry: &InvokeRegistry,
-  request: InvokeRequest,
-  options: InvokeOutputOptions,
-  finalize: Option<&InvokeFinalizeHook>,
-) -> AuvResult<InvokeCliOutcome> {
-  let result = match finalize {
-    Some(finalize) => crate::invoke_recorded_with_finalize(recording, registry, request, finalize)?,
-    None => crate::invoke_recorded(recording, registry, request)?,
-  };
-  if options.json {
-    let mut stdout = io::stdout().lock();
-    result.write_json(&mut stdout, options)?;
-  } else {
-    let stdout = io::stdout();
-    let mut stream = AutoStream::new(stdout.lock(), ColorChoice::Auto);
-    result.write_human(&mut stream, options, true)?;
-  }
-  Ok(InvokeCliOutcome::from_status(result.status))
-}
-
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
 
   use auv_tracing::{ArtifactMetadata, ArtifactPurpose, ArtifactUri, Attributes, ByteLength, ContentType, RunId, Sha256Digest};
-  use auv_tracing_driver::trace::{ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EventId, SpanId};
   use serde_json::Value;
 
   use crate::{
@@ -75,7 +49,6 @@ mod tests {
 
     InvokeResult {
       run_id: "run_fixture".to_string(),
-      producer_span_id: Some(SpanId::new("0000000000000001")),
       command_id: "fixture.observe".to_string(),
       command_summary: "Observe fixture".to_string(),
       status,
@@ -120,19 +93,6 @@ mod tests {
           }],
         }],
       }),
-      artifacts: vec![ArtifactRecordV1Alpha1 {
-        api_version: ARTIFACT_API_VERSION.to_string(),
-        artifact_id: ArtifactId::new("artifact_fixture"),
-        span_id: SpanId::new("0000000000000001"),
-        event_id: Some(EventId::new("event_fixture")),
-        role: "screenshot".to_string(),
-        mime_type: "image/png".to_string(),
-        path: "artifacts/artifact_fixture.png".to_string(),
-        sha256: None,
-        attributes: BTreeMap::new(),
-        summary: Some("fixture screenshot".to_string()),
-      }],
-      artifact_paths: vec!["/tmp/auv/artifact_fixture.png".into()],
       canonical_artifacts: vec![ArtifactMetadata::new(
         ArtifactUri::from_ids(RunId::new(), auv_tracing::ArtifactId::new()),
         ArtifactPurpose::parse("auv.test.screenshot").expect("purpose"),

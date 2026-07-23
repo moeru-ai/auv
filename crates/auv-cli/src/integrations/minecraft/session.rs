@@ -1,6 +1,5 @@
 use auv_game_minecraft::{MinecraftSessionNode, MinecraftSessionObservation, MinecraftSpatialFrame, frame_to_session_observation};
-use auv_tracing_driver::now_millis;
-use auv_tracing_driver::trace::{new_run_id, new_span_id};
+use auv_tracing::{RunId, SpanId};
 
 use auv_runtime::contract::{
   NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionBox, RecognitionScope, RecognitionSource,
@@ -28,8 +27,8 @@ pub fn minecraft_spatial_frame_session_provider(
 }
 
 fn minecraft_session_observation_snapshot(index: usize, observation: MinecraftSessionObservation) -> ObservationSnapshot {
-  let run_id = new_run_id();
-  let span_id = new_span_id();
+  let run_id = RunId::new();
+  let span_id = SpanId::new();
   let source_artifacts = observation
     .detail
     .get("screenshot_artifact_ref")
@@ -44,7 +43,7 @@ fn minecraft_session_observation_snapshot(index: usize, observation: MinecraftSe
     snapshot_id: format!("minecraft_session_observation_{index}"),
     run_id,
     span_id,
-    captured_at_millis: now_millis(),
+    captured_at_millis: auv_runtime::model::now_millis(),
     source: ObservationSource::Visual,
     scope: RecognitionScope {
       surface: RecognitionSurface::Window,
@@ -74,8 +73,8 @@ fn minecraft_session_observation_snapshot(index: usize, observation: MinecraftSe
 }
 
 fn minecraft_session_node_surface_node(
-  run_id: &auv_tracing_driver::trace::RunId,
-  span_id: &auv_tracing_driver::trace::SpanId,
+  run_id: &RunId,
+  span_id: &SpanId,
   source_artifacts: &[String],
   node: MinecraftSessionNode,
 ) -> SurfaceNode {

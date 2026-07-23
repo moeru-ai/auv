@@ -18,8 +18,8 @@
 //!   -> auv-driver InputActionResult
 //!        (standalone `input-action-result` artifact; read via
 //!         `run_read::extract_input_action_results`)
-//!   -> OperationResult / VerificationResult / ObservationSnapshot
-//!        (this file; the persisted, reader-consumable records)
+//!   -> VerificationResult / ObservationSnapshot
+//!        (this file; typed domain evidence)
 //!   -> trace artifacts
 //!        (src/run_read/mod.rs reads them back via `extract_verifications`,
 //!         `extract_observation_snapshots`, and
@@ -28,7 +28,7 @@
 //!
 //! The archived candidate-action `ActionResolverDecision` schema was removed.
 //! Current input delivery evidence is the standalone `InputActionResult`
-//! artifact plus separate `OperationResult` / `VerificationResult` records.
+//! artifact plus separate app-owned verification records.
 //! Do not introduce a replacement action-result schema without owner approval.
 //!
 //! Reader-side `api_version` rejection is deferred; see
@@ -36,9 +36,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use auv_tracing_driver::ArtifactRef;
-
-use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
+pub use auv_tracing::{ArtifactId, ArtifactUri as ArtifactRef, RunId, SpanId};
 
 // NOTICE(contract-api-version-reader-check): producer-side stamping landed
 // in commit be0aab7 but the reader side does not yet reject artifacts
@@ -50,20 +48,12 @@ use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
 // for the reader-side discriminator as its own slice. Adding it now
 // without a real second version would be untestable.
 
-/// Wire-shape version of [`OperationResult`] JSON artifacts. Stamped onto
-/// every produced record so readers can reject artifacts whose shape they do
-/// not understand. Historical artifacts without the field deserialize as this
-/// version because the shape was already `v1alpha1` before the field existed.
-pub const OPERATION_RESULT_API_VERSION: &str = "auv.operation_result.v1alpha1";
-
-/// Wire-shape version of persisted `operation-summary` JSON artifacts (API-P11).
+/// Wire-shape version of the retired generic operation value.
 ///
-/// Covers the `InvokeResult`-sourced half of the `GetOperation` projection:
-/// `status`, `output_summary`, `signals`, and `failure_message`.
-pub const OPERATION_SUMMARY_API_VERSION: &str = "auv.operation_summary.v1alpha2";
-
-/// Artifact role for persisted operation summary projections (API-P11).
-pub const OPERATION_SUMMARY_ARTIFACT_ROLE: &str = "operation-summary";
+/// NOTICE(operation-result-retirement): the type remains a direct in-memory
+/// value for archived callers in this slice; no V1 producer or reader persists
+/// it. Removing the value itself is a separate owner-approved contract change.
+pub const OPERATION_RESULT_API_VERSION: &str = "auv.operation_result.v1alpha1";
 
 /// Wire-shape version of [`VerificationResult`] JSON artifacts. Same semantics
 /// as [`OPERATION_RESULT_API_VERSION`].
@@ -104,20 +94,13 @@ pub enum OperationStatus {
   Failed,
 }
 
-/// Persisted, reader-consumable record of one typed command's outcome.
+/// Retired generic operation value retained only for direct archived callers.
 ///
 /// # Seam role
 ///
-/// - **Produced by** typed driver / runtime command handlers via
-///   `Runtime::record_operation` (see [`auv_tracing_driver::recorded_operation`]).
-///   Verification claims attach here. Input delivery evidence is persisted
-///   separately as an `input-action-result` artifact (`InputActionResult`),
-///   not as a field on this record.
-/// - **Consumed by** `run_read::extract_verifications` (which scans
-///   `operation-result` JSON artifacts and lifts both top-level
-///   `verifications` and the legacy `OperationOutput::Verification`),
-///   and by the inspect HTTP/viewer surface that reads the same
-///   artifacts.
+/// V1 does not persist or reconstruct this value. App/domain functions return
+/// their existing typed values, while input and recognition evidence use their
+/// own canonical artifact purposes.
 ///
 /// Wire `api_version` is stamped on write but readers do not reject
 /// unknown values yet — see `NOTICE(contract-api-version-reader-check)`
@@ -619,75 +602,55 @@ mod tests {
   use super::*;
   use serde_json::json;
 
-  use auv_tracing_driver::trace::EventId;
-
   fn artifact_ref() -> ArtifactRef {
-    ArtifactRef {
-      run_id: RunId::new("run_123"),
-      artifact_id: ArtifactId::new("artifact_01"),
-      span_id: SpanId::new("span_01"),
-      captured_event_id: Some(EventId::new("event_01")),
-    }
+    ArtifactRef::from_ids(RunId::new(), ArtifactId::new())
   }
 
   #[test]
-  fn artifact_ref_is_owned_by_tracing_driver_boundary() {
-    fn accepts_driver_ref(_value: ArtifactRef) {}
+  fn artifact_ref_is_owned_by_canonical_tracing_boundary() {
+    fn accepts_canonical_ref(_value: ArtifactRef) {}
 
-    let artifact_ref = ArtifactRef {
-      run_id: RunId::new("run_type_identity"),
-      artifact_id: ArtifactId::new("artifact_type_identity"),
-      span_id: SpanId::new("span_type_identity"),
-      captured_event_id: Some(EventId::new("event_type_identity")),
-    };
+    let artifact_ref = ArtifactRef::from_ids(RunId::new(), ArtifactId::new());
 
-    accepts_driver_ref(artifact_ref);
+    accepts_canonical_ref(artifact_ref);
   }
 
   #[test]
   fn artifact_ref_round_trips_without_inline_timestamp() {
-    let value = serde_json::to_value(artifact_ref()).expect("artifact ref should serialize");
+    let reference = artifact_ref();
+    let value = serde_json::to_value(&reference).expect("artifact ref should serialize");
 
-    assert_eq!(value["run_id"], json!("run_123"));
-    assert_eq!(value["artifact_id"], json!("artifact_01"));
-    assert_eq!(value["span_id"], json!("span_01"));
-    assert_eq!(value["captured_event_id"], json!("event_01"));
-    assert!(value.get("captured_at_millis").is_none());
+    assert_eq!(value, json!(reference.to_string()));
 
     let parsed: ArtifactRef = serde_json::from_value(value).expect("artifact ref should deserialize");
-    assert_eq!(parsed, artifact_ref());
+    assert_eq!(parsed, reference);
   }
 
   #[test]
-  fn artifact_ref_serializes_missing_capture_event_as_null() {
-    let artifact_ref = ArtifactRef {
-      run_id: RunId::new("run_123"),
-      artifact_id: ArtifactId::new("artifact_01"),
-      span_id: SpanId::new("span_01"),
-      captured_event_id: None,
-    };
+  fn artifact_ref_serializes_only_the_typed_uri() {
+    let artifact_ref = ArtifactRef::from_ids(RunId::new(), ArtifactId::new());
 
     let value = serde_json::to_value(&artifact_ref).expect("artifact ref should serialize");
 
-    assert!(value.get("captured_event_id").is_some());
-    assert_eq!(value["captured_event_id"], serde_json::Value::Null);
+    assert!(value.is_string());
+    assert_eq!(value, json!(artifact_ref.to_string()));
   }
 
   #[test]
   fn candidate_ref_round_trips_as_cross_operation_handle() {
     let reference = CandidateRef {
-      source_run_id: RunId::new("run_getter"),
-      source_span_id: SpanId::new("span_getter"),
+      source_run_id: RunId::new(),
+      source_span_id: SpanId::new(),
       source_operation_id: "music.search.results".to_string(),
-      source_artifact_id: ArtifactId::new("artifact_candidates"),
+      source_artifact_id: ArtifactId::new(),
       candidate_local_id: "row#1".to_string(),
     };
 
     let value = serde_json::to_value(&reference).expect("candidate ref should serialize");
-    assert_eq!(value["source_run_id"], json!("run_getter"));
-    assert_eq!(value["source_span_id"], json!("span_getter"));
+    assert_eq!(value["source_run_id"], json!(reference.source_run_id.to_string()));
+    assert_eq!(value["source_span_id"], json!(reference.source_span_id.to_string()));
     assert_eq!(value["source_operation_id"], json!("music.search.results"));
-    assert_eq!(value["source_artifact_id"], json!("artifact_candidates"));
+    assert_eq!(value["source_artifact_id"], json!(reference.source_artifact_id.to_string()));
     assert_eq!(value["candidate_local_id"], json!("row#1"));
     assert!(value.get("candidate_id").is_none());
 
@@ -746,12 +709,7 @@ mod tests {
   #[test]
   fn recognition_result_round_trips_populated_best_filtered_and_all() {
     let capture_artifact = artifact_ref();
-    let contract_artifact = ArtifactRef {
-      run_id: RunId::new("run_123"),
-      artifact_id: ArtifactId::new("artifact_contract"),
-      span_id: SpanId::new("span_01"),
-      captured_event_id: Some(EventId::new("event_02")),
-    };
+    let contract_artifact = ArtifactRef::from_ids(RunId::new(), ArtifactId::new());
     let best = RecognizedItem {
       item_id: "item_best".to_string(),
       kind: "ocr_text".to_string(),
@@ -894,14 +852,14 @@ mod tests {
   #[test]
   fn node_ref_round_trips_as_stable_scan_handle() {
     let reference = NodeRef {
-      run_id: RunId::new("run_scan"),
-      span_id: SpanId::new("span_scan"),
+      run_id: RunId::new(),
+      span_id: SpanId::new(),
       node_id: "obs_0001_0001".to_string(),
     };
 
     let value = serde_json::to_value(&reference).expect("node ref should serialize");
-    assert_eq!(value["run_id"], json!("run_scan"));
-    assert_eq!(value["span_id"], json!("span_scan"));
+    assert_eq!(value["run_id"], json!(reference.run_id.to_string()));
+    assert_eq!(value["span_id"], json!(reference.span_id.to_string()));
     assert_eq!(value["node_id"], json!("obs_0001_0001"));
 
     let parsed: NodeRef = serde_json::from_value(value).expect("node ref should deserialize");
@@ -912,8 +870,8 @@ mod tests {
   fn surface_node_round_trips_with_recognition_provenance() {
     let node = SurfaceNode {
       node_ref: NodeRef {
-        run_id: RunId::new("run_scan"),
-        span_id: SpanId::new("span_scan"),
+        run_id: RunId::new(),
+        span_id: SpanId::new(),
         node_id: "obs_0001_0001".to_string(),
       },
       kind: "search_result_row".to_string(),
@@ -955,7 +913,7 @@ mod tests {
     let artifact = artifact_ref();
     let result = OperationResult {
       api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new("run_123"),
+      run_id: RunId::new(),
       status: OperationStatus::Completed,
       operation_id: "music.search.results".to_string(),
       evidence_artifacts: vec![artifact.clone()],
@@ -1087,23 +1045,18 @@ mod tests {
       failure_layer: Some(FailureLayer::StateChangedNoMatch),
       evidence: vec![artifact_ref()],
       consumed_candidate_ref: Some(CandidateRef {
-        source_run_id: RunId::new("run_getter"),
-        source_span_id: SpanId::new("span_getter"),
+        source_run_id: RunId::new(),
+        source_span_id: SpanId::new(),
         source_operation_id: "music.search.results".to_string(),
-        source_artifact_id: ArtifactId::new("artifact_candidates"),
+        source_artifact_id: ArtifactId::new(),
         candidate_local_id: "row#1".to_string(),
       }),
       consumed_node_ref: Some(NodeRef {
-        run_id: RunId::new("run_getter"),
-        span_id: SpanId::new("span_getter"),
+        run_id: RunId::new(),
+        span_id: SpanId::new(),
         node_id: "obs_0001_0001".to_string(),
       }),
-      consumed_recognition_artifact_ref: Some(ArtifactRef {
-        run_id: RunId::new("run_getter"),
-        artifact_id: ArtifactId::new("artifact_recognition"),
-        span_id: SpanId::new("span_getter"),
-        captured_event_id: None,
-      }),
+      consumed_recognition_artifact_ref: Some(ArtifactRef::from_ids(RunId::new(), ArtifactId::new())),
       consumed_recognition_id: Some("music_search_results".to_string()),
       consumed_recognized_item_id: Some("row#1".to_string()),
       observed_label: Some("天空仍灿烂".to_string()),
@@ -1179,8 +1132,8 @@ mod tests {
   fn sample_node(node_id: &str, source: RecognitionSource) -> SurfaceNode {
     SurfaceNode {
       node_ref: NodeRef {
-        run_id: RunId::new("run_snapshot"),
-        span_id: SpanId::new("span_snapshot"),
+        run_id: RunId::new(),
+        span_id: SpanId::new(),
         node_id: node_id.to_string(),
       },
       kind: "observation".to_string(),
@@ -1241,8 +1194,8 @@ mod tests {
     let snapshot = ObservationSnapshot {
       api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_run_001_span_001_0001".to_string(),
-      run_id: RunId::new("run_001"),
-      span_id: SpanId::new("span_001"),
+      run_id: RunId::new(),
+      span_id: SpanId::new(),
       captured_at_millis: 1_779_090_000_000,
       source: ObservationSource::Merged,
       scope: snapshot_scope(),
@@ -1279,8 +1232,8 @@ mod tests {
     let snapshot = ObservationSnapshot {
       api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_negative".to_string(),
-      run_id: RunId::new("run_002"),
-      span_id: SpanId::new("span_002"),
+      run_id: RunId::new(),
+      span_id: SpanId::new(),
       captured_at_millis: 1_779_090_001_000,
       source: ObservationSource::Ocr,
       scope: snapshot_scope(),
@@ -1302,8 +1255,8 @@ mod tests {
     let snapshot = ObservationSnapshot {
       api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_ax_only".to_string(),
-      run_id: RunId::new("run_003"),
-      span_id: SpanId::new("span_003"),
+      run_id: RunId::new(),
+      span_id: SpanId::new(),
       captured_at_millis: 1_779_090_002_000,
       source: ObservationSource::Ax,
       scope: snapshot_scope(),
@@ -1345,7 +1298,7 @@ mod tests {
     let verification = sample_verification(VerificationMethod::StateChanged);
     let result = OperationResult {
       api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new("run_action"),
+      run_id: RunId::new(),
       status: OperationStatus::Completed,
       operation_id: "music.result.play".to_string(),
       evidence_artifacts: vec![artifact_ref()],
@@ -1371,8 +1324,9 @@ mod tests {
 
   #[test]
   fn legacy_operation_result_without_verifications_field_decodes_with_empty_vec() {
+    let run_id = RunId::new();
     let json = json!({
-      "run_id": "run_legacy",
+      "run_id": run_id.to_string(),
       "status": "completed",
       "operation_id": "music.search.results",
       "evidence_artifacts": [],
@@ -1395,7 +1349,7 @@ mod tests {
   fn operation_result_supports_multiple_verification_claims() {
     let result = OperationResult {
       api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new("run_multi"),
+      run_id: RunId::new(),
       status: OperationStatus::Completed,
       operation_id: "music.result.play".to_string(),
       evidence_artifacts: vec![artifact_ref()],

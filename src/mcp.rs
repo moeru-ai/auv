@@ -245,6 +245,7 @@ fn validated_adapter_catalog(
 #[derive(Clone)]
 struct McpFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
+  store: Arc<dyn auv_tracing::RunStore>,
 }
 
 fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
@@ -253,7 +254,7 @@ fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> R
     .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
     .map_err(|error| format!("failed to open MCP run authority {}: {error}", root.display()))?;
   let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
-  Ok(McpFrontendAuthority { dispatch })
+  Ok(McpFrontendAuthority { dispatch, store })
 }
 
 struct McpFrontendExecution {
@@ -293,39 +294,42 @@ where
   F: FnOnce() -> Fut + Send + 'static,
   Fut: Future<Output = Result<McpInvokeOutcome, String>> + Send + 'static,
 {
-  let recorded = authority
-    .dispatch
-    .record(|| {
-      auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
-      let future = call();
-      async move {
-        tokio::pin!(future);
-        // TODO(invoke-driver-cancellation): request cancellation drops the
-        // command future between polls, but cannot interrupt one synchronous
-        // driver call already in progress. Add deeper cancellation only after
-        // the owning driver exposes an owner-approved cancellable call API.
-        tokio::select! {
-          biased;
-          _ = cancellation.cancelled() => {
-            auv_tracing::emit_event!(McpFrontendCancellation {
-              frontend: "mcp",
-              reason: "request_cancelled",
-            });
-            Err("invoke cancelled".to_string())
-          }
-          result = &mut future => result,
-        }
+  let run_id = auv_tracing::RunId::new();
+  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+  let future = root.in_scope(|| {
+    auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
+    call()
+  });
+  let future = async move {
+    tokio::pin!(future);
+    // TODO(invoke-driver-cancellation): request cancellation drops the
+    // command future between polls, but cannot interrupt one synchronous
+    // driver call already in progress. Add deeper cancellation only after
+    // the owning driver exposes an owner-approved cancellable call API.
+    tokio::select! {
+      biased;
+      _ = cancellation.cancelled() => {
+        auv_tracing::emit_event!(McpFrontendCancellation {
+          frontend: "mcp",
+          reason: "request_cancelled",
+        });
+        Err("invoke cancelled".to_string())
       }
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-  let (run_id, direct_result, recording) = recorded.into_parts();
-  let (recording_failure, canonical_artifacts) = match recording {
-    auv_tracing::RecordingState::Committed(recording) => (
-      recording.tracing_failure().map(ToString::to_string),
-      recording.snapshot().artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
-    ),
-    auv_tracing::RecordingState::Failed(failure) => (Some(failure.to_string()), Vec::new()),
+      result = &mut future => result,
+    }
+  };
+  let direct_result = root.instrument(future).await;
+  let mut recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
+  let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
+    Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
+    Ok(None) => {
+      recording_failure.get_or_insert_with(|| "recorded run snapshot is missing after execution".to_string());
+      Vec::new()
+    }
+    Err(error) => {
+      recording_failure.get_or_insert_with(|| format!("failed to load recorded run snapshot: {error}"));
+      Vec::new()
+    }
   };
   Ok(McpFrontendExecution {
     run_id,
@@ -1072,8 +1076,9 @@ mod tests {
       Arc::new(registry),
       vec![adapter],
       Arc::new(move |_store_root| {
-        let dispatch = auv_tracing::configure().run_store(configure_store.clone()).build().map_err(|error| error.to_string())?;
-        Ok(McpFrontendAuthority { dispatch })
+        let store: Arc<dyn auv_tracing::RunStore> = configure_store.clone();
+        let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
+        Ok(McpFrontendAuthority { dispatch, store })
       }),
     )
     .map_err(anyhow::Error::msg)?;
@@ -1106,10 +1111,7 @@ mod tests {
     assert_eq!(completed_value["status"], "completed");
     assert_eq!(completed_value["result"]["value"], 7);
     assert_eq!(completed_value["artifacts"], serde_json::json!([]));
-    assert_eq!(
-      completed_value["recording_failure"],
-      "recorded run snapshot is missing after execution (flush failed: 1 instrumentation dispatch failure(s))"
-    );
+    assert_eq!(completed_value["recording_failure"], "1 instrumentation dispatch failure(s)");
     assert!(completed_value.get("tracing_failure").is_none());
     let completed_run_id = completed_value["run_id"].as_str().expect("completed run id").parse::<RunId>()?;
     assert_eq!(completed_store.attempted_run_id(), Some(completed_run_id));
@@ -1123,10 +1125,7 @@ mod tests {
     assert_eq!(failed_value["status"], "failed");
     assert_eq!(failed_value["failure_message"], "direct domain failure");
     assert_eq!(failed_value["artifacts"], serde_json::json!([]));
-    assert_eq!(
-      failed_value["recording_failure"],
-      "recorded run snapshot is missing after execution (flush failed: 1 instrumentation dispatch failure(s))"
-    );
+    assert_eq!(failed_value["recording_failure"], "1 instrumentation dispatch failure(s)");
     assert!(failed_value.get("tracing_failure").is_none());
     let failed_run_id = failed_value["run_id"].as_str().expect("failed run id").parse::<RunId>()?;
     assert_eq!(failed_store.attempted_run_id(), Some(failed_run_id));
@@ -1163,12 +1162,13 @@ mod tests {
       Arc::new(registry),
       vec![adapter],
       Arc::new(move |_store_root| {
+        let store: Arc<dyn auv_tracing::RunStore> = configure_store.clone();
         let dispatch = auv_tracing::configure()
-          .run_store(configure_store.clone())
+          .run_store(store.clone())
           .project_telemetry(Arc::new(FailingProjector), TelemetryRoutePolicy::fixed_fields_only())
           .build()
           .map_err(|error| error.to_string())?;
-        Ok(McpFrontendAuthority { dispatch })
+        Ok(McpFrontendAuthority { dispatch, store })
       }),
     )
     .map_err(anyhow::Error::msg)?;
@@ -1513,8 +1513,9 @@ mod tests {
       Arc::new(registry),
       vec![adapter],
       Arc::new(move |_store_root| {
-        let dispatch = auv_tracing::configure().run_store(configured_store.clone()).build().map_err(|error| error.to_string())?;
-        Ok(McpFrontendAuthority { dispatch })
+        let store: Arc<dyn auv_tracing::RunStore> = configured_store.clone();
+        let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
+        Ok(McpFrontendAuthority { dispatch, store })
       }),
     )
     .map_err(anyhow::Error::msg)?;

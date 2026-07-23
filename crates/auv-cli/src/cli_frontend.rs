@@ -11,18 +11,12 @@ use std::path::{Path, PathBuf};
 use std::process::{self, ExitCode};
 use std::sync::Arc;
 
-use image::ImageReader;
-
 use crate::cli::{CliCommand, InspectClientOptions, help_text, parse_cli, parse_donor_cli, root_donor_tombstone, version_text};
 use crate::integrations::minecraft::verification::query_wired_verification_readable;
 use crate::integrations::minecraft::{
   QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action,
 };
 use auv_runtime::app::{analyze_app_probe, probe_app};
-use auv_runtime::contract::{OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus, VerificationResult};
-use auv_runtime::model::InvokeRequest;
-use auv_runtime::{build_default_runtime, build_runtime_with_store_root};
-use auv_tracing_driver::run_builder::RunSpec;
 
 #[allow(dead_code)] // used by root bin; donor bins only call run_donor_bin
 pub async fn run_root() -> Result<i32, String> {
@@ -137,209 +131,127 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
     CliCommand::PermissionCheck { .. } => {
       unreachable!("permission check is handled before runtime setup")
     }
-    CliCommand::MinecraftProjectionBridge {
-      telemetry_sample,
-      screenshot,
-      capture_target_app,
-      capture_target_title,
-      target_block,
-      capture_skew_ms,
-      screenshot_is_minecraft_window,
-      inspect,
-    } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = run_minecraft_projection_bridge(
-        &runtime,
-        PathBuf::from(telemetry_sample),
-        screenshot.as_ref().map(PathBuf::from),
-        capture_target_app.as_deref(),
-        capture_target_title.as_deref(),
-        &target_block,
-        capture_skew_ms,
-        screenshot_is_minecraft_window,
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("projectionArtifact: {}", output.value.projection_artifact_id);
-      println!("screenshotArtifact: {}", output.value.screenshot_artifact_id);
-      if let Some(overlay_artifact_id) = output.value.overlay_artifact_id.as_deref() {
-        println!("overlayArtifact: {overlay_artifact_id}");
-      }
-      if let Some(refusal_reason) = output.value.refusal_reason.as_deref() {
-        println!("refusalReason: {refusal_reason}");
-      } else {
-        println!("refusalReason: none");
-      }
-      for artifact in &output.value.artifact_paths {
-        println!("artifact: {}", artifact.display());
-      }
+    CliCommand::MinecraftProjectionBridge { .. } => {
+      // TODO(minecraft-projection-canonical-inputs): Restore this archived bridge only after its
+      // frame and screenshot inputs have typed canonical artifact purposes.
+      return Err("minecraft projection bridge awaits typed canonical frame inputs".to_string());
     }
-    CliCommand::MinecraftCalibrateProjection {
-      frame_path,
-      screenshot,
-      target_block,
-      target_semantics,
-      screenshot_is_minecraft_window,
-      inspect,
-    } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = run_minecraft_calibrate_projection(
-        &runtime,
-        PathBuf::from(frame_path),
-        PathBuf::from(screenshot),
-        &target_block,
-        &target_semantics,
-        screenshot_is_minecraft_window,
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("projectionArtifact: {}", output.value.projection_artifact_id);
-      println!("screenshotArtifact: {}", output.value.screenshot_artifact_id);
-      println!("calibrationArtifact: {}", output.value.calibration_artifact_id);
-      if let Some(overlay_artifact_id) = output.value.overlay_artifact_id.as_deref() {
-        println!("overlayArtifact: {overlay_artifact_id}");
-      }
-      if let Some(refusal_reason) = output.value.refusal_reason.as_deref() {
-        println!("refusalReason: {refusal_reason}");
-      } else {
-        println!("refusalReason: none");
-      }
-      for artifact in &output.value.artifact_paths {
-        println!("artifact: {}", artifact.display());
-      }
+    CliCommand::MinecraftCalibrateProjection { .. } => {
+      // TODO(minecraft-projection-canonical-inputs): Calibration previously depended on local
+      // staged paths; re-open it only with typed frame and image ArtifactUris.
+      return Err("minecraft projection calibration awaits typed canonical inputs".to_string());
     }
-    CliCommand::MinecraftLiveClick {
-      telemetry_sample,
-      screenshot,
-      target_block,
-      target_app,
-      target_title,
-      post_telemetry_sample,
-      capture_skew_ms,
-      screenshot_is_minecraft_window,
-      inspect,
-    } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = run_minecraft_live_click(
-        &runtime,
-        PathBuf::from(telemetry_sample),
-        post_telemetry_sample.as_ref().map(PathBuf::from),
-        PathBuf::from(screenshot),
-        &target_block,
-        &target_app,
-        &target_title,
-        capture_skew_ms,
-        screenshot_is_minecraft_window,
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("projectionArtifact: {}", output.value.projection_artifact_id);
-      println!("screenshotArtifact: {}", output.value.screenshot_artifact_id);
-      println!("operationResultArtifact: {}", output.value.operation_result_artifact_id);
-      println!("inputSummary: {}", output.value.input_summary);
-      for artifact in &output.value.artifact_paths {
-        println!("artifact: {}", artifact.display());
-      }
+    CliCommand::MinecraftLiveClick { .. } => {
+      // TODO(minecraft-live-click-canonical-inputs): The direct query-wired action is the owned
+      // activation path; this older click proof has no canonical input contract.
+      return Err("minecraft live click was retired in favor of query-wired live action".to_string());
     }
     CliCommand::MinecraftExportSpatialBundle {
       run_id,
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_spatial_bundle_export(
-        &runtime.recording().handle(),
-        run_id,
-        PathBuf::from(output_dir),
-        crate::integrations::minecraft::current_git_commit(),
-      )?;
-      println!("runId: {}", output.run_id);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft spatial bundle export", move || {
+        crate::integrations::minecraft::run_minecraft_spatial_bundle_export(
+          run_id,
+          PathBuf::from(output_dir),
+          crate::integrations::minecraft::current_git_commit(),
+        )
+      })
+      .await?
+      .1;
       println!("status: completed");
-      println!("sourceRunId: {}", output.value.manifest.source_run.source_run_id);
-      println!("spatialFrames: {}", output.value.manifest.counts.spatial_frames);
-      println!("screenshots: {}", output.value.manifest.counts.screenshots);
-      println!("verification: {}", output.value.manifest.counts.verification);
-      println!("overlays: {}", output.value.manifest.counts.overlays);
-      println!("output: {}", output.value.output_dir.display());
+      println!("sourceRunId: {}", output.manifest.source_run.source_run_id);
+      println!("spatialFrames: {}", output.manifest.counts.spatial_frames);
+      println!("screenshots: {}", output.manifest.counts.screenshots);
+      println!("verification: {}", output.manifest.counts.verification);
+      println!("overlays: {}", output.manifest.counts.overlays);
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::MinecraftExport3dgsScenePacket {
       bundle_manifest_paths,
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_scene_packet_export(
-        &runtime.recording().handle(),
-        bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft scene packet export", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_scene_packet_export(
+          bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
+          PathBuf::from(output_dir),
+        )
+      })
+      .await?
+      .1;
       println!("status: completed");
-      println!("scenePacketSchema: {}", output.value.manifest.schema_version);
-      println!("sourceRuns: {}", output.value.manifest.source_run_ids.join(","));
-      println!("frames: {}", output.value.manifest.counts.frames);
-      println!("screenshots: {}", output.value.manifest.counts.screenshots);
-      println!("missingScreenshots: {}", output.value.manifest.counts.missing_screenshots);
-      println!("manifest: {}", output.value.manifest_path.display());
-      println!("cameras: {}", output.value.cameras_path.display());
-      println!("output: {}", output.value.output_dir.display());
+      println!("scenePacketSchema: {}", output.manifest.schema_version);
+      println!("sourceRuns: {}", output.manifest.source_run_ids.join(","));
+      println!("frames: {}", output.manifest.counts.frames);
+      println!("screenshots: {}", output.manifest.counts.screenshots);
+      println!("missingScreenshots: {}", output.manifest.counts.missing_screenshots);
+      println!("manifest: {}", output.manifest_path.display());
+      println!("cameras: {}", output.cameras_path.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::MinecraftExport3dgsTrainingPackage {
       scene_packet_manifest_path,
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_package_export(
-        &runtime.recording().handle(),
-        PathBuf::from(scene_packet_manifest_path),
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training package export", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_package_export(
+          PathBuf::from(scene_packet_manifest_path),
+          PathBuf::from(output_dir),
+        )
+      })
+      .await?
+      .1;
       println!("status: completed");
-      println!("trainingPackageSchema: {}", output.value.manifest.schema_version);
-      println!("sourceRuns: {}", output.value.manifest.source_run_ids.join(","));
-      println!("frames: {}", output.value.manifest.counts.frames);
-      println!("images: {}", output.value.manifest.counts.images);
+      println!("trainingPackageSchema: {}", output.manifest.schema_version);
+      println!("sourceRuns: {}", output.manifest.source_run_ids.join(","));
+      println!("frames: {}", output.manifest.counts.frames);
+      println!("images: {}", output.manifest.counts.images);
       println!(
         "compatibilityStatus: {}",
-        match output.value.inspect_report.compatibility_views[0].status {
+        match output.inspect_report.compatibility_views[0].status {
           auv_game_minecraft::TrainingCompatibilityStatus::Ready => "ready",
           auv_game_minecraft::TrainingCompatibilityStatus::Partial => "partial",
           auv_game_minecraft::TrainingCompatibilityStatus::Blocked => "blocked",
         }
       );
-      println!("compatibilityExportedFrames: {}", output.value.manifest.counts.compatibility_exported_frames);
-      println!("manifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
-      if let Some(transforms_path) = output.value.compatibility_transforms_path.as_ref() {
+      println!("compatibilityExportedFrames: {}", output.manifest.counts.compatibility_exported_frames);
+      println!("manifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
+      if let Some(transforms_path) = output.compatibility_transforms_path.as_ref() {
         println!("nerfstudioTransforms: {}", transforms_path.display());
       } else {
         println!("nerfstudioTransforms: none");
       }
-      println!("output: {}", output.value.output_dir.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::MinecraftPrepare3dgsTraining {
       training_package_manifest_path,
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_launch_preparation(
-        &runtime.recording().handle(),
-        PathBuf::from(training_package_manifest_path),
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training launch preparation", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_launch_preparation(
+          PathBuf::from(training_package_manifest_path),
+          PathBuf::from(output_dir),
+        )
+      })
+      .await?
+      .1;
       println!("status: completed");
-      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
+      println!("trainerBackend: {}", output.manifest.trainer_backend);
       println!(
         "trainerReadiness: {}",
-        match output.value.inspect_report.trainer_readiness {
+        match output.inspect_report.trainer_readiness {
           auv_game_minecraft::TrainingLaunchReadiness::Ready => "ready",
           auv_game_minecraft::TrainingLaunchReadiness::Blocked => "blocked",
         }
       );
       println!(
         "readinessBlocker: {}",
-        match output.value.inspect_report.readiness_blocker {
+        match output.inspect_report.readiness_blocker {
           Some(auv_game_minecraft::TrainingLaunchReadinessBlocker::CompatibilityViewBlocked) => {
             "compatibility_view_blocked"
           }
@@ -352,11 +264,11 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           None => "none",
         }
       );
-      println!("launchCommand: {}", output.value.manifest.launch_command);
-      println!("launchPlan: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
-      println!("runbook: {}", output.value.runbook_path.display());
-      println!("output: {}", output.value.output_dir.display());
+      println!("launchCommand: {}", output.manifest.launch_command);
+      println!("launchPlan: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
+      println!("runbook: {}", output.runbook_path.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::MinecraftLaunch3dgsTrainingJob {
       training_launch_plan_path,
@@ -366,23 +278,24 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       training_job_submit_command,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_job_launch_with_environment(
-        &runtime.recording().handle(),
-        PathBuf::from(training_launch_plan_path),
-        PathBuf::from(output_dir),
-        training_job_endpoint,
-        training_job_token,
-        training_job_submit_command,
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("remoteJobStatus: {}", output.value.inspect_report.status.as_str());
-      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
-      println!("providerBackend: {}", output.value.manifest.provider_backend);
-      println!("jobBackend: {}", output.value.manifest.job_backend);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training job launch", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_job_launch_with_environment(
+          PathBuf::from(training_launch_plan_path),
+          PathBuf::from(output_dir),
+          training_job_endpoint,
+          training_job_token,
+          training_job_submit_command,
+        )
+      })
+      .await?
+      .1;
+      println!("remoteJobStatus: {}", output.inspect_report.status.as_str());
+      println!("trainerBackend: {}", output.manifest.trainer_backend);
+      println!("providerBackend: {}", output.manifest.provider_backend);
+      println!("jobBackend: {}", output.manifest.job_backend);
       println!(
         "submissionState: {}",
-        match output.value.inspect_report.status {
+        match output.inspect_report.status {
           auv_game_minecraft::TrainingLaunchJobStatus::Blocked => "blocked_before_submission",
           auv_game_minecraft::TrainingLaunchJobStatus::Failed => "submission_failed",
           auv_game_minecraft::TrainingLaunchJobStatus::Queued
@@ -392,14 +305,14 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           }
         }
       );
-      println!("acceptedByProvider: {}", output.value.inspect_report.accepted_by_provider);
+      println!("acceptedByProvider: {}", output.inspect_report.accepted_by_provider);
       println!(
         "submissionRecordedAtMillis: {}",
-        output.value.inspect_report.submission_recorded_at_millis.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string())
+        output.inspect_report.submission_recorded_at_millis.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string())
       );
       println!(
         "readinessBlocker: {}",
-        match output.value.inspect_report.readiness_blocker {
+        match output.inspect_report.readiness_blocker {
           Some(auv_game_minecraft::TrainingLaunchJobBlocker::MissingConfiguration) => {
             "missing_configuration"
           }
@@ -418,13 +331,13 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           None => "none",
         }
       );
-      println!("launchCommand: {}", output.value.manifest.launch_command);
-      println!("configuredJobSubmissionCommand: {}", output.value.manifest.job_submission_command);
-      println!("launchPlan: {}", output.value.manifest.source_training_launch_plan_path);
-      println!("manifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
-      println!("runbook: {}", output.value.runbook_path.display());
-      println!("output: {}", output.value.output_dir.display());
+      println!("launchCommand: {}", output.manifest.launch_command);
+      println!("configuredJobSubmissionCommand: {}", output.manifest.job_submission_command);
+      println!("launchPlan: {}", output.manifest.source_training_launch_plan_path);
+      println!("manifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
+      println!("runbook: {}", output.runbook_path.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::MinecraftCollect3dgsTrainingJobResult {
       training_job_manifest_path,
@@ -434,24 +347,25 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       training_job_status_command,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
-        &runtime.recording().handle(),
-        PathBuf::from(training_job_manifest_path),
-        PathBuf::from(output_dir),
-        training_job_endpoint,
-        training_job_token,
-        training_job_status_command,
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.inspect_report.status.as_str());
-      println!("statusMessage: {}", output.value.inspect_report.status_message.as_deref().unwrap_or("none"));
-      println!("remoteResultStatus: {}", output.value.inspect_report.status.as_str());
-      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
-      println!("jobBackend: {}", output.value.manifest.job_backend);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training result collection", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
+          PathBuf::from(training_job_manifest_path),
+          PathBuf::from(output_dir),
+          training_job_endpoint,
+          training_job_token,
+          training_job_status_command,
+        )
+      })
+      .await?
+      .1;
+      println!("status: {}", output.inspect_report.status.as_str());
+      println!("statusMessage: {}", output.inspect_report.status_message.as_deref().unwrap_or("none"));
+      println!("remoteResultStatus: {}", output.inspect_report.status.as_str());
+      println!("trainerBackend: {}", output.manifest.trainer_backend);
+      println!("jobBackend: {}", output.manifest.job_backend);
       println!(
         "statusReason: {}",
-        match output.value.inspect_report.status_reason {
+        match output.inspect_report.status_reason {
           Some(auv_game_minecraft::TrainingResultReason::MissingConfiguration) => {
             "missing_configuration"
           }
@@ -476,7 +390,7 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       );
       println!(
         "resultStateInterpretation: {}",
-        match output.value.inspect_report.status_reason {
+        match output.inspect_report.status_reason {
           Some(auv_game_minecraft::TrainingResultReason::MissingConfiguration) => {
             "blocked_without_remote_configuration"
           }
@@ -498,11 +412,11 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           Some(auv_game_minecraft::TrainingResultReason::ResultArtifactsMissing) => {
             "legacy_adapter_key_result_artifacts_missing"
           }
-          None => match output.value.inspect_report.status {
+          None => match output.inspect_report.status {
             auv_game_minecraft::TrainingResultStatus::Succeeded
             | auv_game_minecraft::TrainingResultStatus::Submitted
             | auv_game_minecraft::TrainingResultStatus::Queued => {
-              if !output.value.inspect_report.result_dir_exists || !output.value.inspect_report.key_result_artifacts_present {
+              if !output.inspect_report.result_dir_exists || !output.inspect_report.key_result_artifacts_present {
                 "provider_status_recorded_local_results_not_yet_observed"
               } else {
                 "provider_status_matches_local_result_observation"
@@ -512,15 +426,15 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           },
         }
       );
-      println!("jobId: {}", output.value.manifest.job_id);
-      println!("jobUrl: {}", output.value.manifest.job_url.as_deref().unwrap_or("none"));
-      println!("resultDir: {}", output.value.manifest.result_dir);
-      println!("resultDirExists: {}", output.value.inspect_report.result_dir_exists);
-      println!("keyResultArtifactsPresent: {}", output.value.inspect_report.key_result_artifacts_present);
-      println!("manifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
-      println!("runbook: {}", output.value.runbook_path.display());
-      println!("output: {}", output.value.output_dir.display());
+      println!("jobId: {}", output.manifest.job_id);
+      println!("jobUrl: {}", output.manifest.job_url.as_deref().unwrap_or("none"));
+      println!("resultDir: {}", output.manifest.result_dir);
+      println!("resultDirExists: {}", output.inspect_report.result_dir_exists);
+      println!("keyResultArtifactsPresent: {}", output.inspect_report.key_result_artifacts_present);
+      println!("manifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
+      println!("runbook: {}", output.runbook_path.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::MinecraftFetch3dgsTrainingResultArtifacts {
       training_result_manifest_path,
@@ -530,28 +444,29 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       artifact_fetch_command,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_artifact_fetch(
-        &runtime.recording().handle(),
-        PathBuf::from(training_result_manifest_path),
-        PathBuf::from(output_dir),
-        training_job_endpoint,
-        training_job_token,
-        artifact_fetch_command,
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("fetchStatus: {}", output.value.inspect_report.fetch_status.as_str());
-      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
-      println!("jobBackend: {}", output.value.manifest.job_backend);
-      println!("sourceResultStatus: {}", output.value.manifest.source_result_status.as_str());
-      println!("fetchReason: {}", output.value.inspect_report.fetch_reason.map(|reason| reason.as_str()).unwrap_or("none"));
-      println!("sourceResultDir: {}", output.value.manifest.source_result_dir);
-      println!("normalizedResultDir: {}", output.value.manifest.normalized_result_dir);
-      println!("normalizedArtifactCount: {}", output.value.inspect_report.normalized_artifact_count);
-      println!("requiredArtifactsPresent: {}", output.value.inspect_report.required_artifacts_present);
-      println!("manifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
-      println!("output: {}", output.value.output_dir.display());
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training result artifact fetch", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_result_artifact_fetch(
+          PathBuf::from(training_result_manifest_path),
+          PathBuf::from(output_dir),
+          training_job_endpoint,
+          training_job_token,
+          artifact_fetch_command,
+        )
+      })
+      .await?
+      .1;
+      println!("fetchStatus: {}", output.inspect_report.fetch_status.as_str());
+      println!("trainerBackend: {}", output.manifest.trainer_backend);
+      println!("jobBackend: {}", output.manifest.job_backend);
+      println!("sourceResultStatus: {}", output.manifest.source_result_status.as_str());
+      println!("fetchReason: {}", output.inspect_report.fetch_reason.map(|reason| reason.as_str()).unwrap_or("none"));
+      println!("sourceResultDir: {}", output.manifest.source_result_dir);
+      println!("normalizedResultDir: {}", output.manifest.normalized_result_dir);
+      println!("normalizedArtifactCount: {}", output.inspect_report.normalized_artifact_count);
+      println!("requiredArtifactsPresent: {}", output.inspect_report.required_artifacts_present);
+      println!("manifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
+      println!("output: {}", output.output_dir.display());
     }
 
     CliCommand::MinecraftInspect3dgsTrainingResultHoldout {
@@ -561,26 +476,27 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_holdout_preview(
-        &runtime.recording().handle(),
-        PathBuf::from(training_result_semantic_manifest_path),
-        holdout_frame_index,
-        holdout_render_command,
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.manifest.status.as_str());
-      println!("reason: {}", output.value.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
-      println!("holdoutFrameIndex: {}", output.value.manifest.holdout_frame_index);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training holdout inspection", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_result_holdout_preview(
+          PathBuf::from(training_result_semantic_manifest_path),
+          holdout_frame_index,
+          holdout_render_command,
+          PathBuf::from(output_dir),
+        )
+      })
+      .await?
+      .1;
+      println!("status: {}", output.manifest.status.as_str());
+      println!("reason: {}", output.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
+      println!("holdoutFrameIndex: {}", output.manifest.holdout_frame_index);
       println!(
         "spatialFrameId: {}",
-        output.value.manifest.holdout_frame.as_ref().map(|witness| witness.spatial_frame_id.as_str()).unwrap_or("none")
+        output.manifest.holdout_frame.as_ref().map(|witness| witness.spatial_frame_id.as_str()).unwrap_or("none")
       );
-      println!("basisCheckpointPath: {}", output.value.manifest.basis_checkpoint_path.as_deref().unwrap_or("none"));
-      println!("holdoutScreenshotPath: {}", output.value.manifest.holdout_screenshot_path.as_deref().unwrap_or("none"));
-      println!("holdoutPreviewManifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
+      println!("basisCheckpointPath: {}", output.manifest.basis_checkpoint_path.as_deref().unwrap_or("none"));
+      println!("holdoutScreenshotPath: {}", output.manifest.holdout_screenshot_path.as_deref().unwrap_or("none"));
+      println!("holdoutPreviewManifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
     }
 
     CliCommand::MinecraftMeasure3dgsHoldoutRenderQuality {
@@ -590,28 +506,29 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_measure_3dgs_holdout_render_quality(
-        &runtime.recording().handle(),
-        PathBuf::from(training_result_semantic_manifest_path),
-        PathBuf::from(holdout_preview_manifest_path),
-        render_command,
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.manifest.status.as_str());
-      println!("verdict: {}", output.value.manifest.verdict.as_str());
-      println!("imageSizeMatch: {}", output.value.manifest.image_size_match);
-      let metrics = output.value.manifest.metrics.as_ref();
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft holdout render quality", move || {
+        crate::integrations::minecraft::run_minecraft_measure_3dgs_holdout_render_quality(
+          PathBuf::from(training_result_semantic_manifest_path),
+          PathBuf::from(holdout_preview_manifest_path),
+          render_command,
+          PathBuf::from(output_dir),
+        )
+      })
+      .await?
+      .1;
+      println!("status: {}", output.manifest.status.as_str());
+      println!("verdict: {}", output.manifest.verdict.as_str());
+      println!("imageSizeMatch: {}", output.manifest.image_size_match);
+      let metrics = output.manifest.metrics.as_ref();
       println!(
         "l1Mean: {}",
         metrics.and_then(|metrics| metrics.l1_mean).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string())
       );
       println!("mse: {}", metrics.and_then(|metrics| metrics.mse).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()));
       println!("psnr: {}", metrics.and_then(|metrics| metrics.psnr).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()));
-      println!("manifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
-      println!("output: {}", output.value.output_dir.display());
+      println!("manifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::MinecraftQuery3dgsTrainingResult {
       training_result_semantic_manifest_path,
@@ -625,44 +542,45 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let target_block = parse_block_position(&target_block)?;
       let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
       let target_semantics = parse_target_semantics(&target_semantics)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_spatial_query(
-        &runtime.recording().handle(),
-        PathBuf::from(training_result_semantic_manifest_path),
-        target_block,
-        target_face,
-        target_semantics,
-        query_command,
-        use_checkpoint_native_provider,
-        use_closed_scene_toy_provider,
-        closed_scene_fixture_path.map(PathBuf::from),
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.manifest.status.as_str());
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training spatial query", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_result_spatial_query(
+          PathBuf::from(training_result_semantic_manifest_path),
+          target_block,
+          target_face,
+          target_semantics,
+          query_command,
+          use_checkpoint_native_provider,
+          use_closed_scene_toy_provider,
+          closed_scene_fixture_path.map(PathBuf::from),
+          PathBuf::from(output_dir),
+        )
+      })
+      .await?
+      .1;
+      println!("status: {}", output.manifest.status.as_str());
       if matches!(
-        output.value.manifest.status,
+        output.manifest.status,
         auv_game_minecraft::TrainingResultSpatialQueryStatus::Blocked | auv_game_minecraft::TrainingResultSpatialQueryStatus::Failed
       ) {
-        println!("reason: {}", output.value.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
+        println!("reason: {}", output.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
       }
-      println!("selectedBackend: {}", output.value.manifest.selected_backend.map(|backend| backend.as_str()).unwrap_or("none"));
+      println!("selectedBackend: {}", output.manifest.selected_backend.map(|backend| backend.as_str()).unwrap_or("none"));
       println!(
         "visibility: {}",
-        output.value.manifest.visibility.map(|visibility| format!("{visibility:?}")).unwrap_or_else(|| "none".to_string())
+        output.manifest.visibility.map(|visibility| format!("{visibility:?}")).unwrap_or_else(|| "none".to_string())
       );
-      if let Some(screen_point) = output.value.manifest.screen_point {
+      if let Some(screen_point) = output.manifest.screen_point {
         println!("screenPoint: {},{}", screen_point.x, screen_point.y);
       } else {
         println!("screenPoint: none");
       }
-      println!("basisFrameId: {}", output.value.manifest.basis_frame_id.as_deref().unwrap_or("none"));
-      println!("comparisonVerdict: {}", output.value.manifest.comparison_verdict.map(|verdict| verdict.as_str()).unwrap_or("none"));
-      println!("queryManifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
+      println!("basisFrameId: {}", output.manifest.basis_frame_id.as_deref().unwrap_or("none"));
+      println!("comparisonVerdict: {}", output.manifest.comparison_verdict.map(|verdict| verdict.as_str()).unwrap_or("none"));
+      println!("queryManifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
     }
     CliCommand::MinecraftQueryWiredLiveClick {
       training_result_semantic_manifest_path,
@@ -681,7 +599,6 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       verification_expected_item_id,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let target_block = parse_block_position(&target_block)?;
       let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
       let target_semantics = parse_target_semantics(&target_semantics)?;
@@ -704,14 +621,20 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         telemetry_witness,
         verification_expected_item_id,
       };
-      let output = run_minecraft_query_wired_live_action(&runtime.recording().handle(), inputs)?;
-      println!("runId: {}", output.run_id);
-      println!("queryStatus: {}", output.value.query.manifest.status.as_str());
-      println!("wiringAttempted: {}", output.value.wiring.attempted);
-      println!("actionEligibility: {}", output.value.wiring.action_eligibility.as_str());
-      println!("operationResultArtifact: {}", output.value.operation_result_artifact_id);
-      if query_wired_verification_readable(&output.value.wiring) && should_write_local(&inspect) {
-        println!("{}", format_query_wired_inspect_hint(&output.run_id, &inspect));
+      let authority = build_invoke_dispatch(&project_root, &inspect).await?;
+      let execution = execute_invoke_frontend(&authority, move || run_minecraft_query_wired_live_action(inputs)).await?;
+      if let Some(failure) = execution.recording_failure.as_deref() {
+        eprintln!("warning: query-wired action instrumentation failed: {failure}");
+      }
+      let run_id = execution.run_id;
+      let output = execution.direct_result?;
+      println!("queryStatus: {}", output.query.manifest.status.as_str());
+      println!("wiringAttempted: {}", output.wiring.attempted);
+      println!("actionEligibility: {}", output.wiring.action_eligibility.as_str());
+      println!("inputActionCount: {}", output.input_actions.len());
+      println!("verificationCount: {}", output.verifications.len());
+      if query_wired_verification_readable(&output.wiring) && should_write_local(&inspect) {
+        println!("{}", format_query_wired_inspect_hint(run_id, &inspect));
       }
     }
     CliCommand::MinecraftValidate3dgsTrainingResult {
@@ -719,65 +642,65 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_semantic_validation(
-        &runtime.recording().handle(),
-        PathBuf::from(training_result_artifact_manifest_path),
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.inspect_report.semantic_status.as_str());
-      println!("reason: {}", output.value.inspect_report.semantic_reason.map(|reason| reason.as_str()).unwrap_or("none"));
-      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
-      println!("checkpointCount: {}", output.value.inspect_report.checkpoint_count);
-      println!("configTrainer: {}", output.value.inspect_report.config_trainer.as_deref().unwrap_or("none"));
-      println!("semanticManifest: {}", output.value.manifest_path.display());
-      println!("inspectReport: {}", output.value.inspect_report_path.display());
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training result validation", move || {
+        crate::integrations::minecraft::run_minecraft_3dgs_training_result_semantic_validation(
+          PathBuf::from(training_result_artifact_manifest_path),
+          PathBuf::from(output_dir),
+        )
+      })
+      .await?
+      .1;
+      println!("status: {}", output.inspect_report.semantic_status.as_str());
+      println!("reason: {}", output.inspect_report.semantic_reason.map(|reason| reason.as_str()).unwrap_or("none"));
+      println!("trainerBackend: {}", output.manifest.trainer_backend);
+      println!("checkpointCount: {}", output.inspect_report.checkpoint_count);
+      println!("configTrainer: {}", output.inspect_report.config_trainer.as_deref().unwrap_or("none"));
+      println!("semanticManifest: {}", output.manifest_path.display());
+      println!("inspectReport: {}", output.inspect_report_path.display());
     }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
       output_dir,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_texture_sweep_preparation(
-        &runtime.recording().handle(),
-        PathBuf::from(sidecar_run_dir),
-        PathBuf::from(output_dir),
-      )?;
-      println!("runId: {}", output.run_id);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft texture sweep preparation", move || {
+        crate::integrations::minecraft::run_minecraft_texture_sweep_preparation(PathBuf::from(sidecar_run_dir), PathBuf::from(output_dir))
+      })
+      .await?
+      .1;
       println!("status: prepared");
-      println!("packFormat: {}", output.value.manifest.pack_format);
-      println!("profiles: {}", output.value.manifest.profiles.len());
-      for profile in &output.value.manifest.profiles {
+      println!("packFormat: {}", output.manifest.pack_format);
+      println!("profiles: {}", output.manifest.profiles.len());
+      for profile in &output.manifest.profiles {
         println!(
           "profile: {} pack={} expectedTelemetryId={} optionsResourcePacks={}",
           profile.texture_profile, profile.pack_dir, profile.expected_telemetry_resource_pack_id, profile.options_resource_packs_value
         );
       }
-      println!("manifest: {}", output.value.manifest_path.display());
-      println!("runbook: {}", output.value.runbook_path.display());
+      println!("manifest: {}", output.manifest_path.display());
+      println!("runbook: {}", output.runbook_path.display());
     }
     CliCommand::MinecraftBuildTextureSweepSamples {
       bundle_manifest_paths,
       output_path,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_texture_sweep_sample_build(
-        &runtime.recording().handle(),
-        bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
-        PathBuf::from(output_path),
-      )?;
-      println!("runId: {}", output.run_id);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft texture sweep sample build", move || {
+        crate::integrations::minecraft::run_minecraft_texture_sweep_sample_build(
+          bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
+          PathBuf::from(output_path),
+        )
+      })
+      .await?
+      .1;
       println!("status: completed");
-      println!("samples: {}", output.value.sample_set.samples.len());
-      if let Some(source) = &output.value.sample_set.source {
+      println!("samples: {}", output.sample_set.samples.len());
+      if let Some(source) = &output.sample_set.source {
         println!("sampleSourceGenerator: {}", source.generator);
         println!("sampleSourceRuns: {}", source.source_run_ids.join(","));
         println!("bundleManifests: {}", source.bundle_manifest_paths.join(","));
       }
-      println!("output: {}", output.value.output_path.display());
+      println!("output: {}", output.output_path.display());
     }
     CliCommand::MinecraftEvalTextureSweep {
       samples_path,
@@ -785,26 +708,27 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       require_real_source,
       inspect,
     } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::integrations::minecraft::run_minecraft_texture_sweep_eval(
-        &runtime.recording().handle(),
-        PathBuf::from(samples_path),
-        PathBuf::from(output_dir),
-        require_real_source,
-      )?;
-      println!("runId: {}", output.run_id);
+      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft texture sweep evaluation", move || {
+        crate::integrations::minecraft::run_minecraft_texture_sweep_eval(
+          PathBuf::from(samples_path),
+          PathBuf::from(output_dir),
+          require_real_source,
+        )
+      })
+      .await?
+      .1;
       println!("status: completed");
       println!("requireRealSource: {require_real_source}");
-      println!("passed: {}", output.value.passed);
-      println!("resourcePacks: {}", output.value.actual_resource_pack_count);
-      println!("noiseRefusalExercised: {}", output.value.noise_refusal_exercised);
-      if let Some(source) = &output.value.source {
+      println!("passed: {}", output.passed);
+      println!("resourcePacks: {}", output.actual_resource_pack_count);
+      println!("noiseRefusalExercised: {}", output.noise_refusal_exercised);
+      if let Some(source) = &output.source {
         println!("sampleSourceGenerator: {}", source.generator);
         if !source.source_run_ids.is_empty() {
           println!("sampleSourceRuns: {}", source.source_run_ids.join(","));
         }
       }
-      for row in &output.value.rows {
+      for row in &output.rows {
         println!(
           "row: pack={} profile={} samples={} poseP95={} minIoU={} passed={}",
           row.resource_pack,
@@ -835,16 +759,14 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       bundle_id,
       output_dir,
     } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let probe = probe_app(&project_root, &runtime, &bundle_id, output_dir.map(PathBuf::from))?;
+      let probe = probe_app(&project_root, &bundle_id, output_dir.map(PathBuf::from))?;
       println!("app: {}", probe.app.bundle_id);
       println!("status: captured");
       println!("probe: {}", probe.output_dir.join("probe.json").display());
       println!("steps: {}", probe.steps.len());
     }
     CliCommand::AppAnalyze { query } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let output = analyze_app_probe(&runtime, &PathBuf::from(query))?;
+      let output = analyze_app_probe(&PathBuf::from(query))?;
       println!("app: {}", output.analysis.app_identity.bundle_id);
       println!("status: analyzed");
       println!("analysis: {}", output.analysis_path.display());
@@ -901,18 +823,15 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       beatmap_path,
       output_dir,
     } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let recording = runtime.recording().handle();
       let beatmap_path = PathBuf::from(beatmap_path);
       let output_dir = output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-benchmark-output"));
-      let output = crate::integrations::osu::run_osu_benchmark(&recording, beatmap_path, output_dir)?;
-      println!("runId: {}", output.run_id);
+      let output = crate::integrations::osu::run_osu_benchmark(beatmap_path, output_dir).await?;
       println!("status: completed");
-      println!("beatmap: {}", output.value.map_summary.beatmap_path);
-      println!("objects: {}", output.value.map_summary.total_objects);
-      println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
-      println!("jitterMs: {}", output.value.latency_report.jitter_ms);
-      println!("output: {}", output.value.output_dir.display());
+      println!("beatmap: {}", output.map_summary.beatmap_path);
+      println!("objects: {}", output.map_summary.total_objects);
+      println!("latencyP95Ms: {}", output.latency_report.p95_error_ms);
+      println!("jitterMs: {}", output.latency_report.jitter_ms);
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::OsuBenchmarkDispatch {
       beatmap_path,
@@ -921,8 +840,6 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       dispatch_limit,
       capture_verify,
     } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let recording = runtime.recording().handle();
       let beatmap_path = PathBuf::from(beatmap_path);
       let output_dir = output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-dispatch-output"));
       let mut inputs = auv_game_osu::BenchmarkInputs::typed_dispatch(beatmap_path, output_dir, target_app);
@@ -931,58 +848,51 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       }
       inputs.capture_verify = capture_verify;
       let output = crate::integrations::osu::run_osu_benchmark_with_inputs(
-        &recording,
         inputs,
         if capture_verify {
           "osu benchmark typed dispatch with capture verification"
         } else {
           "osu benchmark typed dispatch"
         },
-      )?;
-      println!("runId: {}", output.run_id);
+      )
+      .await?;
       println!("status: completed");
-      println!("beatmap: {}", output.value.map_summary.beatmap_path);
-      println!("objects: {}", output.value.map_summary.total_objects);
-      println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
-      println!("jitterMs: {}", output.value.latency_report.jitter_ms);
-      if let Some(summary) = &output.value.verification_summary {
+      println!("beatmap: {}", output.map_summary.beatmap_path);
+      println!("objects: {}", output.map_summary.total_objects);
+      println!("latencyP95Ms: {}", output.latency_report.p95_error_ms);
+      println!("jitterMs: {}", output.latency_report.jitter_ms);
+      if let Some(summary) = &output.verification_summary {
         println!("verificationCapturedActions: {}", summary.captured_action_count);
         println!("verificationMissingFrames: {}", summary.missing_frame_count);
       }
-      println!("output: {}", output.value.output_dir.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::OsuExportDataset {
       run_artifact_dir,
       output_dir,
     } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let recording = runtime.recording().handle();
-      let output = crate::integrations::osu::run_osu_dataset_export(&recording, PathBuf::from(run_artifact_dir), PathBuf::from(output_dir))?;
-      println!("runId: {}", output.run_id);
+      let output = crate::integrations::osu::run_osu_dataset_export(PathBuf::from(run_artifact_dir), PathBuf::from(output_dir)).await?;
       println!("status: completed");
-      println!("exportedFrames: {}", output.value.dataset_manifest.exported_frames.len());
-      println!("skippedFrames: {}", output.value.dataset_manifest.skipped_frames.len());
-      println!("output: {}", output.value.output_dir.display());
+      println!("exportedFrames: {}", output.dataset_manifest.exported_frames.len());
+      println!("skippedFrames: {}", output.dataset_manifest.skipped_frames.len());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::OsuEvalDetections {
       run_artifact_dir,
       detections_path,
       output_dir,
     } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let recording = runtime.recording().handle();
       let output = crate::integrations::osu::run_osu_detection_eval(
-        &recording,
         PathBuf::from(run_artifact_dir),
         PathBuf::from(detections_path),
         output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-eval-detections-output")),
-      )?;
-      println!("runId: {}", output.run_id);
+      )
+      .await?;
       println!("status: completed");
-      println!("totalFrames: {}", output.value.visual_eval_report.total_frames);
-      println!("labelMatchedFrames: {}", output.value.visual_eval_report.label_matched_frames);
-      println!("spatialMatchedFrames: {}", output.value.visual_eval_report.spatial_matched_frames);
-      println!("output: {}", output.value.output_dir.display());
+      println!("totalFrames: {}", output.visual_eval_report.total_frames);
+      println!("labelMatchedFrames: {}", output.visual_eval_report.label_matched_frames);
+      println!("spatialMatchedFrames: {}", output.visual_eval_report.spatial_matched_frames);
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::OsuVisionDemo {
       beatmap_path,
@@ -991,40 +901,37 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       dispatch_limit,
       capture_verify,
     } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let recording = runtime.recording().handle();
       let output = crate::integrations::osu::run_osu_vision_demo(
-        &recording,
         PathBuf::from(beatmap_path),
         target_app,
         output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-vision-demo-output")),
         dispatch_limit,
         capture_verify,
-      )?;
-      println!("runId: {}", output.run_id);
+      )
+      .await?;
       println!("status: completed");
-      println!("beatmap: {}", output.value.map_summary.beatmap_path);
-      println!("objects: {}", output.value.map_summary.total_objects);
-      println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
-      println!("jitterMs: {}", output.value.latency_report.jitter_ms);
-      println!("dispatchSamples: {}", output.value.dispatch_trace.len());
-      println!("captureArtifacts: {}", output.value.capture_trace.len());
+      println!("beatmap: {}", output.map_summary.beatmap_path);
+      println!("objects: {}", output.map_summary.total_objects);
+      println!("latencyP95Ms: {}", output.latency_report.p95_error_ms);
+      println!("jitterMs: {}", output.latency_report.jitter_ms);
+      println!("dispatchSamples: {}", output.dispatch_trace.len());
+      println!("captureArtifacts: {}", output.capture_trace.len());
       println!(
         "evidenceNotes: {}",
-        if output.value.evidence_summary.evidence_notes.is_empty() {
+        if output.evidence_summary.evidence_notes.is_empty() {
           "none".to_string()
         } else {
-          output.value.evidence_summary.evidence_notes.join(" | ")
+          output.evidence_summary.evidence_notes.join(" | ")
         }
       );
-      println!("hasEvidenceArtifact: {}", output.value.output_dir.join("evidence_summary.json").exists());
-      println!("hasProjectionArtifact: {}", output.value.projection.as_ref().is_some());
-      println!("hasVisualTruthManifest: {}", output.value.visual_truth_manifest.as_ref().is_some());
-      if let Some(summary) = &output.value.verification_summary {
+      println!("hasEvidenceArtifact: {}", output.output_dir.join("evidence_summary.json").exists());
+      println!("hasProjectionArtifact: {}", output.projection.as_ref().is_some());
+      println!("hasVisualTruthManifest: {}", output.visual_truth_manifest.as_ref().is_some());
+      if let Some(summary) = &output.verification_summary {
         println!("verificationCapturedActions: {}", summary.captured_action_count);
         println!("verificationMissingFrames: {}", summary.missing_frame_count);
       }
-      println!("output: {}", output.value.output_dir.display());
+      println!("output: {}", output.output_dir.display());
     }
     CliCommand::Invoke {
       request,
@@ -1083,588 +990,6 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
   Ok(exit_code)
 }
 
-#[derive(Debug)]
-struct MinecraftBridgeOutput {
-  screenshot_artifact_id: String,
-  projection_artifact_id: String,
-  overlay_artifact_id: Option<String>,
-  refusal_reason: Option<String>,
-  artifact_paths: Vec<PathBuf>,
-}
-
-#[derive(Debug)]
-struct MinecraftCalibrationOutput {
-  screenshot_artifact_id: String,
-  projection_artifact_id: String,
-  calibration_artifact_id: String,
-  overlay_artifact_id: Option<String>,
-  refusal_reason: Option<String>,
-  artifact_paths: Vec<PathBuf>,
-}
-
-const MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT: auv_game_minecraft::TailFrameWaitConfig = auv_game_minecraft::TailFrameWaitConfig::new(750, 25);
-
-type MinecraftLiveClickDispatch = for<'a> fn(
-  &auv_runtime::runtime::Runtime,
-  &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'a>,
-  &str,
-  &str,
-  auv_driver::geometry::WindowPoint,
-) -> Result<String, String>;
-
-#[derive(Debug)]
-struct MinecraftLiveClickOutput {
-  screenshot_artifact_id: String,
-  projection_artifact_id: String,
-  operation_result_artifact_id: String,
-  input_summary: String,
-  artifact_paths: Vec<PathBuf>,
-}
-
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-struct MinecraftProjectionCalibrationArtifact {
-  frame_id: String,
-  target_block: String,
-  target_semantics: String,
-  raycast_hit_block_pos: Option<String>,
-  raycast_hit_face: Option<String>,
-  refusal_reason: Option<String>,
-  overlay_ref: Option<String>,
-  known_limits: Vec<String>,
-}
-
-fn build_minecraft_operation_result(run_id: &auv_tracing_driver::trace::RunId, verification: VerificationResult) -> OperationResult {
-  let evidence_artifacts = verification.evidence.clone();
-  OperationResult {
-    api_version: OPERATION_RESULT_API_VERSION.to_string(),
-    run_id: run_id.clone(),
-    status: OperationStatus::Completed,
-    operation_id: "auv.minecraft.live_click".to_string(),
-    evidence_artifacts,
-    output: OperationOutput::Acknowledged {
-      message: Some("minecraft live click completed".to_string()),
-    },
-    verifications: vec![verification],
-    freshness_basis: None,
-    known_limits: Vec::new(),
-  }
-}
-
-fn stage_operation_result_artifact(
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  operation_result: &OperationResult,
-) -> Result<(PathBuf, auv_runtime::contract::ArtifactRef), String> {
-  let artifact_json = serde_json::to_string_pretty(operation_result)
-    .map(|mut json| {
-      json.push('\n');
-      json
-    })
-    .map_err(|error| format!("failed to serialize minecraft operation result: {error}"))?;
-  let artifact_path =
-    env::temp_dir().join(format!("auv-minecraft-operation-result-{}-{}.json", context.run_id(), auv_runtime::model::now_millis()));
-  fs::write(&artifact_path, artifact_json.as_bytes())
-    .map_err(|error| format!("failed to write minecraft operation result artifact: {error}"))?;
-  let staged = context.stage_artifact_file_with_ref(
-    "operation-result",
-    &artifact_path,
-    "operation-result.json",
-    Some("minecraft live-click operation result with world diff verification".to_string()),
-  );
-  let _ = fs::remove_file(&artifact_path);
-  staged.map_err(|error| error.to_string())
-}
-
-fn run_minecraft_live_click(
-  runtime: &auv_runtime::runtime::Runtime,
-  telemetry_sample: PathBuf,
-  post_telemetry_sample: Option<PathBuf>,
-  screenshot: PathBuf,
-  target_block: &str,
-  target_app: &str,
-  target_title: &str,
-  capture_skew_ms: Option<i64>,
-  screenshot_is_minecraft_window: bool,
-) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>, String> {
-  run_minecraft_live_click_with_dispatch(
-    runtime,
-    telemetry_sample,
-    post_telemetry_sample,
-    screenshot,
-    target_block,
-    target_app,
-    target_title,
-    capture_skew_ms,
-    screenshot_is_minecraft_window,
-    dispatch_minecraft_live_click,
-  )
-}
-
-fn dispatch_minecraft_live_click(
-  runtime: &auv_runtime::runtime::Runtime,
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  target_app: &str,
-  target_title: &str,
-  window_point: auv_driver::geometry::WindowPoint,
-) -> Result<String, String> {
-  crate::integrations::minecraft::query_live_action::invoke_click_at_window_point(
-    runtime.recording(),
-    context,
-    target_app,
-    target_title,
-    window_point,
-  )
-}
-
-fn run_minecraft_live_click_with_dispatch(
-  runtime: &auv_runtime::runtime::Runtime,
-  telemetry_sample: PathBuf,
-  post_telemetry_sample: Option<PathBuf>,
-  screenshot: PathBuf,
-  target_block: &str,
-  target_app: &str,
-  target_title: &str,
-  capture_skew_ms: Option<i64>,
-  screenshot_is_minecraft_window: bool,
-  dispatch_click: MinecraftLiveClickDispatch,
-) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>, String> {
-  let target_block = parse_block_position(target_block)?;
-  let pre_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
-    .ok_or_else(|| format!("no valid minecraft frame found in {}", telemetry_sample.display()))?;
-  let post_sample_path = post_telemetry_sample.unwrap_or_else(|| telemetry_sample.clone());
-  let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
-
-  runtime.run_recorded_operation(
-    RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.minecraft.live_click"),
-    "Minecraft live click",
-    |context| {
-      let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
-        "minecraft-screenshot",
-        &screenshot,
-        screenshot.file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png"),
-        Some("minecraft screenshot bound to live telemetry frame".to_string()),
-      )?;
-      let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
-      let (staged_frame_path, _frame_ref) =
-        crate::integrations::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
-      let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
-        if skew >= 0 {
-          pre_frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
-        } else {
-          pre_frame.monotonic_timestamp_ms.saturating_add((-skew) as u64)
-        }
-      } else {
-        pre_frame.monotonic_timestamp_ms
-      };
-
-      let bound =
-        auv_game_minecraft::bind_capture_to_frame(pre_frame.clone(), format!("artifact://{screenshot_artifact_id}"), capture_timestamp_ms);
-      let assessment = auv_game_minecraft::evidence::assess_bound_projection(
-        bound.frame,
-        screenshot_dimensions,
-        screenshot_is_minecraft_window,
-        &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
-        Some(250),
-      )?;
-
-      let projection_artifact = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => artifact.clone(),
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => artifact.clone(),
-      };
-      let (staged_projection_path, projection_ref) = stage_minecraft_projection_artifact(context, &projection_artifact)?;
-      let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
-
-      let projected_point = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
-          artifact.projected_point.clone().ok_or_else(|| "minecraft projection evidence is bound but missing projected point".to_string())?
-        }
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } => {
-          return Err(format!("minecraft live click refused before input dispatch: {:?}", refusal.reason));
-        }
-      };
-
-      let window_point = auv_game_minecraft::input_target::projected_window_point(&projected_point)
-        .ok_or_else(|| "projected minecraft point is not window-clickable".to_string())?;
-
-      let invoke_result_output_summary = dispatch_click(runtime, context, target_app, target_title, window_point)?;
-      let post_frame = auv_game_minecraft::read_latest_spatial_frame_newer_than(
-        &post_sample_path,
-        pre_frame.monotonic_timestamp_ms,
-        MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT,
-      )?
-      .ok_or_else(|| format!("no valid minecraft post frame found in {}", post_sample_path.display()))?;
-
-      let world_diff_request =
-        auv_game_minecraft::verify::WorldDiffRequest::new(auv_game_minecraft::MinecraftBlockTarget::new(target_block))
-          .allow_same_block_state_change();
-      let verification = crate::integrations::minecraft::verification::map_world_diff_verdict_to_verification_result(
-        &auv_game_minecraft::verify::evaluate_world_diff(&pre_frame, &post_frame, &world_diff_request),
-        vec![screenshot_ref.clone(), projection_ref.clone()],
-      );
-      let operation_result = build_minecraft_operation_result(context.run_id(), verification);
-      let (staged_operation_result_path, operation_result_ref) = stage_operation_result_artifact(context, &operation_result)?;
-
-      Ok::<MinecraftLiveClickOutput, String>(MinecraftLiveClickOutput {
-        screenshot_artifact_id,
-        projection_artifact_id,
-        operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
-        input_summary: invoke_result_output_summary,
-        artifact_paths: vec![
-          staged_screenshot_path,
-          staged_frame_path,
-          staged_projection_path,
-          staged_operation_result_path,
-        ],
-      })
-    },
-  )
-}
-
-fn run_minecraft_projection_bridge(
-  runtime: &auv_runtime::runtime::Runtime,
-  telemetry_sample: PathBuf,
-  screenshot: Option<PathBuf>,
-  capture_target_app: Option<&str>,
-  capture_target_title: Option<&str>,
-  target_block: &str,
-  capture_skew_ms: Option<i64>,
-  screenshot_is_minecraft_window: bool,
-) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftBridgeOutput>, String> {
-  let target_block = parse_block_position(target_block)?;
-  let frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
-    .ok_or_else(|| format!("no valid minecraft frame found in {}", telemetry_sample.display()))?;
-
-  runtime.run_recorded_operation(
-    RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.minecraft.bridge"),
-    "Minecraft projection bridge",
-    |context| {
-      let captured = capture_or_stage_bridge_screenshot(runtime, context, screenshot.as_deref(), capture_target_app, capture_target_title)?;
-      let screenshot_dimensions = read_screenshot_dimensions(&captured.staged_path)?;
-      let screenshot_path = captured.staged_path.clone();
-      let screenshot_ref = captured.artifact_ref.clone();
-      let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
-
-      let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
-        if skew >= 0 {
-          frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
-        } else {
-          frame.monotonic_timestamp_ms.saturating_add((-skew) as u64)
-        }
-      } else {
-        frame.monotonic_timestamp_ms
-      };
-
-      let bound = auv_game_minecraft::bind_capture_to_frame(frame, format!("artifact://{screenshot_artifact_id}"), capture_timestamp_ms);
-      let (staged_frame_path, _frame_ref) =
-        crate::integrations::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
-
-      let assessment = auv_game_minecraft::evidence::assess_bound_projection(
-        bound.frame.clone(),
-        screenshot_dimensions,
-        screenshot_is_minecraft_window,
-        &auv_game_minecraft::mc6_projection_target_for_frame(
-          target_block,
-          &bound.frame,
-          auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
-        ),
-        Some(250),
-      )?;
-
-      let projection_artifact = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => artifact.clone(),
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => artifact.clone(),
-      };
-      let (staged_projection_path, projection_ref) = stage_minecraft_projection_artifact(context, &projection_artifact)?;
-      let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
-      let mut artifact_paths = vec![
-        staged_frame_path,
-        screenshot_path.clone(),
-        staged_projection_path,
-      ];
-      let mut overlay_artifact_id = None;
-      let mut refusal_reason = None;
-
-      if let auv_game_minecraft::evidence::ProjectionAssessment::Bound {
-        artifact,
-        raycast_hit,
-      } = assessment
-      {
-        let screenshot_image = decode_screenshot_rgb(&screenshot_path)?;
-        let projected =
-          artifact.projected_point.clone().ok_or_else(|| "minecraft bridge bound projection is missing projected point".to_string())?;
-        let overlay = auv_game_minecraft::render_projection_overlay(screenshot_image, &projected, raycast_hit.as_ref());
-        let overlay_path =
-          env::temp_dir().join(format!("auv-minecraft-overlay-{}-{}.png", context.run_id(), auv_runtime::model::now_millis()));
-        overlay.save(&overlay_path).map_err(|error| format!("failed to save overlay image: {error}"))?;
-        let (staged_overlay_path, overlay_ref) = context.stage_artifact_file_with_ref(
-          "minecraft-overlay",
-          &overlay_path,
-          "minecraft-overlay.png",
-          Some("projected minecraft overlay on real screenshot".to_string()),
-        )?;
-        let _ = fs::remove_file(&overlay_path);
-        overlay_artifact_id = Some(overlay_ref.artifact_id.as_str().to_string());
-        artifact_paths.push(staged_overlay_path);
-      } else if let auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } = assessment {
-        refusal_reason = refusal.reason.map(|reason| format!("{:?}", reason));
-      }
-
-      Ok::<MinecraftBridgeOutput, String>(MinecraftBridgeOutput {
-        screenshot_artifact_id,
-        projection_artifact_id,
-        overlay_artifact_id,
-        refusal_reason,
-        artifact_paths,
-      })
-    },
-  )
-}
-
-fn read_screenshot_dimensions(path: &Path) -> Result<(u32, u32), String> {
-  ImageReader::open(path)
-    .map_err(|error| format!("failed to open screenshot {}: {error}", path.display()))?
-    .into_dimensions()
-    .map_err(|error| format!("failed to read screenshot dimensions {}: {error}", path.display()))
-}
-
-fn parse_target_semantics(raw: &str) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
-  match raw {
-    "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
-    "block_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::BlockCenter),
-    other => Err(format!("invalid target semantics {other:?}; expected hit_face_center or block_center")),
-  }
-}
-
-#[derive(Clone, Debug)]
-struct BridgeCapturedScreenshot {
-  staged_path: PathBuf,
-  artifact_ref: auv_runtime::contract::ArtifactRef,
-}
-
-fn capture_or_stage_bridge_screenshot(
-  runtime: &auv_runtime::runtime::Runtime,
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  screenshot: Option<&Path>,
-  capture_target_app: Option<&str>,
-  capture_target_title: Option<&str>,
-) -> Result<BridgeCapturedScreenshot, String> {
-  if let Some(screenshot) = screenshot {
-    let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
-      "minecraft-screenshot",
-      screenshot,
-      screenshot.file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png"),
-      Some("minecraft screenshot bound to live telemetry frame".to_string()),
-    )?;
-    return Ok(BridgeCapturedScreenshot {
-      staged_path: staged_screenshot_path,
-      artifact_ref: screenshot_ref,
-    });
-  }
-
-  let target_app = capture_target_app.ok_or_else(|| "bridge capture requires target app".to_string())?;
-  let mut inputs = std::collections::BTreeMap::new();
-  if let Some(title) = capture_target_title {
-    inputs.insert("title".to_string(), title.to_string());
-  }
-  let registry = auv_cli_invoke::default_registry();
-  let command = registry.resolve("window.capture").ok_or_else(|| "window.capture command is not registered".to_string())?;
-  let parent = context.current_span().clone();
-  let invoke_result = auv_cli_invoke::invoke_resolved_recorded_in_span(
-    runtime.recording(),
-    context.run_mut(),
-    &parent,
-    command,
-    InvokeRequest {
-      command_id: "window.capture".to_string(),
-      target: auv_runtime::model::ExecutionTarget {
-        application_id: Some(target_app.to_string()),
-        target_label: None,
-      },
-      inputs,
-      dry_run: false,
-    },
-  )?;
-  let artifact = invoke_result
-    .artifacts
-    .iter()
-    .find(|artifact| artifact.role == "window-capture")
-    .ok_or_else(|| "window.capture produced no window-capture artifact".to_string())?;
-  let run_dir = runtime.recording().run_dir(&invoke_result.run_id)?;
-  let capture_path = run_dir.join(&artifact.path);
-  let preferred_name = Path::new(&artifact.path).file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png");
-  let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
-    "minecraft-screenshot",
-    &capture_path,
-    preferred_name,
-    Some("minecraft screenshot captured through window.capture".to_string()),
-  )?;
-  Ok(BridgeCapturedScreenshot {
-    staged_path: staged_screenshot_path,
-    artifact_ref: screenshot_ref,
-  })
-}
-
-fn decode_screenshot_rgb(path: &Path) -> Result<image::RgbImage, String> {
-  let image = ImageReader::open(path)
-    .map_err(|error| format!("failed to open screenshot {}: {error}", path.display()))?
-    .decode()
-    .map_err(|error| format!("failed to decode screenshot {}: {error}", path.display()))?;
-  Ok(image.to_rgb8())
-}
-
-fn stage_minecraft_projection_artifact(
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  projection_artifact: &auv_game_minecraft::MinecraftProjectionArtifact,
-) -> Result<(PathBuf, auv_runtime::contract::ArtifactRef), String> {
-  projection_artifact.validate()?;
-  let artifact_json = serde_json::to_string_pretty(projection_artifact)
-    .map_err(|error| format!("failed to serialize minecraft projection artifact: {error}"))?;
-  let artifact_path =
-    env::temp_dir().join(format!("auv-minecraft-projection-{}-{}.json", context.run_id(), auv_runtime::model::now_millis()));
-  fs::write(&artifact_path, artifact_json.as_bytes()).map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
-  let staged = context.stage_artifact_file_with_ref(
-    crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
-    &artifact_path,
-    "projection-artifact.json",
-    Some("durable minecraft projection artifact".to_string()),
-  );
-  let _ = fs::remove_file(&artifact_path);
-  staged.map_err(|error| error.to_string())
-}
-
-fn stage_minecraft_projection_calibration_artifact(
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  calibration_artifact: &MinecraftProjectionCalibrationArtifact,
-) -> Result<(PathBuf, auv_runtime::contract::ArtifactRef), String> {
-  let artifact_json = serde_json::to_string_pretty(calibration_artifact)
-    .map_err(|error| format!("failed to serialize minecraft calibration artifact: {error}"))?;
-  let artifact_path =
-    env::temp_dir().join(format!("auv-minecraft-projection-calibration-{}-{}.json", context.run_id(), auv_runtime::model::now_millis()));
-  fs::write(&artifact_path, artifact_json.as_bytes()).map_err(|error| format!("failed to write minecraft calibration artifact: {error}"))?;
-  let staged = context.stage_artifact_file_with_ref(
-    crate::integrations::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE,
-    &artifact_path,
-    "projection-calibration.json",
-    Some("durable minecraft projection calibration summary".to_string()),
-  );
-  let _ = fs::remove_file(&artifact_path);
-  staged.map_err(|error| error.to_string())
-}
-
-fn read_minecraft_spatial_frame_file(path: &Path) -> Result<auv_game_minecraft::MinecraftSpatialFrame, String> {
-  let bytes = fs::read(path).map_err(|error| format!("failed to read minecraft spatial frame {}: {error}", path.display()))?;
-  serde_json::from_slice(&bytes).map_err(|error| format!("failed to parse minecraft spatial frame {}: {error}", path.display()))
-}
-
-fn run_minecraft_calibrate_projection(
-  runtime: &auv_runtime::runtime::Runtime,
-  frame_path: PathBuf,
-  screenshot: PathBuf,
-  target_block: &str,
-  target_semantics: &str,
-  screenshot_is_minecraft_window: bool,
-) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftCalibrationOutput>, String> {
-  let frame = read_minecraft_spatial_frame_file(&frame_path)?;
-  let target_block = parse_block_position(target_block)?;
-  let semantics = parse_target_semantics(target_semantics)?;
-  let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
-
-  runtime.run_recorded_operation(
-    RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.minecraft.calibrate_projection"),
-    "Minecraft projection calibration",
-    |context| {
-      let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
-        "minecraft-screenshot",
-        &screenshot,
-        screenshot.file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png"),
-        Some("minecraft screenshot used for calibration".to_string()),
-      )?;
-      let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
-      let bound = auv_game_minecraft::bind_capture_to_frame(
-        frame.clone(),
-        format!("artifact://{screenshot_artifact_id}"),
-        frame.monotonic_timestamp_ms,
-      );
-      let (staged_frame_path, _frame_ref) =
-        crate::integrations::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
-      let target = auv_game_minecraft::mc6_projection_target_for_frame(target_block, &bound.frame, semantics);
-      let assessment = auv_game_minecraft::evidence::assess_bound_projection(
-        bound.frame.clone(),
-        screenshot_dimensions,
-        screenshot_is_minecraft_window,
-        &target,
-        Some(250),
-      )?;
-      let projection_artifact = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => artifact.clone(),
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => artifact.clone(),
-      };
-      let (staged_projection_path, projection_ref) = stage_minecraft_projection_artifact(context, &projection_artifact)?;
-      let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
-      let mut artifact_paths = vec![
-        staged_frame_path,
-        staged_screenshot_path,
-        staged_projection_path,
-      ];
-      let mut overlay_artifact_id = None;
-      let refusal_reason = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound {
-          artifact,
-          raycast_hit,
-        } => {
-          let screenshot_image = decode_screenshot_rgb(&screenshot)?;
-          let projected = artifact
-            .projected_point
-            .clone()
-            .ok_or_else(|| "minecraft calibration bound projection is missing projected point".to_string())?;
-          let overlay = auv_game_minecraft::render_projection_overlay(screenshot_image, &projected, raycast_hit.as_ref());
-          let overlay_path =
-            env::temp_dir().join(format!("auv-minecraft-overlay-{}-{}.png", context.run_id(), auv_runtime::model::now_millis()));
-          overlay.save(&overlay_path).map_err(|error| format!("failed to save overlay image: {error}"))?;
-          let (staged_overlay_path, overlay_ref) = context.stage_artifact_file_with_ref(
-            "minecraft-overlay",
-            &overlay_path,
-            "minecraft-overlay.png",
-            Some("projected minecraft overlay for calibration".to_string()),
-          )?;
-          let _ = fs::remove_file(&overlay_path);
-          overlay_artifact_id = Some(overlay_ref.artifact_id.as_str().to_string());
-          artifact_paths.push(staged_overlay_path);
-          None
-        }
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } => refusal.reason.map(|reason| format!("{reason:?}")),
-      };
-      let calibration = MinecraftProjectionCalibrationArtifact {
-        frame_id: bound.frame.spatial_frame_id.clone(),
-        target_block: format!("{},{},{}", target_block.x, target_block.y, target_block.z),
-        target_semantics: target_semantics.to_string(),
-        raycast_hit_block_pos: bound
-          .frame
-          .raycast_hit
-          .as_ref()
-          .map(|hit| format!("{},{},{}", hit.block_pos.x, hit.block_pos.y, hit.block_pos.z)),
-        raycast_hit_face: bound.frame.raycast_hit.as_ref().map(|hit| format!("{:?}", hit.face)),
-        refusal_reason: refusal_reason.clone(),
-        overlay_ref: overlay_artifact_id.as_ref().map(|artifact_id| format!("artifact://{artifact_id}")),
-        known_limits: vec![
-          "geometry gate is visual-review driven; this artifact does not assert numeric pass/fail".to_string(),
-          "MC-6 hit-face-center applies only when raycast_hit.block_pos matches target_block".to_string(),
-        ],
-      };
-      let (staged_calibration_path, calibration_ref) = stage_minecraft_projection_calibration_artifact(context, &calibration)?;
-      artifact_paths.push(staged_calibration_path);
-
-      Ok::<MinecraftCalibrationOutput, String>(MinecraftCalibrationOutput {
-        screenshot_artifact_id,
-        projection_artifact_id,
-        calibration_artifact_id: calibration_ref.artifact_id.as_str().to_string(),
-        overlay_artifact_id,
-        refusal_reason,
-        artifact_paths,
-      })
-    },
-  )
-}
-
 fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> {
   match raw {
     "up" => Ok(auv_game_minecraft::BlockFace::Up),
@@ -1674,6 +999,14 @@ fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> 
     "east" => Ok(auv_game_minecraft::BlockFace::East),
     "west" => Ok(auv_game_minecraft::BlockFace::West),
     other => Err(format!("invalid --target-face {other:?}; expected up, down, north, south, east, or west")),
+  }
+}
+
+fn parse_target_semantics(raw: &str) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
+  match raw {
+    "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
+    "block_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::BlockCenter),
+    other => Err(format!("invalid --target-semantics {other:?}; expected hit_face_center or block_center")),
   }
 }
 
@@ -1819,6 +1152,7 @@ fn normalize_write_token(source: &str, token: String) -> Result<String, String> 
 #[derive(Clone)]
 struct InvokeFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
+  store: Arc<dyn auv_tracing::RunStore>,
 }
 
 async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptions) -> Result<InvokeFrontendAuthority, String> {
@@ -1861,7 +1195,7 @@ async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptio
   };
   let dispatch =
     auv_tracing::configure().run_store(store.clone()).build().map_err(|error| format!("failed to configure invoke tracing: {error}"))?;
-  Ok(InvokeFrontendAuthority { dispatch })
+  Ok(InvokeFrontendAuthority { dispatch, store })
 }
 
 #[derive(Debug)]
@@ -1888,21 +1222,24 @@ where
   F: FnOnce() -> Fut + Send + 'static,
   Fut: Future<Output = Result<T, String>> + Send + 'static,
 {
-  let recorded = authority
-    .dispatch
-    .record(|| {
-      auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-      call()
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-  let (run_id, direct_result, recording) = recorded.into_parts();
-  let (recording_failure, canonical_artifacts) = match recording {
-    auv_tracing::RecordingState::Committed(recording) => (
-      recording.tracing_failure().map(ToString::to_string),
-      recording.snapshot().artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
-    ),
-    auv_tracing::RecordingState::Failed(failure) => (Some(failure.to_string()), Vec::new()),
+  let run_id = auv_tracing::RunId::new();
+  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+  let future = root.in_scope(|| {
+    auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+    call()
+  });
+  let direct_result = root.instrument(future).await;
+  let mut recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
+  let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
+    Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
+    Ok(None) => {
+      recording_failure.get_or_insert_with(|| "recorded run snapshot is missing after execution".to_string());
+      Vec::new()
+    }
+    Err(error) => {
+      recording_failure.get_or_insert_with(|| format!("failed to load recorded run snapshot: {error}"));
+      Vec::new()
+    }
   };
   Ok(InvokeFrontendExecution {
     run_id,
@@ -1912,22 +1249,23 @@ where
   })
 }
 
-fn build_runtime_for_inspect(project_root: &Path, inspect: &InspectClientOptions) -> Result<auv_runtime::runtime::Runtime, String> {
-  let server_target = if should_try_server_write(inspect) {
-    resolve_inspect_server_target(inspect)?
-  } else {
-    None
-  };
-  if inspect.require_server_write {
-    return Err(match server_target {
-      Some(_) => "inspect server write is required but only supported by the invoke composition root".to_string(),
-      None => "inspect server write is required but no inspect server is configured".to_string(),
-    });
+async fn execute_product_cli_call<T, F, Fut>(
+  project_root: &Path,
+  inspect: &InspectClientOptions,
+  label: &'static str,
+  call: F,
+) -> Result<(auv_tracing::RunId, T), String>
+where
+  T: Send + 'static,
+  F: FnOnce() -> Fut + Send + 'static,
+  Fut: Future<Output = Result<T, String>> + Send + 'static,
+{
+  let authority = build_invoke_dispatch(project_root, inspect).await?;
+  let execution = execute_invoke_frontend(&authority, call).await?;
+  if let Some(failure) = execution.recording_failure.as_deref() {
+    eprintln!("warning: {label} instrumentation failed: {failure}");
   }
-  if !should_write_local(inspect) {
-    return Err("local recording can only be disabled for the invoke composition root".to_string());
-  }
-  build_runtime_with_store_root(project_root.to_path_buf(), resolve_store_root(project_root, inspect.store_root.as_ref()))
+  Ok((execution.run_id, execution.direct_result?))
 }
 
 fn should_write_local(inspect: &InspectClientOptions) -> bool {
@@ -2008,26 +1346,9 @@ mod tests {
   };
   use axum::body::{Body, to_bytes};
   use axum::http::{Request, StatusCode};
-  use futures_util::StreamExt;
-  use image::{Rgb, RgbImage};
-  use rmcp::{
-    ClientHandler, ServiceExt as RmcpServiceExt,
-    model::{CallToolRequestParam, ClientInfo},
-  };
   use tower::ServiceExt;
 
   use super::*;
-
-  static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-  #[derive(Debug, Clone, Default)]
-  struct DummyClientHandler;
-
-  impl ClientHandler for DummyClientHandler {
-    fn get_info(&self) -> ClientInfo {
-      ClientInfo::default()
-    }
-  }
 
   #[test]
   fn library_exit_status_returns_typed_codes_without_terminating_the_process() {
@@ -2076,7 +1397,10 @@ mod tests {
 
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
-    let authority = InvokeFrontendAuthority { dispatch };
+    let authority = InvokeFrontendAuthority {
+      dispatch,
+      store: store.clone(),
+    };
     let invoked_call = call.clone();
     let execution = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect("persisted execution");
 
@@ -2093,7 +1417,10 @@ mod tests {
     let call = CountingCall::default();
     let store = Arc::new(CommitUnknownStore::new());
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
-    let authority = InvokeFrontendAuthority { dispatch };
+    let authority = InvokeFrontendAuthority {
+      dispatch,
+      store: store.clone(),
+    };
 
     let invoked_call = call.clone();
     let execution =
@@ -2104,155 +1431,8 @@ mod tests {
     assert_eq!(store.attempted_run_id(), Some(execution.run_id));
     assert!(execution.canonical_artifacts.is_empty());
     let failure = execution.recording_failure.expect("recording failure");
-    assert_eq!(failure, "recorded run snapshot is missing after execution (flush failed: 3 instrumentation dispatch failure(s))");
+    assert!(failure.contains("instrumentation dispatch failure"), "unexpected failure: {failure}");
     assert_no_canonical_advice(&failure);
-  }
-
-  // ROOT CAUSE:
-  //
-  // MCP used the CLI InvokeCommand handler and treated every Ok value as
-  // completed, so TextEdit semantic mismatch was silently discarded. The
-  // direct frontends now map the same typed report independently and persist
-  // evidence through their own run roots.
-  // https://github.com/moeru-ai/auv/pull/102#issuecomment-4958351155
-  #[tokio::test]
-  async fn textedit_recorded_mismatch_keeps_cli_mcp_run_and_operation_in_sync() {
-    let store_root = env::temp_dir().join(format!("auv-textedit-direct-parity-{}", auv_runtime::model::now_millis()));
-    let _ = fs::remove_dir_all(&store_root);
-    let store = Arc::new(auv_tracing::FileRunStore::open(&store_root).expect("file store"));
-    let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("CLI dispatch");
-    let authority = InvokeFrontendAuthority { dispatch };
-    let command = crate::integrations::textedit::test_document_write_invoke_command();
-    let input = auv_cli_invoke::InvokeCommandInput {
-      command_id: crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID.to_string(),
-      target_application_id: Some("com.apple.TextEdit".to_string()),
-      inputs: textedit_mismatch_inputs(),
-      dry_run: false,
-      cancellation: auv_cli_invoke::InvokeCancellation::new(),
-    };
-
-    let invoked_command = command.clone();
-    let cli_execution = execute_invoke_frontend(&authority, move || invoked_command.invoke(input)).await.expect("persisted CLI execution");
-    assert_eq!(cli_execution.recording_failure, None);
-    let cli_result =
-      auv_cli_invoke::InvokeResult::from_command_result(cli_execution.run_id.to_string(), &command, cli_execution.direct_result);
-    assert_eq!(cli_result.status, auv_cli_invoke::RunStatus::Failed);
-    assert!(cli_result.failure_message.as_deref().is_some_and(|message| message.contains("semantic verification failed")));
-
-    let server = crate::mcp::server_with_test_textedit(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).expect("test TextEdit MCP server");
-    let (server_transport, client_transport) = tokio::io::duplex(16384);
-    let server_handle = tokio::spawn(async move {
-      let service = server.serve(server_transport).await.expect("MCP server start");
-      service.waiting().await.expect("MCP server exit");
-    });
-    let client = DummyClientHandler.serve(client_transport).await.expect("MCP client");
-    let response = client
-      .call_tool(CallToolRequestParam {
-        name: "invoke".into(),
-        arguments: Some(
-          serde_json::json!({
-            "command_id": crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID,
-            "target": { "application_id": "com.apple.TextEdit" },
-            "inputs": textedit_mismatch_inputs(),
-            "inspect": { "store_root": store_root.display().to_string() }
-          })
-          .as_object()
-          .expect("MCP arguments")
-          .clone(),
-        ),
-      })
-      .await
-      .expect("MCP invoke");
-    let mcp_value: serde_json::Value =
-      serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("MCP text response").text)
-        .expect("MCP JSON response");
-    assert_eq!(mcp_value["status"], "failed");
-    assert!(mcp_value["failure_message"].as_str().is_some_and(|message| message.contains("semantic verification failed")));
-    let mcp_run_id = mcp_value["run_id"].as_str().expect("MCP run id").parse::<auv_tracing::RunId>().expect("valid run id");
-    assert_ne!(cli_execution.run_id, mcp_run_id);
-
-    let cli_snapshot = store.load_snapshot(cli_execution.run_id).await.expect("CLI snapshot read").expect("CLI snapshot");
-    let mcp_snapshot = store.load_snapshot(mcp_run_id).await.expect("MCP snapshot read").expect("MCP snapshot");
-    let cli_purposes = artifact_purposes(&cli_snapshot);
-    let mcp_purposes = artifact_purposes(&mcp_snapshot);
-    assert_eq!(cli_purposes, mcp_purposes);
-    assert_eq!(
-      cli_purposes,
-      [
-        "auv.driver.input_action_result",
-        "auv.driver.input_action_result",
-        "auv.textedit.ax_text_observation",
-        "auv.textedit.document_write_result",
-      ]
-    );
-    for (snapshot, run_id) in [
-      (&cli_snapshot, cli_execution.run_id),
-      (&mcp_snapshot, mcp_run_id),
-    ] {
-      assert!(snapshot.artifacts().values().all(|artifact| artifact.metadata().uri().run_id() == run_id));
-      assert_eq!(snapshot.events().iter().map(|event| event.schema().name().as_str()).collect::<Vec<_>>(), vec!["auv.frontend.lifecycle"]);
-      assert!(!stored_document_write_semantic_match(store.as_ref(), snapshot).await);
-    }
-
-    client.cancel().await.expect("cancel MCP client");
-    server_handle.await.expect("join MCP server");
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  fn textedit_mismatch_inputs() -> std::collections::BTreeMap<String, String> {
-    std::collections::BTreeMap::from([
-      ("content".to_string(), "AUV_TEXTEDIT_EXPECTED_MARKER".to_string()),
-      ("fixture_observed_text".to_string(), "observed-without-expected".to_string()),
-    ])
-  }
-
-  fn artifact_purposes(snapshot: &auv_tracing::RunSnapshot) -> Vec<&str> {
-    let mut purposes = snapshot.artifacts().values().map(|artifact| artifact.metadata().purpose().as_str()).collect::<Vec<_>>();
-    purposes.sort();
-    purposes
-  }
-
-  fn read_recorded_minecraft_projection(
-    runtime: &auv_runtime::runtime::Runtime,
-    run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> auv_game_minecraft::MinecraftProjectionArtifact {
-    let artifact = run
-      .artifacts
-      .iter()
-      .find(|artifact| artifact.role == crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE)
-      .expect("recorded projection artifact");
-    let path = runtime.recording().run_dir(run.run.run_id.as_str()).expect("recorded run directory").join(&artifact.path);
-    let bytes = fs::read(path).expect("recorded projection bytes");
-    serde_json::from_slice(&bytes).expect("typed recorded projection")
-  }
-
-  async fn render_typed_minecraft_projection_inspect(projection: &auv_game_minecraft::MinecraftProjectionArtifact) -> String {
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("canonical projection dispatch");
-    let run_id = RunId::new();
-    let root = auv_tracing::dispatcher::with_default(&dispatch, || auv_tracing::Context::root(run_id));
-    auv_game_minecraft::artifact::publish_minecraft_projection(Some(&root), projection)
-      .await
-      .expect("publish typed projection")
-      .expect("canonical artifact publication enabled");
-    dispatch.flush().await.expect("flush typed projection");
-    let snapshot = store.load_snapshot(run_id).await.expect("load projection snapshot").expect("projection snapshot");
-    crate::inspect::build_product_inspect_document(store.as_ref(), &snapshot).await.expect("product projection inspect").render_text()
-  }
-
-  async fn stored_document_write_semantic_match(store: &dyn RunStore, snapshot: &auv_tracing::RunSnapshot) -> bool {
-    let artifact = snapshot
-      .artifacts()
-      .values()
-      .find(|artifact| artifact.metadata().purpose().as_str() == "auv.textedit.document_write_result")
-      .expect("document-write result artifact");
-    let mut reader = store.open_artifact(artifact.metadata().uri().clone()).await.expect("open document-write artifact");
-    let mut bytes = Vec::new();
-    while let Some(chunk) = reader.next().await {
-      bytes.extend_from_slice(&chunk.expect("read document-write artifact"));
-    }
-    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("document-write artifact JSON");
-    value["verification"]["semantic_matched"].as_bool().expect("semantic match field")
   }
 
   fn assert_no_canonical_advice(facts: &str) {
@@ -2385,187 +1565,6 @@ mod tests {
     assert_eq!(target, Some(("http://127.0.0.1:9876/".to_string(), Some("secret".to_string()))));
   }
 
-  #[test]
-  fn required_inspect_server_write_rejects_missing_target() {
-    let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!("auv-missing-inspect-session-{}", auv_runtime::model::now_millis()));
-    fs::create_dir_all(&root).expect("session dir should write");
-    let session_path = root.join("session.json");
-    unsafe {
-      env::set_var("AUV_INSPECT_SESSION", &session_path);
-    }
-    let inspect = InspectClientOptions {
-      server_write: crate::cli::InspectWriteSetting::Enabled,
-      require_server_write: true,
-      ..InspectClientOptions::default()
-    };
-
-    let error = match build_runtime_for_inspect(&root, &inspect) {
-      Ok(_) => panic!("required server write without target should fail"),
-      Err(error) => error,
-    };
-
-    unsafe {
-      env::remove_var("AUV_INSPECT_SESSION");
-    }
-    let _ = fs::remove_dir_all(root);
-    assert!(error.contains("inspect server write is required"));
-  }
-
-  #[test]
-  fn required_missing_server_with_local_write_disabled_does_not_leave_temp_store() {
-    let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!("auv-missing-required-server-no-local-{}", auv_runtime::model::now_millis()));
-    fs::create_dir_all(&root).expect("session dir should write");
-    let session_path = root.join("session.json");
-    unsafe {
-      env::set_var("AUV_INSPECT_SESSION", &session_path);
-    }
-    let prefix = format!("auv-runtime-store-{}-", process::id());
-    let before = temp_runtime_store_entries(&prefix);
-    let inspect = InspectClientOptions {
-      local_write: crate::cli::InspectWriteSetting::Disabled,
-      server_write: crate::cli::InspectWriteSetting::Enabled,
-      require_server_write: true,
-      ..InspectClientOptions::default()
-    };
-
-    let error = match build_runtime_for_inspect(&root, &inspect) {
-      Ok(_) => panic!("required server write without target should fail"),
-      Err(error) => error,
-    };
-    let after = temp_runtime_store_entries(&prefix);
-
-    unsafe {
-      env::remove_var("AUV_INSPECT_SESSION");
-    }
-    let _ = fs::remove_dir_all(root);
-    assert!(error.contains("inspect server write is required"));
-    assert_eq!(after, before);
-  }
-
-  #[test]
-  fn legacy_runtime_rejects_disabled_local_recording_without_allocating_temp_store() {
-    let root = env::temp_dir().join(format!("auv-recording-no-local-{}", auv_runtime::model::now_millis()));
-    let prefix = format!("auv-runtime-store-{}-", process::id());
-    let before = temp_runtime_store_entries(&prefix);
-    let inspect = InspectClientOptions {
-      local_write: crate::cli::InspectWriteSetting::Disabled,
-      ..InspectClientOptions::default()
-    };
-
-    let error = match build_runtime_for_inspect(&root, &inspect) {
-      Ok(_) => panic!("legacy runtime should reject disabled local recording"),
-      Err(error) => error,
-    };
-
-    assert!(error.contains("only be disabled for the invoke composition root"));
-    assert_eq!(temp_runtime_store_entries(&prefix), before);
-  }
-
-  #[test]
-  fn optional_inspect_server_write_ignores_malformed_discovered_session() {
-    let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!("auv-malformed-inspect-session-{}", auv_runtime::model::now_millis()));
-    fs::create_dir_all(&root).expect("session dir should write");
-    let session_path = root.join("session.json");
-    fs::write(&session_path, "not json").expect("malformed session should write");
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt;
-      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600)).expect("session file permissions should change");
-    }
-    unsafe {
-      env::set_var("AUV_INSPECT_SESSION", &session_path);
-    }
-    let inspect = InspectClientOptions {
-      server_write: crate::cli::InspectWriteSetting::Default,
-      require_server_write: false,
-      ..InspectClientOptions::default()
-    };
-
-    let runtime = build_runtime_for_inspect(&root, &inspect);
-
-    unsafe {
-      env::remove_var("AUV_INSPECT_SESSION");
-    }
-    let _ = fs::remove_dir_all(root);
-    assert!(runtime.is_ok());
-  }
-
-  #[test]
-  fn required_inspect_server_write_rejects_malformed_discovered_session() {
-    let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!("auv-required-malformed-inspect-session-{}", auv_runtime::model::now_millis()));
-    fs::create_dir_all(&root).expect("session dir should write");
-    let session_path = root.join("session.json");
-    fs::write(&session_path, "not json").expect("malformed session should write");
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt;
-      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600)).expect("session file permissions should change");
-    }
-    unsafe {
-      env::set_var("AUV_INSPECT_SESSION", &session_path);
-    }
-    let inspect = InspectClientOptions {
-      server_write: crate::cli::InspectWriteSetting::Default,
-      require_server_write: true,
-      ..InspectClientOptions::default()
-    };
-
-    let error = match build_runtime_for_inspect(&root, &inspect) {
-      Ok(_) => panic!("required server write should reject malformed session"),
-      Err(error) => error,
-    };
-
-    unsafe {
-      env::remove_var("AUV_INSPECT_SESSION");
-    }
-    let _ = fs::remove_dir_all(root);
-    assert!(error.contains("failed to parse inspect session"));
-  }
-
-  #[test]
-  fn default_discovery_ignores_non_local_session_url() {
-    let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!("auv-remote-inspect-session-{}", auv_runtime::model::now_millis()));
-    fs::create_dir_all(&root).expect("session dir should write");
-    let session_path = root.join("session.json");
-    fs::write(
-      &session_path,
-      serde_json::to_string(&auv_inspect_server::InspectServerSession {
-        url: "http://203.0.113.7:8765".to_string(),
-        authority_id: "019f8b1e-4b2d-7a00-8f00-0000000000aa".parse().expect("authority id"),
-        pid: 123,
-        started_at_millis: 456,
-      })
-      .expect("session should encode"),
-    )
-    .expect("session should write");
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt;
-      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600)).expect("session file permissions should change");
-    }
-    unsafe {
-      env::set_var("AUV_INSPECT_SESSION", &session_path);
-    }
-    let inspect = InspectClientOptions {
-      server_write: crate::cli::InspectWriteSetting::Default,
-      require_server_write: false,
-      ..InspectClientOptions::default()
-    };
-
-    let target = resolve_inspect_server_target(&inspect).expect("optional discovery should ignore remote URL");
-
-    unsafe {
-      env::remove_var("AUV_INSPECT_SESSION");
-    }
-    let _ = fs::remove_dir_all(root);
-    assert_eq!(target, None);
-  }
-
   #[tokio::test]
   async fn inspect_serve_adapter_uses_file_authority_and_v1_router() {
     let root = env::temp_dir().join(format!("auv-file-authority-adapter-{}", auv_runtime::model::now_millis()));
@@ -2590,59 +1589,6 @@ mod tests {
     assert_eq!(legacy.status(), StatusCode::NOT_FOUND);
     assert_eq!(open_inspect_authority_store(&root).unwrap().authority_id(), authority_id);
     let _ = fs::remove_dir_all(root);
-  }
-
-  fn mc2_temp_dir(label: &str) -> PathBuf {
-    let path = env::temp_dir().join(format!("auv-{label}-{}", auv_runtime::model::now_millis()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).expect("temp dir should be creatable");
-    path
-  }
-
-  fn write_mc2_test_telemetry(path: &Path) {
-    let frame = auv_game_minecraft::MinecraftSpatialFrame {
-      spatial_frame_id: "frame-mc2".to_string(),
-      world_tick: 42,
-      monotonic_timestamp_ms: 5_000,
-      telemetry_session_id: None,
-      viewport: auv_game_minecraft::types::Viewport::new(64, 64),
-      view_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      projection_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      player_pose: auv_game_minecraft::types::PlayerPose {
-        eye_position: auv_game_minecraft::types::Vec3::new(0.0, 0.0, 0.0),
-        yaw: 0.0,
-        pitch: 0.0,
-      },
-      raycast_hit: Some(auv_game_minecraft::types::RaycastHit {
-        block_pos: auv_game_minecraft::BlockPosition::new(0, 0, 0),
-        face: auv_game_minecraft::types::BlockFace::North,
-        block_id: "minecraft:stone".to_string(),
-      }),
-      nearby_blocks: Vec::new(),
-      nearby_entities: Vec::new(),
-      inventory_summary: Vec::new(),
-      screenshot_artifact_ref: None,
-      mc_capture_skew_ms: None,
-      screen_state: None,
-      resource_pack_ids: Vec::new(),
-    };
-    let body = serde_json::to_string(&frame).expect("frame should serialize");
-    fs::write(path, format!("{body}\n")).expect("telemetry sample should write");
-  }
-
-  fn append_mc2_test_telemetry(path: &Path, frame: &auv_game_minecraft::MinecraftSpatialFrame) {
-    use std::io::Write as _;
-
-    let mut file = fs::OpenOptions::new().append(true).open(path).expect("telemetry sample should open for append");
-    writeln!(file, "{}", serde_json::to_string(frame).expect("frame should serialize")).expect("telemetry sample should append");
-  }
-
-  fn write_mc2_test_screenshot(path: &Path) {
-    RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])).save(path).expect("screenshot should write");
   }
 
   #[test]
@@ -2700,252 +1646,5 @@ mod tests {
       assert_eq!(verification.failure_layer, expected_layer);
       assert_eq!(verification.observed_label.as_deref(), Some("minecraft:stone"));
     }
-  }
-
-  #[test]
-  fn minecraft_live_click_waits_for_fresher_post_frame() {
-    let project_root = mc2_temp_dir("mc20-d3-1-live-click-project");
-    let store_root = mc2_temp_dir("mc20-d3-1-live-click-store");
-    let telemetry_path = project_root.join("pre.jsonl");
-    let post_telemetry_path = project_root.join("post.jsonl");
-    let screenshot_path = project_root.join("frame.png");
-    write_mc2_test_telemetry(&telemetry_path);
-    write_mc2_test_telemetry(&post_telemetry_path);
-    write_mc2_test_screenshot(&screenshot_path);
-
-    let appended_post = auv_game_minecraft::MinecraftSpatialFrame {
-      spatial_frame_id: "frame-mc2-post".to_string(),
-      world_tick: 43,
-      monotonic_timestamp_ms: 5_050,
-      telemetry_session_id: None,
-      viewport: auv_game_minecraft::types::Viewport::new(64, 64),
-      view_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      projection_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      player_pose: auv_game_minecraft::types::PlayerPose {
-        eye_position: auv_game_minecraft::types::Vec3::new(0.0, 0.0, 0.0),
-        yaw: 0.0,
-        pitch: 0.0,
-      },
-      raycast_hit: Some(auv_game_minecraft::types::RaycastHit {
-        block_pos: auv_game_minecraft::BlockPosition::new(0, 0, 0),
-        face: auv_game_minecraft::types::BlockFace::North,
-        block_id: "minecraft:stone".to_string(),
-      }),
-      nearby_blocks: Vec::new(),
-      nearby_entities: Vec::new(),
-      inventory_summary: Vec::new(),
-      screenshot_artifact_ref: None,
-      mc_capture_skew_ms: None,
-      screen_state: None,
-      resource_pack_ids: Vec::new(),
-    };
-
-    let writer_path = post_telemetry_path.clone();
-    let writer_frame = appended_post.clone();
-    let writer = std::thread::spawn(move || {
-      std::thread::sleep(std::time::Duration::from_millis(25));
-      append_mc2_test_telemetry(&writer_path, &writer_frame);
-    });
-
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
-    let output = run_minecraft_live_click_with_dispatch(
-      &runtime,
-      telemetry_path,
-      Some(post_telemetry_path),
-      screenshot_path,
-      "0,0,0",
-      "FixtureApp",
-      "Fixture Window",
-      Some(0),
-      true,
-      fixture_minecraft_live_click_dispatch,
-    )
-    .expect("live click should record");
-
-    writer.join().expect("writer thread should join");
-    let verifications =
-      auv_runtime::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str()).expect("verifications should list");
-    assert_eq!(verifications.len(), 1);
-    assert_eq!(verifications[0].failure_layer, None);
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  #[test]
-  fn minecraft_live_click_command_persists_operation_result_artifact() {
-    let project_root = mc2_temp_dir("mc3-live-click-project");
-    let store_root = mc2_temp_dir("mc3-live-click-store");
-    let telemetry_path = project_root.join("pre.jsonl");
-    let post_telemetry_path = project_root.join("post.jsonl");
-    let screenshot_path = project_root.join("frame.png");
-    write_mc2_test_telemetry(&telemetry_path);
-    write_mc2_test_telemetry(&post_telemetry_path);
-    write_mc2_test_screenshot(&screenshot_path);
-
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
-    let output = run_minecraft_live_click_with_dispatch(
-      &runtime,
-      telemetry_path,
-      Some(post_telemetry_path),
-      screenshot_path,
-      "0,0,0",
-      "FixtureApp",
-      "Fixture Window",
-      Some(0),
-      true,
-      fixture_minecraft_live_click_dispatch,
-    )
-    .expect("live click should record");
-
-    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
-    assert_eq!(run.artifacts.len(), 4);
-    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[3].role, "operation-result");
-
-    let verifications =
-      auv_runtime::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str()).expect("verifications should list");
-    assert_eq!(verifications.len(), 1);
-    assert_eq!(verifications[0].method, auv_runtime::contract::VerificationMethod::SemanticMatch);
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  fn fixture_minecraft_live_click_dispatch(
-    _runtime: &auv_runtime::runtime::Runtime,
-    _context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-    target_app: &str,
-    target_title: &str,
-    window_point: auv_driver::geometry::WindowPoint,
-  ) -> Result<String, String> {
-    assert_eq!(target_app, "FixtureApp");
-    assert_eq!(target_title, "Fixture Window");
-    Ok(format!("fixture clicked at ({:.3},{:.3})", window_point.point().x, window_point.point().y))
-  }
-
-  #[tokio::test]
-  async fn minecraft_bridge_run_persists_telemetry_and_projection_artifacts() {
-    let project_root = mc2_temp_dir("mc2-bridge-project");
-    let store_root = mc2_temp_dir("mc2-bridge-store");
-    let telemetry_path = project_root.join("telemetry.jsonl");
-    let screenshot_path = project_root.join("frame.png");
-    write_mc2_test_telemetry(&telemetry_path);
-    write_mc2_test_screenshot(&screenshot_path);
-
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
-    let output = run_minecraft_projection_bridge(&runtime, telemetry_path, Some(screenshot_path), None, None, "0,0,0", Some(0), true)
-      .expect("bridge should succeed");
-
-    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
-    assert_eq!(run.artifacts.len(), 4);
-    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[3].role, "minecraft-overlay");
-
-    let projection = read_recorded_minecraft_projection(&runtime, &run);
-    let inspect_text = render_typed_minecraft_projection_inspect(&projection).await;
-    assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
-    assert!(inspect_text.contains("capture_skew_ms=0"));
-    assert_eq!(output.value.overlay_artifact_id.is_some(), true);
-    assert_eq!(output.value.refusal_reason, None);
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  #[tokio::test]
-  async fn minecraft_bridge_refusal_run_still_persists_telemetry_and_projection_artifacts() {
-    let project_root = mc2_temp_dir("mc2-bridge-refusal-project");
-    let store_root = mc2_temp_dir("mc2-bridge-refusal-store");
-    let telemetry_path = project_root.join("telemetry.jsonl");
-    let screenshot_path = project_root.join("frame.png");
-    write_mc2_test_telemetry(&telemetry_path);
-    write_mc2_test_screenshot(&screenshot_path);
-
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
-    let output = run_minecraft_projection_bridge(&runtime, telemetry_path, Some(screenshot_path), None, None, "0,0,0", Some(999), true)
-      .expect("bridge refusal should still record");
-
-    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
-    assert_eq!(run.artifacts.len(), 3);
-    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
-
-    let projection = read_recorded_minecraft_projection(&runtime, &run);
-    let inspect_text = render_typed_minecraft_projection_inspect(&projection).await;
-    assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
-    assert!(inspect_text.contains("capture_skew_ms=999"));
-    assert_eq!(output.value.refusal_reason.as_deref(), Some("CaptureSkewUnreliable"));
-    assert_eq!(output.value.overlay_artifact_id, None);
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  #[test]
-  fn minecraft_calibrate_projection_persists_projection_overlay_and_calibration_artifacts() {
-    let project_root = mc2_temp_dir("mc6-calibration-project");
-    let store_root = mc2_temp_dir("mc6-calibration-store");
-    let frame_path = project_root.join("frame.json");
-    let screenshot_path = project_root.join("frame.png");
-    write_mc2_test_telemetry(&frame_path);
-    write_mc2_test_screenshot(&screenshot_path);
-
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
-    let output = run_minecraft_calibrate_projection(&runtime, frame_path, screenshot_path, "0,0,0", "hit_face_center", true)
-      .expect("calibration should succeed");
-
-    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
-    assert_eq!(run.artifacts.len(), 5);
-    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[3].role, "minecraft-overlay");
-    assert_eq!(run.artifacts[4].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE);
-    assert_eq!(output.value.overlay_artifact_id.is_some(), true);
-    assert_eq!(output.value.refusal_reason, None);
-
-    let calibration_artifact = run
-      .artifacts
-      .iter()
-      .find(|artifact| artifact.role == crate::integrations::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE)
-      .expect("calibration artifact should exist");
-    let calibration_path =
-      runtime.recording().run_dir(output.run_id.as_str()).expect("run dir should exist").join(&calibration_artifact.path);
-    let calibration: MinecraftProjectionCalibrationArtifact =
-      serde_json::from_slice(&fs::read(&calibration_path).expect("calibration bytes")).expect("calibration json");
-    assert_eq!(calibration.frame_id, "frame-mc2");
-    assert_eq!(calibration.target_block, "0,0,0");
-    assert_eq!(calibration.target_semantics, "hit_face_center");
-    assert_eq!(calibration.raycast_hit_block_pos.as_deref(), Some("0,0,0"));
-    assert_eq!(calibration.raycast_hit_face.as_deref(), Some("North"));
-    assert_eq!(calibration.refusal_reason, None);
-    assert!(calibration.overlay_ref.as_deref().is_some_and(|value| value.starts_with("artifact://")));
-    assert_eq!(calibration.known_limits.len(), 2);
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  fn temp_runtime_store_entries(prefix: &str) -> Vec<String> {
-    let mut entries = fs::read_dir(env::temp_dir())
-      .expect("temp dir should read")
-      .filter_map(|entry| {
-        let entry = entry.ok()?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        name.starts_with(prefix).then_some(name)
-      })
-      .collect::<Vec<_>>();
-    entries.sort();
-    entries
   }
 }

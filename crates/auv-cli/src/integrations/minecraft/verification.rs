@@ -1,12 +1,9 @@
-use std::path::PathBuf;
-
 use auv_game_minecraft::verify::{QueryWiredPostActionWitness, WorldDiffFailure, WorldDiffVerdict};
 use auv_game_minecraft::{
   BlockPosition, MinecraftSpatialFrame, QueryActionWiringOutcome, TailFrameWaitConfig, verify_query_wired_live_action_semantic,
 };
-use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
-use super::{MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE, QueryWiredLiveActionTelemetryWitness};
+use super::QueryWiredLiveActionTelemetryWitness;
 use auv_runtime::contract::{ArtifactRef, FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult};
 
 const MC20_POST_FRAME_WAIT: TailFrameWaitConfig = TailFrameWaitConfig::new(750, 25);
@@ -18,7 +15,6 @@ pub fn map_world_diff_verdict_to_verification_result(verdict: &WorldDiffVerdict,
     Some(WorldDiffFailure::StateChangedNoMatch) => Some(FailureLayer::StateChangedNoMatch),
     Some(WorldDiffFailure::SemanticMismatch) => Some(FailureLayer::SemanticMismatch),
   };
-
   VerificationResult {
     api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
     method: VerificationMethod::SemanticMatch,
@@ -64,24 +60,17 @@ pub struct QueryWiredPostActionVerificationInput<'a> {
   pub verification_expected_item_id: Option<String>,
 }
 
-fn query_wired_dispatch_succeeded(wiring: &QueryActionWiringOutcome) -> bool {
-  wiring.click_summary.is_some()
-}
-
 pub fn query_wired_verification_readable(wiring: &QueryActionWiringOutcome) -> bool {
-  wiring.attempted && query_wired_dispatch_succeeded(wiring)
+  wiring.attempted && wiring.click_summary.is_some()
 }
 
 pub fn build_query_wired_post_action_verifications(
-  context: &mut RecordedOperationContext<'_>,
   wiring: &QueryActionWiringOutcome,
   input: QueryWiredPostActionVerificationInput<'_>,
 ) -> (Vec<VerificationResult>, bool) {
-  // Second tuple element: attach MC20 witness-absent known_limit (no telemetry configured).
-  if !wiring.attempted || !query_wired_dispatch_succeeded(wiring) {
+  if !query_wired_verification_readable(wiring) {
     return (Vec::new(), false);
   }
-
   if input.input_target_block != input.manifest_target_block {
     return (
       vec![build_query_wired_witness_capture_failed_verification(
@@ -98,23 +87,17 @@ pub fn build_query_wired_post_action_verifications(
       false,
     );
   }
-
   let Some(witness) = input.telemetry_witness else {
     return (vec![build_query_wired_witness_absent_verification()], true);
   };
-
-  let pre = match input.pre_frame {
-    Some(frame) => frame,
-    None => {
-      return (
-        vec![build_query_wired_witness_capture_failed_verification(
-          "pre frame missing after telemetry witness was configured",
-        )],
-        false,
-      );
-    }
+  let Some(pre) = input.pre_frame else {
+    return (
+      vec![build_query_wired_witness_capture_failed_verification(
+        "pre frame missing after telemetry witness was configured",
+      )],
+      false,
+    );
   };
-
   let post_sample_path = witness.post_telemetry_sample.as_ref().unwrap_or(&witness.pre_telemetry_sample);
   let post =
     match auv_game_minecraft::read_latest_spatial_frame_newer_than(post_sample_path, pre.monotonic_timestamp_ms, MC20_POST_FRAME_WAIT) {
@@ -127,68 +110,22 @@ pub fn build_query_wired_post_action_verifications(
           false,
         );
       }
-      Err(error) => {
-        return (vec![build_query_wired_witness_capture_failed_verification(error)], false);
-      }
+      Err(error) => return (vec![build_query_wired_witness_capture_failed_verification(error)], false),
     };
-
   let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
     target_block: input.manifest_target_block,
-    pre_frame: pre.clone(),
-    post_frame: post.clone(),
-    expected_item_id: input.verification_expected_item_id.clone(),
+    pre_frame: pre,
+    post_frame: post,
+    expected_item_id: input.verification_expected_item_id,
   });
-
-  let evidence = match stage_minecraft_spatial_frame_artifacts(context, &pre, &post) {
-    Ok(refs) => refs,
-    Err(reason) => {
-      return (
-        vec![build_query_wired_witness_capture_failed_verification(
-          reason,
-        )],
-        false,
-      );
-    }
-  };
-
+  // TODO(minecraft-spatial-frame-purpose-v1): pre/post spatial frame artifacts
+  // are intentionally omitted because Task 20 defines no canonical purpose
+  // for them. Add typed evidence URIs only after the owner approves one.
   (
     vec![map_world_diff_verdict_to_verification_result(
-      &verdict, evidence,
+      &verdict,
+      Vec::new(),
     )],
     false,
   )
-}
-
-fn stage_minecraft_spatial_frame_artifacts(
-  context: &mut RecordedOperationContext<'_>,
-  pre: &MinecraftSpatialFrame,
-  post: &MinecraftSpatialFrame,
-) -> Result<Vec<ArtifactRef>, String> {
-  let (_, pre_ref) = stage_minecraft_spatial_frame_artifact(context, pre)?;
-  let (_, post_ref) = stage_minecraft_spatial_frame_artifact(context, post)?;
-  Ok(vec![pre_ref, post_ref])
-}
-
-pub fn stage_minecraft_spatial_frame_artifact(
-  context: &mut RecordedOperationContext<'_>,
-  frame: &MinecraftSpatialFrame,
-) -> Result<(PathBuf, ArtifactRef), String> {
-  let artifact_json = serde_json::to_string_pretty(frame)
-    .map(|mut json| {
-      json.push('\n');
-      json
-    })
-    .map_err(|error| format!("failed to serialize minecraft spatial frame: {error}"))?;
-  let artifact_path =
-    std::env::temp_dir().join(format!("auv-minecraft-spatial-frame-{}-{}.json", context.run_id(), auv_runtime::model::now_millis()));
-  std::fs::write(&artifact_path, artifact_json.as_bytes())
-    .map_err(|error| format!("failed to write minecraft spatial frame artifact: {error}"))?;
-  let staged = context.stage_artifact_file_with_ref(
-    MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE,
-    &artifact_path,
-    "minecraft-spatial-frame.json",
-    Some("durable minecraft spatial frame with pose, matrices, and raycast truth".to_string()),
-  );
-  let _ = std::fs::remove_file(&artifact_path);
-  staged.map_err(|error| error.to_string())
 }

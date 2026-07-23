@@ -242,7 +242,7 @@ fn permission_is_explicit_for_recognition(
     && consent.recognition_id == recognition.recognition_id
     && consent.grade == consent.provenance.expected_grade()
     && (allow_dev_self_minted_consent || consent.grade != ConsentGrade::DevOnly)
-    && recognition.scope.capture_artifact.as_ref().is_some_and(|artifact| artifact.run_id.as_str() == consent.run_id)
+    && recognition.scope.capture_artifact.as_ref().is_some_and(|artifact| artifact.run_id().to_string() == consent.run_id)
     && consent.scope == ConsentScope::CandidatePromotionOnly
     && consent.approved_action == ConsentAction::PromoteRecognitionToCandidate
 }
@@ -268,15 +268,13 @@ mod tests {
     ArtifactRef, Candidate, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface,
     RecognizedItem,
   };
-  use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, SpanId};
+  use auv_tracing::{ArtifactId, RunId};
 
   fn sample_artifact_ref() -> ArtifactRef {
-    ArtifactRef {
-      run_id: RunId::new("run_candidate_promotion"),
-      artifact_id: ArtifactId::new("artifact_candidate_promotion"),
-      span_id: SpanId::new("span_candidate_promotion"),
-      captured_event_id: Some(EventId::new("event_candidate_promotion")),
-    }
+    ArtifactRef::from_ids(
+      "00000000-0000-0000-0000-000000000001".parse::<RunId>().expect("run ID"),
+      "00000000-0000-0000-0000-000000000002".parse::<ArtifactId>().expect("artifact ID"),
+    )
   }
 
   fn sample_recognition() -> RecognitionResult {
@@ -363,7 +361,7 @@ mod tests {
         consent: Some(ActionConsentRecord {
           consent_id: "consent_unit_test".to_string(),
           recognition_id: "recognition_candidate_promotion".to_string(),
-          run_id: "run_candidate_promotion".to_string(),
+          run_id: sample_artifact_ref().run_id().to_string(),
           scope: ConsentScope::CandidatePromotionOnly,
           approved_action: ConsentAction::PromoteRecognitionToCandidate,
           provenance: ConsentProvenance::HumanGesture,
@@ -585,7 +583,7 @@ mod tests {
           consent: Some(ActionConsentRecord {
             consent_id: "consent_dev".to_string(),
             recognition_id: recognition.recognition_id.clone(),
-            run_id: "run_candidate_promotion".to_string(),
+            run_id: sample_artifact_ref().run_id().to_string(),
             scope: ConsentScope::CandidatePromotionOnly,
             approved_action: ConsentAction::PromoteRecognitionToCandidate,
             provenance: ConsentProvenance::DevSelfMinted,
@@ -619,7 +617,7 @@ mod tests {
           consent: Some(ActionConsentRecord {
             consent_id: "consent_dev".to_string(),
             recognition_id: recognition.recognition_id.clone(),
-            run_id: "run_candidate_promotion".to_string(),
+            run_id: sample_artifact_ref().run_id().to_string(),
             scope: ConsentScope::CandidatePromotionOnly,
             approved_action: ConsentAction::PromoteRecognitionToCandidate,
             provenance: ConsentProvenance::DevSelfMinted,

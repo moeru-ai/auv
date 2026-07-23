@@ -21,11 +21,6 @@ pub fn server(project_root: PathBuf) -> Result<auv_runtime::mcp::McpServer, Stri
   auv_runtime::mcp::McpServer::with_registry(project_root, Arc::new(crate::product_registry()), product_invoke_adapters())
 }
 
-#[cfg(test)]
-pub(crate) fn server_with_test_textedit(project_root: PathBuf) -> Result<auv_runtime::mcp::McpServer, String> {
-  auv_runtime::mcp::McpServer::with_registry(project_root, Arc::new(crate::product_registry()), product_invoke_adapters_with_test_textedit())
-}
-
 pub(crate) fn product_invoke_adapters() -> Vec<McpInvokeAdapter> {
   let mut adapters = auv_runtime::mcp::core_invoke_adapters();
   adapters.push(McpInvokeAdapter::new(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID, |input| async move {
@@ -42,38 +37,17 @@ async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<McpInvo
   if input.dry_run {
     return Ok(McpInvokeOutcome::completed("dry run: app.textedit.document.write", serde_json::Value::Null));
   }
-  let (report, instrumentation) = write_document(command.clone(), input.cancellation).await?.into_parts();
-  document_write_outcome(command, report, instrumentation)
+  let report = write_document(command.clone(), input.cancellation).await?;
+  document_write_outcome(command, report)
 }
 
-#[cfg(test)]
-fn product_invoke_adapters_with_test_textedit() -> Vec<McpInvokeAdapter> {
-  let mut adapters = auv_runtime::mcp::core_invoke_adapters();
-  adapters.push(McpInvokeAdapter::new(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID, |input| async move {
-    let command = parse_document_write(&input)?;
-    if input.dry_run {
-      return Ok(McpInvokeOutcome::completed("dry run: app.textedit.document.write", serde_json::Value::Null));
-    }
-    let observed_text = input.inputs.get("fixture_observed_text").cloned();
-    let (report, instrumentation) =
-      crate::integrations::textedit::write_document_with_test_driver(command.clone(), observed_text, input.cancellation).await?.into_parts();
-    document_write_outcome(command, report, instrumentation)
-  }));
-  adapters
-}
-
-fn document_write_outcome(
-  command: DocumentWrite,
-  report: auv_apple_textedit::DocumentCommandReport,
-  instrumentation: auv_cli_invoke::ArtifactInstrumentationReceipt,
-) -> Result<McpInvokeOutcome, String> {
+fn document_write_outcome(command: DocumentWrite, report: auv_apple_textedit::DocumentCommandReport) -> Result<McpInvokeOutcome, String> {
   let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
   let evidence = report
     .outcomes
     .iter()
     .filter_map(|outcome| outcome.input_action_result.as_ref().map(|_| "auv.driver.input_action_result"))
-    .chain(report.verification.iter().map(|_| "auv.textedit.ax_text_observation"))
-    .chain(std::iter::once("auv.textedit.document_write_result"))
+    .chain(report.verification.iter().map(|_| "auv.textedit.document_write.verification"))
     .collect::<Vec<_>>();
   let mut outcome = McpInvokeOutcome::completed(
     format!(
@@ -95,7 +69,7 @@ fn document_write_outcome(
       ),
     );
   }
-  Ok(outcome.with_artifact_instrumentation(instrumentation))
+  Ok(outcome)
 }
 
 fn reject_production_fixture_inputs(input: &McpInvokeInput) -> Result<(), String> {
