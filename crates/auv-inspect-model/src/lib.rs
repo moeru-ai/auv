@@ -2,21 +2,11 @@
 
 //! Disposable viewer DTOs derived only from canonical [`auv_tracing::RunSnapshot`] values.
 
-pub mod legacy;
-
 use auv_tracing::{
   ArtifactPurpose, ArtifactUri, Attributes, AuthorityId, ByteLength, ContentType, EventId, EventSchema, JsonPayload, RunId, RunRevision,
   RunSnapshot, Sha256Digest, SpanId, SpanLink, SpanName, Timestamp,
 };
 use serde::Serialize;
-
-// TODO(run-contract-tasks-17-23): Remove these hidden aliases when the
-// out-of-scope CLI reader, Balatro, and root contract imports move to `legacy`.
-#[doc(hidden)]
-pub use legacy::{
-  ArtifactRefView, InspectComposer, InspectError, InspectSection, InspectSectionOutput, TELEMETRY_SAMPLE_ARTIFACT_ROLE,
-  artifact_record_view, is_json_mime, open_artifact_file, read_artifact_json, read_telemetry_artifact_summary,
-};
 
 /// Complete Inspect read projection through one canonical run revision.
 #[derive(Clone, Debug, PartialEq, Serialize)]

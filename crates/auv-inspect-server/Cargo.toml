@@ -16,8 +16,6 @@ repository.workspace = true
 auv-inspect-model = { path = "../auv-inspect-model" }
 auv-tracing = { path = "../auv-tracing" }
 auv-tracing-inspect = { path = "../auv-tracing-inspect" }
-auv-tracing-driver = { path = "../auv-tracing-driver" }
-auv-view = { path = "../auv-view" }
 axum = "0.8"
 base64 = "0.22"
 futures-util.workspace = true
