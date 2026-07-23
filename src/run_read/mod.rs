@@ -16,7 +16,9 @@ use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
 use crate::contract::{RecognitionResult, RecognitionSource};
-use crate::scroll_scan::{SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE, SCROLL_SCAN_PURPOSE, ScrollScanArtifact};
+use crate::scroll_scan::{
+  SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE, SCROLL_SCAN_PURPOSE, ScrollScanArtifact, validate_scroll_scan_artifact,
+};
 
 pub const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
 pub const DETECTOR_RECOGNITION_PURPOSE: &str = "auv.runtime.detector_recognition";
@@ -95,66 +97,69 @@ pub enum RootArtifactReadError {
     artifact_run_id: RunId,
   },
   #[error("artifact URI is not committed in the supplied snapshot: {uri}")]
-  DanglingUri { uri: ArtifactUri },
+  DanglingUri { uri: Box<ArtifactUri> },
   #[error("artifact {uri} has purpose {actual}, expected {expected}")]
   WrongPurpose {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     expected: ArtifactPurpose,
     actual: ArtifactPurpose,
   },
   #[error("artifact {uri} has content type {actual}, expected {expected}")]
   WrongContentType {
-    uri: ArtifactUri,
-    expected: ContentType,
-    actual: ContentType,
+    uri: Box<ArtifactUri>,
+    expected: Box<ContentType>,
+    actual: Box<ContentType>,
   },
   #[error("artifact {uri} is {actual} bytes, exceeding the {limit}-byte limit")]
   PayloadTooLarge {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     limit: u64,
     actual: u64,
   },
   #[error("artifact {uri} byte length {actual} cannot be represented by this process")]
-  LengthOutOfRange { uri: ArtifactUri, actual: u64 },
+  LengthOutOfRange { uri: Box<ArtifactUri>, actual: u64 },
   #[error("failed to reserve {expected} bytes for artifact {uri}: {source}")]
   Allocation {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     expected: u64,
     #[source]
     source: TryReserveError,
   },
   #[error("failed to open artifact {uri}: {source}")]
   Open {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     #[source]
     source: ReadError,
   },
   #[error("failed while streaming artifact {uri}: {source}")]
   Stream {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     #[source]
     source: ArtifactReadError,
   },
   #[error("artifact {uri} length mismatch: expected {expected}, read {actual}")]
   LengthMismatch {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     expected: u64,
     actual: u64,
   },
   #[error("artifact {uri} digest mismatch: expected {expected}, read {actual}")]
   DigestMismatch {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     expected: Sha256Digest,
     actual: Sha256Digest,
   },
   #[error("artifact {uri} is malformed JSON: {source}")]
   MalformedJson {
-    uri: ArtifactUri,
+    uri: Box<ArtifactUri>,
     #[source]
     source: serde_json::Error,
   },
   #[error("artifact {uri} failed domain validation: {message}")]
-  InvalidPayload { uri: ArtifactUri, message: String },
+  InvalidPayload {
+    uri: Box<ArtifactUri>,
+    message: String,
+  },
   #[error("expected at most one {purpose} artifact, found {actual}")]
   AmbiguousPurpose {
     purpose: &'static str,
@@ -187,7 +192,7 @@ impl ScrollScanReadError {
       | RootArtifactReadError::InvalidExpectedContentType(_)
       | RootArtifactReadError::AmbiguousPurpose { .. } => "invalid_contract",
     };
-    auv_tracing::ErrorCode::parse(&format!("auv.runtime.scroll_scan.{suffix}")).expect("static scroll-scan error code")
+    auv_tracing::ErrorCode::parse(format!("auv.runtime.scroll_scan.{suffix}")).expect("static scroll-scan error code")
   }
 }
 
@@ -212,10 +217,36 @@ pub async fn publish_scan_coverage(
   publish_json_artifact(context, SCAN_COVERAGE_PURPOSE, value, validate_scan_coverage).await
 }
 
+pub async fn publish_scroll_scan(
+  context: Option<&Context>,
+  value: &ScrollScanArtifact,
+) -> Result<Option<ArtifactMetadata>, RootArtifactPublishError> {
+  let expected_run_id = context.and_then(|context| context.run_id().copied());
+  publish_json_artifact_bounded(context, SCROLL_SCAN_PURPOSE, value, SCROLL_SCAN_JSON_BYTE_LIMIT, |value| {
+    let expected_run_id = expected_run_id.ok_or_else(|| "enabled scroll-scan publication requires a run_id".to_string())?;
+    validate_scroll_scan_artifact(value, expected_run_id)
+  })
+  .await
+}
+
 pub(crate) async fn publish_json_artifact<T, V>(
   context: Option<&Context>,
   purpose: &'static str,
   value: &T,
+  validate: V,
+) -> Result<Option<ArtifactMetadata>, RootArtifactPublishError>
+where
+  T: Serialize,
+  V: FnOnce(&T) -> Result<(), String>,
+{
+  publish_json_artifact_bounded(context, purpose, value, ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, validate).await
+}
+
+async fn publish_json_artifact_bounded<T, V>(
+  context: Option<&Context>,
+  purpose: &'static str,
+  value: &T,
+  byte_limit: u64,
   validate: V,
 ) -> Result<Option<ArtifactMetadata>, RootArtifactPublishError>
 where
@@ -242,10 +273,10 @@ where
     actual: body.len() as u128,
     source,
   })?;
-  if byte_length > ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+  if byte_length > byte_limit {
     return Err(RootArtifactPublishError::PayloadTooLarge {
       purpose,
-      limit: ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+      limit: byte_limit,
       actual: byte_length,
     });
   }
@@ -368,11 +399,11 @@ where
 {
   let bytes = read_json_bytes(store, snapshot, uri, purpose, ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).await?;
   let value = serde_json::from_slice(&bytes).map_err(|source| RootArtifactReadError::MalformedJson {
-    uri: uri.clone(),
+    uri: Box::new(uri.clone()),
     source,
   })?;
   validate(&value).map_err(|message| RootArtifactReadError::InvalidPayload {
-    uri: uri.clone(),
+    uri: Box::new(uri.clone()),
     message,
   })?;
   Ok(value)
@@ -392,11 +423,17 @@ async fn read_json_bytes(
       artifact_run_id: uri.run_id(),
     });
   }
-  let metadata = snapshot.artifacts().get(uri).ok_or_else(|| RootArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
+  let metadata = snapshot
+    .artifacts()
+    .get(uri)
+    .ok_or_else(|| RootArtifactReadError::DanglingUri {
+      uri: Box::new(uri.clone()),
+    })?
+    .metadata();
   let expected_purpose = expected_purpose(purpose)?;
   if metadata.purpose() != &expected_purpose {
     return Err(RootArtifactReadError::WrongPurpose {
-      uri: uri.clone(),
+      uri: Box::new(uri.clone()),
       expected: expected_purpose,
       actual: metadata.purpose().clone(),
     });
@@ -404,50 +441,50 @@ async fn read_json_bytes(
   let expected_content_type = ContentType::parse(JSON_CONTENT_TYPE).map_err(RootArtifactReadError::InvalidExpectedContentType)?;
   if metadata.content_type() != &expected_content_type {
     return Err(RootArtifactReadError::WrongContentType {
-      uri: uri.clone(),
-      expected: expected_content_type,
-      actual: metadata.content_type().clone(),
+      uri: Box::new(uri.clone()),
+      expected: Box::new(expected_content_type),
+      actual: Box::new(metadata.content_type().clone()),
     });
   }
   let expected_length = metadata.byte_length().get();
   if expected_length > limit {
     return Err(RootArtifactReadError::PayloadTooLarge {
-      uri: uri.clone(),
+      uri: Box::new(uri.clone()),
       limit,
       actual: expected_length,
     });
   }
   let capacity = usize::try_from(expected_length).map_err(|_| RootArtifactReadError::LengthOutOfRange {
-    uri: uri.clone(),
+    uri: Box::new(uri.clone()),
     actual: expected_length,
   })?;
   let mut bytes = Vec::new();
   bytes.try_reserve_exact(capacity).map_err(|source| RootArtifactReadError::Allocation {
-    uri: uri.clone(),
+    uri: Box::new(uri.clone()),
     expected: expected_length,
     source,
   })?;
   let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| RootArtifactReadError::Open {
-    uri: uri.clone(),
+    uri: Box::new(uri.clone()),
     source,
   })?;
   let mut actual_length = 0_u64;
   while let Some(chunk) = reader.next().await {
     let chunk = chunk.map_err(|source| RootArtifactReadError::Stream {
-      uri: uri.clone(),
+      uri: Box::new(uri.clone()),
       source,
     })?;
-    actual_length = actual_length.checked_add(chunk.len() as u64).unwrap_or(u64::MAX);
+    actual_length = actual_length.saturating_add(chunk.len() as u64);
     if actual_length > limit {
       return Err(RootArtifactReadError::PayloadTooLarge {
-        uri: uri.clone(),
+        uri: Box::new(uri.clone()),
         limit,
         actual: actual_length,
       });
     }
     if actual_length > expected_length {
       return Err(RootArtifactReadError::LengthMismatch {
-        uri: uri.clone(),
+        uri: Box::new(uri.clone()),
         expected: expected_length,
         actual: actual_length,
       });
@@ -456,7 +493,7 @@ async fn read_json_bytes(
   }
   if actual_length != expected_length {
     return Err(RootArtifactReadError::LengthMismatch {
-      uri: uri.clone(),
+      uri: Box::new(uri.clone()),
       expected: expected_length,
       actual: actual_length,
     });
@@ -464,7 +501,7 @@ async fn read_json_bytes(
   let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
   if actual_digest != metadata.sha256() {
     return Err(RootArtifactReadError::DigestMismatch {
-      uri: uri.clone(),
+      uri: Box::new(uri.clone()),
       expected: metadata.sha256(),
       actual: actual_digest,
     });
@@ -478,13 +515,15 @@ pub async fn read_scroll_scan(
   uri: &ArtifactUri,
 ) -> Result<ScrollScanArtifact, ScrollScanReadError> {
   let bytes = read_json_bytes(store, snapshot, uri, SCROLL_SCAN_PURPOSE, SCROLL_SCAN_JSON_BYTE_LIMIT).await?;
-  serde_json::from_slice(&bytes).map_err(|source| {
-    RootArtifactReadError::MalformedJson {
-      uri: uri.clone(),
-      source,
-    }
-    .into()
-  })
+  let value = serde_json::from_slice(&bytes).map_err(|source| RootArtifactReadError::MalformedJson {
+    uri: Box::new(uri.clone()),
+    source,
+  })?;
+  validate_scroll_scan_artifact(&value, snapshot.run_id()).map_err(|message| RootArtifactReadError::InvalidPayload {
+    uri: Box::new(uri.clone()),
+    message,
+  })?;
+  Ok(value)
 }
 
 fn validate_snapshot_authority(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<(), RootArtifactReadError> {
