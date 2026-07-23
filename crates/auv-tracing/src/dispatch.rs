@@ -299,14 +299,18 @@ impl Dispatch {
 
   pub(crate) fn submit_span_start<S: SpanSpec>(
     &self,
-    authority_id: Option<AuthorityId>,
-    run_id: RunId,
-    parent_span_id: Option<SpanId>,
+    parent: &crate::Context,
     remote_link: Option<SpanLink>,
     span_id: SpanId,
     started_at: Result<Timestamp, ErrorCode>,
     spec: S,
   ) -> bool {
+    let Some(run_id) = parent.run_id().copied() else {
+      drop(spec);
+      return false;
+    };
+    let authority_id = parent.authority_id().copied();
+    let parent_span_id = parent.span_id().copied();
     let preparation = self.reserve_ticket(authority_id, run_id);
     if preparation.is_rejected() {
       drop(spec);

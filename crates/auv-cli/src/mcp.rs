@@ -72,10 +72,23 @@ async fn map_textedit_document_write<D>(
 where
   D: auv_apple_textedit::TextEditDriver,
 {
-  let (report, artifacts) = crate::integrations::textedit::write_document_with_publications(command.clone(), cancellation, driver).await?;
-  let outcome = artifacts
+  let (report, artifacts, publication_failure) =
+    match crate::integrations::textedit::write_document_with_publications(command.clone(), cancellation, driver).await {
+      Ok((report, artifacts)) => (report, artifacts, None),
+      Err(failure) => {
+        let (message, report, artifacts) = failure.into_parts();
+        let Some(report) = report else {
+          return Err(message);
+        };
+        (report, artifacts, Some(message))
+      }
+    };
+  let mut outcome = artifacts
     .into_iter()
     .fold(document_write_outcome(command, report.clone())?, |outcome, metadata| outcome.with_artifact_metadata(Some(metadata)));
+  if let Some(message) = publication_failure {
+    outcome.mark_failed(message.clone(), message);
+  }
   Ok((outcome, report))
 }
 

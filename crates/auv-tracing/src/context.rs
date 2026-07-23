@@ -481,7 +481,7 @@ fn start_span_with_clock(spec: impl SpanSpec, clock: Arc<dyn Clock>) -> Span {
   let close_started_at = sample.timestamp.as_ref().ok().copied();
   let remote_link = parent.remote_span_id.map(SpanLink::new);
   let authority_id = parent.authority_id().copied();
-  let prepared = dispatch.submit_span_start(authority_id, run_id, parent.span_id().copied(), remote_link, span_id, sample.timestamp, spec);
+  let prepared = dispatch.submit_span_start(&parent, remote_link, span_id, sample.timestamp, spec);
   let close = close_started_at.filter(|_| prepared).map(|started_at| SpanClose {
     dispatch,
     authority_id,

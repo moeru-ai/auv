@@ -423,7 +423,7 @@ fn mark_ended_prunable(state: &mut ProjectorState, run_id: RunId, span_id: SpanI
 }
 
 fn prune_ordinary_ended_spans(state: &mut ProjectorState) {
-  state.runs.retain(|_, run| {
+  for run in state.runs.values_mut() {
     run.spans.retain(|_, span| {
       !matches!(
         span,
@@ -432,8 +432,7 @@ fn prune_ordinary_ended_spans(state: &mut ProjectorState) {
         }
       )
     });
-    !run.spans.is_empty()
-  });
+  }
 }
 
 fn error(code: &'static str) -> TelemetryError {

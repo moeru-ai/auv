@@ -141,12 +141,28 @@ mod tests {
   }
 
   #[test]
+  fn failed_output_without_a_store_omits_the_inspect_hint() {
+    let mut result = fixture_result(RunStatus::Failed);
+    result.failure_message = Some("fixture failed".to_string());
+
+    let output = result
+      .render_to_string(InvokeOutputOptions {
+        inspect_hint: false,
+        ..InvokeOutputOptions::default()
+      })
+      .expect("render should succeed");
+
+    assert!(!output.contains("auv inspect run_fixture"));
+  }
+
+  #[test]
   fn detail_includes_notes_limits_verification_artifacts_and_selected_signals() {
     let output = fixture_result(RunStatus::Completed)
       .render_to_string(InvokeOutputOptions {
         json: false,
         detail: true,
         wide: false,
+        inspect_hint: true,
       })
       .expect("render should succeed");
 
@@ -169,6 +185,7 @@ mod tests {
         json: false,
         detail: false,
         wide: true,
+        inspect_hint: true,
       })
       .expect("render should succeed");
 
@@ -183,6 +200,7 @@ mod tests {
         json: true,
         detail: false,
         wide: false,
+        inspect_hint: true,
       })
       .expect("render should succeed");
 

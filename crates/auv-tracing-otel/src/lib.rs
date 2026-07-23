@@ -502,7 +502,7 @@ impl OtelProjectorInner {
 
   fn prune_ordinary_ended_spans(&self) -> Result<(), TelemetryError> {
     let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
-    state.runs.retain(|_, run| {
+    for run in state.runs.values_mut() {
       run.spans.retain(|_, span| {
         !matches!(
           span,
@@ -511,8 +511,7 @@ impl OtelProjectorInner {
           }
         )
       });
-      !run.spans.is_empty()
-    });
+    }
     Ok(())
   }
 }
