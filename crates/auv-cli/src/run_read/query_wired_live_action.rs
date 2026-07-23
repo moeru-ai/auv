@@ -180,14 +180,7 @@ fn is_activation_only_verification(verification: &VerificationResult) -> bool {
 }
 
 fn verification_failure_layer_label(layer: FailureLayer) -> &'static str {
-  match layer {
-    FailureLayer::GroundingFailed => "grounding_failed",
-    FailureLayer::CandidateExpired => "candidate_expired",
-    FailureLayer::ControlFailed => "control_failed",
-    FailureLayer::VerificationUnreliable => "verification_unreliable",
-    FailureLayer::StateChangedNoMatch => "state_changed_no_match",
-    FailureLayer::SemanticMismatch => "semantic_mismatch",
-  }
+  layer.as_str()
 }
 
 fn verification_claim_reason_snippet(verification: &VerificationResult) -> Option<String> {
