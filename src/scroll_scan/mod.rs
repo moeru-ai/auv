@@ -23,9 +23,8 @@ use std::time::Duration;
 
 use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::{AuvResult, now_millis};
-use crate::run_read::publish_scan_coverage;
+use crate::run_read::{RootArtifactPublishError, publish_scan_coverage, publish_scroll_scan};
 use crate::runtime::Runtime;
-use auv_cli_invoke::ArtifactInstrumentationReceipt;
 use auv_scan::{CompletenessWire, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
 use auv_tracing::{Context, RunId, SpanId};
 use image::RgbaImage;
@@ -305,6 +304,346 @@ pub const SCROLL_SCAN_PURPOSE: &str = "auv.runtime.scroll_scan";
 pub const SCROLL_SCAN_JSON_BYTE_LIMIT: u64 = 8 * 1024 * 1024;
 pub const SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE: &str = "auv.runtime.scroll_scan.payload_too_large";
 
+pub(crate) fn validate_scroll_scan_artifact(artifact: &ScrollScanArtifact, expected_run_id: RunId) -> AuvResult<()> {
+  validate_scan_id(&artifact.scan_id)?;
+  validate_scan_region(&artifact.target.region)?;
+  if max_pages_for_policy(&artifact.stop_policy) == 0 {
+    return Err("scroll-scan max_pages must be greater than zero".to_string());
+  }
+  if artifact.pages.len() > max_pages_for_policy(&artifact.stop_policy) {
+    return Err(format!(
+      "page count {} exceeds stop policy max_pages={}",
+      artifact.pages.len(),
+      max_pages_for_policy(&artifact.stop_policy)
+    ));
+  }
+
+  let mut observation_ids = BTreeSet::new();
+  let mut observation_counts = vec![0usize; artifact.pages.len()];
+  let mut new_observation_counts = vec![0usize; artifact.pages.len()];
+  let mut known_observation_signatures = BTreeSet::new();
+  let mut previous_page_index = None;
+  for observation in &artifact.observations {
+    if observation.observation_id.trim().is_empty() {
+      return Err("observation_id must not be empty".to_string());
+    }
+    if !observation_ids.insert(observation.observation_id.as_str()) {
+      return Err(format!("duplicate observation_id {:?}", observation.observation_id));
+    }
+    if observation.page_index >= artifact.pages.len() {
+      return Err(format!("observation page_index {} has no matching page", observation.page_index));
+    }
+    if previous_page_index.is_some_and(|previous| previous > observation.page_index) {
+      return Err("observations must be ordered by nondecreasing page_index".to_string());
+    }
+    previous_page_index = Some(observation.page_index);
+    observation_counts[observation.page_index] += 1;
+    if known_observation_signatures.insert(observation_signature(observation)) {
+      new_observation_counts[observation.page_index] += 1;
+    }
+  }
+
+  for (expected_page_index, page) in artifact.pages.iter().enumerate() {
+    if page.page_index != expected_page_index {
+      return Err(format!(
+        "page indices must be contiguous and ordered from zero: found {} at position {expected_page_index}",
+        page.page_index
+      ));
+    }
+    if let Some(observe_run_id) = &page.observe_run_id {
+      let declared_run_id = observe_run_id
+        .parse::<RunId>()
+        .map_err(|error| format!("page {expected_page_index} observe_run_id {observe_run_id:?} is invalid: {error}"))?;
+      if declared_run_id != expected_run_id {
+        return Err(format!("page {expected_page_index} observe_run_id {declared_run_id} does not match artifact run {expected_run_id}"));
+      }
+    }
+    if page.observation_count != observation_counts[expected_page_index] {
+      return Err(format!(
+        "page {expected_page_index} observation_count {} does not match {} observations",
+        page.observation_count, observation_counts[expected_page_index]
+      ));
+    }
+    if page.new_observation_count != new_observation_counts[expected_page_index] {
+      return Err(format!(
+        "page {expected_page_index} new_observation_count {} does not match {} newly observed signatures",
+        page.new_observation_count, new_observation_counts[expected_page_index]
+      ));
+    }
+  }
+
+  validate_scroll_scan_clusters(artifact, &observation_ids)?;
+  validate_scroll_scan_nodes_and_snapshots(artifact, expected_run_id)?;
+  validate_scroll_scan_page_references(artifact)?;
+  validate_scroll_scan_stop_status(artifact)?;
+  Ok(())
+}
+
+fn validate_scan_id(scan_id: &str) -> AuvResult<()> {
+  if scan_id.is_empty() || !scan_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')) {
+    return Err("scan_id must be non-empty and contain only ASCII letters, digits, '.', '-', or '_'".to_string());
+  }
+  Ok(())
+}
+
+fn validate_scan_region(region: &ScanRegion) -> AuvResult<()> {
+  let ratios = [
+    region.left_ratio,
+    region.top_ratio,
+    region.right_ratio,
+    region.bottom_ratio,
+  ];
+  if ratios.iter().any(|ratio| !ratio.is_finite())
+    || !(0.0..1.0).contains(&region.left_ratio)
+    || !(0.0..1.0).contains(&region.top_ratio)
+    || !(0.0..=1.0).contains(&region.right_ratio)
+    || !(0.0..=1.0).contains(&region.bottom_ratio)
+    || region.left_ratio >= region.right_ratio
+    || region.top_ratio >= region.bottom_ratio
+  {
+    return Err("scroll-scan region ratios must define a non-empty rectangle inside 0..=1".to_string());
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_clusters(artifact: &ScrollScanArtifact, observation_ids: &BTreeSet<&str>) -> AuvResult<()> {
+  let mut cluster_ids = BTreeSet::new();
+  let mut clustered_observation_ids = BTreeSet::new();
+  for cluster in &artifact.clusters {
+    if cluster.cluster_id.trim().is_empty() {
+      return Err("cluster_id must not be empty".to_string());
+    }
+    if !cluster_ids.insert(cluster.cluster_id.as_str()) {
+      return Err(format!("duplicate cluster_id {:?}", cluster.cluster_id));
+    }
+    if cluster.observation_ids.is_empty() {
+      return Err(format!("cluster {:?} must reference at least one observation", cluster.cluster_id));
+    }
+    if !cluster.confidence.is_finite() || !(0.0..=1.0).contains(&cluster.confidence) {
+      return Err(format!("cluster {:?} confidence must be inside 0..=1", cluster.cluster_id));
+    }
+    for observation_id in &cluster.observation_ids {
+      if !observation_ids.contains(observation_id.as_str()) {
+        return Err(format!("cluster observation reference {observation_id:?} does not match an artifact observation"));
+      }
+      if !clustered_observation_ids.insert(observation_id.as_str()) {
+        return Err(format!("cluster observation reference {observation_id:?} appears more than once"));
+      }
+    }
+  }
+  if clustered_observation_ids != *observation_ids {
+    return Err("clusters must reference every observation exactly once".to_string());
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_nodes_and_snapshots(artifact: &ScrollScanArtifact, expected_run_id: RunId) -> AuvResult<()> {
+  if artifact.nodes.is_empty() != artifact.snapshots.is_empty() {
+    return Err("nodes and snapshots must either both be present or both be omitted".to_string());
+  }
+  if artifact.nodes.is_empty() {
+    return Ok(());
+  }
+  if artifact.nodes.len() != artifact.observations.len() {
+    return Err(format!("node count {} does not match observation count {}", artifact.nodes.len(), artifact.observations.len()));
+  }
+
+  let span_id = artifact.nodes[0].node_ref.span_id;
+  for (node, observation) in artifact.nodes.iter().zip(&artifact.observations) {
+    validate_scroll_scan_node(node, observation, expected_run_id, span_id)?;
+  }
+  if artifact.snapshots.len() != artifact.pages.len() {
+    return Err(format!("snapshot count {} does not match page count {}", artifact.snapshots.len(), artifact.pages.len()));
+  }
+
+  let mut snapshot_ids = BTreeSet::new();
+  for (page_index, snapshot) in artifact.snapshots.iter().enumerate() {
+    if snapshot.snapshot_id.trim().is_empty() {
+      return Err("snapshot_id must not be empty".to_string());
+    }
+    if !snapshot_ids.insert(snapshot.snapshot_id.as_str()) {
+      return Err(format!("duplicate snapshot_id {:?}", snapshot.snapshot_id));
+    }
+    if snapshot.run_id != expected_run_id {
+      return Err(format!("snapshot run_id {} does not match artifact run {expected_run_id}", snapshot.run_id));
+    }
+    if snapshot.span_id != span_id {
+      return Err(format!("snapshot {:?} span_id {} does not match artifact node span {span_id}", snapshot.snapshot_id, snapshot.span_id));
+    }
+    validate_snapshot_artifact_lineage(snapshot, expected_run_id)?;
+    validate_snapshot_scope(snapshot, &artifact.target)?;
+    validate_snapshot_counts(snapshot, &artifact.pages[page_index])?;
+
+    let page_observations = artifact.observations.iter().filter(|observation| observation.page_index == page_index);
+    if snapshot.nodes.len() != artifact.pages[page_index].observation_count {
+      return Err(format!(
+        "snapshot page {page_index} node count {} does not match page observation_count {}",
+        snapshot.nodes.len(),
+        artifact.pages[page_index].observation_count
+      ));
+    }
+    for (node, observation) in snapshot.nodes.iter().zip(page_observations) {
+      validate_scroll_scan_node(node, observation, expected_run_id, snapshot.span_id)?;
+    }
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_node(
+  node: &SurfaceNode,
+  observation: &CollectionObservation,
+  expected_run_id: RunId,
+  expected_span_id: SpanId,
+) -> AuvResult<()> {
+  if node.node_ref.run_id != expected_run_id {
+    return Err(format!("node run_id {} does not match artifact run {expected_run_id}", node.node_ref.run_id));
+  }
+  if node.node_ref.span_id != expected_span_id {
+    return Err(format!(
+      "node {:?} span_id {} does not match artifact span {expected_span_id}",
+      node.node_ref.node_id, node.node_ref.span_id
+    ));
+  }
+  if node.node_ref.node_id != observation.observation_id {
+    return Err(format!("node_id {:?} does not match observation_id {:?}", node.node_ref.node_id, observation.observation_id));
+  }
+  if node.box_.x != observation.bounds.x
+    || node.box_.y != observation.bounds.y
+    || node.box_.width != observation.bounds.width
+    || node.box_.height != observation.bounds.height
+  {
+    return Err(format!("node {:?} bounds do not match its observation", node.node_ref.node_id));
+  }
+  let expected_label = (!observation.raw_text.trim().is_empty()).then_some(observation.raw_text.as_str());
+  if node.label.as_deref() != expected_label {
+    return Err(format!("node {:?} label does not match its observation", node.node_ref.node_id));
+  }
+  let expected_node = surface_nodes_from_observations(expected_run_id, expected_span_id, std::slice::from_ref(observation));
+  if expected_node.as_slice() != std::slice::from_ref(node) {
+    return Err(format!("node {:?} does not match the owning observation projection", node.node_ref.node_id));
+  }
+  Ok(())
+}
+
+fn validate_snapshot_artifact_lineage(snapshot: &ObservationSnapshot, expected_run_id: RunId) -> AuvResult<()> {
+  let artifact_refs = snapshot
+    .scope
+    .capture_artifact
+    .iter()
+    .chain(snapshot.scope.capture_contract_artifact.iter())
+    .chain(snapshot.capture_contract_ref.iter())
+    .chain(&snapshot.evidence);
+  for artifact_ref in artifact_refs {
+    if artifact_ref.run_id() != expected_run_id {
+      return Err(format!("snapshot artifact reference {artifact_ref} does not match artifact run {expected_run_id}"));
+    }
+  }
+  Ok(())
+}
+
+fn validate_snapshot_scope(snapshot: &ObservationSnapshot, target: &ScanTarget) -> AuvResult<()> {
+  if snapshot.scope.app_bundle_id != target.application_id || snapshot.scope.window_title != target.window_title {
+    return Err(format!("snapshot {:?} scope does not match the scan target", snapshot.snapshot_id));
+  }
+  let Some(region) = &snapshot.scope.region_hint else {
+    return Err(format!("snapshot {:?} is missing the scan target region", snapshot.snapshot_id));
+  };
+  if region.left != target.region.left_ratio
+    || region.top != target.region.top_ratio
+    || region.right != target.region.right_ratio
+    || region.bottom != target.region.bottom_ratio
+  {
+    return Err(format!("snapshot {:?} region does not match the scan target", snapshot.snapshot_id));
+  }
+  Ok(())
+}
+
+fn validate_snapshot_counts(snapshot: &ObservationSnapshot, page: &ScanPageRecord) -> AuvResult<()> {
+  let page_index = snapshot.detail.get("page_index").and_then(Value::as_u64).and_then(|value| usize::try_from(value).ok());
+  if page_index != Some(page.page_index) {
+    return Err(format!("snapshot page_index {page_index:?} does not match page {}", page.page_index));
+  }
+  let observation_count = snapshot.detail.get("observation_count").and_then(Value::as_u64).and_then(|value| usize::try_from(value).ok());
+  if observation_count != Some(page.observation_count) {
+    return Err(format!("snapshot observation_count {observation_count:?} does not match page {}", page.observation_count));
+  }
+  let new_observation_count =
+    snapshot.detail.get("new_observation_count").and_then(Value::as_u64).and_then(|value| usize::try_from(value).ok());
+  if new_observation_count != Some(page.new_observation_count) {
+    return Err(format!("snapshot new_observation_count {new_observation_count:?} does not match page {}", page.new_observation_count));
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_page_references(artifact: &ScrollScanArtifact) -> AuvResult<()> {
+  let page_count = artifact.pages.len();
+  for candidate in &artifact.section_candidates {
+    if candidate.page_index >= page_count {
+      return Err(format!("section candidate page_index {} has no matching page", candidate.page_index));
+    }
+  }
+  for candidate in &artifact.scroll_boundary_candidates {
+    if candidate.page_index >= page_count {
+      return Err(format!("scroll boundary page_index {} has no matching page", candidate.page_index));
+    }
+  }
+  for decision in &artifact.hook_decisions {
+    let Some(page) = artifact.pages.get(decision.page_index) else {
+      return Err(format!("hook decision page_index {} has no matching page", decision.page_index));
+    };
+    if decision.item_index.is_some_and(|index| index >= page.observation_count) {
+      return Err(format!("hook decision item_index {:?} is outside page observations", decision.item_index));
+    }
+    if decision.row_candidate_index.is_some_and(|index| index >= page.observation_count) {
+      return Err(format!("hook decision row_candidate_index {:?} is outside page observations", decision.row_candidate_index));
+    }
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_stop_status(artifact: &ScrollScanArtifact) -> AuvResult<()> {
+  if artifact.stop_evidence.message.trim().is_empty() {
+    return Err("stop_evidence message must not be empty".to_string());
+  }
+  let last_page_index = artifact.pages.len().checked_sub(1);
+  let valid_stop_index = match artifact.stop_evidence.reason {
+    StopReason::Error => match last_page_index {
+      Some(last) => artifact.stop_evidence.page_index == last || artifact.stop_evidence.page_index == artifact.pages.len(),
+      None => artifact.stop_evidence.page_index == 0,
+    },
+    _ => last_page_index == Some(artifact.stop_evidence.page_index),
+  };
+  if !valid_stop_index {
+    return Err(format!(
+      "stop_evidence page_index {} is inconsistent with {} observed page(s)",
+      artifact.stop_evidence.page_index,
+      artifact.pages.len()
+    ));
+  }
+  let status_matches = matches!(
+    (artifact.stop_evidence.reason, artifact.completeness_claim),
+    (
+      StopReason::NoProgressLimit,
+      CompletenessClaim::CompleteByNoVisualProgressDown
+        | CompletenessClaim::CompleteByNoVisualProgressUp
+        | CompletenessClaim::CompleteByNoVisualProgress
+    ) | (StopReason::ReachedBoundary, CompletenessClaim::CompleteByReachedBoundary)
+      | (StopReason::MaxPages, CompletenessClaim::PartialMaxPages)
+      | (StopReason::NextSectionCandidate, CompletenessClaim::PartialNextSectionCandidate)
+      | (StopReason::MaxScrolls | StopReason::HookRequestedStop | StopReason::MatchFound | StopReason::Error, CompletenessClaim::Unknown)
+  );
+  // NOTICE(scroll-scan-completeness-status): PartialMaxDuration and
+  // PartialUnstableContent have no owning StopReason in the current producer,
+  // so accepting them would create an unverifiable status pair.
+  if !status_matches {
+    return Err(format!(
+      "stop reason {:?} and completeness_claim {:?} are inconsistent",
+      artifact.stop_evidence.reason, artifact.completeness_claim
+    ));
+  }
+  Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct ScanWindowRegionOptions {
   pub target: ScanTarget,
@@ -329,31 +668,24 @@ pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOpti
     Ok(mut source) => execute_scan_window_region(&mut source, options, scan_id, trace_ids),
     Err(error) => failed_scan_execution(options, scan_id, error),
   };
-  publish_scan_execution(&context, &execution).await;
-  match execution.error {
-    Some(error) => Err(error),
-    None => Ok(execution.artifact),
+  let publication = publish_scan_execution(&context, &execution).await;
+  match (execution.error, publication) {
+    (Some(error), Ok(())) => Err(error),
+    (Some(error), Err(publication_error)) => Err(format!("{error}; failed to publish scroll-scan evidence: {publication_error}")),
+    (None, Err(error)) => Err(error.to_string()),
+    (None, Ok(())) => Ok(execution.artifact),
   }
 }
 
-async fn publish_scan_execution(context: &Context, execution: &ScanExecution) {
+async fn publish_scan_execution(context: &Context, execution: &ScanExecution) -> Result<(), RootArtifactPublishError> {
   if !execution.artifact.pages.is_empty() {
-    let _ = publish_scroll_scan_artifact(context, &execution.artifact).await;
+    publish_scroll_scan(Some(context), &execution.artifact).await?;
   }
   // NOTICE: A source failure before the first observed page has no domain
   // artifact to publish. Its failure coverage remains canonical evidence.
   let coverage = scan_coverage_from_artifact(&execution.artifact);
-  let _ = publish_scan_coverage(Some(context), &coverage).await;
-}
-
-async fn publish_scroll_scan_artifact(context: &Context, artifact: &ScrollScanArtifact) -> ArtifactInstrumentationReceipt {
-  let mut instrumentation = ArtifactInstrumentationReceipt::default();
-  if context.can_publish_artifacts() {
-    instrumentation
-      .publish_json_bounded(SCROLL_SCAN_PURPOSE, artifact, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
-      .await;
-  }
-  instrumentation
+  publish_scan_coverage(Some(context), &coverage).await?;
+  Ok(())
 }
 
 trait ScanWindowRegionSource {
@@ -739,23 +1071,7 @@ fn match_found_on_current_page(policy: &StopPolicy, observations: &[CollectionOb
 }
 
 fn validate_scan_options(options: &ScanWindowRegionOptions) -> AuvResult<()> {
-  let region = &options.target.region;
-  let ratios = [
-    region.left_ratio,
-    region.top_ratio,
-    region.right_ratio,
-    region.bottom_ratio,
-  ];
-  if ratios.iter().any(|ratio| !ratio.is_finite())
-    || !(0.0..1.0).contains(&region.left_ratio)
-    || !(0.0..1.0).contains(&region.top_ratio)
-    || !(0.0..=1.0).contains(&region.right_ratio)
-    || !(0.0..=1.0).contains(&region.bottom_ratio)
-    || region.left_ratio >= region.right_ratio
-    || region.top_ratio >= region.bottom_ratio
-  {
-    return Err("scroll-scan region ratios must define a non-empty rectangle inside 0..=1".to_string());
-  }
+  validate_scan_region(&options.target.region)?;
   if max_pages_for_policy(&options.stop_policy) == 0 {
     return Err("scroll-scan max_pages must be greater than zero".to_string());
   }
@@ -1128,11 +1444,13 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
 #[cfg(test)]
 mod tests {
   use std::collections::VecDeque;
-  use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  use std::sync::{Arc, Mutex};
 
   use auv_tracing::{
-    ArtifactPurpose, AuthorityId, MemoryRunStore, RunStore, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy,
-    configure, dispatcher,
+    ArtifactBody, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult,
+    ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunRevision, RunStore,
+    RunSubscription, StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
   };
   use image::Rgba;
 
@@ -1147,6 +1465,73 @@ mod tests {
   }
 
   struct NoopTelemetry;
+
+  struct FailNthArtifactStore {
+    inner: MemoryRunStore,
+    fail_at: usize,
+    writes: AtomicUsize,
+    purposes: Mutex<Vec<String>>,
+  }
+
+  impl FailNthArtifactStore {
+    fn new(fail_at: usize) -> Self {
+      Self {
+        inner: MemoryRunStore::new(AuthorityId::new()),
+        fail_at,
+        writes: AtomicUsize::new(0),
+        purposes: Mutex::new(Vec::new()),
+      }
+    }
+
+    fn write_count(&self) -> usize {
+      self.writes.load(Ordering::SeqCst)
+    }
+
+    fn purposes(&self) -> Vec<String> {
+      self.purposes.lock().expect("purposes lock").clone()
+    }
+  }
+
+  impl RunStore for FailNthArtifactStore {
+    fn authority_id(&self) -> AuthorityId {
+      self.inner.authority_id()
+    }
+
+    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      self.inner.commit(request)
+    }
+
+    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+      let write = self.writes.fetch_add(1, Ordering::SeqCst) + 1;
+      self.purposes.lock().expect("purposes lock").push(request.purpose().as_str().to_string());
+      if write == self.fail_at {
+        return Box::pin(async {
+          Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.scroll_scan_publication_rejected").expect("test error code")))
+        });
+      }
+      self.inner.write_artifact(request, body)
+    }
+
+    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+      self.inner.lookup_commit(run_id, key)
+    }
+
+    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+      self.inner.load_snapshot(run_id)
+    }
+
+    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+      self.inner.commits_after(run_id, after, limit)
+    }
+
+    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+      self.inner.subscribe(run_id, after)
+    }
+
+    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+      self.inner.open_artifact(uri)
+    }
+  }
 
   impl TelemetryProjector for NoopTelemetry {
     fn project(&self, _item: TelemetryItem) -> auv_tracing::BoxFuture<'_, Result<(), TelemetryError>> {
@@ -1311,7 +1696,7 @@ mod tests {
     let expected = execution.artifact.clone();
     let future = root.in_scope(|| publish_scan_execution(&root, &execution));
 
-    root.instrument(future).await;
+    root.instrument(future).await.expect("publish scan artifacts");
     dispatch.flush().await.expect("flush scan artifacts");
     let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("scan snapshot");
     let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().clone()).collect::<Vec<_>>();
@@ -1327,6 +1712,86 @@ mod tests {
       .expect("scroll-scan artifact")
       .metadata();
     assert_eq!(read_scroll_scan(store.as_ref(), &snapshot, scroll_scan.uri()).await.expect("read scroll scan"), expected);
+  }
+
+  #[tokio::test]
+  async fn first_scan_publication_failure_stops_before_coverage() {
+    let store = Arc::new(FailNthArtifactStore::new(1));
+    let dispatch = configure().run_store(store.clone()).build().expect("failing dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+
+    let error = root.instrument(root.in_scope(|| publish_scan_execution(&root, &execution))).await.expect_err("first publication must fail");
+
+    assert_eq!(store.write_count(), 1, "coverage must not be attempted after the domain artifact fails");
+    assert_eq!(store.purposes(), vec![SCROLL_SCAN_PURPOSE]);
+    assert!(matches!(error, RootArtifactPublishError::Publication { .. }));
+  }
+
+  #[tokio::test]
+  async fn second_scan_publication_failure_keeps_one_domain_artifact_without_retrying() {
+    let store = Arc::new(FailNthArtifactStore::new(2));
+    let dispatch = configure().run_store(store.clone()).build().expect("failing dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+
+    let error =
+      root.instrument(root.in_scope(|| publish_scan_execution(&root, &execution))).await.expect_err("second publication must fail");
+
+    assert_eq!(store.write_count(), 2);
+    assert_eq!(store.purposes(), vec![SCROLL_SCAN_PURPOSE, crate::run_read::SCAN_COVERAGE_PURPOSE]);
+    assert!(matches!(error, RootArtifactPublishError::Publication { .. }));
+    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("domain artifact snapshot");
+    let purposes = snapshot.artifacts().values().map(|artifact| artifact.metadata().purpose().as_str()).collect::<Vec<_>>();
+    assert_eq!(purposes, vec![SCROLL_SCAN_PURPOSE], "the successful first publication must not be duplicated");
+  }
+
+  #[tokio::test]
+  async fn invalid_domain_artifact_stops_before_coverage_without_a_flush_failure() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let mut execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+    execution.artifact.pages[0].observation_count = 2;
+
+    let error = root
+      .instrument(root.in_scope(|| publish_scan_execution(&root, &execution)))
+      .await
+      .expect_err("invalid domain artifact must fail before enqueue");
+
+    assert!(matches!(error, RootArtifactPublishError::InvalidPayload { .. }));
+    dispatch.flush().await.expect("pre-enqueue validation failure leaves no artifact job");
+    assert!(store.load_snapshot(run_id).await.expect("snapshot read").is_none());
   }
 
   #[tokio::test]
@@ -1347,7 +1812,7 @@ mod tests {
     );
     let future = root.in_scope(|| publish_scan_execution(&root, &execution));
 
-    root.instrument(future).await;
+    root.instrument(future).await.expect("publish failure coverage");
     dispatch.flush().await.expect("flush scan coverage");
     let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("coverage snapshot");
     let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().as_str()).collect::<Vec<_>>();
@@ -1375,17 +1840,17 @@ mod tests {
 
     let disabled = Context::current();
     assert!(!disabled.can_publish_artifacts());
-    assert!(publish_scroll_scan_artifact(&disabled, &execution.artifact).await.failures().is_empty());
+    assert!(publish_scroll_scan(Some(&disabled), &execution.artifact).await.expect("disabled publication").is_none());
 
     let dispatch =
       configure().project_telemetry(Arc::new(NoopTelemetry), TelemetryRoutePolicy::fixed_fields_only()).build().expect("telemetry dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
-    let future = root.in_scope(|| publish_scroll_scan_artifact(&root, &execution.artifact));
-    let instrumentation = root.instrument(future).await;
+    let future = root.in_scope(|| publish_scroll_scan(Some(&root), &execution.artifact));
+    let publication = root.instrument(future).await.expect("telemetry-only publication");
 
     assert!(root.is_enabled());
     assert!(!root.can_publish_artifacts());
-    assert!(instrumentation.failures().is_empty(), "telemetry-only publication serialized the oversized artifact");
+    assert!(publication.is_none(), "telemetry-only publication serialized the oversized artifact");
   }
 
   #[test]

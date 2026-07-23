@@ -1,17 +1,18 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use auv_cli_invoke::ArtifactInstrumentationReceipt;
 use auv_runtime::contract::{
-  OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope, RecognitionSurface,
+  NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox, RecognitionScope,
+  RecognitionSurface, SurfaceNode,
 };
 use auv_runtime::run_read::{
-  ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, RootArtifactReadError, SCAN_COVERAGE_PURPOSE, publish_scan_coverage, read_scroll_scan,
+  ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, RootArtifactPublishError, RootArtifactReadError, SCAN_COVERAGE_PURPOSE, publish_scan_coverage,
+  publish_scroll_scan, read_scroll_scan,
 };
 use auv_runtime::scene_state_read::read_scan_coverage;
 use auv_runtime::scroll_scan::{
-  CompletenessClaim, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE, SCROLL_SCAN_PURPOSE, ScanRegion, ScanTarget,
-  ScrollScanArtifact, StopEvidence, StopPolicy, StopReason,
+  CollectionObservation, CompletenessClaim, ObservationCluster, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE,
+  SCROLL_SCAN_PURPOSE, ScanPageRecord, ScanRect, ScanRegion, ScanTarget, ScrollScanArtifact, StopEvidence, StopPolicy, StopReason,
 };
 use auv_scan::{CompletenessWire, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
 use auv_tracing::{
@@ -55,28 +56,10 @@ impl RootRunFixture {
   }
 
   async fn publish_scroll_scan(&self, artifact: &ScrollScanArtifact) -> ArtifactMetadata {
-    let future = self.root.in_scope(|| async {
-      let mut instrumentation = ArtifactInstrumentationReceipt::default();
-      instrumentation
-        .publish_json_bounded(SCROLL_SCAN_PURPOSE, artifact, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
-        .await;
-      instrumentation
-    });
-    let instrumentation = self.root.instrument(future).await;
-    assert!(instrumentation.failures().is_empty(), "{:?}", instrumentation.failures());
+    let future = self.root.in_scope(|| publish_scroll_scan(Some(&self.root), artifact));
+    let metadata = self.root.instrument(future).await.expect("publish scroll scan").expect("scroll-scan publication enabled");
     self.dispatch.flush().await.expect("flush scroll scan");
-    self
-      .store
-      .load_snapshot(self.run_id)
-      .await
-      .expect("load scroll-scan snapshot")
-      .expect("scroll-scan snapshot")
-      .artifacts()
-      .values()
-      .find(|published| published.metadata().purpose().as_str() == SCROLL_SCAN_PURPOSE)
-      .expect("canonical scroll-scan artifact")
-      .metadata()
-      .clone()
+    metadata
   }
 
   async fn publish_bytes(&self, purpose: &str, content_type: &str, bytes: Vec<u8>) -> ArtifactMetadata {
@@ -301,7 +284,53 @@ async fn direct_coverage_result(calls: &AtomicUsize, coverage: ScanCoverageWire)
   coverage
 }
 
-fn sample_scroll_scan_artifact() -> ScrollScanArtifact {
+fn sample_scroll_scan_artifact(run_id: RunId) -> ScrollScanArtifact {
+  let span_id = SpanId::new();
+  let observation = CollectionObservation {
+    observation_id: "obs_0001_0001".to_string(),
+    page_index: 0,
+    raw_text: "Fixture row".to_string(),
+    normalized_text_key: "fixture row".to_string(),
+    bounds: ScanRect {
+      x: 10,
+      y: 20,
+      width: 120,
+      height: 24,
+    },
+    section_context: None,
+    source_artifacts: Vec::new(),
+    attributes: std::collections::BTreeMap::from([("source".to_string(), "auv-driver.vision.ocr".to_string())]),
+  };
+  let node = SurfaceNode {
+    node_ref: NodeRef {
+      run_id,
+      span_id,
+      node_id: observation.observation_id.clone(),
+    },
+    kind: "auv-driver.vision.ocr".to_string(),
+    label: Some(observation.raw_text.clone()),
+    box_: RecognitionBox {
+      x: observation.bounds.x,
+      y: observation.bounds.y,
+      width: observation.bounds.width,
+      height: observation.bounds.height,
+    },
+    source_artifacts: Vec::new(),
+    recognition_id: None,
+    recognition_source: None,
+    recognition_surface: None,
+    recognized_item_id: None,
+    recognized_item_kind: None,
+    provider_score: None,
+    detail: serde_json::json!({
+      "observation_id": observation.observation_id,
+      "page_index": observation.page_index,
+      "normalized_text_key": observation.normalized_text_key,
+      "section_context": observation.section_context,
+      "source_artifacts": [],
+      "attributes": observation.attributes,
+    }),
+  };
   ScrollScanArtifact {
     scan_id: "scan_fixture".to_string(),
     target: ScanTarget {
@@ -318,16 +347,23 @@ fn sample_scroll_scan_artifact() -> ScrollScanArtifact {
       max_pages: 1,
       max_scrolls: 0,
     },
-    pages: Vec::new(),
-    observations: Vec::new(),
-    nodes: Vec::new(),
+    pages: vec![ScanPageRecord {
+      page_index: 0,
+      observe_run_id: Some(run_id.to_string()),
+      screenshot_artifact: None,
+      observation_count: 1,
+      new_observation_count: 1,
+      summary: "observed 1 OCR region(s); 1 new scan signature(s)".to_string(),
+    }],
+    observations: vec![observation],
+    nodes: vec![node.clone()],
     snapshots: vec![ObservationSnapshot {
       api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_fixture_0001".to_string(),
-      run_id: RunId::new(),
-      span_id: SpanId::new(),
+      run_id,
+      span_id,
       captured_at_millis: 1,
-      source: ObservationSource::Visual,
+      source: ObservationSource::Ocr,
       scope: RecognitionScope {
         surface: RecognitionSurface::Region,
         display_ref: None,
@@ -335,17 +371,32 @@ fn sample_scroll_scan_artifact() -> ScrollScanArtifact {
         app_bundle_id: Some("com.example.fixture".to_string()),
         window_title: Some("Fixture".to_string()),
         window_number: None,
-        region_hint: None,
+        region_hint: Some(RatioRegion {
+          left: 0.1,
+          top: 0.2,
+          right: 0.9,
+          bottom: 0.8,
+        }),
         capture_artifact: None,
         capture_contract_artifact: None,
       },
       capture_contract_ref: None,
       evidence: Vec::new(),
-      nodes: Vec::new(),
-      detail: serde_json::json!({ "page_index": 0 }),
+      nodes: vec![node],
+      detail: serde_json::json!({
+        "page_index": 0,
+        "observation_count": 1,
+        "new_observation_count": 1,
+      }),
       known_limits: vec!["fixture observation has no capture contract".to_string()],
     }],
-    clusters: Vec::new(),
+    clusters: vec![ObservationCluster {
+      cluster_id: "cluster_0001".to_string(),
+      observation_ids: vec!["obs_0001_0001".to_string()],
+      representative_text: "Fixture row".to_string(),
+      merge_reason: "single_observation".to_string(),
+      confidence: 1.0,
+    }],
     section_candidates: Vec::new(),
     scroll_boundary_candidates: Vec::new(),
     hook_decisions: Vec::new(),
@@ -359,10 +410,24 @@ fn sample_scroll_scan_artifact() -> ScrollScanArtifact {
   }
 }
 
+async fn assert_invalid_scroll_scan(mutate: impl FnOnce(&mut ScrollScanArtifact, RunId), expected_message: &str) {
+  let fixture = RootRunFixture::memory();
+  let mut artifact = sample_scroll_scan_artifact(fixture.run_id);
+  mutate(&mut artifact, fixture.run_id);
+  let bytes = serde_json::to_vec(&artifact).expect("serialize invalid scroll scan");
+  let published = fixture.publish_bytes(SCROLL_SCAN_PURPOSE, "application/json", bytes).await;
+  let snapshot = fixture.snapshot().await;
+
+  let error = read_scroll_scan(fixture.store(), &snapshot, published.uri()).await.expect_err("invalid scroll scan must fail");
+
+  assert_eq!(error.code().as_str(), "auv.runtime.scroll_scan.invalid_payload");
+  assert!(error.to_string().contains(expected_message), "{error}");
+}
+
 #[tokio::test]
 async fn scroll_scan_producer_round_trips_through_the_shared_reader() {
   let fixture = RootRunFixture::memory();
-  let expected = sample_scroll_scan_artifact();
+  let expected = sample_scroll_scan_artifact(fixture.run_id);
 
   let metadata = fixture.publish_scroll_scan(&expected).await;
   let snapshot = fixture.snapshot().await;
@@ -375,10 +440,51 @@ async fn scroll_scan_producer_round_trips_through_the_shared_reader() {
 }
 
 #[tokio::test]
+async fn scroll_scan_reader_rejects_invalid_scan_id_and_run_lineage() {
+  assert_invalid_scroll_scan(|artifact, _| artifact.scan_id.clear(), "scan_id").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.scan_id = "scan id with spaces".to_string(), "scan_id").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].observe_run_id = Some(RunId::new().to_string()), "observe_run_id").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.snapshots[0].run_id = RunId::new(), "snapshot run_id").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.nodes[0].node_ref.run_id = RunId::new(), "node run_id").await;
+}
+
+#[tokio::test]
+async fn scroll_scan_reader_rejects_inconsistent_page_and_observation_ordering() {
+  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].page_index = 1, "page indices").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].observation_count = 2, "observation_count").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.observations[0].page_index = 1, "observation page_index").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].new_observation_count = 0, "new_observation_count").await;
+}
+
+#[tokio::test]
+async fn scroll_scan_reader_rejects_incoherent_nested_references() {
+  assert_invalid_scroll_scan(|artifact, _| artifact.clusters[0].observation_ids[0] = "obs_missing".to_string(), "cluster observation").await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.nodes[0].node_ref.node_id = "obs_missing".to_string(), "node_id").await;
+  assert_invalid_scroll_scan(
+    |artifact, _| artifact.nodes[0].recognition_id = Some("orphan_recognition".to_string()),
+    "owning observation projection",
+  )
+  .await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.snapshots[0].detail["page_index"] = serde_json::json!(1), "snapshot page_index").await;
+  assert_invalid_scroll_scan(
+    |artifact, _| artifact.snapshots[0].evidence.push(ArtifactUri::from_ids(RunId::new(), ArtifactId::new())),
+    "snapshot artifact reference",
+  )
+  .await;
+}
+
+#[tokio::test]
+async fn scroll_scan_reader_rejects_incoherent_stop_and_completeness_status() {
+  assert_invalid_scroll_scan(|artifact, _| artifact.completeness_claim = CompletenessClaim::CompleteByReachedBoundary, "completeness_claim")
+    .await;
+  assert_invalid_scroll_scan(|artifact, _| artifact.stop_evidence.page_index = 1, "stop_evidence page_index").await;
+}
+
+#[tokio::test]
 async fn scroll_scan_reader_checks_authority_owner_purpose_and_content_type() {
   let fixture = RootRunFixture::memory();
-  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
-  let bytes = serde_json::to_vec(&sample_scroll_scan_artifact()).expect("serialize scroll scan");
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact(fixture.run_id)).await;
+  let bytes = serde_json::to_vec(&sample_scroll_scan_artifact(fixture.run_id)).expect("serialize scroll scan");
   let wrong_purpose = fixture.publish_bytes("auv.runtime.other", "application/json", bytes.clone()).await;
   let wrong_content_type = fixture.publish_bytes(SCROLL_SCAN_PURPOSE, "application/problem+json", bytes).await;
   let snapshot = fixture.snapshot().await;
@@ -411,8 +517,8 @@ async fn scroll_scan_reader_checks_authority_owner_purpose_and_content_type() {
 #[tokio::test]
 async fn scroll_scan_reader_checks_committed_length_and_digest() {
   let fixture = RootRunFixture::memory();
-  let artifact = sample_scroll_scan_artifact();
-  let bytes = serde_json::to_vec_pretty(&artifact).expect("serialize canonical scroll scan");
+  let artifact = sample_scroll_scan_artifact(fixture.run_id);
+  let bytes = serde_json::to_vec(&artifact).expect("serialize canonical scroll scan");
   let published = fixture.publish_scroll_scan(&artifact).await;
   let snapshot = fixture.snapshot().await;
 
@@ -446,7 +552,7 @@ async fn scroll_scan_reader_enforces_metadata_and_midstream_bounds() {
   assert_eq!(unopened.open_count(), 0, "metadata bounds must be enforced before opening the body");
 
   let fixture = RootRunFixture::memory();
-  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact(fixture.run_id)).await;
   let snapshot = fixture.snapshot().await;
   let first = vec![0; usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test payload size")];
   let streamed = ArtifactBytesStore::from_chunks(fixture.store.clone(), vec![first, vec![1]]);
@@ -461,7 +567,7 @@ async fn scroll_scan_reader_enforces_metadata_and_midstream_bounds() {
 #[tokio::test]
 async fn scroll_scan_reader_preserves_open_stream_and_json_failure_codes() {
   let fixture = RootRunFixture::memory();
-  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact(fixture.run_id)).await;
   let snapshot = fixture.snapshot().await;
   let open_store = ArtifactBytesStore::open_error(
     fixture.store.clone(),
@@ -493,21 +599,35 @@ async fn scroll_scan_reader_preserves_open_stream_and_json_failure_codes() {
 #[tokio::test]
 async fn scroll_scan_producer_rejects_payload_above_its_domain_bound_without_a_commit() {
   let fixture = RootRunFixture::memory();
-  let mut oversized = sample_scroll_scan_artifact();
+  let mut oversized = sample_scroll_scan_artifact(fixture.run_id);
   oversized.warnings = vec!["x".repeat(usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test payload size"))];
-  let future = fixture.root.in_scope(|| async {
-    let mut instrumentation = ArtifactInstrumentationReceipt::default();
-    instrumentation
-      .publish_json_bounded(SCROLL_SCAN_PURPOSE, &oversized, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
-      .await;
-    instrumentation
-  });
+  let future = fixture.root.in_scope(|| publish_scroll_scan(Some(&fixture.root), &oversized));
 
-  let instrumentation = fixture.root.instrument(future).await;
+  let error = fixture.root.instrument(future).await.expect_err("oversized scroll scan must fail");
 
-  assert_eq!(instrumentation.failures().len(), 1);
-  assert!(instrumentation.failures()[0].message.contains(SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE));
+  assert!(matches!(
+    error,
+    RootArtifactPublishError::PayloadTooLarge {
+      limit: SCROLL_SCAN_JSON_BYTE_LIMIT,
+      ..
+    }
+  ));
   fixture.dispatch.flush().await.expect("construction failure emits no artifact job");
+  assert!(fixture.store.load_snapshot(fixture.run_id).await.expect("load snapshot").is_none());
+}
+
+#[tokio::test]
+async fn scroll_scan_producer_rejects_invalid_domain_payload_without_a_commit() {
+  let fixture = RootRunFixture::memory();
+  let mut invalid = sample_scroll_scan_artifact(fixture.run_id);
+  invalid.pages[0].observation_count = 2;
+  let future = fixture.root.in_scope(|| publish_scroll_scan(Some(&fixture.root), &invalid));
+
+  let error = fixture.root.instrument(future).await.expect_err("invalid scroll scan must fail");
+
+  assert!(matches!(error, RootArtifactPublishError::InvalidPayload { .. }));
+  assert!(error.to_string().contains("observation_count"), "{error}");
+  fixture.dispatch.flush().await.expect("domain validation failure emits no artifact job");
   assert!(fixture.store.load_snapshot(fixture.run_id).await.expect("load snapshot").is_none());
 }
 

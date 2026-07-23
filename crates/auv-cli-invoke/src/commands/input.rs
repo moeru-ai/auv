@@ -4,11 +4,10 @@ use crate::{
     KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS, QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS,
     WINDOW_CLICK_POINT_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
   },
-  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
   invoke_command,
 };
 use crate::{InvokeReport, InvokeReportField};
-use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, Context, NewArtifact, Sha256Digest};
+use auv_tracing::{ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, ContentType, Context, NewArtifact, Sha256Digest};
 use futures_util::io::Cursor as AsyncCursor;
 use sha2::{Digest, Sha256};
 
@@ -156,10 +155,8 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let text = input.required_input("text")?.to_string();
-    let (result, instrumentation) = type_text_into_active_control(text).await?.into_parts();
-    let mut output = input_action_output("typed text into active control", "auv-driver-macos.input", &result);
-    output.artifact_failures = instrumentation.into_failures();
-    Ok(output)
+    let (result, _recording) = type_text_into_active_control(text).await?;
+    Ok(input_action_output("typed text into active control", "auv-driver-macos.input", &result))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -168,13 +165,13 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn type_text_into_active_control(text: String) -> Result<ArtifactPublication<auv_driver::InputActionResult>, String> {
+pub async fn type_text_into_active_control(text: String) -> Result<(auv_driver::InputActionResult, Option<ArtifactMetadata>), String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = session.input().type_text(&text, auv_driver::TypeTextOptions::default()).map_err(|error| error.to_string())?;
-    let _ = publish_input_action_result(&result).await;
-    Ok(ArtifactPublication::new(result, ArtifactInstrumentationReceipt::default()))
+    let recording = publish_input_action_result(&result).await?;
+    Ok((result, recording))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -256,10 +253,9 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let key = input.required_input("key")?.to_string();
-    let (result, instrumentation) = press_key_in_active_app(key.clone()).await?.into_parts();
+    let (result, _recording) = press_key_in_active_app(key.clone()).await?;
     let mut output = input_action_output("pressed key in active app", "auv-driver-macos.input", &result);
     attach_input_key_report(&mut output, &key, Some("active app"), &result);
-    output.artifact_failures = instrumentation.into_failures();
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -269,7 +265,7 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn press_key_in_active_app(key: String) -> Result<ArtifactPublication<auv_driver::InputActionResult>, String> {
+pub async fn press_key_in_active_app(key: String) -> Result<(auv_driver::InputActionResult, Option<ArtifactMetadata>), String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -280,8 +276,8 @@ pub async fn press_key_in_active_app(key: String) -> Result<ArtifactPublication<
         ..auv_driver::KeyPressOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    let _ = publish_input_action_result(&result).await;
-    Ok(ArtifactPublication::new(result, ArtifactInstrumentationReceipt::default()))
+    let recording = publish_input_action_result(&result).await?;
+    Ok((result, recording))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -385,10 +381,9 @@ where
     return Ok(dry_run_output(&input.command_id));
   }
 
-  let (result, instrumentation) = click_resolved_window_point(capability, window, point).await?.into_parts();
+  let (result, _recording) = click_resolved_window_point(capability, window, point).await?;
   let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &result.action);
   add_click_window_signals(&mut output, &result.window, result.point);
-  output.artifact_failures = instrumentation.into_failures();
   Ok(output)
 }
 
@@ -463,7 +458,7 @@ pub struct WindowPointClick {
 pub async fn click_point_in_window(
   selector: auv_driver::WindowSelector,
   point: WindowPointInput,
-) -> Result<ArtifactPublication<WindowPointClick>, String> {
+) -> Result<(WindowPointClick, Option<ArtifactMetadata>), String> {
   #[cfg(target_os = "macos")]
   {
     let capability = LocalWindowPointCapability::open()?;
@@ -482,19 +477,19 @@ async fn click_resolved_window_point<C>(
   capability: &C,
   window: auv_driver::Window,
   point: auv_driver::geometry::WindowPoint,
-) -> Result<ArtifactPublication<WindowPointClick>, String>
+) -> Result<(WindowPointClick, Option<ArtifactMetadata>), String>
 where
   C: WindowPointCapability + Sync + ?Sized,
 {
   let action = capability.click(&window, point).map_err(|error| error.to_string())?;
-  let _ = publish_input_action_result(&action).await;
-  Ok(ArtifactPublication::new(
+  let recording = publish_input_action_result(&action).await?;
+  Ok((
     WindowPointClick {
       window,
       point,
       action,
     },
-    ArtifactInstrumentationReceipt::default(),
+    recording,
   ))
 }
 
@@ -626,16 +621,15 @@ fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputA
   output
 }
 
-async fn publish_input_action_result(result: &auv_driver::InputActionResult) -> Result<(), String> {
+async fn publish_input_action_result(result: &auv_driver::InputActionResult) -> Result<Option<ArtifactMetadata>, String> {
   let context = Context::current();
   if !context.can_publish_artifacts() {
-    return Ok(());
+    return Ok(None);
   }
   let artifact = input_action_result_artifact(result)?;
   context
     .in_scope(|| auv_tracing::emit_artifact!(artifact))
     .await
-    .map(|_| ())
     .map_err(|error| format!("failed to publish {INPUT_ACTION_RESULT_PURPOSE} artifact: {error}"))
 }
 
@@ -835,12 +829,13 @@ mod click_window_point_tests {
     let future =
       root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
 
-    let delivered = root.instrument(future).await.expect("direct window click result");
+    let (delivered, recording) = root.instrument(future).await.expect("direct window click result");
     dispatch.flush().await.expect("flush input action telemetry");
     let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("input run");
 
-    assert_eq!(delivered.value().action, expected);
+    assert_eq!(delivered.action, expected);
     let publication = snapshot.artifacts().values().next().expect("input action artifact");
+    assert_eq!(recording.as_ref(), Some(publication.metadata()));
     assert_eq!(snapshot.artifacts().len(), 1);
     assert_eq!(publication.metadata().purpose().as_str(), INPUT_ACTION_RESULT_PURPOSE);
     assert_eq!(publication.metadata().content_type().to_string(), "application/json");
@@ -854,7 +849,7 @@ mod click_window_point_tests {
   }
 
   #[tokio::test]
-  async fn invalid_input_telemetry_does_not_replace_direct_driver_result() {
+  async fn invalid_input_artifact_fails_the_enabled_typed_call_without_reexecuting_driver_input() {
     let invalid = InputActionResult {
       selected_path: InputDeliveryPath::WindowTargetedMouse,
       attempts: vec![auv_driver::InputAttempt::success(
@@ -873,12 +868,13 @@ mod click_window_point_tests {
     let future =
       root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
 
-    let delivered = root.instrument(future).await.expect("driver result survives telemetry rejection");
-    dispatch.flush().await.expect("flush rejected telemetry run");
+    let error = root.instrument(future).await.expect_err("enabled domain validation failure must propagate");
+    dispatch.flush().await.expect("pre-enqueue validation failure leaves no artifact job");
     let snapshot = store.load_snapshot(run_id).await.expect("snapshot read");
 
-    assert_eq!(delivered.value().action, invalid);
-    assert!(snapshot.is_none(), "rejected optional telemetry must not commit an artifact-only run");
+    assert!(error.contains("successful input attempt must match selected_path"), "{error}");
+    assert_eq!(capability.click_count(), 1, "publication failure must not reexecute direct input");
+    assert!(snapshot.is_none(), "rejected input evidence must not commit an artifact-only run");
   }
 
   #[tokio::test]
@@ -894,7 +890,7 @@ mod click_window_point_tests {
       clipboard_disturbance: auv_driver::DisturbanceLevel::None,
     };
 
-    publish_input_action_result(&invalid).await.expect("disabled telemetry skips domain validation");
+    assert!(publish_input_action_result(&invalid).await.expect("disabled telemetry skips domain validation").is_none());
   }
 
   #[test]
