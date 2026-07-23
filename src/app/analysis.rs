@@ -907,8 +907,10 @@ fn default_ocr_snapshot(app: &AppIdentity) -> OcrTextSnapshot {
 }
 
 pub(crate) fn resolve_probe_ocr_sample_query(app: &AppIdentity, steps: &[AppProbeStep]) -> String {
-  let window_report = read_probe_step_artifact_text(steps, "observe-windows", None);
-  let ax_report = read_probe_step_artifact_text(steps, "observe-window-tree", None);
+  // `probe.json` v0 has used both id sets. Prefer the live producer ids while
+  // retaining read compatibility for historical probe records.
+  let window_report = ["list-windows", "observe-windows"].iter().find_map(|step_id| read_probe_step_artifact_text(steps, step_id, None));
+  let ax_report = ["capture-ax-tree", "observe-window-tree"].iter().find_map(|step_id| read_probe_step_artifact_text(steps, step_id, None));
   first_non_empty_string(&[
     window_report.as_deref().and_then(|report| report_value(report, "frontmostWindowTitle=")).map(str::to_string),
     window_report.as_deref().and_then(|report| report_value(report, "frontmostAppName=")).map(str::to_string),
