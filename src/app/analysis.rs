@@ -901,8 +901,8 @@ fn default_ocr_snapshot(app: &AppIdentity) -> OcrTextSnapshot {
 }
 
 pub(crate) fn resolve_probe_ocr_sample_query(app: &AppIdentity, steps: &[AppProbeStep]) -> String {
-  let window_report = read_probe_step_artifact_text(steps, "observe-windows", None);
-  let ax_report = read_probe_step_artifact_text(steps, "observe-window-tree", None);
+  let window_report = read_probe_step_artifact_text(steps, "list-windows", None);
+  let ax_report = read_probe_step_artifact_text(steps, "capture-ax-tree", None);
   first_non_empty_string(&[
     window_report.as_deref().and_then(|report| report_value(report, "frontmostWindowTitle=")).map(str::to_string),
     window_report.as_deref().and_then(|report| report_value(report, "frontmostAppName=")).map(str::to_string),

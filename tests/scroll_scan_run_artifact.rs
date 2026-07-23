@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use auv_runtime::run_read::{RootArtifactReadError, SCAN_COVERAGE_PURPOSE, publish_scan_coverage};
+use auv_runtime::run_read::{ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, RootArtifactReadError, SCAN_COVERAGE_PURPOSE, publish_scan_coverage};
 use auv_runtime::scene_state_read::read_scan_coverage;
 use auv_scan::{CompletenessWire, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
 use auv_tracing::{
@@ -12,6 +12,8 @@ use auv_tracing::{
 };
 use futures_util::io::Cursor;
 use sha2::{Digest, Sha256};
+
+static PRODUCED_COVERAGE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 struct RootRunFixture {
   store: Arc<MemoryRunStore>,
@@ -190,6 +192,16 @@ fn sample_coverage() -> ScanCoverageWire {
   }
 }
 
+fn produced_coverage() -> ScanCoverageWire {
+  let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/auv-scan/tests/fixtures/scan/coverage/coverage_stable_v0");
+  let invocation = PRODUCED_COVERAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
+  let output_dir = std::env::temp_dir().join(format!("auv-scroll-scan-run-artifact-{}-{invocation}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&output_dir);
+  let produced = auv_scan::produce_coverage_from_fixture_dir(&fixture_dir, &output_dir).expect("produce canonical scan coverage");
+  let _ = std::fs::remove_dir_all(output_dir);
+  produced.wire
+}
+
 async fn direct_coverage_result(calls: &AtomicUsize, coverage: ScanCoverageWire) -> ScanCoverageWire {
   calls.fetch_add(1, Ordering::Relaxed);
   let context = Context::current();
@@ -210,7 +222,7 @@ async fn scan_coverage_publisher_is_a_noop_without_a_context() {
 #[tokio::test]
 async fn scan_coverage_round_trips_through_one_snapshot_authority() {
   let fixture = RootRunFixture::memory();
-  let expected = sample_coverage();
+  let expected = produced_coverage();
   let metadata = fixture.publish_coverage(&expected).await;
   let snapshot = fixture.snapshot().await;
 
@@ -278,6 +290,22 @@ async fn scan_coverage_reader_checks_committed_length_and_digest() {
 }
 
 #[tokio::test]
+async fn scan_coverage_reader_rejects_committed_payload_above_the_canonical_bound_before_opening() {
+  let fixture = RootRunFixture::memory();
+  let oversized = vec![b' '; usize::try_from(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1).expect("test payload size")];
+  fixture.publish_bytes(SCAN_COVERAGE_PURPOSE, "application/json", oversized).await;
+  let snapshot = fixture.snapshot().await;
+  let store = ArtifactBytesStore::new(fixture.store.clone(), Vec::new());
+
+  assert!(matches!(
+    read_scan_coverage(&store, &snapshot).await.expect_err("oversized coverage"),
+    RootArtifactReadError::PayloadTooLarge { limit, actual, .. }
+      if limit == ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT && actual == ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1
+  ));
+  assert_eq!(store.open_count(), 0, "metadata bounds must be enforced before reading the body");
+}
+
+#[tokio::test]
 async fn scan_coverage_reader_rejects_malformed_json_and_wrong_schema() {
   let malformed = RootRunFixture::memory();
   malformed.publish_bytes(SCAN_COVERAGE_PURPOSE, "application/json", br#"{"schema_version":"#.to_vec()).await;
@@ -305,7 +333,7 @@ async fn recording_failure_does_not_replace_or_reexecute_the_direct_coverage_val
   let dispatch = configure().run_store(store.clone()).build().expect("rejecting dispatch");
   let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
   let calls = AtomicUsize::new(0);
-  let expected = sample_coverage();
+  let expected = produced_coverage();
   let future = root.in_scope(|| direct_coverage_result(&calls, expected.clone()));
 
   let direct = root.instrument(future).await;
@@ -315,4 +343,16 @@ async fn recording_failure_does_not_replace_or_reexecute_the_direct_coverage_val
   assert_eq!(store.writes.load(Ordering::Relaxed), 1);
   let flush = dispatch.flush().await.expect_err("recording failure remains frontend-visible");
   assert_eq!(flush.failure_count().get(), 1);
+}
+
+#[test]
+fn scan_coverage_producer_reports_missing_source_without_manufacturing_output() {
+  let fixture_dir = std::env::temp_dir().join(format!("auv-scroll-scan-missing-source-{}", std::process::id()));
+  let output_dir = fixture_dir.join("out");
+  let _ = std::fs::remove_dir_all(&fixture_dir);
+
+  let error = auv_scan::produce_coverage_from_fixture_dir(&fixture_dir, &output_dir).expect_err("missing source must fail");
+
+  assert!(matches!(error, auv_scan::CoverageProducerError::MissingManifest { .. }));
+  assert!(!output_dir.exists(), "a source failure must not leave a canonical coverage artifact");
 }
