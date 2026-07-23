@@ -63,7 +63,7 @@ impl InvokeResult {
         known_limits: output.known_limits,
         verification: output.verification,
         report: output.report,
-        canonical_artifacts: Vec::new(),
+        canonical_artifacts: output.artifacts,
         artifact_failures: output.artifact_failures,
         failure_message: output.failure_message,
       },
@@ -84,11 +84,6 @@ impl InvokeResult {
         failure_message: Some(error),
       },
     }
-  }
-
-  pub fn with_canonical_artifacts(mut self, artifacts: Vec<ArtifactMetadata>) -> Self {
-    self.canonical_artifacts = artifacts;
-    self
   }
 
   pub(crate) fn write_rendered<W: Write>(&self, writer: &mut W, options: InvokeOutputOptions) -> Result<(), String> {
@@ -244,17 +239,29 @@ fn write_error(error: std::io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+  use auv_tracing::{ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactUri, Attributes, ByteLength, ContentType, RunId, Sha256Digest};
+
   use crate::{InvokeCommandOutput, default_registry};
 
   use super::InvokeResult;
 
   #[test]
-  fn direct_command_result_keeps_canonical_artifacts_empty_until_frontend_flush() {
+  fn direct_command_result_carries_command_publications_without_store_readback() {
     let registry = default_registry();
     let command = registry.resolve("scan.coverage").expect("command");
+    let artifact = ArtifactMetadata::new(
+      ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
+      ArtifactPurpose::parse("auv.test.direct_artifact").unwrap(),
+      ContentType::parse("application/json").unwrap(),
+      ByteLength::new(2).unwrap(),
+      Sha256Digest::new([7; 32]),
+      Attributes::empty(),
+    );
+    let mut output = InvokeCommandOutput::new("direct");
+    output.artifacts.push(artifact.clone());
 
-    let result = InvokeResult::from_command_result("019f8b1e-4b2d-7a00-8f00-0000000000aa", command, Ok(InvokeCommandOutput::new("dry run")));
+    let result = InvokeResult::from_command_result("019f8b1e-4b2d-7a00-8f00-0000000000aa", command, Ok(output));
 
-    assert!(result.canonical_artifacts.is_empty());
+    assert_eq!(result.canonical_artifacts, vec![artifact]);
   }
 }

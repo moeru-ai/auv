@@ -224,10 +224,6 @@ pub struct Dispatch {
 }
 
 impl Dispatch {
-  pub(crate) fn run_store(&self) -> Option<Arc<dyn RunStore>> {
-    self.inner.route.as_ref().map(|route| route.store.clone())
-  }
-
   pub(crate) fn authority_id(&self) -> Option<&AuthorityId> {
     self.inner.route.as_ref().map(|route| &route.authority_id)
   }
@@ -303,6 +299,7 @@ impl Dispatch {
 
   pub(crate) fn submit_span_start<S: SpanSpec>(
     &self,
+    authority_id: Option<AuthorityId>,
     run_id: RunId,
     parent_span_id: Option<SpanId>,
     remote_link: Option<SpanLink>,
@@ -310,7 +307,7 @@ impl Dispatch {
     started_at: Result<Timestamp, ErrorCode>,
     spec: S,
   ) -> bool {
-    let preparation = self.reserve_ticket(run_id);
+    let preparation = self.reserve_ticket(authority_id, run_id);
     if preparation.is_rejected() {
       drop(spec);
       preparation.finish_rejected();
@@ -328,8 +325,14 @@ impl Dispatch {
     prepared
   }
 
-  pub(crate) fn submit_span_end(&self, run_id: RunId, span_id: SpanId, ended_at: Result<Timestamp, ErrorCode>) {
-    let preparation = self.reserve_ticket(run_id);
+  pub(crate) fn submit_span_end(
+    &self,
+    authority_id: Option<AuthorityId>,
+    run_id: RunId,
+    span_id: SpanId,
+    ended_at: Result<Timestamp, ErrorCode>,
+  ) {
+    let preparation = self.reserve_ticket(authority_id, run_id);
     if preparation.is_rejected() {
       preparation.finish_rejected();
       return;
@@ -339,12 +342,13 @@ impl Dispatch {
 
   pub(crate) fn submit_event<E: EventPayload>(
     &self,
+    authority_id: Option<AuthorityId>,
     run_id: RunId,
     span_id: Option<SpanId>,
     occurred_at: Result<Timestamp, ErrorCode>,
     event: E,
   ) {
-    let preparation = self.reserve_ticket(run_id);
+    let preparation = self.reserve_ticket(authority_id, run_id);
     if preparation.is_rejected() {
       drop(event);
       preparation.finish_rejected();
@@ -359,7 +363,7 @@ impl Dispatch {
     preparation.complete(mutation);
   }
 
-  fn reserve_ticket(&self, run_id: RunId) -> PreparationGuard {
+  fn reserve_ticket(&self, authority_id: Option<AuthorityId>, run_id: RunId) -> PreparationGuard {
     let ticket = self.allocate_ticket();
     // TODO(dispatch-backpressure-v1): admission limits remain deferred because
     // V1 has no owner-approved capacity policy; add one only with explicit
@@ -380,6 +384,7 @@ impl Dispatch {
     };
     PreparationGuard {
       dispatch: self.clone(),
+      authority_id,
       run_id,
       ticket,
       rejected,
@@ -396,7 +401,7 @@ impl Dispatch {
     progress.next_ticket
   }
 
-  fn complete_preparation(&self, ticket: u64, run_id: RunId, mutation: Result<RunMutation, ErrorCode>) {
+  fn complete_preparation(&self, ticket: u64, authority_id: Option<AuthorityId>, run_id: RunId, mutation: Result<RunMutation, ErrorCode>) {
     if let Some(route) = &self.inner.route {
       let request = mutation.and_then(|mutation| {
         RunCommitRequest::new(route.authority_id, run_id, IdempotencyKey::new(), vec![mutation]).map_err(|_| encode_code())
@@ -419,7 +424,7 @@ impl Dispatch {
 
     match mutation {
       Ok(mutation) => {
-        self.mark_projection_ready(ticket, projection_for_mutation(None, run_id, None, &mutation, &self.inner.projector_routes))
+        self.mark_projection_ready(ticket, projection_for_mutation(authority_id, run_id, None, &mutation, &self.inner.projector_routes))
       }
       Err(code) => {
         self.mark_projection_skipped(ticket);
@@ -2583,6 +2588,7 @@ impl Drop for LaneDrainGuard {
 
 struct PreparationGuard {
   dispatch: Dispatch,
+  authority_id: Option<AuthorityId>,
   run_id: RunId,
   ticket: u64,
   rejected: bool,
@@ -2595,7 +2601,7 @@ impl PreparationGuard {
   }
 
   fn complete(mut self, mutation: Result<RunMutation, ErrorCode>) {
-    self.dispatch.complete_preparation(self.ticket, self.run_id, mutation);
+    self.dispatch.complete_preparation(self.ticket, self.authority_id, self.run_id, mutation);
     self.armed = false;
   }
 

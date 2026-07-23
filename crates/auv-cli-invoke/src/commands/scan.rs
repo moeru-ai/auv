@@ -40,7 +40,7 @@ async fn frame(input: InvokeCommandInput) -> InvokeCommandResult {
   output.backend = Some("auv-scan.produce_frame_from_fixture_dir".to_string());
   output.verification = Some("capture-only; no semantic success claim".to_string());
   output.known_limits.push("scan.frame records a single scan-frame-v0 bundle only; multi-frame invoke is deferred.".to_string());
-  output.artifact_failures = instrumentation.into_failures();
+  output.apply_artifact_instrumentation(instrumentation);
   Ok(output)
 }
 
@@ -73,7 +73,7 @@ async fn coverage(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 
   let fixture_dir = input.required_input("fixture-dir")?.to_string();
-  let (_, _recording) = produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
+  let (_, recording) = produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
 
   let mut output = InvokeCommandOutput::new(format!("scan coverage produced from fixture {fixture_dir}"));
   output.backend = Some("auv-scan.produce_coverage_from_fixture_dir".to_string());
@@ -82,6 +82,7 @@ async fn coverage(input: InvokeCommandInput) -> InvokeCommandResult {
     "scan.coverage resolves frame PNGs via manifest frame_fixture cross-reference under .../scan/coverage/<scenario>/ layout only."
       .to_string(),
   );
+  output.artifacts.extend(recording);
   Ok(output)
 }
 

@@ -90,7 +90,7 @@ impl SessionApiHandler {
     };
 
     let store = self.open_store()?;
-    let dispatch = configure().run_store(store.clone()).build().map_err(|error| SessionApiError::Storage(error.to_string()))?;
+    let dispatch = configure().run_store(store).build().map_err(|error| SessionApiError::Storage(error.to_string()))?;
     let run_id = RunId::new();
     let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
     let future = root.in_scope(|| {
@@ -100,23 +100,8 @@ impl SessionApiHandler {
       command.invoke(input)
     });
     let command_result = root.instrument(future).await;
-    let mut recording_failures = Vec::new();
-    if let Err(error) = dispatch.flush().await {
-      recording_failures.push(error.to_string());
-    }
-    let artifacts = match store.load_snapshot(run_id).await {
-      Ok(Some(snapshot)) => snapshot.artifacts().values().map(|published| published.metadata().clone()).collect(),
-      Ok(None) => {
-        recording_failures.push("recorded run snapshot is missing after execution".to_string());
-        Vec::new()
-      }
-      Err(error) => {
-        recording_failures.push(format!("failed to load recorded run snapshot after execution: {error}"));
-        Vec::new()
-      }
-    };
-    let result = InvokeResult::from_command_result(run_id.to_string(), &command, command_result).with_canonical_artifacts(artifacts);
-    let recording_failure = (!recording_failures.is_empty()).then(|| recording_failures.join("; "));
+    let result = InvokeResult::from_command_result(run_id.to_string(), &command, command_result);
+    let recording_failure = dispatch.flush().await.err().map(|error| error.to_string());
     Ok(mapper::invoke_result_to_response(&result, recording_failure.as_deref()))
   }
 
@@ -199,27 +184,16 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn invoke_reports_missing_snapshot_without_changing_direct_status() {
-    let store = Arc::new(SnapshotReadStore::new(SnapshotReadResult::Missing));
+  async fn invoke_does_not_read_snapshot_for_immediate_presentation() {
+    let store = Arc::new(SnapshotReadStore::new());
     let handler = SessionApiHandler::with_store(store);
     let response = invoke_dry_run(&handler).await;
 
     assert_eq!(response.status, "completed");
     assert!(response.failure_message.is_empty());
-    assert_eq!(response.recording_failure, "recorded run snapshot is missing after execution");
-    assert_eq!(response.known_limits, vec!["auv.api.session.recording_failed"]);
-  }
-
-  #[tokio::test]
-  async fn invoke_reports_snapshot_read_error_without_changing_direct_status() {
-    let store = Arc::new(SnapshotReadStore::new(SnapshotReadResult::Error));
-    let handler = SessionApiHandler::with_store(store);
-    let response = invoke_dry_run(&handler).await;
-
-    assert_eq!(response.status, "completed");
-    assert!(response.failure_message.is_empty());
-    assert!(response.recording_failure.contains("auv.test.session_snapshot_read"));
-    assert_eq!(response.known_limits, vec!["auv.api.session.recording_failed"]);
+    assert!(response.artifacts.is_empty());
+    assert!(response.recording_failure.is_empty());
+    assert!(response.known_limits.is_empty());
   }
 
   async fn invoke_dry_run(handler: &SessionApiHandler) -> proto::InvokeResponse {
@@ -240,21 +214,14 @@ mod tests {
       .expect("direct invoke result")
   }
 
-  enum SnapshotReadResult {
-    Missing,
-    Error,
-  }
-
   struct SnapshotReadStore {
     inner: MemoryRunStore,
-    result: SnapshotReadResult,
   }
 
   impl SnapshotReadStore {
-    fn new(result: SnapshotReadResult) -> Self {
+    fn new() -> Self {
       Self {
         inner: MemoryRunStore::new(AuthorityId::new()),
-        result,
       }
     }
   }
@@ -277,12 +244,7 @@ mod tests {
     }
 
     fn load_snapshot(&self, _run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
-      match self.result {
-        SnapshotReadResult::Missing => Box::pin(async { Ok(None) }),
-        SnapshotReadResult::Error => {
-          Box::pin(async { Err(ReadError::Unavailable(ErrorCode::parse("auv.test.session_snapshot_read").expect("test error code"))) })
-        }
-      }
+      panic!("session invoke must not read a snapshot for immediate presentation")
     }
 
     fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {

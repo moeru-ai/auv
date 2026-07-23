@@ -48,24 +48,11 @@ pub use auv_tracing::{ArtifactId, ArtifactUri as ArtifactRef, RunId, SpanId};
 // for the reader-side discriminator as its own slice. Adding it now
 // without a real second version would be untestable.
 
-/// Wire-shape version of the retired generic operation value.
-///
-/// NOTICE(operation-result-retirement): the type remains a direct in-memory
-/// value for archived callers in this slice; no V1 producer or reader persists
-/// it. Removing the value itself is a separate owner-approved contract change.
-pub const OPERATION_RESULT_API_VERSION: &str = "auv.operation_result.v1alpha1";
-
-/// Wire-shape version of [`VerificationResult`] JSON artifacts. Same semantics
-/// as [`OPERATION_RESULT_API_VERSION`].
+/// Wire-shape version of [`VerificationResult`] JSON artifacts.
 pub const VERIFICATION_RESULT_API_VERSION: &str = "auv.verification_result.v1alpha1";
 
-/// Wire-shape version of [`ObservationSnapshot`] JSON artifacts. Same
-/// semantics as [`OPERATION_RESULT_API_VERSION`].
+/// Wire-shape version of [`ObservationSnapshot`] JSON artifacts.
 pub const OBSERVATION_SNAPSHOT_API_VERSION: &str = "auv.observation_snapshot.v1alpha1";
-
-fn default_operation_result_api_version() -> String {
-  OPERATION_RESULT_API_VERSION.to_string()
-}
 
 fn default_verification_result_api_version() -> String {
   VERIFICATION_RESULT_API_VERSION.to_string()
@@ -82,71 +69,6 @@ pub struct CandidateRef {
   pub source_operation_id: String,
   pub source_artifact_id: ArtifactId,
   pub candidate_local_id: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationStatus {
-  Completed,
-  Failed,
-}
-
-/// Retired generic operation value retained only for direct archived callers.
-///
-/// # Seam role
-///
-/// V1 does not persist or reconstruct this value. App/domain functions return
-/// their existing typed values, while input and recognition evidence use their
-/// own canonical artifact purposes.
-///
-/// Wire `api_version` is stamped on write but readers do not reject
-/// unknown values yet — see `NOTICE(contract-api-version-reader-check)`
-/// at the top of this file.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OperationResult {
-  /// Wire-shape version. See [`OPERATION_RESULT_API_VERSION`]. Defaults so
-  /// historical artifacts without the field still parse as the current shape.
-  #[serde(default = "default_operation_result_api_version")]
-  pub api_version: String,
-  pub run_id: RunId,
-  pub status: OperationStatus,
-  pub operation_id: String,
-  pub evidence_artifacts: Vec<ArtifactRef>,
-  pub output: OperationOutput,
-  /// First-class verification claims attached to this operation. Independent
-  /// of [`OperationOutput`]: any operation — observe, action, or dedicated
-  /// verify — can attach one or more verifications when the world enters an
-  /// expected state. Consumers MAY scan this field directly instead of pattern-
-  /// matching on `output`. Serialized as empty when no claims were produced,
-  /// and accepted as missing for back-compat with older OperationResult JSON.
-  ///
-  /// [`OperationOutput::Verification`] is retained for now so single-claim
-  /// verify-only commands stay one-shape; new producers SHOULD prefer this
-  /// top-level field, especially when an action wants to record a verification
-  /// alongside its acknowledged output.
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub verifications: Vec<VerificationResult>,
-  pub freshness_basis: Option<FreshnessBasis>,
-  pub known_limits: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum OperationOutput {
-  Candidates {
-    candidates: Vec<Candidate>,
-  },
-  // `VerificationResult` is the largest variant by far (~440 B vs. ~24 B for
-  // `Candidates`), and `OperationOutput` / `OperationResult` move across the
-  // seam by value, so leaving it unboxed inflates every sibling. `Box<T>` is
-  // serde-transparent (serializes exactly as `T`), so the wire shape on
-  // `OperationResult.output` stays identical.
-  Verification {
-    verification: Box<VerificationResult>,
-  },
-  Acknowledged {
-    message: Option<String>,
-  },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -334,10 +256,8 @@ pub enum TargetGrounding {
 /// - `RatioRegion` serializes LRBT:
 ///   `{"left":…,"top":…,"right":…,"bottom":…}`. Stored
 ///   `CandidateQuery` / `SurfaceSelectorClause::Ocr.region_hint`
-///   JSON is full of this shape, and `OPERATION_RESULT_API_VERSION`
-///   readers (see `NOTICE(contract-api-version-reader-check)` above)
-///   silently fall back to v1alpha1 on unknown shapes — switching the
-///   wire layout now would parse historical artifacts incorrectly.
+///   JSON uses this shape, so switching the wire layout would parse
+///   historical artifacts incorrectly.
 /// - `auv_driver::geometry::RatioRect` serializes XYWH:
 ///   `{"x":…,"y":…,"width":…,"height":…}`. It is used by driver
 ///   capture / window geometry APIs and was reused by
@@ -407,13 +327,9 @@ pub struct ControlRequirements {
 ///
 /// # Seam role
 ///
-/// - **Produced by** any operation that wants to record a verification
-///   claim — legacy `verify.*` operation-result producers, action commands
-///   that succeeded semantically, or observe commands that incidentally
-///   confirmed a property. Producers attach claims to
-///   [`OperationResult::verifications`] (preferred) or wrap a single
-///   claim into [`OperationOutput::Verification`] (legacy single-claim
-///   shape).
+/// - **Produced by** app or domain operations that return or publish a
+///   verification claim, including actions that succeeded semantically and
+///   observations that incidentally confirmed a property.
 /// - **Consumed by** `run_read::extract_verifications`, the inspect
 ///   server's verification panel, and the trace viewer's per-run
 ///   verification list.
@@ -906,80 +822,6 @@ mod tests {
   }
 
   #[test]
-  fn operation_result_with_candidate_round_trips() {
-    let artifact = artifact_ref();
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(),
-      status: OperationStatus::Completed,
-      operation_id: "music.search.results".to_string(),
-      evidence_artifacts: vec![artifact.clone()],
-      verifications: Vec::new(),
-      output: OperationOutput::Candidates {
-        candidates: vec![Candidate {
-          candidate_local_id: "row#1".to_string(),
-          kind: "search_result_row".to_string(),
-          label: Some("Cure For Me".to_string()),
-          target_spec: TargetSpec {
-            grounding: TargetGrounding::OcrAnchor,
-            anchor_text: Some("Cure For Me".to_string()),
-            region_hint: Some(RatioRegion {
-              left: 0.2,
-              top: 0.3,
-              right: 0.8,
-              bottom: 0.9,
-            }),
-            row_index: None,
-          },
-          evidence: CandidateEvidence {
-            artifact_ref: artifact.clone(),
-            observation: json!({
-              "provider": "vision_ocr",
-              "text": "Cure For Me",
-              "bounds": { "x": 2155, "y": 1402, "width": 170, "height": 24 }
-            }),
-          },
-          liveness: CandidateLiveness {
-            preconditions: LivenessPreconditions {
-              window_ref: Some(WindowRefPrecondition {
-                app_bundle_id: "com.tencent.QQMusicMac".to_string(),
-                window_title_substring: None,
-                window_number: Some(42),
-              }),
-              anchor_recheck: Some(AnchorRecheckPrecondition {
-                text: "Cure For Me".to_string(),
-                region_hint: None,
-                expected_min_confidence: 0.5,
-                max_pixel_distance: 32.0,
-              }),
-            },
-            ttl_hint_ms: Some(5000),
-          },
-          control: ControlRequirements {
-            requires_app_frontmost: true,
-            requires_window_focus: true,
-          },
-          known_limits: vec!["validated only for visible ASCII anchors".to_string()],
-        }],
-      },
-      freshness_basis: Some(FreshnessBasis {
-        source_artifact: Some(artifact),
-        source_operation_id: Some("debug.findWindowRows".to_string()),
-        notes: vec!["window-scoped OCR rows".to_string()],
-      }),
-      known_limits: Vec::new(),
-    };
-
-    let value = serde_json::to_value(&result).expect("operation result should serialize");
-    assert_eq!(value["status"], json!("completed"));
-    assert_eq!(value["output"]["kind"], json!("candidates"));
-    assert_eq!(value["output"]["candidates"][0]["target_spec"]["grounding"], json!("ocr_anchor"));
-
-    let parsed: OperationResult = serde_json::from_value(value).expect("operation result should deserialize");
-    assert_eq!(parsed, result);
-  }
-
-  #[test]
   fn visual_row_candidate_serializes_row_index_without_anchor_recheck() {
     let artifact = artifact_ref();
     let candidate = Candidate {
@@ -1270,98 +1112,5 @@ mod tests {
 
     let parsed: ObservationSnapshot = serde_json::from_value(value).expect("snapshot should deserialize");
     assert_eq!(parsed, snapshot);
-  }
-
-  fn sample_verification(method: VerificationMethod) -> VerificationResult {
-    VerificationResult {
-      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-      method,
-      executed: true,
-      state_changed: true,
-      semantic_matched: Some(true),
-      failure_layer: None,
-      evidence: vec![artifact_ref()],
-      consumed_candidate_ref: None,
-      consumed_node_ref: None,
-      consumed_recognition_artifact_ref: None,
-      consumed_recognition_id: None,
-      consumed_recognized_item_id: None,
-      observed_label: Some("Now playing X".to_string()),
-    }
-  }
-
-  #[test]
-  fn operation_result_carries_first_class_verifications_alongside_acknowledged_output() {
-    let verification = sample_verification(VerificationMethod::StateChanged);
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(),
-      status: OperationStatus::Completed,
-      operation_id: "music.result.play".to_string(),
-      evidence_artifacts: vec![artifact_ref()],
-      output: OperationOutput::Acknowledged {
-        message: Some("Issued play".to_string()),
-      },
-      verifications: vec![verification.clone()],
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-
-    let value = serde_json::to_value(&result).expect("result should serialize");
-    assert_eq!(value["output"]["kind"], json!("acknowledged"));
-    assert_eq!(
-      value["verifications"][0]["method"]["kind"],
-      json!("state_changed"),
-      "first-class verifications must serialize with their typed method"
-    );
-
-    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
-    assert_eq!(parsed.verifications, vec![verification]);
-  }
-
-  #[test]
-  fn legacy_operation_result_without_verifications_field_decodes_with_empty_vec() {
-    let run_id = RunId::new();
-    let json = json!({
-      "run_id": run_id.to_string(),
-      "status": "completed",
-      "operation_id": "music.search.results",
-      "evidence_artifacts": [],
-      "output": { "kind": "acknowledged", "message": null },
-      "freshness_basis": null,
-      "known_limits": []
-    });
-
-    let parsed: OperationResult = serde_json::from_value(json).expect("legacy result should deserialize");
-    assert!(parsed.verifications.is_empty(), "missing verifications field must default to an empty list, preserving back-compat");
-
-    let reserialized = serde_json::to_value(&parsed).expect("result should re-serialize");
-    assert!(
-      reserialized.get("verifications").is_none(),
-      "empty verifications must skip serialize to keep wire compact for legacy producers"
-    );
-  }
-
-  #[test]
-  fn operation_result_supports_multiple_verification_claims() {
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(),
-      status: OperationStatus::Completed,
-      operation_id: "music.result.play".to_string(),
-      evidence_artifacts: vec![artifact_ref()],
-      output: OperationOutput::Acknowledged { message: None },
-      verifications: vec![
-        sample_verification(VerificationMethod::StateChanged),
-        sample_verification(VerificationMethod::SemanticMatch),
-      ],
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-
-    let value = serde_json::to_value(&result).expect("result should serialize");
-    assert_eq!(value["verifications"].as_array().map(|a| a.len()), Some(2), "multi-claim verifications must round-trip");
-    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
-    assert_eq!(parsed.verifications.len(), 2);
   }
 }

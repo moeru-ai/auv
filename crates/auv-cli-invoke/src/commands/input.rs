@@ -155,8 +155,10 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let text = input.required_input("text")?.to_string();
-    let (result, _recording) = type_text_into_active_control(text).await?;
-    Ok(input_action_output("typed text into active control", "auv-driver-macos.input", &result))
+    let (result, recording) = type_text_into_active_control(text).await?;
+    let mut output = input_action_output("typed text into active control", "auv-driver-macos.input", &result);
+    output.artifacts.extend(recording);
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -253,9 +255,10 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let key = input.required_input("key")?.to_string();
-    let (result, _recording) = press_key_in_active_app(key.clone()).await?;
+    let (result, recording) = press_key_in_active_app(key.clone()).await?;
     let mut output = input_action_output("pressed key in active app", "auv-driver-macos.input", &result);
     attach_input_key_report(&mut output, &key, Some("active app"), &result);
+    output.artifacts.extend(recording);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -381,9 +384,10 @@ where
     return Ok(dry_run_output(&input.command_id));
   }
 
-  let (result, _recording) = click_resolved_window_point(capability, window, point).await?;
+  let (result, recording) = click_resolved_window_point(capability, window, point).await?;
   let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &result.action);
   add_click_window_signals(&mut output, &result.window, result.point);
+  output.artifacts.extend(recording);
   Ok(output)
 }
 

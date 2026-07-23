@@ -102,7 +102,7 @@ async fn capture_window(input: InvokeCommandInput) -> InvokeCommandResult {
     // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
     output.verification = Some("capture-only; no semantic success claim".to_string());
     output.known_limits.push("window.capture records a resolved window screenshot only; it does not verify UI semantics.".to_string());
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -169,7 +169,7 @@ async fn find_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
     let query = input.required_input("query")?.to_string();
     let (result, instrumentation) = recognize_window_text(window_selector(&input), query, false).await?.into_parts();
     let mut output = window_text_matches_output(&input.command_id, &result);
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -195,7 +195,7 @@ async fn wait_for_window_text(input: InvokeCommandInput) -> InvokeCommandResult 
     let query = input.required_input("query")?.to_string();
     let (result, instrumentation) = recognize_window_text(window_selector(&input), query, true).await?.into_parts();
     let mut output = window_text_matches_output(&input.command_id, &result);
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -344,7 +344,7 @@ async fn click_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
     output
       .known_limits
       .push("window.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]

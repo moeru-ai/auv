@@ -66,8 +66,19 @@ async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
 pub async fn write_document<D>(
   command: DocumentWrite,
   cancellation: auv_cli_invoke::InvokeCancellation,
-  mut driver: D,
+  driver: D,
 ) -> Result<DocumentCommandReport, String>
+where
+  D: TextEditDriver,
+{
+  write_document_with_publications(command, cancellation, driver).await.map(|(report, _)| report)
+}
+
+pub(crate) async fn write_document_with_publications<D>(
+  command: DocumentWrite,
+  cancellation: auv_cli_invoke::InvokeCancellation,
+  mut driver: D,
+) -> Result<(DocumentCommandReport, Vec<auv_tracing::ArtifactMetadata>), String>
 where
   D: TextEditDriver,
 {
@@ -80,12 +91,16 @@ where
   })?;
   cancellation.check().map_err(|error| error.to_string())?;
   let context = Context::current();
+  let mut artifacts = Vec::new();
   for outcome in &report.outcomes {
     if let Some(result) = &outcome.input_action_result {
       cancellation.check().map_err(|error| error.to_string())?;
-      auv_runtime::run_read::publish_input_action_result(Some(&context), result)
+      if let Some(metadata) = auv_runtime::run_read::publish_input_action_result(Some(&context), result)
         .await
-        .map_err(|error| format!("failed to publish TextEdit input action result: {error}"))?;
+        .map_err(|error| format!("failed to publish TextEdit input action result: {error}"))?
+      {
+        artifacts.push(metadata);
+      }
     }
   }
   if let Some(verification) = report.verification.as_ref() {
@@ -96,7 +111,7 @@ where
       });
     });
   }
-  Ok(report)
+  Ok((report, artifacts))
 }
 
 async fn map_document_write_cli<D>(
@@ -107,8 +122,9 @@ async fn map_document_write_cli<D>(
 where
   D: TextEditDriver,
 {
-  let report = write_document(command.clone(), cancellation, driver).await?;
-  let output = build_invoke_output_from_report(&report, &command)?;
+  let (report, artifacts) = write_document_with_publications(command.clone(), cancellation, driver).await?;
+  let mut output = build_invoke_output_from_report(&report, &command)?;
+  output.artifacts = artifacts;
   Ok((output, report))
 }
 

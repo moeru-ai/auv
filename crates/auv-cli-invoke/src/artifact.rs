@@ -4,7 +4,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, ErrorCode, NewArtifact, Sha256Digest};
+use auv_tracing::{ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, ContentType, ErrorCode, NewArtifact, Sha256Digest};
 use futures_util::io::{AllowStdIo, AsyncRead, Cursor as AsyncCursor};
 use image::{ExtendedColorType, ImageEncoder, RgbaImage, codecs::png::PngEncoder};
 use sha2::{Digest, Sha256};
@@ -31,18 +31,23 @@ pub struct ArtifactInstrumentationFailure {
   pub message: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ArtifactInstrumentationReceipt {
+  artifacts: Vec<ArtifactMetadata>,
   failures: Vec<ArtifactInstrumentationFailure>,
 }
 
 impl ArtifactInstrumentationReceipt {
+  pub fn artifacts(&self) -> &[ArtifactMetadata] {
+    &self.artifacts
+  }
+
   pub fn failures(&self) -> &[ArtifactInstrumentationFailure] {
     &self.failures
   }
 
-  pub fn into_failures(self) -> Vec<ArtifactInstrumentationFailure> {
-    self.failures
+  pub fn into_parts(self) -> (Vec<ArtifactMetadata>, Vec<ArtifactInstrumentationFailure>) {
+    (self.artifacts, self.failures)
   }
 
   pub async fn publish_json<T: serde::Serialize>(&mut self, purpose: &str, value: &T) {
@@ -77,7 +82,7 @@ impl ArtifactInstrumentationReceipt {
 
   async fn publish(&mut self, purpose: &str, artifact: Result<OwnedArtifact, String>) {
     let result = match artifact {
-      Ok(artifact) => auv_tracing::emit_artifact!(artifact).await.map(|_| ()),
+      Ok(artifact) => auv_tracing::emit_artifact!(artifact).await,
       Err(error) => {
         self.failures.push(ArtifactInstrumentationFailure {
           purpose: purpose.to_string(),
@@ -86,11 +91,15 @@ impl ArtifactInstrumentationReceipt {
         return;
       }
     };
-    if let Err(error) = result {
-      self.failures.push(ArtifactInstrumentationFailure {
-        purpose: purpose.to_string(),
-        message: format!("failed to publish {purpose} artifact: {error}"),
-      });
+    match result {
+      Ok(Some(metadata)) => self.artifacts.push(metadata),
+      Ok(None) => {}
+      Err(error) => {
+        self.failures.push(ArtifactInstrumentationFailure {
+          purpose: purpose.to_string(),
+          message: format!("failed to publish {purpose} artifact: {error}"),
+        });
+      }
     }
   }
 }
@@ -119,7 +128,7 @@ impl<T> ArtifactPublication<T> {
 }
 
 pub(crate) fn emission_enabled() -> bool {
-  auv_tracing::Context::current().authority_id().is_some()
+  auv_tracing::Context::current().can_publish_artifacts()
 }
 
 pub(crate) fn json_artifact<T: serde::Serialize>(purpose: &str, value: &T, attributes: Attributes) -> Result<OwnedArtifact, String> {
@@ -568,6 +577,27 @@ mod tests {
     assert_eq!(value, 42);
     assert_eq!(instrumentation.failures().len(), 1);
     assert!(instrumentation.failures()[0].message.contains("artifact write rejected"));
+  }
+
+  #[test]
+  fn artifact_receipt_keeps_successful_publication_metadata() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store).build().expect("dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let future = root.in_scope(|| async {
+      let mut instrumentation = ArtifactInstrumentationReceipt::default();
+      instrumentation.publish_json("auv.test.direct_metadata", &serde_json::json!({ "value": 42 })).await;
+      instrumentation
+    });
+
+    let instrumentation = futures_executor::block_on(root.instrument(future));
+    let (artifacts, failures) = instrumentation.into_parts();
+
+    assert!(failures.is_empty());
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].uri().run_id(), run_id);
+    assert_eq!(artifacts[0].purpose().as_str(), "auv.test.direct_metadata");
   }
 
   struct RejectArtifactStore {

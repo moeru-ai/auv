@@ -578,6 +578,28 @@ fn rust_tracing_allows_same_span_id_in_different_runs() {
 }
 
 #[test]
+fn rust_tracing_flush_releases_ordinary_terminal_span_state() {
+  let _serial = serial_tracing_test();
+  let subscriber = CapturingSubscriber::default();
+  let dispatch = tracing::Dispatch::new(subscriber);
+  let projector = RustTracingProjector::new();
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let span_id = SpanId::new();
+
+  tracing::dispatcher::with_default(&dispatch, || {
+    project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+    project(&projector, span_end(Some(authority_id), run_id, span_id, 11)).unwrap();
+    block_on(projector.flush()).unwrap();
+
+    assert_eq!(
+      project(&projector, span_end(Some(authority_id), run_id, span_id, 12)).unwrap_err().code().as_str(),
+      "auv.telemetry.missing_span_start"
+    );
+  });
+}
+
+#[test]
 fn rust_tracing_parent_end_before_child_closes_both_spans() {
   let _serial = serial_tracing_test();
   let subscriber = CapturingSubscriber::default();

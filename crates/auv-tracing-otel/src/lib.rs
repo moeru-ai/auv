@@ -54,7 +54,7 @@ enum SpanState {
   // retained as a tombstone instead of being made available for reuse.
   Starting,
   Active(ActiveSpan),
-  Ended,
+  Ended { retain_on_flush: bool },
 }
 
 struct ActiveSpan {
@@ -121,6 +121,7 @@ impl OtelProjectorInner {
     let reservation = self.reserve()?;
     let trace_outcome = catch_unwind(AssertUnwindSafe(|| self.tracer_provider.force_flush()));
     let log_outcome = catch_unwind(AssertUnwindSafe(|| self.logger_provider.force_flush()));
+    let cleanup_result = self.prune_ordinary_ended_spans();
     let finish_result = reservation.finish();
 
     // Both providers and the reservation are completed before panic
@@ -134,6 +135,7 @@ impl OtelProjectorInner {
       Err(payload) => resume_unwind(payload),
     };
     let flush_failed = trace_result.is_err() || log_result.is_err();
+    cleanup_result?;
     finish_result?;
     if flush_failed {
       Err(error("auv.telemetry.otel_flush_failed"))
@@ -191,7 +193,7 @@ impl OtelProjectorInner {
             let active = match run.spans.get(&span_id) {
               Some(SpanState::Active(active)) => active,
               Some(SpanState::Starting) | None => return Err(error("auv.telemetry.otel_missing_event_span")),
-              Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_event_span")),
+              Some(SpanState::Ended { .. }) => return Err(error("auv.telemetry.otel_ended_event_span")),
             };
             if active.authority_id != authority_id {
               return Err(error("auv.telemetry.otel_span_authority_mismatch"));
@@ -336,7 +338,7 @@ impl OtelProjectorInner {
                 }
               }
               Some(SpanState::Starting) | None => return Err(error("auv.telemetry.otel_missing_parent_span")),
-              Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_ended_parent_span")),
+              Some(SpanState::Ended { .. }) => return Err(error("auv.telemetry.otel_ended_parent_span")),
             }
           }
           if run.authority_id != input.authority_id {
@@ -448,7 +450,7 @@ impl OtelProjectorInner {
       let active = match run.spans.get(&span_id) {
         Some(SpanState::Active(active)) => active,
         Some(SpanState::Starting) | None => return Err(error("auv.telemetry.otel_missing_span_start")),
-        Some(SpanState::Ended) => return Err(error("auv.telemetry.otel_duplicate_span_end")),
+        Some(SpanState::Ended { .. }) => return Err(error("auv.telemetry.otel_duplicate_span_end")),
       };
       if active.authority_id != authority_id {
         return Err(error("auv.telemetry.otel_span_authority_mismatch"));
@@ -465,7 +467,15 @@ impl OtelProjectorInner {
       if active.latest_child_started_at.is_some_and(|started_at| ended_at < started_at) {
         return Err(error("auv.telemetry.otel_span_end_before_child_start"));
       }
-      let previous = run.spans.insert(span_id, SpanState::Ended).ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
+      let previous = run
+        .spans
+        .insert(
+          span_id,
+          SpanState::Ended {
+            retain_on_flush: true,
+          },
+        )
+        .ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
       let SpanState::Active(active) = previous else {
         return Err(error("auv.telemetry.otel_duplicate_span_end"));
       };
@@ -476,7 +486,34 @@ impl OtelProjectorInner {
     }
     active.context.span().end_with_timestamp(end_time);
     drop(active);
+    self.mark_ended_prunable(run_id, span_id)?;
     reservation.finish()
+  }
+
+  fn mark_ended_prunable(&self, run_id: RunId, span_id: SpanId) -> Result<(), TelemetryError> {
+    let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+    let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.otel_missing_span_start"))?;
+    let Some(SpanState::Ended { retain_on_flush }) = run.spans.get_mut(&span_id) else {
+      return Err(error("auv.telemetry.otel_missing_span_start"));
+    };
+    *retain_on_flush = false;
+    Ok(())
+  }
+
+  fn prune_ordinary_ended_spans(&self) -> Result<(), TelemetryError> {
+    let mut state = self.state.lock().map_err(|_| error("auv.telemetry.otel_state_poisoned"))?;
+    state.runs.retain(|_, run| {
+      run.spans.retain(|_, span| {
+        !matches!(
+          span,
+          SpanState::Ended {
+            retain_on_flush: false
+          }
+        )
+      });
+      !run.spans.is_empty()
+    });
+    Ok(())
   }
 }
 

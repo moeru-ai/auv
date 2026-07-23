@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use auv_tracing::ArtifactMetadata;
+
 use crate::InvokeReport;
 use crate::arg::ArgSpec;
 
-use crate::ArtifactInstrumentationFailure;
+use crate::{ArtifactInstrumentationFailure, ArtifactInstrumentationReceipt};
 
 pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<InvokeCommandOutput, String>> + Send + 'static>>;
 pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
@@ -87,12 +89,14 @@ impl InvokeCommandInput {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InvokeCommandOutput {
   pub summary: String,
   pub backend: Option<String>,
   pub signals: BTreeMap<String, String>,
   pub notes: Vec<String>,
+  /// Canonical metadata returned directly by successful artifact publications.
+  pub artifacts: Vec<ArtifactMetadata>,
   /// Non-authoritative diagnostics from attempted artifact instrumentation.
   pub artifact_failures: Vec<ArtifactInstrumentationFailure>,
   pub known_limits: Vec<String>,
@@ -119,12 +123,19 @@ impl InvokeCommandOutput {
       backend: None,
       signals: BTreeMap::new(),
       notes: Vec::new(),
+      artifacts: Vec::new(),
       artifact_failures: Vec::new(),
       known_limits: Vec::new(),
       report: None,
       failure_message: None,
       verification: None,
     }
+  }
+
+  pub fn apply_artifact_instrumentation(&mut self, receipt: ArtifactInstrumentationReceipt) {
+    let (artifacts, failures) = receipt.into_parts();
+    self.artifacts.extend(artifacts);
+    self.artifact_failures.extend(failures);
   }
 }
 
@@ -249,6 +260,7 @@ mod tests {
   fn command_output_defaults_instrumentation_and_report_fields_to_empty() {
     let output = InvokeCommandOutput::new("observed");
 
+    assert!(output.artifacts.is_empty());
     assert!(output.artifact_failures.is_empty());
     assert!(output.known_limits.is_empty());
     assert!(output.report.is_none());
