@@ -78,17 +78,10 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
     host,
     port,
     store_root,
-    write,
+    ..
   } = &command
   {
     let store_root = resolve_store_root(&project_root, store_root.as_ref());
-    // TODO(run-contract-task-16): Remove the retired parser fields when the
-    // CLI contract migration reaches `cli.rs`; V1 never consumes them.
-    if write != &crate::cli::InspectServeWriteOptions::default() {
-      return Err(
-        "inspect serve write-token options are retired; the V1 authority is loopback-only and has no credential contract".to_string(),
-      );
-    }
     let store = open_inspect_authority_store(&store_root)?;
     let config = auv_inspect_server::InspectServeConfig {
       host: host.clone(),
