@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use image::{DynamicImage, ImageFormat};
+use image::{ImageFormat, ImageReader, Limits};
 use sha2::{Digest, Sha256};
 
 pub mod help;
@@ -38,6 +41,10 @@ use self::query_live_action::DirectWindowPointClickExecutor;
 pub use auv_game_minecraft::artifact_roles::*;
 
 pub const MINECRAFT_SPATIAL_BUNDLE_PURPOSE: &str = "auv.minecraft.spatial_bundle";
+
+const MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT: u64 = 32 * 1024 * 1024;
+const MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT: u64 = 256 * 1024 * 1024;
+const MINECRAFT_IMAGE_DIMENSION_LIMIT: u32 = 16_384;
 
 pub async fn run_minecraft_3dgs_scene_packet_export(
   bundle_manifest_paths: Vec<PathBuf>,
@@ -377,12 +384,13 @@ pub async fn run_minecraft_spatial_bundle_export(
     .await
     .map_err(|error| format!("failed to read Minecraft source run {source_run_id}: {error}"))?
     .ok_or_else(|| format!("Minecraft source run {source_run_id} was not found"))?;
-  let staging_dir = std::env::temp_dir().join(format!("auv-minecraft-bundle-source-{}-{}", source_run_id, auv_runtime::model::now_millis()));
-  fs::create_dir_all(&staging_dir)
-    .map_err(|error| format!("failed to create Minecraft bundle source staging directory {}: {error}", staging_dir.display()))?;
+  let staging = tempfile::Builder::new()
+    .prefix("auv-minecraft-bundle-source-")
+    .tempdir()
+    .map_err(|error| format!("failed to create exclusive Minecraft bundle source staging directory: {error}"))?;
   let artifacts = read_spatial_bundle_artifacts(store.as_ref(), &snapshot)
     .await
-    .and_then(|artifacts| stage_spatial_bundle_artifacts(artifacts, &staging_dir));
+    .and_then(|artifacts| stage_spatial_bundle_artifacts(artifacts, staging.path()));
   let result = match artifacts {
     Ok(artifacts) => export_spatial_bundle(SpatialBundleInputs {
       output_dir,
@@ -391,16 +399,22 @@ pub async fn run_minecraft_spatial_bundle_export(
     }),
     Err(error) => Err(error),
   };
-  let _ = fs::remove_dir_all(&staging_dir);
-  let result = result?;
-  let _ = projection_workflow::publish_json_artifact(MINECRAFT_SPATIAL_BUNDLE_PURPOSE, &result.manifest).await;
+  let cleanup = staging.close().map_err(|error| format!("failed to remove exclusive Minecraft bundle source staging directory: {error}"));
+  let result = match (result, cleanup) {
+    (Ok(result), Ok(())) => result,
+    (Err(error), Ok(())) => return Err(error),
+    (Ok(_), Err(cleanup_error)) => return Err(cleanup_error),
+    (Err(error), Err(cleanup_error)) => return Err(format!("{error}; additionally, {cleanup_error}")),
+  };
+  projection_workflow::publish_json_artifact(MINECRAFT_SPATIAL_BUNDLE_PURPOSE, &result.manifest).await?;
   Ok(result)
 }
 
 enum ValidatedMinecraftBundleArtifact {
   Screenshot {
+    source_uri: ArtifactUri,
     artifact_id: String,
-    image: DynamicImage,
+    bytes: Vec<u8>,
   },
   SpatialFrame {
     artifact_id: String,
@@ -412,7 +426,7 @@ enum ValidatedMinecraftBundleArtifact {
   },
   Overlay {
     artifact_id: String,
-    image: DynamicImage,
+    bytes: Vec<u8>,
   },
 }
 
@@ -423,11 +437,12 @@ async fn read_spatial_bundle_artifacts(store: &dyn RunStore, snapshot: &RunSnaps
   for published in snapshot.artifacts().values() {
     let metadata = published.metadata();
     let uri = metadata.uri();
-    let artifact_id = uri.artifact_id().to_string();
+    let artifact_id = format!("bundle-{:06}", artifacts.len() + 1);
     let artifact = match metadata.purpose().as_str() {
       projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE => ValidatedMinecraftBundleArtifact::Screenshot {
+        source_uri: uri.clone(),
         artifact_id,
-        image: read_minecraft_screenshot(store, snapshot, uri)
+        bytes: read_minecraft_screenshot(store, snapshot, uri)
           .await
           .map_err(|error| minecraft_bundle_read_error("screenshot", uri, error))?,
       },
@@ -449,7 +464,7 @@ async fn read_spatial_bundle_artifacts(store: &dyn RunStore, snapshot: &RunSnaps
       },
       projection_workflow::MINECRAFT_OVERLAY_PURPOSE => ValidatedMinecraftBundleArtifact::Overlay {
         artifact_id,
-        image: read_minecraft_projection_overlay(store, snapshot, uri)
+        bytes: read_minecraft_projection_overlay(store, snapshot, uri)
           .await
           .map_err(|error| minecraft_bundle_read_error("projection-overlay", uri, error))?,
       },
@@ -457,7 +472,49 @@ async fn read_spatial_bundle_artifacts(store: &dyn RunStore, snapshot: &RunSnaps
     };
     artifacts.push(artifact);
   }
+  rewrite_spatial_frame_screenshot_references(store, snapshot, &mut artifacts).await?;
   Ok(artifacts)
+}
+
+async fn rewrite_spatial_frame_screenshot_references(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  artifacts: &mut [ValidatedMinecraftBundleArtifact],
+) -> AuvResult<()> {
+  let screenshot_ids = artifacts
+    .iter()
+    .filter_map(|artifact| match artifact {
+      ValidatedMinecraftBundleArtifact::Screenshot {
+        source_uri,
+        artifact_id,
+        ..
+      } => Some((source_uri.clone(), artifact_id.clone())),
+      _ => None,
+    })
+    .collect::<BTreeMap<_, _>>();
+
+  for artifact in artifacts {
+    let ValidatedMinecraftBundleArtifact::SpatialFrame { frame, .. } = artifact else {
+      continue;
+    };
+    let Some(reference) = frame.screenshot_artifact_ref.as_deref() else {
+      continue;
+    };
+    let uri = reference
+      .parse::<ArtifactUri>()
+      .map_err(|error| format!("Minecraft spatial frame screenshot reference {reference:?} is not a canonical ArtifactUri: {error}"))?;
+    let artifact_id = match screenshot_ids.get(&uri) {
+      Some(artifact_id) => artifact_id,
+      None => match read_minecraft_screenshot(store, snapshot, &uri).await {
+        Err(error) => return Err(minecraft_bundle_read_error("referenced screenshot", &uri, error)),
+        Ok(_) => {
+          return Err(format!("validated Minecraft screenshot artifact {uri} was not assigned a bundle-local identity"));
+        }
+      },
+    };
+    frame.screenshot_artifact_ref = Some(format!("artifact://{artifact_id}"));
+  }
+  Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -477,7 +534,9 @@ fn stage_spatial_bundle_artifacts(
 
 fn stage_spatial_bundle_artifact(artifact: ValidatedMinecraftBundleArtifact, staging_dir: &Path) -> AuvResult<SpatialBundleSourceArtifact> {
   let (artifact_id, semantics, bytes) = match artifact {
-    ValidatedMinecraftBundleArtifact::Screenshot { artifact_id, image } => (
+    ValidatedMinecraftBundleArtifact::Screenshot {
+      artifact_id, bytes, ..
+    } => (
       artifact_id,
       SpatialBundleStagingSemantics {
         role: "minecraft-screenshot",
@@ -485,7 +544,7 @@ fn stage_spatial_bundle_artifact(artifact: ValidatedMinecraftBundleArtifact, sta
         file_name: "screenshot.png",
         summary: "validated Minecraft screenshot bundle input",
       },
-      encode_bundle_png(image, "screenshot")?,
+      bytes,
     ),
     ValidatedMinecraftBundleArtifact::SpatialFrame { artifact_id, frame } => (
       artifact_id,
@@ -510,7 +569,7 @@ fn stage_spatial_bundle_artifact(artifact: ValidatedMinecraftBundleArtifact, sta
       },
       encode_bundle_json(projection.as_ref(), "projection")?,
     ),
-    ValidatedMinecraftBundleArtifact::Overlay { artifact_id, image } => (
+    ValidatedMinecraftBundleArtifact::Overlay { artifact_id, bytes } => (
       artifact_id,
       SpatialBundleStagingSemantics {
         role: "minecraft-overlay",
@@ -518,15 +577,20 @@ fn stage_spatial_bundle_artifact(artifact: ValidatedMinecraftBundleArtifact, sta
         file_name: "projection-overlay.png",
         summary: "validated Minecraft projection-overlay bundle input",
       },
-      encode_bundle_png(image, "projection overlay")?,
+      bytes,
     ),
   };
-  let source_path = staging_dir.join(&artifact_id).join(semantics.file_name);
-  if let Some(parent) = source_path.parent() {
-    fs::create_dir_all(parent)
-      .map_err(|error| format!("failed to create Minecraft bundle staging directory {}: {error}", parent.display()))?;
-  }
-  fs::write(&source_path, bytes).map_err(|error| format!("failed to stage Minecraft bundle input at {}: {error}", source_path.display()))?;
+  let artifact_dir = staging_dir.join(&artifact_id);
+  fs::create_dir(&artifact_dir)
+    .map_err(|error| format!("failed to exclusively create Minecraft bundle staging directory {}: {error}", artifact_dir.display()))?;
+  let source_path = artifact_dir.join(semantics.file_name);
+  let mut source = OpenOptions::new()
+    .write(true)
+    .create_new(true)
+    .open(&source_path)
+    .map_err(|error| format!("failed to exclusively create Minecraft bundle staging input {}: {error}", source_path.display()))?;
+  source.write_all(&bytes).map_err(|error| format!("failed to stage Minecraft bundle input at {}: {error}", source_path.display()))?;
+  source.flush().map_err(|error| format!("failed to flush Minecraft bundle staging input {}: {error}", source_path.display()))?;
 
   // NOTICE(minecraft-bundle-staging-semantics): the domain exporter's legacy
   // input names require `role` and `source_run_path`. These values are private
@@ -543,25 +607,25 @@ fn stage_spatial_bundle_artifact(artifact: ValidatedMinecraftBundleArtifact, sta
 }
 
 fn encode_bundle_json(value: &impl serde::Serialize, kind: &str) -> AuvResult<Vec<u8>> {
-  serde_json::to_vec_pretty(value).map_err(|error| format!("failed to encode validated Minecraft {kind} bundle input: {error}"))
-}
-
-fn encode_bundle_png(image: DynamicImage, kind: &str) -> AuvResult<Vec<u8>> {
-  let mut output = std::io::Cursor::new(Vec::new());
-  image
-    .write_to(&mut output, ImageFormat::Png)
-    .map_err(|error| format!("failed to encode validated Minecraft {kind} bundle input: {error}"))?;
-  Ok(output.into_inner())
+  serialize_json_bounded(value, MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, &format!("validated Minecraft {kind} bundle input"))
 }
 
 async fn read_minecraft_screenshot(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
-) -> Result<DynamicImage, MinecraftArtifactReadError> {
-  let bytes =
-    read_minecraft_bundle_artifact_bytes(store, snapshot, uri, projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE, "image/png", None).await?;
-  decode_minecraft_png(uri, bytes, "screenshot")
+) -> Result<Vec<u8>, MinecraftArtifactReadError> {
+  let bytes = read_minecraft_bundle_artifact_bytes(
+    store,
+    snapshot,
+    uri,
+    projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE,
+    "image/png",
+    MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT,
+  )
+  .await?;
+  validate_minecraft_png(uri, &bytes, "screenshot")?;
+  Ok(bytes)
 }
 
 async fn read_minecraft_spatial_frame(
@@ -575,7 +639,7 @@ async fn read_minecraft_spatial_frame(
     uri,
     projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE,
     "application/json",
-    Some(MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT),
+    MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
   )
   .await?;
   let frame: MinecraftSpatialFrame = serde_json::from_slice(&bytes).map_err(|source| MinecraftArtifactReadError::MalformedJson {
@@ -593,20 +657,75 @@ async fn read_minecraft_projection_overlay(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
-) -> Result<DynamicImage, MinecraftArtifactReadError> {
-  let bytes =
-    read_minecraft_bundle_artifact_bytes(store, snapshot, uri, projection_workflow::MINECRAFT_OVERLAY_PURPOSE, "image/png", None).await?;
-  decode_minecraft_png(uri, bytes, "projection-overlay")
+) -> Result<Vec<u8>, MinecraftArtifactReadError> {
+  let bytes = read_minecraft_bundle_artifact_bytes(
+    store,
+    snapshot,
+    uri,
+    projection_workflow::MINECRAFT_OVERLAY_PURPOSE,
+    "image/png",
+    MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT,
+  )
+  .await?;
+  validate_minecraft_png(uri, &bytes, "projection-overlay")?;
+  Ok(bytes)
 }
 
 // The canonical Minecraft error enum carries rich typed transport failures;
 // preserving that contract here is more useful than hiding it behind a local error.
 #[allow(clippy::result_large_err)]
-fn decode_minecraft_png(uri: &ArtifactUri, bytes: Vec<u8>, kind: &str) -> Result<DynamicImage, MinecraftArtifactReadError> {
-  image::load_from_memory_with_format(&bytes, ImageFormat::Png).map_err(|error| MinecraftArtifactReadError::InvalidPayload {
+fn validate_minecraft_png(uri: &ArtifactUri, bytes: &[u8], kind: &str) -> Result<(), MinecraftArtifactReadError> {
+  let mut dimensions_reader = ImageReader::with_format(std::io::Cursor::new(bytes), ImageFormat::Png);
+  dimensions_reader.limits(minecraft_image_decode_limits());
+  let (width, height) = dimensions_reader.into_dimensions().map_err(|error| MinecraftArtifactReadError::InvalidPayload {
     uri: uri.clone(),
-    message: format!("{kind} PNG payload could not be decoded: {error}"),
+    message: format!("{kind} PNG payload dimensions violated decode limits: {error}"),
+  })?;
+  let decoded_byte_length =
+    minecraft_decoded_image_buffer_length(width, height).map_err(|message| MinecraftArtifactReadError::InvalidPayload {
+      uri: uri.clone(),
+      message: format!("{kind} PNG payload {message}"),
+    })?;
+  validate_minecraft_image_buffer(width, height, decoded_byte_length, &format!("{kind} decoded PNG")).map_err(|message| {
+    MinecraftArtifactReadError::InvalidPayload {
+      uri: uri.clone(),
+      message,
+    }
+  })?;
+
+  let mut reader = ImageReader::with_format(std::io::Cursor::new(bytes), ImageFormat::Png);
+  reader.limits(minecraft_image_decode_limits());
+  reader.decode().map(|_| ()).map_err(|error| MinecraftArtifactReadError::InvalidPayload {
+    uri: uri.clone(),
+    message: format!("{kind} PNG payload violated decode limits or could not be decoded: {error}"),
   })
+}
+
+fn minecraft_image_decode_limits() -> Limits {
+  let mut limits = Limits::default();
+  limits.max_image_width = Some(MINECRAFT_IMAGE_DIMENSION_LIMIT);
+  limits.max_image_height = Some(MINECRAFT_IMAGE_DIMENSION_LIMIT);
+  limits.max_alloc = Some(MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT);
+  limits
+}
+
+fn validate_minecraft_image_buffer(width: u32, height: u32, byte_length: usize, label: &str) -> AuvResult<()> {
+  if width > MINECRAFT_IMAGE_DIMENSION_LIMIT || height > MINECRAFT_IMAGE_DIMENSION_LIMIT {
+    return Err(format!("{label} dimensions {width}x{height} exceed the {MINECRAFT_IMAGE_DIMENSION_LIMIT}-pixel per-axis limit"));
+  }
+  let byte_length = u64::try_from(byte_length).map_err(|_| format!("{label} byte length does not fit u64"))?;
+  if byte_length > MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT {
+    return Err(format!("{label} buffer is {byte_length} bytes, exceeding the {MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT}-byte limit"));
+  }
+  Ok(())
+}
+
+fn minecraft_decoded_image_buffer_length(width: u32, height: u32) -> AuvResult<usize> {
+  let byte_length = u64::from(width)
+    .checked_mul(u64::from(height))
+    .and_then(|pixels| pixels.checked_mul(8))
+    .ok_or_else(|| format!("decoded dimensions {width}x{height} overflow the image byte-length calculation"))?;
+  usize::try_from(byte_length).map_err(|_| format!("decoded dimensions {width}x{height} do not fit this process"))
 }
 
 async fn read_minecraft_bundle_artifact_bytes(
@@ -615,7 +734,7 @@ async fn read_minecraft_bundle_artifact_bytes(
   uri: &ArtifactUri,
   expected_purpose: &'static str,
   expected_content_type: &'static str,
-  byte_limit: Option<u64>,
+  byte_limit: u64,
 ) -> Result<Vec<u8>, MinecraftArtifactReadError> {
   validate_minecraft_bundle_snapshot_authority(store, snapshot)?;
   if uri.run_id() != snapshot.run_id() {
@@ -650,12 +769,10 @@ async fn read_minecraft_bundle_artifact_bytes(
   }
 
   let expected_length = metadata.byte_length().get();
-  if let Some(limit) = byte_limit
-    && expected_length > limit
-  {
+  if expected_length > byte_limit {
     return Err(MinecraftArtifactReadError::PayloadTooLarge {
       uri: uri.clone(),
-      limit,
+      limit: byte_limit,
       actual: expected_length,
     });
   }
@@ -680,12 +797,10 @@ async fn read_minecraft_bundle_artifact_bytes(
       source,
     })?;
     actual_length = actual_length.saturating_add(chunk.len() as u64);
-    if let Some(limit) = byte_limit
-      && actual_length > limit
-    {
+    if actual_length > byte_limit {
       return Err(MinecraftArtifactReadError::PayloadTooLarge {
         uri: uri.clone(),
-        limit,
+        limit: byte_limit,
         actual: actual_length,
       });
     }
@@ -714,6 +829,50 @@ async fn read_minecraft_bundle_artifact_bytes(
     });
   }
   Ok(bytes)
+}
+
+fn serialize_json_bounded(value: &impl serde::Serialize, byte_limit: u64, label: &str) -> AuvResult<Vec<u8>> {
+  let mut output = BoundedBytes::new(label, byte_limit);
+  serde_json::to_writer_pretty(&mut output, value).map_err(|error| format!("failed to serialize {label}: {error}"))?;
+  Ok(output.into_inner())
+}
+
+struct BoundedBytes {
+  label: String,
+  byte_limit: u64,
+  bytes: Vec<u8>,
+}
+
+impl BoundedBytes {
+  fn new(label: &str, byte_limit: u64) -> Self {
+    Self {
+      label: label.to_string(),
+      byte_limit,
+      bytes: Vec::new(),
+    }
+  }
+
+  fn into_inner(self) -> Vec<u8> {
+    self.bytes
+  }
+}
+
+impl Write for BoundedBytes {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let next_length =
+      self.bytes.len().checked_add(buffer.len()).ok_or_else(|| std::io::Error::other(format!("{} length overflow", self.label)))?;
+    let next_length = u64::try_from(next_length).map_err(|_| std::io::Error::other(format!("{} length does not fit u64", self.label)))?;
+    if next_length > self.byte_limit {
+      return Err(std::io::Error::other(format!("{} is {next_length} bytes, exceeding the {}-byte limit", self.label, self.byte_limit)));
+    }
+    self.bytes.try_reserve(buffer.len()).map_err(std::io::Error::other)?;
+    self.bytes.extend_from_slice(buffer);
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
 }
 
 #[allow(clippy::result_large_err)]
@@ -780,6 +939,7 @@ pub fn read_spatial_bundle_manifest(path: PathBuf) -> AuvResult<auv_game_minecra
 #[cfg(test)]
 mod tests {
   use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
 
   use auv_tracing::{
     ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, ByteLength,
@@ -880,16 +1040,9 @@ mod tests {
     let output_dir = root.join("bundle");
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let run_id = RunId::new();
-    let projection = auv_game_minecraft::MinecraftProjectionArtifact::for_frame(&bundle_test_frame(), None, None);
-    let body = serde_json::to_vec(&projection).expect("projection should encode");
-    let uri = write_source_artifact(
-      store.as_ref(),
-      run_id,
-      auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE,
-      "application/json",
-      body.clone(),
-    )
-    .await;
+    let body = png_bytes([8, 16, 32]);
+    let uri =
+      write_source_artifact(store.as_ref(), run_id, projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE, "image/png", body.clone()).await;
     let mut corrupt_body = body;
     corrupt_body[0] ^= 1;
     let controlled = Arc::new(ControlledArtifactStore::new(store, uri, corrupt_body));
@@ -909,16 +1062,9 @@ mod tests {
     let output_dir = root.join("bundle");
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let run_id = RunId::new();
-    let projection = auv_game_minecraft::MinecraftProjectionArtifact::for_frame(&bundle_test_frame(), None, None);
-    let body = serde_json::to_vec(&projection).expect("projection should encode");
-    let uri = write_source_artifact(
-      store.as_ref(),
-      run_id,
-      auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE,
-      "application/json",
-      body.clone(),
-    )
-    .await;
+    let body = png_bytes([8, 16, 32]);
+    let uri =
+      write_source_artifact(store.as_ref(), run_id, projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE, "image/png", body.clone()).await;
     let mut short_body = body;
     short_body.pop().expect("projection body should be non-empty");
     let controlled = Arc::new(ControlledArtifactStore::new(store, uri, short_body));
@@ -975,6 +1121,221 @@ mod tests {
       assert!(output_dir.join(&artifact.bundle_path).is_file(), "bundle artifact was not written: {artifact:?}");
     }
     fs::remove_dir_all(root).expect("remove multi-artifact fixture");
+  }
+
+  // ROOT CAUSE:
+  //
+  // Canonical screenshot references were copied into bundle frames unchanged,
+  // while the scene-packet reader resolves only bundle-local artifact IDs.
+  //
+  // Before the fix, a valid screenshot exported as missing. The fix validates
+  // the exact canonical artifact and rewrites only the staged frame reference.
+  #[tokio::test]
+  async fn spatial_bundle_export_rewrites_canonical_screenshot_reference_for_scene_packet() {
+    let root = bundle_test_root("canonical-screenshot-reference");
+    let output_dir = root.join("bundle");
+    let scene_packet_dir = root.join("scene-packet");
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let run_id = RunId::new();
+    let screenshot_uri =
+      write_source_artifact(store.as_ref(), run_id, projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE, "image/png", png_bytes([8, 16, 32]))
+        .await;
+    let mut frame = bundle_test_frame();
+    frame.screenshot_artifact_ref = Some(screenshot_uri.to_string());
+    frame.screen_state = Some("in_game".to_string());
+    frame.resource_pack_ids = vec!["file/test-pack".to_string()];
+    write_source_artifact(
+      store.as_ref(),
+      run_id,
+      projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE,
+      "application/json",
+      serde_json::to_vec(&frame).expect("spatial frame should encode"),
+    )
+    .await;
+
+    let bundle = run_minecraft_spatial_bundle_export(store, run_id.to_string(), output_dir.clone(), None)
+      .await
+      .expect("canonical screenshot reference should export");
+    let screenshot_record =
+      bundle.manifest.artifacts.iter().find(|artifact| artifact.role == "minecraft-screenshot").expect("bundle screenshot record");
+    let frame_record =
+      bundle.manifest.artifacts.iter().find(|artifact| artifact.role == MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE).expect("bundle frame record");
+    let staged_frame: MinecraftSpatialFrame =
+      serde_json::from_slice(&fs::read(output_dir.join(&frame_record.bundle_path)).expect("read bundled frame"))
+        .expect("decode bundled frame");
+    let expected_screenshot_ref = format!("artifact://{}", screenshot_record.artifact_id);
+    assert_eq!(staged_frame.screenshot_artifact_ref.as_deref(), Some(expected_screenshot_ref.as_str()));
+    assert_ne!(screenshot_record.artifact_id, screenshot_uri.artifact_id().to_string());
+
+    let scene_packet = run_minecraft_3dgs_scene_packet_export(vec![output_dir.join("run.json")], scene_packet_dir.clone())
+      .await
+      .expect("scene packet export");
+    assert_eq!(scene_packet.manifest.counts.screenshots, 1);
+    assert_eq!(scene_packet.manifest.counts.missing_screenshots, 0);
+    assert!(scene_packet_dir.join(scene_packet.manifest.frames[0].screenshot_path.as_ref().expect("screenshot path")).is_file());
+    fs::remove_dir_all(root).expect("remove canonical-screenshot-reference fixture");
+  }
+
+  #[tokio::test]
+  async fn spatial_bundle_export_rejects_dangling_canonical_screenshot_reference() {
+    let root = bundle_test_root("dangling-screenshot-reference");
+    let output_dir = root.join("bundle");
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let run_id = RunId::new();
+    let mut frame = bundle_test_frame();
+    frame.screenshot_artifact_ref = Some(ArtifactUri::from_ids(run_id, ArtifactId::new()).to_string());
+    write_source_artifact(
+      store.as_ref(),
+      run_id,
+      projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE,
+      "application/json",
+      serde_json::to_vec(&frame).expect("spatial frame should encode"),
+    )
+    .await;
+
+    let error = run_minecraft_spatial_bundle_export(store, run_id.to_string(), output_dir.clone(), None)
+      .await
+      .expect_err("dangling screenshot reference must fail export");
+
+    assert!(error.contains("dangling"), "unexpected dangling screenshot error: {error}");
+    assert!(!output_dir.join("run.json").exists());
+    fs::remove_dir_all(root).expect("remove dangling-screenshot-reference fixture");
+  }
+
+  #[tokio::test]
+  async fn spatial_bundle_export_rejects_screenshot_reference_to_wrong_purpose() {
+    let root = bundle_test_root("wrong-purpose-screenshot-reference");
+    let output_dir = root.join("bundle");
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let run_id = RunId::new();
+    let referenced_frame_uri = write_source_artifact(
+      store.as_ref(),
+      run_id,
+      projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE,
+      "application/json",
+      serde_json::to_vec(&bundle_test_frame()).expect("referenced frame should encode"),
+    )
+    .await;
+    let mut frame = bundle_test_frame();
+    frame.spatial_frame_id = "frame-with-mismatched-screenshot".to_string();
+    frame.screenshot_artifact_ref = Some(referenced_frame_uri.to_string());
+    write_source_artifact(
+      store.as_ref(),
+      run_id,
+      projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE,
+      "application/json",
+      serde_json::to_vec(&frame).expect("spatial frame should encode"),
+    )
+    .await;
+
+    let error = run_minecraft_spatial_bundle_export(store, run_id.to_string(), output_dir.clone(), None)
+      .await
+      .expect_err("wrong-purpose screenshot reference must fail export");
+
+    assert!(error.contains("wrong_purpose"), "unexpected mismatched screenshot error: {error}");
+    assert!(!output_dir.join("run.json").exists());
+    fs::remove_dir_all(root).expect("remove wrong-purpose-screenshot-reference fixture");
+  }
+
+  #[tokio::test]
+  async fn spatial_bundle_export_rejects_png_dimensions_outside_decode_limit() {
+    let root = bundle_test_root("oversized-png-dimensions");
+    let output_dir = root.join("bundle");
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let run_id = RunId::new();
+    let image = RgbImage::from_pixel(20_000, 1, Rgb([8, 16, 32]));
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(image).write_to(&mut encoded, ImageFormat::Png).expect("wide PNG should encode");
+    write_source_artifact(store.as_ref(), run_id, projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE, "image/png", encoded.into_inner())
+      .await;
+
+    let error = run_minecraft_spatial_bundle_export(store, run_id.to_string(), output_dir.clone(), None)
+      .await
+      .expect_err("out-of-policy image dimensions must fail export");
+
+    assert!(error.contains("decode limits"), "unexpected image limit error: {error}");
+    assert!(!output_dir.join("run.json").exists());
+    fs::remove_dir_all(root).expect("remove oversized-png-dimensions fixture");
+  }
+
+  // ROOT CAUSE:
+  //
+  // Committed image metadata previously had no byte budget, so export opened
+  // and reserved for attacker-controlled payloads before validating size.
+  //
+  // Before the fix, oversized images reached the store stream. The fix rejects
+  // committed lengths over policy before opening or allocating for the body.
+  #[tokio::test]
+  async fn spatial_bundle_export_rejects_oversized_committed_image_before_store_open() {
+    const TEST_IMAGE_BYTE_LIMIT: usize = 32 * 1024 * 1024;
+
+    let root = bundle_test_root("oversized-committed-image");
+    let output_dir = root.join("bundle");
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let run_id = RunId::new();
+    write_source_artifact(
+      store.as_ref(),
+      run_id,
+      projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE,
+      "image/png",
+      vec![0; TEST_IMAGE_BYTE_LIMIT + 1],
+    )
+    .await;
+    let counting = Arc::new(CountingArtifactStore::new(store));
+
+    let error = run_minecraft_spatial_bundle_export(counting.clone(), run_id.to_string(), output_dir.clone(), None)
+      .await
+      .expect_err("oversized committed image must fail export");
+
+    assert!(error.contains("payload_too_large"), "unexpected oversized committed image error: {error}");
+    assert_eq!(counting.open_count(), 0, "committed image limit must be checked before opening its stream");
+    assert!(!output_dir.join("run.json").exists());
+    fs::remove_dir_all(root).expect("remove oversized-committed-image fixture");
+  }
+
+  // ROOT CAUSE:
+  //
+  // Predictable staging paths were created permissively, so an existing
+  // directory or symlink could redirect a later artifact write.
+  //
+  // Before the fix, staging reused attacker-controlled filesystem entries.
+  // The fix requires exclusive creation for both the directory and the file.
+  #[test]
+  fn spatial_bundle_staging_rejects_precreated_artifact_directory() {
+    let staging = tempfile::tempdir().expect("exclusive staging fixture");
+    let artifact_dir = staging.path().join("bundle-000001");
+    fs::create_dir(&artifact_dir).expect("precreate colliding artifact directory");
+    let sentinel = artifact_dir.join("sentinel");
+    fs::write(&sentinel, b"untouched").expect("write staging sentinel");
+
+    let error =
+      stage_spatial_bundle_artifact(staging_test_screenshot(), staging.path()).expect_err("precreated artifact directory must fail staging");
+
+    assert!(error.contains("exclusively create"), "unexpected staging collision error: {error}");
+    assert_eq!(fs::read(&sentinel).expect("read staging sentinel"), b"untouched");
+    assert!(!artifact_dir.join("screenshot.png").exists());
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn spatial_bundle_staging_rejects_symlinked_artifact_directory() {
+    let staging = tempfile::tempdir().expect("exclusive staging fixture");
+    let redirected = tempfile::tempdir().expect("redirect target fixture");
+    std::os::unix::fs::symlink(redirected.path(), staging.path().join("bundle-000001")).expect("create staging redirect");
+
+    let error =
+      stage_spatial_bundle_artifact(staging_test_screenshot(), staging.path()).expect_err("symlinked artifact directory must fail staging");
+
+    assert!(error.contains("exclusively create"), "unexpected staging symlink error: {error}");
+    assert!(!redirected.path().join("screenshot.png").exists());
+  }
+
+  fn staging_test_screenshot() -> ValidatedMinecraftBundleArtifact {
+    ValidatedMinecraftBundleArtifact::Screenshot {
+      source_uri: ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
+      artifact_id: "bundle-000001".to_string(),
+      bytes: vec![1, 2, 3],
+    }
   }
 
   fn bundle_test_root(label: &str) -> PathBuf {
@@ -1043,6 +1404,24 @@ mod tests {
     body: Vec<u8>,
   }
 
+  struct CountingArtifactStore {
+    inner: Arc<MemoryRunStore>,
+    opens: AtomicUsize,
+  }
+
+  impl CountingArtifactStore {
+    fn new(inner: Arc<MemoryRunStore>) -> Self {
+      Self {
+        inner,
+        opens: AtomicUsize::new(0),
+      }
+    }
+
+    fn open_count(&self) -> usize {
+      self.opens.load(Ordering::SeqCst)
+    }
+  }
+
   impl ControlledArtifactStore {
     fn new(inner: Arc<MemoryRunStore>, overridden_uri: ArtifactUri, body: Vec<u8>) -> Self {
       Self {
@@ -1088,6 +1467,41 @@ mod tests {
       }
       let body = self.body.clone();
       Box::pin(async move { Ok(Box::pin(futures_util::stream::once(async move { Ok(body.into()) })) as ArtifactReader) })
+    }
+  }
+
+  impl RunStore for CountingArtifactStore {
+    fn authority_id(&self) -> AuthorityId {
+      self.inner.authority_id()
+    }
+
+    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      self.inner.commit(request)
+    }
+
+    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+      self.inner.write_artifact(request, body)
+    }
+
+    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+      self.inner.lookup_commit(run_id, key)
+    }
+
+    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+      self.inner.load_snapshot(run_id)
+    }
+
+    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+      self.inner.commits_after(run_id, after, limit)
+    }
+
+    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+      self.inner.subscribe(run_id, after)
+    }
+
+    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+      self.opens.fetch_add(1, Ordering::SeqCst);
+      self.inner.open_artifact(uri)
     }
   }
 }
