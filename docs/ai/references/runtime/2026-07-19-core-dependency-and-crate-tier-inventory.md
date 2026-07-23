@@ -113,7 +113,7 @@ workspace description is empty).
 
 | Crate | Tier | Responsibility (one line) |
 |---|---|---|
-| **auv-runtime** (root pkg, member `.`) | **Core-maintained** | Core runtime: implicit run execution, artifact persistence, contract/model/session, MCP bootstrap, inspect composition, `candidate_promotion`, scroll-scan/scene-state/view-parser read projections |
+| **auv-runtime** (root pkg, member `.`) | **Core-maintained** | Core runtime: implicit run execution, artifact persistence, contract/model/session, MCP bootstrap, inspect composition, scroll-scan/scene-state/view-parser read projections |
 | auv-driver-common | **Core-maintained** | Shared driver capability types: capture, display, geometry, input, operation, permission, readiness, selector, traits, vision, window; `DriverError`/`DriverResult` |
 | auv-driver | **Core-maintained** | Platform-dispatching `LocalDriver`; re-exports `auv-driver-common` and selects linux/macos/windows inner driver at compile time |
 | auv-driver-macos | **Core-maintained** | macOS-native driver (accessibility/AX, application, capture, session, readiness); some modules `#[doc(hidden)]` pub during migration |

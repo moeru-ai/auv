@@ -163,9 +163,16 @@ Keep visual presentation separate from input delivery:
   an explicit `activation_only` boundary.
 
 This seam stays in AUV core because multiple runtime and read-side paths depend
-on it. In particular, `candidate_promotion` is a reusable promotion/gating
-seam, not a `candidate-action`-private module. Do not externalize or remove it
-while quarantining the archived vertical.
+on it.
+
+The `RecognitionResult -> Candidate` promotion gate (`candidate_promotion` +
+`stability`) was retired on 2026-07-23 (branch
+`refactor/retire-candidate-promotion-seam`). The archived `candidate-action`
+removal (#88, 2026-07-07) had already deleted its recording, read-side, and
+execution consumers, leaving both modules with zero production callers and used
+only by their own `#[cfg(test)]` blocks. Do not reintroduce this
+promotion/stability seam without an owner-approved slice that names a concrete
+production consumer.
 
 ## Architecture Surfaces
 

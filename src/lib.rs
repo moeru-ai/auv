@@ -1,7 +1,6 @@
 // File: src/lib.rs
 pub mod api;
 pub mod app;
-pub mod candidate_promotion;
 pub mod contract;
 pub mod inspect;
 pub mod mcp;
@@ -11,7 +10,6 @@ pub mod runtime;
 pub mod scene_state_read;
 pub mod scroll_scan;
 pub mod session;
-pub mod stability;
 pub mod view_parser_read;
 
 use std::path::PathBuf;
