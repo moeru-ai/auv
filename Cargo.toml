@@ -108,7 +108,6 @@ auv-driver-macos = { path = "crates/auv-driver-macos" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-tracing = { path = "crates/auv-tracing", features = ["file-store"] }
 auv-api-proto = { path = "crates/auv-api-proto" }
-auv-tracing-driver = { path = "crates/auv-tracing-driver" }
 auv-inspect-server = { path = "crates/auv-inspect-server" }
 auv-inspect-model = { path = "crates/auv-inspect-model" }
 auv-scan = { path = "crates/auv-scan" }

@@ -1,42 +1,14 @@
-//! Product inspect-server read projection.
-//!
-//! Wraps core enrichment and injects the product [`InspectComposer`] so HTTP
-//! inspect text/document routes share the same composition path as product CLI
-//! and product MCP. Donor JSON extensions (e.g. quality baseline) remain
-//! registered by extension key — not as first-class Minecraft routes.
+//! Product extensions for canonical Inspect snapshots.
 
 use std::sync::Arc;
 
 use auv_game_minecraft::MinecraftArtifactReadError;
-use auv_inspect_model::legacy::InspectComposer;
-use auv_inspect_server::legacy::InspectReadProjection;
 use auv_inspect_server::{InspectRunExtensionError, InspectRunExtensionErrorCategory};
-use auv_runtime::RootInspectReadProjection;
 use auv_tracing::{ArtifactReadError, ErrorCode, ReadError};
 
-/// Product projection: core enrichment + product composer + named JSON extensions.
-#[derive(Clone, Debug)]
-pub struct ProductInspectReadProjection {
-  inner: RootInspectReadProjection,
-}
-
-impl Default for ProductInspectReadProjection {
-  fn default() -> Self {
-    Self::with_composer(crate::inspect::build_product_inspect_composer().expect("product inspect composer"))
-  }
-}
-
-impl ProductInspectReadProjection {
-  pub fn with_composer(composer: Arc<InspectComposer>) -> Self {
-    Self {
-      inner: RootInspectReadProjection::with_composer(composer),
-    }
-  }
-
-  pub fn composer(&self) -> &Arc<InspectComposer> {
-    self.inner.composer()
-  }
-}
+/// Product-owned JSON extensions over one canonical run authority.
+#[derive(Clone, Debug, Default)]
+pub struct ProductInspectReadProjection;
 
 impl auv_inspect_server::InspectRunExtension for ProductInspectReadProjection {
   fn project_json<'a>(
@@ -95,28 +67,6 @@ fn minecraft_artifact_extension_error(error: MinecraftArtifactReadError) -> Insp
     },
   };
   InspectRunExtensionError::new(category, error.code())
-}
-
-impl auv_inspect_server::legacy::InspectReadProjection for ProductInspectReadProjection {
-  fn run_enrichment(
-    &self,
-    store: &auv_tracing_driver::store::LocalStore,
-    run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> Result<auv_inspect_server::legacy::InspectRunEnrichment, String> {
-    InspectReadProjection::run_enrichment(&self.inner, store, run)
-  }
-
-  fn inspect_document(
-    &self,
-    store: &auv_tracing_driver::store::LocalStore,
-    run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> Result<Option<auv_inspect_model::legacy::InspectDocument>, String> {
-    InspectReadProjection::inspect_document(&self.inner, store, run)
-  }
-
-  fn inspect_text(&self, store: &auv_tracing_driver::store::LocalStore, run_id: &str) -> Result<Option<String>, String> {
-    InspectReadProjection::inspect_text(&self.inner, store, run_id)
-  }
 }
 
 #[cfg(test)]

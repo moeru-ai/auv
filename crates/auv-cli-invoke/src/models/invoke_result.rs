@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::PathBuf;
 
 use auv_tracing::ArtifactMetadata;
-use auv_tracing_driver::trace::{ArtifactRecordV1Alpha1, SpanId};
 use serde::Serialize;
 
 use super::{InvokeOutputOptions, InvokeReport, InvokeReportField};
@@ -29,7 +27,6 @@ impl RunStatus {
 #[derive(Clone, Debug)]
 pub struct InvokeResult {
   pub run_id: String,
-  pub producer_span_id: Option<SpanId>,
   pub command_id: String,
   pub command_summary: String,
   pub status: RunStatus,
@@ -40,8 +37,6 @@ pub struct InvokeResult {
   pub known_limits: Vec<String>,
   pub verification: Option<String>,
   pub report: Option<InvokeReport>,
-  pub artifacts: Vec<ArtifactRecordV1Alpha1>,
-  pub artifact_paths: Vec<PathBuf>,
   pub canonical_artifacts: Vec<ArtifactMetadata>,
   pub artifact_failures: Vec<ArtifactInstrumentationFailure>,
   pub failure_message: Option<String>,
@@ -54,7 +49,6 @@ impl InvokeResult {
     match result {
       Ok(output) => Self {
         run_id,
-        producer_span_id: None,
         command_id: command.id.to_string(),
         command_summary: command.summary.to_string(),
         status: if output.failure_message.is_some() {
@@ -69,15 +63,12 @@ impl InvokeResult {
         known_limits: output.known_limits,
         verification: output.verification,
         report: output.report,
-        artifacts: Vec::new(),
-        artifact_paths: Vec::new(),
         canonical_artifacts: Vec::new(),
         artifact_failures: output.artifact_failures,
         failure_message: output.failure_message,
       },
       Err(error) => Self {
         run_id,
-        producer_span_id: None,
         command_id: command.id.to_string(),
         command_summary: command.summary.to_string(),
         status: RunStatus::Failed,
@@ -88,8 +79,6 @@ impl InvokeResult {
         known_limits: Vec::new(),
         verification: None,
         report: None,
-        artifacts: Vec::new(),
-        artifact_paths: Vec::new(),
         canonical_artifacts: Vec::new(),
         artifact_failures: Vec::new(),
         failure_message: Some(error),
@@ -260,12 +249,12 @@ mod tests {
   use super::InvokeResult;
 
   #[test]
-  fn direct_command_result_has_no_fabricated_producer_span() {
+  fn direct_command_result_keeps_canonical_artifacts_empty_until_frontend_flush() {
     let registry = default_registry();
     let command = registry.resolve("scan.coverage").expect("command");
 
     let result = InvokeResult::from_command_result("019f8b1e-4b2d-7a00-8f00-0000000000aa", command, Ok(InvokeCommandOutput::new("dry run")));
 
-    assert!(result.producer_span_id.is_none());
+    assert!(result.canonical_artifacts.is_empty());
   }
 }

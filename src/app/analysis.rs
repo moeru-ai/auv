@@ -22,7 +22,6 @@ use auv_driver_macos::types::{
   ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow, ObservedRect, ObservedWindow,
   OcrTextSnapshot, compute_combined_bounds,
 };
-use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, SpanId};
 use serde_json::Value;
 
 use super::infra::first_non_empty_string;
@@ -670,17 +669,12 @@ fn artifact_refs_for_probe_step(steps: &[AppProbeStep], step_id: &str) -> Vec<cr
   steps
     .iter()
     .find(|step| step.id == step_id)
-    .map(|step| step.artifacts.iter().map(|artifact| app_probe_artifact_ref(step, artifact)).collect())
+    .map(|step| step.artifacts.iter().filter_map(|artifact| app_probe_artifact_ref(step, artifact)).collect())
     .unwrap_or_default()
 }
 
-fn app_probe_artifact_ref(step: &AppProbeStep, artifact: &AppProbeArtifact) -> crate::contract::ArtifactRef {
-  crate::contract::ArtifactRef {
-    run_id: RunId::new(step.run_id.clone()),
-    artifact_id: ArtifactId::new(artifact.artifact_id.clone()),
-    span_id: SpanId::new(artifact.span_id.clone()),
-    captured_event_id: artifact.captured_event_id.as_ref().map(|event_id| EventId::new(event_id.clone())),
-  }
+fn app_probe_artifact_ref(step: &AppProbeStep, artifact: &AppProbeArtifact) -> Option<crate::contract::ArtifactRef> {
+  format!("auv://runs/{}/artifacts/{}", step.run_id, artifact.artifact_id).parse().ok()
 }
 
 pub(crate) fn candidate_compatibility(direct_taxonomy_ids: &[&str], context_taxonomy_ids: &[&str]) -> AppCandidateCompatibility {

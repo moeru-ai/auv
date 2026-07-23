@@ -12,11 +12,8 @@ mod analysis;
 mod infra;
 mod report;
 
-use analysis::{build_app_analysis, resolve_probe_ocr_sample_query};
-use infra::{
-  default_probe_output_dir, finish_failed_app_run, first_non_empty_string, invoke_probe_step, read_json, resolve_app_identity,
-  resolve_probe_path, stage_app_artifact, write_pretty_json,
-};
+use analysis::build_app_analysis;
+use infra::{default_probe_output_dir, first_non_empty_string, read_json, resolve_app_identity, resolve_probe_path, write_pretty_json};
 use report::render_app_analysis_report;
 
 use std::collections::BTreeMap;
@@ -28,11 +25,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
-use crate::runtime::Runtime;
-use auv_tracing_driver::RecordingHandle;
-use auv_tracing_driver::run_builder::{RecordingRun, RunFinish, RunSpec, SpanRef};
-use auv_tracing_driver::store::sanitized_artifact_name;
-use auv_tracing_driver::trace::{RunType, TraceStatusCode};
 
 const APP_PROBE_VERSION: &str = "v0";
 const APP_ANALYSIS_VERSION: &str = "v0";
@@ -415,7 +407,7 @@ impl AppRect {
   }
 }
 
-pub fn probe_app(project_root: &Path, runtime: &Runtime, bundle_id: &str, output_dir: Option<PathBuf>) -> AuvResult<AppProbe> {
+pub fn probe_app(project_root: &Path, bundle_id: &str, output_dir: Option<PathBuf>) -> AuvResult<AppProbe> {
   let app = resolve_app_identity(bundle_id)?;
   let output_dir = output_dir.unwrap_or_else(|| default_probe_output_dir(project_root, bundle_id));
   if output_dir.exists() {
@@ -423,158 +415,23 @@ pub fn probe_app(project_root: &Path, runtime: &Runtime, bundle_id: &str, output
   }
   fs::create_dir_all(&output_dir).map_err(|error| format!("failed to create app probe directory {}: {error}", output_dir.display()))?;
 
-  let recording = runtime.recording().handle();
-  let mut run = recording.start_run(RunSpec::new(RunType::Probe, "auv.probe"))?;
-  let root_span = run.root_span();
-  let result = probe_app_into_run(project_root, runtime, &app, &output_dir, &recording, &mut run, &root_span);
-  match result {
-    Ok(probe) => {
-      recording.finish_run(
-        run,
-        RunFinish {
-          status_code: TraceStatusCode::Ok,
-          summary: Some(format!("Probed app {}", probe.app.bundle_id)),
-          failure: None,
-        },
-      )?;
-      Ok(probe)
-    }
-    Err(error) => finish_failed_app_run(&recording, run, error, format!("App probe {bundle_id} failed")),
-  }
-}
-
-fn probe_app_into_run(
-  project_root: &Path,
-  runtime: &Runtime,
-  app: &AppIdentity,
-  output_dir: &Path,
-  recording: &RecordingHandle,
-  run: &mut RecordingRun,
-  parent: &SpanRef,
-) -> AuvResult<AppProbe> {
-  let mut steps = Vec::new();
-  steps.push(invoke_probe_step(runtime, run, parent, "probe-permissions", "app.probePermissions", None, BTreeMap::new(), false)?);
-  steps.push(invoke_probe_step(runtime, run, parent, "list-displays", "display.list", None, BTreeMap::new(), false)?);
-  let can_activate_target = app.apple_script_addressable;
-  if can_activate_target {
-    let mut activate_inputs = BTreeMap::new();
-    activate_inputs.insert("settle_ms".to_string(), "250".to_string());
-    steps.push(invoke_probe_step(
-      runtime,
-      run,
-      parent,
-      "activate-target-app",
-      "app.activate",
-      Some(app.bundle_id.clone()),
-      activate_inputs,
-      true,
-    )?);
-  }
-
-  let mut window_inputs = BTreeMap::new();
-  window_inputs.insert("limit".to_string(), "20".to_string());
-  steps.push(invoke_probe_step(runtime, run, parent, "list-windows", "window.list", Some(app.bundle_id.clone()), window_inputs, true)?);
-
-  let can_use_app_scoped_window_ops = can_activate_target || app.launch_services_resolved;
-  let fallback_window_title = if can_use_app_scoped_window_ops {
-    None
-  } else {
-    resolve_probe_window_title(app, &steps)
-  };
-
-  let mut tree_inputs = BTreeMap::new();
-  tree_inputs.insert("max_depth".to_string(), "6".to_string());
-  if !can_use_app_scoped_window_ops {
-    if let Some(title) = fallback_window_title.clone() {
-      tree_inputs.insert("title".to_string(), title);
-    }
-  }
-  tree_inputs.insert("max_children".to_string(), "24".to_string());
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "capture-ax-tree",
-    "window.captureAxTree",
-    Some(app.bundle_id.clone()),
-    tree_inputs,
-    true,
-  )?);
-
-  let capture_label = format!("app-probe-{}", sanitized_artifact_name(&app.bundle_id));
-  let mut capture_inputs = BTreeMap::new();
-  capture_inputs.insert("label".to_string(), capture_label);
-  if can_activate_target {
-    capture_inputs.insert("activate_target_before_capture".to_string(), "true".to_string());
-  }
-  if !can_use_app_scoped_window_ops {
-    if let Some(title) = fallback_window_title.clone() {
-      capture_inputs.insert("title".to_string(), title);
-    }
-  }
-  let capture_step =
-    invoke_probe_step(runtime, run, parent, "capture-window", "window.capture", Some(app.bundle_id.clone()), capture_inputs, true)?;
-  steps.push(capture_step);
-
-  let ocr_sample_query = resolve_probe_ocr_sample_query(app, &steps);
-  let mut ocr_inputs = BTreeMap::new();
-  ocr_inputs.insert("label".to_string(), "app-probe-ocr-sample".to_string());
-  ocr_inputs.insert("query".to_string(), ocr_sample_query);
-  ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
-  ocr_inputs.insert("region_left_ratio".to_string(), "0.0".to_string());
-  ocr_inputs.insert("region_top_ratio".to_string(), "0.0".to_string());
-  ocr_inputs.insert("region_right_ratio".to_string(), "1.0".to_string());
-  ocr_inputs.insert("region_bottom_ratio".to_string(), "1.0".to_string());
-  ocr_inputs.insert("max_observations".to_string(), "20".to_string());
-  if !can_use_app_scoped_window_ops {
-    if let Some(title) = fallback_window_title {
-      ocr_inputs.insert("title".to_string(), title);
-    }
-  }
-  steps.push(invoke_probe_step(runtime, run, parent, "ocr-sample", "window.observeRegion", Some(app.bundle_id.clone()), ocr_inputs, true)?);
-
   let probe = AppProbe {
     probe_version: APP_PROBE_VERSION.to_string(),
     created_at_millis: now_millis(),
     project_root: project_root.to_path_buf(),
     output_dir: output_dir.to_path_buf(),
-    app: app.clone(),
-    steps,
+    app,
+    // TODO(app-probe-direct-capabilities-v1): the old nested command recorder
+    // was retired. Restore probe steps only after each capability has a direct
+    // typed API that can inherit the caller's Context.
+    steps: Vec::new(),
   };
   let probe_path = output_dir.join("probe.json");
   write_pretty_json(&probe_path, &probe)?;
-  stage_app_artifact(&recording, run, parent, "probe.output", &probe_path, "probe.json")?;
   Ok(probe)
 }
 
-pub fn analyze_app_probe(runtime: &Runtime, query: &Path) -> AuvResult<AppAnalyzeOutput> {
-  let recording = runtime.recording().handle();
-  let mut run = recording.start_run(RunSpec::new(RunType::Analyze, "auv.analyze"))?;
-  let root_span = run.root_span();
-  let result = analyze_app_probe_into_run(runtime, &recording, &mut run, &root_span, query);
-  match result {
-    Ok(output) => {
-      recording.finish_run(
-        run,
-        RunFinish {
-          status_code: TraceStatusCode::Ok,
-          summary: Some(format!("Analyzed app {}", output.analysis.app_identity.bundle_id)),
-          failure: None,
-        },
-      )?;
-      Ok(output)
-    }
-    Err(error) => finish_failed_app_run(&recording, run, error, "App analysis failed".to_string()),
-  }
-}
-
-fn analyze_app_probe_into_run(
-  _runtime: &Runtime,
-  recording: &RecordingHandle,
-  run: &mut RecordingRun,
-  span: &SpanRef,
-  query: &Path,
-) -> AuvResult<AppAnalyzeOutput> {
+pub fn analyze_app_probe(query: &Path) -> AuvResult<AppAnalyzeOutput> {
   let probe_path = resolve_probe_path(query)?;
   let probe: AppProbe = read_json(&probe_path)?;
   let analysis = build_app_analysis(&probe_path, &probe)?;
@@ -583,8 +440,6 @@ fn analyze_app_probe_into_run(
   write_pretty_json(&analysis_path, &analysis)?;
   fs::write(&report_path, render_app_analysis_report(&analysis))
     .map_err(|error| format!("failed to write app analysis report {}: {error}", report_path.display()))?;
-  stage_app_artifact(&recording, run, span, "analysis.output", &analysis_path, "analysis.json")?;
-  stage_app_artifact(&recording, run, span, "analysis.report", &report_path, "analysis-report.md")?;
   Ok(AppAnalyzeOutput {
     analysis,
     analysis_path,

@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::InvokeReport;
 use crate::arg::ArgSpec;
-use auv_tracing_driver::ProducedArtifact;
 
 use crate::ArtifactInstrumentationFailure;
 
@@ -94,9 +93,6 @@ pub struct InvokeCommandOutput {
   pub backend: Option<String>,
   pub signals: BTreeMap<String, String>,
   pub notes: Vec<String>,
-  // NOTICE(run-recording-v1): Only the Task 22 legacy adapter consumes this
-  // path-based compatibility field. New commands emit owned artifacts directly.
-  pub artifacts: Vec<ProducedArtifact>,
   /// Non-authoritative diagnostics from attempted artifact instrumentation.
   pub artifact_failures: Vec<ArtifactInstrumentationFailure>,
   pub known_limits: Vec<String>,
@@ -123,7 +119,6 @@ impl InvokeCommandOutput {
       backend: None,
       signals: BTreeMap::new(),
       notes: Vec::new(),
-      artifacts: Vec::new(),
       artifact_failures: Vec::new(),
       known_limits: Vec::new(),
       report: None,
@@ -251,10 +246,9 @@ mod tests {
   }
 
   #[test]
-  fn command_output_defaults_evidence_and_report_fields_to_empty() {
+  fn command_output_defaults_instrumentation_and_report_fields_to_empty() {
     let output = InvokeCommandOutput::new("observed");
 
-    assert!(output.artifacts.is_empty());
     assert!(output.artifact_failures.is_empty());
     assert!(output.known_limits.is_empty());
     assert!(output.report.is_none());

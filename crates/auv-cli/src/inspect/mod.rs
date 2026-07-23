@@ -1,4 +1,4 @@
-//! Product inspect: composer assembly and golden fixtures.
+//! Product inspection over canonical run snapshots.
 
 pub(crate) mod query_wired_minecraft;
 pub(crate) mod query_wired_osu;
@@ -7,22 +7,11 @@ pub(crate) mod sections;
 #[cfg(test)]
 mod goldens;
 
-use auv_inspect_model::InspectComposer;
-use auv_runtime::model::AuvResult;
-use auv_tracing_driver::store::LocalStore;
+use auv_tracing::{RunSnapshot, RunStore};
 
-pub use sections::{
-  ProductInspectDocument, ProductInspectError, ProductInspectSection, ProductInspectTextDocument, build_product_inspect_composer,
-  build_product_inspect_document, build_product_inspect_text_document,
-};
+pub use sections::{ProductInspectDocument, ProductInspectError, ProductInspectSection, build_product_inspect_document};
 
-/// Inspect text using an explicit composer shared by CLI and MCP frontends.
-pub fn inspect_run_with(composer: &InspectComposer, store: &LocalStore, run_id: &str) -> AuvResult<String> {
-  composer.inspect_text(store, run_id).map_err(|error| error.to_string())
-}
-
-/// Product inspect text via the shared composer path.
-pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
-  let composer = build_product_inspect_composer().map_err(|error| error.to_string())?;
-  inspect_run_with(&composer, store, run_id)
+/// Renders the product view from one authority snapshot.
+pub async fn inspect_run(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<String, ProductInspectError> {
+  Ok(build_product_inspect_document(store, snapshot).await?.render_text())
 }

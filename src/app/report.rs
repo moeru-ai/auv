@@ -140,11 +140,7 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
       if !candidate.evidence_refs.is_empty() {
         lines.push("  - evidenceRefs:".to_string());
         for reference in &candidate.evidence_refs {
-          let event = reference.captured_event_id.as_ref().map(|value| value.as_str()).unwrap_or("none");
-          lines.push(format!(
-            "    - run=`{}` span=`{}` artifact=`{}` event=`{}`",
-            reference.run_id, reference.span_id, reference.artifact_id, event
-          ));
+          lines.push(format!("    - uri=`{reference}`"));
         }
       }
       if let Some(gate) = &candidate.promotion_gate {

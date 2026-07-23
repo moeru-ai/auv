@@ -15,12 +15,8 @@ pub mod command;
 pub mod commands;
 pub mod help;
 pub mod models;
-// NOTICE(run-recording-v1): This synchronous adapter remains only for legacy
-// callers scheduled for Task 22. New callsites must compose tracing themselves.
-pub mod recorded;
 pub mod registry;
 pub mod render;
-pub mod summary;
 
 pub use arg::ArgSpec;
 pub use artifact::{ArtifactInstrumentationFailure, ArtifactInstrumentationReceipt, ArtifactPublication};
@@ -35,13 +31,8 @@ pub use models::{
   InvokeRequest, InvokeResult, RunStatus,
 };
 pub(crate) use models::{InvokeReportLabels, InvokeReportValue, InvokeSignalValue, OptionalReportText};
-pub use recorded::{
-  InvokeFinalizeHook, invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_finalize, invoke_recorded_with_session,
-  invoke_resolved_recorded_in_span,
-};
 pub use registry::{InvokeRegistry, default_registry};
-pub use render::{InvokeCliOutcome, render_invoke_result, render_recorded_invoke};
-pub use summary::{OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource};
+pub use render::{InvokeCliOutcome, render_invoke_result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InvokeCliParse {

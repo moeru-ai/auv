@@ -210,7 +210,7 @@ mod tests {
     }))
     .expect("dry-run should succeed");
 
-    assert!(output.artifacts.is_empty());
+    assert!(output.artifact_failures.is_empty());
     assert!(output.verification.as_deref().is_some_and(|claim| claim.contains("dry-run")));
   }
 
@@ -225,7 +225,7 @@ mod tests {
     }))
     .expect("dry-run should succeed");
 
-    assert!(output.artifacts.is_empty());
+    assert!(output.artifact_failures.is_empty());
     assert!(output.verification.as_deref().is_some_and(|claim| claim.contains("dry-run")));
   }
 
@@ -243,7 +243,7 @@ mod tests {
       },
     ));
 
-    assert!(output.artifacts.is_empty(), "binary artifact bytes are not CLI presentation state");
+    assert!(output.artifact_failures.is_empty(), "successful artifact publication records no instrumentation failure");
     let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("recorded run");
     let purposes = snapshot.artifacts().values().map(|publication| publication.metadata().purpose().as_str()).collect::<Vec<_>>();
     assert_eq!(purposes.len(), 2);
@@ -265,7 +265,7 @@ mod tests {
       },
     ));
 
-    assert!(output.artifacts.is_empty(), "binary artifact bytes are not CLI presentation state");
+    assert!(output.artifact_failures.is_empty(), "successful artifact publication records no instrumentation failure");
     let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("recorded run");
     let publication = snapshot.artifacts().values().next().expect("coverage artifact");
     assert_eq!(snapshot.artifacts().len(), 1);

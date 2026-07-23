@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use auv_cli::integrations::minecraft::{
   QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action,
 };
-use auv_runtime::build_runtime_with_store_root;
+use auv_tracing::{Context, RunId, RunStore, dispatcher};
 
-fn main() -> Result<(), String> {
+#[tokio::main]
+async fn main() -> Result<(), String> {
   eprintln!("notice: canonical entry is `auv-minecraft query-wired-live-click`; this example is a thin library wrapper");
   let mut args = env::args().skip(1);
   let mut semantic_manifest = None;
@@ -83,16 +84,22 @@ fn main() -> Result<(), String> {
 
   let project_root = env::current_dir().map_err(|error| error.to_string())?;
   let store_root = store_root.unwrap_or_else(|| project_root.join(".auv"));
-  let runtime = build_runtime_with_store_root(project_root, store_root)?;
+  let store = std::sync::Arc::new(auv_tracing::FileRunStore::open(store_root).map_err(|error| error.to_string())?);
+  let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
+  let run_id = RunId::new();
+  let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
   let target_block = parse_block_position(&target_block.ok_or("--target-block is required")?)?;
+  let training_result_semantic_manifest_path = PathBuf::from(semantic_manifest.ok_or("--semantic-manifest is required")?);
+  let output_dir = output_dir.ok_or("--output-dir is required")?;
+  let target_app = target_app.ok_or("--target-app is required")?;
+  let target_title = target_title.ok_or("--target-title is required")?;
   let telemetry_witness = telemetry_sample.map(|pre| QueryWiredLiveActionTelemetryWitness {
     pre_telemetry_sample: pre,
     post_telemetry_sample,
   });
-  let output = run_minecraft_query_wired_live_action(
-    &runtime.recording().handle(),
-    QueryWiredLiveActionInputs {
-      training_result_semantic_manifest_path: PathBuf::from(semantic_manifest.ok_or("--semantic-manifest is required")?),
+  let future = root.in_scope(|| {
+    run_minecraft_query_wired_live_action(QueryWiredLiveActionInputs {
+      training_result_semantic_manifest_path,
       target_block,
       target_face,
       target_semantics,
@@ -100,18 +107,21 @@ fn main() -> Result<(), String> {
       use_checkpoint_native_provider,
       use_closed_scene_toy_provider,
       closed_scene_fixture_path: closed_scene_fixture,
-      output_dir: output_dir.ok_or("--output-dir is required")?.into(),
-      target_app: target_app.ok_or("--target-app is required")?,
-      target_title: target_title.ok_or("--target-title is required")?,
+      output_dir,
+      target_app,
+      target_title,
       telemetry_witness,
       verification_expected_item_id,
-    },
-  )?;
-  println!("runId: {}", output.run_id);
-  println!("queryStatus: {}", output.value.query.manifest.status.as_str());
-  println!("wiringAttempted: {}", output.value.wiring.attempted);
-  println!("actionEligibility: {}", output.value.wiring.action_eligibility.as_str());
-  println!("operationResultArtifact: {}", output.value.operation_result_artifact_id);
+    })
+  });
+  let output = root.instrument(future).await?;
+  dispatch.flush().await.map_err(|error| error.to_string())?;
+  let snapshot = store.load_snapshot(run_id).await.map_err(|error| error.to_string())?;
+  println!("runId: {run_id}");
+  println!("queryStatus: {}", output.query.manifest.status.as_str());
+  println!("wiringAttempted: {}", output.wiring.attempted);
+  println!("actionEligibility: {}", output.wiring.action_eligibility.as_str());
+  println!("artifactCount: {}", snapshot.map_or(0, |snapshot| snapshot.artifacts().len()));
   Ok(())
 }
 

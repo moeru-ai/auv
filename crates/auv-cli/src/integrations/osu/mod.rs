@@ -4,31 +4,24 @@ use std::path::PathBuf;
 pub mod help;
 pub mod query_live_action;
 
-#[cfg(target_os = "macos")]
-use self::query_live_action::InvokeWindowPointClickExecutor;
-use self::query_live_action::{
-  QUERY_WIRED_LIVE_ACTION_OPERATION_ID, build_osu_query_wired_live_action_operation_result,
-  stage_osu_query_wired_live_action_operation_result,
-};
 use auv_game_osu::{
   BenchmarkInputs, BenchmarkOutput, CapturePhase, DatasetExportInputs, DatasetExportOutput, DetectionEvalInputs, DetectionEvalOutput,
   DetectionEvalQualityOutput, DetectionEvalWitnessInputs, DetectionEvalWitnessOutput, FrameDetections, ObjectKind, PlayfieldProjection,
-  RunMode, VisualTruthManifest, VisualTruthQueryActionWiringOutcome, VisualTruthQueryLiveClickExecutor, VisualTruthSemanticValidationInputs,
+  VisualTruthManifest, VisualTruthQueryActionWiringOutcome, VisualTruthQueryLiveClickExecutor, VisualTruthSemanticValidationInputs,
   VisualTruthSpatialQueryInputs, VisualTruthSpatialQueryOutput, build_detection_eval_quality, build_detection_eval_witness,
   evaluate_detection_fixture, export_dataset, query_visual_truth_spatial, run_benchmark, validate_visual_truth_semantic,
   visual_truth_query_action_wiring_lineage_from_manifest, wire_visual_truth_spatial_query_manifest_to_action,
 };
-
 use auv_runtime::contract::{
   NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionBox, RecognitionScope, RecognitionSource,
   RecognitionSurface, SurfaceNode,
 };
 use auv_runtime::model::AuvResult;
 use auv_runtime::session::{BufferedObservationProvider, SessionObservationProvider};
-use auv_tracing_driver::RecordingHandle;
-use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
-use auv_tracing_driver::run_builder::RunSpec;
-use auv_tracing_driver::trace::{RunType, new_run_id, new_span_id};
+use auv_tracing::{Context, RunId, SpanId};
+
+#[cfg(target_os = "macos")]
+use self::query_live_action::DirectWindowPointClickExecutor;
 
 pub use auv_game_osu::{
   OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE, OSU_DETECTION_EVAL_QUALITY_ROLE, OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
@@ -36,149 +29,38 @@ pub use auv_game_osu::{
   OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE, OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
 };
 
-pub fn run_osu_benchmark(
-  recording: &RecordingHandle,
-  beatmap_path: PathBuf,
-  output_dir: PathBuf,
-) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
-  run_osu_benchmark_with_inputs(recording, BenchmarkInputs::new(beatmap_path, output_dir), "osu benchmark dry-run")
+pub async fn run_osu_benchmark(beatmap_path: PathBuf, output_dir: PathBuf) -> AuvResult<BenchmarkOutput> {
+  run_osu_benchmark_with_inputs(BenchmarkInputs::new(beatmap_path, output_dir), "osu benchmark dry-run").await
 }
 
-pub fn run_osu_benchmark_with_inputs(
-  recording: &RecordingHandle,
-  inputs: BenchmarkInputs,
-  operation_label: &str,
-) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
-  let beatmap_path = inputs.beatmap_path.clone();
-  recording.run_recorded_operation(RunSpec::new(RunType::Execute, "auv.osu.benchmark"), operation_label, |context| {
-    context.record_event(
-      "osu.benchmark.inputs",
-      Some(format!(
-        "beatmap={} run_mode={}",
-        beatmap_path.display(),
-        match inputs.run_mode {
-          RunMode::DryRun => "dry_run",
-          RunMode::TypedDispatch => "typed_dispatch",
-        }
-      )),
-    );
-    let result = run_benchmark(&inputs)?;
-    context.in_span("osu.benchmark.artifacts", |context| {
-      for artifact_name in [
-        "parsed_map_summary.json",
-        "action_schedule.json",
-        "dispatch_trace.json",
-        "latency_report.json",
-        "capture_trace.json",
-        "verification_summary.json",
-        "visual_truth_manifest.json",
-        "projection.json",
-        "evidence_summary.json",
-      ] {
-        let artifact_path = result.output_dir.join(artifact_name);
-        if artifact_path.exists() {
-          context.stage_artifact_file(
-            "osu-benchmark",
-            &artifact_path,
-            artifact_name,
-            Some(format!("osu benchmark artifact {artifact_name}")),
-          )?;
-        }
-      }
-      for capture in &result.capture_trace {
-        for sample in &capture.captures {
-          let artifact_path = result.output_dir.join(&sample.file_name);
-          if artifact_path.exists() {
-            context.stage_artifact_file(
-              "osu-benchmark-capture",
-              &artifact_path,
-              &sample.file_name,
-              Some(format!("osu benchmark capture {}", sample.file_name)),
-            )?;
-          }
-        }
-      }
-      Ok::<_, String>(())
-    })?;
-    Ok::<_, String>(result)
+pub async fn run_osu_benchmark_with_inputs(inputs: BenchmarkInputs, _operation_label: &str) -> AuvResult<BenchmarkOutput> {
+  let result = run_benchmark(&inputs)?;
+  publish_benchmark_projection(&result).await;
+  Ok(result)
+}
+
+pub async fn run_osu_dataset_export(run_artifact_dir: PathBuf, output_dir: PathBuf) -> AuvResult<DatasetExportOutput> {
+  // Benchmark/dataset directories are product outputs, not canonical run
+  // artifact families in Task 21.
+  export_dataset(&DatasetExportInputs {
+    run_artifact_dir,
+    output_dir,
   })
 }
 
-pub fn run_osu_dataset_export(
-  recording: &RecordingHandle,
-  run_artifact_dir: PathBuf,
-  output_dir: PathBuf,
-) -> AuvResult<RecordedOperationOutput<DatasetExportOutput>> {
-  recording.run_recorded_operation(RunSpec::new(RunType::Execute, "auv.osu.export_dataset"), "osu export labeled dataset", |context| {
-    context.record_event(
-      "osu.export_dataset.inputs",
-      Some(format!("run_artifact_dir={} output_dir={}", run_artifact_dir.display(), output_dir.display())),
-    );
-    let result = export_dataset(&DatasetExportInputs {
-      run_artifact_dir: run_artifact_dir.clone(),
-      output_dir: output_dir.clone(),
-    })?;
-    context.in_span("osu.export_dataset.artifacts", |context| {
-      for artifact_name in ["dataset_manifest.json"] {
-        let artifact_path = result.output_dir.join(artifact_name);
-        if artifact_path.exists() {
-          context.stage_artifact_file(
-            "osu-dataset",
-            &artifact_path,
-            artifact_name,
-            Some(format!("osu dataset artifact {artifact_name}")),
-          )?;
-        }
-      }
-
-      stage_dataset_dir(context, &result.output_dir.join("images"), "osu-dataset-image")?;
-      stage_dataset_dir(context, &result.output_dir.join("labels"), "osu-dataset-label")?;
-      stage_dataset_dir(context, &result.output_dir.join("overlays"), "osu-dataset-overlay")?;
-
-      Ok::<_, String>(())
-    })?;
-    Ok::<_, String>(result)
-  })
-}
-
-pub fn run_osu_detection_eval(
-  recording: &RecordingHandle,
+pub async fn run_osu_detection_eval(
   run_artifact_dir: PathBuf,
   detections_path: PathBuf,
   output_dir: PathBuf,
-) -> AuvResult<RecordedOperationOutput<DetectionEvalOutput>> {
-  recording.run_recorded_operation(RunSpec::new(RunType::Execute, "auv.osu.eval_detections"), "osu evaluate offline detections", |context| {
-    context.record_event(
-      "osu.eval_detections.inputs",
-      Some(format!(
-        "run_artifact_dir={} detections_path={} output_dir={}",
-        run_artifact_dir.display(),
-        detections_path.display(),
-        output_dir.display()
-      )),
-    );
-    let result = evaluate_detection_fixture(&DetectionEvalInputs {
-      run_artifact_dir: run_artifact_dir.clone(),
-      detections_path: detections_path.clone(),
-      output_dir: output_dir.clone(),
-    })?;
-    context.in_span("osu.eval_detections.artifacts", |context| {
-      for artifact_name in ["visual_eval_report.json", "detection_eval_manifest.json"] {
-        let artifact_path = result.output_dir.join(artifact_name);
-        if artifact_path.exists() {
-          context.stage_artifact_file(
-            "osu-eval-detections",
-            &artifact_path,
-            artifact_name,
-            Some(format!("osu detection eval artifact {artifact_name}")),
-          )?;
-        }
-      }
-      stage_osu_detection_eval_witness_quality_artifacts(context, &result.output_dir)?;
-      Ok::<_, String>(())
-    })?;
-    Ok::<_, String>(result)
-  })
+) -> AuvResult<DetectionEvalOutput> {
+  let result = evaluate_detection_fixture(&DetectionEvalInputs {
+    run_artifact_dir,
+    detections_path,
+    output_dir,
+  })?;
+  let evidence = build_detection_eval_witness_quality(&result.output_dir)?;
+  publish_detection_eval_evidence(&evidence).await;
+  Ok(result)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -187,242 +69,84 @@ pub struct DetectionEvalWitnessQualityOutput {
   pub quality: DetectionEvalQualityOutput,
 }
 
-pub fn run_osu_detection_eval_witness_quality(
-  recording: &RecordingHandle,
-  detection_eval_output_dir: PathBuf,
-) -> AuvResult<RecordedOperationOutput<DetectionEvalWitnessQualityOutput>> {
-  recording.run_recorded_operation(
-    RunSpec::new(RunType::Execute, "auv.osu.eval_detections_witness_quality"),
-    "osu detection eval witness and quality evidence",
-    |context| {
-      context.record_event(
-        "osu.eval_detections_witness_quality.inputs",
-        Some(format!("detection_eval_output_dir={}", detection_eval_output_dir.display(),)),
-      );
-      let witness = build_detection_eval_witness(&DetectionEvalWitnessInputs {
-        detection_eval_output_dir: detection_eval_output_dir.clone(),
-        output_dir: detection_eval_output_dir.join("witness"),
-      })?;
-      let quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
-        witness_manifest_path: witness.manifest_path.clone(),
-        output_dir: detection_eval_output_dir.join("quality"),
-      })?;
-      context.in_span("osu.eval_detections_witness_quality.artifacts", |context| {
-        stage_osu_detection_eval_witness_quality_artifacts(context, &detection_eval_output_dir)?;
-        Ok::<_, String>(())
-      })?;
-      Ok::<_, String>(DetectionEvalWitnessQualityOutput { witness, quality })
-    },
-  )
+pub async fn run_osu_detection_eval_witness_quality(detection_eval_output_dir: PathBuf) -> AuvResult<DetectionEvalWitnessQualityOutput> {
+  let result = build_detection_eval_witness_quality(&detection_eval_output_dir)?;
+  publish_detection_eval_evidence(&result).await;
+  Ok(result)
 }
 
-fn stage_osu_detection_eval_witness_quality_artifacts(
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  detection_eval_output_dir: &std::path::Path,
-) -> Result<(), String> {
-  let witness_dir = detection_eval_output_dir.join("witness");
-  let quality_dir = detection_eval_output_dir.join("quality");
-  let witness_manifest_path = witness_dir.join("osu-detection-eval-witness.json");
-  if !witness_manifest_path.exists() {
-    let witness = build_detection_eval_witness(&DetectionEvalWitnessInputs {
-      detection_eval_output_dir: detection_eval_output_dir.to_path_buf(),
-      output_dir: witness_dir.clone(),
-    })?;
-    let _quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
-      witness_manifest_path: witness.manifest_path.clone(),
-      output_dir: quality_dir.clone(),
-    })?;
-  } else if !quality_dir.join("osu-detection-eval-quality.json").exists() {
-    let _quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
-      witness_manifest_path,
-      output_dir: quality_dir.clone(),
-    })?;
-  }
-
-  for (artifact_name, role) in [
-    ("osu-detection-eval-witness.json", OSU_DETECTION_EVAL_WITNESS_ROLE),
-    ("osu-detection-eval-witness-inspect.json", OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE),
-  ] {
-    let artifact_path = witness_dir.join(artifact_name);
-    if artifact_path.exists() {
-      context.stage_artifact_file(
-        role,
-        &artifact_path,
-        artifact_name,
-        Some(format!("osu detection eval witness artifact {artifact_name}")),
-      )?;
-    }
-  }
-
-  for (artifact_name, role) in [
-    ("osu-detection-eval-quality.json", OSU_DETECTION_EVAL_QUALITY_ROLE),
-    ("osu-detection-eval-quality-inspect.json", OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE),
-  ] {
-    let artifact_path = quality_dir.join(artifact_name);
-    if artifact_path.exists() {
-      context.stage_artifact_file(
-        role,
-        &artifact_path,
-        artifact_name,
-        Some(format!("osu detection eval quality artifact {artifact_name}")),
-      )?;
-    }
-  }
-
-  Ok(())
+fn build_detection_eval_witness_quality(detection_eval_output_dir: &std::path::Path) -> AuvResult<DetectionEvalWitnessQualityOutput> {
+  let witness = build_detection_eval_witness(&DetectionEvalWitnessInputs {
+    detection_eval_output_dir: detection_eval_output_dir.to_path_buf(),
+    output_dir: detection_eval_output_dir.join("witness"),
+  })?;
+  let quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
+    witness_manifest_path: witness.manifest_path.clone(),
+    output_dir: detection_eval_output_dir.join("quality"),
+  })?;
+  Ok(DetectionEvalWitnessQualityOutput { witness, quality })
 }
 
-pub fn run_osu_visual_truth_semantic_validation(
-  recording: &RecordingHandle,
+async fn publish_detection_eval_evidence(result: &DetectionEvalWitnessQualityOutput) {
+  let context = Context::current();
+  let _ = auv_game_osu::detection_eval_witness::publish_osu_detection_eval_witness(Some(&context), &result.witness.manifest).await;
+  let _ = auv_game_osu::detection_eval_quality::publish_osu_detection_eval_quality(Some(&context), &result.quality.manifest).await;
+}
+
+pub async fn run_osu_visual_truth_semantic_validation(
   run_artifact_dir: PathBuf,
   output_dir: PathBuf,
-) -> AuvResult<RecordedOperationOutput<auv_game_osu::VisualTruthSemanticValidationOutput>> {
-  recording.run_recorded_operation(
-    RunSpec::new(RunType::Execute, "auv.osu.validate_visual_truth_semantic"),
-    "osu validate visual truth semantic gate",
-    |context| {
-      context.record_event(
-        "osu.validate_visual_truth_semantic.inputs",
-        Some(format!("run_artifact_dir={} output_dir={}", run_artifact_dir.display(), output_dir.display())),
-      );
-      let result = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-        run_artifact_dir: run_artifact_dir.clone(),
-        output_dir: output_dir.clone(),
-      })?;
-      context.in_span("osu.validate_visual_truth_semantic.artifacts", |context| {
-        for (artifact_name, role) in [
-          ("osu-visual-truth-semantic.json", OSU_VISUAL_TRUTH_SEMANTIC_ROLE),
-          ("osu-visual-truth-semantic-inspect.json", OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE),
-        ] {
-          let artifact_path = result.output_dir.join(artifact_name);
-          if artifact_path.exists() {
-            context.stage_artifact_file(
-              role,
-              &artifact_path,
-              artifact_name,
-              Some(format!("osu visual truth semantic artifact {artifact_name}")),
-            )?;
-          }
-        }
-        Ok::<_, String>(())
-      })?;
-      Ok::<_, String>(result)
-    },
-  )
+) -> AuvResult<auv_game_osu::VisualTruthSemanticValidationOutput> {
+  let result = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
+    run_artifact_dir,
+    output_dir,
+  })?;
+  let context = Context::current();
+  let _ = auv_game_osu::visual_truth_semantic::publish_osu_visual_truth_semantic(Some(&context), &result.manifest).await;
+  Ok(result)
 }
 
-pub fn run_osu_visual_truth_spatial_query(
-  recording: &RecordingHandle,
+pub async fn run_osu_visual_truth_spatial_query(
   visual_truth_semantic_manifest_path: PathBuf,
   object_index: usize,
   capture_phase: CapturePhase,
   object_kind: Option<ObjectKind>,
   output_dir: PathBuf,
-) -> AuvResult<RecordedOperationOutput<VisualTruthSpatialQueryOutput>> {
-  recording.run_recorded_operation(
-    RunSpec::new(RunType::Execute, "auv.osu.query_visual_truth_spatial"),
-    "osu query visual truth spatial target",
-    |context| {
-      context.record_event(
-        "osu.query_visual_truth_spatial.inputs",
-        Some(format!(
-          "semantic_manifest={} object_index={object_index} capture_phase={capture_phase:?} output_dir={}",
-          visual_truth_semantic_manifest_path.display(),
-          output_dir.display()
-        )),
-      );
-      let result = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
-        visual_truth_semantic_manifest_path: visual_truth_semantic_manifest_path.clone(),
-        object_index,
-        capture_phase: capture_phase.clone(),
-        object_kind: object_kind.clone(),
-        output_dir: output_dir.clone(),
-      })?;
-      context.in_span("osu.query_visual_truth_spatial.artifacts", |context| {
-        for (artifact_name, role) in [
-          ("osu-visual-truth-spatial-query.json", OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE),
-          ("osu-visual-truth-spatial-query-inspect.json", OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE),
-        ] {
-          let artifact_path = result.output_dir.join(artifact_name);
-          if artifact_path.exists() {
-            context.stage_artifact_file(
-              role,
-              &artifact_path,
-              artifact_name,
-              Some(format!("osu visual truth spatial query artifact {artifact_name}")),
-            )?;
-          }
-        }
-        Ok::<_, String>(())
-      })?;
-      Ok::<_, String>(result)
-    },
-  )
+) -> AuvResult<VisualTruthSpatialQueryOutput> {
+  let result = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
+    visual_truth_semantic_manifest_path,
+    object_index,
+    capture_phase,
+    object_kind,
+    output_dir,
+  })?;
+  let context = Context::current();
+  let _ = auv_game_osu::visual_truth_spatial_query::publish_osu_visual_truth_spatial_query(Some(&context), &result.manifest).await;
+  Ok(result)
 }
 
-pub fn run_osu_vision_demo(
-  recording: &RecordingHandle,
+pub async fn run_osu_vision_demo(
   beatmap_path: PathBuf,
   target_app: String,
   output_dir: PathBuf,
   dispatch_limit: Option<usize>,
   capture_verify: bool,
-) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
-  let mut inputs = BenchmarkInputs::typed_dispatch(beatmap_path.clone(), output_dir, target_app.clone());
+) -> AuvResult<BenchmarkOutput> {
+  let mut inputs = BenchmarkInputs::typed_dispatch(beatmap_path, output_dir, target_app);
   inputs.dispatch_limit = Some(dispatch_limit.unwrap_or(8).min(8));
   inputs.capture_verify = capture_verify;
-  // TODO(osu-p8): broader vision-only control policy is deferred until the owner approves a slice beyond this bounded local demo command.
-  recording.run_recorded_operation(RunSpec::new(RunType::Execute, "auv.osu.vision_demo"), "osu vision-only low-difficulty demo", |context| {
-    context.record_event(
-      "osu.vision_demo.inputs",
-      Some(format!(
-        "beatmap={} target_app={} dispatch_limit={} capture_verify={}",
-        beatmap_path.display(),
-        target_app,
-        inputs.dispatch_limit.unwrap_or(8),
-        inputs.capture_verify
-      )),
-    );
-    let result = run_benchmark(&inputs)?;
-    context.in_span("osu.vision_demo.artifacts", |context| {
-      for artifact_name in [
-        "parsed_map_summary.json",
-        "action_schedule.json",
-        "dispatch_trace.json",
-        "latency_report.json",
-        "capture_trace.json",
-        "verification_summary.json",
-        "visual_truth_manifest.json",
-        "projection.json",
-        "evidence_summary.json",
-      ] {
-        let artifact_path = result.output_dir.join(artifact_name);
-        if artifact_path.exists() {
-          context.stage_artifact_file(
-            "osu-vision-demo",
-            &artifact_path,
-            artifact_name,
-            Some(format!("osu vision demo artifact {artifact_name}")),
-          )?;
-        }
-      }
-      for capture in &result.capture_trace {
-        for sample in &capture.captures {
-          let artifact_path = result.output_dir.join(&sample.file_name);
-          if artifact_path.exists() {
-            context.stage_artifact_file(
-              "osu-vision-demo-capture",
-              &artifact_path,
-              &sample.file_name,
-              Some(format!("osu vision demo capture {}", sample.file_name)),
-            )?;
-          }
-        }
-      }
-      Ok::<_, String>(())
-    })?;
-    Ok::<_, String>(result)
-  })
+  // TODO(osu-vision-policy): broader vision-only control remains outside this
+  // bounded local demo until the owner approves a product policy slice.
+  let result = run_benchmark(&inputs)?;
+  publish_benchmark_projection(&result).await;
+  Ok(result)
+}
+
+async fn publish_benchmark_projection(result: &BenchmarkOutput) {
+  if let Some(projection) = &result.projection {
+    let context = Context::current();
+    let _ = auv_game_osu::projection::publish_osu_projection(Some(&context), projection).await;
+  }
 }
 
 pub fn osu_detection_session_provider(provider_id: impl Into<String>, frames: Vec<FrameDetections>) -> impl SessionObservationProvider {
@@ -431,8 +155,8 @@ pub fn osu_detection_session_provider(provider_id: impl Into<String>, frames: Ve
 }
 
 fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> ObservationSnapshot {
-  let run_id = new_run_id();
-  let span_id = new_span_id();
+  let run_id = RunId::new();
+  let span_id = SpanId::new();
   let nodes = frame
     .detections
     .detections
@@ -442,8 +166,8 @@ fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> Observ
       let node_id = format!("osu_detection_{}_{}", frame.frame.capture_file_name, detection_index);
       SurfaceNode {
         node_ref: NodeRef {
-          run_id: run_id.clone(),
-          span_id: span_id.clone(),
+          run_id,
+          span_id,
           node_id,
         },
         kind: "osu_detection".to_string(),
@@ -477,13 +201,12 @@ fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> Observ
       }
     })
     .collect();
-
   ObservationSnapshot {
     api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
     snapshot_id: format!("osu_session_observation_{index}"),
     run_id,
     span_id,
-    captured_at_millis: auv_tracing_driver::now_millis(),
+    captured_at_millis: auv_runtime::model::now_millis(),
     source: ObservationSource::Visual,
     scope: RecognitionScope {
       surface: RecognitionSurface::Window,
@@ -510,30 +233,6 @@ fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> Observ
   }
 }
 
-fn stage_dataset_dir(
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  dir: &std::path::Path,
-  artifact_kind: &str,
-) -> Result<(), String> {
-  if !dir.exists() {
-    return Ok(());
-  }
-
-  let entries = fs::read_dir(dir).map_err(|error| format!("failed to read dataset dir {}: {error}", dir.display()))?;
-  for entry in entries {
-    let entry = entry.map_err(|error| format!("failed to read dataset entry: {error}"))?;
-    let path = entry.path();
-    if path.is_file() {
-      let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("dataset artifact path {} has invalid file name", path.display()))?;
-      context.stage_artifact_file(artifact_kind, &path, file_name, Some(format!("osu dataset artifact {file_name}")))?;
-    }
-  }
-  Ok(())
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryWiredLiveActionInputs {
   pub visual_truth_semantic_manifest_path: PathBuf,
@@ -549,126 +248,65 @@ pub struct QueryWiredLiveActionInputs {
 pub struct QueryWiredLiveActionOutput {
   pub query: VisualTruthSpatialQueryOutput,
   pub wiring: VisualTruthQueryActionWiringOutcome,
-  pub operation_result_artifact_id: String,
+  pub input_actions: Vec<auv_driver::InputActionResult>,
 }
 
-pub fn run_osu_query_wired_live_action(
-  recording: &RecordingHandle,
-  inputs: QueryWiredLiveActionInputs,
-) -> AuvResult<RecordedOperationOutput<QueryWiredLiveActionOutput>> {
+pub async fn run_osu_query_wired_live_action(inputs: QueryWiredLiveActionInputs) -> AuvResult<QueryWiredLiveActionOutput> {
   #[cfg(target_os = "macos")]
   {
     let circle_size = circle_size_for_wired_live_action_inputs(&inputs)?;
     let live_projection = build_live_playfield_projection(&inputs.target_app, &inputs.target_title, circle_size)?;
-    return recording.run_recorded_operation(
-      RunSpec::new(RunType::Execute, QUERY_WIRED_LIVE_ACTION_OPERATION_ID),
-      "osu visual truth query wired live action",
-      |context| {
-        let click_executor = InvokeWindowPointClickExecutor::new(context, inputs.target_app.as_str(), inputs.target_title.as_str());
-        run_osu_query_wired_live_action_core(context, &inputs, &live_projection, &click_executor)
-      },
-    );
+    let executor = DirectWindowPointClickExecutor::new(inputs.target_app.clone(), inputs.target_title.clone());
+    let mut output = run_osu_query_wired_live_action_core(&inputs, &live_projection, &executor).await?;
+    output.input_actions = executor.actions();
+    let context = Context::current();
+    for action in &output.input_actions {
+      let _ = auv_runtime::run_read::publish_input_action_result(Some(&context), action).await;
+    }
+    return Ok(output);
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = (recording, inputs);
+    let _ = inputs;
     Err("osu query wired live action requires macOS for live window projection".to_string())
   }
 }
 
-pub fn run_osu_query_wired_live_action_with_executor<E: VisualTruthQueryLiveClickExecutor>(
-  recording: &RecordingHandle,
+pub async fn run_osu_query_wired_live_action_with_executor<E: VisualTruthQueryLiveClickExecutor>(
   inputs: QueryWiredLiveActionInputs,
   live_projection: &PlayfieldProjection,
   executor: &E,
-) -> AuvResult<RecordedOperationOutput<QueryWiredLiveActionOutput>> {
-  recording.run_recorded_operation(
-    RunSpec::new(RunType::Execute, QUERY_WIRED_LIVE_ACTION_OPERATION_ID),
-    "osu visual truth query wired live action",
-    |context| run_osu_query_wired_live_action_core(context, &inputs, live_projection, executor),
-  )
+) -> AuvResult<QueryWiredLiveActionOutput> {
+  run_osu_query_wired_live_action_core(&inputs, live_projection, executor).await
 }
 
-fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecutor>(
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+async fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecutor>(
   inputs: &QueryWiredLiveActionInputs,
   live_projection: &PlayfieldProjection,
   executor: &E,
-) -> Result<QueryWiredLiveActionOutput, String> {
-  context.record_event(
-    "osu.query_wired_live_action.inputs",
-    Some(format!(
-      "semantic_manifest={} object_index={} capture_phase={:?} object_kind={} target_app={} target_title={} output_dir={}",
-      inputs.visual_truth_semantic_manifest_path.display(),
-      inputs.object_index,
-      inputs.capture_phase,
-      inputs.object_kind.as_ref().map(|kind| format!("{kind:?}")).unwrap_or_else(|| "none".to_string()),
-      inputs.target_app,
-      inputs.target_title,
-      inputs.output_dir.display(),
-    )),
-  );
-
-  let query = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
-    visual_truth_semantic_manifest_path: inputs.visual_truth_semantic_manifest_path.clone(),
-    object_index: inputs.object_index,
-    capture_phase: inputs.capture_phase.clone(),
-    object_kind: inputs.object_kind.clone(),
-    output_dir: inputs.output_dir.clone(),
-  })?;
-
-  let (_staged_manifest_path, query_manifest_ref) = context.in_span("osu.query_visual_truth_spatial.artifacts", |context| {
-    context.stage_artifact_file_with_ref(
-      OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
-      &query.manifest_path,
-      "osu-visual-truth-spatial-query.json",
-      Some("osu visual truth spatial query manifest".to_string()),
-    )
-  })?;
-  context.in_span("osu.query_visual_truth_spatial.artifacts", |context| {
-    context.stage_artifact_file(
-      OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE,
-      &query.inspect_report_path,
-      "osu-visual-truth-spatial-query-inspect.json",
-      Some("osu visual truth spatial query inspect report".to_string()),
-    )?;
-    Ok::<_, String>(())
-  })?;
-
+) -> AuvResult<QueryWiredLiveActionOutput> {
+  let query = run_osu_visual_truth_spatial_query(
+    inputs.visual_truth_semantic_manifest_path.clone(),
+    inputs.object_index,
+    inputs.capture_phase.clone(),
+    inputs.object_kind.clone(),
+    inputs.output_dir.clone(),
+  )
+  .await?;
   let lineage = visual_truth_query_action_wiring_lineage_from_manifest(&query.manifest, &query.manifest_path);
   let wiring = wire_visual_truth_spatial_query_manifest_to_action(&query.manifest, &lineage, live_projection, executor);
-
-  let operation_result = build_osu_query_wired_live_action_operation_result(context.run_id(), &wiring, Some(query_manifest_ref.clone()));
-  let (_staged_operation_result_path, operation_result_ref) =
-    stage_osu_query_wired_live_action_operation_result(context, &operation_result)?;
-
-  context.record_event(
-    "osu.query_wired_live_action.outcome",
-    Some(format!(
-      "attempted={} action_eligibility={} refusal_reason={} pixel_point={} window_point={} query_manifest_path={}",
-      wiring.attempted,
-      wiring.action_eligibility.as_str(),
-      wiring.refusal_reason.as_deref().unwrap_or("none"),
-      wiring.pixel_point.map(|(x, y)| format!("{x},{y}")).unwrap_or_else(|| "none".to_string()),
-      wiring.window_point.map(|point| format!("{:.3},{:.3}", point.0.x, point.0.y)).unwrap_or_else(|| "none".to_string()),
-      query.manifest_path.display(),
-    )),
-  );
-
   Ok(QueryWiredLiveActionOutput {
     query,
     wiring,
-    operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
+    input_actions: Vec::new(),
   })
 }
 
 fn circle_size_for_wired_live_action_inputs(inputs: &QueryWiredLiveActionInputs) -> Result<f32, String> {
-  use auv_game_osu::VisualTruthSemanticManifest;
-
   let semantic_json = fs::read_to_string(&inputs.visual_truth_semantic_manifest_path).map_err(|error| {
     format!("failed to read osu visual truth semantic manifest {}: {error}", inputs.visual_truth_semantic_manifest_path.display())
   })?;
-  let semantic: VisualTruthSemanticManifest = serde_json::from_str(&semantic_json).map_err(|error| {
+  let semantic: auv_game_osu::VisualTruthSemanticManifest = serde_json::from_str(&semantic_json).map_err(|error| {
     format!("failed to parse osu visual truth semantic manifest {}: {error}", inputs.visual_truth_semantic_manifest_path.display())
   })?;
   let manifest_json = fs::read_to_string(&semantic.source_visual_truth_manifest_path)
@@ -680,213 +318,22 @@ fn circle_size_for_wired_live_action_inputs(inputs: &QueryWiredLiveActionInputs)
 
 #[cfg(target_os = "macos")]
 fn build_live_playfield_projection(target_app: &str, target_title: &str, circle_size: f32) -> Result<PlayfieldProjection, String> {
-  use auv_driver::{App, WindowSelector};
-
   let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let window = session
     .window()
-    .resolve(WindowSelector::default().owned_by(App::name(target_app.to_string())).title_contains(target_title))
+    .resolve(auv_driver::WindowSelector::default().owned_by(auv_driver::App::name(target_app.to_string())).title_contains(target_title))
     .map_err(|error| error.to_string())?;
   PlayfieldProjection::for_window(&window, circle_size)
 }
 
 #[cfg(test)]
 mod tests {
-  use auv_game_osu::{CapturePhase, FrameDetections, FrameKey};
-  use auv_task_object_detection::{BoundingBox, Detection, DetectionResult, ImageSize};
+  use super::*;
 
-  use auv_runtime::session::{ObserveRequest, SessionOptions, SessionRuntime};
-
-  use super::osu_detection_session_provider;
-
-  #[test]
-  fn osu_detection_provider_projects_into_session_observation() {
-    let provider = osu_detection_session_provider(
-      "osu.fixture.detector",
-      vec![FrameDetections::new(
-        FrameKey::from_parts(0, CapturePhase::AfterDispatch, "capture-after.png"),
-        DetectionResult {
-          image_size: ImageSize {
-            width: 640,
-            height: 480,
-          },
-          detections: vec![Detection {
-            class_id: 1,
-            label: "hit_circle".to_string(),
-            confidence: 0.91,
-            bbox: BoundingBox {
-              x1: 100.2,
-              y1: 150.7,
-              x2: 132.2,
-              y2: 182.7,
-            },
-          }],
-        },
-      )],
-    );
-
-    let mut session = SessionRuntime::new(SessionOptions::default());
-    let provider_id = session.register_provider(provider);
-    let observation = session.observe(&provider_id, ObserveRequest::default()).expect("osu fixture observation should succeed");
-
-    assert_eq!(observation.snapshot.nodes.len(), 1);
-    assert!(observation.snapshot.known_limits.iter().any(|limit| limit.contains("observe-only")));
-    let node = session.find_node_by_label("hit_circle").expect("osu detection should be addressable by session lookup");
-    assert!(matches!(node.node.provider_score, Some(score) if (score - 0.91).abs() < 1e-6));
-    assert_eq!(node.node.box_.width, 32);
-    assert_eq!(node.node.box_.height, 32);
-  }
-
-  mod osu_query_wired_live_action_tests {
-    use std::cell::Cell;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-
-    use auv_driver::geometry::WindowPoint;
-    use auv_game_osu::{
-      OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, PlayfieldProjection, VisualTruthQueryActionWiringLineage, VisualTruthQueryLiveClickExecutor,
-      VisualTruthSemanticValidationInputs, validate_visual_truth_semantic,
-    };
-    use auv_tracing_driver::recording::{NoopRunRecorder, RunRecordingBackend};
-    use auv_tracing_driver::store::LocalStore;
-
-    use super::super::query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
-    use super::super::{OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE, QueryWiredLiveActionInputs, run_osu_query_wired_live_action_with_executor};
-    use auv_game_osu::CapturePhase;
-
-    struct CountingExecutor {
-      calls: Cell<usize>,
-      summary: String,
-    }
-
-    impl CountingExecutor {
-      fn success(summary: impl Into<String>) -> Self {
-        Self {
-          calls: Cell::new(0),
-          summary: summary.into(),
-        }
-      }
-    }
-
-    impl VisualTruthQueryLiveClickExecutor for CountingExecutor {
-      fn attempt_click(&self, _window_point: WindowPoint, _lineage: &VisualTruthQueryActionWiringLineage) -> Result<String, String> {
-        self.calls.set(self.calls.get() + 1);
-        Ok(self.summary.clone())
-      }
-    }
-
-    fn temp_dir(name: &str) -> PathBuf {
-      std::env::temp_dir().join(format!("auv-{name}-{}", std::process::id()))
-    }
-
-    fn setup_probe_work(name: &str) -> PathBuf {
-      let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-game-osu/tests/fixtures/osu_visual_truth_probe");
-      let work = temp_dir(name);
-      fs::create_dir_all(&work).expect("work dir");
-      for name in ["visual_truth_manifest.json", "projection.json"] {
-        fs::copy(fixture_root.join(name), work.join(name)).expect("copy fixture");
-      }
-      work
-    }
-
-    fn live_projection() -> PlayfieldProjection {
-      PlayfieldProjection::for_capture(800.0, 600.0, 4.0).expect("projection")
-    }
-
-    fn operation_output_message(output: &auv_runtime::contract::OperationOutput) -> String {
-      match output {
-        auv_runtime::contract::OperationOutput::Acknowledged { message } => message.clone().unwrap_or_default(),
-        _ => String::new(),
-      }
-    }
-
-    fn read_operation_result_artifact(
-      store: &LocalStore,
-      run: &auv_tracing_driver::store::CanonicalRun,
-    ) -> auv_runtime::contract::OperationResult {
-      let artifact = run.artifacts.iter().find(|a| a.role == "operation-result").expect("op");
-      let artifact_path = store.run_dir(run.run.run_id.as_str()).expect("dir").join(&artifact.path);
-      serde_json::from_slice(&fs::read(&artifact_path).expect("read")).expect("parse")
-    }
-
-    #[test]
-    fn osu_query_wired_live_action_click_ready_records_operation_result() {
-      let work = setup_probe_work("osu-wired-live-action-click-ready");
-      let temp = work.parent().unwrap().join("osu-wired-click-ready");
-      fs::create_dir_all(&temp).expect("temp");
-      let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-        run_artifact_dir: work.clone(),
-        output_dir: work.join("semantic-out-click"),
-      })
-      .expect("semantic")
-      .manifest_path;
-      let store = LocalStore::new(temp.join("store")).expect("store");
-      let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
-      let executor = CountingExecutor::success("mock live click dispatched");
-      let output = run_osu_query_wired_live_action_with_executor(
-        &recording,
-        QueryWiredLiveActionInputs {
-          visual_truth_semantic_manifest_path: semantic_manifest,
-          object_index: 0,
-          capture_phase: CapturePhase::BeforeDispatch,
-          object_kind: None,
-          output_dir: temp.join("query-output"),
-          target_app: "osu!".into(),
-          target_title: "osu".into(),
-        },
-        &live_projection(),
-        &executor,
-      )
-      .expect("ok");
-      assert!(output.value.wiring.attempted);
-      assert_eq!(executor.calls.get(), 1);
-      let run = recording.read_run(output.run_id.as_str()).expect("run");
-      assert!(run.artifacts.iter().any(|a| a.role == OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE));
-      let operation_result = read_operation_result_artifact(&store, &run);
-      assert_eq!(operation_result.operation_id, QUERY_WIRED_LIVE_ACTION_OPERATION_ID);
-      assert!(operation_output_message(&operation_result.output).contains("mock live click dispatched"));
-      assert!(operation_result.known_limits.iter().any(|l| l == OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
-      let _ = fs::remove_dir_all(&work);
-      let _ = fs::remove_dir_all(&temp);
-    }
-
-    #[test]
-    fn osu_query_wired_live_action_not_consumable_refuses_without_executor() {
-      let work = setup_probe_work("osu-wired-live-action-not-consumable");
-      let temp = work.parent().unwrap().join("osu-wired-not-consumable");
-      fs::create_dir_all(&temp).expect("temp");
-      let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-        run_artifact_dir: work.clone(),
-        output_dir: work.join("semantic-out-absent"),
-      })
-      .expect("semantic")
-      .manifest_path;
-      let store = LocalStore::new(temp.join("store")).expect("store");
-      let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
-      let executor = CountingExecutor::success("should not run");
-      let output = run_osu_query_wired_live_action_with_executor(
-        &recording,
-        QueryWiredLiveActionInputs {
-          visual_truth_semantic_manifest_path: semantic_manifest,
-          object_index: 99,
-          capture_phase: CapturePhase::BeforeDispatch,
-          object_kind: None,
-          output_dir: temp.join("query-output"),
-          target_app: "osu!".into(),
-          target_title: "osu".into(),
-        },
-        &live_projection(),
-        &executor,
-      )
-      .expect("ok");
-      assert!(!output.value.wiring.attempted);
-      assert_eq!(executor.calls.get(), 0);
-      let _run = recording.read_run(output.run_id.as_str()).expect("run");
-      assert_eq!(output.value.wiring.action_eligibility.as_str(), "not_consumable");
-      assert!(output.value.wiring.refusal_reason.as_deref().is_some_and(|r| r.contains("target_absent_from_visual_truth")));
-      let _ = fs::remove_dir_all(&work);
-      let _ = fs::remove_dir_all(&temp);
-    }
+  #[tokio::test]
+  async fn direct_benchmark_rejects_missing_beatmap() {
+    let root = std::env::temp_dir().join(format!("auv-osu-direct-{}", auv_runtime::model::now_millis()));
+    let result = run_osu_benchmark(root.join("missing.osu"), root.join("out")).await;
+    assert!(result.is_err());
   }
 }
