@@ -5,6 +5,7 @@
 // frontend assembly.
 
 use std::env;
+#[cfg(test)]
 use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -131,35 +132,105 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
     CliCommand::PermissionCheck { .. } => {
       unreachable!("permission check is handled before runtime setup")
     }
-    CliCommand::MinecraftProjectionBridge { .. } => {
-      // TODO(minecraft-projection-canonical-inputs): Restore this archived bridge only after its
-      // frame and screenshot inputs have typed canonical artifact purposes.
-      return Err("minecraft projection bridge awaits typed canonical frame inputs".to_string());
+    CliCommand::MinecraftProjectionBridge {
+      telemetry_sample,
+      screenshot,
+      capture_target_app,
+      capture_target_title,
+      target_block,
+      capture_skew_ms,
+      screenshot_is_minecraft_window,
+      inspect,
+    } => {
+      let inputs = crate::integrations::minecraft::projection_workflow::MinecraftProjectionBridgeInputs {
+        telemetry_sample: PathBuf::from(telemetry_sample),
+        screenshot: screenshot.map(PathBuf::from),
+        capture_target_app,
+        capture_target_title,
+        target_block: parse_block_position(&target_block)?,
+        capture_skew_ms,
+        screenshot_is_minecraft_window,
+      };
+      let (run_id, output) = execute_product_cli_call(&project_root, &inspect, "Minecraft projection bridge", move || {
+        crate::integrations::minecraft::projection_workflow::run_minecraft_projection_bridge(inputs)
+      })
+      .await?;
+      println!("runId: {run_id}");
+      print_minecraft_projection_publications(&output.publications);
+      print_minecraft_projection_refusal(&output.evidence);
     }
-    CliCommand::MinecraftCalibrateProjection { .. } => {
-      // TODO(minecraft-projection-canonical-inputs): Calibration previously depended on local
-      // staged paths; re-open it only with typed frame and image ArtifactUris.
-      return Err("minecraft projection calibration awaits typed canonical inputs".to_string());
+    CliCommand::MinecraftCalibrateProjection {
+      frame_path,
+      screenshot,
+      target_block,
+      target_semantics,
+      screenshot_is_minecraft_window,
+      inspect,
+    } => {
+      let inputs = crate::integrations::minecraft::projection_workflow::MinecraftProjectionCalibrationInputs {
+        frame_path: PathBuf::from(frame_path),
+        screenshot: PathBuf::from(screenshot),
+        target_block: parse_block_position(&target_block)?,
+        target_semantics: parse_target_semantics(&target_semantics)?,
+        screenshot_is_minecraft_window,
+      };
+      let (run_id, output) = execute_product_cli_call(&project_root, &inspect, "Minecraft projection calibration", move || {
+        crate::integrations::minecraft::projection_workflow::run_minecraft_calibrate_projection(inputs)
+      })
+      .await?;
+      println!("runId: {run_id}");
+      print_minecraft_projection_publications(&output.publications);
+      print_minecraft_projection_refusal(&output.evidence);
     }
-    CliCommand::MinecraftLiveClick { .. } => {
-      // TODO(minecraft-live-click-canonical-inputs): The direct query-wired action is the owned
-      // activation path; this older click proof has no canonical input contract.
-      return Err("minecraft live click was retired in favor of query-wired live action".to_string());
+    CliCommand::MinecraftLiveClick {
+      telemetry_sample,
+      screenshot,
+      target_block,
+      target_app,
+      target_title,
+      post_telemetry_sample,
+      capture_skew_ms,
+      screenshot_is_minecraft_window,
+      inspect,
+    } => {
+      let inputs = crate::integrations::minecraft::projection_workflow::MinecraftLiveClickInputs {
+        telemetry_sample: PathBuf::from(telemetry_sample),
+        post_telemetry_sample: post_telemetry_sample.map(PathBuf::from),
+        screenshot: PathBuf::from(screenshot),
+        target_block: parse_block_position(&target_block)?,
+        target_app,
+        target_title,
+        capture_skew_ms,
+        screenshot_is_minecraft_window,
+      };
+      let (run_id, output) = execute_product_cli_call(&project_root, &inspect, "Minecraft live click", move || {
+        crate::integrations::minecraft::projection_workflow::run_minecraft_live_click(inputs)
+      })
+      .await?;
+      println!("runId: {run_id}");
+      print_minecraft_projection_publications(&output.publications);
+      println!("inputSummary: {}", output.input_summary);
+      println!("inputPath: {:?}", output.input_action.selected_path);
+      println!("inputSucceeded: {}", output.input_action.attempts.last().is_some_and(|attempt| attempt.succeeded));
+      println!("verificationExecuted: {}", output.verification.executed);
+      println!("verificationSemanticMatched: {:?}", output.verification.semantic_matched);
     }
     CliCommand::MinecraftExportSpatialBundle {
       run_id,
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft spatial bundle export", move || {
-        crate::integrations::minecraft::run_minecraft_spatial_bundle_export(
-          run_id,
-          PathBuf::from(output_dir),
-          crate::integrations::minecraft::current_git_commit(),
-        )
-      })
-      .await?
-      .1;
+      let (export_run_id, output) =
+        execute_product_cli_call_with_store(&project_root, &inspect, "Minecraft spatial bundle export", move |store| {
+          crate::integrations::minecraft::run_minecraft_spatial_bundle_export(
+            store,
+            run_id,
+            PathBuf::from(output_dir),
+            crate::integrations::minecraft::current_git_commit(),
+          )
+        })
+        .await?;
+      println!("runId: {export_run_id}");
       println!("status: completed");
       println!("sourceRunId: {}", output.manifest.source_run.source_run_id);
       println!("spatialFrames: {}", output.manifest.counts.spatial_frames);
@@ -1002,6 +1073,31 @@ fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> 
   }
 }
 
+fn print_minecraft_projection_publications(
+  publications: &crate::integrations::minecraft::projection_workflow::MinecraftProjectionPublications,
+) {
+  for (label, artifact) in [
+    ("screenshotArtifact", publications.screenshot.as_ref()),
+    ("spatialFrameArtifact", publications.spatial_frame.as_ref()),
+    ("projectionArtifact", publications.projection.as_ref()),
+    ("overlayArtifact", publications.overlay.as_ref()),
+    ("calibrationArtifact", publications.calibration.as_ref()),
+  ] {
+    if let Some(artifact) = artifact {
+      println!("{label}: {}", artifact.uri());
+    }
+  }
+}
+
+fn print_minecraft_projection_refusal(evidence: &auv_game_minecraft::evidence::ProjectionEvidence) {
+  match evidence {
+    auv_game_minecraft::evidence::ProjectionEvidence::Bound { .. } => println!("refusalReason: none"),
+    auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } => {
+      println!("refusalReason: {:?}", refusal.reason);
+    }
+  }
+}
+
 fn parse_target_semantics(raw: &str) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
   match raw {
     "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
@@ -1141,14 +1237,6 @@ fn open_inspect_authority_store(store_root: &Path) -> Result<Arc<dyn auv_tracing
     .map_err(|error| format!("failed to open Inspect run authority {}: {error}", store_root.display()))
 }
 
-fn normalize_write_token(source: &str, token: String) -> Result<String, String> {
-  if token.trim().is_empty() {
-    Err(format!("{source} resolved to an empty write token"))
-  } else {
-    Ok(token)
-  }
-}
-
 #[derive(Clone)]
 struct InvokeFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
@@ -1157,8 +1245,8 @@ struct InvokeFrontendAuthority {
 
 async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptions) -> Result<InvokeFrontendAuthority, String> {
   let server_target = if should_try_server_write(inspect) {
-    if let Some((url, token)) = resolve_inspect_server_target(inspect)? {
-      Some((url, token))
+    if let Some(url) = resolve_inspect_server_target(inspect)? {
+      Some(url)
     } else if inspect.require_server_write {
       return Err("inspect server write is required but no inspect server is configured".to_string());
     } else if matches!(inspect.server_write, crate::cli::InspectWriteSetting::Enabled) {
@@ -1172,9 +1260,7 @@ async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptio
   };
 
   let store: Option<Arc<dyn auv_tracing::RunStore>> = match server_target {
-    // NOTICE(run-recording-v1): V1 Inspect authorities are loopback-only and
-    // have no token contract. Parser compatibility fields retire in Task 22.
-    Some((url, _legacy_token)) => {
+    Some(url) => {
       let parsed = reqwest::Url::parse(&url).map_err(|error| format!("invalid inspect authority URL {url}: {error}"))?;
       match auv_tracing_inspect::InspectRunStore::connect(parsed).await {
         Ok(store) => Some(Arc::new(store)),
@@ -1260,8 +1346,23 @@ where
   F: FnOnce() -> Fut + Send + 'static,
   Fut: Future<Output = Result<T, String>> + Send + 'static,
 {
+  execute_product_cli_call_with_store(project_root, inspect, label, move |_| call()).await
+}
+
+async fn execute_product_cli_call_with_store<T, F, Fut>(
+  project_root: &Path,
+  inspect: &InspectClientOptions,
+  label: &'static str,
+  call: F,
+) -> Result<(auv_tracing::RunId, T), String>
+where
+  T: Send + 'static,
+  F: FnOnce(Arc<dyn auv_tracing::RunStore>) -> Fut + Send + 'static,
+  Fut: Future<Output = Result<T, String>> + Send + 'static,
+{
   let authority = build_invoke_dispatch(project_root, inspect).await?;
-  let execution = execute_invoke_frontend(&authority, call).await?;
+  let store = authority.store.clone();
+  let execution = execute_invoke_frontend(&authority, move || call(store)).await?;
   if let Some(failure) = execution.recording_failure.as_deref() {
     eprintln!("warning: {label} instrumentation failed: {failure}");
   }
@@ -1276,10 +1377,9 @@ fn should_try_server_write(inspect: &InspectClientOptions) -> bool {
   inspect.require_server_write || !matches!(inspect.server_write, crate::cli::InspectWriteSetting::Disabled)
 }
 
-fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Option<(String, Option<String>)>, String> {
-  let explicit_token = resolve_client_token(inspect)?;
+fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Option<String>, String> {
   if let Some(url) = &inspect.server_url {
-    return Ok(Some((url.clone(), explicit_token)));
+    return Ok(Some(url.clone()));
   }
   let Some(session) = read_discovered_inspect_session(inspect)? else {
     return Ok(None);
@@ -1291,7 +1391,7 @@ fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Optio
     eprintln!("warning: ignoring discovered inspect server with non-local URL: {}", session.url);
     return Ok(None);
   }
-  Ok(Some((session.url, None)))
+  Ok(Some(session.url))
 }
 
 fn read_discovered_inspect_session(inspect: &InspectClientOptions) -> Result<Option<auv_inspect_server::InspectServerSession>, String> {
@@ -1316,18 +1416,6 @@ fn is_local_inspect_url(raw: &str) -> bool {
   }
 }
 
-fn resolve_client_token(inspect: &InspectClientOptions) -> Result<Option<String>, String> {
-  if let Some(token) = &inspect.server_token {
-    return normalize_write_token("--inspect-server-token", token.clone()).map(Some);
-  }
-  if let Some(path) = &inspect.server_token_file {
-    let token =
-      fs::read_to_string(path).map_err(|error| format!("failed to read inspect server token file {path}: {error}"))?.trim().to_string();
-    return normalize_write_token("--inspect-server-token-file", token).map(Some);
-  }
-  Ok(None)
-}
-
 fn temp_runtime_store_root() -> PathBuf {
   env::temp_dir().join(format!("auv-runtime-store-{}-{}", process::id(), auv_runtime::model::now_millis()))
 }
@@ -1346,6 +1434,7 @@ mod tests {
   };
   use axum::body::{Body, to_bytes};
   use axum::http::{Request, StatusCode};
+  use image::{Rgb, RgbImage};
   use tower::ServiceExt;
 
   use super::*;
@@ -1355,6 +1444,183 @@ mod tests {
     assert_eq!(exit_status(Ok(0)), std::process::ExitCode::SUCCESS);
     assert_eq!(exit_status(Ok(7)), std::process::ExitCode::from(7));
     assert_eq!(exit_status(Err("failed".to_string())), std::process::ExitCode::FAILURE);
+  }
+
+  fn minecraft_dispatch_fixture(label: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let root = env::temp_dir().join(format!("auv-task22-{label}-{}", auv_tracing::RunId::new()));
+    fs::create_dir_all(&root).expect("Minecraft dispatch fixture directory should write");
+    let telemetry_path = root.join("telemetry.jsonl");
+    let frame_path = root.join("frame.json");
+    let screenshot_path = root.join("frame.png");
+    let frame = auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-task22".to_string(),
+      world_tick: 42,
+      monotonic_timestamp_ms: 5_000,
+      telemetry_session_id: None,
+      viewport: auv_game_minecraft::Viewport::new(64, 64),
+      view_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      projection_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      player_pose: auv_game_minecraft::PlayerPose {
+        eye_position: auv_game_minecraft::Vec3::new(0.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: Some(auv_game_minecraft::RaycastHit {
+        block_pos: auv_game_minecraft::BlockPosition::new(0, 0, 0),
+        face: auv_game_minecraft::BlockFace::North,
+        block_id: "minecraft:stone".to_string(),
+      }),
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: None,
+      resource_pack_ids: Vec::new(),
+    };
+    let frame_json = serde_json::to_string(&frame).expect("Minecraft fixture frame should encode");
+    fs::write(&telemetry_path, format!("{frame_json}\n")).expect("Minecraft fixture telemetry should write");
+    fs::write(&frame_path, frame_json).expect("Minecraft fixture frame should write");
+    RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])).save(&screenshot_path).expect("Minecraft fixture screenshot should write");
+    (root.clone(), telemetry_path, frame_path, screenshot_path)
+  }
+
+  fn minecraft_dispatch_inspect(root: &Path) -> InspectClientOptions {
+    InspectClientOptions {
+      store_root: Some(root.join("store").display().to_string()),
+      server_write: crate::cli::InspectWriteSetting::Disabled,
+      ..InspectClientOptions::default()
+    }
+  }
+
+  async fn minecraft_dispatch_artifact_purposes(root: &Path) -> Vec<String> {
+    let run_ids = fs::read_dir(root.join("store").join("runs"))
+      .expect("Minecraft dispatch run directory should read")
+      .map(|entry| {
+        entry
+          .expect("Minecraft dispatch run entry should read")
+          .file_name()
+          .to_string_lossy()
+          .parse::<RunId>()
+          .expect("Minecraft dispatch run entry should be a run id")
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(run_ids.len(), 1, "Minecraft fixture should record exactly one frontend run");
+    let store = auv_tracing::FileRunStore::open(root.join("store")).expect("Minecraft dispatch store should open");
+    let snapshot = store
+      .load_snapshot(run_ids[0])
+      .await
+      .expect("Minecraft dispatch snapshot should read")
+      .expect("Minecraft dispatch snapshot should exist");
+    snapshot.artifacts().values().map(|artifact| artifact.metadata().purpose().as_str().to_string()).collect()
+  }
+
+  #[tokio::test]
+  async fn minecraft_bridge_dispatch_reaches_projection_workflow() {
+    let (root, telemetry_path, _, screenshot_path) = minecraft_dispatch_fixture("bridge");
+
+    let result = dispatch(CliCommand::MinecraftProjectionBridge {
+      telemetry_sample: telemetry_path.display().to_string(),
+      screenshot: Some(screenshot_path.display().to_string()),
+      capture_target_app: None,
+      capture_target_title: None,
+      target_block: "0,0,0".to_string(),
+      capture_skew_ms: Some(0),
+      screenshot_is_minecraft_window: true,
+      inspect: minecraft_dispatch_inspect(&root),
+    })
+    .await;
+
+    let purposes = minecraft_dispatch_artifact_purposes(&root).await;
+    fs::remove_dir_all(&root).expect("remove Minecraft bridge fixture");
+    assert_eq!(result, Ok(0));
+    assert!(purposes.iter().any(|purpose| purpose == auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE));
+    assert!(purposes.iter().any(|purpose| { purpose == crate::integrations::minecraft::projection_workflow::MINECRAFT_OVERLAY_PURPOSE }));
+  }
+
+  #[tokio::test]
+  async fn minecraft_calibration_dispatch_reaches_projection_workflow() {
+    let (root, _, frame_path, screenshot_path) = minecraft_dispatch_fixture("calibration");
+
+    let result = dispatch(CliCommand::MinecraftCalibrateProjection {
+      frame_path: frame_path.display().to_string(),
+      screenshot: screenshot_path.display().to_string(),
+      target_block: "0,0,0".to_string(),
+      target_semantics: "hit_face_center".to_string(),
+      screenshot_is_minecraft_window: true,
+      inspect: minecraft_dispatch_inspect(&root),
+    })
+    .await;
+
+    let purposes = minecraft_dispatch_artifact_purposes(&root).await;
+    fs::remove_dir_all(&root).expect("remove Minecraft calibration fixture");
+    assert_eq!(result, Ok(0));
+    assert!(purposes.iter().any(|purpose| purpose == auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE));
+    assert!(
+      purposes
+        .iter()
+        .any(|purpose| { purpose == crate::integrations::minecraft::projection_workflow::MINECRAFT_PROJECTION_CALIBRATION_PURPOSE })
+    );
+  }
+
+  #[tokio::test]
+  async fn minecraft_live_click_dispatch_reaches_projection_refusal_without_live_input() {
+    let (root, telemetry_path, _, screenshot_path) = minecraft_dispatch_fixture("live-click");
+
+    let error = dispatch(CliCommand::MinecraftLiveClick {
+      telemetry_sample: telemetry_path.display().to_string(),
+      screenshot: screenshot_path.display().to_string(),
+      target_block: "0,0,0".to_string(),
+      target_app: "invalid.fixture.minecraft".to_string(),
+      target_title: "Fixture Minecraft".to_string(),
+      post_telemetry_sample: None,
+      capture_skew_ms: Some(0),
+      screenshot_is_minecraft_window: false,
+      inspect: minecraft_dispatch_inspect(&root),
+    })
+    .await
+    .expect_err("non-Minecraft screenshot should reach domain refusal before input");
+
+    fs::remove_dir_all(&root).expect("remove Minecraft live-click fixture");
+    assert!(error.contains("NotMinecraftWindow"), "unexpected live-click error: {error}");
+  }
+
+  #[tokio::test]
+  async fn minecraft_spatial_bundle_dispatch_exports_canonical_projection_artifact() {
+    let (root, _, frame_path, _) = minecraft_dispatch_fixture("spatial-bundle");
+    let store_root = root.join("store");
+    let store = Arc::new(auv_tracing::FileRunStore::open(&store_root).expect("Minecraft fixture store should open"));
+    let source_dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("Minecraft fixture dispatch should build");
+    let source_run_id = RunId::new();
+    let source_root = auv_tracing::dispatcher::with_default(&source_dispatch, || auv_tracing::Context::root(source_run_id));
+    let frame: auv_game_minecraft::MinecraftSpatialFrame =
+      serde_json::from_slice(&fs::read(frame_path).expect("Minecraft fixture frame should read"))
+        .expect("Minecraft fixture frame should parse");
+    let projection = auv_game_minecraft::MinecraftProjectionArtifact::for_frame(&frame, None, None);
+    auv_game_minecraft::artifact::publish_minecraft_projection(Some(&source_root), &projection)
+      .await
+      .expect("Minecraft projection should publish")
+      .expect("Minecraft projection publication should be enabled");
+    source_dispatch.flush().await.expect("Minecraft fixture source run should flush");
+
+    let output_dir = root.join("bundle");
+    let result = dispatch(CliCommand::MinecraftExportSpatialBundle {
+      run_id: source_run_id.to_string(),
+      output_dir: output_dir.display().to_string(),
+      inspect: minecraft_dispatch_inspect(&root),
+    })
+    .await;
+
+    assert_eq!(result, Ok(0));
+    let manifest = crate::integrations::minecraft::read_spatial_bundle_manifest(output_dir.join("run.json"))
+      .expect("Minecraft bundle manifest should parse");
+    assert_eq!(manifest.source_run.source_run_id, source_run_id.to_string());
+    assert_eq!(manifest.counts.spatial_frames, 1);
+    fs::remove_dir_all(&root).expect("remove Minecraft spatial-bundle fixture");
   }
 
   #[derive(Clone, Default)]
@@ -1550,19 +1816,15 @@ mod tests {
   }
 
   #[test]
-  fn inspect_server_target_prefers_explicit_url_and_token_file() {
-    let path = env::temp_dir().join(format!("auv-client-write-token-{}.txt", auv_runtime::model::now_millis()));
-    fs::write(&path, "secret\n").expect("token file should write");
+  fn inspect_server_target_uses_explicit_url() {
     let inspect = InspectClientOptions {
       server_url: Some("http://127.0.0.1:9876/".to_string()),
-      server_token_file: Some(path.display().to_string()),
       ..InspectClientOptions::default()
     };
 
     let target = resolve_inspect_server_target(&inspect).expect("explicit target should resolve");
 
-    let _ = fs::remove_file(path);
-    assert_eq!(target, Some(("http://127.0.0.1:9876/".to_string(), Some("secret".to_string()))));
+    assert_eq!(target, Some("http://127.0.0.1:9876/".to_string()));
   }
 
   #[tokio::test]

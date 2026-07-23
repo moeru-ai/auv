@@ -27,10 +27,9 @@ impl DirectWindowPointClickExecutor {
   pub fn actions(&self) -> Vec<auv_driver::InputActionResult> {
     self.actions.lock().expect("Minecraft click action mutex poisoned").clone()
   }
-}
 
-impl QueryLiveClickExecutor for DirectWindowPointClickExecutor {
-  fn attempt_click(&self, window_point: WindowPoint, _lineage: &QueryActionWiringLineage) -> Result<String, String> {
+  /// Delivers one typed window click and retains its result for publication.
+  pub fn click(&self, window_point: WindowPoint) -> Result<(String, auv_driver::InputActionResult), String> {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let window = session
       .window()
@@ -38,11 +37,17 @@ impl QueryLiveClickExecutor for DirectWindowPointClickExecutor {
         app: Some(auv_driver::App::bundle_id(self.target_app.clone())),
         title: Some(auv_driver::TextMatcher::Contains(self.target_title.clone())),
         main_visible: true,
-        ..auv_driver::WindowSelector::default()
       })
       .map_err(|error| error.to_string())?;
     let action = session.window().click(&window, window_point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
-    self.actions.lock().expect("Minecraft click action mutex poisoned").push(action);
-    Ok(format!("clicked window point ({:.3},{:.3}) in {}", window_point.point().x, window_point.point().y, window.reference.id))
+    let summary = format!("clicked window point ({:.3},{:.3}) in {}", window_point.point().x, window_point.point().y, window.reference.id);
+    self.actions.lock().expect("Minecraft click action mutex poisoned").push(action.clone());
+    Ok((summary, action))
+  }
+}
+
+impl QueryLiveClickExecutor for DirectWindowPointClickExecutor {
+  fn attempt_click(&self, window_point: WindowPoint, _lineage: &QueryActionWiringLineage) -> Result<String, String> {
+    self.click(window_point).map(|(summary, _)| summary)
   }
 }

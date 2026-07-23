@@ -1,32 +1,40 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use futures_util::StreamExt;
 
 pub mod help;
+pub mod projection_workflow;
 pub mod query_live_action;
 pub mod session;
 pub mod verification;
 
 use auv_game_minecraft::{
-  QueryActionWiringOutcome, QueryLiveClickExecutor, ScenePacketInputs, ScenePacketOutput, TextureSweepInputs, TextureSweepPreparationInputs,
-  TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput, TextureSweepThresholds,
-  TrainingLaunchJobInputs, TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
+  QueryActionWiringOutcome, QueryLiveClickExecutor, ScenePacketInputs, ScenePacketOutput, SourceRunSummary, SpatialBundleInputs,
+  SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput, TextureSweepReport,
+  TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
+  TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
   TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput, TrainingResultHoldoutPreviewInputs,
   TrainingResultHoldoutPreviewOutput, TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityOutput,
   TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs, TrainingResultSemanticValidationOutput,
   TrainingResultSpatialQueryInputs, TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryOutput,
   build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
-  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package, fetch_3dgs_training_result_artifacts_with_environment,
-  inspect_3dgs_training_result_holdout, launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
-  measure_3dgs_holdout_render_quality, prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs, query_3dgs_training_result,
-  query_action_wiring_lineage_from_manifest, validate_3dgs_training_result, wire_query_manifest_to_action,
+  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
+  fetch_3dgs_training_result_artifacts_with_environment, inspect_3dgs_training_result_holdout, launch_3dgs_training_job,
+  launch_3dgs_training_job_with_environment, measure_3dgs_holdout_render_quality, prepare_3dgs_training_launch,
+  prepare_texture_sweep_resource_packs, query_3dgs_training_result, query_action_wiring_lineage_from_manifest,
+  validate_3dgs_training_result, wire_query_manifest_to_action,
 };
 use auv_runtime::contract::VerificationResult;
 use auv_runtime::model::AuvResult;
-use auv_tracing::Context;
+use auv_tracing::{Context, RunId, RunSnapshot, RunStore};
 
 use self::query_live_action::DirectWindowPointClickExecutor;
 
 pub use auv_game_minecraft::artifact_roles::*;
+
+pub const MINECRAFT_SPATIAL_BUNDLE_PURPOSE: &str = "auv.minecraft.spatial_bundle";
 
 pub async fn run_minecraft_3dgs_scene_packet_export(
   bundle_manifest_paths: Vec<PathBuf>,
@@ -355,14 +363,94 @@ pub async fn run_minecraft_texture_sweep_sample_build(
 }
 
 pub async fn run_minecraft_spatial_bundle_export(
-  _source_run_id: String,
-  _output_dir: PathBuf,
-  _git_commit: Option<String>,
+  store: Arc<dyn RunStore>,
+  source_run_id: String,
+  output_dir: PathBuf,
+  git_commit: Option<String>,
 ) -> AuvResult<auv_game_minecraft::SpatialBundleOutput> {
-  // TODO(minecraft-spatial-bundle-canonical-source-v1): the retired exporter
-  // requires physical role/path records. Re-enable it after typed canonical
-  // spatial-frame and screenshot purposes are owner-approved.
-  Err("Minecraft spatial bundle export requires canonical spatial-frame and screenshot artifact purposes".to_string())
+  let source_run_id = source_run_id.parse::<RunId>().map_err(|error| format!("invalid Minecraft source run id: {error}"))?;
+  let snapshot = store
+    .load_snapshot(source_run_id)
+    .await
+    .map_err(|error| format!("failed to read Minecraft source run {source_run_id}: {error}"))?
+    .ok_or_else(|| format!("Minecraft source run {source_run_id} was not found"))?;
+  let staging_dir = std::env::temp_dir().join(format!("auv-minecraft-bundle-source-{}-{}", source_run_id, auv_runtime::model::now_millis()));
+  fs::create_dir_all(&staging_dir)
+    .map_err(|error| format!("failed to create Minecraft bundle source staging directory {}: {error}", staging_dir.display()))?;
+  let artifacts = materialize_spatial_bundle_artifacts(store.as_ref(), &snapshot, &staging_dir).await;
+  let result = match artifacts {
+    Ok(artifacts) => export_spatial_bundle(SpatialBundleInputs {
+      output_dir,
+      source: source_run_summary(&snapshot, git_commit),
+      artifacts,
+    }),
+    Err(error) => Err(error),
+  };
+  let _ = fs::remove_dir_all(&staging_dir);
+  let result = result?;
+  let _ = projection_workflow::publish_json_artifact(MINECRAFT_SPATIAL_BUNDLE_PURPOSE, &result.manifest).await;
+  Ok(result)
+}
+
+async fn materialize_spatial_bundle_artifacts(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  staging_dir: &Path,
+) -> AuvResult<Vec<SpatialBundleSourceArtifact>> {
+  let mut artifacts = Vec::new();
+  for published in snapshot.artifacts().values() {
+    let metadata = published.metadata();
+    let Some((role, extension)) = spatial_bundle_role_for_purpose(metadata.purpose().as_str()) else {
+      continue;
+    };
+    let uri = metadata.uri();
+    let source_path = staging_dir.join(format!("{}.{}", uri.artifact_id(), extension));
+    let mut reader =
+      store.open_artifact(uri.clone()).await.map_err(|error| format!("failed to open Minecraft source artifact {uri}: {error}"))?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = reader.next().await {
+      let chunk = chunk.map_err(|error| format!("failed to read Minecraft source artifact {uri}: {error}"))?;
+      bytes.extend_from_slice(&chunk);
+    }
+    fs::write(&source_path, bytes)
+      .map_err(|error| format!("failed to materialize Minecraft source artifact {uri} at {}: {error}", source_path.display()))?;
+    artifacts.push(SpatialBundleSourceArtifact {
+      artifact_id: uri.artifact_id().to_string(),
+      role: role.to_string(),
+      source_path,
+      source_run_path: uri.to_string(),
+      summary: Some(format!("canonical purpose {}", metadata.purpose())),
+    });
+  }
+  Ok(artifacts)
+}
+
+fn spatial_bundle_role_for_purpose(purpose: &str) -> Option<(&'static str, &'static str)> {
+  match purpose {
+    projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE => Some(("minecraft-screenshot", "png")),
+    projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE => Some((MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE, "json")),
+    auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE => Some((MINECRAFT_PROJECTION_ARTIFACT_ROLE, "json")),
+    projection_workflow::MINECRAFT_OVERLAY_PURPOSE => Some(("minecraft-overlay", "png")),
+    _ => None,
+  }
+}
+
+fn source_run_summary(snapshot: &RunSnapshot, git_commit: Option<String>) -> SourceRunSummary {
+  let source_operation = snapshot
+    .spans()
+    .values()
+    .find(|span| span.started().parent_span_id().is_none())
+    .map(|span| span.started().name().to_string())
+    .unwrap_or_else(|| "unknown".to_string());
+  SourceRunSummary {
+    source_run_id: snapshot.run_id().to_string(),
+    source_operation,
+    source_run_type: "execute".to_string(),
+    source_status: "recorded".to_string(),
+    generated_at_millis: auv_runtime::model::now_millis(),
+    auv_git_commit: git_commit.clone(),
+    exporter_git_commit: git_commit,
+  }
 }
 
 pub async fn run_minecraft_texture_sweep_eval(
