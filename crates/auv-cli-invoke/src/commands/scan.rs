@@ -7,7 +7,13 @@ use crate::{
   invoke_command,
 };
 use auv_scan::{produce_coverage_from_fixture_dir, produce_frame_from_fixture_dir};
+use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, Context, NewArtifact, Sha256Digest};
+use futures_util::io::Cursor as AsyncCursor;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+
+const SCAN_COVERAGE_PURPOSE: &str = "auv.runtime.scan_coverage";
+const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("scan", "SCAN").command(frame_invoke_command()).command(coverage_invoke_command())
@@ -88,9 +94,42 @@ pub async fn produce_scan_coverage(fixture_dir: PathBuf) -> Result<ArtifactPubli
   let producer_out = TempDir::new().map_err(|error| format!("scan.coverage failed to create producer output directory: {error}"))?;
   let produced = produce_coverage_from_fixture_dir(&fixture_dir, producer_out.path())
     .map_err(|error| format!("scan.coverage producer failed: {error}"))?;
-  let mut instrumentation = ArtifactInstrumentationReceipt::default();
-  instrumentation.publish_file("auv.runtime.scan_coverage", "application/json", &produced.json_path).await;
-  Ok(ArtifactPublication::new(produced.wire, instrumentation))
+  let _ = publish_scan_coverage(&produced.wire).await;
+  Ok(ArtifactPublication::new(produced.wire, ArtifactInstrumentationReceipt::default()))
+}
+
+async fn publish_scan_coverage(value: &auv_scan::ScanCoverageWire) -> Result<(), String> {
+  let context = Context::current();
+  if !context.can_publish_artifacts() {
+    return Ok(());
+  }
+  let artifact = scan_coverage_artifact(value)?;
+  context
+    .in_scope(|| auv_tracing::emit_artifact!(artifact))
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("failed to publish {SCAN_COVERAGE_PURPOSE} artifact: {error}"))
+}
+
+fn scan_coverage_artifact(value: &auv_scan::ScanCoverageWire) -> Result<NewArtifact<AsyncCursor<Vec<u8>>>, String> {
+  if value.schema_version != auv_scan::SCAN_COVERAGE_SCHEMA_VERSION {
+    return Err(format!("{SCAN_COVERAGE_PURPOSE} failed domain validation: schema version mismatch: found {}", value.schema_version));
+  }
+  let body = serde_json::to_vec(value).map_err(|error| format!("failed to serialize {SCAN_COVERAGE_PURPOSE} artifact: {error}"))?;
+  let byte_length = u64::try_from(body.len()).map_err(|_| format!("{SCAN_COVERAGE_PURPOSE} JSON length does not fit u64"))?;
+  if byte_length > ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+    return Err(format!(
+      "{SCAN_COVERAGE_PURPOSE} is {byte_length} bytes, exceeding the {ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT}-byte limit"
+    ));
+  }
+  Ok(NewArtifact::new(
+    ArtifactPurpose::parse(SCAN_COVERAGE_PURPOSE).map_err(|error| format!("invalid {SCAN_COVERAGE_PURPOSE} purpose: {error}"))?,
+    ContentType::parse("application/json").map_err(|error| format!("invalid {SCAN_COVERAGE_PURPOSE} content type: {error}"))?,
+    ByteLength::new(byte_length).map_err(|error| format!("invalid {SCAN_COVERAGE_PURPOSE} byte length: {error}"))?,
+    Sha256Digest::new(Sha256::digest(&body).into()),
+    Attributes::empty(),
+    AsyncCursor::new(body),
+  ))
 }
 
 #[cfg(test)]
@@ -101,12 +140,16 @@ mod tests {
   use std::sync::Arc;
 
   use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
+  use futures_util::StreamExt;
 
   use crate::{
     InvokeCommand, InvokeCommandInput, InvokeCommandOutput, InvokeNamespace, arg::SCAN_COVERAGE_ARGS, default_registry, render_command_help,
   };
 
-  use super::{coverage, coverage_invoke_command, frame, frame_invoke_command, produce_scan_coverage, produce_scan_frame};
+  use super::{
+    ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, coverage, coverage_invoke_command, frame, frame_invoke_command, produce_scan_coverage,
+    produce_scan_frame, publish_scan_coverage, scan_coverage_artifact,
+  };
 
   fn single_frame_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-scan/tests/fixtures/scan/temporal/single_frame_v0")
@@ -169,6 +212,29 @@ mod tests {
 
     assert_eq!(frame.value().schema_version, auv_scan::SCAN_FRAME_SCHEMA_VERSION);
     assert_eq!(coverage.value().schema_version, auv_scan::SCAN_COVERAGE_SCHEMA_VERSION);
+  }
+
+  #[tokio::test]
+  async fn scan_coverage_publication_short_circuits_without_run_context() {
+    let (mut coverage, _) = produce_scan_coverage(coverage_stable_fixture_dir()).await.expect("typed coverage").into_parts();
+    coverage.schema_version = "scan-coverage-v999".to_string();
+
+    publish_scan_coverage(&coverage).await.expect("disabled telemetry skips domain validation");
+  }
+
+  #[test]
+  fn scan_coverage_artifact_enforces_schema_and_four_mibibyte_bounds() {
+    let (mut invalid, _) =
+      futures_executor::block_on(produce_scan_coverage(coverage_stable_fixture_dir())).expect("typed coverage").into_parts();
+    invalid.schema_version = "scan-coverage-v999".to_string();
+    let schema_error = scan_coverage_artifact(&invalid).err().expect("wrong schema must fail");
+    assert!(schema_error.contains("schema version mismatch"));
+
+    let (mut oversized, _) =
+      futures_executor::block_on(produce_scan_coverage(coverage_stable_fixture_dir())).expect("typed coverage").into_parts();
+    oversized.open_uncertainty_codes = vec!["x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize)];
+    let size_error = scan_coverage_artifact(&oversized).err().expect("oversized coverage must fail");
+    assert!(size_error.contains("4194304-byte limit"));
   }
 
   #[test]
@@ -254,6 +320,7 @@ mod tests {
   #[test]
   fn scan_coverage_from_fixture_dir_emits_owned_artifact() {
     let fixture_dir = coverage_stable_fixture_dir();
+    let (expected, _) = futures_executor::block_on(produce_scan_coverage(fixture_dir.clone())).expect("direct typed coverage").into_parts();
     let (output, store, run_id) = futures_executor::block_on(invoke_traced(
       coverage_invoke_command(),
       InvokeCommandInput {
@@ -271,6 +338,15 @@ mod tests {
     assert_eq!(snapshot.artifacts().len(), 1);
     assert_eq!(publication.metadata().purpose().as_str(), "auv.runtime.scan_coverage");
     assert_eq!(publication.metadata().content_type().to_string(), "application/json");
+    let actual = futures_executor::block_on(async {
+      let mut reader = store.open_artifact(publication.metadata().uri().clone()).await.expect("open coverage artifact");
+      let mut bytes = Vec::new();
+      while let Some(chunk) = reader.next().await {
+        bytes.extend_from_slice(&chunk.expect("coverage artifact chunk"));
+      }
+      serde_json::from_slice::<auv_scan::ScanCoverageWire>(&bytes).expect("typed coverage payload")
+    });
+    assert_eq!(actual, expected);
   }
 
   #[test]

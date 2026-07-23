@@ -8,6 +8,12 @@ use crate::{
   invoke_command,
 };
 use crate::{InvokeReport, InvokeReportField};
+use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, ContentType, Context, NewArtifact, Sha256Digest};
+use futures_util::io::Cursor as AsyncCursor;
+use sha2::{Digest, Sha256};
+
+const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
+const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("input", "INPUT")
@@ -167,8 +173,8 @@ pub async fn type_text_into_active_control(text: String) -> Result<ArtifactPubli
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = session.input().type_text(&text, auv_driver::TypeTextOptions::default()).map_err(|error| error.to_string())?;
-    let instrumentation = emit_input_action_result(&result).await;
-    Ok(ArtifactPublication::new(result, instrumentation))
+    let _ = publish_input_action_result(&result).await;
+    Ok(ArtifactPublication::new(result, ArtifactInstrumentationReceipt::default()))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -274,8 +280,8 @@ pub async fn press_key_in_active_app(key: String) -> Result<ArtifactPublication<
         ..auv_driver::KeyPressOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    let instrumentation = emit_input_action_result(&result).await;
-    Ok(ArtifactPublication::new(result, instrumentation))
+    let _ = publish_input_action_result(&result).await;
+    Ok(ArtifactPublication::new(result, ArtifactInstrumentationReceipt::default()))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -481,14 +487,14 @@ where
   C: WindowPointCapability + Sync + ?Sized,
 {
   let action = capability.click(&window, point).map_err(|error| error.to_string())?;
-  let instrumentation = emit_input_action_result(&action).await;
+  let _ = publish_input_action_result(&action).await;
   Ok(ArtifactPublication::new(
     WindowPointClick {
       window,
       point,
       action,
     },
-    instrumentation,
+    ArtifactInstrumentationReceipt::default(),
   ))
 }
 
@@ -620,10 +626,39 @@ fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputA
   output
 }
 
-async fn emit_input_action_result(result: &auv_driver::InputActionResult) -> ArtifactInstrumentationReceipt {
-  let mut instrumentation = ArtifactInstrumentationReceipt::default();
-  instrumentation.publish_json("auv.driver.input_action_result", result).await;
-  instrumentation
+async fn publish_input_action_result(result: &auv_driver::InputActionResult) -> Result<(), String> {
+  let context = Context::current();
+  if !context.can_publish_artifacts() {
+    return Ok(());
+  }
+  let artifact = input_action_result_artifact(result)?;
+  context
+    .in_scope(|| auv_tracing::emit_artifact!(artifact))
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("failed to publish {INPUT_ACTION_RESULT_PURPOSE} artifact: {error}"))
+}
+
+fn input_action_result_artifact(result: &auv_driver::InputActionResult) -> Result<NewArtifact<AsyncCursor<Vec<u8>>>, String> {
+  if result.attempts.iter().any(|attempt| attempt.succeeded && attempt.path != result.selected_path) {
+    return Err(format!("{INPUT_ACTION_RESULT_PURPOSE} failed domain validation: successful input attempt must match selected_path"));
+  }
+  let body = serde_json::to_vec(result).map_err(|error| format!("failed to serialize {INPUT_ACTION_RESULT_PURPOSE} artifact: {error}"))?;
+  let byte_length = u64::try_from(body.len()).map_err(|_| format!("{INPUT_ACTION_RESULT_PURPOSE} JSON length does not fit u64"))?;
+  if byte_length > ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+    return Err(format!(
+      "{INPUT_ACTION_RESULT_PURPOSE} is {byte_length} bytes, exceeding the {ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT}-byte limit"
+    ));
+  }
+  Ok(NewArtifact::new(
+    ArtifactPurpose::parse(INPUT_ACTION_RESULT_PURPOSE)
+      .map_err(|error| format!("invalid {INPUT_ACTION_RESULT_PURPOSE} purpose: {error}"))?,
+    ContentType::parse("application/json").map_err(|error| format!("invalid {INPUT_ACTION_RESULT_PURPOSE} content type: {error}"))?,
+    ByteLength::new(byte_length).map_err(|error| format!("invalid {INPUT_ACTION_RESULT_PURPOSE} byte length: {error}"))?,
+    Sha256Digest::new(Sha256::digest(&body).into()),
+    Attributes::empty(),
+    AsyncCursor::new(body),
+  ))
 }
 
 fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, result: &auv_driver::InputActionResult) -> InvokeReport {
@@ -651,6 +686,8 @@ fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
 mod click_window_point_tests {
   use super::*;
   use auv_driver::{InputActionResult, InputDeliveryPath};
+  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
+  use futures_util::StreamExt;
   use std::collections::BTreeMap;
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
@@ -658,6 +695,7 @@ mod click_window_point_tests {
   #[derive(Clone)]
   struct ControlledWindowCapability {
     window: auv_driver::Window,
+    action: InputActionResult,
     resolve_calls: Arc<AtomicUsize>,
     click_calls: Arc<AtomicUsize>,
   }
@@ -666,6 +704,7 @@ mod click_window_point_tests {
     fn new() -> Self {
       Self {
         window: test_window(),
+        action: InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse),
         resolve_calls: Arc::new(AtomicUsize::new(0)),
         click_calls: Arc::new(AtomicUsize::new(0)),
       }
@@ -677,6 +716,11 @@ mod click_window_point_tests {
 
     fn click_count(&self) -> usize {
       self.click_calls.load(Ordering::SeqCst)
+    }
+
+    fn with_action(mut self, action: InputActionResult) -> Self {
+      self.action = action;
+      self
     }
   }
 
@@ -692,7 +736,7 @@ mod click_window_point_tests {
       _point: auv_driver::geometry::WindowPoint,
     ) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
       self.click_calls.fetch_add(1, Ordering::SeqCst);
-      Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
+      Ok(self.action.clone())
     }
   }
 
@@ -778,6 +822,100 @@ mod click_window_point_tests {
     assert_eq!(output.summary, "clicked window point");
     assert_eq!(capability.resolve_count(), 1);
     assert_eq!(capability.click_count(), 1);
+  }
+
+  #[tokio::test]
+  async fn resolved_window_click_returns_direct_action_and_publishes_through_typed_root_contract() {
+    let capability = ControlledWindowCapability::new();
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let expected = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
+    let future =
+      root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
+
+    let delivered = root.instrument(future).await.expect("direct window click result");
+    dispatch.flush().await.expect("flush input action telemetry");
+    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("input run");
+
+    assert_eq!(delivered.value().action, expected);
+    let publication = snapshot.artifacts().values().next().expect("input action artifact");
+    assert_eq!(snapshot.artifacts().len(), 1);
+    assert_eq!(publication.metadata().purpose().as_str(), INPUT_ACTION_RESULT_PURPOSE);
+    assert_eq!(publication.metadata().content_type().to_string(), "application/json");
+    let mut reader = store.open_artifact(publication.metadata().uri().clone()).await.expect("open input action artifact");
+    let mut bytes = Vec::new();
+    while let Some(chunk) = reader.next().await {
+      bytes.extend_from_slice(&chunk.expect("input action artifact chunk"));
+    }
+    let recorded: InputActionResult = serde_json::from_slice(&bytes).expect("typed input action payload");
+    assert_eq!(recorded, expected);
+  }
+
+  #[tokio::test]
+  async fn invalid_input_telemetry_does_not_replace_direct_driver_result() {
+    let invalid = InputActionResult {
+      selected_path: InputDeliveryPath::WindowTargetedMouse,
+      attempts: vec![auv_driver::InputAttempt::success(
+        InputDeliveryPath::AxPress,
+      )],
+      fallback_reason: None,
+      mouse_disturbance: auv_driver::DisturbanceLevel::None,
+      focus_disturbance: auv_driver::DisturbanceLevel::None,
+      clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+    };
+    let capability = ControlledWindowCapability::new().with_action(invalid.clone());
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let future =
+      root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
+
+    let delivered = root.instrument(future).await.expect("driver result survives telemetry rejection");
+    dispatch.flush().await.expect("flush rejected telemetry run");
+    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read");
+
+    assert_eq!(delivered.value().action, invalid);
+    assert!(snapshot.is_none(), "rejected optional telemetry must not commit an artifact-only run");
+  }
+
+  #[tokio::test]
+  async fn input_action_publication_short_circuits_without_run_context() {
+    let invalid = InputActionResult {
+      selected_path: InputDeliveryPath::WindowTargetedMouse,
+      attempts: vec![auv_driver::InputAttempt::success(
+        InputDeliveryPath::AxPress,
+      )],
+      fallback_reason: None,
+      mouse_disturbance: auv_driver::DisturbanceLevel::None,
+      focus_disturbance: auv_driver::DisturbanceLevel::None,
+      clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+    };
+
+    publish_input_action_result(&invalid).await.expect("disabled telemetry skips domain validation");
+  }
+
+  #[test]
+  fn input_action_artifact_enforces_domain_and_four_mibibyte_bounds() {
+    let invalid = InputActionResult {
+      selected_path: InputDeliveryPath::WindowTargetedMouse,
+      attempts: vec![auv_driver::InputAttempt::success(
+        InputDeliveryPath::AxPress,
+      )],
+      fallback_reason: None,
+      mouse_disturbance: auv_driver::DisturbanceLevel::None,
+      focus_disturbance: auv_driver::DisturbanceLevel::None,
+      clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+    };
+    let domain_error = input_action_result_artifact(&invalid).err().expect("mismatched successful attempt must fail");
+    assert!(domain_error.contains("successful input attempt must match selected_path"));
+
+    let mut oversized = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
+    oversized.fallback_reason = Some("x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize));
+    let size_error = input_action_result_artifact(&oversized).err().expect("oversized input action must fail");
+    assert!(size_error.contains("4194304-byte limit"));
   }
 
   #[test]

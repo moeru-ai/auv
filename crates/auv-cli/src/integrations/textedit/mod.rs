@@ -1,9 +1,7 @@
 //! TextEdit product invoke backed by the app-owned typed command report.
 
-#[cfg(test)]
 use std::time::Duration;
 
-#[cfg(test)]
 use auv_apple_textedit::StepOutcome;
 use auv_apple_textedit::{
   DocumentCommand, DocumentCommandReport, DocumentWrite, TextEditDriver, VerificationOutcome, run_document_command_with_checkpoint,
@@ -13,7 +11,6 @@ use auv_cli_invoke::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportSection,
   invoke_command,
 };
-#[cfg(test)]
 use auv_driver::{InputActionResult, InputDeliveryPath};
 use auv_runtime::contract::{FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult};
 use auv_tracing::{Context, EventPayload};
@@ -42,35 +39,31 @@ async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
     output.known_limits.push("app.textedit.document.write dry-run does not touch TextEdit or publish run artifacts.".to_string());
     return Ok(output);
   }
-  let report = write_document(command.clone(), input.cancellation).await?;
-  build_invoke_output_from_report(&report, &command)
-}
-
-pub async fn write_document(
-  command: DocumentWrite,
-  cancellation: auv_cli_invoke::InvokeCancellation,
-) -> Result<DocumentCommandReport, String> {
   #[cfg(target_os = "macos")]
   {
-    cancellation.check().map_err(|error| error.to_string())?;
     let driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
-    // TODO(textedit-driver-cancellation): checkpoints cannot interrupt one
-    // synchronous native driver call; reopen this only when the driver owns a
-    // cancellable operation contract.
-    write_document_with_driver(command, cancellation, driver).await
+    return map_document_write_cli(command, input.cancellation, driver).await.map(|(output, _)| output);
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = (command, cancellation);
+    let _ = (command, input.cancellation);
     Err("app.textedit.document.write live driver requires macOS".to_string())
   }
 }
 
-async fn write_document_with_driver(
+/// Executes the shared TextEdit document-write domain function with a caller-owned driver.
+pub async fn write_document<D>(
   command: DocumentWrite,
   cancellation: auv_cli_invoke::InvokeCancellation,
-  mut driver: impl TextEditDriver,
-) -> Result<DocumentCommandReport, String> {
+  mut driver: D,
+) -> Result<DocumentCommandReport, String>
+where
+  D: TextEditDriver,
+{
+  // TODO(textedit-driver-cancellation): checkpoints cannot interrupt one
+  // synchronous native driver call; reopen this only when the driver owns a
+  // cancellable operation contract.
+  cancellation.check().map_err(|error| error.to_string())?;
   let report = run_document_command_with_checkpoint(&DocumentCommand::Write(command), &mut driver, || {
     cancellation.check().map_err(|error| error.to_string())
   })?;
@@ -91,6 +84,19 @@ async fn write_document_with_driver(
     });
   }
   Ok(report)
+}
+
+async fn map_document_write_cli<D>(
+  command: DocumentWrite,
+  cancellation: auv_cli_invoke::InvokeCancellation,
+  driver: D,
+) -> Result<(InvokeCommandOutput, DocumentCommandReport), String>
+where
+  D: TextEditDriver,
+{
+  let report = write_document(command.clone(), cancellation, driver).await?;
+  let output = build_invoke_output_from_report(&report, &command)?;
+  Ok((output, report))
 }
 
 #[derive(serde::Serialize)]
@@ -121,15 +127,18 @@ pub fn map_verification_result(verification: &VerificationOutcome) -> Verificati
   }
 }
 
-#[cfg(test)]
-pub(crate) async fn write_document_with_test_driver(
-  command: DocumentWrite,
+/// Test fixture boundary that runs the production CLI mapping without opening the live macOS driver.
+#[doc(hidden)]
+pub async fn fixture_document_write_cli(
+  input: InvokeCommandInput,
   observed_text: Option<String>,
-  cancellation: auv_cli_invoke::InvokeCancellation,
-) -> Result<DocumentCommandReport, String> {
-  let mut driver = FixtureTextEditDriver::from_write(&command);
-  driver.observed_override = observed_text;
-  write_document_with_driver(command, cancellation, driver).await
+) -> Result<(InvokeCommandOutput, DocumentCommandReport), String> {
+  let command = parse_document_write(&input)?;
+  if input.dry_run {
+    return Err("TextEdit fixture mapping requires a live-style invocation".to_string());
+  }
+  let driver = fixture_driver(&command, observed_text);
+  map_document_write_cli(command, input.cancellation, driver).await
 }
 
 fn reject_production_fixture_inputs(inputs: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
@@ -271,7 +280,6 @@ fn truncate(value: &str, max_chars: usize) -> String {
   }
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug)]
 struct FixtureTextEditDriver {
   content: String,
@@ -279,7 +287,6 @@ struct FixtureTextEditDriver {
   observed_override: Option<String>,
 }
 
-#[cfg(test)]
 impl FixtureTextEditDriver {
   fn from_write(command: &DocumentWrite) -> Self {
     Self {
@@ -290,7 +297,6 @@ impl FixtureTextEditDriver {
   }
 }
 
-#[cfg(test)]
 impl TextEditDriver for FixtureTextEditDriver {
   fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
     Ok(StepOutcome {
@@ -337,6 +343,12 @@ impl TextEditDriver for FixtureTextEditDriver {
   }
 }
 
+pub(crate) fn fixture_driver(command: &DocumentWrite, observed_text: Option<String>) -> impl TextEditDriver + use<> {
+  let mut driver = FixtureTextEditDriver::from_write(command);
+  driver.observed_override = observed_text;
+  driver
+}
+
 #[cfg(test)]
 mod tests {
   use std::sync::Arc;
@@ -348,9 +360,8 @@ mod tests {
   #[tokio::test]
   async fn direct_fixture_report_preserves_semantic_mismatch() {
     let command = DocumentWrite::defaults_with_content("expected");
-    let report = write_document_with_test_driver(command, Some("different".to_string()), auv_cli_invoke::InvokeCancellation::new())
-      .await
-      .expect("fixture report");
+    let driver = fixture_driver(&command, Some("different".to_string()));
+    let report = write_document(command, auv_cli_invoke::InvokeCancellation::new(), driver).await.expect("fixture report");
     assert_eq!(report.verification.as_ref().map(|value| value.semantic_matched), Some(false));
   }
 
@@ -361,8 +372,8 @@ mod tests {
     let run_id = RunId::new();
     let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
     let command = DocumentWrite::defaults_with_content("expected");
-    let future =
-      root.in_scope(|| write_document_with_test_driver(command, Some("different".to_string()), auv_cli_invoke::InvokeCancellation::new()));
+    let driver = fixture_driver(&command, Some("different".to_string()));
+    let future = root.in_scope(|| write_document(command, auv_cli_invoke::InvokeCancellation::new(), driver));
 
     let report = root.instrument(future).await.expect("fixture report");
     dispatch.flush().await.expect("flush TextEdit facts");
