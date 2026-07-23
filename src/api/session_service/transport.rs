@@ -3,8 +3,6 @@
 //! NOTICE(api-p9-non-goals):
 //! - No TLS and no non-loopback bind; remote access is out of scope.
 //! - `StreamSessionEvents` is not wired (event projector, API-P4 responsibility D).
-//! - `GetOperation` remains explicit `UNIMPLEMENTED` until it has a typed domain
-//!   projection; canonical runs do not persist generic command summaries.
 
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
@@ -151,14 +149,6 @@ impl SessionService for SessionServiceGrpc {
     self.handler.invoke(request.into_inner()).await.map(Response::new).map_err(map_session_error)
   }
 
-  async fn get_operation(&self, request: Request<proto::GetOperationRequest>) -> Result<Response<proto::GetOperationResponse>, Status> {
-    let cancel = CancellationToken::new();
-    let _guard = RpcCancelGuard(cancel.clone());
-    let handler = Arc::clone(&self.handler);
-    let inner = request.into_inner();
-    run_blocking_rpc(cancel, move || handler.get_operation(inner)).await.map(Response::new)
-  }
-
   type StreamSessionEventsStream = std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<proto::SessionEvent, Status>> + Send>>;
 
   async fn stream_session_events(
@@ -280,7 +270,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn grpc_invoke_returns_direct_value_and_get_operation_is_explicitly_unwired() {
+  async fn grpc_invoke_returns_direct_value_and_run_identity() {
     let store_root = session_api_temp_store_root("transport");
     let config = SessionApiServeConfig {
       host: DEFAULT_SESSION_API_HOST.to_string(),
@@ -313,15 +303,8 @@ mod tests {
       .expect("invoke")
       .into_inner();
     assert_eq!(invoke_response.status, "completed");
-    let operation = invoke_response.operation.expect("operation ref");
-
-    let get_status = client
-      .get_operation(proto::GetOperationRequest {
-        operation: Some(operation),
-      })
-      .await
-      .expect_err("generic operation projection is retired");
-    assert_eq!(get_status.code(), Code::Unimplemented);
+    assert!(!invoke_response.run_id.is_empty());
+    assert!(invoke_response.recording_failure.is_empty());
 
     server.abort();
     let _ = server.await;

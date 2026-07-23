@@ -22,22 +22,40 @@ impl auv_tracing::EventPayload for SessionFrontendLifecycle {
 }
 
 pub struct SessionApiHandler {
-  store_root: PathBuf,
+  store: SessionRunStoreAuthority,
   registry: Mutex<SessionRegistry>,
+}
+
+enum SessionRunStoreAuthority {
+  File(PathBuf),
+  #[cfg(test)]
+  Injected(Arc<dyn RunStore>),
 }
 
 impl SessionApiHandler {
   pub fn new(store_root: PathBuf) -> Self {
     Self {
-      store_root,
+      store: SessionRunStoreAuthority::File(store_root),
+      registry: Mutex::new(SessionRegistry::new()),
+    }
+  }
+
+  #[cfg(test)]
+  fn with_store(store: Arc<dyn RunStore>) -> Self {
+    Self {
+      store: SessionRunStoreAuthority::Injected(store),
       registry: Mutex::new(SessionRegistry::new()),
     }
   }
 
   fn open_store(&self) -> Result<Arc<dyn RunStore>, SessionApiError> {
-    FileRunStore::open(&self.store_root)
-      .map(|store| Arc::new(store) as Arc<dyn RunStore>)
-      .map_err(|error| SessionApiError::Storage(error.to_string()))
+    match &self.store {
+      SessionRunStoreAuthority::File(store_root) => FileRunStore::open(store_root)
+        .map(|store| Arc::new(store) as Arc<dyn RunStore>)
+        .map_err(|error| SessionApiError::Storage(error.to_string())),
+      #[cfg(test)]
+      SessionRunStoreAuthority::Injected(store) => Ok(store.clone()),
+    }
   }
 
   pub fn create_session(&self, _request: proto::CreateSessionRequest) -> Result<proto::CreateSessionResponse, SessionApiError> {
@@ -82,23 +100,24 @@ impl SessionApiHandler {
       command.invoke(input)
     });
     let command_result = root.instrument(future).await;
-    let recording_failure = dispatch.flush().await.err().map(|error| error.to_string());
+    let mut recording_failures = Vec::new();
+    if let Err(error) = dispatch.flush().await {
+      recording_failures.push(error.to_string());
+    }
     let artifacts = match store.load_snapshot(run_id).await {
       Ok(Some(snapshot)) => snapshot.artifacts().values().map(|published| published.metadata().clone()).collect(),
-      Ok(None) | Err(_) => Vec::new(),
+      Ok(None) => {
+        recording_failures.push("recorded run snapshot is missing after execution".to_string());
+        Vec::new()
+      }
+      Err(error) => {
+        recording_failures.push(format!("failed to load recorded run snapshot after execution: {error}"));
+        Vec::new()
+      }
     };
     let result = InvokeResult::from_command_result(run_id.to_string(), &command, command_result).with_canonical_artifacts(artifacts);
-    Ok(mapper::invoke_result_to_response(&command_id, &result, recording_failure.as_deref()))
-  }
-
-  pub fn get_operation(&self, request: proto::GetOperationRequest) -> Result<proto::GetOperationResponse, SessionApiError> {
-    let _operation = request.operation.ok_or(SessionApiError::MissingField("operation"))?;
-    // TODO(session-get-operation-typed-projection): Wire this RPC to an owner-approved typed
-    // domain projection. Canonical runs intentionally carry no generic status
-    // or persisted invoke-result summary from which to fabricate a response.
-    Err(SessionApiError::NotWired {
-      gate: "typed GetOperation domain projection",
-    })
+    let recording_failure = (!recording_failures.is_empty()).then(|| recording_failures.join("; "));
+    Ok(mapper::invoke_result_to_response(&result, recording_failure.as_deref()))
   }
 
   pub fn stream_session_events(&self, request: proto::StreamSessionEventsRequest) -> Result<Vec<proto::SessionEvent>, SessionApiError> {
@@ -114,7 +133,14 @@ impl SessionApiHandler {
 
 #[cfg(test)]
 mod tests {
+  use std::sync::Arc;
+
   use auv_api_proto::v1::session as proto;
+  use auv_tracing::{
+    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode,
+    IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot,
+    RunStore, RunSubscription, StoreArtifactRequest,
+  };
 
   use super::SessionApiHandler;
   use crate::api::session_service::SessionApiError;
@@ -169,26 +195,106 @@ mod tests {
     let second = handler.invoke(request()).await.expect("second invoke");
     assert_eq!(first.status, "completed");
     assert_eq!(second.status, "completed");
-    assert_ne!(first.operation.expect("operation").run_id, second.operation.expect("operation").run_id);
+    assert_ne!(first.run_id, second.run_id);
   }
 
-  #[test]
-  fn get_operation_does_not_synthesize_a_generic_result() {
-    let error = handler("get-operation")
-      .get_operation(proto::GetOperationRequest {
-        operation: Some(proto::OperationRef {
-          run_id: RunIdForTest::value(),
-          operation_id: "scan.coverage".to_string(),
-        }),
+  #[tokio::test]
+  async fn invoke_reports_missing_snapshot_without_changing_direct_status() {
+    let store = Arc::new(SnapshotReadStore::new(SnapshotReadResult::Missing));
+    let handler = SessionApiHandler::with_store(store);
+    let response = invoke_dry_run(&handler).await;
+
+    assert_eq!(response.status, "completed");
+    assert!(response.failure_message.is_empty());
+    assert_eq!(response.recording_failure, "recorded run snapshot is missing after execution");
+    assert_eq!(response.known_limits, vec!["auv.api.session.recording_failed"]);
+  }
+
+  #[tokio::test]
+  async fn invoke_reports_snapshot_read_error_without_changing_direct_status() {
+    let store = Arc::new(SnapshotReadStore::new(SnapshotReadResult::Error));
+    let handler = SessionApiHandler::with_store(store);
+    let response = invoke_dry_run(&handler).await;
+
+    assert_eq!(response.status, "completed");
+    assert!(response.failure_message.is_empty());
+    assert!(response.recording_failure.contains("auv.test.session_snapshot_read"));
+    assert_eq!(response.known_limits, vec!["auv.api.session.recording_failed"]);
+  }
+
+  async fn invoke_dry_run(handler: &SessionApiHandler) -> proto::InvokeResponse {
+    let session = handler
+      .create_session(proto::CreateSessionRequest {
+        client_label: String::new(),
       })
-      .expect_err("projection is intentionally absent");
-    assert!(matches!(error, SessionApiError::NotWired { .. }));
+      .expect("create session")
+      .session
+      .expect("session ref");
+    handler
+      .invoke(proto::InvokeRequest {
+        session: Some(session),
+        command_id: "scan.coverage".to_string(),
+        json_payload: br#"{"dry_run":true}"#.to_vec(),
+      })
+      .await
+      .expect("direct invoke result")
   }
 
-  struct RunIdForTest;
-  impl RunIdForTest {
-    fn value() -> String {
-      auv_tracing::RunId::new().to_string()
+  enum SnapshotReadResult {
+    Missing,
+    Error,
+  }
+
+  struct SnapshotReadStore {
+    inner: MemoryRunStore,
+    result: SnapshotReadResult,
+  }
+
+  impl SnapshotReadStore {
+    fn new(result: SnapshotReadResult) -> Self {
+      Self {
+        inner: MemoryRunStore::new(AuthorityId::new()),
+        result,
+      }
+    }
+  }
+
+  impl RunStore for SnapshotReadStore {
+    fn authority_id(&self) -> AuthorityId {
+      self.inner.authority_id()
+    }
+
+    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      self.inner.commit(request)
+    }
+
+    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+      self.inner.write_artifact(request, body)
+    }
+
+    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+      self.inner.lookup_commit(run_id, key)
+    }
+
+    fn load_snapshot(&self, _run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
+      match self.result {
+        SnapshotReadResult::Missing => Box::pin(async { Ok(None) }),
+        SnapshotReadResult::Error => {
+          Box::pin(async { Err(ReadError::Unavailable(ErrorCode::parse("auv.test.session_snapshot_read").expect("test error code"))) })
+        }
+      }
+    }
+
+    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+      self.inner.commits_after(run_id, after, limit)
+    }
+
+    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+      self.inner.subscribe(run_id, after)
+    }
+
+    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+      self.inner.open_artifact(uri)
     }
   }
 }

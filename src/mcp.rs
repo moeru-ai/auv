@@ -172,7 +172,7 @@ impl McpServer {
       project_root,
       invoke_registry,
       invoke_adapters,
-      Arc::new(move |store_root| build_invoke_dispatch(dispatch_project_root.clone(), store_root)),
+      Arc::new(move |store_root| build_mcp_authority(dispatch_project_root.clone(), store_root)),
     )
   }
 
@@ -248,20 +248,13 @@ struct McpFrontendAuthority {
   store: Arc<dyn auv_tracing::RunStore>,
 }
 
-fn build_invoke_dispatch(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
+fn build_mcp_authority(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
   let root = store_root.map(PathBuf::from).unwrap_or_else(|| crate::default_project_store_root(project_root));
   let store = auv_tracing::FileRunStore::open(&root)
     .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
     .map_err(|error| format!("failed to open MCP run authority {}: {error}", root.display()))?;
   let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
   Ok(McpFrontendAuthority { dispatch, store })
-}
-
-struct McpFrontendExecution {
-  run_id: auv_tracing::RunId,
-  direct_result: Result<McpInvokeOutcome, String>,
-  recording_failure: Option<String>,
-  canonical_artifacts: Vec<auv_tracing::ArtifactMetadata>,
 }
 
 #[derive(Serialize)]
@@ -283,60 +276,6 @@ struct McpFrontendCancellation {
 impl auv_tracing::EventPayload for McpFrontendCancellation {
   const NAME: &'static str = "auv.frontend.cancelled";
   const VERSION: u32 = 1;
-}
-
-async fn execute_mcp_frontend<F, Fut>(
-  authority: &McpFrontendAuthority,
-  cancellation: InvokeCancellation,
-  call: F,
-) -> Result<McpFrontendExecution, String>
-where
-  F: FnOnce() -> Fut + Send + 'static,
-  Fut: Future<Output = Result<McpInvokeOutcome, String>> + Send + 'static,
-{
-  let run_id = auv_tracing::RunId::new();
-  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-  let future = root.in_scope(|| {
-    auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
-    call()
-  });
-  let future = async move {
-    tokio::pin!(future);
-    // TODO(invoke-driver-cancellation): request cancellation drops the
-    // command future between polls, but cannot interrupt one synchronous
-    // driver call already in progress. Add deeper cancellation only after
-    // the owning driver exposes an owner-approved cancellable call API.
-    tokio::select! {
-      biased;
-      _ = cancellation.cancelled() => {
-        auv_tracing::emit_event!(McpFrontendCancellation {
-          frontend: "mcp",
-          reason: "request_cancelled",
-        });
-        Err("invoke cancelled".to_string())
-      }
-      result = &mut future => result,
-    }
-  };
-  let direct_result = root.instrument(future).await;
-  let mut recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
-  let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
-    Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
-    Ok(None) => {
-      recording_failure.get_or_insert_with(|| "recorded run snapshot is missing after execution".to_string());
-      Vec::new()
-    }
-    Err(error) => {
-      recording_failure.get_or_insert_with(|| format!("failed to load recorded run snapshot: {error}"));
-      Vec::new()
-    }
-  };
-  Ok(McpFrontendExecution {
-    run_id,
-    direct_result,
-    recording_failure,
-    canonical_artifacts,
-  })
 }
 
 fn completed(summary: impl Into<String>, fields: Value) -> McpInvokeOutcome {
@@ -466,12 +405,8 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("scan.coverage dry-run", serde_json::json!({})));
       }
       let fixture_dir = input.required_input("scan.coverage", "fixture-dir")?.to_string();
-      let (coverage, instrumentation) =
-        auv_cli_invoke::commands::scan::produce_scan_coverage(PathBuf::from(&fixture_dir)).await?.into_parts();
-      Ok(
-        completed(format!("scan coverage produced from fixture {fixture_dir}"), serde_json::json!({ "coverage": coverage }))
-          .with_artifact_instrumentation(instrumentation),
-      )
+      let (coverage, _recording) = auv_cli_invoke::commands::scan::produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
+      Ok(completed(format!("scan coverage produced from fixture {fixture_dir}"), serde_json::json!({ "coverage": coverage })))
     }),
     McpInvokeAdapter::new("display.capture", |input| async move {
       if input.dry_run {
@@ -507,11 +442,8 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: input.typeText", serde_json::json!({})));
       }
       let text = input.required_input("input.typeText", "text")?.to_string();
-      let (result, instrumentation) = auv_cli_invoke::commands::input::type_text_into_active_control(text).await?.into_parts();
-      Ok(
-        completed("typed text into active control", serde_json::json!({ "selected_path": result.selected_path.as_str() }))
-          .with_artifact_instrumentation(instrumentation),
-      )
+      let (result, _recording) = auv_cli_invoke::commands::input::type_text_into_active_control(text).await?;
+      Ok(completed("typed text into active control", serde_json::json!({ "selected_path": result.selected_path.as_str() })))
     }),
     McpInvokeAdapter::new("input.pasteText", |input| async move {
       reject_target_activation(&input, "input.pasteText")?;
@@ -528,11 +460,8 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: input.key", serde_json::json!({})));
       }
       let key = input.required_input("input.key", "key")?.to_string();
-      let (result, instrumentation) = auv_cli_invoke::commands::input::press_key_in_active_app(key.clone()).await?.into_parts();
-      Ok(
-        completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": result.selected_path.as_str() }))
-          .with_artifact_instrumentation(instrumentation),
-      )
+      let (result, _recording) = auv_cli_invoke::commands::input::press_key_in_active_app(key.clone()).await?;
+      Ok(completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": result.selected_path.as_str() })))
     }),
     click_window_point_adapter(),
     McpInvokeAdapter::new("screen.captureRegion", |input| async move {
@@ -747,21 +676,61 @@ impl McpServer {
       dry_run: req.dry_run,
       cancellation: cancellation.clone(),
     };
-    let execution = execute_mcp_frontend(&authority, cancellation, move || adapter.invoke(input)).await.map_err(invalid_params)?;
-    let outcome = match execution.direct_result {
+    let run_id = auv_tracing::RunId::new();
+    let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+    let command_future = root.in_scope(|| {
+      auv_tracing::emit_event!(McpFrontendLifecycle { frontend: "mcp" });
+      adapter.invoke(input)
+    });
+    let cancellable_future = async move {
+      tokio::pin!(command_future);
+      // TODO(invoke-driver-cancellation): request cancellation drops the
+      // command future between polls, but cannot interrupt one synchronous
+      // driver call already in progress. Add deeper cancellation only after
+      // the owning driver exposes an owner-approved cancellable call API.
+      tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+          auv_tracing::emit_event!(McpFrontendCancellation {
+            frontend: "mcp",
+            reason: "request_cancelled",
+          });
+          Err("invoke cancelled".to_string())
+        }
+        result = &mut command_future => result,
+      }
+    };
+    let direct_result = root.instrument(cancellable_future).await;
+    let mut recording_failures = Vec::new();
+    if let Err(error) = authority.dispatch.flush().await {
+      recording_failures.push(error.to_string());
+    }
+    let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
+      Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
+      Ok(None) => {
+        recording_failures.push("recorded run snapshot is missing after execution".to_string());
+        Vec::new()
+      }
+      Err(error) => {
+        recording_failures.push(format!("failed to load recorded run snapshot after execution: {error}"));
+        Vec::new()
+      }
+    };
+    let recording_failure = (!recording_failures.is_empty()).then(|| recording_failures.join("; "));
+    let outcome = match direct_result {
       Ok(outcome) => outcome,
       Err(error) => McpInvokeOutcome::failed(error.clone(), error, Value::Null),
     };
     let failed = outcome.status == McpInvokeStatus::Failed;
     let value = serde_json::to_value(McpInvokePresentation {
-      run_id: execution.run_id.to_string(),
+      run_id: run_id.to_string(),
       status: outcome.status.as_str(),
       output_summary: outcome.output_summary,
       signals: outcome.signals,
-      artifacts: execution.canonical_artifacts,
+      artifacts: canonical_artifacts,
       artifact_failures: outcome.artifact_failures,
       failure_message: outcome.failure_message,
-      recording_failure: execution.recording_failure,
+      recording_failure,
       result: outcome.details,
     })
     .map_err(invalid_params)?;
@@ -1111,7 +1080,10 @@ mod tests {
     assert_eq!(completed_value["status"], "completed");
     assert_eq!(completed_value["result"]["value"], 7);
     assert_eq!(completed_value["artifacts"], serde_json::json!([]));
-    assert_eq!(completed_value["recording_failure"], "1 instrumentation dispatch failure(s)");
+    assert_eq!(
+      completed_value["recording_failure"],
+      "1 instrumentation dispatch failure(s); recorded run snapshot is missing after execution"
+    );
     assert!(completed_value.get("tracing_failure").is_none());
     let completed_run_id = completed_value["run_id"].as_str().expect("completed run id").parse::<RunId>()?;
     assert_eq!(completed_store.attempted_run_id(), Some(completed_run_id));
@@ -1125,7 +1097,7 @@ mod tests {
     assert_eq!(failed_value["status"], "failed");
     assert_eq!(failed_value["failure_message"], "direct domain failure");
     assert_eq!(failed_value["artifacts"], serde_json::json!([]));
-    assert_eq!(failed_value["recording_failure"], "1 instrumentation dispatch failure(s)");
+    assert_eq!(failed_value["recording_failure"], "1 instrumentation dispatch failure(s); recorded run snapshot is missing after execution");
     assert!(failed_value.get("tracing_failure").is_none());
     let failed_run_id = failed_value["run_id"].as_str().expect("failed run id").parse::<RunId>()?;
     assert_eq!(failed_store.attempted_run_id(), Some(failed_run_id));

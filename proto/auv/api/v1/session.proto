@@ -8,28 +8,18 @@ syntax = "proto3";
 
 package auv.api.session.v1;
 
-// SessionService exposes synchronous invoke and read-back over a session scope.
+// SessionService exposes synchronous invoke over a session scope.
 service SessionService {
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
   // Blocking terminal invoke: the RPC does not return until the command finishes
   // or fails on the synchronous path (not a fire-and-forget job submit).
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
-  // Idempotent read-back summary for a prior invoke result (not an async polling
-  // model unless status or transport docs say otherwise).
-  rpc GetOperation(GetOperationRequest) returns (GetOperationResponse);
   rpc StreamSessionEvents(StreamSessionEventsRequest)
       returns (stream SessionEvent);
 }
 
 message SessionRef {
   string session_id = 1;
-}
-
-message OperationRef {
-  string run_id = 1;
-  // v1 maps operation_id to command_id from InvokeRequest (not span_id, and not
-  // the internal OperationResult.operation_id domain label).
-  string operation_id = 2;
 }
 
 message ArtifactRef {
@@ -54,25 +44,16 @@ message InvokeRequest {
 }
 
 message InvokeResponse {
-  OperationRef operation = 1;
+  // Canonical run identity for inspection. Invoke is synchronous and does not
+  // persist a generic operation result or status for later readback.
+  string run_id = 1;
   string status = 2; // "completed" | "failed" (string, not enum — experimental)
   repeated ArtifactRef artifacts = 3;
   repeated string known_limits = 4;
   string failure_message = 5; // empty when absent; failure detail on sync path
-}
-
-message GetOperationRequest {
-  OperationRef operation = 1;
-}
-
-message GetOperationResponse {
-  OperationRef operation = 1;
-  string status = 2; // same vocabulary as InvokeResponse: "completed" | "failed"
-  string output_summary = 3;
-  map<string, string> signals = 4;
-  repeated ArtifactRef artifacts = 5;
-  string failure_message = 6; // empty when absent
-  repeated string known_limits = 7; // aligns with InvokeResponse / internal OperationResult
+  // Non-authoritative post-execution recording failure. Direct command status
+  // and failure_message remain unchanged when recording fails.
+  string recording_failure = 6;
 }
 
 message StreamSessionEventsRequest {
@@ -84,13 +65,13 @@ message StreamSessionEventsRequest {
 // must not infer ordering guarantees beyond transport delivery.
 message SessionEvent {
   string event_type = 1;
-  // session_created: session set; operation, artifact empty.
-  // invoke_started: session + operation set; artifact empty.
-  // invoke_completed: session + operation set; artifact empty; summary optional.
-  // invoke_failed: session + operation set; artifact empty; summary may hold failure detail.
-  // artifact_recorded: session + operation + artifact set.
+  // session_created: session set; run_id, artifact empty.
+  // invoke_started: session + run_id set; artifact empty.
+  // invoke_completed: session + run_id set; artifact empty; summary optional.
+  // invoke_failed: session + run_id set; artifact empty; summary may hold failure detail.
+  // artifact_recorded: session + run_id + artifact set.
   SessionRef session = 2;
-  OperationRef operation = 3;
+  string run_id = 3;
   ArtifactRef artifact = 4;
   string summary = 5;
 }
