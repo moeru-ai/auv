@@ -1,6 +1,6 @@
 //! Minecraft app help (`auv-minecraft --help`).
 
-const INSPECT_OPTIONS: &str = " [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]";
+const INSPECT_OPTIONS: &str = " [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>]";
 
 pub fn render_minecraft_help() -> String {
   let mut help = String::from(
@@ -20,7 +20,7 @@ USAGE
   help.push_str("\nCOMMON OPTIONS\n");
   help.push_str("  Most subcommands accept:");
   help.push_str(INSPECT_OPTIONS);
-  help.push_str("\n");
+  help.push('\n');
 
   help
 }
@@ -58,5 +58,6 @@ mod tests {
       assert!(help.contains(line), "minecraft help should include usage line: {line}");
     }
     assert!(!help.contains("auv minecraft "));
+    assert!(!help.contains("--inspect-server-token"), "Minecraft help must not advertise retired Inspect credentials");
   }
 }
