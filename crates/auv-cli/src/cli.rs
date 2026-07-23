@@ -859,9 +859,6 @@ fn parse_inspect_client_option(argument: &str, value: Option<&String>, inspect: 
       inspect.server_url = Some(value.clone());
       Ok(Some(2))
     }
-    "--inspect-server-token" | "--inspect-server-token-file" => Err(format!(
-      "{argument} was removed with the legacy inspect-server write-token transport; configure authentication at the server boundary"
-    )),
     _ => Ok(None),
   }
 }
@@ -3965,18 +3962,41 @@ mod tests {
   }
 
   #[test]
-  fn parse_invoke_rejects_retired_inspect_server_token_flags() {
+  fn parse_invoke_inspect_server_token_flags_follow_unknown_option_behavior() {
+    let unknown_flag = "--unknown-invoke-option";
+    let unknown_error = parse_cli(&[
+      "invoke".to_string(),
+      "window.capture".to_string(),
+      unknown_flag.to_string(),
+    ])
+    .expect_err("unknown invoke option without a value must fail");
+
     for flag in ["--inspect-server-token", "--inspect-server-token-file"] {
-      let error = parse_cli(&[
+      let command = parse_cli(&[
         "invoke".to_string(),
         "window.capture".to_string(),
         flag.to_string(),
         "secret".to_string(),
       ])
-      .expect_err("retired inspect server token flag must fail");
+      .expect("unknown invoke option with a value should parse as command input");
 
-      assert!(error.contains(flag), "{error}");
-      assert!(error.contains("removed"), "{error}");
+      match command {
+        CliCommand::Invoke {
+          request, inspect, ..
+        } => {
+          assert_eq!(request.inputs.get(flag.trim_start_matches("--")).map(String::as_str), Some("secret"));
+          assert_eq!(inspect, InspectClientOptions::default());
+        }
+        other => panic!("unexpected command: {other:?}"),
+      }
+
+      let error = parse_cli(&[
+        "invoke".to_string(),
+        "window.capture".to_string(),
+        flag.to_string(),
+      ])
+      .expect_err("unknown invoke option without a value must fail");
+      assert_eq!(error.replace(flag, unknown_flag), unknown_error);
     }
   }
 
