@@ -63,8 +63,10 @@ G-series  osu Graduation   move proven reusable shapes into core, behind the gat
   `ActionResolverDecision` (`src/action_resolver_decision.rs`) and
   `InputActionResult` (`crates/auv-driver/src/input.rs:322`); reuse
   `OperationResult` / `VerificationResult` (`src/contract.rs:125`, `:445`)
-- `candidate-action` stays frozen; `candidate_promotion` remains a reusable
-  promotion/gating seam and may be kept compiling but not expanded
+- `candidate-action` stays frozen; the `candidate_promotion` / `stability`
+  promotion seam was retired on 2026-07-23 (zero production consumers after the
+  #88 candidate-action removal) and must not be reintroduced without an
+  owner-approved slice
 - `auv-overlay-macos` is visual-only; `auv-driver` / `auv-driver-macos` own input
   delivery and disturbance reporting
 - osu-specific logic stays in `crates/auv-game-osu`; it only reaches core through a
