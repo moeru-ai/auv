@@ -118,25 +118,45 @@ fn invoke_probe_step_preserves_direct_command_artifact_boundary() {
 }
 
 #[test]
-fn resolve_probe_ocr_sample_query_prefers_frontmost_window_or_app_name() {
+fn resolve_probe_ocr_sample_query_supports_legacy_step_ids() {
   let root = temp_dir("probe-ocr-query");
-  let windows_path = root.join("observe-windows.txt");
-  let ax_path = root.join("observe-window-tree.txt");
-  fs::write(&windows_path, "frontmostAppName=Netease Music\nfrontmostWindowTitle=\nobservedAt=2026-05-20T00:00:00Z\nwindowCount=0\n")
-    .expect("window report should write");
-  fs::write(
-    &ax_path,
+  let window_step =
+    report_probe_step_fixture(&root, "observe-windows", "window.list", "frontmostAppName=Netease Music\nfrontmostWindowTitle=\n");
+  let ax_step = report_probe_step_fixture(
+    &root,
+    "observe-window-tree",
+    "window.captureAxTree",
     "observedAt=2026-05-20T00:00:00Z\nappName=Netease Music\nbundleId=com.netease.163music\nwindowTitle=\nrootRole=AXWindow\nnodeCount=0\n",
-  )
-  .expect("ax report should write");
+  );
+  let app = app_identity_fixture("com.netease.163music", "NeteaseMusic");
 
-  let steps = vec![
-    probe_step_fixture("observe-windows", "window.list", vec![windows_path]),
-    probe_step_fixture("observe-window-tree", "window.captureAxTree", vec![ax_path]),
+  assert_eq!(resolve_probe_ocr_sample_query(&app, &[window_step]), "Netease Music");
+  assert_eq!(resolve_probe_ocr_sample_query(&app, &[ax_step]), "Netease Music");
+  let _ = fs::remove_dir_all(root);
+}
+
+// ROOT CAUSE:
+//
+// If app probe reached the OCR sample, its query fell back to app identity
+// because the resolver only recognized retired probe step ids.
+//
+// Before the fix, the live `list-windows` and `capture-ax-tree` steps were
+// ignored. The fix prefers their evidence while retaining legacy probe reads.
+#[test]
+fn resolve_probe_ocr_sample_query_prefers_current_probe_step_ids() {
+  let root = temp_dir("probe-ocr-query-current-ids");
+  let window_steps = vec![
+    report_probe_step_fixture(&root, "observe-windows", "window.list", "frontmostAppName=Legacy Music\nfrontmostWindowTitle=\n"),
+    report_probe_step_fixture(&root, "list-windows", "window.list", "frontmostAppName=Netease Music\nfrontmostWindowTitle=\n"),
+  ];
+  let ax_steps = vec![
+    report_probe_step_fixture(&root, "observe-window-tree", "window.captureAxTree", "appName=Legacy Music\nwindowTitle=\n"),
+    report_probe_step_fixture(&root, "capture-ax-tree", "window.captureAxTree", "appName=Netease Music\nwindowTitle=\n"),
   ];
   let app = app_identity_fixture("com.netease.163music", "NeteaseMusic");
 
-  assert_eq!(resolve_probe_ocr_sample_query(&app, &steps), "Netease Music");
+  assert_eq!(resolve_probe_ocr_sample_query(&app, &window_steps), "Netease Music");
+  assert_eq!(resolve_probe_ocr_sample_query(&app, &ax_steps), "Netease Music");
   let _ = fs::remove_dir_all(root);
 }
 
@@ -365,6 +385,12 @@ fn app_identity_fixture(bundle_id: &str, app_name: &str) -> AppIdentity {
     launch_services_resolved: true,
     resolution_notes: Vec::new(),
   }
+}
+
+fn report_probe_step_fixture(root: &Path, id: &str, command_id: &str, report: &str) -> AppProbeStep {
+  let path = root.join(format!("{id}.txt"));
+  fs::write(&path, report).expect("probe report should write");
+  probe_step_fixture(id, command_id, vec![path])
 }
 
 fn probe_step_fixture(id: &str, command_id: &str, artifact_paths: Vec<PathBuf>) -> AppProbeStep {
