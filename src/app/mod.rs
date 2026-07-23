@@ -12,8 +12,11 @@ mod analysis;
 mod infra;
 mod report;
 
-use analysis::build_app_analysis;
-use infra::{default_probe_output_dir, first_non_empty_string, read_json, resolve_app_identity, resolve_probe_path, write_pretty_json};
+use analysis::{build_app_analysis, resolve_probe_ocr_sample_query};
+use infra::{
+  AppProbeBackend, AppProbeOperation, AppProbeStepRequest, LocalAppProbeBackend, default_probe_output_dir, first_non_empty_string,
+  invoke_probe_step, read_json, resolve_app_identity, resolve_probe_path, sanitized_name, write_pretty_json,
+};
 use report::render_app_analysis_report;
 
 use std::collections::BTreeMap;
@@ -415,16 +418,145 @@ pub fn probe_app(project_root: &Path, bundle_id: &str, output_dir: Option<PathBu
   }
   fs::create_dir_all(&output_dir).map_err(|error| format!("failed to create app probe directory {}: {error}", output_dir.display()))?;
 
+  let mut backend = LocalAppProbeBackend::open()?;
+  probe_app_with_backend(project_root, app, output_dir, &mut backend)
+}
+
+fn probe_app_with_backend<B: AppProbeBackend>(
+  project_root: &Path,
+  app: AppIdentity,
+  output_dir: PathBuf,
+  backend: &mut B,
+) -> AuvResult<AppProbe> {
+  let mut steps = Vec::new();
+  steps.push(invoke_probe_step(
+    backend,
+    &output_dir,
+    AppProbeStepRequest {
+      id: "probe-permissions",
+      command_id: "app.probePermissions",
+      operation: AppProbeOperation::ProbePermissions,
+      target_application_id: None,
+      inputs: BTreeMap::new(),
+    },
+    false,
+  )?);
+  steps.push(invoke_probe_step(
+    backend,
+    &output_dir,
+    AppProbeStepRequest {
+      id: "list-displays",
+      command_id: "display.list",
+      operation: AppProbeOperation::ListDisplays,
+      target_application_id: None,
+      inputs: BTreeMap::new(),
+    },
+    false,
+  )?);
+  let can_activate_target = app.apple_script_addressable;
+  if can_activate_target {
+    steps.push(invoke_probe_step(
+      backend,
+      &output_dir,
+      AppProbeStepRequest {
+        id: "activate-target-app",
+        command_id: "app.activate",
+        operation: AppProbeOperation::ActivateTargetApp,
+        target_application_id: Some(app.bundle_id.clone()),
+        inputs: BTreeMap::from([("settle_ms".to_string(), "250".to_string())]),
+      },
+      true,
+    )?);
+  }
+
+  steps.push(invoke_probe_step(
+    backend,
+    &output_dir,
+    AppProbeStepRequest {
+      id: "list-windows",
+      command_id: "window.list",
+      operation: AppProbeOperation::ListWindows,
+      target_application_id: Some(app.bundle_id.clone()),
+      inputs: BTreeMap::from([("limit".to_string(), "20".to_string())]),
+    },
+    true,
+  )?);
+
+  let can_use_app_scoped_window_ops = can_activate_target || app.launch_services_resolved;
+  let fallback_window_title = (!can_use_app_scoped_window_ops).then(|| resolve_probe_window_title(&app, &steps)).flatten();
+  let mut tree_inputs = BTreeMap::from([
+    ("max_depth".to_string(), "6".to_string()),
+    ("max_children".to_string(), "24".to_string()),
+  ]);
+  if let Some(title) = fallback_window_title.clone() {
+    tree_inputs.insert("title".to_string(), title);
+  }
+  steps.push(invoke_probe_step(
+    backend,
+    &output_dir,
+    AppProbeStepRequest {
+      id: "capture-ax-tree",
+      command_id: "window.captureAxTree",
+      operation: AppProbeOperation::CaptureAxTree,
+      target_application_id: Some(app.bundle_id.clone()),
+      inputs: tree_inputs,
+    },
+    true,
+  )?);
+
+  let mut capture_inputs = BTreeMap::from([("label".to_string(), format!("app-probe-{}", sanitized_name(&app.bundle_id)))]);
+  if can_activate_target {
+    capture_inputs.insert("activate_target_before_capture".to_string(), "true".to_string());
+  }
+  if let Some(title) = fallback_window_title.clone() {
+    capture_inputs.insert("title".to_string(), title);
+  }
+  steps.push(invoke_probe_step(
+    backend,
+    &output_dir,
+    AppProbeStepRequest {
+      id: "capture-window",
+      command_id: "window.capture",
+      operation: AppProbeOperation::CaptureWindow,
+      target_application_id: Some(app.bundle_id.clone()),
+      inputs: capture_inputs,
+    },
+    true,
+  )?);
+
+  let mut ocr_inputs = BTreeMap::from([
+    ("label".to_string(), "app-probe-ocr-sample".to_string()),
+    ("query".to_string(), resolve_probe_ocr_sample_query(&app, &steps)),
+    ("min_confidence".to_string(), "0.55".to_string()),
+    ("region_left_ratio".to_string(), "0.0".to_string()),
+    ("region_top_ratio".to_string(), "0.0".to_string()),
+    ("region_right_ratio".to_string(), "1.0".to_string()),
+    ("region_bottom_ratio".to_string(), "1.0".to_string()),
+    ("max_observations".to_string(), "20".to_string()),
+  ]);
+  if let Some(title) = fallback_window_title {
+    ocr_inputs.insert("title".to_string(), title);
+  }
+  steps.push(invoke_probe_step(
+    backend,
+    &output_dir,
+    AppProbeStepRequest {
+      id: "ocr-sample",
+      command_id: "window.observeRegion",
+      operation: AppProbeOperation::OcrSample,
+      target_application_id: Some(app.bundle_id.clone()),
+      inputs: ocr_inputs,
+    },
+    true,
+  )?);
+
   let probe = AppProbe {
     probe_version: APP_PROBE_VERSION.to_string(),
     created_at_millis: now_millis(),
     project_root: project_root.to_path_buf(),
     output_dir: output_dir.to_path_buf(),
     app,
-    // TODO(app-probe-direct-capabilities-v1): the old nested command recorder
-    // was retired. Restore probe steps only after each capability has a direct
-    // typed API that can inherit the caller's Context.
-    steps: Vec::new(),
+    steps,
   };
   let probe_path = output_dir.join("probe.json");
   write_pretty_json(&probe_path, &probe)?;

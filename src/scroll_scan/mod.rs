@@ -12,16 +12,22 @@
 
 mod observation;
 
-use observation::{observation_from_recognized_item, observation_from_row, should_merge_adjacent_observations};
+use observation::{
+  build_page_observation_snapshot, conservative_merge_observations, observation_from_recognized_item, observation_from_row,
+  should_merge_adjacent_observations, surface_nodes_from_observations,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
-use crate::model::AuvResult;
+use crate::model::{AuvResult, now_millis};
+use crate::run_read::publish_scan_coverage;
 use crate::runtime::Runtime;
-use auv_cli_invoke::{ArtifactInstrumentationReceipt, ArtifactPublication};
-use auv_tracing::RunId;
+use auv_scan::{CompletenessWire, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
+use auv_tracing::{Context, RunId, SpanId};
+use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -313,34 +319,463 @@ pub struct ScanWindowRegionOptions {
 // JSON recipe execution. Reintroduce hook composition only as typed Rust
 // interaction hooks once `auv-tracing-interaction` owns macro-operation
 // recording.
-pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> ArtifactPublication<AuvResult<RunId>> {
+pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<ScrollScanArtifact> {
   let _project_root = runtime.project_root();
-  let error = "scroll scan requires a typed window region observation API".to_string();
-  let artifact = ScrollScanArtifact {
-    scan_id: format!("scan_{}", auv_tracing::Context::current().run_id().map_or_else(|| "disabled".to_string(), |id| id.to_string())),
-    target: options.target,
-    stop_policy: options.stop_policy,
-    pages: Vec::new(),
-    observations: Vec::new(),
-    nodes: Vec::new(),
-    snapshots: Vec::new(),
-    clusters: Vec::new(),
-    section_candidates: Vec::new(),
-    scroll_boundary_candidates: Vec::new(),
-    hook_decisions: Vec::new(),
-    stop_evidence: StopEvidence {
-      reason: StopReason::Error,
-      message: error.clone(),
-      page_index: 0,
-    },
-    completeness_claim: CompletenessClaim::Unknown,
-    warnings: vec!["scan ended with an error; artifact is partial".to_string()],
+  let context = Context::current();
+  let scan_id = context.run_id().map_or_else(|| format!("scan_{}", now_millis()), |run_id| format!("scan_{run_id}"));
+  let trace_ids = context.run_id().copied().zip(context.span_id().copied());
+  let execution = match LocalScanWindowRegionSource::new(&options) {
+    Ok(mut source) => execute_scan_window_region(&mut source, options, scan_id, trace_ids),
+    Err(error) => failed_scan_execution(options, scan_id, error),
   };
-  let mut instrumentation = ArtifactInstrumentationReceipt::default();
-  instrumentation
-    .publish_json_bounded(SCROLL_SCAN_PURPOSE, &artifact, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
-    .await;
-  ArtifactPublication::new(Err(error), instrumentation)
+  let coverage = scan_coverage_from_artifact(&execution.artifact);
+  let _ = publish_scan_coverage(Some(&context), &coverage).await;
+  match execution.error {
+    Some(error) => Err(error),
+    None => Ok(execution.artifact),
+  }
+}
+
+trait ScanWindowRegionSource {
+  fn observe(&mut self, page_index: usize, options: &ScanWindowRegionOptions) -> AuvResult<ScanSourcePage>;
+  fn scroll(&mut self, options: &ScanWindowRegionOptions) -> AuvResult<()>;
+}
+
+struct ScanSourcePage {
+  observations: Vec<CollectionObservation>,
+  screenshot: RgbaImage,
+}
+
+struct LocalScanWindowRegionSource {
+  session: auv_driver::LocalDriverSession,
+  window: auv_driver::Window,
+}
+
+impl LocalScanWindowRegionSource {
+  fn new(options: &ScanWindowRegionOptions) -> AuvResult<Self> {
+    validate_scan_options(options)?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open local driver for scroll scan: {error}"))?;
+    let mut selector = auv_driver::WindowSelector {
+      main_visible: true,
+      ..auv_driver::WindowSelector::default()
+    };
+    if let Some(application_id) = options.target.application_id.as_deref().filter(|value| !value.trim().is_empty()) {
+      selector = selector.owned_by(auv_driver::App::bundle_id(application_id));
+    }
+    if let Some(title) = options.target.window_title.as_deref().filter(|value| !value.trim().is_empty()) {
+      selector = selector.title_contains(title);
+    }
+    let window = session.window().resolve(selector).map_err(|error| format!("failed to resolve scroll-scan window: {error}"))?;
+    Ok(Self { session, window })
+  }
+}
+
+impl ScanWindowRegionSource for LocalScanWindowRegionSource {
+  fn observe(&mut self, page_index: usize, options: &ScanWindowRegionOptions) -> AuvResult<ScanSourcePage> {
+    let capture = self.session.window().capture(&self.window).map_err(|error| format!("failed to capture scroll-scan page: {error}"))?;
+    let region = scan_ratio_rect(&options.target.region);
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture(&capture, region)
+      .map_err(|error| format!("failed to recognize scroll-scan page: {error}"))?;
+    let limit = usize::try_from(options.max_observations).map_err(|error| format!("invalid max_observations: {error}"))?;
+    let observations = recognition
+      .regions
+      .iter()
+      .filter(|region| region.confidence.unwrap_or_default() as f64 >= options.min_confidence)
+      .filter(|region| !region.text.trim().is_empty())
+      .take(limit)
+      .enumerate()
+      .map(|(item_index, region)| {
+        let mut attributes = BTreeMap::from([
+          ("item_index".to_string(), item_index.to_string()),
+          ("recognition_source".to_string(), "ocr_text".to_string()),
+          ("recognition_surface".to_string(), "region".to_string()),
+          ("source".to_string(), "auv-driver.vision.ocr".to_string()),
+        ]);
+        if let Some(confidence) = region.confidence {
+          attributes.insert("provider_score".to_string(), confidence.to_string());
+        }
+        CollectionObservation {
+          observation_id: format!("obs_{:04}_{:04}", page_index + 1, item_index + 1),
+          page_index,
+          raw_text: region.text.clone(),
+          normalized_text_key: observation::normalize_observation_text(&region.text),
+          bounds: ScanRect {
+            x: region.bounds.origin.x.round() as i64,
+            y: region.bounds.origin.y.round() as i64,
+            width: region.bounds.size.width.round() as i64,
+            height: region.bounds.size.height.round() as i64,
+          },
+          section_context: None,
+          source_artifacts: Vec::new(),
+          attributes,
+        }
+      })
+      .collect();
+    Ok(ScanSourcePage {
+      observations,
+      screenshot: capture.image,
+    })
+  }
+
+  fn scroll(&mut self, options: &ScanWindowRegionOptions) -> AuvResult<()> {
+    let point = scan_window_point(&self.window, &options.target.region);
+    let scroll = scan_scroll_delta(&options.direction, options.scroll_amount)?;
+    self
+      .session
+      .window()
+      .scroll(
+        &self.window,
+        point,
+        scroll,
+        auv_driver::ScrollOptions {
+          settle: Duration::from_millis(options.settle_ms),
+          ..auv_driver::ScrollOptions::default()
+        },
+      )
+      .map(|_| ())
+      .map_err(|error| format!("failed to scroll window region: {error}"))
+  }
+}
+
+#[derive(Default)]
+struct ScanWindowRegionState {
+  pages: Vec<ScanPageRecord>,
+  observations: Vec<CollectionObservation>,
+  snapshots: Vec<ObservationSnapshot>,
+  known_observation_signatures: BTreeSet<String>,
+  scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
+  warnings: Vec<String>,
+  previous_screenshot: Option<RgbaImage>,
+}
+
+struct ScanExecution {
+  artifact: ScrollScanArtifact,
+  error: Option<String>,
+}
+
+fn execute_scan_window_region<S: ScanWindowRegionSource>(
+  source: &mut S,
+  options: ScanWindowRegionOptions,
+  scan_id: String,
+  trace_ids: Option<(RunId, SpanId)>,
+) -> ScanExecution {
+  let mut state = ScanWindowRegionState::default();
+  let mut consecutive_no_progress = 0;
+  let mut final_decision = None;
+  let mut scan_error = None;
+
+  for (scroll_count, page_index) in (0..max_pages_for_policy(&options.stop_policy)).enumerate() {
+    let page = match source.observe(page_index, &options) {
+      Ok(page) => page,
+      Err(error) => {
+        scan_error = Some(error);
+        final_decision = Some(error_stop_decision(page_index));
+        break;
+      }
+    };
+    let page_observations = page.observations;
+    let new_observation_count = count_new_observations(&page_observations, &mut state.known_observation_signatures);
+    if new_observation_count == 0 {
+      consecutive_no_progress += 1;
+    } else {
+      consecutive_no_progress = 0;
+    }
+    let observation_count = page_observations.len();
+    state.observations.extend(page_observations.clone());
+    state.pages.push(ScanPageRecord {
+      page_index,
+      observe_run_id: trace_ids.map(|(run_id, _)| run_id.to_string()),
+      screenshot_artifact: None,
+      observation_count,
+      new_observation_count,
+      summary: format!("observed {observation_count} OCR region(s); {new_observation_count} new scan signature(s)"),
+    });
+    if let Some((run_id, span_id)) = trace_ids {
+      state.snapshots.push(build_page_observation_snapshot(
+        run_id,
+        span_id,
+        page_index,
+        &options.target,
+        &page_observations,
+        new_observation_count,
+      ));
+    }
+
+    let screenshot_diff_stability = state
+      .previous_screenshot
+      .as_ref()
+      .map(|previous| screenshot_diff_stability_rgba(previous, &page.screenshot))
+      .transpose()
+      .unwrap_or_else(|error| {
+        state.warnings.push(format!("failed to compare adjacent page screenshots for boundary evidence: {error}"));
+        None
+      });
+    state.previous_screenshot = Some(page.screenshot);
+    let scroll_boundary_candidate = scroll_boundary_candidate_for_progress(
+      &options.direction,
+      page_index,
+      scroll_count,
+      consecutive_no_progress,
+      new_observation_count,
+      &state.observations,
+      screenshot_diff_stability.as_ref(),
+    );
+    if let Some(candidate) = scroll_boundary_candidate.clone() {
+      state.scroll_boundary_candidates.push(candidate);
+    }
+    let progress = ScanProgress {
+      page_index,
+      scroll_count,
+      consecutive_no_progress,
+      new_observation_count,
+      hook_stop_requested: false,
+      match_found: match_found_on_current_page(&options.stop_policy, &page_observations),
+      next_section_candidate: false,
+      scroll_boundary_candidate,
+    };
+    if let Some(decision) = evaluate_stop_policy(&options.stop_policy, &progress, &options.direction) {
+      final_decision = Some(decision);
+      break;
+    }
+    if let Err(error) = source.scroll(&options) {
+      scan_error = Some(error);
+      final_decision = Some(error_stop_decision(page_index));
+      break;
+    }
+  }
+
+  let final_decision = final_decision.unwrap_or_else(|| {
+    stop_decision(
+      StopReason::MaxPages,
+      format!("reached max_pages={}", max_pages_for_policy(&options.stop_policy)),
+      state.pages.last().map(|page| page.page_index).unwrap_or(0),
+      CompletenessClaim::PartialMaxPages,
+    )
+  });
+  if scan_error.is_some() {
+    state.warnings.push("scan ended with an error; coverage is partial".to_string());
+  }
+  let artifact = state.into_artifact(scan_id, options.target, options.stop_policy, final_decision, trace_ids);
+  ScanExecution {
+    artifact,
+    error: scan_error,
+  }
+}
+
+impl ScanWindowRegionState {
+  fn into_artifact(
+    self,
+    scan_id: String,
+    target: ScanTarget,
+    stop_policy: StopPolicy,
+    final_decision: StopDecision,
+    trace_ids: Option<(RunId, SpanId)>,
+  ) -> ScrollScanArtifact {
+    let clusters = conservative_merge_observations(&self.observations);
+    let nodes = trace_ids.map(|(run_id, span_id)| surface_nodes_from_observations(run_id, span_id, &self.observations)).unwrap_or_default();
+    ScrollScanArtifact {
+      scan_id,
+      target,
+      stop_policy,
+      pages: self.pages,
+      observations: self.observations,
+      nodes,
+      snapshots: self.snapshots,
+      clusters,
+      section_candidates: Vec::new(),
+      scroll_boundary_candidates: self.scroll_boundary_candidates,
+      hook_decisions: Vec::new(),
+      stop_evidence: final_decision.stop_evidence,
+      completeness_claim: final_decision.completeness_claim,
+      warnings: self.warnings,
+    }
+  }
+}
+
+fn failed_scan_execution(options: ScanWindowRegionOptions, scan_id: String, error: String) -> ScanExecution {
+  ScanExecution {
+    artifact: ScrollScanArtifact {
+      scan_id,
+      target: options.target,
+      stop_policy: options.stop_policy,
+      pages: Vec::new(),
+      observations: Vec::new(),
+      nodes: Vec::new(),
+      snapshots: Vec::new(),
+      clusters: Vec::new(),
+      section_candidates: Vec::new(),
+      scroll_boundary_candidates: Vec::new(),
+      hook_decisions: Vec::new(),
+      stop_evidence: StopEvidence {
+        reason: StopReason::Error,
+        message: error.clone(),
+        page_index: 0,
+      },
+      completeness_claim: CompletenessClaim::Unknown,
+      warnings: vec!["scan source failed before the first page; coverage is partial".to_string()],
+    },
+    error: Some(error),
+  }
+}
+
+fn scan_coverage_from_artifact(artifact: &ScrollScanArtifact) -> ScanCoverageWire {
+  let observation_pages = artifact
+    .observations
+    .iter()
+    .map(|observation| (observation.observation_id.as_str(), observation.page_index))
+    .collect::<BTreeMap<_, _>>();
+  let entries = artifact
+    .clusters
+    .iter()
+    .map(|cluster| {
+      let last_page = cluster.observation_ids.iter().filter_map(|id| observation_pages.get(id.as_str())).copied().max().unwrap_or(0);
+      CoverageEntryWire {
+        track_id: cluster.cluster_id.clone(),
+        last_seen_frame_id: scan_page_frame_id(&artifact.scan_id, last_page),
+        observation_count: u32::try_from(cluster.observation_ids.len()).unwrap_or(u32::MAX),
+      }
+    })
+    .collect();
+  let open_uncertainty_codes = match artifact.completeness_claim {
+    CompletenessClaim::PartialMaxPages => vec!["max_pages_reached".to_string()],
+    CompletenessClaim::PartialMaxDuration => vec!["max_duration_reached".to_string()],
+    CompletenessClaim::PartialUnstableContent => vec!["unstable_content".to_string()],
+    CompletenessClaim::PartialNextSectionCandidate => vec!["next_section_candidate".to_string()],
+    CompletenessClaim::Unknown if artifact.stop_evidence.reason == StopReason::Error => vec!["scan_source_error".to_string()],
+    CompletenessClaim::Unknown => vec!["scan_completeness_unknown".to_string()],
+    _ => Vec::new(),
+  };
+  let negative_evidence = artifact
+    .pages
+    .iter()
+    .filter(|page| page.page_index > 0 && page.observation_count == 0)
+    .map(|page| NegativeEvidenceWire {
+      code: "no_new_observation".to_string(),
+      after_frame_id: scan_page_frame_id(&artifact.scan_id, page.page_index),
+    })
+    .collect::<Vec<_>>();
+  let claims_complete = matches!(
+    artifact.completeness_claim,
+    CompletenessClaim::CompleteByNoVisualProgressDown
+      | CompletenessClaim::CompleteByNoVisualProgressUp
+      | CompletenessClaim::CompleteByNoVisualProgress
+      | CompletenessClaim::CompleteByReachedBoundary
+  );
+  let completeness = if claims_complete && open_uncertainty_codes.is_empty() && negative_evidence.is_empty() {
+    CompletenessWire::Complete
+  } else {
+    CompletenessWire::Incomplete {
+      reason: if !open_uncertainty_codes.is_empty() || !negative_evidence.is_empty() {
+        "open uncertainties or negative evidence remain".to_string()
+      } else {
+        artifact.stop_evidence.message.clone()
+      },
+    }
+  };
+  ScanCoverageWire {
+    schema_version: SCAN_COVERAGE_SCHEMA_VERSION.to_string(),
+    entries,
+    open_uncertainty_codes,
+    negative_evidence,
+    completeness,
+  }
+}
+
+fn scan_page_frame_id(scan_id: &str, page_index: usize) -> String {
+  format!("{scan_id}:page:{:04}", page_index + 1)
+}
+
+fn max_pages_for_policy(policy: &StopPolicy) -> usize {
+  match policy {
+    StopPolicy::UntilEnd { max_pages, .. }
+    | StopPolicy::UntilNextSection { max_pages, .. }
+    | StopPolicy::UntilMatch { max_pages, .. }
+    | StopPolicy::Bounded { max_pages, .. } => *max_pages,
+  }
+}
+
+fn count_new_observations(observations: &[CollectionObservation], known_observation_signatures: &mut BTreeSet<String>) -> usize {
+  observations.iter().filter(|observation| known_observation_signatures.insert(observation_signature(observation))).count()
+}
+
+fn observation_signature(observation: &CollectionObservation) -> String {
+  if !observation.normalized_text_key.is_empty() {
+    observation.normalized_text_key.clone()
+  } else {
+    let source = observation.attributes.get("source").map(String::as_str).unwrap_or("unknown");
+    format!("visual:{source}|x={}|w={}|h={}", observation.bounds.x, observation.bounds.width, observation.bounds.height)
+  }
+}
+
+fn match_found_on_current_page(policy: &StopPolicy, observations: &[CollectionObservation]) -> bool {
+  let StopPolicy::UntilMatch { query, .. } = policy else {
+    return false;
+  };
+  let normalized_query = observation::normalize_observation_text(query);
+  !normalized_query.is_empty() && observations.iter().any(|observation| observation.normalized_text_key.contains(&normalized_query))
+}
+
+fn validate_scan_options(options: &ScanWindowRegionOptions) -> AuvResult<()> {
+  let region = &options.target.region;
+  let ratios = [
+    region.left_ratio,
+    region.top_ratio,
+    region.right_ratio,
+    region.bottom_ratio,
+  ];
+  if ratios.iter().any(|ratio| !ratio.is_finite())
+    || !(0.0..1.0).contains(&region.left_ratio)
+    || !(0.0..1.0).contains(&region.top_ratio)
+    || !(0.0..=1.0).contains(&region.right_ratio)
+    || !(0.0..=1.0).contains(&region.bottom_ratio)
+    || region.left_ratio >= region.right_ratio
+    || region.top_ratio >= region.bottom_ratio
+  {
+    return Err("scroll-scan region ratios must define a non-empty rectangle inside 0..=1".to_string());
+  }
+  if max_pages_for_policy(&options.stop_policy) == 0 {
+    return Err("scroll-scan max_pages must be greater than zero".to_string());
+  }
+  if options.max_observations <= 0 {
+    return Err("scroll-scan max_observations must be greater than zero".to_string());
+  }
+  if !options.min_confidence.is_finite() || !(0.0..=1.0).contains(&options.min_confidence) {
+    return Err("scroll-scan min_confidence must be inside 0..=1".to_string());
+  }
+  let _ = scan_scroll_delta(&options.direction, options.scroll_amount)?;
+  Ok(())
+}
+
+fn scan_ratio_rect(region: &ScanRegion) -> auv_driver::RatioRect {
+  auv_driver::RatioRect::new(
+    region.left_ratio,
+    region.top_ratio,
+    region.right_ratio - region.left_ratio,
+    region.bottom_ratio - region.top_ratio,
+  )
+}
+
+fn scan_window_point(window: &auv_driver::Window, region: &ScanRegion) -> auv_driver::WindowPoint {
+  auv_driver::WindowPoint::new(
+    window.frame.size.width * (region.left_ratio + region.right_ratio) / 2.0,
+    window.frame.size.height * (region.top_ratio + region.bottom_ratio) / 2.0,
+  )
+}
+
+fn scan_scroll_delta(direction: &str, amount: f64) -> AuvResult<auv_driver::Scroll> {
+  if !amount.is_finite() || amount <= 0.0 {
+    return Err("scroll-scan scroll_amount must be finite and greater than zero".to_string());
+  }
+  match direction.trim().to_ascii_lowercase().as_str() {
+    "up" => Ok(auv_driver::Scroll::new(0.0, amount)),
+    "down" => Ok(auv_driver::Scroll::new(0.0, -amount)),
+    "left" => Ok(auv_driver::Scroll::new(amount, 0.0)),
+    "right" => Ok(auv_driver::Scroll::new(-amount, 0.0)),
+    _ => Err(format!("unsupported scroll-scan direction {direction:?}; expected up, down, left, or right")),
+  }
 }
 
 pub fn observations_from_observe_json(page_index: usize, raw: &str, source_artifact: PathBuf) -> AuvResult<Vec<CollectionObservation>> {
@@ -554,26 +989,7 @@ fn scroll_boundary_candidate_for_progress(
   })
 }
 
-fn screenshot_diff_stability_for_pages(page_index: usize, pages: &[ScanPageRecord]) -> AuvResult<Option<ScreenshotDiffStability>> {
-  if page_index == 0 {
-    return Ok(None);
-  }
-  let previous_screenshot = pages.iter().find(|page| page.page_index == page_index - 1).and_then(|page| page.screenshot_artifact.as_deref());
-  let current_screenshot = pages.iter().find(|page| page.page_index == page_index).and_then(|page| page.screenshot_artifact.as_deref());
-  let (Some(previous_screenshot), Some(current_screenshot)) = (previous_screenshot, current_screenshot) else {
-    return Ok(None);
-  };
-  screenshot_diff_stability(previous_screenshot, current_screenshot).map(Some)
-}
-
-fn screenshot_diff_stability(previous_screenshot: &Path, current_screenshot: &Path) -> AuvResult<ScreenshotDiffStability> {
-  let previous = image::open(previous_screenshot)
-    .map_err(|error| format!("failed to open previous screenshot {}: {error}", previous_screenshot.display()))?;
-  let current = image::open(current_screenshot)
-    .map_err(|error| format!("failed to open current screenshot {}: {error}", current_screenshot.display()))?;
-
-  let previous = previous.to_rgba8();
-  let current = current.to_rgba8();
+fn screenshot_diff_stability_rgba(previous: &RgbaImage, current: &RgbaImage) -> AuvResult<ScreenshotDiffStability> {
   let width = previous.width();
   let height = previous.height();
   if width == 0 || height == 0 {
@@ -686,5 +1102,255 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
     ScrollBoundary::Bottom => "bottom",
     ScrollBoundary::Left => "left",
     ScrollBoundary::Right => "right",
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::VecDeque;
+
+  use image::Rgba;
+
+  use super::*;
+
+  struct ScanSource {
+    pages: VecDeque<AuvResult<ScanSourcePage>>,
+    scroll_calls: usize,
+    scroll_error: Option<String>,
+  }
+
+  impl ScanSource {
+    fn with_pages(pages: Vec<AuvResult<ScanSourcePage>>) -> Self {
+      Self {
+        pages: pages.into(),
+        scroll_calls: 0,
+        scroll_error: None,
+      }
+    }
+  }
+
+  impl ScanWindowRegionSource for ScanSource {
+    fn observe(&mut self, _page_index: usize, _options: &ScanWindowRegionOptions) -> AuvResult<ScanSourcePage> {
+      self.pages.pop_front().unwrap_or_else(|| Err("fixture exhausted".to_string()))
+    }
+
+    fn scroll(&mut self, _options: &ScanWindowRegionOptions) -> AuvResult<()> {
+      self.scroll_calls += 1;
+      self.scroll_error.take().map_or(Ok(()), Err)
+    }
+  }
+
+  fn options(stop_policy: StopPolicy) -> ScanWindowRegionOptions {
+    ScanWindowRegionOptions {
+      target: ScanTarget {
+        application_id: Some("com.example.fixture".to_string()),
+        window_title: Some("Fixture".to_string()),
+        region: ScanRegion {
+          left_ratio: 0.0,
+          top_ratio: 0.0,
+          right_ratio: 1.0,
+          bottom_ratio: 1.0,
+        },
+      },
+      stop_policy,
+      direction: "down".to_string(),
+      scroll_amount: 40.0,
+      settle_ms: 0,
+      min_confidence: 0.0,
+      max_observations: 16,
+    }
+  }
+
+  fn page(page_index: usize, text: &str, color: [u8; 4]) -> ScanSourcePage {
+    ScanSourcePage {
+      observations: vec![CollectionObservation {
+        observation_id: format!("obs_{:04}_0001", page_index + 1),
+        page_index,
+        raw_text: text.to_string(),
+        normalized_text_key: observation::normalize_observation_text(text),
+        bounds: ScanRect {
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 24,
+        },
+        section_context: None,
+        source_artifacts: Vec::new(),
+        attributes: BTreeMap::from([("source".to_string(), "auv-driver.vision.ocr".to_string())]),
+      }],
+      screenshot: RgbaImage::from_pixel(8, 8, Rgba(color)),
+    }
+  }
+
+  fn empty_page(color: [u8; 4]) -> ScanSourcePage {
+    ScanSourcePage {
+      observations: Vec::new(),
+      screenshot: RgbaImage::from_pixel(8, 8, Rgba(color)),
+    }
+  }
+
+  #[test]
+  fn scan_execution_produces_domain_pages_clusters_and_coverage() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [0, 0, 0, 255])),
+      Ok(page(1, "Beta", [255, 255, 255, 255])),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 2,
+        max_scrolls: 5,
+      }),
+      "scan_fixture".to_string(),
+      None,
+    );
+
+    assert!(execution.error.is_none());
+    assert_eq!(source.scroll_calls, 1);
+    assert_eq!(execution.artifact.pages.len(), 2);
+    assert_eq!(execution.artifact.observations.len(), 2);
+    assert_eq!(execution.artifact.clusters.len(), 2);
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::MaxPages);
+    assert_eq!(execution.artifact.completeness_claim, CompletenessClaim::PartialMaxPages);
+
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert_eq!(coverage.schema_version, SCAN_COVERAGE_SCHEMA_VERSION);
+    assert_eq!(coverage.entries.len(), 2);
+    assert_eq!(coverage.entries[1].last_seen_frame_id, "scan_fixture:page:0002");
+    assert_eq!(coverage.open_uncertainty_codes, vec!["max_pages_reached"]);
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[test]
+  fn scan_execution_preserves_partial_domain_evidence_on_source_error() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [0, 0, 0, 255])),
+      Err("fixture observation failed".to_string()),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 3,
+        max_scrolls: 5,
+      }),
+      "scan_partial".to_string(),
+      None,
+    );
+
+    assert_eq!(execution.error.as_deref(), Some("fixture observation failed"));
+    assert_eq!(source.scroll_calls, 1);
+    assert_eq!(execution.artifact.pages.len(), 1);
+    assert_eq!(execution.artifact.observations.len(), 1);
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::Error);
+    assert_eq!(execution.artifact.completeness_claim, CompletenessClaim::Unknown);
+
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert_eq!(coverage.entries.len(), 1);
+    assert_eq!(coverage.open_uncertainty_codes, vec!["scan_source_error"]);
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[test]
+  fn scan_execution_keeps_repeated_observations_as_positive_coverage() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Repeat", [24, 48, 72, 255])),
+      Ok(page(1, "Repeat", [24, 48, 72, 255])),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::UntilEnd {
+        max_pages: 5,
+        max_scrolls: 5,
+        no_progress_limit: 2,
+      }),
+      "scan_boundary".to_string(),
+      None,
+    );
+
+    assert!(execution.error.is_none());
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::ReachedBoundary);
+    assert_eq!(execution.artifact.completeness_claim, CompletenessClaim::CompleteByReachedBoundary);
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert!(coverage.negative_evidence.is_empty());
+    assert_eq!(coverage.entries[0].observation_count, 2);
+    assert_eq!(coverage.completeness, CompletenessWire::Complete);
+  }
+
+  #[test]
+  fn scan_execution_marks_empty_page_as_blocking_negative_evidence() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [24, 48, 72, 255])),
+      Ok(empty_page([24, 48, 72, 255])),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::UntilEnd {
+        max_pages: 5,
+        max_scrolls: 5,
+        no_progress_limit: 2,
+      }),
+      "scan_empty_page".to_string(),
+      None,
+    );
+
+    assert!(execution.error.is_none());
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::ReachedBoundary);
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert_eq!(coverage.negative_evidence.len(), 1);
+    assert_eq!(coverage.negative_evidence[0].after_frame_id, "scan_empty_page:page:0002");
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[test]
+  fn scan_execution_returns_scroll_interruption_after_observed_page() {
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    source.scroll_error = Some("fixture scroll failed".to_string());
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 2,
+        max_scrolls: 5,
+      }),
+      "scan_scroll_error".to_string(),
+      None,
+    );
+
+    assert_eq!(execution.error.as_deref(), Some("fixture scroll failed"));
+    assert_eq!(execution.artifact.pages.len(), 1);
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::Error);
+  }
+
+  #[tokio::test]
+  async fn scan_window_region_reaches_the_direct_window_backend() {
+    let project_root = std::env::temp_dir().join(format!("auv-scroll-scan-direct-backend-{}", std::process::id()));
+    let runtime = Runtime::new(project_root);
+    let result = scan_window_region(
+      &runtime,
+      ScanWindowRegionOptions {
+        target: ScanTarget {
+          application_id: Some("com.example.auv-task22-missing".to_string()),
+          window_title: None,
+          region: ScanRegion {
+            left_ratio: 0.0,
+            top_ratio: 0.0,
+            right_ratio: 1.0,
+            bottom_ratio: 1.0,
+          },
+        },
+        stop_policy: StopPolicy::Bounded {
+          max_pages: 1,
+          max_scrolls: 0,
+        },
+        direction: "down".to_string(),
+        scroll_amount: 40.0,
+        settle_ms: 0,
+        min_confidence: 0.0,
+        max_observations: 16,
+      },
+    )
+    .await;
+    let error = result.expect_err("missing window must remain a source error");
+
+    assert!(!error.contains("requires a typed window region observation API"), "synthetic scan error escaped: {error}");
   }
 }

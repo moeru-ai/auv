@@ -4,10 +4,14 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::contract::{RecognitionResult, RecognitionSource, RecognitionSurface, RecognizedItem};
-use crate::model::AuvResult;
+use crate::contract::{
+  NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox, RecognitionResult,
+  RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, SurfaceNode,
+};
+use crate::model::{AuvResult, now_millis};
+use auv_tracing::{RunId, SpanId};
 
-use super::{CollectionObservation, ObservationCluster, ScanRect};
+use super::{CollectionObservation, ObservationCluster, ScanRect, ScanTarget};
 
 pub fn normalize_observation_text(raw: &str) -> String {
   raw.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_lowercase()
@@ -75,13 +79,13 @@ fn merge_decision(left: &CollectionObservation, right: &CollectionObservation) -
   if attribute_values_conflict(left, right, "recognized_item_id") {
     return None;
   }
-  if let Some(recognized_item_id) = shared_attribute(left, right, "recognized_item_id") {
-    if !recognized_item_id.is_empty() {
-      return Some(MergeDecision {
-        reason: "same_recognized_item_adjacent_page",
-        confidence: 0.94,
-      });
-    }
+  if let Some(recognized_item_id) = shared_attribute(left, right, "recognized_item_id")
+    && !recognized_item_id.is_empty()
+  {
+    return Some(MergeDecision {
+      reason: "same_recognized_item_adjacent_page",
+      confidence: 0.94,
+    });
   }
 
   let left_slot_identity = recognition_slot_identity(left);
@@ -248,11 +252,164 @@ fn observation_attributes_from_recognized_item(
     attributes.insert("row_candidate_index".to_string(), row_index.to_string());
   }
   if let Some(text_fragments) = recognized_item_text_fragments(item) {
-    if !text_fragments.is_empty() {
-      attributes.insert("text_fragments".to_string(), text_fragments.join(" | "));
-    }
+    attributes.insert("text_fragments".to_string(), text_fragments.join(" | "));
   }
   attributes
+}
+
+pub(crate) fn surface_nodes_from_observations(run_id: RunId, span_id: SpanId, observations: &[CollectionObservation]) -> Vec<SurfaceNode> {
+  observations.iter().map(|observation| surface_node_from_observation(run_id, span_id, observation)).collect()
+}
+
+pub(crate) fn build_page_observation_snapshot(
+  run_id: RunId,
+  span_id: SpanId,
+  page_index: usize,
+  target: &ScanTarget,
+  page_observations: &[CollectionObservation],
+  new_observation_count: usize,
+) -> ObservationSnapshot {
+  let nodes = surface_nodes_from_observations(run_id, span_id, page_observations);
+  ObservationSnapshot {
+    api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
+    snapshot_id: format!("snapshot_{run_id}_{:04}", page_index + 1),
+    run_id,
+    span_id,
+    captured_at_millis: now_millis(),
+    source: infer_observation_source(page_observations),
+    scope: RecognitionScope {
+      surface: RecognitionSurface::Region,
+      display_ref: None,
+      native_display_id: None,
+      app_bundle_id: target.application_id.clone(),
+      window_title: target.window_title.clone(),
+      window_number: None,
+      region_hint: Some(RatioRegion {
+        left: target.region.left_ratio,
+        top: target.region.top_ratio,
+        right: target.region.right_ratio,
+        bottom: target.region.bottom_ratio,
+      }),
+      capture_artifact: None,
+      capture_contract_artifact: None,
+    },
+    capture_contract_ref: None,
+    evidence: Vec::new(),
+    nodes,
+    detail: serde_json::json!({
+      "page_index": page_index,
+      "observation_count": page_observations.len(),
+      "new_observation_count": new_observation_count,
+    }),
+    known_limits: vec!["scroll_scan: capture remained an in-memory driver value and has no canonical artifact reference".to_string()],
+  }
+}
+
+fn infer_observation_source(page_observations: &[CollectionObservation]) -> ObservationSource {
+  let mut saw_ax = false;
+  let mut saw_ocr = false;
+  let mut saw_visual = false;
+  for observation in page_observations {
+    match observation_source_hint(observation) {
+      Some(ObservationSource::Ax) => saw_ax = true,
+      Some(ObservationSource::Ocr) => saw_ocr = true,
+      Some(ObservationSource::Visual) => saw_visual = true,
+      Some(ObservationSource::Merged) => {
+        saw_ocr = true;
+        saw_visual = true;
+      }
+      None => {}
+    }
+  }
+  match (saw_ax, saw_ocr, saw_visual) {
+    (true, false, false) => ObservationSource::Ax,
+    (false, false, true) => ObservationSource::Visual,
+    (false, true, false) | (false, false, false) => ObservationSource::Ocr,
+    _ => ObservationSource::Merged,
+  }
+}
+
+fn observation_source_hint(observation: &CollectionObservation) -> Option<ObservationSource> {
+  observation
+    .attributes
+    .get("recognition_source")
+    .and_then(|value| classify_source_tag(value))
+    .or_else(|| observation.attributes.get("source").and_then(|value| classify_source_tag(value)))
+}
+
+fn classify_source_tag(value: &str) -> Option<ObservationSource> {
+  let normalized = value.trim().to_ascii_lowercase();
+  if normalized.contains("ax") {
+    Some(ObservationSource::Ax)
+  } else if normalized.contains("ocr") {
+    Some(ObservationSource::Ocr)
+  } else if normalized.contains("visual") || normalized.contains("segment") || normalized.contains("icon") {
+    Some(ObservationSource::Visual)
+  } else {
+    None
+  }
+}
+
+fn surface_node_from_observation(run_id: RunId, span_id: SpanId, observation: &CollectionObservation) -> SurfaceNode {
+  let source_artifacts = observation.source_artifacts.iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
+  let recognized_item_kind = observation.attributes.get("recognized_item_kind").cloned();
+  let kind = recognized_item_kind
+    .clone()
+    .or_else(|| observation.attributes.get("segmented_region_role").cloned())
+    .or_else(|| observation.attributes.get("source").cloned())
+    .unwrap_or_else(|| "observation".to_string());
+  SurfaceNode {
+    node_ref: NodeRef {
+      run_id,
+      span_id,
+      node_id: observation.observation_id.clone(),
+    },
+    kind,
+    label: (!observation.raw_text.trim().is_empty()).then(|| observation.raw_text.clone()),
+    box_: RecognitionBox {
+      x: observation.bounds.x,
+      y: observation.bounds.y,
+      width: observation.bounds.width,
+      height: observation.bounds.height,
+    },
+    source_artifacts: source_artifacts.clone(),
+    recognition_id: observation.attributes.get("recognition_id").cloned(),
+    recognition_source: observation.attributes.get("recognition_source").and_then(|value| parse_recognition_source_name(value)),
+    recognition_surface: observation.attributes.get("recognition_surface").and_then(|value| parse_recognition_surface_name(value)),
+    recognized_item_id: observation.attributes.get("recognized_item_id").cloned(),
+    recognized_item_kind,
+    provider_score: observation.attributes.get("provider_score").and_then(|value| value.parse::<f64>().ok()),
+    detail: serde_json::json!({
+      "observation_id": observation.observation_id,
+      "page_index": observation.page_index,
+      "normalized_text_key": observation.normalized_text_key,
+      "section_context": observation.section_context,
+      "source_artifacts": source_artifacts,
+      "attributes": observation.attributes,
+    }),
+  }
+}
+
+fn parse_recognition_source_name(value: &str) -> Option<RecognitionSource> {
+  match value {
+    "ocr_text" => Some(RecognitionSource::OcrText),
+    "ocr_row" => Some(RecognitionSource::OcrRow),
+    "visual_row" => Some(RecognitionSource::VisualRow),
+    "segmented_region" => Some(RecognitionSource::SegmentedRegion),
+    "icon_match" => Some(RecognitionSource::IconMatch),
+    "custom" => Some(RecognitionSource::Custom),
+    _ => None,
+  }
+}
+
+fn parse_recognition_surface_name(value: &str) -> Option<RecognitionSurface> {
+  match value {
+    "screen" => Some(RecognitionSurface::Screen),
+    "display" => Some(RecognitionSurface::Display),
+    "window" => Some(RecognitionSurface::Window),
+    "region" => Some(RecognitionSurface::Region),
+    _ => None,
+  }
 }
 
 fn recognized_item_text(item: &RecognizedItem) -> String {
