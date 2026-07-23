@@ -27,7 +27,7 @@ operation trait, runner, execution id, or session object.
 A direct result is the typed result returned by an app or driver operation
 directly to its CLI, MCP, or library caller. Recording consumes facts and
 artifacts emitted by that execution; `RunStore`, run snapshots, and inspection
-projections never reconstruct, gate, or replace the synchronous result path.
+projections never reconstruct, gate, or replace the direct application result path.
 
 ## Run Commit
 
