@@ -16,6 +16,11 @@ fn product_cli_has_no_recording_runtime_or_shared_invoke_wrapper() {
     "OperationSummary",
     "invoke_recorded",
     "render_recorded_invoke",
+    "execute_invoke_frontend",
+    "execute_product_cli_call",
+    "execute_mcp_frontend",
+    "fixture_document_write_cli",
+    "fixture_textedit_document_write",
   ];
   let matches = scan_rust_and_manifests(&roots, &forbidden).unwrap_or_else(|error| panic!("{error}"));
   assert!(matches.is_empty(), "legacy product CLI references: {matches:?}");

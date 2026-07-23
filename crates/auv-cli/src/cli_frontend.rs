@@ -7,7 +7,6 @@
 use std::env;
 #[cfg(test)]
 use std::fs;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::{self, ExitCode};
 use std::sync::Arc;
@@ -48,7 +47,7 @@ pub fn exit_status(result: Result<i32, String>) -> ExitCode {
   }
 }
 
-async fn dispatch(command: CliCommand) -> Result<i32, String> {
+pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
   if matches!(&command, CliCommand::Version) {
     print!("{}", version_text());
     return Ok(0);
@@ -144,10 +143,18 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         capture_skew_ms,
         screenshot_is_minecraft_window,
       };
-      let (run_id, output) = execute_product_cli_call(&project_root, &inspect, "Minecraft projection bridge", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::projection_workflow::run_minecraft_projection_bridge(inputs)
-      })
-      .await?;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft projection bridge recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("runId: {run_id}");
       print_minecraft_projection_publications(&output.publications);
       print_minecraft_projection_refusal(&output.evidence);
@@ -167,10 +174,18 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         target_semantics: parse_target_semantics(&target_semantics)?,
         screenshot_is_minecraft_window,
       };
-      let (run_id, output) = execute_product_cli_call(&project_root, &inspect, "Minecraft projection calibration", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::projection_workflow::run_minecraft_calibrate_projection(inputs)
-      })
-      .await?;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft projection calibration recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("runId: {run_id}");
       print_minecraft_projection_publications(&output.publications);
       print_minecraft_projection_refusal(&output.evidence);
@@ -196,10 +211,18 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         capture_skew_ms,
         screenshot_is_minecraft_window,
       };
-      let (run_id, output) = execute_product_cli_call(&project_root, &inspect, "Minecraft live click", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::projection_workflow::run_minecraft_live_click(inputs)
-      })
-      .await?;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft live click recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("runId: {run_id}");
       print_minecraft_projection_publications(&output.publications);
       println!("inputSummary: {}", output.input_summary);
@@ -213,16 +236,24 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let (export_run_id, output) =
-        execute_product_cli_call_with_store(&project_root, &inspect, "Minecraft spatial bundle export", move |store| {
-          crate::integrations::minecraft::run_minecraft_spatial_bundle_export(
-            store,
-            run_id,
-            PathBuf::from(output_dir),
-            crate::integrations::minecraft::current_git_commit(),
-          )
-        })
-        .await?;
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let store = authority.store.clone();
+      let export_run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(export_run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        crate::integrations::minecraft::run_minecraft_spatial_bundle_export(
+          store,
+          run_id,
+          PathBuf::from(output_dir),
+          crate::integrations::minecraft::current_git_commit(),
+        )
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft spatial bundle export recording failure for run {export_run_id}: {failure}");
+      }
+      let output = output?;
       println!("runId: {export_run_id}");
       println!("status: completed");
       println!("sourceRunId: {}", output.manifest.source_run.source_run_id);
@@ -237,14 +268,21 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft scene packet export", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_scene_packet_export(
           bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
           PathBuf::from(output_dir),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft scene packet export recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: completed");
       println!("scenePacketSchema: {}", output.manifest.schema_version);
       println!("sourceRuns: {}", output.manifest.source_run_ids.join(","));
@@ -260,14 +298,21 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training package export", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_package_export(
           PathBuf::from(scene_packet_manifest_path),
           PathBuf::from(output_dir),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training package export recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: completed");
       println!("trainingPackageSchema: {}", output.manifest.schema_version);
       println!("sourceRuns: {}", output.manifest.source_run_ids.join(","));
@@ -296,14 +341,21 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training launch preparation", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_launch_preparation(
           PathBuf::from(training_package_manifest_path),
           PathBuf::from(output_dir),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training launch preparation recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: completed");
       println!("trainerBackend: {}", output.manifest.trainer_backend);
       println!(
@@ -342,7 +394,11 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       training_job_submit_command,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training job launch", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_job_launch_with_environment(
           PathBuf::from(training_launch_plan_path),
           PathBuf::from(output_dir),
@@ -350,9 +406,12 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           training_job_token,
           training_job_submit_command,
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training job launch recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("remoteJobStatus: {}", output.inspect_report.status.as_str());
       println!("trainerBackend: {}", output.manifest.trainer_backend);
       println!("providerBackend: {}", output.manifest.provider_backend);
@@ -411,7 +470,11 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       training_job_status_command,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training result collection", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
           PathBuf::from(training_job_manifest_path),
           PathBuf::from(output_dir),
@@ -419,9 +482,12 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           training_job_token,
           training_job_status_command,
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training result collection recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: {}", output.inspect_report.status.as_str());
       println!("statusMessage: {}", output.inspect_report.status_message.as_deref().unwrap_or("none"));
       println!("remoteResultStatus: {}", output.inspect_report.status.as_str());
@@ -508,7 +574,11 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       artifact_fetch_command,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training result artifact fetch", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_result_artifact_fetch(
           PathBuf::from(training_result_manifest_path),
           PathBuf::from(output_dir),
@@ -516,9 +586,12 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           training_job_token,
           artifact_fetch_command,
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training result artifact fetch recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("fetchStatus: {}", output.inspect_report.fetch_status.as_str());
       println!("trainerBackend: {}", output.manifest.trainer_backend);
       println!("jobBackend: {}", output.manifest.job_backend);
@@ -540,16 +613,23 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training holdout inspection", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_result_holdout_preview(
           PathBuf::from(training_result_semantic_manifest_path),
           holdout_frame_index,
           holdout_render_command,
           PathBuf::from(output_dir),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training holdout inspection recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: {}", output.manifest.status.as_str());
       println!("reason: {}", output.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
       println!("holdoutFrameIndex: {}", output.manifest.holdout_frame_index);
@@ -570,16 +650,23 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft holdout render quality", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_measure_3dgs_holdout_render_quality(
           PathBuf::from(training_result_semantic_manifest_path),
           PathBuf::from(holdout_preview_manifest_path),
           render_command,
           PathBuf::from(output_dir),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft holdout render quality recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: {}", output.manifest.status.as_str());
       println!("verdict: {}", output.manifest.verdict.as_str());
       println!("imageSizeMatch: {}", output.manifest.image_size_match);
@@ -609,7 +696,11 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       let target_block = parse_block_position(&target_block)?;
       let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
       let target_semantics = parse_target_semantics(&target_semantics)?;
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training spatial query", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_result_spatial_query(
           PathBuf::from(training_result_semantic_manifest_path),
           target_block,
@@ -621,9 +712,12 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
           closed_scene_fixture_path.map(PathBuf::from),
           PathBuf::from(output_dir),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training spatial query recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: {}", output.manifest.status.as_str());
       if matches!(
         output.manifest.status,
@@ -685,13 +779,18 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         telemetry_witness,
         verification_expected_item_id,
       };
-      let authority = build_invoke_dispatch(&project_root, &inspect).await?;
-      let execution = execute_invoke_frontend(&authority, move || run_minecraft_query_wired_live_action(inputs)).await?;
-      if let Some(failure) = execution.recording_failure.as_deref() {
-        eprintln!("warning: query-wired action instrumentation failed: {failure}");
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        run_minecraft_query_wired_live_action(inputs)
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: query-wired action recording failure for run {run_id}: {failure}");
       }
-      let run_id = execution.run_id;
-      let output = execution.direct_result?;
+      let output = output?;
       println!("queryStatus: {}", output.query.manifest.status.as_str());
       println!("wiringAttempted: {}", output.wiring.attempted);
       println!("actionEligibility: {}", output.wiring.action_eligibility.as_str());
@@ -706,14 +805,21 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft training result validation", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_3dgs_training_result_semantic_validation(
           PathBuf::from(training_result_artifact_manifest_path),
           PathBuf::from(output_dir),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft training result validation recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: {}", output.inspect_report.semantic_status.as_str());
       println!("reason: {}", output.inspect_report.semantic_reason.map(|reason| reason.as_str()).unwrap_or("none"));
       println!("trainerBackend: {}", output.manifest.trainer_backend);
@@ -727,11 +833,18 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_dir,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft texture sweep preparation", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_texture_sweep_preparation(PathBuf::from(sidecar_run_dir), PathBuf::from(output_dir))
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft texture sweep preparation recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: prepared");
       println!("packFormat: {}", output.manifest.pack_format);
       println!("profiles: {}", output.manifest.profiles.len());
@@ -749,14 +862,21 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       output_path,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft texture sweep sample build", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_texture_sweep_sample_build(
           bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
           PathBuf::from(output_path),
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft texture sweep sample build recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: completed");
       println!("samples: {}", output.sample_set.samples.len());
       if let Some(source) = &output.sample_set.source {
@@ -772,15 +892,22 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       require_real_source,
       inspect,
     } => {
-      let output = execute_product_cli_call(&project_root, &inspect, "Minecraft texture sweep evaluation", move || {
+      let authority = build_cli_authority(&project_root, &inspect).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
         crate::integrations::minecraft::run_minecraft_texture_sweep_eval(
           PathBuf::from(samples_path),
           PathBuf::from(output_dir),
           require_real_source,
         )
-      })
-      .await?
-      .1;
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: Minecraft texture sweep evaluation recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
       println!("status: completed");
       println!("requireRealSource: {require_real_source}");
       println!("passed: {}", output.passed);
@@ -823,9 +950,21 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       bundle_id,
       output_dir,
     } => {
-      let probe = probe_app(&project_root, &bundle_id, output_dir.map(PathBuf::from))?;
+      let authority = build_cli_authority(&project_root, &InspectClientOptions::default()).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        async move { probe_app(&project_root, &bundle_id, output_dir.map(PathBuf::from)) }
+      });
+      let probe = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: app probe recording failure for run {run_id}: {failure}");
+      }
+      let probe = probe?;
+      println!("runId: {run_id}");
       println!("app: {}", probe.app.bundle_id);
-      println!("status: captured");
+      println!("status: {}", app_probe_presentation_status(&probe.steps));
       println!("probe: {}", probe.output_dir.join("probe.json").display());
       println!("steps: {}", probe.steps.len());
     }
@@ -889,7 +1028,19 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
     } => {
       let beatmap_path = PathBuf::from(beatmap_path);
       let output_dir = output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-benchmark-output"));
-      let output = crate::integrations::osu::run_osu_benchmark(beatmap_path, output_dir).await?;
+      let authority = build_cli_authority(&project_root, &InspectClientOptions::default()).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        crate::integrations::osu::run_osu_benchmark(beatmap_path, output_dir)
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: osu benchmark recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
+      println!("runId: {run_id}");
       println!("status: completed");
       println!("beatmap: {}", output.map_summary.beatmap_path);
       println!("objects: {}", output.map_summary.total_objects);
@@ -911,15 +1062,26 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         inputs.dispatch_limit = Some(dispatch_limit);
       }
       inputs.capture_verify = capture_verify;
-      let output = crate::integrations::osu::run_osu_benchmark_with_inputs(
-        inputs,
-        if capture_verify {
-          "osu benchmark typed dispatch with capture verification"
-        } else {
-          "osu benchmark typed dispatch"
-        },
-      )
-      .await?;
+      let authority = build_cli_authority(&project_root, &InspectClientOptions::default()).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        crate::integrations::osu::run_osu_benchmark_with_inputs(
+          inputs,
+          if capture_verify {
+            "osu benchmark typed dispatch with capture verification"
+          } else {
+            "osu benchmark typed dispatch"
+          },
+        )
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: osu benchmark dispatch recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
+      println!("runId: {run_id}");
       println!("status: completed");
       println!("beatmap: {}", output.map_summary.beatmap_path);
       println!("objects: {}", output.map_summary.total_objects);
@@ -935,7 +1097,19 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       run_artifact_dir,
       output_dir,
     } => {
-      let output = crate::integrations::osu::run_osu_dataset_export(PathBuf::from(run_artifact_dir), PathBuf::from(output_dir)).await?;
+      let authority = build_cli_authority(&project_root, &InspectClientOptions::default()).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        crate::integrations::osu::run_osu_dataset_export(PathBuf::from(run_artifact_dir), PathBuf::from(output_dir))
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: osu dataset export recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
+      println!("runId: {run_id}");
       println!("status: completed");
       println!("exportedFrames: {}", output.dataset_manifest.exported_frames.len());
       println!("skippedFrames: {}", output.dataset_manifest.skipped_frames.len());
@@ -946,12 +1120,23 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       detections_path,
       output_dir,
     } => {
-      let output = crate::integrations::osu::run_osu_detection_eval(
-        PathBuf::from(run_artifact_dir),
-        PathBuf::from(detections_path),
-        output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-eval-detections-output")),
-      )
-      .await?;
+      let authority = build_cli_authority(&project_root, &InspectClientOptions::default()).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        crate::integrations::osu::run_osu_detection_eval(
+          PathBuf::from(run_artifact_dir),
+          PathBuf::from(detections_path),
+          output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-eval-detections-output")),
+        )
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: osu detection evaluation recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
+      println!("runId: {run_id}");
       println!("status: completed");
       println!("totalFrames: {}", output.visual_eval_report.total_frames);
       println!("labelMatchedFrames: {}", output.visual_eval_report.label_matched_frames);
@@ -965,14 +1150,25 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       dispatch_limit,
       capture_verify,
     } => {
-      let output = crate::integrations::osu::run_osu_vision_demo(
-        PathBuf::from(beatmap_path),
-        target_app,
-        output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-vision-demo-output")),
-        dispatch_limit,
-        capture_verify,
-      )
-      .await?;
+      let authority = build_cli_authority(&project_root, &InspectClientOptions::default()).await?;
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        crate::integrations::osu::run_osu_vision_demo(
+          PathBuf::from(beatmap_path),
+          target_app,
+          output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-vision-demo-output")),
+          dispatch_limit,
+          capture_verify,
+        )
+      });
+      let output = root.instrument(future).await;
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        eprintln!("warning: osu vision demo recording failure for run {run_id}: {failure}");
+      }
+      let output = output?;
+      println!("runId: {run_id}");
       println!("status: completed");
       println!("beatmap: {}", output.map_summary.beatmap_path);
       println!("objects: {}", output.map_summary.total_objects);
@@ -1002,7 +1198,7 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
       inspect,
       output,
     } => {
-      let authority = build_invoke_dispatch(&project_root, &inspect).await?;
+      let authority = build_cli_authority(&project_root, &inspect).await?;
       let registry = crate::product_registry();
       let command =
         registry.resolve(&request.command_id).cloned().ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
@@ -1014,12 +1210,33 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
         cancellation: auv_cli_invoke::InvokeCancellation::new(),
       };
       let invoked_command = command.clone();
-      let execution = execute_invoke_frontend(&authority, move || invoked_command.invoke(input)).await?;
-      if let Some(error) = execution.recording_failure {
-        eprintln!("warning: invoke recording failure for run {}: {error}", execution.run_id);
+      let run_id = auv_tracing::RunId::new();
+      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+      let future = root.in_scope(|| {
+        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+        invoked_command.invoke(input)
+      });
+      let direct_result = root.instrument(future).await;
+      let mut recording_failures = Vec::new();
+      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
+        recording_failures.push(failure);
       }
-      let result = auv_cli_invoke::InvokeResult::from_command_result(execution.run_id.to_string(), &command, execution.direct_result)
-        .with_canonical_artifacts(execution.canonical_artifacts);
+      let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
+        Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
+        Ok(None) => {
+          recording_failures.push("recorded run snapshot is missing after execution".to_string());
+          Vec::new()
+        }
+        Err(error) => {
+          recording_failures.push(format!("failed to load recorded run snapshot after execution: {error}"));
+          Vec::new()
+        }
+      };
+      if !recording_failures.is_empty() {
+        eprintln!("warning: invoke recording failure for run {run_id}: {}", recording_failures.join("; "));
+      }
+      let result = auv_cli_invoke::InvokeResult::from_command_result(run_id.to_string(), &command, direct_result)
+        .with_canonical_artifacts(canonical_artifacts);
       for failure in &result.artifact_failures {
         eprintln!("warning: artifact instrumentation failed for {}: {}", failure.purpose, failure.message);
       }
@@ -1052,6 +1269,16 @@ async fn dispatch(command: CliCommand) -> Result<i32, String> {
   }
 
   Ok(exit_code)
+}
+
+fn app_probe_presentation_status(steps: &[auv_runtime::app::AppProbeStep]) -> &'static str {
+  if !steps.is_empty() && steps.iter().all(|step| step.status == "completed") {
+    "captured"
+  } else if steps.is_empty() || steps.iter().all(|step| step.status == "failed") {
+    "failed"
+  } else {
+    "partial"
+  }
 }
 
 fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> {
@@ -1231,12 +1458,12 @@ fn open_inspect_authority_store(store_root: &Path) -> Result<Arc<dyn auv_tracing
 }
 
 #[derive(Clone)]
-struct InvokeFrontendAuthority {
+struct CliFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
   store: Arc<dyn auv_tracing::RunStore>,
 }
 
-async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptions) -> Result<InvokeFrontendAuthority, String> {
+async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions) -> Result<CliFrontendAuthority, String> {
   let server_target = if should_try_server_write(inspect) {
     if let Some(url) = resolve_inspect_server_target(inspect)? {
       Some(url)
@@ -1274,15 +1501,7 @@ async fn build_invoke_dispatch(project_root: &Path, inspect: &InspectClientOptio
   };
   let dispatch =
     auv_tracing::configure().run_store(store.clone()).build().map_err(|error| format!("failed to configure invoke tracing: {error}"))?;
-  Ok(InvokeFrontendAuthority { dispatch, store })
-}
-
-#[derive(Debug)]
-struct InvokeFrontendExecution<T> {
-  run_id: auv_tracing::RunId,
-  direct_result: Result<T, String>,
-  recording_failure: Option<String>,
-  canonical_artifacts: Vec<auv_tracing::ArtifactMetadata>,
+  Ok(CliFrontendAuthority { dispatch, store })
 }
 
 #[derive(serde::Serialize)]
@@ -1295,71 +1514,8 @@ impl auv_tracing::EventPayload for InvokeFrontendLifecycle {
   const VERSION: u32 = 1;
 }
 
-async fn execute_invoke_frontend<T, F, Fut>(authority: &InvokeFrontendAuthority, call: F) -> Result<InvokeFrontendExecution<T>, String>
-where
-  T: Send + 'static,
-  F: FnOnce() -> Fut + Send + 'static,
-  Fut: Future<Output = Result<T, String>> + Send + 'static,
-{
-  let run_id = auv_tracing::RunId::new();
-  let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-  let future = root.in_scope(|| {
-    auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-    call()
-  });
-  let direct_result = root.instrument(future).await;
-  let mut recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
-  let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
-    Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
-    Ok(None) => {
-      recording_failure.get_or_insert_with(|| "recorded run snapshot is missing after execution".to_string());
-      Vec::new()
-    }
-    Err(error) => {
-      recording_failure.get_or_insert_with(|| format!("failed to load recorded run snapshot: {error}"));
-      Vec::new()
-    }
-  };
-  Ok(InvokeFrontendExecution {
-    run_id,
-    direct_result,
-    recording_failure,
-    canonical_artifacts,
-  })
-}
-
-async fn execute_product_cli_call<T, F, Fut>(
-  project_root: &Path,
-  inspect: &InspectClientOptions,
-  label: &'static str,
-  call: F,
-) -> Result<(auv_tracing::RunId, T), String>
-where
-  T: Send + 'static,
-  F: FnOnce() -> Fut + Send + 'static,
-  Fut: Future<Output = Result<T, String>> + Send + 'static,
-{
-  execute_product_cli_call_with_store(project_root, inspect, label, move |_| call()).await
-}
-
-async fn execute_product_cli_call_with_store<T, F, Fut>(
-  project_root: &Path,
-  inspect: &InspectClientOptions,
-  label: &'static str,
-  call: F,
-) -> Result<(auv_tracing::RunId, T), String>
-where
-  T: Send + 'static,
-  F: FnOnce(Arc<dyn auv_tracing::RunStore>) -> Fut + Send + 'static,
-  Fut: Future<Output = Result<T, String>> + Send + 'static,
-{
-  let authority = build_invoke_dispatch(project_root, inspect).await?;
-  let store = authority.store.clone();
-  let execution = execute_invoke_frontend(&authority, move || call(store)).await?;
-  if let Some(failure) = execution.recording_failure.as_deref() {
-    eprintln!("warning: {label} instrumentation failed: {failure}");
-  }
-  Ok((execution.run_id, execution.direct_result?))
+async fn flush_cli_recording(dispatch: &auv_tracing::Dispatch) -> Option<String> {
+  dispatch.flush().await.err().map(|error| error.to_string())
 }
 
 fn should_write_local(inspect: &InspectClientOptions) -> bool {
@@ -1437,6 +1593,28 @@ mod tests {
     assert_eq!(exit_status(Ok(0)), std::process::ExitCode::SUCCESS);
     assert_eq!(exit_status(Ok(7)), std::process::ExitCode::from(7));
     assert_eq!(exit_status(Err("failed".to_string())), std::process::ExitCode::FAILURE);
+  }
+
+  #[test]
+  fn app_probe_status_is_captured_only_when_every_step_completed() {
+    let step = |status: &str| auv_runtime::app::AppProbeStep {
+      id: format!("step-{status}"),
+      command_id: "app.probePermissions".to_string(),
+      target_application_id: None,
+      inputs: Default::default(),
+      run_id: RunId::new().to_string(),
+      span_id: String::new(),
+      status: status.to_string(),
+      output_summary: status.to_string(),
+      artifact_paths: Vec::new(),
+      artifacts: Vec::new(),
+      failure_message: (status != "completed").then(|| status.to_string()),
+    };
+
+    assert_eq!(app_probe_presentation_status(&[step("completed"), step("completed")]), "captured");
+    assert_eq!(app_probe_presentation_status(&[step("completed"), step("failed")]), "partial");
+    assert_eq!(app_probe_presentation_status(&[step("failed")]), "failed");
+    assert_eq!(app_probe_presentation_status(&[]), "failed");
   }
 
   fn minecraft_dispatch_fixture(label: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
@@ -1656,18 +1834,25 @@ mod tests {
 
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
-    let authority = InvokeFrontendAuthority {
+    let authority = CliFrontendAuthority {
       dispatch,
       store: store.clone(),
     };
     let invoked_call = call.clone();
-    let execution = execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect("persisted execution");
+    let run_id = RunId::new();
+    let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+    let future = root.in_scope(|| {
+      auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+      invoked_call.call()
+    });
+    let direct_result = root.instrument(future).await;
+    let recording_failure = flush_cli_recording(&authority.dispatch).await;
 
-    assert_eq!(execution.direct_result, Ok(7));
-    assert_eq!(execution.recording_failure, None);
+    assert_eq!(direct_result, Ok(7));
+    assert_eq!(recording_failure, None);
     assert_eq!(call.call_count(), 2);
-    let snapshot = store.load_snapshot(execution.run_id).await.expect("snapshot").expect("recorded run");
-    assert_eq!(snapshot.run_id(), execution.run_id);
+    let snapshot = store.load_snapshot(run_id).await.expect("snapshot").expect("recorded run");
+    assert_eq!(snapshot.run_id(), run_id);
     assert_eq!(snapshot.events().len(), 3);
   }
 
@@ -1676,20 +1861,30 @@ mod tests {
     let call = CountingCall::default();
     let store = Arc::new(CommitUnknownStore::new());
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
-    let authority = InvokeFrontendAuthority {
+    let authority = CliFrontendAuthority {
       dispatch,
       store: store.clone(),
     };
 
     let invoked_call = call.clone();
-    let execution =
-      execute_invoke_frontend(&authority, move || invoked_call.call()).await.expect("recording failure must preserve the direct result");
+    let run_id = RunId::new();
+    let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
+    let future = root.in_scope(|| {
+      auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
+      invoked_call.call()
+    });
+    let direct_result = root.instrument(future).await;
+    let recording_failure = flush_cli_recording(&authority.dispatch).await;
+    let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
+      Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect::<Vec<_>>(),
+      Ok(None) | Err(_) => Vec::new(),
+    };
 
     assert_eq!(call.call_count(), 1);
-    assert_eq!(execution.direct_result, Ok(7));
-    assert_eq!(store.attempted_run_id(), Some(execution.run_id));
-    assert!(execution.canonical_artifacts.is_empty());
-    let failure = execution.recording_failure.expect("recording failure");
+    assert_eq!(direct_result, Ok(7));
+    assert_eq!(store.attempted_run_id(), Some(run_id));
+    assert!(canonical_artifacts.is_empty());
+    let failure = recording_failure.expect("recording failure");
     assert!(failure.contains("instrumentation dispatch failure"), "unexpected failure: {failure}");
     assert_no_canonical_advice(&failure);
   }

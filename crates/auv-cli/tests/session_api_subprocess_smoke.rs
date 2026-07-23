@@ -13,7 +13,6 @@ use auv_tracing::{FileRunStore, RunId, RunStore};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
-use tonic::Code;
 use tonic::transport::Channel;
 
 const SERVER_READY_PREFIX: &str = "session API: grpc://";
@@ -106,11 +105,10 @@ async fn session_api_subprocess_smoke_returns_direct_value_and_records_canonical
   let invoke_response = invoke_sample_command(&mut client, session).await;
   assert_eq!(invoke_response.status, "completed");
   assert!(invoke_response.failure_message.is_empty());
+  assert!(invoke_response.recording_failure.is_empty());
   assert!(invoke_response.known_limits.is_empty());
   assert!(invoke_response.artifacts.is_empty(), "dry-run coverage must not claim artifacts");
-  let operation = invoke_response.operation.expect("operation ref");
-  assert_eq!(operation.operation_id, "scan.coverage");
-  let run_id = operation.run_id.parse::<RunId>().expect("canonical run id");
+  let run_id = invoke_response.run_id.parse::<RunId>().expect("canonical run id");
 
   let store = FileRunStore::open(&store_root).expect("open session run authority");
   let snapshot = store.load_snapshot(run_id).await.expect("load session run").expect("recorded session run");
@@ -122,15 +120,6 @@ async fn session_api_subprocess_smoke_returns_direct_value_and_records_canonical
     serde_json::from_str::<serde_json::Value>(snapshot.events()[0].payload().get()).expect("frontend lifecycle payload"),
     serde_json::json!({ "frontend": "session-api" })
   );
-
-  let error = client
-    .get_operation(proto::GetOperationRequest {
-      operation: Some(operation),
-    })
-    .await
-    .expect_err("generic GetOperation projection is intentionally unsupported");
-  assert_eq!(error.code(), Code::Unimplemented);
-  assert!(error.message().contains("typed GetOperation domain projection"));
 
   child.kill().await.expect("kill session serve child");
   let _ = child.wait().await;

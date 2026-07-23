@@ -42,10 +42,10 @@ pub fn decode_invoke_payload(command_id: String, json_payload: &[u8]) -> Result<
   })
 }
 
-pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult, recording_failure: Option<&str>) -> proto::InvokeResponse {
+pub fn invoke_result_to_response(result: &InvokeResult, recording_failure: Option<&str>) -> proto::InvokeResponse {
   let mut known_limits = Vec::new();
   if recording_failure.is_some() {
-    known_limits.push("auv.api.session.recording_flush_failed".to_string());
+    known_limits.push("auv.api.session.recording_failed".to_string());
   }
   let artifacts = result
     .canonical_artifacts
@@ -59,14 +59,12 @@ pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult, record
     })
     .collect();
   proto::InvokeResponse {
-    operation: Some(proto::OperationRef {
-      run_id: result.run_id.clone(),
-      operation_id: command_id.to_string(),
-    }),
+    run_id: result.run_id.clone(),
     status: result.status.as_str().to_string(),
     artifacts,
     known_limits,
     failure_message: result.failure_message.clone().unwrap_or_default(),
+    recording_failure: recording_failure.unwrap_or_default().to_string(),
   }
 }
 
@@ -90,9 +88,23 @@ mod tests {
     let registry = default_registry();
     let command = registry.resolve("scan.coverage").expect("command");
     let result = InvokeResult::from_command_result("run-direct", command, Ok(InvokeCommandOutput::new("coverage")));
-    let response = invoke_result_to_response(command.id, &result, None);
+    let response = invoke_result_to_response(&result, None);
     assert_eq!(response.status, RunStatus::Completed.as_str());
-    assert_eq!(response.operation.expect("operation").run_id, "run-direct");
+    assert_eq!(response.run_id, "run-direct");
     assert!(response.known_limits.is_empty());
+    assert!(response.recording_failure.is_empty());
+  }
+
+  #[test]
+  fn invoke_response_keeps_recording_failure_separate_from_direct_status() {
+    let registry = default_registry();
+    let command = registry.resolve("scan.coverage").expect("command");
+    let result = InvokeResult::from_command_result("run-direct", command, Ok(InvokeCommandOutput::new("coverage")));
+    let response = invoke_result_to_response(&result, Some("recorded run snapshot is missing after execution"));
+
+    assert_eq!(response.status, RunStatus::Completed.as_str());
+    assert!(response.failure_message.is_empty());
+    assert_eq!(response.recording_failure, "recorded run snapshot is missing after execution");
+    assert_eq!(response.known_limits, vec!["auv.api.session.recording_failed"]);
   }
 }
