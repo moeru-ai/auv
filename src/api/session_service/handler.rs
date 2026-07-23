@@ -122,9 +122,9 @@ mod tests {
 
   use auv_api_proto::v1::session as proto;
   use auv_tracing::{
-    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode,
-    IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot,
-    RunStore, RunSubscription, StoreArtifactRequest,
+    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, IdempotencyKey,
+    MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore,
+    RunSubscription, StoreArtifactRequest,
   };
 
   use super::SessionApiHandler;
