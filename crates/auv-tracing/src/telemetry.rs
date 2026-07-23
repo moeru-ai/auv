@@ -137,9 +137,6 @@ impl TelemetryRoutePolicy {
     filtered_attributes(attributes, &self.span_attribute_keys)
   }
 
-  // TODO(tracing-contract-v1-task-9): consume this filter when the detached
-  // artifact lane begins emitting dispatch-owned publication telemetry.
-  #[allow(dead_code)]
   pub(crate) fn artifact_attributes(&self, attributes: &Attributes) -> Attributes {
     filtered_attributes(attributes, &self.artifact_attribute_keys)
   }
