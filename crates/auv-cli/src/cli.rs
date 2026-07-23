@@ -27,8 +27,6 @@ pub struct InspectClientOptions {
   pub server_write: InspectWriteSetting,
   pub require_server_write: bool,
   pub server_url: Option<String>,
-  pub server_token: Option<String>,
-  pub server_token_file: Option<String>,
 }
 
 impl Default for InspectClientOptions {
@@ -39,8 +37,6 @@ impl Default for InspectClientOptions {
       server_write: InspectWriteSetting::Default,
       require_server_write: false,
       server_url: None,
-      server_token: None,
-      server_token_file: None,
     }
   }
 }
@@ -353,7 +349,7 @@ USAGE
   auv-godot … (see `auv-godot --help`)
   auv-osu … (see `auv-osu --help`)
   auv-minecraft … (see `auv-minecraft --help`)
-  auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>]
   auv inspect <run-id> [--store-root <path>]
   auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv session serve [--host <host>] [--port <port>] [--store-root <path>]
@@ -886,16 +882,9 @@ fn parse_inspect_client_option(argument: &str, value: Option<&String>, inspect: 
       inspect.server_url = Some(value.clone());
       Ok(Some(2))
     }
-    "--inspect-server-token" => {
-      let value = value.ok_or_else(|| "--inspect-server-token requires a value".to_string())?;
-      inspect.server_token = Some(value.clone());
-      Ok(Some(2))
-    }
-    "--inspect-server-token-file" => {
-      let value = value.ok_or_else(|| "--inspect-server-token-file requires a value".to_string())?;
-      inspect.server_token_file = Some(value.clone());
-      Ok(Some(2))
-    }
+    "--inspect-server-token" | "--inspect-server-token-file" => Err(format!(
+      "{argument} was removed with the legacy inspect-server write-token transport; configure authentication at the server boundary"
+    )),
     _ => Ok(None),
   }
 }
@@ -2174,6 +2163,7 @@ mod tests {
     ] {
       assert!(help.contains(expected), "top-level help should keep core path visible: {expected}");
     }
+    assert!(!help.contains("--inspect-server-token"));
   }
 
   #[test]
@@ -3967,8 +3957,6 @@ mod tests {
       "default".to_string(),
       "--inspect-server-write".to_string(),
       "false".to_string(),
-      "--inspect-server-token-file".to_string(),
-      "/tmp/token".to_string(),
     ])
     .expect("invoke inspect options should parse");
 
@@ -3981,9 +3969,24 @@ mod tests {
         assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
         assert_eq!(inspect.local_write, InspectWriteSetting::Default);
         assert_eq!(inspect.server_write, InspectWriteSetting::Disabled);
-        assert_eq!(inspect.server_token_file.as_deref(), Some("/tmp/token"));
       }
       other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_rejects_retired_inspect_server_token_flags() {
+    for flag in ["--inspect-server-token", "--inspect-server-token-file"] {
+      let error = parse_cli(&[
+        "invoke".to_string(),
+        "window.capture".to_string(),
+        flag.to_string(),
+        "secret".to_string(),
+      ])
+      .expect_err("retired inspect server token flag must fail");
+
+      assert!(error.contains(flag), "{error}");
+      assert!(error.contains("removed"), "{error}");
     }
   }
 

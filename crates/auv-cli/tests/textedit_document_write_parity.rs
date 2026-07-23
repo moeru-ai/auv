@@ -1,103 +1,57 @@
 //! Direct CLI/MCP parity for TextEdit document.write (#101).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use auv_cli::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID;
+use auv_cli::integrations::textedit::{DOCUMENT_WRITE_COMMAND_ID, fixture_document_write_cli, map_verification_result};
 use auv_cli::product_registry;
 use auv_cli_invoke::{InvokeCancellation, InvokeCommandInput};
-use auv_tracing::{Context, EventPayload, FileRunStore, RunId, RunStore, configure, dispatcher};
-use rmcp::{
-  ClientHandler, ServiceExt,
-  model::{CallToolRequestParam, ClientInfo},
-};
+use auv_runtime::contract::VerificationResult;
+use auv_runtime::mcp::McpInvokeInput;
+use auv_runtime::run_read::list_input_action_results;
+use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
 
-#[derive(Debug, Clone, Default)]
-struct DummyClientHandler;
-
-impl ClientHandler for DummyClientHandler {
-  fn get_info(&self) -> ClientInfo {
-    ClientInfo::default()
-  }
-}
-
-#[derive(serde::Serialize)]
-struct CliFrontendLifecycle {
-  frontend: &'static str,
-}
-
-impl EventPayload for CliFrontendLifecycle {
-  const NAME: &'static str = "auv.frontend.lifecycle";
-  const VERSION: u32 = 1;
+#[derive(serde::Deserialize)]
+struct RecordedVerification {
+  verification: VerificationResult,
 }
 
 #[tokio::test]
-async fn textedit_rejected_fixture_input_preserves_direct_cli_mcp_parity() {
-  let store_root = tempfile_dir("textedit-direct-parity");
-  let store = Arc::new(FileRunStore::open(&store_root).expect("file store"));
-  let dispatch = configure().run_store(store.clone()).build().expect("CLI dispatch");
+async fn textedit_fixture_reaches_shared_domain_through_cli_and_mcp_mappings() {
+  let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+  let dispatch = configure().run_store(store.clone()).build().expect("frontend dispatch");
   let cli_run_id = RunId::new();
-  let root = dispatcher::with_default(&dispatch, || Context::root(cli_run_id));
-  let command = product_registry().resolve(DOCUMENT_WRITE_COMMAND_ID).expect("TextEdit command").clone();
-  let input = InvokeCommandInput {
-    command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
-    target_application_id: Some("com.apple.TextEdit".to_string()),
-    inputs: rejected_fixture_inputs(),
-    dry_run: false,
-    cancellation: InvokeCancellation::new(),
-  };
-  let future = root.in_scope(|| {
-    auv_tracing::emit_event!(CliFrontendLifecycle { frontend: "cli" });
-    command.invoke(input)
-  });
-  let cli_value = root.instrument(future).await;
+  let cli_root = dispatcher::with_default(&dispatch, || Context::root(cli_run_id));
+  let cli_future = cli_root.in_scope(|| fixture_document_write_cli(cli_input(), Some("different".to_string())));
+  let (_cli_output, cli_report) = cli_root.instrument(cli_future).await.expect("CLI fixture mapping");
   dispatch.flush().await.expect("flush CLI run");
 
-  let server = auv_cli::mcp::server(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).expect("TextEdit MCP server");
-  let (server_transport, client_transport) = tokio::io::duplex(16384);
-  let server_handle = tokio::spawn(async move {
-    let service = server.serve(server_transport).await.expect("MCP server start");
-    service.waiting().await.expect("MCP server exit");
-  });
-  let client = DummyClientHandler.serve(client_transport).await.expect("MCP client");
-  let response = client
-    .call_tool(CallToolRequestParam {
-      name: "invoke".into(),
-      arguments: Some(
-        serde_json::json!({
-          "command_id": DOCUMENT_WRITE_COMMAND_ID,
-          "target": { "application_id": "com.apple.TextEdit" },
-          "inputs": rejected_fixture_inputs(),
-          "inspect": { "store_root": store_root.display().to_string() }
-        })
-        .as_object()
-        .expect("MCP arguments")
-        .clone(),
-      ),
-    })
-    .await
-    .expect("MCP invoke");
-  let mcp_value: serde_json::Value =
-    serde_json::from_str(&response.content.first().and_then(|content| content.raw.as_text()).expect("MCP text response").text)
-      .expect("MCP JSON response");
+  let mcp_run_id = RunId::new();
+  let mcp_root = dispatcher::with_default(&dispatch, || Context::root(mcp_run_id));
+  let mcp_future = mcp_root.in_scope(|| auv_cli::mcp::fixture_textedit_document_write(mcp_input(), Some("different".to_string())));
+  let (_mcp_outcome, mcp_report) = mcp_root.instrument(mcp_future).await.expect("MCP fixture mapping");
+  dispatch.flush().await.expect("flush MCP run");
 
-  let cli_error = cli_value.expect_err("CLI rejects fixture-only input");
-  assert_eq!(mcp_value["status"], "failed");
-  assert_eq!(mcp_value["failure_message"], cli_error);
-  let mcp_run_id = mcp_value["run_id"].as_str().expect("MCP run id").parse::<RunId>().expect("valid MCP run id");
   assert_ne!(cli_run_id, mcp_run_id);
+  assert_eq!(cli_report, mcp_report);
+  let cli_verification = map_verification_result(cli_report.verification.as_ref().expect("CLI verification"));
+  let mcp_verification = map_verification_result(mcp_report.verification.as_ref().expect("MCP verification"));
+  assert_eq!(cli_verification, mcp_verification);
+  assert_eq!(cli_verification.semantic_matched, Some(false));
 
   for run_id in [cli_run_id, mcp_run_id] {
     let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("frontend run snapshot");
     assert_eq!(snapshot.run_id(), run_id);
-    assert!(snapshot.artifacts().is_empty(), "rejected input must not fabricate result artifacts");
-    assert!(snapshot.events().iter().any(|event| event.schema().name().as_str() == "auv.frontend.lifecycle"));
+    assert_eq!(list_input_action_results(store.as_ref(), &snapshot).await.expect("typed input results").len(), 2);
+    let event = snapshot
+      .events()
+      .iter()
+      .find(|event| event.schema().name().as_str() == "auv.textedit.document_write.verification")
+      .expect("app-owned verification event");
+    assert_eq!(event.schema().version().get(), 1);
+    let recorded: RecordedVerification = serde_json::from_str(event.payload().get()).expect("typed verification payload");
+    assert_eq!(recorded.verification, cli_verification);
   }
-
-  client.cancel().await.expect("cancel MCP client");
-  server_handle.await.expect("join MCP server");
-  let _ = std::fs::remove_dir_all(store_root);
 }
 
 #[test]
@@ -109,17 +63,29 @@ fn product_help_lists_textedit_command_once() {
   assert!(!auv_cli_invoke::render_help_index(&auv_cli_invoke::default_registry()).contains(DOCUMENT_WRITE_COMMAND_ID));
 }
 
-fn rejected_fixture_inputs() -> BTreeMap<String, String> {
+fn document_write_inputs() -> BTreeMap<String, String> {
   BTreeMap::from([
     ("content".to_string(), "AUV_TEXTEDIT_FIXTURE_MARKER".to_string()),
-    ("driver".to_string(), "fixture".to_string()),
     ("verify".to_string(), "true".to_string()),
   ])
 }
 
-fn tempfile_dir(label: &str) -> PathBuf {
-  let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system clock").as_nanos();
-  let path = std::env::temp_dir().join(format!("auv-{label}-{}-{nonce}", std::process::id()));
-  std::fs::create_dir_all(&path).expect("temp dir");
-  path
+fn cli_input() -> InvokeCommandInput {
+  InvokeCommandInput {
+    command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
+    target_application_id: Some("com.apple.TextEdit".to_string()),
+    inputs: document_write_inputs(),
+    dry_run: false,
+    cancellation: InvokeCancellation::new(),
+  }
+}
+
+fn mcp_input() -> McpInvokeInput {
+  McpInvokeInput {
+    target_application_id: Some("com.apple.TextEdit".to_string()),
+    target_label: None,
+    inputs: document_write_inputs(),
+    dry_run: false,
+    cancellation: InvokeCancellation::new(),
+  }
 }

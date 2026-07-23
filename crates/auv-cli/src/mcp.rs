@@ -30,15 +30,48 @@ pub(crate) fn product_invoke_adapters() -> Vec<McpInvokeAdapter> {
 }
 
 async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<McpInvokeOutcome, String> {
-  use crate::integrations::textedit::write_document;
-
   reject_production_fixture_inputs(&input)?;
   let command = parse_document_write(&input)?;
   if input.dry_run {
     return Ok(McpInvokeOutcome::completed("dry run: app.textedit.document.write", serde_json::Value::Null));
   }
-  let report = write_document(command.clone(), input.cancellation).await?;
-  document_write_outcome(command, report)
+  #[cfg(target_os = "macos")]
+  {
+    let driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
+    map_textedit_document_write(command, input.cancellation, driver).await.map(|(outcome, _)| outcome)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (command, input.cancellation);
+    Err("app.textedit.document.write live driver requires macOS".to_string())
+  }
+}
+
+async fn map_textedit_document_write<D>(
+  command: DocumentWrite,
+  cancellation: auv_cli_invoke::InvokeCancellation,
+  driver: D,
+) -> Result<(McpInvokeOutcome, auv_apple_textedit::DocumentCommandReport), String>
+where
+  D: auv_apple_textedit::TextEditDriver,
+{
+  let report = crate::integrations::textedit::write_document(command.clone(), cancellation, driver).await?;
+  let outcome = document_write_outcome(command, report.clone())?;
+  Ok((outcome, report))
+}
+
+/// Test fixture boundary that runs the production MCP mapping without opening the live macOS driver.
+#[doc(hidden)]
+pub async fn fixture_textedit_document_write(
+  input: McpInvokeInput,
+  observed_text: Option<String>,
+) -> Result<(McpInvokeOutcome, auv_apple_textedit::DocumentCommandReport), String> {
+  let command = parse_document_write(&input)?;
+  if input.dry_run {
+    return Err("TextEdit fixture mapping requires a live-style invocation".to_string());
+  }
+  let driver = crate::integrations::textedit::fixture_driver(&command, observed_text);
+  map_textedit_document_write(command, input.cancellation, driver).await
 }
 
 fn document_write_outcome(command: DocumentWrite, report: auv_apple_textedit::DocumentCommandReport) -> Result<McpInvokeOutcome, String> {
