@@ -9,6 +9,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,47 @@ pub type TrainingResultHoldoutPreviewResult<T> = Result<T, String>;
 
 pub const TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE: &str = "auv.minecraft.training.holdout_preview";
+
+pub async fn publish_minecraft_training_holdout_preview(
+  context: Option<&Context>,
+  preview: &TrainingResultHoldoutPreviewManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(
+    context,
+    MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE,
+    preview,
+    validate_training_holdout_preview_payload,
+  )
+  .await
+}
+
+pub async fn read_minecraft_training_holdout_preview(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<TrainingResultHoldoutPreviewManifest, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(
+    store,
+    snapshot,
+    uri,
+    MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE,
+    validate_training_holdout_preview_payload,
+  )
+  .await
+}
+
+fn validate_training_holdout_preview_payload(preview: &TrainingResultHoldoutPreviewManifest) -> Result<(), String> {
+  if preview.schema_version != TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training holdout preview schema_version {} (expected {TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION})",
+      preview.schema_version
+    ));
+  }
+  // TODO(minecraft-holdout-preview-invariants): Add cross-field checks when
+  // the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
+}
 
 pub const MC16_V1_HOLDOUT_PREVIEW_KNOWN_LIMIT: &str = "MC-16 v1 holdout preview records scene-packet holdout witness and checkpoint basis; trained splat holdout render and photometric quality judgment are deferred";
 
@@ -231,7 +273,7 @@ pub fn inspect_3dgs_training_result_holdout(
             .to_string(),
     );
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let semantic_ready = semantic_manifest.semantic_status == StageStatus::Ready;
 
   let scene_packet_manifest_path = PathBuf::from(&semantic_manifest.source_scene_packet_manifest_path);

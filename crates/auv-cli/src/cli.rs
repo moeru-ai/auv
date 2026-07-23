@@ -27,8 +27,6 @@ pub struct InspectClientOptions {
   pub server_write: InspectWriteSetting,
   pub require_server_write: bool,
   pub server_url: Option<String>,
-  pub server_token: Option<String>,
-  pub server_token_file: Option<String>,
 }
 
 impl Default for InspectClientOptions {
@@ -39,8 +37,6 @@ impl Default for InspectClientOptions {
       server_write: InspectWriteSetting::Default,
       require_server_write: false,
       server_url: None,
-      server_token: None,
-      server_token_file: None,
     }
   }
 }
@@ -48,9 +44,6 @@ impl Default for InspectClientOptions {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct InspectServeWriteOptions {
   pub enabled: bool,
-  pub token: Option<String>,
-  pub token_file: Option<String>,
-  pub no_token: bool,
 }
 
 #[derive(Debug)]
@@ -353,9 +346,9 @@ USAGE
   auv-godot … (see `auv-godot --help`)
   auv-osu … (see `auv-osu --help`)
   auv-minecraft … (see `auv-minecraft --help`)
-  auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>]
   auv inspect <run-id> [--store-root <path>]
-  auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
+  auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write]
   auv session serve [--host <host>] [--port <port>] [--store-root <path>]
   auv mcp serve
 
@@ -826,26 +819,6 @@ fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
         write.enabled = true;
         index += 1;
       }
-      "--write-token" => {
-        if index + 1 >= arguments.len() {
-          return Err("--write-token requires a value".to_string());
-        }
-        write.enabled = true;
-        write.token = Some(arguments[index + 1].clone());
-        index += 2;
-      }
-      "--write-token-file" => {
-        if index + 1 >= arguments.len() {
-          return Err("--write-token-file requires a value".to_string());
-        }
-        write.enabled = true;
-        write.token_file = Some(arguments[index + 1].clone());
-        index += 2;
-      }
-      "--no-write-token" => {
-        write.no_token = true;
-        index += 1;
-      }
       other => {
         return Err(format!("unexpected inspect-serve argument {other}"));
       }
@@ -884,16 +857,6 @@ fn parse_inspect_client_option(argument: &str, value: Option<&String>, inspect: 
     "--inspect-server-url" => {
       let value = value.ok_or_else(|| "--inspect-server-url requires a value".to_string())?;
       inspect.server_url = Some(value.clone());
-      Ok(Some(2))
-    }
-    "--inspect-server-token" => {
-      let value = value.ok_or_else(|| "--inspect-server-token requires a value".to_string())?;
-      inspect.server_token = Some(value.clone());
-      Ok(Some(2))
-    }
-    "--inspect-server-token-file" => {
-      let value = value.ok_or_else(|| "--inspect-server-token-file requires a value".to_string())?;
-      inspect.server_token_file = Some(value.clone());
       Ok(Some(2))
     }
     _ => Ok(None),
@@ -2168,11 +2131,15 @@ mod tests {
       "auv-minecraft",
       "auv invoke <command-id>",
       "auv inspect <run-id> [--store-root <path>]",
-      "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]",
+      "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write]",
       "auv session serve [--host <host>] [--port <port>] [--store-root <path>]",
       "auv mcp serve",
     ] {
       assert!(help.contains(expected), "top-level help should keep core path visible: {expected}");
+    }
+    assert!(!help.contains("--inspect-server-token"));
+    for retired in ["--write-token", "--write-token-file", "--no-write-token"] {
+      assert!(!help.contains(retired), "top-level help must omit retired Inspect serve option {retired}");
     }
   }
 
@@ -3875,15 +3842,13 @@ mod tests {
   }
 
   #[test]
-  fn parse_inspect_serve_write_options() {
+  fn parse_inspect_serve_enable_write_option() {
     let command = parse_cli(&[
       "inspect".to_string(),
       "serve".to_string(),
       "--store-root".to_string(),
       "/tmp/auv-store".to_string(),
       "--enable-write".to_string(),
-      "--write-token".to_string(),
-      "secret".to_string(),
     ])
     .expect("inspect serve options should parse");
 
@@ -3898,10 +3863,22 @@ mod tests {
         assert_eq!(port, auv_inspect_server::DEFAULT_INSPECT_PORT);
         assert_eq!(store_root.as_deref(), Some("/tmp/auv-store"));
         assert!(write.enabled);
-        assert_eq!(write.token.as_deref(), Some("secret"));
-        assert!(!write.no_token);
       }
       other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_inspect_serve_rejects_retired_write_token_flags_as_unknown() {
+    for flag in ["--write-token", "--write-token-file", "--no-write-token"] {
+      let mut arguments = vec!["inspect".to_string(), "serve".to_string(), flag.to_string()];
+      if flag != "--no-write-token" {
+        arguments.push("secret".to_string());
+      }
+
+      let error = parse_cli(&arguments).expect_err("retired Inspect serve token flag must fail");
+
+      assert_eq!(error, format!("unexpected inspect-serve argument {flag}"));
     }
   }
 
@@ -3967,8 +3944,6 @@ mod tests {
       "default".to_string(),
       "--inspect-server-write".to_string(),
       "false".to_string(),
-      "--inspect-server-token-file".to_string(),
-      "/tmp/token".to_string(),
     ])
     .expect("invoke inspect options should parse");
 
@@ -3981,9 +3956,47 @@ mod tests {
         assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
         assert_eq!(inspect.local_write, InspectWriteSetting::Default);
         assert_eq!(inspect.server_write, InspectWriteSetting::Disabled);
-        assert_eq!(inspect.server_token_file.as_deref(), Some("/tmp/token"));
       }
       other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_inspect_server_token_flags_follow_unknown_option_behavior() {
+    let unknown_flag = "--unknown-invoke-option";
+    let unknown_error = parse_cli(&[
+      "invoke".to_string(),
+      "window.capture".to_string(),
+      unknown_flag.to_string(),
+    ])
+    .expect_err("unknown invoke option without a value must fail");
+
+    for flag in ["--inspect-server-token", "--inspect-server-token-file"] {
+      let command = parse_cli(&[
+        "invoke".to_string(),
+        "window.capture".to_string(),
+        flag.to_string(),
+        "secret".to_string(),
+      ])
+      .expect("unknown invoke option with a value should parse as command input");
+
+      match command {
+        CliCommand::Invoke {
+          request, inspect, ..
+        } => {
+          assert_eq!(request.inputs.get(flag.trim_start_matches("--")).map(String::as_str), Some("secret"));
+          assert_eq!(inspect, InspectClientOptions::default());
+        }
+        other => panic!("unexpected command: {other:?}"),
+      }
+
+      let error = parse_cli(&[
+        "invoke".to_string(),
+        "window.capture".to_string(),
+        flag.to_string(),
+      ])
+      .expect_err("unknown invoke option without a value must fail");
+      assert_eq!(error.replace(flag, unknown_flag), unknown_error);
     }
   }
 

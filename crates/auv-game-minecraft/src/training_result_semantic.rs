@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -18,6 +19,34 @@ pub type TrainingResultSemanticValidationResult<T> = Result<T, String>;
 
 pub const TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_RESULT_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const MINECRAFT_TRAINING_SEMANTIC_PURPOSE: &str = "auv.minecraft.training.semantic";
+
+pub async fn publish_minecraft_training_semantic(
+  context: Option<&Context>,
+  semantic: &TrainingResultSemanticManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_SEMANTIC_PURPOSE, semantic, validate_training_semantic_payload).await
+}
+
+pub async fn read_minecraft_training_semantic(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<TrainingResultSemanticManifest, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_SEMANTIC_PURPOSE, validate_training_semantic_payload).await
+}
+
+fn validate_training_semantic_payload(semantic: &TrainingResultSemanticManifest) -> Result<(), String> {
+  if semantic.schema_version != TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training semantic schema_version {} (expected {TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION})",
+      semantic.schema_version
+    ));
+  }
+  // TODO(minecraft-training-semantic-invariants): Add cross-field checks when
+  // the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
+}
 
 const RESULT_CONFIG_FILE: &str = "config.yml";
 const RESULT_MODELS_DIR: &str = "nerfstudio_models";
@@ -143,7 +172,7 @@ pub fn validate_3dgs_training_result(
 
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let normalized_result_dir = PathBuf::from(&artifact_manifest.normalized_result_dir);
   let config_path = normalized_result_dir.join(RESULT_CONFIG_FILE);
   let models_dir_path = normalized_result_dir.join(RESULT_MODELS_DIR);

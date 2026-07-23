@@ -13,23 +13,21 @@
 mod observation;
 
 use observation::{
-  build_page_observation_snapshot, conservative_merge_observations, normalize_observation_text, observation_from_recognized_item,
-  observation_from_row, should_merge_adjacent_observations, surface_nodes_from_observations,
+  build_page_observation_snapshot, conservative_merge_observations, observation_from_recognized_item, observation_from_row,
+  should_merge_adjacent_observations, surface_nodes_from_observations,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::time::Duration;
 
 use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
-use crate::model::now_millis;
-use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
+use crate::model::{AuvResult, now_millis};
+use crate::run_read::{RootArtifactPublishError, publish_scan_coverage, publish_scroll_scan};
 use crate::runtime::Runtime;
-use auv_tracing_driver::RecordingHandle;
-use auv_tracing_driver::run_builder::RunSpec;
-use auv_tracing_driver::trace::{RunId, SpanId};
+use auv_scan::{CompletenessWire, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
+use auv_tracing::{Context, RunId, SpanId};
+use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -299,6 +297,353 @@ pub struct ScrollScanArtifact {
   pub warnings: Vec<String>,
 }
 
+pub const SCROLL_SCAN_PURPOSE: &str = "auv.runtime.scroll_scan";
+/// Scroll-scan JSON is inspectable structured evidence, not bulk telemetry.
+/// Eight MiB accommodates thousands of row observations plus their node and
+/// snapshot projections while bounding the producer and every reader.
+pub const SCROLL_SCAN_JSON_BYTE_LIMIT: u64 = 8 * 1024 * 1024;
+pub const SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE: &str = "auv.runtime.scroll_scan.payload_too_large";
+
+pub(crate) fn validate_scroll_scan_artifact(artifact: &ScrollScanArtifact, expected_run_id: RunId) -> AuvResult<()> {
+  validate_scan_id(&artifact.scan_id)?;
+  validate_scan_region(&artifact.target.region)?;
+  if max_pages_for_policy(&artifact.stop_policy) == 0 {
+    return Err("scroll-scan max_pages must be greater than zero".to_string());
+  }
+  if artifact.pages.len() > max_pages_for_policy(&artifact.stop_policy) {
+    return Err(format!(
+      "page count {} exceeds stop policy max_pages={}",
+      artifact.pages.len(),
+      max_pages_for_policy(&artifact.stop_policy)
+    ));
+  }
+
+  let mut observation_ids = BTreeSet::new();
+  let mut observation_counts = vec![0usize; artifact.pages.len()];
+  let mut new_observation_counts = vec![0usize; artifact.pages.len()];
+  let mut known_observation_signatures = BTreeSet::new();
+  let mut previous_page_index = None;
+  for observation in &artifact.observations {
+    if observation.observation_id.trim().is_empty() {
+      return Err("observation_id must not be empty".to_string());
+    }
+    if !observation_ids.insert(observation.observation_id.as_str()) {
+      return Err(format!("duplicate observation_id {:?}", observation.observation_id));
+    }
+    if observation.page_index >= artifact.pages.len() {
+      return Err(format!("observation page_index {} has no matching page", observation.page_index));
+    }
+    if previous_page_index.is_some_and(|previous| previous > observation.page_index) {
+      return Err("observations must be ordered by nondecreasing page_index".to_string());
+    }
+    previous_page_index = Some(observation.page_index);
+    observation_counts[observation.page_index] += 1;
+    if known_observation_signatures.insert(observation_signature(observation)) {
+      new_observation_counts[observation.page_index] += 1;
+    }
+  }
+
+  for (expected_page_index, page) in artifact.pages.iter().enumerate() {
+    if page.page_index != expected_page_index {
+      return Err(format!(
+        "page indices must be contiguous and ordered from zero: found {} at position {expected_page_index}",
+        page.page_index
+      ));
+    }
+    if let Some(observe_run_id) = &page.observe_run_id {
+      let declared_run_id = observe_run_id
+        .parse::<RunId>()
+        .map_err(|error| format!("page {expected_page_index} observe_run_id {observe_run_id:?} is invalid: {error}"))?;
+      if declared_run_id != expected_run_id {
+        return Err(format!("page {expected_page_index} observe_run_id {declared_run_id} does not match artifact run {expected_run_id}"));
+      }
+    }
+    if page.observation_count != observation_counts[expected_page_index] {
+      return Err(format!(
+        "page {expected_page_index} observation_count {} does not match {} observations",
+        page.observation_count, observation_counts[expected_page_index]
+      ));
+    }
+    if page.new_observation_count != new_observation_counts[expected_page_index] {
+      return Err(format!(
+        "page {expected_page_index} new_observation_count {} does not match {} newly observed signatures",
+        page.new_observation_count, new_observation_counts[expected_page_index]
+      ));
+    }
+  }
+
+  validate_scroll_scan_clusters(artifact, &observation_ids)?;
+  validate_scroll_scan_nodes_and_snapshots(artifact, expected_run_id)?;
+  validate_scroll_scan_page_references(artifact)?;
+  validate_scroll_scan_stop_status(artifact)?;
+  Ok(())
+}
+
+fn validate_scan_id(scan_id: &str) -> AuvResult<()> {
+  if scan_id.is_empty() || !scan_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')) {
+    return Err("scan_id must be non-empty and contain only ASCII letters, digits, '.', '-', or '_'".to_string());
+  }
+  Ok(())
+}
+
+fn validate_scan_region(region: &ScanRegion) -> AuvResult<()> {
+  let ratios = [
+    region.left_ratio,
+    region.top_ratio,
+    region.right_ratio,
+    region.bottom_ratio,
+  ];
+  if ratios.iter().any(|ratio| !ratio.is_finite())
+    || !(0.0..1.0).contains(&region.left_ratio)
+    || !(0.0..1.0).contains(&region.top_ratio)
+    || !(0.0..=1.0).contains(&region.right_ratio)
+    || !(0.0..=1.0).contains(&region.bottom_ratio)
+    || region.left_ratio >= region.right_ratio
+    || region.top_ratio >= region.bottom_ratio
+  {
+    return Err("scroll-scan region ratios must define a non-empty rectangle inside 0..=1".to_string());
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_clusters(artifact: &ScrollScanArtifact, observation_ids: &BTreeSet<&str>) -> AuvResult<()> {
+  let mut cluster_ids = BTreeSet::new();
+  let mut clustered_observation_ids = BTreeSet::new();
+  for cluster in &artifact.clusters {
+    if cluster.cluster_id.trim().is_empty() {
+      return Err("cluster_id must not be empty".to_string());
+    }
+    if !cluster_ids.insert(cluster.cluster_id.as_str()) {
+      return Err(format!("duplicate cluster_id {:?}", cluster.cluster_id));
+    }
+    if cluster.observation_ids.is_empty() {
+      return Err(format!("cluster {:?} must reference at least one observation", cluster.cluster_id));
+    }
+    if !cluster.confidence.is_finite() || !(0.0..=1.0).contains(&cluster.confidence) {
+      return Err(format!("cluster {:?} confidence must be inside 0..=1", cluster.cluster_id));
+    }
+    for observation_id in &cluster.observation_ids {
+      if !observation_ids.contains(observation_id.as_str()) {
+        return Err(format!("cluster observation reference {observation_id:?} does not match an artifact observation"));
+      }
+      if !clustered_observation_ids.insert(observation_id.as_str()) {
+        return Err(format!("cluster observation reference {observation_id:?} appears more than once"));
+      }
+    }
+  }
+  if clustered_observation_ids != *observation_ids {
+    return Err("clusters must reference every observation exactly once".to_string());
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_nodes_and_snapshots(artifact: &ScrollScanArtifact, expected_run_id: RunId) -> AuvResult<()> {
+  if artifact.nodes.is_empty() != artifact.snapshots.is_empty() {
+    return Err("nodes and snapshots must either both be present or both be omitted".to_string());
+  }
+  if artifact.nodes.is_empty() {
+    return Ok(());
+  }
+  if artifact.nodes.len() != artifact.observations.len() {
+    return Err(format!("node count {} does not match observation count {}", artifact.nodes.len(), artifact.observations.len()));
+  }
+
+  let span_id = artifact.nodes[0].node_ref.span_id;
+  for (node, observation) in artifact.nodes.iter().zip(&artifact.observations) {
+    validate_scroll_scan_node(node, observation, expected_run_id, span_id)?;
+  }
+  if artifact.snapshots.len() != artifact.pages.len() {
+    return Err(format!("snapshot count {} does not match page count {}", artifact.snapshots.len(), artifact.pages.len()));
+  }
+
+  let mut snapshot_ids = BTreeSet::new();
+  for (page_index, snapshot) in artifact.snapshots.iter().enumerate() {
+    if snapshot.snapshot_id.trim().is_empty() {
+      return Err("snapshot_id must not be empty".to_string());
+    }
+    if !snapshot_ids.insert(snapshot.snapshot_id.as_str()) {
+      return Err(format!("duplicate snapshot_id {:?}", snapshot.snapshot_id));
+    }
+    if snapshot.run_id != expected_run_id {
+      return Err(format!("snapshot run_id {} does not match artifact run {expected_run_id}", snapshot.run_id));
+    }
+    if snapshot.span_id != span_id {
+      return Err(format!("snapshot {:?} span_id {} does not match artifact node span {span_id}", snapshot.snapshot_id, snapshot.span_id));
+    }
+    validate_snapshot_artifact_lineage(snapshot, expected_run_id)?;
+    validate_snapshot_scope(snapshot, &artifact.target)?;
+    validate_snapshot_counts(snapshot, &artifact.pages[page_index])?;
+
+    let page_observations = artifact.observations.iter().filter(|observation| observation.page_index == page_index);
+    if snapshot.nodes.len() != artifact.pages[page_index].observation_count {
+      return Err(format!(
+        "snapshot page {page_index} node count {} does not match page observation_count {}",
+        snapshot.nodes.len(),
+        artifact.pages[page_index].observation_count
+      ));
+    }
+    for (node, observation) in snapshot.nodes.iter().zip(page_observations) {
+      validate_scroll_scan_node(node, observation, expected_run_id, snapshot.span_id)?;
+    }
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_node(
+  node: &SurfaceNode,
+  observation: &CollectionObservation,
+  expected_run_id: RunId,
+  expected_span_id: SpanId,
+) -> AuvResult<()> {
+  if node.node_ref.run_id != expected_run_id {
+    return Err(format!("node run_id {} does not match artifact run {expected_run_id}", node.node_ref.run_id));
+  }
+  if node.node_ref.span_id != expected_span_id {
+    return Err(format!(
+      "node {:?} span_id {} does not match artifact span {expected_span_id}",
+      node.node_ref.node_id, node.node_ref.span_id
+    ));
+  }
+  if node.node_ref.node_id != observation.observation_id {
+    return Err(format!("node_id {:?} does not match observation_id {:?}", node.node_ref.node_id, observation.observation_id));
+  }
+  if node.box_.x != observation.bounds.x
+    || node.box_.y != observation.bounds.y
+    || node.box_.width != observation.bounds.width
+    || node.box_.height != observation.bounds.height
+  {
+    return Err(format!("node {:?} bounds do not match its observation", node.node_ref.node_id));
+  }
+  let expected_label = (!observation.raw_text.trim().is_empty()).then_some(observation.raw_text.as_str());
+  if node.label.as_deref() != expected_label {
+    return Err(format!("node {:?} label does not match its observation", node.node_ref.node_id));
+  }
+  let expected_node = surface_nodes_from_observations(expected_run_id, expected_span_id, std::slice::from_ref(observation));
+  if expected_node.as_slice() != std::slice::from_ref(node) {
+    return Err(format!("node {:?} does not match the owning observation projection", node.node_ref.node_id));
+  }
+  Ok(())
+}
+
+fn validate_snapshot_artifact_lineage(snapshot: &ObservationSnapshot, expected_run_id: RunId) -> AuvResult<()> {
+  let artifact_refs = snapshot
+    .scope
+    .capture_artifact
+    .iter()
+    .chain(snapshot.scope.capture_contract_artifact.iter())
+    .chain(snapshot.capture_contract_ref.iter())
+    .chain(&snapshot.evidence);
+  for artifact_ref in artifact_refs {
+    if artifact_ref.run_id() != expected_run_id {
+      return Err(format!("snapshot artifact reference {artifact_ref} does not match artifact run {expected_run_id}"));
+    }
+  }
+  Ok(())
+}
+
+fn validate_snapshot_scope(snapshot: &ObservationSnapshot, target: &ScanTarget) -> AuvResult<()> {
+  if snapshot.scope.app_bundle_id != target.application_id || snapshot.scope.window_title != target.window_title {
+    return Err(format!("snapshot {:?} scope does not match the scan target", snapshot.snapshot_id));
+  }
+  let Some(region) = &snapshot.scope.region_hint else {
+    return Err(format!("snapshot {:?} is missing the scan target region", snapshot.snapshot_id));
+  };
+  if region.left != target.region.left_ratio
+    || region.top != target.region.top_ratio
+    || region.right != target.region.right_ratio
+    || region.bottom != target.region.bottom_ratio
+  {
+    return Err(format!("snapshot {:?} region does not match the scan target", snapshot.snapshot_id));
+  }
+  Ok(())
+}
+
+fn validate_snapshot_counts(snapshot: &ObservationSnapshot, page: &ScanPageRecord) -> AuvResult<()> {
+  let page_index = snapshot.detail.get("page_index").and_then(Value::as_u64).and_then(|value| usize::try_from(value).ok());
+  if page_index != Some(page.page_index) {
+    return Err(format!("snapshot page_index {page_index:?} does not match page {}", page.page_index));
+  }
+  let observation_count = snapshot.detail.get("observation_count").and_then(Value::as_u64).and_then(|value| usize::try_from(value).ok());
+  if observation_count != Some(page.observation_count) {
+    return Err(format!("snapshot observation_count {observation_count:?} does not match page {}", page.observation_count));
+  }
+  let new_observation_count =
+    snapshot.detail.get("new_observation_count").and_then(Value::as_u64).and_then(|value| usize::try_from(value).ok());
+  if new_observation_count != Some(page.new_observation_count) {
+    return Err(format!("snapshot new_observation_count {new_observation_count:?} does not match page {}", page.new_observation_count));
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_page_references(artifact: &ScrollScanArtifact) -> AuvResult<()> {
+  let page_count = artifact.pages.len();
+  for candidate in &artifact.section_candidates {
+    if candidate.page_index >= page_count {
+      return Err(format!("section candidate page_index {} has no matching page", candidate.page_index));
+    }
+  }
+  for candidate in &artifact.scroll_boundary_candidates {
+    if candidate.page_index >= page_count {
+      return Err(format!("scroll boundary page_index {} has no matching page", candidate.page_index));
+    }
+  }
+  for decision in &artifact.hook_decisions {
+    let Some(page) = artifact.pages.get(decision.page_index) else {
+      return Err(format!("hook decision page_index {} has no matching page", decision.page_index));
+    };
+    if decision.item_index.is_some_and(|index| index >= page.observation_count) {
+      return Err(format!("hook decision item_index {:?} is outside page observations", decision.item_index));
+    }
+    if decision.row_candidate_index.is_some_and(|index| index >= page.observation_count) {
+      return Err(format!("hook decision row_candidate_index {:?} is outside page observations", decision.row_candidate_index));
+    }
+  }
+  Ok(())
+}
+
+fn validate_scroll_scan_stop_status(artifact: &ScrollScanArtifact) -> AuvResult<()> {
+  if artifact.stop_evidence.message.trim().is_empty() {
+    return Err("stop_evidence message must not be empty".to_string());
+  }
+  let last_page_index = artifact.pages.len().checked_sub(1);
+  let valid_stop_index = match artifact.stop_evidence.reason {
+    StopReason::Error => match last_page_index {
+      Some(last) => artifact.stop_evidence.page_index == last || artifact.stop_evidence.page_index == artifact.pages.len(),
+      None => artifact.stop_evidence.page_index == 0,
+    },
+    _ => last_page_index == Some(artifact.stop_evidence.page_index),
+  };
+  if !valid_stop_index {
+    return Err(format!(
+      "stop_evidence page_index {} is inconsistent with {} observed page(s)",
+      artifact.stop_evidence.page_index,
+      artifact.pages.len()
+    ));
+  }
+  let status_matches = matches!(
+    (artifact.stop_evidence.reason, artifact.completeness_claim),
+    (
+      StopReason::NoProgressLimit,
+      CompletenessClaim::CompleteByNoVisualProgressDown
+        | CompletenessClaim::CompleteByNoVisualProgressUp
+        | CompletenessClaim::CompleteByNoVisualProgress
+    ) | (StopReason::ReachedBoundary, CompletenessClaim::CompleteByReachedBoundary)
+      | (StopReason::MaxPages, CompletenessClaim::PartialMaxPages)
+      | (StopReason::NextSectionCandidate, CompletenessClaim::PartialNextSectionCandidate)
+      | (StopReason::MaxScrolls | StopReason::HookRequestedStop | StopReason::MatchFound | StopReason::Error, CompletenessClaim::Unknown)
+  );
+  // NOTICE(scroll-scan-completeness-status): PartialMaxDuration and
+  // PartialUnstableContent have no owning StopReason in the current producer,
+  // so accepting them would create an unverifiable status pair.
+  if !status_matches {
+    return Err(format!(
+      "stop reason {:?} and completeness_claim {:?} are inconsistent",
+      artifact.stop_evidence.reason, artifact.completeness_claim
+    ));
+  }
+  Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct ScanWindowRegionOptions {
   pub target: ScanTarget,
@@ -314,96 +659,213 @@ pub struct ScanWindowRegionOptions {
 // JSON recipe execution. Reintroduce hook composition only as typed Rust
 // interaction hooks once `auv-tracing-interaction` owns macro-operation
 // recording.
-pub fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<RunId> {
-  let recording = runtime.recording().handle();
-  let mut run = recording.start_run(RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.scan.window_region"))?;
-  let root = run.root_span();
-
-  match scan_window_region_into_run(&recording, runtime, &mut run, &root, options) {
-    Ok(summary) => recording.finish_run(
-      run,
-      auv_tracing_driver::run_builder::RunFinish {
-        status_code: auv_tracing_driver::trace::TraceStatusCode::Ok,
-        summary: Some(summary),
-        failure: None,
-      },
-    ),
-    Err(error) => {
-      let finish_result = recording.finish_run(
-        run,
-        auv_tracing_driver::run_builder::RunFinish {
-          status_code: auv_tracing_driver::trace::TraceStatusCode::Error,
-          summary: Some(format!("Window region scan failed: {error}")),
-          failure: Some(error.clone()),
-        },
-      );
-      match finish_result {
-        Ok(_) => Err(error),
-        Err(finish_error) => Err(format!("{error}; additionally failed to persist failed scan run: {finish_error}")),
-      }
-    }
+pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<ScrollScanArtifact> {
+  let _project_root = runtime.project_root();
+  let context = Context::current();
+  let scan_id = context.run_id().map_or_else(|| format!("scan_{}", now_millis()), |run_id| format!("scan_{run_id}"));
+  let trace_ids = context.run_id().copied().zip(context.span_id().copied());
+  let execution = match LocalScanWindowRegionSource::new(&options) {
+    Ok(mut source) => execute_scan_window_region(&mut source, options, scan_id, trace_ids),
+    Err(error) => failed_scan_execution(options, scan_id, error),
+  };
+  let publication = publish_scan_execution(&context, &execution).await;
+  match (execution.error, publication) {
+    (Some(error), Ok(())) => Err(error),
+    (Some(error), Err(publication_error)) => Err(format!("{error}; failed to publish scroll-scan evidence: {publication_error}")),
+    (None, Err(error)) => Err(error.to_string()),
+    (None, Ok(())) => Ok(execution.artifact),
   }
 }
 
-fn scan_window_region_into_run(
-  recording: &RecordingHandle,
-  runtime: &Runtime,
-  run: &mut auv_tracing_driver::run_builder::RecordingRun,
-  root: &auv_tracing_driver::run_builder::SpanRef,
+async fn publish_scan_execution(context: &Context, execution: &ScanExecution) -> Result<(), RootArtifactPublishError> {
+  if !execution.artifact.pages.is_empty() {
+    publish_scroll_scan(Some(context), &execution.artifact).await?;
+  }
+  // NOTICE: A source failure before the first observed page has no domain
+  // artifact to publish. Its failure coverage remains canonical evidence.
+  let coverage = scan_coverage_from_artifact(&execution.artifact);
+  publish_scan_coverage(Some(context), &coverage).await?;
+  Ok(())
+}
+
+trait ScanWindowRegionSource {
+  fn observe(&mut self, page_index: usize, options: &ScanWindowRegionOptions) -> AuvResult<ScanSourcePage>;
+  fn scroll(&mut self, options: &ScanWindowRegionOptions) -> AuvResult<()>;
+}
+
+struct ScanSourcePage {
+  observations: Vec<CollectionObservation>,
+  screenshot: RgbaImage,
+}
+
+struct LocalScanWindowRegionSource {
+  session: auv_driver::LocalDriverSession,
+  window: auv_driver::Window,
+}
+
+impl LocalScanWindowRegionSource {
+  fn new(options: &ScanWindowRegionOptions) -> AuvResult<Self> {
+    validate_scan_options(options)?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open local driver for scroll scan: {error}"))?;
+    let mut selector = auv_driver::WindowSelector {
+      main_visible: true,
+      ..auv_driver::WindowSelector::default()
+    };
+    if let Some(application_id) = options.target.application_id.as_deref().filter(|value| !value.trim().is_empty()) {
+      selector = selector.owned_by(auv_driver::App::bundle_id(application_id));
+    }
+    if let Some(title) = options.target.window_title.as_deref().filter(|value| !value.trim().is_empty()) {
+      selector = selector.title_contains(title);
+    }
+    let window = session.window().resolve(selector).map_err(|error| format!("failed to resolve scroll-scan window: {error}"))?;
+    Ok(Self { session, window })
+  }
+}
+
+impl ScanWindowRegionSource for LocalScanWindowRegionSource {
+  fn observe(&mut self, page_index: usize, options: &ScanWindowRegionOptions) -> AuvResult<ScanSourcePage> {
+    let capture = self.session.window().capture(&self.window).map_err(|error| format!("failed to capture scroll-scan page: {error}"))?;
+    let region = scan_ratio_rect(&options.target.region);
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture(&capture, region)
+      .map_err(|error| format!("failed to recognize scroll-scan page: {error}"))?;
+    let limit = usize::try_from(options.max_observations).map_err(|error| format!("invalid max_observations: {error}"))?;
+    let observations = recognition
+      .regions
+      .iter()
+      .filter(|region| region.confidence.unwrap_or_default() as f64 >= options.min_confidence)
+      .filter(|region| !region.text.trim().is_empty())
+      .take(limit)
+      .enumerate()
+      .map(|(item_index, region)| {
+        let mut attributes = BTreeMap::from([
+          ("item_index".to_string(), item_index.to_string()),
+          ("recognition_source".to_string(), "ocr_text".to_string()),
+          ("recognition_surface".to_string(), "region".to_string()),
+          ("source".to_string(), "auv-driver.vision.ocr".to_string()),
+        ]);
+        if let Some(confidence) = region.confidence {
+          attributes.insert("provider_score".to_string(), confidence.to_string());
+        }
+        CollectionObservation {
+          observation_id: format!("obs_{:04}_{:04}", page_index + 1, item_index + 1),
+          page_index,
+          raw_text: region.text.clone(),
+          normalized_text_key: observation::normalize_observation_text(&region.text),
+          bounds: ScanRect {
+            x: region.bounds.origin.x.round() as i64,
+            y: region.bounds.origin.y.round() as i64,
+            width: region.bounds.size.width.round() as i64,
+            height: region.bounds.size.height.round() as i64,
+          },
+          section_context: None,
+          source_artifacts: Vec::new(),
+          attributes,
+        }
+      })
+      .collect();
+    Ok(ScanSourcePage {
+      observations,
+      screenshot: capture.image,
+    })
+  }
+
+  fn scroll(&mut self, options: &ScanWindowRegionOptions) -> AuvResult<()> {
+    let point = scan_window_point(&self.window, &options.target.region);
+    let scroll = scan_scroll_delta(&options.direction, options.scroll_amount)?;
+    self
+      .session
+      .window()
+      .scroll(
+        &self.window,
+        point,
+        scroll,
+        auv_driver::ScrollOptions {
+          settle: Duration::from_millis(options.settle_ms),
+          ..auv_driver::ScrollOptions::default()
+        },
+      )
+      .map(|_| ())
+      .map_err(|error| format!("failed to scroll window region: {error}"))
+  }
+}
+
+#[derive(Default)]
+struct ScanWindowRegionState {
+  pages: Vec<ScanPageRecord>,
+  observations: Vec<CollectionObservation>,
+  snapshots: Vec<ObservationSnapshot>,
+  known_observation_signatures: BTreeSet<String>,
+  scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
+  warnings: Vec<String>,
+  previous_screenshot: Option<RgbaImage>,
+}
+
+struct ScanExecution {
+  artifact: ScrollScanArtifact,
+  error: Option<String>,
+}
+
+fn execute_scan_window_region<S: ScanWindowRegionSource>(
+  source: &mut S,
   options: ScanWindowRegionOptions,
-) -> AuvResult<String> {
-  // TODO(controller): This scan loop is still a script-shaped orchestration
-  // function that mixes observe, evidence accumulation, stop-policy
-  // evaluation, hook handling, and scroll progression inline. Refactor it
-  // into a replaceable evidence-driven controller whose input is page
-  // observations / boundary evidence / hook decisions and whose output is the
-  // next controller action (continue, stop, retry, adjust region, adjust
-  // scroll) instead of hardcoding one control-flow policy here.
+  scan_id: String,
+  trace_ids: Option<(RunId, SpanId)>,
+) -> ScanExecution {
   let mut state = ScanWindowRegionState::default();
-  let mut scroll_count = 0;
   let mut consecutive_no_progress = 0;
   let mut final_decision = None;
   let mut scan_error = None;
 
-  for page_index in 0..max_pages_for_policy(&options.stop_policy) {
-    let page_result = scan_window_region_page(recording, runtime, run, root, page_index, &options, &mut state);
-    let page_outcome = match page_result {
-      Ok(page_outcome) => page_outcome,
+  for (scroll_count, page_index) in (0..max_pages_for_policy(&options.stop_policy)).enumerate() {
+    let page = match source.observe(page_index, &options) {
+      Ok(page) => page,
       Err(error) => {
         scan_error = Some(error);
         final_decision = Some(error_stop_decision(page_index));
         break;
       }
     };
-    let new_observation_count = page_outcome.new_observation_count;
-
+    let page_observations = page.observations;
+    let new_observation_count = count_new_observations(&page_observations, &mut state.known_observation_signatures);
     if new_observation_count == 0 {
       consecutive_no_progress += 1;
     } else {
       consecutive_no_progress = 0;
     }
+    let observation_count = page_observations.len();
+    state.observations.extend(page_observations.clone());
+    state.pages.push(ScanPageRecord {
+      page_index,
+      observe_run_id: trace_ids.map(|(run_id, _)| run_id.to_string()),
+      screenshot_artifact: None,
+      observation_count,
+      new_observation_count,
+      summary: format!("observed {observation_count} OCR region(s); {new_observation_count} new scan signature(s)"),
+    });
+    if let Some((run_id, span_id)) = trace_ids {
+      state.snapshots.push(build_page_observation_snapshot(
+        run_id,
+        span_id,
+        page_index,
+        &options.target,
+        &page_observations,
+        new_observation_count,
+      ));
+    }
 
-    // Boundary evidence is still incomplete. We now distinguish raw
-    // no-progress heuristics from adjacent-page repeated row-band overlap and
-    // adjacent screenshot-diff stability, but downward scans still need
-    // stronger bottom detection and upward scans still need stronger top
-    // detection. Future layers should add scrollbar/thumb geometry, AX scroll
-    // values, or explicit driver-level scroll-effect evidence. Sectioned lists
-    // also need middleware that can detect separators, sticky headers, or
-    // section boundary regions during the scroll loop so a scan can stop at,
-    // enter, or report section transitions deliberately.
-    // MaaFW reference: Context::wait_freezes and ActionHelper compare image
-    // stability around an action, while Pipeline roi/target references keep
-    // image evidence tied to a node result; see:
-    // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Context.cpp
-    // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/ActionHelper.cpp
-    let screenshot_diff_stability = match screenshot_diff_stability_for_pages(page_index, &state.pages) {
-      Ok(stability) => stability,
-      Err(error) => {
+    let screenshot_diff_stability = state
+      .previous_screenshot
+      .as_ref()
+      .map(|previous| screenshot_diff_stability_rgba(previous, &page.screenshot))
+      .transpose()
+      .unwrap_or_else(|error| {
         state.warnings.push(format!("failed to compare adjacent page screenshots for boundary evidence: {error}"));
         None
-      }
-    };
+      });
+    state.previous_screenshot = Some(page.screenshot);
     let scroll_boundary_candidate = scroll_boundary_candidate_for_progress(
       &options.direction,
       page_index,
@@ -421,30 +883,19 @@ fn scan_window_region_into_run(
       scroll_count,
       consecutive_no_progress,
       new_observation_count,
-      hook_stop_requested: state.hook_decisions.last().is_some_and(|decision| decision.action == HookAction::Stop),
-      match_found: match_found_on_current_page(&options.stop_policy, &page_outcome.observations),
-      next_section_candidate: state.hook_decisions.last().is_some_and(|decision| decision.action == HookAction::Stop)
-        && matches!(options.stop_policy, StopPolicy::UntilNextSection { .. }),
+      hook_stop_requested: false,
+      match_found: match_found_on_current_page(&options.stop_policy, &page_observations),
+      next_section_candidate: false,
       scroll_boundary_candidate,
     };
-
-    // TODO(tracing-interaction-hooks): typed scan hooks are deferred until
-    // `auv-tracing-interaction`; the removed JSON recipe hook path must not be
-    // reintroduced.
     if let Some(decision) = evaluate_stop_policy(&options.stop_policy, &progress, &options.direction) {
       final_decision = Some(decision);
       break;
     }
-
-    match invoke_scan_command(recording, runtime, run, root, scroll_request(&options), "scroll window region") {
-      Ok(_) => {
-        scroll_count += 1;
-      }
-      Err(error) => {
-        scan_error = Some(error);
-        final_decision = Some(error_stop_decision(page_index));
-        break;
-      }
+    if let Err(error) = source.scroll(&options) {
+      scan_error = Some(error);
+      final_decision = Some(error_stop_decision(page_index));
+      break;
     }
   }
 
@@ -457,25 +908,210 @@ fn scan_window_region_into_run(
     )
   });
   if scan_error.is_some() {
-    state.warnings.push("scan ended with an error; artifact is partial".to_string());
+    state.warnings.push("scan ended with an error; coverage is partial".to_string());
   }
-  let artifact = state.into_artifact(run.id(), root.id(), run.id().to_string(), options.target, options.stop_policy, final_decision);
-  if let Err(stage_error) = stage_scan_artifact(recording, run, root, &artifact) {
-    if let Some(error) = scan_error {
-      return Err(format!("{error}; additionally failed to stage partial scroll-scan artifact: {stage_error}"));
-    }
-    return Err(stage_error);
+  let artifact = state.into_artifact(scan_id, options.target, options.stop_policy, final_decision, trace_ids);
+  ScanExecution {
+    artifact,
+    error: scan_error,
   }
-  if let Some(error) = scan_error {
-    return Err(error);
-  }
+}
 
-  Ok(format!(
-    "Scanned {} page(s), captured {} observation(s), formed {} cluster(s).",
-    artifact.pages.len(),
-    artifact.observations.len(),
-    artifact.clusters.len()
-  ))
+impl ScanWindowRegionState {
+  fn into_artifact(
+    self,
+    scan_id: String,
+    target: ScanTarget,
+    stop_policy: StopPolicy,
+    final_decision: StopDecision,
+    trace_ids: Option<(RunId, SpanId)>,
+  ) -> ScrollScanArtifact {
+    let clusters = conservative_merge_observations(&self.observations);
+    let nodes = trace_ids.map(|(run_id, span_id)| surface_nodes_from_observations(run_id, span_id, &self.observations)).unwrap_or_default();
+    ScrollScanArtifact {
+      scan_id,
+      target,
+      stop_policy,
+      pages: self.pages,
+      observations: self.observations,
+      nodes,
+      snapshots: self.snapshots,
+      clusters,
+      section_candidates: Vec::new(),
+      scroll_boundary_candidates: self.scroll_boundary_candidates,
+      hook_decisions: Vec::new(),
+      stop_evidence: final_decision.stop_evidence,
+      completeness_claim: final_decision.completeness_claim,
+      warnings: self.warnings,
+    }
+  }
+}
+
+fn failed_scan_execution(options: ScanWindowRegionOptions, scan_id: String, error: String) -> ScanExecution {
+  ScanExecution {
+    artifact: ScrollScanArtifact {
+      scan_id,
+      target: options.target,
+      stop_policy: options.stop_policy,
+      pages: Vec::new(),
+      observations: Vec::new(),
+      nodes: Vec::new(),
+      snapshots: Vec::new(),
+      clusters: Vec::new(),
+      section_candidates: Vec::new(),
+      scroll_boundary_candidates: Vec::new(),
+      hook_decisions: Vec::new(),
+      stop_evidence: StopEvidence {
+        reason: StopReason::Error,
+        message: error.clone(),
+        page_index: 0,
+      },
+      completeness_claim: CompletenessClaim::Unknown,
+      warnings: vec!["scan source failed before the first page; coverage is partial".to_string()],
+    },
+    error: Some(error),
+  }
+}
+
+fn scan_coverage_from_artifact(artifact: &ScrollScanArtifact) -> ScanCoverageWire {
+  let observation_pages = artifact
+    .observations
+    .iter()
+    .map(|observation| (observation.observation_id.as_str(), observation.page_index))
+    .collect::<BTreeMap<_, _>>();
+  let entries = artifact
+    .clusters
+    .iter()
+    .map(|cluster| {
+      let last_page = cluster.observation_ids.iter().filter_map(|id| observation_pages.get(id.as_str())).copied().max().unwrap_or(0);
+      CoverageEntryWire {
+        track_id: cluster.cluster_id.clone(),
+        last_seen_frame_id: scan_page_frame_id(&artifact.scan_id, last_page),
+        observation_count: u32::try_from(cluster.observation_ids.len()).unwrap_or(u32::MAX),
+      }
+    })
+    .collect();
+  let open_uncertainty_codes = match artifact.completeness_claim {
+    CompletenessClaim::PartialMaxPages => vec!["max_pages_reached".to_string()],
+    CompletenessClaim::PartialMaxDuration => vec!["max_duration_reached".to_string()],
+    CompletenessClaim::PartialUnstableContent => vec!["unstable_content".to_string()],
+    CompletenessClaim::PartialNextSectionCandidate => vec!["next_section_candidate".to_string()],
+    CompletenessClaim::Unknown if artifact.stop_evidence.reason == StopReason::Error => vec!["scan_source_error".to_string()],
+    CompletenessClaim::Unknown => vec!["scan_completeness_unknown".to_string()],
+    _ => Vec::new(),
+  };
+  let negative_evidence = artifact
+    .pages
+    .iter()
+    .filter(|page| page.page_index > 0 && page.observation_count == 0)
+    .map(|page| NegativeEvidenceWire {
+      code: "no_new_observation".to_string(),
+      after_frame_id: scan_page_frame_id(&artifact.scan_id, page.page_index),
+    })
+    .collect::<Vec<_>>();
+  let claims_complete = matches!(
+    artifact.completeness_claim,
+    CompletenessClaim::CompleteByNoVisualProgressDown
+      | CompletenessClaim::CompleteByNoVisualProgressUp
+      | CompletenessClaim::CompleteByNoVisualProgress
+      | CompletenessClaim::CompleteByReachedBoundary
+  );
+  let completeness = if claims_complete && open_uncertainty_codes.is_empty() && negative_evidence.is_empty() {
+    CompletenessWire::Complete
+  } else {
+    CompletenessWire::Incomplete {
+      reason: if !open_uncertainty_codes.is_empty() || !negative_evidence.is_empty() {
+        "open uncertainties or negative evidence remain".to_string()
+      } else {
+        artifact.stop_evidence.message.clone()
+      },
+    }
+  };
+  ScanCoverageWire {
+    schema_version: SCAN_COVERAGE_SCHEMA_VERSION.to_string(),
+    entries,
+    open_uncertainty_codes,
+    negative_evidence,
+    completeness,
+  }
+}
+
+fn scan_page_frame_id(scan_id: &str, page_index: usize) -> String {
+  format!("{scan_id}:page:{:04}", page_index + 1)
+}
+
+fn max_pages_for_policy(policy: &StopPolicy) -> usize {
+  match policy {
+    StopPolicy::UntilEnd { max_pages, .. }
+    | StopPolicy::UntilNextSection { max_pages, .. }
+    | StopPolicy::UntilMatch { max_pages, .. }
+    | StopPolicy::Bounded { max_pages, .. } => *max_pages,
+  }
+}
+
+fn count_new_observations(observations: &[CollectionObservation], known_observation_signatures: &mut BTreeSet<String>) -> usize {
+  observations.iter().filter(|observation| known_observation_signatures.insert(observation_signature(observation))).count()
+}
+
+fn observation_signature(observation: &CollectionObservation) -> String {
+  if !observation.normalized_text_key.is_empty() {
+    observation.normalized_text_key.clone()
+  } else {
+    let source = observation.attributes.get("source").map(String::as_str).unwrap_or("unknown");
+    format!("visual:{source}|x={}|w={}|h={}", observation.bounds.x, observation.bounds.width, observation.bounds.height)
+  }
+}
+
+fn match_found_on_current_page(policy: &StopPolicy, observations: &[CollectionObservation]) -> bool {
+  let StopPolicy::UntilMatch { query, .. } = policy else {
+    return false;
+  };
+  let normalized_query = observation::normalize_observation_text(query);
+  !normalized_query.is_empty() && observations.iter().any(|observation| observation.normalized_text_key.contains(&normalized_query))
+}
+
+fn validate_scan_options(options: &ScanWindowRegionOptions) -> AuvResult<()> {
+  validate_scan_region(&options.target.region)?;
+  if max_pages_for_policy(&options.stop_policy) == 0 {
+    return Err("scroll-scan max_pages must be greater than zero".to_string());
+  }
+  if options.max_observations <= 0 {
+    return Err("scroll-scan max_observations must be greater than zero".to_string());
+  }
+  if !options.min_confidence.is_finite() || !(0.0..=1.0).contains(&options.min_confidence) {
+    return Err("scroll-scan min_confidence must be inside 0..=1".to_string());
+  }
+  let _ = scan_scroll_delta(&options.direction, options.scroll_amount)?;
+  Ok(())
+}
+
+fn scan_ratio_rect(region: &ScanRegion) -> auv_driver::RatioRect {
+  auv_driver::RatioRect::new(
+    region.left_ratio,
+    region.top_ratio,
+    region.right_ratio - region.left_ratio,
+    region.bottom_ratio - region.top_ratio,
+  )
+}
+
+fn scan_window_point(window: &auv_driver::Window, region: &ScanRegion) -> auv_driver::WindowPoint {
+  auv_driver::WindowPoint::new(
+    window.frame.size.width * (region.left_ratio + region.right_ratio) / 2.0,
+    window.frame.size.height * (region.top_ratio + region.bottom_ratio) / 2.0,
+  )
+}
+
+fn scan_scroll_delta(direction: &str, amount: f64) -> AuvResult<auv_driver::Scroll> {
+  if !amount.is_finite() || amount <= 0.0 {
+    return Err("scroll-scan scroll_amount must be finite and greater than zero".to_string());
+  }
+  match direction.trim().to_ascii_lowercase().as_str() {
+    "up" => Ok(auv_driver::Scroll::new(0.0, amount)),
+    "down" => Ok(auv_driver::Scroll::new(0.0, -amount)),
+    "left" => Ok(auv_driver::Scroll::new(amount, 0.0)),
+    "right" => Ok(auv_driver::Scroll::new(-amount, 0.0)),
+    _ => Err(format!("unsupported scroll-scan direction {direction:?}; expected up, down, left, or right")),
+  }
 }
 
 pub fn observations_from_observe_json(page_index: usize, raw: &str, source_artifact: PathBuf) -> AuvResult<Vec<CollectionObservation>> {
@@ -525,165 +1161,6 @@ fn observations_from_recognition_result(
     .enumerate()
     .map(|(item_index, item)| observation_from_recognized_item(page_index, item_index, item, recognition, source_artifact))
     .collect()
-}
-
-#[derive(Default)]
-struct ScanWindowRegionState {
-  pages: Vec<ScanPageRecord>,
-  observations: Vec<CollectionObservation>,
-  snapshots: Vec<ObservationSnapshot>,
-  known_observation_signatures: BTreeSet<String>,
-  scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
-  hook_decisions: Vec<HookDecisionRecord>,
-  warnings: Vec<String>,
-}
-
-struct PageScanOutcome {
-  new_observation_count: usize,
-  observations: Vec<CollectionObservation>,
-}
-
-impl ScanWindowRegionState {
-  fn into_artifact(
-    self,
-    run_id: &RunId,
-    span_id: &SpanId,
-    scan_id: String,
-    target: ScanTarget,
-    stop_policy: StopPolicy,
-    final_decision: StopDecision,
-  ) -> ScrollScanArtifact {
-    let clusters = conservative_merge_observations(&self.observations);
-    let nodes = surface_nodes_from_observations(run_id, span_id, &self.observations);
-    ScrollScanArtifact {
-      scan_id,
-      target,
-      stop_policy,
-      pages: self.pages,
-      observations: self.observations,
-      nodes,
-      snapshots: self.snapshots,
-      clusters,
-      section_candidates: Vec::new(),
-      scroll_boundary_candidates: self.scroll_boundary_candidates,
-      hook_decisions: self.hook_decisions,
-      stop_evidence: final_decision.stop_evidence,
-      completeness_claim: final_decision.completeness_claim,
-      warnings: self.warnings,
-    }
-  }
-}
-
-fn max_pages_for_policy(policy: &StopPolicy) -> usize {
-  match policy {
-    StopPolicy::UntilEnd { max_pages, .. }
-    | StopPolicy::UntilNextSection { max_pages, .. }
-    | StopPolicy::UntilMatch { max_pages, .. }
-    | StopPolicy::Bounded { max_pages, .. } => *max_pages,
-  }
-}
-
-fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> InvokeRequest {
-  let mut inputs = region_inputs(&options.target);
-  inputs.insert("label".to_string(), format!("scan-page-{:04}", page_index + 1));
-  inputs.insert("min_confidence".to_string(), format!("{:.3}", options.min_confidence));
-  inputs.insert("max_observations".to_string(), options.max_observations.to_string());
-  InvokeRequest {
-    command_id: "window.observeRegion".to_string(),
-    target: ExecutionTarget {
-      application_id: options.target.application_id.clone(),
-      target_label: None,
-    },
-    inputs,
-    dry_run: false,
-  }
-}
-
-fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
-  let mut inputs = region_inputs(&options.target);
-  inputs.insert("direction".to_string(), options.direction.clone());
-  inputs.insert("amount".to_string(), format!("{:.3}", options.scroll_amount));
-  inputs.insert("settle_ms".to_string(), options.settle_ms.to_string());
-  InvokeRequest {
-    command_id: "window.scrollRegion".to_string(),
-    target: ExecutionTarget {
-      application_id: options.target.application_id.clone(),
-      target_label: None,
-    },
-    inputs,
-    dry_run: false,
-  }
-}
-
-fn region_inputs(target: &ScanTarget) -> BTreeMap<String, String> {
-  let mut inputs = BTreeMap::from([
-    ("region_left_ratio".to_string(), target.region.left_ratio.to_string()),
-    ("region_top_ratio".to_string(), target.region.top_ratio.to_string()),
-    ("region_right_ratio".to_string(), target.region.right_ratio.to_string()),
-    ("region_bottom_ratio".to_string(), target.region.bottom_ratio.to_string()),
-  ]);
-  if let Some(title) = &target.window_title {
-    inputs.insert("title".to_string(), title.clone());
-  }
-  inputs
-}
-
-fn scan_window_region_page(
-  recording: &RecordingHandle,
-  runtime: &Runtime,
-  run: &mut auv_tracing_driver::run_builder::RecordingRun,
-  root: &auv_tracing_driver::run_builder::SpanRef,
-  page_index: usize,
-  options: &ScanWindowRegionOptions,
-  state: &mut ScanWindowRegionState,
-) -> AuvResult<PageScanOutcome> {
-  let observe_result = invoke_scan_command(recording, runtime, run, root, observe_request(options, page_index), "observe window region")?;
-  let screenshot_artifact = first_artifact_with_extension(&observe_result, "png");
-  let screenshot_artifact_record = first_artifact_record_with_extension(&observe_result, "png");
-  let source_artifact =
-    screenshot_artifact.clone().unwrap_or_else(|| first_artifact_with_extension(&observe_result, "json").unwrap_or_default());
-  let mut page_observations = observations_from_first_json_artifact(page_index, &observe_result, source_artifact)?;
-  enrich_list_item_observations_with_crops(
-    recording,
-    runtime,
-    run,
-    root,
-    page_index,
-    screenshot_artifact.as_deref(),
-    &options,
-    &mut page_observations,
-  )?;
-  let new_observation_count = count_new_observations(&page_observations, &mut state.known_observation_signatures);
-  let observation_count = page_observations.len();
-  state.observations.extend(page_observations.clone());
-
-  let snapshot_screenshot = screenshot_artifact.clone();
-  state.pages.push(ScanPageRecord {
-    page_index,
-    observe_run_id: None,
-    screenshot_artifact,
-    observation_count,
-    new_observation_count,
-    summary: format!(
-      "observed {observation_count} row(s); {new_observation_count} new page-local signature(s); observe command recorded inside the scan run"
-    ),
-  });
-  state.snapshots.push(build_page_observation_snapshot(
-    run.id(),
-    &observe_result.producer_span_id,
-    page_index,
-    &options.target,
-    &page_observations,
-    snapshot_screenshot.as_deref(),
-    screenshot_artifact_record,
-    &observe_result.artifacts,
-    new_observation_count,
-  ));
-
-  Ok(PageScanOutcome {
-    new_observation_count,
-    observations: page_observations,
-  })
 }
 
 /// Returns the direction-aware `CompleteByNoVisualProgress*` claim for the
@@ -848,26 +1325,7 @@ fn scroll_boundary_candidate_for_progress(
   })
 }
 
-fn screenshot_diff_stability_for_pages(page_index: usize, pages: &[ScanPageRecord]) -> AuvResult<Option<ScreenshotDiffStability>> {
-  if page_index == 0 {
-    return Ok(None);
-  }
-  let previous_screenshot = pages.iter().find(|page| page.page_index == page_index - 1).and_then(|page| page.screenshot_artifact.as_deref());
-  let current_screenshot = pages.iter().find(|page| page.page_index == page_index).and_then(|page| page.screenshot_artifact.as_deref());
-  let (Some(previous_screenshot), Some(current_screenshot)) = (previous_screenshot, current_screenshot) else {
-    return Ok(None);
-  };
-  screenshot_diff_stability(previous_screenshot, current_screenshot).map(Some)
-}
-
-fn screenshot_diff_stability(previous_screenshot: &Path, current_screenshot: &Path) -> AuvResult<ScreenshotDiffStability> {
-  let previous = image::open(previous_screenshot)
-    .map_err(|error| format!("failed to open previous screenshot {}: {error}", previous_screenshot.display()))?;
-  let current = image::open(current_screenshot)
-    .map_err(|error| format!("failed to open current screenshot {}: {error}", current_screenshot.display()))?;
-
-  let previous = previous.to_rgba8();
-  let current = current.to_rgba8();
+fn screenshot_diff_stability_rgba(previous: &RgbaImage, current: &RgbaImage) -> AuvResult<ScreenshotDiffStability> {
   let width = previous.width();
   let height = previous.height();
   if width == 0 || height == 0 {
@@ -983,1350 +1441,529 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
   }
 }
 
-fn invoke_scan_command(
-  _recording: &RecordingHandle,
-  runtime: &Runtime,
-  run: &mut auv_tracing_driver::run_builder::RecordingRun,
-  root: &auv_tracing_driver::run_builder::SpanRef,
-  request: InvokeRequest,
-  label: &str,
-) -> AuvResult<InvokeResult> {
-  let registry = auv_cli_invoke::default_registry();
-  let result = auv_cli_invoke::invoke_recorded_in_span(runtime.recording(), &registry, run, root, request)?;
-  if result.status == RunStatus::Completed {
-    Ok(result)
-  } else {
-    Err(result.failure_message.unwrap_or_else(|| format!("{label} command failed")))
-  }
-}
-
-fn observations_from_first_json_artifact(
-  page_index: usize,
-  result: &InvokeResult,
-  source_artifact: PathBuf,
-) -> AuvResult<Vec<CollectionObservation>> {
-  let json_paths = result
-    .artifact_paths
-    .iter()
-    .filter(|path| path.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case("json")))
-    .cloned()
-    .collect::<Vec<_>>();
-  if json_paths.is_empty() {
-    return Err("observe window region did not produce a JSON artifact".to_string());
-  }
-  observations_from_json_artifacts(page_index, &json_paths, &source_artifact)
-}
-
-fn observations_from_json_artifacts(
-  page_index: usize,
-  json_paths: &[PathBuf],
-  source_artifact: &Path,
-) -> AuvResult<Vec<CollectionObservation>> {
-  let mut raw_json_artifacts = Vec::with_capacity(json_paths.len());
-  for path in json_paths {
-    let raw = fs::read_to_string(path).map_err(|error| format!("failed to read observe JSON {}: {error}", path.display()))?;
-    let value: Value = serde_json::from_str(&raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
-    if has_recognition_result_shape(&value) {
-      return observations_from_observe_json(page_index, &raw, source_artifact.to_path_buf());
-    }
-    raw_json_artifacts.push(raw);
-  }
-
-  let mut last_error = None;
-  for raw in raw_json_artifacts {
-    match observations_from_observe_json(page_index, &raw, source_artifact.to_path_buf()) {
-      Ok(observations) => return Ok(observations),
-      Err(error) => last_error = Some(error),
-    }
-  }
-
-  Err(last_error.unwrap_or_else(|| "observe window region did not produce a parseable recognition or rows JSON artifact".to_string()))
-}
-
-fn first_artifact_with_extension(result: &InvokeResult, extension: &str) -> Option<PathBuf> {
-  result
-    .artifact_paths
-    .iter()
-    .find(|path| path.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case(extension)))
-    .cloned()
-}
-
-fn first_artifact_record_with_extension<'a>(
-  result: &'a InvokeResult,
-  extension: &str,
-) -> Option<&'a auv_tracing_driver::trace::ArtifactRecordV1Alpha1> {
-  result.artifacts.iter().find(|artifact| {
-    Path::new(&artifact.path).extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case(extension))
-  })
-}
-
-fn count_new_observations(observations: &[CollectionObservation], known_observation_signatures: &mut BTreeSet<String>) -> usize {
-  observations.iter().filter(|observation| known_observation_signatures.insert(observation_signature(observation))).count()
-}
-
-fn observation_signature(observation: &CollectionObservation) -> String {
-  if !observation.normalized_text_key.is_empty() {
-    // Text-bearing: identity by content alone — no geometry.
-    // The same text at a different y after a partial scroll is the *same* item,
-    // not new content. Including y caused consecutive_no_progress to never
-    // increment, so UntilEnd scans never auto-stopped.
-    // Known trade-off: duplicate items with identical text (e.g. the same song
-    // listed twice in a playlist) collapse to one signature. Callers that need
-    // exact position-aware dedup should not use this function.
-    observation.normalized_text_key.clone()
-  } else {
-    // Visual-only fallback: no OCR text is available.
-    // TODO: Replace with row OCR, AX ids, or local image hashes once those are
-    // produced for visual-band observations (TODO 1524).
-    // Use source + stable geometry (x, w, h) without y so a partial-scroll
-    // shift does not generate a spurious "new" signature.
-    // Known limit: two bands sharing source/x/w/h collide into one signature.
-    let source = observation.attributes.get("source").map(String::as_str).unwrap_or("unknown");
-    format!("visual:{}|x={}|w={}|h={}", source, observation.bounds.x, observation.bounds.width, observation.bounds.height)
-  }
-}
-
-fn match_found_on_current_page(policy: &StopPolicy, current_page_observations: &[CollectionObservation]) -> bool {
-  let StopPolicy::UntilMatch { query, .. } = policy else {
-    return false;
-  };
-  let normalized_query = normalize_observation_text(query);
-  !normalized_query.is_empty()
-    && current_page_observations.iter().any(|observation| observation.normalized_text_key.contains(&normalized_query))
-}
-
-#[derive(Clone, Debug)]
-struct ListItemCropOcrResult {
-  crop_artifact: PathBuf,
-  context_artifact: PathBuf,
-  text_fragments: Vec<String>,
-  strategy: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ListItemCandidateContextArtifact {
-  schema: String,
-  observation_id: String,
-  page_index: usize,
-  raw_text: String,
-  text_fragments: Vec<String>,
-  bounds: ScanRect,
-  attributes: BTreeMap<String, String>,
-  source_artifacts: Vec<PathBuf>,
-  crop_artifact: PathBuf,
-  ocr_strategy: String,
-}
-
-impl ListItemCandidateContextArtifact {
-  const SCHEMA: &'static str = "auv.scan.list_item_candidate_context.v1";
-  const OCR_STRATEGY: &'static str = "crop_ocr";
-}
-
-fn enrich_list_item_observations_with_crops(
-  recording: &RecordingHandle,
-  _runtime: &Runtime,
-  run: &mut auv_tracing_driver::run_builder::RecordingRun,
-  root: &auv_tracing_driver::run_builder::SpanRef,
-  page_index: usize,
-  screenshot_artifact: Option<&Path>,
-  options: &ScanWindowRegionOptions,
-  observations: &mut [CollectionObservation],
-) -> AuvResult<()> {
-  let Some(screenshot_artifact) = screenshot_artifact else {
-    return Ok(());
-  };
-
-  let mut crop_jobs = Vec::new();
-  for (observation_index, observation) in observations.iter().enumerate() {
-    let item_index = observation_item_index(observation);
-    let crop_temp_path = crop_list_item_image(
-      screenshot_artifact,
-      &observation.bounds,
-      &format!("scan-page-{:04}-list-item-{:04}", page_index + 1, item_index + 1),
-    )?;
-    crop_jobs.push((observation_index, item_index, crop_temp_path));
-  }
-
-  let text_results = ocr_list_item_crops_parallel(&crop_jobs, options.min_confidence, options.max_observations)?;
-
-  for (observation_index, item_index, crop_temp_path) in crop_jobs {
-    let observation = &mut observations[observation_index];
-    let text_fragments = text_results.get(observation_index).cloned().unwrap_or_default();
-    let crop_artifact = recording.stage_artifact_file(
-      run,
-      root,
-      "list-item-crop",
-      &crop_temp_path,
-      format!("scan-page-{:04}-list-item-{:04}.png", page_index + 1, item_index + 1),
-      Some("Cropped screenshot for one list item candidate.".to_string()),
-    )?;
-    let context_temp_path = write_list_item_context_artifact(observation, &crop_artifact, &text_fragments)?;
-    let context_artifact = recording.stage_artifact_file(
-      run,
-      root,
-      "list-item-context",
-      &context_temp_path,
-      format!("scan-page-{:04}-list-item-{:04}-context.json", page_index + 1, item_index + 1),
-      Some("Typed context for one list item candidate.".to_string()),
-    )?;
-    let _ = fs::remove_file(&crop_temp_path);
-    let _ = fs::remove_file(&context_temp_path);
-    apply_list_item_crop_ocr_result(
-      observation,
-      ListItemCropOcrResult {
-        crop_artifact,
-        context_artifact,
-        text_fragments,
-        strategy: "crop_ocr".to_string(),
-      },
-    );
-  }
-
-  Ok(())
-}
-
-fn ocr_list_item_crops_parallel(
-  crop_jobs: &[(usize, usize, PathBuf)],
-  min_confidence: f64,
-  max_observations: i64,
-) -> AuvResult<Vec<Vec<String>>> {
-  let mut handles = Vec::new();
-  for (observation_index, _, crop_path) in crop_jobs {
-    let crop_path = crop_path.clone();
-    let observation_index = *observation_index;
-    handles.push(std::thread::spawn(move || {
-      ocr_text_fragments_in_crop_image(&crop_path, min_confidence, max_observations).map(|fragments| (observation_index, fragments))
-    }));
-  }
-
-  let mut results = vec![Vec::new(); crop_jobs.len()];
-  for handle in handles {
-    let (observation_index, fragments) = handle.join().map_err(|_| "list item crop OCR worker panicked".to_string())??;
-    if let Some(slot) = results.get_mut(observation_index) {
-      *slot = fragments;
-    }
-  }
-  Ok(results)
-}
-
-fn ocr_text_fragments_in_crop_image(image_path: &Path, min_confidence: f64, max_observations: i64) -> AuvResult<Vec<String>> {
-  let capture = auv_driver_macos::native::ocr::find_text(image_path, "", false, false, max_observations.min(64), &[], None, None)?;
-  let mut matches = capture.snapshot.matches.into_iter().filter(|matched| matched.confidence >= min_confidence).collect::<Vec<_>>();
-  matches.sort_by(|left, right| left.bounds.y.cmp(&right.bounds.y).then_with(|| left.bounds.x.cmp(&right.bounds.x)));
-  let mut fragments = Vec::new();
-  for matched in matches {
-    if !fragments.iter().any(|fragment| fragment == &matched.text) {
-      fragments.push(matched.text);
-    }
-  }
-  Ok(fragments)
-}
-
-fn observation_item_index(observation: &CollectionObservation) -> usize {
-  observation.attributes.get("item_index").and_then(|value| value.parse::<usize>().ok()).unwrap_or(0)
-}
-
-fn crop_list_item_image(source: &Path, bounds: &ScanRect, label: &str) -> AuvResult<PathBuf> {
-  let image = image::open(source).map_err(|error| format!("failed to open list item source image {}: {error}", source.display()))?;
-  let image_width = image.width() as i64;
-  let image_height = image.height() as i64;
-  let crop = clamped_crop_rect(bounds, image_width, image_height)?;
-  let cropped = image.crop_imm(crop.x as u32, crop.y as u32, crop.width as u32, crop.height as u32);
-  let path = env::temp_dir().join(format!("auv-{}-{}-{}.png", sanitize_scan_artifact_component(label), process::id(), now_millis()));
-  cropped.save(&path).map_err(|error| format!("failed to write list item crop {}: {error}", path.display()))?;
-  Ok(path)
-}
-
-fn clamped_crop_rect(bounds: &ScanRect, image_width: i64, image_height: i64) -> AuvResult<ScanRect> {
-  if image_width <= 0 || image_height <= 0 {
-    return Err(format!("invalid source image dimensions {}x{} for list item crop", image_width, image_height));
-  }
-  let x = bounds.x.clamp(0, image_width.saturating_sub(1));
-  let y = bounds.y.clamp(0, image_height.saturating_sub(1));
-  let max_x = (bounds.x + bounds.width).clamp(x + 1, image_width);
-  let max_y = (bounds.y + bounds.height).clamp(y + 1, image_height);
-  Ok(ScanRect {
-    x,
-    y,
-    width: max_x - x,
-    height: max_y - y,
-  })
-}
-
-fn write_list_item_context_artifact(
-  observation: &CollectionObservation,
-  crop_artifact: &Path,
-  text_fragments: &[String],
-) -> AuvResult<PathBuf> {
-  let path = env::temp_dir().join(format!(
-    "auv-list-item-context-{}-{}-{}.json",
-    sanitize_scan_artifact_component(&observation.observation_id),
-    process::id(),
-    now_millis()
-  ));
-  let payload = build_list_item_context_payload(observation, crop_artifact, text_fragments);
-  let rendered = serde_json::to_string_pretty(&payload).map_err(|error| format!("failed to render list item context JSON: {error}"))?;
-  fs::write(&path, format!("{rendered}\n")).map_err(|error| format!("failed to write list item context {}: {error}", path.display()))?;
-  Ok(path)
-}
-
-fn build_list_item_context_payload(
-  observation: &CollectionObservation,
-  crop_artifact: &Path,
-  text_fragments: &[String],
-) -> ListItemCandidateContextArtifact {
-  let raw_text = joined_text_fragments(text_fragments);
-  let mut attributes = observation.attributes.clone();
-  if !raw_text.is_empty() {
-    attributes.insert("text_fragments".to_string(), raw_text.clone());
-  }
-  attributes.insert("ocr_strategy".to_string(), ListItemCandidateContextArtifact::OCR_STRATEGY.to_string());
-
-  ListItemCandidateContextArtifact {
-    schema: ListItemCandidateContextArtifact::SCHEMA.to_string(),
-    observation_id: observation.observation_id.clone(),
-    page_index: observation.page_index,
-    raw_text,
-    text_fragments: text_fragments.to_vec(),
-    bounds: observation.bounds.clone(),
-    attributes,
-    source_artifacts: observation.source_artifacts.clone(),
-    crop_artifact: crop_artifact.to_path_buf(),
-    ocr_strategy: ListItemCandidateContextArtifact::OCR_STRATEGY.to_string(),
-  }
-}
-
-fn apply_list_item_crop_ocr_result(observation: &mut CollectionObservation, result: ListItemCropOcrResult) {
-  observation.attributes.insert("crop_artifact".to_string(), result.crop_artifact.display().to_string());
-  observation.attributes.insert("context_artifact".to_string(), result.context_artifact.display().to_string());
-  observation.attributes.insert("ocr_strategy".to_string(), result.strategy);
-  if !result.text_fragments.is_empty() {
-    let raw_text = joined_text_fragments(&result.text_fragments);
-    observation.raw_text = raw_text.clone();
-    observation.normalized_text_key = normalize_observation_text(&raw_text);
-    observation.attributes.insert("text_fragments".to_string(), raw_text);
-  }
-}
-
-fn joined_text_fragments(text_fragments: &[String]) -> String {
-  text_fragments.join(" | ")
-}
-
-fn sanitize_scan_artifact_component(raw: &str) -> String {
-  let sanitized = raw
-    .chars()
-    .map(|character| {
-      if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-        character
-      } else {
-        '-'
-      }
-    })
-    .collect::<String>()
-    .trim_matches('-')
-    .to_string();
-  if sanitized.is_empty() {
-    "item".to_string()
-  } else {
-    sanitized
-  }
-}
-
-fn stage_scan_artifact(
-  recording: &RecordingHandle,
-  run: &mut auv_tracing_driver::run_builder::RecordingRun,
-  root: &auv_tracing_driver::run_builder::SpanRef,
-  artifact: &ScrollScanArtifact,
-) -> AuvResult<PathBuf> {
-  let temp_path = write_scan_artifact(artifact)?;
-  let stage_result = recording.stage_artifact_file(
-    run,
-    root,
-    "scroll-scan",
-    &temp_path,
-    "scroll-scan.json",
-    Some("Runtime window-region scroll scan artifact.".to_string()),
-  );
-  let cleanup_result = fs::remove_file(&temp_path);
-  match (stage_result, cleanup_result) {
-    (Ok(staged_path), Ok(())) => Ok(staged_path),
-    (Ok(staged_path), Err(_)) => Ok(staged_path),
-    (Err(error), Ok(())) | (Err(error), Err(_)) => Err(error),
-  }
-}
-
-fn write_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<PathBuf> {
-  let path = env::temp_dir().join(format!("auv-scroll-scan-{}-{}-{}.json", artifact.scan_id, process::id(), now_millis()));
-  let rendered = serde_json::to_string_pretty(artifact).map_err(|error| format!("failed to render scan artifact JSON: {error}"))?;
-  fs::write(&path, format!("{rendered}\n")).map_err(|error| format!("failed to write scan artifact {}: {error}", path.display()))?;
-  Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
+  use std::collections::VecDeque;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  use std::sync::{Arc, Mutex};
+
+  use auv_tracing::{
+    ArtifactBody, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult,
+    ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunRevision, RunStore,
+    RunSubscription, StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
+  };
+  use image::Rgba;
+
+  use crate::run_read::read_scroll_scan;
+
   use super::*;
-  use image::{Rgba, RgbaImage};
-  use std::collections::BTreeMap;
-  use std::env;
-  use std::fs;
-  use std::process;
-  use std::sync::atomic::{AtomicU64, Ordering};
 
-  use auv_tracing_driver::store::LocalStore;
+  struct ScanSource {
+    pages: VecDeque<AuvResult<ScanSourcePage>>,
+    scroll_calls: usize,
+    scroll_error: Option<String>,
+  }
 
-  static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
+  struct NoopTelemetry;
 
-  #[test]
-  fn scan_artifact_serializes_completeness_and_observations() {
-    let artifact = ScrollScanArtifact {
-      scan_id: "scan_test".to_string(),
+  struct FailNthArtifactStore {
+    inner: MemoryRunStore,
+    fail_at: usize,
+    writes: AtomicUsize,
+    purposes: Mutex<Vec<String>>,
+  }
+
+  impl FailNthArtifactStore {
+    fn new(fail_at: usize) -> Self {
+      Self {
+        inner: MemoryRunStore::new(AuthorityId::new()),
+        fail_at,
+        writes: AtomicUsize::new(0),
+        purposes: Mutex::new(Vec::new()),
+      }
+    }
+
+    fn write_count(&self) -> usize {
+      self.writes.load(Ordering::SeqCst)
+    }
+
+    fn purposes(&self) -> Vec<String> {
+      self.purposes.lock().expect("purposes lock").clone()
+    }
+  }
+
+  impl RunStore for FailNthArtifactStore {
+    fn authority_id(&self) -> AuthorityId {
+      self.inner.authority_id()
+    }
+
+    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      self.inner.commit(request)
+    }
+
+    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+      let write = self.writes.fetch_add(1, Ordering::SeqCst) + 1;
+      self.purposes.lock().expect("purposes lock").push(request.purpose().as_str().to_string());
+      if write == self.fail_at {
+        return Box::pin(async {
+          Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.scroll_scan_publication_rejected").expect("test error code")))
+        });
+      }
+      self.inner.write_artifact(request, body)
+    }
+
+    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+      self.inner.lookup_commit(run_id, key)
+    }
+
+    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+      self.inner.load_snapshot(run_id)
+    }
+
+    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+      self.inner.commits_after(run_id, after, limit)
+    }
+
+    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+      self.inner.subscribe(run_id, after)
+    }
+
+    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+      self.inner.open_artifact(uri)
+    }
+  }
+
+  impl TelemetryProjector for NoopTelemetry {
+    fn project(&self, _item: TelemetryItem) -> auv_tracing::BoxFuture<'_, Result<(), TelemetryError>> {
+      Box::pin(async { Ok(()) })
+    }
+
+    fn flush(&self) -> auv_tracing::BoxFuture<'_, Result<(), TelemetryError>> {
+      Box::pin(async { Ok(()) })
+    }
+  }
+
+  impl ScanSource {
+    fn with_pages(pages: Vec<AuvResult<ScanSourcePage>>) -> Self {
+      Self {
+        pages: pages.into(),
+        scroll_calls: 0,
+        scroll_error: None,
+      }
+    }
+  }
+
+  impl ScanWindowRegionSource for ScanSource {
+    fn observe(&mut self, _page_index: usize, _options: &ScanWindowRegionOptions) -> AuvResult<ScanSourcePage> {
+      self.pages.pop_front().unwrap_or_else(|| Err("fixture exhausted".to_string()))
+    }
+
+    fn scroll(&mut self, _options: &ScanWindowRegionOptions) -> AuvResult<()> {
+      self.scroll_calls += 1;
+      self.scroll_error.take().map_or(Ok(()), Err)
+    }
+  }
+
+  fn options(stop_policy: StopPolicy) -> ScanWindowRegionOptions {
+    ScanWindowRegionOptions {
       target: ScanTarget {
-        application_id: Some("com.example.App".to_string()),
-        window_title: Some("Library".to_string()),
+        application_id: Some("com.example.fixture".to_string()),
+        window_title: Some("Fixture".to_string()),
         region: ScanRegion {
-          left_ratio: 0.1,
-          top_ratio: 0.2,
-          right_ratio: 0.9,
-          bottom_ratio: 0.8,
+          left_ratio: 0.0,
+          top_ratio: 0.0,
+          right_ratio: 1.0,
+          bottom_ratio: 1.0,
         },
       },
-      stop_policy: StopPolicy::Bounded {
-        max_pages: 2,
-        max_scrolls: 1,
-      },
-      pages: vec![ScanPageRecord {
-        page_index: 0,
-        observe_run_id: Some("run_observe".to_string()),
-        screenshot_artifact: Some(PathBuf::from("artifacts/page.png")),
-        observation_count: 1,
-        new_observation_count: 1,
-        summary: "observed 1 row".to_string(),
-      }],
+      stop_policy,
+      direction: "down".to_string(),
+      scroll_amount: 40.0,
+      settle_ms: 0,
+      min_confidence: 0.0,
+      max_observations: 16,
+    }
+  }
+
+  fn page(page_index: usize, text: &str, color: [u8; 4]) -> ScanSourcePage {
+    ScanSourcePage {
       observations: vec![CollectionObservation {
-        observation_id: "obs_0001".to_string(),
-        page_index: 0,
-        raw_text: "Alpha".to_string(),
-        normalized_text_key: "alpha".to_string(),
+        observation_id: format!("obs_{:04}_0001", page_index + 1),
+        page_index,
+        raw_text: text.to_string(),
+        normalized_text_key: observation::normalize_observation_text(text),
         bounds: ScanRect {
           x: 10,
           y: 20,
           width: 100,
-          height: 30,
+          height: 24,
         },
         section_context: None,
-        source_artifacts: vec![PathBuf::from("artifacts/page.png")],
-        attributes: BTreeMap::new(),
+        source_artifacts: Vec::new(),
+        attributes: BTreeMap::from([("source".to_string(), "auv-driver.vision.ocr".to_string())]),
       }],
-      nodes: Vec::new(),
-      snapshots: Vec::new(),
-      clusters: vec![ObservationCluster {
-        cluster_id: "cluster_0001".to_string(),
-        observation_ids: vec!["obs_0001".to_string()],
-        representative_text: "Alpha".to_string(),
-        merge_reason: "single_observation".to_string(),
-        confidence: 1.0,
-      }],
-      section_candidates: Vec::new(),
-      scroll_boundary_candidates: vec![ScrollBoundaryCandidate {
-        page_index: 1,
-        scroll_count: 1,
-        direction: "down".to_string(),
-        boundary: ScrollBoundary::Bottom,
-        basis: "no_new_observations_after_scroll".to_string(),
-        confidence: "heuristic".to_string(),
-        consecutive_no_progress: 1,
-      }],
-      hook_decisions: Vec::new(),
-      stop_evidence: StopEvidence {
-        reason: StopReason::MaxPages,
-        message: "reached max_pages=2".to_string(),
-        page_index: 1,
-      },
-      completeness_claim: CompletenessClaim::PartialMaxPages,
-      warnings: vec!["bounded scan".to_string()],
-    };
-
-    let rendered = serde_json::to_string_pretty(&artifact).expect("serialize");
-
-    assert!(rendered.contains("\"completeness_claim\": \"partial_max_pages\""));
-    assert!(rendered.contains("\"normalized_text_key\": \"alpha\""));
-    assert!(rendered.contains("\"merge_reason\": \"single_observation\""));
-    assert!(rendered.contains("\"scroll_boundary_candidates\""));
-    assert!(rendered.contains("\"boundary\": \"bottom\""));
-  }
-
-  #[test]
-  fn conservative_merge_keeps_same_text_on_same_page_separate() {
-    let observations = vec![
-      observation("obs_0001", 0, "Repeat", 10),
-      observation("obs_0002", 0, "Repeat", 80),
-    ];
-
-    let clusters = conservative_merge_observations(&observations);
-
-    assert_eq!(clusters.len(), 2);
-    assert_eq!(clusters[0].merge_reason, "single_observation");
-    assert_eq!(clusters[1].merge_reason, "single_observation");
-  }
-
-  #[test]
-  fn conservative_merge_groups_same_text_on_adjacent_overlap_pages() {
-    let observations = vec![
-      observation("obs_0001", 0, "Repeat", 120),
-      observation("obs_0002", 1, "Repeat", 118),
-    ];
-
-    let clusters = conservative_merge_observations(&observations);
-
-    assert_eq!(clusters.len(), 1);
-    assert_eq!(clusters[0].observation_ids, vec!["obs_0001".to_string(), "obs_0002".to_string()]);
-    assert_eq!(clusters[0].merge_reason, "same_text_adjacent_page_near_y");
-  }
-
-  #[test]
-  fn conservative_merge_does_not_join_adjacent_pages_with_different_recognized_items() {
-    let mut left = observation("obs_0001", 0, "Repeat", 120);
-    left.attributes.insert("recognized_item_id".to_string(), "recognized-row-1".to_string());
-    left.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
-    left.attributes.insert("row_candidate_index".to_string(), "2".to_string());
-
-    let mut right = observation("obs_0002", 1, "Repeat", 118);
-    right.attributes.insert("recognized_item_id".to_string(), "recognized-row-2".to_string());
-    right.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
-    right.attributes.insert("row_candidate_index".to_string(), "3".to_string());
-
-    let clusters = conservative_merge_observations(&[left, right]);
-
-    assert_eq!(clusters.len(), 2);
-    assert_eq!(clusters[0].merge_reason, "single_observation");
-    assert_eq!(clusters[1].merge_reason, "single_observation");
-  }
-
-  #[test]
-  fn conservative_merge_prefers_recognized_item_identity_over_text_y_heuristic() {
-    let mut left = observation("obs_0001", 0, "Repeat", 120);
-    left.attributes.insert("recognized_item_id".to_string(), "recognized-row-1".to_string());
-    left.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
-    left.attributes.insert("row_candidate_index".to_string(), "2".to_string());
-
-    let mut right = observation("obs_0002", 1, "Repeat", 152);
-    right.attributes.insert("recognized_item_id".to_string(), "recognized-row-1".to_string());
-    right.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
-    right.attributes.insert("row_candidate_index".to_string(), "2".to_string());
-
-    let clusters = conservative_merge_observations(&[left, right]);
-
-    assert_eq!(clusters.len(), 1);
-    assert_eq!(clusters[0].observation_ids, vec!["obs_0001".to_string(), "obs_0002".to_string()]);
-    assert_eq!(clusters[0].merge_reason, "same_recognized_item_adjacent_page");
-  }
-
-  #[test]
-  fn bounded_policy_stops_at_max_pages() {
-    let decision = evaluate_stop_policy(
-      &StopPolicy::Bounded {
-        max_pages: 2,
-        max_scrolls: 10,
-      },
-      &ScanProgress {
-        page_index: 1,
-        scroll_count: 1,
-        consecutive_no_progress: 0,
-        new_observation_count: 3,
-        hook_stop_requested: false,
-        match_found: false,
-        next_section_candidate: false,
-        scroll_boundary_candidate: None,
-      },
-      "down",
-    );
-
-    assert_eq!(decision.expect("stop expected").completeness_claim, CompletenessClaim::PartialMaxPages);
-  }
-
-  #[test]
-  fn until_end_policy_stops_after_no_progress_limit_downward() {
-    let decision = evaluate_stop_policy(
-      &StopPolicy::UntilEnd {
-        max_pages: 20,
-        max_scrolls: 20,
-        no_progress_limit: 2,
-      },
-      &ScanProgress {
-        page_index: 3,
-        scroll_count: 3,
-        consecutive_no_progress: 2,
-        new_observation_count: 0,
-        hook_stop_requested: false,
-        match_found: false,
-        next_section_candidate: false,
-        scroll_boundary_candidate: None,
-      },
-      "down",
-    )
-    .expect("stop expected");
-
-    assert_eq!(decision.stop_evidence.reason, StopReason::NoProgressLimit);
-    assert_eq!(decision.completeness_claim, CompletenessClaim::CompleteByNoVisualProgressDown);
-    assert!(decision.stop_evidence.message.contains("scrolling down"));
-    assert!(decision.stop_evidence.message.contains("no_progress_limit=2"));
-  }
-
-  #[test]
-  fn until_end_policy_stops_after_no_progress_limit_upward() {
-    let decision = evaluate_stop_policy(
-      &StopPolicy::UntilEnd {
-        max_pages: 20,
-        max_scrolls: 20,
-        no_progress_limit: 3,
-      },
-      &ScanProgress {
-        page_index: 5,
-        scroll_count: 5,
-        consecutive_no_progress: 3,
-        new_observation_count: 0,
-        hook_stop_requested: false,
-        match_found: false,
-        next_section_candidate: false,
-        scroll_boundary_candidate: None,
-      },
-      "up",
-    )
-    .expect("stop expected");
-
-    assert_eq!(decision.stop_evidence.reason, StopReason::NoProgressLimit);
-    assert_eq!(decision.completeness_claim, CompletenessClaim::CompleteByNoVisualProgressUp);
-    assert!(decision.stop_evidence.message.contains("scrolling up"));
-  }
-
-  #[test]
-  fn scroll_boundary_candidate_maps_direction_to_boundary() {
-    let candidate = scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0, &[], None).expect("boundary candidate");
-
-    assert_eq!(candidate.boundary, ScrollBoundary::Top);
-    assert_eq!(candidate.direction, "up");
-    assert_eq!(candidate.basis, "no_new_observations_after_scroll");
-    assert_eq!(candidate.confidence, "heuristic");
-  }
-
-  #[test]
-  fn scroll_boundary_candidate_requires_prior_scroll_and_no_new_observations() {
-    assert!(scroll_boundary_candidate_for_progress("down", 0, 0, 0, 0, &[], None).is_none());
-    assert!(scroll_boundary_candidate_for_progress("down", 1, 0, 1, 0, &[], None).is_none());
-    assert!(scroll_boundary_candidate_for_progress("down", 1, 1, 0, 2, &[], None).is_none());
-  }
-
-  #[test]
-  fn scroll_boundary_candidate_uses_corroborated_basis_for_downward_repeated_row_overlap() {
-    let observations = repeated_overlap_page_observations();
-
-    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None).expect("boundary candidate");
-
-    assert_eq!(candidate.boundary, ScrollBoundary::Bottom);
-    assert_eq!(candidate.basis, "repeated_row_band_overlap");
-    assert_eq!(candidate.confidence, "corroborated");
-  }
-
-  #[test]
-  fn scroll_boundary_candidate_uses_corroborated_basis_for_upward_repeated_row_overlap() {
-    let observations = repeated_overlap_page_observations();
-
-    let candidate = scroll_boundary_candidate_for_progress("up", 1, 1, 1, 0, &observations, None).expect("boundary candidate");
-
-    assert_eq!(candidate.boundary, ScrollBoundary::Top);
-    assert_eq!(candidate.basis, "repeated_row_band_overlap");
-    assert_eq!(candidate.confidence, "corroborated");
-  }
-
-  #[test]
-  fn scroll_boundary_candidate_keeps_heuristic_basis_for_single_repeated_row_overlap() {
-    let observations = vec![
-      observation("obs_0001", 0, "Repeat A", 120),
-      observation("obs_0002", 1, "Repeat A", 118),
-    ];
-
-    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None).expect("boundary candidate");
-
-    assert_eq!(candidate.basis, "no_new_observations_after_scroll");
-    assert_eq!(candidate.confidence, "heuristic");
-  }
-
-  #[test]
-  fn scroll_boundary_candidate_uses_corroborated_basis_for_screenshot_diff_stability() {
-    let screenshot_a = write_temp_png_artifact("boundary-stable-a", [24, 48, 72, 255]);
-    let screenshot_b = write_temp_png_artifact("boundary-stable-b", [24, 48, 72, 255]);
-    let pages = vec![
-      page_record(0, Some(screenshot_a.clone())),
-      page_record(1, Some(screenshot_b.clone())),
-    ];
-    let screenshot_diff_stability = screenshot_diff_stability_for_pages(1, &pages)
-      .expect("screenshot diff should compare")
-      .expect("adjacent screenshot pair should exist");
-
-    let candidate =
-      scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &[], Some(&screenshot_diff_stability)).expect("boundary candidate");
-
-    assert!(screenshot_diff_stability.is_stable());
-    assert_eq!(candidate.basis, "screenshot_diff_stability");
-    assert_eq!(candidate.confidence, "corroborated");
-
-    let _ = fs::remove_file(screenshot_a);
-    let _ = fs::remove_file(screenshot_b);
-  }
-
-  #[test]
-  fn scroll_boundary_candidate_combines_row_overlap_and_screenshot_diff_stability() {
-    let observations = repeated_overlap_page_observations();
-    let screenshot_a = write_temp_png_artifact("boundary-stable-combo-a", [90, 32, 16, 255]);
-    let screenshot_b = write_temp_png_artifact("boundary-stable-combo-b", [90, 32, 16, 255]);
-    let pages = vec![
-      page_record(0, Some(screenshot_a.clone())),
-      page_record(1, Some(screenshot_b.clone())),
-    ];
-    let screenshot_diff_stability = screenshot_diff_stability_for_pages(1, &pages)
-      .expect("screenshot diff should compare")
-      .expect("adjacent screenshot pair should exist");
-
-    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, Some(&screenshot_diff_stability))
-      .expect("boundary candidate");
-
-    assert_eq!(candidate.basis, "repeated_row_band_overlap+screenshot_diff_stability");
-    assert_eq!(candidate.confidence, "corroborated");
-
-    let _ = fs::remove_file(screenshot_a);
-    let _ = fs::remove_file(screenshot_b);
-  }
-
-  #[test]
-  fn until_match_policy_stops_at_directional_boundary_candidate() {
-    let decision = evaluate_stop_policy(
-      &StopPolicy::UntilMatch {
-        query: "needle".to_string(),
-        max_pages: 20,
-        max_scrolls: 20,
-      },
-      &ScanProgress {
-        page_index: 2,
-        scroll_count: 2,
-        consecutive_no_progress: 1,
-        new_observation_count: 0,
-        hook_stop_requested: false,
-        match_found: false,
-        next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[], None),
-      },
-      "down",
-    )
-    .expect("boundary stop expected");
-
-    assert_eq!(decision.stop_evidence.reason, StopReason::ReachedBoundary);
-    assert_eq!(decision.completeness_claim, CompletenessClaim::CompleteByReachedBoundary);
-    assert!(decision.stop_evidence.message.contains("bottom"));
-    assert!(decision.stop_evidence.message.contains("no_new_observations_after_scroll"));
-  }
-
-  #[test]
-  fn bounded_policy_ignores_directional_boundary_candidate() {
-    let decision = evaluate_stop_policy(
-      &StopPolicy::Bounded {
-        max_pages: 20,
-        max_scrolls: 20,
-      },
-      &ScanProgress {
-        page_index: 2,
-        scroll_count: 2,
-        consecutive_no_progress: 1,
-        new_observation_count: 0,
-        hook_stop_requested: false,
-        match_found: false,
-        next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[], None),
-      },
-      "down",
-    );
-
-    assert!(decision.is_none());
-  }
-
-  #[test]
-  fn count_new_observations_deduplicates_same_text_at_different_scroll_positions() {
-    // Same text at a different y (different scroll position) must NOT count as
-    // new — that is the whole point: consecutive_no_progress should increment
-    // when the same content reappears after a partial scroll, so UntilEnd scans
-    // eventually auto-stop instead of running forever.
-    let mut known_signatures = BTreeSet::new();
-    let first = vec![observation("obs_0001", 0, "Repeat", 10)];
-    let second = vec![observation("obs_0002", 1, "Repeat", 80)];
-
-    assert_eq!(count_new_observations(&first, &mut known_signatures), 1);
-    assert_eq!(count_new_observations(&second, &mut known_signatures), 0);
-  }
-
-  #[test]
-  fn until_match_uses_current_page_observations_only() {
-    let policy = StopPolicy::UntilMatch {
-      query: "needle".to_string(),
-      max_pages: 3,
-      max_scrolls: 3,
-    };
-    let old_accumulated_observations = vec![observation("obs_0001", 0, "needle", 10)];
-    let current_page_observations = vec![observation("obs_0002", 1, "other", 80)];
-
-    assert!(old_accumulated_observations.iter().any(|observation| observation.normalized_text_key.contains("needle")));
-    assert!(!match_found_on_current_page(&policy, &current_page_observations));
-  }
-
-  #[test]
-  fn parse_observe_rows_json_returns_collection_observations() {
-    let raw = r#"{
-    "extractor": "ocr-row",
-    "screenshot_path": "/tmp/page.png",
-    "rows": [
-      {
-        "row_index": 0,
-        "source": "visual-bands+ocr-text",
-        "text": "Alpha",
-        "text_fragments": ["Alpha"],
-        "bounds": { "x": 1, "y": 2, "width": 30, "height": 10 },
-        "peak_density": 0.42
-      }
-    ]
-  }"#;
-
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse observations");
-
-    assert_eq!(observations.len(), 1);
-    assert_eq!(observations[0].raw_text, "Alpha");
-    assert_eq!(observations[0].normalized_text_key, "alpha");
-    assert_eq!(observations[0].attributes.get("source").map(String::as_str), Some("visual-bands+ocr-text"));
-    assert_eq!(observations[0].attributes.get("text_fragments").map(String::as_str), Some("Alpha"));
-  }
-
-  #[test]
-  fn parse_observe_json_prefers_list_item_candidates_over_raw_rows() {
-    let raw = r#"{
-    "extractor": "ocr-row",
-    "screenshot_path": "/tmp/page.png",
-    "rows": [
-      {
-        "row_index": 0,
-        "source": "visual-bands",
-        "text": "",
-        "text_fragments": [],
-        "bounds": { "x": 10, "y": 20, "width": 400, "height": 160 }
-      }
-    ],
-    "item_candidates": [
-      {
-        "item_index": 0,
-        "row_candidate_index": 2,
-        "source": "row_filter",
-        "text": "Whisper of time",
-        "text_fragments": ["Whisper of time"],
-        "bounds": { "x": 100, "y": 220, "width": 600, "height": 84 }
-      },
-      {
-        "item_index": 1,
-        "row_candidate_index": 3,
-        "source": "row_filter",
-        "text": "万书隙",
-        "text_fragments": ["万书隙"],
-        "bounds": { "x": 100, "y": 348, "width": 600, "height": 86 }
-      }
-    ]
-  }"#;
-
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse observations");
-
-    assert_eq!(observations.len(), 2);
-    assert_eq!(observations[0].raw_text, "Whisper of time");
-    assert_eq!(observations[0].attributes.get("row_candidate_index").map(String::as_str), Some("2"));
-    assert_eq!(observations[0].attributes.get("source").map(String::as_str), Some("row_filter"));
-  }
-
-  #[test]
-  fn parse_observe_json_prefers_recognition_result_filtered_items() {
-    let raw = r#"{
-    "recognition_id": "window_region_demo",
-    "source": "visual_row",
-    "scope": {
-      "surface": "region",
-      "display_ref": "display-1",
-      "native_display_id": "69732928",
-      "app_bundle_id": "com.tencent.QQMusicMac",
-      "window_title": null,
-      "window_number": 91,
-      "region_hint": null,
-      "capture_artifact": null,
-      "capture_contract_artifact": null
-    },
-    "best": null,
-    "filtered": [
-      {
-        "item_id": "row#1",
-        "kind": "row",
-        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
-        "text": "Whisper of time",
-        "provider_score": 0.84,
-        "detail": {
-          "row_index": 2,
-          "source": "row_filter",
-          "text_fragments": ["Whisper of time"]
-        }
-      },
-      {
-        "item_id": "row#2",
-        "kind": "row",
-        "box": { "x": 100, "y": 348, "width": 600, "height": 86 },
-        "text": "万书隙",
-        "provider_score": 0.31,
-        "detail": {
-          "row_index": 3,
-          "source": "row_filter",
-          "text_fragments": ["万书隙"]
-        }
-      }
-    ],
-    "all": [
-      {
-        "item_id": "row#0",
-        "kind": "row",
-        "box": { "x": 100, "y": 92, "width": 600, "height": 84 },
-        "text": "Ignored",
-        "provider_score": null,
-        "detail": {
-          "row_index": 1,
-          "source": "visual-bands",
-          "text_fragments": ["Ignored"]
-        }
-      }
-    ],
-    "detail": { "provider": "macos.row_detection" },
-    "evidence": [],
-    "known_limits": []
-  }"#;
-
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse recognition observations");
-
-    assert_eq!(observations.len(), 2);
-    assert_eq!(observations[0].raw_text, "Whisper of time");
-    assert_eq!(observations[0].attributes.get("recognition_id").map(String::as_str), Some("window_region_demo"));
-    assert_eq!(observations[0].attributes.get("recognized_item_id").map(String::as_str), Some("row#1"));
-    assert_eq!(observations[0].attributes.get("recognition_source").map(String::as_str), Some("visual_row"));
-    assert_eq!(observations[0].attributes.get("recognition_surface").map(String::as_str), Some("region"));
-    assert_eq!(observations[0].attributes.get("row_candidate_index").map(String::as_str), Some("2"));
-    assert_eq!(observations[0].attributes.get("source").map(String::as_str), Some("row_filter"));
-    assert_eq!(observations[0].attributes.get("provider_score").map(String::as_str), Some("0.84"));
-    assert_eq!(observations[1].attributes.get("recognized_item_id").map(String::as_str), Some("row#2"));
-    assert_eq!(observations[1].attributes.get("provider_score").map(String::as_str), Some("0.31"));
-  }
-
-  #[test]
-  fn observations_from_json_artifacts_prefers_recognition_result_over_legacy_rows() {
-    let legacy_raw = r#"{
-    "extractor": "ocr-row",
-    "rows": [
-      {
-        "row_index": 0,
-        "source": "visual-bands+ocr-text",
-        "text": "Legacy Row",
-        "text_fragments": ["Legacy Row"],
-        "bounds": { "x": 1, "y": 2, "width": 30, "height": 10 }
-      }
-    ]
-  }"#;
-    let recognition_raw = r#"{
-    "recognition_id": "window_region_demo",
-    "source": "ocr_row",
-    "scope": {
-      "surface": "region",
-      "display_ref": null,
-      "native_display_id": null,
-      "app_bundle_id": null,
-      "window_title": null,
-      "window_number": null,
-      "region_hint": null,
-      "capture_artifact": null,
-      "capture_contract_artifact": null
-    },
-    "best": {
-      "item_id": "row#1",
-      "kind": "row",
-      "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
-      "text": "Preferred Row",
-      "provider_score": null,
-      "detail": {
-        "row_index": 2,
-        "source": "row_filter",
-        "text_fragments": ["Preferred Row"]
-      }
-    },
-    "filtered": [
-      {
-        "item_id": "row#1",
-        "kind": "row",
-        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
-        "text": "Preferred Row",
-        "provider_score": null,
-        "detail": {
-          "row_index": 2,
-          "source": "row_filter",
-          "text_fragments": ["Preferred Row"]
-        }
-      }
-    ],
-    "all": [
-      {
-        "item_id": "row#1",
-        "kind": "row",
-        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
-        "text": "Preferred Row",
-        "provider_score": null,
-        "detail": {
-          "row_index": 2,
-          "source": "row_filter",
-          "text_fragments": ["Preferred Row"]
-        }
-      }
-    ],
-    "detail": { "provider": "macos.row_detection" },
-    "evidence": [],
-    "known_limits": []
-  }"#;
-    let legacy_path = write_temp_json_artifact("legacy", legacy_raw);
-    let recognition_path = write_temp_json_artifact("recognition", recognition_raw);
-
-    let observations =
-      observations_from_json_artifacts(0, &[legacy_path.clone(), recognition_path.clone()], Path::new("artifacts/page.png"))
-        .expect("recognition should win over legacy rows");
-
-    let _ = fs::remove_file(legacy_path);
-    let _ = fs::remove_file(recognition_path);
-
-    assert_eq!(observations.len(), 1);
-    assert_eq!(observations[0].raw_text, "Preferred Row");
-    assert_eq!(observations[0].attributes.get("recognized_item_id").map(String::as_str), Some("row#1"));
-  }
-
-  #[test]
-  fn scan_artifact_serializes_recognition_item_provenance() {
-    let raw = r#"{
-    "recognition_id": "window_region_demo",
-    "source": "visual_row",
-    "scope": {
-      "surface": "region",
-      "display_ref": "display-1",
-      "native_display_id": "69732928",
-      "app_bundle_id": "com.tencent.QQMusicMac",
-      "window_title": null,
-      "window_number": 91,
-      "region_hint": null,
-      "capture_artifact": null,
-      "capture_contract_artifact": null
-    },
-    "best": null,
-    "filtered": [
-      {
-        "item_id": "row#1",
-        "kind": "row",
-        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
-        "text": "Whisper of time",
-        "provider_score": 0.84,
-        "detail": {
-          "row_index": 2,
-          "source": "row_filter",
-          "text_fragments": ["Whisper of time"]
-        }
-      },
-      {
-        "item_id": "row#2",
-        "kind": "row",
-        "box": { "x": 100, "y": 348, "width": 600, "height": 86 },
-        "text": "万书隙",
-        "provider_score": 0.31,
-        "detail": {
-          "row_index": 3,
-          "source": "row_filter",
-          "text_fragments": ["万书隙"]
-        }
-      }
-    ],
-    "all": [
-      {
-        "item_id": "row#1",
-        "kind": "row",
-        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
-        "text": "Whisper of time",
-        "provider_score": 0.84,
-        "detail": {
-          "row_index": 2,
-          "source": "row_filter",
-          "text_fragments": ["Whisper of time"]
-        }
-      },
-      {
-        "item_id": "row#2",
-        "kind": "row",
-        "box": { "x": 100, "y": 348, "width": 600, "height": 86 },
-        "text": "万书隙",
-        "provider_score": 0.31,
-        "detail": {
-          "row_index": 3,
-          "source": "row_filter",
-          "text_fragments": ["万书隙"]
-        }
-      }
-    ],
-    "detail": { "provider": "macos.row_detection" },
-    "evidence": [],
-    "known_limits": []
-  }"#;
-
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse recognition observations");
-    let nodes = surface_nodes_from_observations(&RunId::new("run_scan"), &SpanId::new("span_scan"), &observations);
-
-    let artifact = ScrollScanArtifact {
-      scan_id: "scan_test".to_string(),
-      target: ScanTarget {
-        application_id: Some("com.example.App".to_string()),
-        window_title: Some("Library".to_string()),
-        region: ScanRegion {
-          left_ratio: 0.1,
-          top_ratio: 0.2,
-          right_ratio: 0.9,
-          bottom_ratio: 0.8,
-        },
-      },
-      stop_policy: StopPolicy::Bounded {
-        max_pages: 2,
-        max_scrolls: 1,
-      },
-      pages: vec![ScanPageRecord {
-        page_index: 0,
-        observe_run_id: Some("run_observe".to_string()),
-        screenshot_artifact: Some(PathBuf::from("artifacts/page.png")),
-        observation_count: observations.len(),
-        new_observation_count: observations.len(),
-        summary: "observed recognition rows".to_string(),
-      }],
-      observations,
-      nodes,
-      snapshots: Vec::new(),
-      clusters: vec![],
-      section_candidates: Vec::new(),
-      scroll_boundary_candidates: Vec::new(),
-      hook_decisions: Vec::new(),
-      stop_evidence: StopEvidence {
-        reason: StopReason::MaxPages,
-        message: "reached max_pages=2".to_string(),
-        page_index: 1,
-      },
-      completeness_claim: CompletenessClaim::PartialMaxPages,
-      warnings: vec!["bounded scan".to_string()],
-    };
-
-    let rendered = serde_json::to_string_pretty(&artifact).expect("serialize");
-
-    assert!(rendered.contains("\"recognized_item_id\": \"row#1\""));
-    assert!(rendered.contains("\"recognized_item_id\": \"row#2\""));
-    assert!(rendered.contains("\"provider_score\": \"0.84\""));
-    assert!(rendered.contains("\"provider_score\": \"0.31\""));
-    assert!(rendered.contains("\"recognition_source\": \"visual_row\""));
-    assert!(rendered.contains("\"nodes\": ["));
-    assert!(rendered.contains("\"node_id\": \"obs_0001_0001\""));
-    assert!(rendered.contains("\"node_id\": \"obs_0001_0002\""));
-    assert!(rendered.contains("\"provider_score\": 0.84"));
-    assert!(rendered.contains("\"source_artifacts\": ["));
-    assert!(rendered.contains("artifacts/page.png"));
-  }
-
-  #[test]
-  fn parse_observe_json_propagates_recognition_deserialize_errors() {
-    // Has recognition_result discriminator fields (recognition_id + source) but `filtered`
-    // is the wrong type (object instead of array). Previously this would silently fall back
-    // to the legacy `rows` path and surface a misleading "missing rows array" error.
-    let raw = r#"{
-      "recognition_id": "broken",
-      "source": "ocr_row",
-      "scope": {
-        "surface": "region",
-        "display_ref": null, "native_display_id": null, "app_bundle_id": null,
-        "window_title": null, "window_number": null, "region_hint": null,
-        "capture_artifact": null, "capture_contract_artifact": null
-      },
-      "best": null,
-      "filtered": { "not": "an array" },
-      "all": [],
-      "detail": {},
-      "evidence": [],
-      "known_limits": []
-    }"#;
-
-    let error = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
-      .expect_err("malformed recognition result should surface a deserialize error");
-    assert!(error.contains("recognition result"), "error should identify the failing layer: {error}");
-    assert!(!error.contains("missing rows array"), "should not fall back to legacy path's misleading error: {error}");
-  }
-
-  #[test]
-  fn has_recognition_result_shape_requires_both_discriminators() {
-    let only_id: Value = serde_json::from_str(r#"{"recognition_id":"x"}"#).expect("parse");
-    let only_source: Value = serde_json::from_str(r#"{"source":"ocr_row"}"#).expect("parse");
-    let both: Value = serde_json::from_str(r#"{"recognition_id":"x","source":"ocr_row"}"#).expect("parse");
-    let neither: Value = serde_json::from_str(r#"{"rows":[]}"#).expect("parse");
-
-    assert!(!has_recognition_result_shape(&only_id));
-    assert!(!has_recognition_result_shape(&only_source));
-    assert!(has_recognition_result_shape(&both));
-    assert!(!has_recognition_result_shape(&neither));
-  }
-
-  #[test]
-  fn count_new_observations_tracks_visual_only_rows_once() {
-    let mut known = BTreeSet::new();
-    let mut visual = observation("obs_0001_0001", 0, "", 120);
-    visual.attributes.insert("source".to_string(), "visual-bands".to_string());
-    visual.attributes.insert("row_index".to_string(), "0".to_string());
-
-    assert_eq!(count_new_observations(&[visual.clone()], &mut known), 1);
-    assert_eq!(count_new_observations(&[visual], &mut known), 0);
-  }
-
-  #[test]
-  fn scan_window_region_reports_missing_typed_observe_region_api() {
-    let project_root = temp_dir("scroll-scan-snapshot-project");
-    let store_root = temp_dir("scroll-scan-snapshot-store");
-    let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
-    let options = bounded_scan_options();
-
-    let error = scan_window_region(&runtime, options).expect_err("scroll scan should wait for a typed observe-region invoke implementation");
-
-    assert!(error.contains("window.observeRegion"));
-    assert!(error.contains("typed window region observation API"));
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  #[test]
-  fn crop_ocr_enrichment_writes_text_and_artifact_context() {
-    let mut observation = observation("obs_0001_0001", 0, "", 120);
-    observation.attributes.insert("item_index".to_string(), "2".to_string());
-
-    let enrichment = ListItemCropOcrResult {
-      crop_artifact: PathBuf::from("artifacts/list-item-0003.png"),
-      context_artifact: PathBuf::from("artifacts/list-item-0003-context.json"),
-      text_fragments: vec!["Song A".to_string(), "Artist B".to_string()],
-      strategy: "crop_ocr".to_string(),
-    };
-
-    apply_list_item_crop_ocr_result(&mut observation, enrichment);
-
-    assert_eq!(observation.raw_text, "Song A | Artist B");
-    assert_eq!(observation.normalized_text_key, "song a | artist b");
-    assert_eq!(observation.attributes.get("crop_artifact").map(String::as_str), Some("artifacts/list-item-0003.png"));
-    assert_eq!(observation.attributes.get("context_artifact").map(String::as_str), Some("artifacts/list-item-0003-context.json"));
-    assert_eq!(observation.attributes.get("text_fragments").map(String::as_str), Some("Song A | Artist B"));
-  }
-
-  #[test]
-  fn list_item_context_payload_uses_crop_ocr_fragments_as_single_text_source() {
-    let mut observation = observation("obs_0001_0001", 0, "old observe text", 120);
-    observation.attributes.insert("text_fragments".to_string(), "old observe text".to_string());
-    let fragments = vec!["Song A".to_string(), "Artist B".to_string()];
-
-    let payload = build_list_item_context_payload(&observation, Path::new("artifacts/list-item-0001.png"), &fragments);
-
-    assert_eq!(payload.raw_text, "Song A | Artist B");
-    assert_eq!(payload.text_fragments, fragments);
-    assert_eq!(payload.attributes.get("text_fragments").map(String::as_str), Some("Song A | Artist B"));
-  }
-
-  fn observation(id: &str, page_index: usize, text: &str, y: i64) -> CollectionObservation {
-    CollectionObservation {
-      observation_id: id.to_string(),
-      page_index,
-      raw_text: text.to_string(),
-      normalized_text_key: normalize_observation_text(text),
-      bounds: ScanRect {
-        x: 10,
-        y,
-        width: 100,
-        height: 24,
-      },
-      section_context: None,
-      source_artifacts: Vec::new(),
-      attributes: BTreeMap::new(),
+      screenshot: RgbaImage::from_pixel(8, 8, Rgba(color)),
     }
   }
 
-  fn repeated_overlap_page_observations() -> Vec<CollectionObservation> {
-    vec![
-      observation("obs_0001", 0, "Repeat A", 120),
-      observation("obs_0002", 0, "Repeat B", 172),
-      observation("obs_0003", 1, "Repeat A", 118),
-      observation("obs_0004", 1, "Repeat B", 170),
-    ]
-  }
-
-  fn write_temp_json_artifact(label: &str, raw: &str) -> PathBuf {
-    let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = env::temp_dir().join(format!("auv-scroll-scan-{label}-{}-{counter}.json", process::id()));
-    fs::write(&path, raw).expect("write temp json artifact");
-    path
-  }
-
-  fn write_temp_png_artifact(label: &str, rgba: [u8; 4]) -> PathBuf {
-    let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = env::temp_dir().join(format!("auv-scroll-scan-{label}-{}-{counter}.png", process::id()));
-    let image = RgbaImage::from_pixel(24, 24, Rgba(rgba));
-    image.save(&path).expect("write temp png artifact");
-    path
-  }
-
-  fn page_record(page_index: usize, screenshot_artifact: Option<PathBuf>) -> ScanPageRecord {
-    ScanPageRecord {
-      page_index,
-      observe_run_id: None,
-      screenshot_artifact,
-      observation_count: 0,
-      new_observation_count: 0,
-      summary: "fixture page".to_string(),
+  fn empty_page(color: [u8; 4]) -> ScanSourcePage {
+    ScanSourcePage {
+      observations: Vec::new(),
+      screenshot: RgbaImage::from_pixel(8, 8, Rgba(color)),
     }
   }
 
-  fn bounded_scan_options() -> ScanWindowRegionOptions {
-    ScanWindowRegionOptions {
-      target: ScanTarget {
-        application_id: Some("com.example.App".to_string()),
-        window_title: None,
-        region: ScanRegion {
-          left_ratio: 0.2,
-          top_ratio: 0.3,
-          right_ratio: 0.9,
-          bottom_ratio: 0.8,
-        },
-      },
-      stop_policy: StopPolicy::Bounded {
+  #[test]
+  fn scan_execution_produces_domain_pages_clusters_and_coverage() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [0, 0, 0, 255])),
+      Ok(page(1, "Beta", [255, 255, 255, 255])),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 2,
+        max_scrolls: 5,
+      }),
+      "scan_fixture".to_string(),
+      None,
+    );
+
+    assert!(execution.error.is_none());
+    assert_eq!(source.scroll_calls, 1);
+    assert_eq!(execution.artifact.pages.len(), 2);
+    assert_eq!(execution.artifact.observations.len(), 2);
+    assert_eq!(execution.artifact.clusters.len(), 2);
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::MaxPages);
+    assert_eq!(execution.artifact.completeness_claim, CompletenessClaim::PartialMaxPages);
+
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert_eq!(coverage.schema_version, SCAN_COVERAGE_SCHEMA_VERSION);
+    assert_eq!(coverage.entries.len(), 2);
+    assert_eq!(coverage.entries[1].last_seen_frame_id, "scan_fixture:page:0002");
+    assert_eq!(coverage.open_uncertainty_codes, vec!["max_pages_reached"]);
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[test]
+  fn scan_execution_preserves_partial_domain_evidence_on_source_error() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [0, 0, 0, 255])),
+      Err("fixture observation failed".to_string()),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 3,
+        max_scrolls: 5,
+      }),
+      "scan_partial".to_string(),
+      None,
+    );
+
+    assert_eq!(execution.error.as_deref(), Some("fixture observation failed"));
+    assert_eq!(source.scroll_calls, 1);
+    assert_eq!(execution.artifact.pages.len(), 1);
+    assert_eq!(execution.artifact.observations.len(), 1);
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::Error);
+    assert_eq!(execution.artifact.completeness_claim, CompletenessClaim::Unknown);
+
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert_eq!(coverage.entries.len(), 1);
+    assert_eq!(coverage.open_uncertainty_codes, vec!["scan_source_error"]);
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[tokio::test]
+  async fn partial_scan_execution_publishes_one_domain_artifact_and_coverage() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [0, 0, 0, 255])),
+      Err("fixture observation failed".to_string()),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 3,
+        max_scrolls: 5,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+    let expected = execution.artifact.clone();
+    let future = root.in_scope(|| publish_scan_execution(&root, &execution));
+
+    root.instrument(future).await.expect("publish scan artifacts");
+    dispatch.flush().await.expect("flush scan artifacts");
+    let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("scan snapshot");
+    let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().clone()).collect::<Vec<_>>();
+
+    assert_eq!(purposes.len(), 2, "partial execution must commit each canonical artifact once");
+    assert_eq!(purposes.iter().filter(|purpose| purpose.as_str() == SCROLL_SCAN_PURPOSE).count(), 1);
+    assert_eq!(purposes.iter().filter(|purpose| purpose.as_str() == crate::run_read::SCAN_COVERAGE_PURPOSE).count(), 1);
+    let scroll_scan_purpose = ArtifactPurpose::parse(SCROLL_SCAN_PURPOSE).expect("scroll-scan purpose");
+    let scroll_scan = snapshot
+      .artifacts()
+      .values()
+      .find(|published| published.metadata().purpose() == &scroll_scan_purpose)
+      .expect("scroll-scan artifact")
+      .metadata();
+    assert_eq!(read_scroll_scan(store.as_ref(), &snapshot, scroll_scan.uri()).await.expect("read scroll scan"), expected);
+  }
+
+  #[tokio::test]
+  async fn first_scan_publication_failure_stops_before_coverage() {
+    let store = Arc::new(FailNthArtifactStore::new(1));
+    let dispatch = configure().run_store(store.clone()).build().expect("failing dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
         max_pages: 1,
         max_scrolls: 0,
-      },
-      direction: "down".to_string(),
-      scroll_amount: 40.0,
-      settle_ms: 250,
-      min_confidence: 0.0,
-      max_observations: 128,
-    }
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+
+    let error = root.instrument(root.in_scope(|| publish_scan_execution(&root, &execution))).await.expect_err("first publication must fail");
+
+    assert_eq!(store.write_count(), 1, "coverage must not be attempted after the domain artifact fails");
+    assert_eq!(store.purposes(), vec![SCROLL_SCAN_PURPOSE]);
+    assert!(matches!(error, RootArtifactPublishError::Publication { .. }));
   }
 
-  fn scroll_scan_test_runtime(project_root: PathBuf, store_root: PathBuf) -> Runtime {
-    Runtime::new(project_root, LocalStore::new(store_root).expect("store should initialize"))
+  #[tokio::test]
+  async fn second_scan_publication_failure_keeps_one_domain_artifact_without_retrying() {
+    let store = Arc::new(FailNthArtifactStore::new(2));
+    let dispatch = configure().run_store(store.clone()).build().expect("failing dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+
+    let error =
+      root.instrument(root.in_scope(|| publish_scan_execution(&root, &execution))).await.expect_err("second publication must fail");
+
+    assert_eq!(store.write_count(), 2);
+    assert_eq!(store.purposes(), vec![SCROLL_SCAN_PURPOSE, crate::run_read::SCAN_COVERAGE_PURPOSE]);
+    assert!(matches!(error, RootArtifactPublishError::Publication { .. }));
+    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("domain artifact snapshot");
+    let purposes = snapshot.artifacts().values().map(|artifact| artifact.metadata().purpose().as_str()).collect::<Vec<_>>();
+    assert_eq!(purposes, vec![SCROLL_SCAN_PURPOSE], "the successful first publication must not be duplicated");
   }
 
-  fn temp_dir(label: &str) -> PathBuf {
-    let path = env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).expect("temp dir should be creatable");
-    path
+  #[tokio::test]
+  async fn invalid_domain_artifact_stops_before_coverage_without_a_flush_failure() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let mut execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+    execution.artifact.pages[0].observation_count = 2;
+
+    let error = root
+      .instrument(root.in_scope(|| publish_scan_execution(&root, &execution)))
+      .await
+      .expect_err("invalid domain artifact must fail before enqueue");
+
+    assert!(matches!(error, RootArtifactPublishError::InvalidPayload { .. }));
+    dispatch.flush().await.expect("pre-enqueue validation failure leaves no artifact job");
+    assert!(store.load_snapshot(run_id).await.expect("snapshot read").is_none());
+  }
+
+  #[tokio::test]
+  async fn first_observe_failure_publishes_coverage_without_a_scroll_scan_artifact() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Err("fixture observation failed".to_string())]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 3,
+        max_scrolls: 5,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+    let future = root.in_scope(|| publish_scan_execution(&root, &execution));
+
+    root.instrument(future).await.expect("publish failure coverage");
+    dispatch.flush().await.expect("flush scan coverage");
+    let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("coverage snapshot");
+    let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().as_str()).collect::<Vec<_>>();
+
+    assert_eq!(purposes, vec![crate::run_read::SCAN_COVERAGE_PURPOSE]);
+    let coverage =
+      crate::scene_state_read::read_scan_coverage(store.as_ref(), &snapshot).await.expect("read scan coverage").expect("failure coverage");
+    assert_eq!(coverage.open_uncertainty_codes, vec!["scan_source_error"]);
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[tokio::test]
+  async fn disabled_and_telemetry_contexts_skip_scroll_scan_serialization() {
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let mut execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      }),
+      "scan_disabled".to_string(),
+      None,
+    );
+    execution.artifact.warnings = vec!["x".repeat(usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test payload size"))];
+
+    let disabled = Context::current();
+    assert!(!disabled.can_publish_artifacts());
+    assert!(publish_scroll_scan(Some(&disabled), &execution.artifact).await.expect("disabled publication").is_none());
+
+    let dispatch =
+      configure().project_telemetry(Arc::new(NoopTelemetry), TelemetryRoutePolicy::fixed_fields_only()).build().expect("telemetry dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let future = root.in_scope(|| publish_scroll_scan(Some(&root), &execution.artifact));
+    let publication = root.instrument(future).await.expect("telemetry-only publication");
+
+    assert!(root.is_enabled());
+    assert!(!root.can_publish_artifacts());
+    assert!(publication.is_none(), "telemetry-only publication serialized the oversized artifact");
+  }
+
+  #[test]
+  fn scan_execution_keeps_repeated_observations_as_positive_coverage() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Repeat", [24, 48, 72, 255])),
+      Ok(page(1, "Repeat", [24, 48, 72, 255])),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::UntilEnd {
+        max_pages: 5,
+        max_scrolls: 5,
+        no_progress_limit: 2,
+      }),
+      "scan_boundary".to_string(),
+      None,
+    );
+
+    assert!(execution.error.is_none());
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::ReachedBoundary);
+    assert_eq!(execution.artifact.completeness_claim, CompletenessClaim::CompleteByReachedBoundary);
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert!(coverage.negative_evidence.is_empty());
+    assert_eq!(coverage.entries[0].observation_count, 2);
+    assert_eq!(coverage.completeness, CompletenessWire::Complete);
+  }
+
+  #[test]
+  fn scan_execution_marks_empty_page_as_blocking_negative_evidence() {
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [24, 48, 72, 255])),
+      Ok(empty_page([24, 48, 72, 255])),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::UntilEnd {
+        max_pages: 5,
+        max_scrolls: 5,
+        no_progress_limit: 2,
+      }),
+      "scan_empty_page".to_string(),
+      None,
+    );
+
+    assert!(execution.error.is_none());
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::ReachedBoundary);
+    let coverage = scan_coverage_from_artifact(&execution.artifact);
+    assert_eq!(coverage.negative_evidence.len(), 1);
+    assert_eq!(coverage.negative_evidence[0].after_frame_id, "scan_empty_page:page:0002");
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[test]
+  fn scan_execution_returns_scroll_interruption_after_observed_page() {
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    source.scroll_error = Some("fixture scroll failed".to_string());
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 2,
+        max_scrolls: 5,
+      }),
+      "scan_scroll_error".to_string(),
+      None,
+    );
+
+    assert_eq!(execution.error.as_deref(), Some("fixture scroll failed"));
+    assert_eq!(execution.artifact.pages.len(), 1);
+    assert_eq!(execution.artifact.stop_evidence.reason, StopReason::Error);
+  }
+
+  #[tokio::test]
+  async fn scan_window_region_reaches_the_direct_window_backend() {
+    let project_root = std::env::temp_dir().join(format!("auv-scroll-scan-direct-backend-{}", std::process::id()));
+    let runtime = Runtime::new(project_root);
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let future = root.in_scope(|| {
+      scan_window_region(
+        &runtime,
+        ScanWindowRegionOptions {
+          target: ScanTarget {
+            application_id: Some("com.example.auv-task22-missing".to_string()),
+            window_title: None,
+            region: ScanRegion {
+              left_ratio: 0.0,
+              top_ratio: 0.0,
+              right_ratio: 1.0,
+              bottom_ratio: 1.0,
+            },
+          },
+          stop_policy: StopPolicy::Bounded {
+            max_pages: 1,
+            max_scrolls: 0,
+          },
+          direction: "down".to_string(),
+          scroll_amount: 40.0,
+          settle_ms: 0,
+          min_confidence: 0.0,
+          max_observations: 16,
+        },
+      )
+    });
+    let result = root.instrument(future).await;
+    let error = result.expect_err("missing window must remain a source error");
+
+    assert!(!error.contains("requires a typed window region observation API"), "synthetic scan error escaped: {error}");
+    dispatch.flush().await.expect("flush pre-domain failure coverage");
+    let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("coverage snapshot");
+    let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().as_str()).collect::<Vec<_>>();
+    assert_eq!(purposes, vec![crate::run_read::SCAN_COVERAGE_PURPOSE]);
   }
 }

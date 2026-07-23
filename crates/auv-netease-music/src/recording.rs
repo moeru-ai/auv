@@ -1,32 +1,45 @@
-//! Post-hoc run storage for playlist ls scan + view-memory artifacts (A7-min).
+//! NetEase structured artifacts and app-local canonical URI lineage.
 
+use std::collections::TryReserveError;
+use std::io::Write;
+use std::num::TryFromIntError;
 use std::path::{Path, PathBuf};
 
-use auv_tracing_driver::recorded_operation::RecordedOperationContext;
-use auv_tracing_driver::run_builder::Attributes;
-use auv_tracing_driver::{LocalStore, RunRecordingBackend, RunSpec, RunType};
-use auv_view::memory::{
-  ARTIFACT_DIR_BRIDGE_RUN_ID, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, SPAN_MEMORY_WRITE, SPAN_REACQUIRE_MEMORY_LOAD,
-  VIEW_MEMORY_ARTIFACT_ROLE, ViewMemory, memory_file_path, memory_write_span_attributes, reacquire_memory_load_span_attributes,
-  reacquire_root_span_name, serialize_memory_bytes,
+use auv_tracing::{
+  ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType,
+  ErrorCode, NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest, ValidationError,
 };
+use auv_view::memory::{MemoryReadConfig, MemoryReadOutcome, StaleReason, ViewMemory};
+use futures_util::StreamExt;
+use futures_util::io::Cursor as AsyncCursor;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-use crate::view_memory::ReacquireTraceEvidence;
+use crate::commands::playlist::PlaylistSelectResult;
 use crate::{Inputs, PlaylistSidebarScan};
 
-pub const NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE: &str = "netease-playlist-sidebar-scan";
-pub const NETEASE_PLAYLIST_SELECT_RESULT_ROLE: &str = PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE;
+pub const PLAYLIST_SIDEBAR_SCAN_PURPOSE: &str = "auv.netease.playlist_sidebar_scan";
+pub const VIEW_MEMORY_PURPOSE: &str = "auv.netease.view_memory";
+pub const PLAYLIST_SELECT_RESULT_PURPOSE: &str = "auv.netease.playlist_select_result";
+
 pub const VIEW_MEMORY_RUN_LINEAGE_FILE: &str = "view-memory-run-lineage.json";
-pub const VIEW_MEMORY_LINEAGE_SCHEMA_VERSION: &str = "view-memory-lineage-v0";
+pub const VIEW_MEMORY_LINEAGE_SCHEMA_VERSION: &str = "view-memory-lineage-v1";
+
+/// NetEase structured artifacts contain OCR/view records, not bulk media.
+/// Four MiB leaves ample room above the bounded 12-scroll playlist fixtures
+/// while keeping producer and reader allocation independent of the 512 MiB
+/// whole-artifact ceiling.
+pub const NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
+pub const NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE: &str = "auv.netease.structured_artifact.payload_too_large";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ViewMemoryRunLineage {
   pub schema_version: String,
-  pub run_id: String,
-  pub scan_artifact_id: String,
+  pub scan_uri: ArtifactUri,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub memory_artifact_id: Option<String>,
+  pub memory_uri: Option<ArtifactUri>,
   pub memory_id: String,
   pub scope_id: String,
   pub app_bundle_id: String,
@@ -39,821 +52,920 @@ pub struct PersistedLineage {
   pub memory: Option<ViewMemory>,
 }
 
+/// Caller-read canonical playlist data whose optional memory has been checked
+/// against the scan's authority, run, app, scope, and source artifact.
+#[derive(Clone, Debug)]
+pub struct CanonicalPlaylistArtifacts {
+  state: CanonicalPlaylistArtifactState,
+  read_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+enum CanonicalPlaylistArtifactState {
+  Unavailable,
+  Available {
+    scan: PlaylistSidebarScan,
+    memory: Option<ViewMemory>,
+  },
+}
+
+impl CanonicalPlaylistArtifacts {
+  fn from_scan(scan: PlaylistSidebarScan) -> Self {
+    Self {
+      state: CanonicalPlaylistArtifactState::Available { scan, memory: None },
+      read_limits: Vec::new(),
+    }
+  }
+
+  pub fn scan(&self) -> Option<&PlaylistSidebarScan> {
+    match &self.state {
+      CanonicalPlaylistArtifactState::Unavailable => None,
+      CanonicalPlaylistArtifactState::Available { scan, .. } => Some(scan),
+    }
+  }
+
+  pub fn memory(&self) -> Option<&ViewMemory> {
+    match &self.state {
+      CanonicalPlaylistArtifactState::Unavailable => None,
+      CanonicalPlaylistArtifactState::Available { memory, .. } => memory.as_ref(),
+    }
+  }
+
+  pub fn read_limits(&self) -> &[String] {
+    &self.read_limits
+  }
+
+  pub(crate) fn unavailable(read_limits: Vec<String>) -> Self {
+    Self {
+      state: CanonicalPlaylistArtifactState::Unavailable,
+      read_limits,
+    }
+  }
+
+  fn attach_memory(&mut self, memory: ViewMemory) {
+    let CanonicalPlaylistArtifactState::Available { memory: slot, .. } = &mut self.state else {
+      unreachable!("memory can only be attached to a canonical scan")
+    };
+    *slot = Some(memory);
+  }
+
+  fn push_read_limit(&mut self, limit: String) {
+    self.read_limits.push(limit);
+  }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CanonicalArtifactLineageError {
+  #[error("unsupported canonical playlist lineage schema {actual:?}; expected {VIEW_MEMORY_LINEAGE_SCHEMA_VERSION:?}")]
+  UnsupportedSchema { actual: String },
+  #[error("canonical playlist scan app {actual:?} does not match lineage app {expected:?}")]
+  ScanAppMismatch {
+    expected: String,
+    actual: Option<String>,
+  },
+  #[error("canonical playlist lineage scope {actual:?} does not match {expected:?}")]
+  ScopeMismatch { expected: String, actual: String },
+  #[error("cross-run canonical view-memory URI belongs to {memory_run_id}, not scan run {scan_run_id}")]
+  CrossRunMemory {
+    scan_run_id: RunId,
+    memory_run_id: RunId,
+  },
+  #[error("canonical view-memory source run {actual:?} does not match scan run {expected:?}")]
+  MemorySourceRunMismatch { expected: String, actual: String },
+  #[error("canonical view-memory source reconstruction artifact {actual:?} does not match scan artifact {expected:?}")]
+  MemorySourceArtifactMismatch { expected: String, actual: String },
+  #[error("canonical view-memory app {actual:?} does not match lineage app {expected:?}")]
+  MemoryAppMismatch { expected: String, actual: String },
+  #[error("canonical view-memory scope {actual:?} does not match lineage scope {expected:?}")]
+  MemoryScopeMismatch { expected: String, actual: String },
+  #[error("canonical view-memory region {actual:?} does not match lineage scope {expected:?}")]
+  MemoryRegionMismatch { expected: String, actual: String },
+  #[error("canonical view-memory ID {actual:?} does not match lineage ID {expected:?}")]
+  MemoryIdMismatch { expected: String, actual: String },
+  #[error("canonical view-memory is stale ({reason:?})")]
+  StaleMemory { reason: StaleReason },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum LineageManifestError {
+  #[error("failed to read NetEase lineage manifest {path}: {source}")]
+  Read {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to decode NetEase lineage manifest {path}: {source}")]
+  Decode {
+    path: PathBuf,
+    #[source]
+    source: serde_json::Error,
+  },
+  #[error("unsupported NetEase lineage schema {actual:?}; expected {VIEW_MEMORY_LINEAGE_SCHEMA_VERSION:?}")]
+  UnsupportedSchema { actual: String },
+  #[error("NetEase lineage belongs to app {actual:?}, not {expected:?}")]
+  WrongApp { expected: String, actual: String },
+  #[error("NetEase lineage belongs to scope {actual:?}, not {expected:?}")]
+  WrongScope { expected: String, actual: String },
+  #[error("failed to create NetEase lineage directory {path}: {source}")]
+  CreateDirectory {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to encode NetEase lineage manifest: {0}")]
+  Encode(#[source] serde_json::Error),
+  #[error("failed to create a temporary NetEase lineage manifest in {directory}: {source}")]
+  CreateTemporary {
+    directory: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to write NetEase lineage manifest {path}: {source}")]
+  Write {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to flush NetEase lineage manifest {path}: {source}")]
+  Flush {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to sync NetEase lineage manifest {path}: {source}")]
+  Sync {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+  #[error("failed to atomically replace NetEase lineage manifest {to} from {from}: {source}")]
+  Replace {
+    from: PathBuf,
+    to: PathBuf,
+    #[source]
+    source: std::io::Error,
+  },
+}
+
 pub fn lineage_manifest_path(artifact_dir: &Path) -> PathBuf {
   artifact_dir.join(VIEW_MEMORY_RUN_LINEAGE_FILE)
 }
 
-pub fn read_lineage_manifest(artifact_dir: &Path) -> Option<ViewMemoryRunLineage> {
+pub fn read_lineage_manifest(artifact_dir: &Path) -> Result<ViewMemoryRunLineage, LineageManifestError> {
   let path = lineage_manifest_path(artifact_dir);
-  let json = std::fs::read_to_string(&path).ok()?;
-  let lineage: ViewMemoryRunLineage = serde_json::from_str(&json).ok()?;
-  if lineage.schema_version != VIEW_MEMORY_LINEAGE_SCHEMA_VERSION {
-    return None;
-  }
-  Some(lineage)
+  let bytes = std::fs::read(&path).map_err(|source| LineageManifestError::Read {
+    path: path.clone(),
+    source,
+  })?;
+  let lineage: ViewMemoryRunLineage = serde_json::from_slice(&bytes).map_err(|source| LineageManifestError::Decode { path, source })?;
+  validate_lineage_schema(&lineage)?;
+  Ok(lineage)
 }
 
-pub fn read_lineage_manifest_for_inputs(artifact_dir: &Path, inputs: &Inputs) -> Option<ViewMemoryRunLineage> {
+pub fn read_lineage_manifest_for_inputs(artifact_dir: &Path, inputs: &Inputs) -> Result<ViewMemoryRunLineage, LineageManifestError> {
   let lineage = read_lineage_manifest(artifact_dir)?;
   if lineage.app_bundle_id != inputs.app_id {
-    return None;
+    return Err(LineageManifestError::WrongApp {
+      expected: inputs.app_id.clone(),
+      actual: lineage.app_bundle_id,
+    });
   }
   if lineage.scope_id != crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID {
-    return None;
+    return Err(LineageManifestError::WrongScope {
+      expected: crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID.to_string(),
+      actual: lineage.scope_id,
+    });
   }
-  Some(lineage)
+  Ok(lineage)
 }
 
-/// Parse `artifact_id` from a [`view_memory_lineage_ref_wire`] payload.
-pub fn parse_lineage_scan_artifact_id(source_reconstruction_ref: &str) -> Option<String> {
-  for token in source_reconstruction_ref.split_whitespace() {
-    if let Some(artifact_id) = token.strip_prefix("artifact_id=") {
-      let artifact_id = artifact_id.trim();
-      if !artifact_id.is_empty() {
-        return Some(artifact_id.to_string());
-      }
-    }
-  }
-  None
-}
-
-pub fn write_lineage_manifest(artifact_dir: &Path, lineage: &ViewMemoryRunLineage) -> Result<(), String> {
-  std::fs::create_dir_all(artifact_dir).map_err(|error| format!("failed to create {}: {error}", artifact_dir.display()))?;
+pub fn write_lineage_manifest(artifact_dir: &Path, lineage: &ViewMemoryRunLineage) -> Result<(), LineageManifestError> {
+  validate_lineage_schema(lineage)?;
+  std::fs::create_dir_all(artifact_dir).map_err(|source| LineageManifestError::CreateDirectory {
+    path: artifact_dir.to_path_buf(),
+    source,
+  })?;
   let path = lineage_manifest_path(artifact_dir);
-  let json = serde_json::to_string_pretty(lineage).map_err(|error| format!("failed to serialize lineage manifest: {error}"))?;
-  let tmp = path.with_extension("json.tmp");
-  std::fs::write(&tmp, json).map_err(|error| format!("failed to write {}: {error}", tmp.display()))?;
-  std::fs::rename(&tmp, &path).map_err(|error| format!("failed to rename {} to {}: {error}", tmp.display(), path.display()))
+  let bytes = serde_json::to_vec_pretty(lineage).map_err(LineageManifestError::Encode)?;
+  let mut temporary =
+    tempfile::Builder::new().prefix(".view-memory-run-lineage.").suffix(".tmp").tempfile_in(artifact_dir).map_err(|source| {
+      LineageManifestError::CreateTemporary {
+        directory: artifact_dir.to_path_buf(),
+        source,
+      }
+    })?;
+  let temporary_path = temporary.path().to_path_buf();
+  temporary.write_all(&bytes).map_err(|source| LineageManifestError::Write {
+    path: temporary_path.clone(),
+    source,
+  })?;
+  temporary.flush().map_err(|source| LineageManifestError::Flush {
+    path: temporary_path.clone(),
+    source,
+  })?;
+  temporary.as_file().sync_all().map_err(|source| LineageManifestError::Sync {
+    path: temporary_path.clone(),
+    source,
+  })?;
+  temporary.persist(&path).map(|_| ()).map_err(|error| LineageManifestError::Replace {
+    from: error.file.path().to_path_buf(),
+    to: path,
+    source: error.error,
+  })
 }
 
-/// Remove artifact-dir view-memory so store-first scan cannot pair with stale memory.
-pub fn clear_artifact_dir_view_memory(inputs: &Inputs) -> Result<(), String> {
-  let path = memory_file_path(&inputs.artifact_dir, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
-  if path.is_file() {
-    std::fs::remove_file(&path).map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
+fn validate_lineage_schema(lineage: &ViewMemoryRunLineage) -> Result<(), LineageManifestError> {
+  if lineage.schema_version != VIEW_MEMORY_LINEAGE_SCHEMA_VERSION {
+    return Err(LineageManifestError::UnsupportedSchema {
+      actual: lineage.schema_version.clone(),
+    });
   }
   Ok(())
 }
 
-/// Drop a stale manifest so readers can fall back to a freshly mirrored artifact-dir scan.
-pub fn remove_lineage_manifest(artifact_dir: &Path) {
-  let path = lineage_manifest_path(artifact_dir);
-  let _ = std::fs::remove_file(path);
+#[derive(Debug, thiserror::Error)]
+pub enum NeteaseArtifactPublishError {
+  #[error("invalid NetEase artifact contract for {purpose}: {source}")]
+  InvalidContract {
+    purpose: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("failed to convert {purpose} JSON byte length {actual} between usize and u64: {source}")]
+  LengthConversion {
+    purpose: &'static str,
+    actual: u128,
+    #[source]
+    source: TryFromIntError,
+  },
+  #[error("{NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE}: {purpose} JSON is {actual} bytes, exceeding the {limit}-byte limit")]
+  PayloadTooLarge {
+    purpose: &'static str,
+    limit: u64,
+    actual: u64,
+  },
+  #[error("failed to serialize {purpose} as JSON: {source}")]
+  Serialize {
+    purpose: &'static str,
+    #[source]
+    source: serde_json::Error,
+  },
+  #[error("failed to allocate {purpose} JSON bytes: {source}")]
+  Allocation {
+    purpose: &'static str,
+    #[source]
+    source: TryReserveError,
+  },
+  #[error("{purpose} JSON serialization changed between measurement and publication")]
+  NondeterministicSerialization { purpose: &'static str },
+  #[error("failed to publish {purpose}: {source}")]
+  Publication {
+    purpose: &'static str,
+    #[source]
+    source: ArtifactWriteError,
+  },
 }
 
-pub fn persist_playlist_ls_artifacts(
-  store_root: &Path,
+/// Publishes the scan and its optional view memory into the caller's current
+/// run. The domain scan has already completed; publication errors never cause
+/// the scan to execute again.
+pub async fn persist_playlist_ls_artifacts(
   scan: &PlaylistSidebarScan,
   inputs: &Inputs,
   memory_enabled: bool,
-) -> Result<PersistedLineage, String> {
-  let store = LocalStore::new(store_root.to_path_buf()).map_err(|error| error.to_string())?;
-  let recording = RunRecordingBackend::local_only(store).handle();
-  let scan_json = serde_json::to_vec_pretty(scan).map_err(|error| format!("failed to serialize playlist scan: {error}"))?;
-
-  let output = recording
-    .run_recorded_operation(RunSpec::new(RunType::Command, "auv.netease.playlist.ls"), "playlist ls store artifacts", |ctx| {
-      persist_in_recorded_context(ctx, &scan_json, inputs, scan, memory_enabled)
-    })
-    .map_err(|error| error.to_string())?;
-
-  Ok(output.value)
-}
-
-fn persist_in_recorded_context(
-  ctx: &mut RecordedOperationContext<'_>,
-  scan_json: &[u8],
-  inputs: &Inputs,
-  scan: &PlaylistSidebarScan,
-  memory_enabled: bool,
-) -> Result<PersistedLineage, String> {
-  let (_, scan_ref) = ctx
-    .stage_artifact_bytes_with_ref(
-      NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE,
-      scan_json,
-      "playlist-scan-cache.json",
-      Some("playlist sidebar scan".to_string()),
-    )
-    .map_err(|error| error.to_string())?;
-
-  let run_id = ctx.run_id().as_str().to_string();
-  let scan_artifact_id = scan_ref.artifact_id.as_str().to_string();
+) -> Result<Option<PersistedLineage>, NeteaseArtifactPublishError> {
+  let Some(scan_metadata) = publish_json(PLAYLIST_SIDEBAR_SCAN_PURPOSE, scan).await? else {
+    return Ok(None);
+  };
+  let scan_uri = scan_metadata.uri().clone();
   let memory = if memory_enabled {
-    crate::view_memory::try_build_writable_memory(inputs, scan, &run_id, &scan_artifact_id)
+    crate::view_memory::try_build_writable_memory(inputs, scan, &scan_uri)
   } else {
     None
   };
-  let memory_artifact_id = if let Some(memory) = &memory {
-    let run_id_for_attrs = ctx.run_id().as_str();
-    let attrs = span_attributes_from_pairs(memory_write_span_attributes(memory, run_id_for_attrs));
-    ctx
-      .in_span_with_attributes(SPAN_MEMORY_WRITE, attrs, |ctx| {
-        let bytes = serialize_memory_bytes(memory).map_err(|error| error.to_string())?;
-        let (_, memory_ref) = ctx
-          .stage_artifact_bytes_with_ref(
-            VIEW_MEMORY_ARTIFACT_ROLE,
-            bytes,
-            "view-memory-playlist_sidebar.json",
-            Some("view memory".to_string()),
-          )
-          .map_err(|error| error.to_string())?;
-        Ok::<_, String>(memory_ref.artifact_id.as_str().to_string())
-      })?
-      .into()
-  } else {
-    None
+  let memory_uri = match &memory {
+    Some(memory) => {
+      let Some(metadata) = publish_json(VIEW_MEMORY_PURPOSE, memory).await? else {
+        return Ok(None);
+      };
+      Some(metadata.uri().clone())
+    }
+    None => None,
   };
-  let memory_id = auv_view::memory::build_memory_id(&inputs.app_id, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
-  Ok(PersistedLineage {
+  Ok(Some(PersistedLineage {
     lineage: ViewMemoryRunLineage {
       schema_version: VIEW_MEMORY_LINEAGE_SCHEMA_VERSION.to_string(),
-      run_id,
-      scan_artifact_id,
-      memory_artifact_id,
-      memory_id,
+      scan_uri,
+      memory_uri,
+      memory_id: auv_view::memory::build_memory_id(&inputs.app_id, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID),
       scope_id: crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID.to_string(),
       app_bundle_id: inputs.app_id.clone(),
       written_at_millis: crate::view_memory::system_time_millis(),
     },
     memory,
+  }))
+}
+
+/// Publishes the exact existing playlist-select result without changing the
+/// domain value or coupling its lifetime to instrumentation.
+pub async fn persist_playlist_select_proof(result: &PlaylistSelectResult) -> Result<Option<ArtifactMetadata>, NeteaseArtifactPublishError> {
+  publish_json(PLAYLIST_SELECT_RESULT_PURPOSE, result).await
+}
+
+pub async fn read_playlist_sidebar_scan(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<PlaylistSidebarScan, NeteaseArtifactReadError> {
+  let bytes = read_json_bytes(store, snapshot, uri, PLAYLIST_SIDEBAR_SCAN_PURPOSE).await?;
+  let json = std::str::from_utf8(&bytes).map_err(|source| NeteaseArtifactReadError::InvalidUtf8 {
+    uri: uri.clone(),
+    source,
+  })?;
+  crate::decode_playlist_sidebar_scan_json(json).map_err(|source| NeteaseArtifactReadError::MalformedPlaylistScan {
+    uri: uri.clone(),
+    source,
   })
 }
 
-pub fn load_scan_from_store(store_root: &Path, lineage: &ViewMemoryRunLineage) -> Option<PlaylistSidebarScan> {
-  let bytes = read_artifact_bytes(store_root, &lineage.run_id, &lineage.scan_artifact_id)?;
-  let json = std::str::from_utf8(&bytes).ok()?;
-  crate::decode_playlist_sidebar_scan_json(json).ok()
+pub async fn read_view_memory(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<ViewMemory, NeteaseArtifactReadError> {
+  read_json(store, snapshot, uri, VIEW_MEMORY_PURPOSE).await
 }
 
-pub fn load_memory_from_store(store_root: &Path, lineage: &ViewMemoryRunLineage) -> Option<ViewMemory> {
-  let artifact_id = lineage.memory_artifact_id.as_deref()?;
-  let bytes = read_artifact_bytes(store_root, &lineage.run_id, artifact_id)?;
-  serde_json::from_slice(&bytes).ok()
+pub async fn read_playlist_select_result(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<PlaylistSelectResult, NeteaseArtifactReadError> {
+  read_json(store, snapshot, uri, PLAYLIST_SELECT_RESULT_PURPOSE).await
 }
 
-// NOTICE(store_root_read_bias_v1): When store_root is set, consumers prefer manifest →
-// store over artifact-dir files. Freshness reconciliation is intentionally deferred.
-pub fn try_load_scan_cache(inputs: &Inputs) -> Option<PlaylistSidebarScan> {
-  try_load_scan_cache_with_limits(inputs).0
-}
-
-pub fn try_load_scan_cache_with_limits(inputs: &Inputs) -> (Option<PlaylistSidebarScan>, Vec<String>) {
-  let mut known_limits = Vec::new();
-  if let Some(store_root) = &inputs.store_root {
-    if let Some(lineage) = read_lineage_manifest_for_inputs(&inputs.artifact_dir, inputs) {
-      if let Some(scan) = load_scan_from_store(store_root, &lineage) {
-        return (Some(scan), known_limits);
-      }
-      known_limits.push(format!("store scan artifact missing for run {}; using artifact-dir fallback", lineage.run_id));
-    } else if read_lineage_manifest(&inputs.artifact_dir).is_some() {
-      known_limits.push("lineage manifest rejected for current app/scope; using artifact-dir fallback".into());
-    } else {
-      known_limits.push("lineage manifest missing with --store-root; using artifact-dir fallback".into());
-    }
-    if let Some(scan) = try_load_scan_from_memory_lineage(inputs, store_root) {
-      return (Some(scan), known_limits);
-    }
+/// Reads canonical playlist inputs from one caller-owned run snapshot.
+/// Invalid optional memory is omitted and reported as a read limit so it
+/// cannot drive reacquisition while the independently valid scan remains usable.
+pub async fn read_canonical_playlist_artifacts(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  lineage: &ViewMemoryRunLineage,
+  memory_enabled: bool,
+) -> Result<CanonicalPlaylistArtifacts, NeteaseArtifactReadError> {
+  let scan = read_playlist_sidebar_scan(store, snapshot, &lineage.scan_uri).await?;
+  validate_scan_lineage(&scan, lineage).map_err(|source| NeteaseArtifactReadError::InvalidLineage { source })?;
+  let mut artifacts = CanonicalPlaylistArtifacts::from_scan(scan);
+  if !memory_enabled {
+    return Ok(artifacts);
   }
-  let cache_path = inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
-  let json = match std::fs::read_to_string(&cache_path) {
-    Ok(json) => json,
-    Err(_) => return (None, known_limits),
+  let Some(memory_uri) = lineage.memory_uri.as_ref() else {
+    return Ok(artifacts);
   };
-  (crate::decode_playlist_sidebar_scan_json(&json).ok(), known_limits)
-}
 
-pub fn try_load_view_memory(inputs: &Inputs) -> Option<ViewMemory> {
-  if let Some(store_root) = &inputs.store_root {
-    if let Some(lineage) = read_lineage_manifest_for_inputs(&inputs.artifact_dir, inputs) {
-      return load_memory_from_store(store_root, &lineage);
-    }
-    if let Some(memory) = try_load_memory_from_artifact_lineage(inputs, store_root) {
-      return Some(memory);
-    }
-    return None;
-  }
-  let path = memory_file_path(&inputs.artifact_dir, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
-  auv_view::memory::parse_memory_file(&path)
-}
-
-fn try_load_scan_from_memory_lineage(inputs: &Inputs, store_root: &Path) -> Option<PlaylistSidebarScan> {
-  let memory = load_artifact_dir_memory(inputs)?;
-  if !artifact_memory_pairs_with_store(memory.source_run_id.as_str()) {
-    return None;
-  }
-  let scan_artifact_id = parse_lineage_scan_artifact_id(&memory.source_reconstruction_ref)?;
-  let lineage = lineage_from_memory(&memory, scan_artifact_id, None);
-  load_scan_from_store(store_root, &lineage)
-}
-
-fn try_load_memory_from_artifact_lineage(inputs: &Inputs, store_root: &Path) -> Option<ViewMemory> {
-  let memory_file = load_artifact_dir_memory(inputs)?;
-  if !artifact_memory_pairs_with_store(memory_file.source_run_id.as_str()) {
-    return None;
-  }
-  let scan_artifact_id = parse_lineage_scan_artifact_id(&memory_file.source_reconstruction_ref)?;
-  let store = LocalStore::new(store_root.to_path_buf()).ok()?;
-  let canonical = store.read_run(&memory_file.source_run_id).ok()?;
-  let scan_present = canonical.artifacts.iter().any(|artifact| artifact.artifact_id.as_str() == scan_artifact_id);
-  if !scan_present {
-    return None;
-  }
-  let memory_artifact_id = canonical
-    .artifacts
-    .iter()
-    .find(|artifact| artifact.role == VIEW_MEMORY_ARTIFACT_ROLE && artifact.path.ends_with("view-memory-playlist_sidebar.json"))
-    .map(|artifact| artifact.artifact_id.as_str().to_string())?;
-  let lineage = lineage_from_memory(&memory_file, scan_artifact_id, Some(memory_artifact_id));
-  load_memory_from_store(store_root, &lineage)
-}
-
-fn artifact_memory_pairs_with_store(source_run_id: &str) -> bool {
-  source_run_id != ARTIFACT_DIR_BRIDGE_RUN_ID
-}
-
-fn load_artifact_dir_memory(inputs: &Inputs) -> Option<ViewMemory> {
-  let path = memory_file_path(&inputs.artifact_dir, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
-  auv_view::memory::parse_memory_file(&path)
-}
-
-fn lineage_from_memory(memory: &ViewMemory, scan_artifact_id: String, memory_artifact_id: Option<String>) -> ViewMemoryRunLineage {
-  ViewMemoryRunLineage {
-    schema_version: VIEW_MEMORY_LINEAGE_SCHEMA_VERSION.to_string(),
-    run_id: memory.source_run_id.clone(),
-    scan_artifact_id,
-    memory_artifact_id,
-    memory_id: memory.memory_id.clone(),
-    scope_id: memory.scope_id.clone(),
-    app_bundle_id: memory.app_bundle_id.clone(),
-    written_at_millis: memory.last_reconstructed_at_millis,
-  }
-}
-
-fn read_artifact_bytes(store_root: &Path, run_id: &str, artifact_id: &str) -> Option<Vec<u8>> {
-  let store = LocalStore::new(store_root.to_path_buf()).ok()?;
-  let (_, path) = store.artifact_file(run_id, artifact_id).ok()?;
-  std::fs::read(&path).ok()
-}
-
-fn span_attributes_from_pairs(pairs: Vec<(String, String)>) -> Attributes {
-  pairs.into_iter().map(|(key, value)| (key, serde_json::Value::String(value))).collect()
-}
-
-/// Post-hoc durable proof run for `playlist select --store-root` (A8a).
-pub fn persist_playlist_select_proof(
-  store_root: &Path,
-  evidence: Option<&ReacquireTraceEvidence>,
-  memory: Option<&ViewMemory>,
-  build_result_json: impl FnOnce(&str) -> Result<Vec<u8>, String>,
-) -> Result<String, String> {
-  let store = LocalStore::new(store_root.to_path_buf()).map_err(|error| error.to_string())?;
-  let recording = RunRecordingBackend::local_only(store).handle();
-
-  let output = recording
-    .run_recorded_operation(RunSpec::new(RunType::Command, "auv.netease.playlist.select"), "playlist select store proof", |ctx| {
-      persist_select_proof_in_recorded_context(ctx, evidence, memory, build_result_json)
-    })
-    .map_err(|error| error.to_string())?;
-
-  Ok(output.run_id.as_str().to_string())
-}
-
-fn persist_select_proof_in_recorded_context<F>(
-  ctx: &mut RecordedOperationContext<'_>,
-  evidence: Option<&ReacquireTraceEvidence>,
-  memory: Option<&ViewMemory>,
-  build_result_json: F,
-) -> Result<String, String>
-where
-  F: FnOnce(&str) -> Result<Vec<u8>, String>,
-{
-  let run_id = ctx.run_id().as_str().to_string();
-  if let Some(evidence) = evidence {
-    let root_name = reacquire_root_span_name(&evidence.scope_id);
-    let root_attrs = span_attributes_from_pairs(evidence.to_reacquire_root_attributes());
-
-    ctx.in_span_with_attributes(&root_name, root_attrs, |ctx| {
-      // NOTICE(a8-controlled-subset): root + memory_load + winning stage only — not full 6-stage tree.
-      if let Some(memory) = memory {
-        let load_attrs = span_attributes_from_pairs(reacquire_memory_load_span_attributes(memory));
-        ctx.in_span_with_attributes(SPAN_REACQUIRE_MEMORY_LOAD, load_attrs, |ctx| {
-          emit_winning_reacquire_stage_span(ctx, evidence)?;
-          Ok::<_, String>(())
-        })?;
-      } else {
-        emit_winning_reacquire_stage_span(ctx, evidence)?;
+  if memory_uri.run_id() != lineage.scan_uri.run_id() {
+    // TODO(netease-cross-run-view-memory): cross-run memory remains rejected
+    // until an owner-approved provenance contract supplies authority and source
+    // proof beyond V1 same-run lineage.
+    artifacts.push_read_limit(
+      CanonicalArtifactLineageError::CrossRunMemory {
+        scan_run_id: lineage.scan_uri.run_id(),
+        memory_run_id: memory_uri.run_id(),
       }
-      Ok::<_, String>(())
-    })?;
+      .to_string(),
+    );
+    return Ok(artifacts);
   }
 
-  let result_json = build_result_json(&run_id)?;
-  ctx
-    .stage_artifact_bytes_with_ref(
-      NETEASE_PLAYLIST_SELECT_RESULT_ROLE,
-      result_json,
-      "netease-playlist-select-result.json",
-      Some("playlist select proof".to_string()),
-    )
-    .map_err(|error| error.to_string())?;
-
-  Ok(run_id)
+  let memory = match read_view_memory(store, snapshot, memory_uri).await {
+    Ok(memory) => memory,
+    Err(error) => {
+      artifacts.push_read_limit(format!("canonical view-memory artifact read failed: {error}"));
+      return Ok(artifacts);
+    }
+  };
+  match validate_memory_lineage(memory, lineage) {
+    Ok(memory) => artifacts.attach_memory(memory),
+    Err(error) => artifacts.push_read_limit(error.to_string()),
+  }
+  Ok(artifacts)
 }
 
-fn emit_winning_reacquire_stage_span(ctx: &mut RecordedOperationContext<'_>, evidence: &ReacquireTraceEvidence) -> Result<(), String> {
-  if let Some(stage_name) = evidence.winning_stage_span_name() {
-    // NOTICE(a8-controlled-subset): only the winning stage span is recorded in A8 v1.
-    ctx.in_span(&stage_name, |ctx| {
-      ctx.record_event("reacquire.stage.completed", None);
-      Ok::<_, String>(())
-    })?;
+fn validate_scan_lineage(scan: &PlaylistSidebarScan, lineage: &ViewMemoryRunLineage) -> Result<(), CanonicalArtifactLineageError> {
+  if lineage.schema_version != VIEW_MEMORY_LINEAGE_SCHEMA_VERSION {
+    return Err(CanonicalArtifactLineageError::UnsupportedSchema {
+      actual: lineage.schema_version.clone(),
+    });
+  }
+  if lineage.scope_id != crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID {
+    return Err(CanonicalArtifactLineageError::ScopeMismatch {
+      expected: crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID.to_string(),
+      actual: lineage.scope_id.clone(),
+    });
+  }
+  let actual = scan.app().app_id.clone();
+  if actual.as_deref() != Some(lineage.app_bundle_id.as_str()) {
+    return Err(CanonicalArtifactLineageError::ScanAppMismatch {
+      expected: lineage.app_bundle_id.clone(),
+      actual,
+    });
   }
   Ok(())
 }
 
+fn validate_memory_lineage(memory: ViewMemory, lineage: &ViewMemoryRunLineage) -> Result<ViewMemory, CanonicalArtifactLineageError> {
+  let expected_run_id = lineage.scan_uri.run_id().to_string();
+  if memory.source_run_id != expected_run_id {
+    return Err(CanonicalArtifactLineageError::MemorySourceRunMismatch {
+      expected: expected_run_id,
+      actual: memory.source_run_id,
+    });
+  }
+  let expected_source = lineage.scan_uri.to_string();
+  if memory.source_reconstruction_ref != expected_source {
+    return Err(CanonicalArtifactLineageError::MemorySourceArtifactMismatch {
+      expected: expected_source,
+      actual: memory.source_reconstruction_ref,
+    });
+  }
+  if memory.app_bundle_id != lineage.app_bundle_id {
+    return Err(CanonicalArtifactLineageError::MemoryAppMismatch {
+      expected: lineage.app_bundle_id.clone(),
+      actual: memory.app_bundle_id,
+    });
+  }
+  if memory.scope_id != lineage.scope_id {
+    return Err(CanonicalArtifactLineageError::MemoryScopeMismatch {
+      expected: lineage.scope_id.clone(),
+      actual: memory.scope_id,
+    });
+  }
+  if memory.scope_snapshot.region_id != lineage.scope_id {
+    return Err(CanonicalArtifactLineageError::MemoryRegionMismatch {
+      expected: lineage.scope_id.clone(),
+      actual: memory.scope_snapshot.region_id,
+    });
+  }
+  if memory.memory_id != lineage.memory_id {
+    return Err(CanonicalArtifactLineageError::MemoryIdMismatch {
+      expected: lineage.memory_id.clone(),
+      actual: memory.memory_id,
+    });
+  }
+
+  let config = MemoryReadConfig {
+    now_millis: crate::view_memory::system_time_millis(),
+    ..MemoryReadConfig::default()
+  };
+  match auv_view::memory::read_memory(memory, &config, None) {
+    MemoryReadOutcome::Accepted(memory) => Ok(memory),
+    MemoryReadOutcome::Rejected { reason } => Err(CanonicalArtifactLineageError::StaleMemory { reason }),
+  }
+}
+
+async fn read_json<T: DeserializeOwned>(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  purpose: &'static str,
+) -> Result<T, NeteaseArtifactReadError> {
+  let bytes = read_json_bytes(store, snapshot, uri, purpose).await?;
+  serde_json::from_slice(&bytes).map_err(|source| NeteaseArtifactReadError::MalformedJson {
+    uri: uri.clone(),
+    source,
+  })
+}
+
+async fn read_json_bytes(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  expected_purpose: &'static str,
+) -> Result<Vec<u8>, NeteaseArtifactReadError> {
+  let expected_purpose = expected_artifact_purpose(expected_purpose)?;
+  let expected_content_type = expected_json_content_type()?;
+  let store_authority = store.authority_id();
+  if snapshot.authority_id() != store_authority {
+    return Err(NeteaseArtifactReadError::SnapshotAuthorityMismatch {
+      snapshot_authority: snapshot.authority_id(),
+      store_authority,
+    });
+  }
+  if uri.run_id() != snapshot.run_id() {
+    return Err(NeteaseArtifactReadError::WrongOwner {
+      snapshot_run_id: snapshot.run_id(),
+      artifact_run_id: uri.run_id(),
+    });
+  }
+  let metadata = snapshot.artifacts().get(uri).ok_or_else(|| NeteaseArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
+  if metadata.purpose() != &expected_purpose {
+    return Err(NeteaseArtifactReadError::WrongPurpose {
+      uri: uri.clone(),
+      expected: expected_purpose,
+      actual: metadata.purpose().clone(),
+    });
+  }
+  if metadata.content_type() != &expected_content_type {
+    return Err(NeteaseArtifactReadError::WrongContentType {
+      uri: uri.clone(),
+      expected: expected_content_type,
+      actual: metadata.content_type().clone(),
+    });
+  }
+
+  let expected_length = metadata.byte_length().get();
+  if expected_length > NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+    return Err(NeteaseArtifactReadError::PayloadTooLarge {
+      uri: uri.clone(),
+      limit: NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+      actual: expected_length,
+    });
+  }
+  let expected_capacity = usize::try_from(expected_length).map_err(|_| NeteaseArtifactReadError::LengthOutOfRange {
+    uri: uri.clone(),
+    actual: expected_length,
+  })?;
+  let mut bytes = Vec::new();
+  bytes.try_reserve_exact(expected_capacity).map_err(|source| NeteaseArtifactReadError::Allocation {
+    uri: uri.clone(),
+    expected: expected_length,
+    source,
+  })?;
+  let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| NeteaseArtifactReadError::Open {
+    uri: uri.clone(),
+    source,
+  })?;
+  let mut actual_length = 0_u64;
+  while let Some(chunk) = reader.next().await {
+    let chunk = chunk.map_err(|source| NeteaseArtifactReadError::Stream {
+      uri: uri.clone(),
+      source,
+    })?;
+    actual_length = actual_length.checked_add(chunk.len() as u64).ok_or_else(|| NeteaseArtifactReadError::PayloadTooLarge {
+      uri: uri.clone(),
+      limit: NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+      actual: u64::MAX,
+    })?;
+    if actual_length > NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+      return Err(NeteaseArtifactReadError::PayloadTooLarge {
+        uri: uri.clone(),
+        limit: NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+        actual: actual_length,
+      });
+    }
+    if actual_length > expected_length {
+      return Err(NeteaseArtifactReadError::LengthMismatch {
+        uri: uri.clone(),
+        expected: expected_length,
+        actual: actual_length,
+      });
+    }
+    bytes.extend_from_slice(&chunk);
+  }
+  if actual_length != expected_length {
+    return Err(NeteaseArtifactReadError::LengthMismatch {
+      uri: uri.clone(),
+      expected: expected_length,
+      actual: actual_length,
+    });
+  }
+  let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
+  if actual_digest != metadata.sha256() {
+    return Err(NeteaseArtifactReadError::DigestMismatch {
+      uri: uri.clone(),
+      expected: metadata.sha256(),
+      actual: actual_digest,
+    });
+  }
+  Ok(bytes)
+}
+
+fn expected_artifact_purpose(value: &'static str) -> Result<ArtifactPurpose, NeteaseArtifactReadError> {
+  ArtifactPurpose::parse(value).map_err(|source| NeteaseArtifactReadError::InvalidExpectedPurpose { value, source })
+}
+
+fn expected_json_content_type() -> Result<ContentType, NeteaseArtifactReadError> {
+  const JSON_CONTENT_TYPE: &str = "application/json";
+  ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| NeteaseArtifactReadError::InvalidExpectedContentType {
+    value: JSON_CONTENT_TYPE,
+    source,
+  })
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum NeteaseArtifactReadError {
+  #[error("invalid expected NetEase artifact purpose {value:?}: {source}")]
+  InvalidExpectedPurpose {
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("invalid expected NetEase artifact content type {value:?}: {source}")]
+  InvalidExpectedContentType {
+    value: &'static str,
+    #[source]
+    source: ValidationError,
+  },
+  #[error("NetEase snapshot authority {snapshot_authority} does not match store authority {store_authority}")]
+  SnapshotAuthorityMismatch {
+    snapshot_authority: AuthorityId,
+    store_authority: AuthorityId,
+  },
+  #[error("NetEase artifact URI belongs to run {artifact_run_id}, not snapshot run {snapshot_run_id}")]
+  WrongOwner {
+    snapshot_run_id: RunId,
+    artifact_run_id: RunId,
+  },
+  #[error("NetEase artifact URI is not committed in the supplied snapshot: {uri}")]
+  DanglingUri { uri: ArtifactUri },
+  #[error("NetEase artifact {uri} has purpose {actual}, expected {expected}")]
+  WrongPurpose {
+    uri: ArtifactUri,
+    expected: ArtifactPurpose,
+    actual: ArtifactPurpose,
+  },
+  #[error("NetEase artifact {uri} has content type {actual}, expected {expected}")]
+  WrongContentType {
+    uri: ArtifactUri,
+    expected: ContentType,
+    actual: ContentType,
+  },
+  #[error("NetEase artifact {uri} is {actual} bytes, exceeding the {limit}-byte structured-artifact limit")]
+  PayloadTooLarge {
+    uri: ArtifactUri,
+    limit: u64,
+    actual: u64,
+  },
+  #[error("NetEase artifact {uri} byte length {actual} cannot be represented by this process")]
+  LengthOutOfRange { uri: ArtifactUri, actual: u64 },
+  #[error("failed to reserve {expected} bytes for NetEase artifact {uri}: {source}")]
+  Allocation {
+    uri: ArtifactUri,
+    expected: u64,
+    #[source]
+    source: TryReserveError,
+  },
+  #[error("failed to open NetEase artifact {uri}: {source}")]
+  Open {
+    uri: ArtifactUri,
+    #[source]
+    source: ReadError,
+  },
+  #[error("failed to stream NetEase artifact {uri}: {source}")]
+  Stream {
+    uri: ArtifactUri,
+    #[source]
+    source: ArtifactReadError,
+  },
+  #[error("NetEase artifact {uri} length mismatch: expected {expected}, read {actual}")]
+  LengthMismatch {
+    uri: ArtifactUri,
+    expected: u64,
+    actual: u64,
+  },
+  #[error("NetEase artifact {uri} digest mismatch: expected {expected}, read {actual}")]
+  DigestMismatch {
+    uri: ArtifactUri,
+    expected: Sha256Digest,
+    actual: Sha256Digest,
+  },
+  #[error("NetEase artifact {uri} is not valid UTF-8: {source}")]
+  InvalidUtf8 {
+    uri: ArtifactUri,
+    #[source]
+    source: std::str::Utf8Error,
+  },
+  #[error("NetEase playlist scan artifact {uri} is invalid: {source}")]
+  MalformedPlaylistScan {
+    uri: ArtifactUri,
+    #[source]
+    source: crate::PlaylistSidebarScanDecodeError,
+  },
+  #[error("NetEase artifact {uri} is not the expected JSON type: {source}")]
+  MalformedJson {
+    uri: ArtifactUri,
+    #[source]
+    source: serde_json::Error,
+  },
+  #[error("invalid canonical NetEase artifact lineage: {source}")]
+  InvalidLineage {
+    #[source]
+    source: CanonicalArtifactLineageError,
+  },
+}
+
+impl NeteaseArtifactReadError {
+  pub fn code(&self) -> ErrorCode {
+    let code = match self {
+      Self::InvalidExpectedPurpose { .. } | Self::InvalidExpectedContentType { .. } => "auv.netease.artifact.invalid_reader_contract",
+      Self::SnapshotAuthorityMismatch { .. } => "auv.netease.artifact.snapshot_authority_mismatch",
+      Self::WrongOwner { .. } => "auv.netease.artifact.wrong_owner",
+      Self::DanglingUri { .. } => "auv.netease.artifact.dangling_uri",
+      Self::WrongPurpose { .. } => "auv.netease.artifact.wrong_purpose",
+      Self::WrongContentType { .. } => "auv.netease.artifact.wrong_content_type",
+      Self::PayloadTooLarge { .. } => NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE,
+      Self::LengthOutOfRange { .. } => "auv.netease.artifact.length_out_of_range",
+      Self::Allocation { .. } => "auv.netease.artifact.allocation_failed",
+      Self::Open { .. } => "auv.netease.artifact.open_failed",
+      Self::Stream { .. } => "auv.netease.artifact.stream_failed",
+      Self::LengthMismatch { .. } => "auv.netease.artifact.length_mismatch",
+      Self::DigestMismatch { .. } => "auv.netease.artifact.digest_mismatch",
+      Self::InvalidUtf8 { .. } | Self::MalformedPlaylistScan { .. } | Self::MalformedJson { .. } => "auv.netease.artifact.malformed_json",
+      Self::InvalidLineage { .. } => "auv.netease.artifact.invalid_lineage",
+    };
+    ErrorCode::parse(code).expect("static NetEase artifact error code is valid")
+  }
+}
+
+async fn publish_json<T: Serialize>(purpose: &'static str, value: &T) -> Result<Option<ArtifactMetadata>, NeteaseArtifactPublishError> {
+  // Contexts without artifact authority must not validate or allocate bytes.
+  if !auv_tracing::Context::current().can_publish_artifacts() {
+    return Ok(None);
+  }
+  let (body, digest) = serialize_json_exact(purpose, value)?;
+  let body_length = u64::try_from(body.len()).map_err(|source| NeteaseArtifactPublishError::LengthConversion {
+    purpose,
+    actual: body.len() as u128,
+    source,
+  })?;
+  let length = ByteLength::new(body_length).map_err(|source| NeteaseArtifactPublishError::InvalidContract { purpose, source })?;
+  let artifact = NewArtifact::new(
+    auv_tracing::ArtifactPurpose::parse(purpose).map_err(|source| NeteaseArtifactPublishError::InvalidContract { purpose, source })?,
+    ContentType::parse("application/json").map_err(|source| NeteaseArtifactPublishError::InvalidContract { purpose, source })?,
+    length,
+    digest,
+    Attributes::empty(),
+    AsyncCursor::new(body),
+  );
+  auv_tracing::emit_artifact!(artifact).await.map_err(|source| NeteaseArtifactPublishError::Publication { purpose, source })
+}
+
+fn serialize_json_exact<T: Serialize>(purpose: &'static str, value: &T) -> Result<(Vec<u8>, Sha256Digest), NeteaseArtifactPublishError> {
+  let mut measurement = JsonMeasurement::default();
+  if let Err(source) = serde_json::to_writer(&mut measurement, value) {
+    if let Some((actual, source)) = measurement.length_conversion_error {
+      return Err(NeteaseArtifactPublishError::LengthConversion {
+        purpose,
+        actual,
+        source,
+      });
+    }
+    if let Some(actual) = measurement.exceeded_at {
+      return Err(NeteaseArtifactPublishError::PayloadTooLarge {
+        purpose,
+        limit: NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
+        actual,
+      });
+    }
+    return Err(NeteaseArtifactPublishError::Serialize { purpose, source });
+  }
+  let measured_length = usize::try_from(measurement.length).map_err(|source| NeteaseArtifactPublishError::LengthConversion {
+    purpose,
+    actual: u128::from(measurement.length),
+    source,
+  })?;
+  let measured_digest = Sha256Digest::new(measurement.hasher.finalize().into());
+  let mut output = ExactJsonBuffer::new(purpose, measured_length)?;
+  serde_json::to_writer(&mut output, value).map_err(|source| NeteaseArtifactPublishError::Serialize { purpose, source })?;
+  let body = output.finish(measured_digest).ok_or(NeteaseArtifactPublishError::NondeterministicSerialization { purpose })?;
+  Ok((body, measured_digest))
+}
+
+#[derive(Default)]
+struct JsonMeasurement {
+  length: u64,
+  hasher: Sha256,
+  length_conversion_error: Option<(u128, TryFromIntError)>,
+  exceeded_at: Option<u64>,
+}
+
+impl Write for JsonMeasurement {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let buffer_length = u64::try_from(buffer.len()).map_err(|source| {
+      self.length_conversion_error = Some((buffer.len() as u128, source));
+      std::io::Error::other("NetEase JSON chunk length does not fit u64")
+    })?;
+    let length = self.length.checked_add(buffer_length).ok_or_else(|| std::io::Error::other("NetEase JSON length overflow"))?;
+    if length > NETEASE_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
+      self.exceeded_at = Some(length);
+      return Err(std::io::Error::other(NETEASE_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE));
+    }
+    self.length = length;
+    self.hasher.update(buffer);
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+}
+
+struct ExactJsonBuffer {
+  bytes: Vec<u8>,
+  measured_length: usize,
+  actual_length: usize,
+  hasher: Sha256,
+}
+
+impl ExactJsonBuffer {
+  fn new(purpose: &'static str, measured_length: usize) -> Result<Self, NeteaseArtifactPublishError> {
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(measured_length).map_err(|source| NeteaseArtifactPublishError::Allocation { purpose, source })?;
+    Ok(Self {
+      bytes,
+      measured_length,
+      actual_length: 0,
+      hasher: Sha256::new(),
+    })
+  }
+
+  fn finish(self, measured_digest: Sha256Digest) -> Option<Vec<u8>> {
+    if self.actual_length != self.measured_length || Sha256Digest::new(self.hasher.finalize().into()) != measured_digest {
+      return None;
+    }
+    Some(self.bytes)
+  }
+}
+
+impl Write for ExactJsonBuffer {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    self.actual_length =
+      self.actual_length.checked_add(buffer.len()).ok_or_else(|| std::io::Error::other("NetEase JSON length overflow"))?;
+    self.hasher.update(buffer);
+    let remaining = self.measured_length.saturating_sub(self.bytes.len());
+    self.bytes.extend_from_slice(&buffer[..buffer.len().min(remaining)]);
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+}
+
 #[cfg(test)]
 mod tests {
+  use std::sync::Arc;
+
+  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, configure, dispatcher};
+
   use super::*;
-  use auv_view::memory::{
-    VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot, build_memory_id, view_memory_lineage_ref_wire, write_memory_file,
-  };
-  use auv_view::{VIEW_IR_SCHEMA_VERSION, ViewBounds};
 
-  fn minimal_scan_json() -> String {
-    serde_json::json!({
-      "schema_version": VIEW_IR_SCHEMA_VERSION,
-      "app": {},
-      "window": {},
-      "sidebar_region": {
-        "bounds": {"x": 0.0, "y": 220.0, "width": 240.0, "height": 400.0}
-      },
-      "observations": [],
-      "reconstruction": {
-        "root": {
-          "id": "root.sidebar",
-          "kind": "collection",
-          "bounds": {"x": 0.0, "y": 0.0, "width": 240.0, "height": 400.0},
-          "anchors": [],
-          "landmarks": [],
-          "actions": [],
-          "evidence": [],
-          "children": [{
-            "id": "item.test",
-            "kind": "item",
-            "label": "Store Label",
-            "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
-            "anchors": [{
-              "id": "anchor.test",
-              "label": "Store Label",
-              "strength": "strong",
-              "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
-              "evidence_ids": []
-            }],
-            "landmarks": [],
-            "actions": [],
-            "evidence": [],
-            "children": []
-          }]
-        },
-        "anchor_index": [],
-        "landmark_index": []
-      },
-      "projection": {
-        "sections": [{
-          "id": "section-created",
-          "kind": "my_playlists",
-          "label": "创建的歌单",
-          "items": [{
-            "id": "item.test",
-            "label": "Store Label",
-            "confidence": "high",
-            "candidate_id": "obs1.candidate.test",
-            "anchor_id": "anchor.test"
-          }]
-        }]
-      },
-      "boundary": {"top": "unknown", "bottom": "unknown", "left": "unknown", "right": "unknown"},
-      "diagnostics": [],
-      "known_limits": []
-    })
-    .to_string()
-  }
+  #[test]
+  fn invalid_reader_contract_retains_validation_error_source() {
+    let error = expected_artifact_purpose("not_namespaced").expect_err("invalid purpose must retain its validation error");
 
-  fn minimal_blocking_scan_json() -> String {
-    let mut value: serde_json::Value = serde_json::from_str(&minimal_scan_json()).expect("minimal scan json");
-    value["diagnostics"] = serde_json::json!([{
-      "code": "parser_no_reliable_candidates",
-      "message": "blocking",
-      "node_id": null
-    }]);
-    value.to_string()
+    match &error {
+      NeteaseArtifactReadError::InvalidExpectedPurpose { value, source } => {
+        assert_eq!(*value, "not_namespaced");
+        assert_eq!(source.to_string(), "namespaced name requires at least two segments");
+      }
+      other => panic!("expected typed validation error, got {other:?}"),
+    }
+    assert!(std::error::Error::source(&error).is_some());
   }
 
   #[test]
-  fn persist_and_read_scan_via_manifest() {
-    let root = std::env::temp_dir().join(format!("auv-recording-persist-{}", std::process::id()));
-    let artifact_dir = root.join("artifacts");
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
-    assert_ne!(persisted.lineage.run_id, ARTIFACT_DIR_BRIDGE_RUN_ID);
-    assert!(persisted.lineage.memory_artifact_id.is_some());
-    write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
+  fn invalid_publish_contract_retains_validation_error_source() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store).build().expect("memory dispatch should build");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let publication = root.in_scope(|| publish_json("not_namespaced", &"payload"));
 
-    let mut inputs = Inputs::with_defaults();
-    inputs.artifact_dir = artifact_dir.clone();
-    inputs.store_root = Some(store_root.clone());
-    let loaded = try_load_scan_cache(&inputs).expect("load scan");
-    assert_eq!(loaded.projection().sections[0].items[0].label, "Store Label");
+    let error = futures_executor::block_on(root.instrument(publication)).expect_err("invalid purpose must fail publication");
 
-    let _ = std::fs::remove_dir_all(&root);
+    match &error {
+      NeteaseArtifactPublishError::InvalidContract { purpose, source } => {
+        assert_eq!(*purpose, "not_namespaced");
+        assert_eq!(source.to_string(), "namespaced name requires at least two segments");
+      }
+      other => panic!("expected typed contract validation error, got {other:?}"),
+    }
+    let source = std::error::Error::source(&error).expect("validation error source");
+    assert!(source.downcast_ref::<ValidationError>().is_some());
   }
 
   #[test]
-  fn store_first_beats_stale_artifact_dir_scan_cache() {
-    let root = std::env::temp_dir().join(format!("auv-recording-bias-{}", std::process::id()));
-    let artifact_dir = root.join("artifacts");
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
-    write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
-
-    let stale = minimal_scan_json().replace("Store Label", "Stale Artifact Dir Label");
-    std::fs::write(artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE), stale).expect("stale cache");
-
-    let mut inputs = Inputs::with_defaults();
-    inputs.artifact_dir = artifact_dir;
-    inputs.store_root = Some(store_root);
-    let loaded = try_load_scan_cache(&inputs).expect("store wins");
-    assert_eq!(loaded.projection().sections[0].items[0].label, "Store Label");
-
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn parse_lineage_scan_artifact_id_reads_wire_form() {
-    let wire = view_memory_lineage_ref_wire("run_abc", "artifact_0001");
-    assert_eq!(parse_lineage_scan_artifact_id(&wire).as_deref(), Some("artifact_0001"));
-  }
-
-  #[test]
-  fn play_candidate_id_path_loads_scan_from_store_first() {
-    let root = std::env::temp_dir().join(format!("auv-recording-candidate-{}", std::process::id()));
-    let artifact_dir = root.join("artifacts");
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
-    write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
-
-    let stale = minimal_scan_json().replace("obs1.candidate.test", "obs9.candidate.stale");
-    std::fs::write(artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE), stale).expect("stale cache");
-
-    let mut inputs = Inputs::with_defaults();
-    inputs.artifact_dir = artifact_dir;
-    inputs.store_root = Some(store_root);
-    let loaded = try_load_scan_cache(&inputs).expect("store-first scan");
-    let target = loaded.select_target_by_candidate_id("obs1.candidate.test").expect("candidate id resolves");
-    assert_eq!(target.label, "Store Label");
-  }
-
-  #[test]
-  fn play_query_path_loads_scan_from_store_first() {
-    let root = std::env::temp_dir().join(format!("auv-recording-query-{}", std::process::id()));
-    let artifact_dir = root.join("artifacts");
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
-    write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
-
-    let stale = minimal_scan_json().replace("Store Label", "Stale Query Label");
-    std::fs::write(artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE), stale).expect("stale cache");
-
-    let mut inputs = Inputs::with_defaults();
-    inputs.artifact_dir = artifact_dir;
-    inputs.store_root = Some(store_root);
-    let loaded = try_load_scan_cache(&inputs).expect("store-first scan");
-    let target = loaded.select_target("Store").expect("query resolves");
-    assert_eq!(target.label, "Store Label");
-
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn without_store_root_reads_artifact_dir_scan_cache() {
-    let root = std::env::temp_dir().join(format!("auv-recording-a6-{}", std::process::id()));
-    let artifact_dir = root.join("artifacts");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let json = serde_json::to_string_pretty(&scan).expect("json");
-    std::fs::write(artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE), json).expect("cache");
-
-    let mut inputs = Inputs::with_defaults();
-    inputs.artifact_dir = artifact_dir;
-    assert!(inputs.store_root.is_none());
-    let loaded = try_load_scan_cache(&inputs).expect("artifact-dir scan");
-    assert_eq!(loaded.projection().sections[0].items[0].label, "Store Label");
-
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn manifest_missing_with_store_root_reports_known_limits() {
-    let mut inputs = Inputs::with_defaults();
-    inputs.store_root = Some(std::env::temp_dir());
-    let (_scan, limits) = try_load_scan_cache_with_limits(&inputs);
-    assert!(_scan.is_none());
-    assert!(limits.iter().any(|limit| limit.contains("lineage manifest missing")));
-  }
-
-  #[test]
-  fn stale_artifact_memory_not_used_when_store_scan_has_no_memory() {
-    let root = std::env::temp_dir().join(format!("auv-recording-stale-mem-{}", std::process::id()));
-    let artifact_dir = root.join("artifacts");
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let blocking = crate::decode_playlist_sidebar_scan_json(&minimal_blocking_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    inputs.artifact_dir = artifact_dir.clone();
-    let stale_memory = ViewMemory {
-      schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
-      memory_id: build_memory_id("com.netease.163music", "playlist_sidebar"),
-      app_bundle_id: "com.netease.163music".into(),
-      scope_id: "playlist_sidebar".into(),
-      last_reconstructed_at_millis: 1,
-      source_run_id: "run_old".into(),
-      source_reconstruction_ref: view_memory_lineage_ref_wire("run_old", "artifact_0001"),
-      anchors: Vec::new(),
-      landmarks: Vec::new(),
-      node_snapshots: Default::default(),
-      scope_snapshot: ViewMemoryScopeSnapshot {
-        region_id: "playlist_sidebar".into(),
-        region_bounds_window_local: ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-        baseline_width: 240,
-        schema_version_view_ir: "view-ir-v0".into(),
-      },
-      diagnostics: Vec::new(),
+  fn publish_length_conversion_retains_value_and_typed_source() {
+    let source = u8::try_from(u16::MAX).expect_err("fixture conversion must overflow");
+    let error = NeteaseArtifactPublishError::LengthConversion {
+      purpose: PLAYLIST_SELECT_RESULT_PURPOSE,
+      actual: u16::MAX.into(),
+      source,
     };
-    write_memory_file(&memory_file_path(&artifact_dir, "playlist_sidebar"), &stale_memory).expect("stale memory");
 
-    let persisted = persist_playlist_ls_artifacts(&store_root, &blocking, &inputs, true).expect("persist");
-    assert!(persisted.lineage.memory_artifact_id.is_none());
-    write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
-
-    let mut inputs = Inputs::with_defaults();
-    inputs.artifact_dir = artifact_dir;
-    inputs.store_root = Some(store_root);
-    inputs.app_id = "com.netease.163music".to_string();
-    assert!(try_load_view_memory(&inputs).is_none());
-
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn removed_manifest_falls_back_to_fresh_artifact_dir_scan() {
-    let root = std::env::temp_dir().join(format!("auv-recording-manifest-drop-{}", std::process::id()));
-    let artifact_dir = root.join("artifacts");
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-
-    let old_scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    let old_persisted = persist_playlist_ls_artifacts(&store_root, &old_scan, &inputs, false).expect("old persist");
-    write_lineage_manifest(&artifact_dir, &old_persisted.lineage).expect("old manifest");
-
-    let fresh_scan =
-      crate::decode_playlist_sidebar_scan_json(&minimal_scan_json().replace("Store Label", "Fresh Mirror Label")).expect("fresh scan");
-    let fresh_json = serde_json::to_string_pretty(&fresh_scan).expect("json");
-    std::fs::write(artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE), fresh_json).expect("mirror");
-    remove_lineage_manifest(&artifact_dir);
-
-    let mut inputs = Inputs::with_defaults();
-    inputs.artifact_dir = artifact_dir;
-    inputs.store_root = Some(store_root);
-    inputs.app_id = "com.netease.163music".to_string();
-    let (loaded, limits) = try_load_scan_cache_with_limits(&inputs);
-    let loaded = loaded.expect("artifact-dir fallback scan");
-    assert_eq!(loaded.projection().sections[0].items[0].label, "Fresh Mirror Label");
-    assert!(limits.iter().any(|limit| limit.contains("lineage manifest missing")));
-
-    let _ = std::fs::remove_dir_all(&root);
-  }
-  fn sample_select_result_json(run_id: &str) -> Result<Vec<u8>, String> {
-    let json = serde_json::json!({
-      "command": "playlist.select",
-      "query": "Test",
-      "app": {},
-      "window": {},
-      "target": {
-        "label": "Test Playlist",
-        "section_id": "section.created",
-        "section_kind": "my_playlists",
-        "item_id": "item.test",
-        "anchor_id": null,
-        "candidate_id": "item.test",
-        "observation_index": 0,
-        "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0}
-      },
-      "steps": [{"name": "reacquire-target", "target_bounds": null, "delivery_path": null, "fallback_reason": null}],
-      "verification": {"status": "passed", "method": "main_title_ocr_full_window_v1", "observed_title": "Test Playlist", "artifact": null, "note": null},
-      "diagnostics": [],
-      "known_limits": [],
-      "reacquire": {
-        "outcome": "reacquired",
-        "strategy_used": "label_current_viewport",
-        "observation_count": 1,
-        "skipped_rescan_replay": true
-      },
-      "run_id": run_id
-    });
-    serde_json::to_vec_pretty(&json).map_err(|error| error.to_string())
-  }
-
-  fn sample_reacquire_evidence() -> ReacquireTraceEvidence {
-    ReacquireTraceEvidence {
-      scope_id: "playlist_sidebar".into(),
-      target_kind: "label".into(),
-      outcome: "reacquired".into(),
-      stage_used: "label_current_viewport".into(),
-      observation_count: 1,
-      skipped_rescan_replay: true,
-      stale_reason: None,
-      strategy_used: Some("label_current_viewport".into()),
+    match &error {
+      NeteaseArtifactPublishError::LengthConversion {
+        purpose,
+        actual,
+        source,
+      } => {
+        assert_eq!(*purpose, PLAYLIST_SELECT_RESULT_PURPOSE);
+        assert_eq!(*actual, u128::from(u16::MAX));
+        assert_eq!(source.to_string(), "out of range integral type conversion attempted");
+      }
+      other => panic!("expected typed length conversion error, got {other:?}"),
     }
-  }
-
-  fn sample_store_memory(run_id: &str) -> ViewMemory {
-    ViewMemory {
-      schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
-      memory_id: build_memory_id("com.netease.163music", "playlist_sidebar"),
-      app_bundle_id: "com.netease.163music".into(),
-      scope_id: "playlist_sidebar".into(),
-      last_reconstructed_at_millis: 1_719_744_000_000,
-      source_run_id: run_id.into(),
-      source_reconstruction_ref: view_memory_lineage_ref_wire(run_id, "artifact_0001"),
-      anchors: Vec::new(),
-      landmarks: Vec::new(),
-      node_snapshots: Default::default(),
-      scope_snapshot: ViewMemoryScopeSnapshot {
-        region_id: "playlist_sidebar".into(),
-        region_bounds_window_local: ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-        baseline_width: 240,
-        schema_version_view_ir: "view-ir-v0".into(),
-      },
-      diagnostics: Vec::new(),
-    }
-  }
-
-  #[test]
-  fn memory_write_span_on_store_persist() {
-    let root = std::env::temp_dir().join(format!("auv-a8-mem-span-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(&persisted.lineage.run_id).expect("run");
-    let span = run.spans.iter().find(|span| span.name == SPAN_MEMORY_WRITE).expect("memory_write span");
-    assert_eq!(span.attributes.len(), 6);
-    assert_eq!(
-      span.attributes.get(auv_view::memory::ATTR_MEMORY_MEMORY_ID).and_then(|value| value.as_str()),
-      Some("com.netease.163music:playlist_sidebar")
-    );
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn no_memory_write_span_when_gate_off() {
-    let root = std::env::temp_dir().join(format!("auv-a8-gate-off-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
-    let mut inputs = Inputs::with_defaults();
-    inputs.app_id = "com.netease.163music".to_string();
-    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(&persisted.lineage.run_id).expect("run");
-    assert!(!run.spans.iter().any(|span| span.name == SPAN_MEMORY_WRITE));
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn no_durable_spans_without_store_root() {
-    let root = std::env::temp_dir().join(format!("auv-a8-no-store-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    assert_eq!(store.list_runs().expect("list runs").len(), 0);
-
-    // CLI contract: default inputs omit store_root, so persist is never invoked.
-    let inputs = Inputs::with_defaults();
-    assert!(inputs.store_root.is_none());
-    assert_eq!(store.list_runs().expect("list runs").len(), 0);
-
-    // Contrast: explicit store_root + persist creates durable reacquire spans.
-    let evidence = sample_reacquire_evidence();
-    let memory = sample_store_memory("run_no_store_contrast");
-    let run_id =
-      persist_playlist_select_proof(&store_root, Some(&evidence), Some(&memory), sample_select_result_json).expect("persist select proof");
-    let runs = store.list_runs().expect("list runs");
-    assert_eq!(runs.len(), 1);
-    let run = store.read_run(&run_id).expect("run");
-    assert!(run.spans.iter().any(|span| span.name.starts_with("view.reacquire")));
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn select_proof_run_emits_reacquire_root() {
-    let root = std::env::temp_dir().join(format!("auv-a8-select-root-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    let evidence = sample_reacquire_evidence();
-    let memory = sample_store_memory("run_ls");
-    let run_id =
-      persist_playlist_select_proof(&store_root, Some(&evidence), Some(&memory), sample_select_result_json).expect("persist select proof");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(&run_id).expect("run");
-    let root_span = run.spans.iter().find(|span| span.name == "view.reacquire.playlist_sidebar").expect("reacquire root span");
-    assert_eq!(root_span.attributes.get(auv_view::memory::ATTR_REACQUIRE_OUTCOME).and_then(|value| value.as_str()), Some("reacquired"));
-    assert_eq!(
-      root_span.attributes.get(auv_view::memory::ATTR_REACQUIRE_STAGE_USED).and_then(|value| value.as_str()),
-      Some("label_current_viewport")
-    );
-    assert!(run.spans.iter().any(|span| span.name == SPAN_REACQUIRE_MEMORY_LOAD));
-    assert!(run.spans.iter().any(|span| { span.name == "view.reacquire.stage.3.label_current_viewport" }));
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn select_result_artifact_staged() {
-    let root = std::env::temp_dir().join(format!("auv-a8-select-artifact-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    let evidence = sample_reacquire_evidence();
-    let run_id = persist_playlist_select_proof(&store_root, Some(&evidence), None, sample_select_result_json).expect("persist");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(&run_id).expect("run");
-    let artifact =
-      run.artifacts.iter().find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE).expect("select result artifact");
-    let bytes = read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str()).expect("artifact bytes");
-    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert_eq!(value["verification"]["method"], "main_title_ocr_full_window_v1");
-    assert!(value["steps"].as_array().is_some_and(|steps| !steps.is_empty()));
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn select_run_id_in_json() {
-    let root = std::env::temp_dir().join(format!("auv-a8-run-id-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    let evidence = sample_reacquire_evidence();
-    let run_id = persist_playlist_select_proof(&store_root, Some(&evidence), None, sample_select_result_json).expect("persist");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(&run_id).expect("run");
-    let artifact = run.artifacts.iter().find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE).expect("artifact");
-    let bytes = read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str()).expect("bytes");
-    let decoded: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert_eq!(decoded["run_id"].as_str(), Some(run_id.as_str()));
-    let _ = std::fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn select_proof_without_reacquire_summary_emits_no_reacquire_spans() {
-    let root = std::env::temp_dir().join(format!("auv-a8-no-reacquire-span-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = std::fs::remove_dir_all(&root);
-    let run_id = persist_playlist_select_proof(&store_root, None, None, sample_select_result_json).expect("persist");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(&run_id).expect("run");
-    assert!(
-      !run.spans.iter().any(|span| span.name.starts_with("view.reacquire")),
-      "unexpected reacquire spans: {:?}",
-      run.spans.iter().map(|span| span.name.as_str()).collect::<Vec<_>>()
-    );
-    assert!(run.artifacts.iter().any(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE));
-    let _ = std::fs::remove_dir_all(&root);
+    let source = std::error::Error::source(&error).expect("integer conversion error source");
+    assert!(source.downcast_ref::<TryFromIntError>().is_some());
   }
 }

@@ -3,12 +3,6 @@
 //! NOTICE(api-p9-non-goals):
 //! - No TLS and no non-loopback bind; remote access is out of scope.
 //! - `StreamSessionEvents` is not wired (event projector, API-P4 responsibility D).
-//! - `Invoke` persists synthetic `operation-result` on the happy path (API-R2).
-//!   `GetOperation` still requires a persisted skeleton when that write fails.
-//! - `spawn_blocking` work is not forcibly interrupted mid-flight; RPC cancellation
-//!   returns `CANCELLED` to the server and aborts the join handle, but an in-flight
-//!   `Invoke` may still complete recorded command execution until cooperative
-//!   cancellation is wired through the invoke seam.
 
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
@@ -83,9 +77,7 @@ pub async fn resolve_loopback_bind_addr(host: &str, port: u16) -> Result<SocketA
 pub fn map_session_error(error: SessionApiError) -> Status {
   match error {
     SessionApiError::MissingField(_) | SessionApiError::PayloadDecode(_) => Status::invalid_argument(error.to_string()),
-    SessionApiError::UnknownSession(_) | SessionApiError::RunNotFound(_) => Status::not_found(error.to_string()),
-    SessionApiError::PersistedOperationRequired(_) => Status::failed_precondition(error.to_string()),
-    SessionApiError::OperationIdMismatch { .. } => Status::invalid_argument(error.to_string()),
+    SessionApiError::UnknownSession(_) => Status::not_found(error.to_string()),
     SessionApiError::Storage(_) | SessionApiError::InvokeExecution(_) => Status::internal(error.to_string()),
     SessionApiError::NotWired { .. } => Status::unimplemented(error.to_string()),
   }
@@ -154,19 +146,7 @@ impl SessionService for SessionServiceGrpc {
   }
 
   async fn invoke(&self, request: Request<proto::InvokeRequest>) -> Result<Response<proto::InvokeResponse>, Status> {
-    let cancel = CancellationToken::new();
-    let _guard = RpcCancelGuard(cancel.clone());
-    let handler = Arc::clone(&self.handler);
-    let inner = request.into_inner();
-    run_blocking_rpc(cancel, move || handler.invoke(inner)).await.map(Response::new)
-  }
-
-  async fn get_operation(&self, request: Request<proto::GetOperationRequest>) -> Result<Response<proto::GetOperationResponse>, Status> {
-    let cancel = CancellationToken::new();
-    let _guard = RpcCancelGuard(cancel.clone());
-    let handler = Arc::clone(&self.handler);
-    let inner = request.into_inner();
-    run_blocking_rpc(cancel, move || handler.get_operation(inner)).await.map(Response::new)
+    self.handler.invoke(request.into_inner()).await.map(Response::new).map_err(map_session_error)
   }
 
   type StreamSessionEventsStream = std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<proto::SessionEvent, Status>> + Send>>;
@@ -221,7 +201,6 @@ mod tests {
   use auv_api_proto::v1::session::session_service_client::SessionServiceClient;
   use tonic::Code;
 
-  use crate::api::session_service::operation_result_store::INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT;
   use crate::api::session_service::test_fixtures::session_api_temp_store_root;
 
   use super::*;
@@ -257,7 +236,6 @@ mod tests {
   fn map_session_error_maps_representative_variants() {
     assert_eq!(map_session_error(SessionApiError::MissingField("session")).code(), Code::InvalidArgument);
     assert_eq!(map_session_error(SessionApiError::UnknownSession("ghost".to_string())).code(), Code::NotFound);
-    assert_eq!(map_session_error(SessionApiError::PersistedOperationRequired("run-1".to_string())).code(), Code::FailedPrecondition);
     assert_eq!(map_session_error(SessionApiError::Storage("disk".to_string())).code(), Code::Internal);
     assert_eq!(map_session_error(SessionApiError::NotWired { gate: "events" }).code(), Code::Unimplemented);
   }
@@ -292,7 +270,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn grpc_invoke_and_get_operation_round_trips() {
+  async fn grpc_invoke_returns_direct_value_and_run_identity() {
     let store_root = session_api_temp_store_root("transport");
     let config = SessionApiServeConfig {
       host: DEFAULT_SESSION_API_HOST.to_string(),
@@ -325,19 +303,8 @@ mod tests {
       .expect("invoke")
       .into_inner();
     assert_eq!(invoke_response.status, "completed");
-    let operation = invoke_response.operation.expect("operation ref");
-
-    let get_response = client
-      .get_operation(proto::GetOperationRequest {
-        operation: Some(operation),
-      })
-      .await
-      .expect("get_operation should succeed after invoke")
-      .into_inner();
-
-    assert_eq!(get_response.status, "completed");
-    assert_eq!(get_response.output_summary, "scan.coverage dry-run");
-    assert!(get_response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
+    assert!(!invoke_response.run_id.is_empty());
+    assert!(invoke_response.recording_failure.is_empty());
 
     server.abort();
     let _ = server.await;

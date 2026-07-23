@@ -1,21 +1,77 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use auv_tracing::ArtifactMetadata;
 
 use crate::InvokeReport;
 use crate::arg::ArgSpec;
-use auv_tracing_driver::ProducedArtifact;
 
-type InvokeCommandHandler = fn(InvokeCommandInput<'_>) -> InvokeCommandResult;
+use crate::{ArtifactInstrumentationFailure, ArtifactInstrumentationReceipt};
 
-#[derive(Clone, Copy, Debug)]
-pub struct InvokeCommandInput<'a> {
-  pub command_id: &'a str,
-  pub target_application_id: Option<&'a str>,
-  pub inputs: &'a BTreeMap<String, String>,
-  pub dry_run: bool,
+pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<InvokeCommandOutput, String>> + Send + 'static>>;
+pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
+
+/// Cloneable cancellation shared by one frontend dispatch and its typed command.
+#[derive(Clone, Debug)]
+pub struct InvokeCancellation {
+  token: Arc<tokio_util::sync::CancellationToken>,
 }
 
-impl<'a> InvokeCommandInput<'a> {
-  pub fn required_input(&self, name: &str) -> Result<&'a str, String> {
+impl InvokeCancellation {
+  pub fn new() -> Self {
+    Self {
+      token: Arc::new(tokio_util::sync::CancellationToken::new()),
+    }
+  }
+
+  pub fn from_token(token: tokio_util::sync::CancellationToken) -> Self {
+    Self {
+      token: Arc::new(token),
+    }
+  }
+
+  pub fn cancel(&self) {
+    self.token.cancel();
+  }
+
+  pub fn is_cancelled(&self) -> bool {
+    self.token.is_cancelled()
+  }
+
+  pub fn check(&self) -> Result<(), InvokeCancelled> {
+    if self.is_cancelled() {
+      Err(InvokeCancelled)
+    } else {
+      Ok(())
+    }
+  }
+
+  pub async fn cancelled(&self) {
+    self.token.cancelled().await;
+  }
+}
+
+impl Default for InvokeCancellation {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("invoke cancelled")]
+pub struct InvokeCancelled;
+
+#[derive(Clone, Debug)]
+pub struct InvokeCommandInput {
+  pub command_id: String,
+  pub target_application_id: Option<String>,
+  pub inputs: BTreeMap<String, String>,
+  pub dry_run: bool,
+  pub cancellation: InvokeCancellation,
+}
+
+impl InvokeCommandInput {
+  pub fn required_input(&self, name: &str) -> Result<&str, String> {
     self
       .inputs
       .get(name)
@@ -28,20 +84,25 @@ impl<'a> InvokeCommandInput<'a> {
     self.required_input(name)?.parse::<f64>().map_err(|error| format!("{} received invalid --{name}: {error}", self.command_id))
   }
 
-  pub fn target_or_input_target(&self) -> Option<&'a str> {
-    self.target_application_id.or_else(|| self.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
+  pub fn target_or_input_target(&self) -> Option<&str> {
+    self.target_application_id.as_deref().or_else(|| self.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InvokeCommandOutput {
   pub summary: String,
   pub backend: Option<String>,
   pub signals: BTreeMap<String, String>,
   pub notes: Vec<String>,
-  pub artifacts: Vec<ProducedArtifact>,
+  /// Canonical metadata returned directly by successful artifact publications.
+  pub artifacts: Vec<ArtifactMetadata>,
+  /// Non-authoritative diagnostics from attempted artifact instrumentation.
+  pub artifact_failures: Vec<ArtifactInstrumentationFailure>,
   pub known_limits: Vec<String>,
   pub report: Option<InvokeReport>,
+  /// CLI presentation failure derived from an otherwise successful typed call.
+  pub failure_message: Option<String>,
   /// Human-readable boundary claim produced by the handler for this execution.
   ///
   /// This is intentionally not a structured `VerificationResult`: direct
@@ -63,10 +124,18 @@ impl InvokeCommandOutput {
       signals: BTreeMap::new(),
       notes: Vec::new(),
       artifacts: Vec::new(),
+      artifact_failures: Vec::new(),
       known_limits: Vec::new(),
       report: None,
+      failure_message: None,
       verification: None,
     }
+  }
+
+  pub fn apply_artifact_instrumentation(&mut self, receipt: ArtifactInstrumentationReceipt) {
+    let (artifacts, failures) = receipt.into_parts();
+    self.artifacts.extend(artifacts);
+    self.artifact_failures.extend(failures);
   }
 }
 
@@ -111,7 +180,10 @@ pub struct InvokeCommand {
 }
 
 impl InvokeCommand {
-  pub fn invoke(&self, input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+  pub fn invoke(&self, input: InvokeCommandInput) -> InvokeCommandFuture {
+    if let Err(error) = input.cancellation.check() {
+      return Box::pin(async move { Err(error.to_string()) });
+    }
     (self.handler)(input)
   }
 }
@@ -157,7 +229,7 @@ pub fn spec(
   namespace: InvokeNamespace,
   summary: &'static str,
   args: &'static [ArgSpec],
-  handler: fn(InvokeCommandInput<'_>) -> InvokeCommandResult,
+  handler: InvokeCommandHandler,
 ) -> InvokeCommand {
   InvokeCommand {
     id,
@@ -170,15 +242,29 @@ pub fn spec(
 
 #[cfg(test)]
 mod tests {
-  use super::InvokeCommandOutput;
+  use super::{InvokeCancellation, InvokeCommandOutput};
 
   #[test]
-  fn command_output_defaults_evidence_and_report_fields_to_empty() {
+  fn invoke_cancellation_is_typed_cloneable_and_observable() {
+    let cancellation = InvokeCancellation::new();
+    let observer = cancellation.clone();
+
+    assert!(observer.check().is_ok());
+    cancellation.cancel();
+
+    let error = observer.check().expect_err("shared cancellation must be observable");
+    assert_eq!(error.to_string(), "invoke cancelled");
+  }
+
+  #[test]
+  fn command_output_defaults_instrumentation_and_report_fields_to_empty() {
     let output = InvokeCommandOutput::new("observed");
 
     assert!(output.artifacts.is_empty());
+    assert!(output.artifact_failures.is_empty());
     assert!(output.known_limits.is_empty());
     assert!(output.report.is_none());
+    assert!(output.failure_message.is_none());
     assert!(output.verification.is_none());
   }
 }

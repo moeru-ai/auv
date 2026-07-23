@@ -1,12 +1,16 @@
 //! Minecraft inspect composition (ordinary readers/renderers).
 
-mod helpers;
+mod quality;
 mod render;
 mod sections;
 
+pub use quality::{
+  MinecraftInspectedArtifact, MinecraftQualityBaseline, MinecraftQualityVerdict, MinecraftQualityVerdicts, QualityEvidenceCoverage,
+  QualityRenderEvidenceMode, QualityStage, QualityStageCheck, QualityStageOutcome, QualityVerdictOutcome,
+};
 pub use sections::{
-  MinecraftPrimarySection, MinecraftQualitySpatialSection, inspect_sections_primary, inspect_sections_quality_spatial,
-  render_minecraft_primary_text, render_minecraft_quality_spatial_text,
+  MinecraftInspectSection, MinecraftQualitySpatialInspection, MinecraftSpatialQueryInspection, inspect_sections_primary,
+  inspect_sections_quality_spatial, read_minecraft_quality_spatial_inspection,
 };
 
 #[cfg(test)]

@@ -1,4 +1,6 @@
-use crate::visual_truth_spatial_query::{VisualTruthPixelVisibility, VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus};
+use crate::visual_truth_spatial_query::{
+  VisualTruthPixelVisibility, VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus, validate_answered_spatial_query,
+};
 use auv_query_readiness::{DerivedActionReadiness, format_query_not_consumable_refusal};
 
 pub type VisualTruthSpatialQueryActionEligibility = auv_query_readiness::DerivedActionEligibility;
@@ -24,33 +26,24 @@ pub fn derive_visual_truth_spatial_query_action_readiness(
     };
   }
 
-  let Some(visibility) = manifest.pixel_visibility else {
-    let derived = DerivedActionReadiness::answer_non_clickable("answered query missing pixel visibility witness");
-    return VisualTruthSpatialQueryActionReadiness {
-      eligibility: derived.eligibility,
-      pixel_point: None,
-      refusal_reason: derived.refusal_reason,
-    };
-  };
-
-  let pixel_point = match (manifest.pixel_x, manifest.pixel_y) {
-    (Some(x), Some(y)) => Some((x, y)),
-    _ => None,
-  };
-
-  if visibility == VisualTruthPixelVisibility::InsideCapture {
-    if let Some(point) = pixel_point {
-      let derived = DerivedActionReadiness::click_ready();
+  let (pixel_x, pixel_y, visibility) = match validate_answered_spatial_query(manifest) {
+    Ok(answer) => answer,
+    Err(reason) => {
+      let derived = DerivedActionReadiness::answer_non_clickable(reason);
       return VisualTruthSpatialQueryActionReadiness {
         eligibility: derived.eligibility,
-        pixel_point: Some(point),
+        pixel_point: None,
         refusal_reason: derived.refusal_reason,
       };
     }
-    let derived = DerivedActionReadiness::answer_non_clickable("visibility=inside_capture missing_pixel_point");
+  };
+  let pixel_point = Some((pixel_x, pixel_y));
+
+  if visibility == VisualTruthPixelVisibility::InsideCapture {
+    let derived = DerivedActionReadiness::click_ready();
     return VisualTruthSpatialQueryActionReadiness {
       eligibility: derived.eligibility,
-      pixel_point: None,
+      pixel_point,
       refusal_reason: derived.refusal_reason,
     };
   }
@@ -106,6 +99,61 @@ mod tests {
     manifest.pixel_visibility = Some(VisualTruthPixelVisibility::OutsideCapture);
     let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
     assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
+  }
+
+  #[test]
+  fn answer_non_clickable_when_inside_visibility_has_negative_coordinates() {
+    let mut manifest = base_manifest();
+    manifest.pixel_x = Some(-1.0);
+
+    let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
+
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
+    assert!(readiness.pixel_point.is_none());
+  }
+
+  #[test]
+  fn answer_non_clickable_when_inside_visibility_exceeds_capture_bounds() {
+    let mut manifest = base_manifest();
+    manifest.pixel_x = Some(801.0);
+
+    let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
+
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
+    assert!(readiness.pixel_point.is_none());
+  }
+
+  #[test]
+  fn answer_non_clickable_when_inside_visibility_is_on_exclusive_capture_edge() {
+    let mut manifest = base_manifest();
+    manifest.pixel_x = Some(800.0);
+
+    let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
+
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
+    assert!(readiness.pixel_point.is_none());
+  }
+
+  #[test]
+  fn answer_non_clickable_when_capture_dimensions_are_missing() {
+    let mut manifest = base_manifest();
+    manifest.capture_width = None;
+
+    let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
+
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
+    assert!(readiness.pixel_point.is_none());
+  }
+
+  #[test]
+  fn answer_non_clickable_when_match_radius_is_invalid() {
+    let mut manifest = base_manifest();
+    manifest.match_radius_px = Some(0.0);
+
+    let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
+
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
+    assert!(readiness.pixel_point.is_none());
   }
 
   #[test]

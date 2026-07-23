@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::PathBuf;
 
-use auv_tracing_driver::trace::{ArtifactRecordV1Alpha1, SpanId};
+use auv_tracing::ArtifactMetadata;
 use serde::Serialize;
 
 use super::{InvokeOutputOptions, InvokeReport, InvokeReportField};
 use crate::models::invoke_report::{write_detail_section, write_field_rows};
+use crate::{ArtifactInstrumentationFailure, InvokeCommand, InvokeCommandResult};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,7 +27,6 @@ impl RunStatus {
 #[derive(Clone, Debug)]
 pub struct InvokeResult {
   pub run_id: String,
-  pub producer_span_id: SpanId,
   pub command_id: String,
   pub command_summary: String,
   pub status: RunStatus,
@@ -38,12 +37,55 @@ pub struct InvokeResult {
   pub known_limits: Vec<String>,
   pub verification: Option<String>,
   pub report: Option<InvokeReport>,
-  pub artifacts: Vec<ArtifactRecordV1Alpha1>,
-  pub artifact_paths: Vec<PathBuf>,
+  pub canonical_artifacts: Vec<ArtifactMetadata>,
+  pub artifact_failures: Vec<ArtifactInstrumentationFailure>,
   pub failure_message: Option<String>,
 }
 
 impl InvokeResult {
+  /// Maps the direct command value into CLI-only presentation state.
+  pub fn from_command_result(run_id: impl Into<String>, command: &InvokeCommand, result: InvokeCommandResult) -> Self {
+    let run_id = run_id.into();
+    match result {
+      Ok(output) => Self {
+        run_id,
+        command_id: command.id.to_string(),
+        command_summary: command.summary.to_string(),
+        status: if output.failure_message.is_some() {
+          RunStatus::Failed
+        } else {
+          RunStatus::Completed
+        },
+        output_summary: output.summary,
+        backend: output.backend,
+        signals: output.signals,
+        notes: output.notes,
+        known_limits: output.known_limits,
+        verification: output.verification,
+        report: output.report,
+        canonical_artifacts: output.artifacts,
+        artifact_failures: output.artifact_failures,
+        failure_message: output.failure_message,
+      },
+      Err(error) => Self {
+        run_id,
+        command_id: command.id.to_string(),
+        command_summary: command.summary.to_string(),
+        status: RunStatus::Failed,
+        output_summary: error.clone(),
+        backend: None,
+        signals: BTreeMap::new(),
+        notes: Vec::new(),
+        known_limits: Vec::new(),
+        verification: None,
+        report: None,
+        canonical_artifacts: Vec::new(),
+        artifact_failures: Vec::new(),
+        failure_message: Some(error),
+      },
+    }
+  }
+
   pub(crate) fn write_rendered<W: Write>(&self, writer: &mut W, options: InvokeOutputOptions) -> Result<(), String> {
     if options.json {
       self.write_json(writer, options)
@@ -72,7 +114,7 @@ impl InvokeResult {
       None => write_field_rows(writer, &[InvokeReportField::new("Output", &self.output_summary)], color)?,
     }
 
-    if self.status == RunStatus::Failed {
+    if self.status == RunStatus::Failed && options.inspect_hint {
       writeln!(writer).map_err(write_error)?;
       write_field_rows(
         writer,
@@ -110,20 +152,17 @@ impl InvokeResult {
     if !self.known_limits.is_empty() {
       write_detail_section(writer, "Known limits", &self.known_limits, color)?;
     }
-    if !self.artifacts.is_empty() {
+    if !self.canonical_artifacts.is_empty() {
       let artifacts = self
-        .artifacts
+        .canonical_artifacts
         .iter()
-        .map(|artifact| {
-          let mut line = format!("{} ({})", artifact.artifact_id, artifact.role);
-          if let Some(summary) = artifact.summary.as_deref() {
-            line.push_str(": ");
-            line.push_str(summary);
-          }
-          line
-        })
+        .map(|artifact| format!("{} ({}, {})", artifact.uri(), artifact.purpose(), artifact.content_type()))
         .collect::<Vec<_>>();
       write_detail_section(writer, "Artifacts", &artifacts, color)?;
+    }
+    if !self.artifact_failures.is_empty() {
+      let failures = self.artifact_failures.iter().map(|failure| format!("{}: {}", failure.purpose, failure.message)).collect::<Vec<_>>();
+      write_detail_section(writer, "Artifact instrumentation", &failures, color)?;
     }
 
     let signals = selected_detail_signals(&self.signals).into_iter().map(|(key, value)| format!("{key}: {value}")).collect::<Vec<_>>();
@@ -152,7 +191,8 @@ struct InvokeResultJsonOutput<'a> {
   report: Option<&'a InvokeReport>,
   #[serde(skip_serializing_if = "Option::is_none")]
   failure: Option<&'a str>,
-  artifacts: Vec<InvokeResultJsonArtifact<'a>>,
+  artifacts: Vec<&'a ArtifactMetadata>,
+  artifact_failures: &'a [ArtifactInstrumentationFailure],
   #[serde(skip_serializing_if = "Option::is_none")]
   signals: Option<BTreeMap<String, String>>,
 }
@@ -166,28 +206,11 @@ impl<'a> InvokeResultJsonOutput<'a> {
       summary: &result.output_summary,
       report: result.report.as_ref(),
       failure: result.failure_message.as_deref(),
-      artifacts: result
-        .artifacts
-        .iter()
-        .map(|artifact| InvokeResultJsonArtifact {
-          artifact_id: artifact.artifact_id.as_str(),
-          role: &artifact.role,
-          mime_type: &artifact.mime_type,
-          summary: artifact.summary.as_deref(),
-        })
-        .collect(),
+      artifacts: result.canonical_artifacts.iter().collect(),
+      artifact_failures: &result.artifact_failures,
       signals: options.detail.then(|| selected_detail_signals(&result.signals)),
     }
   }
-}
-
-#[derive(Serialize)]
-struct InvokeResultJsonArtifact<'a> {
-  artifact_id: &'a str,
-  role: &'a str,
-  mime_type: &'a str,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  summary: Option<&'a str>,
 }
 
 fn selected_detail_signals(signals: &BTreeMap<String, String>) -> BTreeMap<String, String> {
@@ -212,4 +235,33 @@ fn label(value: &str, color: bool) -> String {
 
 fn write_error(error: std::io::Error) -> String {
   format!("failed to write invoke output: {error}")
+}
+
+#[cfg(test)]
+mod tests {
+  use auv_tracing::{ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactUri, Attributes, ByteLength, ContentType, RunId, Sha256Digest};
+
+  use crate::{InvokeCommandOutput, default_registry};
+
+  use super::InvokeResult;
+
+  #[test]
+  fn direct_command_result_carries_command_publications_without_store_readback() {
+    let registry = default_registry();
+    let command = registry.resolve("scan.coverage").expect("command");
+    let artifact = ArtifactMetadata::new(
+      ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
+      ArtifactPurpose::parse("auv.test.direct_artifact").unwrap(),
+      ContentType::parse("application/json").unwrap(),
+      ByteLength::new(2).unwrap(),
+      Sha256Digest::new([7; 32]),
+      Attributes::empty(),
+    );
+    let mut output = InvokeCommandOutput::new("direct");
+    output.artifacts.push(artifact.clone());
+
+    let result = InvokeResult::from_command_result("019f8b1e-4b2d-7a00-8f00-0000000000aa", command, Ok(output));
+
+    assert_eq!(result.canonical_artifacts, vec![artifact]);
+  }
 }

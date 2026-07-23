@@ -1,71 +1,72 @@
+//! Disposable Inspect read projection from canonical run state.
+
+use std::sync::Arc;
+
 use auv_inspect_model::InspectDocument;
-use auv_tracing_driver::store::{CanonicalRun, LocalStore};
-use auv_view::memory::{ViewParserInspect, ViewParserListSummary};
+use auv_tracing::{BoxFuture, ErrorCode, RunSnapshot, RunStore};
 
-use crate::InspectResult;
+/// HTTP-facing failure category for a named Inspect run extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InspectRunExtensionErrorCategory {
+  /// The extension rejected a caller-supplied typed reference.
+  InvalidReference,
+  /// The extension authority denied the read.
+  Forbidden,
+  /// The extension's backing authority is temporarily unavailable.
+  Unavailable,
+  /// Canonical extension data failed an integrity contract.
+  Integrity,
+}
 
-pub trait InspectReadProjection: Send + Sync + 'static {
-  fn run_enrichment(&self, store: &LocalStore, run: &CanonicalRun) -> InspectResult<InspectRunEnrichment>;
+/// Safe typed failure returned by an Inspect run extension.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectRunExtensionError {
+  category: InspectRunExtensionErrorCategory,
+  code: ErrorCode,
+}
 
-  /// Named JSON extension lookup for an already-loaded run.
-  ///
-  /// Returns `Ok(None)` when the extension key is unsupported for this
-  /// projection (HTTP maps that to 404). Real load/encode failures remain `Err`.
-  fn run_json_extension(&self, extension: &str, store: &LocalStore, run: &CanonicalRun) -> InspectResult<Option<serde_json::Value>> {
-    let _ = (store, run, extension);
-    Ok(None)
+impl InspectRunExtensionError {
+  /// Creates a failure from one safe category and stable code.
+  pub fn new(category: InspectRunExtensionErrorCategory, code: ErrorCode) -> Self {
+    Self { category, code }
   }
 
-  /// Composer-backed structured inspect document.
-  ///
-  /// Default: unsupported. Core / product projections override by collecting
-  /// from an injected [`auv_inspect_model::InspectComposer`].
-  fn inspect_document(&self, store: &LocalStore, run: &CanonicalRun) -> InspectResult<Option<InspectDocument>> {
-    let _ = (store, run);
-    Ok(None)
+  /// Returns the route-level failure category.
+  pub fn category(&self) -> InspectRunExtensionErrorCategory {
+    self.category
   }
 
-  /// Composer-backed inspect text. Default derives from [`Self::inspect_document`].
-  fn inspect_text(&self, store: &LocalStore, run_id: &str) -> InspectResult<Option<String>> {
-    let run = store.read_run(run_id)?;
-    Ok(self.inspect_document(store, &run)?.map(|document| document.render_text()))
+  /// Returns the safe stable code; extension-internal messages are not carried.
+  pub fn code(&self) -> &ErrorCode {
+    &self.code
   }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct DefaultInspectReadProjection;
+/// Projects named product data from one canonical Inspect authority snapshot.
+pub trait InspectRunExtension: Send + Sync + 'static {
+  /// Returns JSON for a recognized extension name, or `None` when unknown.
+  fn project_json<'a>(
+    &'a self,
+    extension: &'a str,
+    store: &'a Arc<dyn RunStore>,
+    snapshot: &'a RunSnapshot,
+  ) -> BoxFuture<'a, Result<Option<serde_json::Value>, InspectRunExtensionError>>;
+}
 
-impl InspectReadProjection for DefaultInspectReadProjection {
-  fn run_enrichment(&self, _store: &LocalStore, _run: &CanonicalRun) -> InspectResult<InspectRunEnrichment> {
-    Ok(InspectRunEnrichment::default())
+pub(crate) struct DefaultInspectRunExtension;
+
+impl InspectRunExtension for DefaultInspectRunExtension {
+  fn project_json<'a>(
+    &'a self,
+    _extension: &'a str,
+    _store: &'a Arc<dyn RunStore>,
+    _snapshot: &'a RunSnapshot,
+  ) -> BoxFuture<'a, Result<Option<serde_json::Value>, InspectRunExtensionError>> {
+    Box::pin(async { Ok(None) })
   }
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct InspectRunEnrichment {
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub command_boundary_claims: Vec<CommandBoundaryClaim>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub verifications: Vec<serde_json::Value>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub observation_snapshots: Vec<serde_json::Value>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub detector_recognition_lineage: Vec<serde_json::Value>,
-  /// Serialized `InputActionResult` from `input-action-result` artifacts.
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub input_action_results: Vec<serde_json::Value>,
-  /// Serialized `ControlFailure` lifted from the run's `operation-result`, when
-  /// a driver control step failed before verification. Absent otherwise, so the
-  /// HTTP surface reports the same typed classification as the inspect text.
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub control_failure: Option<serde_json::Value>,
-  pub view_parser: ViewParserInspect,
-  pub view_parser_summary: ViewParserListSummary,
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct CommandBoundaryClaim {
-  pub span_id: auv_tracing_driver::trace::SpanId,
-  pub kind: String,
-  pub message: String,
+/// Builds viewer-facing data without introducing a second read authority.
+pub fn project_snapshot(snapshot: &RunSnapshot) -> InspectDocument {
+  InspectDocument::from(snapshot)
 }

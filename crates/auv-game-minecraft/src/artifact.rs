@@ -1,10 +1,27 @@
 use serde::{Deserialize, Serialize};
 
 use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};
-use auv_tracing_driver::EvidenceCorrelationKey;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 
 use crate::types::{MinecraftProjectedPoint, MinecraftSpatialFrame, ProjectionVisibility};
 use crate::verify::MismatchRefusalReason;
+
+pub const MINECRAFT_PROJECTION_PURPOSE: &str = "auv.minecraft.projection";
+
+pub async fn publish_minecraft_projection(
+  context: Option<&Context>,
+  projection: &MinecraftProjectionArtifact,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, MINECRAFT_PROJECTION_PURPOSE, projection, MinecraftProjectionArtifact::validate).await
+}
+
+pub async fn read_minecraft_projection(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<MinecraftProjectionArtifact, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_PROJECTION_PURPOSE, MinecraftProjectionArtifact::validate).await
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProjectionViewportBounds {
@@ -93,12 +110,6 @@ impl MinecraftProjectionArtifact {
       basis = basis.with_known_limit("minecraft projection basis has no bound screenshot artifact");
     }
     basis
-  }
-
-  pub fn to_core_evidence_correlation_key(&self) -> EvidenceCorrelationKey {
-    let basis_frame_id =
-      self.projected_point.as_ref().map(|point| point.basis_frame_id.clone()).unwrap_or_else(|| self.spatial_frame_id.clone());
-    EvidenceCorrelationKey::new(basis_frame_id)
   }
 
   pub fn validate(&self) -> Result<(), String> {
@@ -262,27 +273,6 @@ mod tests {
     assert_eq!(basis.derivation_family, ProjectionDerivationFamily::CameraMatrix);
     assert_eq!(basis.confidence, 0.8);
     assert_eq!(basis.match_radius_px, Some(12.0));
-  }
-
-  #[test]
-  fn projection_artifact_exposes_core_evidence_correlation_key() {
-    let artifact = MinecraftProjectionArtifact::for_frame(
-      &test_frame(),
-      Some(MinecraftProjectedPoint {
-        screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
-        visibility: ProjectionVisibility::Visible,
-        match_radius_px: 12.0,
-        basis_frame_id: "frame-1".to_string(),
-        confidence: 0.8,
-      }),
-      None,
-    );
-
-    let key = artifact.to_core_evidence_correlation_key();
-
-    assert_eq!(key.basis_frame_id, "frame-1");
-    assert!(key.action_artifact_id.is_none());
-    assert!(key.verification_artifact_id.is_none());
   }
 
   #[test]

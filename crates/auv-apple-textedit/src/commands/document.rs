@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use auv_driver::DriverResult;
+use auv_driver::{DriverError, DriverResult};
 use serde::{Deserialize, Serialize};
 
 use crate::driver::{StepOutcome, TextEditDriver, VerificationOutcome};
@@ -73,25 +73,47 @@ pub struct DocumentCommandReport {
 }
 
 pub fn run_document_command(command: &DocumentCommand, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
+  run_document_command_with_checkpoint(command, driver, || Ok::<_, DriverError>(()))
+}
+
+/// Runs a document command while checking a caller-owned lifecycle boundary
+/// immediately before each UI-facing driver phase.
+pub fn run_document_command_with_checkpoint<E>(
+  command: &DocumentCommand,
+  driver: &mut impl TextEditDriver,
+  mut checkpoint: impl FnMut() -> Result<(), E>,
+) -> Result<DocumentCommandReport, E>
+where
+  E: From<DriverError>,
+{
   match command {
-    DocumentCommand::Write(command) => run_write(command, driver),
-    DocumentCommand::Compare(command) => run_compare(command, driver),
-    DocumentCommand::Focus(command) => run_focus(command, driver),
+    DocumentCommand::Write(command) => run_write(command, driver, &mut checkpoint),
+    DocumentCommand::Compare(command) => run_compare(command, driver, &mut checkpoint),
+    DocumentCommand::Focus(command) => run_focus(command, driver, &mut checkpoint),
   }
 }
 
-fn run_write(command: &DocumentWrite, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
-  let mut outcomes = vec![
-    driver.activate_app(&command.app_id, Duration::from_millis(command.activate_settle_ms))?,
-    driver.focus_text_input(&command.app_id, &command.focus_query, &command.focus_candidate)?,
-    driver.paste_text_preserve_clipboard(
-      &command.app_id,
-      &command.content,
-      command.replace,
-      Duration::from_millis(command.input_settle_ms),
-    )?,
-  ];
+fn run_write<E>(
+  command: &DocumentWrite,
+  driver: &mut impl TextEditDriver,
+  checkpoint: &mut impl FnMut() -> Result<(), E>,
+) -> Result<DocumentCommandReport, E>
+where
+  E: From<DriverError>,
+{
+  checkpoint()?;
+  let mut outcomes = vec![driver.activate_app(&command.app_id, Duration::from_millis(command.activate_settle_ms))?];
+  checkpoint()?;
+  outcomes.push(driver.focus_text_input(&command.app_id, &command.focus_query, &command.focus_candidate)?);
+  checkpoint()?;
+  outcomes.push(driver.paste_text_preserve_clipboard(
+    &command.app_id,
+    &command.content,
+    command.replace,
+    Duration::from_millis(command.input_settle_ms),
+  )?);
   let verification = if command.verify {
+    checkpoint()?;
     Some(driver.verify_ax_text(&command.app_id, &command.content, &command.compare_role)?)
   } else {
     None
@@ -104,7 +126,15 @@ fn run_write(command: &DocumentWrite, driver: &mut impl TextEditDriver) -> Drive
   })
 }
 
-fn run_compare(command: &DocumentCompare, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
+fn run_compare<E>(
+  command: &DocumentCompare,
+  driver: &mut impl TextEditDriver,
+  checkpoint: &mut impl FnMut() -> Result<(), E>,
+) -> Result<DocumentCommandReport, E>
+where
+  E: From<DriverError>,
+{
+  checkpoint()?;
   let verification = driver.verify_ax_text(&command.app_id, &command.content, &command.role)?;
   Ok(DocumentCommandReport {
     command: "document.compare",
@@ -113,7 +143,15 @@ fn run_compare(command: &DocumentCompare, driver: &mut impl TextEditDriver) -> D
   })
 }
 
-fn run_focus(command: &DocumentFocus, driver: &mut impl TextEditDriver) -> DriverResult<DocumentCommandReport> {
+fn run_focus<E>(
+  command: &DocumentFocus,
+  driver: &mut impl TextEditDriver,
+  checkpoint: &mut impl FnMut() -> Result<(), E>,
+) -> Result<DocumentCommandReport, E>
+where
+  E: From<DriverError>,
+{
+  checkpoint()?;
   let outcome = driver.focus_text_input(&command.app_id, &command.query, &command.candidate)?;
   Ok(DocumentCommandReport {
     command: "document.focus",

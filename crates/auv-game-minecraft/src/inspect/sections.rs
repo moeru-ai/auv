@@ -1,144 +1,212 @@
-//! Minecraft InspectSection factories (primary + quality/spatial).
+//! Minecraft inspect composition over canonical run snapshots.
 
-use std::sync::Arc;
+use auv_tracing::{RunSnapshot, RunStore};
 
-use auv_inspect_model::{InspectError, InspectSection, InspectSectionOutput};
-use auv_tracing_driver::store::{CanonicalRun, LocalStore};
-
+use super::quality::{MinecraftInspectedArtifact, MinecraftQualityBaseline, derive_quality_baseline};
 use super::render::{append_primary_sections, append_quality_and_spatial_sections};
-use crate::run_read::{
-  collect_quality_baseline_evidence_for_run, derive_minecraft_training_result_quality_baseline_report,
-  derive_minecraft_training_result_quality_verdict, extract_minecraft_holdout_render_quality_inspect_reports,
-  extract_minecraft_holdout_render_quality_manifests, extract_minecraft_projection_artifacts, extract_minecraft_spatial_bundle_manifests,
-  extract_minecraft_telemetry_sample_artifacts, extract_minecraft_training_job_inspect_reports, extract_minecraft_training_job_manifests,
-  extract_minecraft_training_launch_inspect_reports, extract_minecraft_training_launch_manifests,
-  extract_minecraft_training_package_inspect_reports, extract_minecraft_training_package_manifests,
-  extract_minecraft_training_result_artifact_fetch_inspect_reports, extract_minecraft_training_result_artifact_fetch_manifests,
-  extract_minecraft_training_result_holdout_preview_inspect_reports, extract_minecraft_training_result_holdout_preview_manifests,
-  extract_minecraft_training_result_inspect_reports, extract_minecraft_training_result_manifests,
-  extract_minecraft_training_result_semantic_inspect_reports, extract_minecraft_training_result_semantic_manifests,
-  extract_minecraft_training_result_spatial_query_inspect_reports, extract_minecraft_training_result_spatial_query_manifests,
-  quality_baseline_profile_v1, quality_baseline_verdict_thresholds_probe_v1, quality_baseline_verdict_thresholds_trained_render_v1,
+use crate::artifact::{MINECRAFT_PROJECTION_PURPOSE, read_minecraft_projection};
+use crate::run_read::{MinecraftArtifactReadError, artifact_uris_for_purpose, validate_snapshot_authority};
+use crate::scene_packet::{MINECRAFT_SCENE_PACKET_PURPOSE, read_minecraft_scene_packet};
+use crate::training_job::{MINECRAFT_TRAINING_JOB_PURPOSE, read_minecraft_training_job};
+use crate::training_package::{MINECRAFT_TRAINING_PACKAGE_PURPOSE, read_minecraft_training_package};
+use crate::training_result::{MINECRAFT_TRAINING_RESULT_PURPOSE, read_minecraft_training_result};
+use crate::training_result_holdout_preview::{MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE, read_minecraft_training_holdout_preview};
+use crate::training_result_holdout_render_quality::{
+  MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE, read_minecraft_training_holdout_render_quality,
+};
+use crate::training_result_semantic::{MINECRAFT_TRAINING_SEMANTIC_PURPOSE, read_minecraft_training_semantic};
+use crate::training_result_spatial_query::{MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE, read_minecraft_training_spatial_query};
+use crate::{
+  MinecraftProjectionArtifact, ScenePacketManifest, TrainingLaunchJobManifest, TrainingPackageManifest,
+  TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityManifest, TrainingResultManifest, TrainingResultSemanticManifest,
+  TrainingResultSpatialQueryActionReadiness, TrainingResultSpatialQueryManifest, derive_action_readiness,
 };
 
-pub struct MinecraftPrimarySection;
-
-impl InspectSection for MinecraftPrimarySection {
-  fn id(&self) -> &'static str {
-    "minecraft_primary"
-  }
-
-  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text: render_minecraft_primary_text(store, run)?,
-      json: None,
-    }))
-  }
+pub enum MinecraftInspectSection {
+  Primary(String),
+  QualitySpatial(String),
 }
 
-pub struct MinecraftQualitySpatialSection;
-
-impl InspectSection for MinecraftQualitySpatialSection {
-  fn id(&self) -> &'static str {
-    "minecraft_quality_spatial"
+impl MinecraftInspectSection {
+  pub fn id(&self) -> &'static str {
+    match self {
+      Self::Primary(_) => "minecraft_primary",
+      Self::QualitySpatial(_) => "minecraft_quality_spatial",
+    }
   }
 
-  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text: render_minecraft_quality_spatial_text(store, run)?,
-      json: None,
-    }))
+  pub fn text(&self) -> &str {
+    match self {
+      Self::Primary(text) | Self::QualitySpatial(text) => text,
+    }
+  }
+
+  pub fn into_text(self) -> String {
+    match self {
+      Self::Primary(text) | Self::QualitySpatial(text) => text,
+    }
   }
 }
 
-pub fn render_minecraft_primary_text(store: &LocalStore, run: &CanonicalRun) -> Result<String, InspectError> {
-  let projection = extract_minecraft_projection_artifacts(store, run)?;
-  let telemetry = extract_minecraft_telemetry_sample_artifacts(store, run)?;
-  let spatial = extract_minecraft_spatial_bundle_manifests(store, run)?;
-  let pkg_m = extract_minecraft_training_package_manifests(store, run)?;
-  let pkg_r = extract_minecraft_training_package_inspect_reports(store, run)?;
-  let launch_m = extract_minecraft_training_launch_manifests(store, run)?;
-  let launch_r = extract_minecraft_training_launch_inspect_reports(store, run)?;
-  let job_m = extract_minecraft_training_job_manifests(store, run)?;
-  let job_r = extract_minecraft_training_job_inspect_reports(store, run)?;
-  let result_m = extract_minecraft_training_result_manifests(store, run)?;
-  let result_r = extract_minecraft_training_result_inspect_reports(store, run)?;
-  let fetch_m = extract_minecraft_training_result_artifact_fetch_manifests(store, run)?;
-  let fetch_r = extract_minecraft_training_result_artifact_fetch_inspect_reports(store, run)?;
-  let sem_m = extract_minecraft_training_result_semantic_manifests(store, run)?;
-  let sem_r = extract_minecraft_training_result_semantic_inspect_reports(store, run)?;
-  let holdout_m = extract_minecraft_training_result_holdout_preview_manifests(store, run)?;
-  let holdout_r = extract_minecraft_training_result_holdout_preview_inspect_reports(store, run)?;
-  let rq_m = extract_minecraft_holdout_render_quality_manifests(store, run)?;
-  let rq_r = extract_minecraft_holdout_render_quality_inspect_reports(store, run)?;
-  let mut output = String::new();
-  append_primary_sections(
-    &mut output,
-    &projection,
-    &telemetry,
-    &spatial,
-    &pkg_m,
-    &pkg_r,
-    &launch_m,
-    &launch_r,
-    &job_m,
-    &job_r,
-    &result_m,
-    &result_r,
-    &fetch_m,
-    &fetch_r,
-    &sem_m,
-    &sem_r,
-    &holdout_m,
-    &holdout_r,
-    &rq_m,
-    &rq_r,
-  );
-  Ok(output)
+pub(crate) struct MinecraftPrimaryInspection {
+  pub projections: Vec<MinecraftInspectedArtifact<MinecraftProjectionArtifact>>,
+  pub scene_packets: Vec<MinecraftInspectedArtifact<ScenePacketManifest>>,
+  pub training_packages: Vec<MinecraftInspectedArtifact<TrainingPackageManifest>>,
+  pub training_jobs: Vec<MinecraftInspectedArtifact<TrainingLaunchJobManifest>>,
+  pub training_results: Vec<MinecraftInspectedArtifact<TrainingResultManifest>>,
+  pub semantics: Vec<MinecraftInspectedArtifact<TrainingResultSemanticManifest>>,
+  pub holdout_previews: Vec<MinecraftInspectedArtifact<TrainingResultHoldoutPreviewManifest>>,
+  pub render_quality: Vec<MinecraftInspectedArtifact<TrainingResultHoldoutRenderQualityManifest>>,
 }
 
-pub fn render_minecraft_quality_spatial_text(store: &LocalStore, run: &CanonicalRun) -> Result<String, InspectError> {
-  let spatial_m = extract_minecraft_training_result_spatial_query_manifests(store, run)?;
-  let spatial_r = extract_minecraft_training_result_spatial_query_inspect_reports(store, run)?;
-  let run_id = run.run.run_id.as_str();
-  let quality_baseline_report = quality_baseline_profile_v1().ok().and_then(|profile| {
-    collect_quality_baseline_evidence_for_run(store, run_id, &profile).ok().map(|bundle| {
-      derive_minecraft_training_result_quality_baseline_report(
-        &profile,
-        bundle.spatial_query.as_ref(),
-        bundle.holdout_preview.as_ref(),
-        bundle.render_quality.as_ref(),
-        &bundle.collection_issues,
-      )
-    })
-  });
-  let (quality_verdict_probe, quality_verdict_trained_render) = quality_baseline_report.as_ref().map_or((None, None), |report| {
-    let probe = quality_baseline_verdict_thresholds_probe_v1()
-      .ok()
-      .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
-    let trained_render = quality_baseline_verdict_thresholds_trained_render_v1()
-      .ok()
-      .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
-    (probe, trained_render)
-  });
-  let mut output = String::new();
-  append_quality_and_spatial_sections(
-    &mut output,
-    &spatial_m,
-    &spatial_r,
-    quality_baseline_report.as_ref(),
-    quality_verdict_probe.as_ref(),
-    quality_verdict_trained_render.as_ref(),
-  );
-  Ok(output)
+pub struct MinecraftSpatialQueryInspection {
+  pub(crate) artifact: MinecraftInspectedArtifact<TrainingResultSpatialQueryManifest>,
+  pub(crate) readiness: TrainingResultSpatialQueryActionReadiness,
 }
 
-pub fn inspect_sections_primary() -> Vec<Arc<dyn InspectSection>> {
-  vec![Arc::new(MinecraftPrimarySection)]
+impl MinecraftSpatialQueryInspection {
+  pub fn artifact(&self) -> &MinecraftInspectedArtifact<TrainingResultSpatialQueryManifest> {
+    &self.artifact
+  }
 }
 
-pub fn inspect_sections_quality_spatial() -> Vec<Arc<dyn InspectSection>> {
-  vec![Arc::new(MinecraftQualitySpatialSection)]
+pub struct MinecraftQualitySpatialInspection {
+  pub(crate) spatial_queries: Vec<MinecraftSpatialQueryInspection>,
+  baseline: MinecraftQualityBaseline,
+}
+
+impl MinecraftQualitySpatialInspection {
+  pub fn quality_baseline(&self) -> &MinecraftQualityBaseline {
+    &self.baseline
+  }
+
+  pub fn spatial_queries(&self) -> &[MinecraftSpatialQueryInspection] {
+    &self.spatial_queries
+  }
+}
+
+pub async fn inspect_sections_primary(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<MinecraftInspectSection>, MinecraftArtifactReadError> {
+  let inspection = read_primary_inspection(store, snapshot).await?;
+  let mut text = String::new();
+  append_primary_sections(&mut text, &inspection);
+  Ok(vec![MinecraftInspectSection::Primary(text)])
+}
+
+pub async fn inspect_sections_quality_spatial(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<MinecraftInspectSection>, MinecraftArtifactReadError> {
+  let inspection = read_minecraft_quality_spatial_inspection(store, snapshot).await?;
+  let mut text = String::new();
+  append_quality_and_spatial_sections(&mut text, &inspection);
+  Ok(vec![MinecraftInspectSection::QualitySpatial(text)])
+}
+
+pub async fn read_minecraft_quality_spatial_inspection(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<MinecraftQualitySpatialInspection, MinecraftArtifactReadError> {
+  validate_snapshot_authority(store, snapshot)?;
+
+  let mut spatial_queries = Vec::new();
+  let mut baseline_spatial_queries = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_TRAINING_SPATIAL_QUERY_PURPOSE)? {
+    let payload = read_minecraft_training_spatial_query(store, snapshot, &uri).await?;
+    let artifact = MinecraftInspectedArtifact::new(uri, payload);
+    let readiness = derive_action_readiness(&artifact.payload);
+    baseline_spatial_queries.push(artifact.clone());
+    spatial_queries.push(MinecraftSpatialQueryInspection {
+      artifact,
+      readiness,
+    });
+  }
+  let holdout_previews = read_holdout_previews(store, snapshot).await?;
+  let render_quality = read_render_quality(store, snapshot).await?;
+  let baseline = derive_quality_baseline(&baseline_spatial_queries, &holdout_previews, &render_quality);
+
+  Ok(MinecraftQualitySpatialInspection {
+    spatial_queries,
+    baseline,
+  })
+}
+
+async fn read_primary_inspection(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<MinecraftPrimaryInspection, MinecraftArtifactReadError> {
+  validate_snapshot_authority(store, snapshot)?;
+
+  let mut projections = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_PROJECTION_PURPOSE)? {
+    let payload = read_minecraft_projection(store, snapshot, &uri).await?;
+    projections.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+
+  let mut scene_packets = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_SCENE_PACKET_PURPOSE)? {
+    let payload = read_minecraft_scene_packet(store, snapshot, &uri).await?;
+    scene_packets.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+
+  let mut training_packages = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_TRAINING_PACKAGE_PURPOSE)? {
+    let payload = read_minecraft_training_package(store, snapshot, &uri).await?;
+    training_packages.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+
+  let mut training_jobs = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_TRAINING_JOB_PURPOSE)? {
+    let payload = read_minecraft_training_job(store, snapshot, &uri).await?;
+    training_jobs.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+
+  let mut training_results = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_TRAINING_RESULT_PURPOSE)? {
+    let payload = read_minecraft_training_result(store, snapshot, &uri).await?;
+    training_results.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+
+  let mut semantics = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_TRAINING_SEMANTIC_PURPOSE)? {
+    let payload = read_minecraft_training_semantic(store, snapshot, &uri).await?;
+    semantics.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+
+  Ok(MinecraftPrimaryInspection {
+    projections,
+    scene_packets,
+    training_packages,
+    training_jobs,
+    training_results,
+    semantics,
+    holdout_previews: read_holdout_previews(store, snapshot).await?,
+    render_quality: read_render_quality(store, snapshot).await?,
+  })
+}
+
+async fn read_holdout_previews(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<MinecraftInspectedArtifact<TrainingResultHoldoutPreviewManifest>>, MinecraftArtifactReadError> {
+  let mut values = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_TRAINING_HOLDOUT_PREVIEW_PURPOSE)? {
+    let payload = read_minecraft_training_holdout_preview(store, snapshot, &uri).await?;
+    values.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+  Ok(values)
+}
+
+async fn read_render_quality(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<Vec<MinecraftInspectedArtifact<TrainingResultHoldoutRenderQualityManifest>>, MinecraftArtifactReadError> {
+  let mut values = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, MINECRAFT_TRAINING_HOLDOUT_RENDER_QUALITY_PURPOSE)? {
+    let payload = read_minecraft_training_holdout_render_quality(store, snapshot, &uri).await?;
+    values.push(MinecraftInspectedArtifact::new(uri, payload));
+  }
+  Ok(values)
 }

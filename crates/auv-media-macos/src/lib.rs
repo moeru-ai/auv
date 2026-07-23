@@ -17,6 +17,94 @@ pub mod output;
 pub use cli::OutputFormat;
 pub use error::MediaError;
 
+#[cfg(feature = "tracing")]
+mod tracing {
+  use std::time::Duration;
+
+  use auv_tracing::{AttributeKey, AttributeValue, Attributes, SpanSpec};
+
+  use super::MediaCommand;
+
+  struct NowPlayingSpan;
+
+  impl SpanSpec for NowPlayingSpan {
+    const NAME: &'static str = "auv.media.now_playing";
+
+    fn attributes(&self) -> Attributes {
+      Attributes::empty()
+    }
+  }
+
+  struct SendCommandSpan {
+    command: MediaCommand,
+  }
+
+  impl SpanSpec for SendCommandSpan {
+    const NAME: &'static str = "auv.media.send_command";
+
+    fn attributes(&self) -> Attributes {
+      Attributes::try_from_iter([(
+        AttributeKey::parse("auv.media.command").expect("static media command attribute key is valid"),
+        AttributeValue::string(self.command.label()).expect("media command labels are bounded"),
+      )])
+      .expect("static media command attributes are bounded")
+    }
+  }
+
+  struct SeekSpan {
+    position: Duration,
+  }
+
+  impl SpanSpec for SeekSpan {
+    const NAME: &'static str = "auv.media.seek";
+
+    fn attributes(&self) -> Attributes {
+      let Ok(position_millis) = i64::try_from(self.position.as_millis()) else {
+        return Attributes::empty();
+      };
+      let Ok(position_millis) = AttributeValue::integer(position_millis) else {
+        return Attributes::empty();
+      };
+      Attributes::try_from_iter([(
+        AttributeKey::parse("auv.media.position_millis").expect("static media position attribute key is valid"),
+        position_millis,
+      )])
+      .expect("static media position attributes are bounded")
+    }
+  }
+
+  pub(super) fn now_playing<T>(operation: impl FnOnce() -> T) -> T {
+    auv_tracing::start_span(NowPlayingSpan).in_scope(operation)
+  }
+
+  pub(super) fn send_command<T>(command: MediaCommand, operation: impl FnOnce() -> T) -> T {
+    auv_tracing::start_span(SendCommandSpan { command }).in_scope(operation)
+  }
+
+  pub(super) fn seek<T>(position: Duration, operation: impl FnOnce() -> T) -> T {
+    auv_tracing::start_span(SeekSpan { position }).in_scope(operation)
+  }
+}
+
+#[cfg(not(feature = "tracing"))]
+mod tracing {
+  use std::time::Duration;
+
+  use super::MediaCommand;
+
+  pub(super) fn now_playing<T>(operation: impl FnOnce() -> T) -> T {
+    operation()
+  }
+
+  pub(super) fn send_command<T>(_command: MediaCommand, operation: impl FnOnce() -> T) -> T {
+    operation()
+  }
+
+  pub(super) fn seek<T>(_position: Duration, operation: impl FnOnce() -> T) -> T {
+    operation()
+  }
+}
+
 /// A structured snapshot of the system now-playing state.
 ///
 /// [`Default`] is the idle state (nothing owns the slot) — useful for callers
@@ -101,13 +189,13 @@ fn parse_get(json: &str) -> Result<NowPlayingState, MediaError> {
 /// Read the current system now-playing state.
 #[cfg(target_os = "macos")]
 pub fn now_playing() -> Result<NowPlayingState, MediaError> {
-  parse_get(&adapter::run_now_playing_get()?)
+  tracing::now_playing(|| parse_get(&adapter::run_now_playing_get()?))
 }
 
 /// Read the current system now-playing state (non-macOS stub).
 #[cfg(not(target_os = "macos"))]
 pub fn now_playing() -> Result<NowPlayingState, MediaError> {
-  Err(MediaError::Unsupported)
+  tracing::now_playing(|| Err(MediaError::Unsupported))
 }
 
 /// A transport command sent to whichever app owns the system now-playing slot.
@@ -152,25 +240,25 @@ impl MediaCommand {
 /// Send a transport command to the current now-playing app.
 #[cfg(target_os = "macos")]
 pub fn send_command(command: MediaCommand) -> Result<(), MediaError> {
-  adapter::send_command(command.command_id())
+  tracing::send_command(command, || adapter::send_command(command.command_id()))
 }
 
 /// Send a transport command to the current now-playing app (non-macOS stub).
 #[cfg(not(target_os = "macos"))]
-pub fn send_command(_command: MediaCommand) -> Result<(), MediaError> {
-  Err(MediaError::Unsupported)
+pub fn send_command(command: MediaCommand) -> Result<(), MediaError> {
+  tracing::send_command(command, || Err(MediaError::Unsupported))
 }
 
 /// Seek the current now-playing app to `position` from the start of the track.
 #[cfg(target_os = "macos")]
 pub fn seek(position: std::time::Duration) -> Result<(), MediaError> {
-  adapter::seek(position.as_micros())
+  tracing::seek(position, || adapter::seek(position.as_micros()))
 }
 
 /// Seek the current now-playing app (non-macOS stub).
 #[cfg(not(target_os = "macos"))]
-pub fn seek(_position: std::time::Duration) -> Result<(), MediaError> {
-  Err(MediaError::Unsupported)
+pub fn seek(position: std::time::Duration) -> Result<(), MediaError> {
+  tracing::seek(position, || Err(MediaError::Unsupported))
 }
 
 #[cfg(test)]
@@ -249,5 +337,153 @@ mod tests {
     assert_eq!(MediaCommand::TogglePlayPause.command_id(), 2);
     assert_eq!(MediaCommand::NextTrack.command_id(), 4);
     assert_eq!(MediaCommand::PreviousTrack.command_id(), 5);
+  }
+
+  #[cfg(not(target_os = "macos"))]
+  #[test]
+  fn non_macos_public_operations_return_unsupported_without_platform_side_effects() {
+    assert_eq!(now_playing(), Err(MediaError::Unsupported));
+    assert_eq!(send_command(MediaCommand::Pause), Err(MediaError::Unsupported));
+    assert_eq!(seek(std::time::Duration::ZERO), Err(MediaError::Unsupported));
+  }
+
+  #[cfg(feature = "tracing")]
+  mod tracing_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use auv_tracing::{
+      AttributeKey, AttributeValue, AuthorityId, Context, Dispatch, MemoryRunStore, RunId, RunSnapshot, RunStore, configure, dispatcher,
+    };
+
+    use super::*;
+
+    struct TestTracing {
+      dispatch: Dispatch,
+      store: Arc<MemoryRunStore>,
+      run_id: RunId,
+      root: Context,
+    }
+
+    impl TestTracing {
+      fn memory() -> Self {
+        let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+        let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch should build");
+        let run_id = RunId::new();
+        let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+        Self {
+          dispatch,
+          store,
+          run_id,
+          root,
+        }
+      }
+
+      fn flush_snapshot(&self) -> RunSnapshot {
+        futures_executor::block_on(self.dispatch.flush()).expect("span writes should flush");
+        futures_executor::block_on(self.store.load_snapshot(self.run_id))
+          .expect("snapshot read should succeed")
+          .expect("instrumented run should exist")
+      }
+    }
+
+    #[test]
+    fn now_playing_preserves_result_and_only_active_dispatch_records_span() {
+      let tracing = TestTracing::memory();
+      let expected: Result<NowPlayingState, MediaError> = Ok(NowPlayingState {
+        present: true,
+        title: Some("fixture title".to_string()),
+        ..NowPlayingState::default()
+      });
+
+      let without = crate::tracing::now_playing(|| expected.clone());
+      let with = tracing.root.in_scope(|| crate::tracing::now_playing(|| expected.clone()));
+
+      assert_eq!(without, expected);
+      assert_eq!(with, expected);
+      let snapshot = tracing.flush_snapshot();
+      let spans = snapshot.spans().values().collect::<Vec<_>>();
+      assert_eq!(spans.len(), 1);
+      assert_eq!(spans[0].started().name().as_str(), "auv.media.now_playing");
+      assert!(spans[0].started().attributes().is_empty());
+      assert!(spans[0].ended().is_some());
+      assert!(snapshot.events().is_empty());
+    }
+
+    #[test]
+    fn send_command_preserves_result_and_records_bounded_command_attribute() {
+      let tracing = TestTracing::memory();
+      let expected: Result<(), MediaError> = Err(MediaError::Unsupported);
+
+      let without = crate::tracing::send_command(MediaCommand::Pause, || expected.clone());
+      let with = tracing.root.in_scope(|| crate::tracing::send_command(MediaCommand::Pause, || expected.clone()));
+
+      assert_eq!(without, expected);
+      assert_eq!(with, expected);
+      let snapshot = tracing.flush_snapshot();
+      let spans = snapshot.spans().values().collect::<Vec<_>>();
+      assert_eq!(spans.len(), 1);
+      assert_eq!(spans[0].started().name().as_str(), "auv.media.send_command");
+      let command_key = AttributeKey::parse("auv.media.command").unwrap();
+      assert_eq!(spans[0].started().attributes().get(&command_key), Some(&AttributeValue::string("pause").unwrap()));
+      assert!(spans[0].ended().is_some());
+      assert!(snapshot.events().is_empty());
+    }
+
+    #[test]
+    fn seek_preserves_result_and_records_exact_position_millis() {
+      let tracing = TestTracing::memory();
+      let position = Duration::from_millis(1_234);
+      let expected: Result<(), MediaError> = Ok(());
+
+      let without = crate::tracing::seek(position, || expected.clone());
+      let with = tracing.root.in_scope(|| crate::tracing::seek(position, || expected.clone()));
+
+      assert_eq!(without, expected);
+      assert_eq!(with, expected);
+      let snapshot = tracing.flush_snapshot();
+      let spans = snapshot.spans().values().collect::<Vec<_>>();
+      assert_eq!(spans.len(), 1);
+      assert_eq!(spans[0].started().name().as_str(), "auv.media.seek");
+      let position_key = AttributeKey::parse("auv.media.position_millis").unwrap();
+      assert_eq!(spans[0].started().attributes().get(&position_key), Some(&AttributeValue::integer(1_234).unwrap()));
+      assert!(spans[0].ended().is_some());
+      assert!(snapshot.events().is_empty());
+    }
+
+    #[test]
+    fn seek_records_maximum_exact_position_millis_without_changing_result() {
+      let tracing = TestTracing::memory();
+      let expected: Result<(), MediaError> = Err(MediaError::Unsupported);
+      let position = Duration::from_millis(9_007_199_254_740_991);
+
+      let with = tracing.root.in_scope(|| crate::tracing::seek(position, || expected.clone()));
+
+      assert_eq!(with, expected);
+      let snapshot = tracing.flush_snapshot();
+      let span = snapshot.spans().values().next().expect("seek span");
+      assert_eq!(span.started().name().as_str(), "auv.media.seek");
+      let position_key = AttributeKey::parse("auv.media.position_millis").unwrap();
+      assert_eq!(span.started().attributes().get(&position_key), Some(&AttributeValue::integer(9_007_199_254_740_991).unwrap()));
+      assert!(span.ended().is_some());
+      assert!(snapshot.events().is_empty());
+    }
+
+    #[test]
+    fn seek_omits_one_above_maximum_exact_position_millis_without_changing_result() {
+      let tracing = TestTracing::memory();
+      let expected: Result<(), MediaError> = Ok(());
+      let position = Duration::from_millis(9_007_199_254_740_992);
+
+      let with = tracing.root.in_scope(|| crate::tracing::seek(position, || expected.clone()));
+
+      assert_eq!(with, expected);
+      let snapshot = tracing.flush_snapshot();
+      let span = snapshot.spans().values().next().expect("seek span");
+      assert_eq!(span.started().name().as_str(), "auv.media.seek");
+      assert!(span.started().attributes().is_empty());
+      assert!(span.ended().is_some());
+      assert!(snapshot.events().is_empty());
+    }
   }
 }

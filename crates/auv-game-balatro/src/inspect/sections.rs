@@ -1,60 +1,61 @@
-//! Balatro InspectSection factory — loads store data and emits legacy fragments.
+//! Balatro inspect composition over canonical run snapshots.
 
-use std::sync::Arc;
-
-use auv_inspect_model::{InspectError, InspectSection, InspectSectionOutput};
-use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+use auv_tracing::{RunSnapshot, RunStore};
 
 use super::render::append_sections;
-use crate::run_read::{
-  extract_balatro_card_detection_eval_witness_inspect_reports, extract_balatro_card_detection_eval_witness_manifests,
-  extract_balatro_card_detection_quality_inspect_reports, extract_balatro_card_detection_quality_manifests,
-  extract_balatro_card_detection_semantic_inspect_reports, extract_balatro_card_detection_semantic_manifests,
-  extract_balatro_card_detection_spatial_query_inspect_reports, extract_balatro_card_detection_spatial_query_manifests,
-};
+use crate::card_detection_eval_witness::{CARD_DETECTION_EVAL_WITNESS_PURPOSE, read_card_detection_witness};
+use crate::card_detection_quality::{CARD_DETECTION_QUALITY_PURPOSE, read_card_detection_quality};
+use crate::card_detection_semantic::{CARD_DETECTION_SEMANTIC_PURPOSE, read_card_detection_semantic};
+use crate::card_detection_spatial_query::{CARD_DETECTION_SPATIAL_QUERY_PURPOSE, read_card_detection_spatial_query};
+use crate::run_read::{BalatroArtifactReadError, artifact_uris_for_purpose, validate_snapshot_authority};
 
-/// Single balatro section covering all ordinary card-detection inspect headers.
 pub struct BalatroCardDetectionSection;
 
-impl InspectSection for BalatroCardDetectionSection {
-  fn id(&self) -> &'static str {
-    "balatro_card_detection"
-  }
+impl BalatroCardDetectionSection {
+  pub const ID: &'static str = "balatro_card_detection";
 
-  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    let text = render_balatro_card_detection_text(store, run)?;
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text,
-      json: None,
-    }))
+  pub async fn collect(&self, store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<String, BalatroArtifactReadError> {
+    render_balatro_card_detection_text(store, snapshot).await
   }
 }
 
-pub fn render_balatro_card_detection_text(store: &LocalStore, run: &CanonicalRun) -> Result<String, InspectError> {
-  let semantic_manifests = extract_balatro_card_detection_semantic_manifests(store, run)?;
-  let semantic_reports = extract_balatro_card_detection_semantic_inspect_reports(store, run)?;
-  let spatial_manifests = extract_balatro_card_detection_spatial_query_manifests(store, run)?;
-  let spatial_reports = extract_balatro_card_detection_spatial_query_inspect_reports(store, run)?;
-  let witness_manifests = extract_balatro_card_detection_eval_witness_manifests(store, run)?;
-  let witness_reports = extract_balatro_card_detection_eval_witness_inspect_reports(store, run)?;
-  let quality_manifests = extract_balatro_card_detection_quality_manifests(store, run)?;
-  let quality_reports = extract_balatro_card_detection_quality_inspect_reports(store, run)?;
+pub async fn render_balatro_card_detection_text(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<String, BalatroArtifactReadError> {
+  validate_snapshot_authority(store, snapshot)?;
+
+  let mut semantic_manifests = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, CARD_DETECTION_SEMANTIC_PURPOSE)? {
+    let manifest = read_card_detection_semantic(store, snapshot, &uri).await?;
+    semantic_manifests.push((uri, manifest));
+  }
+
+  let mut spatial_query_manifests = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, CARD_DETECTION_SPATIAL_QUERY_PURPOSE)? {
+    let manifest = read_card_detection_spatial_query(store, snapshot, &uri).await?;
+    spatial_query_manifests.push((uri, manifest));
+  }
+
+  let mut witness_manifests = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, CARD_DETECTION_EVAL_WITNESS_PURPOSE)? {
+    let manifest = read_card_detection_witness(store, snapshot, &uri).await?;
+    witness_manifests.push((uri, manifest));
+  }
+
+  let mut quality_manifests = Vec::new();
+  for uri in artifact_uris_for_purpose(store, snapshot, CARD_DETECTION_QUALITY_PURPOSE)? {
+    let manifest = read_card_detection_quality(store, snapshot, &uri).await?;
+    quality_manifests.push((uri, manifest));
+  }
+
   let mut output = String::new();
-  append_sections(
-    &mut output,
-    &semantic_manifests,
-    &semantic_reports,
-    &spatial_manifests,
-    &spatial_reports,
-    &witness_manifests,
-    &witness_reports,
-    &quality_manifests,
-    &quality_reports,
-  );
+  append_sections(&mut output, &semantic_manifests, &spatial_query_manifests, &witness_manifests, &quality_manifests);
   Ok(output)
 }
 
-pub fn inspect_sections() -> Vec<Arc<dyn InspectSection>> {
-  vec![Arc::new(BalatroCardDetectionSection)]
+/// TODO: Remove this empty legacy factory in run-contract Task 22, when the
+/// product composer moves from its synchronous local-store trait to canonical
+/// async `RunStore` sections. New Balatro inspection uses
+/// [`BalatroCardDetectionSection::collect`].
+#[doc(hidden)]
+pub fn inspect_sections<T>() -> Vec<T> {
+  Vec::new()
 }

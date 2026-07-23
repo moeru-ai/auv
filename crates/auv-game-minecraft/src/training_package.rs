@@ -3,6 +3,7 @@ use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,34 @@ pub type TrainingPackageResult<T> = Result<T, String>;
 
 pub const TRAINING_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_PACKAGE_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const MINECRAFT_TRAINING_PACKAGE_PURPOSE: &str = "auv.minecraft.training.package";
+
+pub async fn publish_minecraft_training_package(
+  context: Option<&Context>,
+  package: &TrainingPackageManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, MINECRAFT_TRAINING_PACKAGE_PURPOSE, package, validate_training_package_payload).await
+}
+
+pub async fn read_minecraft_training_package(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<TrainingPackageManifest, crate::run_read::MinecraftArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_TRAINING_PACKAGE_PURPOSE, validate_training_package_payload).await
+}
+
+fn validate_training_package_payload(package: &TrainingPackageManifest) -> Result<(), String> {
+  if package.schema_version != TRAINING_PACKAGE_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported Minecraft training package schema_version {} (expected {TRAINING_PACKAGE_SCHEMA_VERSION})",
+      package.schema_version
+    ));
+  }
+  // TODO(minecraft-training-package-invariants): Add cross-field checks when
+  // the owning manifest contract declares invariants beyond schema_version.
+  Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrainingPackageInputs {
@@ -347,7 +376,7 @@ pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPa
     known_limits: compatibility_known_limits,
   };
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let manifest_path = inputs.output_dir.join("run.json");
   let cameras_path = inputs.output_dir.join("cameras.json");
   let known_limits_path = inputs.output_dir.join("known_limits.json");

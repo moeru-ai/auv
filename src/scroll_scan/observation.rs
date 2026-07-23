@@ -5,11 +5,11 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::contract::{
-  ArtifactRef, NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox,
-  RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, SurfaceNode,
+  NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox, RecognitionResult,
+  RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, SurfaceNode,
 };
 use crate::model::{AuvResult, now_millis};
-use auv_tracing_driver::trace::{ArtifactRecordV1Alpha1, RunId, SpanId};
+use auv_tracing::{RunId, SpanId};
 
 use super::{CollectionObservation, ObservationCluster, ScanRect, ScanTarget};
 
@@ -79,13 +79,13 @@ fn merge_decision(left: &CollectionObservation, right: &CollectionObservation) -
   if attribute_values_conflict(left, right, "recognized_item_id") {
     return None;
   }
-  if let Some(recognized_item_id) = shared_attribute(left, right, "recognized_item_id") {
-    if !recognized_item_id.is_empty() {
-      return Some(MergeDecision {
-        reason: "same_recognized_item_adjacent_page",
-        confidence: 0.94,
-      });
-    }
+  if let Some(recognized_item_id) = shared_attribute(left, right, "recognized_item_id")
+    && !recognized_item_id.is_empty()
+  {
+    return Some(MergeDecision {
+      reason: "same_recognized_item_adjacent_page",
+      confidence: 0.94,
+    });
   }
 
   let left_slot_identity = recognition_slot_identity(left);
@@ -252,63 +252,29 @@ fn observation_attributes_from_recognized_item(
     attributes.insert("row_candidate_index".to_string(), row_index.to_string());
   }
   if let Some(text_fragments) = recognized_item_text_fragments(item) {
-    if !text_fragments.is_empty() {
-      attributes.insert("text_fragments".to_string(), text_fragments.join(" | "));
-    }
+    attributes.insert("text_fragments".to_string(), text_fragments.join(" | "));
   }
   attributes
 }
 
-pub(crate) fn surface_nodes_from_observations(run_id: &RunId, span_id: &SpanId, observations: &[CollectionObservation]) -> Vec<SurfaceNode> {
+pub(crate) fn surface_nodes_from_observations(run_id: RunId, span_id: SpanId, observations: &[CollectionObservation]) -> Vec<SurfaceNode> {
   observations.iter().map(|observation| surface_node_from_observation(run_id, span_id, observation)).collect()
 }
 
-/// Build a v0 `ObservationSnapshot` record for one scanned page. The
-/// `nodes` field projects this page's observations into the unified UI layer;
-/// the snapshot context captures who, what, when, and where.
-///
-/// Provenance limitations: scroll scan now threads observe-artifact
-/// `ArtifactRef`s into the snapshot record, but it still does not emit a
-/// separate capture-contract artifact. Per-node `source_artifacts` remain path
-/// strings for now because `SurfaceNode` has not yet grown structured artifact
-/// refs.
 pub(crate) fn build_page_observation_snapshot(
-  run_id: &RunId,
-  span_id: &SpanId,
+  run_id: RunId,
+  span_id: SpanId,
   page_index: usize,
   target: &ScanTarget,
   page_observations: &[CollectionObservation],
-  screenshot_artifact: Option<&Path>,
-  screenshot_artifact_record: Option<&ArtifactRecordV1Alpha1>,
-  evidence_artifacts: &[ArtifactRecordV1Alpha1],
   new_observation_count: usize,
 ) -> ObservationSnapshot {
   let nodes = surface_nodes_from_observations(run_id, span_id, page_observations);
-  let screenshot_path = screenshot_artifact.map(|path| path.display().to_string());
-  let capture_artifact = screenshot_artifact_record.map(|artifact| artifact_ref(run_id, artifact));
-  let evidence = evidence_artifacts.iter().map(|artifact| artifact_ref(run_id, artifact)).collect::<Vec<_>>();
-  let observation_count = page_observations.len();
-  let mut detail = serde_json::Map::new();
-  detail.insert("page_index".to_string(), Value::from(page_index));
-  detail.insert("observation_count".to_string(), Value::from(observation_count));
-  detail.insert("new_observation_count".to_string(), Value::from(new_observation_count));
-  if let Some(path) = &screenshot_path {
-    detail.insert("screenshot_artifact".to_string(), Value::from(path.clone()));
-  }
-
-  let mut known_limits = Vec::new();
-  if screenshot_artifact.is_none() {
-    known_limits.push("scroll_scan: observe response did not include a png artifact for this page".to_string());
-  }
-  if evidence.is_empty() {
-    known_limits.push("scroll_scan: observe response did not expose any evidence artifacts for this page".to_string());
-  }
-
   ObservationSnapshot {
     api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
-    snapshot_id: format!("snapshot_{}_{:04}", run_id, page_index + 1),
-    run_id: run_id.clone(),
-    span_id: span_id.clone(),
+    snapshot_id: format!("snapshot_{run_id}_{:04}", page_index + 1),
+    run_id,
+    span_id,
     captured_at_millis: now_millis(),
     source: infer_observation_source(page_observations),
     scope: RecognitionScope {
@@ -324,23 +290,18 @@ pub(crate) fn build_page_observation_snapshot(
         right: target.region.right_ratio,
         bottom: target.region.bottom_ratio,
       }),
-      capture_artifact,
+      capture_artifact: None,
       capture_contract_artifact: None,
     },
     capture_contract_ref: None,
-    evidence,
+    evidence: Vec::new(),
     nodes,
-    detail: Value::Object(detail),
-    known_limits,
-  }
-}
-
-fn artifact_ref(run_id: &RunId, artifact: &ArtifactRecordV1Alpha1) -> ArtifactRef {
-  ArtifactRef {
-    run_id: run_id.clone(),
-    artifact_id: artifact.artifact_id.clone(),
-    span_id: artifact.span_id.clone(),
-    captured_event_id: artifact.event_id.clone(),
+    detail: serde_json::json!({
+      "page_index": page_index,
+      "observation_count": page_observations.len(),
+      "new_observation_count": new_observation_count,
+    }),
+    known_limits: vec!["scroll_scan: capture remained an in-memory driver value and has no canonical artifact reference".to_string()],
   }
 }
 
@@ -348,7 +309,6 @@ fn infer_observation_source(page_observations: &[CollectionObservation]) -> Obse
   let mut saw_ax = false;
   let mut saw_ocr = false;
   let mut saw_visual = false;
-
   for observation in page_observations {
     match observation_source_hint(observation) {
       Some(ObservationSource::Ax) => saw_ax = true,
@@ -361,16 +321,11 @@ fn infer_observation_source(page_observations: &[CollectionObservation]) -> Obse
       None => {}
     }
   }
-
-  let source_count = usize::from(saw_ax) + usize::from(saw_ocr) + usize::from(saw_visual);
-  if source_count > 1 {
-    ObservationSource::Merged
-  } else if saw_visual {
-    ObservationSource::Visual
-  } else if saw_ax {
-    ObservationSource::Ax
-  } else {
-    ObservationSource::Ocr
+  match (saw_ax, saw_ocr, saw_visual) {
+    (true, false, false) => ObservationSource::Ax,
+    (false, false, true) => ObservationSource::Visual,
+    (false, true, false) | (false, false, false) => ObservationSource::Ocr,
+    _ => ObservationSource::Merged,
   }
 }
 
@@ -395,33 +350,22 @@ fn classify_source_tag(value: &str) -> Option<ObservationSource> {
   }
 }
 
-fn surface_node_from_observation(run_id: &RunId, span_id: &SpanId, observation: &CollectionObservation) -> SurfaceNode {
+fn surface_node_from_observation(run_id: RunId, span_id: SpanId, observation: &CollectionObservation) -> SurfaceNode {
   let source_artifacts = observation.source_artifacts.iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
-  let recognition_id = observation.attributes.get("recognition_id").cloned();
-  let recognition_source = observation.attributes.get("recognition_source").and_then(|value| parse_recognition_source_name(value));
-  let recognition_surface = observation.attributes.get("recognition_surface").and_then(|value| parse_recognition_surface_name(value));
-  let recognized_item_id = observation.attributes.get("recognized_item_id").cloned();
   let recognized_item_kind = observation.attributes.get("recognized_item_kind").cloned();
-  let provider_score = observation.attributes.get("provider_score").and_then(|value| value.parse::<f64>().ok());
   let kind = recognized_item_kind
     .clone()
     .or_else(|| observation.attributes.get("segmented_region_role").cloned())
     .or_else(|| observation.attributes.get("source").cloned())
     .unwrap_or_else(|| "observation".to_string());
-  let label = if observation.raw_text.trim().is_empty() {
-    None
-  } else {
-    Some(observation.raw_text.clone())
-  };
-
   SurfaceNode {
     node_ref: NodeRef {
-      run_id: run_id.clone(),
-      span_id: span_id.clone(),
+      run_id,
+      span_id,
       node_id: observation.observation_id.clone(),
     },
     kind,
-    label,
+    label: (!observation.raw_text.trim().is_empty()).then(|| observation.raw_text.clone()),
     box_: RecognitionBox {
       x: observation.bounds.x,
       y: observation.bounds.y,
@@ -429,104 +373,20 @@ fn surface_node_from_observation(run_id: &RunId, span_id: &SpanId, observation: 
       height: observation.bounds.height,
     },
     source_artifacts: source_artifacts.clone(),
-    recognition_id,
-    recognition_source,
-    recognition_surface,
-    recognized_item_id,
+    recognition_id: observation.attributes.get("recognition_id").cloned(),
+    recognition_source: observation.attributes.get("recognition_source").and_then(|value| parse_recognition_source_name(value)),
+    recognition_surface: observation.attributes.get("recognition_surface").and_then(|value| parse_recognition_surface_name(value)),
+    recognized_item_id: observation.attributes.get("recognized_item_id").cloned(),
     recognized_item_kind,
-    provider_score,
+    provider_score: observation.attributes.get("provider_score").and_then(|value| value.parse::<f64>().ok()),
     detail: serde_json::json!({
-      "observation_id": observation.observation_id.clone(),
+      "observation_id": observation.observation_id,
       "page_index": observation.page_index,
-      "normalized_text_key": observation.normalized_text_key.clone(),
-      "section_context": observation.section_context.clone(),
+      "normalized_text_key": observation.normalized_text_key,
+      "section_context": observation.section_context,
       "source_artifacts": source_artifacts,
-      "attributes": observation.attributes.clone(),
+      "attributes": observation.attributes,
     }),
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use std::collections::BTreeMap;
-  use std::path::PathBuf;
-
-  use super::{build_page_observation_snapshot, infer_observation_source, normalize_observation_text};
-  use crate::contract::ObservationSource;
-  use crate::scroll_scan::{CollectionObservation, ScanRect, ScanRegion, ScanTarget};
-  use auv_tracing_driver::trace::{RunId, SpanId};
-
-  fn sample_target() -> ScanTarget {
-    ScanTarget {
-      application_id: Some("com.example.App".to_string()),
-      window_title: Some("Fixture".to_string()),
-      region: ScanRegion {
-        left_ratio: 0.2,
-        top_ratio: 0.3,
-        right_ratio: 0.8,
-        bottom_ratio: 0.9,
-      },
-    }
-  }
-
-  fn sample_observation(id: &str, source_key: &str, source_value: &str) -> CollectionObservation {
-    CollectionObservation {
-      observation_id: id.to_string(),
-      page_index: 0,
-      raw_text: format!("{source_value} item"),
-      normalized_text_key: normalize_observation_text(&format!("{source_value} item")),
-      bounds: ScanRect {
-        x: 10,
-        y: 20,
-        width: 100,
-        height: 24,
-      },
-      section_context: None,
-      source_artifacts: vec![PathBuf::from("/tmp/fixture.json")],
-      attributes: BTreeMap::from([(source_key.to_string(), source_value.to_string())]),
-    }
-  }
-
-  #[test]
-  fn infer_observation_source_prefers_visual_when_rows_are_visual() {
-    let observations = vec![sample_observation(
-      "obs_visual",
-      "recognition_source",
-      "visual_row",
-    )];
-    assert_eq!(infer_observation_source(&observations), ObservationSource::Visual);
-  }
-
-  #[test]
-  fn infer_observation_source_marks_mixed_visual_and_ocr_pages_as_merged() {
-    let observations = vec![
-      sample_observation("obs_ocr", "recognition_source", "ocr_row"),
-      sample_observation("obs_visual", "recognition_source", "visual_row"),
-    ];
-    assert_eq!(infer_observation_source(&observations), ObservationSource::Merged);
-  }
-
-  #[test]
-  fn build_page_observation_snapshot_uses_supplied_producer_span() {
-    let run_id = RunId::new("run_snapshot_test");
-    let span_id = SpanId::new("0000000000000007");
-    let snapshot = build_page_observation_snapshot(
-      &run_id,
-      &span_id,
-      0,
-      &sample_target(),
-      &[sample_observation(
-        "obs_ocr",
-        "recognition_source",
-        "ocr_row",
-      )],
-      None,
-      None,
-      &[],
-      1,
-    );
-
-    assert_eq!(snapshot.span_id, span_id);
   }
 }
 

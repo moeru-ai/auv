@@ -7,12 +7,13 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::benchmark::{CapturePhase, ObjectKind};
 use crate::projection::ProjectionArtifact;
-use crate::visual_eval::{EvalProjection, pixel_point_inside_capture, project_playfield_point};
+use crate::visual_eval::{EvalProjection, project_playfield_point};
 use crate::visual_truth::{VisualTruthFrame, VisualTruthManifest};
 use crate::visual_truth_semantic::VisualTruthSemanticManifest;
 
@@ -20,6 +21,7 @@ pub type VisualTruthSpatialQueryResult<T> = Result<T, String>;
 
 pub const VISUAL_TRUTH_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE: &str = "auv.osu.visual_truth.spatial_query";
 
 const QUERY_MANIFEST_FILE: &str = "osu-visual-truth-spatial-query.json";
 const QUERY_INSPECT_FILE: &str = "osu-visual-truth-spatial-query-inspect.json";
@@ -145,6 +147,99 @@ impl VisualTruthSpatialQueryReason {
   }
 }
 
+pub async fn publish_osu_visual_truth_spatial_query(
+  context: Option<&Context>,
+  query: &VisualTruthSpatialQueryManifest,
+) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, query, validate_spatial_query_payload).await
+}
+
+pub async fn read_osu_visual_truth_spatial_query(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<VisualTruthSpatialQueryManifest, crate::run_read::OsuArtifactReadError> {
+  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, validate_spatial_query_payload).await
+}
+
+fn validate_spatial_query_payload(query: &VisualTruthSpatialQueryManifest) -> Result<(), String> {
+  if query.schema_version != VISUAL_TRUTH_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported osu! visual truth spatial query schema_version {} (expected {VISUAL_TRUTH_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION})",
+      query.schema_version
+    ));
+  }
+  if query.pixel_x.is_some() != query.pixel_y.is_some() {
+    return Err("spatial query pixel coordinates must both be present or absent".to_string());
+  }
+  if query.capture_width.is_some() != query.capture_height.is_some() {
+    return Err("spatial query capture dimensions must both be present or absent".to_string());
+  }
+  if [query.pixel_x, query.pixel_y, query.match_radius_px].into_iter().flatten().any(|value| !value.is_finite()) {
+    return Err("spatial query contains non-finite pixel values".to_string());
+  }
+  if query.match_radius_px.is_some_and(|value| value <= 0.0) {
+    return Err("spatial query match radius must be positive".to_string());
+  }
+  if query.capture_width.is_some_and(|value| value == 0) || query.capture_height.is_some_and(|value| value == 0) {
+    return Err("spatial query capture dimensions must be positive".to_string());
+  }
+  if query.status == VisualTruthSpatialQueryStatus::Answered {
+    validate_answered_spatial_query(query)?;
+  }
+  Ok(())
+}
+
+pub(crate) fn validate_answered_spatial_query(
+  query: &VisualTruthSpatialQueryManifest,
+) -> Result<(f32, f32, VisualTruthPixelVisibility), String> {
+  if query.status != VisualTruthSpatialQueryStatus::Answered {
+    return Err(format!("spatial query status {} is not answered", query.status.as_str()));
+  }
+  if query.reason.is_some() {
+    return Err("answered spatial query must not include a refusal reason".to_string());
+  }
+  let (Some(visibility), Some(pixel_x), Some(pixel_y), Some(match_radius_px), Some(capture_width), Some(capture_height)) =
+    (query.pixel_visibility, query.pixel_x, query.pixel_y, query.match_radius_px, query.capture_width, query.capture_height)
+  else {
+    return Err("answered spatial query must include visibility, pixel, radius, and capture dimensions".to_string());
+  };
+  if !pixel_x.is_finite() || !pixel_y.is_finite() || !match_radius_px.is_finite() {
+    return Err("answered spatial query contains non-finite pixel values".to_string());
+  }
+  if match_radius_px <= 0.0 {
+    return Err("answered spatial query match radius must be positive".to_string());
+  }
+  if capture_width == 0 || capture_height == 0 {
+    return Err("answered spatial query capture dimensions must be positive".to_string());
+  }
+
+  let inside_capture = pixel_coordinates_inside_capture(pixel_x, pixel_y, capture_width, capture_height);
+  let expected_visibility = if inside_capture {
+    VisualTruthPixelVisibility::InsideCapture
+  } else {
+    VisualTruthPixelVisibility::OutsideCapture
+  };
+  if visibility != expected_visibility {
+    return Err(format!(
+      "answered spatial query pixel_visibility={} contradicts capture bounds {}x{} for point ({pixel_x}, {pixel_y})",
+      visibility.as_str(),
+      capture_width,
+      capture_height
+    ));
+  }
+  Ok((pixel_x, pixel_y, visibility))
+}
+
+fn pixel_coordinates_inside_capture(pixel_x: f32, pixel_y: f32, capture_width: u32, capture_height: u32) -> bool {
+  pixel_x.is_finite()
+    && pixel_y.is_finite()
+    && pixel_x >= 0.0
+    && pixel_y >= 0.0
+    && pixel_x < capture_width as f32
+    && pixel_y < capture_height as f32
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VisualTruthPixelVisibility {
@@ -164,7 +259,7 @@ impl VisualTruthPixelVisibility {
 pub fn query_visual_truth_spatial(inputs: VisualTruthSpatialQueryInputs) -> VisualTruthSpatialQueryResult<VisualTruthSpatialQueryOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = crate::run_read::now_millis();
   let semantic_manifest =
     read_json_file::<VisualTruthSemanticManifest>(&inputs.visual_truth_semantic_manifest_path, "osu visual truth semantic manifest")?;
 
@@ -276,7 +371,7 @@ fn answer_for_frame(frame: &VisualTruthFrame, projection: &EvalProjection) -> Qu
     };
   };
 
-  let pixel_visibility = if pixel_point_inside_capture(&point, capture_width, capture_height) {
+  let pixel_visibility = if pixel_coordinates_inside_capture(point.x, point.y, capture_width, capture_height) {
     VisualTruthPixelVisibility::InsideCapture
   } else {
     VisualTruthPixelVisibility::OutsideCapture
@@ -338,6 +433,8 @@ fn write_query_output(
     capture_height: answer.capture_height,
     known_limits: known_limits.iter().cloned().collect(),
   };
+
+  validate_spatial_query_payload(&manifest)?;
 
   let manifest_path = inputs.output_dir.join(QUERY_MANIFEST_FILE);
   write_json_file(&manifest_path, &manifest)?;

@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,7 @@ pub type CardDetectionQualityResult<T> = Result<T, String>;
 
 pub const CARD_DETECTION_QUALITY_MANIFEST_SCHEMA_VERSION: u32 = 2;
 pub const CARD_DETECTION_QUALITY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 2;
+pub const CARD_DETECTION_QUALITY_PURPOSE: &str = "auv.balatro.card_detection.quality";
 pub const BALATRO_SLOT_COVERAGE_QUALITY_KNOWN_LIMIT: &str = "balatro slot-coverage quality records measurement evidence only; it does not claim model usefulness, gameplay success, or pass/fail thresholds";
 pub const BALATRO_X2_QUALITY_KNOWN_LIMIT: &str = BALATRO_SLOT_COVERAGE_QUALITY_KNOWN_LIMIT;
 pub const BALATRO_X4_WITNESS_BOUND_QUALITY_KNOWN_LIMIT: &str = "balatro X4 quality derives metrics/verdict only from persisted card-detection-eval-witness manifest; it does not reload semantic bundle or expected_slots directly";
@@ -127,11 +129,30 @@ impl CardDetectionQualityVerdict {
   }
 }
 
+pub async fn publish_card_detection_quality(
+  context: Option<&Context>,
+  quality: &CardDetectionQualityManifest,
+) -> Result<Option<ArtifactMetadata>, crate::BalatroArtifactPublishError> {
+  crate::run_read::publish_json_artifact(context, CARD_DETECTION_QUALITY_PURPOSE, quality).await
+}
+
+pub async fn read_card_detection_quality(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+) -> Result<CardDetectionQualityManifest, crate::BalatroArtifactReadError> {
+  let bytes = crate::run_read::read_json_artifact_bytes(store, snapshot, uri, CARD_DETECTION_QUALITY_PURPOSE).await?;
+  serde_json::from_slice(&bytes).map_err(|source| crate::BalatroArtifactReadError::MalformedJson {
+    uri: uri.clone(),
+    source,
+  })
+}
+
 pub fn build_card_detection_quality(inputs: &CardDetectionQualityInputs) -> CardDetectionQualityResult<CardDetectionQualityOutput> {
   fs::create_dir_all(&inputs.output_dir)
     .map_err(|error| format!("failed to create card detection quality output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = auv_tracing_driver::now_millis();
+  let generated_at_millis = now_millis();
   let known_limits = BTreeSet::from([
     BALATRO_X2_QUALITY_KNOWN_LIMIT.to_string(),
     BALATRO_X4_WITNESS_BOUND_QUALITY_KNOWN_LIMIT.to_string(),
@@ -349,6 +370,10 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
       format!("failed to serialize {}: {error}", path.display())
     }
   })
+}
+
+fn now_millis() -> u64 {
+  u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

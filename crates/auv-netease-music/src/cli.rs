@@ -10,9 +10,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::output::{build_playlist_json_output, playlist_view_memory_report, render_playlist_human_output};
 use crate::{
-  Confidence, DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs, PlaylistCategory, PlaylistSidebarScan,
-  SongListInputs, run_daily_recommended_play, run_daily_recommended_songs_scan, run_live_scan, run_live_scan_until_query, run_open_window,
-  run_playback_status_probe, run_playlist_play, run_playlist_play_candidate_id, run_playlist_select,
+  Confidence, DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs, PlaylistCategory, SongListInputs,
+  run_daily_recommended_play, run_daily_recommended_songs_scan, run_live_scan, run_live_scan_until_query, run_open_window,
+  run_playback_status_probe,
 };
 
 pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
@@ -229,6 +229,9 @@ pub(crate) enum Command {
   about = "NetEase Cloud Music CLI"
 )]
 struct CliArgs {
+  /// Run-store authority selected by this standalone frontend.
+  #[arg(long = "store-root", global = true)]
+  store_root: Option<PathBuf>,
   #[command(subcommand)]
   command: CliSubcommand,
 }
@@ -414,7 +417,7 @@ struct SongsLsArgs {
 
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_help = "Recommended playlist flow:\n  auv-netease-music playlist ls \"Trance vol.2\" --json\n  auv-netease-music playlist play --candidate-id <id>\n\n`playlist ls` writes playlist-scan-cache.json under --artifact-dir; `playlist play --candidate-id` reads that cache, so use the same --artifact-dir for both commands."
+  after_help = "Recommended playlist flow:\n  auv-netease-music --store-root <root> playlist ls \"Trance vol.2\" --json\n  auv-netease-music --store-root <root> playlist play --candidate-id <id>\n\nA successful recorded scan exposes its canonical artifacts.scan_uri. Use the same --store-root for the follow-up command."
 )]
 struct PlaylistPlayArgs {
   /// Playlist query. Convenience path; prefer --candidate-id after playlist ls --json for agent calls.
@@ -431,8 +434,6 @@ struct PlaylistPlayArgs {
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
   artifact_dir: Option<PathBuf>,
-  #[arg(long = "store-root")]
-  store_root: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
   #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
@@ -465,7 +466,7 @@ struct PlaylistPlayArgs {
 
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_help = "Recommended playlist flow:\n  auv-netease-music playlist ls \"Trance vol.2\" --json\n  auv-netease-music playlist play --candidate-id <id>\n\nJSON output includes matches[].candidate_id. The scan is also cached as playlist-scan-cache.json under --artifact-dir for the follow-up play command."
+  after_help = "Recommended playlist flow:\n  auv-netease-music --store-root <root> playlist ls \"Trance vol.2\" --json\n  auv-netease-music --store-root <root> playlist play --candidate-id <id>\n\nJSON output includes matches[].candidate_id and, after successful publication, artifacts.scan_uri. Use the same --store-root for the follow-up command."
 )]
 struct PlaylistLsArgs {
   /// Optional playlist keyword. When present, scanning continues until the keyword is found or the list boundary is reached.
@@ -489,8 +490,6 @@ struct PlaylistLsArgs {
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
   artifact_dir: Option<PathBuf>,
-  #[arg(long = "store-root")]
-  store_root: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
   #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
@@ -523,8 +522,6 @@ struct PlaylistSelectArgs {
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
   artifact_dir: Option<PathBuf>,
-  #[arg(long = "store-root")]
-  store_root: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
   #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
@@ -631,12 +628,6 @@ fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
   }
 }
 
-fn apply_store_root(inputs: &mut Inputs, store_root: Option<PathBuf>) {
-  if let Some(store_root) = store_root {
-    inputs.store_root = Some(store_root);
-  }
-}
-
 fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
   let mut inputs = Inputs::with_defaults();
   let query = args.keyword;
@@ -647,7 +638,6 @@ fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
   if let Some(artifact_dir) = args.artifact_dir {
     inputs.artifact_dir = artifact_dir;
   }
-  apply_store_root(&mut inputs, args.store_root);
   if let Some(max_scrolls) = args.max_scrolls {
     inputs.max_scrolls = max_scrolls.get();
   }
@@ -706,7 +696,6 @@ fn parse_playlist_select(args: PlaylistSelectArgs) -> Result<PlaylistSelectComma
   if let Some(artifact_dir) = args.artifact_dir {
     inputs.artifact_dir = artifact_dir;
   }
-  apply_store_root(&mut inputs, args.store_root);
   if let Some(max_scrolls) = args.max_scrolls {
     inputs.max_scrolls = max_scrolls.get();
   }
@@ -781,7 +770,6 @@ fn parse_playlist_play_query(args: PlaylistPlayArgs) -> Result<PlaylistPlayComma
   if let Some(artifact_dir) = args.artifact_dir {
     inputs.artifact_dir = artifact_dir;
   }
-  apply_store_root(&mut inputs, args.store_root);
   if let Some(max_scrolls) = args.max_scrolls {
     inputs.max_scrolls = max_scrolls.get();
   }
@@ -984,26 +972,99 @@ pub fn run() -> ExitCode {
       };
     }
   };
+  let store_root = parsed.store_root.clone();
 
-  match command_from_args(parsed) {
-    Ok(Command::OpenWindow(cmd)) => run_open_window_command(cmd),
-    Ok(Command::PlaylistLs(cmd)) => run_playlist(cmd),
-    Ok(Command::PlaylistSelect(cmd)) => run_playlist_select_command(cmd),
-    Ok(Command::PlaylistPlay(cmd)) => run_playlist_play_command(cmd),
-    Ok(Command::PlaylistPlayDailyRecommended(cmd)) => run_daily_recommended(cmd),
-    Ok(Command::PlaylistSongsLs(cmd)) => run_songs_ls(cmd),
-    Ok(Command::NowPlaying(cmd)) => run_now_playing(cmd),
-    Ok(Command::Control(cmd)) => run_control(cmd),
-    Ok(Command::Seek(cmd)) => run_seek(cmd),
-    Ok(Command::PlaybackStatus(cmd)) => run_playback_status(cmd),
-    Ok(Command::Invoke(args)) => crate::invoke::run(&args.args),
+  let command = match command_from_args(parsed) {
+    Ok(command) => command,
     Err(error) => {
       if error.starts_with("error:") {
         eprint!("{error}");
       } else {
         eprintln!("error: {error}");
       }
-      ExitCode::from(2)
+      return ExitCode::from(2);
+    }
+  };
+
+  futures_executor::block_on(async move {
+    let Some(store_root) = store_root else {
+      return execute_command(command, None).await;
+    };
+    let store = match auv_tracing::FileRunStore::open(&store_root) {
+      Ok(store) => std::sync::Arc::new(store),
+      Err(error) => {
+        eprintln!("error: failed to open run-store authority {}: {error}", store_root.display());
+        return ExitCode::from(1);
+      }
+    };
+    let dispatch = match auv_tracing::configure().run_store(store.clone()).build() {
+      Ok(dispatch) => dispatch,
+      Err(error) => {
+        eprintln!("error: failed to configure run-store authority: {error}");
+        return ExitCode::from(1);
+      }
+    };
+    let root = auv_tracing::dispatcher::with_default(&dispatch, || auv_tracing::Context::root(auv_tracing::RunId::new()));
+    let future = root.in_scope(|| execute_command(command, Some(store.as_ref())));
+    let exit = root.instrument(future).await;
+    if let Err(error) = dispatch.flush().await {
+      eprintln!("warning: run instrumentation flush failed: {error}");
+    }
+    exit
+  })
+}
+
+async fn execute_command(command: Command, store: Option<&dyn auv_tracing::RunStore>) -> ExitCode {
+  match command {
+    Command::OpenWindow(cmd) => run_open_window_command(cmd),
+    Command::PlaylistLs(cmd) => run_playlist(cmd).await,
+    Command::PlaylistSelect(cmd) => {
+      let artifacts = read_canonical_playlist_artifacts(store, &cmd.inputs).await;
+      run_playlist_select_command(cmd, &artifacts).await
+    }
+    Command::PlaylistPlay(cmd) => {
+      let artifacts = read_canonical_playlist_artifacts(store, &cmd.inputs).await;
+      run_playlist_play_command(cmd, &artifacts)
+    }
+    Command::PlaylistPlayDailyRecommended(cmd) => run_daily_recommended(cmd),
+    Command::PlaylistSongsLs(cmd) => run_songs_ls(cmd),
+    Command::NowPlaying(cmd) => run_now_playing(cmd),
+    Command::Control(cmd) => run_control(cmd),
+    Command::Seek(cmd) => run_seek(cmd),
+    Command::PlaybackStatus(cmd) => run_playback_status(cmd),
+    Command::Invoke(args) => crate::invoke::run(&args.args).await,
+  }
+}
+
+async fn read_canonical_playlist_artifacts(
+  store: Option<&dyn auv_tracing::RunStore>,
+  inputs: &Inputs,
+) -> crate::recording::CanonicalPlaylistArtifacts {
+  let Some(store) = store else {
+    return crate::recording::CanonicalPlaylistArtifacts::unavailable(Vec::new());
+  };
+  let lineage = match crate::recording::read_lineage_manifest_for_inputs(&inputs.artifact_dir, inputs) {
+    Ok(lineage) => lineage,
+    Err(error) => {
+      return crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!("canonical playlist lineage unavailable: {error}")]);
+    }
+  };
+  let scan_snapshot = match store.load_snapshot(lineage.scan_uri.run_id()).await {
+    Ok(Some(snapshot)) => snapshot,
+    Ok(None) => {
+      return crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!(
+        "canonical playlist run {} is unavailable",
+        lineage.scan_uri.run_id()
+      )]);
+    }
+    Err(error) => {
+      return crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!("canonical playlist snapshot read failed: {error}")]);
+    }
+  };
+  match crate::recording::read_canonical_playlist_artifacts(store, &scan_snapshot, &lineage, crate::view_memory::enabled()).await {
+    Ok(artifacts) => artifacts,
+    Err(error) => {
+      crate::recording::CanonicalPlaylistArtifacts::unavailable(vec![format!("canonical playlist artifact read failed: {error}")])
     }
   }
 }
@@ -1032,7 +1093,6 @@ mod tests {
       min_confidence: None,
       app_id: None,
       artifact_dir: None,
-      store_root: None,
       max_scrolls: None,
       scroll_amount: None,
       scroll_settle_ms: None,
@@ -1429,7 +1489,7 @@ mod tests {
   }
 
   #[test]
-  fn clap_playlist_play_candidate_id_maps_cache_target() {
+  fn clap_playlist_play_candidate_id_maps_canonical_target() {
     let command = parse_playlist_play_command(&[
       "auv-netease-music",
       "playlist",
@@ -1438,12 +1498,12 @@ mod tests {
       "obs6.candidate.ocr4.trance_vol_2",
       "--json",
       "--artifact-dir",
-      "/tmp/netease-playlist-cache",
+      "/tmp/netease-playlist-artifacts",
     ]);
 
     assert_eq!(command.target, PlaylistPlayTarget::CandidateId("obs6.candidate.ocr4.trance_vol_2".to_string()));
     assert_eq!(command.output, OutputMode::Json);
-    assert_eq!(command.inputs.artifact_dir, PathBuf::from("/tmp/netease-playlist-cache"));
+    assert_eq!(command.inputs.artifact_dir, PathBuf::from("/tmp/netease-playlist-artifacts"));
   }
 
   #[test]
@@ -1524,72 +1584,9 @@ mod tests {
 
     assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
   }
-  #[test]
-  fn select_store_proof_failure_records_known_limit_and_clears_run_id() {
-    use super::apply_playlist_select_store_proof;
-    use crate::commands::playlist::{PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification};
-    use crate::{Inputs, PlaylistSelectTarget, SidebarSectionKind};
-    use auv_view::{ScanAppContext, ScanWindowContext};
-
-    let root = std::env::temp_dir().join(format!("auv-select-store-fail-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("temp root");
-    let blocker = root.join("not-a-directory");
-    std::fs::write(&blocker, "blocker").expect("blocker file");
-
-    let mut inputs = Inputs::with_defaults();
-    inputs.store_root = Some(blocker);
-
-    let mut result = PlaylistSelectResult {
-      command: "playlist.select".into(),
-      query: "Test".into(),
-      app: ScanAppContext::default(),
-      window: ScanWindowContext::default(),
-      target: PlaylistSelectTarget {
-        label: "Test".into(),
-        section_id: "section.test".into(),
-        section_kind: SidebarSectionKind::MyPlaylists,
-        item_id: "item.test".into(),
-        anchor_id: None,
-        candidate_id: None,
-        observation_index: None,
-        bounds: None,
-      },
-      steps: vec![PlaylistSelectStep {
-        name: "reacquire-target".into(),
-        target_bounds: None,
-        delivery_path: None,
-        fallback_reason: None,
-      }],
-      verification: PlaylistSelectVerification {
-        status: "passed".into(),
-        method: "main_title_ocr_full_window_v1".into(),
-        observed_title: None,
-        artifact: None,
-        recognition_artifact: None,
-        sidebar_echo_recognition_artifact: None,
-        note: None,
-      },
-      diagnostics: Vec::new(),
-      known_limits: Vec::new(),
-      reacquire: None,
-      run_id: Some("partial-run-id".into()),
-    };
-
-    apply_playlist_select_store_proof(&inputs, &mut result);
-
-    assert!(result.run_id.is_none());
-    assert!(
-      result.known_limits.iter().any(|limit| limit.contains("store select proof failed")),
-      "expected known_limits entry, got {:?}",
-      result.known_limits
-    );
-
-    let _ = std::fs::remove_dir_all(&root);
-  }
 }
 
-fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
+async fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   let scan = match cmd.query.as_deref() {
     Some(query) => run_live_scan_until_query(&cmd.inputs, query),
     None => run_live_scan(&cmd.inputs),
@@ -1603,97 +1600,52 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   };
 
   let mut ls_known_limits = Vec::new();
-  let mut run_id = None;
+  let mut scan_uri = None;
   let gate_enabled = crate::view_memory::enabled();
-  let mut view_memory_write = Ok(());
+  let mut view_memory = None;
 
-  if let Some(store_root) = &cmd.inputs.store_root {
-    match crate::recording::persist_playlist_ls_artifacts(store_root, &scan, &cmd.inputs, gate_enabled) {
-      Ok(persisted) => {
-        match crate::recording::write_lineage_manifest(&cmd.inputs.artifact_dir, &persisted.lineage) {
-          Ok(()) => run_id = Some(persisted.lineage.run_id.clone()),
-          Err(error) => {
-            crate::recording::remove_lineage_manifest(&cmd.inputs.artifact_dir);
-            let message = format!("lineage manifest write failed; store read may require fallback scan: {error}");
-            eprintln!("warning: {message}");
-            ls_known_limits.push(message);
-          }
-        }
-        if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
-          let message = format!("artifact-dir mirror incomplete; durable source is store run {}", persisted.lineage.run_id);
-          eprintln!("warning: {message}: {error}");
+  match crate::recording::persist_playlist_ls_artifacts(&scan, &cmd.inputs, gate_enabled).await {
+    Ok(Some(persisted)) => {
+      scan_uri = Some(persisted.lineage.scan_uri.to_string());
+      match crate::recording::write_lineage_manifest(&cmd.inputs.artifact_dir, &persisted.lineage) {
+        Ok(()) => {}
+        Err(error) => {
+          let message = format!("canonical URI lineage manifest write failed: {error}");
+          eprintln!("warning: {message}");
           ls_known_limits.push(message);
         }
-        if gate_enabled {
-          match persisted.memory.as_ref() {
-            Some(memory) => {
-              if let Err(error) = crate::view_memory::write_memory_mirror(&cmd.inputs, memory) {
-                let message =
-                  format!("artifact-dir view-memory mirror incomplete; durable source is store run {}", persisted.lineage.run_id);
-                eprintln!("warning: {message}: {error}");
-                ls_known_limits.push(message);
-                view_memory_write = Err(error);
-              } else {
-                view_memory_write = Ok(());
-              }
-            }
+      }
+      if gate_enabled {
+        view_memory = playlist_view_memory_report(
+          true,
+          match persisted.memory {
+            Some(_) => Ok(()),
             None => {
-              if let Err(error) = crate::recording::clear_artifact_dir_view_memory(&cmd.inputs) {
-                let message = format!("failed to clear stale artifact-dir view-memory before skip: {error}");
-                eprintln!("warning: {message}");
-                ls_known_limits.push(message);
-              }
               ls_known_limits
-                .push(format!("view-memory not written; durable store run {} has no memory artifact", persisted.lineage.run_id));
-              view_memory_write = Err("scan did not produce writable ViewMemory".to_string());
+                .push(format!("view-memory not published; canonical scan {} did not produce writable memory", persisted.lineage.scan_uri));
+              Err("scan did not produce writable ViewMemory".to_string())
             }
-          }
-        }
-      }
-      Err(error) => {
-        let message = format!("store write failed; using artifact-dir bridge only: {error}");
-        eprintln!("warning: {message}");
-        ls_known_limits.push(message);
-        if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
-          eprintln!("{error}");
-          return ExitCode::from(1);
-        }
-        if gate_enabled {
-          view_memory_write = match crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-              eprintln!("view memory write skipped: {error}");
-              Err(error)
-            }
-          };
-        }
+          },
+        );
       }
     }
-  } else {
-    if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
-      eprintln!("{error}");
-      return ExitCode::from(1);
-    }
-    if gate_enabled {
-      view_memory_write = match crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-          eprintln!("view memory write skipped: {error}");
-          Err(error)
-        }
-      };
+    Ok(None) => {}
+    Err(error) => {
+      let message = format!("run artifact instrumentation failed: {error}");
+      eprintln!("warning: {message}");
+      ls_known_limits.push(message);
+      if gate_enabled {
+        view_memory = playlist_view_memory_report(true, Err("view-memory artifact was not published".to_string()));
+      }
     }
   }
 
-  let view_memory = playlist_view_memory_report(gate_enabled, view_memory_write);
-  let scan_cache_path = cmd.inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
   let output = build_playlist_json_output(
     &scan,
     cmd.query.as_deref(),
     cmd.output.min_confidence,
-    scan_cache_path.clone(),
+    scan_uri.clone(),
     view_memory,
-    run_id.clone(),
     ls_known_limits.clone(),
   );
 
@@ -1706,9 +1658,8 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
           cmd.query.as_deref(),
           cmd.output.min_confidence,
           cmd.output.detail,
-          run_id.as_deref(),
+          scan_uri.as_deref(),
           &ls_known_limits,
-          Some(scan_cache_path.to_string_lossy().as_ref()),
         )
       );
       ExitCode::SUCCESS
@@ -1738,13 +1689,6 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       ExitCode::SUCCESS
     }
   }
-}
-
-fn write_playlist_scan_cache(inputs: &Inputs, scan: &PlaylistSidebarScan) -> Result<(), String> {
-  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
-  let cache_path = inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
-  let json = serde_json::to_string_pretty(scan).map_err(|error| format!("failed to serialize playlist scan cache: {error}"))?;
-  std::fs::write(&cache_path, json).map_err(|error| format!("failed to write {}: {error}", cache_path.display()))
 }
 
 fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
@@ -1789,31 +1733,14 @@ fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
   }
 }
 
-fn apply_playlist_select_store_proof(inputs: &Inputs, result: &mut crate::commands::playlist::PlaylistSelectResult) {
-  let Some(store_root) = &inputs.store_root else {
-    return;
-  };
-  let memory = crate::view_memory::load_memory_raw(inputs);
-  let evidence = crate::view_memory::ReacquireTraceEvidence::from_select_parts(
-    crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID,
-    &result.target,
-    result.reacquire.as_ref(),
-  );
-  match crate::recording::persist_playlist_select_proof(store_root, evidence.as_ref(), memory.as_ref(), |run_id| {
-    result.run_id = Some(run_id.to_string());
-    serde_json::to_vec_pretty(result).map_err(|error| format!("failed to serialize playlist select result: {error}"))
-  }) {
-    Ok(run_id) => result.run_id = Some(run_id),
-    Err(error) => {
-      eprintln!("warning: store select proof failed: {error}");
-      result.known_limits.push(format!("store select proof failed: {error}"));
-      result.run_id = None;
-    }
+async fn publish_playlist_select_result(result: &crate::commands::playlist::PlaylistSelectResult) {
+  if let Err(error) = crate::recording::persist_playlist_select_proof(result).await {
+    eprintln!("warning: playlist-select artifact instrumentation failed: {error}");
   }
 }
 
-fn run_playlist_select_command(cmd: PlaylistSelectCommand) -> ExitCode {
-  let mut result = match run_playlist_select(&cmd.inputs, &cmd.query) {
+async fn run_playlist_select_command(cmd: PlaylistSelectCommand, artifacts: &crate::recording::CanonicalPlaylistArtifacts) -> ExitCode {
+  let result = match crate::commands::playlist::run_playlist_select_with_artifacts(&cmd.inputs, &cmd.query, artifacts) {
     Ok(result) => result,
     Err(error) => {
       eprintln!("playlist select failed: {error}");
@@ -1821,9 +1748,7 @@ fn run_playlist_select_command(cmd: PlaylistSelectCommand) -> ExitCode {
     }
   };
 
-  if cmd.inputs.store_root.is_some() {
-    apply_playlist_select_store_proof(&cmd.inputs, &mut result);
-  }
+  publish_playlist_select_result(&result).await;
 
   match &cmd.output {
     OutputMode::Human => {
@@ -1857,10 +1782,12 @@ fn run_playlist_select_command(cmd: PlaylistSelectCommand) -> ExitCode {
   }
 }
 
-fn run_playlist_play_command(cmd: PlaylistPlayCommand) -> ExitCode {
+fn run_playlist_play_command(cmd: PlaylistPlayCommand, artifacts: &crate::recording::CanonicalPlaylistArtifacts) -> ExitCode {
   let result = match &cmd.target {
-    PlaylistPlayTarget::Query(query) => run_playlist_play(&cmd.inputs, query),
-    PlaylistPlayTarget::CandidateId(candidate_id) => run_playlist_play_candidate_id(&cmd.inputs, candidate_id),
+    PlaylistPlayTarget::Query(query) => crate::commands::playlist::run_playlist_play_with_artifacts(&cmd.inputs, query, artifacts),
+    PlaylistPlayTarget::CandidateId(candidate_id) => {
+      crate::commands::playlist::run_playlist_play_candidate_with_artifacts(&cmd.inputs, candidate_id, artifacts)
+    }
   };
   let result = match result {
     Ok(result) => result,

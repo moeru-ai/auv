@@ -1,9 +1,8 @@
 use std::io;
 
 use anstream::{AutoStream, ColorChoice};
-use auv_tracing_driver::{AuvResult, RunRecordingBackend};
 
-use crate::{InvokeFinalizeHook, InvokeOutputOptions, InvokeRegistry, InvokeRequest, RunStatus};
+use crate::{InvokeOutputOptions, InvokeResult, RunStatus};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvokeCliOutcome {
@@ -18,17 +17,7 @@ impl InvokeCliOutcome {
   }
 }
 
-pub fn render_recorded_invoke(
-  recording: &RunRecordingBackend,
-  registry: &InvokeRegistry,
-  request: InvokeRequest,
-  options: InvokeOutputOptions,
-  finalize: Option<&InvokeFinalizeHook>,
-) -> AuvResult<InvokeCliOutcome> {
-  let result = match finalize {
-    Some(finalize) => crate::invoke_recorded_with_finalize(recording, registry, request, finalize)?,
-    None => crate::invoke_recorded(recording, registry, request)?,
-  };
+pub fn render_invoke_result(result: &InvokeResult, options: InvokeOutputOptions) -> Result<InvokeCliOutcome, String> {
   if options.json {
     let mut stdout = io::stdout().lock();
     result.write_json(&mut stdout, options)?;
@@ -37,14 +26,14 @@ pub fn render_recorded_invoke(
     let mut stream = AutoStream::new(stdout.lock(), ColorChoice::Auto);
     result.write_human(&mut stream, options, true)?;
   }
-  Ok(InvokeCliOutcome::from_status(result.status))
+  Ok(InvokeCliOutcome::from_status(result.status.clone()))
 }
 
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
 
-  use auv_tracing_driver::trace::{ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EventId, SpanId};
+  use auv_tracing::{ArtifactMetadata, ArtifactPurpose, ArtifactUri, Attributes, ByteLength, ContentType, RunId, Sha256Digest};
   use serde_json::Value;
 
   use crate::{
@@ -60,7 +49,6 @@ mod tests {
 
     InvokeResult {
       run_id: "run_fixture".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
       command_id: "fixture.observe".to_string(),
       command_summary: "Observe fixture".to_string(),
       status,
@@ -105,19 +93,15 @@ mod tests {
           }],
         }],
       }),
-      artifacts: vec![ArtifactRecordV1Alpha1 {
-        api_version: ARTIFACT_API_VERSION.to_string(),
-        artifact_id: ArtifactId::new("artifact_fixture"),
-        span_id: SpanId::new("0000000000000001"),
-        event_id: Some(EventId::new("event_fixture")),
-        role: "screenshot".to_string(),
-        mime_type: "image/png".to_string(),
-        path: "artifacts/artifact_fixture.png".to_string(),
-        sha256: None,
-        attributes: BTreeMap::new(),
-        summary: Some("fixture screenshot".to_string()),
-      }],
-      artifact_paths: vec!["/tmp/auv/artifact_fixture.png".into()],
+      canonical_artifacts: vec![ArtifactMetadata::new(
+        ArtifactUri::from_ids(RunId::new(), auv_tracing::ArtifactId::new()),
+        ArtifactPurpose::parse("auv.test.screenshot").expect("purpose"),
+        ContentType::parse("image/png").expect("content type"),
+        ByteLength::new(1).expect("length"),
+        Sha256Digest::new([0; 32]),
+        Attributes::empty(),
+      )],
+      artifact_failures: Vec::new(),
       failure_message: None,
     }
   }
@@ -157,12 +141,28 @@ mod tests {
   }
 
   #[test]
+  fn failed_output_without_a_store_omits_the_inspect_hint() {
+    let mut result = fixture_result(RunStatus::Failed);
+    result.failure_message = Some("fixture failed".to_string());
+
+    let output = result
+      .render_to_string(InvokeOutputOptions {
+        inspect_hint: false,
+        ..InvokeOutputOptions::default()
+      })
+      .expect("render should succeed");
+
+    assert!(!output.contains("auv inspect run_fixture"));
+  }
+
+  #[test]
   fn detail_includes_notes_limits_verification_artifacts_and_selected_signals() {
     let output = fixture_result(RunStatus::Completed)
       .render_to_string(InvokeOutputOptions {
         json: false,
         detail: true,
         wide: false,
+        inspect_hint: true,
       })
       .expect("render should succeed");
 
@@ -173,7 +173,7 @@ mod tests {
     assert!(output.contains("Verification"));
     assert!(output.contains("activation_only"));
     assert!(output.contains("Artifacts"));
-    assert!(output.contains("artifact_fixture"));
+    assert!(output.contains("auv.test.screenshot"));
     assert!(output.contains("Signals"));
     assert!(output.contains("selected_target: Safari address field"));
   }
@@ -185,6 +185,7 @@ mod tests {
         json: false,
         detail: false,
         wide: true,
+        inspect_hint: true,
       })
       .expect("render should succeed");
 
@@ -199,6 +200,7 @@ mod tests {
         json: true,
         detail: false,
         wide: false,
+        inspect_hint: true,
       })
       .expect("render should succeed");
 

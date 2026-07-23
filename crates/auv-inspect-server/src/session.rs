@@ -1,9 +1,9 @@
 //! Inspect server session descriptor (cross-process discovery).
 //!
-//! When `inspect serve --enable-write` runs, it writes a session file containing
-//! the local server URL, store root, write-enabled state, optional write token,
-//! process id, and start time. Other CLI runs read this descriptor to discover
-//! a running inspect server they should report to.
+//! When `inspect serve` runs, it writes a session file containing the local
+//! server URL, authority identity, process id, and start time. Other
+//! composition roots can use this descriptor to discover the selected
+//! authority without learning its storage layout.
 //!
 //! The descriptor lives in a user-private location (`XDG_RUNTIME_DIR` /
 //! `~/Library/Caches/AUV/` / `XDG_CACHE_HOME` / `~/.cache/auv/`) and is written
@@ -17,11 +17,10 @@ use crate::InspectResult;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct InspectServerSession {
   pub url: String,
-  pub store_root: String,
-  pub write_enabled: bool,
-  pub write_token: Option<String>,
+  pub authority_id: auv_tracing::AuthorityId,
   pub pid: u32,
   pub started_at_millis: u64,
 }
@@ -199,9 +198,7 @@ mod tests {
       &path,
       serde_json::to_string(&InspectServerSession {
         url: "http://127.0.0.1:8765".to_string(),
-        store_root: root.display().to_string(),
-        write_enabled: true,
-        write_token: Some("secret".to_string()),
+        authority_id: "019f8b1e-4b2d-7a00-8f00-0000000000aa".parse().expect("authority id"),
         pid: 123,
         started_at_millis: 456,
       })
@@ -239,9 +236,7 @@ mod tests {
 
     write_inspect_session(&InspectServerSession {
       url: "http://127.0.0.1:8765".to_string(),
-      store_root: root.display().to_string(),
-      write_enabled: true,
-      write_token: Some("secret".to_string()),
+      authority_id: "019f8b1e-4b2d-7a00-8f00-0000000000aa".parse().expect("authority id"),
       pid: 123,
       started_at_millis: 456,
     })

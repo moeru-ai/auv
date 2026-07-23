@@ -31,5 +31,3 @@ pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE: &str = "m
 pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE: &str = "minecraft-3dgs-holdout-render-quality";
 pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE: &str = "minecraft-3dgs-holdout-render-quality-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
-
-pub use auv_inspect_model::TELEMETRY_SAMPLE_ARTIFACT_ROLE;

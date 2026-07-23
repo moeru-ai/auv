@@ -19,8 +19,8 @@ pub use commands::playback::{
   PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson, run_playback_status_probe,
 };
 pub use commands::playlist::{
-  PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification,
-  run_playlist_play, run_playlist_play_candidate_id, run_playlist_select,
+  PlaylistPlayCandidate, PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectStep,
+  PlaylistSelectVerification, resolve_playlist_play_candidate, run_playlist_play, run_playlist_select,
 };
 pub use commands::transport::{TransportAction, TransportInputs, TransportResult, run_transport_action};
 pub use interaction::{InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction};
@@ -70,7 +70,6 @@ use auv_view::draw_rect;
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
-pub const PLAYLIST_SCAN_CACHE_FILE: &str = "playlist-scan-cache.json";
 pub const DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR: &str = "/tmp/auv-netease-play-daily-recommended-artifacts";
 // TODO(netease-scroll-completion): this conservative default is only a
 // product-agnostic safety cap, not an account-size estimate or completion
@@ -106,7 +105,6 @@ pub struct Inputs {
   pub sidebar_region: Option<RatioRect>,
   pub ocr_options: TextRecognitionOptions,
   pub category: PlaylistCategory,
-  pub store_root: Option<PathBuf>,
 }
 
 impl Inputs {
@@ -120,7 +118,6 @@ impl Inputs {
       sidebar_region: None,
       ocr_options: TextRecognitionOptions::default(),
       category: PlaylistCategory::All,
-      store_root: None,
     }
   }
 }
@@ -472,7 +469,7 @@ impl PlaylistSidebarScan {
       }
     }
 
-    Err(format!("no playlist candidate_id matched {candidate_id:?}; run `playlist ls <query> --json` first with the same --artifact-dir"))
+    Err(format!("no playlist candidate_id matched {candidate_id:?} in the canonical playlist scan"))
   }
 
   pub fn to_human_readable(&self) -> PlaylistSidebarHumanSummary<'_> {
@@ -643,17 +640,29 @@ enum SidebarScrollbarBoundary {
 
 /// Decode a stored playlist sidebar scan artifact and reject unknown wire
 /// shapes before interpreting the app-specific fields.
-pub fn decode_playlist_sidebar_scan_json(input: &str) -> Result<PlaylistSidebarScan, String> {
-  let value: serde_json::Value = serde_json::from_str(input).map_err(|error| format!("invalid playlist sidebar scan JSON: {error}"))?;
-  let schema_version = value
-    .get("schema_version")
-    .and_then(serde_json::Value::as_str)
-    .ok_or_else(|| "playlist sidebar scan JSON is missing schema_version".to_string())?;
+#[derive(Debug, thiserror::Error)]
+pub enum PlaylistSidebarScanDecodeError {
+  #[error("invalid playlist sidebar scan JSON: {0}")]
+  InvalidJson(#[source] serde_json::Error),
+  #[error("playlist sidebar scan JSON is missing schema_version")]
+  MissingSchemaVersion,
+  #[error("unsupported playlist sidebar scan schema_version {actual:?}; expected {VIEW_IR_SCHEMA_VERSION:?}")]
+  UnsupportedSchemaVersion { actual: String },
+  #[error("invalid playlist sidebar scan shape: {0}")]
+  InvalidShape(#[source] serde_json::Error),
+}
+
+pub fn decode_playlist_sidebar_scan_json(input: &str) -> Result<PlaylistSidebarScan, PlaylistSidebarScanDecodeError> {
+  let value: serde_json::Value = serde_json::from_str(input).map_err(PlaylistSidebarScanDecodeError::InvalidJson)?;
+  let schema_version =
+    value.get("schema_version").and_then(serde_json::Value::as_str).ok_or(PlaylistSidebarScanDecodeError::MissingSchemaVersion)?;
   if schema_version != VIEW_IR_SCHEMA_VERSION {
-    return Err(format!("unsupported playlist sidebar scan schema_version {schema_version:?}; expected {VIEW_IR_SCHEMA_VERSION:?}"));
+    return Err(PlaylistSidebarScanDecodeError::UnsupportedSchemaVersion {
+      actual: schema_version.to_string(),
+    });
   }
 
-  serde_json::from_value(value).map_err(|error| format!("invalid playlist sidebar scan shape: {error}"))
+  serde_json::from_value(value).map_err(PlaylistSidebarScanDecodeError::InvalidShape)
 }
 
 fn optional(value: Option<&str>) -> &str {

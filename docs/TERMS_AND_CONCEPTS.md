@@ -4,49 +4,96 @@ This document defines the working vocabulary for AUV runtime recording,
 inspection, and future replay work. Terms marked as provisional are design
 terms, not stable public API names.
 
-## Trace
+## Run
 
-A trace is one complete inspectable workflow. Examples include one Rust
-orchestration workflow, one app probe, one validation pass, or one ad-hoc
-command invocation. Historical JSON recipe execution produced traces before
-the recipe lane was retired.
+A run is an explicitly created correlation, persistence, inspection, and replay
+scope. It has no start, finish, status, or seal fact in V1 and is not an
+OpenTelemetry trace.
 
-A trace is the unit that inspection tools load as a whole. It should contain
-enough structure to reconstruct what AUV attempted, what happened, what state
-was observed, and which captured materials support that account.
+## AuthorityId
 
-## InspectSection / InspectDocument / InspectComposer (provisional)
+An `AuthorityId` is the stable, non-secret identity of the sole authority
+`RunStore` selected to persist a run. It prevents one propagated `RunId` from
+silently splitting canonical history across stores.
 
-Provisional core vocabulary for shared inspect composition across frontends
-(owned by `crates/auv-inspect-model`):
+## Operation Scope
 
-- **InspectSection** — one collectible inspect unit (`id` + `collect` → optional
-  type-erased `InspectSectionOutput { id, text, json }`).
-- **InspectDocument** — ordered list of collected section outputs; `render_text`
-  concatenates section text in registration order.
-- **InspectComposer** — explicit value holding registered sections; product CLI,
-  product MCP, and product inspect-server projection use the same product factory
-  and section set, with each frontend explicitly injecting its composer `Arc`
-  into all text / document paths for that lifecycle. Core library default
-  composer is core-only (prefix+suffix). Named JSON extensions (e.g. quality
-  baseline) are served via generic `/runs/{id}/extensions/{extension}` keys
-  registered by the product projection — not first-class donor routes in the
-  shared server.
+An operation scope is an ordinary caller-named AUV span around app or driver
+work. It is not a persisted operation entity and does not require an AUV-owned
+operation trait, runner, execution id, or session object.
 
-Semantics: registration order is render order; duplicate registered ids fail
-assembly; after `collect` returns `Some(output)`, `output.id` must equal the
-registered `section.id()` (mismatch aborts the document); `collect` returning
-`None` omits the section; a section error aborts the document. Product assembly
-(not the core library default) owns donor-including composers.
+## Direct Result
+
+A direct result is the typed result returned by an app or driver operation
+directly to its CLI, MCP, or library caller. Recording consumes facts and
+artifacts emitted by that execution; `RunStore`, run snapshots, and inspection
+projections never reconstruct, gate, or replace the direct application result path.
+
+## Run Commit
+
+A run commit is one atomic, ordered set of facts accepted by the authority
+`RunStore`. Accepted commits are the canonical durable truth for a run.
+
+## Run Snapshot
+
+A run snapshot is a disposable read model reduced from accepted commits through
+one revision. `through_revision` is a read cursor, not a schema version.
+
+## Dispatch
+
+`Dispatch` routes typed AUV emissions to configured authority and projection
+destinations. It owns routing policy and does not execute operations, schedule
+application work, or contain an operation catalog.
+
+## Context
+
+`Context` is a cloneable snapshot of the current AUV run and optional span scope
+together with its associated `Dispatch`. It propagates instrumentation scope;
+it is not an operation session or application runtime.
+
+## RunStore
+
+`RunStore` is the authority storage and read port for ordered commits, artifacts,
+snapshots, history, and recovery. It is not an exporter, hook, subscriber,
+application runtime, or operation handler.
+
+## Projection
+
+A projection is a deliberately lossy mapping from canonical AUV run data into
+another read or telemetry model. Projections support presentation and external
+observability; they are not canonical run truth.
+
+## Verification
+
+Verification evaluates asserted external state. It is independent from target
+resolution, input delivery, operation completion, and persistence.
+
+## Inspect Document
+
+`auv_inspect_model::InspectDocument` is the disposable viewer projection of one
+canonical `RunSnapshot`. It carries the authority, run, and through-revision
+identity together with projected spans, events, and committed artifact
+metadata. It is not a second persistence model and does not own artifact bytes.
+
+Core projection is deterministic from the snapshot. Product-specific text
+documents may wrap this canonical projection with app-owned sections, but there
+is no shared section registry or composer in `auv-inspect-model`.
+
+## Inspect Run Extension
+
+`auv_inspect_server::InspectRunExtension` is the optional read-side contract for
+named product JSON at `/v1/runs/{run_id}/extensions/{extension}`. An extension
+receives the selected authority `RunStore` and canonical `RunSnapshot`; it may
+derive product data but cannot create another authority or alter run history.
 
 ## Product CLI package / auv-cli (provisional)
 
 Provisional packaging term for the app-integration composition package
 (`auv-cli`, located at `crates/auv-cli`):
 
-- Owns root `auv` and app-specific bins, CLI frontend, integration wiring, product
-  `InspectComposer`, query-wired OperationResult adapters (S3b; stay in product
-  until contract ownership moves), and product inspect-server projection wrappers.
+- Owns root `auv` and app-specific bins, CLI frontend, integration wiring,
+  app-owned text inspection sections, query-wired result adapters, and the product
+  `InspectRunExtension` implementation.
 - Depends on library-only `auv-runtime` plus `auv-game-*` / `auv-godot`.
 - Must not be confused with core `auv-runtime`; game crates must not depend on
   `auv-cli` to reach product types.
@@ -57,11 +104,8 @@ A device is the controllable/observable computer target a run executes
 against. Examples include the local macOS host, a remote macOS host, a macOS
 or Windows VM, a container desktop, and future browser-like sandboxes.
 
-Every run carries a `device_id`. When callers do not specify one, the runtime
-uses the default device id `local`. The id is recorded on each run's
-attributes under `auv.device.id` and is threaded into every `DriverRunContext`
-so drivers, evidence artifacts, and future RPC frontends can route correctly
-once remote devices land.
+Device identity is not a required field in the V1 run contract. Callers may
+record it as domain metadata when a workflow needs to distinguish targets.
 
 The current AUV release only executes on the local macOS host. Remote, VM,
 and container devices are a planned protocol direction; they are not
@@ -73,12 +117,9 @@ A session is the automation context on a device. It groups target app/window
 defaults, observation cache, run recording state, and per-session
 permission/capability profile.
 
-Every run carries a `session_id`. When callers do not specify one, the
-runtime uses the default session id `default`. The id is recorded on each
-run's attributes under `auv.session.id` and is threaded into every
-`DriverRunContext`. The id exists so future RPC/JS-SDK/REPL frontends can
-scope cache, namespaces, and action locks per session without changing the
-recording contract again.
+The V1 run contract does not require a `session_id` or an AUV session object.
+Application runtimes may use session concepts for caches, namespaces, and
+action locks without making them canonical run identity.
 
 Today there is one implicit session per CLI invocation for ordinary command
 execution. The first in-process `SessionRuntime` substrate now exists for
@@ -88,56 +129,50 @@ verification resources, and invalidate observations after an action. Daemon
 transport, JS/REPL handles, session-scoped artifact namespaces, and
 device-level action locks are still planned, not implemented.
 
-## Run
-
-A run is the user-visible top-level record for a trace. The `run_id` is the
-stable handle used by CLI commands, storage paths, and viewer APIs.
-
-A run is scoped to one `device_id` and one `session_id`. Both identifiers are
-recorded on the run's attributes (`auv.device.id`, `auv.session.id`) so
-historical runs remain self-describing once multi-device and multi-session
-land. Runs from different devices or sessions never share local state.
-
-For local storage, a run is expected to live under `.auv/runs/{run_id}/`. The
-on-disk layout is independent of device/session — those are run-record
-attributes, not path components — so existing run directories remain readable
-across the protocol skeleton expansion.
-
-Internally, a run may also carry an OpenTelemetry-compatible trace identifier so
-the recorded data can later be exported to OTLP without treating the human
-readable `run_id` as the telemetry trace id.
-
 ## Span
 
-A span is a timed unit of work inside a run. Spans form a tree through
-`parent_span_id`.
+An AUV span is an optional timed diagnostic scope inside a run. Spans may form
+a tree through `parent_span_id`. An operation scope is one ordinary caller-named
+use of this span API; spans need not belong to a persisted operation entity and
+do not create an independent tracing authority.
 
-Expected span levels include workflow phases, command invocations, driver
-actions, and historical JSON recipe compatibility spans in older runs. A
-single ad-hoc command can be a run with one root span and one command span.
-Historical recipe execution was modeled as one run with child spans for its
-steps and command invocations; active workflow composition uses Rust
-orchestration over typed driver APIs and tracing boundaries.
+A span becomes durable only when the run's authority `RunStore` accepts it
+through a `RunCommit`. Until then it is transient diagnostic data.
+OpenTelemetry spans are projections, not AUV persistence identity.
 
 ## Event
 
-An event is a timestamped occurrence attached to a span. Events are small and
-append-friendly. They should describe what happened, not carry large payloads.
+An AUV event is an optional typed, timestamped point-in-time fact associated
+with the current run and, optionally, a span. Events need not belong to a
+persisted operation entity and do not create an independent event or tracing
+authority.
 
 Examples include `command.resolved`, `driver.invoke`, `action.started`,
 `artifact.captured`, `assertion.passed`, and `assertion.failed`.
 
+An event becomes durable only when the run's authority `RunStore` accepts it
+through a `RunCommit`. Events should describe small occurrences; structured or
+large payloads belong in typed values or artifacts.
+
 ## Artifact
 
-An artifact is persisted inspection material produced during a run. Artifacts
-may be files, structured JSON documents, images, reports, logs, or media.
+An artifact is committed inspection, evidence, replay, or domain-output
+material owned by a run. It combines typed metadata with authority-owned bytes
+and becomes visible only when the authority `RunStore` atomically includes it
+in a `RunCommit` after validating the complete byte stream.
+
+Artifacts may optionally be associated with a span. V1 does not assign artifact
+ownership to a persisted operation entity or verification. Artifacts may
+contain structured JSON documents, images, reports, logs, media, or other files.
 
 Examples include screenshots, click-overlay images, accessibility snapshots,
 driver input/output JSON, distillation reports, validation reports, and video
 segments.
 
-Artifacts are referenced from spans or events by metadata. Large payloads should
-remain as files or blobs rather than being embedded directly in events.
+Committed typed facts and resources refer to artifacts through `ArtifactUri`.
+An `ArtifactUri` is the transport-independent identity of an artifact. Spans
+and events may add diagnostic links, but they do not own artifacts; large
+payloads remain authority-owned bytes rather than embedded event data.
 
 ## Observation Scope
 
@@ -335,10 +370,11 @@ image result before it is persisted as an artifact. A capture frame should carry
 image data plus coordinate metadata, capture source, backend, scale, and timing
 information.
 
-Driver crates may produce capture frames. The runtime or recorder decides
-whether to persist them into `.auv/runs` artifacts. This keeps the operation
-path from requiring synchronous filename allocation or image writes when the
-caller only needs pixels for OCR, recognition, or immediate interaction logic.
+Driver crates may produce capture frames. The caller or configured
+instrumentation path decides whether to persist them as artifacts. This keeps
+the operation path from requiring synchronous filename allocation or image
+writes when the caller only needs pixels for OCR, recognition, or immediate
+interaction logic.
 
 ## Input Mode
 
@@ -551,55 +587,29 @@ They are inspection artifacts, not screenshots.
 
 ## Inspect Server
 
-The inspect server is an HTTP and WebSocket access layer over stored and live
-run data. It is not the runtime execution API.
+The inspect server is an HTTP and SSE access layer over stored and live run
+data. It is not the runtime execution API.
 
 The server exists so browser viewers, Android WebViews, IDE integrations, and
 other tools can list runs, fetch run structure, load artifacts, and subscribe to
 live run events.
 
-The default CLI endpoint is `127.0.0.1:8765`. A standalone `inspect serve`
-process can read historical runs from the configured store root and can accept
-cross-process run updates only when write mode is explicitly enabled.
+V1 selects exactly one authority `RunStore` for each run. An inspect
+implementation has one of two relationships to that authority:
 
-Inspect server write mode is opt-in. In write mode, runtimes can report
-incremental run updates to the server over local HTTP, and the server applies
-accepted updates to its configured store before broadcasting them to live
-viewers. The server rejects conflicting updates instead of silently merging or
-overwriting them.
+- it reads snapshots, commits, subscriptions, and artifacts from the selected
+  authority `RunStore`; or
+- it is selected as the authority `RunStore`, with `InspectRunStore` carrying
+  the store contract over the Inspect HTTP/SSE protocol.
 
-Local recording and inspect server reporting are multi-write behavior. AUV does
-not define a universal single source of truth when both are enabled; each target
-owns the records it accepted, and callers choose which store or server they
-inspect.
+Only `RunCommit` values accepted by the selected authority define durable run
+truth. Inspect projections, rendering, and live broadcasts, including SSE
+delivery, are non-authoritative and cannot change committed history.
 
-Artifact byte upload is available in write mode after the corresponding
-artifact metadata has been accepted for the run. Replay and broader mutation
-APIs remain out of scope for the first inspect-server design.
-
-## Run Recording Backend
-
-A run recording backend is a dependency of execution surfaces, not of the
-legacy `Runtime` type specifically. It owns run recording effects by combining
-one store for canonical snapshots and artifact staging with one or more run
-recorders for incremental updates.
-
-The backend lets CLI, library calls, and future frontends share the same runtime
-execution model while choosing different recording policies. Examples include
-local-only recording, local plus inspect server reporting, server-required
-reporting, and library-supplied recorders.
-
-## Driver Tracing Boundary
-
-The driver tracing boundary is implemented by `auv-tracing-driver`. It owns
-durable AUV run/span/event/artifact recording and may emit Rust `tracing`
-spans/events for observability. It does not install global subscribers or
-OpenTelemetry exporters; binaries and servers configure those layers.
-
-Typed driver calls and Rust orchestration should use this boundary when they
-need inspectable artifacts without depending on command catalog or CLI argument
-parsing code. The root `Runtime` still exposes temporary facade methods for
-remaining invoke and historical callers.
+Reliable replication between authorities requires a separate protocol with an
+outbox, acknowledgement, resume cursor, and conflict policy; that protocol is
+deferred. Artifact metadata and bytes are committed atomically through the
+authority `RunStore` artifact contract.
 
 ## Interaction Tracing Boundary
 
@@ -609,8 +619,9 @@ a surface, scrolls, observes again, and records merged evidence as one
 interaction-level trace structure.
 
 The working crate name for this boundary is `auv-tracing-interaction`.
-Interaction tracing may call the driver tracing boundary, but it should not
-become a command catalog, recipe runtime, or platform driver implementation.
+Interaction tracing may instrument typed driver calls through `auv-tracing`,
+but it should not become a command catalog, recipe runtime, or platform driver
+implementation.
 
 ## Operation Spec
 
@@ -709,15 +720,13 @@ stay together. It wraps driver operation specs but does not own the operation
 contract itself. It is not the core runtime and should not own run recording
 semantics, recipe execution, or bundle discovery.
 
-## Run Recorder
+## Historical Terms
 
-A run recorder receives incremental run updates such as `runStarted`,
-`spanStarted`, `eventAppended`, `artifactCreated`, `spanFinished`, and
-`runFinished`.
-
-Recorder implementations may persist updates locally, broadcast them to
-same-process viewers, report them to an inspect server, fan them out to multiple
-targets, or intentionally discard them.
+Before V1, AUV experimented with persisted operation/execution entities,
+recorder fan-out, and a driver-specific tracing boundary. Those surfaces are
+retired rather than compatibility-supported. The repository audit and migration
+record remain in
+[`docs/ai/references/inspect/2026-07-17-auv-tracing-contract-and-invoke-output-design.md`](ai/references/inspect/2026-07-17-auv-tracing-contract-and-invoke-output-design.md).
 
 ## Inspect Server Session
 

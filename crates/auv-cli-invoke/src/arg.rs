@@ -66,12 +66,6 @@ pub const VERIFY: ArgSpec = ArgSpec {
   required: false,
   help: "Run AX text verification after paste (default true).",
 };
-pub const DRIVER: ArgSpec = ArgSpec {
-  flag: "--driver",
-  value_name: "NAME",
-  required: false,
-  help: "Driver boundary: omit for live macOS, or `fixture` for hermetic CI.",
-};
 pub const TARGET_TEXT: ArgSpec = ArgSpec {
   flag: "--target_text",
   value_name: "TEXT",
@@ -182,5 +176,5 @@ pub const COVERAGE_FIXTURE_DIR: ArgSpec = ArgSpec {
   help: "Directory containing a coverage scenario manifest (manifest.json); frame PNGs are resolved via frame_fixture cross-reference, not stored in this directory.",
 };
 pub const SCAN_COVERAGE_ARGS: &[ArgSpec] = &[COVERAGE_FIXTURE_DIR];
-pub const TEXTEDIT_DOCUMENT_WRITE_ARGS: &[ArgSpec] = &[CONTENT, REPLACE, VERIFY, DRIVER];
+pub const TEXTEDIT_DOCUMENT_WRITE_ARGS: &[ArgSpec] = &[CONTENT, REPLACE, VERIFY];
 pub const NO_ARGS: &[ArgSpec] = &[];

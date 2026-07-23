@@ -64,7 +64,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | Shared vocabulary | [`../../TERMS_AND_CONCEPTS.md`](../../TERMS_AND_CONCEPTS.md) |
 | Core roadmap | [`runtime/2026-06-13-core-roadmap.md`](runtime/2026-06-13-core-roadmap.md) |
 | Invoke / CLI design | [`invoke-cli/2026-06-11-cli-invoke-driver-console-design.md`](invoke-cli/2026-06-11-cli-invoke-driver-console-design.md) |
-| Inspect viewer design | [`inspect/2026-05-19-trace-run-inspect-design.md`](inspect/2026-05-19-trace-run-inspect-design.md) |
+| Current AUV tracing / run storage / Inspect contract | [`inspect/INDEX.md`](inspect/INDEX.md) |
 | Temporal scan | [`scan/INDEX.md`](scan/INDEX.md) |
 | Session API / MCP | [`session-api/INDEX.md`](session-api/INDEX.md) |
 | Design system / viewer UI | [`../../design/README.md`](../../design/README.md) |

@@ -111,7 +111,7 @@ pub fn prepare_texture_sweep_resource_packs(inputs: TextureSweepPreparationInput
     .collect::<Vec<_>>();
   let manifest = TextureSweepPreparationManifest {
     schema_version: TEXTURE_SWEEP_PREP_SCHEMA_VERSION,
-    generated_at_millis: auv_tracing_driver::now_millis(),
+    generated_at_millis: crate::run_read::now_millis(),
     sidecar_run_dir: inputs.sidecar_run_dir.to_string_lossy().into_owned(),
     resourcepacks_dir: resourcepacks_dir.to_string_lossy().into_owned(),
     pack_format: MINECRAFT_1_21_1_RESOURCE_PACK_FORMAT,

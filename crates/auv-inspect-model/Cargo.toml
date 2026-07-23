@@ -7,13 +7,12 @@ publish.workspace = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Neutral inspect composition contract (InspectSection / InspectDocument / InspectComposer)"
+description = "Disposable Inspect viewer DTOs derived from canonical run snapshots"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-tracing-driver = { path = "../auv-tracing-driver" }
+auv-tracing = { path = "../auv-tracing" }
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true

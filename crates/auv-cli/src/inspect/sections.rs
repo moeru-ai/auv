@@ -1,107 +1,136 @@
-//! Product inspect sections assembled from app-owned and product-owned readers.
-//!
-//! Query-wired sections remain product-owned because they depend on
-//! `OperationResult` adapters. Ordinary app-specific sections are supplied by
-//! `auv-game-*` factories.
-//!
-//! Product CLI, product MCP, and the product inspect-server projection inject
-//! the same composer from `build_product_inspect_composer`. Viewer app-specific
-//! cards still fetch named JSON extensions (e.g. quality baseline) by key, not
-//! first-class Minecraft routes.
+//! Product inspect sections assembled from canonical root and app readers.
 
-use std::sync::Arc;
+use auv_tracing::{RunSnapshot, RunStore};
 
-use auv_inspect_model::{InspectComposer, InspectError, InspectSection, InspectSectionOutput};
-use auv_runtime::inspect::{CorePrefixSection, CoreSuffixSection};
-use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+use super::query_wired_minecraft::{append_minecraft_query_wired_section, collect_minecraft_query_wired_live_action_summaries};
+use super::query_wired_osu::{append_osu_query_wired_section, collect_osu_query_wired_live_action_summaries};
 
-use super::query_wired_minecraft::append_minecraft_query_wired_section;
-use super::query_wired_osu::append_osu_query_wired_section;
-use crate::run_read::{list_minecraft_query_wired_live_action_summaries, list_osu_query_wired_live_action_summaries};
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ProductInspectSection {
+  pub id: &'static str,
+  pub text: String,
+}
 
-pub struct OsuQueryWiredLiveActionSection;
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ProductInspectDocument {
+  #[serde(flatten)]
+  canonical: auv_inspect_model::InspectDocument,
+  pub sections: Vec<ProductInspectSection>,
+}
 
-impl InspectSection for OsuQueryWiredLiveActionSection {
-  fn id(&self) -> &'static str {
-    "osu_query_wired_live_action"
-  }
-
-  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    let summaries = list_osu_query_wired_live_action_summaries(store, run.run.run_id.as_str())?;
-    let mut text = String::new();
-    append_osu_query_wired_section(&mut text, &summaries);
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text,
-      json: None,
-    }))
+impl ProductInspectDocument {
+  pub fn render_text(&self) -> String {
+    let mut output = String::new();
+    for section in &self.sections {
+      output.push_str(&section.text);
+      if !section.text.ends_with('\n') {
+        output.push('\n');
+      }
+    }
+    output
   }
 }
 
-pub struct MinecraftQueryWiredLiveActionSection;
+#[derive(Debug)]
+pub enum ProductInspectError {
+  Root(String),
+  Minecraft(auv_game_minecraft::MinecraftArtifactReadError),
+  Balatro(auv_game_balatro::BalatroArtifactReadError),
+  Osu(auv_game_osu::run_read::OsuArtifactReadError),
+}
 
-impl InspectSection for MinecraftQueryWiredLiveActionSection {
-  fn id(&self) -> &'static str {
-    "minecraft_query_wired_live_action"
-  }
-
-  fn collect(&self, store: &LocalStore, run: &CanonicalRun) -> Result<Option<InspectSectionOutput>, InspectError> {
-    let summaries = list_minecraft_query_wired_live_action_summaries(store, run.run.run_id.as_str())?;
-    let mut text = String::new();
-    append_minecraft_query_wired_section(&mut text, &summaries);
-    Ok(Some(InspectSectionOutput {
-      id: self.id(),
-      text,
-      json: None,
-    }))
+impl std::fmt::Display for ProductInspectError {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Root(error) => write!(formatter, "root inspection failed: {error}"),
+      Self::Minecraft(error) => write!(formatter, "Minecraft inspection failed: {error}"),
+      Self::Balatro(error) => write!(formatter, "Balatro inspection failed: {error}"),
+      Self::Osu(error) => write!(formatter, "osu! inspection failed: {error}"),
+    }
   }
 }
 
-/// LOCKED golden render order (do not invent another).
-pub fn build_product_inspect_composer() -> Result<Arc<InspectComposer>, InspectError> {
-  let mut sections: Vec<Arc<dyn InspectSection>> = Vec::new();
-  // 1. core_prefix
-  sections.push(Arc::new(CorePrefixSection));
-  // 2. minecraft primary
-  sections.extend(auv_game_minecraft::inspect_sections_primary());
-  // 3. balatro
-  sections.extend(auv_game_balatro::inspect_sections());
-  // 4. minecraft quality+spatial
-  sections.extend(auv_game_minecraft::inspect_sections_quality_spatial());
-  // 5. osu A
-  sections.extend(auv_game_osu::inspect_sections_primary());
-  // 6. osu query-wired (PRODUCT)
-  sections.push(Arc::new(OsuQueryWiredLiveActionSection));
-  // 7. osu B
-  sections.extend(auv_game_osu::inspect_sections_detection_eval());
-  // 8. minecraft query-wired (PRODUCT)
-  sections.push(Arc::new(MinecraftQueryWiredLiveActionSection));
-  // 9. core_suffix
-  sections.push(Arc::new(CoreSuffixSection));
-  InspectComposer::try_new(sections).map(Arc::new)
+impl std::error::Error for ProductInspectError {}
+
+impl From<auv_game_minecraft::MinecraftArtifactReadError> for ProductInspectError {
+  fn from(value: auv_game_minecraft::MinecraftArtifactReadError) -> Self {
+    Self::Minecraft(value)
+  }
 }
 
-#[cfg(test)]
-mod tests {
-  use super::*;
+impl From<auv_game_balatro::BalatroArtifactReadError> for ProductInspectError {
+  fn from(value: auv_game_balatro::BalatroArtifactReadError) -> Self {
+    Self::Balatro(value)
+  }
+}
 
-  #[test]
-  fn product_composer_keeps_locked_section_order() {
-    let composer = build_product_inspect_composer().expect("product composer");
-    let ids = composer.sections().iter().map(|section| section.id()).collect::<Vec<_>>();
-    assert_eq!(
-      ids,
-      [
-        "core_prefix",
-        "minecraft_primary",
-        "balatro_card_detection",
-        "minecraft_quality_spatial",
-        "osu_visual_truth_primary",
-        "osu_query_wired_live_action",
-        "osu_detection_eval",
-        "minecraft_query_wired_live_action",
-        "core_suffix",
-      ]
-    );
+impl From<auv_game_osu::run_read::OsuArtifactReadError> for ProductInspectError {
+  fn from(value: auv_game_osu::run_read::OsuArtifactReadError) -> Self {
+    Self::Osu(value)
+  }
+}
+
+pub async fn build_product_inspect_document(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+) -> Result<ProductInspectDocument, ProductInspectError> {
+  let sections = collect_sections(store, snapshot).await?;
+  Ok(ProductInspectDocument {
+    canonical: auv_inspect_model::InspectDocument::from(snapshot),
+    sections,
+  })
+}
+
+async fn collect_sections(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<Vec<ProductInspectSection>, ProductInspectError> {
+  let mut sections = Vec::new();
+  sections.push(ProductInspectSection {
+    id: "core_prefix",
+    text: auv_runtime::inspect::inspect_run_core_prefix_body(store, snapshot).await.map_err(ProductInspectError::Root)?,
+  });
+
+  sections.extend(auv_game_minecraft::inspect_sections_primary(store, snapshot).await?.into_iter().map(minecraft_section));
+  sections.push(ProductInspectSection {
+    id: auv_game_balatro::inspect::BalatroCardDetectionSection::ID,
+    text: auv_game_balatro::inspect::render_balatro_card_detection_text(store, snapshot).await?,
+  });
+  sections.extend(auv_game_minecraft::inspect_sections_quality_spatial(store, snapshot).await?.into_iter().map(minecraft_section));
+  sections.extend(auv_game_osu::inspect_sections_primary(store, snapshot).await?.into_iter().map(osu_section));
+
+  let osu_query_wired = collect_osu_query_wired_live_action_summaries(store, snapshot).await?;
+  let mut osu_query_wired_text = String::new();
+  append_osu_query_wired_section(&mut osu_query_wired_text, &osu_query_wired);
+  sections.push(ProductInspectSection {
+    id: "osu_query_wired_live_action",
+    text: osu_query_wired_text,
+  });
+
+  sections.extend(auv_game_osu::inspect_sections_detection_eval(store, snapshot).await?.into_iter().map(osu_section));
+
+  let minecraft_query_wired = collect_minecraft_query_wired_live_action_summaries(store, snapshot).await?;
+  let mut minecraft_query_wired_text = String::new();
+  append_minecraft_query_wired_section(&mut minecraft_query_wired_text, &minecraft_query_wired);
+  sections.push(ProductInspectSection {
+    id: "minecraft_query_wired_live_action",
+    text: minecraft_query_wired_text,
+  });
+
+  sections.push(ProductInspectSection {
+    id: "core_suffix",
+    text: auv_runtime::inspect::inspect_run_core_suffix_body(store, snapshot).await.map_err(ProductInspectError::Root)?,
+  });
+  Ok(sections)
+}
+
+fn minecraft_section(section: auv_game_minecraft::inspect::MinecraftInspectSection) -> ProductInspectSection {
+  ProductInspectSection {
+    id: section.id(),
+    text: section.into_text(),
+  }
+}
+
+fn osu_section(section: auv_game_osu::inspect::OsuInspectSection) -> ProductInspectSection {
+  ProductInspectSection {
+    id: section.id(),
+    text: section.into_text(),
   }
 }

@@ -10,10 +10,8 @@ pub mod v1 {
 
 #[cfg(test)]
 mod tests {
-  use std::collections::HashMap;
-
   use crate::v1::session::session_service_client::SessionServiceClient;
-  use crate::v1::session::{ArtifactRef, FILE_DESCRIPTOR_SET, GetOperationResponse, InvokeRequest, OperationRef, SessionRef};
+  use crate::v1::session::{FILE_DESCRIPTOR_SET, InvokeRequest, SessionRef};
   use prost::Message;
   use prost_types::FileDescriptorSet;
 
@@ -37,39 +35,7 @@ mod tests {
   }
 
   #[test]
-  fn get_operation_response_round_trip() {
-    let response = GetOperationResponse {
-      operation: Some(OperationRef {
-        run_id: "run-1".to_string(),
-        operation_id: "minecraft.query".to_string(),
-      }),
-      status: "failed".to_string(),
-      output_summary: "command rejected".to_string(),
-      signals: HashMap::from([("exit_code".to_string(), "1".to_string())]),
-      artifacts: vec![ArtifactRef {
-        run_id: "run-1".to_string(),
-        artifact_id: "art-1".to_string(),
-        role: "trace".to_string(),
-      }],
-      failure_message: "invalid payload".to_string(),
-      known_limits: vec!["json_payload_max_bytes".to_string()],
-    };
-
-    let encoded = response.encode_to_vec();
-    let decoded = GetOperationResponse::decode(encoded.as_slice()).expect("decode GetOperationResponse");
-
-    assert_eq!(decoded.status, "failed");
-    assert_eq!(decoded.failure_message, "invalid payload");
-    assert_eq!(decoded.known_limits, vec!["json_payload_max_bytes"]);
-    let operation = decoded.operation.expect("operation ref");
-    assert_eq!(operation.run_id, "run-1");
-    assert_eq!(operation.operation_id, "minecraft.query");
-    assert_eq!(decoded.artifacts.len(), 1);
-    assert_eq!(decoded.signals.get("exit_code"), Some(&"1".to_string()));
-  }
-
-  #[test]
-  fn file_descriptor_set_lists_session_service_rpcs() {
+  fn file_descriptor_set_exposes_direct_invoke_without_operation_readback() {
     let descriptor_set = FileDescriptorSet::decode(FILE_DESCRIPTOR_SET).expect("decode FILE_DESCRIPTOR_SET");
 
     let session_file = descriptor_set
@@ -83,14 +49,19 @@ mod tests {
 
     let rpc_names: Vec<&str> = session_service.method.iter().filter_map(|method| method.name.as_deref()).collect();
 
-    assert_eq!(
-      rpc_names,
-      vec![
-        "CreateSession",
-        "Invoke",
-        "GetOperation",
-        "StreamSessionEvents",
-      ]
+    assert_eq!(rpc_names, vec!["CreateSession", "Invoke", "StreamSessionEvents",]);
+
+    assert!(
+      session_file.message_type.iter().all(|message| message.name.as_deref() != Some("OperationRef")),
+      "synchronous Invoke must expose run identity directly without an operation readback type"
+    );
+
+    let invoke_response =
+      session_file.message_type.iter().find(|message| message.name.as_deref() == Some("InvokeResponse")).expect("InvokeResponse descriptor");
+    assert_eq!(invoke_response.field.first().and_then(|field| field.name.as_deref()), Some("run_id"));
+    assert!(
+      invoke_response.field.iter().any(|field| field.name.as_deref() == Some("recording_failure")),
+      "InvokeResponse must expose post-execution recording failure separately from direct command status"
     );
   }
 

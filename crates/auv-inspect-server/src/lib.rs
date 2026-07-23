@@ -1,17 +1,19 @@
-//! Viewer-facing HTTP/WebSocket inspection server for recorded AUV runs.
+//! Viewer-facing HTTP authority for canonical AUV run data.
 //!
-//! This crate serves run storage and artifact inspection APIs. It does not
-//! execute commands, drive applications, or own runtime semantics.
+//! This crate composes an existing [`auv_tracing::RunStore`]. It does not
+//! execute operations, own application control flow, or maintain a second run
+//! recording model.
 
 pub mod read_projection;
 pub mod session;
 
+mod run_api;
 mod server;
 mod viewer_assets;
 
-pub use read_projection::{CommandBoundaryClaim, DefaultInspectReadProjection, InspectReadProjection, InspectRunEnrichment};
+pub use read_projection::{InspectRunExtension, InspectRunExtensionError, InspectRunExtensionErrorCategory, project_snapshot};
 pub use server::{
-  DEFAULT_INSPECT_HOST, DEFAULT_INSPECT_PORT, InspectServeConfig, InspectWriteConfig, router, router_with_projection, serve,
+  DEFAULT_INSPECT_HOST, DEFAULT_INSPECT_PORT, InspectServeConfig, router, router_with_artifact_origin, router_with_extension, serve,
 };
 pub use session::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
 

@@ -8,12 +8,49 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use auv_driver::InputActionResult;
-use auv_tracing_driver::now_millis;
-use auv_tracing_driver::trace::{DeviceId, SessionId};
-
 use crate::contract::{ObservationSnapshot, SurfaceNode, VerificationResult};
-use crate::model::AuvResult;
+use crate::model::{AuvResult, now_millis};
+use auv_driver::InputActionResult;
+#[cfg(test)]
+use auv_tracing::{RunId, SpanId};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceId(String);
+
+impl DeviceId {
+  pub fn new(value: impl Into<String>) -> Self {
+    Self(value.into())
+  }
+
+  pub fn as_str(&self) -> &str {
+    &self.0
+  }
+}
+
+impl Default for DeviceId {
+  fn default() -> Self {
+    Self("local".to_string())
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionId(String);
+
+impl SessionId {
+  pub fn new(value: impl Into<String>) -> Self {
+    Self(value.into())
+  }
+
+  pub fn as_str(&self) -> &str {
+    &self.0
+  }
+}
+
+impl Default for SessionId {
+  fn default() -> Self {
+    Self("default".to_string())
+  }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProviderId(String);
@@ -64,8 +101,8 @@ pub struct SessionOptions {
 impl Default for SessionOptions {
   fn default() -> Self {
     Self {
-      device_id: DeviceId::default_local(),
-      session_id: SessionId::default_session(),
+      device_id: DeviceId::default(),
+      session_id: SessionId::default(),
     }
   }
 }
@@ -334,8 +371,8 @@ fn synthetic_snapshot(nodes: Vec<SurfaceNode>) -> ObservationSnapshot {
   ObservationSnapshot {
     api_version: crate::contract::OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
     snapshot_id: "pending_session_observation".to_string(),
-    run_id: auv_tracing_driver::trace::new_run_id(),
-    span_id: auv_tracing_driver::trace::new_span_id(),
+    run_id: RunId::new(),
+    span_id: SpanId::new(),
     captured_at_millis: now_millis(),
     source: crate::contract::ObservationSource::Visual,
     scope: crate::contract::RecognitionScope {
@@ -362,8 +399,8 @@ fn synthetic_surface_node(node_id: impl Into<String>, label: impl Into<String>, 
   let node_id = node_id.into();
   SurfaceNode {
     node_ref: crate::contract::NodeRef {
-      run_id: auv_tracing_driver::trace::RunId::new("run_session_synthetic"),
-      span_id: auv_tracing_driver::trace::SpanId::new("span_session_synthetic"),
+      run_id: RunId::new(),
+      span_id: SpanId::new(),
       node_id,
     },
     kind: "session_fixture_node".to_string(),

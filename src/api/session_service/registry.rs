@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 
-use auv_tracing_driver::{SessionId, now_millis};
+use crate::model::now_millis;
+use crate::session::SessionId;
 
 /// Lightweight per-session metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]

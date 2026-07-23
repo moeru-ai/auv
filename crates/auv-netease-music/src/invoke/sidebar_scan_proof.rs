@@ -1,29 +1,21 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_cli_invoke::{ArgSpec, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult};
+use auv_cli_invoke::{ArgSpec, ArtifactInstrumentationFailure, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput};
 use auv_driver::vision::TextRecognitionOptions;
 
-use crate::recording::{NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE, persist_playlist_ls_artifacts};
+use crate::recording::{PLAYLIST_SIDEBAR_SCAN_PURPOSE, persist_playlist_ls_artifacts};
 use crate::{DEFAULT_APP_ID, Inputs, PlaylistCategory, PlaylistSidebarScan, decode_playlist_sidebar_scan_json};
 
 pub const SIDEBAR_SCAN_PROOF_COMMAND_ID: &str = "netease.playlist.sidebarScanProof";
 pub const SCAN_FIXTURE_FILE: &str = "playlist-sidebar-scan.json";
 
-pub const SIDEBAR_SCAN_PROOF_ARGS: &[ArgSpec] = &[
-  ArgSpec {
-    flag: "--fixture-dir",
-    value_name: "PATH",
-    required: true,
-    help: "Directory containing playlist-sidebar-scan.json (hermetic scan proof fixture).",
-  },
-  ArgSpec {
-    flag: "--store-root",
-    value_name: "PATH",
-    required: true,
-    help: "Local store root where the sidebar-scan proof run is persisted.",
-  },
-];
+pub const SIDEBAR_SCAN_PROOF_ARGS: &[ArgSpec] = &[ArgSpec {
+  flag: "--fixture-dir",
+  value_name: "PATH",
+  required: true,
+  help: "Directory containing playlist-sidebar-scan.json (hermetic scan proof fixture).",
+}];
 
 pub fn build_scan_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSidebarScan, String> {
   if !fixture_dir.is_dir() {
@@ -37,15 +29,13 @@ pub fn build_scan_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSidebar
 
   let bytes = fs::read(&fixture_path).map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
   let json = std::str::from_utf8(&bytes).map_err(|error| format!("fixture {} is not valid UTF-8: {error}", fixture_path.display()))?;
-  decode_playlist_sidebar_scan_json(json)
+  decode_playlist_sidebar_scan_json(json).map_err(|error| error.to_string())
 }
 
-/// Minimal [`Inputs`] for `persist_playlist_ls_artifacts(..., memory_enabled=false)` only.
-pub fn persist_inputs_for_sidebar_scan_proof(store_root: &Path, scan: &PlaylistSidebarScan) -> Inputs {
+/// Minimal [`Inputs`] used only to derive the persisted app-local lineage.
+pub fn persist_inputs_for_sidebar_scan_proof(scan: &PlaylistSidebarScan) -> Inputs {
   let app_id = scan.app().app_id.clone().filter(|value| !value.is_empty()).unwrap_or_else(|| DEFAULT_APP_ID.to_string());
 
-  // NOTICE(acp-2): persist-only inputs; not product CLI runtime config.
-  // When memory_enabled=false, persist_in_recorded_context only reads inputs.app_id.
   Inputs {
     app_id,
     artifact_dir: PathBuf::new(),
@@ -55,16 +45,16 @@ pub fn persist_inputs_for_sidebar_scan_proof(store_root: &Path, scan: &PlaylistS
     sidebar_region: None,
     ocr_options: TextRecognitionOptions::default(),
     category: PlaylistCategory::All,
-    store_root: Some(store_root.to_path_buf()),
   }
 }
 
-pub fn sidebar_scan_proof_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  let fixture_dir = required_input(&input, "fixture-dir")?;
-  let store_root = required_input(&input, "store-root")?;
-  let fixture_path = Path::new(fixture_dir);
-  let store_path = Path::new(store_root);
+pub fn sidebar_scan_proof_handler(input: InvokeCommandInput) -> InvokeCommandFuture {
+  Box::pin(sidebar_scan_proof(input))
+}
 
+async fn sidebar_scan_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, String> {
+  let fixture_dir = required_input(&input, "fixture-dir")?.to_string();
+  let fixture_path = Path::new(&fixture_dir);
   let scan = build_scan_from_fixture_dir(fixture_path)?;
 
   if input.dry_run {
@@ -73,26 +63,38 @@ pub fn sidebar_scan_proof_handler(input: InvokeCommandInput<'_>) -> InvokeComman
       "validated hermetic sidebar scan proof fixture at {} ({section_count} projection sections)",
       fixture_dir
     ));
-    output.verification = Some("dry-run; no store proof written".to_string());
+    output.verification = Some("dry-run; no run artifact written".to_string());
     output.known_limits.push("hermetic_fixture_only".to_string());
-    output.signals.insert("fixture_dir".to_string(), fixture_dir.to_string());
+    output.signals.insert("fixture_dir".to_string(), fixture_dir);
     return Ok(output);
   }
 
-  let inputs = persist_inputs_for_sidebar_scan_proof(store_path, &scan);
-  let persisted = persist_playlist_ls_artifacts(store_path, &scan, &inputs, false).map_err(|error| error)?;
-  let run_id = persisted.lineage.run_id;
-
-  let mut output = InvokeCommandOutput::new(format!("persisted hermetic sidebar scan proof run {run_id} under {}", store_root));
+  let inputs = persist_inputs_for_sidebar_scan_proof(&scan);
+  let mut output = match persist_playlist_ls_artifacts(&scan, &inputs, false).await {
+    Ok(Some(persisted)) => {
+      let run_id = persisted.lineage.scan_uri.run_id().to_string();
+      let mut output = InvokeCommandOutput::new(format!("persisted hermetic sidebar scan proof in run {run_id}"));
+      output.signals.insert("run_id".to_string(), run_id);
+      output.signals.insert("scan_uri".to_string(), persisted.lineage.scan_uri.to_string());
+      output
+    }
+    Ok(None) => InvokeCommandOutput::new("validated hermetic sidebar scan proof fixture; run artifact publication was disabled"),
+    Err(error) => {
+      let mut output = InvokeCommandOutput::new("validated hermetic sidebar scan proof fixture; run artifact was not published");
+      output.artifact_failures.push(ArtifactInstrumentationFailure {
+        purpose: PLAYLIST_SIDEBAR_SCAN_PURPOSE.to_string(),
+        message: error.to_string(),
+      });
+      output
+    }
+  };
   output.verification = Some("hermetic fixture proof only; no live scan or view-memory write".to_string());
   output.known_limits.push("hermetic_fixture_only".to_string());
-  output.signals.insert("run_id".to_string(), run_id.clone());
-  output.signals.insert("store_root".to_string(), store_root.to_string());
-  output.signals.insert("artifact_role".to_string(), NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE.to_string());
+  output.signals.insert("artifact_purpose".to_string(), PLAYLIST_SIDEBAR_SCAN_PURPOSE.to_string());
   Ok(output)
 }
 
-fn required_input<'a>(input: &InvokeCommandInput<'a>, key: &str) -> Result<&'a str, String> {
+fn required_input<'a>(input: &'a InvokeCommandInput, key: &str) -> Result<&'a str, String> {
   input
     .inputs
     .get(key)
@@ -108,11 +110,8 @@ pub fn hermetic_sidebar_scan_proof_fixture_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
-  use std::fs;
 
   use auv_cli_invoke::default_registry;
-  use auv_tracing_driver::LocalStore;
-  use auv_view::memory::VIEW_MEMORY_ARTIFACT_ROLE;
 
   use super::*;
   use crate::invoke::netease_registry;
@@ -139,111 +138,37 @@ mod tests {
   }
 
   #[test]
-  fn sidebar_scan_proof_writes_scan_artifact() {
-    let root = std::env::temp_dir().join(format!("auv-acp2-sidebar-scan-proof-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = fs::remove_dir_all(&root);
-
+  fn sidebar_scan_proof_without_context_preserves_direct_fixture_result() {
     let mut inputs = BTreeMap::new();
     inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
-    inputs.insert("store-root".to_string(), store_root.display().to_string());
+    let command = netease_registry().resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command").clone();
 
-    let registry = netease_registry();
-    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    let output = command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
+    let output = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs,
+      dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
+    }))
+    .expect("fixture validation remains the direct result");
 
-    let run_id = output.signals.get("run_id").expect("run_id signal");
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let run = store.read_run(run_id).expect("run");
-    assert!(run.artifacts.iter().any(|artifact| artifact.role == NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE));
-
-    let _ = fs::remove_dir_all(&root);
+    assert!(output.summary.contains("publication was disabled"));
+    assert!(output.artifact_failures.is_empty());
   }
 
   #[test]
-  fn sidebar_scan_proof_run_uses_ls_runspec() {
-    let root = std::env::temp_dir().join(format!("auv-acp2-runspec-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = fs::remove_dir_all(&root);
+  fn sidebar_scan_proof_requires_fixture_dir() {
+    let command = netease_registry().resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command").clone();
+    let error = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command.id.to_string(),
+      target_application_id: None,
+      inputs: BTreeMap::new(),
+      dry_run: false,
+      cancellation: auv_cli_invoke::InvokeCancellation::new(),
+    }))
+    .expect_err("missing fixture-dir should fail");
 
-    let mut inputs = BTreeMap::new();
-    inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
-    inputs.insert("store-root".to_string(), store_root.display().to_string());
-
-    let registry = netease_registry();
-    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
-
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let runs = store.list_runs().expect("runs");
-    assert_eq!(runs.len(), 1);
-    let run = store.read_run(runs[0].run_id.as_str()).expect("run");
-    let root_span = run.spans.iter().find(|span| span.parent_span_id.is_none()).expect("root span");
-    assert_eq!(root_span.name, "auv.netease.playlist.ls");
-
-    let _ = fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn sidebar_scan_proof_no_view_memory_artifact() {
-    let root = std::env::temp_dir().join(format!("auv-acp2-no-memory-{}", std::process::id()));
-    let store_root = root.join("store");
-    let _ = fs::remove_dir_all(&root);
-
-    let mut inputs = BTreeMap::new();
-    inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
-    inputs.insert("store-root".to_string(), store_root.display().to_string());
-
-    let registry = netease_registry();
-    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect("handler");
-
-    let store = LocalStore::new(store_root.clone()).expect("store");
-    let runs = store.list_runs().expect("runs");
-    let run = store.read_run(runs[0].run_id.as_str()).expect("run");
-    assert!(!run.artifacts.iter().any(|artifact| artifact.role == VIEW_MEMORY_ARTIFACT_ROLE));
-
-    let _ = fs::remove_dir_all(&root);
-  }
-
-  #[test]
-  fn sidebar_scan_proof_requires_store_root() {
-    let mut inputs = BTreeMap::new();
-    inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
-
-    let registry = netease_registry();
-    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
-    let error = command
-      .invoke(InvokeCommandInput {
-        command_id: command.id,
-        target_application_id: None,
-        inputs: &inputs,
-        dry_run: false,
-      })
-      .expect_err("missing store-root should fail");
-
-    assert!(error.contains("store-root"));
+    assert!(error.contains("fixture-dir"));
   }
 
   #[test]

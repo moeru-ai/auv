@@ -29,15 +29,22 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
   let summary = &values["summary"];
   let args = &values["args"];
   let export_name = format!("{function_name}_invoke_command");
+  let handler_name = format!("__{function_name}_invoke_handler");
 
   let generated = format!(
-    "pub fn {export_name}() -> ::auv_cli_invoke::InvokeCommand {{
+    "fn {handler_name}(
+      input: ::auv_cli_invoke::InvokeCommandInput,
+    ) -> ::auv_cli_invoke::InvokeCommandFuture {{
+      Box::pin({function_name}(input))
+    }}
+
+    pub fn {export_name}() -> ::auv_cli_invoke::InvokeCommand {{
       ::auv_cli_invoke::command::spec(
         {id},
         ::auv_cli_invoke::InvokeNamespace::{namespace},
         {summary},
         {args},
-        {function_name},
+        {handler_name},
       )
     }}"
   );
@@ -45,7 +52,7 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
   let mut output = item.to_string();
   output.push('\n');
   output.push_str(&generated);
-  output.parse().map_or_else(|_| compile_error("invoke_command generated invalid Rust"), |tokens| tokens)
+  output.parse().unwrap_or_else(|_| compile_error("invoke_command generated invalid Rust"))
 }
 
 fn find_function_name(item: TokenStream) -> Option<String> {

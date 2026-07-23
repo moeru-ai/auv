@@ -2,11 +2,9 @@ use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportLabels,
   InvokeReportTable, InvokeReportTableRow, InvokeReportValue, OptionalReportText,
   arg::{NO_ARGS, WINDOW_ARGS, WINDOW_TEXT_ARGS, WINDOW_VERIFY_TEXT_ARGS},
-  artifact::invoke_artifact_path,
+  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
   invoke_command,
 };
-#[cfg(target_os = "macos")]
-use auv_tracing_driver::ProducedArtifact;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("window", "WINDOW")
@@ -31,15 +29,14 @@ pub fn group() -> CommandGroup {
   summary = "List visible macOS window candidates using the normalized AUV window selector model.",
   args = NO_ARGS,
 )]
-fn list_windows(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn list_windows(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let windows = session.window().list().map_err(|error| error.to_string())?;
+    let windows = observe_windows().await?;
     let mut output = window_list_output(&windows);
     output.backend = Some("auv-driver-macos.window".to_string());
     output.signals.insert("window.count".to_string(), windows.len().to_string());
@@ -62,28 +59,38 @@ fn list_windows(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   }
 }
 
+pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    session.window().list().map_err(|error| error.to_string())
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("window.list is only available on macOS".to_string())
+  }
+}
+
 #[invoke_command(
   id = "window.capture",
   group = "window",
   summary = "Capture one single-display window and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = WINDOW_ARGS,
 )]
-fn capture_window(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn capture_window(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let window = session.window().resolve(window_selector(&input)).map_err(|error| error.to_string())?;
-    let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
+    let (result, instrumentation) = capture_selected_window(window_selector(&input)).await?.into_parts();
 
     let mut output = InvokeCommandOutput::new("window captured");
-    output.backend = Some(format!("auv-driver-macos.window.{}", capture.backend));
-    add_window_signals(&mut output, &window);
-    output.signals.insert("capture.width".to_string(), capture.image.width().to_string());
-    output.signals.insert("capture.height".to_string(), capture.image.height().to_string());
+    output.backend = Some(format!("auv-driver-macos.window.{}", result.capture.backend));
+    add_window_signals(&mut output, &result.window);
+    output.signals.insert("capture.width".to_string(), result.capture.image.width().to_string());
+    output.signals.insert("capture.height".to_string(), result.capture.image.height().to_string());
     // TODO(invoke-window-capture-backend): live testing on 2026-06-18 showed
     // ScreenCaptureKit single-window capture can time out and xcap fallback can
     // fail for Chrome/NetEase windows. Stabilize the typed window capture backend
@@ -93,21 +100,37 @@ fn capture_window(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     // and scalar capture signals, but not a standalone capture-contract artifact.
     // Add it after the direct-invoke contract JSON shape is accepted in
     // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
-    let source_path = invoke_artifact_path(input.command_id, "window-capture", "png");
-    capture.image.save(&source_path).map_err(|error| format!("failed to write window.capture artifact: {error}"))?;
-    output.artifacts.push(ProducedArtifact {
-      kind: "window-capture".to_string(),
-      source_path,
-      preferred_name: format!("{}-window-capture.png", input.command_id.replace('.', "-")),
-      note: Some("Window screenshot captured by window.capture.".to_string()),
-    });
     output.verification = Some("capture-only; no semantic success claim".to_string());
     output.known_limits.push("window.capture records a resolved window screenshot only; it does not verify UI semantics.".to_string());
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
+    Err("window.capture is only available on macOS".to_string())
+  }
+}
+
+#[derive(Clone, Debug)]
+pub struct WindowCapture {
+  pub window: auv_driver::Window,
+  pub capture: auv_driver::Capture,
+}
+
+pub async fn capture_selected_window(selector: auv_driver::WindowSelector) -> Result<ArtifactPublication<WindowCapture>, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
+    let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
+    let mut instrumentation = ArtifactInstrumentationReceipt::default();
+    instrumentation.publish_png("auv.driver.window_capture", &capture.image).await;
+    Ok(ArtifactPublication::new(WindowCapture { window, capture }, instrumentation))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = selector;
     Err("window.capture is only available on macOS".to_string())
   }
 }
@@ -118,7 +141,12 @@ fn capture_window(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Capture an AX tree snapshot for a target macOS app window.",
   args = WINDOW_ARGS,
 )]
-fn capture_ax_tree(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn capture_ax_tree(_input: InvokeCommandInput) -> InvokeCommandResult {
+  capture_ax_tree_snapshot().await?;
+  Ok(InvokeCommandOutput::new("captured AX tree"))
+}
+
+pub async fn capture_ax_tree_snapshot() -> Result<(), String> {
   // TODO(invoke-window-ax-tree): AX tree capture still lives in the root
   // macOS command adapter; move a typed AX snapshot API before enabling this
   // direct invoke command.
@@ -131,17 +159,18 @@ fn capture_ax_tree(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Capture a resolved window and locate OCR text anchors in window pixel space.",
   args = WINDOW_TEXT_ARGS,
 )]
-fn find_window_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn find_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
-    let query = input.required_input("query")?;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let window = session.window().resolve(window_selector(&input)).map_err(|error| error.to_string())?;
-    window_text_matches(input.command_id, &session, &window, query, false)
+    let query = input.required_input("query")?.to_string();
+    let (result, instrumentation) = recognize_window_text(window_selector(&input), query, false).await?.into_parts();
+    let mut output = window_text_matches_output(&input.command_id, &result);
+    output.apply_artifact_instrumentation(instrumentation);
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -156,17 +185,18 @@ fn find_window_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
   args = WINDOW_TEXT_ARGS,
 )]
-fn wait_for_window_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn wait_for_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
-    let query = input.required_input("query")?;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let window = session.window().resolve(window_selector(&input)).map_err(|error| error.to_string())?;
-    window_text_matches(input.command_id, &session, &window, query, true)
+    let query = input.required_input("query")?.to_string();
+    let (result, instrumentation) = recognize_window_text(window_selector(&input), query, true).await?.into_parts();
+    let mut output = window_text_matches_output(&input.command_id, &result);
+    output.apply_artifact_instrumentation(instrumentation);
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -181,7 +211,12 @@ fn wait_for_window_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Detect visible OCR row bands inside a resolved window.",
   args = WINDOW_ARGS,
 )]
-fn find_window_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn find_window_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
+  find_window_rows_domain().await?;
+  Ok(InvokeCommandOutput::new("found window rows"))
+}
+
+pub async fn find_window_rows_domain() -> Result<(), String> {
   // TODO(invoke-window-rows): row-band detection still lives in the root
   // macOS command adapter; move a typed window-row API before enabling this
   // direct invoke command.
@@ -194,7 +229,12 @@ fn find_window_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Poll resolved-window row detection until enough rows appear or the timeout expires.",
   args = WINDOW_ARGS,
 )]
-fn wait_for_window_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn wait_for_window_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
+  wait_for_window_rows_domain().await?;
+  Ok(InvokeCommandOutput::new("found window rows after waiting"))
+}
+
+pub async fn wait_for_window_rows_domain() -> Result<(), String> {
   // TODO(invoke-window-rows): row wait/polling still lives in the root macOS
   // command adapter; move a typed window-row API before enabling this direct
   // invoke command.
@@ -207,7 +247,12 @@ fn wait_for_window_rows(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Observe OCR row-like content inside a resolved macOS window region without scrolling.",
   args = WINDOW_ARGS,
 )]
-fn observe_window_region(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn observe_window_region(_input: InvokeCommandInput) -> InvokeCommandResult {
+  observe_window_region_domain().await?;
+  Ok(InvokeCommandOutput::new("observed window region"))
+}
+
+pub async fn observe_window_region_domain() -> Result<(), String> {
   // TODO(invoke-window-observe-region): region observation still lives in the
   // root macOS command adapter and needs a typed region/OCR result API before
   // this direct invoke command can run.
@@ -220,7 +265,12 @@ fn observe_window_region(_input: InvokeCommandInput<'_>) -> InvokeCommandResult 
   summary = "Match a template image against a resolved macOS window screenshot using NCC and emit a RecognitionResult artifact.",
   args = WINDOW_ARGS,
 )]
-fn find_icon_match(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn find_icon_match(_input: InvokeCommandInput) -> InvokeCommandResult {
+  find_window_icon_match().await?;
+  Ok(InvokeCommandOutput::new("found window icon match"))
+}
+
+pub async fn find_window_icon_match() -> Result<(), String> {
   // TODO(invoke-window-icon-match): icon/template matching has no stable typed
   // invoke input contract for the template image and threshold yet; add that
   // API before enabling this command.
@@ -233,7 +283,12 @@ fn find_icon_match(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Scroll at the center of a resolved macOS window region and record scroll evidence.",
   args = WINDOW_ARGS,
 )]
-fn scroll_window_region(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn scroll_window_region(_input: InvokeCommandInput) -> InvokeCommandResult {
+  scroll_window_region_domain().await?;
+  Ok(InvokeCommandOutput::new("scrolled window region"))
+}
+
+pub async fn scroll_window_region_domain() -> Result<(), String> {
   // TODO(invoke-window-scroll-region): WindowApi::scroll exists, but this
   // invoke command exposes only window selection args; add typed region point
   // and delta inputs before enabling direct scroll delivery.
@@ -246,7 +301,12 @@ fn scroll_window_region(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Verify that a text-bearing AX node exists in the observed tree without relying on screenshot OCR.",
   args = WINDOW_VERIFY_TEXT_ARGS,
 )]
-fn verify_ax_text(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn verify_ax_text(_input: InvokeCommandInput) -> InvokeCommandResult {
+  verify_window_ax_text().await?;
+  Ok(InvokeCommandOutput::new("verified window AX text"))
+}
+
+pub async fn verify_window_ax_text() -> Result<(), String> {
   // TODO(invoke-window-verify-ax-text): AX text verification still lives in
   // the root macOS command adapter; move a typed AX text query API before
   // enabling this direct invoke command.
@@ -259,52 +319,81 @@ fn verify_ax_text(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Capture a resolved window, resolve an OCR text anchor, and click its projected logical point.",
   args = WINDOW_TEXT_ARGS,
 )]
-fn click_window_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn click_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     use auv_driver::{ClickOptions, RatioRect, ScreenPoint};
 
     if input.dry_run {
-      return Ok(dry_run_output(input.command_id));
+      return Ok(dry_run_output(&input.command_id));
     }
 
-    let query = input.required_input("query")?;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let window = session.window().resolve(window_selector(&input)).map_err(|error| error.to_string())?;
-    let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
-    let matches =
-      session.vision().find_text_in_capture(&capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
-    let matched = matches.best_match().ok_or_else(|| format!("window.clickText did not find text {query:?}"))?;
-    let screen_point = ScreenPoint::from(matched.action_point());
-    let window_point = session.window().to_window_point(&window, screen_point).map_err(|error| error.to_string())?;
-    let action = session.window().click(&window, window_point, ClickOptions::default()).map_err(|error| error.to_string())?;
+    let query = input.required_input("query")?.to_string();
+    let (result, instrumentation) = click_recognized_window_text(window_selector(&input), query).await?.into_parts();
 
-    let mut output = text_matches_output(input.command_id, "auv-driver-macos.window.input", &matches.matches, Some(0));
-    add_window_signals(&mut output, &window);
+    let mut output = text_matches_output(&input.command_id, "auv-driver-macos.window.input", &result.matches.matches, Some(0));
+    add_window_signals(&mut output, &result.window);
     // TODO(invoke-recognition-result-artifacts): clickText records the OCR source
     // screenshot used for target resolution, but not the structured
     // recognition-result artifact. Add it with window.findText once the
     // direct-invoke recognition artifact shape is accepted.
-    let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
-    capture.image.save(&source_path).map_err(|error| format!("failed to write window click OCR screenshot artifact: {error}"))?;
-    output.artifacts.push(ProducedArtifact {
-      kind: "window-ocr-screenshot".to_string(),
-      source_path,
-      preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
-      note: Some("Window screenshot used to resolve window.clickText OCR target.".to_string()),
-    });
-    output.signals.insert("input.selected_path".to_string(), format!("{:?}", action.selected_path));
-    output.signals.insert("click.window_x".to_string(), window_point.point().x.to_string());
-    output.signals.insert("click.window_y".to_string(), window_point.point().y.to_string());
+    output.signals.insert("input.selected_path".to_string(), result.action.selected_path.as_str().to_string());
+    output.signals.insert("click.window_x".to_string(), result.point.point().x.to_string());
+    output.signals.insert("click.window_y".to_string(), result.point.point().y.to_string());
     output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
     output
       .known_limits
       .push("window.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
+    Err("window.clickText is only available on macOS".to_string())
+  }
+}
+
+#[derive(Clone, Debug)]
+pub struct WindowTextClick {
+  pub window: auv_driver::Window,
+  pub matches: auv_driver::OcrMatches,
+  pub point: auv_driver::geometry::WindowPoint,
+  pub action: auv_driver::InputActionResult,
+}
+
+pub async fn click_recognized_window_text(
+  selector: auv_driver::WindowSelector,
+  query: String,
+) -> Result<ArtifactPublication<WindowTextClick>, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
+    let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
+    let matches = session
+      .vision()
+      .find_text_in_capture(&capture, &query, auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0))
+      .map_err(|error| error.to_string())?;
+    let matched = matches.best_match().ok_or_else(|| format!("window.clickText did not find text {query:?}"))?;
+    let point =
+      session.window().to_window_point(&window, auv_driver::ScreenPoint::from(matched.action_point())).map_err(|error| error.to_string())?;
+    let action = session.window().click(&window, point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
+    let mut instrumentation = ArtifactInstrumentationReceipt::default();
+    instrumentation.publish_png("auv.driver.window_ocr_source", &capture.image).await;
+    Ok(ArtifactPublication::new(
+      WindowTextClick {
+        window,
+        matches,
+        point,
+        action,
+      },
+      instrumentation,
+    ))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (selector, query);
     Err("window.clickText is only available on macOS".to_string())
   }
 }
@@ -315,61 +404,80 @@ fn click_window_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   summary = "Capture a resolved window, detect visible rows, and click a row-derived projected logical point.",
   args = WINDOW_ARGS,
 )]
-fn click_window_row(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+async fn click_window_row(_input: InvokeCommandInput) -> InvokeCommandResult {
+  click_window_row_domain().await?;
+  Ok(InvokeCommandOutput::new("clicked window row"))
+}
+
+pub async fn click_window_row_domain() -> Result<(), String> {
   // TODO(invoke-window-rows): click-row depends on typed row-band detection
   // plus row-to-click-point policy; move that API before enabling this direct
   // invoke command.
   Err("window.clickRow requires a typed window row click API".to_string())
 }
 
+#[derive(Clone, Debug)]
+pub struct WindowTextRecognition {
+  pub window: auv_driver::Window,
+  pub matches: auv_driver::OcrMatches,
+}
+
 #[cfg(target_os = "macos")]
-fn window_text_matches(
-  command_id: &str,
-  session: &auv_driver::LocalDriverSession,
-  window: &auv_driver::Window,
-  query: &str,
+pub async fn recognize_window_text(
+  selector: auv_driver::WindowSelector,
+  query: String,
   wait: bool,
-) -> InvokeCommandResult {
+) -> Result<ArtifactPublication<WindowTextRecognition>, String> {
   use auv_driver::{RatioRect, WaitOptions};
   use std::{thread, time::Instant};
 
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+  let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
   let wait_options = WaitOptions::default();
   let started = Instant::now();
   loop {
-    let capture = session.window().capture(window).map_err(|error| error.to_string())?;
+    let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
     let matches =
-      session.vision().find_text_in_capture(&capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
+      session.vision().find_text_in_capture(&capture, &query, RatioRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
     if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
       if wait && matches.matches.is_empty() {
         return Err(format!("window.waitForText did not find text {query:?} before timeout"));
       }
 
-      let mut output = text_matches_output(command_id, "auv-driver-macos.window.vision", &matches.matches, None);
-      add_window_signals(&mut output, window);
       // TODO(invoke-recognition-result-artifacts): this records the window OCR
       // source screenshot and scalar match signals, but not a structured
       // recognition-result artifact with query/bounds/confidence. Add it after
       // the artifact shape is accepted in the direct-command handoff.
-      let source_path = invoke_artifact_path(command_id, "ocr-screenshot", "png");
-      capture.image.save(&source_path).map_err(|error| format!("failed to write window OCR screenshot artifact: {error}"))?;
-      output.artifacts.push(ProducedArtifact {
-        kind: "window-ocr-screenshot".to_string(),
-        source_path,
-        preferred_name: format!("{}-ocr-screenshot.png", command_id.replace('.', "-")),
-        note: Some("Window screenshot used for OCR matching.".to_string()),
-      });
-      output.verification = Some("recognition-only; no semantic success claim".to_string());
-      output
-        .known_limits
-        .push("window OCR recognition records text matches and source screenshot only; it does not verify downstream UI state.".to_string());
-      return Ok(output);
+      let mut instrumentation = ArtifactInstrumentationReceipt::default();
+      instrumentation.publish_png("auv.driver.window_ocr_source", &capture.image).await;
+      return Ok(ArtifactPublication::new(WindowTextRecognition { window, matches }, instrumentation));
     }
     thread::sleep(wait_options.poll_interval);
   }
 }
 
+#[cfg(not(target_os = "macos"))]
+pub async fn recognize_window_text(
+  _selector: auv_driver::WindowSelector,
+  _query: String,
+  _wait: bool,
+) -> Result<ArtifactPublication<WindowTextRecognition>, String> {
+  Err("window text OCR is only available on macOS".to_string())
+}
+
 #[cfg(target_os = "macos")]
-fn window_selector(input: &InvokeCommandInput<'_>) -> auv_driver::WindowSelector {
+fn window_text_matches_output(command_id: &str, result: &WindowTextRecognition) -> InvokeCommandOutput {
+  let mut output = text_matches_output(command_id, "auv-driver-macos.window.vision", &result.matches.matches, None);
+  add_window_signals(&mut output, &result.window);
+  output.verification = Some("recognition-only; no semantic success claim".to_string());
+  output
+    .known_limits
+    .push("window OCR recognition records text matches and source screenshot only; it does not verify downstream UI state.".to_string());
+  output
+}
+
+#[cfg(target_os = "macos")]
+fn window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelector {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
   let mut selector = WindowSelector {

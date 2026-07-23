@@ -195,11 +195,11 @@ fn decode_playlist_sidebar_scan_json_accepts_current_schema() {
 fn decode_playlist_sidebar_scan_json_rejects_missing_or_unknown_schema() {
   let missing = r#"{"projection":{"sections":[]}}"#;
   let missing_error = decode_playlist_sidebar_scan_json(missing).expect_err("missing schema version should be rejected");
-  assert!(missing_error.contains("missing schema_version"));
+  assert!(missing_error.to_string().contains("missing schema_version"));
 
   let unknown = r#"{"schema_version":"view-ir-v999","projection":{"sections":[]}}"#;
   let unknown_error = decode_playlist_sidebar_scan_json(unknown).expect_err("unknown schema version should be rejected");
-  assert!(unknown_error.contains("unsupported playlist sidebar scan schema_version"));
+  assert!(unknown_error.to_string().contains("unsupported playlist sidebar scan schema_version"));
 }
 
 #[test]

@@ -23,6 +23,8 @@ Count: **22**
 - [`2026-06-05-window-management-api-v0.md`](2026-06-05-window-management-api-v0.md)
 - [`2026-06-11-windows-driver-feasibility-and-delivery-paths.md`](2026-06-11-windows-driver-feasibility-and-delivery-paths.md)
 - [`2026-06-16-tracing-driver-extraction-implementation-plan.md`](2026-06-16-tracing-driver-extraction-implementation-plan.md)
+  (historical; superseded by the implemented
+  [run recording contract V1 spec](../inspect/2026-07-20-auv-run-recording-contract-v1-spec.md))
 - [`2026-06-18-driver-windows-v0-implementation.md`](2026-06-18-driver-windows-v0-implementation.md)
 - [`2026-07-19-ax-path-resolution-characterization.md`](2026-07-19-ax-path-resolution-characterization.md)
 - [`2026-07-19-error-chain-inventory.md`](2026-07-19-error-chain-inventory.md)

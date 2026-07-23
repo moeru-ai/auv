@@ -1,0 +1,36 @@
+[package]
+name = "auv-tracing-inspect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "HTTP-neutral protocol contracts for the AUV Inspect run authority"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-tracing = { path = "../auv-tracing" }
+base64 = "0.22"
+bytes.workspace = true
+futures-util = { workspace = true, features = ["io"] }
+reqwest = { workspace = true, features = ["stream"] }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value", "unbounded_depth"] }
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["rt", "time"] }
+tokio-util = { version = "0.7", features = ["compat", "io"] }
+url = { version = "2", features = ["serde"] }
+uuid.workspace = true
+
+[dev-dependencies]
+auv-inspect-server = { path = "../auv-inspect-server" }
+auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+axum = "0.8"
+futures-util = { workspace = true, features = ["io"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
+url = { version = "2", features = ["serde"] }

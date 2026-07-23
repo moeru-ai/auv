@@ -10,32 +10,29 @@ use clap::{Arg, ArgAction, Command};
 extern crate self as auv_cli_invoke;
 
 pub mod arg;
-pub(crate) mod artifact;
+pub mod artifact;
 pub mod command;
 pub mod commands;
 pub mod help;
 pub mod models;
-pub mod recorded;
 pub mod registry;
 pub mod render;
-pub mod summary;
 
 pub use arg::ArgSpec;
+pub use artifact::{ArtifactInstrumentationFailure, ArtifactInstrumentationReceipt, ArtifactPublication};
 pub use auv_cli_invoke_macros::invoke_command;
-pub use command::{CommandGroup, CommandNode, InvokeCommand, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace};
+pub use command::{
+  CommandGroup, CommandNode, InvokeCancellation, InvokeCancelled, InvokeCommand, InvokeCommandFuture, InvokeCommandHandler,
+  InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace,
+};
 pub use help::{render_command_help, render_help_index};
 pub use models::{
   ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
   InvokeRequest, InvokeResult, RunStatus,
 };
 pub(crate) use models::{InvokeReportLabels, InvokeReportValue, InvokeSignalValue, OptionalReportText};
-pub use recorded::{
-  InvokeFinalizeHook, invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_finalize, invoke_recorded_with_session,
-  invoke_resolved_recorded_in_span,
-};
 pub use registry::{InvokeRegistry, default_registry};
-pub use render::{InvokeCliOutcome, render_recorded_invoke};
-pub use summary::{OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource};
+pub use render::{InvokeCliOutcome, render_invoke_result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InvokeCliParse {
@@ -82,6 +79,7 @@ pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String>
       json: matches.get_flag("json") || matches.get_flag("format"),
       detail: matches.get_flag("detail"),
       wide: matches.get_flag("wide"),
+      inspect_hint: true,
     },
   })
 }
