@@ -45,7 +45,8 @@ fn textedit_document_write_adapter_with_fixture_driver(observed_text: Option<Str
 }
 
 async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<McpInvokeOutcome, String> {
-  invoke_textedit_document_write_with(input, |_| auv_apple_textedit::MacosTextEditDriver::open_local()).await
+  invoke_textedit_document_write_with(input, |_| auv_apple_textedit::MacosTextEditDriver::open_local().map_err(|error| error.to_string()))
+    .await
 }
 
 async fn invoke_textedit_document_write_with<D>(

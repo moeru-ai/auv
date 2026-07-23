@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **20**
+Count: **22**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -26,6 +26,8 @@ Count: **20**
   (historical; superseded by the implemented
   [run recording contract V1 spec](../inspect/2026-07-20-auv-run-recording-contract-v1-spec.md))
 - [`2026-06-18-driver-windows-v0-implementation.md`](2026-06-18-driver-windows-v0-implementation.md)
+- [`2026-07-19-ax-path-resolution-characterization.md`](2026-07-19-ax-path-resolution-characterization.md)
+- [`2026-07-19-error-chain-inventory.md`](2026-07-19-error-chain-inventory.md)
 
 ## Related
 

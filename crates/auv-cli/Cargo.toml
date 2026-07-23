@@ -59,7 +59,6 @@ reqwest.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-media-macos = { path = "../auv-media-macos" }
 objc2-core-graphics.workspace = true
 objc2-core-foundation.workspace = true
 swift-bridge-build.workspace = true

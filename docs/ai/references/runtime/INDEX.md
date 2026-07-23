@@ -2,7 +2,7 @@
 
 Execution, contract, action seam, admission, query readiness, core roadmaps
 
-Count: **29**
+Count: **31**
 
 - [`2026-05-27-action-resolver-v0.md`](2026-05-27-action-resolver-v0.md)
 - [`2026-06-13-core-graduation-local-handoff.md`](2026-06-13-core-graduation-local-handoff.md)
@@ -33,6 +33,8 @@ Count: **29**
 - [`2026-07-06-action-seam-closeout.md`](2026-07-06-action-seam-closeout.md)
 - [`2026-07-07-archived-candidate-action-removal-plan.md`](2026-07-07-archived-candidate-action-removal-plan.md)
 - [`2026-07-07-archived-candidate-action-removal-spec.md`](2026-07-07-archived-candidate-action-removal-spec.md)
+- [`2026-07-19-core-contract-ownership-review.md`](2026-07-19-core-contract-ownership-review.md)
+- [`2026-07-19-core-dependency-and-crate-tier-inventory.md`](2026-07-19-core-dependency-and-crate-tier-inventory.md)
 
 ## Related
 

@@ -132,39 +132,21 @@ private func axFirstWindow(_ appElement: AXUIElement) -> AXUIElement? {
   return axElementArrayAttribute(appElement, kAXWindowsAttribute as String).first
 }
 
-private struct AxPathResolutionFailure: Error {
-  let message: String
-  let recovery: String
-}
-
-private func axObservedPathIndices(path: String, operation: String, retry: String) -> Result<[Int], AxPathResolutionFailure> {
-  let segments = path.split(separator: ".").map(String.init)
-  guard segments.first == "0" else {
-    return .failure(AxPathResolutionFailure(
-      message: "AX \(operation) path must begin with 0; got \(path)",
-      recovery: "capture a fresh AX tree and retry \(retry)"
-    ))
-  }
-
-  var indices: [Int] = []
-  for (offset, segment) in segments.dropFirst().enumerated() {
-    guard let index = Int(segment), index >= 0 else {
-      return .failure(AxPathResolutionFailure(
-        message: "AX \(operation) path segment \(segment) at offset \(offset) is not a non-negative integer",
-        recovery: "capture a fresh AX tree and retry \(retry)"
-      ))
-    }
-    indices.append(index)
-  }
-  return .success(indices)
-}
+// NOTICE: `AxPathResolutionFailure` and `axObservedPathIndices` live in
+// `AxPath.swift` — the pure, AX-free parse layer. They are `internal` (not
+// `private`) so a standalone `swiftc` characterization harness can compile that
+// one file in isolation (the full module cannot be linked under `swift test`
+// because the generated `SwiftBridgeCore.swift` references Rust FFI symbols only
+// present in the cargo-built static lib). See
+// `docs/ai/references/driver/2026-07-19-ax-path-resolution-characterization.md`.
 
 private func axResolveObservedPath(
   pid: pid_t,
   path: String,
   expectedRole: String,
   operation: String,
-  retry: String
+  retry: String,
+  requireTrustedProcess: Bool = false
 ) -> Result<AXUIElement, AxPathResolutionFailure> {
   let indices: [Int]
   switch axObservedPathIndices(path: path, operation: operation, retry: retry) {
@@ -172,6 +154,15 @@ private func axResolveObservedPath(
     indices = parsed
   case .failure(let failure):
     return .failure(failure)
+  }
+
+  // Validate the caller-owned path before checking TCC so malformed input is
+  // classified as InvalidInput even when Accessibility permission is absent.
+  if requireTrustedProcess && !AXIsProcessTrusted() {
+    return .failure(AxPathResolutionFailure(
+      message: "Accessibility permission is required to \(operation) an AX node",
+      recovery: "grant Accessibility permission to the process running AUV, then retry \(retry)"
+    ))
   }
 
   let appElement = AXUIElementCreateApplication(pid)
@@ -502,7 +493,14 @@ func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
   }
 
   let current: AXUIElement
-  switch axResolveObservedPath(pid: pid, path: pathRaw, expectedRole: expectedRole, operation: "focus", retry: "the focus request") {
+  switch axResolveObservedPath(
+    pid: pid,
+    path: pathRaw,
+    expectedRole: expectedRole,
+    operation: "focus",
+    retry: "the focus request",
+    requireTrustedProcess: true
+  ) {
   case .success(let resolved):
     current = resolved
   case .failure(let failure):

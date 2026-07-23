@@ -62,7 +62,7 @@ use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
 use auv_driver::{ActivationPolicy, Click, InputPolicy, LocalDriverSession, PrepareForInputOptions, Scroll, ScrollOptions, WindowPoint};
 #[cfg(target_os = "macos")]
-use auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot;
+use auv_driver_macos::native::tree::capture_ax_tree_snapshot;
 #[cfg(target_os = "macos")]
 use auv_driver_macos::types::ObservedAxNode;
 #[cfg(target_os = "macos")]

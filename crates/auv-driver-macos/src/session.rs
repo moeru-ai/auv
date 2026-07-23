@@ -1490,6 +1490,7 @@ fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec
   if monitors.is_empty() {
     return Err(DriverError::PermissionDenied {
       permission: "screen_recording",
+      message: None,
       recovery: Some(
         "xcap returned no displays; run `auv doctor --json` and grant Screen Recording to the terminal or agent process that launches AUV"
           .to_string(),
@@ -2000,9 +2001,11 @@ mod no_steal_tests {
     match error {
       DriverError::PermissionDenied {
         permission,
+        message,
         recovery,
       } => {
         assert_eq!(permission, "screen_recording");
+        assert_eq!(message, None);
         assert!(recovery.as_deref().is_some_and(|message| message.contains("auv doctor --json")));
       }
       other => panic!("unexpected error: {other}"),

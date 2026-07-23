@@ -636,6 +636,45 @@ call the same operation contract without going through CLI parsing.
 
 In code, the current type is `auv_driver::OperationSpec`.
 
+## Operation Status
+
+Operation status is the coarse recorded outcome on an `OperationResult`. It is
+not, by itself, proof that an action was delivered or that the expected world
+state was reached.
+
+`Completed` means the producer did not classify the operation as failed under
+that operation's current policy. `Failed` may represent refusal, backend or
+permission failure, or a required verification that did not match. Producers
+do not yet share one rule for whether semantic mismatch changes the coarse
+status, so consumers must not infer the failure layer from this enum alone.
+
+Action delivery evidence belongs in `InputActionResult` artifacts. Semantic
+evidence belongs in `VerificationResult.semantic_matched` together with its
+failure layer. A `Completed` result can therefore carry
+`semantic_matched = false`, and a `Failed` result can still show that input was
+delivered. The planned TextEdit parity/failure-semantics slice owns any future
+standardization of producer status policy.
+
+In code, the current type is `auv_runtime::contract::OperationStatus`.
+
+## Control Failure
+
+A control failure is a typed operation-level classification for a driver
+control step that failed before, or instead of, semantic verification. It is
+persisted as `OperationResult.control_failure`, separately from
+`VerificationResult`, because no verification claim exists when activation,
+focus, or input delivery fails first.
+
+The current `ControlFailure` record carries a shared `FailureLayer`, a human
+message, and an optional recovery hint. The only active producer is TextEdit's
+typed driver-error path, which emits `FailureLayer::ControlFailed`; other
+pipeline-layer producers remain intentionally deferred. A control failure makes
+the coarse operation status `Failed`, but consumers should read the typed field
+for the layer and recovery detail rather than inferring either from status or
+free text.
+
+In code, the current type is `auv_runtime::contract::ControlFailure`.
+
 ## Operation Disturbance
 
 Operation disturbance is the coarse user-visible disturbance profile attached

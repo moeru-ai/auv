@@ -17,6 +17,7 @@ use auv_cli_invoke::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportSection,
   invoke_command,
 };
+use auv_driver::DriverError;
 #[cfg(test)]
 use auv_driver::{InputActionResult, InputDeliveryPath};
 use auv_runtime::contract::{FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult};
@@ -52,7 +53,7 @@ async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
   }
   #[cfg(target_os = "macos")]
   {
-    let driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
+    let driver = auv_apple_textedit::MacosTextEditDriver::open_local().map_err(|error| error.to_string())?;
     return map_document_write_cli(command, input.cancellation, driver).await.map(|(output, _)| output);
   }
   #[cfg(not(target_os = "macos"))]
@@ -107,6 +108,12 @@ impl DocumentWriteFailure {
   }
 }
 
+impl From<DriverError> for DocumentWriteFailure {
+  fn from(error: DriverError) -> Self {
+    Self::before_report(error.to_string())
+  }
+}
+
 pub(crate) async fn write_document_with_publications<D>(
   command: DocumentWrite,
   cancellation: auv_cli_invoke::InvokeCancellation,
@@ -120,9 +127,8 @@ where
   // cancellable operation contract.
   cancellation.check().map_err(|error| DocumentWriteFailure::before_report(error.to_string()))?;
   let report = run_document_command_with_checkpoint(&DocumentCommand::Write(command), &mut driver, || {
-    cancellation.check().map_err(|error| error.to_string())
-  })
-  .map_err(DocumentWriteFailure::before_report)?;
+    cancellation.check().map_err(|error| DocumentWriteFailure::before_report(error.to_string()))
+  })?;
   let mut artifacts = Vec::new();
   if let Err(error) = cancellation.check() {
     return Err(DocumentWriteFailure::after_report(error.to_string(), report, artifacts));
@@ -377,7 +383,7 @@ impl FixtureTextEditDriver {
 
 #[cfg(test)]
 impl TextEditDriver for FixtureTextEditDriver {
-  fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
+  fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, DriverError> {
     Ok(StepOutcome {
       step_id: "activate",
       summary: format!("fixture activated {app_id} settle_ms={}", settle.as_millis()),
@@ -385,7 +391,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     })
   }
 
-  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, String> {
+  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, DriverError> {
     Ok(StepOutcome {
       step_id: "focus",
       summary: format!("fixture focused {app_id} query={query} candidate={candidate}"),
@@ -399,7 +405,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     text: &str,
     replace_existing: bool,
     settle: Duration,
-  ) -> Result<StepOutcome, String> {
+  ) -> Result<StepOutcome, DriverError> {
     self.content = text.to_string();
     Ok(StepOutcome {
       step_id: "paste",
@@ -408,7 +414,7 @@ impl TextEditDriver for FixtureTextEditDriver {
     })
   }
 
-  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, String> {
+  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, DriverError> {
     self.role = target_role.to_string();
     let observed = self.observed_override.clone().unwrap_or_else(|| self.content.clone());
     Ok(VerificationOutcome {
@@ -469,11 +475,11 @@ mod tests {
   }
 
   impl TextEditDriver for InvalidInputActionDriver {
-    fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
+    fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, DriverError> {
       self.0.activate_app(app_id, settle)
     }
 
-    fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, String> {
+    fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, DriverError> {
       let mut outcome = self.0.focus_text_input(app_id, query, candidate)?;
       outcome.input_action_result.as_mut().expect("fixture focus action").selected_path = InputDeliveryPath::ClipboardPaste;
       Ok(outcome)
@@ -485,11 +491,11 @@ mod tests {
       text: &str,
       replace_existing: bool,
       settle: Duration,
-    ) -> Result<StepOutcome, String> {
+    ) -> Result<StepOutcome, DriverError> {
       self.0.paste_text_preserve_clipboard(app_id, text, replace_existing, settle)
     }
 
-    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, String> {
+    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, DriverError> {
       self.0.verify_ax_text(app_id, target_text, target_role)
     }
   }

@@ -162,7 +162,7 @@ fn inspect_toolbar_nodes(snapshot: &ObservedAxTreeSnapshot) -> (Vec<ToolbarInspe
   let mut diagnostics = Vec::new();
 
   for node in snapshot.nodes.iter().filter(|node| node.role.eq_ignore_ascii_case("AXToolbar")) {
-    let inspection = auv_driver_macos::native::ax_tree::inspect_ax_node_path(snapshot.pid, &node.path, &node.role)
+    let inspection = auv_driver_macos::native::tree::inspect_ax_node_path(snapshot.pid, &node.path, &node.role)
       .map(|inspection| ToolbarInspection {
         path: inspection.path,
         role: inspection.role,
