@@ -1196,9 +1196,10 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
     CliCommand::Invoke {
       request,
       inspect,
-      output,
+      mut output,
     } => {
       let authority = build_cli_authority(&project_root, &inspect).await?;
+      output.inspect_hint = authority.store.is_some();
       let registry = crate::product_registry();
       let command =
         registry.resolve(&request.command_id).cloned().ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
@@ -1453,12 +1454,8 @@ async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions
       Some(url)
     } else if inspect.require_server_write {
       return Err("inspect server write is required but no inspect server is configured".to_string());
-    } else if matches!(inspect.server_write, crate::cli::InspectWriteSetting::Enabled) {
-      if !should_write_local(inspect) {
-        return Err("inspect server write was requested but no inspect server is configured".to_string());
-      }
-      eprintln!("warning: inspect server write requested but no inspect server is configured");
-      None
+    } else if server_write_explicitly_requested(inspect) {
+      return Err("inspect server write was requested but no inspect server is configured".to_string());
     } else {
       None
     }
@@ -1471,7 +1468,7 @@ async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions
       let parsed = reqwest::Url::parse(&url).map_err(|error| format!("invalid inspect authority URL {url}: {error}"))?;
       match auv_tracing_inspect::InspectRunStore::connect(parsed).await {
         Ok(store) => Some(Arc::new(store)),
-        Err(error) if inspect.require_server_write || !should_write_local(inspect) => {
+        Err(error) if server_write_explicitly_requested(inspect) || !should_write_local(inspect) => {
           return Err(format!("failed to connect requested inspect authority {url}: {error}"));
         }
         Err(error) => {
@@ -1488,7 +1485,8 @@ async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions
     None if should_write_local(inspect) => {
       Some(open_inspect_authority_store(&resolve_store_root(project_root, inspect.store_root.as_ref()))?)
     }
-    None => None,
+    None if no_store_requested(inspect) => None,
+    None => return Err("invoke requires one configured V1 run authority unless local and server recording are both disabled".to_string()),
   };
   let dispatch = match &store {
     Some(store) => auv_tracing::configure().run_store(store.clone()).build(),
@@ -1518,6 +1516,18 @@ fn should_write_local(inspect: &InspectClientOptions) -> bool {
 
 fn should_try_server_write(inspect: &InspectClientOptions) -> bool {
   inspect.require_server_write || !matches!(inspect.server_write, crate::cli::InspectWriteSetting::Disabled)
+}
+
+fn server_write_explicitly_requested(inspect: &InspectClientOptions) -> bool {
+  inspect.require_server_write
+    || matches!(inspect.server_write, crate::cli::InspectWriteSetting::Enabled)
+    || (inspect.server_url.is_some() && !matches!(inspect.server_write, crate::cli::InspectWriteSetting::Disabled))
+}
+
+fn no_store_requested(inspect: &InspectClientOptions) -> bool {
+  !inspect.require_server_write
+    && matches!(inspect.local_write, crate::cli::InspectWriteSetting::Disabled)
+    && matches!(inspect.server_write, crate::cli::InspectWriteSetting::Disabled)
 }
 
 fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Option<String>, String> {
@@ -1863,6 +1873,33 @@ mod tests {
 
     assert!(!root.is_enabled());
     assert!(!root.can_publish_artifacts());
+  }
+
+  #[test]
+  fn no_store_requires_both_recording_paths_to_be_disabled() {
+    let mut inspect = InspectClientOptions::default();
+    assert!(!no_store_requested(&inspect));
+
+    inspect.local_write = crate::cli::InspectWriteSetting::Disabled;
+    assert!(!no_store_requested(&inspect));
+
+    inspect.server_write = crate::cli::InspectWriteSetting::Disabled;
+    assert!(no_store_requested(&inspect));
+  }
+
+  #[tokio::test]
+  async fn explicit_inspect_server_failure_does_not_fall_back_to_local_storage() {
+    let inspect = InspectClientOptions {
+      server_write: crate::cli::InspectWriteSetting::Enabled,
+      server_url: Some("http://127.0.0.1:1".to_string()),
+      ..InspectClientOptions::default()
+    };
+
+    let Err(error) = build_cli_authority(Path::new(env!("CARGO_MANIFEST_DIR")), &inspect).await else {
+      panic!("explicit inspect authority failure must not fall back to local storage")
+    };
+
+    assert!(error.contains("failed to connect requested inspect authority"), "unexpected error: {error}");
   }
 
   #[tokio::test]

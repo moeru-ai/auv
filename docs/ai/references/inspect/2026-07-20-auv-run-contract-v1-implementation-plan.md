@@ -3168,9 +3168,9 @@ Delete `crates/auv-tracing-driver/`, its workspace member/dependencies, and
 regenerate `Cargo.lock`. Run:
 
 ```bash
-rg -n 'auv[-_]run|RunSession|OperationExecution|ExecutionId|RunOpened|RunSealed|OtelMirror|CompositeSink' \
+rg -n '(^|[^[:alnum:]_-])auv[-_]run([^[:alnum:]_-]|$)|RunSession|OperationExecution|ExecutionId|RunOpened|RunSealed|OtelMirror|CompositeSink' \
   Cargo.toml crates/auv-tracing crates/auv-tracing-inspect crates/auv-tracing-otel \
-  --glob '*.rs' --glob 'Cargo.toml'
+  --glob '*.rs' --glob 'Cargo.toml' --glob '!crate_identity.rs'
 ```
 
 Expected: exit status 1 and no output.

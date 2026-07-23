@@ -79,6 +79,7 @@ pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String>
       json: matches.get_flag("json") || matches.get_flag("format"),
       detail: matches.get_flag("detail"),
       wide: matches.get_flag("wide"),
+      inspect_hint: true,
     },
   })
 }

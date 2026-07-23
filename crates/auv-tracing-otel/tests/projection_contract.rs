@@ -721,6 +721,10 @@ fn otel_flush_releases_ordinary_terminal_span_state() {
     project(&projector, span_end(Some(authority_id), run_id, span_id, 12)).unwrap_err().code().as_str(),
     "auv.telemetry.otel_missing_span_start"
   );
+  assert_eq!(
+    project(&projector, span_start(Some(AuthorityId::new()), run_id, AuvSpanId::new(), None, 13)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_run_authority_mismatch"
+  );
 }
 
 #[test]

@@ -114,7 +114,7 @@ impl InvokeResult {
       None => write_field_rows(writer, &[InvokeReportField::new("Output", &self.output_summary)], color)?,
     }
 
-    if self.status == RunStatus::Failed {
+    if self.status == RunStatus::Failed && options.inspect_hint {
       writeln!(writer).map_err(write_error)?;
       write_field_rows(
         writer,

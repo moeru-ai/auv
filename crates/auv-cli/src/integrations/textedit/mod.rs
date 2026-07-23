@@ -71,40 +71,87 @@ pub async fn write_document<D>(
 where
   D: TextEditDriver,
 {
-  write_document_with_publications(command, cancellation, driver).await.map(|(report, _)| report)
+  write_document_with_publications(command, cancellation, driver).await.map(|(report, _)| report).map_err(DocumentWriteFailure::into_message)
+}
+
+#[derive(Debug)]
+pub(crate) struct DocumentWriteFailure {
+  message: String,
+  report: Option<DocumentCommandReport>,
+  artifacts: Vec<auv_tracing::ArtifactMetadata>,
+}
+
+impl DocumentWriteFailure {
+  fn before_report(message: String) -> Self {
+    Self {
+      message,
+      report: None,
+      artifacts: Vec::new(),
+    }
+  }
+
+  fn after_report(message: String, report: DocumentCommandReport, artifacts: Vec<auv_tracing::ArtifactMetadata>) -> Self {
+    Self {
+      message,
+      report: Some(report),
+      artifacts,
+    }
+  }
+
+  fn into_message(self) -> String {
+    self.message
+  }
+
+  pub(crate) fn into_parts(self) -> (String, Option<DocumentCommandReport>, Vec<auv_tracing::ArtifactMetadata>) {
+    (self.message, self.report, self.artifacts)
+  }
 }
 
 pub(crate) async fn write_document_with_publications<D>(
   command: DocumentWrite,
   cancellation: auv_cli_invoke::InvokeCancellation,
   mut driver: D,
-) -> Result<(DocumentCommandReport, Vec<auv_tracing::ArtifactMetadata>), String>
+) -> Result<(DocumentCommandReport, Vec<auv_tracing::ArtifactMetadata>), DocumentWriteFailure>
 where
   D: TextEditDriver,
 {
   // TODO(textedit-driver-cancellation): checkpoints cannot interrupt one
   // synchronous native driver call; reopen this only when the driver owns a
   // cancellable operation contract.
-  cancellation.check().map_err(|error| error.to_string())?;
+  cancellation.check().map_err(|error| DocumentWriteFailure::before_report(error.to_string()))?;
   let report = run_document_command_with_checkpoint(&DocumentCommand::Write(command), &mut driver, || {
     cancellation.check().map_err(|error| error.to_string())
-  })?;
-  cancellation.check().map_err(|error| error.to_string())?;
-  let context = Context::current();
+  })
+  .map_err(DocumentWriteFailure::before_report)?;
   let mut artifacts = Vec::new();
+  if let Err(error) = cancellation.check() {
+    return Err(DocumentWriteFailure::after_report(error.to_string(), report, artifacts));
+  }
+  let context = Context::current();
   for outcome in &report.outcomes {
     if let Some(result) = &outcome.input_action_result {
-      cancellation.check().map_err(|error| error.to_string())?;
-      if let Some(metadata) = auv_runtime::run_read::publish_input_action_result(Some(&context), result)
-        .await
-        .map_err(|error| format!("failed to publish TextEdit input action result: {error}"))?
-      {
-        artifacts.push(metadata);
+      if let Err(error) = cancellation.check() {
+        return Err(DocumentWriteFailure::after_report(error.to_string(), report, artifacts));
+      }
+      match auv_runtime::run_read::publish_input_action_result(Some(&context), result).await {
+        Ok(Some(metadata)) => artifacts.push(metadata),
+        Ok(None) => {}
+        Err(error) => {
+          return Err(DocumentWriteFailure::after_report(
+            format!("failed to publish TextEdit input action result: {error}"),
+            report,
+            artifacts,
+          ));
+        }
       }
     }
   }
+  if report.verification.is_some()
+    && let Err(error) = cancellation.check()
+  {
+    return Err(DocumentWriteFailure::after_report(error.to_string(), report, artifacts));
+  }
   if let Some(verification) = report.verification.as_ref() {
-    cancellation.check().map_err(|error| error.to_string())?;
     context.in_scope(|| {
       auv_tracing::emit_event!(TextEditDocumentWriteVerificationEvent {
         verification: map_verification_result(verification),
@@ -122,10 +169,24 @@ async fn map_document_write_cli<D>(
 where
   D: TextEditDriver,
 {
-  let (report, artifacts) = write_document_with_publications(command.clone(), cancellation, driver).await?;
-  let mut output = build_invoke_output_from_report(&report, &command)?;
-  output.artifacts = artifacts;
-  Ok((output, report))
+  match write_document_with_publications(command.clone(), cancellation, driver).await {
+    Ok((report, artifacts)) => {
+      let mut output = build_invoke_output_from_report(&report, &command)?;
+      output.artifacts = artifacts;
+      Ok((output, report))
+    }
+    Err(failure) => {
+      let (message, report, artifacts) = failure.into_parts();
+      let Some(report) = report else {
+        return Err(message);
+      };
+      let mut output = build_invoke_output_from_report(&report, &command)?;
+      output.summary = message.clone();
+      output.failure_message = Some(message);
+      output.artifacts = artifacts;
+      Ok((output, report))
+    }
+  }
 }
 
 #[derive(serde::Serialize)]
@@ -388,10 +449,13 @@ pub(crate) async fn with_fixture_driver<T>(command: &DocumentWrite, observed_tex
 #[cfg(test)]
 mod tests {
   use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
 
   use auv_tracing::{
-    AuthorityId, DispatchTask, ErrorCode, MemoryRunStore, RunId, RunStore, TaskSpawnError, TaskSpawner, TelemetryError, TelemetryItem,
-    TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
+    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, DispatchTask,
+    ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision,
+    RunStore, RunSubscription, StoreArtifactRequest, TaskSpawnError, TaskSpawner, TelemetryError, TelemetryItem, TelemetryProjector,
+    TelemetryRoutePolicy, configure, dispatcher,
   };
 
   use super::*;
@@ -435,6 +499,62 @@ mod tests {
   impl TaskSpawner for RejectingSpawner {
     fn spawn(&self, _task: DispatchTask) -> Result<(), TaskSpawnError> {
       Err(TaskSpawnError::new(ErrorCode::parse("auv.test.textedit_spawn_rejected").expect("test error code")))
+    }
+  }
+
+  struct FailNthArtifactStore {
+    inner: MemoryRunStore,
+    fail_at: usize,
+    writes: AtomicUsize,
+  }
+
+  impl FailNthArtifactStore {
+    fn new(fail_at: usize) -> Self {
+      Self {
+        inner: MemoryRunStore::new(AuthorityId::new()),
+        fail_at,
+        writes: AtomicUsize::new(0),
+      }
+    }
+  }
+
+  impl RunStore for FailNthArtifactStore {
+    fn authority_id(&self) -> AuthorityId {
+      self.inner.authority_id()
+    }
+
+    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
+      self.inner.commit(request)
+    }
+
+    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+      let write = self.writes.fetch_add(1, Ordering::SeqCst) + 1;
+      if write == self.fail_at {
+        return Box::pin(async {
+          Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.textedit_publication_rejected").expect("test error code")))
+        });
+      }
+      self.inner.write_artifact(request, body)
+    }
+
+    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
+      self.inner.lookup_commit(run_id, key)
+    }
+
+    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
+      self.inner.load_snapshot(run_id)
+    }
+
+    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
+      self.inner.commits_after(run_id, after, limit)
+    }
+
+    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
+      self.inner.subscribe(run_id, after)
+    }
+
+    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
+      self.inner.open_artifact(uri)
     }
   }
 
@@ -484,6 +604,22 @@ mod tests {
     let error = root.instrument(future).await.expect_err("enqueue failure must fail enabled publication");
 
     assert!(error.contains("failed to publish root artifact"), "unexpected publication error: {error}");
+  }
+
+  #[tokio::test]
+  async fn frontend_mapping_preserves_committed_artifacts_when_a_later_publication_fails() {
+    let store = Arc::new(FailNthArtifactStore::new(2));
+    let dispatch = configure().run_store(store).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let command = DocumentWrite::defaults_with_content("expected");
+    let driver = fixture_driver(&command, None);
+    let future = root.in_scope(|| map_document_write_cli(command, auv_cli_invoke::InvokeCancellation::new(), driver));
+
+    let (output, _) = root.instrument(future).await.expect("partial publication is a failed frontend value");
+
+    assert!(output.failure_message.as_deref().is_some_and(|message| message.contains("textedit_publication_rejected")));
+    assert_eq!(output.artifacts.len(), 1);
+    assert_eq!(output.artifacts[0].purpose().as_str(), "auv.driver.input_action_result");
   }
 
   #[tokio::test]

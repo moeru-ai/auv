@@ -596,6 +596,10 @@ fn rust_tracing_flush_releases_ordinary_terminal_span_state() {
       project(&projector, span_end(Some(authority_id), run_id, span_id, 12)).unwrap_err().code().as_str(),
       "auv.telemetry.missing_span_start"
     );
+    assert_eq!(
+      project(&projector, span_start(Some(AuthorityId::new()), run_id, SpanId::new(), None, 13)).unwrap_err().code().as_str(),
+      "auv.telemetry.run_authority_mismatch"
+    );
   });
 }
 
@@ -870,6 +874,7 @@ fn rust_tracing_record_panic_keeps_end_terminal_and_closes_span() {
     assert!(panic.is_err());
     assert_eq!(record_count.load(Ordering::SeqCst), 1);
     assert_eq!(close_count.load(Ordering::SeqCst), 1);
+    block_on(projector.flush()).unwrap();
     assert_eq!(
       project(&projector, span_end(Some(authority_id), run_id, span_id, 12)).unwrap_err().code().as_str(),
       "auv.telemetry.duplicate_span_end"

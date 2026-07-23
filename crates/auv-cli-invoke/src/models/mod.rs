@@ -26,6 +26,7 @@ pub struct InvokeOutputOptions {
   pub json: bool,
   pub detail: bool,
   pub wide: bool,
+  pub inspect_hint: bool,
 }
 
 impl Default for InvokeOutputOptions {
@@ -34,6 +35,7 @@ impl Default for InvokeOutputOptions {
       json: false,
       detail: false,
       wide: false,
+      inspect_hint: true,
     }
   }
 }
