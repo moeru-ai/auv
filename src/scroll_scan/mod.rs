@@ -25,6 +25,7 @@ use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::{AuvResult, now_millis};
 use crate::run_read::publish_scan_coverage;
 use crate::runtime::Runtime;
+use auv_cli_invoke::ArtifactInstrumentationReceipt;
 use auv_scan::{CompletenessWire, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
 use auv_tracing::{Context, RunId, SpanId};
 use image::RgbaImage;
@@ -328,12 +329,31 @@ pub async fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOpti
     Ok(mut source) => execute_scan_window_region(&mut source, options, scan_id, trace_ids),
     Err(error) => failed_scan_execution(options, scan_id, error),
   };
-  let coverage = scan_coverage_from_artifact(&execution.artifact);
-  let _ = publish_scan_coverage(Some(&context), &coverage).await;
+  publish_scan_execution(&context, &execution).await;
   match execution.error {
     Some(error) => Err(error),
     None => Ok(execution.artifact),
   }
+}
+
+async fn publish_scan_execution(context: &Context, execution: &ScanExecution) {
+  if !execution.artifact.pages.is_empty() {
+    let _ = publish_scroll_scan_artifact(context, &execution.artifact).await;
+  }
+  // NOTICE: A source failure before the first observed page has no domain
+  // artifact to publish. Its failure coverage remains canonical evidence.
+  let coverage = scan_coverage_from_artifact(&execution.artifact);
+  let _ = publish_scan_coverage(Some(context), &coverage).await;
+}
+
+async fn publish_scroll_scan_artifact(context: &Context, artifact: &ScrollScanArtifact) -> ArtifactInstrumentationReceipt {
+  let mut instrumentation = ArtifactInstrumentationReceipt::default();
+  if context.can_publish_artifacts() {
+    instrumentation
+      .publish_json_bounded(SCROLL_SCAN_PURPOSE, artifact, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE)
+      .await;
+  }
+  instrumentation
 }
 
 trait ScanWindowRegionSource {
@@ -1108,8 +1128,15 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
 #[cfg(test)]
 mod tests {
   use std::collections::VecDeque;
+  use std::sync::Arc;
 
+  use auv_tracing::{
+    ArtifactPurpose, AuthorityId, MemoryRunStore, RunStore, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy,
+    configure, dispatcher,
+  };
   use image::Rgba;
+
+  use crate::run_read::read_scroll_scan;
 
   use super::*;
 
@@ -1117,6 +1144,18 @@ mod tests {
     pages: VecDeque<AuvResult<ScanSourcePage>>,
     scroll_calls: usize,
     scroll_error: Option<String>,
+  }
+
+  struct NoopTelemetry;
+
+  impl TelemetryProjector for NoopTelemetry {
+    fn project(&self, _item: TelemetryItem) -> auv_tracing::BoxFuture<'_, Result<(), TelemetryError>> {
+      Box::pin(async { Ok(()) })
+    }
+
+    fn flush(&self) -> auv_tracing::BoxFuture<'_, Result<(), TelemetryError>> {
+      Box::pin(async { Ok(()) })
+    }
   }
 
   impl ScanSource {
@@ -1250,6 +1289,105 @@ mod tests {
     assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
   }
 
+  #[tokio::test]
+  async fn partial_scan_execution_publishes_one_domain_artifact_and_coverage() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![
+      Ok(page(0, "Alpha", [0, 0, 0, 255])),
+      Err("fixture observation failed".to_string()),
+    ]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 3,
+        max_scrolls: 5,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+    let expected = execution.artifact.clone();
+    let future = root.in_scope(|| publish_scan_execution(&root, &execution));
+
+    root.instrument(future).await;
+    dispatch.flush().await.expect("flush scan artifacts");
+    let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("scan snapshot");
+    let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().clone()).collect::<Vec<_>>();
+
+    assert_eq!(purposes.len(), 2, "partial execution must commit each canonical artifact once");
+    assert_eq!(purposes.iter().filter(|purpose| purpose.as_str() == SCROLL_SCAN_PURPOSE).count(), 1);
+    assert_eq!(purposes.iter().filter(|purpose| purpose.as_str() == crate::run_read::SCAN_COVERAGE_PURPOSE).count(), 1);
+    let scroll_scan_purpose = ArtifactPurpose::parse(SCROLL_SCAN_PURPOSE).expect("scroll-scan purpose");
+    let scroll_scan = snapshot
+      .artifacts()
+      .values()
+      .find(|published| published.metadata().purpose() == &scroll_scan_purpose)
+      .expect("scroll-scan artifact")
+      .metadata();
+    assert_eq!(read_scroll_scan(store.as_ref(), &snapshot, scroll_scan.uri()).await.expect("read scroll scan"), expected);
+  }
+
+  #[tokio::test]
+  async fn first_observe_failure_publishes_coverage_without_a_scroll_scan_artifact() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut source = ScanSource::with_pages(vec![Err("fixture observation failed".to_string())]);
+    let execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 3,
+        max_scrolls: 5,
+      }),
+      format!("scan_{run_id}"),
+      Some((run_id, SpanId::new())),
+    );
+    let future = root.in_scope(|| publish_scan_execution(&root, &execution));
+
+    root.instrument(future).await;
+    dispatch.flush().await.expect("flush scan coverage");
+    let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("coverage snapshot");
+    let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().as_str()).collect::<Vec<_>>();
+
+    assert_eq!(purposes, vec![crate::run_read::SCAN_COVERAGE_PURPOSE]);
+    let coverage =
+      crate::scene_state_read::read_scan_coverage(store.as_ref(), &snapshot).await.expect("read scan coverage").expect("failure coverage");
+    assert_eq!(coverage.open_uncertainty_codes, vec!["scan_source_error"]);
+    assert!(matches!(coverage.completeness, CompletenessWire::Incomplete { .. }));
+  }
+
+  #[tokio::test]
+  async fn disabled_and_telemetry_contexts_skip_scroll_scan_serialization() {
+    let mut source = ScanSource::with_pages(vec![Ok(page(0, "Alpha", [0, 0, 0, 255]))]);
+    let mut execution = execute_scan_window_region(
+      &mut source,
+      options(StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      }),
+      "scan_disabled".to_string(),
+      None,
+    );
+    execution.artifact.warnings = vec!["x".repeat(usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test payload size"))];
+
+    let disabled = Context::current();
+    assert!(!disabled.can_publish_artifacts());
+    assert!(publish_scroll_scan_artifact(&disabled, &execution.artifact).await.failures().is_empty());
+
+    let dispatch =
+      configure().project_telemetry(Arc::new(NoopTelemetry), TelemetryRoutePolicy::fixed_fields_only()).build().expect("telemetry dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let future = root.in_scope(|| publish_scroll_scan_artifact(&root, &execution.artifact));
+    let instrumentation = root.instrument(future).await;
+
+    assert!(root.is_enabled());
+    assert!(!root.can_publish_artifacts());
+    assert!(instrumentation.failures().is_empty(), "telemetry-only publication serialized the oversized artifact");
+  }
+
   #[test]
   fn scan_execution_keeps_repeated_observations_as_positive_coverage() {
     let mut source = ScanSource::with_pages(vec![
@@ -1324,33 +1462,43 @@ mod tests {
   async fn scan_window_region_reaches_the_direct_window_backend() {
     let project_root = std::env::temp_dir().join(format!("auv-scroll-scan-direct-backend-{}", std::process::id()));
     let runtime = Runtime::new(project_root);
-    let result = scan_window_region(
-      &runtime,
-      ScanWindowRegionOptions {
-        target: ScanTarget {
-          application_id: Some("com.example.auv-task22-missing".to_string()),
-          window_title: None,
-          region: ScanRegion {
-            left_ratio: 0.0,
-            top_ratio: 0.0,
-            right_ratio: 1.0,
-            bottom_ratio: 1.0,
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let future = root.in_scope(|| {
+      scan_window_region(
+        &runtime,
+        ScanWindowRegionOptions {
+          target: ScanTarget {
+            application_id: Some("com.example.auv-task22-missing".to_string()),
+            window_title: None,
+            region: ScanRegion {
+              left_ratio: 0.0,
+              top_ratio: 0.0,
+              right_ratio: 1.0,
+              bottom_ratio: 1.0,
+            },
           },
+          stop_policy: StopPolicy::Bounded {
+            max_pages: 1,
+            max_scrolls: 0,
+          },
+          direction: "down".to_string(),
+          scroll_amount: 40.0,
+          settle_ms: 0,
+          min_confidence: 0.0,
+          max_observations: 16,
         },
-        stop_policy: StopPolicy::Bounded {
-          max_pages: 1,
-          max_scrolls: 0,
-        },
-        direction: "down".to_string(),
-        scroll_amount: 40.0,
-        settle_ms: 0,
-        min_confidence: 0.0,
-        max_observations: 16,
-      },
-    )
-    .await;
+      )
+    });
+    let result = root.instrument(future).await;
     let error = result.expect_err("missing window must remain a source error");
 
     assert!(!error.contains("requires a typed window region observation API"), "synthetic scan error escaped: {error}");
+    dispatch.flush().await.expect("flush pre-domain failure coverage");
+    let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("coverage snapshot");
+    let purposes = snapshot.artifacts().values().map(|published| published.metadata().purpose().as_str()).collect::<Vec<_>>();
+    assert_eq!(purposes, vec![crate::run_read::SCAN_COVERAGE_PURPOSE]);
   }
 }
