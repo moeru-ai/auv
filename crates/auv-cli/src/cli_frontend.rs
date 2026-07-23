@@ -237,7 +237,7 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       inspect,
     } => {
       let authority = build_cli_authority(&project_root, &inspect).await?;
-      let store = authority.store.clone();
+      let store = authority.store.clone().ok_or_else(|| "Minecraft spatial bundle export requires an Inspect run authority".to_string())?;
       let export_run_id = auv_tracing::RunId::new();
       let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(export_run_id));
       let future = root.in_scope(|| {
@@ -1217,26 +1217,10 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
         invoked_command.invoke(input)
       });
       let direct_result = root.instrument(future).await;
-      let mut recording_failures = Vec::new();
       if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        recording_failures.push(failure);
+        eprintln!("warning: invoke recording failure for run {run_id}: {failure}");
       }
-      let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
-        Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
-        Ok(None) => {
-          recording_failures.push("recorded run snapshot is missing after execution".to_string());
-          Vec::new()
-        }
-        Err(error) => {
-          recording_failures.push(format!("failed to load recorded run snapshot after execution: {error}"));
-          Vec::new()
-        }
-      };
-      if !recording_failures.is_empty() {
-        eprintln!("warning: invoke recording failure for run {run_id}: {}", recording_failures.join("; "));
-      }
-      let result = auv_cli_invoke::InvokeResult::from_command_result(run_id.to_string(), &command, direct_result)
-        .with_canonical_artifacts(canonical_artifacts);
+      let result = auv_cli_invoke::InvokeResult::from_command_result(run_id.to_string(), &command, direct_result);
       for failure in &result.artifact_failures {
         eprintln!("warning: artifact instrumentation failed for {}: {}", failure.purpose, failure.message);
       }
@@ -1460,7 +1444,7 @@ fn open_inspect_authority_store(store_root: &Path) -> Result<Arc<dyn auv_tracing
 #[derive(Clone)]
 struct CliFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
-  store: Arc<dyn auv_tracing::RunStore>,
+  store: Option<Arc<dyn auv_tracing::RunStore>>,
 }
 
 async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions) -> Result<CliFrontendAuthority, String> {
@@ -1470,6 +1454,9 @@ async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions
     } else if inspect.require_server_write {
       return Err("inspect server write is required but no inspect server is configured".to_string());
     } else if matches!(inspect.server_write, crate::cli::InspectWriteSetting::Enabled) {
+      if !should_write_local(inspect) {
+        return Err("inspect server write was requested but no inspect server is configured".to_string());
+      }
       eprintln!("warning: inspect server write requested but no inspect server is configured");
       None
     } else {
@@ -1484,7 +1471,9 @@ async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions
       let parsed = reqwest::Url::parse(&url).map_err(|error| format!("invalid inspect authority URL {url}: {error}"))?;
       match auv_tracing_inspect::InspectRunStore::connect(parsed).await {
         Ok(store) => Some(Arc::new(store)),
-        Err(error) if inspect.require_server_write => return Err(format!("failed to connect required inspect authority {url}: {error}")),
+        Err(error) if inspect.require_server_write || !should_write_local(inspect) => {
+          return Err(format!("failed to connect requested inspect authority {url}: {error}"));
+        }
         Err(error) => {
           eprintln!("warning: failed to connect inspect authority {url}: {error}; using local tracing authority");
           None
@@ -1495,12 +1484,17 @@ async fn build_cli_authority(project_root: &Path, inspect: &InspectClientOptions
   };
 
   let store = match store {
-    Some(store) => store,
-    None if should_write_local(inspect) => open_inspect_authority_store(&resolve_store_root(project_root, inspect.store_root.as_ref()))?,
-    None => return Err("invoke requires one configured V1 run authority".to_string()),
+    Some(store) => Some(store),
+    None if should_write_local(inspect) => {
+      Some(open_inspect_authority_store(&resolve_store_root(project_root, inspect.store_root.as_ref()))?)
+    }
+    None => None,
   };
-  let dispatch =
-    auv_tracing::configure().run_store(store.clone()).build().map_err(|error| format!("failed to configure invoke tracing: {error}"))?;
+  let dispatch = match &store {
+    Some(store) => auv_tracing::configure().run_store(store.clone()).build(),
+    None => auv_tracing::configure().build(),
+  }
+  .map_err(|error| format!("failed to configure invoke tracing: {error}"))?;
   Ok(CliFrontendAuthority { dispatch, store })
 }
 
@@ -1836,7 +1830,7 @@ mod tests {
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
     let authority = CliFrontendAuthority {
       dispatch,
-      store: store.clone(),
+      store: Some(store.clone()),
     };
     let invoked_call = call.clone();
     let run_id = RunId::new();
@@ -1857,13 +1851,28 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn cli_authority_allows_no_store_when_all_recording_is_disabled() {
+    let inspect = InspectClientOptions {
+      local_write: crate::cli::InspectWriteSetting::Disabled,
+      server_write: crate::cli::InspectWriteSetting::Disabled,
+      ..InspectClientOptions::default()
+    };
+
+    let authority = build_cli_authority(Path::new(env!("CARGO_MANIFEST_DIR")), &inspect).await.expect("no-store dispatch");
+    let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(RunId::new()));
+
+    assert!(!root.is_enabled());
+    assert!(!root.can_publish_artifacts());
+  }
+
+  #[tokio::test]
   async fn cli_commit_unknown_preserves_direct_result_without_retry_or_canonical_advice() {
     let call = CountingCall::default();
     let store = Arc::new(CommitUnknownStore::new());
     let dispatch = auv_tracing::configure().run_store(store.clone()).build().expect("dispatch");
     let authority = CliFrontendAuthority {
       dispatch,
-      store: store.clone(),
+      store: Some(store.clone()),
     };
 
     let invoked_call = call.clone();
@@ -1875,15 +1884,10 @@ mod tests {
     });
     let direct_result = root.instrument(future).await;
     let recording_failure = flush_cli_recording(&authority.dispatch).await;
-    let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
-      Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect::<Vec<_>>(),
-      Ok(None) | Err(_) => Vec::new(),
-    };
 
     assert_eq!(call.call_count(), 1);
     assert_eq!(direct_result, Ok(7));
     assert_eq!(store.attempted_run_id(), Some(run_id));
-    assert!(canonical_artifacts.is_empty());
     let failure = recording_failure.expect("recording failure");
     assert!(failure.contains("instrumentation dispatch failure"), "unexpected failure: {failure}");
     assert_no_canonical_advice(&failure);

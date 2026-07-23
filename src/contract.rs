@@ -48,24 +48,11 @@ pub use auv_tracing::{ArtifactId, ArtifactUri as ArtifactRef, RunId, SpanId};
 // for the reader-side discriminator as its own slice. Adding it now
 // without a real second version would be untestable.
 
-/// Wire-shape version of the retired generic operation value.
-///
-/// NOTICE(operation-result-retirement): the type remains a direct in-memory
-/// value for archived callers in this slice; no V1 producer or reader persists
-/// it. Removing the value itself is a separate owner-approved contract change.
-pub const OPERATION_RESULT_API_VERSION: &str = "auv.operation_result.v1alpha1";
-
-/// Wire-shape version of [`VerificationResult`] JSON artifacts. Same semantics
-/// as [`OPERATION_RESULT_API_VERSION`].
+/// Wire-shape version of [`VerificationResult`] JSON artifacts.
 pub const VERIFICATION_RESULT_API_VERSION: &str = "auv.verification_result.v1alpha1";
 
-/// Wire-shape version of [`ObservationSnapshot`] JSON artifacts. Same
-/// semantics as [`OPERATION_RESULT_API_VERSION`].
+/// Wire-shape version of [`ObservationSnapshot`] JSON artifacts.
 pub const OBSERVATION_SNAPSHOT_API_VERSION: &str = "auv.observation_snapshot.v1alpha1";
-
-fn default_operation_result_api_version() -> String {
-  OPERATION_RESULT_API_VERSION.to_string()
-}
 
 fn default_verification_result_api_version() -> String {
   VERIFICATION_RESULT_API_VERSION.to_string()
@@ -82,140 +69,6 @@ pub struct CandidateRef {
   pub source_operation_id: String,
   pub source_artifact_id: ArtifactId,
   pub candidate_local_id: String,
-}
-
-/// Coarse recorded outcome of an operation, not proof of action delivery or
-/// semantic success.
-///
-/// `Completed` means the producer did not classify the operation as failed
-/// under that operation's current policy. `Failed` means it did; the reason may
-/// be refusal before dispatch, a backend or permission error, or a required
-/// verification that did not match. The status alone does not identify which
-/// layer failed.
-///
-/// Consumers must use [`InputActionResult`] artifacts for delivery evidence and
-/// [`VerificationResult::semantic_matched`] together with
-/// [`VerificationResult::failure_layer`] for semantic evidence. In particular,
-/// `Completed` can coexist with `semantic_matched == Some(false)` and therefore
-/// must not be read as semantic success; `Failed` does not imply that no action
-/// was delivered.
-///
-/// TODO(operation-status-policy): producers do not yet share one rule for
-/// whether a semantic mismatch changes this coarse status. Standardize that in
-/// the TextEdit parity/failure-semantics slice, then tighten this contract if
-/// the owner approves one policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationStatus {
-  Completed,
-  Failed,
-}
-
-/// Retired generic operation value retained only for direct archived callers.
-///
-/// # Seam role
-///
-/// V1 does not persist or reconstruct this value. App/domain functions return
-/// their existing typed values, while input and recognition evidence use their
-/// own canonical artifact purposes.
-///
-/// Wire `api_version` is stamped on write but readers do not reject
-/// unknown values yet — see `NOTICE(contract-api-version-reader-check)`
-/// at the top of this file.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OperationResult {
-  /// Wire-shape version. See [`OPERATION_RESULT_API_VERSION`]. Defaults so
-  /// historical artifacts without the field still parse as the current shape.
-  #[serde(default = "default_operation_result_api_version")]
-  pub api_version: String,
-  pub run_id: RunId,
-  /// Coarse recorded outcome — see [`OperationStatus`]. Delivery and semantic
-  /// evidence live in artifacts and [`Self::verifications`], respectively.
-  pub status: OperationStatus,
-  pub operation_id: String,
-  pub evidence_artifacts: Vec<ArtifactRef>,
-  pub output: OperationOutput,
-  /// First-class verification claims attached to this operation. Independent
-  /// of [`OperationOutput`]: any operation — observe, action, or dedicated
-  /// verify — can attach one or more verifications when the world enters an
-  /// expected state. Consumers MAY scan this field directly instead of pattern-
-  /// matching on `output`. Serialized as empty when no claims were produced,
-  /// and accepted as missing for back-compat with older OperationResult JSON.
-  ///
-  /// [`OperationOutput::Verification`] is retained for now so single-claim
-  /// verify-only commands stay one-shape; new producers SHOULD prefer this
-  /// top-level field, especially when an action wants to record a verification
-  /// alongside its acknowledged output.
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub verifications: Vec<VerificationResult>,
-  /// Typed classification for a *control-layer* failure — one that happened
-  /// before (or instead of) any verification, so it cannot be expressed as a
-  /// [`VerificationResult`]. A driver control call (activate / focus / paste)
-  /// that returns a typed `DriverError` lands here as
-  /// [`FailureLayer::ControlFailed`] with the driver's message and any recovery
-  /// hint, keeping the failure classifiable instead of collapsing to free text.
-  ///
-  /// Distinct from [`Self::verifications`]: `failure_layer` there classifies a
-  /// verification that *ran and disagreed* (e.g. `SemanticMismatch`); this
-  /// classifies a control step that never produced a verification at all.
-  /// Serialized as absent when the operation had no control-layer failure, and
-  /// accepted as missing for back-compat with older OperationResult JSON.
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub control_failure: Option<ControlFailure>,
-  pub freshness_basis: Option<FreshnessBasis>,
-  pub known_limits: Vec<String>,
-}
-
-/// A classified control-layer failure attached to an [`OperationResult`].
-///
-/// # Seam role
-///
-/// - **Produced by** command handlers that map a typed driver failure into a
-///   persisted classification (currently `app.textedit.document.write` maps
-///   `DriverError` -> [`FailureLayer::ControlFailed`] at its invoke finalize).
-/// - **Consumed by** the inspect-family read path (`run_read`, core inspect
-///   text render, and the HTTP inspect enrichment) so CLI `inspect`, MCP
-///   `run_inspect`, and the HTTP surface all report the same typed
-///   classification for a driver control failure.
-///
-/// `layer` reuses the shared [`FailureLayer`] taxonomy rather than a private
-/// enum. Today the only producer emits [`FailureLayer::ControlFailed`]; the
-/// wider taxonomy (`GroundingFailed`, `CandidateExpired`, ...) is deliberately
-/// left to future producers on this same field.
-// TODO(control-failure-producers): only `ControlFailed` is produced today
-// (textedit driver-error path). `GroundingFailed` / `CandidateExpired` remain
-// unproduced on purpose — add them when a real grounding/candidate producer
-// needs a persisted control-layer classification, not speculatively.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ControlFailure {
-  /// Which pipeline layer failed. See [`FailureLayer`].
-  pub layer: FailureLayer,
-  /// Human-readable failure detail, excluding any separately stored recovery
-  /// hint.
-  pub message: String,
-  /// Optional recovery hint carried from the driver error when it had one
-  /// (e.g. `PermissionDenied` / `StaleObservation` / `RoleMismatch`).
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub recovery: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum OperationOutput {
-  Candidates {
-    candidates: Vec<Candidate>,
-  },
-  // `VerificationResult` is the largest variant by far (~440 B vs. ~24 B for
-  // `Candidates`), and `OperationOutput` / `OperationResult` move across the
-  // seam by value, so leaving it unboxed inflates every sibling. `Box<T>` is
-  // serde-transparent (serializes exactly as `T`), so the wire shape on
-  // `OperationResult.output` stays identical.
-  Verification {
-    verification: Box<VerificationResult>,
-  },
-  Acknowledged {
-    message: Option<String>,
-  },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -403,10 +256,8 @@ pub enum TargetGrounding {
 /// - `RatioRegion` serializes LRBT:
 ///   `{"left":…,"top":…,"right":…,"bottom":…}`. Stored
 ///   `CandidateQuery` / `SurfaceSelectorClause::Ocr.region_hint`
-///   JSON is full of this shape, and `OPERATION_RESULT_API_VERSION`
-///   readers (see `NOTICE(contract-api-version-reader-check)` above)
-///   silently fall back to v1alpha1 on unknown shapes — switching the
-///   wire layout now would parse historical artifacts incorrectly.
+///   JSON uses this shape, so switching the wire layout would parse
+///   historical artifacts incorrectly.
 /// - `auv_driver::geometry::RatioRect` serializes XYWH:
 ///   `{"x":…,"y":…,"width":…,"height":…}`. It is used by driver
 ///   capture / window geometry APIs and was reused by
@@ -476,13 +327,9 @@ pub struct ControlRequirements {
 ///
 /// # Seam role
 ///
-/// - **Produced by** any operation that wants to record a verification
-///   claim — legacy `verify.*` operation-result producers, action commands
-///   that succeeded semantically, or observe commands that incidentally
-///   confirmed a property. Producers attach claims to
-///   [`OperationResult::verifications`] (preferred) or wrap a single
-///   claim into [`OperationOutput::Verification`] (legacy single-claim
-///   shape).
+/// - **Produced by** app or domain operations that return or publish a
+///   verification claim, including actions that succeeded semantically and
+///   observations that incidentally confirmed a property.
 /// - **Consumed by** `run_read::extract_verifications`, the inspect
 ///   server's verification panel, and the trace viewer's per-run
 ///   verification list.
@@ -576,23 +423,6 @@ pub enum FailureLayer {
   VerificationUnreliable,
   StateChangedNoMatch,
   SemanticMismatch,
-}
-
-impl FailureLayer {
-  /// Stable snake_case wire string for this layer, matching the serde
-  /// `rename_all = "snake_case"` representation. Shared by the inspect text
-  /// render and the session-API proto mapper so the taxonomy has one wire
-  /// spelling rather than a hand-written copy per consumer.
-  pub fn as_str(&self) -> &'static str {
-    match self {
-      Self::GroundingFailed => "grounding_failed",
-      Self::CandidateExpired => "candidate_expired",
-      Self::ControlFailed => "control_failed",
-      Self::VerificationUnreliable => "verification_unreliable",
-      Self::StateChangedNoMatch => "state_changed_no_match",
-      Self::SemanticMismatch => "semantic_mismatch",
-    }
-  }
 }
 
 /// Coarse evidence source for an [`ObservationSnapshot`]. AX trees, OCR
@@ -992,137 +822,6 @@ mod tests {
   }
 
   #[test]
-  fn operation_result_with_candidate_round_trips() {
-    let artifact = artifact_ref();
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(),
-      status: OperationStatus::Completed,
-      operation_id: "music.search.results".to_string(),
-      evidence_artifacts: vec![artifact.clone()],
-      verifications: Vec::new(),
-      output: OperationOutput::Candidates {
-        candidates: vec![Candidate {
-          candidate_local_id: "row#1".to_string(),
-          kind: "search_result_row".to_string(),
-          label: Some("Cure For Me".to_string()),
-          target_spec: TargetSpec {
-            grounding: TargetGrounding::OcrAnchor,
-            anchor_text: Some("Cure For Me".to_string()),
-            region_hint: Some(RatioRegion {
-              left: 0.2,
-              top: 0.3,
-              right: 0.8,
-              bottom: 0.9,
-            }),
-            row_index: None,
-          },
-          evidence: CandidateEvidence {
-            artifact_ref: artifact.clone(),
-            observation: json!({
-              "provider": "vision_ocr",
-              "text": "Cure For Me",
-              "bounds": { "x": 2155, "y": 1402, "width": 170, "height": 24 }
-            }),
-          },
-          liveness: CandidateLiveness {
-            preconditions: LivenessPreconditions {
-              window_ref: Some(WindowRefPrecondition {
-                app_bundle_id: "com.tencent.QQMusicMac".to_string(),
-                window_title_substring: None,
-                window_number: Some(42),
-              }),
-              anchor_recheck: Some(AnchorRecheckPrecondition {
-                text: "Cure For Me".to_string(),
-                region_hint: None,
-                expected_min_confidence: 0.5,
-                max_pixel_distance: 32.0,
-              }),
-            },
-            ttl_hint_ms: Some(5000),
-          },
-          control: ControlRequirements {
-            requires_app_frontmost: true,
-            requires_window_focus: true,
-          },
-          known_limits: vec!["validated only for visible ASCII anchors".to_string()],
-        }],
-      },
-      freshness_basis: Some(FreshnessBasis {
-        source_artifact: Some(artifact),
-        source_operation_id: Some("debug.findWindowRows".to_string()),
-        notes: vec!["window-scoped OCR rows".to_string()],
-      }),
-      known_limits: Vec::new(),
-      control_failure: None,
-    };
-
-    let value = serde_json::to_value(&result).expect("operation result should serialize");
-    assert_eq!(value["status"], json!("completed"));
-    assert_eq!(value["output"]["kind"], json!("candidates"));
-    assert_eq!(value["output"]["candidates"][0]["target_spec"]["grounding"], json!("ocr_anchor"));
-    // A success operation carries no control failure and must not serialize the field.
-    assert!(value.get("control_failure").is_none());
-
-    let parsed: OperationResult = serde_json::from_value(value).expect("operation result should deserialize");
-    assert_eq!(parsed, result);
-  }
-
-  #[test]
-  fn operation_result_control_failure_round_trips_and_omits_when_absent() {
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new("run_ctrl"),
-      status: OperationStatus::Failed,
-      operation_id: "app.textedit.document.write".to_string(),
-      evidence_artifacts: Vec::new(),
-      output: OperationOutput::Acknowledged {
-        message: Some("TextEdit document.write control failure".to_string()),
-      },
-      verifications: Vec::new(),
-      control_failure: Some(ControlFailure {
-        layer: FailureLayer::ControlFailed,
-        message: "accessibility permission was denied: not authorized".to_string(),
-        recovery: Some("grant Accessibility in System Settings".to_string()),
-      }),
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-
-    let value = serde_json::to_value(&result).expect("operation result should serialize");
-    assert_eq!(value["status"], json!("failed"));
-    assert_eq!(value["control_failure"]["layer"], json!("control_failed"));
-    assert_eq!(value["control_failure"]["message"], json!("accessibility permission was denied: not authorized"));
-    assert_eq!(value["control_failure"]["recovery"], json!("grant Accessibility in System Settings"));
-
-    let parsed: OperationResult = serde_json::from_value(value).expect("operation result should deserialize");
-    assert_eq!(parsed, result);
-  }
-
-  // ROOT CAUSE:
-  //
-  // `control_failure` is an additive field on the persisted `OperationResult`
-  // wire shape. If it were not `#[serde(default)]`, older `operation-result`
-  // JSON (written before PR8-B) would fail to deserialize once readers upgrade.
-  // This locks the back-compat guarantee: absent field -> `None`.
-  #[test]
-  fn operation_result_without_control_failure_field_parses_as_none() {
-    let legacy = json!({
-      "api_version": OPERATION_RESULT_API_VERSION,
-      "run_id": "run_legacy",
-      "status": "failed",
-      "operation_id": "app.textedit.document.write",
-      "evidence_artifacts": [],
-      "output": { "kind": "acknowledged", "message": "legacy failure" },
-      "freshness_basis": null,
-      "known_limits": []
-    });
-
-    let parsed: OperationResult = serde_json::from_value(legacy).expect("legacy operation result should deserialize");
-    assert_eq!(parsed.control_failure, None);
-  }
-
-  #[test]
   fn visual_row_candidate_serializes_row_index_without_anchor_recheck() {
     let artifact = artifact_ref();
     let candidate = Candidate {
@@ -1413,168 +1112,5 @@ mod tests {
 
     let parsed: ObservationSnapshot = serde_json::from_value(value).expect("snapshot should deserialize");
     assert_eq!(parsed, snapshot);
-  }
-
-  fn sample_verification(method: VerificationMethod) -> VerificationResult {
-    VerificationResult {
-      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-      method,
-      executed: true,
-      state_changed: true,
-      semantic_matched: Some(true),
-      failure_layer: None,
-      evidence: vec![artifact_ref()],
-      consumed_candidate_ref: None,
-      consumed_node_ref: None,
-      consumed_recognition_artifact_ref: None,
-      consumed_recognition_id: None,
-      consumed_recognized_item_id: None,
-      observed_label: Some("Now playing X".to_string()),
-    }
-  }
-
-  #[test]
-  fn operation_result_carries_first_class_verifications_alongside_acknowledged_output() {
-    let verification = sample_verification(VerificationMethod::StateChanged);
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(),
-      status: OperationStatus::Completed,
-      operation_id: "music.result.play".to_string(),
-      evidence_artifacts: vec![artifact_ref()],
-      output: OperationOutput::Acknowledged {
-        message: Some("Issued play".to_string()),
-      },
-      verifications: vec![verification.clone()],
-      control_failure: None,
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-
-    let value = serde_json::to_value(&result).expect("result should serialize");
-    assert_eq!(value["output"]["kind"], json!("acknowledged"));
-    assert_eq!(
-      value["verifications"][0]["method"]["kind"],
-      json!("state_changed"),
-      "first-class verifications must serialize with their typed method"
-    );
-
-    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
-    assert_eq!(parsed.verifications, vec![verification]);
-  }
-
-  #[test]
-  fn legacy_operation_result_without_verifications_field_decodes_with_empty_vec() {
-    let run_id = RunId::new();
-    let json = json!({
-      "run_id": run_id.to_string(),
-      "status": "completed",
-      "operation_id": "music.search.results",
-      "evidence_artifacts": [],
-      "output": { "kind": "acknowledged", "message": null },
-      "freshness_basis": null,
-      "known_limits": []
-    });
-
-    let parsed: OperationResult = serde_json::from_value(json).expect("legacy result should deserialize");
-    assert!(parsed.verifications.is_empty(), "missing verifications field must default to an empty list, preserving back-compat");
-
-    let reserialized = serde_json::to_value(&parsed).expect("result should re-serialize");
-    assert!(
-      reserialized.get("verifications").is_none(),
-      "empty verifications must skip serialize to keep wire compact for legacy producers"
-    );
-  }
-
-  #[test]
-  fn operation_result_supports_multiple_verification_claims() {
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(),
-      status: OperationStatus::Completed,
-      operation_id: "music.result.play".to_string(),
-      evidence_artifacts: vec![artifact_ref()],
-      output: OperationOutput::Acknowledged { message: None },
-      verifications: vec![
-        sample_verification(VerificationMethod::StateChanged),
-        sample_verification(VerificationMethod::SemanticMatch),
-      ],
-      control_failure: None,
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-
-    let value = serde_json::to_value(&result).expect("result should serialize");
-    assert_eq!(value["verifications"].as_array().map(|a| a.len()), Some(2), "multi-claim verifications must round-trip");
-    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
-    assert_eq!(parsed.verifications.len(), 2);
-  }
-
-  // ROOT CAUSE:
-  //
-  // `OperationStatus` had no documentation, so `Completed` could be misread as
-  // semantic success. Producers currently use different coarse status policy:
-  // some keep `Completed` when verification does not match, while TextEdit
-  // marks a required semantic mismatch `Failed`. This test locks the invariant
-  // shared by both policies: status never replaces the explicit verification
-  // evidence, and `Completed` alone cannot prove a semantic match.
-  #[test]
-  fn operation_status_completed_does_not_imply_semantic_match() {
-    let mut mismatch = sample_verification(VerificationMethod::StateChanged);
-    mismatch.state_changed = true; // the action was delivered and the world moved,
-    mismatch.semantic_matched = Some(false); // but it did NOT reach the expected state,
-    mismatch.failure_layer = Some(FailureLayer::StateChangedNoMatch);
-
-    let result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new("run_delivered_no_match"),
-      status: OperationStatus::Completed, // this producer keeps a coarse completed status.
-      operation_id: "music.result.play".to_string(),
-      evidence_artifacts: vec![artifact_ref()],
-      output: OperationOutput::Acknowledged {
-        message: Some("click delivered".to_string()),
-      },
-      verifications: vec![mismatch],
-      control_failure: None,
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-
-    let value = serde_json::to_value(&result).expect("result should serialize");
-    // Coarse status and semantic evidence remain separate fields, not one collapsed flag.
-    assert_eq!(value["status"], json!("completed"), "status reflects execution, not semantic match");
-    assert_eq!(value["verifications"][0]["semantic_matched"], json!(false), "semantic failure lives in the verification");
-    assert_eq!(value["verifications"][0]["failure_layer"], json!("state_changed_no_match"));
-
-    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
-    assert_eq!(parsed.status, OperationStatus::Completed);
-    assert_eq!(parsed.verifications[0].semantic_matched, Some(false));
-  }
-
-  // ROOT CAUSE:
-  //
-  // `FailureLayer::as_str` is a hand-written token table used by the proto
-  // mapper and the inspect text render, while the persisted `OperationResult`
-  // JSON, the HTTP inspect enrichment, and the textedit signal round-trip use
-  // serde's `rename_all = "snake_case"` spelling. If the two ever disagree, the
-  // RPC/inspect-text layer string would silently diverge from the JSON spelling
-  // for the same failure.
-  //
-  // This pins `as_str()` to the serde token for every variant so the "single
-  // wire spelling" invariant is enforced, not just asserted in a doc comment.
-  // The match is exhaustive, so a new variant forces a new arm here too.
-  #[test]
-  fn failure_layer_as_str_matches_serde_token_for_every_variant() {
-    for layer in [
-      FailureLayer::GroundingFailed,
-      FailureLayer::CandidateExpired,
-      FailureLayer::ControlFailed,
-      FailureLayer::VerificationUnreliable,
-      FailureLayer::StateChangedNoMatch,
-      FailureLayer::SemanticMismatch,
-    ] {
-      let serde_token = serde_json::to_value(layer).expect("layer serializes").as_str().expect("layer serializes as a string").to_string();
-      assert_eq!(layer.as_str(), serde_token, "as_str must equal the serde snake_case token for {layer:?}");
-    }
   }
 }

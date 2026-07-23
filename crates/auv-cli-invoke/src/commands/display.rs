@@ -50,7 +50,7 @@ async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
     output
       .known_limits
       .push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     output
   })
 }

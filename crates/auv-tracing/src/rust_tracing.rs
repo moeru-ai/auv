@@ -39,7 +39,7 @@ enum SpanState {
   // retained as a tombstone instead of being made available for reuse.
   Starting,
   Active(ActiveSpan),
-  Ended,
+  Ended { retain_on_flush: bool },
 }
 
 struct ActiveSpan {
@@ -122,7 +122,7 @@ impl RustTracingProjector {
                     }
                   }
                   Some(SpanState::Starting) | None => return Err(error("auv.telemetry.missing_parent_span")),
-                  Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_parent_span")),
+                  Some(SpanState::Ended { .. }) => return Err(error("auv.telemetry.ended_parent_span")),
                 }
               }
               if run.authority_id != authority_id {
@@ -205,7 +205,7 @@ impl RustTracingProjector {
           let active = match run.spans.get(&span_id) {
             Some(SpanState::Active(active)) => active,
             Some(SpanState::Starting) | None => return Err(error("auv.telemetry.missing_span_start")),
-            Some(SpanState::Ended) => return Err(error("auv.telemetry.duplicate_span_end")),
+            Some(SpanState::Ended { .. }) => return Err(error("auv.telemetry.duplicate_span_end")),
           };
           if active.authority_id != authority_id {
             return Err(error("auv.telemetry.span_authority_mismatch"));
@@ -222,7 +222,15 @@ impl RustTracingProjector {
           if active.latest_child_started_at.is_some_and(|started_at| ended_at < started_at) {
             return Err(error("auv.telemetry.span_end_before_child_start"));
           }
-          let previous = run.spans.insert(span_id, SpanState::Ended).ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
+          let previous = run
+            .spans
+            .insert(
+              span_id,
+              SpanState::Ended {
+                retain_on_flush: true,
+              },
+            )
+            .ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
           let SpanState::Active(active) = previous else {
             return Err(error("auv.telemetry.duplicate_span_end"));
           };
@@ -233,6 +241,10 @@ impl RustTracingProjector {
         let close_panic = catch_unwind(AssertUnwindSafe(|| drop(active))).err();
         if let Some(payload) = record_panic.or(close_panic) {
           resume_unwind(payload);
+        }
+        {
+          let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+          mark_ended_prunable(&mut state, run_id, span_id)?;
         }
         reservation.finish()
       }
@@ -272,7 +284,7 @@ impl RustTracingProjector {
               let active = match run.spans.get(&span_id) {
                 Some(SpanState::Active(active)) => active,
                 Some(SpanState::Starting) | None => return Err(error("auv.telemetry.missing_event_span")),
-                Some(SpanState::Ended) => return Err(error("auv.telemetry.ended_event_span")),
+                Some(SpanState::Ended { .. }) => return Err(error("auv.telemetry.ended_event_span")),
               };
               if active.authority_id != authority_id {
                 return Err(error("auv.telemetry.span_authority_mismatch"));
@@ -390,8 +402,38 @@ impl TelemetryProjector for RustTracingProjector {
   }
 
   fn flush(&self) -> crate::BoxFuture<'_, Result<(), TelemetryError>> {
-    Box::pin(async { Ok(()) })
+    Box::pin(async move {
+      let reservation = self.reserve()?;
+      {
+        let mut state = self.state.lock().map_err(|_| error("auv.telemetry.rust_tracing_state_poisoned"))?;
+        prune_ordinary_ended_spans(&mut state);
+      }
+      reservation.finish()
+    })
   }
+}
+
+fn mark_ended_prunable(state: &mut ProjectorState, run_id: RunId, span_id: SpanId) -> Result<(), TelemetryError> {
+  let run = state.runs.get_mut(&run_id).ok_or_else(|| error("auv.telemetry.missing_span_start"))?;
+  let Some(SpanState::Ended { retain_on_flush }) = run.spans.get_mut(&span_id) else {
+    return Err(error("auv.telemetry.missing_span_start"));
+  };
+  *retain_on_flush = false;
+  Ok(())
+}
+
+fn prune_ordinary_ended_spans(state: &mut ProjectorState) {
+  state.runs.retain(|_, run| {
+    run.spans.retain(|_, span| {
+      !matches!(
+        span,
+        SpanState::Ended {
+          retain_on_flush: false
+        }
+      )
+    });
+    !run.spans.is_empty()
+  });
 }
 
 fn error(code: &'static str) -> TelemetryError {

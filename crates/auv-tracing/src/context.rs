@@ -314,6 +314,7 @@ struct SpanState {
 
 struct SpanClose {
   dispatch: Dispatch,
+  authority_id: Option<AuthorityId>,
   run_id: RunId,
   started_at: Timestamp,
   started_tick: Duration,
@@ -344,7 +345,7 @@ impl Drop for SpanState {
       return;
     };
     let ended_at = crate::dispatch::timestamp_after(close.started_at, close.started_tick, close.clock.monotonic_now());
-    close.dispatch.submit_span_end(close.run_id, self.id, ended_at);
+    close.dispatch.submit_span_end(close.authority_id, close.run_id, self.id, ended_at);
   }
 }
 
@@ -479,9 +480,11 @@ fn start_span_with_clock(spec: impl SpanSpec, clock: Arc<dyn Clock>) -> Span {
   let sample = parent.span.as_ref().and_then(|span| span.sample_clock()).unwrap_or_else(|| sample_root_clock(clock));
   let close_started_at = sample.timestamp.as_ref().ok().copied();
   let remote_link = parent.remote_span_id.map(SpanLink::new);
-  let prepared = dispatch.submit_span_start(run_id, parent.span_id().copied(), remote_link, span_id, sample.timestamp, spec);
+  let authority_id = parent.authority_id().copied();
+  let prepared = dispatch.submit_span_start(authority_id, run_id, parent.span_id().copied(), remote_link, span_id, sample.timestamp, spec);
   let close = close_started_at.filter(|_| prepared).map(|started_at| SpanClose {
     dispatch,
+    authority_id,
     run_id,
     started_at,
     started_tick: sample.tick,
@@ -505,7 +508,7 @@ pub fn emit_event(event: impl EventPayload) {
 
   let occurred_at =
     context.span.as_ref().and_then(|span| span.sample_clock()).map(|sample| sample.timestamp).unwrap_or_else(crate::dispatch::timestamp_now);
-  dispatch.submit_event(run_id, context.span_id().copied(), occurred_at, event);
+  dispatch.submit_event(context.authority_id().copied(), run_id, context.span_id().copied(), occurred_at, event);
 }
 
 #[cfg(all(test, feature = "memory-store"))]

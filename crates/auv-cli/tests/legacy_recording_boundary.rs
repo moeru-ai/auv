@@ -21,6 +21,8 @@ fn product_cli_has_no_recording_runtime_or_shared_invoke_wrapper() {
     "execute_mcp_frontend",
     "fixture_document_write_cli",
     "fixture_textedit_document_write",
+    "OPERATION_RESULT_API_VERSION",
+    "pub struct OperationResult",
   ];
   let matches = scan_rust_and_manifests(&roots, &forbidden).unwrap_or_else(|error| panic!("{error}"));
   assert!(matches.is_empty(), "legacy product CLI references: {matches:?}");

@@ -72,8 +72,10 @@ async fn map_textedit_document_write<D>(
 where
   D: auv_apple_textedit::TextEditDriver,
 {
-  let report = crate::integrations::textedit::write_document(command.clone(), cancellation, driver).await?;
-  let outcome = document_write_outcome(command, report.clone())?;
+  let (report, artifacts) = crate::integrations::textedit::write_document_with_publications(command.clone(), cancellation, driver).await?;
+  let outcome = artifacts
+    .into_iter()
+    .fold(document_write_outcome(command, report.clone())?, |outcome, metadata| outcome.with_artifact_metadata(Some(metadata)));
   Ok((outcome, report))
 }
 

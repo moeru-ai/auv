@@ -84,7 +84,7 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
     // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
     output.verification = Some("capture-only; no semantic success claim".to_string());
     output.known_limits.push("screen.captureRegion records a region screenshot only; it does not verify UI semantics.".to_string());
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -133,7 +133,7 @@ async fn find_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
     let query = input.required_input("query")?.to_string();
     let (matches, instrumentation) = recognize_screen_text(query, false).await?.into_parts();
     let mut output = screen_text_matches_output(&input.command_id, &matches);
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -160,7 +160,7 @@ async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult 
     let query = input.required_input("query")?.to_string();
     let (matches, instrumentation) = recognize_screen_text(query, true).await?.into_parts();
     let mut output = screen_text_matches_output(&input.command_id, &matches);
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -299,7 +299,7 @@ async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
     output
       .known_limits
       .push("screen.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
-    output.artifact_failures = instrumentation.into_failures();
+    output.apply_artifact_instrumentation(instrumentation);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]

@@ -92,8 +92,7 @@ Provisional packaging term for the app-integration composition package
 (`auv-cli`, located at `crates/auv-cli`):
 
 - Owns root `auv` and app-specific bins, CLI frontend, integration wiring,
-  app-owned text inspection sections, query-wired OperationResult adapters (S3b;
-  stay in product until contract ownership moves), and the product
+  app-owned text inspection sections, query-wired result adapters, and the product
   `InspectRunExtension` implementation.
 - Depends on library-only `auv-runtime` plus `auv-game-*` / `auv-godot`.
 - Must not be confused with core `auv-runtime`; game crates must not depend on

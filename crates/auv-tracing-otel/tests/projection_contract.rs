@@ -707,6 +707,23 @@ fn same_auv_span_id_is_valid_in_different_otel_runs() {
 }
 
 #[test]
+fn otel_flush_releases_ordinary_terminal_span_state() {
+  let projector = OtelProjector::new(SdkTracerProvider::builder().build(), SdkLoggerProvider::builder().build());
+  let authority_id = AuthorityId::new();
+  let run_id = RunId::new();
+  let span_id = AuvSpanId::new();
+
+  project(&projector, span_start(Some(authority_id), run_id, span_id, None, 10)).unwrap();
+  project(&projector, span_end(Some(authority_id), run_id, span_id, 11)).unwrap();
+  block_on(projector.flush()).unwrap();
+
+  assert_eq!(
+    project(&projector, span_end(Some(authority_id), run_id, span_id, 12)).unwrap_err().code().as_str(),
+    "auv.telemetry.otel_missing_span_start"
+  );
+}
+
+#[test]
 fn otel_parent_end_before_child_exports_both_spans() {
   let (tracer_provider, logger_provider, span_exporter, _) = providers();
   let projector = OtelProjector::new(tracer_provider, logger_provider);

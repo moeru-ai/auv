@@ -4,8 +4,11 @@ mod support;
 
 use std::collections::BTreeMap;
 
-use auv_tracing::{Attributes, Context, RunId, RunStore, SpanId, SpanSpec, TextMapReader, TextMapWriter, dispatcher, extract};
-use support::{TestDispatch, block_on_timeout};
+use auv_tracing::{
+  Attributes, Context, EventPayload, RunId, RunStore, SpanId, SpanSpec, TelemetryItem, TelemetryRoutePolicy, TextMapReader, TextMapWriter,
+  configure, dispatcher, extract,
+};
+use support::{RecordingProjector, TestDispatch, block_on_timeout};
 
 const VERSION: &str = "auv-context-version";
 const RUN_ID: &str = "auv-run-id";
@@ -56,6 +59,16 @@ impl SpanSpec for TestSpan {
   fn attributes(&self) -> Attributes {
     Attributes::empty()
   }
+}
+
+#[derive(serde::Serialize)]
+struct TestEvent {
+  value: u32,
+}
+
+impl EventPayload for TestEvent {
+  const NAME: &'static str = "auv.test.propagated_event";
+  const VERSION: u32 = 1;
 }
 
 fn minimal_carrier(run_id: impl ToString) -> MapCarrier {
@@ -227,6 +240,49 @@ fn disabled_remote_context_preserves_authority_and_span_for_reinjection() {
   assert_eq!(reinjected.value(RUN_ID), Some(run_id.to_string().as_str()));
   assert_eq!(reinjected.value(AUTHORITY_ID), Some(authority_id.to_string().as_str()));
   assert_eq!(reinjected.value(SPAN_ID), Some(span_id.to_string().as_str()));
+}
+
+#[test]
+fn telemetry_only_remote_context_projects_the_propagated_authority() {
+  let projector = RecordingProjector::new();
+  let dispatch = configure().project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
+  let run_id = RunId::new();
+  let authority_id = auv_tracing::AuthorityId::new();
+  let remote = extract(&complete_carrier(run_id, authority_id, SpanId::new())).unwrap().unwrap();
+  let context = dispatcher::with_default(&dispatch, || Context::from_remote(remote)).unwrap();
+
+  context.in_scope(|| {
+    let span = auv_tracing::start_span!(TestSpan);
+    span.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 1 }));
+    drop(span);
+  });
+  block_on_timeout(dispatch.flush()).unwrap();
+
+  let items = projector.items();
+  assert_eq!(items.len(), 3);
+  for item in items {
+    match item {
+      TelemetryItem::SpanStart {
+        authority_id: projected_authority,
+        run_id: projected_run,
+        ..
+      }
+      | TelemetryItem::SpanEnd {
+        authority_id: projected_authority,
+        run_id: projected_run,
+        ..
+      }
+      | TelemetryItem::Event {
+        authority_id: projected_authority,
+        run_id: projected_run,
+        ..
+      } => {
+        assert_eq!(projected_authority, Some(authority_id));
+        assert_eq!(projected_run, run_id);
+      }
+      TelemetryItem::Artifact { .. } => panic!("remote telemetry-only contexts cannot publish artifacts"),
+    }
+  }
 }
 
 #[test]

@@ -95,6 +95,7 @@ pub struct McpInvokeOutcome {
   output_summary: String,
   signals: BTreeMap<String, Value>,
   details: BTreeMap<String, Value>,
+  artifacts: Vec<auv_tracing::ArtifactMetadata>,
   artifact_failures: Vec<auv_cli_invoke::ArtifactInstrumentationFailure>,
   failure_message: Option<String>,
 }
@@ -106,6 +107,7 @@ impl McpInvokeOutcome {
       output_summary: summary.into(),
       signals: BTreeMap::new(),
       details: object_fields(details),
+      artifacts: Vec::new(),
       artifact_failures: Vec::new(),
       failure_message: None,
     }
@@ -117,6 +119,7 @@ impl McpInvokeOutcome {
       output_summary: summary.into(),
       signals: BTreeMap::new(),
       details: object_fields(details),
+      artifacts: Vec::new(),
       artifact_failures: Vec::new(),
       failure_message: Some(failure.into()),
     }
@@ -133,7 +136,14 @@ impl McpInvokeOutcome {
   }
 
   pub fn with_artifact_instrumentation(mut self, receipt: auv_cli_invoke::ArtifactInstrumentationReceipt) -> Self {
-    self.artifact_failures = receipt.into_failures();
+    let (artifacts, failures) = receipt.into_parts();
+    self.artifacts.extend(artifacts);
+    self.artifact_failures.extend(failures);
+    self
+  }
+
+  pub fn with_artifact_metadata(mut self, metadata: Option<auv_tracing::ArtifactMetadata>) -> Self {
+    self.artifacts.extend(metadata);
     self
   }
 }
@@ -245,7 +255,6 @@ fn validated_adapter_catalog(
 #[derive(Clone)]
 struct McpFrontendAuthority {
   dispatch: auv_tracing::Dispatch,
-  store: Arc<dyn auv_tracing::RunStore>,
 }
 
 fn build_mcp_authority(project_root: PathBuf, store_root: Option<String>) -> Result<McpFrontendAuthority, String> {
@@ -253,8 +262,8 @@ fn build_mcp_authority(project_root: PathBuf, store_root: Option<String>) -> Res
   let store = auv_tracing::FileRunStore::open(&root)
     .map(|store| Arc::new(store) as Arc<dyn auv_tracing::RunStore>)
     .map_err(|error| format!("failed to open MCP run authority {}: {error}", root.display()))?;
-  let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
-  Ok(McpFrontendAuthority { dispatch, store })
+  let dispatch = auv_tracing::configure().run_store(store).build().map_err(|error| error.to_string())?;
+  Ok(McpFrontendAuthority { dispatch })
 }
 
 #[derive(Serialize)]
@@ -360,6 +369,7 @@ where
         })
       };
       let mut outcome = completed(output.summary, details);
+      outcome.artifacts = output.artifacts;
       outcome.artifact_failures = output.artifact_failures;
       Ok(outcome)
     }
@@ -405,8 +415,11 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("scan.coverage dry-run", serde_json::json!({})));
       }
       let fixture_dir = input.required_input("scan.coverage", "fixture-dir")?.to_string();
-      let (coverage, _recording) = auv_cli_invoke::commands::scan::produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
-      Ok(completed(format!("scan coverage produced from fixture {fixture_dir}"), serde_json::json!({ "coverage": coverage })))
+      let (coverage, recording) = auv_cli_invoke::commands::scan::produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
+      Ok(
+        completed(format!("scan coverage produced from fixture {fixture_dir}"), serde_json::json!({ "coverage": coverage }))
+          .with_artifact_metadata(recording),
+      )
     }),
     McpInvokeAdapter::new("display.capture", |input| async move {
       if input.dry_run {
@@ -442,8 +455,11 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: input.typeText", serde_json::json!({})));
       }
       let text = input.required_input("input.typeText", "text")?.to_string();
-      let (result, _recording) = auv_cli_invoke::commands::input::type_text_into_active_control(text).await?;
-      Ok(completed("typed text into active control", serde_json::json!({ "selected_path": result.selected_path.as_str() })))
+      let (result, recording) = auv_cli_invoke::commands::input::type_text_into_active_control(text).await?;
+      Ok(
+        completed("typed text into active control", serde_json::json!({ "selected_path": result.selected_path.as_str() }))
+          .with_artifact_metadata(recording),
+      )
     }),
     McpInvokeAdapter::new("input.pasteText", |input| async move {
       reject_target_activation(&input, "input.pasteText")?;
@@ -460,8 +476,11 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
         return Ok(completed("dry run: input.key", serde_json::json!({})));
       }
       let key = input.required_input("input.key", "key")?.to_string();
-      let (result, _recording) = auv_cli_invoke::commands::input::press_key_in_active_app(key.clone()).await?;
-      Ok(completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": result.selected_path.as_str() })))
+      let (result, recording) = auv_cli_invoke::commands::input::press_key_in_active_app(key.clone()).await?;
+      Ok(
+        completed("pressed key in active app", serde_json::json!({ "key": key, "selected_path": result.selected_path.as_str() }))
+          .with_artifact_metadata(recording),
+      )
     }),
     click_window_point_adapter(),
     McpInvokeAdapter::new("screen.captureRegion", |input| async move {
@@ -701,22 +720,7 @@ impl McpServer {
       }
     };
     let direct_result = root.instrument(cancellable_future).await;
-    let mut recording_failures = Vec::new();
-    if let Err(error) = authority.dispatch.flush().await {
-      recording_failures.push(error.to_string());
-    }
-    let canonical_artifacts = match authority.store.load_snapshot(run_id).await {
-      Ok(Some(snapshot)) => snapshot.artifacts().values().map(|artifact| artifact.metadata().clone()).collect(),
-      Ok(None) => {
-        recording_failures.push("recorded run snapshot is missing after execution".to_string());
-        Vec::new()
-      }
-      Err(error) => {
-        recording_failures.push(format!("failed to load recorded run snapshot after execution: {error}"));
-        Vec::new()
-      }
-    };
-    let recording_failure = (!recording_failures.is_empty()).then(|| recording_failures.join("; "));
+    let recording_failure = authority.dispatch.flush().await.err().map(|error| error.to_string());
     let outcome = match direct_result {
       Ok(outcome) => outcome,
       Err(error) => McpInvokeOutcome::failed(error.clone(), error, Value::Null),
@@ -727,7 +731,7 @@ impl McpServer {
       status: outcome.status.as_str(),
       output_summary: outcome.output_summary,
       signals: outcome.signals,
-      artifacts: canonical_artifacts,
+      artifacts: outcome.artifacts,
       artifact_failures: outcome.artifact_failures,
       failure_message: outcome.failure_message,
       recording_failure,
@@ -1047,7 +1051,7 @@ mod tests {
       Arc::new(move |_store_root| {
         let store: Arc<dyn auv_tracing::RunStore> = configure_store.clone();
         let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
-        Ok(McpFrontendAuthority { dispatch, store })
+        Ok(McpFrontendAuthority { dispatch })
       }),
     )
     .map_err(anyhow::Error::msg)?;
@@ -1080,10 +1084,7 @@ mod tests {
     assert_eq!(completed_value["status"], "completed");
     assert_eq!(completed_value["result"]["value"], 7);
     assert_eq!(completed_value["artifacts"], serde_json::json!([]));
-    assert_eq!(
-      completed_value["recording_failure"],
-      "1 instrumentation dispatch failure(s); recorded run snapshot is missing after execution"
-    );
+    assert_eq!(completed_value["recording_failure"], "1 instrumentation dispatch failure(s)");
     assert!(completed_value.get("tracing_failure").is_none());
     let completed_run_id = completed_value["run_id"].as_str().expect("completed run id").parse::<RunId>()?;
     assert_eq!(completed_store.attempted_run_id(), Some(completed_run_id));
@@ -1097,7 +1098,7 @@ mod tests {
     assert_eq!(failed_value["status"], "failed");
     assert_eq!(failed_value["failure_message"], "direct domain failure");
     assert_eq!(failed_value["artifacts"], serde_json::json!([]));
-    assert_eq!(failed_value["recording_failure"], "1 instrumentation dispatch failure(s); recorded run snapshot is missing after execution");
+    assert_eq!(failed_value["recording_failure"], "1 instrumentation dispatch failure(s)");
     assert!(failed_value.get("tracing_failure").is_none());
     let failed_run_id = failed_value["run_id"].as_str().expect("failed run id").parse::<RunId>()?;
     assert_eq!(failed_store.attempted_run_id(), Some(failed_run_id));
@@ -1140,7 +1141,7 @@ mod tests {
           .project_telemetry(Arc::new(FailingProjector), TelemetryRoutePolicy::fixed_fields_only())
           .build()
           .map_err(|error| error.to_string())?;
-        Ok(McpFrontendAuthority { dispatch, store })
+        Ok(McpFrontendAuthority { dispatch })
       }),
     )
     .map_err(anyhow::Error::msg)?;
@@ -1487,7 +1488,7 @@ mod tests {
       Arc::new(move |_store_root| {
         let store: Arc<dyn auv_tracing::RunStore> = configured_store.clone();
         let dispatch = auv_tracing::configure().run_store(store.clone()).build().map_err(|error| error.to_string())?;
-        Ok(McpFrontendAuthority { dispatch, store })
+        Ok(McpFrontendAuthority { dispatch })
       }),
     )
     .map_err(anyhow::Error::msg)?;
