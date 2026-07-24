@@ -47,8 +47,6 @@ pub(crate) struct SidebarTargetProbe {
   pub viewport_fingerprint: String,
   pub result: Option<ViewBounds>,
   pub miss_reason: Option<SidebarTargetMissReason>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub artifact_path: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -93,19 +91,10 @@ pub(crate) struct SidebarTargetProbeCaptureContext {
   pub ocr_regions_below_sidebar_bottom: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SidebarTargetProbeArtifactPaths {
-  pub probe_json: String,
-  pub window_png: String,
-  pub sidebar_crop_png: String,
-  pub recognition_json: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SidebarTargetProbeOutcome {
   pub probe: SidebarTargetProbe,
   pub capture_context: SidebarTargetProbeCaptureContext,
-  pub artifact_paths: SidebarTargetProbeArtifactPaths,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,7 +103,6 @@ struct SidebarTargetProbeArtifact {
   candidates: Vec<SidebarTargetProbeCandidateSummary>,
   scroll_context: SidebarTargetProbeScrollContext,
   capture_context: SidebarTargetProbeCaptureContext,
-  artifact_paths: SidebarTargetProbeArtifactPaths,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -285,13 +273,10 @@ pub(crate) fn analyze_sidebar_target_probe(observation: &SidebarViewportObservat
     viewport_fingerprint: observation.viewport_fingerprint.clone(),
     result,
     miss_reason,
-    artifact_path: None,
   }
 }
 
-pub(crate) fn write_sidebar_target_probe_artifacts(
-  artifact_dir: &std::path::Path,
-  artifact_stem: &str,
+pub(crate) fn publish_sidebar_target_probe_artifacts(
   window_image: &RgbaImage,
   sidebar_crop: &RgbaImage,
   recognition: &TextRecognition,
@@ -299,30 +284,24 @@ pub(crate) fn write_sidebar_target_probe_artifacts(
   probe: &SidebarTargetProbe,
   scroll_context: &SidebarTargetProbeScrollContext,
   capture_context: &SidebarTargetProbeCaptureContext,
-) -> Result<SidebarTargetProbeArtifactPaths, String> {
+) {
   // NOTICE(a6c-7): probe image + recognition artifacts for ROI vs motion bisection.
-  std::fs::create_dir_all(artifact_dir).map_err(|error| format!("failed to create {}: {error}", artifact_dir.display()))?;
+  let payload = sidebar_target_probe_artifact(observation, probe, scroll_context, capture_context);
+  auv_tracing::in_span!("auv.netease.sidebar_target_probe.evidence", || {
+    crate::run_artifacts::emit_png("auv.netease.sidebar_target_probe.window_capture", window_image);
+    crate::run_artifacts::emit_png("auv.netease.sidebar_target_probe.sidebar_crop", sidebar_crop);
+    crate::run_artifacts::emit_json("auv.netease.sidebar_target_probe.recognition", recognition);
+    crate::run_artifacts::emit_json("auv.netease.sidebar_target_probe.result", &payload);
+  });
+}
 
-  let window_png = artifact_dir.join(format!("{artifact_stem}-window.png"));
-  let sidebar_crop_png = artifact_dir.join(format!("{artifact_stem}-sidebar-crop.png"));
-  let recognition_json = artifact_dir.join(format!("{artifact_stem}-recognition.json"));
-  let probe_json = artifact_dir.join(format!("{artifact_stem}.json"));
-
-  window_image.save(&window_png).map_err(|error| format!("failed to save {}: {error}", window_png.display()))?;
-  sidebar_crop.save(&sidebar_crop_png).map_err(|error| format!("failed to save {}: {error}", sidebar_crop_png.display()))?;
-  std::fs::write(
-    &recognition_json,
-    serde_json::to_string_pretty(recognition).map_err(|error| format!("failed to serialize recognition: {error}"))?,
-  )
-  .map_err(|error| format!("failed to write {}: {error}", recognition_json.display()))?;
-
-  let artifact_paths = SidebarTargetProbeArtifactPaths {
-    probe_json: probe_json.display().to_string(),
-    window_png: window_png.display().to_string(),
-    sidebar_crop_png: sidebar_crop_png.display().to_string(),
-    recognition_json: recognition_json.display().to_string(),
-  };
-  let payload = SidebarTargetProbeArtifact {
+fn sidebar_target_probe_artifact(
+  observation: &SidebarViewportObservation,
+  probe: &SidebarTargetProbe,
+  scroll_context: &SidebarTargetProbeScrollContext,
+  capture_context: &SidebarTargetProbeCaptureContext,
+) -> SidebarTargetProbeArtifact {
+  SidebarTargetProbeArtifact {
     probe: probe.clone(),
     candidates: observation
       .candidates
@@ -335,21 +314,12 @@ pub(crate) fn write_sidebar_target_probe_artifacts(
       .collect(),
     scroll_context: scroll_context.clone(),
     capture_context: capture_context.clone(),
-    artifact_paths: artifact_paths.clone(),
-  };
-  std::fs::write(
-    &probe_json,
-    serde_json::to_string_pretty(&payload).map_err(|error| format!("failed to serialize sidebar target probe: {error}"))?,
-  )
-  .map_err(|error| format!("failed to write {}: {error}", probe_json.display()))?;
-
-  Ok(artifact_paths)
+  }
 }
 
 pub(crate) fn sidebar_target_probe_diagnostic_message(phase: &str, attempt: usize, outcome: &SidebarTargetProbeOutcome) -> String {
   let probe = &outcome.probe;
   let capture_context = &outcome.capture_context;
-  let artifact_paths = &outcome.artifact_paths;
   let miss = probe
     .miss_reason
     .as_ref()
@@ -373,9 +343,6 @@ pub(crate) fn sidebar_target_probe_diagnostic_message(phase: &str, attempt: usiz
       + capture_context.parse_viewport_bounds.height,
     "ocr_regions_below_sidebar_bottom": capture_context.ocr_regions_below_sidebar_bottom,
     "miss_reason": serde_json::from_str::<serde_json::Value>(&miss).unwrap_or(serde_json::Value::Null),
-    "artifact_path": probe.artifact_path,
-    "window_png": artifact_paths.window_png,
-    "sidebar_crop_png": artifact_paths.sidebar_crop_png,
   })
   .to_string()
 }
@@ -444,8 +411,6 @@ pub(crate) fn capture_sidebar_target_probe(
   observation_index: usize,
   target_label: &str,
   query: &str,
-  artifact_dir: &std::path::Path,
-  artifact_stem: &str,
   scroll_context: SidebarTargetProbeScrollContext,
   previous_sidebar_crop: &mut Option<RgbaImage>,
 ) -> Result<SidebarTargetProbeOutcome, String> {
@@ -489,10 +454,8 @@ pub(crate) fn capture_sidebar_target_probe(
     &ocr_context,
     parse_viewport,
   );
-  let mut probe = analyze_sidebar_target_probe(&observation, target_label, query);
-  let artifact_paths = write_sidebar_target_probe_artifacts(
-    artifact_dir,
-    artifact_stem,
+  let probe = analyze_sidebar_target_probe(&observation, target_label, query);
+  publish_sidebar_target_probe_artifacts(
     &capture.image,
     &sidebar_crop,
     &recognition,
@@ -500,13 +463,11 @@ pub(crate) fn capture_sidebar_target_probe(
     &probe,
     &scroll_context,
     &capture_context,
-  )?;
-  probe.artifact_path = Some(artifact_paths.probe_json.clone());
+  );
 
   Ok(SidebarTargetProbeOutcome {
     probe,
     capture_context,
-    artifact_paths,
   })
 }
 
@@ -644,7 +605,7 @@ mod tests {
   }
 
   #[test]
-  fn write_sidebar_target_probe_artifact_includes_capture_context() {
+  fn sidebar_target_probe_artifact_includes_capture_context() {
     let sidebar_bounds = sample_sidebar_bounds();
     let recognition = fake_recognition(vec![("16", 70.0, 512.0, 14.0, 11.0)]);
     let observation = parse_sidebar_viewport(0, sidebar_bounds, &recognition);
@@ -676,37 +637,19 @@ mod tests {
         Some("AX scroll is not implemented in this slice".to_string()),
       )),
     };
-    let artifact_dir = std::env::temp_dir().join(format!("auv-probe-artifact-test-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&artifact_dir);
-    let window_image = RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]));
-    let sidebar_crop = RgbaImage::from_pixel(8, 8, image::Rgba([4, 5, 6, 255]));
+    let payload = sidebar_target_probe_artifact(&observation, &probe, &scroll_context, &capture_context);
 
-    let artifact_paths = write_sidebar_target_probe_artifacts(
-      &artifact_dir,
-      "rescan-reobserve-00",
-      &window_image,
-      &sidebar_crop,
-      &recognition,
-      &observation,
-      &probe,
-      &scroll_context,
-      &capture_context,
-    )
-    .expect("artifact write");
-
-    let payload: serde_json::Value =
-      serde_json::from_str(&std::fs::read_to_string(&artifact_paths.probe_json).expect("read")).expect("json");
+    let payload = serde_json::to_value(payload).expect("serialize probe artifact");
     assert!(payload.get("capture_context").is_some());
     assert!(payload.get("scroll_context").is_some());
-    assert!(payload.get("artifact_paths").is_some());
+    assert!(payload.get("artifact_paths").is_none());
     assert_eq!(payload["capture_context"]["ocr_region_count"], serde_json::json!(1));
     assert_eq!(payload["capture_context"]["ocr_profile"], serde_json::json!(PROBE_SIDEBAR_ENHANCED_V1));
     assert!(payload["capture_context"].get("parse_viewport_bounds").is_some());
-    let _ = std::fs::remove_dir_all(&artifact_dir);
   }
 
   #[test]
-  fn sidebar_target_probe_diagnostic_includes_ocr_region_count() {
+  fn sidebar_target_probe_diagnostic_excludes_local_artifact_paths() {
     let sidebar_bounds = sample_sidebar_bounds();
     let recognition = fake_recognition(vec![("16", 70.0, 512.0, 14.0, 11.0)]);
     let observation = parse_sidebar_viewport(0, sidebar_bounds, &recognition);
@@ -731,12 +674,6 @@ mod tests {
         &ocr_context,
         parse_viewport,
       ),
-      artifact_paths: SidebarTargetProbeArtifactPaths {
-        probe_json: "/tmp/rescan-reobserve-00.json".to_string(),
-        window_png: "/tmp/rescan-reobserve-00-window.png".to_string(),
-        sidebar_crop_png: "/tmp/rescan-reobserve-00-sidebar-crop.png".to_string(),
-        recognition_json: "/tmp/rescan-reobserve-00-recognition.json".to_string(),
-      },
     };
 
     let message = sidebar_target_probe_diagnostic_message("rescan", 0, &outcome);
@@ -749,7 +686,9 @@ mod tests {
     assert_eq!(payload["crop_w"], serde_json::json!(640));
     assert_eq!(payload["crop_h"], serde_json::json!(676));
     assert_eq!(payload["scroll_motion_no_motion"], serde_json::json!(true));
-    assert_eq!(payload["sidebar_crop_png"], serde_json::json!("/tmp/rescan-reobserve-00-sidebar-crop.png"));
+    assert!(payload.get("artifact_path").is_none());
+    assert!(payload.get("window_png").is_none());
+    assert!(payload.get("sidebar_crop_png").is_none());
   }
 
   #[test]

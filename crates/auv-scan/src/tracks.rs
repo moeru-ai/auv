@@ -1,24 +1,26 @@
-//! Adjacent-segment tracks (`scan-tracks-v0`) — crate-local directory artifact.
-//!
-//! NOTICE(s9b-artifact-boundary): directory-level artifact beside scan-frame-*.json;
-//! not run-level; not scene_state product wire; not runtime-staged producer.
+//! Adjacent-segment tracks (`scan-tracks-v0`).
 //!
 //! NOTICE(s9b-track-id): `track_id` in wire mirrors current adjacent label-based projection
 //! (`track-{label}` per association.rs); **not** a stable cross-segment identity claim.
 //! N-1 segments do not assert global track continuity or ID-switch policy.
 
+#[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::io::Write;
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use thiserror::Error;
 
-use crate::association::{AssociationDiagnostic, AssociationResult, FrameObservation, associate_adjacent_frames};
+use crate::association::{AssociationResult, FrameObservation, associate_adjacent_frames};
 use crate::reader::ScanFrameBundle;
 use crate::timeline::DIAG_INSUFFICIENT_FRAMES;
 
 pub const SCAN_TRACKS_SCHEMA_VERSION: &str = "scan-tracks-v0";
+#[cfg(test)]
 pub const SCAN_TRACKS_ARTIFACT_FILE_NAME: &str = "scan-tracks.json";
 
 pub const DIAG_OBSERVATIONS_FRAME_MISMATCH: &str = "observations_frame_mismatch";
@@ -36,7 +38,7 @@ pub struct TrackSegmentWire {
   pub to_frame_id: String,
   pub from_sequence_index: u32,
   pub to_sequence_index: u32,
-  pub associations: Vec<AssociationResultWire>,
+  pub associations: Vec<AssociationResult>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,31 +47,7 @@ pub struct TracksDiagnosticWire {
   pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AssociationDiagnosticWire {
-  pub code: String,
-  pub message: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum AssociationResultWire {
-  Linked {
-    track_id: String,
-    previous_observation_id: String,
-    current_observation_id: String,
-  },
-  NewTrack {
-    track_id: String,
-    current_observation_id: String,
-  },
-  AmbiguousAssociation {
-    label: String,
-    candidate_observation_ids: Vec<String>,
-    diagnostic: AssociationDiagnosticWire,
-  },
-}
-
+#[cfg(test)]
 #[derive(Debug, Error)]
 pub enum TracksError {
   #[error("schema_version mismatch: expected {SCAN_TRACKS_SCHEMA_VERSION}, found {found}")]
@@ -80,43 +58,6 @@ pub enum TracksError {
   Io(#[from] std::io::Error),
   #[error("json parse error: {0}")]
   Json(#[from] serde_json::Error),
-}
-
-fn association_diagnostic_to_wire(diagnostic: AssociationDiagnostic) -> AssociationDiagnosticWire {
-  AssociationDiagnosticWire {
-    code: diagnostic.code,
-    message: diagnostic.message,
-  }
-}
-
-fn association_result_to_wire(result: AssociationResult) -> AssociationResultWire {
-  match result {
-    AssociationResult::Linked {
-      track_id,
-      previous_observation_id,
-      current_observation_id,
-    } => AssociationResultWire::Linked {
-      track_id,
-      previous_observation_id,
-      current_observation_id,
-    },
-    AssociationResult::NewTrack {
-      track_id,
-      current_observation_id,
-    } => AssociationResultWire::NewTrack {
-      track_id,
-      current_observation_id,
-    },
-    AssociationResult::AmbiguousAssociation {
-      label,
-      candidate_observation_ids,
-      diagnostic,
-    } => AssociationResultWire::AmbiguousAssociation {
-      label,
-      candidate_observation_ids,
-      diagnostic: association_diagnostic_to_wire(diagnostic),
-    },
-  }
 }
 
 fn insufficient_frames_diagnostic(found: usize) -> TracksDiagnosticWire {
@@ -164,10 +105,7 @@ pub fn build_scan_tracks_from_bundle(bundle: &ScanFrameBundle, observations_by_f
     .map(|(index, window)| {
       let first = &window[0];
       let second = &window[1];
-      let associations = associate_adjacent_frames(&observations_by_frame[index], &observations_by_frame[index + 1])
-        .into_iter()
-        .map(association_result_to_wire)
-        .collect();
+      let associations = associate_adjacent_frames(&observations_by_frame[index], &observations_by_frame[index + 1]);
       TrackSegmentWire {
         from_frame_id: first.frame_id.clone(),
         to_frame_id: second.frame_id.clone(),
@@ -185,7 +123,8 @@ pub fn build_scan_tracks_from_bundle(bundle: &ScanFrameBundle, observations_by_f
   }
 }
 
-pub fn write_tracks_artifact(dir: &Path, tracks: &ScanTracksWire) -> Result<PathBuf, TracksError> {
+#[cfg(test)]
+pub(crate) fn write_tracks_artifact(dir: &Path, tracks: &ScanTracksWire) -> Result<PathBuf, TracksError> {
   if tracks.schema_version != SCAN_TRACKS_SCHEMA_VERSION {
     return Err(TracksError::SchemaMismatch {
       found: tracks.schema_version.clone(),
@@ -200,7 +139,8 @@ pub fn write_tracks_artifact(dir: &Path, tracks: &ScanTracksWire) -> Result<Path
   Ok(path)
 }
 
-pub fn read_tracks_artifact(path: &Path) -> Result<ScanTracksWire, TracksError> {
+#[cfg(test)]
+pub(crate) fn read_tracks_artifact(path: &Path) -> Result<ScanTracksWire, TracksError> {
   let bytes = fs::read(path)?;
   let value: serde_json::Value = serde_json::from_slice(&bytes)?;
   let Some(schema_version) = value.get("schema_version") else {
@@ -229,20 +169,20 @@ pub fn format_scan_tracks_text(tracks: &ScanTracksWire) -> String {
     ));
     for association in &segment.associations {
       match association {
-        AssociationResultWire::Linked {
+        AssociationResult::Linked {
           track_id,
           previous_observation_id,
           current_observation_id,
         } => lines.push(format!(
           "[tracks.association] status=linked track_id={track_id} previous_observation_id={previous_observation_id} current_observation_id={current_observation_id}"
         )),
-        AssociationResultWire::NewTrack {
+        AssociationResult::NewTrack {
           track_id,
           current_observation_id,
         } => lines.push(format!(
           "[tracks.association] status=new_track track_id={track_id} current_observation_id={current_observation_id}"
         )),
-        AssociationResultWire::AmbiguousAssociation {
+        AssociationResult::AmbiguousAssociation {
           label,
           candidate_observation_ids,
           diagnostic,
@@ -269,7 +209,7 @@ mod tests {
   use serde::Deserialize;
 
   use super::*;
-  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageDimensions};
   use crate::producer::produce_frames_from_fixture_dir;
   use crate::reader::load_scan_frames_from_dir;
 
@@ -296,7 +236,7 @@ mod tests {
 
   #[derive(Debug, Deserialize)]
   struct TracksManifestSegment {
-    associations: Vec<AssociationResultWire>,
+    associations: Vec<AssociationResult>,
   }
 
   #[derive(Debug, Deserialize)]
@@ -341,21 +281,15 @@ mod tests {
         height: 600,
       },
       viewport_bounds: None,
-      image: ScanImageRef {
-        file_name: format!("{frame_id}.png"),
+      image_dimensions: ScanImageDimensions {
         width: 8,
         height: 8,
-        media_type: "image/png".into(),
       },
     }
   }
 
   fn handbuilt_bundle(frames: Vec<ScanFrame>) -> ScanFrameBundle {
-    ScanFrameBundle {
-      frames,
-      source_dir: PathBuf::from("/tmp"),
-      loaded_json_paths: Vec::new(),
-    }
+    ScanFrameBundle { frames }
   }
 
   fn produce_bundle_from_manifest(manifest: &TracksManifest) -> ScanFrameBundle {
@@ -498,7 +432,7 @@ mod tests {
     assert_eq!(tracks.segments.len(), 1);
     assert!(matches!(
       &tracks.segments[0].associations[0],
-      AssociationResultWire::AmbiguousAssociation {
+      AssociationResult::AmbiguousAssociation {
         label,
         diagnostic,
         ..

@@ -585,12 +585,16 @@ The V1 action-oriented macros are:
 
 ```rust
 let span = auv_tracing::start_span!(span_value);
+let value = auv_tracing::in_span!("auv.example.operation", || operation());
 auv_tracing::emit_event!(event_value);
 let artifact = auv_tracing::emit_artifact!(artifact_value).await?;
 ```
 
-They delegate to the same-named typed functions. `start_span!` returns `Span`,
-`emit_event!` returns `()`, and `emit_artifact!` yields
+`start_span!`, `emit_event!`, and `emit_artifact!` delegate to the same-named
+typed functions. `in_span!` defines an empty-attribute `SpanSpec` from a
+literal namespaced span name and evaluates one synchronous closure inside it;
+callers that need attributes use an explicit typed `SpanSpec`. `start_span!`
+returns `Span`, `emit_event!` returns `()`, and `emit_artifact!` yields
 `Result<Option<ArtifactMetadata>, ArtifactWriteError>`.
 
 ```rust
@@ -612,9 +616,24 @@ pub fn emit_artifact<R>(
 where
   R: futures_io::AsyncRead + Unpin + Send + 'static;
 
+pub fn emit_json_artifact<T: serde::Serialize>(
+  purpose: ArtifactPurpose,
+  attributes: Attributes,
+  byte_limit: ByteLength,
+  value: &T,
+) -> Result<ArtifactEmission, JsonArtifactError>;
+
 impl Future for ArtifactEmission {
   type Output = Result<Option<ArtifactMetadata>, ArtifactWriteError>;
 }
+
+pub async fn read_json_artifact<T: serde::de::DeserializeOwned>(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  expected_purpose: &ArtifactPurpose,
+  byte_limit: ByteLength,
+) -> Result<T, JsonArtifactReadError>;
 ```
 
 `NewArtifact` has private fields and generates its `ArtifactId` and
@@ -630,6 +649,16 @@ captures a prerequisite fence for preceding span/event submissions. The worker
 waits for a referenced `SpanStarted` to commit, then transfers bytes without
 occupying the fact FIFO. Later `SpanEnded` and event submissions may therefore
 commit before the eventual `ArtifactPublished` fact.
+
+`emit_json_artifact` owns the repeated JSON transport mechanics: the canonical
+content type, bounded serialization, byte length, digest, and artifact
+admission. If the current context has no artifact authority, it returns a
+disabled `ArtifactEmission` without serializing `value`. `read_json_artifact`
+first applies the same authority, run ownership, committed membership, purpose,
+content type, byte limit, exact length, and digest checks as the raw artifact
+reader, then decodes `T`. Neither helper performs app-domain validation;
+producers and typed readers retain that responsibility. A custom versioned
+decoder may consume validated raw bytes instead.
 
 `artifact!` is not used because it does not say whether the macro declares,
 writes, uploads, or commits anything. `include_artifact!` is not recommended
@@ -1713,7 +1742,7 @@ Projectors do not receive arbitrary `RunFact` values. The router first produces
 a closed telemetry projection containing only bounded scalar attributes and
 canonical AUV URI strings. Rust tracing and OTEL integrations accept that safe
 projection type. Every projected item includes `auv.run.id` and includes
-`auv.authority.id` when an authority exists. Single-fact committed signals use
+`auv.authority.id` when an authority exists. Single-fact telemetry items use
 `auv.run.revision`; a projected span uses separate start and end revisions.
 The fixed field vocabulary is:
 
@@ -1926,7 +1955,7 @@ Implementation approval requires at least:
 - OTEL projection contains artifact URI and bounded metadata only;
 - OTEL span status remains unset and AUV IDs are not reused as OTEL IDs;
 - OTEL spans expose distinct start/end revisions, while event and artifact
-  signals expose their single commit revision;
+  projections expose their single commit revision;
 - Rust `tracing` projection uses only its fixed callsite field vocabulary;
 - canonical event JSON is absent from Rust tracing and OTEL projections;
 - `ArtifactUri` accepts one canonical form and rejects traversal, query,

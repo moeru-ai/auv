@@ -201,7 +201,6 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
       sidebar_ratio: broad_sidebar_ratio,
       ocr_options: inputs.ocr_options.clone(),
       ls_query: None,
-      artifact_dir: inputs.artifact_dir.clone(),
       pending_artifacts: Vec::new(),
       scroll_amount: inputs.scroll_amount,
       scroll_settle_ms: inputs.scroll_settle_ms,
@@ -348,7 +347,6 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
     sidebar_ratio,
     ocr_options: sidebar_ls_scan_ocr_options(&inputs.ocr_options, query),
     ls_query: query.map(str::to_string),
-    artifact_dir: inputs.artifact_dir.clone(),
     pending_artifacts: Vec::new(),
     scroll_amount: inputs.scroll_amount,
     scroll_settle_ms: inputs.scroll_settle_ms,
@@ -372,7 +370,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
   };
   scan.diagnostics.extend(pre_scan_diagnostics);
   scan.known_limits.extend(pre_scan_known_limits);
-  scan.diagnostics.extend(observer.finish_artifacts());
+  observer.finish_artifacts();
   scan.app = app_context;
   scan.window = window_context;
   scan.sidebar_region = sidebar_region;
@@ -389,8 +387,7 @@ struct LiveSidebarObserver {
   sidebar_ratio: RatioRect,
   ocr_options: TextRecognitionOptions,
   ls_query: Option<String>,
-  artifact_dir: PathBuf,
-  pending_artifacts: Vec<std::thread::JoinHandle<Result<(), String>>>,
+  pending_artifacts: Vec<std::thread::JoinHandle<()>>,
   scroll_amount: f64,
   scroll_settle_ms: u64,
   pending_scroll_delivery_path: Option<String>,
@@ -450,68 +447,28 @@ impl LiveSidebarObserver {
     Ok((capture.image.clone(), capture.scale_factor, window_recognition, observation))
   }
 
-  fn write_observation_artifacts(
-    &mut self,
-    observation_index: usize,
-    image: RgbaImage,
-    recognition: TextRecognition,
-    observation: SidebarViewportObservation,
-  ) -> Vec<String> {
-    let base = format!("obs-{observation_index:04}");
-    let screenshot = self.artifact_dir.join(format!("{base}-window.png"));
-    let overlay = self.artifact_dir.join(format!("{base}-overlay.png"));
-    let recognition_json = self.artifact_dir.join(format!("{base}-recognition.json"));
-    let observation_json = self.artifact_dir.join(format!("{base}-observation.json"));
-    let paths = vec![
-      screenshot.clone(),
-      overlay.clone(),
-      recognition_json.clone(),
-      observation_json.clone(),
-    ];
-    let artifact_dir = self.artifact_dir.clone();
+  fn publish_observation_artifacts(&mut self, image: RgbaImage, recognition: TextRecognition, observation: SidebarViewportObservation) {
     let sidebar_bounds = self.sidebar_bounds;
-    self.pending_artifacts.push(std::thread::spawn(move || {
-      std::fs::create_dir_all(&artifact_dir).map_err(|error| format!("failed to create {}: {error}", artifact_dir.display()))?;
-      image.save(&screenshot).map_err(|error| format!("failed to save {}: {error}", screenshot.display()))?;
+    if let Some(task) = crate::run_artifacts::spawn_artifact_task(move || {
+      crate::run_artifacts::emit_png("auv.netease.sidebar.window_capture", &image);
 
-      let mut overlay_image = image.clone();
-      draw_overlay(&mut overlay_image, sidebar_bounds, &observation);
-      overlay_image.save(&overlay).map_err(|error| format!("failed to save {}: {error}", overlay.display()))?;
+      let mut overlay = image;
+      draw_overlay(&mut overlay, sidebar_bounds, &observation);
+      crate::run_artifacts::emit_png("auv.netease.sidebar.overlay", &overlay);
 
-      let recognition_payload =
-        serde_json::to_string_pretty(&recognition).map_err(|error| format!("failed to serialize recognition: {error}"))?;
-      std::fs::write(&recognition_json, recognition_payload)
-        .map_err(|error| format!("failed to write {}: {error}", recognition_json.display()))?;
-
-      let observation_payload =
-        serde_json::to_string_pretty(&observation).map_err(|error| format!("failed to serialize observation: {error}"))?;
-      std::fs::write(&observation_json, observation_payload)
-        .map_err(|error| format!("failed to write {}: {error}", observation_json.display()))?;
-
-      Ok(())
-    }));
-
-    paths.into_iter().map(|path| path.display().to_string()).collect()
+      crate::run_artifacts::emit_json("auv.netease.sidebar.recognition", &recognition);
+      crate::run_artifacts::emit_json("auv.netease.sidebar.viewport_observation", &observation);
+    }) {
+      self.pending_artifacts.push(task);
+    }
   }
 
-  fn finish_artifacts(self) -> Vec<ParserDiagnostic> {
-    self
-      .pending_artifacts
-      .into_iter()
-      .filter_map(|handle| match handle.join() {
-        Ok(Ok(())) => None,
-        Ok(Err(error)) => Some(ParserDiagnostic {
-          code: "artifact_write_failed".to_string(),
-          message: error,
-          node_id: None,
-        }),
-        Err(_) => Some(ParserDiagnostic {
-          code: "artifact_write_panicked".to_string(),
-          message: "background artifact writer panicked".to_string(),
-          node_id: None,
-        }),
-      })
-      .collect()
+  fn finish_artifacts(self) {
+    for handle in self.pending_artifacts {
+      if handle.join().is_err() {
+        crate::run_artifacts::preparation_failed("auv.netease.sidebar.observation_artifacts", "background artifact preparation panicked");
+      }
+    }
   }
 }
 
@@ -535,7 +492,7 @@ impl ViewObserver for LiveSidebarObserver {
       .map(|previous| self.motion_policy.compare(previous, &sidebar_crop));
     self.previous_sidebar_crop = Some(sidebar_crop);
     observation.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
-    observation.source_artifacts = self.write_observation_artifacts(observation_index, image, window_recognition, observation.clone());
+    self.publish_observation_artifacts(image, window_recognition, observation.clone());
 
     Ok(observation)
   }

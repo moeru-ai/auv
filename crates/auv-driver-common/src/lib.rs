@@ -3,7 +3,6 @@ pub mod display;
 pub mod error;
 pub mod geometry;
 pub mod input;
-pub mod operation;
 pub mod permission;
 pub mod readiness;
 pub mod selector;
@@ -11,7 +10,7 @@ pub mod traits;
 pub mod vision;
 pub mod window;
 
-pub use capture::{Activation, Capture, CaptureBinding, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
+pub use capture::{Activation, Capture, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{
@@ -19,11 +18,10 @@ pub use geometry::{
   ScreenPoint, Size, WindowPoint, WorldPoint,
 };
 pub use input::{
-  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputAttempt,
-  InputDeliveryPath, InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll,
-  ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputAttempt, InputDeliveryPath,
+  InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate,
+  ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
-pub use operation::{OperationDisturbance, OperationNamespace, OperationSpec};
 pub use permission::{PermissionProbe, PermissionStatus};
 pub use readiness::{ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus};
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
@@ -51,7 +49,7 @@ mod tests {
       DriverDescriptor {
         id: "test",
         platform: PlatformKind::Fixture,
-        summary: "test driver",
+        description: "test driver",
       }
     }
 
@@ -65,7 +63,7 @@ mod tests {
       DriverDescriptor {
         id: "test-session",
         platform: PlatformKind::Fixture,
-        summary: "test session",
+        description: "test session",
       }
     }
   }
@@ -76,7 +74,7 @@ mod tests {
     let session = driver.open_local()?;
 
     assert_eq!(driver.descriptor().id, "test");
-    assert_eq!(session.descriptor().summary, "test session");
+    assert_eq!(session.descriptor().description, "test session");
 
     let _ = PlatformKind::Macos;
     let _ = PlatformKind::Windows;

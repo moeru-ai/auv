@@ -1,21 +1,25 @@
-//! Crate-local read-side: load frame artifacts, verify PNG dimensions, summarize metadata.
+//! In-memory scan frame bundles and metadata formatting.
 
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
 use thiserror::Error;
 
-use crate::artifact::{ScanArtifactError, read_frame_artifact};
+#[cfg(test)]
+use crate::artifact::{ScanArtifactError, frame_image_file_name, read_frame_artifact};
 use crate::frame::ScanFrame;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanFrameBundle {
   pub frames: Vec<ScanFrame>,
-  pub source_dir: PathBuf,
-  pub loaded_json_paths: Vec<PathBuf>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Error)]
 pub enum ScanInspectError {
   #[error(transparent)]
@@ -43,6 +47,7 @@ pub enum ScanInspectError {
   Io(#[from] std::io::Error),
 }
 
+#[cfg(test)]
 fn is_scan_frame_artifact_name(file_name: &str) -> bool {
   let Some(stem) = file_name.strip_prefix("scan-frame-") else {
     return false;
@@ -53,7 +58,7 @@ fn is_scan_frame_artifact_name(file_name: &str) -> bool {
   !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Load all `scan-frame-*.json` artifacts from `dir` (top level only).
+#[cfg(test)]
 pub fn load_scan_frames_from_dir(dir: &Path) -> Result<ScanFrameBundle, ScanInspectError> {
   let mut entries: Vec<(PathBuf, ScanFrame)> = Vec::new();
   for entry in fs::read_dir(dir)? {
@@ -101,16 +106,12 @@ pub fn load_scan_frames_from_dir(dir: &Path) -> Result<ScanFrameBundle, ScanInsp
     }
   }
 
-  let loaded_json_paths = entries.iter().map(|(path, _)| path.clone()).collect();
   let frames = entries.into_iter().map(|(_, frame)| frame).collect();
 
-  Ok(ScanFrameBundle {
-    frames,
-    source_dir: dir.to_path_buf(),
-    loaded_json_paths,
-  })
+  Ok(ScanFrameBundle { frames })
 }
 
+#[cfg(test)]
 fn png_dimensions(image_bytes: &[u8]) -> Result<(u32, u32), ScanInspectError> {
   let reader = image::ImageReader::new(std::io::Cursor::new(image_bytes))
     .with_guessed_format()
@@ -118,9 +119,9 @@ fn png_dimensions(image_bytes: &[u8]) -> Result<(u32, u32), ScanInspectError> {
   reader.into_dimensions().map_err(|err| ScanInspectError::Io(std::io::Error::other(err)))
 }
 
-/// Read PNG dimensions from disk and compare to wire `image.width` / `image.height`.
+#[cfg(test)]
 pub fn verify_frame_image_dimensions(source_dir: &Path, frame: &ScanFrame) -> Result<(), ScanInspectError> {
-  let image_path = source_dir.join(&frame.image.file_name);
+  let image_path = source_dir.join(frame_image_file_name(frame.sequence_index));
   if !image_path.is_file() {
     return Err(ScanInspectError::ImageFileMissing {
       path: image_path.display().to_string(),
@@ -128,10 +129,10 @@ pub fn verify_frame_image_dimensions(source_dir: &Path, frame: &ScanFrame) -> Re
   }
   let image_bytes = fs::read(&image_path)?;
   let (actual_w, actual_h) = png_dimensions(&image_bytes)?;
-  if actual_w != frame.image.width || actual_h != frame.image.height {
+  if actual_w != frame.image_dimensions.width || actual_h != frame.image_dimensions.height {
     return Err(ScanInspectError::ImageDimensionMismatch {
-      expected_w: frame.image.width,
-      expected_h: frame.image.height,
+      expected_w: frame.image_dimensions.width,
+      expected_h: frame.image_dimensions.height,
       actual_w,
       actual_h,
     });
@@ -142,19 +143,18 @@ pub fn verify_frame_image_dimensions(source_dir: &Path, frame: &ScanFrame) -> Re
 /// Metadata-only summary from in-memory [`ScanFrame`] fields (no disk IO).
 pub fn summarize_scan_frame_text(frame: &ScanFrame) -> String {
   format!(
-    "frame_id={} sequence_index={} captured_at_millis={} image={}x{} file={} window={}x{}",
+    "frame_id={} sequence_index={} captured_at_millis={} image={}x{} window={}x{}",
     frame.frame_id,
     frame.sequence_index,
     frame.captured_at_millis,
-    frame.image.width,
-    frame.image.height,
-    frame.image.file_name,
+    frame.image_dimensions.width,
+    frame.image_dimensions.height,
     frame.window_bounds.width,
     frame.window_bounds.height,
   )
 }
 
-/// Replay frames from an artifact directory (read-only; no driver or capture).
+#[cfg(test)]
 pub fn replay_scan_frames_from_dir(dir: &Path) -> Result<ScanFrameBundle, ScanInspectError> {
   load_scan_frames_from_dir(dir)
 }
@@ -179,9 +179,9 @@ mod tests {
 
   use super::test_support::{FrameFieldExpectation, assert_frame_matches_expectation};
   use super::*;
-  use crate::artifact::{frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
+  use crate::artifact::{frame_artifact_file_name, frame_image_file_name, read_frame_artifact, write_frame_artifact};
   use crate::fixture::build_frame_from_fixture;
-  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageDimensions};
   use crate::producer::{produce_frame_from_fixture_dir, produce_frames_from_fixture_dir};
 
   fn single_frame_fixture_dir() -> PathBuf {
@@ -215,7 +215,6 @@ mod tests {
     let golden = read_frame_artifact(&dir.join(frame_artifact_file_name(0))).expect("golden");
     let bundle = load_scan_frames_from_dir(&dir).expect("load");
     assert_eq!(bundle.frames.len(), 1);
-    assert_eq!(bundle.loaded_json_paths.len(), 1);
     assert_frame_matches_expectation(&bundle.frames[0], &FrameFieldExpectation { expected: golden });
     cleanup(&dir);
   }
@@ -240,28 +239,22 @@ mod tests {
         height: 8,
       },
       viewport_bounds: None,
-      image: ScanImageRef {
-        file_name: "frame-a.png".to_string(),
+      image_dimensions: ScanImageDimensions {
         width: 8,
         height: 8,
-        media_type: "image/png".to_string(),
       },
     };
     let frame1 = ScanFrame {
       sequence_index: 1,
       frame_id: "frame-b".to_string(),
       captured_at_millis: 2,
-      image: ScanImageRef {
-        file_name: "frame-b.png".to_string(),
-        ..frame0.image.clone()
-      },
       ..frame0.clone()
     };
 
     write_frame_artifact(&dir, &frame1).unwrap();
     write_frame_artifact(&dir, &frame0).unwrap();
-    fs::write(dir.join("frame-a.png"), &png_bytes).unwrap();
-    fs::write(dir.join("frame-b.png"), &png_bytes).unwrap();
+    fs::write(dir.join(frame_image_file_name(0)), &png_bytes).unwrap();
+    fs::write(dir.join(frame_image_file_name(1)), &png_bytes).unwrap();
 
     let bundle = load_scan_frames_from_dir(&dir).expect("load");
     assert_eq!(bundle.frames.len(), 2);
@@ -304,7 +297,7 @@ mod tests {
     cleanup(&dir);
     copy_golden_artifact_dir(&dir);
     let mut frame = read_frame_artifact(&dir.join(frame_artifact_file_name(0))).expect("read");
-    frame.image.height = 99;
+    frame.image_dimensions.height = 99;
     let err = verify_frame_image_dimensions(&dir, &frame).expect_err("mismatch");
     assert!(matches!(
       err,
@@ -339,7 +332,7 @@ mod tests {
     let path = dir.join(frame_artifact_file_name(0));
     fs::write(path, serde_json::to_string_pretty(&frame).unwrap()).unwrap();
     let err = load_scan_frames_from_dir(&dir).expect_err("schema");
-    assert!(matches!(err, ScanInspectError::Artifact(ScanArtifactError::SchemaMismatch { .. })));
+    assert!(matches!(err, ScanInspectError::Artifact(ScanArtifactError::Frame(crate::frame::ScanFrameError::SchemaMismatch { .. }))));
     cleanup(&dir);
   }
 
@@ -350,8 +343,8 @@ mod tests {
     let summary = summarize_scan_frame_text(&frame);
     assert!(summary.contains("frame_id=frame-0001"));
     assert!(summary.contains("sequence_index=0"));
-    assert!(summary.contains("frame-0001.png"));
     assert!(summary.contains("image=8x8"));
+    assert!(!summary.contains(".png"));
   }
 
   #[test]

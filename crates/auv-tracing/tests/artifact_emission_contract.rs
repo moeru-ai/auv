@@ -442,10 +442,10 @@ fn pre_barrier_flush_projects_an_earlier_post_barrier_revision_first() {
 }
 
 #[test]
-fn higher_revision_target_prunes_an_already_observed_queued_target() {
+fn higher_revision_target_prunes_an_already_cursor_confirmed_queued_target() {
   let store = ArtifactStore::new();
   let response_gate = store.store_then_wait_response_next();
-  let page_gate = store.block_next_observation_page();
+  let page_gate = store.block_next_cursor_page();
   let projector = RecordingProjector::new();
   let dispatch =
     configure().run_store(store).project_telemetry(projector.clone(), TelemetryRoutePolicy::fixed_fields_only()).build().unwrap();
@@ -555,7 +555,7 @@ fn recovered_target_projects_when_resubscribe_fails_and_the_next_target_reestabl
 }
 
 #[test]
-fn post_write_observation_failure_settles_the_artifact_receipt_once() {
+fn post_write_cursor_failure_settles_the_artifact_receipt_once() {
   let store = CursorStore::page_failure();
   let projector = RecordingProjector::new();
   let reporter = RecordingReporter::new();
@@ -576,19 +576,19 @@ fn post_write_observation_failure_settles_the_artifact_receipt_once() {
   assert_eq!(flush.first().stage(), DispatchStage::AuthorityRead);
   assert_eq!(flush.first().code().as_str(), "auv.test.page_failed");
   assert_eq!(projector.item_count(), 0);
-  assert!(reporter.failures().is_empty(), "the awaited receipt must own failure observation");
+  assert!(reporter.failures().is_empty(), "the awaited receipt must own the failure");
   assert_eq!(block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap().artifacts().len(), 1);
   block_on_timeout(dispatch.flush()).unwrap();
   assert!(reporter.failures().is_empty());
 }
 
 #[test]
-fn dropped_post_write_observation_failure_reports_before_flush_completion() {
+fn dropped_post_write_cursor_failure_reports_before_flush_completion() {
   // ROOT CAUSE:
   //
-  // If a stored artifact's observation failed after its receipt was dropped,
-  // fail_observation exposed terminal progress before sending the failed
-  // receipt and synchronously reporting its unobserved failure.
+  // If cursor readback failed after an artifact receipt was dropped,
+  // fail_cursor_advance exposed terminal progress before sending the failed
+  // receipt and synchronously reporting its unclaimed failure.
   //
   // Before the fix, an operation-complete projector flush could wake first.
   // The fix reports the claimed receipt before terminalizing its ticket.
@@ -633,7 +633,7 @@ fn dropped_post_write_observation_failure_reports_before_flush_completion() {
 fn artifact_direct_contradiction_after_cursor_proof_fails_without_lookup_or_projection() {
   let store = ArtifactStore::new();
   let response_gate = store.store_then_wait_mismatch_next();
-  let page_gate = store.block_next_observation_page();
+  let page_gate = store.block_next_cursor_page();
   let projector = RecordingProjector::new();
   let reporter = RecordingReporter::new();
   let spawner = TrackingTaskSpawner::new();
@@ -665,7 +665,7 @@ fn artifact_direct_contradiction_after_cursor_proof_fails_without_lookup_or_proj
   assert_eq!(store.lookup_call_count(), 0, "a contradictory direct response must never enter publication lookup");
   assert_eq!(block_on_timeout(store.load_snapshot(run_id)).unwrap().unwrap().artifacts().len(), 1);
   assert_eq!(projected_kinds(projector.as_ref()), ["event_occurred"]);
-  assert!(reporter.failures().is_empty(), "the awaited receipt owns failure observation");
+  assert!(reporter.failures().is_empty(), "the awaited receipt owns the failure");
   block_on_timeout(dispatch.flush()).unwrap();
 
   root.in_scope(|| auv_tracing::emit_event!(TestEvent { value: 21 }));
@@ -678,7 +678,7 @@ fn confirmed_artifact_failure_after_cursor_proof_is_an_authority_contradiction()
   let store = ArtifactStore::new();
   let response_gate = store
     .store_then_wait_failure_next(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.impossible_rejection_after_commit").unwrap()));
-  let page_gate = store.block_next_observation_page();
+  let page_gate = store.block_next_cursor_page();
   let projector = RecordingProjector::new();
   let spawner = TrackingTaskSpawner::new();
   let dispatch = configure()
@@ -716,7 +716,7 @@ fn confirmed_artifact_failure_after_cursor_proof_is_an_authority_contradiction()
 fn artifact_ok_identity_must_match_the_cursor_proven_commit() {
   let store = ArtifactStore::new();
   let response_gate = store.store_then_wait_revision_mismatch_next();
-  let page_gate = store.block_next_observation_page();
+  let page_gate = store.block_next_cursor_page();
   let projector = RecordingProjector::new();
   let spawner = TrackingTaskSpawner::new();
   let dispatch = configure()
@@ -755,7 +755,7 @@ fn cursor_artifact_mismatch_claims_receipt_and_ignores_the_late_direct_response(
   let store = ArtifactStore::new();
   let response_gate = store.store_then_wait_response_next();
   store.mismatch_next_observed_artifact();
-  let page_gate = store.block_next_observation_page();
+  let page_gate = store.block_next_cursor_page();
   let projector = RecordingProjector::new();
   let reporter = RecordingReporter::new();
   let spawner = TrackingTaskSpawner::new();
@@ -799,7 +799,7 @@ fn cursor_artifact_mismatch_claims_receipt_and_ignores_the_late_direct_response(
 fn dropped_cursor_artifact_mismatch_reports_before_flush_completion() {
   // ROOT CAUSE:
   //
-  // If cursor observation contradicted its own artifact target after the
+  // If cursor readback contradicted its own artifact target after the
   // receipt was dropped, the mismatch branch exposed terminal progress before
   // sending the failed receipt and synchronously reporting the failure.
   //
@@ -807,7 +807,7 @@ fn dropped_cursor_artifact_mismatch_reports_before_flush_completion() {
   // The fix reports the claimed receipt before terminalizing its ticket.
   let store = ArtifactStore::new();
   store.mismatch_next_observed_artifact();
-  let page_gate = store.block_next_observation_page();
+  let page_gate = store.block_next_cursor_page();
   let projector = RecordingProjector::new();
   let reporter = RecordingReporter::new();
   let dispatch = configure()
@@ -906,7 +906,7 @@ fn ordinary_direct_contradiction_after_cursor_proof_skips_that_projection_and_qu
   let run_id = RunId::new();
   let store = IntegrityStore::new(run_id, IntegrityFault::DirectResponseMismatch);
   let response_gate = store.block_direct_response();
-  let page_gate = store.block_observation_page();
+  let page_gate = store.block_cursor_page();
   let projector = RecordingProjector::new();
   let reporter = RecordingReporter::new();
   let spawner = TrackingTaskSpawner::new();
@@ -1061,7 +1061,7 @@ fn canceled_cursor_establishment_terminalizes_receipt_without_polling_body() {
 }
 
 #[test]
-fn observed_confirmed_failure_reaches_receipt_and_one_flush_interval() {
+fn cursor_confirmed_failure_reaches_receipt_and_one_flush_interval() {
   let store = ArtifactStore::new();
   let code = ErrorCode::parse("auv.test.artifact_rejected").unwrap();
   store.fail_next(ArtifactWriteError::Rejected(code.clone()));
@@ -1072,7 +1072,7 @@ fn observed_confirmed_failure_reaches_receipt_and_one_flush_interval() {
   let result = root.in_scope(|| block_on_timeout(auv_tracing::emit_artifact(ready_artifact(b"rejected"))));
 
   assert_eq!(result.unwrap_err(), ArtifactWriteError::Rejected(code.clone()));
-  assert!(reporter.failures().is_empty(), "an observed artifact failure must not also use the unobserved reporter path");
+  assert!(reporter.failures().is_empty(), "a cursor-confirmed artifact failure must not also use the unclaimed reporter path");
   let flush = block_on_timeout(dispatch.flush()).unwrap_err();
   assert_eq!(flush.failure_count().get(), 1);
   assert_eq!(flush.first().code(), &code);
@@ -1104,7 +1104,7 @@ fn dropped_failure_receipt_reports_and_flushes_exactly_once() {
 }
 
 #[test]
-fn synchronized_receipt_send_drop_races_report_each_unobserved_failure_once() {
+fn synchronized_receipt_send_drop_races_report_each_unclaimed_failure_once() {
   const ATTEMPTS: usize = 128;
 
   let store = ArtifactStore::new();
@@ -1138,11 +1138,11 @@ fn synchronized_receipt_send_drop_races_report_each_unobserved_failure_once() {
 }
 
 #[test]
-fn canceled_failure_completion_does_not_duplicate_unobserved_reporting() {
+fn canceled_failure_completion_does_not_duplicate_unclaimed_reporting() {
   // ROOT CAUSE:
   //
   // If a dropped artifact receipt completed with failure, flush could observe
-  // ticket terminalization before unobserved reporting because completion
+  // ticket terminalization before unclaimed reporting because completion
   // terminalized the ticket before sending the closed receipt.
   //
   // Before the fix, terminalization woke the flush waiter while the worker had

@@ -1,6 +1,6 @@
-use auv_driver::CaptureBinding;
 use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};
 use auv_driver::window::Window;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +11,7 @@ const PLAYFIELD_HEIGHT: f64 = 384.0;
 
 pub const OSU_PROJECTION_PURPOSE: &str = "auv.osu.projection";
 
+#[cfg(feature = "tracing")]
 pub async fn publish_osu_projection(
   context: Option<&Context>,
   projection: &ProjectionArtifact,
@@ -18,6 +19,7 @@ pub async fn publish_osu_projection(
   crate::run_read::publish_json_artifact(context, OSU_PROJECTION_PURPOSE, projection, ProjectionArtifact::validate).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_osu_projection(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -188,7 +190,7 @@ impl ProjectionArtifact {
   }
 
   pub fn to_core_projection_basis(&self, basis_id: impl Into<String>, timestamp_millis: u64) -> ProjectionBasis {
-    let mut basis = ProjectionBasis::new(
+    ProjectionBasis::new(
       basis_id,
       timestamp_millis,
       ProjectionSourceSpace::Local2d {
@@ -200,25 +202,7 @@ impl ProjectionArtifact {
         ProjectionDerivationMethod::EmpiricalCalibration => ProjectionDerivationFamily::EmpiricalCalibration,
       },
     )
-    .with_match_radius_px(f64::from(self.match_radius_px));
-    if self.capture_bounds.is_none() {
-      basis = basis.with_known_limit("osu projection basis has no bound capture rectangle");
-    }
-    basis
-  }
-
-  pub fn to_core_capture_binding(
-    &self,
-    source_observation_id: impl Into<String>,
-    capture_ref: impl Into<String>,
-    capture_skew_ms: i64,
-  ) -> CaptureBinding {
-    let mut binding = CaptureBinding::new(source_observation_id, capture_ref, capture_skew_ms)
-      .with_known_limit("osu capture binding records dataset projection provenance, not input success");
-    if self.capture_bounds.is_none() {
-      binding = binding.with_known_limit("osu projection artifact has no bound capture rectangle");
-    }
-    binding
+    .with_match_radius_px(f64::from(self.match_radius_px))
   }
 
   pub fn with_capture(
@@ -342,18 +326,6 @@ mod tests {
     );
     assert_eq!(basis.derivation_family, ProjectionDerivationFamily::LayoutRule);
     assert_eq!(basis.match_radius_px, Some(f64::from(artifact.match_radius_px)));
-  }
-
-  #[test]
-  fn projection_artifact_exposes_core_capture_binding() {
-    let artifact = sample_projection_artifact_with_capture();
-
-    let binding = artifact.to_core_capture_binding("osu-frame-1", "artifact://osu-capture-1", -16);
-
-    assert_eq!(binding.source_observation_id, "osu-frame-1");
-    assert_eq!(binding.capture_ref, "artifact://osu-capture-1");
-    assert_eq!(binding.capture_skew_ms, -16);
-    assert!(binding.known_limits.iter().any(|limit| limit.contains("dataset projection provenance")));
   }
 
   #[test]

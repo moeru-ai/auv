@@ -5,8 +5,8 @@ use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver_common::input::{
-  Click, ClickOptions, InputActionResult, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
-  TypeTextOptions, WaitOptions,
+  Click, ClickOptions, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
+  ScrollDeliveryCandidate, ScrollOptions, TypeTextOptions, WaitOptions,
 };
 use auv_driver_common::permission::PermissionProbe;
 use auv_driver_common::selector::WindowSelector;
@@ -200,6 +200,7 @@ impl WindowApi<'_> {
     let mut result = self.session.input().click_at(screen_point, options.click)?;
     add_foreground_window_fallback_reason(
       &mut result,
+      InputDeliveryPath::WindowTargetedMouse,
       "linux window.click used foreground RemoteDesktop portal input; Wayland window-targeted background pointer delivery is not available in this slice",
     );
     Ok(result)
@@ -220,15 +221,16 @@ impl WindowApi<'_> {
     let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
     add_foreground_window_fallback_reason(
       &mut result,
+      InputDeliveryPath::WindowTargetedWheel,
       "linux window.scroll used foreground RemoteDesktop portal input; Wayland window-targeted background wheel delivery is not available in this slice",
     );
     Ok(result)
   }
 }
 
-fn add_foreground_window_fallback_reason(result: &mut InputActionResult, reason: &str) {
-  if result.fallback_reason.is_none() {
-    result.fallback_reason = Some(reason.to_string());
+fn add_foreground_window_fallback_reason(result: &mut InputActionResult, unavailable_path: InputDeliveryPath, reason: &str) {
+  if result.fallback_reason().is_none() {
+    result.attempts.insert(0, InputAttempt::failure(unavailable_path, reason));
   }
 }
 
@@ -311,7 +313,7 @@ impl InputApi<'_> {
 
   /// Temporarily installs text on the Wayland clipboard, pastes it through the
   /// RemoteDesktop portal, and restores the prior text snapshot.
-  pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<()> {
+  pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<InputActionResult> {
     paste_text(&self.session.state, options)
   }
 }

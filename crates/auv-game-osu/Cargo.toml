@@ -12,25 +12,34 @@ documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+tracing = ["dep:auv-tracing"]
+
 [dependencies]
 auv-file = { path = "../auv-file" }
 auv-query-readiness = { path = "../auv-query-readiness" }
 auv-stage-status = { path = "../auv-stage-status" }
 auv-driver = { path = "../auv-driver" }
 auv-task-object-detection = { path = "../auv-task-object-detection" }
-auv-tracing = { path = "../auv-tracing" }
-futures-util = { workspace = true, features = ["io"] }
+auv-tracing = { path = "../auv-tracing", optional = true }
 image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 thiserror.workspace = true
 rosu-map = "0.2"
 
 [dev-dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
+futures-util = { workspace = true, features = ["io"] }
+sha2.workspace = true
 tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }
+
+[[test]]
+name = "tracing_contract"
+path = "tests/tracing_contract.rs"
+required-features = ["tracing"]

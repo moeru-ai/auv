@@ -2,7 +2,13 @@
 
 Date: 2026-05-29
 
-Status: v0 persistence spec. Pins what `ViewMemory` stores, how it
+Status: historical v0 design input. Its filesystem persistence, duplicated
+`source_run_id`, and generic reconstruction-reference contract are superseded
+by `docs/TERMS_AND_CONCEPTS.md`: current `ViewMemory` carries one typed
+`source_scan_uri: ArtifactUri`, and the selected `RunStore` owns persistence.
+The original analysis below is retained as research context.
+
+This document originally pinned what `ViewMemory` stores, how it
 is keyed and evicted, and how it links to existing run storage.
 **Per the design doc, memory scope "should be derived from the
 matching and reacquisition algorithm once the first scan result

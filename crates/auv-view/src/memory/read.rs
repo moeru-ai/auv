@@ -1,6 +1,8 @@
 use super::{DEFAULT_MEMORY_TTL_MILLIS, VIEW_MEMORY_SCHEMA_VERSION, ViewMemory};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StaleReason {
   MemoryRejectedAtFreshness,
   SchemaMismatch,
@@ -8,6 +10,18 @@ pub enum StaleReason {
   // NOTICE(a4-min): produced only by reacquire(), not read_memory().
   RegionGoneAtReacquisition,
   ObservationFailedAtReacquisition,
+}
+
+impl StaleReason {
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::MemoryRejectedAtFreshness => "memory_rejected_at_freshness",
+      Self::SchemaMismatch => "schema_mismatch",
+      Self::BaselineMismatchHard => "baseline_mismatch_hard",
+      Self::RegionGoneAtReacquisition => "region_gone_at_reacquisition",
+      Self::ObservationFailedAtReacquisition => "observation_failed_at_reacquisition",
+    }
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -69,16 +83,16 @@ mod tests {
   use super::*;
   use crate::ViewBounds;
   use crate::memory::{VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot};
+  use auv_tracing::{ArtifactId, ArtifactUri, RunId};
 
   fn sample_memory(last_millis: u64) -> ViewMemory {
     ViewMemory {
       schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
+      source_scan_uri: ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
       memory_id: "app:scope".into(),
       app_bundle_id: "app".into(),
       scope_id: "scope".into(),
       last_reconstructed_at_millis: last_millis,
-      source_run_id: "artifact-dir-bridge-a3".into(),
-      source_reconstruction_ref: String::new(),
       anchors: Vec::new(),
       landmarks: Vec::new(),
       node_snapshots: Default::default(),

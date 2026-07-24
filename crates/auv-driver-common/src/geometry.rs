@@ -219,8 +219,6 @@ pub struct ProjectionBasis {
   pub confidence: f64,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub match_radius_px: Option<f64>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub known_limits: Vec<String>,
 }
 
 impl ProjectionBasis {
@@ -239,7 +237,6 @@ impl ProjectionBasis {
       derivation_family,
       confidence: 1.0,
       match_radius_px: None,
-      known_limits: Vec::new(),
     }
   }
 
@@ -250,11 +247,6 @@ impl ProjectionBasis {
 
   pub fn with_match_radius_px(mut self, match_radius_px: f64) -> Self {
     self.match_radius_px = Some(match_radius_px);
-    self
-  }
-
-  pub fn with_known_limit(mut self, known_limit: impl Into<String>) -> Self {
-    self.known_limits.push(known_limit.into());
     self
   }
 }
@@ -273,8 +265,7 @@ mod tests {
       ProjectionDerivationFamily::CameraMatrix,
     )
     .with_confidence(0.75)
-    .with_match_radius_px(12.0)
-    .with_known_limit("viewport-relative until capture binding is attached");
+    .with_match_radius_px(12.0);
 
     let value = serde_json::to_value(&basis).expect("serialize projection basis");
 

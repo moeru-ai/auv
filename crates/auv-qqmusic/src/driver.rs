@@ -7,20 +7,19 @@ use auv_driver::{
 };
 use auv_driver_macos::MacosDriverSession;
 
-use crate::search::{DEFAULT_SEARCH_REGION, SearchAnchorMatch, SearchStep};
-
-pub type OperationResult<T> = Result<T, String>;
+use crate::search::{DEFAULT_SEARCH_REGION, SearchAction, SearchActionResult, SearchAnchorMatch};
 
 pub trait QqMusicDriver {
-  fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<SearchStep>;
+  fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<SearchActionResult, String>;
 
-  fn press_search_shortcut(&mut self, shortcut: &str, settle: Duration) -> OperationResult<SearchStep>;
+  fn press_search_shortcut(&mut self, shortcut: &str, settle: Duration) -> Result<SearchActionResult, String>;
 
-  fn paste_query(&mut self, query: &str, settle: Duration) -> OperationResult<SearchStep>;
+  fn paste_query(&mut self, query: &str, settle: Duration) -> Result<SearchActionResult, String>;
 
-  fn wait_anchor(&mut self, app_id: &str, anchor: &str, timeout: Duration) -> OperationResult<SearchAnchorMatch>;
+  fn wait_anchor(&mut self, app_id: &str, anchor: &str, timeout: Duration) -> Result<SearchAnchorMatch, String>;
 
-  fn click_anchor(&mut self, app_id: &str, anchor: &SearchAnchorMatch, click: Click, settle: Duration) -> OperationResult<SearchStep>;
+  fn click_anchor(&mut self, app_id: &str, anchor: &SearchAnchorMatch, click: Click, settle: Duration)
+  -> Result<SearchActionResult, String>;
 }
 
 pub struct MacosQqMusicDriver {
@@ -28,7 +27,7 @@ pub struct MacosQqMusicDriver {
 }
 
 impl MacosQqMusicDriver {
-  pub fn open_local() -> OperationResult<Self> {
+  pub fn open_local() -> Result<Self, String> {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     Ok(Self { session })
   }
@@ -39,13 +38,13 @@ impl MacosQqMusicDriver {
     }
   }
 
-  fn main_window(&self, app_id: &str) -> OperationResult<Window> {
+  fn main_window(&self, app_id: &str) -> Result<Window, String> {
     self.session.window().resolve(main_window_selector(app_id)).map_err(|error| error.to_string())
   }
 }
 
 impl QqMusicDriver for MacosQqMusicDriver {
-  fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<SearchStep> {
+  fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<SearchActionResult, String> {
     let window = self.main_window(app_id)?;
     self
       .session
@@ -60,10 +59,10 @@ impl QqMusicDriver for MacosQqMusicDriver {
         },
       )
       .map_err(|error| error.to_string())?;
-    Ok(SearchStep::new("search.activate", "activated QQMusic"))
+    Ok(SearchActionResult::completed(SearchAction::Activate))
   }
 
-  fn press_search_shortcut(&mut self, shortcut: &str, settle: Duration) -> OperationResult<SearchStep> {
+  fn press_search_shortcut(&mut self, shortcut: &str, settle: Duration) -> Result<SearchActionResult, String> {
     let result = self
       .session
       .input()
@@ -72,11 +71,11 @@ impl QqMusicDriver for MacosQqMusicDriver {
         settle,
       })
       .map_err(|error| error.to_string())?;
-    Ok(SearchStep::with_input("search.shortcut", format!("pressed {shortcut}"), result))
+    Ok(SearchActionResult::delivered(SearchAction::FocusSearch, result))
   }
 
-  fn paste_query(&mut self, query: &str, settle: Duration) -> OperationResult<SearchStep> {
-    self
+  fn paste_query(&mut self, query: &str, settle: Duration) -> Result<SearchActionResult, String> {
+    let result = self
       .session
       .input()
       .paste_text(PasteTextOptions {
@@ -86,10 +85,10 @@ impl QqMusicDriver for MacosQqMusicDriver {
         settle,
       })
       .map_err(|error| error.to_string())?;
-    Ok(SearchStep::new("search.query", "pasted and submitted search query"))
+    Ok(SearchActionResult::delivered(SearchAction::SubmitQuery, result))
   }
 
-  fn wait_anchor(&mut self, app_id: &str, anchor: &str, timeout: Duration) -> OperationResult<SearchAnchorMatch> {
+  fn wait_anchor(&mut self, app_id: &str, anchor: &str, timeout: Duration) -> Result<SearchAnchorMatch, String> {
     let window = self.main_window(app_id)?;
     let matches = self
       .session
@@ -114,7 +113,13 @@ impl QqMusicDriver for MacosQqMusicDriver {
     })
   }
 
-  fn click_anchor(&mut self, app_id: &str, anchor: &SearchAnchorMatch, click: Click, settle: Duration) -> OperationResult<SearchStep> {
+  fn click_anchor(
+    &mut self,
+    app_id: &str,
+    anchor: &SearchAnchorMatch,
+    click: Click,
+    settle: Duration,
+  ) -> Result<SearchActionResult, String> {
     let window = self.main_window(app_id)?;
     let result = self
       .session
@@ -132,7 +137,7 @@ impl QqMusicDriver for MacosQqMusicDriver {
     if !settle.is_zero() {
       std::thread::sleep(settle);
     }
-    Ok(SearchStep::with_input("search.results.click", "clicked search result anchor", result))
+    Ok(SearchActionResult::delivered(SearchAction::ClickResult, result))
   }
 }
 

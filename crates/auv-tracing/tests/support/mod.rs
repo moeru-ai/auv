@@ -668,7 +668,7 @@ pub struct IntegrityStore {
   fault: IntegrityFault,
   commit_calls: Arc<Mutex<Vec<RunId>>>,
   direct_response_gate: Arc<Mutex<Option<CommitGate>>>,
-  observation_page_gate: Arc<Mutex<Option<CommitGate>>>,
+  cursor_page_gate: Arc<Mutex<Option<CommitGate>>>,
 }
 
 impl IntegrityStore {
@@ -679,7 +679,7 @@ impl IntegrityStore {
       fault,
       commit_calls: Arc::new(Mutex::new(Vec::new())),
       direct_response_gate: Arc::new(Mutex::new(None)),
-      observation_page_gate: Arc::new(Mutex::new(None)),
+      cursor_page_gate: Arc::new(Mutex::new(None)),
     })
   }
 
@@ -693,9 +693,9 @@ impl IntegrityStore {
     gate
   }
 
-  pub fn block_observation_page(&self) -> CommitGate {
+  pub fn block_cursor_page(&self) -> CommitGate {
     let gate = CommitGate::new();
-    *self.observation_page_gate.lock().unwrap() = Some(gate.clone());
+    *self.cursor_page_gate.lock().unwrap() = Some(gate.clone());
     gate
   }
 
@@ -784,7 +784,7 @@ impl RunStore for IntegrityStore {
   }
 
   fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
-    let page_gate = (run_id == self.affected_run_id).then(|| self.observation_page_gate.lock().unwrap().take()).flatten();
+    let page_gate = (run_id == self.affected_run_id).then(|| self.cursor_page_gate.lock().unwrap().take()).flatten();
     Box::pin(async move {
       if let Some(page_gate) = page_gate
         && let Some(wait) = page_gate.enter()
@@ -1409,7 +1409,7 @@ impl ArtifactStore {
     gate
   }
 
-  pub fn block_next_observation_page(&self) -> CommitGate {
+  pub fn block_next_cursor_page(&self) -> CommitGate {
     let gate = CommitGate::new();
     self.state.pending_subscriptions.store(true, Ordering::SeqCst);
     self.state.page_gates.lock().unwrap().push_back(gate.clone());

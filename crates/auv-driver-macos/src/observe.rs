@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde::Serialize;
 
 use crate::support::ax_node_search_text;
@@ -126,69 +124,4 @@ pub fn permission_probe_report(
   ]
   .join("\n")
     + "\n"
-}
-
-pub fn verify_now_playing_title_signals(matched_title: &str) -> BTreeMap<String, String> {
-  let mut signals = BTreeMap::from([("ax.node_found".to_string(), "true".to_string())]);
-  insert_optional_signal(&mut signals, "ax.now_playing_title", matched_title);
-  signals
-}
-
-pub fn verify_ax_text_signals(matched_text: &str, matched_role: &str) -> BTreeMap<String, String> {
-  let mut signals = BTreeMap::from([("ax.node_found".to_string(), "true".to_string())]);
-  insert_optional_signal(&mut signals, "ax.matched_text", matched_text);
-  insert_optional_signal(&mut signals, "ax.matched_role", matched_role);
-  signals
-}
-
-pub fn ocr_detection_signals(filtered_match_count: usize, best_match_text: Option<&str>) -> BTreeMap<String, String> {
-  let mut signals = BTreeMap::from([
-    ("ocr.match_found".to_string(), (!filtered_match_count.eq(&0)).to_string()),
-    ("ocr.filtered_match_count".to_string(), filtered_match_count.to_string()),
-  ]);
-  if let Some(best_match_text) = best_match_text {
-    insert_optional_signal(&mut signals, "ocr.best_match_text", best_match_text);
-  }
-  signals
-}
-
-pub fn wait_ocr_detection_signals(filtered_match_count: usize, best_match_text: Option<&str>, timed_out: bool) -> BTreeMap<String, String> {
-  let mut signals = ocr_detection_signals(filtered_match_count, best_match_text);
-  signals.insert("ocr.timed_out".to_string(), timed_out.to_string());
-  signals
-}
-
-pub fn row_detection_signals(row_count: usize) -> BTreeMap<String, String> {
-  BTreeMap::from([
-    ("rows.count".to_string(), row_count.to_string()),
-    ("rows.visible".to_string(), (!row_count.eq(&0)).to_string()),
-  ])
-}
-
-pub fn wait_row_detection_signals(row_count: usize, required_row_count: usize, timed_out: bool) -> BTreeMap<String, String> {
-  let mut signals = row_detection_signals(row_count);
-  signals.insert("rows.requirement_met".to_string(), (row_count >= required_row_count).to_string());
-  signals.insert("rows.timed_out".to_string(), timed_out.to_string());
-  signals
-}
-
-pub fn insert_optional_signal(signals: &mut BTreeMap<String, String>, key: &str, value: &str) {
-  if !value.trim().is_empty() {
-    signals.insert(key.to_string(), value.to_string());
-  }
-}
-
-pub fn preferred_ax_signal_text(node: &ObservedAxNode) -> String {
-  for value in [
-    &node.value,
-    &node.title,
-    &node.description,
-    &node.help,
-    &node.placeholder,
-  ] {
-    if !value.trim().is_empty() {
-      return value.clone();
-    }
-  }
-  String::new()
 }

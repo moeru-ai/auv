@@ -165,11 +165,11 @@ struct SubscriptionRegistry {
 struct SubscriptionWatch {
   run_id: RunId,
   waker: Weak<AtomicWaker>,
-  observed: FileSignal,
+  observed: FileFingerprint,
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct FileSignal {
+struct FileFingerprint {
   length: Option<u64>,
   modified: Option<SystemTime>,
   is_regular: bool,
@@ -534,7 +534,7 @@ impl FileAuthority {
       SubscriptionWatch {
         run_id,
         waker: Arc::downgrade(waker),
-        observed: self.file_signal(run_id),
+        observed: self.file_fingerprint(run_id),
       },
     );
     Ok(token)
@@ -575,14 +575,14 @@ impl FileAuthority {
     Ok(())
   }
 
-  fn file_signal(&self, run_id: RunId) -> FileSignal {
+  fn file_fingerprint(&self, run_id: RunId) -> FileFingerprint {
     let Ok(runs) = self.root.open_dir_nofollow("runs") else {
-      return FileSignal::missing();
+      return FileFingerprint::missing();
     };
     let Ok(directory) = runs.open_dir_nofollow(run_id.to_string()) else {
-      return FileSignal::missing();
+      return FileFingerprint::missing();
     };
-    file_signal(&directory, "commits.log")
+    file_fingerprint(&directory, "commits.log")
   }
 }
 
@@ -1511,7 +1511,7 @@ fn watch_subscriptions(authority: Weak<FileAuthority>) {
       let Some(waker) = entry.waker.upgrade() else {
         return false;
       };
-      let current = authority.file_signal(entry.run_id);
+      let current = authority.file_fingerprint(entry.run_id);
       if current != entry.observed {
         entry.observed = current;
         wake.push(waker);
@@ -1541,18 +1541,18 @@ fn watch_subscriptions(authority: Weak<FileAuthority>) {
   }
 }
 
-fn file_signal(directory: &Dir, name: impl AsRef<Path>) -> FileSignal {
+fn file_fingerprint(directory: &Dir, name: impl AsRef<Path>) -> FileFingerprint {
   match directory.symlink_metadata(name) {
-    Ok(metadata) => FileSignal {
+    Ok(metadata) => FileFingerprint {
       length: Some(metadata.len()),
       modified: metadata.modified().ok().map(cap_std::time::SystemTime::into_std),
       is_regular: metadata.is_file() && !metadata.file_type().is_symlink(),
     },
-    Err(_) => FileSignal::missing(),
+    Err(_) => FileFingerprint::missing(),
   }
 }
 
-impl FileSignal {
+impl FileFingerprint {
   fn missing() -> Self {
     Self {
       length: None,

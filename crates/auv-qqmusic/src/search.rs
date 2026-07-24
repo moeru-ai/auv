@@ -3,7 +3,7 @@ use std::time::Duration;
 use auv_driver::{Click, InputActionResult, Point, RatioRect};
 use serde::{Deserialize, Serialize};
 
-use crate::driver::{OperationResult, QqMusicDriver};
+use crate::driver::QqMusicDriver;
 
 pub const DEFAULT_APP_ID: &str = "com.tencent.QQMusicMac";
 pub const DEFAULT_SEARCH_SHORTCUT: &str = "cmd+f";
@@ -74,26 +74,32 @@ pub struct SearchAnchorMatch {
   pub point: Point,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchAction {
+  Activate,
+  FocusSearch,
+  SubmitQuery,
+  ClickResult,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SearchStep {
-  pub step_id: &'static str,
-  pub summary: String,
+pub struct SearchActionResult {
+  pub action: SearchAction,
   pub input_action_result: Option<InputActionResult>,
 }
 
-impl SearchStep {
-  pub fn new(step_id: &'static str, summary: impl Into<String>) -> Self {
+impl SearchActionResult {
+  pub fn completed(action: SearchAction) -> Self {
     Self {
-      step_id,
-      summary: summary.into(),
+      action,
       input_action_result: None,
     }
   }
 
-  pub fn with_input(step_id: &'static str, summary: impl Into<String>, input_action_result: InputActionResult) -> Self {
+  pub fn delivered(action: SearchAction, input_action_result: InputActionResult) -> Self {
     Self {
-      step_id,
-      summary: summary.into(),
+      action,
       input_action_result: Some(input_action_result),
     }
   }
@@ -102,42 +108,42 @@ impl SearchStep {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SearchCommandReport {
   pub command: &'static str,
-  pub steps: Vec<SearchStep>,
+  pub actions: Vec<SearchActionResult>,
   pub anchor: Option<SearchAnchorMatch>,
   pub unsupported: Option<String>,
 }
 
-pub fn run_search_command(command: &SearchCommand, driver: &mut impl QqMusicDriver) -> OperationResult<SearchCommandReport> {
+pub fn run_search_command(command: &SearchCommand, driver: &mut impl QqMusicDriver) -> Result<SearchCommandReport, String> {
   match command {
-    SearchCommand::Search(command) => run_search(command, driver),
-    SearchCommand::Results(SearchResultsAction::Select(command)) => run_select(command, driver),
-    SearchCommand::Results(SearchResultsAction::Click(command)) => run_click(command, driver),
+    SearchCommand::Search(command) => crate::tracing::search(|| run_search(command, driver)),
+    SearchCommand::Results(SearchResultsAction::Select(command)) => crate::tracing::search_result_select(|| run_select(command, driver)),
+    SearchCommand::Results(SearchResultsAction::Click(command)) => crate::tracing::search_result_click(|| run_click(command, driver)),
   }
 }
 
-fn run_search(command: &SearchSubmit, driver: &mut impl QqMusicDriver) -> OperationResult<SearchCommandReport> {
-  let steps = execute_search_phase(driver, &command.app_id, &command.query, &command.shortcut, command.settle_ms)?;
+fn run_search(command: &SearchSubmit, driver: &mut impl QqMusicDriver) -> Result<SearchCommandReport, String> {
+  let actions = execute_search_phase(driver, &command.app_id, &command.query, &command.shortcut, command.settle_ms)?;
   Ok(SearchCommandReport {
     command: "search",
-    steps,
+    actions,
     anchor: None,
     unsupported: None,
   })
 }
 
-fn run_select(command: &SearchResultsSelect, driver: &mut impl QqMusicDriver) -> OperationResult<SearchCommandReport> {
-  let mut steps = execute_search_phase(driver, &command.app_id, &command.query, DEFAULT_SEARCH_SHORTCUT, command.settle_ms)?;
+fn run_select(command: &SearchResultsSelect, driver: &mut impl QqMusicDriver) -> Result<SearchCommandReport, String> {
+  let mut actions = execute_search_phase(driver, &command.app_id, &command.query, DEFAULT_SEARCH_SHORTCUT, command.settle_ms)?;
   let anchor = driver.wait_anchor(&command.app_id, &command.anchor, Duration::from_millis(command.anchor_timeout_ms))?;
-  steps.push(driver.click_anchor(&command.app_id, &anchor, Click::Single, Duration::from_millis(command.settle_ms))?);
+  actions.push(driver.click_anchor(&command.app_id, &anchor, Click::Single, Duration::from_millis(command.settle_ms))?);
   Ok(SearchCommandReport {
     command: "search.results.select",
-    steps,
+    actions,
     anchor: Some(anchor),
     unsupported: None,
   })
 }
 
-fn run_click(command: &SearchResultsClick, driver: &mut impl QqMusicDriver) -> OperationResult<SearchCommandReport> {
+fn run_click(command: &SearchResultsClick, driver: &mut impl QqMusicDriver) -> Result<SearchCommandReport, String> {
   if command.row.is_some() {
     // TODO(qqmusic-row-click): row selection is parsed for the agreed CLI shape,
     // but execution is deferred until a typed result-row detection API exists.
@@ -151,9 +157,9 @@ fn run_click(command: &SearchResultsClick, driver: &mut impl QqMusicDriver) -> O
   let query = command.query.as_deref().ok_or_else(|| "search.results.click requires <query> unless --candidate-ref is used".to_string())?;
   let anchor_text =
     command.anchor.as_deref().ok_or_else(|| "search.results.click requires --anchor, --row, or --candidate-ref".to_string())?;
-  let mut steps = execute_search_phase(driver, &command.app_id, query, DEFAULT_SEARCH_SHORTCUT, command.settle_ms)?;
+  let mut actions = execute_search_phase(driver, &command.app_id, query, DEFAULT_SEARCH_SHORTCUT, command.settle_ms)?;
   let anchor = driver.wait_anchor(&command.app_id, anchor_text, Duration::from_millis(command.anchor_timeout_ms))?;
-  steps.push(driver.click_anchor(
+  actions.push(driver.click_anchor(
     &command.app_id,
     &anchor,
     Click::Double {
@@ -163,7 +169,7 @@ fn run_click(command: &SearchResultsClick, driver: &mut impl QqMusicDriver) -> O
   )?);
   Ok(SearchCommandReport {
     command: "search.results.click",
-    steps,
+    actions,
     anchor: Some(anchor),
     unsupported: None,
   })
@@ -175,7 +181,7 @@ fn execute_search_phase(
   query: &str,
   shortcut: &str,
   settle_ms: u64,
-) -> OperationResult<Vec<SearchStep>> {
+) -> Result<Vec<SearchActionResult>, String> {
   Ok(vec![
     driver.activate_app(app_id, Duration::from_millis(settle_ms))?,
     driver.press_search_shortcut(shortcut, Duration::from_millis(settle_ms))?,
@@ -186,7 +192,7 @@ fn execute_search_phase(
 fn unsupported(message: impl Into<String>) -> SearchCommandReport {
   SearchCommandReport {
     command: "search.results.click",
-    steps: Vec::new(),
+    actions: Vec::new(),
     anchor: None,
     unsupported: Some(message.into()),
   }
@@ -203,26 +209,25 @@ mod tests {
   }
 
   impl QqMusicDriver for RecordingQqMusicDriver {
-    fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<SearchStep> {
+    fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<SearchActionResult, String> {
       self.calls.push(format!("activate:{app_id}:{}", settle.as_millis()));
-      Ok(SearchStep::new("activate", "activated"))
+      Ok(SearchActionResult::completed(SearchAction::Activate))
     }
 
-    fn press_search_shortcut(&mut self, shortcut: &str, settle: Duration) -> OperationResult<SearchStep> {
+    fn press_search_shortcut(&mut self, shortcut: &str, settle: Duration) -> Result<SearchActionResult, String> {
       self.calls.push(format!("shortcut:{shortcut}:{}", settle.as_millis()));
-      Ok(SearchStep::with_input(
-        "shortcut",
-        "pressed shortcut",
+      Ok(SearchActionResult::delivered(
+        SearchAction::FocusSearch,
         InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents),
       ))
     }
 
-    fn paste_query(&mut self, query: &str, settle: Duration) -> OperationResult<SearchStep> {
+    fn paste_query(&mut self, query: &str, settle: Duration) -> Result<SearchActionResult, String> {
       self.calls.push(format!("paste:{query}:{}", settle.as_millis()));
-      Ok(SearchStep::new("paste", "pasted query"))
+      Ok(SearchActionResult::completed(SearchAction::SubmitQuery))
     }
 
-    fn wait_anchor(&mut self, app_id: &str, anchor: &str, timeout: Duration) -> OperationResult<SearchAnchorMatch> {
+    fn wait_anchor(&mut self, app_id: &str, anchor: &str, timeout: Duration) -> Result<SearchAnchorMatch, String> {
       self.calls.push(format!("anchor:{app_id}:{anchor}:{}", timeout.as_millis()));
       Ok(SearchAnchorMatch {
         text: anchor.to_string(),
@@ -231,9 +236,15 @@ mod tests {
       })
     }
 
-    fn click_anchor(&mut self, app_id: &str, anchor: &SearchAnchorMatch, click: Click, settle: Duration) -> OperationResult<SearchStep> {
+    fn click_anchor(
+      &mut self,
+      app_id: &str,
+      anchor: &SearchAnchorMatch,
+      click: Click,
+      settle: Duration,
+    ) -> Result<SearchActionResult, String> {
       self.calls.push(format!("click:{app_id}:{}:{click:?}:{}", anchor.text, settle.as_millis()));
-      Ok(SearchStep::with_input("click", "clicked", InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse)))
+      Ok(SearchActionResult::delivered(SearchAction::ClickResult, InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse)))
     }
   }
 
@@ -328,5 +339,29 @@ mod tests {
 
     assert_eq!(report.unsupported.as_deref(), Some("search.results.click --candidate-ref needs a typed CandidateRef consumer API"));
     assert!(driver.calls.is_empty());
+  }
+
+  #[cfg(feature = "tracing")]
+  #[test]
+  fn command_uses_the_caller_context_without_owning_a_run() {
+    use std::sync::Arc;
+
+    use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
+
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut driver = RecordingQqMusicDriver::default();
+
+    let result = root.in_scope(|| run_search_command(&SearchCommand::Search(SearchSubmit::defaults_with_query("fixture")), &mut driver));
+
+    assert!(result.is_ok());
+    futures_executor::block_on(dispatch.flush()).expect("flush");
+    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("run snapshot");
+    let span = snapshot.spans().values().next().expect("command span");
+    assert_eq!(span.started().name().as_str(), "auv.qqmusic.search");
+    assert!(span.started().attributes().is_empty());
+    assert!(span.ended().is_some());
   }
 }

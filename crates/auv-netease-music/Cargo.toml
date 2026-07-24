@@ -15,6 +15,11 @@ repository.workspace = true
 default = []
 tracing = ["auv-media-macos/tracing"]
 
+[[bin]]
+name = "auv-netease-music"
+path = "src/bin/auv-netease-music.rs"
+required-features = ["tracing"]
+
 [dependencies]
 auv-driver = { path = "../auv-driver" }
 # auv-media-macos compiles on all targets (non-macOS calls return Unsupported),
@@ -33,7 +38,6 @@ serde_json.workspace = true
 image.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }

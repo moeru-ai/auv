@@ -77,11 +77,8 @@ pub struct ViewEvidenceNode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewEvidenceSource {
-  OcrText,
-  AxNode,
-  IconMatch,
   #[default]
-  Visual,
+  OcrText,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -859,7 +856,7 @@ mod tests {
       ViewEvidenceNode {
         // labels: None nodes are skipped
         id: "c".into(),
-        source: ViewEvidenceSource::AxNode,
+        source: ViewEvidenceSource::OcrText,
         label: None,
         bounds: None,
         confidence: Confidence::Low,

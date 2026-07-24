@@ -34,9 +34,9 @@ path = "src/bin/auv-minecraft.rs"
 auv-runtime = { path = "../.." }
 auv-apple-textedit = { path = "../auv-apple-textedit" }
 auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }
-auv-game-osu = { path = "../auv-game-osu" }
-auv-game-balatro = { path = "../auv-game-balatro" }
-auv-game-minecraft = { path = "../auv-game-minecraft" }
+auv-game-osu = { path = "../auv-game-osu", features = ["tracing"] }
+auv-game-balatro = { path = "../auv-game-balatro", features = ["tracing"] }
+auv-game-minecraft = { path = "../auv-game-minecraft", features = ["tracing"] }
 auv-godot = { path = "../auv-godot" }
 auv-task-object-detection = { path = "../auv-task-object-detection" }
 auv-driver = { path = "../auv-driver" }

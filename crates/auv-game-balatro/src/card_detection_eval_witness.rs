@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -160,6 +161,7 @@ impl CardDetectionEvalWitnessReason {
   }
 }
 
+#[cfg(feature = "tracing")]
 pub async fn publish_card_detection_witness(
   context: Option<&Context>,
   witness: &CardDetectionEvalWitnessManifest,
@@ -167,16 +169,13 @@ pub async fn publish_card_detection_witness(
   crate::run_read::publish_json_artifact(context, CARD_DETECTION_EVAL_WITNESS_PURPOSE, witness).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_card_detection_witness(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<CardDetectionEvalWitnessManifest, crate::BalatroArtifactReadError> {
-  let bytes = crate::run_read::read_json_artifact_bytes(store, snapshot, uri, CARD_DETECTION_EVAL_WITNESS_PURPOSE).await?;
-  serde_json::from_slice(&bytes).map_err(|source| crate::BalatroArtifactReadError::MalformedJson {
-    uri: uri.clone(),
-    source,
-  })
+  crate::run_read::read_json_artifact(store, snapshot, uri, CARD_DETECTION_EVAL_WITNESS_PURPOSE).await
 }
 
 pub fn build_card_detection_eval_witness(

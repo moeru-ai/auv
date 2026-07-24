@@ -69,7 +69,6 @@ pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionR
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
     attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
-    fallback_reason: None,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -86,12 +85,22 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputAction
   let selected_pattern = native::select_node(window, &indices)?;
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxPress,
-    attempts: vec![InputAttempt {
-      path: InputDeliveryPath::AxPress,
-      succeeded: true,
-      message: Some(selected_pattern.to_string()),
-    }],
-    fallback_reason: (selected_pattern == "InvokePattern.Invoke").then_some("SelectionItemPattern was unavailable".to_string()),
+    attempts: if selected_pattern == "InvokePattern.Invoke" {
+      vec![
+        InputAttempt::failure(InputDeliveryPath::AxPress, "SelectionItemPattern was unavailable"),
+        InputAttempt {
+          path: InputDeliveryPath::AxPress,
+          succeeded: true,
+          message: Some(selected_pattern.to_string()),
+        },
+      ]
+    } else {
+      vec![InputAttempt {
+        path: InputDeliveryPath::AxPress,
+        succeeded: true,
+        message: Some(selected_pattern.to_string()),
+      }]
+    },
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,

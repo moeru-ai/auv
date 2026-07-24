@@ -8,6 +8,7 @@ use auv_file::{
 };
 use auv_stage_status::StageStatus;
 use auv_task_object_detection::Detection;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -133,6 +134,7 @@ impl CardDetectionSpatialQueryReason {
   }
 }
 
+#[cfg(feature = "tracing")]
 pub async fn publish_card_detection_spatial_query(
   context: Option<&Context>,
   query: &CardDetectionSpatialQueryManifest,
@@ -140,16 +142,13 @@ pub async fn publish_card_detection_spatial_query(
   crate::run_read::publish_json_artifact(context, CARD_DETECTION_SPATIAL_QUERY_PURPOSE, query).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_card_detection_spatial_query(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<CardDetectionSpatialQueryManifest, crate::BalatroArtifactReadError> {
-  let bytes = crate::run_read::read_json_artifact_bytes(store, snapshot, uri, CARD_DETECTION_SPATIAL_QUERY_PURPOSE).await?;
-  serde_json::from_slice(&bytes).map_err(|source| crate::BalatroArtifactReadError::MalformedJson {
-    uri: uri.clone(),
-    source,
-  })
+  crate::run_read::read_json_artifact(store, snapshot, uri, CARD_DETECTION_SPATIAL_QUERY_PURPOSE).await
 }
 
 pub fn query_card_detection_spatial(

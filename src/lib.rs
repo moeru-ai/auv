@@ -1,14 +1,11 @@
 pub mod api;
-pub mod app;
 pub mod contract;
 pub mod inspect;
 pub mod mcp;
 pub mod model;
 pub mod run_read;
-pub mod runtime;
 pub mod scene_state_read;
 pub mod scroll_scan;
-pub mod session;
 
 use std::path::PathBuf;
 

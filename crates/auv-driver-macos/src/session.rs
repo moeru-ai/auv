@@ -132,13 +132,13 @@ impl AccessibilityApi<'_> {
     query: &str,
     expected_role: Option<&str>,
     candidate: &str,
-  ) -> DriverResult<crate::accessibility::AxFocusObservation> {
+  ) -> DriverResult<crate::accessibility::AxFocusResult> {
     let _ = self.session;
     crate::accessibility::focus_text_by_query(app, query, expected_role, candidate)
   }
 
   /// Captures the current AX tree and verifies expected text on a role-matched node.
-  pub fn verify_text(&self, app: &str, expected_text: &str, expected_role: &str) -> DriverResult<crate::accessibility::AxTextObservation> {
+  pub fn verify_text(&self, app: &str, expected_text: &str, expected_role: &str) -> DriverResult<crate::accessibility::AxTextRead> {
     let _ = self.session;
     crate::accessibility::verify_text(app, expected_text, expected_role)
   }
@@ -338,7 +338,6 @@ impl WindowApi<'_> {
               InputAttempt::failure(InputDeliveryPath::WindowTargetedMouse, fallback_reason.clone()),
               InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
             ],
-            fallback_reason: Some(fallback_reason),
             mouse_disturbance: DisturbanceLevel::Temporary,
             focus_disturbance: DisturbanceLevel::Foreground,
             clipboard_disturbance: DisturbanceLevel::None,
@@ -377,7 +376,6 @@ impl WindowApi<'_> {
               InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboard, fallback_reason.clone()),
               InputAttempt::success(InputDeliveryPath::ClipboardPaste),
             ],
-            fallback_reason: Some(fallback_reason),
             mouse_disturbance: DisturbanceLevel::None,
             focus_disturbance: DisturbanceLevel::Foreground,
             clipboard_disturbance: DisturbanceLevel::Temporary,
@@ -390,7 +388,6 @@ impl WindowApi<'_> {
 
   pub fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
     let mut attempts = Vec::new();
-    let mut fallback_reason = None;
     for candidate in scroll_attempt_candidates(&options) {
       match candidate {
         ScrollDeliveryCandidate::AxScroll => {
@@ -400,7 +397,6 @@ impl WindowApi<'_> {
           // mutation against captured AX tree state.
           let message = "AX scroll is not implemented in this slice";
           attempts.push(InputAttempt::failure(InputDeliveryPath::AxScroll, message));
-          fallback_reason.get_or_insert_with(|| message.to_string());
         }
         ScrollDeliveryCandidate::WindowTargetedWheel => match self.scroll_window_targeted_wheel(window, point, scroll, options.settle) {
           Ok(()) => {
@@ -408,7 +404,6 @@ impl WindowApi<'_> {
             return Ok(InputActionResult {
               selected_path: InputDeliveryPath::WindowTargetedWheel,
               attempts,
-              fallback_reason,
               mouse_disturbance: DisturbanceLevel::None,
               focus_disturbance: DisturbanceLevel::None,
               clipboard_disturbance: DisturbanceLevel::None,
@@ -416,8 +411,7 @@ impl WindowApi<'_> {
           }
           Err(error) => {
             let message = error.to_string();
-            attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedWheel, message.clone()));
-            fallback_reason.get_or_insert(message);
+            attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedWheel, message));
           }
         },
         ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => {
@@ -426,7 +420,6 @@ impl WindowApi<'_> {
           // owner-approved verification for focus/element anchoring.
           let message = "window-targeted keyboard scroll is reserved but disabled";
           attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboardScroll, message));
-          fallback_reason.get_or_insert_with(|| message.to_string());
         }
         ScrollDeliveryCandidate::ForegroundHid => {
           if options.policy == InputPolicy::BackgroundOnly {
@@ -438,7 +431,6 @@ impl WindowApi<'_> {
           return Ok(InputActionResult {
             selected_path: result.selected_path,
             attempts,
-            fallback_reason,
             mouse_disturbance: result.mouse_disturbance,
             focus_disturbance: result.focus_disturbance,
             clipboard_disturbance: result.clipboard_disturbance,
@@ -457,7 +449,6 @@ impl WindowApi<'_> {
     let number = window_number(window)?;
     let title = window.title.clone().unwrap_or_default();
     let mut attempts = Vec::new();
-    let mut fallback_reason = None;
 
     for candidate in window_mutation_candidates(&options) {
       let path = window_mutation_path(candidate);
@@ -467,14 +458,12 @@ impl WindowApi<'_> {
         // bridge; enable when the owner approves foreground repositioning.
         let message = "foreground window mutation fallback is not implemented in this slice";
         attempts.push(WindowMutationAttempt::failure(path, message));
-        fallback_reason.get_or_insert_with(|| message.to_string());
         continue;
       }
 
       if !candidate_supports_window_mutation(candidate, kind) {
         let message = format!("{} does not support {}", window_mutation_candidate_name(candidate), window_mutation_kind_name(kind));
         attempts.push(WindowMutationAttempt::failure(path, message.clone()));
-        fallback_reason.get_or_insert(message);
         continue;
       }
 
@@ -485,14 +474,13 @@ impl WindowApi<'_> {
           if !options.settle.is_zero() {
             thread::sleep(options.settle);
           }
-          let result = window_mutation_result(path, attempts, fallback_reason, response);
+          let result = window_mutation_result(path, attempts, response);
           verify_window_mutation(kind, &options.verification, &result)?;
           return Ok(result);
         }
         Err(error) => {
           let message = error.to_string();
           attempts.push(WindowMutationAttempt::failure(path, message.clone()));
-          fallback_reason.get_or_insert(message);
           if options.policy == WindowMutationPolicy::NativeOnly {
             break;
           }
@@ -500,7 +488,7 @@ impl WindowApi<'_> {
       }
     }
 
-    Err(window_mutation_failure(attempts, fallback_reason))
+    Err(window_mutation_failure(attempts))
   }
 
   pub fn prepare_for_input(&self, window: &Window, options: PrepareForInputOptions) -> DriverResult<InputPreparationLease> {
@@ -563,13 +551,14 @@ impl WindowApi<'_> {
 }
 
 impl InputApi<'_> {
-  pub fn click_at(&self, point: Point, click: Click) -> DriverResult<()> {
+  pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
     let _ = self.session;
     let (count, interval) = match click {
       Click::Single => (1, 0),
       Click::Double { interval } => (2, duration_millis(interval)?),
     };
-    crate::native::pointer::click_point(point.x, point.y, 0, count, interval).map_err(backend)
+    crate::native::pointer::click_point(point.x, point.y, 0, count, interval).map_err(backend)?;
+    Ok(foreground_system_events_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
   }
 
   pub fn scroll_global_hid(&self, point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
@@ -583,7 +572,6 @@ impl InputApi<'_> {
       attempts: vec![InputAttempt::success(
         InputDeliveryPath::ForegroundSystemEvents,
       )],
-      fallback_reason: None,
       mouse_disturbance: DisturbanceLevel::Temporary,
       focus_disturbance: DisturbanceLevel::Unknown,
       clipboard_disturbance: DisturbanceLevel::None,
@@ -618,7 +606,7 @@ impl InputApi<'_> {
     Ok(foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
   }
 
-  pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<()> {
+  pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<InputActionResult> {
     let _ = self.session;
     let _lock = acquire_clipboard_lock(Duration::from_millis(5_000))?;
     let snapshot = crate::native::clipboard::capture_clipboard_snapshot().map_err(backend)?;
@@ -648,7 +636,13 @@ impl InputApi<'_> {
     })();
     let restore_result = crate::native::clipboard::restore_clipboard_snapshot(&snapshot).map_err(backend);
     match (result, restore_result) {
-      (Ok(()), Ok(())) => Ok(()),
+      (Ok(()), Ok(())) => Ok(InputActionResult {
+        selected_path: InputDeliveryPath::ClipboardPaste,
+        attempts: vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)],
+        mouse_disturbance: DisturbanceLevel::None,
+        focus_disturbance: DisturbanceLevel::Unknown,
+        clipboard_disturbance: DisturbanceLevel::Temporary,
+      }),
       (Err(action_error), Ok(())) => Err(action_error),
       (Ok(()), Err(restore_error)) => Err(backend(format!("pasted text but failed to restore clipboard: {restore_error}"))),
       (Err(action_error), Err(restore_error)) => {
@@ -1087,7 +1081,6 @@ fn foreground_system_events_result(
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
-    fallback_reason: None,
     mouse_disturbance,
     focus_disturbance,
     clipboard_disturbance,
@@ -1241,13 +1234,11 @@ fn rounded_positive_i64(value: f64, field: &str) -> DriverResult<i64> {
 fn window_mutation_result(
   selected_path: WindowMutationPath,
   attempts: Vec<WindowMutationAttempt>,
-  fallback_reason: Option<String>,
   response: crate::native::window::DecodedWindowMutationResponse,
 ) -> WindowMutationResult {
   WindowMutationResult {
     selected_path,
     attempts,
-    fallback_reason,
     before_frame: Some(Rect::new(
       response.before_x as f64,
       response.before_y as f64,
@@ -1356,13 +1347,11 @@ fn verify_close(actual: f64, expected: f64, tolerance: f64, field: &str) -> Driv
   Err(backend(format!("window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}")))
 }
 
-fn window_mutation_failure(attempts: Vec<WindowMutationAttempt>, fallback_reason: Option<String>) -> DriverError {
+fn window_mutation_failure(attempts: Vec<WindowMutationAttempt>) -> DriverError {
   let mut parts =
     attempts.into_iter().filter_map(|attempt| attempt.message.map(|message| format!("{:?}: {message}", attempt.path))).collect::<Vec<_>>();
   if parts.is_empty() {
-    if let Some(reason) = fallback_reason {
-      parts.push(reason);
-    }
+    parts.push("no window mutation candidate succeeded".to_string());
   }
   if parts.is_empty() {
     return DriverError::unsupported("window_mutation");
@@ -1936,6 +1925,16 @@ mod no_steal_tests {
   }
 
   #[test]
+  fn global_click_returns_typed_input_action_result() {
+    let _: fn(&InputApi<'static>, Point, Click) -> DriverResult<InputActionResult> = InputApi::click_at;
+  }
+
+  #[test]
+  fn paste_text_returns_typed_input_action_result() {
+    let _: fn(&InputApi<'static>, PasteTextOptions) -> DriverResult<InputActionResult> = InputApi::paste_text;
+  }
+
+  #[test]
   fn type_text_parts_validate_submit_and_delay_without_delivery() {
     let parts = type_text_parts(TypeTextOptions {
       submit: TextSubmit::Return,
@@ -2262,7 +2261,6 @@ mod no_steal_tests {
         WindowMutationPath::AxWindowAttribute,
         "set AXPosition",
       )],
-      None,
       crate::native::window::DecodedWindowMutationResponse {
         performed_action: "move_to".to_string(),
         path: "pid=123 window_number=42".to_string(),
@@ -2293,7 +2291,6 @@ mod no_steal_tests {
     let result = window_mutation_result(
       WindowMutationPath::AxWindowAttribute,
       Vec::new(),
-      None,
       crate::native::window::DecodedWindowMutationResponse {
         performed_action: "resize".to_string(),
         path: "pid=123 window_number=42".to_string(),
@@ -2329,7 +2326,6 @@ mod no_steal_tests {
     let result = window_mutation_result(
       WindowMutationPath::AxWindowAction,
       Vec::new(),
-      None,
       crate::native::window::DecodedWindowMutationResponse {
         performed_action: "minimize".to_string(),
         path: "pid=123 window_number=42".to_string(),
@@ -2356,13 +2352,10 @@ mod no_steal_tests {
 
   #[test]
   fn window_mutation_failure_preserves_attempt_messages() {
-    let error = window_mutation_failure(
-      vec![
-        WindowMutationAttempt::failure(WindowMutationPath::AxWindowAttribute, "stale window"),
-        WindowMutationAttempt::failure(WindowMutationPath::ForegroundSystemEvents, "foreground fallback deferred"),
-      ],
-      Some("stale window".to_string()),
-    );
+    let error = window_mutation_failure(vec![
+      WindowMutationAttempt::failure(WindowMutationPath::AxWindowAttribute, "stale window"),
+      WindowMutationAttempt::failure(WindowMutationPath::ForegroundSystemEvents, "foreground fallback deferred"),
+    ]);
 
     let message = error.to_string();
     assert!(message.contains("stale window"));

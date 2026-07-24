@@ -206,6 +206,23 @@ fn disabled_calls_do_not_create_a_run() {
 }
 
 #[test]
+fn literal_span_macro_scopes_the_operation_under_the_current_run() {
+  let fixture = TestDispatch::memory();
+  let run_id = RunId::new();
+  let root = fixture.context(run_id);
+
+  let value = root.in_scope(|| auv_tracing::in_span!("auv.test.literal_operation", || 42));
+
+  assert_eq!(value, 42);
+  block_on_timeout(fixture.dispatch.flush()).unwrap();
+  let snapshot = block_on_timeout(fixture.store.load_snapshot(run_id)).unwrap().expect("literal span run");
+  let span = snapshot.spans().values().next().expect("literal span");
+  assert_eq!(span.started().name().as_str(), "auv.test.literal_operation");
+  assert!(span.started().attributes().is_empty());
+  assert!(span.ended().is_some());
+}
+
+#[test]
 fn enabled_root_without_emissions_creates_no_run() {
   let fixture = TestDispatch::memory();
   let run_id = RunId::new();

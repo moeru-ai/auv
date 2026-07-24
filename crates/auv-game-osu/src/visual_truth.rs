@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CaptureSample, CaptureTraceSample, DispatchSample, MapSummary, ScheduledAction};
+use crate::{CaptureSample, CaptureTimingSample, DispatchSample, MapSummary, ScheduledAction};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VisualTruthManifest {
@@ -49,39 +49,39 @@ pub struct ExpectedObjectTruth {
 pub fn build_visual_truth_manifest(
   map_summary: &MapSummary,
   schedule: &[ScheduledAction],
-  dispatch_trace: &[DispatchSample],
-  capture_trace: &[CaptureTraceSample],
+  dispatch_samples: &[DispatchSample],
+  capture_samples: &[CaptureTimingSample],
 ) -> Result<VisualTruthManifest, String> {
   let schedule_by_object = schedule.iter().map(|action| (action.object_index, action)).collect::<HashMap<_, _>>();
-  let dispatch_by_object = dispatch_trace.iter().map(|sample| (sample.object_index, sample)).collect::<HashMap<_, _>>();
-  let capture_by_object = capture_trace.iter().map(|sample| (sample.object_index, sample)).collect::<HashMap<_, _>>();
+  let dispatch_by_object = dispatch_samples.iter().map(|sample| (sample.object_index, sample)).collect::<HashMap<_, _>>();
+  let capture_by_object = capture_samples.iter().map(|sample| (sample.object_index, sample)).collect::<HashMap<_, _>>();
   let mut frames = Vec::new();
 
-  for capture_sample in capture_trace {
+  for capture_sample in capture_samples {
     let scheduled_action = schedule_by_object
       .get(&capture_sample.object_index)
-      .ok_or_else(|| format!("capture trace references missing scheduled action for object {}", capture_sample.object_index))?;
+      .ok_or_else(|| format!("capture samples references missing scheduled action for object {}", capture_sample.object_index))?;
     let dispatch_sample = dispatch_by_object
       .get(&capture_sample.object_index)
-      .ok_or_else(|| format!("capture trace references missing dispatch sample for object {}", capture_sample.object_index))?;
+      .ok_or_else(|| format!("capture samples references missing dispatch sample for object {}", capture_sample.object_index))?;
 
     if scheduled_action.object_kind != capture_sample.object_kind {
-      return Err(format!("object {} kind mismatch between schedule and capture trace", capture_sample.object_index));
+      return Err(format!("object {} kind mismatch between schedule and capture samples", capture_sample.object_index));
     }
     if dispatch_sample.object_kind != capture_sample.object_kind {
-      return Err(format!("object {} kind mismatch between dispatch trace and capture trace", capture_sample.object_index));
+      return Err(format!("object {} kind mismatch between dispatch samples and capture samples", capture_sample.object_index));
     }
     if scheduled_action.scheduled_time_ms != capture_sample.scheduled_time_ms {
-      return Err(format!("object {} scheduled time mismatch between schedule and capture trace", capture_sample.object_index));
+      return Err(format!("object {} scheduled time mismatch between schedule and capture samples", capture_sample.object_index));
     }
     if dispatch_sample.scheduled_time_ms != capture_sample.scheduled_time_ms {
-      return Err(format!("object {} scheduled time mismatch between dispatch trace and capture trace", capture_sample.object_index));
+      return Err(format!("object {} scheduled time mismatch between dispatch samples and capture samples", capture_sample.object_index));
     }
     if dispatch_sample.actual_dispatch_time_ms != capture_sample.actual_dispatch_time_ms {
-      return Err(format!("object {} dispatch time mismatch between dispatch trace and capture trace", capture_sample.object_index));
+      return Err(format!("object {} dispatch time mismatch between dispatch samples and capture samples", capture_sample.object_index));
     }
     if dispatch_sample.dispatch_error_ms != capture_sample.dispatch_error_ms {
-      return Err(format!("object {} dispatch error mismatch between dispatch trace and capture trace", capture_sample.object_index));
+      return Err(format!("object {} dispatch error mismatch between dispatch samples and capture samples", capture_sample.object_index));
     }
 
     for capture in &capture_sample.captures {
@@ -105,10 +105,10 @@ pub fn build_visual_truth_manifest(
 
   for object_index in capture_by_object.keys() {
     if !schedule_by_object.contains_key(object_index) {
-      return Err(format!("capture trace references missing scheduled action for object {}", object_index));
+      return Err(format!("capture samples references missing scheduled action for object {}", object_index));
     }
     if !dispatch_by_object.contains_key(object_index) {
-      return Err(format!("capture trace references missing dispatch sample for object {}", object_index));
+      return Err(format!("capture samples references missing dispatch sample for object {}", object_index));
     }
   }
 
@@ -167,7 +167,7 @@ mod tests {
     }]
   }
 
-  fn test_dispatch_trace() -> Vec<DispatchSample> {
+  fn test_dispatch_samples() -> Vec<DispatchSample> {
     vec![DispatchSample {
       object_index: 0,
       object_kind: ObjectKind::Circle,
@@ -186,8 +186,8 @@ mod tests {
     let manifest = build_visual_truth_manifest(
       &test_map_summary(),
       &test_schedule(),
-      &test_dispatch_trace(),
-      &[CaptureTraceSample {
+      &test_dispatch_samples(),
+      &[CaptureTimingSample {
         object_index: 0,
         object_kind: ObjectKind::Circle,
         scheduled_time_ms: 100,
@@ -239,8 +239,8 @@ mod tests {
     let error = build_visual_truth_manifest(
       &test_map_summary(),
       &test_schedule(),
-      &test_dispatch_trace(),
-      &[CaptureTraceSample {
+      &test_dispatch_samples(),
+      &[CaptureTimingSample {
         object_index: 0,
         object_kind: ObjectKind::Circle,
         scheduled_time_ms: 100,

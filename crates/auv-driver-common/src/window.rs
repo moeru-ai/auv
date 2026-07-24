@@ -135,13 +135,19 @@ impl WindowMutationAttempt {
 pub struct WindowMutationResult {
   pub selected_path: WindowMutationPath,
   pub attempts: Vec<WindowMutationAttempt>,
-  pub fallback_reason: Option<String>,
   pub before_frame: Option<Rect>,
   pub after_frame: Option<Rect>,
   pub before_state: Option<WindowState>,
   pub after_state: Option<WindowState>,
   pub focus_disturbance: DisturbanceLevel,
   pub mouse_disturbance: DisturbanceLevel,
+}
+
+impl WindowMutationResult {
+  /// Returns the first failed mutation attempt's diagnostic.
+  pub fn fallback_reason(&self) -> Option<&str> {
+    self.attempts.iter().find(|attempt| !attempt.succeeded).and_then(|attempt| attempt.message.as_deref())
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,12 +194,10 @@ mod tests {
   fn window_mutation_types_serde_as_snake_case() {
     let result = WindowMutationResult {
       selected_path: WindowMutationPath::AxWindowAttribute,
-      attempts: vec![WindowMutationAttempt {
-        path: WindowMutationPath::AxWindowAttribute,
-        succeeded: true,
-        message: Some("set AXPosition".to_string()),
-      }],
-      fallback_reason: None,
+      attempts: vec![
+        WindowMutationAttempt::failure(WindowMutationPath::PlatformNative, "native mutation unavailable"),
+        WindowMutationAttempt::success(WindowMutationPath::AxWindowAttribute, "set AXPosition"),
+      ],
       before_frame: Some(Rect::new(0.0, 0.0, 400.0, 300.0)),
       after_frame: Some(Rect::new(10.0, 20.0, 400.0, 300.0)),
       before_state: Some(WindowState {
@@ -210,7 +214,9 @@ mod tests {
 
     let encoded = serde_json::to_value(&result).expect("serialize");
     assert_eq!(encoded["selected_path"], "ax_window_attribute");
-    assert_eq!(encoded["attempts"][0]["path"], "ax_window_attribute");
+    assert_eq!(encoded["attempts"][1]["path"], "ax_window_attribute");
+    assert!(encoded.get("fallback_reason").is_none());
+    assert_eq!(result.fallback_reason(), Some("native mutation unavailable"));
 
     let decoded: WindowMutationResult = serde_json::from_value(encoded).expect("deserialize");
     assert_eq!(decoded, result);

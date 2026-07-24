@@ -1,6 +1,5 @@
 //! Product inspection over canonical run snapshots.
 
-pub(crate) mod query_wired_minecraft;
 pub(crate) mod query_wired_osu;
 pub(crate) mod sections;
 

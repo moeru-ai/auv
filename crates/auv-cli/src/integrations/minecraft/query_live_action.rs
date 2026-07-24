@@ -1,18 +1,9 @@
-use std::sync::Mutex;
+use auv_driver::{InputActionResult, geometry::WindowPoint};
 
-use auv_driver::geometry::WindowPoint;
-use auv_game_minecraft::{QueryActionWiringLineage, QueryLiveClickExecutor};
-
-pub const QUERY_WIRED_LIVE_ACTION_OPERATION_ID: &str = "auv.minecraft.query_wired_live_action";
-
-/// Synchronous executor required by the Minecraft wiring policy.
-///
-/// The enclosing async product function publishes the captured typed input
-/// results after the policy call returns.
+/// Delivers direct Minecraft window clicks for live projection workflows.
 pub struct DirectWindowPointClickExecutor {
   target_app: String,
   target_title: String,
-  actions: Mutex<Vec<auv_driver::InputActionResult>>,
 }
 
 impl DirectWindowPointClickExecutor {
@@ -20,16 +11,11 @@ impl DirectWindowPointClickExecutor {
     Self {
       target_app: target_app.into(),
       target_title: target_title.into(),
-      actions: Mutex::new(Vec::new()),
     }
   }
 
-  pub fn actions(&self) -> Vec<auv_driver::InputActionResult> {
-    self.actions.lock().expect("Minecraft click action mutex poisoned").clone()
-  }
-
-  /// Delivers one typed window click and retains its result for publication.
-  pub fn click(&self, window_point: WindowPoint) -> Result<(String, auv_driver::InputActionResult), String> {
+  /// Delivers one typed window click.
+  pub fn click(&self, window_point: WindowPoint) -> Result<InputActionResult, String> {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let window = session
       .window()
@@ -40,14 +26,6 @@ impl DirectWindowPointClickExecutor {
       })
       .map_err(|error| error.to_string())?;
     let action = session.window().click(&window, window_point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
-    let summary = format!("clicked window point ({:.3},{:.3}) in {}", window_point.point().x, window_point.point().y, window.reference.id);
-    self.actions.lock().expect("Minecraft click action mutex poisoned").push(action.clone());
-    Ok((summary, action))
-  }
-}
-
-impl QueryLiveClickExecutor for DirectWindowPointClickExecutor {
-  fn attempt_click(&self, window_point: WindowPoint, _lineage: &QueryActionWiringLineage) -> Result<String, String> {
-    self.click(window_point).map(|(summary, _)| summary)
+    Ok(action)
   }
 }

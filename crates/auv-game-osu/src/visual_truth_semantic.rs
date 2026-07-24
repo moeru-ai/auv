@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -101,6 +102,7 @@ impl VisualTruthSemanticReason {
   }
 }
 
+#[cfg(feature = "tracing")]
 pub async fn publish_osu_visual_truth_semantic(
   context: Option<&Context>,
   semantic: &VisualTruthSemanticManifest,
@@ -108,6 +110,7 @@ pub async fn publish_osu_visual_truth_semantic(
   crate::run_read::publish_json_artifact(context, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE, semantic, validate_semantic_payload).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_osu_visual_truth_semantic(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -116,6 +119,7 @@ pub async fn read_osu_visual_truth_semantic(
   crate::run_read::read_json_artifact(store, snapshot, uri, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE, validate_semantic_payload).await
 }
 
+#[cfg(feature = "tracing")]
 fn validate_semantic_payload(semantic: &VisualTruthSemanticManifest) -> Result<(), String> {
   if semantic.schema_version != VISUAL_TRUTH_SEMANTIC_MANIFEST_SCHEMA_VERSION {
     return Err(format!(
@@ -139,7 +143,7 @@ pub fn validate_visual_truth_semantic(
 ) -> VisualTruthSemanticValidationResult<VisualTruthSemanticValidationOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = crate::run_read::now_millis();
+  let generated_at_millis = crate::time::now_millis();
   let source_visual_truth_manifest_path = inputs.run_artifact_dir.join(VISUAL_TRUTH_MANIFEST_FILE);
   let source_projection_path = inputs.run_artifact_dir.join(PROJECTION_FILE);
 

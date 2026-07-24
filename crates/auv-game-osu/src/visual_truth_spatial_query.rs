@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -147,6 +148,7 @@ impl VisualTruthSpatialQueryReason {
   }
 }
 
+#[cfg(feature = "tracing")]
 pub async fn publish_osu_visual_truth_spatial_query(
   context: Option<&Context>,
   query: &VisualTruthSpatialQueryManifest,
@@ -154,6 +156,7 @@ pub async fn publish_osu_visual_truth_spatial_query(
   crate::run_read::publish_json_artifact(context, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, query, validate_spatial_query_payload).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_osu_visual_truth_spatial_query(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -259,7 +262,7 @@ impl VisualTruthPixelVisibility {
 pub fn query_visual_truth_spatial(inputs: VisualTruthSpatialQueryInputs) -> VisualTruthSpatialQueryResult<VisualTruthSpatialQueryOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = crate::run_read::now_millis();
+  let generated_at_millis = crate::time::now_millis();
   let semantic_manifest =
     read_json_file::<VisualTruthSemanticManifest>(&inputs.visual_truth_semantic_manifest_path, "osu visual truth semantic manifest")?;
 

@@ -1,45 +1,38 @@
-//! ViewMemory persistence and anchor reacquisition (SceneBridge A3-min).
+//! ViewMemory construction, validation, and anchor reacquisition.
 //!
-//! NOTICE(artifact-dir-bridge-a3): Without `--store-root`, reads/writes JSON under
-//! product `--artifact-dir` paths with a compatibility placeholder run id.
-//! Run-storage `view-memory` artifact role lands in A7-min when store recording
-//! is enabled.
+//! Legacy string-pair trace builders are not part of the public memory API:
+//!
+//! ```compile_fail
+//! use auv_view::memory::{
+//!   memory_write_span_attributes,
+//!   reacquire_memory_load_span_attributes,
+//!   reacquire_root_span_name,
+//!   reacquire_stage_span_name,
+//! };
+//! ```
+//!
+//! Obsolete app-specific inspect projections are not part of the view-memory
+//! domain API:
+//!
+//! ```compile_fail
+//! use auv_view::memory::ViewParserInspect;
+//! ```
 
-mod inspect;
 mod reacquire;
 mod reacquire_adapter;
 mod read;
-mod store;
-mod trace;
 mod write;
 
-pub use inspect::{
-  GeometryProofSummary, IdentityProofSummary, MemoryProofSummary, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, ReacquisitionRecord,
-  ReplayProofSummary, ResolutionProofSummary, VerificationProofSummary, ViewParserInspect, ViewParserListSummary, ViewParserReacquireWire,
-  ViewParserSelectResultWire, ViewParserSelectStepWire, ViewParserSelectTargetWire, ViewParserSelectVerificationWire, ViewResolutionSummary,
-  format_view_resolution_summary_text, summarize_view_parser_inspect,
-};
 pub use reacquire::{
   ReacquireCandidate, ReacquireConfig, ReacquireObservation, ReacquireOutcome, ReacquireStrategy, ReacquireTarget, ReacquiredNode, reacquire,
 };
 pub use reacquire_adapter::{ReacquireDriverAdapter, outcome_label, strategy_name};
 pub use read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory};
-pub use store::{
-  load_memory_file, memory_file_name, memory_file_path, parse_memory_file, serialize_memory_bytes, view_memory_lineage_ref_wire,
-  write_memory_file,
-};
-pub use trace::{
-  ATTR_MEMORY_ANCHOR_COUNT, ATTR_MEMORY_EVICTION_COUNT, ATTR_MEMORY_LANDMARK_COUNT, ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS,
-  ATTR_MEMORY_LOAD_MEMORY_ID, ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_MEMORY_MEMORY_ID, ATTR_MEMORY_NODE_SNAPSHOT_COUNT,
-  ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND, ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME, ATTR_REACQUIRE_SCOPE_ID,
-  ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED, ATTR_REACQUIRE_TARGET_KIND, SPAN_MEMORY_WRITE,
-  SPAN_REACQUIRE_MEMORY_LOAD, SPAN_REACQUIRE_ROOT_PREFIX, SPAN_REACQUIRE_STAGE_PREFIX, memory_write_span_attributes,
-  reacquire_memory_load_span_attributes, reacquire_root_span_name, reacquire_stage_span_name,
-};
-pub use write::{ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryWriteInput, build_memory_id, try_build_memory};
+pub use write::{MemoryWriteInput, build_memory_id, try_build_memory};
 
 use std::collections::BTreeMap;
 
+use auv_tracing::ArtifactUri;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -49,20 +42,16 @@ use crate::{
 
 pub const VIEW_MEMORY_SCHEMA_VERSION: &str = "view-memory-v0";
 
-/// Donor-neutral run artifact role for persisted [`ViewMemory`] payloads.
-pub const VIEW_MEMORY_ARTIFACT_ROLE: &str = "view-memory";
-
 pub const DEFAULT_MEMORY_TTL_MILLIS: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ViewMemory {
   pub schema_version: String,
+  pub source_scan_uri: ArtifactUri,
   pub memory_id: String,
   pub app_bundle_id: String,
   pub scope_id: String,
   pub last_reconstructed_at_millis: u64,
-  pub source_run_id: String,
-  pub source_reconstruction_ref: String,
   pub anchors: Vec<ViewAnchor>,
   pub landmarks: Vec<ViewLandmark>,
   pub node_snapshots: BTreeMap<String, ViewNodeSnapshot>,
@@ -164,12 +153,11 @@ pub fn memory_from_reconstruction_parts(input: MemoryWriteInput<'_>, reconstruct
   let memory_id = build_memory_id(input.app_bundle_id, input.scope_id);
   Some(ViewMemory {
     schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
+    source_scan_uri: input.source_scan_uri,
     memory_id,
     app_bundle_id: input.app_bundle_id.to_string(),
     scope_id: input.scope_id.to_string(),
     last_reconstructed_at_millis: input.last_reconstructed_at_millis,
-    source_run_id: input.source_run_id,
-    source_reconstruction_ref: input.source_reconstruction_ref,
     anchors: reconstruction.anchor_index.clone(),
     landmarks: reconstruction.landmark_index.clone(),
     node_snapshots: snapshots,
@@ -187,6 +175,11 @@ pub fn memory_from_reconstruction_parts(input: MemoryWriteInput<'_>, reconstruct
 mod tests {
   use super::*;
   use crate::{AnchorStrength, ViewAnchor};
+  use auv_tracing::{ArtifactId, RunId};
+
+  fn source_scan_uri() -> ArtifactUri {
+    ArtifactUri::from_ids(RunId::new(), ArtifactId::new())
+  }
 
   fn sample_root() -> ViewNodeRecord {
     ViewNodeRecord {
@@ -221,6 +214,7 @@ mod tests {
     };
     let memory = memory_from_reconstruction_parts(
       MemoryWriteInput {
+        source_scan_uri: source_scan_uri(),
         app_bundle_id: "com.netease.163music",
         scope_id: "playlist_sidebar",
         root: &root,
@@ -230,8 +224,6 @@ mod tests {
           baseline_width: 240,
           schema_version_view_ir: VIEW_IR_SCHEMA_VERSION.to_string(),
         },
-        source_reconstruction_ref: "playlist-scan-cache.json".into(),
-        source_run_id: ARTIFACT_DIR_BRIDGE_RUN_ID.into(),
         last_reconstructed_at_millis: 1_719_744_000_000,
         clean: true,
       },
@@ -258,6 +250,7 @@ mod tests {
     };
     let memory = memory_from_reconstruction_parts(
       MemoryWriteInput {
+        source_scan_uri: source_scan_uri(),
         app_bundle_id: "com.netease.163music",
         scope_id: "playlist_sidebar",
         root: &root,
@@ -267,8 +260,6 @@ mod tests {
           baseline_width: 240,
           schema_version_view_ir: VIEW_IR_SCHEMA_VERSION.to_string(),
         },
-        source_reconstruction_ref: String::new(),
-        source_run_id: ARTIFACT_DIR_BRIDGE_RUN_ID.into(),
         last_reconstructed_at_millis: 0,
         clean: true,
       },

@@ -44,13 +44,13 @@ paths.
 Good convergence work usually has one of these shapes:
 
 - Defines or tightens a shared contract in `docs/TERMS_AND_CONCEPTS.md`,
-  `src/contract.rs`, run records, artifacts, or command signals.
+  `src/contract.rs`, run records, artifacts, or typed command facts.
 - Reconnects invoke and typed Rust command surfaces so CLI, library, MCP, and future UI
   frontends share the same runtime execution path.
 - Connects an existing producer to an existing consumer with typed evidence,
-  for example `RecognitionResult -> CandidateRef -> action -> VerificationResult`.
+  for example `RecognitionResult -> CandidateRef -> action -> app-owned result`.
 - Aligns typed driver results with runtime evidence, for example
-  `InputActionResult -> OperationResult / VerificationResult -> trace/artifact signals`.
+  `InputActionResult -> app-owned result -> tracing events/artifacts`.
 - Fixes a reproduced bug in a narrow path and adds a regression test.
 - Turns a known boundary into explicit metadata, failure layers, fallback
   reasons, or validation errors.
@@ -144,7 +144,7 @@ The active macOS automation seam is:
 recognition / AX / candidates
   -> ActionResolver
   -> auv-driver InputActionResult
-  -> OperationResult / VerificationResult / trace artifacts
+  -> app-owned operation result / tracing events / artifacts
 ```
 
 Keep visual presentation separate from input delivery:

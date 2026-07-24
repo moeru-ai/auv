@@ -24,3 +24,22 @@ fn core_crate_exposes_no_operation_recording_wrapper() {
   assert!(!lib.contains("mod recording"));
   assert!(!lib.contains("pub use recording"));
 }
+
+#[test]
+fn authority_readback_uses_cursor_language_not_an_observation_model() {
+  let dispatch = fs::read_to_string(format!("{}/src/dispatch.rs", env!("CARGO_MANIFEST_DIR"))).unwrap();
+
+  for forbidden in [
+    "ObservationLane",
+    "ObservationTarget",
+    "ObservationWork",
+    "ObservationResult",
+    "ObservationSpawnGuard",
+    "ObservationTaskGuard",
+    "ObservationFailureTarget",
+    "CursorObservation",
+    "CursorObservationFailure",
+  ] {
+    assert!(!dispatch.contains(forbidden), "dispatch still defines the ambiguous internal model `{forbidden}`");
+  }
+}

@@ -1,5 +1,4 @@
 use std::fmt;
-use std::path::PathBuf;
 
 use auv_driver::vision::TextRecognitionOptions;
 use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext};
@@ -18,7 +17,6 @@ use crate::views::player::PlaybackControlState;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaybackStatusInputs {
   pub app_id: String,
-  pub artifact_dir: PathBuf,
   pub settle_ms: u64,
   pub ocr_options: TextRecognitionOptions,
 }
@@ -27,7 +25,6 @@ impl PlaybackStatusInputs {
   pub fn with_defaults() -> Self {
     Self {
       app_id: DEFAULT_APP_ID.to_string(),
-      artifact_dir: PathBuf::from("/tmp/auv-netease-playback-status-artifacts"),
       settle_ms: 350,
       ocr_options: TextRecognitionOptions::default(),
     }
@@ -50,7 +47,6 @@ pub struct PlaybackStatus {
   pub click_point: Option<auv_driver::Point>,
   pub detail_screen_detected: bool,
   pub source: Option<String>,
-  pub artifacts: Vec<String>,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
 }
@@ -71,7 +67,6 @@ impl PlaybackStatus {
       click_point: self.click_point,
       detail_screen_detected: self.detail_screen_detected,
       source: self.source.as_deref(),
-      artifacts: &self.artifacts,
       diagnostics: &self.diagnostics,
       known_limits: &self.known_limits,
     }
@@ -95,7 +90,6 @@ pub struct PlaybackStatusJson<'a> {
   pub click_point: Option<auv_driver::Point>,
   pub detail_screen_detected: bool,
   pub source: Option<&'a str>,
-  pub artifacts: &'a [String],
   pub diagnostics: &'a [ParserDiagnostic],
   pub known_limits: &'a [String],
 }
@@ -107,13 +101,7 @@ impl fmt::Display for PlaybackStatusHumanReadable<'_> {
     status.load_preset(NOTHING);
     if self.wide {
       status.set_header([
-        "PLAYBACK",
-        "SCREEN",
-        "PLAYING",
-        "CONTROL",
-        "CLICK",
-        "ARTIFACTS",
-        "SOURCE",
+        "PLAYBACK", "SCREEN", "PLAYING", "CONTROL", "CLICK", "SOURCE",
       ]);
       status.add_row([
         Cell::new(playback_cell(result.playback_exists)),
@@ -121,7 +109,6 @@ impl fmt::Display for PlaybackStatusHumanReadable<'_> {
         Cell::new(playing_cell(result.was_playing, result.control_state)),
         Cell::new(control_state_cell(result.control_state)),
         Cell::new(click_point_cell(result.click_point)),
-        Cell::new(result.artifacts.len()),
         Cell::new(result.source.as_deref().unwrap_or("-")),
       ]);
     } else {
@@ -211,10 +198,10 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
 
   // NOTICE(netease-windows-playback-status-scope): unlike the macOS probe,
   // this reads UIA control state directly and does not capture screenshots,
-  // run OCR, or click into the song-detail screen. `artifact_dir` and
-  // `ocr_options` are part of the shared `PlaybackStatusInputs` contract for
-  // the macOS branch and are intentionally unused here.
-  let _ = (&inputs.artifact_dir, &inputs.ocr_options);
+  // run OCR, or click into the song-detail screen. `ocr_options` is part of the
+  // shared `PlaybackStatusInputs` contract for the macOS branch and is
+  // intentionally unused here.
+  let _ = &inputs.ocr_options;
 
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
@@ -231,7 +218,6 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       click_point: None,
       detail_screen_detected: false,
       source: None,
-      artifacts: Vec::new(),
       diagnostics,
       known_limits,
     });
@@ -278,7 +264,6 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
         click_point: None,
         detail_screen_detected: false,
         source: None,
-        artifacts: Vec::new(),
         diagnostics,
         known_limits,
       });
@@ -309,7 +294,6 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     click_point: None,
     detail_screen_detected: false,
     source: None,
-    artifacts: Vec::new(),
     diagnostics,
     known_limits,
   })
@@ -326,9 +310,6 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   };
   use auv_view::ViewBounds;
 
-  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
-
-  let mut artifacts = Vec::new();
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
 
@@ -350,7 +331,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
 
   let before_capture = session.window().capture(&window).map_err(|error| format!("initial playback capture failed: {error}"))?;
-  artifacts.push(write_capture_artifact(&inputs.artifact_dir, "playback-status-before", &before_capture)?);
+  crate::run_artifacts::emit_png("auv.netease.playback.before_capture", &before_capture.image);
   let before_recognition = session
     .vision()
     .recognize_text_in_capture_with_options(&before_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
@@ -378,7 +359,6 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       click_point: None,
       detail_screen_detected: true,
       source,
-      artifacts,
       diagnostics,
       known_limits,
     });
@@ -396,7 +376,6 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       click_point: None,
       detail_screen_detected: false,
       source: None,
-      artifacts,
       diagnostics,
       known_limits,
     });
@@ -414,7 +393,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       },
     )
     .map_err(|error| format!("playback bar click failed: {error}"))?;
-  if let Some(reason) = click_result.fallback_reason {
+  if let Some(reason) = click_result.fallback_reason() {
     known_limits.push(format!("playback bar click fallback: {reason}"));
   }
   if inputs.settle_ms > 0 {
@@ -422,7 +401,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   }
 
   let mut after_capture = session.window().capture(&window).map_err(|error| format!("post-click detail capture failed: {error}"))?;
-  artifacts.push(write_capture_artifact(&inputs.artifact_dir, "playback-status-after-click", &after_capture)?);
+  crate::run_artifacts::emit_png("auv.netease.playback.after_click_capture", &after_capture.image);
   let mut recognition = session
     .vision()
     .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
@@ -456,7 +435,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     }
 
     after_capture = session.window().capture(&window).map_err(|error| format!("post-foreground-click detail capture failed: {error}"))?;
-    artifacts.push(write_capture_artifact(&inputs.artifact_dir, "playback-status-after-foreground-click", &after_capture)?);
+    crate::run_artifacts::emit_png("auv.netease.playback.after_foreground_click_capture", &after_capture.image);
     recognition = session
       .vision()
       .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
@@ -487,17 +466,9 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     click_point: Some(click_point),
     detail_screen_detected,
     source,
-    artifacts,
     diagnostics,
     known_limits,
   })
-}
-
-#[cfg(target_os = "macos")]
-fn write_capture_artifact(artifact_dir: &std::path::Path, name: &str, capture: &auv_driver::capture::Capture) -> Result<String, String> {
-  let path = artifact_dir.join(format!("{name}.png"));
-  capture.image.save(&path).map_err(|error| format!("failed to save {}: {error}", path.display()))?;
-  Ok(path.display().to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -549,7 +520,6 @@ mod tests {
       click_point: None,
       detail_screen_detected: true,
       source: Some("每日歌曲推荐".to_string()),
-      artifacts: Vec::new(),
       diagnostics: Vec::new(),
       known_limits: Vec::new(),
     };
@@ -569,14 +539,13 @@ mod tests {
       click_point: Some(auv_driver::Point::new(104.0, 1012.0)),
       detail_screen_detected: true,
       source: Some("每日歌曲推荐".to_string()),
-      artifacts: vec!["before.png".to_string(), "after.png".to_string()],
       diagnostics: Vec::new(),
       known_limits: Vec::new(),
     };
 
     assert_eq!(
       result.to_human_readable(true).to_string(),
-      "PLAYBACK  SCREEN   PLAYING  CONTROL        CLICK         ARTIFACTS  SOURCE\nDetected  Details  Playing  pause_visible  104.0,1012.0  2          每日歌曲推荐"
+      "PLAYBACK  SCREEN   PLAYING  CONTROL        CLICK         SOURCE\nDetected  Details  Playing  pause_visible  104.0,1012.0  每日歌曲推荐"
     );
   }
 
@@ -592,7 +561,6 @@ mod tests {
       click_point: Some(auv_driver::Point::new(104.0, 1012.0)),
       detail_screen_detected: true,
       source: Some("每日歌曲推荐".to_string()),
-      artifacts: vec!["before.png".to_string(), "after.png".to_string()],
       diagnostics: Vec::new(),
       known_limits: Vec::new(),
     };
@@ -605,7 +573,7 @@ mod tests {
     assert_eq!(value["control_state"], "pause_visible");
     assert_eq!(value["detail_screen_detected"], true);
     assert_eq!(value["source"], "每日歌曲推荐");
-    assert_eq!(value["artifacts"], serde_json::json!(["before.png", "after.png"]));
+    assert!(value.get("artifacts").is_none());
   }
 
   #[test]
@@ -620,7 +588,6 @@ mod tests {
       click_point: Some(auv_driver::Point::new(104.0, 1012.0)),
       detail_screen_detected: false,
       source: None,
-      artifacts: Vec::new(),
       diagnostics: vec![ParserDiagnostic {
         code: "song_detail_not_detected".to_string(),
         message: "playback bar click did not reveal NetEase song detail markers".to_string(),

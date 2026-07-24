@@ -6,14 +6,12 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanFrame};
+use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanFrame, ScanFrameError};
 
 #[derive(Debug, Error)]
 pub enum ScanArtifactError {
-  #[error("schema_version mismatch: expected {SCAN_FRAME_SCHEMA_VERSION}, found {found}")]
-  SchemaMismatch { found: String },
-  #[error("invalid bounds for {field}")]
-  InvalidBounds { field: &'static str },
+  #[error(transparent)]
+  Frame(#[from] ScanFrameError),
   #[error("missing required field: {0}")]
   MissingField(&'static str),
   #[error(transparent)]
@@ -26,6 +24,11 @@ pub enum ScanArtifactError {
 /// `sequence_index` 0 → `"scan-frame-0001.json"`.
 pub fn frame_artifact_file_name(sequence_index: u32) -> String {
   format!("scan-frame-{:04}.json", sequence_index.saturating_add(1))
+}
+
+/// Returns the bundle-local PNG name derived from the frame sequence.
+pub fn frame_image_file_name(sequence_index: u32) -> String {
+  format!("frame-{:04}.png", sequence_index.saturating_add(1))
 }
 
 pub fn write_frame_artifact(dir: &Path, frame: &ScanFrame) -> Result<PathBuf, ScanArtifactError> {
@@ -47,9 +50,12 @@ pub fn read_frame_artifact(path: &Path) -> Result<ScanFrame, ScanArtifactError> 
     return Err(ScanArtifactError::MissingField("schema_version"));
   };
   let Some(schema_version) = schema_version.as_str() else {
-    return Err(ScanArtifactError::SchemaMismatch {
-      found: schema_version.to_string(),
-    });
+    return Err(
+      ScanFrameError::SchemaMismatch {
+        found: schema_version.to_string(),
+      }
+      .into(),
+    );
   };
   if schema_version.is_empty() {
     return Err(ScanArtifactError::MissingField("schema_version"));
@@ -62,7 +68,7 @@ pub fn read_frame_artifact(path: &Path) -> Result<ScanFrame, ScanArtifactError> 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::frame::{ScanBounds, ScanImageRef};
+  use crate::frame::{ScanBounds, ScanImageDimensions};
 
   fn sample_frame() -> ScanFrame {
     ScanFrame {
@@ -77,11 +83,9 @@ mod tests {
         height: 600,
       },
       viewport_bounds: None,
-      image: ScanImageRef {
-        file_name: "frame-0001.png".to_string(),
+      image_dimensions: ScanImageDimensions {
         width: 8,
         height: 8,
-        media_type: "image/png".to_string(),
       },
     }
   }
@@ -106,7 +110,7 @@ mod tests {
     let path = dir.join("bad.json");
     fs::write(&path, serde_json::to_string_pretty(&frame).unwrap()).unwrap();
     let err = read_frame_artifact(&path).expect_err("schema");
-    assert!(matches!(err, ScanArtifactError::SchemaMismatch { .. }));
+    assert!(matches!(err, ScanArtifactError::Frame(ScanFrameError::SchemaMismatch { .. })));
     let _ = fs::remove_dir_all(&dir);
   }
 
@@ -136,9 +140,9 @@ mod tests {
     let err = read_frame_artifact(&path).expect_err("bounds");
     assert!(matches!(
       err,
-      ScanArtifactError::InvalidBounds {
+      ScanArtifactError::Frame(ScanFrameError::InvalidBounds {
         field: "window_bounds"
-      }
+      })
     ));
     let _ = fs::remove_dir_all(&dir);
   }

@@ -1,44 +1,104 @@
-//! In-memory coverage evaluator and read-model (`CoverageView`).
-//!
-//! NOTICE(s8a): durable wire lives in `coverage_artifact.rs`;
-//! evaluator + `CoverageView` remain in-memory by design.
+//! Coverage evaluator and canonical typed result.
 
 use crate::association::AssociationResult;
 use crate::reader::ScanFrameBundle;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CoverageEntry {
   pub track_id: String,
   pub last_seen_frame_id: String,
   pub observation_count: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NegativeEvidence {
   pub code: String,
   pub after_frame_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CompletenessClaim {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CoverageStatus {
   Complete,
-  Incomplete { reason: String },
+  Incomplete {
+    reason: String,
+    open_uncertainty_codes: Vec<String>,
+    negative_evidence: Vec<NegativeEvidence>,
+  },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CoverageView {
   pub entries: Vec<CoverageEntry>,
-  pub open_uncertainty_codes: Vec<String>,
-  pub negative_evidence: Vec<NegativeEvidence>,
-  pub completeness: CompletenessClaim,
+  status: CoverageStatus,
+}
+
+impl CoverageView {
+  pub fn complete(entries: Vec<CoverageEntry>) -> Self {
+    Self {
+      entries,
+      status: CoverageStatus::Complete,
+    }
+  }
+
+  pub fn incomplete(
+    entries: Vec<CoverageEntry>,
+    reason: impl Into<String>,
+    open_uncertainty_codes: Vec<String>,
+    negative_evidence: Vec<NegativeEvidence>,
+  ) -> Self {
+    Self {
+      entries,
+      status: CoverageStatus::Incomplete {
+        reason: reason.into(),
+        open_uncertainty_codes,
+        negative_evidence,
+      },
+    }
+  }
+
+  pub fn status(&self) -> &CoverageStatus {
+    &self.status
+  }
+
+  pub fn open_uncertainty_codes(&self) -> &[String] {
+    match &self.status {
+      CoverageStatus::Complete => &[],
+      CoverageStatus::Incomplete {
+        open_uncertainty_codes,
+        ..
+      } => open_uncertainty_codes,
+    }
+  }
+
+  pub fn negative_evidence(&self) -> &[NegativeEvidence] {
+    match &self.status {
+      CoverageStatus::Complete => &[],
+      CoverageStatus::Incomplete {
+        negative_evidence, ..
+      } => negative_evidence,
+    }
+  }
 }
 
 /// Build an in-memory coverage view from a frame bundle and association results.
 pub fn build_coverage_view(bundle: &ScanFrameBundle, associations: &[AssociationResult]) -> CoverageView {
+  build_coverage_view_for_sequence(bundle.frames.len(), bundle.frames.last().map(|frame| frame.frame_id.as_str()), associations)
+}
+
+pub(crate) fn build_coverage_view_for_sequence(
+  frame_count: usize,
+  last_frame_id: Option<&str>,
+  associations: &[AssociationResult],
+) -> CoverageView {
   let mut entries = Vec::new();
   let mut open_uncertainty_codes = Vec::new();
   let mut negative_evidence = Vec::new();
-  let last_frame_id = bundle.frames.last().map(|f| f.frame_id.as_str()).unwrap_or_default();
+  let last_frame_id = last_frame_id.unwrap_or_default();
 
   for association in associations {
     match association {
@@ -62,26 +122,17 @@ pub fn build_coverage_view(bundle: &ScanFrameBundle, associations: &[Association
     }
   }
 
-  if bundle.frames.len() >= 2 && associations.is_empty() {
+  if frame_count >= 2 && associations.is_empty() {
     negative_evidence.push(NegativeEvidence {
       code: "no_new_observation".into(),
       after_frame_id: last_frame_id.to_string(),
     });
   }
 
-  let completeness = if open_uncertainty_codes.is_empty() && negative_evidence.is_empty() {
-    CompletenessClaim::Complete
+  if open_uncertainty_codes.is_empty() && negative_evidence.is_empty() {
+    CoverageView::complete(entries)
   } else {
-    CompletenessClaim::Incomplete {
-      reason: "open uncertainties or negative evidence remain".into(),
-    }
-  };
-
-  CoverageView {
-    entries,
-    open_uncertainty_codes,
-    negative_evidence,
-    completeness,
+    CoverageView::incomplete(entries, "open uncertainties or negative evidence remain", open_uncertainty_codes, negative_evidence)
   }
 }
 
@@ -91,6 +142,25 @@ mod tests {
   use crate::association::{FrameObservation, associate_adjacent_frames};
   use crate::producer::produce_frames_from_fixture_dir;
   use crate::reader::load_scan_frames_from_dir;
+
+  #[test]
+  fn coverage_view_is_the_only_coverage_fact_shape() {
+    let public_api = include_str!("lib.rs").split("#[cfg(test)]\nmod public_api_boundary_tests").next().expect("public API boundary");
+    let artifact = include_str!("coverage_artifact.rs").split("#[cfg(test)]\nmod tests").next().expect("artifact implementation");
+    let scene_state = include_str!("scene_state.rs").split("#[cfg(test)]").next().expect("scene state implementation");
+
+    for forbidden in [
+      "ScanCoverageWire",
+      "CoverageEntryWire",
+      "NegativeEvidenceWire",
+      "CompletenessWire",
+      "coverage_view_to_wire",
+    ] {
+      assert!(!public_api.contains(forbidden), "public API still exports duplicate coverage shape {forbidden}");
+      assert!(!artifact.contains(forbidden), "artifact payload still duplicates coverage fact {forbidden}");
+    }
+    assert!(!scene_state.contains("coverage_wire"), "scene state still accepts a second coverage authority");
+  }
 
   #[test]
   fn build_coverage_view_records_last_seen_frame() {
@@ -113,9 +183,9 @@ mod tests {
     assert_eq!(view.entries.len(), 1);
     assert_eq!(view.entries[0].last_seen_frame_id, "frame-0002");
     assert_eq!(view.entries[0].observation_count, 2);
-    assert!(view.open_uncertainty_codes.is_empty());
-    assert!(view.negative_evidence.is_empty());
-    assert_eq!(view.completeness, CompletenessClaim::Complete);
+    assert!(view.open_uncertainty_codes().is_empty());
+    assert!(view.negative_evidence().is_empty());
+    assert_eq!(view.status(), &CoverageStatus::Complete);
     let _ = std::fs::remove_dir_all(&out_dir);
   }
 
@@ -128,9 +198,9 @@ mod tests {
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
     let view = build_coverage_view(&bundle, &[]);
     assert!(view.entries.is_empty());
-    assert_eq!(view.negative_evidence.len(), 1);
-    assert_eq!(view.negative_evidence[0].code, "no_new_observation");
-    assert!(matches!(view.completeness, CompletenessClaim::Incomplete { .. }));
+    assert_eq!(view.negative_evidence().len(), 1);
+    assert_eq!(view.negative_evidence()[0].code, "no_new_observation");
+    assert!(matches!(view.status(), CoverageStatus::Incomplete { .. }));
     let _ = std::fs::remove_dir_all(&out_dir);
   }
 
@@ -159,8 +229,8 @@ mod tests {
     );
     let view = build_coverage_view(&bundle, &associations);
     assert!(view.entries.is_empty());
-    assert_eq!(view.open_uncertainty_codes, vec!["ambiguous_association"]);
-    assert!(matches!(view.completeness, CompletenessClaim::Incomplete { .. }));
+    assert_eq!(view.open_uncertainty_codes(), ["ambiguous_association"]);
+    assert!(matches!(view.status(), CoverageStatus::Incomplete { .. }));
     let _ = std::fs::remove_dir_all(&out_dir);
   }
 }

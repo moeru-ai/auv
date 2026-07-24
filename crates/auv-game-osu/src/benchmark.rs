@@ -148,7 +148,7 @@ pub enum CapturePhase {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CaptureTraceSample {
+pub struct CaptureTimingSample {
   pub object_index: usize,
   pub object_kind: ObjectKind,
   pub scheduled_time_ms: u64,
@@ -157,11 +157,11 @@ pub struct CaptureTraceSample {
   pub captures: Vec<CaptureSample>,
 }
 
+/// Capture availability and timing metrics; these do not indicate semantic action success.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VerificationSummary {
-  pub capture_enabled: bool,
+pub struct CaptureCoverageMetrics {
   pub captured_action_count: usize,
-  pub missing_frame_count: usize,
+  pub missing_action_count: usize,
   pub max_capture_delay_ms: i64,
   pub suspicious_time_inversion_count: usize,
 }
@@ -179,32 +179,23 @@ pub struct LatencyReport {
   pub missed_schedule_count: usize,
 }
 
+/// Canonical aggregate metrics for one benchmark execution.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BenchmarkEvidenceSummary {
-  pub dispatch_sample_count: usize,
-  pub capture_artifact_count: usize,
-  pub has_projection_artifact: bool,
-  pub has_visual_truth_manifest: bool,
-  pub has_visual_eval_report: bool,
-  pub missed_schedule_count: usize,
-  pub verification_captured_action_count: usize,
-  pub verification_missing_frame_count: usize,
-  pub verification_suspicious_time_inversion_count: usize,
-  pub evidence_notes: Vec<String>,
+pub struct BenchmarkReport {
+  pub latency: LatencyReport,
+  pub capture_coverage: Option<CaptureCoverageMetrics>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BenchmarkOutput {
   pub map_summary: MapSummary,
   pub schedule: Vec<ScheduledAction>,
-  pub dispatch_trace: Vec<DispatchSample>,
-  pub capture_trace: Vec<CaptureTraceSample>,
-  pub latency_report: LatencyReport,
-  pub verification_summary: Option<VerificationSummary>,
+  pub dispatch_samples: Vec<DispatchSample>,
+  pub capture_samples: Vec<CaptureTimingSample>,
+  pub benchmark_report: BenchmarkReport,
   pub visual_truth_manifest: Option<VisualTruthManifest>,
   pub projection: Option<ProjectionArtifact>,
   pub visual_eval_report: Option<VisualEvalReport>,
-  pub evidence_summary: BenchmarkEvidenceSummary,
   pub output_dir: PathBuf,
 }
 
@@ -243,36 +234,28 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   }
 
   let map_summary = build_map_summary(&inputs.beatmap_path, &beatmap, &schedule);
-  let (dispatch_trace, capture_trace, verification_summary, projection) = match inputs.run_mode {
+  let (dispatch_samples, capture_samples, capture_coverage, projection) = match inputs.run_mode {
     RunMode::DryRun => (run_dry_schedule(&schedule, inputs.lead_in_ms), Vec::new(), None, None),
     RunMode::TypedDispatch => run_typed_dispatch(schedule.as_slice(), &map_summary, inputs)?,
   };
-  let latency_report = build_latency_report(inputs.run_mode.clone(), &dispatch_trace);
+  let benchmark_report = BenchmarkReport {
+    latency: build_latency_report(inputs.run_mode.clone(), &dispatch_samples),
+    capture_coverage,
+  };
   let visual_truth_manifest = if inputs.capture_verify {
-    Some(build_visual_truth_manifest(&map_summary, &schedule, &dispatch_trace, &capture_trace)?)
+    Some(build_visual_truth_manifest(&map_summary, &schedule, &dispatch_samples, &capture_samples)?)
   } else {
     None
   };
 
   let visual_eval_report = None;
 
-  let evidence_summary = build_evidence_summary(
-    &dispatch_trace,
-    &capture_trace,
-    &latency_report,
-    verification_summary.as_ref(),
-    visual_truth_manifest.as_ref(),
-    projection.as_ref(),
-    visual_eval_report.as_ref(),
-  );
-
   write_json(inputs.output_dir.join("parsed_map_summary.json"), &map_summary)?;
   write_json(inputs.output_dir.join("action_schedule.json"), &schedule)?;
-  write_json(inputs.output_dir.join("dispatch_trace.json"), &dispatch_trace)?;
-  write_json(inputs.output_dir.join("latency_report.json"), &latency_report)?;
+  write_json(inputs.output_dir.join("dispatch_samples.json"), &dispatch_samples)?;
+  write_json(inputs.output_dir.join("benchmark_report.json"), &benchmark_report)?;
   if inputs.capture_verify {
-    write_json(inputs.output_dir.join("capture_trace.json"), &capture_trace)?;
-    write_json(inputs.output_dir.join("verification_summary.json"), &verification_summary)?;
+    write_json(inputs.output_dir.join("capture_samples.json"), &capture_samples)?;
     if let Some(manifest) = &visual_truth_manifest {
       write_json(inputs.output_dir.join("visual_truth_manifest.json"), manifest)?;
     }
@@ -283,19 +266,16 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   if let Some(report) = &visual_eval_report {
     write_json(inputs.output_dir.join("visual_eval_report.json"), report)?;
   }
-  write_json(inputs.output_dir.join("evidence_summary.json"), &evidence_summary)?;
 
   Ok(BenchmarkOutput {
     map_summary,
     schedule,
-    dispatch_trace,
-    capture_trace,
-    latency_report,
-    verification_summary,
+    dispatch_samples,
+    capture_samples,
+    benchmark_report,
     visual_truth_manifest,
     projection,
     visual_eval_report,
-    evidence_summary,
     output_dir: inputs.output_dir.clone(),
   })
 }
@@ -478,13 +458,13 @@ fn build_map_summary(beatmap_path: &Path, beatmap: &Beatmap, schedule: &[Schedul
 
 fn run_dry_schedule(schedule: &[ScheduledAction], lead_in_ms: u64) -> Vec<DispatchSample> {
   let start = Instant::now() + Duration::from_millis(lead_in_ms);
-  let mut trace = Vec::with_capacity(schedule.len());
+  let mut samples = Vec::with_capacity(schedule.len());
 
   for action in schedule {
     wait_until_due(start, action.scheduled_time_ms);
     let actual_dispatch_time_ms = start.elapsed().as_millis() as u64;
     let dispatch_error_ms = actual_dispatch_time_ms as i64 - action.scheduled_time_ms as i64;
-    trace.push(DispatchSample {
+    samples.push(DispatchSample {
       object_index: action.object_index,
       object_kind: action.object_kind.clone(),
       scheduled_time_ms: action.scheduled_time_ms,
@@ -497,7 +477,7 @@ fn run_dry_schedule(schedule: &[ScheduledAction], lead_in_ms: u64) -> Vec<Dispat
     });
   }
 
-  trace
+  samples
 }
 
 #[cfg(target_os = "macos")]
@@ -505,7 +485,7 @@ fn run_typed_dispatch(
   schedule: &[ScheduledAction],
   map_summary: &MapSummary,
   inputs: &BenchmarkInputs,
-) -> OsuResult<(Vec<DispatchSample>, Vec<CaptureTraceSample>, Option<VerificationSummary>, Option<ProjectionArtifact>)> {
+) -> OsuResult<(Vec<DispatchSample>, Vec<CaptureTimingSample>, Option<CaptureCoverageMetrics>, Option<ProjectionArtifact>)> {
   let target_app = inputs.target_app.as_deref().ok_or_else(|| "typed dispatch requires target_app".to_string())?;
   let dispatch_limit = inputs.dispatch_limit.unwrap_or(8).min(schedule.len());
   let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -519,8 +499,8 @@ fn run_typed_dispatch(
     &window_projection,
     inputs.capture_verify.then_some("before_dispatch capture smoke".to_string()),
   ));
-  let mut trace = Vec::with_capacity(dispatch_limit);
-  let mut capture_trace = if inputs.capture_verify {
+  let mut dispatch_samples = Vec::with_capacity(dispatch_limit);
+  let mut capture_samples = if inputs.capture_verify {
     Vec::with_capacity(dispatch_limit)
   } else {
     Vec::new()
@@ -584,7 +564,7 @@ fn run_typed_dispatch(
       .map_err(|error| format!("typed dispatch failed at object {}: {error}", action.object_index))?;
     let actual_dispatch_time_ms = start.elapsed().as_millis() as u64;
     let dispatch_error_ms = actual_dispatch_time_ms as i64 - action.scheduled_time_ms as i64;
-    trace.push(dispatch_sample_from_result(action, actual_dispatch_time_ms, dispatch_error_ms, result));
+    dispatch_samples.push(dispatch_sample_from_result(action, actual_dispatch_time_ms, dispatch_error_ms, result));
 
     if inputs.capture_verify {
       for offset_ms in &inputs.post_capture_offsets_ms {
@@ -602,7 +582,7 @@ fn run_typed_dispatch(
           *offset_ms,
         )?);
       }
-      capture_trace.push(CaptureTraceSample {
+      capture_samples.push(CaptureTimingSample {
         object_index: action.object_index,
         object_kind: action.object_kind.clone(),
         scheduled_time_ms: action.scheduled_time_ms,
@@ -613,9 +593,9 @@ fn run_typed_dispatch(
     }
   }
 
-  let verification_summary = inputs.capture_verify.then(|| build_verification_summary(dispatch_limit, &capture_trace));
+  let capture_coverage = inputs.capture_verify.then(|| build_capture_coverage_metrics(dispatch_limit, &capture_samples));
 
-  Ok((trace, capture_trace, verification_summary, projection_artifact))
+  Ok((dispatch_samples, capture_samples, capture_coverage, projection_artifact))
 }
 
 #[cfg(target_os = "macos")]
@@ -702,7 +682,7 @@ fn run_typed_dispatch(
   _schedule: &[ScheduledAction],
   _map_summary: &MapSummary,
   _inputs: &BenchmarkInputs,
-) -> OsuResult<(Vec<DispatchSample>, Vec<CaptureTraceSample>, Option<VerificationSummary>, Option<ProjectionArtifact>)> {
+) -> OsuResult<(Vec<DispatchSample>, Vec<CaptureTimingSample>, Option<CaptureCoverageMetrics>, Option<ProjectionArtifact>)> {
   Err("typed dispatch is currently implemented only for macOS".to_string())
 }
 
@@ -721,7 +701,7 @@ fn dispatch_sample_from_result(
     x: action.x,
     y: action.y,
     delivery_path: Some(format!("{:?}", result.selected_path)),
-    fallback_reason: result.fallback_reason,
+    fallback_reason: result.fallback_reason().map(str::to_string),
   }
 }
 
@@ -745,9 +725,9 @@ fn wait_until_instant(due: Instant) {
   }
 }
 
-fn build_latency_report(run_mode: RunMode, dispatch_trace: &[DispatchSample]) -> LatencyReport {
-  let total_actions = dispatch_trace.len();
-  let mut errors = dispatch_trace.iter().map(|sample| sample.dispatch_error_ms).collect::<Vec<_>>();
+fn build_latency_report(run_mode: RunMode, dispatch_samples: &[DispatchSample]) -> LatencyReport {
+  let total_actions = dispatch_samples.len();
+  let mut errors = dispatch_samples.iter().map(|sample| sample.dispatch_error_ms).collect::<Vec<_>>();
   errors.sort_unstable();
 
   let mean_error_ms = if total_actions == 0 {
@@ -761,7 +741,7 @@ fn build_latency_report(run_mode: RunMode, dispatch_trace: &[DispatchSample]) ->
   let p99_error_ms = percentile(&errors, 0.99);
   let max_error_ms = errors.iter().copied().max().unwrap_or(0);
   let jitter_ms = max_error_ms - errors.iter().copied().min().unwrap_or(0);
-  let missed_schedule_count = dispatch_trace.iter().filter(|sample| sample.dispatch_error_ms > 0).count();
+  let missed_schedule_count = dispatch_samples.iter().filter(|sample| sample.dispatch_error_ms > 0).count();
 
   LatencyReport {
     run_mode,
@@ -776,10 +756,10 @@ fn build_latency_report(run_mode: RunMode, dispatch_trace: &[DispatchSample]) ->
   }
 }
 
-fn build_verification_summary(expected_actions: usize, capture_trace: &[CaptureTraceSample]) -> VerificationSummary {
-  let captured_action_count = capture_trace.iter().filter(|sample| !sample.captures.is_empty()).count();
-  let missing_frame_count = expected_actions.saturating_sub(captured_action_count);
-  let max_capture_delay_ms = capture_trace
+fn build_capture_coverage_metrics(expected_actions: usize, capture_samples: &[CaptureTimingSample]) -> CaptureCoverageMetrics {
+  let captured_action_count = capture_samples.iter().filter(|sample| !sample.captures.is_empty()).count();
+  let missing_action_count = expected_actions.saturating_sub(captured_action_count);
+  let max_capture_delay_ms = capture_samples
     .iter()
     .flat_map(|sample| {
       sample
@@ -790,82 +770,17 @@ fn build_verification_summary(expected_actions: usize, capture_trace: &[CaptureT
     })
     .max()
     .unwrap_or(0);
-  let suspicious_time_inversion_count = capture_trace
+  let suspicious_time_inversion_count = capture_samples
     .iter()
     .flat_map(|sample| sample.captures.iter())
     .filter(|capture| matches!(capture.phase, CapturePhase::AfterDispatch) && capture.relative_to_dispatch_ms < 0)
     .count();
 
-  VerificationSummary {
-    capture_enabled: true,
+  CaptureCoverageMetrics {
     captured_action_count,
-    missing_frame_count,
+    missing_action_count,
     max_capture_delay_ms,
     suspicious_time_inversion_count,
-  }
-}
-
-fn build_evidence_summary(
-  dispatch_trace: &[DispatchSample],
-  capture_trace: &[CaptureTraceSample],
-  latency_report: &LatencyReport,
-  verification_summary: Option<&VerificationSummary>,
-  visual_truth_manifest: Option<&VisualTruthManifest>,
-  projection: Option<&ProjectionArtifact>,
-  visual_eval_report: Option<&VisualEvalReport>,
-) -> BenchmarkEvidenceSummary {
-  let mut evidence_notes = Vec::new();
-
-  if dispatch_trace.is_empty() {
-    evidence_notes.push("no dispatch samples were recorded".to_string());
-  }
-  if capture_trace.is_empty() {
-    evidence_notes.push("no capture artifacts were recorded".to_string());
-  }
-  if projection.is_none() {
-    evidence_notes.push("projection artifact is missing".to_string());
-  }
-  if visual_truth_manifest.is_none() {
-    evidence_notes.push("visual truth manifest is missing".to_string());
-  }
-  if latency_report.missed_schedule_count > 0 {
-    evidence_notes.push(format!("{} scheduled actions missed their target time", latency_report.missed_schedule_count));
-  }
-
-  let (verification_captured_action_count, verification_missing_frame_count, verification_suspicious_time_inversion_count) =
-    if let Some(summary) = verification_summary {
-      if summary.captured_action_count == 0 {
-        evidence_notes.push("verification captured zero actions".to_string());
-      }
-      if summary.missing_frame_count > 0 {
-        evidence_notes.push(format!("{} verification frames are missing", summary.missing_frame_count));
-      }
-      if summary.suspicious_time_inversion_count > 0 {
-        evidence_notes.push(format!("{} verification captures inverted dispatch timing", summary.suspicious_time_inversion_count));
-      }
-      (summary.captured_action_count, summary.missing_frame_count, summary.suspicious_time_inversion_count)
-    } else {
-      evidence_notes.push("verification summary is missing".to_string());
-      (0, 0, 0)
-    };
-
-  if let Some(report) = visual_eval_report {
-    if report.total_frames == 0 {
-      evidence_notes.push("visual eval report contains zero frames".to_string());
-    }
-  }
-
-  BenchmarkEvidenceSummary {
-    dispatch_sample_count: dispatch_trace.len(),
-    capture_artifact_count: capture_trace.len(),
-    has_projection_artifact: projection.is_some(),
-    has_visual_truth_manifest: visual_truth_manifest.is_some(),
-    has_visual_eval_report: visual_eval_report.is_some(),
-    missed_schedule_count: latency_report.missed_schedule_count,
-    verification_captured_action_count,
-    verification_missing_frame_count,
-    verification_suspicious_time_inversion_count,
-    evidence_notes,
   }
 }
 
@@ -1095,7 +1010,7 @@ ApproachRate:7
   }
 
   #[test]
-  fn benchmark_writes_smoke_evidence_summary_without_capture_verify() {
+  fn benchmark_writes_one_authoritative_report_without_derived_summaries() {
     let temp_dir = std::env::temp_dir().join(format!(
       "auv-osu-evidence-summary-{}",
       std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
@@ -1108,11 +1023,16 @@ ApproachRate:7
     let output_dir = temp_dir.join("output");
     let result = run_benchmark(&BenchmarkInputs::new(beatmap_path.clone(), output_dir.clone())).expect("benchmark should succeed");
 
-    assert!(result.verification_summary.is_none());
+    let report = read_json::<serde_json::Value>(&output_dir.join("benchmark_report.json")).expect("benchmark report");
+    let report_fields = report.as_object().expect("benchmark report object").keys().map(String::as_str).collect::<Vec<_>>();
+
+    assert_eq!(report_fields, ["capture_coverage", "latency"]);
+    assert_eq!(report["latency"]["total_actions"], 1);
+    assert!(report["capture_coverage"].is_null());
     assert!(result.projection.is_none());
-    assert!(!result.evidence_summary.evidence_notes.is_empty());
-    assert!(output_dir.join("evidence_summary.json").exists());
+    assert!(!output_dir.join("latency_report.json").exists());
     assert!(!output_dir.join("verification_summary.json").exists());
+    assert!(!output_dir.join("evidence_summary.json").exists());
     assert!(!output_dir.join("projection.json").exists());
 
     std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
@@ -1120,7 +1040,7 @@ ApproachRate:7
 
   #[test]
   fn latency_report_aggregates_percentiles() {
-    let dispatch_trace = vec![
+    let dispatch_samples = vec![
       DispatchSample {
         object_index: 0,
         object_kind: ObjectKind::Circle,
@@ -1156,7 +1076,7 @@ ApproachRate:7
       },
     ];
 
-    let report = build_latency_report(RunMode::DryRun, &dispatch_trace);
+    let report = build_latency_report(RunMode::DryRun, &dispatch_samples);
     assert_eq!(report.total_actions, 3);
     assert_eq!(report.p50_error_ms, 2);
     assert_eq!(report.p95_error_ms, 3);
@@ -1168,7 +1088,7 @@ ApproachRate:7
 
   #[test]
   fn latency_report_counts_positive_errors_as_missed_schedule() {
-    let dispatch_trace = vec![
+    let dispatch_samples = vec![
       DispatchSample {
         object_index: 0,
         object_kind: ObjectKind::Circle,
@@ -1204,7 +1124,7 @@ ApproachRate:7
       },
     ];
 
-    let report = build_latency_report(RunMode::DryRun, &dispatch_trace);
+    let report = build_latency_report(RunMode::DryRun, &dispatch_samples);
     assert_eq!(report.missed_schedule_count, 1);
     assert_eq!(report.jitter_ms, 4);
   }
@@ -1268,8 +1188,10 @@ ApproachRate:7
       5,
       InputActionResult {
         selected_path: InputDeliveryPath::WindowTargetedMouse,
-        attempts: vec![],
-        fallback_reason: Some("fallback".to_string()),
+        attempts: vec![
+          auv_driver::InputAttempt::failure(InputDeliveryPath::AxPress, "fallback"),
+          auv_driver::InputAttempt::success(InputDeliveryPath::WindowTargetedMouse),
+        ],
         mouse_disturbance: auv_driver::DisturbanceLevel::Temporary,
         focus_disturbance: auv_driver::DisturbanceLevel::Foreground,
         clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -1280,11 +1202,11 @@ ApproachRate:7
   }
 
   #[test]
-  fn verification_summary_aggregates_capture_readiness() {
-    let summary = build_verification_summary(
+  fn capture_coverage_metrics_aggregate_capture_readiness() {
+    let metrics = build_capture_coverage_metrics(
       2,
       &[
-        CaptureTraceSample {
+        CaptureTimingSample {
           object_index: 0,
           object_kind: ObjectKind::Circle,
           scheduled_time_ms: 10,
@@ -1315,7 +1237,7 @@ ApproachRate:7
             },
           ],
         },
-        CaptureTraceSample {
+        CaptureTimingSample {
           object_index: 1,
           object_kind: ObjectKind::Circle,
           scheduled_time_ms: 20,
@@ -1325,17 +1247,28 @@ ApproachRate:7
         },
       ],
     );
-    assert_eq!(summary.captured_action_count, 1);
-    assert_eq!(summary.missing_frame_count, 1);
-    assert_eq!(summary.max_capture_delay_ms, 14);
-    assert_eq!(summary.suspicious_time_inversion_count, 0);
+    assert_eq!(metrics.captured_action_count, 1);
+    assert_eq!(metrics.missing_action_count, 1);
+    assert_eq!(metrics.max_capture_delay_ms, 14);
+    assert_eq!(metrics.suspicious_time_inversion_count, 0);
+
+    let value = serde_json::to_value(&metrics).expect("serialize capture coverage metrics");
+    assert_eq!(
+      value.as_object().expect("capture coverage metrics object").keys().map(String::as_str).collect::<Vec<_>>(),
+      [
+        "captured_action_count",
+        "max_capture_delay_ms",
+        "missing_action_count",
+        "suspicious_time_inversion_count",
+      ]
+    );
   }
 
   #[test]
-  fn verification_summary_flags_after_dispatch_time_inversion() {
-    let summary = build_verification_summary(
+  fn capture_coverage_metrics_flag_after_dispatch_time_inversion() {
+    let metrics = build_capture_coverage_metrics(
       1,
-      &[CaptureTraceSample {
+      &[CaptureTimingSample {
         object_index: 0,
         object_kind: ObjectKind::Circle,
         scheduled_time_ms: 30,
@@ -1355,10 +1288,10 @@ ApproachRate:7
       }],
     );
 
-    assert_eq!(summary.captured_action_count, 1);
-    assert_eq!(summary.missing_frame_count, 0);
-    assert_eq!(summary.max_capture_delay_ms, -1);
-    assert_eq!(summary.suspicious_time_inversion_count, 1);
+    assert_eq!(metrics.captured_action_count, 1);
+    assert_eq!(metrics.missing_action_count, 0);
+    assert_eq!(metrics.max_capture_delay_ms, -1);
+    assert_eq!(metrics.suspicious_time_inversion_count, 1);
   }
 
   #[test]

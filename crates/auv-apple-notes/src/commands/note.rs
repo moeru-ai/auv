@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::driver::{NotesDriver, OperationResult, StepOutcome, VerificationOutcome};
+use crate::driver::{NoteActionResult, NotesDriver, VerificationOutcome};
 
 pub const DEFAULT_APP_ID: &str = "com.apple.Notes";
 pub const DEFAULT_NOTE_TEXT: &str = "AUV_NOTE_MARKER_2026_05_21_V2";
@@ -83,38 +83,38 @@ pub struct NoteFocus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteCommandReport {
   pub command: &'static str,
-  pub outcomes: Vec<StepOutcome>,
+  pub actions: Vec<NoteActionResult>,
   pub verification: Option<VerificationOutcome>,
 }
 
-pub fn run_note_command(command: &NoteCommand, driver: &mut impl NotesDriver) -> OperationResult<NoteCommandReport> {
+pub fn run_note_command(command: &NoteCommand, driver: &mut impl NotesDriver) -> Result<NoteCommandReport, String> {
   match command {
-    NoteCommand::New(command) => run_new(command, driver),
-    NoteCommand::Write(command) => run_write(command, driver),
-    NoteCommand::Compare(command) => run_compare(command, driver),
-    NoteCommand::Focus(command) => run_focus(command, driver),
+    NoteCommand::New(command) => crate::tracing::note_new(|| run_new(command, driver)),
+    NoteCommand::Write(command) => crate::tracing::note_write(|| run_write(command, driver)),
+    NoteCommand::Compare(command) => crate::tracing::note_compare(|| run_compare(command, driver)),
+    NoteCommand::Focus(command) => crate::tracing::note_focus(|| run_focus(command, driver)),
   }
 }
 
-fn run_new(command: &NoteNew, driver: &mut impl NotesDriver) -> OperationResult<NoteCommandReport> {
-  let outcomes = vec![
+fn run_new(command: &NoteNew, driver: &mut impl NotesDriver) -> Result<NoteCommandReport, String> {
+  let actions = vec![
     driver.activate_app(&command.app_id, Duration::from_millis(command.settle_ms))?,
     driver.create_note(&command.app_id, Duration::from_millis(command.settle_ms))?,
   ];
   Ok(NoteCommandReport {
     command: "note.new",
-    outcomes,
+    actions,
     verification: None,
   })
 }
 
-fn run_write(command: &NoteWrite, driver: &mut impl NotesDriver) -> OperationResult<NoteCommandReport> {
-  let mut outcomes = vec![driver.activate_app(&command.app_id, Duration::from_millis(command.activate_settle_ms))?];
+fn run_write(command: &NoteWrite, driver: &mut impl NotesDriver) -> Result<NoteCommandReport, String> {
+  let mut actions = vec![driver.activate_app(&command.app_id, Duration::from_millis(command.activate_settle_ms))?];
   if command.new_note {
-    outcomes.push(driver.create_note(&command.app_id, Duration::from_millis(command.create_settle_ms))?);
+    actions.push(driver.create_note(&command.app_id, Duration::from_millis(command.create_settle_ms))?);
   }
-  outcomes.push(driver.focus_note_body(&command.app_id, &command.focus_query, &command.focus_candidate)?);
-  outcomes.push(driver.paste_text_preserve_clipboard(
+  actions.push(driver.focus_note_body(&command.app_id, &command.focus_query, &command.focus_candidate)?);
+  actions.push(driver.paste_text_preserve_clipboard(
     &command.app_id,
     &command.content,
     command.replace,
@@ -125,47 +125,35 @@ fn run_write(command: &NoteWrite, driver: &mut impl NotesDriver) -> OperationRes
   } else {
     None
   };
-  normalize_write_step_ids(&mut outcomes);
   Ok(NoteCommandReport {
     command: "note.write",
-    outcomes,
+    actions,
     verification,
   })
 }
 
-fn run_compare(command: &NoteCompare, driver: &mut impl NotesDriver) -> OperationResult<NoteCommandReport> {
+fn run_compare(command: &NoteCompare, driver: &mut impl NotesDriver) -> Result<NoteCommandReport, String> {
   let verification = driver.verify_ax_text(&command.app_id, &command.content, &command.role)?;
   Ok(NoteCommandReport {
     command: "note.compare",
-    outcomes: Vec::new(),
+    actions: Vec::new(),
     verification: Some(verification),
   })
 }
 
-fn run_focus(command: &NoteFocus, driver: &mut impl NotesDriver) -> OperationResult<NoteCommandReport> {
-  let outcome = driver.focus_note_body(&command.app_id, &command.query, &command.candidate)?;
+fn run_focus(command: &NoteFocus, driver: &mut impl NotesDriver) -> Result<NoteCommandReport, String> {
+  let action = driver.focus_note_body(&command.app_id, &command.query, &command.candidate)?;
   Ok(NoteCommandReport {
     command: "note.focus",
-    outcomes: vec![outcome],
+    actions: vec![action],
     verification: None,
   })
-}
-
-fn normalize_write_step_ids(outcomes: &mut [StepOutcome]) {
-  for outcome in outcomes.iter_mut() {
-    outcome.step_id = match outcome.step_id {
-      "activate" => "note-write.activate",
-      "note.create" => "note-write.new",
-      "focus" => "note-write.focus",
-      "paste" => "note-write.paste",
-      _ => outcome.step_id,
-    };
-  }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::driver::NoteAction;
   use auv_driver::{InputActionResult, InputDeliveryPath};
 
   #[derive(Default)]
@@ -174,29 +162,26 @@ mod tests {
   }
 
   impl NotesDriver for RecordingNotesDriver {
-    fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome> {
+    fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<NoteActionResult, String> {
       self.calls.push(format!("activate:{app_id}:{}", settle.as_millis()));
-      Ok(StepOutcome {
-        step_id: "activate",
-        summary: "activated".to_string(),
+      Ok(NoteActionResult {
+        action: NoteAction::Activate,
         input_action_result: None,
       })
     }
 
-    fn create_note(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome> {
+    fn create_note(&mut self, app_id: &str, settle: Duration) -> Result<NoteActionResult, String> {
       self.calls.push(format!("new:{app_id}:{}", settle.as_millis()));
-      Ok(StepOutcome {
-        step_id: "note.create",
-        summary: "created".to_string(),
+      Ok(NoteActionResult {
+        action: NoteAction::Create,
         input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::AxPress)),
       })
     }
 
-    fn focus_note_body(&mut self, app_id: &str, query: &str, candidate: &str) -> OperationResult<StepOutcome> {
+    fn focus_note_body(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<NoteActionResult, String> {
       self.calls.push(format!("focus:{app_id}:{query}:{candidate}"));
-      Ok(StepOutcome {
-        step_id: "focus",
-        summary: "focused".to_string(),
+      Ok(NoteActionResult {
+        action: NoteAction::FocusBody,
         input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::AxFocus)),
       })
     }
@@ -207,16 +192,15 @@ mod tests {
       text: &str,
       replace_existing: bool,
       settle: Duration,
-    ) -> OperationResult<StepOutcome> {
+    ) -> Result<NoteActionResult, String> {
       self.calls.push(format!("paste:{app_id}:{text}:{replace_existing}:{}", settle.as_millis()));
-      Ok(StepOutcome {
-        step_id: "paste",
-        summary: "pasted".to_string(),
+      Ok(NoteActionResult {
+        action: NoteAction::PasteText,
         input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::ClipboardPaste)),
       })
     }
 
-    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> OperationResult<VerificationOutcome> {
+    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, String> {
       self.calls.push(format!("compare:{app_id}:{target_text}:{target_role}"));
       Ok(VerificationOutcome {
         matched_role: target_role.to_string(),
@@ -259,12 +243,12 @@ mod tests {
       ]
     );
     assert_eq!(
-      report.outcomes.iter().map(|outcome| outcome.step_id).collect::<Vec<_>>(),
+      report.actions.iter().map(|action| action.action).collect::<Vec<_>>(),
       vec![
-        "note-write.activate",
-        "note-write.new",
-        "note-write.focus",
-        "note-write.paste"
+        NoteAction::Activate,
+        NoteAction::Create,
+        NoteAction::FocusBody,
+        NoteAction::PasteText,
       ]
     );
     assert!(report.verification.is_some());
@@ -286,11 +270,11 @@ mod tests {
       ]
     );
     assert_eq!(
-      report.outcomes.iter().map(|outcome| outcome.step_id).collect::<Vec<_>>(),
+      report.actions.iter().map(|action| action.action).collect::<Vec<_>>(),
       vec![
-        "note-write.activate",
-        "note-write.focus",
-        "note-write.paste"
+        NoteAction::Activate,
+        NoteAction::FocusBody,
+        NoteAction::PasteText
       ]
     );
     assert!(report.verification.is_none());
@@ -324,5 +308,29 @@ mod tests {
 
     assert_eq!(report.command, "note.focus");
     assert_eq!(driver.calls, vec!["focus:com.apple.Notes:Note Body Text View:"]);
+  }
+
+  #[cfg(feature = "tracing")]
+  #[test]
+  fn command_uses_the_caller_context_without_owning_a_run() {
+    use std::sync::Arc;
+
+    use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
+
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let mut driver = RecordingNotesDriver::default();
+
+    let result = root.in_scope(|| run_note_command(&NoteCommand::New(NoteNew::defaults()), &mut driver));
+
+    assert!(result.is_ok());
+    futures_executor::block_on(dispatch.flush()).expect("flush");
+    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("run snapshot");
+    let span = snapshot.spans().values().next().expect("command span");
+    assert_eq!(span.started().name().as_str(), "auv.apple_notes.note.new");
+    assert!(span.started().attributes().is_empty());
+    assert!(span.ended().is_some());
   }
 }

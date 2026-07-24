@@ -85,11 +85,11 @@ struct CapturedState {
   spans: BTreeMap<u64, usize>,
   span_references: BTreeMap<u64, usize>,
   closed_span_ids: Vec<u64>,
-  signals: Vec<CapturedSignal>,
+  callbacks: Vec<CapturedCallback>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum CapturedSignal {
+enum CapturedCallback {
   Event(CapturedParent),
   Close(u64),
 }
@@ -103,8 +103,8 @@ impl CapturingSubscriber {
     self.state.lock().unwrap().closed_span_ids.clone()
   }
 
-  fn signals(&self) -> Vec<CapturedSignal> {
-    self.state.lock().unwrap().signals.clone()
+  fn callbacks(&self) -> Vec<CapturedCallback> {
+    self.state.lock().unwrap().callbacks.clone()
   }
 
   fn capture(metadata: &'static Metadata<'static>) -> CapturedCallsite {
@@ -168,7 +168,7 @@ impl Subscriber for CapturingSubscriber {
     event.record(&mut ValueVisitor(&mut callsite.values));
     callsite.parent = Self::parent(event.is_root(), event.is_contextual(), event.parent());
     let mut state = self.state.lock().unwrap();
-    state.signals.push(CapturedSignal::Event(callsite.parent.clone()));
+    state.callbacks.push(CapturedCallback::Event(callsite.parent.clone()));
     state.callsites.push(callsite);
   }
 
@@ -190,7 +190,7 @@ impl Subscriber for CapturingSubscriber {
     if *references == 0 {
       state.span_references.remove(&id);
       state.closed_span_ids.push(id);
-      state.signals.push(CapturedSignal::Close(id));
+      state.callbacks.push(CapturedCallback::Close(id));
       true
     } else {
       false
@@ -1037,13 +1037,13 @@ fn rust_tracing_concurrent_direct_span_event_and_end_are_linearized() {
     }
   }
 
-  let signals = subscriber.signals();
+  let callbacks = subscriber.callbacks();
   for span_id in subscriber.closed_span_ids() {
-    let close_index = signals.iter().position(|signal| signal == &CapturedSignal::Close(span_id)).unwrap();
-    for event_index in signals
+    let close_index = callbacks.iter().position(|callback| callback == &CapturedCallback::Close(span_id)).unwrap();
+    for event_index in callbacks
       .iter()
       .enumerate()
-      .filter_map(|(index, signal)| (signal == &CapturedSignal::Event(CapturedParent::Explicit(span_id))).then_some(index))
+      .filter_map(|(index, callback)| (callback == &CapturedCallback::Event(CapturedParent::Explicit(span_id))).then_some(index))
     {
       assert!(event_index < close_index, "successful event must be observed before span close");
     }

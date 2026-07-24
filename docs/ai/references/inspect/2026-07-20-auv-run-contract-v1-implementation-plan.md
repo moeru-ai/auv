@@ -2,7 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. In this completed plan, checkbox (`- [ ]`) steps preserve the approved procedure and are not a historical progress log.
 
-**Status:** Implementation complete. Completion is recorded by this status and the Inspect index; all unchecked steps below preserve the original execution procedure consistently.
+**Status:** Implementation in progress. The canonical `auv-tracing` core,
+authority stores, Inspect integration, and bounded telemetry projectors are
+implemented, but producer/frontend migration is not complete. The generic CLI
+and MCP invoke result bags have been removed: direct failure uses `Result`, CLI
+success carries only an optional frontend report for human or JSON presentation,
+and detached artifacts remain in the selected run authority. Completion still
+requires removal of legacy handwritten trace/observation schemas,
+path/role-based artifact surfaces, and stale terminology outside `auv-tracing`.
+The unchecked steps below remain the approved procedure; this status must not be
+changed to complete until the final workspace migration searches and frontend
+parity tests pass.
 
 **Goal:** Replace the rejected `auv-run` execution layer and the legacy `auv-tracing-driver` recorder stack with the approved opt-in `auv-tracing` context, run-fact, artifact, store, Inspect, and telemetry contracts.
 
@@ -2530,7 +2540,10 @@ function and maps that direct value into the existing CLI-only
 `InvokeCommandOutput`; MCP calls the same domain function through its own
 adapter and does not use `InvokeCommand` or reuse its output type.
 `command_id` belongs to the CLI catalog and is not added to canonical run
-facts.
+facts. The CLI output type contains only an optional frontend report. It has no
+generic summary, backend, notes, known-limits, verification, signal, artifact,
+or failure fields; the CLI may render that report as human text or JSON, and
+command failure remains the `Err` branch.
 
 Update `#[invoke_command]` to generate a private boxed adapter for each
 annotated async handler before passing it to `command::spec`:
@@ -2547,15 +2560,18 @@ Keep `id`, `group`, `summary`, and `args` macro metadata unchanged. Add a macro
 unit test that expands an async handler and type-checks the generated
 `InvokeCommand`; do not replace the concrete command with a trait object.
 
-Command implementations may call `Context::current`, `start_span!`,
-`emit_event!`, and await `emit_artifact!`; they never receive a runner or
-recording backend. Replace
+Command implementations may call `Context::current`, `in_span!`,
+`start_span!`, `emit_event!`, and await `emit_artifact!`; they never receive a
+runner or recording backend. Use `in_span!` only for a literal operation name
+with empty attributes; use a typed `SpanSpec` when attributes are required.
+Replace
 `ProducedArtifact` path/role/note records at each command with an owned reader,
 `ArtifactPurpose`, `ContentType`, digest, length, and attributes passed directly
-to `emit_artifact!`. When emission returns `Some`, a command-specific CLI
-adapter may expose its canonical URI in that command's presentation; disabled
-tracing returns `None` and does not change the primary domain value or error.
-Do not add a generic attachment/result/failure shape to `auv-tracing`.
+to `emit_artifact!`. Detached emission is not awaited to construct the direct
+frontend value. CLI and MCP return the run ID but do not duplicate the
+authority's artifact list; callers read canonical URIs through `RunStore` or
+Inspect. Disabled tracing does not change the primary domain value or error. Do
+not add a generic attachment/result/failure shape to `auv-tracing`.
 `InvokeResult` remains
 `auv-cli-invoke` presentation data; it is never rebuilt from `RunStore` and no
 field is canonical run truth.
@@ -2653,12 +2669,12 @@ legacy recording.
 - [ ] **Step 2: Emit the exact owned payload**
 
 Define `SCROLL_SCAN_PURPOSE = "auv.runtime.scroll_scan"` beside
-`ScrollScanArtifact`. Serialize that exact Rust type as `application/json` into
-`NewArtifact<R>` and await `emit_artifact!` from the scroll-scan call site.
-Known limits and observation snapshots remain fields of `ScrollScanArtifact`;
-they are not normalized into generic tracing verification or observation
-objects. Remove only this slice's preferred filename, role, summary, and path
-inputs.
+`ScrollScanArtifact`. Serialize that exact Rust type as `application/json` and
+submit it through the detached recording path after constructing the direct
+domain result. Known limits remain part of `ScrollScanArtifact`; the abandoned
+generic `ObservationSnapshot`/`SurfaceNode` projection is not embedded in it.
+Remove preferred filename, role, summary, path, and tracing-lineage inputs from
+the domain result.
 
 - [ ] **Step 3: Read by purpose, URI, and committed metadata**
 
@@ -2818,90 +2834,21 @@ git add crates/auv-game-balatro Cargo.lock
 git commit --only crates/auv-game-balatro Cargo.lock -m "refactor(auv-game-balatro): migrate run artifacts"
 ```
 
-### Task 20: Migrate Minecraft Run Producers And Readers
+### Task 20: Keep Minecraft Core Producers And Readers
 
-**Files:**
-- Modify: `crates/auv-game-minecraft/Cargo.toml`
-- Modify: `crates/auv-game-minecraft/src/artifact.rs`
-- Modify: `crates/auv-game-minecraft/src/inspect/sections.rs`
-- Modify: `crates/auv-game-minecraft/src/inspect/tests_smoke.rs`
-- Modify: `crates/auv-game-minecraft/src/prep.rs`
-- Rewrite: `crates/auv-game-minecraft/src/run_read.rs`
-- Modify: `crates/auv-game-minecraft/src/sample_builder.rs`
-- Modify: `crates/auv-game-minecraft/src/scene_packet.rs`
-- Modify: `crates/auv-game-minecraft/src/training_job.rs`
-- Modify: `crates/auv-game-minecraft/src/training_launch.rs`
-- Modify: `crates/auv-game-minecraft/src/training_package.rs`
-- Modify: `crates/auv-game-minecraft/src/training_result.rs`
-- Modify: `crates/auv-game-minecraft/src/training_result_artifact.rs`
-- Modify: `crates/auv-game-minecraft/src/training_result_holdout_preview.rs`
-- Modify: `crates/auv-game-minecraft/src/training_result_holdout_render_quality.rs`
-- Modify: `crates/auv-game-minecraft/src/training_result_semantic.rs`
-- Modify: `crates/auv-game-minecraft/src/training_result_spatial_query.rs`
-- Create: `crates/auv-game-minecraft/tests/tracing_contract.rs`
+Owner direction retired the Minecraft `training_*` vertical. The V1 migration
+therefore keeps only current Minecraft core producers and readers, including
+projection and scene-packet artifacts. Training jobs, packages, results,
+holdout analysis, training spatial queries, their CLI commands, and their
+inspect projections are deleted rather than migrated or preserved as tracing
+compatibility.
 
-- [ ] **Step 1: Add a failing projection round-trip test**
+The remaining typed readers accept `&dyn RunStore` and `&RunSnapshot`, select
+an exact artifact purpose, and use the canonical AUV artifact URI and integrity
+checks. Minecraft domain concepts must not be promoted into generic
+`auv-tracing` verification, observation, recommendation, or operation records.
 
-```rust
-#[test]
-fn projection_round_trips_without_a_file_locator() {
-  futures_executor::block_on(async {
-    let fixture = MinecraftRunFixture::memory();
-    let published = fixture.publish_projection(expected_projection()).await.unwrap();
-    let decoded: MinecraftProjectionArtifact =
-      read_minecraft_projection(fixture.store(), &published).await.unwrap();
-    assert_eq!(decoded, expected_projection());
-    assert_eq!(published.purpose().as_str(), "auv.minecraft.projection");
-  });
-}
-```
-
-Run: `cargo test -p auv-game-minecraft --test tracing_contract`
-
-Expected: FAIL because the reader still consumes `CanonicalRun` and artifact
-paths.
-
-- [ ] **Step 2: Assign exact purposes to existing Minecraft payloads**
-
-```text
-auv.minecraft.projection
-auv.minecraft.scene_packet
-auv.minecraft.training.job
-auv.minecraft.training.package
-auv.minecraft.training.result
-auv.minecraft.training.holdout_preview
-auv.minecraft.training.holdout_render_quality
-auv.minecraft.training.semantic
-auv.minecraft.training.spatial_query
-```
-
-Keep each payload's existing Rust struct and validation. Every purpose listed
-above is a typed JSON artifact with `application/json`; this task does not add a
-second preview-image artifact for `holdout_preview`. Do not translate
-projection, readiness, mismatch-refusal, or training status into generic core
-verification or observation records.
-
-- [ ] **Step 3: Rewrite Minecraft readers against committed metadata**
-
-Readers accept `&dyn RunStore` and `&RunSnapshot`, select an exact purpose,
-open the canonical URI, verify content type/length/digest, and decode in the
-Minecraft crate. Inspect sections call those typed readers. Remove
-`EvidenceCorrelationKey`, role, summary, preferred filename, and path lookup
-from the storage boundary; preserve domain correlation fields inside the typed
-payload where they still have consumers.
-
-- [ ] **Step 4: Run the Minecraft suite**
-
-Run: `cargo test -p auv-game-minecraft && cargo test -p auv-game-minecraft --test tracing_contract`
-
-Expected: PASS, and `rg -n 'auv_tracing_driver|auv-tracing-driver|CanonicalRun|ArtifactRecordV1Alpha1' crates/auv-game-minecraft` exits 1.
-
-- [ ] **Step 5: Commit Minecraft migration**
-
-```bash
-git add crates/auv-game-minecraft Cargo.lock
-git commit --only crates/auv-game-minecraft Cargo.lock -m "refactor(auv-game-minecraft): migrate run artifacts"
-```
+Validation: `cargo test -p auv-game-minecraft --all-features`.
 
 ### Task 21: Migrate osu! Run Producers And Readers
 
@@ -3080,8 +3027,9 @@ Balatro, Minecraft, osu!, and TextEdit functions return their existing domain
 values directly and use `Context::current` for optional spans/events. They emit
 artifacts with the purpose constants established in Tasks 19-21. TextEdit owns
 event schema `auv.textedit.document_write.verification` version 1 and continues
-to return its existing `VerificationResult`; the canonical run records the
-domain event but does not derive an operation status or retry recommendation.
+to return its app-owned `VerificationOutcome`; the canonical run records that
+typed domain event but does not derive an operation status, generic verification
+record, or retry recommendation.
 
 Migrate the remaining root-owned artifacts with this exact table; all are
 `application/json` and all readers are named here:
@@ -3094,8 +3042,9 @@ Migrate the remaining root-owned artifacts with this exact table; all are
 | `auv.runtime.scan_coverage` | `ScanCoverageWire` | `read_scan_coverage` |
 
 Use `NewArtifact<R>` at each typed producer. Do not add a runtime-generic
-verification event. `VerificationResult` remains in its app-owned direct result
-or in the TextEdit-owned schema above. Retire persisted `OperationResult`,
+verification type or event. Each app keeps its own direct result and event
+schema, such as TextEdit `VerificationOutcome` or Minecraft
+`WorldDiffVerdict`. Retire persisted `OperationResult`,
 `OperationSummaryRecord`, run status, and output summary instead of assigning
 them new purposes.
 
@@ -3232,7 +3181,7 @@ git commit --only Cargo.toml Cargo.lock crates/auv-tracing-driver docs/TERMS_AND
 | CLI/MCP/library composition without a runner | 16 |
 | root runtime producer/reader migration | 17 |
 | NetEase typed artifact/lineage migration | 18 |
-| Balatro, Minecraft, and osu! owner-specific migration | 19-21 |
+| Balatro and osu! owner-specific migration; narrowed Minecraft core migration | 19-21 |
 | product CLI integration and recorded-wrapper removal | 22 |
 | legacy retirement and workspace validation | 23 |
 

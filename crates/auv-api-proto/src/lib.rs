@@ -35,7 +35,7 @@ mod tests {
   }
 
   #[test]
-  fn file_descriptor_set_exposes_direct_invoke_without_operation_readback() {
+  fn file_descriptor_set_exposes_direct_typed_invoke_result_json() {
     let descriptor_set = FileDescriptorSet::decode(FILE_DESCRIPTOR_SET).expect("decode FILE_DESCRIPTOR_SET");
 
     let session_file = descriptor_set
@@ -49,7 +49,7 @@ mod tests {
 
     let rpc_names: Vec<&str> = session_service.method.iter().filter_map(|method| method.name.as_deref()).collect();
 
-    assert_eq!(rpc_names, vec!["CreateSession", "Invoke", "StreamSessionEvents",]);
+    assert_eq!(rpc_names, vec!["CreateSession", "Invoke"]);
 
     assert!(
       session_file.message_type.iter().all(|message| message.name.as_deref() != Some("OperationRef")),
@@ -58,10 +58,22 @@ mod tests {
 
     let invoke_response =
       session_file.message_type.iter().find(|message| message.name.as_deref() == Some("InvokeResponse")).expect("InvokeResponse descriptor");
-    assert_eq!(invoke_response.field.first().and_then(|field| field.name.as_deref()), Some("run_id"));
+    let response_fields = invoke_response.field.iter().filter_map(|field| field.name.as_deref()).collect::<Vec<_>>();
+    assert_eq!(response_fields, vec!["run_id", "completed", "failed", "recording_failure"]);
+    assert_eq!(invoke_response.oneof_decl.iter().filter_map(|oneof| oneof.name.as_deref()).collect::<Vec<_>>(), vec!["terminal"]);
     assert!(
       invoke_response.field.iter().any(|field| field.name.as_deref() == Some("recording_failure")),
       "InvokeResponse must expose post-execution recording failure separately from direct command status"
+    );
+    let completed = session_file
+      .message_type
+      .iter()
+      .find(|message| message.name.as_deref() == Some("InvokeCompleted"))
+      .expect("InvokeCompleted descriptor");
+    assert_eq!(completed.field.iter().filter_map(|field| field.name.as_deref()).collect::<Vec<_>>(), vec!["result_json"]);
+    assert!(
+      session_file.message_type.iter().all(|message| !matches!(message.name.as_deref(), Some("ArtifactRef" | "SessionEvent"))),
+      "session invoke must not retain detached artifact lists or an unwired generic event projection"
     );
   }
 

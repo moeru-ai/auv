@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use auv_apple_textedit::DocumentWrite;
-use auv_runtime::mcp::{McpInvokeAdapter, McpInvokeInput, McpInvokeOutcome};
+use auv_runtime::mcp::{McpInvokeAdapter, McpInvokeInput, McpInvokeSuccess};
 
 /// Serve product MCP (CLI `auv mcp serve`) with the shared product inspect composer
 /// and product invoke metadata/adapters.
@@ -23,8 +23,244 @@ pub fn server(project_root: PathBuf) -> Result<auv_runtime::mcp::McpServer, Stri
 
 pub(crate) fn product_invoke_adapters() -> Vec<McpInvokeAdapter> {
   let mut adapters = auv_runtime::mcp::core_invoke_adapters();
+  adapters.push(balatro_blind_select_adapter());
+  adapters.push(balatro_blind_skip_adapter());
+  adapters.push(balatro_cards_clear_adapter());
+  adapters.push(balatro_cards_discard_adapter());
+  adapters.push(balatro_cards_play_adapter());
+  adapters.push(balatro_cards_select_adapter());
+  adapters.push(balatro_cash_out_adapter());
+  adapters.push(balatro_consumable_sell_adapter());
+  adapters.push(balatro_consumable_use_adapter());
+  adapters.push(balatro_game_restart_adapter());
+  adapters.push(balatro_joker_sell_adapter());
+  adapters.push(balatro_pack_choose_adapter());
+  adapters.push(balatro_pack_skip_adapter());
+  adapters.push(balatro_store_buy_adapter());
+  adapters.push(balatro_store_next_round_adapter());
   adapters.push(textedit_document_write_adapter());
   adapters
+}
+
+fn balatro_blind_select_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(
+    crate::integrations::balatro::BLIND_SELECT_COMMAND_ID,
+    |input| async move { invoke_balatro_blind_select(input).await },
+  )
+}
+
+async fn invoke_balatro_blind_select(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_blind_select_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_blind_select(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_blind_skip_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::BLIND_SKIP_COMMAND_ID, |input| async move { invoke_balatro_blind_skip(input).await })
+}
+
+async fn invoke_balatro_blind_skip(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_blind_skip_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_blind_skip(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_cards_clear_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::CARDS_CLEAR_COMMAND_ID, |input| async move { invoke_balatro_cards_clear(input).await })
+}
+
+async fn invoke_balatro_cards_clear(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_cards_clear_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_cards_clear(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_cards_select_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(
+    crate::integrations::balatro::CARDS_SELECT_COMMAND_ID,
+    |input| async move { invoke_balatro_cards_select(input).await },
+  )
+}
+
+async fn invoke_balatro_cards_select(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_cards_select_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_cards_select(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_cards_play_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::CARDS_PLAY_COMMAND_ID, |input| async move { invoke_balatro_cards_play(input).await })
+}
+
+async fn invoke_balatro_cards_play(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_card_commit_request(
+    crate::integrations::balatro::CARDS_PLAY_COMMAND_ID,
+    input.target_application_id.as_deref(),
+    &input.inputs,
+  )?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_cards_play(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_cards_discard_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(
+    crate::integrations::balatro::CARDS_DISCARD_COMMAND_ID,
+    |input| async move { invoke_balatro_cards_discard(input).await },
+  )
+}
+
+async fn invoke_balatro_cards_discard(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_card_commit_request(
+    crate::integrations::balatro::CARDS_DISCARD_COMMAND_ID,
+    input.target_application_id.as_deref(),
+    &input.inputs,
+  )?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_cards_discard(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_cash_out_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::CASH_OUT_COMMAND_ID, |input| async move { invoke_balatro_cash_out(input).await })
+}
+
+async fn invoke_balatro_cash_out(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_cash_out_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_cash_out(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_consumable_sell_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::CONSUMABLE_SELL_COMMAND_ID, |input| async move {
+    invoke_balatro_consumable_sell(input).await
+  })
+}
+
+async fn invoke_balatro_consumable_sell(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_consumable_sell_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_object_sell(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_consumable_use_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::CONSUMABLE_USE_COMMAND_ID, |input| async move {
+    invoke_balatro_consumable_use(input).await
+  })
+}
+
+async fn invoke_balatro_consumable_use(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_consumable_use_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_consumable_use(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_game_restart_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(
+    crate::integrations::balatro::GAME_RESTART_COMMAND_ID,
+    |input| async move { invoke_balatro_game_restart(input).await },
+  )
+}
+
+async fn invoke_balatro_game_restart(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_game_restart_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_game_restart(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_joker_sell_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::JOKER_SELL_COMMAND_ID, |input| async move { invoke_balatro_joker_sell(input).await })
+}
+
+async fn invoke_balatro_joker_sell(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_joker_sell_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_object_sell(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_pack_choose_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::PACK_CHOOSE_COMMAND_ID, |input| async move { invoke_balatro_pack_choose(input).await })
+}
+
+async fn invoke_balatro_pack_choose(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_pack_choose_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_pack_choose(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_pack_skip_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::PACK_SKIP_COMMAND_ID, |input| async move { invoke_balatro_pack_skip(input).await })
+}
+
+async fn invoke_balatro_pack_skip(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_pack_skip_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_pack_skip(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_store_buy_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::STORE_BUY_COMMAND_ID, |input| async move { invoke_balatro_store_buy(input).await })
+}
+
+async fn invoke_balatro_store_buy(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_store_buy_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_store_buy(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
+}
+
+fn balatro_store_next_round_adapter() -> McpInvokeAdapter {
+  McpInvokeAdapter::new(crate::integrations::balatro::STORE_NEXT_ROUND_COMMAND_ID, |input| async move {
+    invoke_balatro_store_next_round(input).await
+  })
+}
+
+async fn invoke_balatro_store_next_round(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  let request = crate::integrations::balatro::parse_store_next_round_request(input.target_application_id.as_deref(), &input.inputs)?;
+  if input.dry_run {
+    return Ok(McpInvokeSuccess::empty());
+  }
+  let result = crate::integrations::balatro::execute_store_next_round(request, input.cancellation).await?;
+  McpInvokeSuccess::from_result(&result)
 }
 
 fn textedit_document_write_adapter() -> McpInvokeAdapter {
@@ -44,21 +280,22 @@ fn textedit_document_write_adapter_with_fixture_driver(observed_text: Option<Str
   })
 }
 
-async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<McpInvokeOutcome, String> {
-  invoke_textedit_document_write_with(input, |_| auv_apple_textedit::MacosTextEditDriver::open_local()).await
+async fn invoke_textedit_document_write(input: McpInvokeInput) -> Result<McpInvokeSuccess, String> {
+  invoke_textedit_document_write_with(input, |_| auv_apple_textedit::MacosTextEditDriver::open_local().map_err(|error| error.to_string()))
+    .await
 }
 
 async fn invoke_textedit_document_write_with<D>(
   input: McpInvokeInput,
   open_driver: impl FnOnce(&DocumentWrite) -> Result<D, String>,
-) -> Result<McpInvokeOutcome, String>
+) -> Result<McpInvokeSuccess, String>
 where
   D: auv_apple_textedit::TextEditDriver,
 {
   reject_production_fixture_inputs(&input)?;
   let command = parse_document_write(&input)?;
   if input.dry_run {
-    return Ok(McpInvokeOutcome::completed("dry run: app.textedit.document.write", serde_json::Value::Null));
+    return Ok(McpInvokeSuccess::empty());
   }
   let driver = open_driver(&command)?;
   map_textedit_document_write(command, input.cancellation, driver).await.map(|(outcome, _)| outcome)
@@ -68,59 +305,19 @@ async fn map_textedit_document_write<D>(
   command: DocumentWrite,
   cancellation: auv_cli_invoke::InvokeCancellation,
   driver: D,
-) -> Result<(McpInvokeOutcome, auv_apple_textedit::DocumentCommandReport), String>
+) -> Result<(McpInvokeSuccess, auv_apple_textedit::DocumentCommandReport), String>
 where
   D: auv_apple_textedit::TextEditDriver,
 {
-  let (report, artifacts, publication_failure) =
-    match crate::integrations::textedit::write_document_with_publications(command.clone(), cancellation, driver).await {
-      Ok((report, artifacts)) => (report, artifacts, None),
-      Err(failure) => {
-        let (message, report, artifacts) = failure.into_parts();
-        let Some(report) = report else {
-          return Err(message);
-        };
-        (report, artifacts, Some(message))
-      }
-    };
-  let mut outcome = artifacts
-    .into_iter()
-    .fold(document_write_outcome(command, report.clone())?, |outcome, metadata| outcome.with_artifact_metadata(Some(metadata)));
-  if let Some(message) = publication_failure {
-    outcome.mark_failed(message.clone(), message);
-  }
+  let report = crate::integrations::textedit::execute_document_write(command.clone(), cancellation, driver)
+    .await
+    .map_err(crate::integrations::textedit::DocumentWriteFailure::into_message)?;
+  let outcome = document_write_outcome(&report)?;
   Ok((outcome, report))
 }
 
-fn document_write_outcome(command: DocumentWrite, report: auv_apple_textedit::DocumentCommandReport) -> Result<McpInvokeOutcome, String> {
-  let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
-  let evidence = report
-    .outcomes
-    .iter()
-    .filter_map(|outcome| outcome.input_action_result.as_ref().map(|_| "auv.driver.input_action_result"))
-    .chain(report.verification.iter().map(|_| "auv.textedit.document_write.verification"))
-    .collect::<Vec<_>>();
-  let mut outcome = McpInvokeOutcome::completed(
-    format!(
-      "TextEdit document.write completed ({} steps, verify={}, semantic_matched={semantic_matched:?})",
-      report.outcomes.len(),
-      report.verification.is_some(),
-    ),
-    serde_json::json!({ "evidence_kinds": evidence }),
-  );
-  outcome.insert_signal("textedit.app_id", command.app_id);
-  outcome.insert_signal("textedit.semantic_matched", serde_json::to_value(semantic_matched).map_err(|error| error.to_string())?);
-  if let Some(verification) = report.verification.as_ref().filter(|verification| !verification.semantic_matched) {
-    let observed = truncate(&verification.matched_text, 80);
-    outcome.mark_failed(
-      format!("TextEdit document.write failed semantic verification (role={}, observed={observed})", verification.matched_role),
-      format!(
-        "TextEdit semantic verification failed: expected content was not present in observed AX text role={} observed={observed}",
-        verification.matched_role
-      ),
-    );
-  }
-  Ok(outcome)
+fn document_write_outcome(report: &auv_apple_textedit::DocumentCommandReport) -> Result<McpInvokeSuccess, String> {
+  McpInvokeSuccess::from_result(report)
 }
 
 fn reject_production_fixture_inputs(input: &McpInvokeInput) -> Result<(), String> {
@@ -159,21 +356,11 @@ fn parse_bool(value: &str, name: &str) -> Result<bool, String> {
   }
 }
 
-fn truncate(value: &str, max_chars: usize) -> String {
-  let mut chars = value.chars();
-  let head: String = chars.by_ref().take(max_chars).collect();
-  if chars.next().is_some() {
-    format!("{head}...")
-  } else {
-    head
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use std::path::{Path, PathBuf};
 
-  use auv_runtime::contract::VerificationResult;
+  use auv_apple_textedit::VerificationOutcome;
   use auv_runtime::run_read::list_input_action_results;
   use auv_tracing::{FileRunStore, RunId, RunStore};
   use rmcp::{
@@ -195,7 +382,7 @@ mod tests {
 
   #[derive(serde::Deserialize)]
   struct RecordedVerification {
-    verification: VerificationResult,
+    verification: VerificationOutcome,
   }
 
   struct TempStores {
@@ -257,6 +444,21 @@ mod tests {
       cli_store.load_snapshot(cli_run_id).await.expect("load CLI snapshot").expect("CLI run flushed before dispatch returned");
 
     let mut adapters = auv_runtime::mcp::core_invoke_adapters();
+    adapters.push(balatro_blind_select_adapter());
+    adapters.push(balatro_blind_skip_adapter());
+    adapters.push(balatro_cards_clear_adapter());
+    adapters.push(balatro_cards_discard_adapter());
+    adapters.push(balatro_cards_play_adapter());
+    adapters.push(balatro_cards_select_adapter());
+    adapters.push(balatro_cash_out_adapter());
+    adapters.push(balatro_consumable_sell_adapter());
+    adapters.push(balatro_consumable_use_adapter());
+    adapters.push(balatro_game_restart_adapter());
+    adapters.push(balatro_joker_sell_adapter());
+    adapters.push(balatro_pack_choose_adapter());
+    adapters.push(balatro_pack_skip_adapter());
+    adapters.push(balatro_store_buy_adapter());
+    adapters.push(balatro_store_next_round_adapter());
     adapters.push(textedit_document_write_adapter_with_fixture_driver(Some("different".to_string())));
     let server =
       auv_runtime::mcp::McpServer::with_registry(PathBuf::from(env!("CARGO_MANIFEST_DIR")), Arc::new(crate::product_registry()), adapters)
@@ -292,9 +494,11 @@ mod tests {
     let mcp_snapshot =
       mcp_store.load_snapshot(mcp_run_id).await.expect("load MCP snapshot").expect("MCP run flushed before response returned");
 
-    assert_eq!(cli_exit, 1);
-    assert_eq!(response.is_error, Some(true));
-    assert_eq!(presentation["status"], "failed");
+    assert_eq!(cli_exit, 0);
+    assert_eq!(response.is_error, Some(false));
+    assert_eq!(presentation["status"], "completed");
+    assert_eq!(presentation["result"]["verification"]["semantic_matched"], false);
+    assert_eq!(presentation["result"]["actions"].as_array().map(Vec::len), Some(3));
     assert!(presentation["recording_failure"].is_null());
     assert_ne!(cli_run_id, mcp_run_id);
 
@@ -306,10 +510,10 @@ mod tests {
     let cli_verification = recorded_verification(&cli_snapshot);
     let mcp_verification = recorded_verification(&mcp_snapshot);
     assert_eq!(cli_verification, mcp_verification);
-    assert_eq!(cli_verification.semantic_matched, Some(false));
+    assert!(!cli_verification.semantic_matched);
     assert_eq!(cli_snapshot.artifacts().len(), 2);
     assert_eq!(mcp_snapshot.artifacts().len(), 2);
-    assert_eq!(presentation["artifacts"].as_array().map(Vec::len), Some(2));
+    assert!(presentation.get("artifacts").is_none());
     assert_eq!(frontend_lifecycle(&cli_snapshot), "cli");
     assert_eq!(frontend_lifecycle(&mcp_snapshot), "mcp");
 
@@ -318,8 +522,23 @@ mod tests {
   }
 
   #[test]
-  fn product_help_lists_textedit_command_once() {
+  fn product_help_lists_app_commands_once() {
     let help = auv_cli_invoke::render_help_index(&crate::product_registry());
+    assert_eq!(help.matches(crate::integrations::balatro::BLIND_SELECT_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::BLIND_SKIP_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::CARDS_CLEAR_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::CARDS_DISCARD_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::CARDS_PLAY_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::CARDS_SELECT_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::CASH_OUT_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::CONSUMABLE_SELL_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::CONSUMABLE_USE_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::GAME_RESTART_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::JOKER_SELL_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::PACK_CHOOSE_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::PACK_SKIP_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::STORE_BUY_COMMAND_ID).count(), 1);
+    assert_eq!(help.matches(crate::integrations::balatro::STORE_NEXT_ROUND_COMMAND_ID).count(), 1);
     assert_eq!(help.matches(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID).count(), 1);
     let command =
       crate::product_registry().resolve(crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID).expect("TextEdit command").clone();
@@ -339,7 +558,7 @@ mod tests {
     runs[0]
   }
 
-  fn recorded_verification(snapshot: &auv_tracing::RunSnapshot) -> VerificationResult {
+  fn recorded_verification(snapshot: &auv_tracing::RunSnapshot) -> VerificationOutcome {
     let event = snapshot
       .events()
       .iter()

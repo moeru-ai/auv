@@ -152,7 +152,6 @@ pub struct DetectedScreenRows {
   pub raw_match_count: usize,
   pub filtered_match_count: usize,
   pub rows: Vec<ObservedOcrRow>,
-  pub report: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]

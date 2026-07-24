@@ -5,12 +5,10 @@ use comfy_table::{Cell, Table, presets::NOTHING};
 
 use super::InvokeOutputOptions;
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvokeReport {
   pub fields: Vec<InvokeReportField>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub tables: Vec<InvokeReportTable>,
-  #[serde(default, skip)]
   pub wide_tables: Vec<InvokeReportTable>,
   pub sections: Vec<InvokeReportSection>,
 }
@@ -51,7 +49,7 @@ impl InvokeReport {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvokeReportField {
   pub label: String,
   pub value: String,
@@ -66,17 +64,16 @@ impl InvokeReportField {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvokeReportSection {
   pub title: String,
   pub fields: Vec<InvokeReportField>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvokeReportTable {
   pub columns: Vec<String>,
   pub rows: Vec<InvokeReportTableRow>,
-  #[serde(default, skip)]
   pub display_max_chars: Vec<Option<usize>>,
 }
 
@@ -127,7 +124,7 @@ impl InvokeReportTable {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvokeReportTableRow {
   pub cells: Vec<String>,
 }
@@ -158,16 +155,6 @@ impl InvokeReportValue for auv_driver::Rect {
   }
 }
 
-pub(crate) trait InvokeSignalValue {
-  fn signal_value(&self) -> String;
-}
-
-impl InvokeSignalValue for auv_driver::Rect {
-  fn signal_value(&self) -> String {
-    format!("x={:.0},y={:.0},width={:.0},height={:.0}", self.origin.x, self.origin.y, self.size.width, self.size.height)
-  }
-}
-
 pub(crate) trait OptionalReportText<'a> {
   fn report_or(self, fallback: &'a str) -> &'a str;
 }
@@ -186,15 +173,6 @@ impl InvokeReportLabels for Vec<&'static str> {
   fn report_labels(&self) -> String {
     self.join(",")
   }
-}
-
-pub(super) fn write_detail_section<W: Write>(writer: &mut W, title: &str, rows: &[String], color: bool) -> Result<(), String> {
-  writeln!(writer).map_err(write_error)?;
-  writeln!(writer, "  {}", label(title, color)).map_err(write_error)?;
-  for row in rows {
-    writeln!(writer, "    {row}").map_err(write_error)?;
-  }
-  Ok(())
 }
 
 pub(super) fn write_field_rows<W: Write>(writer: &mut W, fields: &[InvokeReportField], color: bool) -> Result<(), String> {

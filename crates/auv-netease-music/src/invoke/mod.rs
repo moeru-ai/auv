@@ -5,7 +5,9 @@ mod sidebar_scan_proof;
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use auv_cli_invoke::{CommandGroup, InvokeCommandInput, InvokeNamespace, InvokeRegistry, command};
+use auv_cli_invoke::{
+  CommandGroup, InvokeCommandInput, InvokeNamespace, InvokeOutputOptions, InvokeRegistry, InvokeResult, command, render_invoke_result,
+};
 
 pub use help::{render_command_help, render_help_index};
 pub use select_proof::{
@@ -39,6 +41,16 @@ pub fn netease_registry() -> InvokeRegistry {
 
 /// Dispatch `auv-netease-music invoke …` without touching root `default_registry()`.
 pub async fn run(tokens: &[String]) -> ExitCode {
+  if auv_tracing::Context::current().run_id().is_some() {
+    return run_in_context(tokens).await;
+  }
+
+  let root = auv_tracing::Context::root(auv_tracing::RunId::new());
+  let future = root.in_scope(|| run_in_context(tokens));
+  root.instrument(future).await
+}
+
+async fn run_in_context(tokens: &[String]) -> ExitCode {
   let registry = netease_registry();
 
   if tokens.is_empty() || tokens == ["--help"] || tokens == ["-h"] {
@@ -105,7 +117,7 @@ pub async fn run(tokens: &[String]) -> ExitCode {
     cursor += 2;
   }
 
-  match command
+  let direct_result = command
     .invoke(InvokeCommandInput {
       command_id: command.id.to_string(),
       target_application_id: None,
@@ -113,21 +125,16 @@ pub async fn run(tokens: &[String]) -> ExitCode {
       dry_run,
       cancellation: auv_cli_invoke::InvokeCancellation::new(),
     })
-    .await
-  {
-    Ok(output) => {
-      println!("{}", output.summary);
-      if let Some(run_id) = output.signals.get("run_id") {
-        println!("run_id={run_id}");
-      }
-      if let Some(scan_uri) = output.signals.get("scan_uri") {
-        println!("scan_uri={scan_uri}");
-      }
-      for limit in &output.known_limits {
-        println!("known_limit: {limit}");
-      }
-      ExitCode::SUCCESS
-    }
+    .await;
+  let context = auv_tracing::Context::current();
+  let run_id = context.run_id().expect("invoke installs or inherits a run context");
+  let result = InvokeResult::from_command_result(*run_id, command, direct_result);
+  let options = InvokeOutputOptions {
+    inspect_hint: context.can_publish_artifacts(),
+    ..InvokeOutputOptions::default()
+  };
+  match render_invoke_result(&result, options) {
+    Ok(outcome) => ExitCode::from(outcome.exit_code as u8),
     Err(error) => {
       eprintln!("error: {error}");
       ExitCode::from(1)

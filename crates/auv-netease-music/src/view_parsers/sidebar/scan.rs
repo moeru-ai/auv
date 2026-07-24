@@ -51,8 +51,7 @@ fn finish_sidebar_scan(
   scroll_amount: f64,
   scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
-  let interaction_events =
-    build_standalone_interaction_events(&loop_outcome.observations, scroll_amount, scroll_settle_ms, loop_outcome.stop_reason.as_deref());
+  crate::run_artifacts::emit_sidebar_scan_events(&loop_outcome.observations, scroll_amount, scroll_settle_ms, loop_outcome.stop_reason);
 
   let mut scan = reconstruct_playlist_sidebar(
     ScanAppContext {
@@ -72,16 +71,18 @@ fn finish_sidebar_scan(
   scan.diagnostics.extend(loop_outcome.diagnostics);
   scan.known_limits.extend(top_seek.known_limits);
   scan.known_limits.extend(loop_outcome.known_limits);
-  scan.interaction_events = interaction_events;
+  scan.stop_reason = loop_outcome.stop_reason;
   if top_seek.boundary == BoundaryConfidence::Likely {
     apply_top_boundary(&mut scan, top_seek.boundary);
   }
   if matches!(
-    loop_outcome.stop_reason.as_deref(),
-    Some("scroll_no_motion_after_input")
-      | Some("scroll_no_motion_with_ax_scrollbar_bottom")
-      | Some("scroll_no_new_semantic_candidates_after_input")
-      | Some("scroll_no_new_semantic_candidates_with_ax_scrollbar_bottom")
+    loop_outcome.stop_reason,
+    Some(
+      SidebarScanStopReason::ScrollNoMotionAfterInput
+        | SidebarScanStopReason::ScrollNoMotionWithAxScrollbarBottom
+        | SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput
+        | SidebarScanStopReason::ScrollNoNewSemanticCandidatesWithAxScrollbarBottom
+    )
   ) {
     apply_bottom_boundary(&mut scan, BoundaryConfidence::Likely);
   }
@@ -89,27 +90,29 @@ fn finish_sidebar_scan(
 }
 
 pub(crate) fn heuristic_stop_reason_with_ax_corroboration(
-  base_reason: &'static str,
+  base_reason: SidebarScanStopReason,
   ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>,
-) -> Option<&'static str> {
+) -> Option<SidebarScanStopReason> {
   match (base_reason, ax_scrollbar_boundary) {
-    ("scroll_no_new_semantic_candidates_after_input", Some(SidebarScrollbarBoundary::Bottom)) => {
-      Some("scroll_no_new_semantic_candidates_with_ax_scrollbar_bottom")
+    (SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput, Some(SidebarScrollbarBoundary::Bottom)) => {
+      Some(SidebarScanStopReason::ScrollNoNewSemanticCandidatesWithAxScrollbarBottom)
     }
-    ("scroll_no_motion_after_input", Some(SidebarScrollbarBoundary::Bottom)) => Some("scroll_no_motion_with_ax_scrollbar_bottom"),
+    (SidebarScanStopReason::ScrollNoMotionAfterInput, Some(SidebarScrollbarBoundary::Bottom)) => {
+      Some(SidebarScanStopReason::ScrollNoMotionWithAxScrollbarBottom)
+    }
     (
-      "scroll_no_new_semantic_candidates_after_input" | "scroll_no_motion_after_input",
+      SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput | SidebarScanStopReason::ScrollNoMotionAfterInput,
       Some(SidebarScrollbarBoundary::Top | SidebarScrollbarBoundary::Interior),
     ) => None,
     _ => Some(base_reason),
   }
 }
 
-pub(crate) fn repeated_fingerprint_stop_reason(ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>) -> &'static str {
+pub(crate) fn repeated_fingerprint_stop_reason(ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>) -> SidebarScanStopReason {
   if ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom) {
-    "repeated_viewport_fingerprint_with_ax_scrollbar_bottom"
+    SidebarScanStopReason::RepeatedViewportFingerprintWithAxScrollbarBottom
   } else {
-    "repeated_viewport_fingerprint"
+    SidebarScanStopReason::RepeatedViewportFingerprint
   }
 }
 
@@ -216,7 +219,6 @@ pub(crate) fn empty_scroll_seek_observation(observation_index: usize, viewport_b
       axis: ViewAxis::Vertical,
       scroll_offset: None,
     },
-    source_artifacts: Vec::new(),
     incoming_scroll_delivery_path: None,
     scroll_motion: None,
     viewport_fingerprint: String::new(),
@@ -231,7 +233,7 @@ pub(crate) struct CollectionLoopOutcome {
   observations: Vec<SidebarViewportObservation>,
   diagnostics: Vec<ParserDiagnostic>,
   known_limits: Vec<String>,
-  stop_reason: Option<String>,
+  stop_reason: Option<SidebarScanStopReason>,
 }
 
 fn scan_with_collection_policy_impl(
@@ -304,7 +306,7 @@ fn scan_with_collection_policy_impl(
     observations.push(observation);
 
     if reached_stop_landmark {
-      stop_reason = Some("reached_stop_landmark".to_string());
+      stop_reason = Some(SidebarScanStopReason::ReachedStopLandmark);
       break;
     }
 
@@ -313,7 +315,7 @@ fn scan_with_collection_policy_impl(
     // scroll stop detector. Motion evidence covers the real NetEase case where
     // OCR text drifts enough that exact fingerprints do not repeat at bottom.
     if repeated_fingerprint && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom)) {
-      stop_reason = Some(repeated_fingerprint_stop_reason(ax_scrollbar_boundary).to_string());
+      stop_reason = Some(repeated_fingerprint_stop_reason(ax_scrollbar_boundary));
       break;
     }
 
@@ -326,9 +328,9 @@ fn scan_with_collection_policy_impl(
       && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
     {
       if let Some(reason) =
-        heuristic_stop_reason_with_ax_corroboration("scroll_no_new_semantic_candidates_after_input", ax_scrollbar_boundary)
+        heuristic_stop_reason_with_ax_corroboration(SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput, ax_scrollbar_boundary)
       {
-        stop_reason = Some(reason.to_string());
+        stop_reason = Some(reason);
         break;
       }
     }
@@ -341,8 +343,10 @@ fn scan_with_collection_policy_impl(
     if consecutive_no_motion_after_scroll >= motion_stop_threshold(ax_scrollbar_boundary)
       && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
     {
-      if let Some(reason) = heuristic_stop_reason_with_ax_corroboration("scroll_no_motion_after_input", ax_scrollbar_boundary) {
-        stop_reason = Some(reason.to_string());
+      if let Some(reason) =
+        heuristic_stop_reason_with_ax_corroboration(SidebarScanStopReason::ScrollNoMotionAfterInput, ax_scrollbar_boundary)
+      {
+        stop_reason = Some(reason);
         break;
       }
     }
@@ -509,78 +513,6 @@ impl CollectionPolicy {
       PlaylistCategory::Favorite => Some("category favorite scan ended without seeing favorite playlist landmark".to_string()),
     }
   }
-}
-
-pub(crate) fn build_standalone_interaction_events(
-  observations: &[SidebarViewportObservation],
-  scroll_amount: f64,
-  scroll_settle_ms: u64,
-  stop_reason: Option<&str>,
-) -> Vec<InteractionEvent> {
-  let mut events = Vec::new();
-  for (index, observation) in observations.iter().enumerate() {
-    events.push(InteractionEvent {
-      event_index: events.len(),
-      phase: InteractionPhase::Collect,
-      kind: InteractionEventKind::Observe,
-      observation_index: Some(observation.observation_index),
-      from_observation: None,
-      to_observation: None,
-      viewport_fingerprint: Some(observation.viewport_fingerprint.clone()),
-      scroll: None,
-      motion: observation.scroll_motion.clone(),
-      artifacts: observation.source_artifacts.clone(),
-      note: None,
-    });
-
-    if index + 1 < observations.len() {
-      let mut artifacts = observation.source_artifacts.clone();
-      for artifact in &observations[index + 1].source_artifacts {
-        if !artifacts.iter().any(|existing| existing == artifact) {
-          artifacts.push(artifact.clone());
-        }
-      }
-      events.push(InteractionEvent {
-        event_index: events.len(),
-        phase: InteractionPhase::Collect,
-        kind: InteractionEventKind::InputScroll,
-        observation_index: None,
-        from_observation: Some(observation.observation_index),
-        to_observation: Some(observations[index + 1].observation_index),
-        viewport_fingerprint: None,
-        scroll: Some(ScrollInteraction {
-          axis: ViewAxis::Vertical,
-          direction: ScrollDirection::Down,
-          requested_delta: -scroll_amount,
-          policy: "background_preferred".to_string(),
-          delivery_path: observations[index + 1].incoming_scroll_delivery_path.clone(),
-          motion: observations[index + 1].scroll_motion.clone(),
-          settle_ms: scroll_settle_ms,
-          anchor: None,
-          detected_boundary: "unknown".to_string(),
-        }),
-        motion: observations[index + 1].scroll_motion.clone(),
-        artifacts,
-        note: Some("standalone event; durable trace should use view.parse.scroll.<index> spans".to_string()),
-      });
-    }
-  }
-  if let Some(stop_reason) = stop_reason {
-    events.push(InteractionEvent {
-      event_index: events.len(),
-      phase: InteractionPhase::Collect,
-      kind: InteractionEventKind::StopDecision,
-      observation_index: observations.last().map(|observation| observation.observation_index),
-      from_observation: None,
-      to_observation: None,
-      viewport_fingerprint: observations.last().map(|observation| observation.viewport_fingerprint.clone()),
-      scroll: None,
-      motion: observations.last().and_then(|observation| observation.scroll_motion.clone()),
-      artifacts: observations.last().map(|observation| observation.source_artifacts.clone()).unwrap_or_default(),
-      note: Some(stop_reason.to_string()),
-    });
-  }
-  events
 }
 
 pub(crate) fn apply_top_boundary(scan: &mut PlaylistSidebarScan, top: BoundaryConfidence) {

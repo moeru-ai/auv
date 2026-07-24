@@ -1,32 +1,24 @@
 //! Canonical root-owned run artifact producers and readers.
 
-use std::collections::TryReserveError;
-use std::num::TryFromIntError;
-
 use auv_driver::InputActionResult;
-use auv_scan::{SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
+use auv_scan::{CoverageView, ScanCoverageArtifact};
 use auv_tracing::{
-  ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType,
-  Context, NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest, ValidationError,
+  ArtifactMetadata, ArtifactPurpose, ArtifactUri, ArtifactWriteError, Attributes, ByteLength, Context, EventPayload, JsonArtifactError,
+  JsonArtifactReadError, ReadArtifactError, RunSnapshot, RunStore, ValidationError,
 };
-use futures_util::StreamExt;
-use futures_util::io::Cursor as AsyncCursor;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use sha2::{Digest, Sha256};
 
 use crate::contract::{RecognitionResult, RecognitionSource};
 use crate::scroll_scan::{
   SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE, SCROLL_SCAN_PURPOSE, ScrollScanArtifact, validate_scroll_scan_artifact,
 };
 
-pub const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
+pub use auv_driver::INPUT_ACTION_RESULT_PURPOSE;
 pub const DETECTOR_RECOGNITION_PURPOSE: &str = "auv.runtime.detector_recognition";
 pub const SCENE_STATE_INPUT_PURPOSE: &str = "auv.runtime.scene_state_input";
 pub const SCAN_COVERAGE_PURPOSE: &str = "auv.runtime.scan_coverage";
 pub const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
-
-const JSON_CONTENT_TYPE: &str = "application/json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum RootArtifactPublishError {
@@ -36,37 +28,16 @@ pub enum RootArtifactPublishError {
     #[source]
     source: ValidationError,
   },
-  #[error("invalid root artifact content type: {0}")]
-  InvalidContentType(ValidationError),
   #[error("root artifact {purpose} failed domain validation: {message}")]
   InvalidPayload {
     purpose: ArtifactPurpose,
     message: String,
   },
-  #[error("failed to serialize root artifact {purpose}: {source}")]
-  Serialize {
+  #[error("failed to construct root artifact {purpose}: {source}")]
+  Json {
     purpose: ArtifactPurpose,
     #[source]
-    source: serde_json::Error,
-  },
-  #[error("root artifact {purpose} JSON length {actual} cannot be represented as u64: {source}")]
-  LengthOutOfRange {
-    purpose: ArtifactPurpose,
-    actual: u128,
-    #[source]
-    source: TryFromIntError,
-  },
-  #[error("root artifact {purpose} is {actual} bytes, exceeding the {limit}-byte limit")]
-  PayloadTooLarge {
-    purpose: ArtifactPurpose,
-    limit: u64,
-    actual: u64,
-  },
-  #[error("invalid root artifact byte length for {purpose}: {source}")]
-  InvalidByteLength {
-    purpose: ArtifactPurpose,
-    #[source]
-    source: ValidationError,
+    source: JsonArtifactError,
   },
   #[error("failed to publish root artifact {purpose}: {source}")]
   Publication {
@@ -84,70 +55,10 @@ pub enum RootArtifactReadError {
     #[source]
     source: ValidationError,
   },
-  #[error("invalid expected root artifact content type: {0}")]
-  InvalidExpectedContentType(ValidationError),
-  #[error("snapshot authority {snapshot_authority} does not match store authority {store_authority}")]
-  SnapshotAuthorityMismatch {
-    snapshot_authority: AuthorityId,
-    store_authority: AuthorityId,
-  },
-  #[error("artifact URI belongs to run {artifact_run_id}, not snapshot run {snapshot_run_id}")]
-  WrongOwner {
-    snapshot_run_id: RunId,
-    artifact_run_id: RunId,
-  },
-  #[error("artifact URI is not committed in the supplied snapshot: {uri}")]
-  DanglingUri { uri: Box<ArtifactUri> },
-  #[error("artifact {uri} has purpose {actual}, expected {expected}")]
-  WrongPurpose {
-    uri: Box<ArtifactUri>,
-    expected: ArtifactPurpose,
-    actual: ArtifactPurpose,
-  },
-  #[error("artifact {uri} has content type {actual}, expected {expected}")]
-  WrongContentType {
-    uri: Box<ArtifactUri>,
-    expected: Box<ContentType>,
-    actual: Box<ContentType>,
-  },
-  #[error("artifact {uri} is {actual} bytes, exceeding the {limit}-byte limit")]
-  PayloadTooLarge {
-    uri: Box<ArtifactUri>,
-    limit: u64,
-    actual: u64,
-  },
-  #[error("artifact {uri} byte length {actual} cannot be represented by this process")]
-  LengthOutOfRange { uri: Box<ArtifactUri>, actual: u64 },
-  #[error("failed to reserve {expected} bytes for artifact {uri}: {source}")]
-  Allocation {
-    uri: Box<ArtifactUri>,
-    expected: u64,
-    #[source]
-    source: TryReserveError,
-  },
-  #[error("failed to open artifact {uri}: {source}")]
-  Open {
-    uri: Box<ArtifactUri>,
-    #[source]
-    source: ReadError,
-  },
-  #[error("failed while streaming artifact {uri}: {source}")]
-  Stream {
-    uri: Box<ArtifactUri>,
-    #[source]
-    source: ArtifactReadError,
-  },
-  #[error("artifact {uri} length mismatch: expected {expected}, read {actual}")]
-  LengthMismatch {
-    uri: Box<ArtifactUri>,
-    expected: u64,
-    actual: u64,
-  },
-  #[error("artifact {uri} digest mismatch: expected {expected}, read {actual}")]
-  DigestMismatch {
-    uri: Box<ArtifactUri>,
-    expected: Sha256Digest,
-    actual: Sha256Digest,
+  #[error("failed to read root artifact: {source}")]
+  Read {
+    #[from]
+    source: ReadArtifactError,
   },
   #[error("artifact {uri} is malformed JSON: {source}")]
   MalformedJson {
@@ -174,25 +85,98 @@ pub struct ScrollScanReadError(#[from] pub RootArtifactReadError);
 impl ScrollScanReadError {
   pub fn code(&self) -> auv_tracing::ErrorCode {
     let suffix = match &self.0 {
-      RootArtifactReadError::SnapshotAuthorityMismatch { .. } => "snapshot_authority_mismatch",
-      RootArtifactReadError::WrongOwner { .. } => "wrong_owner",
-      RootArtifactReadError::DanglingUri { .. } => "dangling_uri",
-      RootArtifactReadError::WrongPurpose { .. } => "wrong_purpose",
-      RootArtifactReadError::WrongContentType { .. } => "wrong_content_type",
-      RootArtifactReadError::PayloadTooLarge { .. } => return auv_tracing::ErrorCode::parse(SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE).unwrap(),
-      RootArtifactReadError::LengthOutOfRange { .. } => "length_out_of_range",
-      RootArtifactReadError::Allocation { .. } => "allocation_failed",
-      RootArtifactReadError::Open { .. } => "open_failed",
-      RootArtifactReadError::Stream { .. } => "stream_failed",
-      RootArtifactReadError::LengthMismatch { .. } => "length_mismatch",
-      RootArtifactReadError::DigestMismatch { .. } => "digest_mismatch",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::SnapshotAuthorityMismatch { .. },
+      } => "snapshot_authority_mismatch",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::WrongRun { .. },
+      } => "wrong_owner",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::NotCommitted { .. },
+      } => "dangling_uri",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::WrongPurpose { .. },
+      } => "wrong_purpose",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::WrongContentType { .. },
+      } => "wrong_content_type",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::PayloadTooLarge { .. },
+      } => return auv_tracing::ErrorCode::parse(SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE).unwrap(),
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::LengthOutOfRange { .. },
+      } => "length_out_of_range",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::Allocation { .. },
+      } => "allocation_failed",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::Open { .. },
+      } => "open_failed",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::Stream { .. },
+      } => "stream_failed",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::LengthMismatch { .. },
+      } => "length_mismatch",
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::DigestMismatch { .. },
+      } => "digest_mismatch",
       RootArtifactReadError::MalformedJson { .. } => "malformed_json",
       RootArtifactReadError::InvalidPayload { .. } => "invalid_payload",
-      RootArtifactReadError::InvalidExpectedPurpose { .. }
-      | RootArtifactReadError::InvalidExpectedContentType(_)
-      | RootArtifactReadError::AmbiguousPurpose { .. } => "invalid_contract",
+      RootArtifactReadError::InvalidExpectedPurpose { .. } | RootArtifactReadError::AmbiguousPurpose { .. } => "invalid_contract",
     };
     auv_tracing::ErrorCode::parse(format!("auv.runtime.scroll_scan.{suffix}")).expect("static scroll-scan error code")
+  }
+}
+
+#[derive(Serialize)]
+struct RootArtifactPreparationFailed {
+  purpose: &'static str,
+  error: String,
+}
+
+impl EventPayload for RootArtifactPreparationFailed {
+  const NAME: &'static str = "auv.runtime.artifact_preparation_failed";
+  const VERSION: u32 = 1;
+}
+
+/// Admits typed input evidence without making recording part of the operation
+/// result. Preparation failures become tracing diagnostics; store failures are
+/// reported by the active dispatch.
+pub fn emit_input_action_result(value: &InputActionResult) {
+  emit_json_artifact_bounded(INPUT_ACTION_RESULT_PURPOSE, value, ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, validate_input_action_result);
+}
+
+pub fn emit_scan_coverage(value: &CoverageView) {
+  let artifact = ScanCoverageArtifact::new(value.clone());
+  emit_json_artifact_bounded(SCAN_COVERAGE_PURPOSE, &artifact, ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, |_| Ok(()));
+}
+
+pub fn emit_scroll_scan(value: &ScrollScanArtifact) {
+  emit_json_artifact_bounded(SCROLL_SCAN_PURPOSE, value, SCROLL_SCAN_JSON_BYTE_LIMIT, validate_scroll_scan_artifact);
+}
+
+fn emit_json_artifact_bounded<T, V>(purpose: &'static str, value: &T, byte_limit: u64, validate: V)
+where
+  T: Serialize,
+  V: FnOnce(&T) -> Result<(), String>,
+{
+  let context = Context::current();
+  if !context.can_publish_artifacts() {
+    return;
+  }
+  match validate_json_artifact_bounded(purpose, value, byte_limit, validate).and_then(|(purpose, byte_limit)| {
+    auv_tracing::emit_json_artifact(purpose.clone(), Attributes::empty(), byte_limit, value)
+      .map(|emission| (purpose.clone(), emission))
+      .map_err(|source| RootArtifactPublishError::Json { purpose, source })
+  }) {
+    Ok((_, emission)) => drop(emission),
+    Err(error) => context.in_scope(|| {
+      auv_tracing::emit_event!(RootArtifactPreparationFailed {
+        purpose,
+        error: error.to_string(),
+      });
+    }),
   }
 }
 
@@ -212,21 +196,17 @@ pub async fn publish_detector_recognition(
 
 pub async fn publish_scan_coverage(
   context: Option<&Context>,
-  value: &ScanCoverageWire,
+  value: &CoverageView,
 ) -> Result<Option<ArtifactMetadata>, RootArtifactPublishError> {
-  publish_json_artifact(context, SCAN_COVERAGE_PURPOSE, value, validate_scan_coverage).await
+  let artifact = ScanCoverageArtifact::new(value.clone());
+  publish_json_artifact(context, SCAN_COVERAGE_PURPOSE, &artifact, |_| Ok(())).await
 }
 
 pub async fn publish_scroll_scan(
   context: Option<&Context>,
   value: &ScrollScanArtifact,
 ) -> Result<Option<ArtifactMetadata>, RootArtifactPublishError> {
-  let expected_run_id = context.and_then(|context| context.run_id().copied());
-  publish_json_artifact_bounded(context, SCROLL_SCAN_PURPOSE, value, SCROLL_SCAN_JSON_BYTE_LIMIT, |value| {
-    let expected_run_id = expected_run_id.ok_or_else(|| "enabled scroll-scan publication requires a run_id".to_string())?;
-    validate_scroll_scan_artifact(value, expected_run_id)
-  })
-  .await
+  publish_json_artifact_bounded(context, SCROLL_SCAN_PURPOSE, value, SCROLL_SCAN_JSON_BYTE_LIMIT, validate_scroll_scan_artifact).await
 }
 
 pub(crate) async fn publish_json_artifact<T, V>(
@@ -256,6 +236,27 @@ where
   let Some(context) = context.filter(|context| context.can_publish_artifacts()) else {
     return Ok(None);
   };
+  let (purpose, byte_limit) = validate_json_artifact_bounded(purpose, value, byte_limit, validate)?;
+  let emission =
+    context.in_scope(|| auv_tracing::emit_json_artifact(purpose.clone(), Attributes::empty(), byte_limit, value)).map_err(|source| {
+      RootArtifactPublishError::Json {
+        purpose: purpose.clone(),
+        source,
+      }
+    })?;
+  emission.await.map_err(|source| RootArtifactPublishError::Publication { purpose, source })
+}
+
+fn validate_json_artifact_bounded<T, V>(
+  purpose: &'static str,
+  value: &T,
+  byte_limit: u64,
+  validate: V,
+) -> Result<(ArtifactPurpose, ByteLength), RootArtifactPublishError>
+where
+  T: Serialize,
+  V: FnOnce(&T) -> Result<(), String>,
+{
   let purpose = ArtifactPurpose::parse(purpose).map_err(|source| RootArtifactPublishError::InvalidPurpose {
     value: purpose,
     source,
@@ -264,37 +265,8 @@ where
     purpose: purpose.clone(),
     message,
   })?;
-  let body = serde_json::to_vec(value).map_err(|source| RootArtifactPublishError::Serialize {
-    purpose: purpose.clone(),
-    source,
-  })?;
-  let byte_length = u64::try_from(body.len()).map_err(|source| RootArtifactPublishError::LengthOutOfRange {
-    purpose: purpose.clone(),
-    actual: body.len() as u128,
-    source,
-  })?;
-  if byte_length > byte_limit {
-    return Err(RootArtifactPublishError::PayloadTooLarge {
-      purpose,
-      limit: byte_limit,
-      actual: byte_length,
-    });
-  }
-  let artifact = NewArtifact::new(
-    purpose.clone(),
-    ContentType::parse(JSON_CONTENT_TYPE).map_err(RootArtifactPublishError::InvalidContentType)?,
-    ByteLength::new(byte_length).map_err(|source| RootArtifactPublishError::InvalidByteLength {
-      purpose: purpose.clone(),
-      source,
-    })?,
-    Sha256Digest::new(Sha256::digest(&body).into()),
-    Attributes::empty(),
-    AsyncCursor::new(body),
-  );
-  context
-    .in_scope(|| auv_tracing::emit_artifact!(artifact))
-    .await
-    .map_err(|source| RootArtifactPublishError::Publication { purpose, source })
+  let byte_limit = ByteLength::new(byte_limit).expect("root JSON limits remain within the canonical whole-artifact limit");
+  Ok((purpose, byte_limit))
 }
 
 pub async fn list_input_action_results(
@@ -313,14 +285,13 @@ pub struct DetectorRecognitionLineage {
   pub artifact_uri: ArtifactUri,
   pub recognition_id: String,
   pub source: RecognitionSource,
-  pub backend: Option<String>,
+  pub producer: String,
   pub model_id: Option<String>,
   pub execution_provider: Option<String>,
   pub all_count: usize,
   pub filtered_count: usize,
   pub best_item_id: Option<String>,
   pub evidence_artifacts: Vec<ArtifactUri>,
-  pub known_limits: Vec<String>,
 }
 
 pub async fn list_detector_recognition_lineage(
@@ -335,14 +306,13 @@ pub async fn list_detector_recognition_lineage(
       artifact_uri: uri,
       recognition_id: recognition.recognition_id,
       source: recognition.source,
-      backend: detail_string(&recognition.detail, "backend"),
-      model_id: detail_string(&recognition.detail, "model_id"),
-      execution_provider: detail_string(&recognition.detail, "execution_provider"),
+      producer: recognition.provenance.producer,
+      model_id: recognition.provenance.model_id,
+      execution_provider: recognition.provenance.execution_provider,
       all_count: recognition.all.len(),
       filtered_count: recognition.filtered.len(),
       best_item_id: recognition.best.as_ref().map(|item| item.item_id.clone()),
-      evidence_artifacts: recognition.evidence,
-      known_limits: recognition.known_limits,
+      evidence_artifacts: recognition.evidence_artifacts,
     });
   }
   Ok(lineage)
@@ -397,10 +367,36 @@ where
   T: DeserializeOwned,
   V: FnOnce(&T) -> Result<(), String>,
 {
-  let bytes = read_json_bytes(store, snapshot, uri, purpose, ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).await?;
-  let value = serde_json::from_slice(&bytes).map_err(|source| RootArtifactReadError::MalformedJson {
-    uri: Box::new(uri.clone()),
-    source,
+  read_json_artifact_bounded(store, snapshot, uri, purpose, ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, validate).await
+}
+
+async fn read_json_artifact_bounded<T, V>(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  purpose: &'static str,
+  limit: u64,
+  validate: V,
+) -> Result<T, RootArtifactReadError>
+where
+  T: DeserializeOwned,
+  V: FnOnce(&T) -> Result<(), String>,
+{
+  let expected_purpose = expected_purpose(purpose)?;
+  let value = auv_tracing::read_json_artifact(
+    store,
+    snapshot,
+    uri,
+    &expected_purpose,
+    ByteLength::new(limit).expect("artifact reader limit must be non-zero"),
+  )
+  .await
+  .map_err(|error| match error {
+    JsonArtifactReadError::Artifact(source) => RootArtifactReadError::Read { source },
+    JsonArtifactReadError::Decode { source, .. } => RootArtifactReadError::MalformedJson {
+      uri: Box::new(uri.clone()),
+      source,
+    },
   })?;
   validate(&value).map_err(|message| RootArtifactReadError::InvalidPayload {
     uri: Box::new(uri.clone()),
@@ -409,129 +405,25 @@ where
   Ok(value)
 }
 
-async fn read_json_bytes(
-  store: &dyn RunStore,
-  snapshot: &RunSnapshot,
-  uri: &ArtifactUri,
-  purpose: &'static str,
-  limit: u64,
-) -> Result<Vec<u8>, RootArtifactReadError> {
-  validate_snapshot_authority(store, snapshot)?;
-  if uri.run_id() != snapshot.run_id() {
-    return Err(RootArtifactReadError::WrongOwner {
-      snapshot_run_id: snapshot.run_id(),
-      artifact_run_id: uri.run_id(),
-    });
-  }
-  let metadata = snapshot
-    .artifacts()
-    .get(uri)
-    .ok_or_else(|| RootArtifactReadError::DanglingUri {
-      uri: Box::new(uri.clone()),
-    })?
-    .metadata();
-  let expected_purpose = expected_purpose(purpose)?;
-  if metadata.purpose() != &expected_purpose {
-    return Err(RootArtifactReadError::WrongPurpose {
-      uri: Box::new(uri.clone()),
-      expected: expected_purpose,
-      actual: metadata.purpose().clone(),
-    });
-  }
-  let expected_content_type = ContentType::parse(JSON_CONTENT_TYPE).map_err(RootArtifactReadError::InvalidExpectedContentType)?;
-  if metadata.content_type() != &expected_content_type {
-    return Err(RootArtifactReadError::WrongContentType {
-      uri: Box::new(uri.clone()),
-      expected: Box::new(expected_content_type),
-      actual: Box::new(metadata.content_type().clone()),
-    });
-  }
-  let expected_length = metadata.byte_length().get();
-  if expected_length > limit {
-    return Err(RootArtifactReadError::PayloadTooLarge {
-      uri: Box::new(uri.clone()),
-      limit,
-      actual: expected_length,
-    });
-  }
-  let capacity = usize::try_from(expected_length).map_err(|_| RootArtifactReadError::LengthOutOfRange {
-    uri: Box::new(uri.clone()),
-    actual: expected_length,
-  })?;
-  let mut bytes = Vec::new();
-  bytes.try_reserve_exact(capacity).map_err(|source| RootArtifactReadError::Allocation {
-    uri: Box::new(uri.clone()),
-    expected: expected_length,
-    source,
-  })?;
-  let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| RootArtifactReadError::Open {
-    uri: Box::new(uri.clone()),
-    source,
-  })?;
-  let mut actual_length = 0_u64;
-  while let Some(chunk) = reader.next().await {
-    let chunk = chunk.map_err(|source| RootArtifactReadError::Stream {
-      uri: Box::new(uri.clone()),
-      source,
-    })?;
-    actual_length = actual_length.saturating_add(chunk.len() as u64);
-    if actual_length > limit {
-      return Err(RootArtifactReadError::PayloadTooLarge {
-        uri: Box::new(uri.clone()),
-        limit,
-        actual: actual_length,
-      });
-    }
-    if actual_length > expected_length {
-      return Err(RootArtifactReadError::LengthMismatch {
-        uri: Box::new(uri.clone()),
-        expected: expected_length,
-        actual: actual_length,
-      });
-    }
-    bytes.extend_from_slice(&chunk);
-  }
-  if actual_length != expected_length {
-    return Err(RootArtifactReadError::LengthMismatch {
-      uri: Box::new(uri.clone()),
-      expected: expected_length,
-      actual: actual_length,
-    });
-  }
-  let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
-  if actual_digest != metadata.sha256() {
-    return Err(RootArtifactReadError::DigestMismatch {
-      uri: Box::new(uri.clone()),
-      expected: metadata.sha256(),
-      actual: actual_digest,
-    });
-  }
-  Ok(bytes)
-}
-
 pub async fn read_scroll_scan(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<ScrollScanArtifact, ScrollScanReadError> {
-  let bytes = read_json_bytes(store, snapshot, uri, SCROLL_SCAN_PURPOSE, SCROLL_SCAN_JSON_BYTE_LIMIT).await?;
-  let value = serde_json::from_slice(&bytes).map_err(|source| RootArtifactReadError::MalformedJson {
-    uri: Box::new(uri.clone()),
-    source,
-  })?;
-  validate_scroll_scan_artifact(&value, snapshot.run_id()).map_err(|message| RootArtifactReadError::InvalidPayload {
-    uri: Box::new(uri.clone()),
-    message,
-  })?;
-  Ok(value)
+  read_json_artifact_bounded(store, snapshot, uri, SCROLL_SCAN_PURPOSE, SCROLL_SCAN_JSON_BYTE_LIMIT, validate_scroll_scan_artifact)
+    .await
+    .map_err(Into::into)
 }
 
 fn validate_snapshot_authority(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<(), RootArtifactReadError> {
   if snapshot.authority_id() != store.authority_id() {
-    return Err(RootArtifactReadError::SnapshotAuthorityMismatch {
-      snapshot_authority: snapshot.authority_id(),
-      store_authority: store.authority_id(),
-    });
+    return Err(
+      ReadArtifactError::SnapshotAuthorityMismatch {
+        snapshot_authority: snapshot.authority_id(),
+        store_authority: store.authority_id(),
+      }
+      .into(),
+    );
   }
   Ok(())
 }
@@ -554,31 +446,18 @@ fn validate_recognition_result(value: &RecognitionResult) -> Result<(), String> 
   Ok(())
 }
 
-fn validate_scan_coverage(value: &ScanCoverageWire) -> Result<(), String> {
-  if value.schema_version != SCAN_COVERAGE_SCHEMA_VERSION {
-    return Err(format!("schema version mismatch: found {}", value.schema_version));
-  }
-  Ok(())
-}
-
-fn detail_string(detail: &serde_json::Value, key: &str) -> Option<String> {
-  detail.get(key).and_then(serde_json::Value::as_str).map(str::to_string)
-}
-
 #[cfg(test)]
 mod tests {
   use std::sync::Arc;
 
-  use auv_tracing::{MemoryRunStore, configure, dispatcher};
-  use serde_json::json;
-
   use super::*;
+  use crate::contract::RecognitionProvenance;
+  use auv_tracing::{AuthorityId, MemoryRunStore, RunId, configure, dispatcher};
 
   fn input_action() -> InputActionResult {
     InputActionResult {
       selected_path: auv_driver::InputDeliveryPath::Noop,
       attempts: Vec::new(),
-      fallback_reason: None,
       mouse_disturbance: auv_driver::DisturbanceLevel::None,
       focus_disturbance: auv_driver::DisturbanceLevel::None,
       clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -589,6 +468,11 @@ mod tests {
     RecognitionResult {
       recognition_id: "recognition-root-reader".to_string(),
       source: RecognitionSource::VisualRow,
+      provenance: RecognitionProvenance {
+        producer: "fixture".to_string(),
+        model_id: Some("rows-v1".to_string()),
+        execution_provider: None,
+      },
       scope: crate::contract::RecognitionScope {
         surface: crate::contract::RecognitionSurface::Window,
         display_ref: None,
@@ -597,15 +481,13 @@ mod tests {
         window_title: Some("Example".to_string()),
         window_number: Some(7),
         region_hint: None,
-        capture_artifact: None,
-        capture_contract_artifact: None,
+        capture_artifact_uri: None,
+        capture_contract_artifact_uri: None,
       },
       best: None,
       filtered: Vec::new(),
       all: Vec::new(),
-      detail: json!({ "backend": "fixture", "model_id": "rows-v1" }),
-      evidence: Vec::new(),
-      known_limits: vec!["fixture".to_string()],
+      evidence_artifacts: Vec::new(),
     }
   }
 
@@ -613,14 +495,39 @@ mod tests {
   async fn publishers_are_noops_without_a_current_context() {
     assert!(publish_input_action_result(None, &input_action()).await.expect("disabled input publication").is_none());
     assert!(publish_detector_recognition(None, &recognition()).await.expect("disabled recognition publication").is_none());
-    let coverage = ScanCoverageWire {
-      schema_version: SCAN_COVERAGE_SCHEMA_VERSION.to_string(),
-      entries: Vec::new(),
-      open_uncertainty_codes: Vec::new(),
-      negative_evidence: Vec::new(),
-      completeness: auv_scan::CompletenessWire::Complete,
-    };
+    let coverage = CoverageView::complete(Vec::new());
     assert!(publish_scan_coverage(None, &coverage).await.expect("disabled coverage publication").is_none());
+  }
+
+  #[tokio::test]
+  async fn detached_input_action_preparation_failure_does_not_change_the_primary_value() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let invalid = InputActionResult {
+      selected_path: auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      attempts: vec![auv_driver::InputAttempt::success(
+        auv_driver::InputDeliveryPath::AxPress,
+      )],
+      mouse_disturbance: auv_driver::DisturbanceLevel::None,
+      focus_disturbance: auv_driver::DisturbanceLevel::None,
+      clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+    };
+
+    let value = root.in_scope(|| {
+      emit_input_action_result(&invalid);
+      42
+    });
+    dispatch.flush().await.expect("preparation diagnostic flush");
+    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("diagnostic run");
+
+    assert_eq!(value, 42);
+    assert!(snapshot.artifacts().is_empty());
+    assert!(
+      snapshot.events().iter().any(|event| event.schema().name().as_str() == "auv.runtime.artifact_preparation_failed"),
+      "invalid detached evidence must be visible as a typed diagnostic"
+    );
   }
 
   #[tokio::test]
@@ -641,7 +548,7 @@ mod tests {
 
     for metadata in [&input_metadata, &recognition_metadata] {
       assert_eq!(metadata.uri().run_id(), run_id);
-      assert_eq!(metadata.content_type().to_string(), JSON_CONTENT_TYPE);
+      assert_eq!(metadata.content_type().to_string(), "application/json");
       assert!(snapshot.artifacts().contains_key(metadata.uri()));
     }
     assert_eq!(input_metadata.purpose().as_str(), INPUT_ACTION_RESULT_PURPOSE);
@@ -651,7 +558,7 @@ mod tests {
     assert_eq!(lineage.len(), 1);
     assert_eq!(lineage[0].artifact_uri, recognition_metadata.uri().clone());
     assert_eq!(lineage[0].recognition_id, recognition.recognition_id);
-    assert_eq!(lineage[0].backend.as_deref(), Some("fixture"));
+    assert_eq!(lineage[0].producer, "fixture");
   }
 
   #[tokio::test]
@@ -675,6 +582,11 @@ mod tests {
     .await
     .expect_err("foreign URI must fail ownership validation");
 
-    assert!(matches!(error, RootArtifactReadError::WrongOwner { .. }));
+    assert!(matches!(
+      error,
+      RootArtifactReadError::Read {
+        source: ReadArtifactError::WrongRun { .. }
+      }
+    ));
   }
 }

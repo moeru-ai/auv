@@ -1,7 +1,7 @@
 use crate::{
-  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
+  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField,
   arg::{IMAGE_TEXT_ARGS, REGION_ARGS, SCREEN_TEXT_ARGS, TARGET_ARGS},
-  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
+  artifact::emit_png,
   invoke_command,
 };
 
@@ -58,7 +58,7 @@ pub fn group() -> CommandGroup {
 #[invoke_command(
   id = "screen.captureRegion",
   group = "screen",
-  summary = "Capture one display-contained region and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
+  description = "Capture one display-contained region and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = REGION_ARGS,
 )]
 async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
@@ -71,21 +71,8 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
 
   #[cfg(target_os = "macos")]
   {
-    let (capture, instrumentation) = capture_screen_region(region).await?.into_parts();
-
-    let mut output = InvokeCommandOutput::new("screen region captured");
-    output.backend = Some(format!("auv-driver-macos.display.{}", capture.capture.backend));
-    output.signals.insert("display.id".to_string(), capture.display.id);
-    output.signals.insert("capture.width".to_string(), capture.capture.image.width().to_string());
-    output.signals.insert("capture.height".to_string(), capture.capture.image.height().to_string());
-    // TODO(invoke-capture-contract-artifacts): this records the captured pixels
-    // and basic dimensions, but not the standalone capture-contract artifact.
-    // Add it after the direct-invoke contract JSON shape is accepted in
-    // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
-    output.verification = Some("capture-only; no semantic success claim".to_string());
-    output.known_limits.push("screen.captureRegion records a region screenshot only; it does not verify UI semantics.".to_string());
-    output.apply_artifact_instrumentation(instrumentation);
-    Ok(output)
+    let capture = capture_screen_region(region).await?;
+    region_capture_output(&capture)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -94,7 +81,7 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<ArtifactPublication<auv_driver::RegionCapture>, String> {
+pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<auv_driver::RegionCapture, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -105,9 +92,8 @@ pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<ArtifactP
         ..auv_driver::CaptureOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    let mut instrumentation = ArtifactInstrumentationReceipt::default();
-    instrumentation.publish_png("auv.driver.screen_region_capture", &capture.capture.image).await;
-    Ok(ArtifactPublication::new(capture, instrumentation))
+    emit_png("auv.driver.screen_region_capture", &capture.capture.image);
+    Ok(capture)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -116,10 +102,22 @@ pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<ArtifactP
   }
 }
 
+fn region_capture_output(capture: &auv_driver::RegionCapture) -> InvokeCommandResult {
+  let mut output = InvokeCommandOutput::from_result(&super::display_capture_result(&capture.display, &capture.capture))?;
+  output.report = Some(InvokeReport::new(
+    vec![
+      InvokeReportField::new("Display ID", capture.display.id.clone()),
+      InvokeReportField::new("Pixel size", format!("{}x{}", capture.capture.image.width(), capture.capture.image.height())),
+    ],
+    Vec::new(),
+  ));
+  Ok(output)
+}
+
 #[invoke_command(
   id = "screen.findText",
   group = "screen",
-  summary = "Capture a screenshot and locate OCR text anchors in screenshot pixel space. If activate_target_before_capture is true, the target app is foregrounded first.",
+  description = "Capture a screenshot and locate OCR text anchors in screenshot pixel space. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = SCREEN_TEXT_ARGS,
 )]
 async fn find_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
@@ -131,10 +129,8 @@ async fn find_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let query = input.required_input("query")?.to_string();
-    let (matches, instrumentation) = recognize_screen_text(query, false).await?.into_parts();
-    let mut output = screen_text_matches_output(&input.command_id, &matches);
-    output.apply_artifact_instrumentation(instrumentation);
-    Ok(output)
+    let matches = recognize_screen_text(query, false).await?;
+    screen_text_matches_output(&input.command_id, &matches)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -146,7 +142,7 @@ async fn find_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
 #[invoke_command(
   id = "screen.waitForText",
   group = "screen",
-  summary = "Poll live-desktop OCR until a target text anchor appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
+  description = "Poll live-desktop OCR until a target text anchor appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
   args = SCREEN_TEXT_ARGS,
 )]
 async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
@@ -158,10 +154,8 @@ async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult 
     }
 
     let query = input.required_input("query")?.to_string();
-    let (matches, instrumentation) = recognize_screen_text(query, true).await?.into_parts();
-    let mut output = screen_text_matches_output(&input.command_id, &matches);
-    output.apply_artifact_instrumentation(instrumentation);
-    Ok(output)
+    let matches = recognize_screen_text(query, true).await?;
+    screen_text_matches_output(&input.command_id, &matches)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -171,7 +165,7 @@ async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult 
 }
 
 #[cfg(target_os = "macos")]
-pub async fn recognize_screen_text(query: String, wait: bool) -> Result<ArtifactPublication<auv_driver::OcrMatches>, String> {
+pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, String> {
   use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
   use std::{thread, time::Instant};
 
@@ -189,41 +183,37 @@ pub async fn recognize_screen_text(query: String, wait: bool) -> Result<Artifact
         return Err(format!("screen.waitForText did not find text {query:?} before timeout"));
       }
       // TODO(invoke-recognition-result-artifacts): this records the OCR source
-      // screenshot and scalar match signals, but not a structured
+      // screenshot and typed OCR matches, but not a structured
       // recognition-result artifact with query/bounds/confidence. Add that
       // after the artifact shape is accepted in the direct-command handoff.
-      let mut instrumentation = ArtifactInstrumentationReceipt::default();
-      instrumentation.publish_png("auv.driver.screen_ocr_source", &capture.capture.image).await;
-      return Ok(ArtifactPublication::new(matches, instrumentation));
+      emit_png("auv.driver.screen_ocr_source", &capture.capture.image);
+      return Ok(matches);
     }
     thread::sleep(wait_options.poll_interval);
   }
 }
 
 #[cfg(not(target_os = "macos"))]
-pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<ArtifactPublication<auv_driver::OcrMatches>, String> {
+pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_driver::OcrMatches, String> {
   Err("screen text OCR is only available on macOS".to_string())
 }
 
 #[cfg(target_os = "macos")]
-fn screen_text_matches_output(command_id: &str, matches: &auv_driver::OcrMatches) -> InvokeCommandOutput {
-  let mut output = text_matches_output(command_id, "auv-driver-macos.vision", &matches.matches, None);
-  output.verification = Some("recognition-only; no semantic success claim".to_string());
-  output
-    .known_limits
-    .push("screen OCR recognition records text matches and source screenshot only; it does not verify downstream UI state.".to_string());
-  output
+fn screen_text_matches_output(_command_id: &str, matches: &auv_driver::OcrMatches) -> InvokeCommandResult {
+  let mut output = InvokeCommandOutput::from_result(matches)?;
+  output.report = Some(crate::commands::ocr::match_report(&matches.matches, None));
+  Ok(output)
 }
 
 #[invoke_command(
   id = "screen.findRows",
   group = "screen",
-  summary = "Detect visible OCR row bands inside a constrained screen region without depending on one exact anchor string. If activate_target_before_capture is true, the target app is foregrounded first.",
+  description = "Detect visible OCR row bands inside a constrained screen region without depending on one exact anchor string. If activate_target_before_capture is true, the target app is foregrounded first.",
   args = TARGET_ARGS,
 )]
 async fn find_screen_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
   find_screen_rows_domain().await?;
-  Ok(InvokeCommandOutput::new("found screen rows"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn find_screen_rows_domain() -> Result<(), String> {
@@ -236,12 +226,12 @@ pub async fn find_screen_rows_domain() -> Result<(), String> {
 #[invoke_command(
   id = "screen.waitForRows",
   group = "screen",
-  summary = "Poll live-desktop OCR row detection until at least a target number of visible rows appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
+  description = "Poll live-desktop OCR row detection until at least a target number of visible rows appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
   args = TARGET_ARGS,
 )]
 async fn wait_for_screen_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
   wait_for_screen_rows_domain().await?;
-  Ok(InvokeCommandOutput::new("found screen rows after waiting"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn wait_for_screen_rows_domain() -> Result<(), String> {
@@ -254,12 +244,12 @@ pub async fn wait_for_screen_rows_domain() -> Result<(), String> {
 #[invoke_command(
   id = "screen.findImageText",
   group = "screen",
-  summary = "Locate OCR text anchors inside an existing image artifact without touching the live desktop.",
+  description = "Locate OCR text anchors inside an existing image artifact without touching the live desktop.",
   args = IMAGE_TEXT_ARGS,
 )]
 async fn find_image_text(_input: InvokeCommandInput) -> InvokeCommandResult {
   recognize_image_text().await?;
-  Ok(InvokeCommandOutput::new("recognized image text"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn recognize_image_text() -> Result<(), String> {
@@ -272,7 +262,7 @@ pub async fn recognize_image_text() -> Result<(), String> {
 #[invoke_command(
   id = "screen.clickText",
   group = "screen",
-  summary = "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
+  description = "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
   args = SCREEN_TEXT_ARGS,
 )]
 async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
@@ -286,21 +276,8 @@ async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
     }
 
     let query = input.required_input("query")?.to_string();
-    let (result, instrumentation) = click_recognized_screen_text(query).await?.into_parts();
-
-    let mut output = text_matches_output(&input.command_id, "auv-driver-macos.input", &result.matches.matches, Some(0));
-    // TODO(invoke-recognition-result-artifacts): clickText records the OCR
-    // source screenshot used for target resolution, but not the structured
-    // recognition-result artifact. Add it with screen.findText once the
-    // direct-invoke recognition artifact shape is accepted.
-    output.signals.insert("click.x".to_string(), result.point.x.to_string());
-    output.signals.insert("click.y".to_string(), result.point.y.to_string());
-    output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
-    output
-      .known_limits
-      .push("screen.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
-    output.apply_artifact_instrumentation(instrumentation);
-    Ok(output)
+    let result = click_recognized_screen_text(query).await?;
+    screen_text_click_output(&result)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -309,13 +286,25 @@ async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct ScreenTextClick {
   pub matches: auv_driver::OcrMatches,
   pub point: auv_driver::geometry::Point,
+  pub action: auv_driver::InputActionResult,
 }
 
-pub async fn click_recognized_screen_text(query: String) -> Result<ArtifactPublication<ScreenTextClick>, String> {
+#[cfg(target_os = "macos")]
+fn screen_text_click_output(result: &ScreenTextClick) -> InvokeCommandResult {
+  let mut output = InvokeCommandOutput::from_result(result)?;
+  output.report = Some(crate::commands::ocr::match_report(&result.matches.matches, Some(0)));
+  if let Some(report) = output.report.as_mut() {
+    report.fields.push(InvokeReportField::new("Click point", format!("{:.0},{:.0}", result.point.x, result.point.y)));
+    report.fields.push(InvokeReportField::new("Input path", result.action.selected_path.as_str()));
+  }
+  Ok(output)
+}
+
+pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -325,10 +314,14 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ArtifactPubli
       .find_text_in_capture(&capture.capture, &query, auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
     let point = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?.action_point();
-    session.input().click_at(point, auv_driver::Click::Single).map_err(|error| error.to_string())?;
-    let mut instrumentation = ArtifactInstrumentationReceipt::default();
-    instrumentation.publish_png("auv.driver.screen_ocr_source", &capture.capture.image).await;
-    Ok(ArtifactPublication::new(ScreenTextClick { matches, point }, instrumentation))
+    let action = session.input().click_at(point, auv_driver::Click::Single).map_err(|error| error.to_string())?;
+    super::input::emit_input_action_result(&action);
+    emit_png("auv.driver.screen_ocr_source", &capture.capture.image);
+    Ok(ScreenTextClick {
+      matches,
+      point,
+      action,
+    })
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -340,12 +333,12 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ArtifactPubli
 #[invoke_command(
   id = "screen.clickRow",
   group = "screen",
-  summary = "Detect visible OCR row bands inside a constrained screen region and click a chosen row-derived point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
+  description = "Detect visible OCR row bands inside a constrained screen region and click a chosen row-derived point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
   args = TARGET_ARGS,
 )]
 async fn click_screen_row(_input: InvokeCommandInput) -> InvokeCommandResult {
   click_screen_row_domain().await?;
-  Ok(InvokeCommandOutput::new("clicked screen row"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn click_screen_row_domain() -> Result<(), String> {
@@ -365,31 +358,15 @@ fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Res
   Ok(())
 }
 
-fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
-  InvokeCommandOutput::new(format!("dry run: {command_id}"))
-}
-
-#[cfg(target_os = "macos")]
-fn text_matches_output(
-  command_id: &str,
-  backend: &str,
-  matches: &[auv_driver::OcrMatch],
-  selected_index: Option<usize>,
-) -> InvokeCommandOutput {
-  let count = matches.len();
-  let mut output = InvokeCommandOutput::new(format!("{command_id} matched {count} text region(s)"));
-  output.backend = Some(backend.to_string());
-  output.signals.insert("match.count".to_string(), count.to_string());
-  if let Some(best_text) = matches.first() {
-    output.signals.insert("match.best_text".to_string(), best_text.text.clone());
-  }
-  output.report = Some(crate::commands::ocr::match_report(matches, selected_index));
-  output
+fn dry_run_output(_command_id: &str) -> InvokeCommandOutput {
+  InvokeCommandOutput::completed()
 }
 
 #[cfg(test)]
 mod region_tests {
   use std::collections::BTreeMap;
+
+  use image::RgbaImage;
 
   use super::*;
   use crate::InvokeCancellation;
@@ -454,5 +431,76 @@ mod region_tests {
     };
     let error = futures_executor::block_on(capture_region(invalid_live)).expect_err("invalid live region must fail before capture");
     assert!(error.contains("width") && error.contains("greater than zero"));
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn screen_text_output_returns_typed_ocr_matches() {
+    let matches = auv_driver::OcrMatches {
+      matches: vec![auv_driver::OcrMatch {
+        text: "Pause".to_string(),
+        confidence: 0.95,
+        bounds: auv_driver::Rect::new(10.0, 20.0, 80.0, 24.0),
+      }],
+    };
+
+    let output = screen_text_matches_output("screen.findText", &matches).expect("OCR result should serialize");
+
+    assert_eq!(output.result(), Some(&serde_json::to_value(&matches).expect("fixture should serialize")));
+  }
+
+  #[test]
+  fn region_capture_result_keeps_pixels_out_of_json() {
+    let capture = auv_driver::RegionCapture {
+      display: auv_driver::Display {
+        id: "display_1".to_string(),
+        name: None,
+        frame: auv_driver::Rect::new(0.0, 0.0, 1920.0, 1080.0),
+        coordinate_space: auv_driver::CoordinateSpace::Screen,
+        scale_factor: 1.0,
+        is_primary: false,
+        is_builtin: Some(false),
+      },
+      capture: auv_driver::Capture {
+        image: RgbaImage::new(320, 180),
+        bounds: auv_driver::Rect::new(100.0, 120.0, 320.0, 180.0),
+        scale_factor: 1.0,
+        backend: "fixture-region".to_string(),
+        fallback_reason: Some("fixture fallback".to_string()),
+      },
+    };
+
+    let output = region_capture_output(&capture).expect("region result should serialize");
+    let result = output.result().expect("capture should have a result");
+
+    assert_eq!(result["display"]["id"], "display_1");
+    assert_eq!(result["capture"]["bounds"]["origin"]["x"], 100.0);
+    assert_eq!(result["capture"]["pixel_dimensions"]["width"], 320);
+    assert_eq!(result["capture"]["backend"], "fixture-region");
+    assert_eq!(result["capture"]["fallback_reason"], "fixture fallback");
+    assert!(result.get("image").is_none());
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn screen_text_click_result_keeps_resolution_and_delivery_together() {
+    let click = ScreenTextClick {
+      matches: auv_driver::OcrMatches {
+        matches: vec![auv_driver::OcrMatch {
+          text: "Pause".to_string(),
+          confidence: 0.97,
+          bounds: auv_driver::Rect::new(40.0, 50.0, 70.0, 20.0),
+        }],
+      },
+      point: auv_driver::Point::new(75.0, 60.0),
+      action: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::ForegroundSystemEvents),
+    };
+
+    let output = screen_text_click_output(&click).expect("screen click result should serialize");
+    let result = output.result().expect("click should have a result");
+
+    assert_eq!(result["matches"]["matches"][0]["text"], "Pause");
+    assert_eq!(result["point"]["x"], 75.0);
+    assert_eq!(result["action"]["selected_path"], "foreground_system_events");
   }
 }

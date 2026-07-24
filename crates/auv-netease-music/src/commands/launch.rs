@@ -11,24 +11,47 @@ use crate::windows::resolve_window;
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "windows")]
 const POLL_INTERVAL_MS: u64 = 250;
+#[cfg(target_os = "windows")]
 const FORCE_RENDERER_ACCESSIBILITY_ARG: &str = "--force-renderer-accessibility";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaunchStep {
-  pub name: String,
-  pub outcome: String,
-  pub note: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LaunchResult {
   pub command: String,
   pub window_found: bool,
   pub window_title: Option<String>,
   pub process_name: String,
   pub executable: Option<String>,
-  pub steps: Vec<LaunchStep>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum LaunchEvent {
+  #[cfg(target_os = "windows")]
+  ExistingWindowResolved {
+    found: bool,
+  },
+  #[cfg(target_os = "windows")]
+  WindowActivated,
+  #[cfg(target_os = "windows")]
+  ProcessStarted {
+    executable: String,
+    renderer_accessibility_enabled: bool,
+  },
+  #[cfg(target_os = "windows")]
+  WindowAppeared,
+  #[cfg(target_os = "windows")]
+  WaitTimedOut {
+    timeout_ms: u64,
+  },
+  UnsupportedPlatform,
+}
+
+impl auv_tracing::EventPayload for LaunchEvent {
+  const NAME: &'static str = "auv.netease.launch.lifecycle";
+  const VERSION: u32 = 1;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,16 +79,7 @@ impl LaunchResult {
       window_title: None,
       process_name: inputs.resolve.process_name.clone(),
       executable: None,
-      steps: Vec::new(),
     }
-  }
-
-  fn push(&mut self, name: &str, outcome: &str, note: Option<String>) {
-    self.steps.push(LaunchStep {
-      name: name.to_string(),
-      outcome: outcome.to_string(),
-      note,
-    });
   }
 }
 
@@ -108,14 +122,14 @@ mod platform {
   pub fn run(inputs: &OpenWindowInputs) -> Result<LaunchResult, String> {
     let mut result = LaunchResult::new(inputs);
     if let Some(window) = resolve_window(&inputs.resolve)? {
-      result.push("resolve", "found", None);
+      auv_tracing::emit_event!(LaunchEvent::ExistingWindowResolved { found: true });
       activate(&window)?;
-      result.push("activate", "ok", None);
+      auv_tracing::emit_event!(LaunchEvent::WindowActivated);
       result.window_found = true;
       result.window_title = window.title;
       return Ok(result);
     }
-    result.push("resolve", "not_found", None);
+    auv_tracing::emit_event!(LaunchEvent::ExistingWindowResolved { found: false });
 
     let executable = resolve_executable(inputs.executable.as_ref(), |name| std::env::var_os(name));
     result.executable = Some(executable.display().to_string());
@@ -128,14 +142,17 @@ mod platform {
       .arg(FORCE_RENDERER_ACCESSIBILITY_ARG)
       .spawn()
       .map_err(|error| format!("failed to launch {}: {error}", executable.display()))?;
-    result.push("launch", "ok", Some(format!("argument={FORCE_RENDERER_ACCESSIBILITY_ARG}")));
+    auv_tracing::emit_event!(LaunchEvent::ProcessStarted {
+      executable: executable.display().to_string(),
+      renderer_accessibility_enabled: true,
+    });
 
     let deadline = Instant::now() + Duration::from_millis(inputs.settle_ms);
     loop {
       if let Some(window) = resolve_window(&inputs.resolve)? {
-        result.push("wait", "appeared", None);
+        auv_tracing::emit_event!(LaunchEvent::WindowAppeared);
         activate(&window)?;
-        result.push("activate", "ok", None);
+        auv_tracing::emit_event!(LaunchEvent::WindowActivated);
         result.window_found = true;
         result.window_title = window.title;
         return Ok(result);
@@ -146,14 +163,9 @@ mod platform {
       std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
 
-    result.push(
-      "wait",
-      "timeout",
-      Some(format!(
-        "{DEFAULT_PROCESS_NAME} launched but no visible NetEase window appeared within {}ms; the app may still be tray-only",
-        inputs.settle_ms
-      )),
-    );
+    auv_tracing::emit_event!(LaunchEvent::WaitTimedOut {
+      timeout_ms: inputs.settle_ms,
+    });
     Ok(result)
   }
 
@@ -168,9 +180,8 @@ mod platform {
   use super::*;
 
   pub fn run(inputs: &OpenWindowInputs) -> Result<LaunchResult, String> {
-    let mut result = LaunchResult::new(inputs);
-    result.push("launch", "unsupported", Some("NetEase open-window is currently supported only on Windows".to_string()));
-    Ok(result)
+    auv_tracing::emit_event!(LaunchEvent::UnsupportedPlatform);
+    Ok(LaunchResult::new(inputs))
   }
 }
 

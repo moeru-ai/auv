@@ -45,7 +45,6 @@ pub(crate) fn parse_sidebar_viewport(
       axis: ViewAxis::Vertical,
       scroll_offset: None,
     },
-    source_artifacts: Vec::new(),
     incoming_scroll_delivery_path: None,
     scroll_motion: None,
     viewport_fingerprint,

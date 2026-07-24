@@ -4,14 +4,14 @@ use crate::{
     KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS, QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS,
     WINDOW_CLICK_POINT_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
   },
+  artifact::{emission_enabled, emit_prepared},
   invoke_command,
 };
 use crate::{InvokeReport, InvokeReportField};
-use auv_tracing::{ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, ContentType, Context, NewArtifact, Sha256Digest};
+use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, NewArtifact};
 use futures_util::io::Cursor as AsyncCursor;
-use sha2::{Digest, Sha256};
 
-const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
+use auv_driver::INPUT_ACTION_RESULT_PURPOSE;
 const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 
 pub fn group() -> CommandGroup {
@@ -34,12 +34,12 @@ pub fn group() -> CommandGroup {
 #[invoke_command(
   id = "input.focusText",
   group = "input",
-  summary = "Focus a target macOS text input through AX, either by --query text or by a promoted --candidate JSON payload.",
+  description = "Focus a target macOS text input through AX, either by --query text or by a promoted --candidate JSON payload.",
   args = QUERY_OR_CANDIDATE_ARGS,
 )]
 async fn focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
   focus_text().await?;
-  Ok(InvokeCommandOutput::new("focused text input"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn focus_text() -> Result<(), String> {
@@ -52,12 +52,12 @@ pub async fn focus_text() -> Result<(), String> {
 #[invoke_command(
   id = "input.pressButton",
   group = "input",
-  summary = "Press a known macOS button-like control by query through AX.",
+  description = "Press a known macOS button-like control by query through AX.",
   args = QUERY_ARGS,
 )]
 async fn press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
   press_button_by_query().await?;
-  Ok(InvokeCommandOutput::new("pressed button"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn press_button_by_query() -> Result<(), String> {
@@ -70,12 +70,12 @@ pub async fn press_button_by_query() -> Result<(), String> {
 #[invoke_command(
   id = "input.axPressButton",
   group = "input",
-  summary = "Press a control by query via AXUIElementPerformAction without moving the real cursor. Pass --overlay true to draw a visual AUV cursor over the target. Falls back with an error when the AX target has no matching action; use input.pressButton for non-AX-pressable targets.",
+  description = "Press a control by query via AXUIElementPerformAction without moving the real cursor. Pass --overlay true to draw a visual AUV cursor over the target. Falls back with an error when the AX target has no matching action; use input.pressButton for non-AX-pressable targets.",
   args = QUERY_OVERLAY_ARGS,
 )]
 async fn ax_press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
   press_button_with_ax().await?;
-  Ok(InvokeCommandOutput::new("pressed button through AX"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn press_button_with_ax() -> Result<(), String> {
@@ -88,12 +88,12 @@ pub async fn press_button_with_ax() -> Result<(), String> {
 #[invoke_command(
   id = "input.axFocusText",
   group = "input",
-  summary = "Focus a text input by query or promoted --candidate JSON via AXUIElementSetAttributeValue(kAXFocusedAttribute) without moving the real cursor. Pass --overlay true for the dual-cursor visual. Errors when the target does not accept programmatic focus; use input.focusText if pointer movement is acceptable.",
+  description = "Focus a text input by query or promoted --candidate JSON via AXUIElementSetAttributeValue(kAXFocusedAttribute) without moving the real cursor. Pass --overlay true for the dual-cursor visual. Errors when the target does not accept programmatic focus; use input.focusText if pointer movement is acceptable.",
   args = QUERY_OR_CANDIDATE_OVERLAY_ARGS,
 )]
 async fn ax_focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
   focus_text_with_ax().await?;
-  Ok(InvokeCommandOutput::new("focused text input through AX"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn focus_text_with_ax() -> Result<(), String> {
@@ -105,12 +105,12 @@ pub async fn focus_text_with_ax() -> Result<(), String> {
 #[invoke_command(
   id = "input.axClickWindowText",
   group = "input",
-  summary = "Find visible text in a window via Vision OCR, resolve the AX node at that point, then press it via AXUIElementPerformAction without moving the real cursor. Pass --overlay true for the dual-cursor visual. Errors with a hint to window.clickText when the OCR anchor maps to a canvas-rendered or non-AX-pressable region.",
+  description = "Find visible text in a window via Vision OCR, resolve the AX node at that point, then press it via AXUIElementPerformAction without moving the real cursor. Pass --overlay true for the dual-cursor visual. Errors with a hint to window.clickText when the OCR anchor maps to a canvas-rendered or non-AX-pressable region.",
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
 async fn ax_click_window_text(_input: InvokeCommandInput) -> InvokeCommandResult {
   click_window_text_with_ax().await?;
-  Ok(InvokeCommandOutput::new("clicked window text through AX"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn click_window_text_with_ax() -> Result<(), String> {
@@ -123,12 +123,12 @@ pub async fn click_window_text_with_ax() -> Result<(), String> {
 #[invoke_command(
   id = "input.smartPress",
   group = "input",
-  summary = "ActionResolver v0 diagnostic press: try OCR-to-AX press first; if it fails and pointer fallback is allowed, fall back to pointer click.",
+  description = "ActionResolver v0 diagnostic press: try OCR-to-AX press first; if it fails and pointer fallback is allowed, fall back to pointer click.",
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
 async fn smart_press(_input: InvokeCommandInput) -> InvokeCommandResult {
   resolve_and_press().await?;
-  Ok(InvokeCommandOutput::new("resolved and pressed target"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn resolve_and_press() -> Result<(), String> {
@@ -141,24 +141,20 @@ pub async fn resolve_and_press() -> Result<(), String> {
 #[invoke_command(
   id = "input.typeText",
   group = "input",
-  summary = "Type text into the active macOS control through System Events.",
+  description = "Type text into the active macOS control through System Events.",
   args = TEXT_ARGS,
 )]
 async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
-    use auv_driver::TypeTextOptions;
-
     reject_target_activation(&input, "input.typeText")?;
     if input.dry_run {
       return Ok(dry_run_output(&input.command_id));
     }
 
     let text = input.required_input("text")?.to_string();
-    let (result, recording) = type_text_into_active_control(text).await?;
-    let mut output = input_action_output("typed text into active control", "auv-driver-macos.input", &result);
-    output.artifacts.extend(recording);
-    Ok(output)
+    let result = type_text_into_active_control(text).await?;
+    input_action_output(&result)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -167,13 +163,13 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn type_text_into_active_control(text: String) -> Result<(auv_driver::InputActionResult, Option<ArtifactMetadata>), String> {
+pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = session.input().type_text(&text, auv_driver::TypeTextOptions::default()).map_err(|error| error.to_string())?;
-    let recording = publish_input_action_result(&result).await?;
-    Ok((result, recording))
+    emit_input_action_result(&result);
+    Ok(result)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -185,32 +181,20 @@ pub async fn type_text_into_active_control(text: String) -> Result<(auv_driver::
 #[invoke_command(
   id = "input.pasteText",
   group = "input",
-  summary = "Paste text into the active macOS control through the clipboard, then restore the prior clipboard snapshot.",
+  description = "Paste text into the active macOS control through the clipboard, then restore the prior clipboard snapshot.",
   args = TEXT_ARGS,
 )]
 async fn paste_text_preserve_clipboard(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
-    use auv_driver::PasteTextOptions;
-
     reject_target_activation(&input, "input.pasteText")?;
     if input.dry_run {
       return Ok(dry_run_output(&input.command_id));
     }
 
     let text = input.required_input("text")?.to_string();
-    paste_text_into_active_control(text).await?;
-
-    let mut output = InvokeCommandOutput::new("pasted text into active control");
-    output.backend = Some("auv-driver-macos.input".to_string());
-    output.signals.insert("clipboard_disturbance".to_string(), "temporary".to_string());
-    // TODO(invoke-paste-input-action-result): paste_text currently returns only
-    // success/failure, so this handler cannot persist a typed InputActionResult
-    // artifact like input.typeText/input.key. Extend the typed paste API to
-    // return delivery evidence before claiming full input artifact coverage.
-    output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
-    output.known_limits.push("input.pasteText records clipboard-based input delivery only; it does not verify target UI state.".to_string());
-    Ok(output)
+    let result = paste_text_into_active_control(text).await?;
+    input_action_output(&result)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -219,17 +203,19 @@ async fn paste_text_preserve_clipboard(input: InvokeCommandInput) -> InvokeComma
   }
 }
 
-pub async fn paste_text_into_active_control(text: String) -> Result<(), String> {
+pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    session
+    let result = session
       .input()
       .paste_text(auv_driver::PasteTextOptions {
         text,
         ..auv_driver::PasteTextOptions::default()
       })
-      .map_err(|error| error.to_string())
+      .map_err(|error| error.to_string())?;
+    emit_input_action_result(&result);
+    Ok(result)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -241,24 +227,21 @@ pub async fn paste_text_into_active_control(text: String) -> Result<(), String> 
 #[invoke_command(
   id = "input.key",
   group = "input",
-  summary = "Press a keyboard key or shortcut in the active macOS app through System Events.",
+  description = "Press a keyboard key or shortcut in the active macOS app through System Events.",
   args = KEY_ARGS,
 )]
 async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
-    use auv_driver::KeyPressOptions;
-
     reject_target_activation(&input, "input.key")?;
     if input.dry_run {
       return Ok(dry_run_output(&input.command_id));
     }
 
     let key = input.required_input("key")?.to_string();
-    let (result, recording) = press_key_in_active_app(key.clone()).await?;
-    let mut output = input_action_output("pressed key in active app", "auv-driver-macos.input", &result);
-    attach_input_key_report(&mut output, &key, Some("active app"), &result);
-    output.artifacts.extend(recording);
+    let result = press_key_in_active_app(key.clone()).await?;
+    let mut output = input_action_output(&result)?;
+    attach_input_key_report(&mut output, &key, Some("active app"), Some("auv-driver-macos.input"), &result);
     Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
@@ -268,7 +251,7 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
   }
 }
 
-pub async fn press_key_in_active_app(key: String) -> Result<(auv_driver::InputActionResult, Option<ArtifactMetadata>), String> {
+pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
@@ -279,8 +262,8 @@ pub async fn press_key_in_active_app(key: String) -> Result<(auv_driver::InputAc
         ..auv_driver::KeyPressOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    let recording = publish_input_action_result(&result).await?;
-    Ok((result, recording))
+    emit_input_action_result(&result);
+    Ok(result)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -292,12 +275,12 @@ pub async fn press_key_in_active_app(key: String) -> Result<(auv_driver::InputAc
 #[invoke_command(
   id = "input.clickPoint",
   group = "input",
-  summary = "Click a macOS global logical point through Quartz.",
+  description = "Click a macOS global logical point through Quartz.",
   args = TARGET_ARGS,
 )]
 async fn click_point(_input: InvokeCommandInput) -> InvokeCommandResult {
   click_global_point().await?;
-  Ok(InvokeCommandOutput::new("clicked global point"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn click_global_point() -> Result<(), String> {
@@ -310,15 +293,17 @@ pub async fn click_global_point() -> Result<(), String> {
 #[invoke_command(
   id = "input.clickWindowPoint",
   group = "input",
-  summary = "Click a point relative to a target macOS window, either from --relative_x/--relative_y inputs or from a promoted --candidate JSON payload.",
+  description = "Click a point relative to a target macOS window, either from --relative_x/--relative_y inputs or from a promoted --candidate JSON payload.",
   args = WINDOW_CLICK_POINT_ARGS,
 )]
 async fn click_window_point(input: InvokeCommandInput) -> InvokeCommandResult {
-  click_window_point_domain(input).await
+  let outcome = click_window_point_domain(input).await?;
+  window_point_click_output(outcome)
 }
 
-/// Executes `input.clickWindowPoint` through the local window capability.
-pub async fn click_window_point_domain(input: InvokeCommandInput) -> InvokeCommandResult {
+/// Resolves and optionally delivers `input.clickWindowPoint`, returning the
+/// typed domain value used independently by CLI and MCP adapters.
+pub async fn click_window_point_domain(input: InvokeCommandInput) -> Result<WindowPointClickOutcome, String> {
   #[cfg(target_os = "macos")]
   {
     let capability = LocalWindowPointCapability::open()?;
@@ -369,7 +354,7 @@ impl WindowPointCapability for LocalWindowPointCapability {
   }
 }
 
-async fn click_window_point_with_capability<C>(input: InvokeCommandInput, capability: &C) -> InvokeCommandResult
+async fn click_window_point_with_capability<C>(input: InvokeCommandInput, capability: &C) -> Result<WindowPointClickOutcome, String>
 where
   C: WindowPointCapability + Sync + ?Sized,
 {
@@ -381,14 +366,11 @@ where
   let point = point.resolve(&window, &input.command_id)?;
   input.cancellation.check().map_err(|error| error.to_string())?;
   if input.dry_run {
-    return Ok(dry_run_output(&input.command_id));
+    return Ok(WindowPointClickOutcome::Validated { window, point });
   }
 
-  let (result, recording) = click_resolved_window_point(capability, window, point).await?;
-  let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &result.action);
-  add_click_window_signals(&mut output, &result.window, result.point);
-  output.artifacts.extend(recording);
-  Ok(output)
+  let click = click_resolved_window_point(capability, window, point).await?;
+  Ok(WindowPointClickOutcome::Delivered { click })
 }
 
 #[derive(Clone, Debug)]
@@ -459,10 +441,65 @@ pub struct WindowPointClick {
   pub action: auv_driver::InputActionResult,
 }
 
-pub async fn click_point_in_window(
-  selector: auv_driver::WindowSelector,
-  point: WindowPointInput,
-) -> Result<(WindowPointClick, Option<ArtifactMetadata>), String> {
+#[derive(Clone, Debug)]
+pub enum WindowPointClickOutcome {
+  Validated {
+    window: auv_driver::Window,
+    point: auv_driver::geometry::WindowPoint,
+  },
+  Delivered {
+    click: WindowPointClick,
+  },
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct WindowPointClickResult {
+  pub window: auv_driver::Window,
+  pub point: auv_driver::geometry::WindowPoint,
+  pub action: Option<auv_driver::InputActionResult>,
+}
+
+impl WindowPointClickOutcome {
+  pub fn into_result(self) -> WindowPointClickResult {
+    match self {
+      Self::Validated { window, point } => WindowPointClickResult {
+        window,
+        point,
+        action: None,
+      },
+      Self::Delivered { click } => WindowPointClickResult {
+        window: click.window,
+        point: click.point,
+        action: Some(click.action),
+      },
+    }
+  }
+}
+
+fn window_point_click_output(outcome: WindowPointClickOutcome) -> InvokeCommandResult {
+  let result = outcome.into_result();
+  match &result.action {
+    None => {
+      let mut output = InvokeCommandOutput::from_result(&result)?;
+      output.report = Some(InvokeReport::new(
+        vec![
+          InvokeReportField::new("Window ID", result.window.reference.id.clone()),
+          InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)),
+        ],
+        Vec::new(),
+      ));
+      Ok(output)
+    }
+    Some(action) => {
+      let mut output = InvokeCommandOutput::from_result(&result)?;
+      output.report = Some(InvokeReport::new(input_action_report_fields(action), Vec::new()));
+      append_click_window_report(&mut output, &result.window, result.point);
+      Ok(output)
+    }
+  }
+}
+
+pub async fn click_point_in_window(selector: auv_driver::WindowSelector, point: WindowPointInput) -> Result<WindowPointClick, String> {
   #[cfg(target_os = "macos")]
   {
     let capability = LocalWindowPointCapability::open()?;
@@ -481,31 +518,28 @@ async fn click_resolved_window_point<C>(
   capability: &C,
   window: auv_driver::Window,
   point: auv_driver::geometry::WindowPoint,
-) -> Result<(WindowPointClick, Option<ArtifactMetadata>), String>
+) -> Result<WindowPointClick, String>
 where
   C: WindowPointCapability + Sync + ?Sized,
 {
   let action = capability.click(&window, point).map_err(|error| error.to_string())?;
-  let recording = publish_input_action_result(&action).await?;
-  Ok((
-    WindowPointClick {
-      window,
-      point,
-      action,
-    },
-    recording,
-  ))
+  emit_input_action_result(&action);
+  Ok(WindowPointClick {
+    window,
+    point,
+    action,
+  })
 }
 
 #[invoke_command(
   id = "input.teachClick",
   group = "input",
-  summary = "Capture a target window before and after a human-taught click, recording global and window-local click coordinates for automation debugging.",
+  description = "Capture a target window before and after a human-taught click, recording global and window-local click coordinates for automation debugging.",
   args = WINDOW_ARGS,
 )]
 async fn teach_click(_input: InvokeCommandInput) -> InvokeCommandResult {
   teach_click_workflow().await?;
-  Ok(InvokeCommandOutput::new("recorded taught click"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn teach_click_workflow() -> Result<(), String> {
@@ -518,12 +552,12 @@ pub async fn teach_click_workflow() -> Result<(), String> {
 #[invoke_command(
   id = "input.scrollPoint",
   group = "input",
-  summary = "Scroll at a macOS global logical point through Quartz.",
+  description = "Scroll at a macOS global logical point through Quartz.",
   args = TARGET_ARGS,
 )]
 async fn scroll_point(_input: InvokeCommandInput) -> InvokeCommandResult {
   scroll_global_point().await?;
-  Ok(InvokeCommandOutput::new("scrolled global point"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn scroll_global_point() -> Result<(), String> {
@@ -578,19 +612,25 @@ fn click_window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelect
   selector
 }
 
-fn add_click_window_signals(output: &mut InvokeCommandOutput, window: &auv_driver::Window, window_point: auv_driver::geometry::WindowPoint) {
-  output.signals.insert("window.id".to_string(), window.reference.id.clone());
+fn append_click_window_report(
+  output: &mut InvokeCommandOutput,
+  window: &auv_driver::Window,
+  window_point: auv_driver::geometry::WindowPoint,
+) {
+  let Some(report) = output.report.as_mut() else {
+    return;
+  };
+  report.fields.push(InvokeReportField::new("Window ID", window.reference.id.clone()));
   if let Some(title) = &window.title {
-    output.signals.insert("window.title".to_string(), title.clone());
+    report.fields.push(InvokeReportField::new("Window title", title.clone()));
   }
   if let Some(app_name) = &window.app_name {
-    output.signals.insert("window.app_name".to_string(), app_name.clone());
+    report.fields.push(InvokeReportField::new("Application", app_name.clone()));
   }
   if let Some(bundle_id) = &window.app_bundle_id {
-    output.signals.insert("window.app_bundle_id".to_string(), bundle_id.clone());
+    report.fields.push(InvokeReportField::new("Bundle ID", bundle_id.clone()));
   }
-  output.signals.insert("click.window_x".to_string(), window_point.point().x.to_string());
-  output.signals.insert("click.window_y".to_string(), window_point.point().y.to_string());
+  report.fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", window_point.point().x, window_point.point().y)));
 }
 
 fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
@@ -603,77 +643,70 @@ fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Res
   Ok(())
 }
 
-fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
-  InvokeCommandOutput::new(format!("dry run: {command_id}"))
+fn dry_run_output(_command_id: &str) -> InvokeCommandOutput {
+  InvokeCommandOutput::completed()
 }
 
-fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandOutput {
-  let mut output = InvokeCommandOutput::new(summary);
-  output.backend = Some(backend.to_string());
-  output.signals.insert("input.selected_path".to_string(), result.selected_path.as_str().to_string());
-  output.signals.insert("input.attempt_count".to_string(), result.attempts.len().to_string());
-  output.signals.insert("input.mouse_disturbance".to_string(), result.mouse_disturbance.as_str().to_string());
-  output.signals.insert("input.focus_disturbance".to_string(), result.focus_disturbance.as_str().to_string());
-  output.signals.insert("input.clipboard_disturbance".to_string(), result.clipboard_disturbance.as_str().to_string());
-  if let Some(reason) = &result.fallback_reason {
-    output.signals.insert("input.fallback_reason".to_string(), reason.clone());
-  }
-  output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
-  output
-    .known_limits
-    .push("input delivery records the selected input path and attempts only; it does not verify target UI state.".to_string());
-  output
+fn input_action_output(result: &auv_driver::InputActionResult) -> InvokeCommandResult {
+  let mut output = InvokeCommandOutput::from_result(result)?;
+  output.report = Some(InvokeReport::new(input_action_report_fields(result), Vec::new()));
+  Ok(output)
 }
 
-async fn publish_input_action_result(result: &auv_driver::InputActionResult) -> Result<Option<ArtifactMetadata>, String> {
-  let context = Context::current();
-  if !context.can_publish_artifacts() {
-    return Ok(None);
+fn input_action_report_fields(result: &auv_driver::InputActionResult) -> Vec<InvokeReportField> {
+  let mut fields = vec![
+    InvokeReportField::new("Result", "delivered"),
+    InvokeReportField::new("Path", result.selected_path.as_str()),
+    InvokeReportField::new("Attempts", result.attempts.len().to_string()),
+    InvokeReportField::new("Mouse disturbance", result.mouse_disturbance.as_str()),
+    InvokeReportField::new("Focus disturbance", result.focus_disturbance.as_str()),
+    InvokeReportField::new("Clipboard disturbance", result.clipboard_disturbance.as_str()),
+  ];
+  if let Some(reason) = result.fallback_reason() {
+    fields.push(InvokeReportField::new("Fallback reason", reason));
   }
-  let artifact = input_action_result_artifact(result)?;
-  context
-    .in_scope(|| auv_tracing::emit_artifact!(artifact))
-    .await
-    .map_err(|error| format!("failed to publish {INPUT_ACTION_RESULT_PURPOSE} artifact: {error}"))
+  fields
+}
+
+pub(super) fn emit_input_action_result(result: &auv_driver::InputActionResult) {
+  if !emission_enabled() {
+    return;
+  }
+  emit_prepared(INPUT_ACTION_RESULT_PURPOSE, input_action_result_artifact(result));
 }
 
 fn input_action_result_artifact(result: &auv_driver::InputActionResult) -> Result<NewArtifact<AsyncCursor<Vec<u8>>>, String> {
   if result.attempts.iter().any(|attempt| attempt.succeeded && attempt.path != result.selected_path) {
     return Err(format!("{INPUT_ACTION_RESULT_PURPOSE} failed domain validation: successful input attempt must match selected_path"));
   }
-  let body = serde_json::to_vec(result).map_err(|error| format!("failed to serialize {INPUT_ACTION_RESULT_PURPOSE} artifact: {error}"))?;
-  let byte_length = u64::try_from(body.len()).map_err(|_| format!("{INPUT_ACTION_RESULT_PURPOSE} JSON length does not fit u64"))?;
-  if byte_length > ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
-    return Err(format!(
-      "{INPUT_ACTION_RESULT_PURPOSE} is {byte_length} bytes, exceeding the {ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT}-byte limit"
-    ));
-  }
-  Ok(NewArtifact::new(
+  NewArtifact::from_json(
     ArtifactPurpose::parse(INPUT_ACTION_RESULT_PURPOSE)
       .map_err(|error| format!("invalid {INPUT_ACTION_RESULT_PURPOSE} purpose: {error}"))?,
-    ContentType::parse("application/json").map_err(|error| format!("invalid {INPUT_ACTION_RESULT_PURPOSE} content type: {error}"))?,
-    ByteLength::new(byte_length).map_err(|error| format!("invalid {INPUT_ACTION_RESULT_PURPOSE} byte length: {error}"))?,
-    Sha256Digest::new(Sha256::digest(&body).into()),
     Attributes::empty(),
-    AsyncCursor::new(body),
-  ))
+    ByteLength::new(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).expect("static input-action JSON limit is valid"),
+    result,
+  )
+  .map_err(|error| format!("failed to construct {INPUT_ACTION_RESULT_PURPOSE} artifact: {error}"))
 }
 
 fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, result: &auv_driver::InputActionResult) -> InvokeReport {
-  let mut fields = vec![
-    report_field("Result", "delivered"),
-    report_field("Key", key),
-    report_field("Target", target.unwrap_or("active app")),
-    report_field("Path", result.selected_path.as_str()),
-  ];
+  let mut fields = input_action_report_fields(result);
+  fields.insert(1, report_field("Key", key));
+  fields.insert(2, report_field("Target", target.unwrap_or("active app")));
   if let Some(backend) = backend {
     fields.push(report_field("Backend", backend));
   }
   InvokeReport::new(fields, Vec::new())
 }
 
-fn attach_input_key_report(output: &mut InvokeCommandOutput, key: &str, target: Option<&str>, result: &auv_driver::InputActionResult) {
-  output.report = Some(input_key_report(key, target, output.backend.as_deref(), result));
+fn attach_input_key_report(
+  output: &mut InvokeCommandOutput,
+  key: &str,
+  target: Option<&str>,
+  backend: Option<&str>,
+  result: &auv_driver::InputActionResult,
+) {
+  output.report = Some(input_key_report(key, target, backend, result));
 }
 
 fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
@@ -765,9 +798,9 @@ mod click_window_point_tests {
       dry_run: true,
       cancellation: crate::InvokeCancellation::new(),
     };
-    let output = futures_executor::block_on(click_window_point_with_capability(input, &capability)).expect("dry run should succeed");
+    let outcome = futures_executor::block_on(click_window_point_with_capability(input, &capability)).expect("dry run should succeed");
 
-    assert!(output.summary.contains("dry run: input.clickWindowPoint"));
+    assert!(matches!(outcome, WindowPointClickOutcome::Validated { .. }));
     assert_eq!(capability.resolve_count(), 1);
     assert_eq!(capability.click_count(), 0);
   }
@@ -815,9 +848,9 @@ mod click_window_point_tests {
       cancellation: crate::InvokeCancellation::new(),
     };
 
-    let output = futures_executor::block_on(click_window_point_with_capability(input, &capability)).expect("valid live point");
+    let outcome = futures_executor::block_on(click_window_point_with_capability(input, &capability)).expect("valid live point");
 
-    assert_eq!(output.summary, "clicked window point");
+    assert!(matches!(outcome, WindowPointClickOutcome::Delivered { .. }));
     assert_eq!(capability.resolve_count(), 1);
     assert_eq!(capability.click_count(), 1);
   }
@@ -833,13 +866,12 @@ mod click_window_point_tests {
     let future =
       root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
 
-    let (delivered, recording) = root.instrument(future).await.expect("direct window click result");
+    let delivered = root.instrument(future).await.expect("direct window click result");
     dispatch.flush().await.expect("flush input action telemetry");
     let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("input run");
 
     assert_eq!(delivered.action, expected);
     let publication = snapshot.artifacts().values().next().expect("input action artifact");
-    assert_eq!(recording.as_ref(), Some(publication.metadata()));
     assert_eq!(snapshot.artifacts().len(), 1);
     assert_eq!(publication.metadata().purpose().as_str(), INPUT_ACTION_RESULT_PURPOSE);
     assert_eq!(publication.metadata().content_type().to_string(), "application/json");
@@ -853,13 +885,12 @@ mod click_window_point_tests {
   }
 
   #[tokio::test]
-  async fn invalid_input_artifact_fails_the_enabled_typed_call_without_reexecuting_driver_input() {
+  async fn invalid_input_artifact_does_not_change_the_typed_call_or_reexecute_driver_input() {
     let invalid = InputActionResult {
       selected_path: InputDeliveryPath::WindowTargetedMouse,
       attempts: vec![auv_driver::InputAttempt::success(
         InputDeliveryPath::AxPress,
       )],
-      fallback_reason: None,
       mouse_disturbance: auv_driver::DisturbanceLevel::None,
       focus_disturbance: auv_driver::DisturbanceLevel::None,
       clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -872,29 +903,28 @@ mod click_window_point_tests {
     let future =
       root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
 
-    let error = root.instrument(future).await.expect_err("enabled domain validation failure must propagate");
-    dispatch.flush().await.expect("pre-enqueue validation failure leaves no artifact job");
-    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read");
+    let delivered = root.instrument(future).await.expect("artifact preparation must not replace the direct input result");
+    dispatch.flush().await.expect("typed preparation diagnostic should flush");
+    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("diagnostic run");
 
-    assert!(error.contains("successful input attempt must match selected_path"), "{error}");
-    assert_eq!(capability.click_count(), 1, "publication failure must not reexecute direct input");
-    assert!(snapshot.is_none(), "rejected input evidence must not commit an artifact-only run");
+    assert_eq!(delivered.action, invalid);
+    assert_eq!(capability.click_count(), 1, "artifact preparation must not reexecute direct input");
+    assert!(snapshot.artifacts().is_empty(), "invalid evidence must not commit an artifact");
   }
 
   #[tokio::test]
-  async fn input_action_publication_short_circuits_without_run_context() {
+  async fn input_action_emission_short_circuits_without_run_context() {
     let invalid = InputActionResult {
       selected_path: InputDeliveryPath::WindowTargetedMouse,
       attempts: vec![auv_driver::InputAttempt::success(
         InputDeliveryPath::AxPress,
       )],
-      fallback_reason: None,
       mouse_disturbance: auv_driver::DisturbanceLevel::None,
       focus_disturbance: auv_driver::DisturbanceLevel::None,
       clipboard_disturbance: auv_driver::DisturbanceLevel::None,
     };
 
-    assert!(publish_input_action_result(&invalid).await.expect("disabled telemetry skips domain validation").is_none());
+    emit_input_action_result(&invalid);
   }
 
   #[test]
@@ -904,7 +934,6 @@ mod click_window_point_tests {
       attempts: vec![auv_driver::InputAttempt::success(
         InputDeliveryPath::AxPress,
       )],
-      fallback_reason: None,
       mouse_disturbance: auv_driver::DisturbanceLevel::None,
       focus_disturbance: auv_driver::DisturbanceLevel::None,
       clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -912,8 +941,16 @@ mod click_window_point_tests {
     let domain_error = input_action_result_artifact(&invalid).err().expect("mismatched successful attempt must fail");
     assert!(domain_error.contains("successful input attempt must match selected_path"));
 
-    let mut oversized = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
-    oversized.fallback_reason = Some("x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize));
+    let oversized = InputActionResult {
+      selected_path: InputDeliveryPath::WindowTargetedMouse,
+      attempts: vec![
+        auv_driver::InputAttempt::failure(InputDeliveryPath::AxPress, "x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize)),
+        auv_driver::InputAttempt::success(InputDeliveryPath::WindowTargetedMouse),
+      ],
+      mouse_disturbance: auv_driver::DisturbanceLevel::None,
+      focus_disturbance: auv_driver::DisturbanceLevel::None,
+      clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+    };
     let size_error = input_action_result_artifact(&oversized).err().expect("oversized input action must fail");
     assert!(size_error.contains("4194304-byte limit"));
   }
@@ -1075,9 +1112,8 @@ mod click_window_point_tests {
   fn input_key_report_includes_delivered_key_target_and_backend() {
     let result = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
 
-    let mut output = InvokeCommandOutput::new("pressed key in active app");
-    output.backend = Some("auv-driver-macos.input".to_string());
-    attach_input_key_report(&mut output, "Cmd+L", Some("active app"), &result);
+    let mut output = InvokeCommandOutput::completed();
+    attach_input_key_report(&mut output, "Cmd+L", Some("active app"), Some("auv-driver-macos.input"), &result);
     assert!(
       output.report.is_some(),
       "input.key live path calls this helper after driver delivery, so this stable helper test verifies report population without sending a real key"
@@ -1092,22 +1128,40 @@ mod click_window_point_tests {
   }
 
   #[test]
-  fn input_action_output_projects_explicit_snake_case_wire_values() {
+  fn input_action_output_reports_explicit_domain_values() {
     let result = InputActionResult {
       selected_path: InputDeliveryPath::WindowTargetedKeyboardScroll,
       attempts: vec![],
-      fallback_reason: None,
       mouse_disturbance: auv_driver::DisturbanceLevel::None,
       focus_disturbance: auv_driver::DisturbanceLevel::Foreground,
       clipboard_disturbance: auv_driver::DisturbanceLevel::Temporary,
     };
 
-    let output = input_action_output("delivered", "test", &result);
+    let output = input_action_output(&result).expect("input result should serialize");
 
-    assert_eq!(output.signals.get("input.selected_path").map(String::as_str), Some("window_targeted_keyboard_scroll"));
-    assert_eq!(output.signals.get("input.mouse_disturbance").map(String::as_str), Some("none"));
-    assert_eq!(output.signals.get("input.focus_disturbance").map(String::as_str), Some("foreground"));
-    assert_eq!(output.signals.get("input.clipboard_disturbance").map(String::as_str), Some("temporary"));
+    let report = output.report.as_ref().expect("input action report");
+    assert_eq!(field_value(report, "Path"), "window_targeted_keyboard_scroll");
+    assert_eq!(field_value(report, "Mouse disturbance"), "none");
+    assert_eq!(field_value(report, "Focus disturbance"), "foreground");
+    assert_eq!(field_value(report, "Clipboard disturbance"), "temporary");
+    assert_eq!(output.result(), Some(&serde_json::to_value(&result).expect("fixture should serialize")));
+  }
+
+  #[test]
+  fn window_point_click_result_keeps_resolved_target_and_delivery_together() {
+    let click = WindowPointClick {
+      window: test_window(),
+      point: auv_driver::geometry::WindowPoint::new(640.0, 360.0),
+      action: InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse),
+    };
+
+    let output = window_point_click_output(WindowPointClickOutcome::Delivered { click }).expect("click result should serialize");
+    let result = output.result().expect("click should have a result");
+
+    assert_eq!(result["window"]["reference"]["id"], "window-1");
+    assert_eq!(result["point"]["x"], 640.0);
+    assert_eq!(result["point"]["y"], 360.0);
+    assert_eq!(result["action"]["selected_path"], "window_targeted_mouse");
   }
 
   fn field_value<'a>(report: &'a InvokeReport, label: &str) -> &'a str {

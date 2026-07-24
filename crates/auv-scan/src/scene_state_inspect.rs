@@ -3,40 +3,22 @@
 //! NOTICE(scan-s6a): NOT a durable wire, read cache, or viewer surface. No `Serialize`.
 
 use crate::scene_state::{
-  SceneDraftAnswers, SceneStateError, SceneStateInput, SceneStateProduct, build_scene_state_product, observations_match_bundle,
+  SceneDraftAnswers, SceneStateError, SceneStateInput, SceneStateProduct, build_scene_state_product, observations_match_frames,
 };
-
-/// Whether scene-state inspect hydrated coverage from a durable wire or in-memory evaluator.
-#[derive(Clone, Copy, Debug)]
-pub enum CoverageInspectSource {
-  InMemory,
-  Durable,
-}
-
-impl PartialEq for CoverageInspectSource {
-  fn eq(&self, other: &Self) -> bool {
-    matches!((self, other), (Self::InMemory, Self::InMemory) | (Self::Durable, Self::Durable))
-  }
-}
-
-impl Eq for CoverageInspectSource {}
 
 /// L3 in-memory consumption surface. NOT a durable wire or read cache.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneStateInspect {
   /// Memory-only convenience wrapper around the L2 product. NOT a schema or read cache.
   pub product: SceneStateProduct,
-  pub bundle_frame_count: usize,
+  pub frame_count: usize,
   pub observations_frame_count: usize,
   pub observations_input_valid: bool,
-  pub coverage_source: CoverageInspectSource,
 }
 
 /// List/badge projection (mirrors ViewParserListSummary intent).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SceneStateListSummary {
-  /// Always true when inspect build succeeded; reserved for future list aggregation over partial inputs.
-  pub has_scene_state: bool,
   pub action_ready: bool,
   pub blocking_codes: Vec<String>,
   pub track_count: usize,
@@ -46,27 +28,20 @@ pub struct SceneStateListSummary {
 /// Build the L3 inspect read surface from scene state input.
 pub fn build_scene_state_inspect(input: &SceneStateInput) -> Result<SceneStateInspect, SceneStateError> {
   let product = build_scene_state_product(input)?;
-  let bundle_frame_count = input.bundle.frames.len();
+  let frame_count = input.frames.len();
   let observations_frame_count = input.observations_by_frame.len();
-  let observations_input_valid = observations_match_bundle(&input.bundle, &input.observations_by_frame);
-  let coverage_source = if input.coverage_wire.is_some() {
-    CoverageInspectSource::Durable
-  } else {
-    CoverageInspectSource::InMemory
-  };
+  let observations_input_valid = observations_match_frames(&input.frames, &input.observations_by_frame);
   Ok(SceneStateInspect {
     product,
-    bundle_frame_count,
+    frame_count,
     observations_frame_count,
     observations_input_valid,
-    coverage_source,
   })
 }
 
 /// Summarize inspect for list/badge consumption.
 pub fn summarize_scene_state_inspect(inspect: &SceneStateInspect) -> SceneStateListSummary {
   SceneStateListSummary {
-    has_scene_state: inspect.bundle_frame_count > 0,
     action_ready: inspect.product.action_readiness.ready,
     blocking_codes: inspect.product.action_readiness.blocking_codes.clone(),
     track_count: inspect.product.tracks.len(),
@@ -80,15 +55,11 @@ pub fn format_scene_state_inspect_text(inspect: &SceneStateInspect) -> String {
   let mut lines = Vec::new();
 
   lines.push(format!(
-    "[scene.input] as_of_frame_id={} bundle_frames={} observation_frames={} observations_valid={}",
-    product.as_of_frame_id, inspect.bundle_frame_count, inspect.observations_frame_count, inspect.observations_input_valid,
+    "[scene.input] as_of_frame_id={} frames={} observation_frames={} observations_valid={}",
+    product.as_of_frame_id, inspect.frame_count, inspect.observations_frame_count, inspect.observations_input_valid,
   ));
 
-  let coverage_source = match inspect.coverage_source {
-    CoverageInspectSource::Durable => "durable",
-    CoverageInspectSource::InMemory => "in_memory",
-  };
-  lines.push(format!("[scene.coverage] source={coverage_source} entry_count={}", product.coverage.entries.len(),));
+  lines.push(format!("[scene.coverage] entry_count={}", product.coverage.entries.len(),));
 
   lines.push(format!(
     "[scene.readiness] ready={} reason={} blocking={:?}",
@@ -127,16 +98,16 @@ pub fn format_scene_state_inspect_text(inspect: &SceneStateInspect) -> String {
     }
   }
 
-  lines.push(format_draft_answers_section(&product.draft_answers));
+  lines.push(format_draft_answers_section(product.draft_answers()));
   lines.join("\n")
 }
 
-fn format_draft_answers_section(draft: &SceneDraftAnswers) -> String {
+fn format_draft_answers_section(draft: SceneDraftAnswers<'_>) -> String {
   let recommended = draft.recommended_observations.iter().map(|req| req.code.as_str()).collect::<Vec<_>>().join(",");
   format!(
     "[scene.draft_answers] as_of={} tracks={} action_ready={} blocking={:?} recommended=[{recommended}]",
     draft.as_of_frame_id,
-    draft.track_summaries.len(),
+    draft.tracks.len(),
     draft.action_readiness.ready,
     draft.action_readiness.blocking_codes,
   )
@@ -175,37 +146,33 @@ mod tests {
   }
 
   #[test]
-  fn inspect_durable_coverage_smoke() {
-    let mut input = scene_input_from_fixture("scene_stable_v0");
-    input.coverage_wire = crate::scene_fixture_support::coverage_wire_from_scene_fixture("scene_stable_v0");
-    let inspect = build_scene_state_inspect(&input).expect("inspect");
-    let product = build_scene_state_product(&input).expect("product");
-    assert_eq!(inspect.product, product);
-    assert_eq!(inspect.coverage_source, CoverageInspectSource::Durable);
-  }
-
-  #[test]
   fn inspect_product_matches_direct_build() {
     let input = scene_input_from_fixture("scene_stable_v0");
     let inspect = build_scene_state_inspect(&input).expect("inspect");
     let product = build_scene_state_product(&input).expect("product");
     assert_eq!(inspect.product, product);
-    assert_eq!(inspect.observations_input_valid, observations_match_bundle(&input.bundle, &input.observations_by_frame));
+    assert_eq!(inspect.observations_input_valid, observations_match_frames(&input.frames, &input.observations_by_frame));
   }
 
   #[test]
   fn summarize_scene_state_inspect_projection() {
     let inspect = build_inspect_from_fixture("scene_stale_v0");
     let summary = summarize_scene_state_inspect(&inspect);
-    assert_eq!(summary.action_ready, inspect.product.action_readiness.ready);
-    assert_eq!(summary.blocking_codes, inspect.product.action_readiness.blocking_codes);
-    assert_eq!(summary.track_count, inspect.product.tracks.len());
+    let SceneStateListSummary {
+      action_ready,
+      blocking_codes,
+      track_count,
+      recommended_observation_codes,
+    } = summary;
+    assert_eq!(action_ready, inspect.product.action_readiness.ready);
+    assert_eq!(blocking_codes, inspect.product.action_readiness.blocking_codes);
+    assert_eq!(track_count, inspect.product.tracks.len());
     assert_eq!(
-      summary.recommended_observation_codes,
+      recommended_observation_codes,
       inspect.product.recommended_observations.iter().map(|req| req.code.clone()).collect::<Vec<_>>()
     );
-    assert!(summary.blocking_codes.iter().any(|code| code == "no_new_observation"));
-    assert!(summary.recommended_observation_codes.iter().any(|code| code == "rescan_after_motion"));
+    assert!(blocking_codes.iter().any(|code| code == "no_new_observation"));
+    assert!(recommended_observation_codes.iter().any(|code| code == "rescan_after_motion"));
   }
 
   #[test]

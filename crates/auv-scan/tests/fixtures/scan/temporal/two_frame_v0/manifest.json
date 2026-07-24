@@ -20,8 +20,7 @@
       "image": {
         "file_name": "frame-0001.png",
         "width": 8,
-        "height": 8,
-        "media_type": "image/png"
+        "height": 8
       }
     },
     {
@@ -38,8 +37,7 @@
       "image": {
         "file_name": "frame-0002.png",
         "width": 8,
-        "height": 8,
-        "media_type": "image/png"
+        "height": 8
       }
     }
   ]

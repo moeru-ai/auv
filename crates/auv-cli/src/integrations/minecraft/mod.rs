@@ -5,46 +5,58 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use futures_util::StreamExt;
 use image::{ImageFormat, ImageReader, Limits};
-use sha2::{Digest, Sha256};
 
 pub mod help;
 pub mod projection_workflow;
 pub mod query_live_action;
-pub mod session;
-pub mod verification;
 
+use auv_game_minecraft::dataset::{PROJECTION_BUNDLE_ROLE, SPATIAL_FRAME_BUNDLE_ROLE};
 use auv_game_minecraft::{
-  MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, MinecraftArtifactReadError, MinecraftProjectionArtifact, MinecraftProjector,
-  MinecraftSpatialFrame, QueryActionWiringOutcome, QueryLiveClickExecutor, ScenePacketInputs, ScenePacketOutput, SourceRunSummary,
-  SpatialBundleInputs, SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput,
-  TextureSweepReport, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
-  TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
-  TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput, TrainingResultHoldoutPreviewInputs,
-  TrainingResultHoldoutPreviewOutput, TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityOutput,
-  TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs, TrainingResultSemanticValidationOutput,
-  TrainingResultSpatialQueryInputs, TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryOutput,
-  build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
-  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
-  fetch_3dgs_training_result_artifacts_with_environment, inspect_3dgs_training_result_holdout, launch_3dgs_training_job,
-  launch_3dgs_training_job_with_environment, measure_3dgs_holdout_render_quality, prepare_3dgs_training_launch,
-  prepare_texture_sweep_resource_packs, query_3dgs_training_result, query_action_wiring_lineage_from_manifest,
-  validate_3dgs_training_result, wire_query_manifest_to_action,
+  BundleArtifactId, MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, MinecraftArtifactReadError, MinecraftProjectionArtifact,
+  MinecraftProjector, MinecraftSpatialFrame, ScenePacketInputs, ScenePacketOutput, SourceRunReference, SpatialBundleInputs,
+  SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput, TextureSweepReport,
+  TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput, TextureSweepThresholds, build_texture_sweep_samples_from_bundles,
+  evaluate_texture_sweep, export_3dgs_scene_packet, export_spatial_bundle, prepare_texture_sweep_resource_packs,
 };
-use auv_runtime::contract::VerificationResult;
 use auv_runtime::model::AuvResult;
-use auv_tracing::{ArtifactPurpose, ArtifactUri, ContentType, Context, RunId, RunSnapshot, RunStore, Sha256Digest};
-
-use self::query_live_action::DirectWindowPointClickExecutor;
-
-pub use auv_game_minecraft::artifact_roles::*;
+use auv_tracing::{
+  ArtifactMetadata, ArtifactPurpose, ArtifactUri, ByteLength, ContentType, Context, EventPayload, ReadArtifactError, RunId, RunSnapshot,
+  RunStore, read_artifact_bytes,
+};
 
 pub const MINECRAFT_SPATIAL_BUNDLE_PURPOSE: &str = "auv.minecraft.spatial_bundle";
 
 const MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT: u64 = 32 * 1024 * 1024;
 const MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT: u64 = 256 * 1024 * 1024;
 const MINECRAFT_IMAGE_DIMENSION_LIMIT: u32 = 16_384;
+
+#[derive(serde::Serialize)]
+struct MinecraftArtifactPublicationFailed {
+  artifact_purpose: &'static str,
+  error: String,
+}
+
+impl EventPayload for MinecraftArtifactPublicationFailed {
+  const NAME: &'static str = "auv.minecraft.artifact_publication_failed";
+  const VERSION: u32 = 1;
+}
+
+fn keep_artifact_receipt<E: std::fmt::Display>(
+  artifact_purpose: &'static str,
+  result: Result<Option<ArtifactMetadata>, E>,
+) -> Option<ArtifactMetadata> {
+  match result {
+    Ok(receipt) => receipt,
+    Err(error) => {
+      auv_tracing::emit_event!(MinecraftArtifactPublicationFailed {
+        artifact_purpose,
+        error: error.to_string(),
+      });
+      None
+    }
+  }
+}
 
 pub async fn run_minecraft_3dgs_scene_packet_export(
   bundle_manifest_paths: Vec<PathBuf>,
@@ -55,24 +67,10 @@ pub async fn run_minecraft_3dgs_scene_packet_export(
     output_dir,
   })?;
   let context = Context::current();
-  auv_game_minecraft::scene_packet::publish_minecraft_scene_packet(Some(&context), &result.manifest)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft scene packet: {error}"))?;
-  Ok(result)
-}
-
-pub async fn run_minecraft_3dgs_training_package_export(
-  scene_packet_manifest_path: PathBuf,
-  output_dir: PathBuf,
-) -> AuvResult<TrainingPackageOutput> {
-  let result = export_3dgs_training_package(TrainingPackageInputs {
-    scene_packet_manifest_path,
-    output_dir,
-  })?;
-  let context = Context::current();
-  auv_game_minecraft::training_package::publish_minecraft_training_package(Some(&context), &result.manifest)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft training package: {error}"))?;
+  keep_artifact_receipt(
+    auv_game_minecraft::scene_packet::MINECRAFT_SCENE_PACKET_PURPOSE,
+    auv_game_minecraft::scene_packet::publish_minecraft_scene_packet(Some(&context), &result.manifest).await,
+  );
   Ok(result)
 }
 
@@ -83,309 +81,6 @@ pub async fn run_minecraft_texture_sweep_preparation(
   prepare_texture_sweep_resource_packs(TextureSweepPreparationInputs {
     sidecar_run_dir,
     output_dir,
-  })
-}
-
-pub async fn run_minecraft_3dgs_training_launch_preparation(
-  training_package_manifest_path: PathBuf,
-  output_dir: PathBuf,
-) -> AuvResult<TrainingLaunchPreparationOutput> {
-  prepare_3dgs_training_launch(TrainingLaunchPreparationInputs {
-    training_package_manifest_path,
-    output_dir,
-  })
-}
-
-pub async fn run_minecraft_3dgs_training_job_launch(
-  training_launch_plan_path: PathBuf,
-  output_dir: PathBuf,
-) -> AuvResult<auv_game_minecraft::TrainingLaunchJobOutput> {
-  run_minecraft_3dgs_training_job_launch_with_environment(training_launch_plan_path, output_dir, None, None, None).await
-}
-
-pub async fn run_minecraft_3dgs_training_job_launch_with_environment(
-  training_launch_plan_path: PathBuf,
-  output_dir: PathBuf,
-  training_job_endpoint: Option<String>,
-  training_job_token: Option<String>,
-  training_job_submit_command: Option<String>,
-) -> AuvResult<auv_game_minecraft::TrainingLaunchJobOutput> {
-  let inputs = TrainingLaunchJobInputs {
-    training_launch_plan_path,
-    output_dir,
-  };
-  let result = if training_job_endpoint.is_some() || training_job_token.is_some() || training_job_submit_command.is_some() {
-    launch_3dgs_training_job_with_environment(
-      inputs,
-      auv_game_minecraft::TrainingJobEnvironment::with_values(training_job_endpoint, training_job_token, training_job_submit_command),
-    )?
-  } else {
-    launch_3dgs_training_job(inputs)?
-  };
-  let context = Context::current();
-  auv_game_minecraft::training_job::publish_minecraft_training_job(Some(&context), &result.manifest)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft training job: {error}"))?;
-  Ok(result)
-}
-
-pub async fn run_minecraft_3dgs_training_result_collection(
-  training_job_manifest_path: PathBuf,
-  output_dir: PathBuf,
-) -> AuvResult<TrainingResultOutput> {
-  run_minecraft_3dgs_training_result_collection_with_environment(training_job_manifest_path, output_dir, None, None, None).await
-}
-
-pub async fn run_minecraft_3dgs_training_result_collection_with_environment(
-  training_job_manifest_path: PathBuf,
-  output_dir: PathBuf,
-  training_job_endpoint: Option<String>,
-  training_job_token: Option<String>,
-  training_job_status_command: Option<String>,
-) -> AuvResult<TrainingResultOutput> {
-  let inputs = TrainingResultInputs {
-    training_job_manifest_path,
-    output_dir,
-  };
-  let result = if training_job_endpoint.is_some() || training_job_token.is_some() || training_job_status_command.is_some() {
-    collect_3dgs_training_job_result_with_environment(
-      inputs,
-      auv_game_minecraft::TrainingResultEnvironment::with_values(training_job_endpoint, training_job_token, training_job_status_command),
-    )?
-  } else {
-    collect_3dgs_training_job_result(inputs)?
-  };
-  let context = Context::current();
-  auv_game_minecraft::training_result::publish_minecraft_training_result(Some(&context), &result.manifest)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft training result: {error}"))?;
-  Ok(result)
-}
-
-pub async fn run_minecraft_3dgs_training_result_artifact_fetch(
-  training_result_manifest_path: PathBuf,
-  output_dir: PathBuf,
-  training_job_endpoint: Option<String>,
-  training_job_token: Option<String>,
-  artifact_fetch_command: Option<String>,
-) -> AuvResult<TrainingResultArtifactFetchOutput> {
-  fetch_3dgs_training_result_artifacts_with_environment(
-    TrainingResultArtifactFetchInputs {
-      training_result_manifest_path,
-      output_dir,
-    },
-    auv_game_minecraft::TrainingResultArtifactFetchEnvironment::with_values(
-      training_job_endpoint,
-      training_job_token,
-      artifact_fetch_command,
-    ),
-  )
-}
-
-pub async fn run_minecraft_3dgs_training_result_semantic_validation(
-  training_result_artifact_manifest_path: PathBuf,
-  output_dir: PathBuf,
-) -> AuvResult<TrainingResultSemanticValidationOutput> {
-  let result = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
-    training_result_artifact_manifest_path,
-    output_dir,
-  })?;
-  let context = Context::current();
-  auv_game_minecraft::training_result_semantic::publish_minecraft_training_semantic(Some(&context), &result.manifest)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft training semantic result: {error}"))?;
-  Ok(result)
-}
-
-pub async fn run_minecraft_3dgs_training_result_holdout_preview(
-  training_result_semantic_manifest_path: PathBuf,
-  holdout_frame_index: Option<usize>,
-  holdout_render_command: Option<String>,
-  output_dir: PathBuf,
-) -> AuvResult<TrainingResultHoldoutPreviewOutput> {
-  let result = inspect_3dgs_training_result_holdout(TrainingResultHoldoutPreviewInputs {
-    training_result_semantic_manifest_path,
-    output_dir,
-    holdout_frame_index,
-    holdout_render_command,
-  })?;
-  let context = Context::current();
-  auv_game_minecraft::training_result_holdout_preview::publish_minecraft_training_holdout_preview(Some(&context), &result.manifest)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft training holdout preview: {error}"))?;
-  Ok(result)
-}
-
-pub async fn run_minecraft_measure_3dgs_holdout_render_quality(
-  training_result_semantic_manifest_path: PathBuf,
-  holdout_preview_manifest_path: PathBuf,
-  render_command: String,
-  output_dir: PathBuf,
-) -> AuvResult<TrainingResultHoldoutRenderQualityOutput> {
-  let result = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
-    training_result_semantic_manifest_path,
-    holdout_preview_manifest_path,
-    render_command,
-    output_dir,
-  })?;
-  let context = Context::current();
-  auv_game_minecraft::training_result_holdout_render_quality::publish_minecraft_training_holdout_render_quality(
-    Some(&context),
-    &result.manifest,
-  )
-  .await
-  .map_err(|error| format!("failed to publish Minecraft training holdout render quality: {error}"))?;
-  Ok(result)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn run_minecraft_3dgs_training_result_spatial_query(
-  training_result_semantic_manifest_path: PathBuf,
-  target_block: auv_game_minecraft::BlockPosition,
-  target_face: Option<auv_game_minecraft::BlockFace>,
-  target_semantics: auv_game_minecraft::MinecraftTargetSemantics,
-  query_command: Option<String>,
-  use_checkpoint_native_provider: bool,
-  use_closed_scene_toy_provider: bool,
-  closed_scene_fixture_path: Option<PathBuf>,
-  output_dir: PathBuf,
-) -> AuvResult<TrainingResultSpatialQueryOutput> {
-  let result = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
-    training_result_semantic_manifest_path,
-    target_block,
-    target_face,
-    target_semantics,
-    query_command,
-    use_checkpoint_native_provider,
-    use_closed_scene_toy_provider,
-    closed_scene_fixture_path,
-    output_dir,
-  })?;
-  let context = Context::current();
-  auv_game_minecraft::training_result_spatial_query::publish_minecraft_training_spatial_query(Some(&context), &result.manifest)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft training spatial query: {error}"))?;
-  Ok(result)
-}
-
-pub fn wire_spatial_query_manifest_to_action(
-  manifest: &TrainingResultSpatialQueryManifest,
-  manifest_path: &Path,
-  executor: &impl QueryLiveClickExecutor,
-) -> QueryActionWiringOutcome {
-  let lineage = query_action_wiring_lineage_from_manifest(manifest, manifest_path);
-  wire_query_manifest_to_action(manifest, &lineage, executor)
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct QueryWiredLiveActionTelemetryWitness {
-  pub pre_telemetry_sample: PathBuf,
-  pub post_telemetry_sample: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct QueryWiredLiveActionInputs {
-  pub training_result_semantic_manifest_path: PathBuf,
-  pub target_block: auv_game_minecraft::BlockPosition,
-  pub target_face: Option<auv_game_minecraft::BlockFace>,
-  pub target_semantics: auv_game_minecraft::MinecraftTargetSemantics,
-  pub query_command: Option<String>,
-  pub use_checkpoint_native_provider: bool,
-  pub use_closed_scene_toy_provider: bool,
-  pub closed_scene_fixture_path: Option<PathBuf>,
-  pub output_dir: PathBuf,
-  pub target_app: String,
-  pub target_title: String,
-  pub telemetry_witness: Option<QueryWiredLiveActionTelemetryWitness>,
-  pub verification_expected_item_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct QueryWiredLiveActionOutput {
-  pub query: TrainingResultSpatialQueryOutput,
-  pub wiring: QueryActionWiringOutcome,
-  pub verifications: Vec<VerificationResult>,
-  pub input_actions: Vec<auv_driver::InputActionResult>,
-}
-
-pub async fn run_minecraft_query_wired_live_action(inputs: QueryWiredLiveActionInputs) -> AuvResult<QueryWiredLiveActionOutput> {
-  let executor = DirectWindowPointClickExecutor::new(inputs.target_app.clone(), inputs.target_title.clone());
-  run_minecraft_query_wired_live_action_with_executor_and_actions(inputs, &executor, || executor.actions()).await
-}
-
-pub async fn run_minecraft_query_wired_live_action_with_executor<E: QueryLiveClickExecutor>(
-  inputs: QueryWiredLiveActionInputs,
-  executor: &E,
-) -> AuvResult<QueryWiredLiveActionOutput> {
-  run_minecraft_query_wired_live_action_with_executor_and_actions(inputs, executor, Vec::new).await
-}
-
-async fn run_minecraft_query_wired_live_action_with_executor_and_actions<E, A>(
-  inputs: QueryWiredLiveActionInputs,
-  executor: &E,
-  input_actions: A,
-) -> AuvResult<QueryWiredLiveActionOutput>
-where
-  E: QueryLiveClickExecutor,
-  A: FnOnce() -> Vec<auv_driver::InputActionResult>,
-{
-  let mut output = run_query_wired_live_action_core(&inputs, executor).await?;
-  output.input_actions = input_actions();
-  let context = Context::current();
-  for action in &output.input_actions {
-    auv_runtime::run_read::publish_input_action_result(Some(&context), action)
-      .await
-      .map_err(|error| format!("failed to publish Minecraft query-wired live-click input action result: {error}"))?;
-  }
-  Ok(output)
-}
-
-async fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
-  inputs: &QueryWiredLiveActionInputs,
-  executor: &E,
-) -> AuvResult<QueryWiredLiveActionOutput> {
-  let query = run_minecraft_3dgs_training_result_spatial_query(
-    inputs.training_result_semantic_manifest_path.clone(),
-    inputs.target_block,
-    inputs.target_face,
-    inputs.target_semantics,
-    inputs.query_command.clone(),
-    inputs.use_checkpoint_native_provider,
-    inputs.use_closed_scene_toy_provider,
-    inputs.closed_scene_fixture_path.clone(),
-    inputs.output_dir.clone(),
-  )
-  .await?;
-  let pre_frame = if let Some(witness) = inputs.telemetry_witness.as_ref() {
-    Some(
-      auv_game_minecraft::read_latest_spatial_frame_from_tail(&witness.pre_telemetry_sample)?
-        .ok_or_else(|| format!("no valid minecraft pre frame found in {}", witness.pre_telemetry_sample.display()))?,
-    )
-  } else {
-    None
-  };
-  let mut wiring = wire_spatial_query_manifest_to_action(&query.manifest, &query.manifest_path, executor);
-  let (verifications, witness_absent_limit_needed) = verification::build_query_wired_post_action_verifications(
-    &wiring,
-    verification::QueryWiredPostActionVerificationInput {
-      telemetry_witness: inputs.telemetry_witness.as_ref(),
-      input_target_block: inputs.target_block,
-      manifest_target_block: query.manifest.target_block,
-      pre_frame,
-      verification_expected_item_id: inputs.verification_expected_item_id.clone(),
-    },
-  );
-  if wiring.attempted && !verifications.is_empty() {
-    wiring.known_limits.retain(|limit| limit != auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT);
-    if witness_absent_limit_needed {
-      wiring.known_limits.push(auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string());
-    }
-  }
-  Ok(QueryWiredLiveActionOutput {
-    query,
-    wiring,
-    verifications,
-    input_actions: Vec::new(),
   })
 }
 
@@ -403,7 +98,10 @@ pub async fn run_minecraft_spatial_bundle_export(
   store: Arc<dyn RunStore>,
   source_run_id: String,
   output_dir: PathBuf,
-  git_commit: Option<String>,
+  // NOTICE(minecraft-bundle-exporter-commit): exporter commit metadata is not
+  // canonical RunSnapshot provenance. Remove this argument when the command
+  // frontend signature is in an owner-approved write slice.
+  _git_commit: Option<String>,
 ) -> AuvResult<auv_game_minecraft::SpatialBundleOutput> {
   let source_run_id = source_run_id.parse::<RunId>().map_err(|error| format!("invalid Minecraft source run id: {error}"))?;
   let snapshot = store
@@ -421,7 +119,8 @@ pub async fn run_minecraft_spatial_bundle_export(
   let result = match artifacts {
     Ok(artifacts) => export_spatial_bundle(SpatialBundleInputs {
       output_dir,
-      source: source_run_summary(&snapshot, git_commit),
+      source_run: source_run_reference(&snapshot),
+      exported_at_millis: auv_runtime::model::now_millis(),
       artifacts,
     }),
     Err(error) => Err(error),
@@ -440,19 +139,23 @@ pub async fn run_minecraft_spatial_bundle_export(
 enum ValidatedMinecraftBundleArtifact {
   Screenshot {
     source_uri: ArtifactUri,
-    artifact_id: String,
+    bundle_artifact_id: BundleArtifactId,
     bytes: Vec<u8>,
   },
   SpatialFrame {
-    artifact_id: String,
+    source_uri: ArtifactUri,
+    bundle_artifact_id: BundleArtifactId,
     frame: Box<MinecraftSpatialFrame>,
+    screenshot_bundle_artifact_id: Option<BundleArtifactId>,
   },
   Projection {
-    artifact_id: String,
+    source_uri: ArtifactUri,
+    bundle_artifact_id: BundleArtifactId,
     projection: Box<MinecraftProjectionArtifact>,
   },
   Overlay {
-    artifact_id: String,
+    source_uri: ArtifactUri,
+    bundle_artifact_id: BundleArtifactId,
     bytes: Vec<u8>,
   },
 }
@@ -464,25 +167,28 @@ async fn read_spatial_bundle_artifacts(store: &dyn RunStore, snapshot: &RunSnaps
   for published in snapshot.artifacts().values() {
     let metadata = published.metadata();
     let uri = metadata.uri();
-    let artifact_id = format!("bundle-{:06}", artifacts.len() + 1);
+    let bundle_artifact_id = BundleArtifactId::new(format!("bundle-{:06}", artifacts.len() + 1))?;
     let artifact = match metadata.purpose().as_str() {
       projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE => ValidatedMinecraftBundleArtifact::Screenshot {
         source_uri: uri.clone(),
-        artifact_id,
+        bundle_artifact_id,
         bytes: read_minecraft_screenshot(store, snapshot, uri)
           .await
           .map_err(|error| minecraft_bundle_read_error("screenshot", uri, error))?,
       },
       projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE => ValidatedMinecraftBundleArtifact::SpatialFrame {
-        artifact_id,
+        source_uri: uri.clone(),
+        bundle_artifact_id,
         frame: Box::new(
           read_minecraft_spatial_frame(store, snapshot, uri)
             .await
             .map_err(|error| minecraft_bundle_read_error("spatial-frame", uri, error))?,
         ),
+        screenshot_bundle_artifact_id: None,
       },
       auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE => ValidatedMinecraftBundleArtifact::Projection {
-        artifact_id,
+        source_uri: uri.clone(),
+        bundle_artifact_id,
         projection: Box::new(
           auv_game_minecraft::artifact::read_minecraft_projection(store, snapshot, uri)
             .await
@@ -490,7 +196,8 @@ async fn read_spatial_bundle_artifacts(store: &dyn RunStore, snapshot: &RunSnaps
         ),
       },
       projection_workflow::MINECRAFT_OVERLAY_PURPOSE => ValidatedMinecraftBundleArtifact::Overlay {
-        artifact_id,
+        source_uri: uri.clone(),
+        bundle_artifact_id,
         bytes: read_minecraft_projection_overlay(store, snapshot, uri)
           .await
           .map_err(|error| minecraft_bundle_read_error("projection-overlay", uri, error))?,
@@ -499,11 +206,11 @@ async fn read_spatial_bundle_artifacts(store: &dyn RunStore, snapshot: &RunSnaps
     };
     artifacts.push(artifact);
   }
-  rewrite_spatial_frame_screenshot_references(store, snapshot, &mut artifacts).await?;
+  resolve_spatial_frame_screenshot_bundle_ids(store, snapshot, &mut artifacts).await?;
   Ok(artifacts)
 }
 
-async fn rewrite_spatial_frame_screenshot_references(
+async fn resolve_spatial_frame_screenshot_bundle_ids(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   artifacts: &mut [ValidatedMinecraftBundleArtifact],
@@ -513,15 +220,20 @@ async fn rewrite_spatial_frame_screenshot_references(
     .filter_map(|artifact| match artifact {
       ValidatedMinecraftBundleArtifact::Screenshot {
         source_uri,
-        artifact_id,
+        bundle_artifact_id,
         ..
-      } => Some((source_uri.clone(), artifact_id.clone())),
+      } => Some((source_uri.clone(), bundle_artifact_id.clone())),
       _ => None,
     })
     .collect::<BTreeMap<_, _>>();
 
   for artifact in artifacts {
-    let ValidatedMinecraftBundleArtifact::SpatialFrame { frame, .. } = artifact else {
+    let ValidatedMinecraftBundleArtifact::SpatialFrame {
+      frame,
+      screenshot_bundle_artifact_id,
+      ..
+    } = artifact
+    else {
       continue;
     };
     let Some(reference) = frame.screenshot_artifact_ref.as_deref() else {
@@ -530,8 +242,8 @@ async fn rewrite_spatial_frame_screenshot_references(
     let uri = reference
       .parse::<ArtifactUri>()
       .map_err(|error| format!("Minecraft spatial frame screenshot reference {reference:?} is not a canonical ArtifactUri: {error}"))?;
-    let artifact_id = match screenshot_ids.get(&uri) {
-      Some(artifact_id) => artifact_id,
+    let bundle_artifact_id = match screenshot_ids.get(&uri) {
+      Some(bundle_artifact_id) => bundle_artifact_id,
       None => match read_minecraft_screenshot(store, snapshot, &uri).await {
         Err(error) => return Err(minecraft_bundle_read_error("referenced screenshot", &uri, error)),
         Ok(_) => {
@@ -539,7 +251,7 @@ async fn rewrite_spatial_frame_screenshot_references(
         }
       },
     };
-    frame.screenshot_artifact_ref = Some(format!("artifact://{artifact_id}"));
+    *screenshot_bundle_artifact_id = Some(bundle_artifact_id.clone());
   }
   Ok(())
 }
@@ -547,9 +259,7 @@ async fn rewrite_spatial_frame_screenshot_references(
 #[derive(Clone, Copy)]
 struct SpatialBundleStagingSemantics {
   role: &'static str,
-  directory: &'static str,
   file_name: &'static str,
-  summary: &'static str,
 }
 
 fn stage_spatial_bundle_artifacts(
@@ -560,54 +270,66 @@ fn stage_spatial_bundle_artifacts(
 }
 
 fn stage_spatial_bundle_artifact(artifact: ValidatedMinecraftBundleArtifact, staging_dir: &Path) -> AuvResult<SpatialBundleSourceArtifact> {
-  let (artifact_id, semantics, bytes) = match artifact {
+  let (source_artifact_uri, bundle_artifact_id, screenshot_bundle_artifact_id, semantics, bytes) = match artifact {
     ValidatedMinecraftBundleArtifact::Screenshot {
-      artifact_id, bytes, ..
+      source_uri,
+      bundle_artifact_id,
+      bytes,
     } => (
-      artifact_id,
+      source_uri,
+      bundle_artifact_id,
+      None,
       SpatialBundleStagingSemantics {
         role: "minecraft-screenshot",
-        directory: "screenshots",
         file_name: "screenshot.png",
-        summary: "validated Minecraft screenshot bundle input",
       },
       bytes,
     ),
-    ValidatedMinecraftBundleArtifact::SpatialFrame { artifact_id, frame } => (
-      artifact_id,
+    ValidatedMinecraftBundleArtifact::SpatialFrame {
+      source_uri,
+      bundle_artifact_id,
+      frame,
+      screenshot_bundle_artifact_id,
+    } => (
+      source_uri,
+      bundle_artifact_id,
+      screenshot_bundle_artifact_id,
       SpatialBundleStagingSemantics {
-        role: MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE,
-        directory: "spatial_frames",
+        role: SPATIAL_FRAME_BUNDLE_ROLE,
         file_name: "spatial-frame.json",
-        summary: "validated Minecraft spatial-frame bundle input",
       },
       encode_bundle_json(frame.as_ref(), "spatial frame")?,
     ),
     ValidatedMinecraftBundleArtifact::Projection {
-      artifact_id,
+      source_uri,
+      bundle_artifact_id,
       projection,
     } => (
-      artifact_id,
+      source_uri,
+      bundle_artifact_id,
+      None,
       SpatialBundleStagingSemantics {
-        role: MINECRAFT_PROJECTION_ARTIFACT_ROLE,
-        directory: "spatial_frames",
+        role: PROJECTION_BUNDLE_ROLE,
         file_name: "projection.json",
-        summary: "validated Minecraft projection bundle input",
       },
       encode_bundle_json(projection.as_ref(), "projection")?,
     ),
-    ValidatedMinecraftBundleArtifact::Overlay { artifact_id, bytes } => (
-      artifact_id,
+    ValidatedMinecraftBundleArtifact::Overlay {
+      source_uri,
+      bundle_artifact_id,
+      bytes,
+    } => (
+      source_uri,
+      bundle_artifact_id,
+      None,
       SpatialBundleStagingSemantics {
         role: "minecraft-overlay",
-        directory: "overlays",
         file_name: "projection-overlay.png",
-        summary: "validated Minecraft projection-overlay bundle input",
       },
       bytes,
     ),
   };
-  let artifact_dir = staging_dir.join(&artifact_id);
+  let artifact_dir = staging_dir.join(bundle_artifact_id.as_str());
   fs::create_dir(&artifact_dir)
     .map_err(|error| format!("failed to exclusively create Minecraft bundle staging directory {}: {error}", artifact_dir.display()))?;
   let source_path = artifact_dir.join(semantics.file_name);
@@ -619,17 +341,12 @@ fn stage_spatial_bundle_artifact(artifact: ValidatedMinecraftBundleArtifact, sta
   source.write_all(&bytes).map_err(|error| format!("failed to stage Minecraft bundle input at {}: {error}", source_path.display()))?;
   source.flush().map_err(|error| format!("failed to flush Minecraft bundle staging input {}: {error}", source_path.display()))?;
 
-  // NOTICE(minecraft-bundle-staging-semantics): the domain exporter's legacy
-  // input names require `role` and `source_run_path`. These values are private
-  // bundle routing semantics, not RunSnapshot storage metadata. Remove this
-  // adapter if the domain exporter accepts decoded typed payloads directly.
-  let bundle_input_path = Path::new("bundle-inputs").join(semantics.directory).join(format!("{}-{}", artifact_id, semantics.file_name));
   Ok(SpatialBundleSourceArtifact {
-    artifact_id,
+    source_artifact_uri: source_artifact_uri.into(),
+    bundle_artifact_id,
     role: semantics.role.to_string(),
-    source_path,
-    source_run_path: bundle_input_path.to_string_lossy().into_owned(),
-    summary: Some(semantics.summary.to_string()),
+    source_file: source_path,
+    screenshot_bundle_artifact_id,
   })
 }
 
@@ -763,99 +480,22 @@ async fn read_minecraft_bundle_artifact_bytes(
   expected_content_type: &'static str,
   byte_limit: u64,
 ) -> Result<Vec<u8>, MinecraftArtifactReadError> {
-  validate_minecraft_bundle_snapshot_authority(store, snapshot)?;
-  if uri.run_id() != snapshot.run_id() {
-    return Err(MinecraftArtifactReadError::WrongOwner {
-      snapshot_run_id: snapshot.run_id(),
-      artifact_run_id: uri.run_id(),
-    });
-  }
-  let metadata = snapshot.artifacts().get(uri).ok_or_else(|| MinecraftArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
   let expected_purpose = ArtifactPurpose::parse(expected_purpose).map_err(|source| MinecraftArtifactReadError::InvalidExpectedPurpose {
     value: expected_purpose,
     source,
   })?;
-  if metadata.purpose() != &expected_purpose {
-    return Err(MinecraftArtifactReadError::WrongPurpose {
-      uri: Box::new(uri.clone()),
-      expected: expected_purpose,
-      actual: metadata.purpose().clone(),
-    });
-  }
   let expected_content_type =
-    ContentType::parse(expected_content_type).map_err(|source| MinecraftArtifactReadError::InvalidExpectedContentType {
-      value: expected_content_type,
-      source,
-    })?;
-  if metadata.content_type() != &expected_content_type {
-    return Err(MinecraftArtifactReadError::WrongContentType {
-      uri: Box::new(uri.clone()),
-      expected: Box::new(expected_content_type),
-      actual: Box::new(metadata.content_type().clone()),
-    });
-  }
-
-  let expected_length = metadata.byte_length().get();
-  if expected_length > byte_limit {
-    return Err(MinecraftArtifactReadError::PayloadTooLarge {
-      uri: uri.clone(),
-      limit: byte_limit,
-      actual: expected_length,
-    });
-  }
-  let expected_capacity = usize::try_from(expected_length).map_err(|_| MinecraftArtifactReadError::LengthOutOfRange {
-    uri: uri.clone(),
-    actual: expected_length,
-  })?;
-  let mut bytes = Vec::new();
-  bytes.try_reserve_exact(expected_capacity).map_err(|source| MinecraftArtifactReadError::Allocation {
-    uri: uri.clone(),
-    expected: expected_length,
-    source,
-  })?;
-  let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| MinecraftArtifactReadError::Open {
-    uri: uri.clone(),
-    source,
-  })?;
-  let mut actual_length = 0_u64;
-  while let Some(chunk) = reader.next().await {
-    let chunk = chunk.map_err(|source| MinecraftArtifactReadError::Stream {
-      uri: uri.clone(),
-      source,
-    })?;
-    actual_length = actual_length.saturating_add(chunk.len() as u64);
-    if actual_length > byte_limit {
-      return Err(MinecraftArtifactReadError::PayloadTooLarge {
-        uri: uri.clone(),
-        limit: byte_limit,
-        actual: actual_length,
-      });
-    }
-    if actual_length > expected_length {
-      return Err(MinecraftArtifactReadError::LengthMismatch {
-        uri: uri.clone(),
-        expected: expected_length,
-        actual: actual_length,
-      });
-    }
-    bytes.extend_from_slice(&chunk);
-  }
-  if actual_length != expected_length {
-    return Err(MinecraftArtifactReadError::LengthMismatch {
-      uri: uri.clone(),
-      expected: expected_length,
-      actual: actual_length,
-    });
-  }
-  let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
-  if actual_digest != metadata.sha256() {
-    return Err(MinecraftArtifactReadError::DigestMismatch {
-      uri: Box::new(uri.clone()),
-      expected: metadata.sha256(),
-      actual: actual_digest,
-    });
-  }
-  Ok(bytes)
+    ContentType::parse(expected_content_type).expect("Minecraft bundle readers use compile-time validated content types");
+  read_artifact_bytes(
+    store,
+    snapshot,
+    uri,
+    &expected_purpose,
+    &expected_content_type,
+    ByteLength::new(byte_limit).expect("Minecraft bundle reader limit must be non-zero"),
+  )
+  .await
+  .map_err(Into::into)
 }
 
 fn serialize_json_bounded(value: &impl serde::Serialize, byte_limit: u64, label: &str) -> AuvResult<Vec<u8>> {
@@ -906,10 +546,13 @@ impl Write for BoundedBytes {
 fn validate_minecraft_bundle_snapshot_authority(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<(), MinecraftArtifactReadError> {
   let store_authority = store.authority_id();
   if snapshot.authority_id() != store_authority {
-    return Err(MinecraftArtifactReadError::SnapshotAuthorityMismatch {
-      snapshot_authority: snapshot.authority_id(),
-      store_authority,
-    });
+    return Err(
+      ReadArtifactError::SnapshotAuthorityMismatch {
+        snapshot_authority: snapshot.authority_id(),
+        store_authority,
+      }
+      .into(),
+    );
   }
   Ok(())
 }
@@ -918,21 +561,11 @@ fn minecraft_bundle_read_error(kind: &str, uri: &ArtifactUri, error: MinecraftAr
   format!("failed to read typed Minecraft {kind} artifact {uri}: {}: {error}", error.code())
 }
 
-fn source_run_summary(snapshot: &RunSnapshot, git_commit: Option<String>) -> SourceRunSummary {
-  let source_operation = snapshot
-    .spans()
-    .values()
-    .find(|span| span.started().parent_span_id().is_none())
-    .map(|span| span.started().name().to_string())
-    .unwrap_or_else(|| "unknown".to_string());
-  SourceRunSummary {
-    source_run_id: snapshot.run_id().to_string(),
-    source_operation,
-    source_run_type: "execute".to_string(),
-    source_status: "recorded".to_string(),
-    generated_at_millis: auv_runtime::model::now_millis(),
-    auv_git_commit: git_commit.clone(),
-    exporter_git_commit: git_commit,
+fn source_run_reference(snapshot: &RunSnapshot) -> SourceRunReference {
+  SourceRunReference {
+    authority_id: snapshot.authority_id().into(),
+    run_id: snapshot.run_id().into(),
+    through_revision: snapshot.through_revision().into(),
   }
 }
 
@@ -968,297 +601,24 @@ mod tests {
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
-  use auv_driver::{InputActionResult, InputDeliveryPath};
   use auv_tracing::{
     ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, ByteLength,
-    CommitError, CommitResult, ContentType, DispatchTask, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit,
-    RunCommitPage, RunCommitRequest, RunRevision, RunStore, RunSubscription, Sha256Digest, StoreArtifactRequest, TaskSpawnError,
-    TaskSpawner, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
+    CommitError, CommitResult, ContentType, IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage,
+    RunCommitRequest, RunRevision, RunStore, RunSubscription, Sha256Digest, StoreArtifactRequest,
   };
   use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
   use sha2::{Digest, Sha256};
-  use tempfile::TempDir;
 
   use super::*;
 
   // ROOT CAUSE:
   //
-  // Typed Minecraft publishers returned validation, serialization, dispatch,
-  // and store errors, but these command paths discarded every result.
+  // Typed Minecraft publishers returned store errors after the domain operation
+  // had already completed.
   //
-  // Before the fix, direct domain work returned success without its required
-  // enabled-context artifact. The fix propagates the typed publication error.
-  #[tokio::test]
-  async fn scene_packet_export_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root
-      .in_scope(|| run_minecraft_3dgs_scene_packet_export(vec![fixture.bundle_manifest_path.clone()], fixture.path("reject-scene-packet")));
-
-    let error = root.instrument(future).await.expect_err("scene packet publication failure must fail the command");
-
-    assert_publication_error(&error, "scene packet", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn training_package_export_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root
-      .in_scope(|| run_minecraft_3dgs_training_package_export(fixture.scene.manifest_path.clone(), fixture.path("reject-training-package")));
-
-    let error = root.instrument(future).await.expect_err("training package publication failure must fail the command");
-
-    assert_publication_error(&error, "training package", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn training_job_launch_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root.in_scope(|| {
-      run_minecraft_3dgs_training_job_launch_with_environment(
-        fixture.launch.manifest_path.clone(),
-        fixture.path("reject-training-job"),
-        Some("https://training.invalid".to_string()),
-        None,
-        Some("unused".to_string()),
-      )
-    });
-
-    let error = root.instrument(future).await.expect_err("training job publication failure must fail the command");
-
-    assert_publication_error(&error, "training job", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn training_result_collection_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root.in_scope(|| {
-      run_minecraft_3dgs_training_result_collection_with_environment(
-        fixture.job.manifest_path.clone(),
-        fixture.path("reject-training-result"),
-        Some("https://training.invalid".to_string()),
-        None,
-        Some("unused".to_string()),
-      )
-    });
-
-    let error = root.instrument(future).await.expect_err("training result publication failure must fail the command");
-
-    assert_publication_error(&error, "training result", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn training_semantic_validation_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root.in_scope(|| {
-      run_minecraft_3dgs_training_result_semantic_validation(
-        fixture.artifact_fetch.manifest_path.clone(),
-        fixture.path("reject-training-semantic"),
-      )
-    });
-
-    let error = root.instrument(future).await.expect_err("training semantic publication failure must fail the command");
-
-    assert_publication_error(&error, "training semantic result", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn holdout_preview_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root.in_scope(|| {
-      run_minecraft_3dgs_training_result_holdout_preview(
-        fixture.semantic.manifest_path.clone(),
-        None,
-        None,
-        fixture.path("reject-holdout-preview"),
-      )
-    });
-
-    let error = root.instrument(future).await.expect_err("holdout preview publication failure must fail the command");
-
-    assert_publication_error(&error, "training holdout preview", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn holdout_render_quality_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root.in_scope(|| {
-      run_minecraft_measure_3dgs_holdout_render_quality(
-        fixture.semantic.manifest_path.clone(),
-        fixture.preview.manifest_path.clone(),
-        "unused".to_string(),
-        fixture.path("reject-holdout-render-quality"),
-      )
-    });
-
-    let error = root.instrument(future).await.expect_err("holdout render-quality publication failure must fail the command");
-
-    assert_publication_error(&error, "training holdout render quality", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn training_spatial_query_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::new()));
-    let future = root.in_scope(|| {
-      run_minecraft_3dgs_training_result_spatial_query(
-        fixture.semantic.manifest_path.clone(),
-        fixture.target_block,
-        None,
-        auv_game_minecraft::MinecraftTargetSemantics::BlockCenter,
-        None,
-        false,
-        false,
-        None,
-        fixture.path("reject-spatial-query"),
-      )
-    });
-
-    let error = root.instrument(future).await.expect_err("spatial-query publication failure must fail the command");
-
-    assert_publication_error(&error, "training spatial query", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn query_wired_live_action_propagates_enabled_store_failure() {
-    let fixture = minecraft_publication_fixture().await;
-    let root = publication_root(Arc::new(RejectArtifactStore::for_purpose(
-      ArtifactPurpose::parse(auv_runtime::run_read::INPUT_ACTION_RESULT_PURPOSE).expect("input-action artifact purpose"),
-    )));
-    let action = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
-    let inputs = fixture.query_wired_inputs("invalid-live-action");
-    let executor = RefusingClickExecutor;
-    let future = root.in_scope(|| run_minecraft_query_wired_live_action_with_executor_and_actions(inputs, &executor, || vec![action]));
-
-    let error = root.instrument(future).await.expect_err("input-action store failure must fail the command");
-
-    assert_publication_error(&error, "query-wired live-click input action result", "auv.test.minecraft_command_artifact_rejected");
-  }
-
-  #[tokio::test]
-  async fn disabled_context_preserves_all_typed_minecraft_domain_results() {
-    let fixture = minecraft_publication_fixture().await;
-
-    assert!(fixture.scene.manifest_path.is_file());
-    assert!(fixture.package.manifest_path.is_file());
-    assert!(fixture.job.manifest_path.is_file());
-    assert!(fixture.result.manifest_path.is_file());
-    assert!(fixture.semantic.manifest_path.is_file());
-    assert!(fixture.preview.manifest_path.is_file());
-    assert!(fixture.render_quality.manifest_path.is_file());
-    assert!(fixture.spatial_query.manifest_path.is_file());
-
-    let invalid_action = invalid_input_action();
-    let output = run_minecraft_query_wired_live_action_with_executor_and_actions(
-      fixture.query_wired_inputs("disabled-live-action"),
-      &RefusingClickExecutor,
-      || vec![invalid_action.clone()],
-    )
-    .await
-    .expect("disabled input-action publication must preserve the direct output");
-    assert_eq!(output.input_actions, vec![invalid_action]);
-  }
-
-  #[tokio::test]
-  async fn telemetry_only_context_preserves_all_typed_minecraft_domain_results() {
-    let fixture = minecraft_publication_fixture().await;
-    let dispatch = configure()
-      .project_telemetry(Arc::new(NoopProjector), TelemetryRoutePolicy::fixed_fields_only())
-      .task_spawner(Arc::new(RejectingSpawner))
-      .build()
-      .expect("telemetry-only dispatch");
-    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
-    assert!(!root.can_publish_artifacts());
-    let invalid_action = invalid_input_action();
-    let future = root.in_scope(|| async {
-      let scene =
-        run_minecraft_3dgs_scene_packet_export(vec![fixture.bundle_manifest_path.clone()], fixture.path("telemetry-scene-packet")).await?;
-      let package =
-        run_minecraft_3dgs_training_package_export(scene.manifest_path.clone(), fixture.path("telemetry-training-package")).await?;
-      let launch =
-        run_minecraft_3dgs_training_launch_preparation(package.manifest_path.clone(), fixture.path("telemetry-launch-plan")).await?;
-      let job = run_minecraft_3dgs_training_job_launch_with_environment(
-        launch.manifest_path.clone(),
-        fixture.path("telemetry-training-job"),
-        Some("https://training.invalid".to_string()),
-        None,
-        Some("unused".to_string()),
-      )
-      .await?;
-      let result = run_minecraft_3dgs_training_result_collection_with_environment(
-        job.manifest_path.clone(),
-        fixture.path("telemetry-training-result"),
-        Some("https://training.invalid".to_string()),
-        None,
-        Some("unused".to_string()),
-      )
-      .await?;
-      let artifact_fetch = run_minecraft_3dgs_training_result_artifact_fetch(
-        result.manifest_path.clone(),
-        fixture.path("telemetry-artifact-fetch"),
-        None,
-        None,
-        None,
-      )
-      .await?;
-      let semantic =
-        run_minecraft_3dgs_training_result_semantic_validation(artifact_fetch.manifest_path.clone(), fixture.path("telemetry-semantic"))
-          .await?;
-      let preview = run_minecraft_3dgs_training_result_holdout_preview(
-        semantic.manifest_path.clone(),
-        None,
-        None,
-        fixture.path("telemetry-holdout-preview"),
-      )
-      .await?;
-      let render_quality = run_minecraft_measure_3dgs_holdout_render_quality(
-        semantic.manifest_path.clone(),
-        preview.manifest_path.clone(),
-        "unused".to_string(),
-        fixture.path("telemetry-render-quality"),
-      )
-      .await?;
-      let spatial_query = run_minecraft_3dgs_training_result_spatial_query(
-        semantic.manifest_path.clone(),
-        fixture.target_block,
-        None,
-        auv_game_minecraft::MinecraftTargetSemantics::BlockCenter,
-        None,
-        false,
-        false,
-        None,
-        fixture.path("telemetry-spatial-query"),
-      )
-      .await?;
-      let live_action = run_minecraft_query_wired_live_action_with_executor_and_actions(
-        fixture.query_wired_inputs("telemetry-live-action"),
-        &RefusingClickExecutor,
-        || vec![invalid_action],
-      )
-      .await?;
-      Ok::<_, String>((scene, package, job, result, semantic, preview, render_quality, spatial_query, live_action))
-    });
-
-    let (scene, package, job, result, semantic, preview, render_quality, spatial_query, live_action) =
-      root.instrument(future).await.expect("telemetry-only publication must preserve every direct output");
-
-    assert!(scene.manifest_path.is_file());
-    assert!(package.manifest_path.is_file());
-    assert!(job.manifest_path.is_file());
-    assert!(result.manifest_path.is_file());
-    assert!(semantic.manifest_path.is_file());
-    assert!(preview.manifest_path.is_file());
-    assert!(render_quality.manifest_path.is_file());
-    assert!(spatial_query.manifest_path.is_file());
-    assert_eq!(live_action.input_actions.len(), 1);
-  }
-
+  // Before the fix, a failed recording changed a completed operation into an
+  // application failure and made a caller likely to retry its side effects.
+  // The direct result is now independent from the recording route.
   #[tokio::test]
   async fn direct_texture_sweep_prep_returns_domain_output() {
     let root = std::env::temp_dir().join(format!("auv-minecraft-direct-{}", auv_tracing::RunId::new()));
@@ -1415,7 +775,7 @@ mod tests {
     write_source_artifact(store.as_ref(), run_id, projection_workflow::MINECRAFT_OVERLAY_PURPOSE, "image/png", png_bytes([64, 32, 16]))
       .await;
 
-    let output = run_minecraft_spatial_bundle_export(store, run_id.to_string(), output_dir.clone(), None)
+    let output = run_minecraft_spatial_bundle_export(store.clone(), run_id.to_string(), output_dir.clone(), None)
       .await
       .expect("valid typed artifacts should export");
 
@@ -1423,9 +783,11 @@ mod tests {
     assert_eq!(output.manifest.counts.spatial_frames, 2);
     assert_eq!(output.manifest.counts.overlays, 1);
     assert_eq!(output.manifest.artifacts.len(), 4);
+    assert_eq!(output.manifest.source_run.authority_id, store.authority_id().into());
+    assert_eq!(output.manifest.source_run.run_id, run_id.into());
     for artifact in &output.manifest.artifacts {
-      assert!(artifact.source_path.starts_with("bundle-inputs/"), "source path was not bundle-local: {artifact:?}");
-      assert!(!artifact.source_path.contains(&run_id.to_string()), "source path exposed canonical run identity: {artifact:?}");
+      assert_eq!(artifact.source_artifact_uri.run_id(), run_id.to_string());
+      assert!(!artifact.bundle_artifact_id.as_str().contains(&run_id.to_string()));
       assert!(output_dir.join(&artifact.bundle_path).is_file(), "bundle artifact was not written: {artifact:?}");
     }
     fs::remove_dir_all(root).expect("remove multi-artifact fixture");
@@ -1433,13 +795,13 @@ mod tests {
 
   // ROOT CAUSE:
   //
-  // Canonical screenshot references were copied into bundle frames unchanged,
-  // while the scene-packet reader resolves only bundle-local artifact IDs.
+  // Canonical screenshot references and bundle-local IDs shared one string
+  // field, so the exporter rewrote a valid ArtifactUri into a fabricated URI.
   //
-  // Before the fix, a valid screenshot exported as missing. The fix validates
-  // the exact canonical artifact and rewrites only the staged frame reference.
+  // Before the fix, typed lineage was lost at staging. The fix validates
+  // canonical lineage and records the local screenshot relationship separately.
   #[tokio::test]
-  async fn spatial_bundle_export_rewrites_canonical_screenshot_reference_for_scene_packet() {
+  async fn spatial_bundle_export_preserves_canonical_screenshot_reference_and_links_bundle_artifact() {
     let root = bundle_test_root("canonical-screenshot-reference");
     let output_dir = root.join("bundle");
     let scene_packet_dir = root.join("scene-packet");
@@ -1467,13 +829,14 @@ mod tests {
     let screenshot_record =
       bundle.manifest.artifacts.iter().find(|artifact| artifact.role == "minecraft-screenshot").expect("bundle screenshot record");
     let frame_record =
-      bundle.manifest.artifacts.iter().find(|artifact| artifact.role == MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE).expect("bundle frame record");
+      bundle.manifest.artifacts.iter().find(|artifact| artifact.role == SPATIAL_FRAME_BUNDLE_ROLE).expect("bundle frame record");
     let staged_frame: MinecraftSpatialFrame =
       serde_json::from_slice(&fs::read(output_dir.join(&frame_record.bundle_path)).expect("read bundled frame"))
         .expect("decode bundled frame");
-    let expected_screenshot_ref = format!("artifact://{}", screenshot_record.artifact_id);
-    assert_eq!(staged_frame.screenshot_artifact_ref.as_deref(), Some(expected_screenshot_ref.as_str()));
-    assert_ne!(screenshot_record.artifact_id, screenshot_uri.artifact_id().to_string());
+    let screenshot_uri_string = screenshot_uri.to_string();
+    assert_eq!(staged_frame.screenshot_artifact_ref.as_deref(), Some(screenshot_uri_string.as_str()));
+    assert_eq!(frame_record.screenshot_bundle_artifact_id.as_ref(), Some(&screenshot_record.bundle_artifact_id));
+    assert_ne!(screenshot_record.bundle_artifact_id.as_str(), screenshot_uri.artifact_id().to_string());
 
     let scene_packet = run_minecraft_3dgs_scene_packet_export(vec![output_dir.join("run.json")], scene_packet_dir.clone())
       .await
@@ -1641,7 +1004,7 @@ mod tests {
   fn staging_test_screenshot() -> ValidatedMinecraftBundleArtifact {
     ValidatedMinecraftBundleArtifact::Screenshot {
       source_uri: ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
-      artifact_id: "bundle-000001".to_string(),
+      bundle_artifact_id: BundleArtifactId::new("bundle-000001").expect("valid bundle artifact id"),
       bytes: vec![1, 2, 3],
     }
   }
@@ -1688,203 +1051,6 @@ mod tests {
     output.into_inner()
   }
 
-  struct MinecraftPublicationFixture {
-    _temp: TempDir,
-    root: PathBuf,
-    bundle_manifest_path: PathBuf,
-    scene: ScenePacketOutput,
-    package: TrainingPackageOutput,
-    launch: TrainingLaunchPreparationOutput,
-    job: auv_game_minecraft::TrainingLaunchJobOutput,
-    result: TrainingResultOutput,
-    artifact_fetch: TrainingResultArtifactFetchOutput,
-    semantic: TrainingResultSemanticValidationOutput,
-    preview: TrainingResultHoldoutPreviewOutput,
-    render_quality: TrainingResultHoldoutRenderQualityOutput,
-    spatial_query: TrainingResultSpatialQueryOutput,
-    target_block: auv_game_minecraft::BlockPosition,
-  }
-
-  impl MinecraftPublicationFixture {
-    fn path(&self, name: &str) -> PathBuf {
-      self.root.join(name)
-    }
-
-    fn query_wired_inputs(&self, output_name: &str) -> QueryWiredLiveActionInputs {
-      QueryWiredLiveActionInputs {
-        training_result_semantic_manifest_path: self.semantic.manifest_path.clone(),
-        target_block: self.target_block,
-        target_face: None,
-        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::BlockCenter,
-        query_command: None,
-        use_checkpoint_native_provider: false,
-        use_closed_scene_toy_provider: false,
-        closed_scene_fixture_path: None,
-        output_dir: self.path(output_name),
-        target_app: "invalid.test.app".to_string(),
-        target_title: "invalid test window".to_string(),
-        telemetry_witness: None,
-        verification_expected_item_id: None,
-      }
-    }
-  }
-
-  async fn minecraft_publication_fixture() -> MinecraftPublicationFixture {
-    let temp = tempfile::tempdir().expect("Minecraft publication fixture");
-    let root = temp.path().to_path_buf();
-    let source_store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let source_run_id = RunId::new();
-    let screenshot_uri = write_source_artifact(
-      source_store.as_ref(),
-      source_run_id,
-      projection_workflow::MINECRAFT_SCREENSHOT_PURPOSE,
-      "image/png",
-      png_bytes([8, 16, 32]),
-    )
-    .await;
-    let mut frame = bundle_test_frame();
-    frame.screenshot_artifact_ref = Some(screenshot_uri.to_string());
-    frame.screen_state = Some("in_game".to_string());
-    frame.resource_pack_ids = vec!["file/test-pack".to_string()];
-    write_source_artifact(
-      source_store.as_ref(),
-      source_run_id,
-      projection_workflow::MINECRAFT_SPATIAL_FRAME_PURPOSE,
-      "application/json",
-      serde_json::to_vec(&frame).expect("spatial frame should encode"),
-    )
-    .await;
-    let bundle = run_minecraft_spatial_bundle_export(source_store, source_run_id.to_string(), root.join("fixture-bundle"), None)
-      .await
-      .expect("fixture bundle");
-    let bundle_manifest_path = bundle.output_dir.join("run.json");
-    let scene = run_minecraft_3dgs_scene_packet_export(vec![bundle_manifest_path.clone()], root.join("fixture-scene-packet"))
-      .await
-      .expect("fixture scene packet");
-    let package = run_minecraft_3dgs_training_package_export(scene.manifest_path.clone(), root.join("fixture-training-package"))
-      .await
-      .expect("fixture training package");
-    let launch = run_minecraft_3dgs_training_launch_preparation(package.manifest_path.clone(), root.join("fixture-launch-plan"))
-      .await
-      .expect("fixture launch plan");
-    let job = run_minecraft_3dgs_training_job_launch_with_environment(
-      launch.manifest_path.clone(),
-      root.join("fixture-training-job"),
-      Some("https://training.invalid".to_string()),
-      None,
-      Some("unused".to_string()),
-    )
-    .await
-    .expect("fixture blocked training job");
-    let result = run_minecraft_3dgs_training_result_collection_with_environment(
-      job.manifest_path.clone(),
-      root.join("fixture-training-result"),
-      Some("https://training.invalid".to_string()),
-      None,
-      Some("unused".to_string()),
-    )
-    .await
-    .expect("fixture blocked training result");
-    let artifact_fetch =
-      run_minecraft_3dgs_training_result_artifact_fetch(result.manifest_path.clone(), root.join("fixture-artifact-fetch"), None, None, None)
-        .await
-        .expect("fixture blocked artifact fetch");
-    let semantic =
-      run_minecraft_3dgs_training_result_semantic_validation(artifact_fetch.manifest_path.clone(), root.join("fixture-semantic"))
-        .await
-        .expect("fixture blocked semantic result");
-    let preview =
-      run_minecraft_3dgs_training_result_holdout_preview(semantic.manifest_path.clone(), None, None, root.join("fixture-holdout-preview"))
-        .await
-        .expect("fixture blocked holdout preview");
-    let render_quality = run_minecraft_measure_3dgs_holdout_render_quality(
-      semantic.manifest_path.clone(),
-      preview.manifest_path.clone(),
-      "unused".to_string(),
-      root.join("fixture-render-quality"),
-    )
-    .await
-    .expect("fixture blocked render quality");
-    let target_block = auv_game_minecraft::BlockPosition::new(0, 64, 0);
-    let spatial_query = run_minecraft_3dgs_training_result_spatial_query(
-      semantic.manifest_path.clone(),
-      target_block,
-      None,
-      auv_game_minecraft::MinecraftTargetSemantics::BlockCenter,
-      None,
-      false,
-      false,
-      None,
-      root.join("fixture-spatial-query"),
-    )
-    .await
-    .expect("fixture blocked spatial query");
-    MinecraftPublicationFixture {
-      _temp: temp,
-      root,
-      bundle_manifest_path,
-      scene,
-      package,
-      launch,
-      job,
-      result,
-      artifact_fetch,
-      semantic,
-      preview,
-      render_quality,
-      spatial_query,
-      target_block,
-    }
-  }
-
-  fn publication_root(store: Arc<dyn RunStore>) -> Context {
-    let dispatch = configure().run_store(store).build().expect("publication test dispatch");
-    dispatcher::with_default(&dispatch, || Context::root(RunId::new()))
-  }
-
-  fn assert_publication_error(error: &str, stage: &str, source: &str) {
-    assert!(error.contains(stage), "publication error lost stage {stage:?}: {error}");
-    assert!(error.contains(source), "publication error lost source/code {source:?}: {error}");
-  }
-
-  fn invalid_input_action() -> InputActionResult {
-    let mut action = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
-    action.selected_path = InputDeliveryPath::ClipboardPaste;
-    action
-  }
-
-  struct RefusingClickExecutor;
-
-  impl QueryLiveClickExecutor for RefusingClickExecutor {
-    fn attempt_click(
-      &self,
-      _window_point: auv_driver::geometry::WindowPoint,
-      _lineage: &auv_game_minecraft::QueryActionWiringLineage,
-    ) -> Result<String, String> {
-      Err("test executor refuses live clicks".to_string())
-    }
-  }
-
-  struct RejectingSpawner;
-
-  impl TaskSpawner for RejectingSpawner {
-    fn spawn(&self, _task: DispatchTask) -> Result<(), TaskSpawnError> {
-      Err(TaskSpawnError::new(ErrorCode::parse("auv.test.minecraft_command_spawn_rejected").expect("test error code")))
-    }
-  }
-
-  struct NoopProjector;
-
-  impl TelemetryProjector for NoopProjector {
-    fn project(&self, _item: TelemetryItem) -> BoxFuture<'_, Result<(), TelemetryError>> {
-      Box::pin(async { Ok(()) })
-    }
-
-    fn flush(&self) -> BoxFuture<'_, Result<(), TelemetryError>> {
-      Box::pin(async { Ok(()) })
-    }
-  }
-
   async fn write_source_artifact(store: &MemoryRunStore, run_id: RunId, purpose: &str, content_type: &str, body: Vec<u8>) -> ArtifactUri {
     let artifact_id = ArtifactId::new();
     let request = StoreArtifactRequest::new(
@@ -1912,27 +1078,6 @@ mod tests {
   struct CountingArtifactStore {
     inner: Arc<MemoryRunStore>,
     opens: AtomicUsize,
-  }
-
-  struct RejectArtifactStore {
-    inner: MemoryRunStore,
-    reject_purpose: Option<ArtifactPurpose>,
-  }
-
-  impl RejectArtifactStore {
-    fn new() -> Self {
-      Self {
-        inner: MemoryRunStore::new(AuthorityId::new()),
-        reject_purpose: None,
-      }
-    }
-
-    fn for_purpose(reject_purpose: ArtifactPurpose) -> Self {
-      Self {
-        inner: MemoryRunStore::new(AuthorityId::new()),
-        reject_purpose: Some(reject_purpose),
-      }
-    }
   }
 
   impl CountingArtifactStore {
@@ -2027,45 +1172,6 @@ mod tests {
 
     fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
       self.opens.fetch_add(1, Ordering::SeqCst);
-      self.inner.open_artifact(uri)
-    }
-  }
-
-  impl RunStore for RejectArtifactStore {
-    fn authority_id(&self) -> AuthorityId {
-      self.inner.authority_id()
-    }
-
-    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
-      self.inner.commit(request)
-    }
-
-    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
-      if self.reject_purpose.as_ref().is_some_and(|purpose| purpose != request.purpose()) {
-        return self.inner.write_artifact(request, body);
-      }
-      Box::pin(async {
-        Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.minecraft_command_artifact_rejected").expect("test error code")))
-      })
-    }
-
-    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
-      self.inner.lookup_commit(run_id, key)
-    }
-
-    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
-      self.inner.load_snapshot(run_id)
-    }
-
-    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
-      self.inner.commits_after(run_id, after, limit)
-    }
-
-    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
-      self.inner.subscribe(run_id, after)
-    }
-
-    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
       self.inner.open_artifact(uri)
     }
   }

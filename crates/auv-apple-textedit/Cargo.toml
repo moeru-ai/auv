@@ -11,10 +11,20 @@ documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+tracing = ["dep:auv-tracing"]
+
 [dependencies]
 auv-driver = { path = "../auv-driver" }
+auv-tracing = { path = "../auv-tracing", optional = true }
 clap = { version = "4", features = ["derive"] }
 serde.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }
+
+[dev-dependencies]
+auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+futures-executor = "0.3"
+serde_json.workspace = true

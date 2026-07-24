@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -136,6 +137,7 @@ impl DetectionEvalQualityVerdict {
   }
 }
 
+#[cfg(feature = "tracing")]
 pub async fn publish_osu_detection_eval_quality(
   context: Option<&Context>,
   quality: &DetectionEvalQualityManifest,
@@ -143,6 +145,7 @@ pub async fn publish_osu_detection_eval_quality(
   crate::run_read::publish_json_artifact(context, OSU_DETECTION_EVAL_QUALITY_PURPOSE, quality, validate_quality_payload).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_osu_detection_eval_quality(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -261,7 +264,7 @@ pub fn build_detection_eval_quality(inputs: &DetectionEvalQualityInputs) -> Dete
   fs::create_dir_all(&inputs.output_dir)
     .map_err(|error| format!("failed to create detection eval quality output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = crate::run_read::now_millis();
+  let generated_at_millis = crate::time::now_millis();
   let known_limits = BTreeSet::from([OSU_WQ1_V1_QUALITY_KNOWN_LIMIT.to_string()]);
   let mut warnings = BTreeSet::new();
 

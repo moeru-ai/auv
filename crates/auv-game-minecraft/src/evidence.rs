@@ -5,14 +5,14 @@ use crate::bind::bind_capture_to_frame;
 use crate::overlay::render_projection_overlay;
 use crate::projection::MinecraftProjector;
 use crate::types::{MinecraftBlockTarget, MinecraftSpatialFrame, RaycastHit};
-use crate::verify::{MismatchRefusal, evaluate_mismatch_refusal};
+use crate::verify::{MismatchRefusal, evaluate_mismatch_refusal_with_capture};
 
 /// A real captured screenshot plus the monotonic timestamp taken at the capture
 /// instant. The image is owned so the overlay can be drawn onto it.
 #[derive(Clone, Debug)]
 pub struct ScreenshotCapture {
   pub image: RgbImage,
-  pub artifact_ref: String,
+  pub artifact_ref: Option<String>,
   pub capture_monotonic_timestamp_ms: u64,
   pub is_minecraft_window: bool,
   /// Optional screenshot dimensions. When present and different from viewport,
@@ -155,7 +155,7 @@ pub fn assess_bound_projection(
     scale.apply_to_radius(&mut projected.match_radius_px);
   }
 
-  let refusal = evaluate_mismatch_refusal(&frame, &projected, target, is_minecraft_window, max_capture_skew_ms);
+  let refusal = evaluate_mismatch_refusal_with_capture(&frame, &projected, target, true, is_minecraft_window, max_capture_skew_ms);
   let artifact = projector.build_projection_artifact(Some(projected.clone()), None);
   if refusal.refused {
     return Ok(ProjectionAssessment::Refused {
@@ -216,7 +216,7 @@ mod tests {
   fn capture_at(ts: u64, is_minecraft_window: bool) -> ScreenshotCapture {
     ScreenshotCapture {
       image: RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])),
-      artifact_ref: "shot.png".to_string(),
+      artifact_ref: Some("shot.png".to_string()),
       capture_monotonic_timestamp_ms: ts,
       is_minecraft_window,
       screenshot_dimensions: None,
@@ -226,7 +226,7 @@ mod tests {
   fn capture_with_size(ts: u64, is_minecraft_window: bool, width: u32, height: u32) -> ScreenshotCapture {
     ScreenshotCapture {
       image: RgbImage::from_pixel(width, height, Rgb([0, 0, 0])),
-      artifact_ref: "shot.png".to_string(),
+      artifact_ref: Some("shot.png".to_string()),
       capture_monotonic_timestamp_ms: ts,
       is_minecraft_window,
       screenshot_dimensions: None,
@@ -286,6 +286,24 @@ mod tests {
       }
       ProjectionEvidence::Refused { refusal, .. } => {
         panic!("expected a bound overlay, got refusal: {:?}", refusal.reason);
+      }
+    }
+  }
+
+  #[test]
+  fn in_memory_capture_does_not_require_a_persisted_artifact_reference() {
+    let mut capture = capture_at(1_000, true);
+    capture.artifact_ref = None;
+
+    let evidence =
+      build_projection_evidence(frame_at(1_000), capture, &visible_target(), Some(250)).expect("in-memory capture should project");
+
+    match evidence {
+      ProjectionEvidence::Bound { artifact, .. } => {
+        assert_eq!(artifact.screenshot_artifact_ref, None);
+      }
+      ProjectionEvidence::Refused { refusal, .. } => {
+        panic!("recording state changed the direct projection: {:?}", refusal.reason);
       }
     }
   }

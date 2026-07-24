@@ -158,7 +158,7 @@ fn unsupported_local_descriptor() -> DriverDescriptor {
   DriverDescriptor {
     id: "unsupported.local",
     platform: PlatformKind::Remote,
-    summary: "unsupported local driver",
+    description: "unsupported local driver",
   }
 }
 
@@ -181,7 +181,7 @@ mod tests {
       DriverDescriptor {
         id: "test",
         platform: PlatformKind::Fixture,
-        summary: "test driver",
+        description: "test driver",
       }
     }
 
@@ -195,7 +195,7 @@ mod tests {
       DriverDescriptor {
         id: "test-session",
         platform: PlatformKind::Fixture,
-        summary: "test session",
+        description: "test session",
       }
     }
   }
@@ -206,7 +206,7 @@ mod tests {
     let session = driver.open_local()?;
 
     assert_eq!(driver.descriptor().id, "test");
-    assert_eq!(session.descriptor().summary, "test session");
+    assert_eq!(session.descriptor().description, "test session");
 
     let _ = PlatformKind::Macos;
     let _ = PlatformKind::Windows;

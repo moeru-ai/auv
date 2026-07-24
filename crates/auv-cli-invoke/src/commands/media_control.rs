@@ -13,12 +13,12 @@ pub fn group() -> CommandGroup {
 #[invoke_command(
   id = "mediaControl.nowPlaying",
   group = "mediaControl",
-  summary = "Read structured now-playing media state from the desktop backend.",
+  description = "Read structured now-playing media state from the desktop backend.",
   args = NO_ARGS,
 )]
 async fn media_control_now_playing(_input: InvokeCommandInput) -> InvokeCommandResult {
   read_now_playing().await?;
-  Ok(InvokeCommandOutput::new("read now-playing state"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn read_now_playing() -> Result<(), String> {
@@ -31,12 +31,12 @@ pub async fn read_now_playing() -> Result<(), String> {
 #[invoke_command(
   id = "mediaControl.play",
   group = "mediaControl",
-  summary = "Send a generic system media play command and read now-playing state for verification.",
+  description = "Send a generic system media play command and read now-playing state for verification.",
   args = NO_ARGS,
 )]
 async fn media_control_play(_input: InvokeCommandInput) -> InvokeCommandResult {
   play_media().await?;
-  Ok(InvokeCommandOutput::new("played media"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn play_media() -> Result<(), String> {
@@ -49,12 +49,12 @@ pub async fn play_media() -> Result<(), String> {
 #[invoke_command(
   id = "mediaControl.pause",
   group = "mediaControl",
-  summary = "Send a generic system media pause command and read now-playing state for verification.",
+  description = "Send a generic system media pause command and read now-playing state for verification.",
   args = NO_ARGS,
 )]
 async fn media_control_pause(_input: InvokeCommandInput) -> InvokeCommandResult {
   pause_media().await?;
-  Ok(InvokeCommandOutput::new("paused media"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn pause_media() -> Result<(), String> {
@@ -67,12 +67,12 @@ pub async fn pause_media() -> Result<(), String> {
 #[invoke_command(
   id = "mediaControl.togglePlayPause",
   group = "mediaControl",
-  summary = "Send a generic system media play/pause toggle command and compare now-playing state before and after.",
+  description = "Send a generic system media play/pause toggle command and compare now-playing state before and after.",
   args = NO_ARGS,
 )]
 async fn media_control_toggle_play_pause(_input: InvokeCommandInput) -> InvokeCommandResult {
   toggle_play_pause().await?;
-  Ok(InvokeCommandOutput::new("toggled media playback"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn toggle_play_pause() -> Result<(), String> {
@@ -87,12 +87,12 @@ pub async fn toggle_play_pause() -> Result<(), String> {
 #[invoke_command(
   id = "mediaControl.next",
   group = "mediaControl",
-  summary = "Send a generic system media next-track command and compare now-playing identity before and after.",
+  description = "Send a generic system media next-track command and compare now-playing identity before and after.",
   args = NO_ARGS,
 )]
 async fn media_control_next(_input: InvokeCommandInput) -> InvokeCommandResult {
   next_track().await?;
-  Ok(InvokeCommandOutput::new("advanced to next track"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn next_track() -> Result<(), String> {
@@ -105,12 +105,12 @@ pub async fn next_track() -> Result<(), String> {
 #[invoke_command(
   id = "mediaControl.previous",
   group = "mediaControl",
-  summary = "Send a generic system media previous-track command and compare now-playing identity before and after.",
+  description = "Send a generic system media previous-track command and compare now-playing identity before and after.",
   args = NO_ARGS,
 )]
 async fn media_control_previous(_input: InvokeCommandInput) -> InvokeCommandResult {
   previous_track().await?;
-  Ok(InvokeCommandOutput::new("returned to previous track"))
+  Ok(InvokeCommandOutput::completed())
 }
 
 pub async fn previous_track() -> Result<(), String> {

@@ -451,6 +451,12 @@ impl ByteLength {
   }
 }
 
+impl fmt::Display for ByteLength {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self.0.fmt(formatter)
+  }
+}
+
 impl<'de> Deserialize<'de> for ByteLength {
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where

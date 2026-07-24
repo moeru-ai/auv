@@ -1,10 +1,8 @@
 //! Canonical scene-state and scan-coverage artifact readers.
 
-use std::path::PathBuf;
-
 use auv_scan::{
-  FrameObservation, LifecycleEvent, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire, ScanFrame, ScanFrameBundle, SceneStateInput,
-  SceneStateInspect, TransitionEvidence, build_scene_state_inspect, format_scene_state_inspect_text,
+  CoverageView, FrameObservation, LifecycleEvent, ScanCoverageArtifact, SceneFrame, SceneStateInput, SceneStateInspect, TransitionEvidence,
+  build_scene_state_inspect, format_scene_state_inspect_text,
 };
 use auv_tracing::{ArtifactMetadata, Context, RunSnapshot, RunStore};
 use serde::{Deserialize, Serialize};
@@ -20,7 +18,7 @@ pub const SCENE_STATE_INPUT_SCHEMA_VERSION: &str = "scan-scene-state-input-v0";
 #[serde(deny_unknown_fields)]
 pub struct SceneStateInputWire {
   pub schema_version: String,
-  pub frames: Vec<ScanFrame>,
+  pub frames: Vec<SceneFrame>,
   pub observations_by_frame: Vec<Vec<FrameObservationWire>>,
   pub lifecycle_events: Option<Vec<LifecycleEventWire>>,
 }
@@ -70,15 +68,9 @@ pub async fn read_scene_state_input(
   read_one_json_artifact(store, snapshot, SCENE_STATE_INPUT_PURPOSE, validate_scene_state_wire).await
 }
 
-pub async fn read_scan_coverage(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<Option<ScanCoverageWire>, RootArtifactReadError> {
-  read_one_json_artifact(store, snapshot, SCAN_COVERAGE_PURPOSE, |value: &ScanCoverageWire| {
-    if value.schema_version == SCAN_COVERAGE_SCHEMA_VERSION {
-      Ok(())
-    } else {
-      Err(format!("schema version mismatch: found {}", value.schema_version))
-    }
-  })
-  .await
+pub async fn read_scan_coverage(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<Option<CoverageView>, RootArtifactReadError> {
+  let artifact: Option<ScanCoverageArtifact> = read_one_json_artifact(store, snapshot, SCAN_COVERAGE_PURPOSE, |_| Ok(())).await?;
+  Ok(artifact.map(ScanCoverageArtifact::into_coverage))
 }
 
 pub async fn build_scene_state_inspect_for_run(
@@ -88,11 +80,10 @@ pub async fn build_scene_state_inspect_for_run(
   let Some(wire) = read_scene_state_input(store, snapshot).await? else {
     return Ok(SceneStateReadOutcome::Missing);
   };
-  let mut input = match wire_to_scene_state_input(wire) {
+  let input = match wire_to_scene_state_input(wire) {
     Ok(input) => input,
     Err(reason) => return Ok(SceneStateReadOutcome::Unsupported { reason }),
   };
-  input.coverage_wire = read_scan_coverage(store, snapshot).await?;
   Ok(match build_scene_state_inspect(&input) {
     Ok(inspect) => SceneStateReadOutcome::Present(inspect),
     Err(error) => SceneStateReadOutcome::Unsupported {
@@ -149,17 +140,9 @@ fn wire_to_scene_state_input(wire: SceneStateInputWire) -> Result<SceneStateInpu
     })
     .collect();
   Ok(SceneStateInput {
-    bundle: ScanFrameBundle {
-      frames: wire.frames,
-      // TODO(scene-state-frame-assets-v1): companion image resolution is not
-      // part of this JSON-only slice; add typed image ArtifactUri references
-      // when the owner approves a scene-state media contract.
-      source_dir: PathBuf::new(),
-      loaded_json_paths: Vec::new(),
-    },
+    frames: wire.frames,
     observations_by_frame,
     lifecycle_events,
-    coverage_wire: None,
   })
 }
 
@@ -213,7 +196,7 @@ fn required(value: &Option<String>, message: &str) -> Result<String, String> {
 mod tests {
   use std::sync::Arc;
 
-  use auv_scan::{CompletenessWire, SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanImageRef};
+  use auv_scan::ScanBounds;
   use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
 
   use super::*;
@@ -222,8 +205,7 @@ mod tests {
   fn scene_input() -> SceneStateInputWire {
     SceneStateInputWire {
       schema_version: SCENE_STATE_INPUT_SCHEMA_VERSION.to_string(),
-      frames: vec![ScanFrame {
-        schema_version: SCAN_FRAME_SCHEMA_VERSION.to_string(),
+      frames: vec![SceneFrame {
         frame_id: "frame-1".to_string(),
         sequence_index: 0,
         captured_at_millis: 10,
@@ -234,12 +216,6 @@ mod tests {
           height: 80,
         },
         viewport_bounds: None,
-        image: ScanImageRef {
-          file_name: "frame-1.png".to_string(),
-          width: 100,
-          height: 80,
-          media_type: "image/png".to_string(),
-        },
       }],
       observations_by_frame: vec![vec![FrameObservationWire {
         observation_id: "observation-1".to_string(),
@@ -249,20 +225,24 @@ mod tests {
     }
   }
 
-  fn coverage() -> ScanCoverageWire {
-    ScanCoverageWire {
-      schema_version: SCAN_COVERAGE_SCHEMA_VERSION.to_string(),
-      entries: Vec::new(),
-      open_uncertainty_codes: Vec::new(),
-      negative_evidence: Vec::new(),
-      completeness: CompletenessWire::Complete,
-    }
+  fn coverage() -> CoverageView {
+    CoverageView::complete(Vec::new())
   }
 
   #[tokio::test]
   async fn scene_and_coverage_publishers_are_noops_without_context() {
     assert!(publish_scene_state_input(None, &scene_input()).await.expect("disabled scene publication").is_none());
     assert!(publish_scan_coverage(None, &coverage()).await.expect("disabled coverage publication").is_none());
+  }
+
+  #[test]
+  fn scene_state_payload_does_not_serialize_local_frame_image_locators() {
+    let payload = serde_json::to_value(scene_input()).expect("scene state payload");
+    let frame = payload.pointer("/frames/0").and_then(serde_json::Value::as_object).expect("scene frame");
+
+    assert!(frame.get("image").is_none());
+    assert!(!payload.to_string().contains("file_name"));
+    assert!(!payload.to_string().contains("media_type"));
   }
 
   #[tokio::test]

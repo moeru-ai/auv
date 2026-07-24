@@ -11,9 +11,9 @@
 //! - `transport`: loopback-only tonic gRPC adapter (API-P9).
 //! - `test_fixtures` (tests only): shared run/artifact staging helpers.
 //!
-//! TODO(api-p4-stream-events): `StreamSessionEvents` remains deferred to the
-//! event projector (API-P4 responsibility D); the transport returns
-//! `UNIMPLEMENTED` until that seam is wired.
+//! TODO(session-live-subscription): A session-scoped live stream is intentionally
+//! absent until a consumer requires cursor and gap recovery semantics over
+//! `auv_tracing::RunSubscription`; do not add a second generic event schema.
 
 pub mod handler;
 pub mod mapper;
@@ -30,7 +30,7 @@ use std::fmt;
 pub enum SessionApiError {
   /// A required proto field was absent.
   MissingField(&'static str),
-  /// `Invoke` / `StreamSessionEvents` referenced a session that was never created.
+  /// `Invoke` referenced a session that was never created.
   UnknownSession(String),
   /// `json_payload` could not be decoded into a host invoke request.
   PayloadDecode(String),
@@ -38,8 +38,6 @@ pub enum SessionApiError {
   Storage(String),
   /// Session-aware invoke execution failed after validation.
   InvokeExecution(String),
-  /// A seam this RPC depends on is not wired in the current skeleton.
-  NotWired { gate: &'static str },
 }
 
 impl fmt::Display for SessionApiError {
@@ -50,7 +48,6 @@ impl fmt::Display for SessionApiError {
       Self::PayloadDecode(message) => write!(f, "failed to decode json_payload: {message}"),
       Self::Storage(message) => write!(f, "storage error: {message}"),
       Self::InvokeExecution(message) => write!(f, "invoke execution failed: {message}"),
-      Self::NotWired { gate } => write!(f, "session API seam not wired: {gate}"),
     }
   }
 }

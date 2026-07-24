@@ -7,14 +7,10 @@ publish.workspace = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Temporal scan wire contracts, frame artifacts, and producers (S line)."
+description = "Temporal scan contracts, pure evaluators, and fixture decoders."
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
-
-[features]
-default = []
-live-capture = []
 
 [dependencies]
 auv-driver = { path = "../auv-driver" }
@@ -22,7 +18,6 @@ image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tempfile = "3"
 
 [dev-dependencies]
 serde_json.workspace = true

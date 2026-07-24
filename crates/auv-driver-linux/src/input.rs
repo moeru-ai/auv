@@ -73,7 +73,7 @@ pub(crate) fn paste(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult
   with_input_session(state, |session| session.key_chord(&[keysym::CONTROL_L], keysym::for_char('v')?))
 }
 
-pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: PasteTextOptions) -> DriverResult<()> {
+pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: PasteTextOptions) -> DriverResult<InputActionResult> {
   let snapshot = snapshot_clipboard(state)?;
   let result = (|| {
     set_clipboard_text(state, &options.text)?;
@@ -95,7 +95,13 @@ pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: P
   })();
   let restore_result = restore_clipboard(state, &snapshot);
   match (result, restore_result) {
-    (Ok(()), Ok(())) => Ok(()),
+    (Ok(()), Ok(())) => Ok(InputActionResult {
+      selected_path: InputDeliveryPath::ClipboardPaste,
+      attempts: vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)],
+      mouse_disturbance: DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::Unknown,
+      clipboard_disturbance: DisturbanceLevel::Temporary,
+    }),
     (Err(action_error), Ok(())) => Err(action_error),
     (Ok(()), Err(restore_error)) => Err(crate::error::backend(format!("pasted text but failed to restore clipboard: {restore_error}"))),
     (Err(action_error), Err(restore_error)) => {
@@ -112,7 +118,6 @@ pub fn reserved_input_result(reason: impl Into<String>) -> InputActionResult {
       InputDeliveryPath::Unsupported,
       reason.clone(),
     )],
-    fallback_reason: Some(reason),
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::None,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -136,7 +141,6 @@ fn keyboard_result() -> InputActionResult {
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
-    fallback_reason: None,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Unknown,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -149,7 +153,6 @@ fn pointer_result() -> InputActionResult {
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
-    fallback_reason: None,
     mouse_disturbance: DisturbanceLevel::Temporary,
     focus_disturbance: DisturbanceLevel::Unknown,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -272,5 +275,10 @@ mod tests {
 
     assert_eq!(result.selected_path, InputDeliveryPath::Unsupported);
     assert_eq!(result.attempts.len(), 1);
+  }
+
+  #[test]
+  fn paste_text_returns_typed_input_action_result() {
+    let _: fn(&Arc<Mutex<LinuxDriverSessionState>>, PasteTextOptions) -> DriverResult<InputActionResult> = paste_text;
   }
 }

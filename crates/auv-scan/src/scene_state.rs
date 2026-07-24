@@ -2,23 +2,47 @@
 //!
 //! NOTICE(scan-s5a): `motion` is supporting evidence only — must not drive draft-answer conclusions.
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::association::{AssociationResult, FrameObservation, associate_adjacent_frames};
-use crate::coverage::{CoverageView, build_coverage_view};
-use crate::coverage_artifact::{ScanCoverageWire, coverage_wire_to_view};
+use crate::coverage::{CoverageView, build_coverage_view_for_sequence};
+use crate::frame::{ScanBounds, ScanFrame};
 use crate::lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, evaluate_lifecycle};
-use crate::motion::{MotionResult, MotionUnknown, estimate_viewport_motion};
-use crate::reader::ScanFrameBundle;
+use crate::motion::{MotionError, MotionEstimate, MotionResult, MotionUnknown};
+
+/// Frame facts consumed by scene-state evaluation.
+///
+/// Local bundle paths and image encoding metadata are intentionally absent:
+/// scene-state policy depends only on temporal identity and geometry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneFrame {
+  pub frame_id: String,
+  pub sequence_index: u32,
+  pub captured_at_millis: u64,
+  pub window_bounds: ScanBounds,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub viewport_bounds: Option<ScanBounds>,
+}
+
+impl From<ScanFrame> for SceneFrame {
+  fn from(frame: ScanFrame) -> Self {
+    Self {
+      frame_id: frame.frame_id,
+      sequence_index: frame.sequence_index,
+      captured_at_millis: frame.captured_at_millis,
+      window_bounds: frame.window_bounds,
+      viewport_bounds: frame.viewport_bounds,
+    }
+  }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SceneStateInput {
-  pub bundle: ScanFrameBundle,
+  pub frames: Vec<SceneFrame>,
   pub observations_by_frame: Vec<Vec<FrameObservation>>,
   pub lifecycle_events: Option<Vec<LifecycleEvent>>,
-  /// When `Some`, durable coverage is authoritative only for coverage-derived fields
-  /// (see `build_scene_state_product`). Associations still computed for tracks.
-  pub coverage_wire: Option<ScanCoverageWire>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,7 +61,7 @@ pub enum VisibilityAssessment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TrackSceneSummary {
+pub struct SceneTrackState {
   pub track_id: String,
   pub last_seen_frame_id: Option<String>,
   pub latest_observation_present: bool,
@@ -65,12 +89,12 @@ pub struct SceneDiagnostic {
   pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SceneDraftAnswers {
-  pub as_of_frame_id: String,
-  pub track_summaries: Vec<TrackSceneSummary>,
-  pub action_readiness: ActionReadiness,
-  pub recommended_observations: Vec<ObservationRequest>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SceneDraftAnswers<'a> {
+  pub as_of_frame_id: &'a str,
+  pub tracks: &'a [SceneTrackState],
+  pub action_readiness: &'a ActionReadiness,
+  pub recommended_observations: &'a [ObservationRequest],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -80,11 +104,22 @@ pub struct SceneStateProduct {
   pub motion: MotionResult,
   pub coverage: CoverageView,
   pub lifecycle: Option<LifecycleVerdict>,
-  pub tracks: Vec<TrackSceneSummary>,
+  pub tracks: Vec<SceneTrackState>,
   pub action_readiness: ActionReadiness,
   pub recommended_observations: Vec<ObservationRequest>,
   pub diagnostics: Vec<SceneDiagnostic>,
-  pub draft_answers: SceneDraftAnswers,
+}
+
+impl SceneStateProduct {
+  /// Borrow the canonical scene state as the S0 draft-answer projection.
+  pub fn draft_answers(&self) -> SceneDraftAnswers<'_> {
+    SceneDraftAnswers {
+      as_of_frame_id: &self.as_of_frame_id,
+      tracks: &self.tracks,
+      action_readiness: &self.action_readiness,
+      recommended_observations: &self.recommended_observations,
+    }
+  }
 }
 
 #[derive(Debug, Error)]
@@ -101,8 +136,8 @@ fn label_for_track_id(track_id: &str) -> Option<&str> {
   track_id.strip_prefix("track-")
 }
 
-pub(crate) fn observations_match_bundle(bundle: &ScanFrameBundle, observations: &[Vec<FrameObservation>]) -> bool {
-  !bundle.frames.is_empty() && !observations.is_empty() && observations.len() == bundle.frames.len()
+pub(crate) fn observations_match_frames(frames: &[SceneFrame], observations: &[Vec<FrameObservation>]) -> bool {
+  !frames.is_empty() && !observations.is_empty() && observations.len() == frames.len()
 }
 
 fn collect_labels(observations_by_frame: &[Vec<FrameObservation>]) -> Vec<String> {
@@ -118,10 +153,10 @@ fn collect_labels(observations_by_frame: &[Vec<FrameObservation>]) -> Vec<String
   labels
 }
 
-fn last_seen_frame_id(bundle: &ScanFrameBundle, observations_by_frame: &[Vec<FrameObservation>], label: &str) -> Option<String> {
+fn last_seen_frame_id(frames: &[SceneFrame], observations_by_frame: &[Vec<FrameObservation>], label: &str) -> Option<String> {
   for (index, frame_obs) in observations_by_frame.iter().enumerate().rev() {
     if frame_obs.iter().any(|obs| obs.label == label) {
-      return bundle.frames.get(index).map(|frame| frame.frame_id.clone());
+      return frames.get(index).map(|frame| frame.frame_id.clone());
     }
   }
   None
@@ -129,11 +164,11 @@ fn last_seen_frame_id(bundle: &ScanFrameBundle, observations_by_frame: &[Vec<Fra
 
 // NOTICE(s9b-deferral): N-frame adjacent associations are durable in `scan-tracks-v0`;
 // this helper still uses only the last frame pair for scene_state (S5a scope).
-fn associations_for_bundle(bundle: &ScanFrameBundle, observations_by_frame: &[Vec<FrameObservation>]) -> Vec<AssociationResult> {
-  if bundle.frames.len() < 2 {
+fn associations_for_frames(frames: &[SceneFrame], observations_by_frame: &[Vec<FrameObservation>]) -> Vec<AssociationResult> {
+  if frames.len() < 2 {
     return Vec::new();
   }
-  let last = bundle.frames.len() - 1;
+  let last = frames.len() - 1;
   associate_adjacent_frames(&observations_by_frame[last - 1], &observations_by_frame[last])
 }
 
@@ -170,7 +205,7 @@ fn visibility_for_track(
   if latest_observation_present {
     return VisibilityAssessment::Visible;
   }
-  let stale_candidate = coverage.negative_evidence.iter().any(|entry| entry.code == "no_new_observation") && last_seen_frame_id.is_some();
+  let stale_candidate = coverage.negative_evidence().iter().any(|entry| entry.code == "no_new_observation") && last_seen_frame_id.is_some();
   if stale_candidate {
     return VisibilityAssessment::StaleCandidate;
   }
@@ -218,12 +253,12 @@ fn collect_blocking_codes(
     push_unique(&mut codes, "missing_observations");
     return codes;
   }
-  for uncertainty in &coverage.open_uncertainty_codes {
+  for uncertainty in coverage.open_uncertainty_codes() {
     if uncertainty == "ambiguous_association" {
       push_unique(&mut codes, "ambiguous_association");
     }
   }
-  for negative in &coverage.negative_evidence {
+  for negative in coverage.negative_evidence() {
     if negative.code == "no_new_observation" {
       push_unique(&mut codes, "no_new_observation");
     }
@@ -285,25 +320,25 @@ fn recommended_observations_for_codes(blocking_codes: &[String]) -> Vec<Observat
   requests
 }
 
-fn build_track_summaries(
-  bundle: &ScanFrameBundle,
+fn build_track_states(
+  frames: &[SceneFrame],
   observations_by_frame: &[Vec<FrameObservation>],
   as_of_frame_id: &str,
   associations: &[AssociationResult],
   coverage: &CoverageView,
   lifecycle: &Option<LifecycleVerdict>,
-) -> Vec<TrackSceneSummary> {
+) -> Vec<SceneTrackState> {
   let labels = collect_labels(observations_by_frame);
   labels
     .into_iter()
     .map(|label| {
       let track_id = track_id_for_label(&label);
-      let last_seen = last_seen_frame_id(bundle, observations_by_frame, &label);
+      let last_seen = last_seen_frame_id(frames, observations_by_frame, &label);
       let latest_observation_present = last_seen.as_deref() == Some(as_of_frame_id);
       let identity_assessment = identity_for_track(&track_id, associations);
       let visibility_assessment = visibility_for_track(latest_observation_present, &identity_assessment, coverage, &last_seen);
       let lifecycle_verdict = lifecycle_verdict_for_track(&track_id, lifecycle);
-      TrackSceneSummary {
+      SceneTrackState {
         track_id,
         last_seen_frame_id: last_seen,
         latest_observation_present,
@@ -315,38 +350,51 @@ fn build_track_summaries(
     .collect()
 }
 
+fn estimate_scene_motion(frames: &[SceneFrame]) -> Result<MotionResult, MotionError> {
+  if frames.len() < 2 {
+    return Err(MotionError::InsufficientFrames {
+      found: frames.len(),
+    });
+  }
+  let first = &frames[0];
+  let second = &frames[1];
+  if second.sequence_index <= first.sequence_index {
+    return Ok(MotionResult::Unknown(MotionUnknown {
+      code: "motion_unknown".into(),
+      message: "non-monotonic sequence_index between adjacent frames".into(),
+    }));
+  }
+  Ok(MotionResult::Estimated(MotionEstimate {
+    delta_x: second.window_bounds.x - first.window_bounds.x,
+    delta_y: second.window_bounds.y - first.window_bounds.y,
+    confidence: 1.0,
+  }))
+}
+
 /// Build an in-memory scene state product from frames, observations, and optional lifecycle events.
-///
-/// When `input.coverage_wire` is `Some`, durable coverage is authoritative only for
-/// coverage-derived fields (`product.coverage`, blocking codes from coverage, visibility
-/// paths that read `coverage.negative_evidence`). Associations and track identity still
-/// come from observations. When `None`, coverage is computed in-memory via
-/// `build_coverage_view` when the run has no `scan-coverage-v0` artifact.
 pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStateProduct, SceneStateError> {
-  if input.bundle.frames.is_empty() {
+  if input.frames.is_empty() {
     return Err(SceneStateError::EmptyBundle);
   }
 
-  let as_of_frame_id = input.bundle.frames.last().expect("non-empty bundle").frame_id.clone();
+  let as_of_frame_id = input.frames.last().expect("non-empty frame sequence").frame_id.clone();
 
   // NOTICE(scan-s5a): motion exposed for context; not used in readiness / visibility / presence.
-  let motion = estimate_viewport_motion(&input.bundle).unwrap_or_else(|error| match error {
+  let motion = estimate_scene_motion(&input.frames).unwrap_or_else(|error| match error {
     crate::motion::MotionError::InsufficientFrames { found } => MotionResult::Unknown(MotionUnknown {
       code: "motion_unknown".into(),
       message: format!("scene state accepted with supporting-evidence-only motion; found {found} frame(s)"),
     }),
   });
 
-  let observations_valid = observations_match_bundle(&input.bundle, &input.observations_by_frame);
+  let observations_valid = observations_match_frames(&input.frames, &input.observations_by_frame);
   let associations = if observations_valid {
-    associations_for_bundle(&input.bundle, &input.observations_by_frame)
+    associations_for_frames(&input.frames, &input.observations_by_frame)
   } else {
     Vec::new()
   };
-  let coverage = match &input.coverage_wire {
-    Some(wire) => coverage_wire_to_view(wire),
-    None => build_coverage_view(&input.bundle, &associations),
-  };
+  let coverage =
+    build_coverage_view_for_sequence(input.frames.len(), input.frames.last().map(|frame| frame.frame_id.as_str()), &associations);
   let (lifecycle, lifecycle_input_error) = evaluate_lifecycle_optional(&input.lifecycle_events);
 
   let blocking_codes = collect_blocking_codes(observations_valid, &coverage, &lifecycle, &lifecycle_input_error);
@@ -364,16 +412,9 @@ pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStatePr
   let recommended_observations = recommended_observations_for_codes(&blocking_codes);
 
   let tracks = if observations_valid {
-    build_track_summaries(&input.bundle, &input.observations_by_frame, &as_of_frame_id, &associations, &coverage, &lifecycle)
+    build_track_states(&input.frames, &input.observations_by_frame, &as_of_frame_id, &associations, &coverage, &lifecycle)
   } else {
     Vec::new()
-  };
-
-  let draft_answers = SceneDraftAnswers {
-    as_of_frame_id: as_of_frame_id.clone(),
-    track_summaries: tracks.clone(),
-    action_readiness: action_readiness.clone(),
-    recommended_observations: recommended_observations.clone(),
   };
 
   let diagnostics = blocking_codes
@@ -393,7 +434,6 @@ pub fn build_scene_state_product(input: &SceneStateInput) -> Result<SceneStatePr
     action_readiness,
     recommended_observations,
     diagnostics,
-    draft_answers,
   })
 }
 
@@ -420,7 +460,7 @@ mod tests {
   use super::*;
   use crate::producer::{produce_frame_from_fixture_dir, produce_frames_from_fixture_dir};
   use crate::reader::load_scan_frames_from_dir;
-  use crate::scene_fixture_support::{SceneFixture, coverage_wire_from_scene_fixture, load_scene_fixture, scene_input_from_fixture};
+  use crate::scene_fixture_support::{SceneFixture, load_scene_fixture, scene_input_from_fixture};
   use std::path::PathBuf;
 
   fn build_from_scene_fixture(scenario_dir: &str) -> SceneStateProduct {
@@ -482,30 +522,6 @@ mod tests {
     }
   }
 
-  fn assert_durable_coverage_parity(scenario_dir: &str) {
-    let mut input = scene_input_from_fixture(scenario_dir);
-    input.coverage_wire = None;
-    let in_memory = build_scene_state_product(&input).expect("in-memory scene");
-    input.coverage_wire = coverage_wire_from_scene_fixture(scenario_dir);
-    let durable = build_scene_state_product(&input).expect("durable scene");
-    assert_eq!(in_memory, durable);
-  }
-
-  #[test]
-  fn scene_durable_coverage_parity_stable() {
-    assert_durable_coverage_parity("scene_stable_v0");
-  }
-
-  #[test]
-  fn scene_durable_coverage_parity_stale() {
-    assert_durable_coverage_parity("scene_stale_v0");
-  }
-
-  #[test]
-  fn scene_durable_coverage_parity_ambiguous() {
-    assert_durable_coverage_parity("scene_ambiguous_v0");
-  }
-
   #[test]
   fn scene_stable_fixture() {
     let fixture = load_scene_fixture("scene_stable_v0");
@@ -513,6 +529,17 @@ mod tests {
     assert_scene_expect(&fixture, &product);
     assert!(product.recommended_observations.is_empty());
     assert!(summarize_scene_state_text(&product).contains("as_of_frame_id=frame-0002"));
+  }
+
+  #[test]
+  fn draft_answers_borrows_canonical_scene_state() {
+    let product = build_from_scene_fixture("scene_stable_v0");
+    let draft = product.draft_answers();
+    let tracks: &[SceneTrackState] = draft.tracks;
+
+    assert!(std::ptr::eq(tracks, product.tracks.as_slice()));
+    assert!(std::ptr::eq(draft.action_readiness, &product.action_readiness));
+    assert!(std::ptr::eq(draft.recommended_observations, product.recommended_observations.as_slice()));
   }
 
   #[test]
@@ -564,13 +591,12 @@ mod tests {
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
     assert_eq!(bundle.frames.len(), 1);
     let input = SceneStateInput {
-      bundle,
+      frames: bundle.frames.into_iter().map(Into::into).collect(),
       observations_by_frame: vec![vec![FrameObservation {
         observation_id: "o0".into(),
         label: "widget".into(),
       }]],
       lifecycle_events: None,
-      coverage_wire: None,
     };
     let product = build_scene_state_product(&input).expect("single frame scene");
     assert!(matches!(
@@ -581,7 +607,7 @@ mod tests {
   }
 
   #[test]
-  fn scene_track_summary_carries_matching_lifecycle_verdict() {
+  fn scene_track_state_carries_matching_lifecycle_verdict() {
     let product = build_from_scene_fixture("scene_lost_v0");
     let track = product.tracks.first().expect("track");
     assert!(matches!(
@@ -598,7 +624,7 @@ mod tests {
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
     let input = SceneStateInput {
-      bundle,
+      frames: bundle.frames.into_iter().map(Into::into).collect(),
       observations_by_frame: vec![
         vec![FrameObservation {
           observation_id: "o0".into(),
@@ -610,7 +636,6 @@ mod tests {
         }],
       ],
       lifecycle_events: Some(Vec::new()),
-      coverage_wire: None,
     };
     let product = build_scene_state_product(&input).expect("scene state");
     assert!(product.action_readiness.blocking_codes.iter().any(|code| code == "lifecycle_incomplete"));

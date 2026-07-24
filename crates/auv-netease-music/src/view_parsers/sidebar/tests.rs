@@ -79,12 +79,7 @@ fn created_category_scan_stops_at_favorite_landmark_before_scrolling_again() {
   assert_eq!(scan.projection.sections[0].kind, SidebarSectionKind::MyPlaylists);
   assert_eq!(scan.projection.sections[0].items.len(), 1);
   assert_eq!(scan.projection.sections[0].items[0].label, "Coding BGM");
-  assert!(
-    scan
-      .interaction_events
-      .iter()
-      .any(|event| { event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("reached_stop_landmark") })
-  );
+  assert_eq!(scan.stop_reason(), Some(SidebarScanStopReason::ReachedStopLandmark));
 }
 
 #[test]
@@ -126,9 +121,14 @@ fn favorite_category_starts_collecting_at_favorite_landmark() {
   assert_eq!(scan.projection.sections[0].items[0].label, "Road Trip");
 }
 
+#[cfg(feature = "tracing")]
 #[test]
-fn reconstruct_sidebar_records_observe_and_scroll_interaction_events() {
-  let mut first = parse_sidebar_viewport(
+fn sidebar_scan_records_observe_and_scroll_events_in_auv_tracing() {
+  use std::sync::Arc;
+
+  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
+
+  let first = parse_sidebar_viewport(
     0,
     ViewBounds::new(0.0, 0.0, 240.0, 400.0),
     &fake_recognition(vec![
@@ -136,41 +136,46 @@ fn reconstruct_sidebar_records_observe_and_scroll_interaction_events() {
       ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
     ]),
   );
-  first.source_artifacts = vec!["obs-0000-window.png".to_string()];
   let mut second =
     parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]));
-  second.source_artifacts = vec!["obs-0001-window.png".to_string()];
   second.incoming_scroll_delivery_path = Some("window_targeted_wheel".to_string());
   let mut observer = FakeSidebarObserver::new(vec![first, second]);
+  let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+  let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+  let run_id = RunId::new();
+  let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
 
-  let scan = scan_sidebar_with_observer(
-    &mut observer,
-    ScanOptions {
-      max_pages: 2,
-      max_scrolls: 10,
-    },
-    PlaylistCategory::All,
-    300.0,
-    250,
+  root.in_scope(|| {
+    scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 2,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::All,
+      300.0,
+      250,
+    )
+  });
+  futures_executor::block_on(dispatch.flush()).expect("flush scan events");
+  let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("load scan run").expect("scan run snapshot");
+  let event_names = snapshot.events().iter().map(|event| event.schema().name().as_str()).collect::<Vec<_>>();
+
+  assert_eq!(
+    event_names,
+    vec![
+      "auv.netease.sidebar.observed",
+      "auv.netease.sidebar.scrolled",
+      "auv.netease.sidebar.observed",
+    ]
   );
-
-  assert!(scan.interaction_events.iter().any(|event| {
-    event.kind == InteractionEventKind::Observe && event.observation_index == Some(0) && event.artifacts == vec!["obs-0000-window.png"]
-  }));
-  assert!(scan.interaction_events.iter().any(|event| {
-    event.kind == InteractionEventKind::InputScroll
-      && event.from_observation == Some(0)
-      && event.to_observation == Some(1)
-      && event.artifacts
-        == vec![
-          "obs-0000-window.png".to_string(),
-          "obs-0001-window.png".to_string(),
-        ]
-      && event
-        .scroll
-        .as_ref()
-        .is_some_and(|scroll| scroll.settle_ms == 250 && scroll.delivery_path.as_deref() == Some("window_targeted_wheel"))
-  }));
+  let scroll_payload: serde_json::Value = serde_json::from_str(snapshot.events()[1].payload().get()).expect("decode scroll event");
+  assert_eq!(scroll_payload["from_observation"], 0);
+  assert_eq!(scroll_payload["to_observation"], 1);
+  assert_eq!(scroll_payload["requested_delta"], -300.0);
+  assert_eq!(scroll_payload["settle_ms"], 250);
+  assert_eq!(scroll_payload["delivery_path"], "window_targeted_wheel");
+  assert!(scroll_payload.get("artifacts").is_none());
 }
 
 #[test]
@@ -309,12 +314,7 @@ fn scan_loop_stops_on_repeated_viewport_fingerprint() {
   assert_eq!(scan.window.id, Some("fake".to_string()));
   assert_eq!(scan.observations.len(), 3);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
-  assert!(
-    scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("repeated_viewport_fingerprint"))
-  );
+  assert_eq!(scan.stop_reason(), Some(SidebarScanStopReason::RepeatedViewportFingerprint));
 }
 
 #[test]
@@ -359,12 +359,7 @@ fn scan_loop_stops_after_two_scrolls_with_no_motion_evidence() {
 
   assert_eq!(scan.observations.len(), 4);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
-  assert!(
-    scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_after_input"))
-  );
+  assert_eq!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoMotionAfterInput));
   assert!(!scan.known_limits.iter().any(|limit| limit.contains("max_scrolls")));
 }
 
@@ -447,9 +442,7 @@ fn scan_loop_stops_after_one_no_motion_when_ax_scrollbar_is_bottom() {
 
   assert_eq!(scan.observations.len(), 3);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
-  assert!(scan.interaction_events.iter().any(
-    |event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_with_ax_scrollbar_bottom")
-  ));
+  assert_eq!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoMotionWithAxScrollbarBottom));
 }
 
 #[test]
@@ -484,12 +477,7 @@ fn scan_loop_does_not_stop_scroll_on_no_motion_without_prior_motion() {
 
   assert_eq!(scan.observations.len(), 4);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Unknown);
-  assert!(
-    !scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_after_input"))
-  );
+  assert_ne!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoMotionAfterInput));
   assert!(scan.known_limits.iter().any(|limit| limit.contains("max_scrolls=3")));
 }
 
@@ -526,12 +514,7 @@ fn scan_loop_does_not_stop_scroll_on_no_motion_from_noop_delivery() {
 
   assert_eq!(scan.observations.len(), 4);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Unknown);
-  assert!(
-    !scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_after_input"))
-  );
+  assert_ne!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoMotionAfterInput));
 }
 
 #[test]
@@ -588,8 +571,7 @@ fn scan_loop_stops_after_two_scrolls_with_no_new_semantic_candidates() {
 
   assert_eq!(scan.observations.len(), 3);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
-  assert!(scan.interaction_events.iter().any(|event| event.kind == InteractionEventKind::StopDecision
-    && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
+  assert_eq!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput));
   assert!(!scan.known_limits.iter().any(|limit| limit.contains("max_scrolls")));
 }
 
@@ -650,8 +632,7 @@ fn query_scan_continues_past_no_new_candidates_until_query_is_visible() {
 
   assert_eq!(scan.observations.len(), 4);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Unknown);
-  assert!(!scan.interaction_events.iter().any(|event| event.kind == InteractionEventKind::StopDecision
-    && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
+  assert_ne!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput));
   assert_eq!(
     scan
       .projection
@@ -794,8 +775,7 @@ fn scan_loop_ignores_scroll_no_new_semantic_candidates_from_noop_delivery() {
   );
 
   assert_eq!(scan.observations.len(), 4);
-  assert!(!scan.interaction_events.iter().any(|event| event.kind == InteractionEventKind::StopDecision
-    && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
+  assert_ne!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput));
 }
 
 #[test]
@@ -834,7 +814,7 @@ fn favorite_category_does_not_stop_on_no_new_candidates_before_start_landmark() 
   assert_eq!(scan.projection.sections[0].kind, SidebarSectionKind::FavoritePlaylists);
   assert_eq!(scan.projection.sections[0].items.len(), 1);
   assert_eq!(scan.projection.sections[0].items[0].label, "Road Trip");
-  assert!(!scan.interaction_events.iter().any(|event| event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
+  assert_ne!(scan.stop_reason(), Some(SidebarScanStopReason::ScrollNoNewSemanticCandidatesAfterInput));
 }
 
 #[test]

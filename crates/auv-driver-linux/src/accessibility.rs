@@ -54,10 +54,14 @@ pub fn snapshot_window(window: &Window) -> DriverResult<AxTreeSnapshot> {
 
 pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
   let result = atspi::focus_node(window, node_path)?;
+  let mut attempts = Vec::new();
+  if let Some(reason) = result.fallback_reason {
+    attempts.push(InputAttempt::failure(InputDeliveryPath::AxFocus, reason));
+  }
+  attempts.push(InputAttempt::success(InputDeliveryPath::AxFocus));
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
-    attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
-    fallback_reason: result.fallback_reason,
+    attempts,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -73,7 +77,6 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputAction
       succeeded: true,
       message: Some(result.action_name),
     }],
-    fallback_reason: None,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -96,7 +99,6 @@ mod tests {
         succeeded: true,
         message: Some("click".to_string()),
       }],
-      fallback_reason: None,
       mouse_disturbance: DisturbanceLevel::None,
       focus_disturbance: DisturbanceLevel::Foreground,
       clipboard_disturbance: DisturbanceLevel::None,
@@ -125,7 +127,6 @@ mod tests {
     let result = InputActionResult {
       selected_path: InputDeliveryPath::AxFocus,
       attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
-      fallback_reason: None,
       mouse_disturbance: DisturbanceLevel::None,
       focus_disturbance: DisturbanceLevel::Foreground,
       clipboard_disturbance: DisturbanceLevel::None,

@@ -52,6 +52,10 @@ name = "dispatch_contract"
 required-features = ["memory-store"]
 
 [[test]]
+name = "artifact_read_contract"
+required-features = ["memory-store"]
+
+[[test]]
 name = "file_store_recovery"
 required-features = ["file-store"]
 

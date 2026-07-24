@@ -1550,7 +1550,6 @@ mod tests {
   use tower::ServiceExt;
 
   use super::*;
-  use crate::read_projection::DefaultInspectRunExtension;
   use crate::server::RunMutationArbitrator;
 
   const AUTHORITY: &str = "019f8b1e-4b2d-7a00-8f00-0000000000aa";
@@ -1564,7 +1563,6 @@ mod tests {
   fn test_app(store: MemoryRunStore, artifacts: ArtifactApiState) -> (Router, Arc<InspectServerState>) {
     let state = Arc::new(InspectServerState {
       store: Arc::new(store.clone()),
-      extension: Arc::new(DefaultInspectRunExtension),
       artifacts,
       artifact_origin: None,
       mutation_arbitrator: RunMutationArbitrator::new(),

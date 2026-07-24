@@ -265,7 +265,7 @@ impl Dispatch {
     emission
   }
 
-  pub(crate) fn report_unobserved_artifact_failure(&self, failure: &DispatchFailure) {
+  pub(crate) fn report_unclaimed_artifact_failure(&self, failure: &DispatchFailure) {
     self.report_failures(std::slice::from_ref(failure));
   }
 
@@ -480,7 +480,7 @@ impl Dispatch {
           None => {
             let indeterminate = lane.indeterminate;
             lane.draining = false;
-            if !indeterminate && lane.owned.is_empty() && !lane.observation.running && lane.observation.targets.is_empty() {
+            if !indeterminate && lane.owned.is_empty() && !lane.cursor_lane.running && lane.cursor_lane.targets.is_empty() {
               lanes.remove(&run_id);
             }
             return;
@@ -541,7 +541,7 @@ impl Dispatch {
           return;
         };
         match lane.queue.front().map(|entry| &entry.state) {
-          Some(LaneEntryState::Ready(_) | LaneEntryState::Artifact(_)) if lane.observation.establishing => {
+          Some(LaneEntryState::Ready(_) | LaneEntryState::Artifact(_)) if lane.cursor_lane.establishing => {
             lane.running = false;
             guard.disarm();
             return;
@@ -567,7 +567,7 @@ impl Dispatch {
             lane.running = false;
             let indeterminate = lane.indeterminate;
             let draining = lane.draining;
-            if !indeterminate && !draining && lane.owned.is_empty() && !lane.observation.running && lane.observation.targets.is_empty() {
+            if !indeterminate && !draining && lane.owned.is_empty() && !lane.cursor_lane.running && lane.cursor_lane.targets.is_empty() {
               lanes.remove(&run_id);
             }
             guard.disarm();
@@ -592,9 +592,9 @@ impl Dispatch {
           }
 
           let mut admission = Some(admission);
-          if self.observation_needs_initialization(run_id) {
+          if self.cursor_needs_initialization(run_id) {
             guard.activate_artifact(ticket, DispatchStage::AuthorityRead, admission.take().expect("artifact admission is available"));
-            match self.initialize_observation(run_id).await {
+            match self.initialize_cursor(run_id).await {
               Ok(()) => {}
               Err(failure) => {
                 let admission = guard.take_artifact(ticket);
@@ -623,9 +623,9 @@ impl Dispatch {
           self.spawn_artifact_task(run_id, ticket, admission);
         }
         LaneAction::Commit(ticket, request) => {
-          if self.observation_needs_initialization(run_id) {
+          if self.cursor_needs_initialization(run_id) {
             guard.activate(ticket, DispatchStage::AuthorityRead);
-            match self.initialize_observation(run_id).await {
+            match self.initialize_cursor(run_id).await {
               Ok(()) => {}
               Err(failure) => {
                 guard.complete(ticket);
@@ -678,7 +678,7 @@ impl Dispatch {
                 Some(commit)
               }
               Ok(Some(_)) | Ok(None) | Err(_) => {
-                if let Some(commit) = self.observed_commit(run_id, request.idempotency_key()) {
+                if let Some(commit) = self.cursor_commit(run_id, request.idempotency_key()) {
                   guard.quarantine_on_drop = false;
                   Some(commit)
                 } else {
@@ -724,29 +724,29 @@ impl Dispatch {
     }
   }
 
-  fn observation_needs_initialization(&self, run_id: RunId) -> bool {
+  fn cursor_needs_initialization(&self, run_id: RunId) -> bool {
     if self.inner.projector_routes.is_empty() {
       return false;
     }
     let lanes = self.inner.lanes.lock().unwrap();
     let lane = lanes.get(&run_id).expect("an authority write retains its run lane");
-    !lane.observation.initialized && !lane.observation.running
+    !lane.cursor_lane.initialized && !lane.cursor_lane.running
   }
 
-  async fn initialize_observation(&self, run_id: RunId) -> Result<(), CursorFailure> {
-    let route = self.inner.route.as_ref().expect("authority observation requires a route");
-    let resume_after = self.inner.lanes.lock().unwrap().get(&run_id).and_then(|lane| lane.observation.resume_after);
+  async fn initialize_cursor(&self, run_id: RunId) -> Result<(), CursorFailure> {
+    let route = self.inner.route.as_ref().expect("authority cursor initialization requires a route");
+    let resume_after = self.inner.lanes.lock().unwrap().get(&run_id).and_then(|lane| lane.cursor_lane.resume_after);
     let cursor = match resume_after {
       Some(after) => AuthorityCursor::resume(route, run_id, after).await?,
       None => AuthorityCursor::establish(route, run_id).await?,
     };
     let mut lanes = self.inner.lanes.lock().unwrap();
     let lane = lanes.get_mut(&run_id).expect("cursor initialization retains its run lane");
-    debug_assert!(!lane.observation.initialized);
-    debug_assert!(lane.observation.cursor.is_none());
-    lane.observation.initialized = true;
-    lane.observation.resume_after = Some(cursor.through_revision);
-    lane.observation.cursor = Some(cursor);
+    debug_assert!(!lane.cursor_lane.initialized);
+    debug_assert!(lane.cursor_lane.cursor.is_none());
+    lane.cursor_lane.initialized = true;
+    lane.cursor_lane.resume_after = Some(cursor.through_revision);
+    lane.cursor_lane.cursor = Some(cursor);
     Ok(())
   }
 
@@ -759,7 +759,7 @@ impl Dispatch {
       OwnedSubmission {
         ticket,
         request,
-        observed_commit: None,
+        cursor_commit: None,
         response_validated: false,
         artifact_response_commit: None,
       },
@@ -771,8 +771,8 @@ impl Dispatch {
     self.inner.lanes.lock().unwrap().get_mut(&run_id).and_then(|lane| lane.owned.remove(&idempotency_key))
   }
 
-  fn observed_commit(&self, run_id: RunId, idempotency_key: IdempotencyKey) -> Option<RunCommit> {
-    self.inner.lanes.lock().unwrap().get(&run_id)?.owned.get(&idempotency_key)?.observed_commit.clone()
+  fn cursor_commit(&self, run_id: RunId, idempotency_key: IdempotencyKey) -> Option<RunCommit> {
+    self.inner.lanes.lock().unwrap().get(&run_id)?.owned.get(&idempotency_key)?.cursor_commit.clone()
   }
 
   fn complete_owned_write(&self, run_id: RunId, idempotency_key: IdempotencyKey, revision: RunRevision) {
@@ -786,12 +786,12 @@ impl Dispatch {
       };
       debug_assert!(!owned.response_validated, "an owned write response validates once");
       owned.response_validated = true;
-      if let Some(commit) = owned.observed_commit.clone() {
+      if let Some(commit) = owned.cursor_commit.clone() {
         let ticket = owned.ticket;
         lane.owned.remove(&idempotency_key);
         (false, Some((ticket, commit)))
       } else {
-        lane.observation.targets.push_back(ObservationTarget {
+        lane.cursor_lane.targets.push_back(CursorTarget {
           ticket: owned.ticket,
           idempotency_key,
           revision,
@@ -803,22 +803,22 @@ impl Dispatch {
       self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
     }
     if enqueue {
-      self.wake_observation(run_id);
+      self.wake_cursor(run_id);
     }
   }
 
-  fn wake_observation(&self, run_id: RunId) {
-    // Revision observation is independent of the ordinary write FIFO so a
+  fn wake_cursor(&self, run_id: RunId) {
+    // Cursor advancement is independent of the ordinary write FIFO so a
     // blocked store response cannot retain the run's sole committed cursor.
     {
       let mut lanes = self.inner.lanes.lock().unwrap();
       let Some(lane) = lanes.get_mut(&run_id) else {
         return;
       };
-      if lane.observation.draining {
+      if lane.cursor_lane.draining {
         return;
       }
-      lane.observation.draining = true;
+      lane.cursor_lane.draining = true;
     }
 
     loop {
@@ -827,52 +827,52 @@ impl Dispatch {
         let Some(lane) = lanes.get_mut(&run_id) else {
           return;
         };
-        if lane.observation.running {
-          lane.observation.draining = false;
+        if lane.cursor_lane.running {
+          lane.cursor_lane.draining = false;
           return;
         }
         let target = loop {
-          let Some(target) = lane.observation.targets.pop_front() else {
+          let Some(target) = lane.cursor_lane.targets.pop_front() else {
             break None;
           };
-          if lane.owned.get(&target.idempotency_key).is_some_and(|owned| owned.observed_commit.is_none()) {
+          if lane.owned.get(&target.idempotency_key).is_some_and(|owned| owned.cursor_commit.is_none()) {
             break Some(target);
           }
         };
         let Some(target) = target else {
-          lane.observation.draining = false;
+          lane.cursor_lane.draining = false;
           if !lane.indeterminate && !lane.running && lane.queue.is_empty() && lane.owned.is_empty() {
             lanes.remove(&run_id);
           }
           return;
         };
-        let cursor = lane.observation.cursor.take();
+        let cursor = lane.cursor_lane.cursor.take();
         if let Some(cursor) = cursor.as_ref() {
-          lane.observation.resume_after = Some(cursor.through_revision);
+          lane.cursor_lane.resume_after = Some(cursor.through_revision);
         }
-        lane.observation.running = true;
-        lane.observation.establishing = cursor.is_none();
-        ObservationWork {
+        lane.cursor_lane.running = true;
+        lane.cursor_lane.establishing = cursor.is_none();
+        CursorWork {
           run_id,
           target,
           cursor,
-          resume_after: lane.observation.resume_after,
+          resume_after: lane.cursor_lane.resume_after,
         }
       };
 
-      self.spawn_observation(work);
+      self.spawn_cursor_advance(work);
       let mut lanes = self.inner.lanes.lock().unwrap();
       let Some(lane) = lanes.get_mut(&run_id) else {
         return;
       };
-      if lane.observation.running {
-        lane.observation.draining = false;
+      if lane.cursor_lane.running {
+        lane.cursor_lane.draining = false;
         return;
       }
     }
   }
 
-  fn spawn_observation(&self, work: ObservationWork) {
+  fn spawn_cursor_advance(&self, work: CursorWork) {
     let run_id = work.run_id;
     let target = work.target;
     let recovery = Arc::new(Mutex::new(Some(work)));
@@ -880,14 +880,14 @@ impl Dispatch {
     let task_admission = admission.clone();
     let task_recovery = recovery.clone();
     let dispatch = self.clone();
-    let spawn_guard = ObservationSpawnGuard::new(admission.clone(), self.clone(), recovery.clone());
+    let spawn_guard = CursorSpawnGuard::new(admission.clone(), self.clone(), recovery.clone());
     let task = Box::pin(async move {
       let _spawn_guard = spawn_guard;
       let admitted = async move {
         if task_admission.start() {
-          let work = task_recovery.lock().unwrap().take().expect("started observation task owns its work");
-          let mut guard = ObservationTaskGuard::new(dispatch.clone(), run_id, target);
-          let result = dispatch.observe_target(work).await;
+          let work = task_recovery.lock().unwrap().take().expect("started cursor task owns its work");
+          let mut guard = CursorTaskGuard::new(dispatch.clone(), run_id, target);
+          let result = dispatch.advance_cursor(work).await;
           guard.complete(result);
         }
       };
@@ -906,19 +906,19 @@ impl Dispatch {
     if let Some(failure) = failure
       && let Some(work) = recovery.lock().unwrap().take()
     {
-      self.fail_observation(work.run_id, work.target, failure, false, None, true);
+      self.fail_cursor_advance(work.run_id, work.target, failure, false, None, true);
     }
   }
 
-  async fn observe_target(&self, mut work: ObservationWork) -> ObservationResult {
-    let route = self.inner.route.as_ref().expect("authority observation requires a route");
+  async fn advance_cursor(&self, mut work: CursorWork) -> CursorResult {
+    let route = self.inner.route.as_ref().expect("authority cursor advancement requires a route");
     let mut cursor = match work.cursor.take() {
       Some(cursor) => cursor,
       None => match work.resume_after {
         Some(after) => match AuthorityCursor::resume(route, work.run_id, after).await {
           Ok(cursor) => cursor,
           Err(failure) => {
-            return ObservationResult {
+            return CursorResult {
               cursor: None,
               resume_after: work.resume_after,
               commits: Vec::new(),
@@ -929,7 +929,7 @@ impl Dispatch {
         None => match AuthorityCursor::establish(route, work.run_id).await {
           Ok(cursor) => cursor,
           Err(failure) => {
-            return ObservationResult {
+            return CursorResult {
               cursor: None,
               resume_after: None,
               commits: Vec::new(),
@@ -939,17 +939,17 @@ impl Dispatch {
         },
       },
     };
-    match cursor.observe_through(route, work.target.revision).await {
-      Ok(observation) => ObservationResult {
+    match cursor.advance_through(route, work.target.revision).await {
+      Ok(advance) => CursorResult {
         resume_after: Some(cursor.through_revision),
-        cursor: observation.cursor_usable.then_some(cursor),
-        commits: observation.commits,
+        cursor: advance.cursor_usable.then_some(cursor),
+        commits: advance.commits,
         failure: None,
       },
       Err(failure) => {
-        let CursorObservationFailure { failure, commits } = failure;
+        let CursorAdvanceFailure { failure, commits } = failure;
         let cursor = (!failure.is_integrity()).then_some(cursor);
-        ObservationResult {
+        CursorResult {
           resume_after: cursor.as_ref().map(|cursor| cursor.through_revision),
           cursor,
           commits,
@@ -959,21 +959,21 @@ impl Dispatch {
     }
   }
 
-  fn finish_observation(&self, run_id: RunId, target: ObservationTarget, result: ObservationResult) {
-    let ObservationResult {
+  fn finish_cursor_advance(&self, run_id: RunId, target: CursorTarget, result: CursorResult) {
+    let CursorResult {
       cursor,
       resume_after,
       commits,
       failure,
     } = result;
     let skip_target = failure.is_some();
-    let observed = self.apply_observed_commits(run_id, &commits, skip_target.then_some(target.idempotency_key));
-    let target_observed = observed.target_observed(target.idempotency_key);
+    let matched = self.apply_cursor_commits(run_id, &commits, skip_target.then_some(target.idempotency_key));
+    let contains_target = matched.contains_target(target.idempotency_key);
     let mut failure = failure;
-    let mismatch = observed.mismatch;
+    let mismatch = matched.mismatch;
     if let Some(mismatch) = mismatch.as_ref() {
       failure = Some(CursorFailure::integrity(mismatch.code.clone()));
-    } else if failure.is_none() && !target_observed {
+    } else if failure.is_none() && !contains_target {
       failure = Some(CursorFailure::integrity(committed_cursor_mismatch_code()));
     }
 
@@ -993,31 +993,31 @@ impl Dispatch {
         }
         settle_target = mismatch.ticket != target.ticket;
       }
-      self.fail_observation(run_id, target, DispatchFailure::new(DispatchStage::AuthorityRead, code), integrity, cursor, settle_target);
+      self.fail_cursor_advance(run_id, target, DispatchFailure::new(DispatchStage::AuthorityRead, code), integrity, cursor, settle_target);
       return;
     }
 
     {
       let mut lanes = self.inner.lanes.lock().unwrap();
       if let Some(lane) = lanes.get_mut(&run_id) {
-        lane.observation.running = false;
-        lane.observation.establishing = false;
-        lane.observation.initialized = cursor.is_some();
-        lane.observation.resume_after = resume_after;
-        lane.observation.cursor = cursor;
+        lane.cursor_lane.running = false;
+        lane.cursor_lane.establishing = false;
+        lane.cursor_lane.initialized = cursor.is_some();
+        lane.cursor_lane.resume_after = resume_after;
+        lane.cursor_lane.cursor = cursor;
       }
     }
-    self.wake_observation(run_id);
+    self.wake_cursor(run_id);
     self.wake_lane(run_id);
   }
 
-  fn apply_observed_commits(&self, run_id: RunId, commits: &[RunCommit], skip: Option<IdempotencyKey>) -> ObservedCommits {
+  fn apply_cursor_commits(&self, run_id: RunId, commits: &[RunCommit], skip: Option<IdempotencyKey>) -> CursorCommits {
     let mut ready = Vec::new();
-    let mut observed_keys = Vec::new();
+    let mut matched_keys = Vec::new();
     let mut mismatch = None;
     {
       let mut lanes = self.inner.lanes.lock().unwrap();
-      let lane = lanes.get_mut(&run_id).expect("active observation retains its run lane");
+      let lane = lanes.get_mut(&run_id).expect("active cursor advancement retains its run lane");
       let mut projection = self.inner.projection.lock().unwrap();
       for commit in commits {
         let key = commit.idempotency_key();
@@ -1039,36 +1039,36 @@ impl Dispatch {
         if let Some(code) = mismatch_code {
           let ticket = owned.ticket;
           let owned = lane.owned.remove(&key).expect("the mismatching owned submission is present");
-          lane.observation.targets.retain(|target| target.idempotency_key != key);
+          lane.cursor_lane.targets.retain(|target| target.idempotency_key != key);
           lane.indeterminate = true;
           let receipt = match owned.request {
             OwnedRequest::Ordinary(_) => None,
             OwnedRequest::Artifact { settlement, .. } => settlement.claim(),
           };
-          mismatch = Some(ObservedCommitMismatch {
+          mismatch = Some(CursorCommitMismatch {
             ticket,
             receipt,
             code,
           });
           break;
         }
-        if owned.observed_commit.is_some() {
+        if owned.cursor_commit.is_some() {
           continue;
         }
-        owned.observed_commit = Some(commit.clone());
-        observed_keys.push(key);
+        owned.cursor_commit = Some(commit.clone());
+        matched_keys.push(key);
         projection.stage(owned.ticket);
-        lane.observation.targets.retain(|target| target.idempotency_key != key);
+        lane.cursor_lane.targets.retain(|target| target.idempotency_key != key);
         if owned.response_validated {
           let owned = lane.owned.remove(&key).expect("the response-validated owned submission is present");
           match owned.request {
-            OwnedRequest::Ordinary(_) => ready.push(ObservedReady::Ordinary {
+            OwnedRequest::Ordinary(_) => ready.push(CursorReady::Ordinary {
               ticket: owned.ticket,
               commit: commit.clone(),
             }),
             OwnedRequest::Artifact { settlement, .. } => {
               if let Some(receipt) = settlement.claim() {
-                ready.push(ObservedReady::Artifact {
+                ready.push(CursorReady::Artifact {
                   ticket: owned.ticket,
                   commit: commit.clone(),
                   receipt,
@@ -1081,30 +1081,30 @@ impl Dispatch {
     }
     for item in ready {
       match item {
-        ObservedReady::Ordinary { ticket, commit } => {
+        CursorReady::Ordinary { ticket, commit } => {
           self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
         }
-        ObservedReady::Artifact {
+        CursorReady::Artifact {
           ticket,
           commit,
           receipt,
         } => {
-          let metadata = artifact_metadata(&commit).expect("validated observed artifact commit contains metadata").clone();
+          let metadata = artifact_metadata(&commit).expect("validated cursor commit contains artifact metadata").clone();
           self.mark_projection_ready(ticket, projection_for_commit(&commit, &self.inner.projector_routes));
           self.deliver_artifact_receipt(receipt, Ok(metadata), None);
         }
       }
     }
-    ObservedCommits {
-      observed_keys,
+    CursorCommits {
+      matched_keys,
       mismatch,
     }
   }
 
-  fn fail_observation(
+  fn fail_cursor_advance(
     &self,
     run_id: RunId,
-    target: ObservationTarget,
+    target: CursorTarget,
     failure: DispatchFailure,
     quarantine: bool,
     cursor: Option<AuthorityCursor>,
@@ -1115,33 +1115,33 @@ impl Dispatch {
       let Some(lane) = lanes.get_mut(&run_id) else {
         return;
       };
-      lane.observation.running = false;
-      lane.observation.establishing = false;
-      lane.observation.initialized = cursor.is_some();
+      lane.cursor_lane.running = false;
+      lane.cursor_lane.establishing = false;
+      lane.cursor_lane.initialized = cursor.is_some();
       if quarantine {
-        lane.observation.resume_after = None;
+        lane.cursor_lane.resume_after = None;
       } else if let Some(cursor) = cursor.as_ref() {
-        lane.observation.resume_after = Some(cursor.through_revision);
+        lane.cursor_lane.resume_after = Some(cursor.through_revision);
       }
-      lane.observation.cursor = cursor;
+      lane.cursor_lane.cursor = cursor;
       if quarantine {
         lane.indeterminate = true;
       }
       if settle_target {
         lane.owned.remove(&target.idempotency_key).and_then(|owned| match owned.request {
-          OwnedRequest::Ordinary(_) => Some(ObservationFailureTarget::Ordinary),
-          OwnedRequest::Artifact { settlement, .. } => settlement.claim().map(ObservationFailureTarget::Artifact),
+          OwnedRequest::Ordinary(_) => Some(SubmissionFailureTarget::Ordinary),
+          OwnedRequest::Artifact { settlement, .. } => settlement.claim().map(SubmissionFailureTarget::Artifact),
         })
       } else {
         None
       }
     };
     match target_settlement {
-      Some(ObservationFailureTarget::Ordinary) => {
+      Some(SubmissionFailureTarget::Ordinary) => {
         self.mark_projection_skipped(target.ticket);
         self.terminalize(target.ticket, vec![failure]);
       }
-      Some(ObservationFailureTarget::Artifact(receipt)) => {
+      Some(SubmissionFailureTarget::Artifact(receipt)) => {
         let error = if quarantine {
           ArtifactWriteError::Integrity(failure.code().clone())
         } else {
@@ -1153,7 +1153,7 @@ impl Dispatch {
       }
       None => {}
     }
-    self.wake_observation(run_id);
+    self.wake_cursor(run_id);
     self.wake_lane(run_id);
   }
 
@@ -1284,8 +1284,8 @@ impl Dispatch {
               terminal: true,
             })
           } else {
-            let observed_commit = lane.owned.get(&idempotency_key).and_then(|owned| owned.observed_commit.clone());
-            if observed_commit.as_ref().is_some_and(|observed| observed != &commit) {
+            let cursor_commit = lane.owned.get(&idempotency_key).and_then(|owned| owned.cursor_commit.clone());
+            if cursor_commit.as_ref().is_some_and(|cursor_commit| cursor_commit != &commit) {
               lane.owned.remove(&idempotency_key);
               lane.indeterminate = true;
               let error = ArtifactWriteError::Integrity(commit_response_mismatch_code());
@@ -1300,16 +1300,16 @@ impl Dispatch {
               debug_assert!(!owned.response_validated, "an artifact response validates once");
               owned.response_validated = true;
               owned.artifact_response_commit = Some(commit.clone());
-              if let Some(ready_commit) = observed_commit {
+              if let Some(ready_commit) = cursor_commit {
                 lane.owned.remove(&idempotency_key);
                 settlement.claim().map(|receipt| ArtifactWorkerCompletion::Success {
                   receipt,
-                  metadata: Box::new(artifact_metadata(&ready_commit).expect("observed artifact commit contains metadata").clone()),
+                  metadata: Box::new(artifact_metadata(&ready_commit).expect("cursor commit contains artifact metadata").clone()),
                   ready_commit: Some(ready_commit),
                   terminal: false,
                 })
               } else {
-                lane.observation.targets.push_back(ObservationTarget {
+                lane.cursor_lane.targets.push_back(CursorTarget {
                   ticket,
                   idempotency_key,
                   revision: commit.revision(),
@@ -1320,20 +1320,20 @@ impl Dispatch {
           }
         }
         Err(ArtifactWriteError::PublicationUnknown(_))
-          if lane.owned.get(&idempotency_key).and_then(|owned| owned.observed_commit.as_ref()).is_some() =>
+          if lane.owned.get(&idempotency_key).and_then(|owned| owned.cursor_commit.as_ref()).is_some() =>
         {
-          let owned = lane.owned.remove(&idempotency_key).expect("an observed artifact retains its owned submission");
-          let commit = owned.observed_commit.expect("the guarded artifact commit is present");
+          let owned = lane.owned.remove(&idempotency_key).expect("a cursor-confirmed artifact retains its owned submission");
+          let commit = owned.cursor_commit.expect("the guarded artifact commit is present");
           settlement.claim().map(|receipt| ArtifactWorkerCompletion::Success {
             receipt,
-            metadata: Box::new(artifact_metadata(&commit).expect("observed artifact commit contains metadata").clone()),
+            metadata: Box::new(artifact_metadata(&commit).expect("cursor commit contains artifact metadata").clone()),
             ready_commit: Some(commit),
             terminal: false,
           })
         }
         Err(error) => {
           let contradiction =
-            direct_contradiction || lane.owned.get(&idempotency_key).and_then(|owned| owned.observed_commit.as_ref()).is_some();
+            direct_contradiction || lane.owned.get(&idempotency_key).and_then(|owned| owned.cursor_commit.as_ref()).is_some();
           let error = if contradiction {
             ArtifactWriteError::Integrity(commit_response_mismatch_code())
           } else {
@@ -1378,7 +1378,7 @@ impl Dispatch {
         self.terminalize_unreported(ticket, vec![failure]);
       }
     }
-    self.wake_observation(run_id);
+    self.wake_cursor(run_id);
     self.wake_lane(run_id);
   }
 
@@ -1448,16 +1448,16 @@ impl Dispatch {
     &self,
     receipt: ArtifactReceiptSender,
     result: Result<ArtifactMetadata, ArtifactWriteError>,
-    unobserved_failure: Option<DispatchFailure>,
+    unclaimed_failure: Option<DispatchFailure>,
   ) {
     let message = ArtifactReceiptMessage {
       result,
-      unobserved_failure,
+      unclaimed_failure,
     };
     if let Err(message) = receipt.send(message)
-      && let Some(failure) = message.unobserved_failure
+      && let Some(failure) = message.unclaimed_failure
     {
-      self.report_unobserved_artifact_failure(&failure);
+      self.report_unclaimed_artifact_failure(&failure);
     }
   }
 
@@ -1489,29 +1489,29 @@ impl Dispatch {
   }
 
   fn recover_lane_task(&self, run_id: RunId, active: Option<ActiveLaneWork>, quarantine: bool) {
-    let observed = {
+    let cursor_commit = {
       let mut lanes = self.inner.lanes.lock().unwrap();
       let Some(lane) = lanes.get_mut(&run_id) else {
         return;
       };
       lane.running = false;
-      let observed = active
+      let cursor_commit = active
         .as_ref()
         .and_then(|active| match active.recovery {
           ActiveLaneRecovery::Ordinary(Some(key)) => lane.owned.remove(&key),
           ActiveLaneRecovery::Ordinary(None) | ActiveLaneRecovery::ArtifactAdmission(_) => None,
         })
-        .and_then(|owned| owned.observed_commit);
-      if quarantine && observed.is_none() {
+        .and_then(|owned| owned.cursor_commit);
+      if quarantine && cursor_commit.is_none() {
         lane.indeterminate = true;
       }
-      observed
+      cursor_commit
     };
     if let Some(active) = active {
       let failure = DispatchFailure::new(active.stage, task_unwind_code());
       match active.recovery {
         ActiveLaneRecovery::Ordinary(_) => {
-          if let Some(commit) = observed {
+          if let Some(commit) = cursor_commit {
             self.mark_projection_ready(active.ticket, projection_for_commit(&commit, &self.inner.projector_routes));
           } else {
             self.mark_projection_skipped(active.ticket);
@@ -1810,14 +1810,14 @@ impl Drop for LaneSpawnGuard {
   }
 }
 
-struct ObservationSpawnGuard {
+struct CursorSpawnGuard {
   admission: Arc<SpawnAdmission>,
   dispatch: Dispatch,
-  recovery: Arc<Mutex<Option<ObservationWork>>>,
+  recovery: Arc<Mutex<Option<CursorWork>>>,
 }
 
-impl ObservationSpawnGuard {
-  fn new(admission: Arc<SpawnAdmission>, dispatch: Dispatch, recovery: Arc<Mutex<Option<ObservationWork>>>) -> Self {
+impl CursorSpawnGuard {
+  fn new(admission: Arc<SpawnAdmission>, dispatch: Dispatch, recovery: Arc<Mutex<Option<CursorWork>>>) -> Self {
     Self {
       admission,
       dispatch,
@@ -1826,12 +1826,12 @@ impl ObservationSpawnGuard {
   }
 }
 
-impl Drop for ObservationSpawnGuard {
+impl Drop for CursorSpawnGuard {
   fn drop(&mut self) {
     if self.admission.task_dropped_before_start()
       && let Some(work) = self.recovery.lock().unwrap().take()
     {
-      self.dispatch.fail_observation(
+      self.dispatch.fail_cursor_advance(
         work.run_id,
         work.target,
         DispatchFailure::new(DispatchStage::AuthorityRead, task_unwind_code()),
@@ -1843,15 +1843,15 @@ impl Drop for ObservationSpawnGuard {
   }
 }
 
-struct ObservationTaskGuard {
+struct CursorTaskGuard {
   dispatch: Dispatch,
   run_id: RunId,
-  target: ObservationTarget,
+  target: CursorTarget,
   armed: bool,
 }
 
-impl ObservationTaskGuard {
-  fn new(dispatch: Dispatch, run_id: RunId, target: ObservationTarget) -> Self {
+impl CursorTaskGuard {
+  fn new(dispatch: Dispatch, run_id: RunId, target: CursorTarget) -> Self {
     Self {
       dispatch,
       run_id,
@@ -1860,16 +1860,16 @@ impl ObservationTaskGuard {
     }
   }
 
-  fn complete(&mut self, result: ObservationResult) {
+  fn complete(&mut self, result: CursorResult) {
     self.armed = false;
-    self.dispatch.finish_observation(self.run_id, self.target, result);
+    self.dispatch.finish_cursor_advance(self.run_id, self.target, result);
   }
 }
 
-impl Drop for ObservationTaskGuard {
+impl Drop for CursorTaskGuard {
   fn drop(&mut self) {
     if self.armed {
-      self.dispatch.fail_observation(
+      self.dispatch.fail_cursor_advance(
         self.run_id,
         self.target,
         DispatchFailure::new(DispatchStage::AuthorityRead, task_unwind_code()),
@@ -2317,18 +2317,18 @@ impl CursorFailure {
   }
 }
 
-struct CursorObservationFailure {
+struct CursorAdvanceFailure {
   failure: CursorFailure,
   commits: Vec<RunCommit>,
 }
 
-impl CursorObservationFailure {
+impl CursorAdvanceFailure {
   fn new(failure: CursorFailure, commits: Vec<RunCommit>) -> Self {
     Self { failure, commits }
   }
 }
 
-struct CursorObservation {
+struct CursorAdvance {
   commits: Vec<RunCommit>,
   cursor_usable: bool,
 }
@@ -2336,7 +2336,7 @@ struct CursorObservation {
 struct OwnedSubmission {
   ticket: u64,
   request: OwnedRequest,
-  observed_commit: Option<RunCommit>,
+  cursor_commit: Option<RunCommit>,
   response_validated: bool,
   artifact_response_commit: Option<RunCommit>,
 }
@@ -2396,24 +2396,24 @@ impl AuthorityCursor {
     })
   }
 
-  async fn observe_through(&mut self, route: &AuthorityRoute, target: RunRevision) -> Result<CursorObservation, CursorObservationFailure> {
+  async fn advance_through(&mut self, route: &AuthorityRoute, target: RunRevision) -> Result<CursorAdvance, CursorAdvanceFailure> {
     let mut commits = Vec::new();
     let mut resume = false;
     while self.through_revision < target {
       match poll_subscription_once(&mut self.subscription).await {
         Poll::Ready(Some(Ok(commit))) => {
-          if let Err(failure) = self.observe_commit(commit, &mut commits) {
-            return Err(CursorObservationFailure::new(failure, commits));
+          if let Err(failure) = self.accept_commit(commit, &mut commits) {
+            return Err(CursorAdvanceFailure::new(failure, commits));
           }
         }
         Poll::Ready(Some(Err(SubscriptionError::Gap { .. }))) | Poll::Pending | Poll::Ready(None) => {
           if let Err(failure) = self.recover_through(route, target, &mut commits).await {
-            return Err(CursorObservationFailure::new(failure, commits));
+            return Err(CursorAdvanceFailure::new(failure, commits));
           }
           resume = true;
         }
         Poll::Ready(Some(Err(SubscriptionError::Store(error)))) => {
-          return Err(CursorObservationFailure::new(cursor_failure_from_read(error), commits));
+          return Err(CursorAdvanceFailure::new(cursor_failure_from_read(error), commits));
         }
       }
     }
@@ -2421,14 +2421,14 @@ impl AuthorityCursor {
       self.subscription = match route.store.subscribe(self.run_id, self.through_revision).await {
         Ok(subscription) => subscription,
         Err(_) => {
-          return Ok(CursorObservation {
+          return Ok(CursorAdvance {
             commits,
             cursor_usable: false,
           });
         }
       };
     }
-    Ok(CursorObservation {
+    Ok(CursorAdvance {
       commits,
       cursor_usable: true,
     })
@@ -2461,7 +2461,7 @@ impl AuthorityCursor {
         return Err(CursorFailure::integrity(committed_cursor_mismatch_code()));
       }
       for commit in page.commits().iter().cloned() {
-        self.observe_commit(commit, commits)?;
+        self.accept_commit(commit, commits)?;
       }
       if self.through_revision < target && !page.has_more() {
         return Err(CursorFailure::integrity(committed_cursor_mismatch_code()));
@@ -2470,7 +2470,7 @@ impl AuthorityCursor {
     Ok(())
   }
 
-  fn observe_commit(&mut self, commit: RunCommit, commits: &mut Vec<RunCommit>) -> Result<(), CursorFailure> {
+  fn accept_commit(&mut self, commit: RunCommit, commits: &mut Vec<RunCommit>) -> Result<(), CursorFailure> {
     let expected_revision =
       self.through_revision.get().checked_add(1).ok_or_else(|| CursorFailure::integrity(committed_cursor_mismatch_code()))?;
     if commit.authority_id() != self.authority_id || commit.run_id() != self.run_id || commit.revision().get() != expected_revision {
@@ -2697,59 +2697,59 @@ struct RunLane {
   indeterminate: bool,
   queue: VecDeque<LaneEntry>,
   owned: HashMap<IdempotencyKey, OwnedSubmission>,
-  observation: ObservationLane,
+  cursor_lane: CursorLane,
 }
 
 #[derive(Default)]
-struct ObservationLane {
+struct CursorLane {
   draining: bool,
   running: bool,
   establishing: bool,
   initialized: bool,
   resume_after: Option<RunRevision>,
   cursor: Option<AuthorityCursor>,
-  targets: VecDeque<ObservationTarget>,
+  targets: VecDeque<CursorTarget>,
 }
 
 #[derive(Clone, Copy)]
-struct ObservationTarget {
+struct CursorTarget {
   ticket: u64,
   idempotency_key: IdempotencyKey,
   revision: RunRevision,
 }
 
-struct ObservationWork {
+struct CursorWork {
   run_id: RunId,
-  target: ObservationTarget,
+  target: CursorTarget,
   cursor: Option<AuthorityCursor>,
   resume_after: Option<RunRevision>,
 }
 
-struct ObservationResult {
+struct CursorResult {
   cursor: Option<AuthorityCursor>,
   resume_after: Option<RunRevision>,
   commits: Vec<RunCommit>,
   failure: Option<CursorFailure>,
 }
 
-struct ObservedCommits {
-  observed_keys: Vec<IdempotencyKey>,
-  mismatch: Option<ObservedCommitMismatch>,
+struct CursorCommits {
+  matched_keys: Vec<IdempotencyKey>,
+  mismatch: Option<CursorCommitMismatch>,
 }
 
-impl ObservedCommits {
-  fn target_observed(&self, idempotency_key: IdempotencyKey) -> bool {
-    self.observed_keys.contains(&idempotency_key)
+impl CursorCommits {
+  fn contains_target(&self, idempotency_key: IdempotencyKey) -> bool {
+    self.matched_keys.contains(&idempotency_key)
   }
 }
 
-struct ObservedCommitMismatch {
+struct CursorCommitMismatch {
   ticket: u64,
   receipt: Option<ArtifactReceiptSender>,
   code: ErrorCode,
 }
 
-enum ObservedReady {
+enum CursorReady {
   Ordinary {
     ticket: u64,
     commit: RunCommit,
@@ -2761,7 +2761,7 @@ enum ObservedReady {
   },
 }
 
-enum ObservationFailureTarget {
+enum SubmissionFailureTarget {
   Ordinary,
   Artifact(ArtifactReceiptSender),
 }

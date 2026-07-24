@@ -113,7 +113,7 @@ mod tests {
   }
 
   #[test]
-  fn match_report_preserves_full_text_for_machine_output() {
+  fn match_report_preserves_full_text_for_human_rendering() {
     let text = "A very long OCR match that should remain complete in the report data before rendering".to_string();
     let matches = vec![OcrMatch {
       text: text.clone(),

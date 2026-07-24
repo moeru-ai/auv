@@ -1,14 +1,26 @@
 //! Lightweight in-memory session registry (API-P4 responsibility A).
 //!
 //! Creates and looks up session handles and lets the handler reject unknown
-//! sessions on `Invoke` / `StreamSessionEvents`. Deliberately metadata-only: it
-//! does NOT materialize a `SessionRuntime` (API-P4: lazy provider/observation
-//! state is a later RPC's concern, not the invoke-only first slice).
+//! sessions on `Invoke`. Deliberately metadata-only:
+//! command execution and run recording remain owned by their frontend path.
 
 use std::collections::HashMap;
 
 use crate::model::now_millis;
-use crate::session::SessionId;
+
+/// Opaque handle allocated by the session service.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SessionId(String);
+
+impl SessionId {
+  fn new(value: String) -> Self {
+    Self(value)
+  }
+
+  pub fn as_str(&self) -> &str {
+    &self.0
+  }
+}
 
 /// Lightweight per-session metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]

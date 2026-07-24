@@ -261,86 +261,21 @@ pub fn decode_visual_rows_response(response: DecodedVisualRowsResponse) -> AuvRe
     width: response.analysis_strip_width,
     height: response.analysis_strip_height,
   };
-  let report_rows = rows.clone();
-
-  Ok(
-    NativeVisualRowsCapture {
-      rows: DetectedScreenRows {
-        strategy: "visual-bands".to_string(),
-        raw_match_count: 0,
-        filtered_match_count: 0,
-        rows,
-        report: String::new(),
-      },
-      detected_at: response.detected_at,
-      image_path: PathBuf::from(response.image_path),
-      image_width: response.image_width,
-      image_height: response.image_height,
-      crop_rect,
-      analysis_strip,
-      peak_densities: response.peak_densities,
-    }
-    .with_report(report_rows),
-  )
-}
-
-impl NativeVisualRowsCapture {
-  fn with_report(mut self, report_rows: Vec<ObservedOcrRow>) -> Self {
-    self.rows.report = render_visual_rows_report(self.clone(), &report_rows);
-    self
-  }
-}
-
-pub fn render_ocr_text_report(capture: &NativeOcrTextCapture) -> String {
-  let snapshot = &capture.snapshot;
-  let mut lines = vec![
-    format!("recognizedAt={}", snapshot.recognized_at),
-    format!("imagePath={}", snapshot.image_path.display()),
-    format!("imageWidth={}", snapshot.image_width),
-    format!("imageHeight={}", snapshot.image_height),
-    format!("query={}", snapshot.query),
-    format!("exact={}", snapshot.exact),
-    format!("caseSensitive={}", snapshot.case_sensitive),
-    format!("normalizedQuery={}", capture.normalized_query),
-  ];
-  if let Some(crop) = capture.crop_rect.as_ref() {
-    lines.push(format!("cropRect={},{},{},{}", crop.x, crop.y, crop.width, crop.height));
-    lines.push(format!("ocrScaleFactor={:.3}", capture.ocr_scale_factor));
-  }
-  for matched in &snapshot.matches {
-    lines.push(format!(
-      "match\t{}\t{}\t{:.6}\t{}\t{}\t{}\t{}",
-      matched.match_index, matched.text, matched.confidence, matched.bounds.x, matched.bounds.y, matched.bounds.width, matched.bounds.height
-    ));
-  }
-  lines.push(format!("matchCount={}", snapshot.matches.len()));
-  lines.join("\n") + "\n"
-}
-
-pub fn render_visual_rows_report(capture: NativeVisualRowsCapture, rows: &[ObservedOcrRow]) -> String {
-  let mut lines = vec![
-    format!("detectedAt={}", capture.detected_at),
-    format!("imagePath={}", capture.image_path.display()),
-    format!("imageWidth={}", capture.image_width),
-    format!("imageHeight={}", capture.image_height),
-    "rowStrategy=visual-bands".to_string(),
-  ];
-  if let Some(crop) = capture.crop_rect.as_ref() {
-    lines.push(format!("cropRect={},{},{},{}", crop.x, crop.y, crop.width, crop.height));
-  }
-  lines.push(format!(
-    "analysisStrip={},{},{},{}",
-    capture.analysis_strip.x, capture.analysis_strip.y, capture.analysis_strip.width, capture.analysis_strip.height
-  ));
-  for (index, row) in rows.iter().enumerate() {
-    let peak_density = capture.peak_densities.get(index).copied().unwrap_or(0.0);
-    lines.push(format!(
-      "row\t{}\t{}\t{}\t{}\t{}\t{:.6}",
-      row.row_index, row.bounds.x, row.bounds.y, row.bounds.width, row.bounds.height, peak_density
-    ));
-  }
-  lines.push(format!("rowCount={}", rows.len()));
-  lines.join("\n") + "\n"
+  Ok(NativeVisualRowsCapture {
+    rows: DetectedScreenRows {
+      strategy: "visual-bands".to_string(),
+      raw_match_count: 0,
+      filtered_match_count: 0,
+      rows,
+    },
+    detected_at: response.detected_at,
+    image_path: PathBuf::from(response.image_path),
+    image_width: response.image_width,
+    image_height: response.image_height,
+    crop_rect,
+    analysis_strip,
+    peak_densities: response.peak_densities,
+  })
 }
 
 #[derive(Clone, Debug)]

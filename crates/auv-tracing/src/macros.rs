@@ -6,6 +6,28 @@ macro_rules! start_span {
   };
 }
 
+/// Runs a synchronous operation inside an empty-attribute span with a stable
+/// literal name.
+///
+/// Use [`start_span!`](crate::start_span) with an explicit [`SpanSpec`](crate::SpanSpec)
+/// when the span carries typed attributes.
+#[macro_export]
+macro_rules! in_span {
+  ($name:literal, $operation:expr $(,)?) => {{
+    struct AuvLiteralSpan;
+
+    impl $crate::SpanSpec for AuvLiteralSpan {
+      const NAME: &'static str = $name;
+
+      fn attributes(&self) -> $crate::Attributes {
+        $crate::Attributes::empty()
+      }
+    }
+
+    $crate::start_span(AuvLiteralSpan).in_scope($operation)
+  }};
+}
+
 /// Emits a typed event in the current AUV context.
 #[macro_export]
 macro_rules! emit_event {

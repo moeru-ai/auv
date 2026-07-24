@@ -1,19 +1,24 @@
-//! Adjacent-segment timeline (`scan-timeline-v0`) — crate-local directory artifact.
+//! Adjacent-segment timeline (`scan-timeline-v0`).
 //!
 //! NOTICE(s9a-contract-revision): Builder emits N-1 adjacent segments when `len >= 2`;
 //! S1-4b two-frame-only cap removed. Wire schema unchanged (`scan-timeline-v0`).
 
+#[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::io::Write;
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use thiserror::Error;
 
 use crate::motion::{MotionResult, estimate_viewport_motion_between};
 use crate::reader::ScanFrameBundle;
 
 pub const SCAN_TIMELINE_SCHEMA_VERSION: &str = "scan-timeline-v0";
+#[cfg(test)]
 pub const SCAN_TIMELINE_ARTIFACT_FILE_NAME: &str = "scan-timeline.json";
 
 pub const DIAG_INSUFFICIENT_FRAMES: &str = "insufficient_frames";
@@ -56,6 +61,7 @@ pub struct TimelineDiagnosticWire {
   pub message: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Error)]
 pub enum TimelineError {
   #[error("schema_version mismatch: expected {SCAN_TIMELINE_SCHEMA_VERSION}, found {found}")]
@@ -123,7 +129,8 @@ pub fn build_scan_timeline_from_bundle(bundle: &ScanFrameBundle) -> ScanTimeline
   }
 }
 
-pub fn write_timeline_artifact(dir: &Path, timeline: &ScanTimelineWire) -> Result<PathBuf, TimelineError> {
+#[cfg(test)]
+pub(crate) fn write_timeline_artifact(dir: &Path, timeline: &ScanTimelineWire) -> Result<PathBuf, TimelineError> {
   if timeline.schema_version != SCAN_TIMELINE_SCHEMA_VERSION {
     return Err(TimelineError::SchemaMismatch {
       found: timeline.schema_version.clone(),
@@ -138,7 +145,8 @@ pub fn write_timeline_artifact(dir: &Path, timeline: &ScanTimelineWire) -> Resul
   Ok(path)
 }
 
-pub fn read_timeline_artifact(path: &Path) -> Result<ScanTimelineWire, TimelineError> {
+#[cfg(test)]
+pub(crate) fn read_timeline_artifact(path: &Path) -> Result<ScanTimelineWire, TimelineError> {
   let bytes = fs::read(path)?;
   let value: serde_json::Value = serde_json::from_slice(&bytes)?;
   let Some(schema_version) = value.get("schema_version") else {
@@ -188,7 +196,7 @@ mod tests {
   use serde::Deserialize;
 
   use super::*;
-  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageDimensions};
   use crate::producer::produce_frames_from_fixture_dir;
   use crate::reader::{ScanFrameBundle, ScanInspectError, load_scan_frames_from_dir};
 
@@ -244,21 +252,15 @@ mod tests {
         height: 600,
       },
       viewport_bounds: None,
-      image: ScanImageRef {
-        file_name: format!("{frame_id}.png"),
+      image_dimensions: ScanImageDimensions {
         width: 8,
         height: 8,
-        media_type: "image/png".into(),
       },
     }
   }
 
   fn handbuilt_bundle(frames: Vec<ScanFrame>) -> ScanFrameBundle {
-    ScanFrameBundle {
-      frames,
-      source_dir: PathBuf::from("/tmp"),
-      loaded_json_paths: Vec::new(),
-    }
+    ScanFrameBundle { frames }
   }
 
   #[test]

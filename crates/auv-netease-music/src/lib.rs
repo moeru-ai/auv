@@ -1,12 +1,13 @@
 //! NetEase Music product CLI library: sidebar playlist scan + agent-callable output.
 
 pub mod app;
+#[cfg(feature = "tracing")]
 pub mod cli;
 pub mod commands;
-pub mod interaction;
+#[cfg(feature = "tracing")]
 pub mod invoke;
 pub mod output;
-pub mod recording;
+pub mod run_artifacts;
 pub mod scroll;
 pub mod view_memory;
 pub mod view_parsers;
@@ -14,16 +15,17 @@ pub mod views;
 pub mod windows;
 
 pub use commands::daily_recommended::{run_daily_recommended_play, run_daily_recommended_songs_scan};
-pub use commands::launch::{LaunchResult, LaunchStep, OpenWindowInputs, run_open_window};
+pub use commands::launch::{LaunchResult, OpenWindowInputs, run_open_window};
 pub use commands::playback::{
   PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson, run_playback_status_probe,
 };
+#[cfg(feature = "tracing")]
+pub use commands::playlist::{PlaylistPlayCandidate, resolve_playlist_play_candidate};
 pub use commands::playlist::{
-  PlaylistPlayCandidate, PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectStep,
-  PlaylistSelectVerification, resolve_playlist_play_candidate, run_playlist_play, run_playlist_select,
+  PlaylistPlayResult, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectTitleOcrTier, PlaylistSelectVerification,
+  PlaylistSelectVerificationEvidence, run_playlist_play, run_playlist_select,
 };
 pub use commands::transport::{TransportAction, TransportInputs, TransportResult, run_transport_action};
-pub use interaction::{InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction};
 pub use view_parsers::sidebar::live::{run_live_scan, run_live_scan_until_query};
 pub use views::player::PlaybackControlState;
 pub use views::sidebar::{PlaylistSidebarItem, PlaylistSidebarProjection, SidebarSection, SidebarSectionKind};
@@ -69,8 +71,6 @@ use auv_driver_macos::types::ObservedAxNode;
 use auv_view::draw_rect;
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
-pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
-pub const DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR: &str = "/tmp/auv-netease-play-daily-recommended-artifacts";
 // TODO(netease-scroll-completion): this conservative default is only a
 // product-agnostic safety cap, not an account-size estimate or completion
 // policy. Full playlist enumeration should derive its budget from section
@@ -98,7 +98,6 @@ pub enum PlaylistCategory {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Inputs {
   pub app_id: String,
-  pub artifact_dir: PathBuf,
   pub max_scrolls: usize,
   pub scroll_amount: f64,
   pub scroll_settle_ms: u64,
@@ -111,7 +110,6 @@ impl Inputs {
   pub fn with_defaults() -> Self {
     Self {
       app_id: DEFAULT_APP_ID.to_string(),
-      artifact_dir: PathBuf::from(DEFAULT_ARTIFACT_DIR),
       max_scrolls: DEFAULT_MAX_SCROLLS,
       scroll_amount: 300.0,
       scroll_settle_ms: DEFAULT_SCROLL_SETTLE_MS,
@@ -125,7 +123,6 @@ impl Inputs {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DailyRecommendedPlayInputs {
   pub app_id: String,
-  pub artifact_dir: PathBuf,
   pub max_top_scrolls: usize,
   pub top_scroll_amount: f64,
   pub settle_ms: u64,
@@ -141,7 +138,6 @@ impl DailyRecommendedPlayInputs {
   pub fn with_defaults() -> Self {
     Self {
       app_id: DEFAULT_APP_ID.to_string(),
-      artifact_dir: PathBuf::from(DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR),
       max_top_scrolls: 8,
       top_scroll_amount: 420.0,
       settle_ms: 350,
@@ -153,13 +149,12 @@ impl DailyRecommendedPlayInputs {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DailyRecommendedPlayResult {
   pub command: String,
   pub app: ScanAppContext,
   pub window: ScanWindowContext,
-  pub steps: Vec<DailyRecommendedPlayStep>,
   pub verification: DailyRecommendedVerification,
-  pub artifacts: Vec<String>,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
 }
@@ -180,21 +175,15 @@ impl fmt::Display for DailyRecommendedHumanSummary<'_> {
     writeln!(f, "NetEase daily recommended play")?;
     writeln!(f, "app: id={} name={}", optional(result.app.app_id.as_deref()), optional(result.app.name.as_deref()))?;
     writeln!(f, "window: title={}", optional(result.window.title.as_deref()))?;
-    writeln!(f, "steps:")?;
-    for step in &result.steps {
-      writeln!(
-        f,
-        "  - {} target={} delivery={}",
-        step.name,
-        optional(step.target_label.as_deref()),
-        optional(step.delivery_path.as_deref())
-      )?;
-    }
     writeln!(
       f,
       "verification: {}{}",
-      result.verification.status,
-      result.verification.best_score.map(|score| format!(" best_score={score:.3}")).unwrap_or_default()
+      if result.verification.passed() {
+        "passed"
+      } else {
+        "failed"
+      },
+      result.verification.best_score().map(|score| format!(" best_score={score:.3}")).unwrap_or_default()
     )?;
     if result.diagnostics.is_empty() {
       write!(f, "diagnostics: (none)")
@@ -211,7 +200,6 @@ impl fmt::Display for DailyRecommendedHumanSummary<'_> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SongListInputs {
   pub app_id: String,
-  pub artifact_dir: PathBuf,
   pub max_scrolls: usize,
   pub scroll_amount: f64,
   pub scroll_settle_ms: u64,
@@ -222,7 +210,6 @@ impl SongListInputs {
   pub fn with_defaults() -> Self {
     Self {
       app_id: DEFAULT_APP_ID.to_string(),
-      artifact_dir: PathBuf::from("/tmp/auv-netease-song-list-artifacts"),
       max_scrolls: DEFAULT_MAX_SCROLLS,
       scroll_amount: 520.0,
       scroll_settle_ms: DEFAULT_SCROLL_SETTLE_MS,
@@ -243,13 +230,11 @@ pub struct SongListScanResult {
   pub boundary: ScrollBoundarySummary,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
-  pub artifacts: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SongListObservation {
   pub observation_index: usize,
-  pub source_artifact: Option<String>,
   pub incoming_scroll_delivery_path: Option<String>,
   pub scroll_motion: Option<MotionEvidence>,
   pub rows: Vec<SongListItem>,
@@ -265,26 +250,47 @@ pub struct SongListItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DailyRecommendedPlayStep {
-  pub name: String,
-  pub target_label: Option<String>,
-  pub target_bounds: Option<ViewBounds>,
-  pub delivery_path: Option<String>,
-  pub fallback_reason: Option<String>,
-  pub artifact: Option<String>,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DailyRecommendedVerification {
+  Passed {
+    evidence: DailyRecommendedVerificationEvidence,
+  },
+  Failed {
+    evidence: DailyRecommendedVerificationEvidence,
+  },
+}
+
+impl DailyRecommendedVerification {
+  pub fn passed(&self) -> bool {
+    matches!(self, Self::Passed { .. })
+  }
+
+  pub fn best_score(&self) -> Option<f64> {
+    match self.evidence() {
+      DailyRecommendedVerificationEvidence::IconMatch { best_score, .. } => *best_score,
+      DailyRecommendedVerificationEvidence::BottomPlaybackControl { .. } => None,
+    }
+  }
+
+  fn evidence(&self) -> &DailyRecommendedVerificationEvidence {
+    match self {
+      Self::Passed { evidence } | Self::Failed { evidence } => evidence,
+    }
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DailyRecommendedVerification {
-  pub status: String,
-  pub method: String,
-  pub template: Option<String>,
-  pub control_state: Option<PlaybackControlState>,
-  pub observed_bottom_text: Option<String>,
-  pub match_count: usize,
-  pub best_score: Option<f64>,
-  pub artifact: Option<String>,
-  pub note: Option<String>,
+#[serde(tag = "method", rename_all = "snake_case")]
+pub enum DailyRecommendedVerificationEvidence {
+  IconMatch {
+    threshold: f64,
+    match_count: usize,
+    best_score: Option<f64>,
+  },
+  BottomPlaybackControl {
+    control_state: PlaybackControlState,
+    observed_bottom_text: Option<String>,
+  },
 }
 
 /// Top-level scan artifact for one `netease_playlist_ls` run.
@@ -296,6 +302,26 @@ pub struct DailyRecommendedVerification {
 /// guaranteed to be stable across runs or app versions. Cross-run lookups
 /// (e.g. a future `playlist get <anchor_id>`) must not rely on these as
 /// durable identifiers without first introducing content-derived IDs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarScanStopReason {
+  ReachedStopLandmark,
+  RepeatedViewportFingerprint,
+  RepeatedViewportFingerprintWithAxScrollbarBottom,
+  ScrollNoNewSemanticCandidatesAfterInput,
+  ScrollNoNewSemanticCandidatesWithAxScrollbarBottom,
+  ScrollNoMotionAfterInput,
+  ScrollNoMotionWithAxScrollbarBottom,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollDirection {
+  Up,
+  #[default]
+  Down,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlaylistSidebarScan {
   /// Wire-shape version of this artifact. See `VIEW_IR_SCHEMA_VERSION`.
@@ -307,14 +333,8 @@ pub struct PlaylistSidebarScan {
   reconstruction: ViewReconstructionRecord,
   projection: PlaylistSidebarProjection,
   boundary: ScrollBoundarySummary,
-  /// Standalone interaction evidence for the product CLI.
-  ///
-  /// TODO(view-parser-trace-layout-v0): once this crate writes through AUV run
-  /// storage, migrate these local events to `view.parse.observe.<index>` and
-  /// `view.parse.scroll.<index>` spans instead of treating this field as the
-  /// durable trace contract.
-  #[serde(default)]
-  interaction_events: Vec<InteractionEvent>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  stop_reason: Option<SidebarScanStopReason>,
   diagnostics: Vec<ParserDiagnostic>,
   known_limits: Vec<String>,
 }
@@ -351,7 +371,7 @@ impl PlaylistSidebarScan {
       },
       projection: PlaylistSidebarProjection::default(),
       boundary: ScrollBoundarySummary::default(),
-      interaction_events: Vec::new(),
+      stop_reason: None,
       diagnostics: Vec::new(),
       known_limits: Vec::new(),
     }
@@ -396,6 +416,10 @@ impl PlaylistSidebarScan {
 
   pub fn boundary(&self) -> &ScrollBoundarySummary {
     &self.boundary
+  }
+
+  pub fn stop_reason(&self) -> Option<SidebarScanStopReason> {
+    self.stop_reason
   }
 
   pub fn diagnostics(&self) -> &[ParserDiagnostic] {
@@ -577,13 +601,6 @@ impl fmt::Display for PlaylistSidebarHumanSummary<'_> {
 struct SidebarViewportObservation {
   observation_index: usize,
   viewport: ViewViewportRecord,
-  /// Local artifact paths written by the standalone NetEase CLI.
-  ///
-  /// TODO(view-artifact-ref-v1): replace these path strings with
-  /// `contract::ArtifactRef` only after this crate writes through AUV run
-  /// storage. Pulling the root contract into this app crate now would invert
-  /// the intended crate boundary.
-  source_artifacts: Vec<String>,
   incoming_scroll_delivery_path: Option<String>,
   scroll_motion: Option<MotionEvidence>,
   viewport_fingerprint: String,

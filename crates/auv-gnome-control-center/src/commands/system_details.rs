@@ -4,9 +4,6 @@ use std::time::Duration;
 use auv_driver::InputActionResult;
 use serde::{Deserialize, Serialize};
 
-use crate::interaction::InteractionStep;
-#[cfg(target_os = "linux")]
-use crate::interaction::StepOutcome;
 use crate::views::MatchedNode;
 use crate::windows::OpenWindowReport;
 
@@ -25,18 +22,16 @@ impl Default for CopySystemDetailsInputs {
 pub struct CopySystemDetailsResult {
   pub command: &'static str,
   pub window: OpenWindowReport,
-  pub steps: Vec<InteractionStep>,
   pub system_node: MatchedNode,
   pub about_node: MatchedNode,
   pub details_node: MatchedNode,
   pub copy_node: MatchedNode,
   pub clipboard_text: String,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub delivery: Option<InputActionResult>,
+  pub delivery: InputActionResult,
 }
 
 pub fn run_copy_system_details(inputs: &CopySystemDetailsInputs) -> Result<CopySystemDetailsResult, String> {
-  platform::run(inputs)
+  crate::tracing::system_details_copy(|| platform::run(inputs))
 }
 
 #[cfg(target_os = "linux")]
@@ -47,7 +42,8 @@ mod platform {
 
   use super::*;
   use crate::app::{ABOUT_PAGE, COPY_BUTTON, SYSTEM_DETAILS_PAGE, SYSTEM_PAGE};
-  use crate::commands::{click_visible_labeled_node, select_visible_labeled_node};
+  use crate::commands::{click_visible_labeled_node_with_delivery, select_visible_labeled_node};
+  use crate::tracing::NodeAction;
   use crate::windows::{ResolveOptions, open_or_resolve};
 
   pub fn run(inputs: &CopySystemDetailsInputs) -> Result<CopySystemDetailsResult, String> {
@@ -55,33 +51,30 @@ mod platform {
       settle: Duration::from_millis(inputs.settle_ms),
     })?;
     let session = auv_driver::open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
-    let mut steps = open_report.steps.clone();
-
-    let system_node = select_visible_labeled_node(&session, &window, SYSTEM_PAGE, "select-system", &mut steps)?;
+    let system_node = select_visible_labeled_node(&session, &window, SYSTEM_PAGE, NodeAction::SelectSystem)?;
     std::thread::sleep(Duration::from_millis(350));
 
-    let about_node = select_visible_labeled_node(&session, &window, ABOUT_PAGE, "select-about", &mut steps)?;
+    let about_node = select_visible_labeled_node(&session, &window, ABOUT_PAGE, NodeAction::SelectAbout)?;
     std::thread::sleep(Duration::from_millis(350));
 
-    let details_node = select_visible_labeled_node(&session, &window, SYSTEM_DETAILS_PAGE, "select-system-details", &mut steps)?;
+    let details_node = select_visible_labeled_node(&session, &window, SYSTEM_DETAILS_PAGE, NodeAction::SelectSystemDetails)?;
     std::thread::sleep(Duration::from_millis(350));
 
     let clipboard_before = session.clipboard().snapshot().unwrap_or_default();
-    let copy_node = click_visible_labeled_node(&session, &window, COPY_BUTTON, "copy-system-details", &mut steps)?;
+    let (copy_node, delivery) = click_visible_labeled_node_with_delivery(&session, &window, COPY_BUTTON, NodeAction::CopySystemDetails)?;
 
     let clipboard_text = wait_for_clipboard_text(&session, &clipboard_before, Duration::from_secs(2))?;
-    steps.push(InteractionStep::new("read-clipboard", StepOutcome::Copied).note(format!("{} bytes", clipboard_text.len())));
+    crate::tracing::clipboard_read(clipboard_text.len());
 
     Ok(CopySystemDetailsResult {
       command: "copy-system-details",
       window: open_report,
-      steps,
       system_node,
       about_node,
       details_node,
       copy_node,
       clipboard_text,
-      delivery: None,
+      delivery,
     })
   }
 

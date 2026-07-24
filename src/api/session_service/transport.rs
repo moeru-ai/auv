@@ -2,7 +2,6 @@
 //!
 //! NOTICE(api-p9-non-goals):
 //! - No TLS and no non-loopback bind; remote access is out of scope.
-//! - `StreamSessionEvents` is not wired (event projector, API-P4 responsibility D).
 
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
@@ -79,7 +78,6 @@ pub fn map_session_error(error: SessionApiError) -> Status {
     SessionApiError::MissingField(_) | SessionApiError::PayloadDecode(_) => Status::invalid_argument(error.to_string()),
     SessionApiError::UnknownSession(_) => Status::not_found(error.to_string()),
     SessionApiError::Storage(_) | SessionApiError::InvokeExecution(_) => Status::internal(error.to_string()),
-    SessionApiError::NotWired { .. } => Status::unimplemented(error.to_string()),
   }
 }
 
@@ -147,15 +145,6 @@ impl SessionService for SessionServiceGrpc {
 
   async fn invoke(&self, request: Request<proto::InvokeRequest>) -> Result<Response<proto::InvokeResponse>, Status> {
     self.handler.invoke(request.into_inner()).await.map(Response::new).map_err(map_session_error)
-  }
-
-  type StreamSessionEventsStream = std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<proto::SessionEvent, Status>> + Send>>;
-
-  async fn stream_session_events(
-    &self,
-    _request: Request<proto::StreamSessionEventsRequest>,
-  ) -> Result<Response<Self::StreamSessionEventsStream>, Status> {
-    Err(Status::unimplemented("session API seam not wired: stream_session_events"))
   }
 }
 
@@ -237,7 +226,6 @@ mod tests {
     assert_eq!(map_session_error(SessionApiError::MissingField("session")).code(), Code::InvalidArgument);
     assert_eq!(map_session_error(SessionApiError::UnknownSession("ghost".to_string())).code(), Code::NotFound);
     assert_eq!(map_session_error(SessionApiError::Storage("disk".to_string())).code(), Code::Internal);
-    assert_eq!(map_session_error(SessionApiError::NotWired { gate: "events" }).code(), Code::Unimplemented);
   }
 
   #[tokio::test]
@@ -302,7 +290,7 @@ mod tests {
       .await
       .expect("invoke")
       .into_inner();
-    assert_eq!(invoke_response.status, "completed");
+    assert!(matches!(invoke_response.terminal, Some(proto::invoke_response::Terminal::Completed(_))));
     assert!(!invoke_response.run_id.is_empty());
     assert!(invoke_response.recording_failure.is_empty());
 

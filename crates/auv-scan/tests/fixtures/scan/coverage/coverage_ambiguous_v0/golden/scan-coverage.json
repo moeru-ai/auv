@@ -1,12 +1,14 @@
 {
-  "schema_version": "scan-coverage-v0",
-  "entries": [],
-  "open_uncertainty_codes": [
-    "ambiguous_association"
-  ],
-  "negative_evidence": [],
-  "completeness": {
-    "status": "incomplete",
-    "reason": "open uncertainties or negative evidence remain"
+  "schema": "auv.scan.coverage.v1",
+  "coverage": {
+    "entries": [],
+    "status": {
+      "state": "incomplete",
+      "reason": "open uncertainties or negative evidence remain",
+      "open_uncertainty_codes": [
+        "ambiguous_association"
+      ],
+      "negative_evidence": []
+    }
   }
 }

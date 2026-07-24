@@ -7,7 +7,7 @@ use auv_driver_macos::MacosDriverSession;
 use auv_view::memory::{MemoryReadConfig, ReacquireDriverAdapter, ReacquireObservation, ViewMemory};
 use auv_view::{ParserDiagnostic, ViewBounds};
 
-use crate::view_memory::{PlaylistReacquireAttempt, try_reacquire_playlist_target};
+use crate::view_memory::{PlaylistReacquireResult, try_reacquire_playlist_target};
 use crate::{Inputs, PlaylistSelectTarget, SidebarCandidateKind, SidebarSectionKind};
 
 pub struct LiveSidebarReacquireAdapter<'a> {
@@ -148,7 +148,7 @@ pub fn try_reacquire_for_target(
   target: &PlaylistSelectTarget,
   read_config: &MemoryReadConfig,
   current_baseline_width: Option<u32>,
-) -> PlaylistReacquireAttempt {
+) -> PlaylistReacquireResult {
   let mut adapter = LiveSidebarReacquireAdapter::new(session, window, sidebar_bounds, inputs, sidebar_anchor);
   try_reacquire_playlist_target(memory, target, &mut adapter, read_config, current_baseline_width)
 }

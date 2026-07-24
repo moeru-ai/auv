@@ -1,143 +1,67 @@
-//! Bounded crate-local coverage ledger wire (`scan-coverage-v0`).
-//!
-//! NOTICE(s8a-artifact-boundary): directory-level artifact beside scan-frame-*.json;
-//! not run-level; not runtime-staged by S8a; not scene_state durable product.
+//! Versioned serialized form of [`CoverageView`](crate::CoverageView).
 
+#[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::io::Write;
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use thiserror::Error;
 
-use crate::coverage::{CompletenessClaim, CoverageEntry, CoverageView, NegativeEvidence};
+use crate::coverage::CoverageView;
 
-pub const SCAN_COVERAGE_SCHEMA_VERSION: &str = "scan-coverage-v0";
+#[cfg(test)]
 pub const SCAN_COVERAGE_ARTIFACT_FILE_NAME: &str = "scan-coverage.json";
-pub const SCAN_COVERAGE_ARTIFACT_ROLE: &str = "scan-coverage-v0";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScanCoverageWire {
-  pub schema_version: String,
-  pub entries: Vec<CoverageEntryWire>,
-  pub open_uncertainty_codes: Vec<String>,
-  pub negative_evidence: Vec<NegativeEvidenceWire>,
-  pub completeness: CompletenessWire,
+#[serde(deny_unknown_fields)]
+pub struct ScanCoverageArtifact {
+  schema: ScanCoverageSchema,
+  coverage: CoverageView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CoverageEntryWire {
-  pub track_id: String,
-  pub last_seen_frame_id: String,
-  pub observation_count: u32,
+enum ScanCoverageSchema {
+  #[serde(rename = "auv.scan.coverage.v1")]
+  V1,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NegativeEvidenceWire {
-  pub code: String,
-  pub after_frame_id: String,
+impl ScanCoverageArtifact {
+  pub fn new(coverage: CoverageView) -> Self {
+    Self {
+      schema: ScanCoverageSchema::V1,
+      coverage,
+    }
+  }
+
+  pub fn coverage(&self) -> &CoverageView {
+    &self.coverage
+  }
+
+  pub fn into_coverage(self) -> CoverageView {
+    self.coverage
+  }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum CompletenessWire {
-  Complete,
-  Incomplete { reason: String },
-}
-
+#[cfg(test)]
 #[derive(Debug, Error)]
 pub enum CoverageArtifactError {
-  #[error("schema_version mismatch: expected {SCAN_COVERAGE_SCHEMA_VERSION}, found {found}")]
-  SchemaMismatch { found: String },
-  #[error("missing required field: {0}")]
-  MissingField(&'static str),
   #[error(transparent)]
   Io(#[from] std::io::Error),
   #[error("json parse error: {0}")]
   Json(#[from] serde_json::Error),
 }
 
-/// Project an in-memory [`CoverageView`] into durable wire. Does not recompute coverage.
-pub fn coverage_view_to_wire(view: &CoverageView) -> ScanCoverageWire {
-  ScanCoverageWire {
-    schema_version: SCAN_COVERAGE_SCHEMA_VERSION.to_string(),
-    entries: view
-      .entries
-      .iter()
-      .map(|entry| CoverageEntryWire {
-        track_id: entry.track_id.clone(),
-        last_seen_frame_id: entry.last_seen_frame_id.clone(),
-        observation_count: entry.observation_count,
-      })
-      .collect(),
-    open_uncertainty_codes: view.open_uncertainty_codes.clone(),
-    negative_evidence: view
-      .negative_evidence
-      .iter()
-      .map(|evidence| NegativeEvidenceWire {
-        code: evidence.code.clone(),
-        after_frame_id: evidence.after_frame_id.clone(),
-      })
-      .collect(),
-    completeness: completeness_to_wire(&view.completeness),
-  }
-}
-
-fn completeness_to_wire(claim: &CompletenessClaim) -> CompletenessWire {
-  match claim {
-    CompletenessClaim::Complete => CompletenessWire::Complete,
-    CompletenessClaim::Incomplete { reason } => CompletenessWire::Incomplete {
-      reason: reason.clone(),
-    },
-  }
-}
-
-fn completeness_from_wire(wire: &CompletenessWire) -> CompletenessClaim {
-  match wire {
-    CompletenessWire::Complete => CompletenessClaim::Complete,
-    CompletenessWire::Incomplete { reason } => CompletenessClaim::Incomplete {
-      reason: reason.clone(),
-    },
-  }
-}
-
-/// Hydrate an in-memory [`CoverageView`] from durable wire. Does not recompute coverage.
-pub(crate) fn coverage_wire_to_view(wire: &ScanCoverageWire) -> CoverageView {
-  CoverageView {
-    entries: wire
-      .entries
-      .iter()
-      .map(|entry| CoverageEntry {
-        track_id: entry.track_id.clone(),
-        last_seen_frame_id: entry.last_seen_frame_id.clone(),
-        observation_count: entry.observation_count,
-      })
-      .collect(),
-    open_uncertainty_codes: wire.open_uncertainty_codes.clone(),
-    negative_evidence: wire
-      .negative_evidence
-      .iter()
-      .map(|evidence| NegativeEvidence {
-        code: evidence.code.clone(),
-        after_frame_id: evidence.after_frame_id.clone(),
-      })
-      .collect(),
-    completeness: completeness_from_wire(&wire.completeness),
-  }
-}
-
-/// Read `scan-coverage.json` from a scan frame directory.
 #[cfg(test)]
-pub(crate) fn read_coverage_artifact_from_scan_dir(dir: &Path) -> Result<ScanCoverageWire, CoverageArtifactError> {
+pub(crate) fn read_coverage_artifact_from_scan_dir(dir: &Path) -> Result<ScanCoverageArtifact, CoverageArtifactError> {
   read_coverage_artifact(&dir.join(SCAN_COVERAGE_ARTIFACT_FILE_NAME))
 }
 
-pub fn write_coverage_artifact(dir: &Path, coverage: &ScanCoverageWire) -> Result<PathBuf, CoverageArtifactError> {
-  if coverage.schema_version != SCAN_COVERAGE_SCHEMA_VERSION {
-    return Err(CoverageArtifactError::SchemaMismatch {
-      found: coverage.schema_version.clone(),
-    });
-  }
+#[cfg(test)]
+pub(crate) fn write_coverage_artifact(dir: &Path, coverage: &ScanCoverageArtifact) -> Result<PathBuf, CoverageArtifactError> {
   fs::create_dir_all(dir)?;
   let path = dir.join(SCAN_COVERAGE_ARTIFACT_FILE_NAME);
   let json = serde_json::to_string_pretty(coverage)?;
@@ -147,23 +71,10 @@ pub fn write_coverage_artifact(dir: &Path, coverage: &ScanCoverageWire) -> Resul
   Ok(path)
 }
 
-pub fn read_coverage_artifact(path: &Path) -> Result<ScanCoverageWire, CoverageArtifactError> {
+#[cfg(test)]
+pub(crate) fn read_coverage_artifact(path: &Path) -> Result<ScanCoverageArtifact, CoverageArtifactError> {
   let bytes = fs::read(path)?;
-  let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-  let Some(schema_version) = value.get("schema_version") else {
-    return Err(CoverageArtifactError::MissingField("schema_version"));
-  };
-  let Some(schema_version) = schema_version.as_str() else {
-    return Err(CoverageArtifactError::SchemaMismatch {
-      found: schema_version.to_string(),
-    });
-  };
-  if schema_version != SCAN_COVERAGE_SCHEMA_VERSION {
-    return Err(CoverageArtifactError::SchemaMismatch {
-      found: schema_version.to_string(),
-    });
-  }
-  serde_json::from_value(value).map_err(CoverageArtifactError::from)
+  serde_json::from_slice(&bytes).map_err(CoverageArtifactError::from)
 }
 
 #[cfg(test)]
@@ -244,84 +155,79 @@ mod tests {
   static ARTIFACT_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
   #[test]
-  fn coverage_wire_to_view_roundtrip() {
+  fn coverage_artifact_roundtrip_preserves_the_canonical_value() {
     for view in [
       stable_coverage_view(),
       no_observation_coverage_view(),
       ambiguous_coverage_view(),
     ] {
-      let wire = coverage_view_to_wire(&view);
-      let roundtrip = coverage_wire_to_view(&wire);
+      let bytes = serde_json::to_vec(&ScanCoverageArtifact::new(view.clone())).expect("serialize");
+      let roundtrip = serde_json::from_slice::<ScanCoverageArtifact>(&bytes).expect("deserialize").into_coverage();
       assert_eq!(roundtrip, view);
     }
   }
 
   #[test]
   fn read_coverage_artifact_from_scan_dir_roundtrip() {
-    let wire = coverage_view_to_wire(&stable_coverage_view());
+    let artifact = ScanCoverageArtifact::new(stable_coverage_view());
     let seq = ARTIFACT_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
     let out_dir = env::temp_dir().join(format!("auv-scan-coverage-scan-dir-{}-{}", process::id(), seq));
     let _ = fs::remove_dir_all(&out_dir);
-    write_coverage_artifact(&out_dir, &wire).expect("write");
+    write_coverage_artifact(&out_dir, &artifact).expect("write");
     let read_back = read_coverage_artifact_from_scan_dir(&out_dir).expect("read dir");
-    assert_eq!(read_back, wire);
+    assert_eq!(read_back, artifact);
     let _ = fs::remove_dir_all(&out_dir);
   }
 
   #[test]
   fn write_read_coverage_artifact_roundtrip() {
-    let wire = coverage_view_to_wire(&stable_coverage_view());
+    let artifact = ScanCoverageArtifact::new(stable_coverage_view());
     let seq = ARTIFACT_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
     let out_dir = env::temp_dir().join(format!("auv-scan-coverage-roundtrip-{}-{}", process::id(), seq));
     let _ = fs::remove_dir_all(&out_dir);
-    let written = write_coverage_artifact(&out_dir, &wire).expect("write");
+    let written = write_coverage_artifact(&out_dir, &artifact).expect("write");
     let read_back = read_coverage_artifact(&written).expect("read");
-    assert_eq!(read_back, wire);
+    assert_eq!(read_back, artifact);
     let _ = fs::remove_dir_all(&out_dir);
   }
 
   #[test]
   fn read_coverage_artifact_rejects_unknown_schema_version() {
     let path = env::temp_dir().join(format!("auv-scan-coverage-bad-schema-{}", process::id()));
-    fs::write(
-      &path,
-      r#"{"schema_version":"scan-coverage-v99","entries":[],"open_uncertainty_codes":[],"negative_evidence":[],"completeness":{"status":"complete"}}"#,
-    )
-    .expect("write");
+    fs::write(&path, r#"{"schema":"auv.scan.coverage.v99","coverage":{"entries":[],"status":"complete"}}"#).expect("write");
     let err = read_coverage_artifact(&path).expect_err("schema");
-    assert!(matches!(err, CoverageArtifactError::SchemaMismatch { .. }));
+    assert!(matches!(err, CoverageArtifactError::Json(_)));
     let _ = fs::remove_file(&path);
   }
 
   #[test]
   fn read_coverage_artifact_rejects_missing_schema_version() {
     let path = env::temp_dir().join(format!("auv-scan-coverage-missing-schema-{}", process::id()));
-    fs::write(&path, r#"{"entries":[],"open_uncertainty_codes":[],"negative_evidence":[],"completeness":{"status":"complete"}}"#)
-      .expect("write");
+    fs::write(&path, r#"{"coverage":{"entries":[],"status":"complete"}}"#).expect("write");
     let err = read_coverage_artifact(&path).expect_err("missing");
-    assert!(matches!(err, CoverageArtifactError::MissingField("schema_version")));
+    assert!(matches!(err, CoverageArtifactError::Json(_)));
     let _ = fs::remove_file(&path);
   }
 
   #[test]
-  fn coverage_view_to_wire_matches_golden_stable() {
-    let wire = coverage_view_to_wire(&stable_coverage_view());
+  fn coverage_artifact_matches_golden_stable() {
+    let artifact = ScanCoverageArtifact::new(stable_coverage_view());
     let golden = read_coverage_artifact(&golden_path("coverage_stable_v0")).expect("golden");
-    assert_eq!(wire, golden);
+    assert_eq!(artifact, golden);
   }
 
   #[test]
-  fn coverage_view_to_wire_matches_golden_no_observation() {
-    let wire = coverage_view_to_wire(&no_observation_coverage_view());
+  fn coverage_artifact_matches_golden_no_observation() {
+    let artifact = ScanCoverageArtifact::new(no_observation_coverage_view());
     let golden = read_coverage_artifact(&golden_path("coverage_no_observation_v0")).expect("golden");
-    assert_eq!(wire, golden);
+    assert_eq!(artifact, golden);
   }
 
   #[test]
-  fn coverage_view_to_wire_matches_golden_ambiguous() {
-    let wire = coverage_view_to_wire(&ambiguous_coverage_view());
+  fn coverage_artifact_matches_golden_ambiguous() {
+    let artifact = ScanCoverageArtifact::new(ambiguous_coverage_view());
     let golden = read_coverage_artifact(&golden_path("coverage_ambiguous_v0")).expect("golden");
-    assert_eq!(wire, golden);
+    assert_eq!(artifact, golden);
   }
 
   /// Regenerates committed golden fixtures from the fixed pipeline. Run with `--ignored`.
@@ -334,10 +240,10 @@ mod tests {
       ("coverage_ambiguous_v0", ambiguous_coverage_view()),
     ];
     for (scenario, view) in scenarios {
-      let wire = coverage_view_to_wire(&view);
+      let artifact = ScanCoverageArtifact::new(view);
       let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/coverage").join(scenario).join("golden");
       fs::create_dir_all(&dir).expect("mkdir");
-      write_coverage_artifact(&dir, &wire).expect("write golden");
+      write_coverage_artifact(&dir, &artifact).expect("write golden");
     }
   }
 }

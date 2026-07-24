@@ -307,40 +307,6 @@ pub fn decode_ax_focus_response(response: DecodedAxFocusResponse) -> DriverResul
   })
 }
 
-pub fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
-  let snapshot = &capture.snapshot;
-  let mut lines = vec![
-    format!("observedAt={}", snapshot.observed_at),
-    format!("appName={}", snapshot.app_name),
-    format!("bundleId={}", snapshot.bundle_id),
-    format!("pid={}", capture.pid),
-    format!("windowTitle={}", snapshot.window_title),
-    format!("rootRole={}", capture.root_role),
-  ];
-  for node in &snapshot.nodes {
-    lines.push(format!(
-      "node\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-      node.depth,
-      node.path,
-      node.role,
-      node.subrole,
-      node.title,
-      node.description,
-      node.help,
-      node.identifier,
-      node.placeholder,
-      node.value,
-      node.focused,
-      node.bounds.x,
-      node.bounds.y,
-      node.bounds.width,
-      node.bounds.height
-    ));
-  }
-  lines.push(format!("nodeCount={}", snapshot.nodes.len()));
-  lines.join("\n") + "\n"
-}
-
 #[derive(Clone, Debug)]
 pub struct DecodedAxTreeResponse {
   pub observed_at: String,

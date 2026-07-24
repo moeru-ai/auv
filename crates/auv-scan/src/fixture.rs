@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::artifact::ScanArtifactError;
-use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageDimensions};
 
 const MANIFEST_FILE: &str = "manifest.json";
 
@@ -18,7 +18,14 @@ struct FixtureManifest {
   captured_at_millis: u64,
   window_bounds: ScanBounds,
   viewport_bounds: Option<ScanBounds>,
-  image: ScanImageRef,
+  image: FixtureImage,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct FixtureImage {
+  file_name: String,
+  width: u32,
+  height: u32,
 }
 
 pub(crate) fn build_frame_from_fixture(fixture_dir: &Path) -> Result<ScanFrame, ScanArtifactError> {
@@ -40,7 +47,10 @@ pub(crate) fn build_frame_from_fixture(fixture_dir: &Path) -> Result<ScanFrame, 
     captured_at_millis: manifest.captured_at_millis,
     window_bounds: manifest.window_bounds,
     viewport_bounds: manifest.viewport_bounds,
-    image: manifest.image,
+    image_dimensions: ScanImageDimensions {
+      width: manifest.image.width,
+      height: manifest.image.height,
+    },
   };
   frame.validate_wire()?;
   Ok(frame)
@@ -52,7 +62,7 @@ mod tests {
 
   use super::*;
   use crate::artifact::{frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
-  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanImageRef};
+  use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanImageDimensions};
 
   fn single_frame_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/single_frame_v0")
@@ -76,12 +86,10 @@ mod tests {
     );
     assert_eq!(frame.viewport_bounds, None);
     assert_eq!(
-      frame.image,
-      ScanImageRef {
-        file_name: "frame-0001.png".to_string(),
+      frame.image_dimensions,
+      ScanImageDimensions {
         width: 8,
         height: 8,
-        media_type: "image/png".to_string(),
       }
     );
   }

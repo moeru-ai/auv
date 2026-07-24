@@ -1,4 +1,4 @@
-//! Temporal scan contracts, producers, artifact IO, and read-side projections.
+//! Temporal scan contracts, pure evaluators, and fixture decoders.
 //!
 //! The crate root is the only public import path. Implementation modules stay
 //! private so one concept cannot be imported through both `auv_scan::Type` and
@@ -17,6 +17,7 @@ mod fixture;
 #[cfg(test)]
 mod scene_fixture_support;
 
+#[cfg(test)]
 mod artifact;
 mod association;
 mod coverage;
@@ -31,43 +32,55 @@ mod scene_state_inspect;
 mod timeline;
 mod tracks;
 
-pub use artifact::{ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
 pub use association::{AssociationDiagnostic, AssociationResult, FrameObservation, associate_adjacent_frames};
-pub use coverage::{CompletenessClaim, CoverageEntry, CoverageView, NegativeEvidence, build_coverage_view};
-pub use coverage_artifact::{
-  CompletenessWire, CoverageArtifactError, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_ARTIFACT_FILE_NAME,
-  SCAN_COVERAGE_ARTIFACT_ROLE, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire, coverage_view_to_wire, read_coverage_artifact,
-  write_coverage_artifact,
-};
-pub use frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+pub use coverage::{CoverageEntry, CoverageStatus, CoverageView, NegativeEvidence, build_coverage_view};
+pub use coverage_artifact::ScanCoverageArtifact;
+pub use frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanFrameError, ScanImageDimensions};
 pub use lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, TransitionEvidence, evaluate_lifecycle};
 pub use motion::{MotionError, MotionEstimate, MotionResult, MotionUnknown, estimate_viewport_motion};
-#[cfg(feature = "live-capture")]
-pub use producer::live::produce_frame_from_capture;
 pub use producer::{
-  CoverageProducerError, FrameCaptureMeta, ProducedCoverage, ProducedFrame, ProducedFrameBatch, ScanProducerError, bounds_to_scan_bounds,
-  bounds_to_scan_bounds_f64, build_scan_frame, frame_from_capture, produce_coverage_from_fixture_dir, produce_frame_from_fixture_dir,
-  produce_frames_from_fixture_dir, write_frame_with_image,
+  CoverageProducerError, FrameCaptureMeta, LoadedFrameFixture, ScanProducerError, bounds_to_scan_bounds, bounds_to_scan_bounds_f64,
+  build_coverage_fixture, build_scan_frame, frame_from_capture, load_frame_fixture,
 };
-pub use reader::{
-  ScanFrameBundle, ScanInspectError, load_scan_frames_from_dir, replay_scan_frames_from_dir, summarize_scan_frame_text,
-  verify_frame_image_dimensions,
-};
+pub use reader::{ScanFrameBundle, summarize_scan_frame_text};
 pub use scene_state::{
-  ActionReadiness, IdentityAssessment, ObservationRequest, SceneDiagnostic, SceneDraftAnswers, SceneStateError, SceneStateInput,
-  SceneStateProduct, TrackSceneSummary, VisibilityAssessment, build_scene_state_product, summarize_scene_state_text,
+  ActionReadiness, IdentityAssessment, ObservationRequest, SceneDiagnostic, SceneDraftAnswers, SceneFrame, SceneStateError, SceneStateInput,
+  SceneStateProduct, SceneTrackState, VisibilityAssessment, build_scene_state_product, summarize_scene_state_text,
 };
 pub use scene_state_inspect::{
-  CoverageInspectSource, SceneStateInspect, SceneStateListSummary, build_scene_state_inspect, format_scene_state_inspect_text,
-  summarize_scene_state_inspect,
+  SceneStateInspect, SceneStateListSummary, build_scene_state_inspect, format_scene_state_inspect_text, summarize_scene_state_inspect,
 };
 pub use timeline::{
-  DIAG_INSUFFICIENT_FRAMES, DIAG_UNSUPPORTED_FRAME_COUNT, SCAN_TIMELINE_ARTIFACT_FILE_NAME, SCAN_TIMELINE_SCHEMA_VERSION, ScanTimelineWire,
-  TimelineDiagnosticWire, TimelineError, TimelineMotionWire, TimelineSegmentWire, build_scan_timeline_from_bundle,
-  format_scan_timeline_text, read_timeline_artifact, write_timeline_artifact,
+  DIAG_INSUFFICIENT_FRAMES, DIAG_UNSUPPORTED_FRAME_COUNT, SCAN_TIMELINE_SCHEMA_VERSION, ScanTimelineWire, TimelineDiagnosticWire,
+  TimelineMotionWire, TimelineSegmentWire, build_scan_timeline_from_bundle, format_scan_timeline_text,
 };
 pub use tracks::{
-  AssociationDiagnosticWire, AssociationResultWire, DIAG_OBSERVATIONS_FRAME_MISMATCH, SCAN_TRACKS_ARTIFACT_FILE_NAME,
-  SCAN_TRACKS_SCHEMA_VERSION, ScanTracksWire, TrackSegmentWire, TracksDiagnosticWire, TracksError, build_scan_tracks_from_bundle,
-  format_scan_tracks_text, read_tracks_artifact, write_tracks_artifact,
+  DIAG_OBSERVATIONS_FRAME_MISMATCH, SCAN_TRACKS_SCHEMA_VERSION, ScanTracksWire, TrackSegmentWire, TracksDiagnosticWire,
+  build_scan_tracks_from_bundle, format_scan_tracks_text,
 };
+
+#[cfg(test)]
+mod public_api_boundary_tests {
+  #[test]
+  fn public_api_does_not_own_artifact_filesystem_layout() {
+    let public_api = include_str!("lib.rs").split("#[cfg(test)]\nmod public_api_boundary_tests").next().expect("public API boundary");
+
+    for forbidden in [
+      "write_frame_artifact",
+      "read_frame_artifact",
+      "write_coverage_artifact",
+      "read_coverage_artifact",
+      "write_timeline_artifact",
+      "read_timeline_artifact",
+      "write_tracks_artifact",
+      "read_tracks_artifact",
+      "write_frame_with_image",
+      "ProducedFrame",
+      "ProducedCoverage",
+      "load_scan_frames_from_dir",
+      "replay_scan_frames_from_dir",
+    ] {
+      assert!(!public_api.contains(forbidden), "auv-scan public API still owns artifact filesystem symbol {forbidden}");
+    }
+  }
+}

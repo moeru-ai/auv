@@ -2,11 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use auv_cli_invoke::{
-  ArgSpec, ArtifactInstrumentationFailure, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput, arg::FIXTURE_DIR,
+  ArgSpec, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput, InvokeReport, InvokeReportField, arg::FIXTURE_DIR,
 };
 
 use crate::commands::playlist::PlaylistSelectResult;
-use crate::recording::{PLAYLIST_SELECT_RESULT_PURPOSE, persist_playlist_select_proof};
+use crate::run_artifacts::{PLAYLIST_SELECT_RESULT_PURPOSE, emit_playlist_select_result};
 
 #[cfg(feature = "tracing")]
 mod tracing {
@@ -84,39 +84,24 @@ async fn select_proof(input: InvokeCommandInput) -> Result<InvokeCommandOutput, 
   let fixture_path = Path::new(&fixture_dir);
   let preview = build_select_result_from_fixture_dir(fixture_path)?;
 
-  if input.dry_run {
-    let mut output = InvokeCommandOutput::new(format!("validated hermetic select proof fixture at {fixture_dir}"));
-    output.verification = Some("dry-run; no run artifact written".to_string());
-    output.known_limits.push("hermetic_fixture_only".to_string());
-    output.signals.insert("fixture_dir".to_string(), fixture_dir);
-    output.signals.insert("query".to_string(), preview.query.clone());
-    return Ok(output);
+  if !input.dry_run {
+    emit_playlist_select_result(&preview);
   }
 
-  let publication = persist_playlist_select_proof(&preview).await;
-  let mut output = match publication {
-    Ok(Some(metadata)) => {
-      let run_id = metadata.uri().run_id().to_string();
-      let mut output = InvokeCommandOutput::new(format!("persisted hermetic select proof in run {run_id}"));
-      output.signals.insert("run_id".to_string(), run_id.clone());
-      output.signals.insert("select_result_uri".to_string(), metadata.uri().to_string());
-      output
-    }
-    Ok(None) => InvokeCommandOutput::new("validated hermetic select proof fixture; run artifact publication was disabled"),
-    Err(error) => {
-      let mut output = InvokeCommandOutput::new("validated hermetic select proof fixture; run artifact was not published");
-      output.artifact_failures.push(ArtifactInstrumentationFailure {
-        purpose: PLAYLIST_SELECT_RESULT_PURPOSE.to_string(),
-        message: error.to_string(),
-      });
-      output
-    }
-  };
-  output.signals.insert("query".to_string(), preview.query);
-  output.verification = Some("hermetic fixture proof only; no live scan or semantic success claim".to_string());
-  output.known_limits.push("hermetic_fixture_only".to_string());
-  output.signals.insert("artifact_purpose".to_string(), PLAYLIST_SELECT_RESULT_PURPOSE.to_string());
+  let mut output = InvokeCommandOutput::from_result(&preview)?;
+  output.report = Some(select_proof_report(&fixture_dir, &preview.query));
   Ok(output)
+}
+
+fn select_proof_report(fixture_dir: &str, query: &str) -> InvokeReport {
+  InvokeReport::new(
+    vec![
+      InvokeReportField::new("Fixture", fixture_dir),
+      InvokeReportField::new("Query", query),
+      InvokeReportField::new("Artifact purpose", PLAYLIST_SELECT_RESULT_PURPOSE),
+    ],
+    Vec::new(),
+  )
 }
 
 fn required_input<'a>(input: &'a InvokeCommandInput, key: &str) -> Result<&'a str, String> {
@@ -209,9 +194,10 @@ mod tests {
     }))
     .expect("direct fixture result");
 
-    assert!(output.summary.contains("publication was disabled"));
-    assert!(output.artifact_failures.is_empty());
-    assert!(!output.signals.contains_key("run_id"));
+    assert!(output.report.is_some());
+    let expected = build_select_result_from_fixture_dir(&hermetic_select_proof_fixture_dir()).expect("fixture should parse");
+    let result = auv_cli_invoke::InvokeResult::from_command_result(auv_tracing::RunId::new(), command, Ok(output));
+    assert_eq!(result.result(), Some(&serde_json::to_value(expected).expect("fixture result should serialize")));
   }
 
   #[test]

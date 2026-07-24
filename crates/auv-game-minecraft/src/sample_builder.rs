@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 
 use crate::MinecraftProjector;
 use crate::artifact::MinecraftProjectionArtifact;
-use crate::dataset::{SpatialBundleDirectory, SpatialBundleManifest};
+use crate::dataset::{PROJECTION_BUNDLE_ROLE, SPATIAL_FRAME_BUNDLE_ROLE, SpatialBundleDirectory, SpatialBundleManifest};
 use crate::measurement::{TextureSweepSample, TextureSweepSampleSet, TextureSweepSampleSource};
 use crate::types::{MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility};
 use crate::verify::MismatchRefusalReason;
@@ -98,7 +98,7 @@ pub fn build_texture_sweep_samples_from_bundles(inputs: TextureSweepSampleBuildI
   let mut profile_frames = BTreeMap::<String, ProfileFrames>::new();
   for manifest_path in &inputs.bundle_manifest_paths {
     let manifest = read_manifest(manifest_path)?;
-    source_run_ids.insert(manifest.source_run.source_run_id.clone());
+    source_run_ids.insert(manifest.source_run.run_id.to_string());
     known_limits.extend(manifest.known_limits.iter().cloned());
     collect_manifest_frames(manifest_path, &manifest, &mut profile_frames)?;
   }
@@ -116,7 +116,7 @@ pub fn build_texture_sweep_samples_from_bundles(inputs: TextureSweepSampleBuildI
 
   let sample_set = TextureSweepSampleSet {
     source: Some(TextureSweepSampleSource {
-      generated_at_millis: crate::run_read::now_millis(),
+      generated_at_millis: crate::now_millis(),
       generator: TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR.to_string(),
       source_run_ids: source_run_ids.into_iter().collect(),
       bundle_manifest_paths: inputs.bundle_manifest_paths.iter().map(|path| path.to_string_lossy().into_owned()).collect(),
@@ -152,7 +152,7 @@ fn collect_manifest_frames(
     manifest_path.parent().ok_or_else(|| format!("MC-6 spatial bundle manifest {} has no parent directory", manifest_path.display()))?;
   let projection_refusal_reasons = read_projection_refusal_reasons(bundle_dir, manifest)?;
   for artifact in &manifest.artifacts {
-    if artifact.directory != SpatialBundleDirectory::SpatialFrames || artifact.role != "minecraft-spatial-frame" {
+    if artifact.directory != SpatialBundleDirectory::SpatialFrames || artifact.role != SPATIAL_FRAME_BUNDLE_ROLE {
       continue;
     }
     let frame_path = bundle_dir.join(&artifact.bundle_path);
@@ -172,7 +172,7 @@ fn collect_manifest_frames(
       return Err(format!("resource pack {resource_pack} maps to both {} and {texture_profile}", entry.texture_profile));
     }
     let sample = sample_for_frame(&frame, &resource_pack, &texture_profile, projection_refusal_reason)?;
-    entry.record_sample(&frame, &manifest.source_run.source_run_id, sample);
+    entry.record_sample(&frame, &manifest.source_run.run_id.to_string(), sample);
   }
   Ok(())
 }
@@ -229,7 +229,7 @@ fn read_projection_refusal_reasons(
 ) -> SampleBuildResult<BTreeMap<String, Option<MismatchRefusalReason>>> {
   let mut reasons = BTreeMap::new();
   for artifact in &manifest.artifacts {
-    if artifact.directory != SpatialBundleDirectory::SpatialFrames || artifact.role != "minecraft-projection" {
+    if artifact.directory != SpatialBundleDirectory::SpatialFrames || artifact.role != PROJECTION_BUNDLE_ROLE {
       continue;
     }
     let projection_path = bundle_dir.join(&artifact.bundle_path);
@@ -334,7 +334,10 @@ fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> SampleBuildR
 mod tests {
   use super::*;
   use crate::artifact::MinecraftProjectionArtifact;
-  use crate::dataset::{SPATIAL_BUNDLE_SCHEMA_VERSION, SourceRunSummary, SpatialBundleArtifactRecord, SpatialBundleCounts};
+  use crate::dataset::{
+    BundleArtifactId, SPATIAL_BUNDLE_SCHEMA_VERSION, SourceArtifactUri, SourceAuthorityId, SourceRunId, SourceRunReference,
+    SourceRunRevision, SpatialBundleArtifactRecord, SpatialBundleCounts,
+  };
   use crate::types::{BlockFace, BlockPosition, PlayerPose, RaycastHit, Vec3, Viewport};
   use crate::verify::MismatchRefusalReason;
 
@@ -370,7 +373,9 @@ mod tests {
       nearby_blocks: Vec::new(),
       nearby_entities: Vec::new(),
       inventory_summary: Vec::new(),
-      screenshot_artifact_ref: Some("artifact://screenshot".to_string()),
+      screenshot_artifact_ref: Some(
+        "auv://runs/00000000-0000-0000-0000-000000000001/artifacts/00000000-0000-0000-0000-000000000001".to_string(),
+      ),
       mc_capture_skew_ms: Some(10),
       screen_state: screen_state.map(str::to_string),
       resource_pack_ids: vec!["fabric".to_string(), pack_id.to_string()],
@@ -414,12 +419,12 @@ mod tests {
       let file_name = format!("artifact_{index:04}-{name}.json");
       fs::write(frames_dir.join(&file_name), serde_json::to_vec_pretty(frame).expect("frame json")).expect("frame write");
       artifacts.push(SpatialBundleArtifactRecord {
-        artifact_id: format!("artifact_{index:04}"),
-        role: "minecraft-spatial-frame".to_string(),
-        source_path: format!("artifacts/{name}.json"),
-        bundle_path: format!("spatial_frames/{file_name}"),
+        source_artifact_uri: test_source_artifact_uri(index),
+        bundle_artifact_id: BundleArtifactId::new(format!("artifact_{index:04}")).expect("bundle artifact id"),
+        role: SPATIAL_FRAME_BUNDLE_ROLE.to_string(),
+        bundle_path: PathBuf::from(format!("spatial_frames/{file_name}")),
         directory: SpatialBundleDirectory::SpatialFrames,
-        summary: None,
+        screenshot_bundle_artifact_id: None,
       });
     }
     let base_index = artifacts.len();
@@ -427,25 +432,18 @@ mod tests {
       let file_name = format!("artifact_{:04}-{name}.json", base_index + offset);
       fs::write(frames_dir.join(&file_name), serde_json::to_vec_pretty(projection).expect("projection json")).expect("projection write");
       artifacts.push(SpatialBundleArtifactRecord {
-        artifact_id: format!("artifact_{:04}", base_index + offset),
-        role: "minecraft-projection".to_string(),
-        source_path: format!("artifacts/{name}.json"),
-        bundle_path: format!("spatial_frames/{file_name}"),
+        source_artifact_uri: test_source_artifact_uri(base_index + offset),
+        bundle_artifact_id: BundleArtifactId::new(format!("artifact_{:04}", base_index + offset)).expect("bundle artifact id"),
+        role: PROJECTION_BUNDLE_ROLE.to_string(),
+        bundle_path: PathBuf::from(format!("spatial_frames/{file_name}")),
         directory: SpatialBundleDirectory::SpatialFrames,
-        summary: None,
+        screenshot_bundle_artifact_id: None,
       });
     }
     let manifest = SpatialBundleManifest {
       schema_version: SPATIAL_BUNDLE_SCHEMA_VERSION,
-      source_run: SourceRunSummary {
-        source_run_id: source_run_id.to_string(),
-        source_operation: "auv.minecraft.bridge".to_string(),
-        source_run_type: "execute".to_string(),
-        source_status: "ok".to_string(),
-        generated_at_millis: 1,
-        auv_git_commit: None,
-        exporter_git_commit: None,
-      },
+      source_run: test_source_run_reference(source_run_id),
+      exported_at_millis: 1,
       counts: SpatialBundleCounts {
         spatial_frames: artifacts.len(),
         ..SpatialBundleCounts::default()
@@ -456,6 +454,24 @@ mod tests {
     let manifest_path = bundle_dir.join("run.json");
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("manifest json")).expect("manifest write");
     manifest_path
+  }
+
+  fn test_source_run_reference(run_id: &str) -> SourceRunReference {
+    SourceRunReference {
+      authority_id: SourceAuthorityId::new("authority_1").expect("source authority"),
+      run_id: SourceRunId::new(test_source_run_id(run_id)).expect("source run"),
+      through_revision: SourceRunRevision::new(7).expect("source revision"),
+    }
+  }
+
+  fn test_source_artifact_uri(index: usize) -> SourceArtifactUri {
+    SourceArtifactUri::new(format!("auv://runs/{}/artifacts/00000000-0000-0000-0000-{:012}", test_source_run_id("run_1"), index + 1))
+      .expect("source artifact URI")
+  }
+
+  fn test_source_run_id(label: &str) -> String {
+    let index = label.rsplit('_').next().and_then(|value| value.parse::<u128>().ok()).unwrap_or(1);
+    format!("00000000-0000-0000-0000-{index:012}")
   }
 
   #[test]
@@ -489,7 +505,7 @@ mod tests {
 
     let source = output.sample_set.source.as_ref().expect("source");
     assert_eq!(source.generator, TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR);
-    assert_eq!(source.source_run_ids, vec!["run_1"]);
+    assert_eq!(source.source_run_ids, vec![test_source_run_id("run_1")]);
     assert_eq!(source.bundle_manifest_paths, vec![manifest_path.to_string_lossy().into_owned()]);
     assert_eq!(output.sample_set.samples.len(), 2);
     assert!(output.sample_set.samples.iter().any(|sample| sample.refused_noise));

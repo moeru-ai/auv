@@ -16,7 +16,7 @@ pub const DEFAULT_AX_MAX_CHILDREN: i64 = 64;
 
 /// Evidence returned after focusing a selected AX node.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AxFocusObservation {
+pub struct AxFocusResult {
   pub app: String,
   pub pid: i32,
   pub path: String,
@@ -27,16 +27,14 @@ pub struct AxFocusObservation {
   pub input_action_result: InputActionResult,
 }
 
-/// Evidence returned after reading/verifying AX text on a node.
+/// Observed AX facts returned after reading text from a node.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AxTextObservation {
+pub struct AxTextRead {
   pub app: String,
   pub pid: i32,
   pub path: String,
   pub role: String,
   pub matched_text: String,
-  pub expected_text: String,
-  pub semantic_matched: bool,
 }
 
 pub fn capture_app_tree(app: &str, max_depth: i64, max_children: i64) -> DriverResult<ObservedAxTreeSnapshot> {
@@ -56,14 +54,13 @@ pub fn focus_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResul
       succeeded: true,
       message: Some(format!("focused AX path {path} role {expected_role}")),
     }],
-    fallback_reason: None,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Temporary,
     clipboard_disturbance: DisturbanceLevel::None,
   })
 }
 
-pub fn focus_text_by_query(app: &str, query: &str, expected_role: Option<&str>, candidate: &str) -> DriverResult<AxFocusObservation> {
+pub fn focus_text_by_query(app: &str, query: &str, expected_role: Option<&str>, candidate: &str) -> DriverResult<AxFocusResult> {
   let snapshot = capture_app_tree(app, DEFAULT_AX_MAX_DEPTH, DEFAULT_AX_MAX_CHILDREN)?;
   let node = select_focus_node(&snapshot, query, expected_role, candidate)?;
   let role = if node.role.trim().is_empty() {
@@ -72,7 +69,7 @@ pub fn focus_text_by_query(app: &str, query: &str, expected_role: Option<&str>, 
     node.role.clone()
   };
   let input_action_result = focus_node_path(snapshot.pid, &node.path, &role)?;
-  Ok(AxFocusObservation {
+  Ok(AxFocusResult {
     app: app.to_string(),
     pid: snapshot.pid,
     path: node.path.clone(),
@@ -84,19 +81,17 @@ pub fn focus_text_by_query(app: &str, query: &str, expected_role: Option<&str>, 
   })
 }
 
-pub fn verify_text(app: &str, expected_text: &str, expected_role: &str) -> DriverResult<AxTextObservation> {
+pub fn verify_text(app: &str, _expected_text: &str, expected_role: &str) -> DriverResult<AxTextRead> {
+  // TODO(ax-read-text-api): remove the expected-text argument when the
+  // AccessibilityApi signature is in scope; the driver must not interpret it.
   let snapshot = capture_app_tree(app, DEFAULT_AX_MAX_DEPTH, DEFAULT_AX_MAX_CHILDREN)?;
   let node = select_text_node_by_role(&snapshot, expected_role)?;
-  let matched_text = node.value.clone();
-  let semantic_matched = matched_text.contains(expected_text);
-  Ok(AxTextObservation {
+  Ok(AxTextRead {
     app: app.to_string(),
     pid: snapshot.pid,
     path: node.path.clone(),
     role: node.role.clone(),
-    matched_text,
-    expected_text: expected_text.to_string(),
-    semantic_matched,
+    matched_text: node.value.clone(),
   })
 }
 
@@ -266,12 +261,17 @@ mod tests {
   }
 
   #[test]
-  fn verify_text_observation_can_report_semantic_mismatch_without_erroring() {
-    let snapshot = sample_snapshot();
-    let node = select_text_node_by_role(&snapshot, "AXTextArea").expect("role node");
-    let expected = "not-present-in-body";
-    let semantic_matched = node.value.contains(expected);
-    assert!(!semantic_matched);
-    assert_eq!(node.value, "hello body");
+  fn text_read_contains_only_ax_facts() {
+    let facts = serde_json::json!({
+      "app": "com.apple.TextEdit",
+      "pid": 4242,
+      "path": "0.1.2",
+      "role": "AXTextArea",
+      "matched_text": "hello body"
+    });
+
+    let read: AxTextRead = serde_json::from_value(facts.clone()).expect("fact-only AX text read");
+
+    assert_eq!(serde_json::to_value(read).expect("serialize text read"), facts);
   }
 }

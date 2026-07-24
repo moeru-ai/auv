@@ -6,28 +6,17 @@ pub mod query_live_action;
 
 use auv_game_osu::{
   BenchmarkInputs, BenchmarkOutput, CapturePhase, DatasetExportInputs, DatasetExportOutput, DetectionEvalInputs, DetectionEvalOutput,
-  DetectionEvalQualityOutput, DetectionEvalWitnessInputs, DetectionEvalWitnessOutput, FrameDetections, ObjectKind, PlayfieldProjection,
-  VisualTruthManifest, VisualTruthQueryActionWiringOutcome, VisualTruthQueryLiveClickExecutor, VisualTruthSemanticValidationInputs,
+  DetectionEvalQualityOutput, DetectionEvalWitnessInputs, DetectionEvalWitnessOutput, ObjectKind, PlayfieldProjection, VisualTruthManifest,
+  VisualTruthQueryActionWiringOutcome, VisualTruthQueryLiveClickExecutor, VisualTruthSemanticValidationInputs,
   VisualTruthSpatialQueryInputs, VisualTruthSpatialQueryOutput, build_detection_eval_quality, build_detection_eval_witness,
   evaluate_detection_fixture, export_dataset, query_visual_truth_spatial, run_benchmark, validate_visual_truth_semantic,
   visual_truth_query_action_wiring_lineage_from_manifest, wire_visual_truth_spatial_query_manifest_to_action,
 };
-use auv_runtime::contract::{
-  NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionBox, RecognitionScope, RecognitionSource,
-  RecognitionSurface, SurfaceNode,
-};
 use auv_runtime::model::AuvResult;
-use auv_runtime::session::{BufferedObservationProvider, SessionObservationProvider};
-use auv_tracing::{Context, RunId, SpanId};
+use auv_tracing::Context;
 
 #[cfg(target_os = "macos")]
 use self::query_live_action::DirectWindowPointClickExecutor;
-
-pub use auv_game_osu::{
-  OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE, OSU_DETECTION_EVAL_QUALITY_ROLE, OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
-  OSU_DETECTION_EVAL_WITNESS_ROLE, OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE, OSU_VISUAL_TRUTH_SEMANTIC_ROLE,
-  OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE, OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
-};
 
 pub async fn run_osu_benchmark(beatmap_path: PathBuf, output_dir: PathBuf) -> AuvResult<BenchmarkOutput> {
   run_osu_benchmark_with_inputs(BenchmarkInputs::new(beatmap_path, output_dir), "osu benchmark dry-run").await
@@ -149,90 +138,6 @@ async fn publish_benchmark_projection(result: &BenchmarkOutput) {
   }
 }
 
-pub fn osu_detection_session_provider(provider_id: impl Into<String>, frames: Vec<FrameDetections>) -> impl SessionObservationProvider {
-  let snapshots = frames.into_iter().enumerate().map(|(index, frame)| osu_frame_detections_snapshot(index, frame)).collect();
-  BufferedObservationProvider::new(provider_id, snapshots)
-}
-
-fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> ObservationSnapshot {
-  let run_id = RunId::new();
-  let span_id = SpanId::new();
-  let nodes = frame
-    .detections
-    .detections
-    .into_iter()
-    .enumerate()
-    .map(|(detection_index, detection)| {
-      let node_id = format!("osu_detection_{}_{}", frame.frame.capture_file_name, detection_index);
-      SurfaceNode {
-        node_ref: NodeRef {
-          run_id,
-          span_id,
-          node_id,
-        },
-        kind: "osu_detection".to_string(),
-        label: Some(detection.label.clone()),
-        box_: RecognitionBox {
-          x: detection.bbox.x1.round() as i64,
-          y: detection.bbox.y1.round() as i64,
-          width: detection.bbox.width().round().max(0.0) as i64,
-          height: detection.bbox.height().round().max(0.0) as i64,
-        },
-        source_artifacts: vec![frame.frame.capture_file_name.clone()],
-        recognition_id: Some(format!("osu_frame_detection_{index}")),
-        recognition_source: Some(RecognitionSource::VisualRow),
-        recognition_surface: Some(RecognitionSurface::Window),
-        recognized_item_id: Some(format!("detection_{detection_index}")),
-        recognized_item_kind: Some("osu_object".to_string()),
-        provider_score: Some(f64::from(detection.confidence)),
-        detail: serde_json::json!({
-          "class_id": detection.class_id,
-          "source_image_size": {
-            "width": frame.detections.image_size.width,
-            "height": frame.detections.image_size.height,
-          },
-          "frame": {
-            "object_index": frame.frame.object_index,
-            "phase": frame.frame.phase,
-            "capture_file_name": frame.frame.capture_file_name,
-          },
-          "coordinate_space": "source_image_pixels"
-        }),
-      }
-    })
-    .collect();
-  ObservationSnapshot {
-    api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
-    snapshot_id: format!("osu_session_observation_{index}"),
-    run_id,
-    span_id,
-    captured_at_millis: auv_runtime::model::now_millis(),
-    source: ObservationSource::Visual,
-    scope: RecognitionScope {
-      surface: RecognitionSurface::Window,
-      display_ref: None,
-      native_display_id: None,
-      app_bundle_id: None,
-      window_title: None,
-      window_number: None,
-      region_hint: None,
-      capture_artifact: None,
-      capture_contract_artifact: None,
-    },
-    capture_contract_ref: None,
-    evidence: Vec::new(),
-    nodes,
-    detail: serde_json::json!({
-      "producer": "osu_detection_session_provider",
-      "frame_index": index
-    }),
-    known_limits: vec![
-      "osu detections are source-image pixels; this provider is observe-only and does not imply clickable window coordinates".to_string(),
-      "session v0 provider has no durable capture artifact link for this fixture projection".to_string(),
-    ],
-  }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryWiredLiveActionInputs {
   pub visual_truth_semantic_manifest_path: PathBuf,
@@ -248,7 +153,6 @@ pub struct QueryWiredLiveActionInputs {
 pub struct QueryWiredLiveActionOutput {
   pub query: VisualTruthSpatialQueryOutput,
   pub wiring: VisualTruthQueryActionWiringOutcome,
-  pub input_actions: Vec<auv_driver::InputActionResult>,
 }
 
 pub async fn run_osu_query_wired_live_action(inputs: QueryWiredLiveActionInputs) -> AuvResult<QueryWiredLiveActionOutput> {
@@ -257,13 +161,7 @@ pub async fn run_osu_query_wired_live_action(inputs: QueryWiredLiveActionInputs)
     let circle_size = circle_size_for_wired_live_action_inputs(&inputs)?;
     let live_projection = build_live_playfield_projection(&inputs.target_app, &inputs.target_title, circle_size)?;
     let executor = DirectWindowPointClickExecutor::new(inputs.target_app.clone(), inputs.target_title.clone());
-    let mut output = run_osu_query_wired_live_action_core(&inputs, &live_projection, &executor).await?;
-    output.input_actions = executor.actions();
-    let context = Context::current();
-    for action in &output.input_actions {
-      let _ = auv_runtime::run_read::publish_input_action_result(Some(&context), action).await;
-    }
-    return Ok(output);
+    return run_osu_query_wired_live_action_with_executor(inputs, &live_projection, &executor).await;
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -277,7 +175,12 @@ pub async fn run_osu_query_wired_live_action_with_executor<E: VisualTruthQueryLi
   live_projection: &PlayfieldProjection,
   executor: &E,
 ) -> AuvResult<QueryWiredLiveActionOutput> {
-  run_osu_query_wired_live_action_core(&inputs, live_projection, executor).await
+  let output = run_osu_query_wired_live_action_core(&inputs, live_projection, executor).await?;
+  if let Some(action) = &output.wiring.input_action {
+    let context = Context::current();
+    let _ = auv_runtime::run_read::publish_input_action_result(Some(&context), action).await;
+  }
+  Ok(output)
 }
 
 async fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecutor>(
@@ -295,11 +198,7 @@ async fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecut
   .await?;
   let lineage = visual_truth_query_action_wiring_lineage_from_manifest(&query.manifest, &query.manifest_path);
   let wiring = wire_visual_truth_spatial_query_manifest_to_action(&query.manifest, &lineage, live_projection, executor);
-  Ok(QueryWiredLiveActionOutput {
-    query,
-    wiring,
-    input_actions: Vec::new(),
-  })
+  Ok(QueryWiredLiveActionOutput { query, wiring })
 }
 
 fn circle_size_for_wired_live_action_inputs(inputs: &QueryWiredLiveActionInputs) -> Result<f32, String> {

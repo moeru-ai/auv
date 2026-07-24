@@ -90,6 +90,24 @@ pub fn evaluate_mismatch_refusal(
   screenshot_is_minecraft_window: bool,
   max_capture_skew_ms: Option<i64>,
 ) -> MismatchRefusal {
+  evaluate_mismatch_refusal_with_capture(
+    pre,
+    projected,
+    expected_target,
+    pre.screenshot_artifact_ref.is_some(),
+    screenshot_is_minecraft_window,
+    max_capture_skew_ms,
+  )
+}
+
+pub(crate) fn evaluate_mismatch_refusal_with_capture(
+  pre: &MinecraftSpatialFrame,
+  projected: &MinecraftProjectedPoint,
+  expected_target: &MinecraftBlockTarget,
+  screenshot_available: bool,
+  screenshot_is_minecraft_window: bool,
+  max_capture_skew_ms: Option<i64>,
+) -> MismatchRefusal {
   if !screenshot_is_minecraft_window {
     return MismatchRefusal {
       refused: true,
@@ -99,7 +117,7 @@ pub fn evaluate_mismatch_refusal(
     };
   }
 
-  if pre.screenshot_artifact_ref.is_none() {
+  if !screenshot_available {
     return MismatchRefusal {
       refused: true,
       reason: Some(MismatchRefusalReason::ScreenshotUnavailable),
@@ -164,25 +182,6 @@ pub fn evaluate_mismatch_refusal(
     basis_frame_id: Some(pre.spatial_frame_id.clone()),
     observed_block_id: target_block_id(pre, expected_target.block_pos),
   }
-}
-
-pub const MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT: &str =
-  "mc20_v1_query_wired_witness_absent_post_action_semantic_verification_unreliable";
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QueryWiredPostActionWitness {
-  pub target_block: BlockPosition,
-  pub pre_frame: MinecraftSpatialFrame,
-  pub post_frame: MinecraftSpatialFrame,
-  pub expected_item_id: Option<String>,
-}
-
-pub fn verify_query_wired_live_action_semantic(witness: &QueryWiredPostActionWitness) -> WorldDiffVerdict {
-  let mut request = WorldDiffRequest::new(MinecraftBlockTarget::new(witness.target_block)).allow_same_block_state_change();
-  if let Some(item_id) = &witness.expected_item_id {
-    request = request.with_expected_item_id(item_id.clone());
-  }
-  evaluate_world_diff(&witness.pre_frame, &witness.post_frame, &request)
 }
 
 pub fn evaluate_world_diff(pre: &MinecraftSpatialFrame, post: &MinecraftSpatialFrame, request: &WorldDiffRequest) -> WorldDiffVerdict {
@@ -313,7 +312,9 @@ mod tests {
         entity_kind: "minecraft:pig".to_string(),
       }],
       inventory_summary,
-      screenshot_artifact_ref: Some("artifact://frame.png".to_string()),
+      screenshot_artifact_ref: Some(
+        "auv://runs/00000000-0000-0000-0000-000000000001/artifacts/00000000-0000-0000-0000-000000000001".to_string(),
+      ),
       mc_capture_skew_ms: Some(0),
       screen_state: None,
       resource_pack_ids: Vec::new(),
@@ -723,142 +724,5 @@ mod tests {
 
     assert!(verdict.state_changed);
     assert_eq!(verdict.failure, None);
-  }
-
-  #[test]
-  fn verify_query_wired_live_action_semantic_passes_on_allowed_same_block_tick_advance() {
-    let target_block = target().block_pos;
-    let pre = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
-    let post = frame_at(11, 1_050, Some(witnessed_stone()), vec![], vec![]);
-    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
-      target_block,
-      pre_frame: pre,
-      post_frame: post,
-      expected_item_id: None,
-    });
-
-    assert!(verdict.state_changed);
-    assert_eq!(verdict.failure, None);
-    assert_eq!(verdict.semantic_matched, None);
-  }
-
-  #[test]
-  fn verify_query_wired_live_action_semantic_reports_unreliable_without_pre_witness() {
-    let target_block = target().block_pos;
-    let pre = frame_at(10, 1_000, None, vec![], vec![]);
-    let post = frame_at(11, 1_050, None, vec![], vec![]);
-    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
-      target_block,
-      pre_frame: pre,
-      post_frame: post,
-      expected_item_id: None,
-    });
-
-    assert_eq!(verdict.failure, Some(WorldDiffFailure::VerificationUnreliable));
-    assert!(!verdict.state_changed);
-  }
-
-  #[test]
-  fn verify_query_wired_live_action_semantic_detects_block_removal() {
-    let target_block = target().block_pos;
-    let pre = frame_at(
-      10,
-      1_000,
-      Some(witnessed_stone()),
-      vec![NearbyBlock {
-        block_pos: target_block,
-        block_id: "minecraft:stone".to_string(),
-      }],
-      vec![],
-    );
-    let post = frame_at(
-      11,
-      1_050,
-      Some(RaycastHit {
-        block_pos: target_block,
-        face: BlockFace::North,
-        block_id: "minecraft:air".to_string(),
-      }),
-      vec![],
-      vec![],
-    );
-    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
-      target_block,
-      pre_frame: pre,
-      post_frame: post,
-      expected_item_id: None,
-    });
-
-    assert!(verdict.state_changed);
-    assert_eq!(verdict.failure, None);
-    assert_eq!(verdict.observed_block_id.as_deref(), Some("minecraft:air"));
-  }
-  #[test]
-  fn verify_query_wired_live_action_semantic_passes_with_expected_item_id_on_block_break_and_inventory_rise() {
-    let target_block = target().block_pos;
-    let pre = frame_at(
-      10,
-      1_000,
-      Some(witnessed_stone()),
-      vec![NearbyBlock {
-        block_pos: target_block,
-        block_id: "minecraft:stone".to_string(),
-      }],
-      vec![InventorySummaryEntry {
-        item_id: "minecraft:stone".to_string(),
-        count: 1,
-      }],
-    );
-    let post = frame_at(
-      11,
-      1_050,
-      None,
-      vec![],
-      vec![InventorySummaryEntry {
-        item_id: "minecraft:stone".to_string(),
-        count: 2,
-      }],
-    );
-    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
-      target_block,
-      pre_frame: pre,
-      post_frame: post,
-      expected_item_id: Some("minecraft:stone".to_string()),
-    });
-
-    assert_eq!(verdict.semantic_matched, Some(true));
-    assert!(verdict.state_changed);
-    assert_eq!(verdict.failure, None);
-    assert_eq!(verdict.observed_item_delta, Some(1));
-  }
-
-  #[test]
-  fn verify_query_wired_live_action_semantic_fails_with_expected_item_id_when_inventory_stays_flat() {
-    let target_block = target().block_pos;
-    let pre = frame_at(
-      10,
-      1_000,
-      Some(witnessed_stone()),
-      vec![NearbyBlock {
-        block_pos: target_block,
-        block_id: "minecraft:stone".to_string(),
-      }],
-      vec![InventorySummaryEntry {
-        item_id: "minecraft:stone".to_string(),
-        count: 1,
-      }],
-    );
-    let post = frame_at(11, 1_050, None, vec![], vec![]);
-    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
-      target_block,
-      pre_frame: pre,
-      post_frame: post,
-      expected_item_id: Some("minecraft:stone".to_string()),
-    });
-
-    assert_eq!(verdict.semantic_matched, Some(false));
-    assert!(verdict.state_changed);
-    assert_eq!(verdict.failure, Some(WorldDiffFailure::StateChangedNoMatch));
-    assert_eq!(verdict.observed_item_delta, Some(-1));
   }
 }

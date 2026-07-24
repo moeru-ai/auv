@@ -86,7 +86,7 @@ async fn cli_dry_run_returns_a_v1_run_that_cli_inspect_reads() {
 }
 
 #[tokio::test]
-async fn cli_artifact_command_returns_canonical_uri_that_cli_inspect_reads() {
+async fn cli_artifact_command_records_canonical_uri_that_cli_inspect_reads() {
   let store = TempStore::new("cli-artifact");
   let store_arg = store.path().to_str().expect("UTF-8 store path");
   let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-scan/tests/fixtures/scan/temporal/single_frame_v0");
@@ -101,17 +101,11 @@ async fn cli_artifact_command_returns_canonical_uri_that_cli_inspect_reads() {
     store_arg,
   ]));
   let run_id = invoke["run_id"].as_str().expect("run id");
-  let returned_uris = invoke["artifacts"]
-    .as_array()
-    .expect("artifact array")
-    .iter()
-    .map(|artifact| artifact["uri"].as_str().expect("canonical artifact URI").to_string())
-    .collect::<Vec<_>>();
+  assert!(invoke.get("artifacts").is_none(), "invoke result must not duplicate RunStore artifacts");
 
   let snapshot = load_snapshot(store.path(), run_id).await;
   let snapshot_uris = snapshot.artifacts().values().map(|artifact| artifact.metadata().uri().to_string()).collect::<Vec<_>>();
-  assert_eq!(returned_uris, snapshot_uris);
-  assert!(returned_uris.iter().all(|uri| uri.starts_with(&format!("auv://runs/{run_id}/artifacts/"))));
+  assert!(snapshot_uris.iter().all(|uri| uri.starts_with(&format!("auv://runs/{run_id}/artifacts/"))));
 
   let inspect = run_cli(&["inspect", run_id, "--store-root", store_arg]);
   assert!(inspect.status.success(), "inspect failed: {}", String::from_utf8_lossy(&inspect.stderr));
@@ -122,7 +116,7 @@ async fn cli_artifact_command_returns_canonical_uri_that_cli_inspect_reads() {
     .iter()
     .map(|artifact| artifact["uri"].as_str().expect("inspect URI"))
     .collect::<Vec<_>>();
-  assert_eq!(inspected_uris, returned_uris);
+  assert_eq!(inspected_uris, snapshot_uris);
 }
 
 #[tokio::test]
@@ -176,7 +170,7 @@ async fn mcp_dry_run_returns_a_v1_run_that_mcp_inspect_reads() -> Result<(), Box
 }
 
 #[tokio::test]
-async fn mcp_artifact_command_returns_canonical_uri_that_mcp_inspect_reads() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn mcp_artifact_command_records_canonical_uri_that_mcp_inspect_reads() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   let store = TempStore::new("mcp-artifact");
   let server = auv_cli::mcp::server(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).map_err(std::io::Error::other)?;
   let (server_transport, client_transport) = tokio::io::duplex(16384);
@@ -205,17 +199,11 @@ async fn mcp_artifact_command_returns_canonical_uri_that_mcp_inspect_reads() -> 
     .await?;
   let invoke: Value = serde_json::from_str(&invoke.content[0].raw.as_text().expect("invoke text").text)?;
   let run_id = invoke["run_id"].as_str().expect("run id");
-  let returned_uris = invoke["artifacts"]
-    .as_array()
-    .expect("artifact array")
-    .iter()
-    .map(|artifact| artifact["uri"].as_str().expect("canonical URI").to_string())
-    .collect::<Vec<_>>();
+  assert!(invoke.get("artifacts").is_none(), "invoke result must not duplicate RunStore artifacts");
 
   let snapshot = load_snapshot(store.path(), run_id).await;
   let snapshot_uris = snapshot.artifacts().values().map(|artifact| artifact.metadata().uri().to_string()).collect::<Vec<_>>();
-  assert_eq!(returned_uris, snapshot_uris);
-  assert_eq!(returned_uris.len(), 2);
+  assert_eq!(snapshot_uris.len(), 2);
 
   let inspect = client
     .call_tool(CallToolRequestParam {
@@ -232,7 +220,7 @@ async fn mcp_artifact_command_returns_canonical_uri_that_mcp_inspect_reads() -> 
     .iter()
     .map(|artifact| artifact["uri"].as_str().expect("inspect URI").to_string())
     .collect::<Vec<_>>();
-  assert_eq!(inspected_uris, returned_uris);
+  assert_eq!(inspected_uris, snapshot_uris);
 
   client.cancel().await?;
   server_handle.await??;

@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "linux")]
 use crate::app::{APP_ID, DISPLAY_NAME, PROCESS_NAME, SETTINGS_WINDOW};
-use crate::interaction::InteractionStep;
 #[cfg(target_os = "linux")]
-use crate::interaction::StepOutcome;
+use crate::tracing::WindowEvent;
 
 #[cfg(target_os = "linux")]
 const POLL_INTERVAL_MS: u64 = 250;
@@ -34,7 +33,6 @@ pub struct OpenWindowReport {
   pub frame: Option<Rect>,
   pub app_id: &'static str,
   pub process_name: &'static str,
-  pub steps: Vec<InteractionStep>,
 }
 
 pub fn open_or_resolve(options: &ResolveOptions) -> Result<(Window, OpenWindowReport), String> {
@@ -58,12 +56,12 @@ mod platform {
 
     match resolve_window(&session) {
       Ok(window) => {
-        report.steps.push(InteractionStep::new("resolve", StepOutcome::Found));
+        crate::tracing::window(WindowEvent::ExistingWindowResolved { found: true });
         record_window(&mut report, &window);
         return Ok((window, report));
       }
       Err(DriverError::NotFound { .. }) => {
-        report.steps.push(InteractionStep::new("resolve", StepOutcome::NotFound));
+        crate::tracing::window(WindowEvent::ExistingWindowResolved { found: false });
       }
       Err(error) => return Err(format!("failed to resolve {DISPLAY_NAME}: {error}")),
     }
@@ -74,13 +72,13 @@ mod platform {
       .stderr(Stdio::null())
       .spawn()
       .map_err(|error| format!("failed to launch {PROCESS_NAME}: {error}"))?;
-    report.steps.push(InteractionStep::new("launch", StepOutcome::Started));
+    crate::tracing::window(WindowEvent::ProcessStarted);
 
     let deadline = Instant::now() + options.settle;
     loop {
       match resolve_window(&session) {
         Ok(window) => {
-          report.steps.push(InteractionStep::new("wait", StepOutcome::Found));
+          crate::tracing::window(WindowEvent::WindowAppeared);
           record_window(&mut report, &window);
           return Ok((window, report));
         }
@@ -88,9 +86,9 @@ mod platform {
           std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
         Err(DriverError::NotFound { .. }) => {
-          report
-            .steps
-            .push(InteractionStep::new("wait", StepOutcome::NotFound).note(format!("no visible {DISPLAY_NAME} window before timeout")));
+          crate::tracing::window(WindowEvent::WaitTimedOut {
+            timeout_ms: u64::try_from(options.settle.as_millis()).unwrap_or(u64::MAX),
+          });
           return Err(format!("no visible {DISPLAY_NAME} window appeared"));
         }
         Err(error) => return Err(format!("failed while waiting for {DISPLAY_NAME}: {error}")),
@@ -160,6 +158,5 @@ fn report() -> OpenWindowReport {
     frame: None,
     app_id: APP_ID,
     process_name: PROCESS_NAME,
-    steps: Vec::new(),
   }
 }

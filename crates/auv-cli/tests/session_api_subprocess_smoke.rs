@@ -103,11 +103,8 @@ async fn session_api_subprocess_smoke_returns_direct_value_and_records_canonical
   assert!(!session.session_id.is_empty());
 
   let invoke_response = invoke_sample_command(&mut client, session).await;
-  assert_eq!(invoke_response.status, "completed");
-  assert!(invoke_response.failure_message.is_empty());
+  assert!(matches!(invoke_response.terminal, Some(auv_api_proto::v1::session::invoke_response::Terminal::Completed(_))));
   assert!(invoke_response.recording_failure.is_empty());
-  assert!(invoke_response.known_limits.is_empty());
-  assert!(invoke_response.artifacts.is_empty(), "dry-run coverage must not claim artifacts");
   let run_id = invoke_response.run_id.parse::<RunId>().expect("canonical run id");
 
   let store = FileRunStore::open(&store_root).expect("open session run authority");

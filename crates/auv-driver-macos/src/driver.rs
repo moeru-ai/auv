@@ -48,7 +48,7 @@ impl DriverSession for MacosDriverSession {
 mod tests {
   use auv_driver_common::{Driver, DriverSession, PlatformKind};
 
-  use crate::{MacosDriver, macos_legacy_descriptor_metadata};
+  use crate::MacosDriver;
 
   #[test]
   fn descriptor_uses_desktop_namespace() {
@@ -56,10 +56,6 @@ mod tests {
 
     assert_eq!(descriptor.id, "macos.desktop");
     assert_eq!(descriptor.platform, PlatformKind::Macos);
-    let metadata = macos_legacy_descriptor_metadata();
-    assert_eq!(metadata.descriptor, descriptor);
-    assert!(metadata.capabilities.iter().any(|capability| *capability == "desktop.capture-window"));
-    assert!(!metadata.capabilities.iter().any(|capability| capability.starts_with("observe.")));
   }
 
   #[test]

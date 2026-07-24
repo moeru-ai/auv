@@ -7,25 +7,23 @@ use std::future::Future;
 #[cfg(test)]
 use std::time::Duration;
 
-#[cfg(test)]
-use auv_apple_textedit::StepOutcome;
 use auv_apple_textedit::{
-  DocumentCommand, DocumentCommandReport, DocumentWrite, TextEditDriver, VerificationOutcome, run_document_command_with_checkpoint,
+  DocumentCommand, DocumentCommandReport, DocumentWrite, TextEditAction, TextEditDriver, VerificationOutcome,
+  run_document_command_with_checkpoint,
 };
+#[cfg(test)]
+use auv_apple_textedit::{MatchedAxNode, TextEditActionResult};
 use auv_cli_invoke::arg::TEXTEDIT_DOCUMENT_WRITE_ARGS;
 use auv_cli_invoke::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportSection,
   invoke_command,
 };
+use auv_driver::DriverError;
 #[cfg(test)]
 use auv_driver::{InputActionResult, InputDeliveryPath};
-use auv_runtime::contract::{FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult};
 use auv_tracing::{Context, EventPayload};
 
 pub const DOCUMENT_WRITE_COMMAND_ID: &str = "app.textedit.document.write";
-pub const TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT: &str = "auv.product.textedit.document_write.v0";
-pub const TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT: &str =
-  "TextEdit document.write observes only post-write AX text; without a pre-write observation it cannot prove state_changed.";
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("textedit", "TEXTEDIT").command(document_write_invoke_command())
@@ -34,17 +32,14 @@ pub fn group() -> CommandGroup {
 #[invoke_command(
   id = "app.textedit.document.write",
   group = "app",
-  summary = "Write TextEdit document body through typed AX focus, clipboard paste, and optional AX verification.",
+  description = "Write TextEdit document body through typed AX focus, clipboard paste, and optional AX verification.",
   args = TEXTEDIT_DOCUMENT_WRITE_ARGS,
 )]
 async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
   reject_production_fixture_inputs(&input.inputs)?;
   let command = parse_document_write(&input)?;
   if input.dry_run {
-    let mut output = InvokeCommandOutput::new("dry run: app.textedit.document.write");
-    output.verification = Some("dry-run; no semantic success claim".to_string());
-    output.known_limits.push("app.textedit.document.write dry-run does not touch TextEdit or publish run artifacts.".to_string());
-    return Ok(output);
+    return Ok(InvokeCommandOutput::completed());
   }
   #[cfg(test)]
   if let Some(driver) = take_fixture_driver() {
@@ -52,7 +47,7 @@ async fn document_write(input: InvokeCommandInput) -> InvokeCommandResult {
   }
   #[cfg(target_os = "macos")]
   {
-    let driver = auv_apple_textedit::MacosTextEditDriver::open_local()?;
+    let driver = auv_apple_textedit::MacosTextEditDriver::open_local().map_err(|error| error.to_string())?;
     return map_document_write_cli(command, input.cancellation, driver).await.map(|(output, _)| output);
   }
   #[cfg(not(target_os = "macos"))]
@@ -71,94 +66,67 @@ pub async fn write_document<D>(
 where
   D: TextEditDriver,
 {
-  write_document_with_publications(command, cancellation, driver).await.map(|(report, _)| report).map_err(DocumentWriteFailure::into_message)
+  execute_document_write(command, cancellation, driver).await.map_err(DocumentWriteFailure::into_message)
 }
 
 #[derive(Debug)]
 pub(crate) struct DocumentWriteFailure {
   message: String,
-  report: Option<DocumentCommandReport>,
-  artifacts: Vec<auv_tracing::ArtifactMetadata>,
 }
 
 impl DocumentWriteFailure {
-  fn before_report(message: String) -> Self {
-    Self {
-      message,
-      report: None,
-      artifacts: Vec::new(),
-    }
+  fn new(message: String) -> Self {
+    Self { message }
   }
 
-  fn after_report(message: String, report: DocumentCommandReport, artifacts: Vec<auv_tracing::ArtifactMetadata>) -> Self {
-    Self {
-      message,
-      report: Some(report),
-      artifacts,
-    }
-  }
-
-  fn into_message(self) -> String {
+  pub(crate) fn into_message(self) -> String {
     self.message
-  }
-
-  pub(crate) fn into_parts(self) -> (String, Option<DocumentCommandReport>, Vec<auv_tracing::ArtifactMetadata>) {
-    (self.message, self.report, self.artifacts)
   }
 }
 
-pub(crate) async fn write_document_with_publications<D>(
+impl From<DriverError> for DocumentWriteFailure {
+  fn from(error: DriverError) -> Self {
+    Self::new(error.to_string())
+  }
+}
+
+pub(crate) async fn execute_document_write<D>(
   command: DocumentWrite,
   cancellation: auv_cli_invoke::InvokeCancellation,
   mut driver: D,
-) -> Result<(DocumentCommandReport, Vec<auv_tracing::ArtifactMetadata>), DocumentWriteFailure>
+) -> Result<DocumentCommandReport, DocumentWriteFailure>
 where
   D: TextEditDriver,
 {
   // TODO(textedit-driver-cancellation): checkpoints cannot interrupt one
   // synchronous native driver call; reopen this only when the driver owns a
   // cancellable operation contract.
-  cancellation.check().map_err(|error| DocumentWriteFailure::before_report(error.to_string()))?;
+  cancellation.check().map_err(|error| DocumentWriteFailure::new(error.to_string()))?;
   let report = run_document_command_with_checkpoint(&DocumentCommand::Write(command), &mut driver, || {
-    cancellation.check().map_err(|error| error.to_string())
-  })
-  .map_err(DocumentWriteFailure::before_report)?;
-  let mut artifacts = Vec::new();
+    cancellation.check().map_err(|error| DocumentWriteFailure::new(error.to_string()))
+  })?;
   if let Err(error) = cancellation.check() {
-    return Err(DocumentWriteFailure::after_report(error.to_string(), report, artifacts));
+    return Err(DocumentWriteFailure::new(error.to_string()));
   }
   let context = Context::current();
-  for outcome in &report.outcomes {
-    if let Some(result) = &outcome.input_action_result {
-      if let Err(error) = cancellation.check() {
-        return Err(DocumentWriteFailure::after_report(error.to_string(), report, artifacts));
-      }
-      match auv_runtime::run_read::publish_input_action_result(Some(&context), result).await {
-        Ok(Some(metadata)) => artifacts.push(metadata),
-        Ok(None) => {}
-        Err(error) => {
-          return Err(DocumentWriteFailure::after_report(
-            format!("failed to publish TextEdit input action result: {error}"),
-            report,
-            artifacts,
-          ));
-        }
-      }
+  for action in &report.actions {
+    if let Some(result) = &action.input_action_result {
+      context.in_scope(|| auv_runtime::run_read::emit_input_action_result(result));
     }
   }
   if report.verification.is_some()
     && let Err(error) = cancellation.check()
   {
-    return Err(DocumentWriteFailure::after_report(error.to_string(), report, artifacts));
+    return Err(DocumentWriteFailure::new(error.to_string()));
   }
   if let Some(verification) = report.verification.as_ref() {
     context.in_scope(|| {
       auv_tracing::emit_event!(TextEditDocumentWriteVerificationEvent {
-        verification: map_verification_result(verification),
+        verification: verification.clone(),
       });
     });
   }
-  Ok((report, artifacts))
+  Ok(report)
 }
 
 async fn map_document_write_cli<D>(
@@ -169,52 +137,20 @@ async fn map_document_write_cli<D>(
 where
   D: TextEditDriver,
 {
-  match write_document_with_publications(command.clone(), cancellation, driver).await {
-    Ok((report, artifacts)) => {
-      let mut output = build_invoke_output_from_report(&report, &command)?;
-      output.artifacts = artifacts;
-      Ok((output, report))
-    }
-    Err(failure) => {
-      let (message, report, artifacts) = failure.into_parts();
-      let Some(report) = report else {
-        return Err(message);
-      };
-      let mut output = build_invoke_output_from_report(&report, &command)?;
-      output.summary = message.clone();
-      output.failure_message = Some(message);
-      output.artifacts = artifacts;
-      Ok((output, report))
-    }
+  match execute_document_write(command.clone(), cancellation, driver).await {
+    Ok(report) => Ok((build_invoke_output_from_report(&report, &command)?, report)),
+    Err(failure) => Err(failure.into_message()),
   }
 }
 
 #[derive(serde::Serialize)]
 struct TextEditDocumentWriteVerificationEvent {
-  verification: VerificationResult,
+  verification: VerificationOutcome,
 }
 
 impl EventPayload for TextEditDocumentWriteVerificationEvent {
   const NAME: &'static str = "auv.textedit.document_write.verification";
   const VERSION: u32 = 1;
-}
-
-pub fn map_verification_result(verification: &VerificationOutcome) -> VerificationResult {
-  VerificationResult {
-    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-    method: VerificationMethod::AxText,
-    executed: true,
-    state_changed: false,
-    semantic_matched: Some(verification.semantic_matched),
-    failure_layer: (!verification.semantic_matched).then_some(FailureLayer::SemanticMismatch),
-    evidence: Vec::new(),
-    consumed_candidate_ref: None,
-    consumed_node_ref: None,
-    consumed_recognition_artifact_ref: None,
-    consumed_recognition_id: None,
-    consumed_recognized_item_id: None,
-    observed_label: Some(verification.matched_role.clone()),
-  }
 }
 
 fn reject_production_fixture_inputs(inputs: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
@@ -227,53 +163,25 @@ fn reject_production_fixture_inputs(inputs: &std::collections::BTreeMap<String, 
 }
 
 pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, command: &DocumentWrite) -> InvokeCommandResult {
-  let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
-  let mut output = InvokeCommandOutput::new(format!(
-    "TextEdit document.write completed ({} steps, verify={}, semantic_matched={semantic_matched:?})",
-    report.outcomes.len(),
-    report.verification.is_some(),
-  ));
-  output.backend = Some("auv-apple-textedit.DocumentWrite".to_string());
-  output.signals.insert("textedit.command".to_string(), report.command.to_string());
-  output.signals.insert("textedit.app_id".to_string(), command.app_id.clone());
-  output.signals.insert("textedit.replace".to_string(), command.replace.to_string());
-  output.signals.insert("textedit.verify_requested".to_string(), command.verify.to_string());
-  output.signals.insert("textedit.verification_present".to_string(), report.verification.is_some().to_string());
-  if let Some(matched) = semantic_matched {
-    output.signals.insert("textedit.semantic_matched".to_string(), matched.to_string());
-  }
-  output.verification = Some(match semantic_matched {
-    Some(true) => "semantic verification recorded as TextEdit AX text matched=true".to_string(),
-    Some(false) => "semantic verification recorded as TextEdit AX text matched=false".to_string(),
-    None => "activation and input delivery only; verify=false".to_string(),
-  });
-  output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT.to_string());
-  if report.verification.is_some() {
-    output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT.to_string());
-  }
+  let mut output = InvokeCommandOutput::from_result(report)?;
   output.report = Some(document_write_report(report, command));
-  if let Some(verification) = report.verification.as_ref().filter(|verification| !verification.semantic_matched) {
-    let observed = truncate(&verification.matched_text, 80);
-    output.summary =
-      format!("TextEdit document.write failed semantic verification (role={}, observed={observed})", verification.matched_role);
-    output.failure_message = Some(format!(
-      "TextEdit semantic verification failed: expected content was not present in observed AX text role={} observed={observed}",
-      verification.matched_role
-    ));
-  }
   Ok(output)
 }
 
 fn document_write_report(report: &DocumentCommandReport, command: &DocumentWrite) -> InvokeReport {
   let mut sections = Vec::new();
   sections.push(InvokeReportSection {
-    title: "Steps".to_string(),
+    title: "Actions".to_string(),
     fields: report
-      .outcomes
+      .actions
       .iter()
-      .map(|outcome| InvokeReportField {
-        label: outcome.step_id.to_string(),
-        value: outcome.summary.clone(),
+      .map(|action| InvokeReportField {
+        label: action_name(action.action).to_string(),
+        value: action
+          .input_action_result
+          .as_ref()
+          .map(|result| format!("{:?}", result.selected_path))
+          .unwrap_or_else(|| "completed".to_string()),
       })
       .collect(),
   });
@@ -346,6 +254,14 @@ fn parse_bool(value: &str, name: &str) -> Result<bool, String> {
   }
 }
 
+fn action_name(action: TextEditAction) -> &'static str {
+  match action {
+    TextEditAction::Activate => "activate",
+    TextEditAction::FocusTextInput => "focus_text_input",
+    TextEditAction::PasteText => "paste_text",
+  }
+}
+
 fn truncate(value: &str, max_chars: usize) -> String {
   let mut chars = value.chars();
   let head: String = chars.by_ref().take(max_chars).collect();
@@ -377,38 +293,35 @@ impl FixtureTextEditDriver {
 
 #[cfg(test)]
 impl TextEditDriver for FixtureTextEditDriver {
-  fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
-    Ok(StepOutcome {
-      step_id: "activate",
-      summary: format!("fixture activated {app_id} settle_ms={}", settle.as_millis()),
+  fn activate_app(&mut self, _app_id: &str, _settle: Duration) -> Result<TextEditActionResult, DriverError> {
+    Ok(TextEditActionResult {
+      action: TextEditAction::Activate,
       input_action_result: None,
     })
   }
 
-  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, String> {
-    Ok(StepOutcome {
-      step_id: "focus",
-      summary: format!("fixture focused {app_id} query={query} candidate={candidate}"),
+  fn focus_text_input(&mut self, _app_id: &str, _query: &str, _candidate: &str) -> Result<TextEditActionResult, DriverError> {
+    Ok(TextEditActionResult {
+      action: TextEditAction::FocusTextInput,
       input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::AxFocus)),
     })
   }
 
   fn paste_text_preserve_clipboard(
     &mut self,
-    app_id: &str,
+    _app_id: &str,
     text: &str,
-    replace_existing: bool,
-    settle: Duration,
-  ) -> Result<StepOutcome, String> {
+    _replace_existing: bool,
+    _settle: Duration,
+  ) -> Result<TextEditActionResult, DriverError> {
     self.content = text.to_string();
-    Ok(StepOutcome {
-      step_id: "paste",
-      summary: format!("fixture pasted into {app_id} replace={replace_existing} settle_ms={}", settle.as_millis()),
+    Ok(TextEditActionResult {
+      action: TextEditAction::PasteText,
       input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::ClipboardPaste)),
     })
   }
 
-  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, String> {
+  fn verify_ax_text(&mut self, _app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, DriverError> {
     self.role = target_role.to_string();
     let observed = self.observed_override.clone().unwrap_or_else(|| self.content.clone());
     Ok(VerificationOutcome {
@@ -416,8 +329,10 @@ impl TextEditDriver for FixtureTextEditDriver {
       matched_text: observed.clone(),
       artifact_count: 1,
       semantic_matched: observed.contains(target_text),
-      observation_path: Some("fixture.0.1.2".to_string()),
-      observation_pid: Some(0),
+      matched_node: Some(MatchedAxNode {
+        path: "fixture.0.1.2".to_string(),
+        process_id: 0,
+      }),
     })
   }
 }
@@ -469,11 +384,11 @@ mod tests {
   }
 
   impl TextEditDriver for InvalidInputActionDriver {
-    fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<StepOutcome, String> {
+    fn activate_app(&mut self, app_id: &str, settle: Duration) -> Result<TextEditActionResult, DriverError> {
       self.0.activate_app(app_id, settle)
     }
 
-    fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<StepOutcome, String> {
+    fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> Result<TextEditActionResult, DriverError> {
       let mut outcome = self.0.focus_text_input(app_id, query, candidate)?;
       outcome.input_action_result.as_mut().expect("fixture focus action").selected_path = InputDeliveryPath::ClipboardPaste;
       Ok(outcome)
@@ -485,11 +400,11 @@ mod tests {
       text: &str,
       replace_existing: bool,
       settle: Duration,
-    ) -> Result<StepOutcome, String> {
+    ) -> Result<TextEditActionResult, DriverError> {
       self.0.paste_text_preserve_clipboard(app_id, text, replace_existing, settle)
     }
 
-    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, String> {
+    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> Result<VerificationOutcome, DriverError> {
       self.0.verify_ax_text(app_id, target_text, target_role)
     }
   }
@@ -579,7 +494,21 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn enabled_context_propagates_input_action_validation_failure() {
+  async fn invoke_mapping_keeps_semantic_mismatch_in_the_completed_typed_result() {
+    let command = DocumentWrite::defaults_with_content("expected");
+    let driver = fixture_driver(&command, Some("different".to_string()));
+    let report = write_document(command.clone(), auv_cli_invoke::InvokeCancellation::new(), driver).await.expect("fixture report");
+    let expected = serde_json::to_value(&report).expect("serialize typed TextEdit report");
+
+    let output = build_invoke_output_from_report(&report, &command).expect("semantic mismatch is not an execution failure");
+    let result = auv_cli_invoke::InvokeResult::from_command_result(RunId::new(), &document_write_invoke_command(), Ok(output));
+
+    assert_eq!(result.status(), auv_cli_invoke::InvokeStatus::Completed);
+    assert_eq!(result.result(), Some(&expected));
+  }
+
+  #[tokio::test]
+  async fn enabled_context_keeps_input_action_validation_failure_out_of_the_direct_result() {
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = configure().run_store(store).build().expect("memory dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
@@ -587,13 +516,14 @@ mod tests {
     let future =
       root.in_scope(|| write_document(command.clone(), auv_cli_invoke::InvokeCancellation::new(), InvalidInputActionDriver::new(&command)));
 
-    let error = root.instrument(future).await.expect_err("invalid typed evidence must fail enabled publication");
+    let report = root.instrument(future).await.expect("invalid recording evidence must not replace the TextEdit result");
+    dispatch.flush().await.expect("preparation diagnostic flush");
 
-    assert!(error.contains("successful input attempt must match selected_path"), "unexpected publication error: {error}");
+    assert_eq!(report.actions.len(), 3);
   }
 
   #[tokio::test]
-  async fn enabled_context_propagates_input_action_enqueue_failure() {
+  async fn enabled_context_keeps_input_action_enqueue_failure_out_of_the_direct_result() {
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = configure().run_store(store).task_spawner(Arc::new(RejectingSpawner)).build().expect("rejecting dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
@@ -601,13 +531,14 @@ mod tests {
     let driver = fixture_driver(&command, None);
     let future = root.in_scope(|| write_document(command, auv_cli_invoke::InvokeCancellation::new(), driver));
 
-    let error = root.instrument(future).await.expect_err("enqueue failure must fail enabled publication");
+    let report = root.instrument(future).await.expect("enqueue failure must not replace the TextEdit result");
+    dispatch.flush().await.expect_err("enqueue failure remains on the tracing dispatch");
 
-    assert!(error.contains("failed to publish root artifact"), "unexpected publication error: {error}");
+    assert_eq!(report.actions.len(), 3);
   }
 
   #[tokio::test]
-  async fn frontend_mapping_preserves_committed_artifacts_when_a_later_publication_fails() {
+  async fn frontend_mapping_is_unchanged_when_a_later_artifact_write_fails() {
     let store = Arc::new(FailNthArtifactStore::new(2));
     let dispatch = configure().run_store(store).build().expect("memory dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
@@ -615,11 +546,11 @@ mod tests {
     let driver = fixture_driver(&command, None);
     let future = root.in_scope(|| map_document_write_cli(command, auv_cli_invoke::InvokeCancellation::new(), driver));
 
-    let (output, _) = root.instrument(future).await.expect("partial publication is a failed frontend value");
+    let (output, report) = root.instrument(future).await.expect("artifact failure must not replace the frontend value");
+    dispatch.flush().await.expect_err("artifact write failure remains on the tracing dispatch");
 
-    assert!(output.failure_message.as_deref().is_some_and(|message| message.contains("textedit_publication_rejected")));
-    assert_eq!(output.artifacts.len(), 1);
-    assert_eq!(output.artifacts[0].purpose().as_str(), "auv.driver.input_action_result");
+    assert!(output.report.is_some());
+    assert_eq!(report.actions.len(), 3);
   }
 
   #[tokio::test]

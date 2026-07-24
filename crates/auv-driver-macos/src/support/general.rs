@@ -16,10 +16,6 @@ pub fn window_area(window: &ObservedWindow) -> i64 {
   window.bounds.width.saturating_mul(window.bounds.height)
 }
 
-pub fn render_rect_compact(rect: &ObservedRect) -> String {
-  format!("{},{},{},{}", rect.x, rect.y, rect.width, rect.height)
-}
-
 pub fn ocr_match_center(matched: &OcrTextMatch) -> (f64, f64) {
   (matched.bounds.x as f64 + (matched.bounds.width as f64 / 2.0), matched.bounds.y as f64 + (matched.bounds.height as f64 / 2.0))
 }

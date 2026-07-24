@@ -7,9 +7,9 @@ Count: **12**
 ## Current V1
 
 - [`2026-07-20-auv-run-recording-contract-v1-spec.md`](2026-07-20-auv-run-recording-contract-v1-spec.md)
-  (normative implemented `auv-tracing` V1 contract)
+  (normative `auv-tracing` V1 contract; canonical core implemented, workspace migration in progress)
 - [`2026-07-20-auv-run-contract-v1-implementation-plan.md`](2026-07-20-auv-run-contract-v1-implementation-plan.md)
-  (completed implementation record)
+  (active implementation and migration record)
 
 The V1 spec is normative and wins if any historical record conflicts with it.
 

@@ -1,23 +1,20 @@
-//! Frame producer — fixture-first hermetic path + optional live capture mapping.
-//!
-//! NOTICE(scan-s1-slice-2): fixture and live **must** share `write_frame_with_image`
-//! → `write_frame_artifact`. Fail-closed: no degraded/partial artifacts on disk.
+//! Frame construction and fixture decoding.
 
 mod coverage;
 mod error;
 
-#[cfg(feature = "live-capture")]
-pub mod live;
-
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::artifact::write_frame_artifact;
-use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+#[cfg(test)]
+use crate::artifact::{frame_image_file_name, write_frame_artifact};
+use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageDimensions};
 
-pub use coverage::{CoverageProducerError, ProducedCoverage, produce_coverage_from_fixture_dir};
+pub use coverage::{CoverageProducerError, build_coverage_fixture};
 pub use error::ScanProducerError;
 
 /// Metadata supplied by a capture site when building a [`ScanFrame`].
@@ -28,11 +25,27 @@ pub struct FrameCaptureMeta {
   pub captured_at_millis: u64,
   pub window_bounds: ScanBounds,
   pub viewport_bounds: Option<ScanBounds>,
-  pub image_file_name: String,
-  pub media_type: String,
 }
 
-/// Result of a successful produce/write bundle.
+/// One decoded fixture frame. Fixture paths remain input-only and never become
+/// artifact locators.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadedFrameFixture {
+  frame: ScanFrame,
+  image_bytes: Vec<u8>,
+}
+
+impl LoadedFrameFixture {
+  pub fn frame(&self) -> &ScanFrame {
+    &self.frame
+  }
+
+  pub fn into_parts(self) -> (ScanFrame, Vec<u8>) {
+    (self.frame, self.image_bytes)
+  }
+}
+
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProducedFrame {
   pub json_path: PathBuf,
@@ -50,7 +63,7 @@ struct FixtureManifest {
   captured_at_millis: u64,
   window_bounds: ScanBounds,
   viewport_bounds: Option<ScanBounds>,
-  image: ScanImageRef,
+  image: FixtureImage,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +73,12 @@ struct MultiFrameFixtureEntry {
   captured_at_millis: u64,
   window_bounds: ScanBounds,
   viewport_bounds: Option<ScanBounds>,
-  image: ScanImageRef,
+  image: FixtureImage,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureImage {
+  file_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +87,7 @@ struct MultiFrameFixtureManifest {
   frames: Vec<MultiFrameFixtureEntry>,
 }
 
-/// Result of a successful multi-frame produce/write batch.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProducedFrameBatch {
   pub produced: Vec<ProducedFrame>,
@@ -87,11 +105,9 @@ pub fn build_scan_frame(meta: FrameCaptureMeta, image_width: u32, image_height: 
     captured_at_millis: meta.captured_at_millis,
     window_bounds: meta.window_bounds,
     viewport_bounds: meta.viewport_bounds,
-    image: ScanImageRef {
-      file_name: meta.image_file_name,
+    image_dimensions: ScanImageDimensions {
       width: image_width,
       height: image_height,
-      media_type: meta.media_type,
     },
   };
   frame.validate_wire()?;
@@ -118,11 +134,11 @@ pub fn frame_from_capture(capture: &auv_driver::Capture, meta: FrameCaptureMeta)
   build_scan_frame(meta, capture.image.width(), capture.image.height())
 }
 
-/// Write PNG bytes then JSON artifact. On JSON failure, removes the PNG (fail-closed).
+#[cfg(test)]
 pub fn write_frame_with_image(dir: &Path, frame: &ScanFrame, image_bytes: &[u8]) -> Result<ProducedFrame, ScanProducerError> {
   frame.validate_wire()?;
   fs::create_dir_all(dir)?;
-  let image_path = dir.join(&frame.image.file_name);
+  let image_path = dir.join(frame_image_file_name(frame.sequence_index));
   fs::write(&image_path, image_bytes)?;
   match write_frame_artifact(dir, frame) {
     Ok(json_path) => Ok(ProducedFrame {
@@ -144,8 +160,6 @@ fn fixture_meta_from_entry(entry: MultiFrameFixtureEntry) -> FrameCaptureMeta {
     captured_at_millis: entry.captured_at_millis,
     window_bounds: entry.window_bounds,
     viewport_bounds: entry.viewport_bounds,
-    image_file_name: entry.image.file_name,
-    media_type: entry.image.media_type,
   }
 }
 
@@ -157,8 +171,6 @@ fn fixture_meta_from_manifest(manifest: FixtureManifest) -> FrameCaptureMeta {
     captured_at_millis: manifest.captured_at_millis,
     window_bounds: manifest.window_bounds,
     viewport_bounds: manifest.viewport_bounds,
-    image_file_name: manifest.image.file_name,
-    media_type: manifest.image.media_type,
   }
 }
 
@@ -169,7 +181,8 @@ fn png_dimensions(image_bytes: &[u8]) -> Result<(u32, u32), ScanProducerError> {
   reader.into_dimensions().map_err(|err| ScanProducerError::Io(std::io::Error::other(err)))
 }
 
-fn load_fixture_frame(fixture_dir: &Path) -> Result<(ScanFrame, Vec<u8>), ScanProducerError> {
+/// Decode one hermetic fixture into a typed frame and its original image bytes.
+pub fn load_frame_fixture(fixture_dir: &Path) -> Result<LoadedFrameFixture, ScanProducerError> {
   let manifest_path = fixture_dir.join(MANIFEST_FILE);
   let manifest_bytes = fs::read(&manifest_path)?;
   let manifest: FixtureManifest = serde_json::from_slice(&manifest_bytes)?;
@@ -182,12 +195,12 @@ fn load_fixture_frame(fixture_dir: &Path) -> Result<(ScanFrame, Vec<u8>), ScanPr
   let image_bytes = fs::read(&image_path)?;
   let (image_width, image_height) = png_dimensions(&image_bytes)?;
   let frame = build_scan_frame(fixture_meta_from_manifest(manifest), image_width, image_height)?;
-  Ok((frame, image_bytes))
+  Ok(LoadedFrameFixture { frame, image_bytes })
 }
 
-/// Hermetic producer: read fixture manifest + PNG, write artifact bundle to `out_dir`.
+#[cfg(test)]
 pub fn produce_frame_from_fixture_dir(fixture_dir: &Path, out_dir: &Path) -> Result<ProducedFrame, ScanProducerError> {
-  let (frame, image_bytes) = load_fixture_frame(fixture_dir)?;
+  let (frame, image_bytes) = load_frame_fixture(fixture_dir)?.into_parts();
   write_frame_with_image(out_dir, &frame, &image_bytes)
 }
 
@@ -228,6 +241,7 @@ fn load_multi_frame_fixture(fixture_dir: &Path) -> Result<Vec<(ScanFrame, Vec<u8
   Ok(frames)
 }
 
+#[cfg(test)]
 fn rollback_produced_frames(produced: &[ProducedFrame]) {
   for frame in produced.iter().rev() {
     let _ = fs::remove_file(&frame.json_path);
@@ -235,7 +249,7 @@ fn rollback_produced_frames(produced: &[ProducedFrame]) {
   }
 }
 
-/// Hermetic multi-frame producer: each frame uses `write_frame_with_image` (single write path).
+#[cfg(test)]
 pub fn produce_frames_from_fixture_dir(fixture_dir: &Path, out_dir: &Path) -> Result<ProducedFrameBatch, ScanProducerError> {
   let frames = load_multi_frame_fixture(fixture_dir)?;
   let mut produced = Vec::with_capacity(frames.len());
@@ -281,8 +295,6 @@ mod tests {
         height: 600,
       },
       viewport_bounds: None,
-      image_file_name: "frame-0001.png".to_string(),
-      media_type: "image/png".to_string(),
     }
   }
 
@@ -308,7 +320,6 @@ mod tests {
     let produced = produce_frame_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     assert!(produced.image_path.is_file());
     assert_eq!(produced.image_path.file_name().unwrap(), "frame-0001.png");
-    assert_eq!(produced.frame.image.file_name, "frame-0001.png");
     let _ = fs::remove_dir_all(&out_dir);
   }
 
@@ -368,8 +379,7 @@ mod tests {
         "image": {
           "file_name": "frame-0001.png",
           "width": 8,
-          "height": 8,
-          "media_type": "image/png"
+          "height": 8
         }
       }))
       .unwrap(),
@@ -421,8 +431,8 @@ mod tests {
     };
     let frame = frame_from_capture(&capture, sample_meta()).expect("frame");
     assert_eq!(frame.schema_version, SCAN_FRAME_SCHEMA_VERSION);
-    assert_eq!(frame.image.width, 8);
-    assert_eq!(frame.image.height, 8);
+    assert_eq!(frame.image_dimensions.width, 8);
+    assert_eq!(frame.image_dimensions.height, 8);
   }
 
   #[test]

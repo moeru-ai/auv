@@ -4,6 +4,7 @@ use super::{
   read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory},
 };
 use crate::{ParserDiagnostic, ViewBounds, normalize_identity};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReacquireTarget {
@@ -15,7 +16,8 @@ pub enum ReacquireTarget {
   },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReacquireStrategy {
   DirectId,
   LabelCurrentViewport,
@@ -312,6 +314,7 @@ mod tests {
   use super::*;
   use crate::ViewBounds;
   use crate::memory::{VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot};
+  use auv_tracing::{ArtifactId, ArtifactUri, RunId};
 
   struct FakeAdapter {
     observations: Vec<ReacquireObservation>,
@@ -349,12 +352,11 @@ mod tests {
   fn empty_memory() -> ViewMemory {
     ViewMemory {
       schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
+      source_scan_uri: ArtifactUri::from_ids(RunId::new(), ArtifactId::new()),
       memory_id: "app:scope".into(),
       app_bundle_id: "app".into(),
       scope_id: "scope".into(),
       last_reconstructed_at_millis: 0,
-      source_run_id: String::new(),
-      source_reconstruction_ref: String::new(),
       anchors: Vec::new(),
       landmarks: Vec::new(),
       node_snapshots: Default::default(),

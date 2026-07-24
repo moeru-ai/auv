@@ -29,7 +29,7 @@ pub(crate) fn reconstruct_playlist_sidebar(
     },
     projection: PlaylistSidebarProjection { sections },
     boundary,
-    interaction_events: Vec::new(),
+    stop_reason: None,
     diagnostics,
     known_limits: Vec::new(),
   }

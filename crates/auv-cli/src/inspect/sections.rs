@@ -2,7 +2,6 @@
 
 use auv_tracing::{RunSnapshot, RunStore};
 
-use super::query_wired_minecraft::{append_minecraft_query_wired_section, collect_minecraft_query_wired_live_action_summaries};
 use super::query_wired_osu::{append_osu_query_wired_section, collect_osu_query_wired_live_action_summaries};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -93,7 +92,6 @@ async fn collect_sections(store: &dyn RunStore, snapshot: &RunSnapshot) -> Resul
     id: auv_game_balatro::inspect::BalatroCardDetectionSection::ID,
     text: auv_game_balatro::inspect::render_balatro_card_detection_text(store, snapshot).await?,
   });
-  sections.extend(auv_game_minecraft::inspect_sections_quality_spatial(store, snapshot).await?.into_iter().map(minecraft_section));
   sections.extend(auv_game_osu::inspect_sections_primary(store, snapshot).await?.into_iter().map(osu_section));
 
   let osu_query_wired = collect_osu_query_wired_live_action_summaries(store, snapshot).await?;
@@ -105,14 +103,6 @@ async fn collect_sections(store: &dyn RunStore, snapshot: &RunSnapshot) -> Resul
   });
 
   sections.extend(auv_game_osu::inspect_sections_detection_eval(store, snapshot).await?.into_iter().map(osu_section));
-
-  let minecraft_query_wired = collect_minecraft_query_wired_live_action_summaries(store, snapshot).await?;
-  let mut minecraft_query_wired_text = String::new();
-  append_minecraft_query_wired_section(&mut minecraft_query_wired_text, &minecraft_query_wired);
-  sections.push(ProductInspectSection {
-    id: "minecraft_query_wired_live_action",
-    text: minecraft_query_wired_text,
-  });
 
   sections.push(ProductInspectSection {
     id: "core_suffix",

@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use auv_netease_music::invoke::{build_select_result_from_fixture_dir, hermetic_select_proof_fixture_dir};
-use auv_netease_music::recording::persist_playlist_select_proof;
+use auv_netease_music::run_artifacts::persist_playlist_select_proof;
 use auv_tracing::{AuthorityId, Context, Dispatch, MemoryRunStore, RunId, RunSnapshot, RunStore, configure, dispatcher};
 
 struct TestTracing {
@@ -37,7 +37,7 @@ impl TestTracing {
 }
 
 #[test]
-fn tracing_feature_composes_netease_and_media_tracing_without_enabling_defaults() {
+fn tracing_feature_only_enables_optional_media_tracing_without_enabling_defaults() {
   let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
   let output = Command::new(env!("CARGO"))
     .args([
@@ -86,9 +86,8 @@ fn direct_result_is_identical_with_and_without_active_dispatch() {
   assert!(matches!(enabled, Ok(Some(_))));
 
   assert_eq!(with, expected);
-  assert_eq!(with.run_id, without.run_id);
-  assert_eq!(with.known_limits, without.known_limits);
   let snapshot = tracing.flush_snapshot();
+  assert_eq!(snapshot.run_id(), tracing.run_id);
   let spans = snapshot.spans().values().collect::<Vec<_>>();
   assert_eq!(spans.len(), 1);
   assert_eq!(spans[0].started().name().as_str(), "auv.netease.playlist.select_proof");

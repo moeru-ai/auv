@@ -9,7 +9,6 @@ use auv_game_minecraft::{
   BlockPosition, MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, MinecraftBlockTarget, MinecraftProjectionArtifact, MinecraftSpatialFrame,
   MinecraftTargetSemantics, MismatchRefusalReason, TailFrameWaitConfig, bind_capture_to_frame, mc6_projection_target_for_frame,
 };
-use auv_runtime::contract::VerificationResult;
 use auv_runtime::model::AuvResult;
 use auv_tracing::{
   ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, ContentType, Context, EventPayload, NewArtifact, Sha256Digest,
@@ -21,7 +20,7 @@ use sha2::{Digest, Sha256};
 use super::query_live_action::DirectWindowPointClickExecutor;
 use super::{
   BoundedBytes, MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT, minecraft_decoded_image_buffer_length, minecraft_image_decode_limits,
-  serialize_json_bounded, validate_minecraft_image_buffer,
+  validate_minecraft_image_buffer,
 };
 
 pub const MINECRAFT_SCREENSHOT_PURPOSE: &str = "auv.minecraft.screenshot";
@@ -32,30 +31,6 @@ pub const MINECRAFT_OVERLAY_PURPOSE: &str = "auv.minecraft.projection_overlay";
 pub const MINECRAFT_PROJECTION_CALIBRATION_PURPOSE: &str = "auv.minecraft.projection_calibration";
 
 const LIVE_CLICK_POST_FRAME_WAIT: TailFrameWaitConfig = TailFrameWaitConfig::new(750, 25);
-
-#[derive(Clone, Debug)]
-/// Canonical publications required with artifact authority and absent otherwise.
-pub struct MinecraftProjectionPublications {
-  pub screenshot: Option<ArtifactMetadata>,
-  pub spatial_frame: Option<ArtifactMetadata>,
-  pub projection: Option<ArtifactMetadata>,
-  pub overlay: Option<ArtifactMetadata>,
-  pub calibration: Option<ArtifactMetadata>,
-}
-
-impl MinecraftProjectionPublications {
-  pub fn artifacts(&self) -> impl Iterator<Item = &ArtifactMetadata> {
-    [
-      self.screenshot.as_ref(),
-      self.spatial_frame.as_ref(),
-      self.projection.as_ref(),
-      self.overlay.as_ref(),
-      self.calibration.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-  }
-}
 
 #[derive(Clone, Debug)]
 /// Typed inputs for binding telemetry to a supplied or freshly captured image.
@@ -70,10 +45,9 @@ pub struct MinecraftProjectionBridgeInputs {
 }
 
 #[derive(Clone, Debug)]
-/// Direct projection evidence plus canonical publications when recording is available.
+/// Direct projection evidence.
 pub struct MinecraftProjectionBridgeOutput {
   pub evidence: ProjectionEvidence,
-  pub publications: MinecraftProjectionPublications,
 }
 
 #[derive(Clone, Debug)]
@@ -95,7 +69,6 @@ pub struct MinecraftProjectionCalibrationArtifact {
   pub raycast_hit_block_pos: Option<String>,
   pub raycast_hit_face: Option<String>,
   pub refusal_reason: Option<MismatchRefusalReason>,
-  pub overlay_ref: Option<String>,
   pub known_limits: Vec<String>,
 }
 
@@ -104,7 +77,6 @@ pub struct MinecraftProjectionCalibrationArtifact {
 pub struct MinecraftProjectionCalibrationOutput {
   pub evidence: ProjectionEvidence,
   pub calibration: MinecraftProjectionCalibrationArtifact,
-  pub publications: MinecraftProjectionPublications,
 }
 
 #[derive(Clone, Debug)]
@@ -125,14 +97,13 @@ pub struct MinecraftLiveClickInputs {
 pub struct MinecraftLiveClickOutput {
   pub projection: MinecraftProjectionArtifact,
   pub input_action: auv_driver::InputActionResult,
-  pub verification: VerificationResult,
-  pub input_summary: String,
-  pub publications: MinecraftProjectionPublications,
+  pub verification: auv_game_minecraft::WorldDiffVerdict,
 }
 
 #[derive(serde::Serialize)]
 struct MinecraftLiveClickVerificationEvent {
-  verification: VerificationResult,
+  verdict: auv_game_minecraft::WorldDiffVerdict,
+  evidence: Vec<auv_tracing::ArtifactUri>,
 }
 
 impl EventPayload for MinecraftLiveClickVerificationEvent {
@@ -155,7 +126,6 @@ pub async fn run_minecraft_projection_bridge(inputs: MinecraftProjectionBridgeIn
   let projected = project_capture(frame, screenshot, &target, inputs.capture_skew_ms, inputs.screenshot_is_minecraft_window).await?;
   Ok(MinecraftProjectionBridgeOutput {
     evidence: projected.evidence,
-    publications: projected.publications,
   })
 }
 
@@ -183,18 +153,15 @@ pub async fn run_minecraft_calibrate_projection(
     raycast_hit_block_pos: frame.raycast_hit.as_ref().map(|hit| format!("{},{},{}", hit.block_pos.x, hit.block_pos.y, hit.block_pos.z)),
     raycast_hit_face: frame.raycast_hit.as_ref().map(|hit| format!("{:?}", hit.face)),
     refusal_reason,
-    overlay_ref: projected.publications.overlay.as_ref().map(|artifact| artifact.uri().to_string()),
     known_limits: vec![
       "geometry gate is visual-review driven; this artifact does not assert numeric pass/fail".to_string(),
       "MC-6 hit-face-center applies only when raycast_hit.block_pos matches target_block".to_string(),
     ],
   };
-  let mut publications = projected.publications;
-  publications.calibration = publish_json_artifact(MINECRAFT_PROJECTION_CALIBRATION_PURPOSE, &calibration).await?;
+  drop(publish_json_artifact(MINECRAFT_PROJECTION_CALIBRATION_PURPOSE, &calibration).await?);
   Ok(MinecraftProjectionCalibrationOutput {
     evidence: projected.evidence,
     calibration,
-    publications,
   })
 }
 
@@ -222,12 +189,12 @@ pub async fn run_minecraft_live_click(inputs: MinecraftLiveClickInputs) -> AuvRe
   let window_point = auv_game_minecraft::projected_window_point(&projected_point)
     .ok_or_else(|| "projected minecraft point is not window-clickable".to_string())?;
   let executor = DirectWindowPointClickExecutor::new(inputs.target_app, inputs.target_title);
-  let (input_summary, input_action) = executor.click(window_point)?;
+  let input_action = executor.click(window_point)?;
   let context = Context::current();
-  let input_action_artifact = auv_runtime::run_read::publish_input_action_result(Some(&context), &input_action)
-    .await
-    .map_err(|error| format!("failed to publish Minecraft live-click input action result: {error}"))?;
-  require_enabled_publication(&context, auv_runtime::run_read::INPUT_ACTION_RESULT_PURPOSE, input_action_artifact)?;
+  super::keep_artifact_receipt(
+    auv_runtime::run_read::INPUT_ACTION_RESULT_PURPOSE,
+    auv_runtime::run_read::publish_input_action_result(Some(&context), &input_action).await,
+  );
 
   let post_sample_path = inputs.post_telemetry_sample.as_deref().unwrap_or(&inputs.telemetry_sample);
   let post_frame = auv_game_minecraft::read_latest_spatial_frame_newer_than(
@@ -237,17 +204,14 @@ pub async fn run_minecraft_live_click(inputs: MinecraftLiveClickInputs) -> AuvRe
   )?
   .ok_or_else(|| format!("no valid minecraft post frame found in {}", post_sample_path.display()))?;
   let post_frame_artifact = publish_json_artifact(MINECRAFT_SPATIAL_FRAME_PURPOSE, &post_frame).await?;
-  let evidence =
-    projected.publications.spatial_frame.iter().chain(post_frame_artifact.iter()).map(|artifact| artifact.uri().clone()).collect();
+  let evidence = projected.recorded_spatial_frame.iter().chain(post_frame_artifact.iter()).map(|artifact| artifact.uri().clone()).collect();
   let world_diff_request =
     auv_game_minecraft::verify::WorldDiffRequest::new(MinecraftBlockTarget::new(inputs.target_block)).allow_same_block_state_change();
-  let verification = super::verification::map_world_diff_verdict_to_verification_result(
-    &auv_game_minecraft::verify::evaluate_world_diff(&pre_frame, &post_frame, &world_diff_request),
-    evidence,
-  );
+  let verification = auv_game_minecraft::verify::evaluate_world_diff(&pre_frame, &post_frame, &world_diff_request);
   context.in_scope(|| {
     auv_tracing::emit_event!(MinecraftLiveClickVerificationEvent {
-      verification: verification.clone(),
+      verdict: verification.clone(),
+      evidence,
     });
   });
 
@@ -255,15 +219,13 @@ pub async fn run_minecraft_live_click(inputs: MinecraftLiveClickInputs) -> AuvRe
     projection,
     input_action,
     verification,
-    input_summary,
-    publications: projected.publications,
   })
 }
 
 struct ProjectedCapture {
   bound_frame: MinecraftSpatialFrame,
   evidence: ProjectionEvidence,
-  publications: MinecraftProjectionPublications,
+  recorded_spatial_frame: Option<ArtifactMetadata>,
 }
 
 async fn project_capture(
@@ -273,55 +235,47 @@ async fn project_capture(
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
 ) -> AuvResult<ProjectedCapture> {
-  let screenshot_artifact = publish_png(MINECRAFT_SCREENSHOT_PURPOSE, &screenshot).await?;
-  let screenshot_ref = screenshot_artifact.as_ref().map(|artifact| artifact.uri().to_string());
-  // NOTICE(minecraft-optional-capture-ref): the domain evidence builder still
-  // requires a String capture reference. Disabled and telemetry-only runs use
-  // an empty transient value which is cleared before evidence can be returned
-  // or published. Remove this adapter when ScreenshotCapture accepts Option.
-  let evidence_ref = screenshot_ref.clone().unwrap_or_default();
   let capture_timestamp_ms = capture_timestamp(frame.monotonic_timestamp_ms, capture_skew_ms);
-  let mut bound = bind_capture_to_frame(frame, evidence_ref.clone(), capture_timestamp_ms);
-  let mut evidence = build_projection_evidence(
-    bound.frame.clone(),
+  let bound = bind_capture_to_frame(frame.clone(), None, capture_timestamp_ms);
+  let evidence = build_projection_evidence(
+    frame,
     ScreenshotCapture {
       screenshot_dimensions: Some((screenshot.width(), screenshot.height())),
-      image: screenshot,
-      artifact_ref: evidence_ref,
+      image: screenshot.clone(),
+      artifact_ref: None,
       capture_monotonic_timestamp_ms: capture_timestamp_ms,
       is_minecraft_window: screenshot_is_minecraft_window,
     },
     target,
     Some(250),
   )?;
-  if screenshot_ref.is_none() {
-    bound.frame.screenshot_artifact_ref = None;
-    match &mut evidence {
+
+  let screenshot_artifact = publish_png(MINECRAFT_SCREENSHOT_PURPOSE, &screenshot).await?;
+  let mut recorded_frame = bound.frame.clone();
+  let mut recorded_evidence = evidence.clone();
+  if let Some(screenshot_uri) = screenshot_artifact.as_ref().map(|artifact| artifact.uri().to_string()) {
+    recorded_frame.screenshot_artifact_ref = Some(screenshot_uri.clone());
+    match &mut recorded_evidence {
       ProjectionEvidence::Bound { artifact, .. } | ProjectionEvidence::Refused { artifact, .. } => {
-        artifact.screenshot_artifact_ref = None;
+        artifact.screenshot_artifact_ref = Some(screenshot_uri);
       }
     }
   }
-  let spatial_frame = publish_json_artifact(MINECRAFT_SPATIAL_FRAME_PURPOSE, &bound.frame).await?;
-  let context = Context::current();
-  let projection = auv_game_minecraft::artifact::publish_minecraft_projection(Some(&context), evidence.artifact())
-    .await
-    .map_err(|error| format!("failed to publish Minecraft projection artifact: {error}"))?;
-  let projection = require_enabled_publication(&context, auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE, projection)?;
-  let overlay = match &evidence {
-    ProjectionEvidence::Bound { overlay, .. } => publish_png(MINECRAFT_OVERLAY_PURPOSE, overlay).await?,
-    ProjectionEvidence::Refused { .. } => None,
-  };
+  let recorded_spatial_frame = publish_json_artifact(MINECRAFT_SPATIAL_FRAME_PURPOSE, &recorded_frame).await?;
+  if screenshot_artifact.is_some() {
+    let context = Context::current();
+    super::keep_artifact_receipt(
+      auv_game_minecraft::artifact::MINECRAFT_PROJECTION_PURPOSE,
+      auv_game_minecraft::artifact::publish_minecraft_projection(Some(&context), recorded_evidence.artifact()).await,
+    );
+  }
+  if let ProjectionEvidence::Bound { overlay, .. } = &evidence {
+    drop(publish_png(MINECRAFT_OVERLAY_PURPOSE, overlay).await?);
+  }
   Ok(ProjectedCapture {
     bound_frame: bound.frame,
     evidence,
-    publications: MinecraftProjectionPublications {
-      screenshot: screenshot_artifact,
-      spatial_frame,
-      projection,
-      overlay,
-      calibration: None,
-    },
+    recorded_spatial_frame,
   })
 }
 
@@ -407,8 +361,24 @@ pub(crate) async fn publish_json_artifact<T: serde::Serialize>(purpose: &'static
   if !context.can_publish_artifacts() {
     return Ok(None);
   }
-  let bytes = serialize_json_bounded(value, MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, &format!("{purpose} artifact"))?;
-  publish_bytes(&context, purpose, "application/json", bytes).await.map(Some)
+  let purpose_value = match ArtifactPurpose::parse(purpose) {
+    Ok(purpose) => purpose,
+    Err(error) => {
+      return Ok(super::keep_artifact_receipt::<String>(purpose, Err(format!("invalid artifact purpose: {error}"))));
+    }
+  };
+  let emission = match auv_tracing::emit_json_artifact(
+    purpose_value,
+    Attributes::empty(),
+    ByteLength::new(MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).expect("static Minecraft JSON limit is valid"),
+    value,
+  ) {
+    Ok(artifact) => artifact,
+    Err(error) => {
+      return Ok(super::keep_artifact_receipt::<String>(purpose, Err(format!("failed to construct artifact: {error}"))));
+    }
+  };
+  Ok(super::keep_artifact_receipt(purpose, emission.await))
 }
 
 async fn publish_png(purpose: &'static str, image: &RgbImage) -> AuvResult<Option<ArtifactMetadata>> {
@@ -416,40 +386,44 @@ async fn publish_png(purpose: &'static str, image: &RgbImage) -> AuvResult<Optio
   if !context.can_publish_artifacts() {
     return Ok(None);
   }
-  validate_minecraft_image_buffer(image.width(), image.height(), image.as_raw().len(), purpose)?;
+  if let Err(error) = validate_minecraft_image_buffer(image.width(), image.height(), image.as_raw().len(), purpose) {
+    return Ok(super::keep_artifact_receipt::<String>(purpose, Err(error)));
+  }
   let mut output = BoundedBytes::new(purpose, MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT);
-  PngEncoder::new(&mut output)
-    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgb8)
-    .map_err(|error| format!("failed to encode {purpose} artifact: {error}"))?;
-  publish_bytes(&context, purpose, "image/png", output.into_inner()).await.map(Some)
+  if let Err(error) = PngEncoder::new(&mut output).write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgb8) {
+    return Ok(super::keep_artifact_receipt::<String>(purpose, Err(format!("failed to encode artifact: {error}"))));
+  }
+  Ok(publish_bytes(&context, purpose, "image/png", output.into_inner()).await)
 }
 
-async fn publish_bytes(context: &Context, purpose: &'static str, content_type: &'static str, bytes: Vec<u8>) -> AuvResult<ArtifactMetadata> {
-  let byte_length = u64::try_from(bytes.len()).map_err(|_| format!("{purpose} artifact length does not fit u64"))?;
+async fn publish_bytes(context: &Context, purpose: &'static str, content_type: &'static str, bytes: Vec<u8>) -> Option<ArtifactMetadata> {
+  let byte_length = match u64::try_from(bytes.len()) {
+    Ok(byte_length) => byte_length,
+    Err(_) => return super::keep_artifact_receipt::<String>(purpose, Err("artifact length does not fit u64".to_string())),
+  };
+  let purpose_value = match ArtifactPurpose::parse(purpose) {
+    Ok(purpose) => purpose,
+    Err(error) => return super::keep_artifact_receipt::<String>(purpose, Err(format!("invalid artifact purpose: {error}"))),
+  };
+  let content_type_value = match ContentType::parse(content_type) {
+    Ok(content_type) => content_type,
+    Err(error) => {
+      return super::keep_artifact_receipt::<String>(purpose, Err(format!("invalid artifact content type {content_type}: {error}")));
+    }
+  };
+  let byte_length = match ByteLength::new(byte_length) {
+    Ok(byte_length) => byte_length,
+    Err(error) => return super::keep_artifact_receipt::<String>(purpose, Err(format!("invalid artifact byte length: {error}"))),
+  };
   let artifact = NewArtifact::new(
-    ArtifactPurpose::parse(purpose).map_err(|error| format!("invalid {purpose} artifact purpose: {error}"))?,
-    ContentType::parse(content_type).map_err(|error| format!("invalid {purpose} artifact content type {content_type}: {error}"))?,
-    ByteLength::new(byte_length).map_err(|error| format!("invalid {purpose} artifact byte length: {error}"))?,
+    purpose_value,
+    content_type_value,
+    byte_length,
     Sha256Digest::new(Sha256::digest(&bytes).into()),
     Attributes::empty(),
     AsyncCursor::new(bytes),
   );
-  let published = context
-    .in_scope(|| auv_tracing::emit_artifact!(artifact))
-    .await
-    .map_err(|error| format!("failed to publish {purpose} artifact: {error}"))?;
-  published.ok_or_else(|| format!("enabled publication of {purpose} returned no artifact receipt"))
-}
-
-fn require_enabled_publication(
-  context: &Context,
-  purpose: &'static str,
-  publication: Option<ArtifactMetadata>,
-) -> AuvResult<Option<ArtifactMetadata>> {
-  if context.can_publish_artifacts() && publication.is_none() {
-    return Err(format!("enabled publication of {purpose} returned no artifact receipt"));
-  }
-  Ok(publication)
+  super::keep_artifact_receipt(purpose, context.in_scope(|| auv_tracing::emit_artifact!(artifact)).await)
 }
 
 #[cfg(test)]
@@ -467,15 +441,53 @@ mod tests {
 
   use super::*;
 
+  #[test]
+  fn public_projection_outputs_do_not_expose_recording_receipts() {
+    let production = include_str!("projection_workflow.rs").split("#[cfg(test)]").next().expect("projection workflow test boundary");
+
+    assert!(!production.contains("pub struct MinecraftProjectionPublications"));
+    for output in [
+      "MinecraftProjectionBridgeOutput",
+      "MinecraftProjectionCalibrationOutput",
+      "MinecraftLiveClickOutput",
+    ] {
+      let fields = production
+        .split(&format!("pub struct {output}"))
+        .nth(1)
+        .and_then(|tail| tail.split("}\n").next())
+        .unwrap_or_else(|| panic!("{output} fields"));
+      assert!(!fields.contains("publications"), "{output} leaks recording receipts into its direct result");
+      assert!(!fields.contains("ArtifactMetadata"), "{output} leaks store metadata into its direct result");
+    }
+  }
+
+  #[tokio::test]
+  async fn artifact_authority_does_not_change_direct_projection_evidence() {
+    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+    let run_id = RunId::new();
+    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let target = MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0));
+    let future =
+      root.in_scope(|| project_capture(projection_test_frame(), RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])), &target, Some(0), true));
+
+    let projected = root.instrument(future).await.expect("projection");
+
+    assert_eq!(projected.bound_frame.screenshot_artifact_ref, None);
+    assert_eq!(projected.evidence.artifact().screenshot_artifact_ref, None);
+    let snapshot = store.load_snapshot(run_id).await.expect("load run").expect("recorded run");
+    assert!(snapshot.artifacts().len() >= 3, "recording should remain available independently from the direct evidence");
+  }
+
   // ROOT CAUSE:
   //
-  // If an authority-backed artifact write failed, projection still returned
-  // success because every publication failure was collapsed into None.
+  // An authority-backed artifact write failed after projection had already
+  // produced its direct domain value.
   //
-  // Before the fix, callers could claim evidence that the run never recorded.
-  // The fix propagates required publication failures from the workflow.
+  // Before the fix, the recording failure replaced that direct result. The
+  // projection now survives with every unavailable artifact reference absent.
   #[tokio::test]
-  async fn project_capture_propagates_enabled_screenshot_publication_failure() {
+  async fn project_capture_preserves_direct_projection_when_store_rejects_recording() {
     let store = Arc::new(RejectArtifactStore::new());
     let dispatch = configure().run_store(store).build().expect("rejecting dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
@@ -483,12 +495,11 @@ mod tests {
     let future =
       root.in_scope(|| project_capture(projection_test_frame(), RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])), &target, Some(0), true));
 
-    let error = match root.instrument(future).await {
-      Ok(_) => panic!("enabled screenshot publication failure must fail projection"),
-      Err(error) => error,
-    };
+    let projected = root.instrument(future).await.expect("projection result must survive recording failure");
 
-    assert!(error.contains("auv.test.minecraft_artifact_rejected"), "unexpected publication error: {error}");
+    assert_eq!(projected.bound_frame.screenshot_artifact_ref, None);
+    assert_eq!(projected.evidence.artifact().screenshot_artifact_ref, None);
+    assert!(projected.recorded_spatial_frame.is_none());
   }
 
   // ROOT CAUSE:
@@ -512,7 +523,7 @@ mod tests {
 
     assert_eq!(projected.bound_frame.screenshot_artifact_ref, None);
     assert_eq!(projected.evidence.artifact().screenshot_artifact_ref, None);
-    assert_eq!(projected.publications.artifacts().count(), 0);
+    assert!(projected.recorded_spatial_frame.is_none());
   }
 
   #[tokio::test]
@@ -525,7 +536,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn enabled_json_publication_rejects_payload_over_minecraft_limit() {
+  async fn enabled_json_publication_drops_oversized_recording_without_failing_the_caller() {
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = configure().run_store(store).build().expect("memory dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
@@ -533,21 +544,17 @@ mod tests {
       "x".repeat(usize::try_from(auv_game_minecraft::MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1).expect("test limit fits usize"));
     let future = root.in_scope(|| publish_json_artifact("auv.minecraft.test_oversized", &oversized));
 
-    let error = root.instrument(future).await.expect_err("oversized enabled JSON publication must fail");
-
-    assert!(error.contains("exceeding"), "unexpected oversized publication error: {error}");
+    assert!(root.instrument(future).await.expect("recording preparation failure is not a domain failure").is_none());
   }
 
   #[tokio::test]
-  async fn enabled_json_publication_propagates_serialization_failure() {
+  async fn enabled_json_publication_drops_serialization_failure_without_failing_the_caller() {
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
     let dispatch = configure().run_store(store).build().expect("memory dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let future = root.in_scope(|| publish_json_artifact("auv.minecraft.test_serialization_failure", &FailingSerializationProbe));
 
-    let error = root.instrument(future).await.expect_err("enabled serialization failure must fail publication");
-
-    assert!(error.contains("intentional serialization failure"), "unexpected serialization error: {error}");
+    assert!(root.instrument(future).await.expect("recording serialization failure is not a domain failure").is_none());
   }
 
   struct SerializationProbe<'a>(&'a AtomicBool);

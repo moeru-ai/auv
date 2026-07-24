@@ -1,18 +1,23 @@
+use std::collections::TryReserveError;
 use std::fmt;
 use std::future::Future;
+use std::io::Write;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::task::{Context as TaskContext, Poll};
 
 use futures_channel::oneshot;
 use futures_io::AsyncRead;
+use futures_util::StreamExt;
+use futures_util::io::Cursor;
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::{
-  ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactWriteError, Attributes, ByteLength, ContentType, Dispatch,
-  DispatchFailure, IdempotencyKey, RunId, Sha256Digest, ValidationError,
+  ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactWriteError, Attributes, AuthorityId, ByteLength,
+  ContentType, Dispatch, DispatchFailure, IdempotencyKey, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest, ValidationError,
 };
 
 /// One validated, caller-owned artifact write.
@@ -66,6 +71,346 @@ impl<R> NewArtifact<R> {
   }
 }
 
+impl NewArtifact<Cursor<Vec<u8>>> {
+  /// Creates an artifact whose complete body is already owned in memory.
+  ///
+  /// Length and digest are derived here so producers cannot publish metadata
+  /// that disagrees with the supplied bytes.
+  pub fn from_bytes(
+    purpose: ArtifactPurpose,
+    content_type: ContentType,
+    attributes: Attributes,
+    body: Vec<u8>,
+  ) -> Result<Self, ValidationError> {
+    let byte_length =
+      u64::try_from(body.len()).map_err(|_| ValidationError::new("artifact byte length does not fit the canonical integer range"))?;
+    Ok(Self::new(
+      purpose,
+      content_type,
+      ByteLength::new(byte_length)?,
+      Sha256Digest::new(Sha256::digest(&body).into()),
+      attributes,
+      Cursor::new(body),
+    ))
+  }
+
+  /// Serializes one typed value into a bounded JSON artifact.
+  ///
+  /// Domain validation remains the producer's responsibility. This constructor
+  /// owns the shared encoding, allocation bound, content type, length, and
+  /// digest rules.
+  pub fn from_json<T>(purpose: ArtifactPurpose, attributes: Attributes, byte_limit: ByteLength, value: &T) -> Result<Self, JsonArtifactError>
+  where
+    T: Serialize,
+  {
+    let body = serialize_json_bounded(value, byte_limit)?;
+    let byte_length = ByteLength::new(u64::try_from(body.len()).map_err(|_| JsonArtifactError::LengthOutOfRange {
+      actual: body.len() as u128,
+    })?)
+    .expect("bounded JSON cannot exceed the canonical whole-artifact limit");
+    Ok(Self::new(
+      purpose,
+      ContentType::parse("application/json").expect("static JSON content type is valid"),
+      byte_length,
+      Sha256Digest::new(Sha256::digest(&body).into()),
+      attributes,
+      Cursor::new(body),
+    ))
+  }
+}
+
+/// Failure to construct a bounded JSON artifact.
+#[derive(Debug, thiserror::Error)]
+pub enum JsonArtifactError {
+  /// The value's serializer failed.
+  #[error("failed to serialize JSON artifact: {0}")]
+  Serialize(#[source] serde_json::Error),
+  /// The serialized body crossed the caller-provided bound.
+  #[error("JSON artifact is at least {actual} bytes, exceeding the {limit}-byte limit")]
+  PayloadTooLarge { limit: ByteLength, actual: u64 },
+  /// The encoded length cannot be represented by the canonical integer model.
+  #[error("JSON artifact length {actual} is outside the canonical integer range")]
+  LengthOutOfRange { actual: u128 },
+  /// Memory allocation for the bounded body failed.
+  #[error("failed to allocate JSON artifact body: {0}")]
+  Allocation(#[source] TryReserveError),
+}
+
+fn serialize_json_bounded<T>(value: &T, limit: ByteLength) -> Result<Vec<u8>, JsonArtifactError>
+where
+  T: Serialize,
+{
+  let mut output = BoundedJsonBuffer::new(limit);
+  let result = serde_json::to_writer(&mut output, value);
+  if let Some(failure) = output.failure.take() {
+    return Err(failure);
+  }
+  result.map_err(JsonArtifactError::Serialize)?;
+  Ok(output.bytes)
+}
+
+struct BoundedJsonBuffer {
+  limit: ByteLength,
+  bytes: Vec<u8>,
+  failure: Option<JsonArtifactError>,
+}
+
+impl BoundedJsonBuffer {
+  fn new(limit: ByteLength) -> Self {
+    Self {
+      limit,
+      bytes: Vec::new(),
+      failure: None,
+    }
+  }
+
+  fn fail(&mut self, failure: JsonArtifactError) -> std::io::Error {
+    self.failure = Some(failure);
+    std::io::Error::other("JSON artifact exceeded its bounded buffer")
+  }
+}
+
+impl Write for BoundedJsonBuffer {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let Some(next_length) = self.bytes.len().checked_add(buffer.len()) else {
+      return Err(self.fail(JsonArtifactError::LengthOutOfRange { actual: u128::MAX }));
+    };
+    let next_length = match u64::try_from(next_length) {
+      Ok(length) => length,
+      Err(_) => {
+        return Err(self.fail(JsonArtifactError::LengthOutOfRange {
+          actual: next_length as u128,
+        }));
+      }
+    };
+    if next_length > self.limit.get() {
+      return Err(self.fail(JsonArtifactError::PayloadTooLarge {
+        limit: self.limit,
+        actual: next_length,
+      }));
+    }
+    if let Err(source) = self.bytes.try_reserve(buffer.len()) {
+      return Err(self.fail(JsonArtifactError::Allocation(source)));
+    }
+    self.bytes.extend_from_slice(buffer);
+    Ok(buffer.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+}
+
+/// Reads one committed artifact body after validating its authority, owner,
+/// metadata contract, consumer bound, length, and digest.
+pub async fn read_artifact_bytes(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  expected_purpose: &ArtifactPurpose,
+  expected_content_type: &ContentType,
+  byte_limit: ByteLength,
+) -> Result<Vec<u8>, ReadArtifactError> {
+  let store_authority = store.authority_id();
+  if snapshot.authority_id() != store_authority {
+    return Err(ReadArtifactError::SnapshotAuthorityMismatch {
+      snapshot_authority: snapshot.authority_id(),
+      store_authority,
+    });
+  }
+  if uri.run_id() != snapshot.run_id() {
+    return Err(ReadArtifactError::WrongRun {
+      snapshot_run_id: snapshot.run_id(),
+      artifact_run_id: uri.run_id(),
+    });
+  }
+  let metadata = snapshot.artifacts().get(uri).ok_or_else(|| ReadArtifactError::NotCommitted { uri: uri.clone() })?.metadata();
+  if metadata.purpose() != expected_purpose {
+    return Err(ReadArtifactError::WrongPurpose {
+      uri: uri.clone(),
+      expected: expected_purpose.clone(),
+      actual: metadata.purpose().clone(),
+    });
+  }
+  if metadata.content_type() != expected_content_type {
+    return Err(ReadArtifactError::WrongContentType {
+      uri: uri.clone(),
+      expected: expected_content_type.clone(),
+      actual: metadata.content_type().clone(),
+    });
+  }
+
+  let expected_length = metadata.byte_length().get();
+  if expected_length > byte_limit.get() {
+    return Err(ReadArtifactError::PayloadTooLarge {
+      uri: uri.clone(),
+      limit: byte_limit,
+      actual: expected_length,
+    });
+  }
+  let expected_capacity = usize::try_from(expected_length).map_err(|_| ReadArtifactError::LengthOutOfRange {
+    uri: uri.clone(),
+    actual: expected_length,
+  })?;
+  let mut bytes = Vec::new();
+  bytes.try_reserve_exact(expected_capacity).map_err(|source| ReadArtifactError::Allocation {
+    uri: uri.clone(),
+    expected: metadata.byte_length(),
+    source,
+  })?;
+  let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| ReadArtifactError::Open {
+    uri: uri.clone(),
+    source,
+  })?;
+  let mut actual_length = 0_u64;
+  while let Some(chunk) = reader.next().await {
+    let chunk = chunk.map_err(|source| ReadArtifactError::Stream {
+      uri: uri.clone(),
+      source,
+    })?;
+    actual_length = actual_length.checked_add(chunk.len() as u64).ok_or_else(|| ReadArtifactError::PayloadTooLarge {
+      uri: uri.clone(),
+      limit: byte_limit,
+      actual: u64::MAX,
+    })?;
+    if actual_length > byte_limit.get() {
+      return Err(ReadArtifactError::PayloadTooLarge {
+        uri: uri.clone(),
+        limit: byte_limit,
+        actual: actual_length,
+      });
+    }
+    if actual_length > expected_length {
+      return Err(ReadArtifactError::LengthMismatch {
+        uri: uri.clone(),
+        expected: metadata.byte_length(),
+        actual: actual_length,
+      });
+    }
+    bytes.extend_from_slice(&chunk);
+  }
+  if actual_length != expected_length {
+    return Err(ReadArtifactError::LengthMismatch {
+      uri: uri.clone(),
+      expected: metadata.byte_length(),
+      actual: actual_length,
+    });
+  }
+  let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
+  if actual_digest != metadata.sha256() {
+    return Err(ReadArtifactError::DigestMismatch {
+      uri: uri.clone(),
+      expected: metadata.sha256(),
+      actual: actual_digest,
+    });
+  }
+  Ok(bytes)
+}
+
+/// Reads and decodes one bounded JSON artifact after applying the canonical
+/// artifact ownership and integrity checks.
+///
+/// This validates the transport contract only. Producers and consumers remain
+/// responsible for domain-specific payload validation after decoding.
+pub async fn read_json_artifact<T>(
+  store: &dyn RunStore,
+  snapshot: &RunSnapshot,
+  uri: &ArtifactUri,
+  expected_purpose: &ArtifactPurpose,
+  byte_limit: ByteLength,
+) -> Result<T, JsonArtifactReadError>
+where
+  T: de::DeserializeOwned,
+{
+  let content_type = ContentType::parse("application/json").expect("static JSON content type is valid");
+  let bytes = read_artifact_bytes(store, snapshot, uri, expected_purpose, &content_type, byte_limit).await?;
+  serde_json::from_slice(&bytes).map_err(|source| JsonArtifactReadError::Decode {
+    uri: uri.clone(),
+    source,
+  })
+}
+
+/// Failure to read or decode a typed JSON artifact.
+#[derive(Debug, thiserror::Error)]
+pub enum JsonArtifactReadError {
+  #[error(transparent)]
+  Artifact(#[from] ReadArtifactError),
+  #[error("artifact {uri} contains invalid JSON: {source}")]
+  Decode {
+    uri: ArtifactUri,
+    #[source]
+    source: serde_json::Error,
+  },
+}
+
+/// Failure to read bytes under a caller-specified artifact contract.
+#[derive(Debug, thiserror::Error)]
+pub enum ReadArtifactError {
+  #[error("snapshot authority {snapshot_authority} does not match store authority {store_authority}")]
+  SnapshotAuthorityMismatch {
+    snapshot_authority: AuthorityId,
+    store_authority: AuthorityId,
+  },
+  #[error("artifact belongs to run {artifact_run_id}, not snapshot run {snapshot_run_id}")]
+  WrongRun {
+    snapshot_run_id: RunId,
+    artifact_run_id: RunId,
+  },
+  #[error("artifact is not committed in the supplied snapshot: {uri}")]
+  NotCommitted { uri: ArtifactUri },
+  #[error("artifact {uri} has purpose {actual}, expected {expected}")]
+  WrongPurpose {
+    uri: ArtifactUri,
+    expected: ArtifactPurpose,
+    actual: ArtifactPurpose,
+  },
+  #[error("artifact {uri} has content type {actual}, expected {expected}")]
+  WrongContentType {
+    uri: ArtifactUri,
+    expected: ContentType,
+    actual: ContentType,
+  },
+  #[error("artifact {uri} is {actual} bytes, exceeding the {limit}-byte consumer limit")]
+  PayloadTooLarge {
+    uri: ArtifactUri,
+    limit: ByteLength,
+    actual: u64,
+  },
+  #[error("artifact {uri} byte length {actual} cannot be represented by this process")]
+  LengthOutOfRange { uri: ArtifactUri, actual: u64 },
+  #[error("failed to reserve {expected} bytes for artifact {uri}: {source}")]
+  Allocation {
+    uri: ArtifactUri,
+    expected: ByteLength,
+    #[source]
+    source: TryReserveError,
+  },
+  #[error("failed to open artifact {uri}: {source}")]
+  Open {
+    uri: ArtifactUri,
+    #[source]
+    source: ReadError,
+  },
+  #[error("failed to stream artifact {uri}: {source}")]
+  Stream {
+    uri: ArtifactUri,
+    #[source]
+    source: ArtifactReadError,
+  },
+  #[error("artifact {uri} length mismatch: expected {expected}, read {actual}")]
+  LengthMismatch {
+    uri: ArtifactUri,
+    expected: ByteLength,
+    actual: u64,
+  },
+  #[error("artifact {uri} digest mismatch: expected {expected}, read {actual}")]
+  DigestMismatch {
+    uri: ArtifactUri,
+    expected: Sha256Digest,
+    actual: Sha256Digest,
+  },
+}
+
 pub(crate) struct DetachedArtifact {
   pub(crate) artifact_id: ArtifactId,
   pub(crate) idempotency_key: IdempotencyKey,
@@ -79,7 +424,7 @@ pub(crate) struct DetachedArtifact {
 
 pub(crate) struct ArtifactReceiptMessage {
   pub(crate) result: Result<ArtifactMetadata, ArtifactWriteError>,
-  pub(crate) unobserved_failure: Option<DispatchFailure>,
+  pub(crate) unclaimed_failure: Option<DispatchFailure>,
 }
 
 pub(crate) type ArtifactReceiptSender = oneshot::Sender<ArtifactReceiptMessage>;
@@ -149,11 +494,31 @@ impl Drop for ArtifactEmission {
     };
     receiver.close();
     if let Ok(Some(message)) = receiver.try_recv()
-      && let Some(failure) = message.unobserved_failure
+      && let Some(failure) = message.unclaimed_failure
     {
-      dispatch.report_unobserved_artifact_failure(&failure);
+      dispatch.report_unclaimed_artifact_failure(&failure);
     }
   }
+}
+
+/// Serializes and admits one typed JSON artifact under the current context.
+///
+/// When the current context has no artifact authority, this returns a disabled
+/// emission without serializing `value`. Recording stays observational and
+/// cannot make an otherwise unused domain value fail serialization.
+pub fn emit_json_artifact<T>(
+  purpose: ArtifactPurpose,
+  attributes: Attributes,
+  byte_limit: ByteLength,
+  value: &T,
+) -> Result<ArtifactEmission, JsonArtifactError>
+where
+  T: Serialize,
+{
+  if !crate::Context::current().can_publish_artifacts() {
+    return Ok(ArtifactEmission::disabled());
+  }
+  Ok(emit_artifact(NewArtifact::from_json(purpose, attributes, byte_limit, value)?))
 }
 
 /// Admits an artifact under the current captured run context.
@@ -173,6 +538,97 @@ where
 
 fn receipt_closed_code() -> crate::ErrorCode {
   crate::ErrorCode::parse("auv.dispatch.artifact_receipt_closed").expect("static dispatch error code is valid")
+}
+
+#[cfg(test)]
+mod tests {
+  use serde::ser::Error as _;
+
+  use super::*;
+
+  #[test]
+  fn byte_artifact_derives_committed_length_and_digest_from_the_body() {
+    let body = b"artifact body".to_vec();
+    let artifact = NewArtifact::from_bytes(
+      ArtifactPurpose::parse("auv.test.bytes").unwrap(),
+      ContentType::parse("application/octet-stream").unwrap(),
+      Attributes::empty(),
+      body.clone(),
+    )
+    .unwrap();
+
+    assert_eq!(artifact.expected_byte_length.get(), body.len() as u64);
+    assert_eq!(artifact.expected_sha256, Sha256Digest::new(Sha256::digest(&body).into()));
+  }
+
+  #[test]
+  fn json_artifact_serializes_once_with_canonical_content_type_and_integrity() {
+    let artifact = NewArtifact::from_json(
+      ArtifactPurpose::parse("auv.test.json").unwrap(),
+      Attributes::empty(),
+      ByteLength::new(1024).unwrap(),
+      &serde_json::json!({ "value": 42 }),
+    )
+    .unwrap();
+
+    assert_eq!(artifact.content_type.to_string(), "application/json");
+    assert_eq!(artifact.expected_byte_length.get(), artifact.body.get_ref().len() as u64);
+    assert_eq!(artifact.expected_sha256, Sha256Digest::new(Sha256::digest(artifact.body.get_ref()).into()));
+  }
+
+  #[test]
+  fn json_artifact_rejects_payloads_larger_than_the_caller_limit() {
+    let error = match NewArtifact::from_json(
+      ArtifactPurpose::parse("auv.test.json").unwrap(),
+      Attributes::empty(),
+      ByteLength::new(8).unwrap(),
+      &serde_json::json!({ "value": "too large" }),
+    ) {
+      Ok(_) => panic!("bounded JSON must fail"),
+      Err(error) => error,
+    };
+
+    assert!(matches!(error, JsonArtifactError::PayloadTooLarge { limit, actual } if limit.get() == 8 && actual > 8));
+  }
+
+  struct FailingJson;
+
+  impl Serialize for FailingJson {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+      S: Serializer,
+    {
+      Err(S::Error::custom("intentional serialization failure"))
+    }
+  }
+
+  #[test]
+  fn json_artifact_preserves_serializer_failures() {
+    let error = match NewArtifact::from_json(
+      ArtifactPurpose::parse("auv.test.json").unwrap(),
+      Attributes::empty(),
+      ByteLength::new(1024).unwrap(),
+      &FailingJson,
+    ) {
+      Ok(_) => panic!("serializer failure must propagate"),
+      Err(error) => error,
+    };
+
+    assert!(matches!(error, JsonArtifactError::Serialize(_)));
+  }
+
+  #[test]
+  fn disabled_json_emission_does_not_serialize_the_domain_value() {
+    let emission = emit_json_artifact(
+      ArtifactPurpose::parse("auv.test.json").unwrap(),
+      Attributes::empty(),
+      ByteLength::new(1024).unwrap(),
+      &FailingJson,
+    )
+    .expect("disabled instrumentation must not inspect the value");
+
+    assert!(futures_executor::block_on(emission).unwrap().is_none());
+  }
 }
 
 /// The canonical transport-independent identity of one run artifact.

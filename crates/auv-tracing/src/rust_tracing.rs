@@ -25,7 +25,7 @@ pub struct RustTracingProjector {
 struct ProjectorState {
   in_flight: Option<ThreadId>,
   // TODO(run-ended-v1): Reclaim retained run identities and span tombstones
-  // when TelemetryItem gains a validated RunEnded signal.
+  // when TelemetryItem gains a validated RunEnded event.
   runs: BTreeMap<RunId, RunState>,
 }
 

@@ -3,11 +3,12 @@ use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::dataset::{SpatialBundleDirectory, SpatialBundleManifest};
+use crate::dataset::{BundleArtifactId, SPATIAL_FRAME_BUNDLE_ROLE, SpatialBundleDirectory, SpatialBundleManifest};
 use crate::types::{MinecraftSpatialFrame, PlayerPose, RaycastHit, Viewport};
 
 pub type ScenePacketResult<T> = Result<T, String>;
@@ -16,6 +17,7 @@ pub const SCENE_PACKET_SCHEMA_VERSION: u32 = 1;
 pub const SCENE_PACKET_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
 pub const MINECRAFT_SCENE_PACKET_PURPOSE: &str = "auv.minecraft.scene_packet";
 
+#[cfg(feature = "tracing")]
 pub async fn publish_minecraft_scene_packet(
   context: Option<&Context>,
   packet: &ScenePacketManifest,
@@ -23,6 +25,7 @@ pub async fn publish_minecraft_scene_packet(
   crate::run_read::publish_json_artifact(context, MINECRAFT_SCENE_PACKET_PURPOSE, packet, validate_scene_packet_payload).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_minecraft_scene_packet(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -31,6 +34,7 @@ pub async fn read_minecraft_scene_packet(
   crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_SCENE_PACKET_PURPOSE, validate_scene_packet_payload).await
 }
 
+#[cfg(feature = "tracing")]
 fn validate_scene_packet_payload(packet: &ScenePacketManifest) -> Result<(), String> {
   if packet.schema_version != SCENE_PACKET_SCHEMA_VERSION {
     return Err(format!(
@@ -128,11 +132,11 @@ pub struct ScenePacketFrameRecord {
   pub spatial_frame_id: String,
   pub source_run_id: String,
   pub source_bundle_manifest_path: String,
-  pub source_frame_artifact_id: String,
-  pub source_frame_bundle_path: String,
+  pub source_frame_bundle_artifact_id: BundleArtifactId,
+  pub source_frame_bundle_path: PathBuf,
   pub frame_json_path: String,
   #[serde(default)]
-  pub screenshot_artifact_id: Option<String>,
+  pub screenshot_bundle_artifact_id: Option<BundleArtifactId>,
   #[serde(default)]
   pub screenshot_path: Option<String>,
   pub monotonic_timestamp_ms: u64,
@@ -148,10 +152,10 @@ pub struct ScenePacketFramePayload {
   pub frame_index: usize,
   pub source_run_id: String,
   pub source_bundle_manifest_path: String,
-  pub source_frame_artifact_id: String,
-  pub source_frame_bundle_path: String,
+  pub source_frame_bundle_artifact_id: BundleArtifactId,
+  pub source_frame_bundle_path: PathBuf,
   #[serde(default)]
-  pub screenshot_artifact_id: Option<String>,
+  pub screenshot_bundle_artifact_id: Option<BundleArtifactId>,
   #[serde(default)]
   pub screenshot_path: Option<String>,
   pub spatial_frame: MinecraftSpatialFrame,
@@ -175,10 +179,10 @@ struct ScenePacketFramePayloadRef<'a> {
   pub frame_index: usize,
   pub source_run_id: &'a str,
   pub source_bundle_manifest_path: &'a str,
-  pub source_frame_artifact_id: &'a str,
-  pub source_frame_bundle_path: &'a str,
+  pub source_frame_bundle_artifact_id: &'a BundleArtifactId,
+  pub source_frame_bundle_path: &'a Path,
   #[serde(default)]
-  pub screenshot_artifact_id: Option<&'a str>,
+  pub screenshot_bundle_artifact_id: Option<&'a BundleArtifactId>,
   #[serde(default)]
   pub screenshot_path: Option<&'a str>,
   pub spatial_frame: &'a MinecraftSpatialFrame,
@@ -209,18 +213,19 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
     let manifest = read_manifest(manifest_path)?;
     let bundle_dir =
       manifest_path.parent().ok_or_else(|| format!("MC-7 source bundle manifest {} has no parent directory", manifest_path.display()))?;
-    source_run_ids.insert(manifest.source_run.source_run_id.clone());
+    let source_run_id = manifest.source_run.run_id.to_string();
+    source_run_ids.insert(source_run_id.clone());
     known_limits.extend(manifest.known_limits.iter().cloned());
 
     let screenshots = manifest
       .artifacts
       .iter()
       .filter(|artifact| artifact.directory == SpatialBundleDirectory::Screenshots)
-      .map(|artifact| (artifact.artifact_id.clone(), artifact.clone()))
+      .map(|artifact| (artifact.bundle_artifact_id.clone(), artifact.clone()))
       .collect::<BTreeMap<_, _>>();
 
     for artifact in &manifest.artifacts {
-      if artifact.directory != SpatialBundleDirectory::SpatialFrames || artifact.role != "minecraft-spatial-frame" {
+      if artifact.directory != SpatialBundleDirectory::SpatialFrames || artifact.role != SPATIAL_FRAME_BUNDLE_ROLE {
         continue;
       }
 
@@ -228,14 +233,12 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
       let frame_source_path = bundle_dir.join(&artifact.bundle_path);
       let spatial_frame = read_frame(&frame_source_path)?;
       let frame_json_path = format!("frames/frame_{frame_index:06}.json");
-      let screenshot_artifact_id =
-        spatial_frame.screenshot_artifact_ref.as_deref().and_then(|artifact_ref| artifact_ref.strip_prefix("artifact://"));
-      let screenshot = screenshot_artifact_id.and_then(|artifact_id| screenshots.get(artifact_id));
-      let (screenshot_artifact_id, screenshot_path) = if let Some(screenshot) = screenshot {
+      let screenshot = artifact.screenshot_bundle_artifact_id.as_ref().and_then(|artifact_id| screenshots.get(artifact_id));
+      let (screenshot_bundle_artifact_id, screenshot_path) = if let Some(screenshot) = screenshot {
         let path = format!("frames/frame_{frame_index:06}.{}", extension_for(&screenshot.bundle_path));
         copy_file(&bundle_dir.join(&screenshot.bundle_path), &inputs.output_dir.join(&path), "MC-7 scene packet screenshot")?;
         screenshot_count += 1;
-        (Some(screenshot.artifact_id.clone()), Some(path))
+        (Some(screenshot.bundle_artifact_id.clone()), Some(path))
       } else {
         missing_screenshot_count += 1;
         anomalies.missing_screenshot_frame_indices.push(frame_index);
@@ -247,7 +250,7 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
         anomalies.non_ingame_frame_indices.push(frame_index);
         warnings.insert(format!(
           "frame {frame_index} from source run {} had non-ingame screen_state {:?}",
-          manifest.source_run.source_run_id,
+          source_run_id,
           screen_state.as_deref().unwrap_or("missing")
         ));
       }
@@ -257,13 +260,13 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
       match file_resource_packs.len() {
         0 => {
           anomalies.frames_without_file_resource_pack.push(frame_index);
-          warnings.insert(format!("frame {frame_index} from source run {} had no file/* resource pack", manifest.source_run.source_run_id));
+          warnings.insert(format!("frame {frame_index} from source run {source_run_id} had no file/* resource pack"));
         }
         1 => {
           let coverage =
             resource_pack_coverage.entry(file_resource_packs[0].clone()).or_insert_with(ResourcePackCoverageAccumulator::default);
           coverage.frame_count += 1;
-          coverage.source_run_ids.insert(manifest.source_run.source_run_id.clone());
+          coverage.source_run_ids.insert(source_run_id.clone());
           coverage.screen_states.insert(screen_state.clone().unwrap_or_else(|| "missing".to_string()));
           coverage.first_timestamp_ms = Some(
             coverage
@@ -278,21 +281,20 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
           anomalies.frames_with_multiple_file_resource_packs.push(frame_index);
           warnings.insert(format!(
             "frame {frame_index} from source run {} had multiple file/* resource packs: {}",
-            manifest.source_run.source_run_id,
+            source_run_id,
             file_resource_packs.join(",")
           ));
         }
       }
 
-      let source_run_id = manifest.source_run.source_run_id.as_str();
       let source_bundle_manifest_path = manifest_path.to_string_lossy().into_owned();
       let payload = ScenePacketFramePayloadRef {
         frame_index,
-        source_run_id,
+        source_run_id: source_run_id.as_str(),
         source_bundle_manifest_path: source_bundle_manifest_path.as_str(),
-        source_frame_artifact_id: artifact.artifact_id.as_str(),
-        source_frame_bundle_path: artifact.bundle_path.as_str(),
-        screenshot_artifact_id: screenshot_artifact_id.as_deref(),
+        source_frame_bundle_artifact_id: &artifact.bundle_artifact_id,
+        source_frame_bundle_path: &artifact.bundle_path,
+        screenshot_bundle_artifact_id: screenshot_bundle_artifact_id.as_ref(),
         screenshot_path: screenshot_path.as_deref(),
         spatial_frame: &spatial_frame,
       };
@@ -312,12 +314,12 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
       frames.push(ScenePacketFrameRecord {
         frame_index,
         spatial_frame_id: spatial_frame.spatial_frame_id,
-        source_run_id: source_run_id.to_string(),
+        source_run_id: source_run_id.clone(),
         source_bundle_manifest_path,
-        source_frame_artifact_id: artifact.artifact_id.clone(),
+        source_frame_bundle_artifact_id: artifact.bundle_artifact_id.clone(),
         source_frame_bundle_path: artifact.bundle_path.clone(),
         frame_json_path,
-        screenshot_artifact_id,
+        screenshot_bundle_artifact_id,
         screenshot_path,
         monotonic_timestamp_ms: spatial_frame.monotonic_timestamp_ms,
         viewport: spatial_frame.viewport,
@@ -341,7 +343,7 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
 
   let manifest = ScenePacketManifest {
     schema_version: SCENE_PACKET_SCHEMA_VERSION,
-    generated_at_millis: crate::run_read::now_millis(),
+    generated_at_millis: crate::now_millis(),
     source_bundle_manifest_paths: source_bundle_manifest_paths.clone(),
     source_run_ids: source_run_ids.clone(),
     counts: ScenePacketCounts {
@@ -419,13 +421,8 @@ fn read_frame(path: &Path) -> ScenePacketResult<MinecraftSpatialFrame> {
   read_json_file(path, "MC-7 source spatial frame")
 }
 
-fn extension_for(path: &str) -> String {
-  Path::new(path)
-    .extension()
-    .and_then(|extension| extension.to_str())
-    .filter(|extension| !extension.trim().is_empty())
-    .unwrap_or("png")
-    .to_string()
+fn extension_for(path: &Path) -> String {
+  path.extension().and_then(|extension| extension.to_str()).filter(|extension| !extension.trim().is_empty()).unwrap_or("png").to_string()
 }
 
 fn copy_file(source: &Path, destination: &Path, label: &str) -> ScenePacketResult<()> {
@@ -495,7 +492,10 @@ impl JsonArrayWriter {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::dataset::{SPATIAL_BUNDLE_SCHEMA_VERSION, SourceRunSummary, SpatialBundleArtifactRecord, SpatialBundleCounts};
+  use crate::dataset::{
+    SPATIAL_BUNDLE_SCHEMA_VERSION, SourceArtifactUri, SourceAuthorityId, SourceRunId, SourceRunReference, SourceRunRevision,
+    SpatialBundleArtifactRecord, SpatialBundleCounts,
+  };
   use crate::types::{BlockFace, BlockPosition, PlayerPose, RaycastHit, Vec3, Viewport};
 
   fn identity_matrix() -> [f64; 16] {
@@ -567,28 +567,31 @@ mod tests {
     let mut artifacts = Vec::new();
 
     for (index, mut frame_spec) in frames.into_iter().enumerate() {
-      let screenshot_artifact_id = format!("artifact_{:04}", index * 2 + 1);
-      let frame_artifact_id = format!("artifact_{:04}", index * 2 + 2);
-      let screenshot_file_name = format!("{screenshot_artifact_id}-{}.png", frame_spec.label);
-      let frame_file_name = format!("{frame_artifact_id}-{}.json", frame_spec.label);
-      let screenshot_bundle_path = format!("screenshots/{screenshot_file_name}");
-      let frame_bundle_path = format!("spatial_frames/{frame_file_name}");
+      let screenshot_bundle_artifact_id =
+        BundleArtifactId::new(format!("artifact_{:04}", index * 2 + 1)).expect("screenshot bundle artifact id");
+      let frame_bundle_artifact_id = BundleArtifactId::new(format!("artifact_{:04}", index * 2 + 2)).expect("frame bundle artifact id");
+      let screenshot_file_name = format!("{screenshot_bundle_artifact_id}-{}.png", frame_spec.label);
+      let frame_file_name = format!("{frame_bundle_artifact_id}-{}.json", frame_spec.label);
+      let screenshot_bundle_path = PathBuf::from(format!("screenshots/{screenshot_file_name}"));
+      let frame_bundle_path = PathBuf::from(format!("spatial_frames/{frame_file_name}"));
+      let screenshot_source_uri = test_source_artifact_uri(index * 2 + 1);
+      let frame_source_uri = test_source_artifact_uri(index * 2 + 2);
 
       frame_spec.frame.screenshot_artifact_ref = match frame_spec.screenshot {
         ScreenshotDisposition::Present | ScreenshotDisposition::MissingArtifact | ScreenshotDisposition::MissingFile => {
-          Some(format!("artifact://{screenshot_artifact_id}"))
+          Some(screenshot_source_uri.to_string())
         }
         ScreenshotDisposition::MissingRef => None,
       };
 
       if matches!(frame_spec.screenshot, ScreenshotDisposition::Present | ScreenshotDisposition::MissingFile) {
         artifacts.push(SpatialBundleArtifactRecord {
-          artifact_id: screenshot_artifact_id.clone(),
+          source_artifact_uri: screenshot_source_uri,
+          bundle_artifact_id: screenshot_bundle_artifact_id.clone(),
           role: "minecraft-screenshot".to_string(),
-          source_path: format!("artifacts/{screenshot_file_name}"),
           bundle_path: screenshot_bundle_path.clone(),
           directory: SpatialBundleDirectory::Screenshots,
-          summary: None,
+          screenshot_bundle_artifact_id: None,
         });
       }
       if matches!(frame_spec.screenshot, ScreenshotDisposition::Present) {
@@ -597,26 +600,24 @@ mod tests {
 
       fs::write(frames_dir.join(&frame_file_name), serde_json::to_vec_pretty(&frame_spec.frame).expect("frame json")).expect("frame write");
       artifacts.push(SpatialBundleArtifactRecord {
-        artifact_id: frame_artifact_id,
-        role: "minecraft-spatial-frame".to_string(),
-        source_path: format!("artifacts/{frame_file_name}"),
+        source_artifact_uri: frame_source_uri,
+        bundle_artifact_id: frame_bundle_artifact_id,
+        role: SPATIAL_FRAME_BUNDLE_ROLE.to_string(),
         bundle_path: frame_bundle_path,
         directory: SpatialBundleDirectory::SpatialFrames,
-        summary: None,
+        screenshot_bundle_artifact_id: match frame_spec.screenshot {
+          ScreenshotDisposition::Present | ScreenshotDisposition::MissingArtifact | ScreenshotDisposition::MissingFile => {
+            Some(screenshot_bundle_artifact_id)
+          }
+          ScreenshotDisposition::MissingRef => None,
+        },
       });
     }
 
     let manifest = SpatialBundleManifest {
       schema_version: SPATIAL_BUNDLE_SCHEMA_VERSION,
-      source_run: SourceRunSummary {
-        source_run_id: run_id.to_string(),
-        source_operation: "auv.minecraft.bridge".to_string(),
-        source_run_type: "execute".to_string(),
-        source_status: "ok".to_string(),
-        generated_at_millis: 1,
-        auv_git_commit: None,
-        exporter_git_commit: None,
-      },
+      source_run: test_source_run_reference(run_id),
+      exported_at_millis: 1,
       counts: SpatialBundleCounts {
         screenshots: artifacts.iter().filter(|artifact| artifact.directory == SpatialBundleDirectory::Screenshots).count(),
         spatial_frames: artifacts.iter().filter(|artifact| artifact.directory == SpatialBundleDirectory::SpatialFrames).count(),
@@ -628,6 +629,24 @@ mod tests {
     let manifest_path = bundle_dir.join("run.json");
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("manifest json")).expect("manifest write");
     manifest_path
+  }
+
+  fn test_source_run_reference(run_id: &str) -> SourceRunReference {
+    SourceRunReference {
+      authority_id: SourceAuthorityId::new("authority_1").expect("source authority"),
+      run_id: SourceRunId::new(test_source_run_id(run_id)).expect("source run"),
+      through_revision: SourceRunRevision::new(7).expect("source revision"),
+    }
+  }
+
+  fn test_source_artifact_uri(index: usize) -> SourceArtifactUri {
+    SourceArtifactUri::new(format!("auv://runs/{}/artifacts/00000000-0000-0000-0000-{index:012}", test_source_run_id("run_1")))
+      .expect("source artifact URI")
+  }
+
+  fn test_source_run_id(label: &str) -> String {
+    let index = label.rsplit('_').next().and_then(|value| value.parse::<u128>().ok()).unwrap_or(1);
+    format!("00000000-0000-0000-0000-{index:012}")
   }
 
   #[test]
@@ -652,7 +671,7 @@ mod tests {
     .expect("scene packet export should succeed");
 
     assert_eq!(output.manifest.schema_version, SCENE_PACKET_SCHEMA_VERSION);
-    assert_eq!(output.manifest.source_run_ids, vec!["run_1"]);
+    assert_eq!(output.manifest.source_run_ids, vec![test_source_run_id("run_1")]);
     assert_eq!(output.manifest.source_bundle_manifest_paths, vec![manifest_path.to_string_lossy().into_owned()]);
     assert_eq!(output.manifest.counts.frames, 1);
     assert_eq!(output.manifest.counts.screenshots, 1);

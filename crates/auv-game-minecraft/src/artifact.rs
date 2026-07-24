@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 
 use crate::types::{MinecraftProjectedPoint, MinecraftSpatialFrame, ProjectionVisibility};
@@ -8,6 +9,7 @@ use crate::verify::MismatchRefusalReason;
 
 pub const MINECRAFT_PROJECTION_PURPOSE: &str = "auv.minecraft.projection";
 
+#[cfg(feature = "tracing")]
 pub async fn publish_minecraft_projection(
   context: Option<&Context>,
   projection: &MinecraftProjectionArtifact,
@@ -15,6 +17,7 @@ pub async fn publish_minecraft_projection(
   crate::run_read::publish_json_artifact(context, MINECRAFT_PROJECTION_PURPOSE, projection, MinecraftProjectionArtifact::validate).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_minecraft_projection(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -103,11 +106,6 @@ impl MinecraftProjectionArtifact {
     );
     if let Some(projected_point) = &self.projected_point {
       basis = basis.with_confidence(projected_point.confidence).with_match_radius_px(projected_point.match_radius_px);
-    } else {
-      basis = basis.with_known_limit("minecraft projection artifact has no projected point");
-    }
-    if self.screenshot_artifact_ref.is_none() {
-      basis = basis.with_known_limit("minecraft projection basis has no bound screenshot artifact");
     }
     basis
   }
@@ -229,13 +227,14 @@ mod tests {
   #[test]
   fn projection_artifact_carries_capture_binding_evidence() {
     let mut frame = test_frame();
-    frame.screenshot_artifact_ref = Some("artifact://screenshot-1".to_string());
+    let screenshot_uri = "auv://runs/00000000-0000-0000-0000-000000000001/artifacts/00000000-0000-0000-0000-000000000001";
+    frame.screenshot_artifact_ref = Some(screenshot_uri.to_string());
     frame.mc_capture_skew_ms = Some(180);
     frame.screen_state = Some("menu".to_string());
 
     let artifact = MinecraftProjectionArtifact::for_frame(&frame, None, None);
 
-    assert_eq!(artifact.screenshot_artifact_ref.as_deref(), Some("artifact://screenshot-1"));
+    assert_eq!(artifact.screenshot_artifact_ref.as_deref(), Some(screenshot_uri));
     assert_eq!(artifact.mc_capture_skew_ms, Some(180));
     assert_eq!(artifact.screen_state.as_deref(), Some("menu"));
   }

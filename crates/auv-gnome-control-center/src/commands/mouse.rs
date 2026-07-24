@@ -4,9 +4,6 @@ use std::time::Duration;
 use auv_driver::{InputActionResult, WindowPoint};
 use serde::{Deserialize, Serialize};
 
-use crate::interaction::InteractionStep;
-#[cfg(target_os = "linux")]
-use crate::interaction::StepOutcome;
 use crate::views::MatchedNode;
 use crate::windows::OpenWindowReport;
 
@@ -57,7 +54,6 @@ impl Default for NaturalScrollingToggleInputs {
 pub struct PointerSpeedSetResult {
   pub command: &'static str,
   pub window: OpenWindowReport,
-  pub steps: Vec<InteractionStep>,
   pub mouse_node: MatchedNode,
   pub slider_node: MatchedNode,
   pub requested_position: f64,
@@ -76,7 +72,6 @@ pub struct PointerSpeedRoundtripResult {
 pub struct NaturalScrollingToggleResult {
   pub command: &'static str,
   pub window: OpenWindowReport,
-  pub steps: Vec<InteractionStep>,
   pub mouse_node: MatchedNode,
   pub switch_node: MatchedNode,
   pub observed_value_before: Option<String>,
@@ -85,15 +80,15 @@ pub struct NaturalScrollingToggleResult {
 }
 
 pub fn run_pointer_speed_set(inputs: &PointerSpeedSetInputs) -> Result<PointerSpeedSetResult, String> {
-  platform::run_set(inputs)
+  crate::tracing::pointer_speed_set(|| platform::run_set(inputs))
 }
 
 pub fn run_pointer_speed_roundtrip(inputs: &PointerSpeedRoundtripInputs) -> Result<PointerSpeedRoundtripResult, String> {
-  platform::run_roundtrip(inputs)
+  crate::tracing::pointer_speed_roundtrip(|| platform::run_roundtrip(inputs))
 }
 
 pub fn run_natural_scrolling_toggle(inputs: &NaturalScrollingToggleInputs) -> Result<NaturalScrollingToggleResult, String> {
-  platform::run_toggle_natural_scrolling(inputs)
+  crate::tracing::natural_scrolling_toggle(|| platform::run_toggle_natural_scrolling(inputs))
 }
 
 #[cfg(target_os = "linux")]
@@ -106,6 +101,7 @@ mod platform {
   use super::*;
   use crate::app::{MOUSE_PAGE, NATURAL_SCROLLING, POINTER_SPEED, TRADITIONAL_SCROLLING};
   use crate::commands::{click_visible_labeled_node_with_delivery, select_visible_labeled_node};
+  use crate::tracing::NodeAction;
   use crate::views::{SettingsNode, find_slider_near_label, visible_labels};
   use crate::windows::{ResolveOptions, open_or_resolve};
 
@@ -151,8 +147,7 @@ mod platform {
     open_report: OpenWindowReport,
     position: f64,
   ) -> Result<PointerSpeedSetResult, String> {
-    let mut steps = open_report.steps.clone();
-    let mouse_node = select_mouse_page(session, window, &mut steps)?;
+    let mouse_node = select_mouse_page(session, window)?;
     std::thread::sleep(Duration::from_millis(350));
     let nodes = snapshot_nodes(session, window)?;
     let slider_node = find_slider_near_label(&nodes, POINTER_SPEED).ok_or_else(|| {
@@ -174,12 +169,10 @@ mod platform {
         },
       )
       .map_err(|error| format!("failed to click pointer speed slider at position {:.2}: {error}", position))?;
-    steps
-      .push(InteractionStep::new("set-pointer-speed", StepOutcome::Clicked).target(format!("{position:.2}")).note(format!("{delivery:?}")));
+    crate::tracing::pointer_speed(position, clicked_point, delivery.clone());
     Ok(PointerSpeedSetResult {
       command: "mouse.set-pointer-speed",
       window: open_report,
-      steps,
       mouse_node,
       slider_node,
       requested_position: position,
@@ -193,8 +186,7 @@ mod platform {
     window: &auv_driver::Window,
     open_report: OpenWindowReport,
   ) -> Result<NaturalScrollingToggleResult, String> {
-    let mut steps = open_report.steps.clone();
-    let mouse_node = select_mouse_page(session, window, &mut steps)?;
+    let mouse_node = select_mouse_page(session, window)?;
     std::thread::sleep(Duration::from_millis(350));
 
     let natural_scroll_before = read_natural_scroll_setting()?;
@@ -203,7 +195,7 @@ mod platform {
     } else {
       NATURAL_SCROLLING
     };
-    let (switch_node, delivery) = click_visible_labeled_node_with_delivery(session, window, target, "toggle-natural-scrolling", &mut steps)?;
+    let (switch_node, delivery) = click_visible_labeled_node_with_delivery(session, window, target, NodeAction::ToggleNaturalScrolling)?;
     std::thread::sleep(Duration::from_millis(250));
     let natural_scroll_after = read_natural_scroll_setting()?;
     if natural_scroll_after == natural_scroll_before {
@@ -212,7 +204,6 @@ mod platform {
     Ok(NaturalScrollingToggleResult {
       command: "mouse.toggle-natural-scrolling",
       window: open_report,
-      steps,
       mouse_node,
       switch_node,
       observed_value_before: Some(natural_scroll_before.to_string()),
@@ -221,12 +212,8 @@ mod platform {
     })
   }
 
-  fn select_mouse_page(
-    session: &LinuxDriverSession,
-    window: &auv_driver::Window,
-    steps: &mut Vec<InteractionStep>,
-  ) -> Result<MatchedNode, String> {
-    select_visible_labeled_node(session, window, MOUSE_PAGE, "select-mouse", steps)
+  fn select_mouse_page(session: &LinuxDriverSession, window: &auv_driver::Window) -> Result<MatchedNode, String> {
+    select_visible_labeled_node(session, window, MOUSE_PAGE, NodeAction::SelectMouse)
   }
 
   fn snapshot_nodes(session: &LinuxDriverSession, window: &auv_driver::Window) -> Result<Vec<SettingsNode>, String> {

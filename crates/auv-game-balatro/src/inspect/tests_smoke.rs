@@ -29,7 +29,12 @@ fn balatro_section_checks_authority_even_without_artifacts() {
     let error =
       super::render_balatro_card_detection_text(&other_store, &snapshot).await.expect_err("empty snapshots retain authority checks");
 
-    assert!(matches!(error, crate::BalatroArtifactReadError::SnapshotAuthorityMismatch { .. }));
+    assert!(matches!(
+      error,
+      crate::BalatroArtifactReadError::Read {
+        source: auv_tracing::ReadArtifactError::SnapshotAuthorityMismatch { .. }
+      }
+    ));
   });
 }
 

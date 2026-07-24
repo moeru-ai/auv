@@ -36,7 +36,7 @@ pub const LINUX_DESKTOP_CAPABILITIES: &[&str] = &[
 pub struct LinuxDriverDescriptor {
   pub id: &'static str,
   pub platform: PlatformKind,
-  pub summary: &'static str,
+  pub description: &'static str,
 }
 
 impl LinuxDriverDescriptor {
@@ -44,7 +44,7 @@ impl LinuxDriverDescriptor {
     DriverDescriptor {
       id: self.id,
       platform: self.platform,
-      summary: self.summary,
+      description: self.description,
     }
   }
 }
@@ -53,6 +53,6 @@ pub fn linux_driver_descriptor() -> LinuxDriverDescriptor {
   LinuxDriverDescriptor {
     id: "linux.desktop",
     platform: PlatformKind::Linux,
-    summary: "Linux Wayland desktop driver: display capture, AT-SPI window/accessibility observation, Tesseract OCR, text clipboard, foreground portal input, and portal readiness probes.",
+    description: "Linux Wayland desktop driver: display capture, AT-SPI window/accessibility observation, Tesseract OCR, text clipboard, foreground portal input, and portal readiness probes.",
   }
 }

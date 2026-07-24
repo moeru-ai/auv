@@ -35,7 +35,12 @@ fn osu_sections_validate_authority_without_osu_artifacts() {
 
     let error = crate::inspect_sections_primary(&other_store, &snapshot).await.expect_err("authority mismatch");
 
-    assert!(matches!(error, crate::run_read::OsuArtifactReadError::SnapshotAuthorityMismatch { .. }));
+    assert!(matches!(
+      error,
+      crate::run_read::OsuArtifactReadError::Read {
+        source: auv_tracing::ReadArtifactError::SnapshotAuthorityMismatch { .. }
+      }
+    ));
   });
 }
 

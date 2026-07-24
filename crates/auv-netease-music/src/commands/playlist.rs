@@ -3,7 +3,8 @@ use std::fmt;
 use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext, ViewBounds};
 use serde::{Deserialize, Serialize};
 
-use crate::recording::CanonicalPlaylistArtifacts;
+#[cfg(feature = "tracing")]
+use crate::run_artifacts::CanonicalPlaylistArtifacts;
 #[cfg(target_os = "macos")]
 use crate::run_live_scan_until_query;
 use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget};
@@ -11,20 +12,18 @@ use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget};
 const PLAYLIST_SELECT_BOTTOM_SAFE_PADDING: f64 = 128.0;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlaylistSelectResult {
   pub command: String,
   pub query: String,
   pub app: ScanAppContext,
   pub window: ScanWindowContext,
   pub target: PlaylistSelectTarget,
-  pub steps: Vec<PlaylistSelectStep>,
   pub verification: PlaylistSelectVerification,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub reacquire: Option<crate::view_memory::PlaylistReacquireSummary>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub run_id: Option<String>,
+  pub reacquire: Option<crate::view_memory::PlaylistReacquireResult>,
 }
 
 impl PlaylistSelectResult {
@@ -34,43 +33,78 @@ impl PlaylistSelectResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlaylistSelectStep {
-  pub name: String,
-  pub target_bounds: Option<ViewBounds>,
-  pub delivery_path: Option<String>,
-  pub fallback_reason: Option<String>,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PlaylistSelectVerification {
+  Passed {
+    observed_title: String,
+    evidence: PlaylistSelectVerificationEvidence,
+  },
+  Failed {
+    evidence: PlaylistSelectVerificationEvidence,
+  },
+}
+
+impl PlaylistSelectVerification {
+  pub fn passed(&self) -> bool {
+    matches!(self, Self::Passed { .. })
+  }
+
+  pub fn observed_title(&self) -> Option<&str> {
+    match self {
+      Self::Passed { observed_title, .. } => Some(observed_title),
+      Self::Failed { .. } => None,
+    }
+  }
+
+  fn used_sidebar_row_echo(&self) -> bool {
+    matches!(
+      self,
+      Self::Passed {
+        evidence: PlaylistSelectVerificationEvidence::SidebarRowEcho { .. },
+        ..
+      }
+    )
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlaylistSelectVerification {
-  pub status: String,
-  pub method: String,
-  pub observed_title: Option<String>,
-  pub artifact: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub recognition_artifact: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub sidebar_echo_recognition_artifact: Option<String>,
-  pub note: Option<String>,
+#[serde(tag = "method", rename_all = "snake_case")]
+pub enum PlaylistSelectVerificationEvidence {
+  TitleOcr {
+    tier: PlaylistSelectTitleOcrTier,
+    recognized_region_count: usize,
+    main_pane_match_count: usize,
+    sidebar_echo_attempted: bool,
+  },
+  SidebarRowEcho {
+    recognized_region_count: usize,
+    main_pane_match_count: usize,
+  },
 }
 
-const PLAYLIST_SELECT_VERIFICATION_OCR_TITLE_BAND: &str = "main_title_ocr_title_band_v1";
-const PLAYLIST_SELECT_VERIFICATION_OCR_HERO_HEADER: &str = "main_title_ocr_hero_header_v1";
-const PLAYLIST_SELECT_VERIFICATION_OCR_MAIN_BAND: &str = "main_title_ocr_main_band_v1";
-const PLAYLIST_SELECT_VERIFICATION_OCR_FULL_WINDOW: &str = "main_title_ocr_full_window_v1";
-const PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO: &str = "sidebar_row_echo_detail_chrome_v1";
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistSelectTitleOcrTier {
+  TitleBand,
+  HeroHeader,
+  MainBand,
+  FullWindow,
+}
+
 const PLAYLIST_SELECT_VERIFICATION_SIDEBAR_ECHO_LIMIT: &str = "verification_used_sidebar_row_echo_for_numeric_title";
 const PLAYLIST_SELECT_VERIFICATION_ROW_ECHO_MARGIN: f64 = 16.0;
 const PLAYLIST_SELECT_TARGET_FROM_RUN_ARTIFACT_MARKER: &str = "playlist_select_target_from_run_artifact_v1";
 
 /// Caller-owned typed inputs resolved for candidate-based playlist playback.
 #[derive(Clone, Debug)]
+#[cfg(feature = "tracing")]
 pub struct PlaylistPlayCandidate {
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
   memory: Option<auv_view::memory::ViewMemory>,
 }
 
+#[cfg(feature = "tracing")]
 impl PlaylistPlayCandidate {
   pub fn scan(&self) -> &crate::PlaylistSidebarScan {
     &self.scan
@@ -90,6 +124,7 @@ impl PlaylistPlayCandidate {
 }
 
 /// Resolves a candidate from caller-read canonical artifacts without acquiring storage authority.
+#[cfg(feature = "tracing")]
 pub fn resolve_playlist_play_candidate(artifacts: &CanonicalPlaylistArtifacts, candidate_id: &str) -> Result<PlaylistPlayCandidate, String> {
   let scan = artifacts
     .scan()
@@ -103,12 +138,14 @@ pub fn resolve_playlist_play_candidate(artifacts: &CanonicalPlaylistArtifacts, c
   })
 }
 
+#[cfg(any(feature = "tracing", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlaylistSelectTargetResolveSource {
   RunArtifact,
   LiveScan,
 }
 
+#[cfg(any(feature = "tracing", test))]
 fn playlist_select_target_resolve_source(
   gate_enabled: bool,
   run_artifact: Option<&crate::PlaylistSidebarScan>,
@@ -136,15 +173,14 @@ pub struct PlaylistSelectHumanSummary<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlaylistPlayResult {
   pub command: String,
   pub query: String,
   pub select: PlaylistSelectResult,
-  pub steps: Vec<PlaylistPlayStep>,
   pub verification: PlaylistPlayVerification,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
-  pub artifacts: Vec<String>,
 }
 
 impl PlaylistPlayResult {
@@ -154,23 +190,47 @@ impl PlaylistPlayResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlaylistPlayStep {
-  pub name: String,
-  pub target_label: Option<String>,
-  pub target_bounds: Option<ViewBounds>,
-  pub delivery_path: Option<String>,
-  pub fallback_reason: Option<String>,
-  pub artifact: Option<String>,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PlaylistPlayVerification {
+  Passed {
+    control_state: PlaybackControlState,
+    observed_bottom_text: Option<String>,
+  },
+  Failed {
+    control_state: PlaybackControlState,
+    observed_bottom_text: Option<String>,
+  },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlaylistPlayVerification {
-  pub status: String,
-  pub method: String,
-  pub control_state: Option<PlaybackControlState>,
-  pub observed_bottom_text: Option<String>,
-  pub artifact: Option<String>,
-  pub note: Option<String>,
+impl PlaylistPlayVerification {
+  pub fn passed(&self) -> bool {
+    matches!(self, Self::Passed { .. })
+  }
+
+  pub fn control_state(&self) -> PlaybackControlState {
+    match self {
+      Self::Passed { control_state, .. } | Self::Failed { control_state, .. } => *control_state,
+    }
+  }
+
+  pub fn observed_bottom_text(&self) -> Option<&str> {
+    match self {
+      Self::Passed {
+        observed_bottom_text,
+        ..
+      }
+      | Self::Failed {
+        observed_bottom_text,
+        ..
+      } => observed_bottom_text.as_deref(),
+    }
+  }
+}
+
+#[derive(Serialize)]
+struct PlaylistPlayVerificationArtifact<'a> {
+  before_bottom_text: Option<&'a str>,
+  verification: &'a PlaylistPlayVerification,
 }
 
 pub struct PlaylistPlayHumanSummary<'a> {
@@ -183,14 +243,15 @@ impl fmt::Display for PlaylistSelectHumanSummary<'_> {
     writeln!(f, "NetEase playlist select")?;
     writeln!(f, "query: {}", result.query)?;
     writeln!(f, "target: {}", result.target.label)?;
-    if let Some(run_id) = &result.run_id {
-      writeln!(f, "run_id: {run_id}")?;
-    }
     writeln!(
       f,
       "verification: {}{}",
-      result.verification.status,
-      result.verification.observed_title.as_deref().map(|title| format!(" observed_title={title}")).unwrap_or_default()
+      if result.verification.passed() {
+        "passed"
+      } else {
+        "failed"
+      },
+      result.verification.observed_title().map(|title| format!(" observed_title={title}")).unwrap_or_default()
     )?;
     if result.known_limits.is_empty() {
       writeln!(f, "known_limits: (none)")?;
@@ -221,8 +282,12 @@ impl fmt::Display for PlaylistPlayHumanSummary<'_> {
     writeln!(
       f,
       "verification: {} control={}",
-      result.verification.status,
-      result.verification.control_state.map(|state| format!("{state:?}")).unwrap_or_else(|| "-".to_string())
+      if result.verification.passed() {
+        "passed"
+      } else {
+        "failed"
+      },
+      format!("{:?}", result.verification.control_state())
     )?;
     if result.known_limits.is_empty() {
       writeln!(f, "known_limits: (none)")?;
@@ -260,21 +325,21 @@ fn playlist_play_click_options() -> auv_driver::ClickOptions {
   }
 }
 
-fn playlist_play_status_from_bottom_probe(
+fn playlist_play_verified_from_bottom_probe(
   control_state: PlaybackControlState,
   before_bottom_text: Option<&str>,
   observed_bottom_text: Option<&str>,
-) -> &'static str {
+) -> bool {
   if control_state != PlaybackControlState::PauseVisible {
-    return "failed";
+    return false;
   }
 
   let before = before_bottom_text.and_then(normalized_non_empty);
   let observed = observed_bottom_text.and_then(normalized_non_empty);
   match (before, observed) {
-    (Some(before), Some(observed)) if before == observed => "failed",
-    (Some(_), None) => "failed",
-    _ => "passed",
+    (Some(before), Some(observed)) if before == observed => false,
+    (Some(_), None) => false,
+    _ => true,
   }
 }
 
@@ -361,18 +426,6 @@ fn playlist_select_verification_main_band_ratio(sidebar_bounds: ViewBounds, wind
 
 fn playlist_select_verification_full_window_ratio(_sidebar_bounds: ViewBounds, _window_size: auv_driver::Size) -> auv_driver::RatioRect {
   auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0)
-}
-
-fn playlist_select_verification_recognition_artifact_path(verification_png: &std::path::Path) -> std::path::PathBuf {
-  let stem =
-    verification_png.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_else(|| "playlist-select-post-click".to_string());
-  verification_png.with_file_name(format!("{stem}-recognition.json"))
-}
-
-fn playlist_select_verification_sidebar_echo_recognition_artifact_path(verification_png: &std::path::Path) -> std::path::PathBuf {
-  let stem =
-    verification_png.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_else(|| "playlist-select-post-click".to_string());
-  verification_png.with_file_name(format!("{stem}-sidebar-echo-recognition.json"))
 }
 
 fn playlist_select_verification_view_bounds_to_ratio(bounds: ViewBounds, window_size: auv_driver::Size) -> auv_driver::RatioRect {
@@ -469,19 +522,6 @@ fn playlist_select_verification_sidebar_row_echo_from_recognition(
     .map(|region| region.text.trim().to_string())
 }
 
-fn playlist_select_verification_note(
-  ocr_tiers_tried: &str,
-  final_tier: &str,
-  region_count: usize,
-  main_pane_guard_pass: usize,
-  sidebar_echo_attempted: bool,
-  sidebar_echo_pass: bool,
-) -> String {
-  format!(
-    "ocr_tiers_tried={ocr_tiers_tried}; final_tier={final_tier}; region_count={region_count}; main_pane_guard_pass={main_pane_guard_pass}; sidebar_echo_attempted={sidebar_echo_attempted}; sidebar_echo_pass={sidebar_echo_pass}"
-  )
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -514,9 +554,9 @@ mod tests {
 
   #[test]
   fn playlist_play_verification_rejects_unchanged_existing_playback() {
-    let status = playlist_play_status_from_bottom_probe(PlaybackControlState::PauseVisible, Some("old song"), Some("old song"));
+    let verified = playlist_play_verified_from_bottom_probe(PlaybackControlState::PauseVisible, Some("old song"), Some("old song"));
 
-    assert_eq!(status, "failed");
+    assert!(!verified);
   }
 
   fn sample_playlist_select_window() -> auv_driver::Size {
@@ -621,10 +661,7 @@ mod tests {
 
   #[test]
   fn build_playlist_select_verification_ocr_options_boosts_single_digit_target() {
-    let inputs = Inputs {
-      artifact_dir: std::path::PathBuf::from("/tmp/artifacts"),
-      ..Inputs::with_defaults()
-    };
+    let inputs = Inputs::with_defaults();
     let options = build_playlist_select_verification_ocr_options(&inputs, "3");
 
     assert!(options.custom_words.iter().any(|word| word == "3"));
@@ -636,28 +673,11 @@ mod tests {
     let base = auv_driver::vision::TextRecognitionOptions::default().with_recognition_languages(["ja-JP"]);
     let inputs = Inputs {
       ocr_options: base.clone(),
-      artifact_dir: std::path::PathBuf::from("/tmp/artifacts"),
       ..Inputs::with_defaults()
     };
     let options = build_playlist_select_verification_ocr_options(&inputs, "最近播放");
 
     assert_eq!(options, base);
-  }
-
-  #[test]
-  fn playlist_select_verification_recognition_artifact_path_uses_png_stem() {
-    let path = playlist_select_verification_recognition_artifact_path(std::path::Path::new("/tmp/artifacts/playlist-select-post-click.png"));
-
-    assert_eq!(path, std::path::PathBuf::from("/tmp/artifacts/playlist-select-post-click-recognition.json"));
-  }
-
-  #[test]
-  fn playlist_select_verification_sidebar_echo_artifact_path_uses_png_stem() {
-    let path = playlist_select_verification_sidebar_echo_recognition_artifact_path(std::path::Path::new(
-      "/tmp/artifacts/playlist-select-post-click.png",
-    ));
-
-    assert_eq!(path, std::path::PathBuf::from("/tmp/artifacts/playlist-select-post-click-sidebar-echo-recognition.json"));
   }
 
   fn sample_playlist_select_window_1812() -> auv_driver::Size {
@@ -826,18 +846,6 @@ mod tests {
     assert!(title.is_none());
   }
 
-  #[test]
-  fn playlist_select_verification_note_includes_tiers_and_echo_flags() {
-    let note =
-      playlist_select_verification_note("title,hero,main,full", PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO, 13, 4, true, true);
-
-    assert!(note.contains("ocr_tiers_tried=title,hero,main,full"));
-    assert!(note.contains("final_tier=sidebar_row_echo_detail_chrome_v1"));
-    assert!(note.contains("region_count=13"));
-    assert!(note.contains("main_pane_guard_pass=4"));
-    assert!(note.contains("sidebar_echo_attempted=true"));
-    assert!(note.contains("sidebar_echo_pass=true"));
-  }
   fn scan_with_playlist_labels(labels: &[&str]) -> crate::PlaylistSidebarScan {
     use crate::view_parsers::sidebar::parse_sidebar_viewport;
     use crate::view_parsers::sidebar::reconstruct::reconstruct_playlist_sidebar;
@@ -917,7 +925,7 @@ pub fn run_playlist_select(_inputs: &Inputs, _query: &str) -> Result<PlaylistSel
   Err("live NetEase playlist select is only supported on macOS".to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), feature = "tracing"))]
 pub(crate) fn run_playlist_select_with_artifacts(
   inputs: &Inputs,
   query: &str,
@@ -931,7 +939,7 @@ pub fn run_playlist_play(_inputs: &Inputs, _query: &str) -> Result<PlaylistPlayR
   Err("live NetEase playlist play is only supported on macOS".to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), feature = "tracing"))]
 pub(crate) fn run_playlist_play_with_artifacts(
   inputs: &Inputs,
   query: &str,
@@ -940,7 +948,7 @@ pub(crate) fn run_playlist_play_with_artifacts(
   run_playlist_play(inputs, query)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), feature = "tracing"))]
 pub(crate) fn run_playlist_play_candidate_with_artifacts(
   _inputs: &Inputs,
   candidate_id: &str,
@@ -952,10 +960,12 @@ pub(crate) fn run_playlist_play_candidate_with_artifacts(
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_select(inputs: &Inputs, query: &str) -> Result<PlaylistSelectResult, String> {
-  run_playlist_select_with_artifacts(inputs, query, &CanonicalPlaylistArtifacts::unavailable(Vec::new()))
+  let scan = run_live_scan_until_query(inputs, query)?;
+  let target = scan.select_target(query)?;
+  run_playlist_select_resolved(inputs, query, scan, target, false, None, Vec::new())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "tracing"))]
 pub(crate) fn run_playlist_select_with_artifacts(
   inputs: &Inputs,
   query: &str,
@@ -965,14 +975,12 @@ pub(crate) fn run_playlist_select_with_artifacts(
   run_playlist_select_resolved(inputs, query, scan, target, target_from_run_artifact, artifacts.memory(), artifacts.read_limits().to_vec())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "tracing"))]
 fn resolve_playlist_target_for_query(
   inputs: &Inputs,
   query: &str,
   artifacts: &CanonicalPlaylistArtifacts,
 ) -> Result<(crate::PlaylistSidebarScan, PlaylistSelectTarget, bool), String> {
-  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
-
   let gate_enabled = crate::view_memory::enabled();
   match playlist_select_target_resolve_source(gate_enabled, artifacts.scan(), query) {
     PlaylistSelectTargetResolveSource::RunArtifact => {
@@ -1000,13 +1008,17 @@ fn run_playlist_select_resolved(
 ) -> Result<PlaylistSelectResult, String> {
   use crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
   use crate::delivery_path_label;
+  use crate::run_artifacts::{PlaylistSelectInputDelivered, PlaylistTargetResolved};
   use crate::view_parsers::sidebar::region::{broad_sidebar_probe_bounds, sidebar_scroll_anchor};
   use crate::view_parsers::sidebar::{
     SidebarTargetProbeScrollContext, SidebarTargetSeekStep, capture_sidebar_target_probe, next_sidebar_target_seek_step,
     preceding_scroll_context, sidebar_rescan_target_seek_budget, sidebar_target_probe_diagnostic_message, top_seek_scroll_budget,
   };
   use auv_driver::selector::{App, Window};
-  use auv_driver::{ActivationPolicy, Click, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions, Size, WindowPoint};
+  use auv_driver::{
+    ActivationPolicy, Click, InputActionResult, InputDeliveryPath, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions, Size,
+    WindowPoint,
+  };
 
   let target_bounds =
     target.bounds.ok_or_else(|| format!("playlist target {:?} did not carry live bounds; rerun playlist ls/select", target.label))?;
@@ -1020,14 +1032,13 @@ fn run_playlist_select_resolved(
   let sidebar_bounds = scan.sidebar_region().bounds.unwrap_or_else(|| broad_sidebar_probe_bounds(window_size));
   let sidebar_baseline_width = Some(sidebar_bounds.width.round().max(1.0) as u32);
   let sidebar_anchor = sidebar_scroll_anchor(sidebar_bounds);
-  let mut steps = Vec::new();
   let mut diagnostics = scan.diagnostics().to_vec();
   let mut known_limits = scan.known_limits().to_vec();
   known_limits.extend(artifact_read_limits);
   if target_from_run_artifact {
     known_limits.insert(0, PLAYLIST_SELECT_TARGET_FROM_RUN_ARTIFACT_MARKER.to_string());
   }
-  let mut reacquire_summary = None;
+  let mut reacquire_result = None;
   let mut skip_rescan_replay = false;
   let mut click_bounds = target_bounds;
 
@@ -1045,7 +1056,7 @@ fn run_playlist_select_resolved(
         now_millis: crate::view_memory::system_time_millis(),
         ..Default::default()
       };
-      match crate::view_parsers::sidebar::reacquire::try_reacquire_for_target(
+      let reacquire = crate::view_parsers::sidebar::reacquire::try_reacquire_for_target(
         inputs,
         &session,
         &window,
@@ -1055,28 +1066,23 @@ fn run_playlist_select_resolved(
         &target,
         &read_config,
         sidebar_baseline_width,
-      ) {
-        crate::view_memory::PlaylistReacquireAttempt::Hit { bounds, summary } => {
-          click_bounds = bounds;
+      );
+      match &reacquire {
+        crate::view_memory::PlaylistReacquireResult::Reacquired { bounds, .. } => {
+          click_bounds = *bounds;
           skip_rescan_replay = true;
-          reacquire_summary = Some(summary);
-          steps.push(PlaylistSelectStep {
-            name: "reacquire-target".to_string(),
-            target_bounds: Some(click_bounds),
-            delivery_path: None,
-            fallback_reason: None,
+          auv_tracing::emit_event!(PlaylistTargetResolved::ViewMemory {
+            bounds: click_bounds
           });
         }
-        crate::view_memory::PlaylistReacquireAttempt::Stale { summary } => {
-          let stale_reason = summary.stale_reason.as_deref().unwrap_or("unknown");
-          known_limits.push(format!("view-memory stale at reacquire ({stale_reason}) — falling back to rescan replay",));
-          reacquire_summary = Some(summary);
+        crate::view_memory::PlaylistReacquireResult::Stale { reason, .. } => {
+          known_limits.push(format!("view-memory stale at reacquire ({}) — falling back to rescan replay", reason.as_str()));
         }
-        crate::view_memory::PlaylistReacquireAttempt::Miss { summary } => {
+        crate::view_memory::PlaylistReacquireResult::NotFound { .. } => {
           known_limits.push("view-memory reacquire missed target — falling back to rescan replay".to_string());
-          reacquire_summary = Some(summary);
         }
       }
+      reacquire_result = Some(reacquire);
     } else {
       known_limits.push("canonical view-memory artifact unavailable; using rescan replay".to_string());
     }
@@ -1108,13 +1114,12 @@ fn run_playlist_select_resolved(
             "background_preferred",
             inputs.scroll_settle_ms,
             Some(delivery_path_label(result.selected_path).to_string()),
-            result.fallback_reason.clone(),
+            result.fallback_reason().map(str::to_string),
           ));
-          steps.push(PlaylistSelectStep {
-            name: format!("scroll-sidebar-top-{index}"),
-            target_bounds: Some(sidebar_bounds),
-            delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
-            fallback_reason: result.fallback_reason,
+          auv_tracing::emit_event!(PlaylistSelectInputDelivered::SeekSidebarTop {
+            attempt: index,
+            bounds: sidebar_bounds,
+            delivery: result,
           });
         }
         Err(error) => {
@@ -1148,8 +1153,6 @@ fn run_playlist_select_resolved(
         index,
         &target.label,
         query,
-        &inputs.artifact_dir,
-        &format!("rescan-reobserve-{index:02}"),
         scroll_context,
         &mut previous_sidebar_crop,
       ) {
@@ -1174,11 +1177,9 @@ fn run_playlist_select_resolved(
       match next_sidebar_target_seek_step(index, seek_budget, found) {
         Some(SidebarTargetSeekStep::Found(_)) => {
           click_bounds = outcome.probe.result.expect("found step requires bounds");
-          steps.push(PlaylistSelectStep {
-            name: "reobserve-playlist-after-rescan-replay".to_string(),
-            target_bounds: Some(click_bounds),
-            delivery_path: None,
-            fallback_reason: None,
+          auv_tracing::emit_event!(PlaylistTargetResolved::RescanReplay {
+            attempt: index,
+            bounds: click_bounds,
           });
           rescan_target_found = true;
           break;
@@ -1203,13 +1204,12 @@ fn run_playlist_select_resolved(
             "foreground_preferred",
             inputs.scroll_settle_ms,
             Some(delivery_path_label(result.selected_path).to_string()),
-            result.fallback_reason.clone(),
+            result.fallback_reason().map(str::to_string),
           ));
-          steps.push(PlaylistSelectStep {
-            name: format!("scroll-sidebar-target-page-{index}"),
-            target_bounds: Some(sidebar_bounds),
-            delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
-            fallback_reason: result.fallback_reason,
+          auv_tracing::emit_event!(PlaylistSelectInputDelivered::SeekTargetPage {
+            attempt: index,
+            bounds: sidebar_bounds,
+            delivery: result,
           });
         }
         None => break,
@@ -1254,13 +1254,12 @@ fn run_playlist_select_resolved(
       "background_preferred",
       inputs.scroll_settle_ms,
       Some(delivery_path_label(result.selected_path).to_string()),
-      result.fallback_reason.clone(),
+      result.fallback_reason().map(str::to_string),
     );
-    steps.push(PlaylistSelectStep {
-      name: format!("scroll-sidebar-bottom-padding-{attempt}"),
-      target_bounds: Some(sidebar_bounds),
-      delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
-      fallback_reason: result.fallback_reason,
+    auv_tracing::emit_event!(PlaylistSelectInputDelivered::SeekBottomPadding {
+      attempt,
+      bounds: sidebar_bounds,
+      delivery: result,
     });
 
     let mut previous_sidebar_crop = None;
@@ -1272,8 +1271,6 @@ fn run_playlist_select_resolved(
       attempt,
       &target.label,
       query,
-      &inputs.artifact_dir,
-      &format!("bottom-padding-reobserve-{attempt:02}"),
       SidebarTargetProbeScrollContext {
         phase: "bottom_padding".to_string(),
         attempt,
@@ -1290,11 +1287,9 @@ fn run_playlist_select_resolved(
         });
         if let Some(bounds) = outcome.probe.result {
           click_bounds = bounds;
-          steps.push(PlaylistSelectStep {
-            name: format!("reobserve-playlist-after-bottom-padding-{attempt}"),
-            target_bounds: Some(click_bounds),
-            delivery_path: None,
-            fallback_reason: None,
+          auv_tracing::emit_event!(PlaylistTargetResolved::BottomPadding {
+            attempt,
+            bounds: click_bounds,
           });
         } else {
           diagnostics.push(ParserDiagnostic {
@@ -1330,26 +1325,14 @@ fn run_playlist_select_resolved(
   if inputs.scroll_settle_ms > 0 {
     std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
   }
-  steps.push(PlaylistSelectStep {
-    name: "click-playlist".to_string(),
-    target_bounds: Some(click_bounds),
-    delivery_path: Some(delivery_path_label(click.selected_path).to_string()),
-    fallback_reason: click.fallback_reason,
+  auv_tracing::emit_event!(PlaylistSelectInputDelivered::SelectPlaylist {
+    bounds: click_bounds,
+    delivery: click,
   });
 
-  let verification_artifact = inputs.artifact_dir.join("playlist-select-post-click.png");
-  let mut verification = verify_playlist_select_title(
-    &session,
-    &window,
-    window_size,
-    sidebar_bounds,
-    click_bounds,
-    inputs,
-    &verification_artifact,
-    &target.label,
-  )?;
+  let mut verification = verify_playlist_select_title(&session, &window, window_size, sidebar_bounds, click_bounds, inputs, &target.label)?;
 
-  if verification.status != "passed" {
+  if !verification.passed() {
     known_limits.push("background playlist row click did not verify; retried with foreground click".to_string());
     let screen_point = session
       .window()
@@ -1376,25 +1359,15 @@ fn run_playlist_select_resolved(
     if inputs.scroll_settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
     }
-    steps.push(PlaylistSelectStep {
-      name: "click-playlist-foreground-retry".to_string(),
-      target_bounds: Some(click_bounds),
-      delivery_path: Some("foreground_system_events".to_string()),
-      fallback_reason: Some("window-targeted click did not verify selection".to_string()),
+    let delivery = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
+    auv_tracing::emit_event!(PlaylistSelectInputDelivered::SelectPlaylistForegroundRetry {
+      bounds: click_bounds,
+      delivery,
     });
-    verification = verify_playlist_select_title(
-      &session,
-      &window,
-      window_size,
-      sidebar_bounds,
-      click_bounds,
-      inputs,
-      &verification_artifact,
-      &target.label,
-    )?;
+    verification = verify_playlist_select_title(&session, &window, window_size, sidebar_bounds, click_bounds, inputs, &target.label)?;
   }
 
-  if verification.method == PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO {
+  if verification.used_sidebar_row_echo() {
     known_limits.push(PLAYLIST_SELECT_VERIFICATION_SIDEBAR_ECHO_LIMIT.to_string());
   }
 
@@ -1404,12 +1377,10 @@ fn run_playlist_select_resolved(
     app: scan.app().clone(),
     window: scan.window().clone(),
     target,
-    steps,
     verification,
     diagnostics,
     known_limits,
-    reacquire: reacquire_summary,
-    run_id: None,
+    reacquire: reacquire_result,
   })
 }
 
@@ -1421,112 +1392,102 @@ fn verify_playlist_select_title(
   sidebar_bounds: ViewBounds,
   row_bounds: ViewBounds,
   inputs: &Inputs,
-  verification_artifact: &std::path::Path,
   target_label: &str,
 ) -> Result<PlaylistSelectVerification, String> {
-  let capture = session.window().capture(window).map_err(|error| format!("playlist select verification capture failed: {error}"))?;
-  capture.image.save(verification_artifact).map_err(|error| format!("failed to save {}: {error}", verification_artifact.display()))?;
+  auv_tracing::in_span!("auv.netease.playlist_select.verification", || {
+    let capture = session.window().capture(window).map_err(|error| format!("playlist select verification capture failed: {error}"))?;
+    crate::run_artifacts::emit_png("auv.netease.playlist_select.verification_capture", &capture.image);
 
-  let recognition_json = playlist_select_verification_recognition_artifact_path(verification_artifact);
-  let sidebar_echo_json = playlist_select_verification_sidebar_echo_recognition_artifact_path(verification_artifact);
-  let ocr_options = build_playlist_select_verification_ocr_options(inputs, target_label);
-  let ocr_tiers: [(&str, fn(ViewBounds, auv_driver::Size) -> auv_driver::RatioRect); 4] = [
-    (PLAYLIST_SELECT_VERIFICATION_OCR_TITLE_BAND, playlist_select_verification_title_band_ratio),
-    (PLAYLIST_SELECT_VERIFICATION_OCR_HERO_HEADER, playlist_select_verification_hero_header_ratio),
-    (PLAYLIST_SELECT_VERIFICATION_OCR_MAIN_BAND, playlist_select_verification_main_band_ratio),
-    (PLAYLIST_SELECT_VERIFICATION_OCR_FULL_WINDOW, playlist_select_verification_full_window_ratio),
-  ];
+    let ocr_options = build_playlist_select_verification_ocr_options(inputs, target_label);
+    let ocr_tiers: [(PlaylistSelectTitleOcrTier, fn(ViewBounds, auv_driver::Size) -> auv_driver::RatioRect); 4] = [
+      (PlaylistSelectTitleOcrTier::TitleBand, playlist_select_verification_title_band_ratio),
+      (PlaylistSelectTitleOcrTier::HeroHeader, playlist_select_verification_hero_header_ratio),
+      (PlaylistSelectTitleOcrTier::MainBand, playlist_select_verification_main_band_ratio),
+      (PlaylistSelectTitleOcrTier::FullWindow, playlist_select_verification_full_window_ratio),
+    ];
 
-  let mut method = PLAYLIST_SELECT_VERIFICATION_OCR_FULL_WINDOW;
-  let mut observed_title = None;
-  let mut last_recognition = None;
+    let mut final_tier = PlaylistSelectTitleOcrTier::FullWindow;
+    let mut observed_title = None;
+    let mut last_recognition = None;
 
-  for (tier_method, ratio_for_tier) in ocr_tiers {
-    method = tier_method;
-    let ocr_ratio = ratio_for_tier(sidebar_bounds, window_size);
-    let recognition = session
-      .vision()
-      .recognize_text_in_capture_with_options(&capture, ocr_ratio, ocr_options.clone())
-      .map_err(|error| format!("playlist select verification OCR failed: {error}"))?;
-    let recognition = crate::recognition_in_window_space(recognition, &capture);
-    last_recognition = Some(recognition.clone());
-    // NOTICE(a6c-4b): top-nav OCR in the upper band is not playlist detail title.
-    observed_title = playlist_select_verification_title(&recognition, window_size, sidebar_bounds, target_label);
-    if observed_title.is_some() {
-      break;
+    for (tier, ratio_for_tier) in ocr_tiers {
+      final_tier = tier;
+      let ocr_ratio = ratio_for_tier(sidebar_bounds, window_size);
+      let recognition = session
+        .vision()
+        .recognize_text_in_capture_with_options(&capture, ocr_ratio, ocr_options.clone())
+        .map_err(|error| format!("playlist select verification OCR failed: {error}"))?;
+      let recognition = crate::recognition_in_window_space(recognition, &capture);
+      last_recognition = Some(recognition.clone());
+      // NOTICE(a6c-4b): top-nav OCR in the upper band is not playlist detail title.
+      observed_title = playlist_select_verification_title(&recognition, window_size, sidebar_bounds, target_label);
+      if observed_title.is_some() {
+        break;
+      }
     }
-  }
 
-  let recognition = last_recognition.ok_or_else(|| "playlist select verification OCR produced no recognition payload".to_string())?;
-  let mut sidebar_echo_recognition_artifact = None;
-  let mut sidebar_echo_attempted = false;
-  let mut sidebar_echo_pass = false;
+    let recognition = last_recognition.ok_or_else(|| "playlist select verification OCR produced no recognition payload".to_string())?;
+    let mut sidebar_echo_attempted = false;
+    let mut used_sidebar_row_echo = false;
 
-  if observed_title.is_none() && crate::view_parsers::sidebar::parse::is_single_ascii_digit_query(target_label) {
-    sidebar_echo_attempted = true;
-    let sidebar_ratio = playlist_select_verification_view_bounds_to_ratio(sidebar_bounds, window_size);
-    let sidebar_recognition = session
-      .vision()
-      .recognize_text_in_capture_with_options(&capture, sidebar_ratio, ocr_options.clone())
-      .map_err(|error| format!("playlist select verification sidebar echo OCR failed: {error}"))?;
-    let sidebar_recognition = crate::recognition_in_window_space(sidebar_recognition, &capture);
-    std::fs::write(
-      &sidebar_echo_json,
-      serde_json::to_string_pretty(&sidebar_recognition)
-        .map_err(|error| format!("failed to serialize sidebar echo recognition: {error}"))?,
-    )
-    .map_err(|error| format!("failed to write {}: {error}", sidebar_echo_json.display()))?;
-    sidebar_echo_recognition_artifact = Some(sidebar_echo_json.display().to_string());
-
-    if let Some(echo_title) = playlist_select_verification_sidebar_row_echo_from_recognition(
-      &sidebar_recognition,
-      &recognition,
-      row_bounds,
-      target_label,
-      window_size,
-      sidebar_bounds,
-    ) {
-      observed_title = Some(echo_title);
-      method = PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO;
-      sidebar_echo_pass = true;
+    if observed_title.is_none() && crate::view_parsers::sidebar::parse::is_single_ascii_digit_query(target_label) {
+      sidebar_echo_attempted = true;
+      let sidebar_ratio = playlist_select_verification_view_bounds_to_ratio(sidebar_bounds, window_size);
+      let sidebar_recognition = session
+        .vision()
+        .recognize_text_in_capture_with_options(&capture, sidebar_ratio, ocr_options.clone())
+        .map_err(|error| format!("playlist select verification sidebar echo OCR failed: {error}"))?;
+      let sidebar_recognition = crate::recognition_in_window_space(sidebar_recognition, &capture);
+      crate::run_artifacts::emit_json("auv.netease.playlist_select.sidebar_echo_recognition", &sidebar_recognition);
+      if let Some(echo_title) = playlist_select_verification_sidebar_row_echo_from_recognition(
+        &sidebar_recognition,
+        &recognition,
+        row_bounds,
+        target_label,
+        window_size,
+        sidebar_bounds,
+      ) {
+        observed_title = Some(echo_title);
+        used_sidebar_row_echo = true;
+      }
     }
-  }
 
-  std::fs::write(
-    &recognition_json,
-    serde_json::to_string_pretty(&recognition).map_err(|error| format!("failed to serialize recognition: {error}"))?,
-  )
-  .map_err(|error| format!("failed to write {}: {error}", recognition_json.display()))?;
+    crate::run_artifacts::emit_json("auv.netease.playlist_select.recognition", &recognition);
 
-  let verified = observed_title.is_some();
-  let region_count = recognition.regions.len();
-  let main_pane_guard_pass = playlist_select_verification_count_main_pane_guard_regions(&recognition, window_size, sidebar_bounds);
-  let note = playlist_select_verification_note(
-    "title,hero,main,full",
-    method,
-    region_count,
-    main_pane_guard_pass,
-    sidebar_echo_attempted,
-    sidebar_echo_pass,
-  );
+    let recognized_region_count = recognition.regions.len();
+    let main_pane_match_count = playlist_select_verification_count_main_pane_guard_regions(&recognition, window_size, sidebar_bounds);
+    let evidence = if used_sidebar_row_echo {
+      PlaylistSelectVerificationEvidence::SidebarRowEcho {
+        recognized_region_count,
+        main_pane_match_count,
+      }
+    } else {
+      PlaylistSelectVerificationEvidence::TitleOcr {
+        tier: final_tier,
+        recognized_region_count,
+        main_pane_match_count,
+        sidebar_echo_attempted,
+      }
+    };
 
-  Ok(PlaylistSelectVerification {
-    status: if verified { "passed" } else { "failed" }.to_string(),
-    method: method.to_string(),
-    observed_title,
-    artifact: Some(verification_artifact.display().to_string()),
-    recognition_artifact: Some(recognition_json.display().to_string()),
-    sidebar_echo_recognition_artifact,
-    note: Some(note),
+    Ok(match observed_title {
+      Some(observed_title) => PlaylistSelectVerification::Passed {
+        observed_title,
+        evidence,
+      },
+      None => PlaylistSelectVerification::Failed { evidence },
+    })
   })
 }
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_play(inputs: &Inputs, query: &str) -> Result<PlaylistPlayResult, String> {
-  run_playlist_play_with_artifacts(inputs, query, &CanonicalPlaylistArtifacts::unavailable(Vec::new()))
+  let scan = run_live_scan_until_query(inputs, query)?;
+  let target = scan.select_target(query)?;
+  run_playlist_play_resolved(inputs, query, scan, target, false, None, Vec::new())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "tracing"))]
 pub(crate) fn run_playlist_play_with_artifacts(
   inputs: &Inputs,
   query: &str,
@@ -1536,7 +1497,7 @@ pub(crate) fn run_playlist_play_with_artifacts(
   run_playlist_play_resolved(inputs, query, scan, target, target_from_run_artifact, artifacts.memory(), artifacts.read_limits().to_vec())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "tracing"))]
 pub(crate) fn run_playlist_play_candidate_with_artifacts(
   inputs: &Inputs,
   candidate_id: &str,
@@ -1557,31 +1518,25 @@ fn run_playlist_play_resolved(
   artifact_read_limits: Vec<String>,
 ) -> Result<PlaylistPlayResult, String> {
   use crate::commands::daily_recommended::best_text_match;
-  use crate::delivery_path_label;
+  use crate::run_artifacts::PlaylistPlayInputDelivered;
   use auv_driver::selector::{App, Window};
-  use auv_driver::{ActivationPolicy, Click, PrepareForInputOptions, RatioRect, Size, WindowPoint};
+  use auv_driver::{ActivationPolicy, Click, InputActionResult, InputDeliveryPath, PrepareForInputOptions, RatioRect, Size, WindowPoint};
 
   let select = run_playlist_select_resolved(inputs, query, scan, target, target_from_run_artifact, memory, artifact_read_limits)?;
-  if select.verification.status != "passed" {
-    return Err(format!("playlist select verification failed before play: observed_title={:?}", select.verification.observed_title));
+  if !select.verification.passed() {
+    return Err(format!("playlist select verification failed before play: observed_title={:?}", select.verification.observed_title()));
   }
-
-  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
 
   let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
-  let mut steps = Vec::new();
-  let mut artifacts = Vec::new();
   let diagnostics = select.diagnostics.clone();
   let mut known_limits = select.known_limits.clone();
 
   let capture = session.window().capture(&window).map_err(|error| format!("playlist play-all capture failed: {error}"))?;
-  let play_all_artifact = inputs.artifact_dir.join("playlist-play-all-target.png");
-  capture.image.save(&play_all_artifact).map_err(|error| format!("failed to save {}: {error}", play_all_artifact.display()))?;
-  artifacts.push(play_all_artifact.display().to_string());
+  crate::run_artifacts::emit_png("auv.netease.playlist_play.target_capture", &capture.image);
   let recognition = session
     .vision()
     .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
@@ -1602,24 +1557,14 @@ fn run_playlist_play_resolved(
   if inputs.scroll_settle_ms > 0 {
     std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
   }
-  steps.push(PlaylistPlayStep {
-    name: "click-play-all".to_string(),
-    target_label: Some(target.text),
-    target_bounds: Some(target_bounds),
-    delivery_path: Some(delivery_path_label(click.selected_path).to_string()),
-    fallback_reason: click.fallback_reason,
-    artifact: Some(play_all_artifact.display().to_string()),
+  auv_tracing::emit_event!(PlaylistPlayInputDelivered::PlayAll {
+    label: target.text,
+    bounds: target_bounds,
+    delivery: click,
   });
 
-  let mut verification = capture_playlist_play_verification(
-    &session,
-    &window,
-    inputs,
-    &mut artifacts,
-    "playlist-play-post-click-playback-state",
-    before_bottom_text.as_deref(),
-  )?;
-  if verification.status != "passed" {
+  let mut verification = capture_playlist_play_verification(&session, &window, inputs, before_bottom_text.as_deref())?;
+  if !verification.passed() {
     known_limits.push("window-targeted Play All click did not verify playback; retried with foreground click".to_string());
     let screen_point = session
       .window()
@@ -1646,24 +1591,15 @@ fn run_playlist_play_resolved(
     if inputs.scroll_settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
     }
-    steps.push(PlaylistPlayStep {
-      name: "click-play-all-foreground-retry".to_string(),
-      target_label: Some("播放全部".to_string()),
-      target_bounds: Some(target_bounds),
-      delivery_path: Some("foreground_system_events".to_string()),
-      fallback_reason: Some("window-targeted click did not verify playback".to_string()),
-      artifact: Some(play_all_artifact.display().to_string()),
+    let delivery = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
+    auv_tracing::emit_event!(PlaylistPlayInputDelivered::PlayAllForegroundRetry {
+      label: "播放全部".to_string(),
+      bounds: target_bounds,
+      delivery,
     });
-    verification = capture_playlist_play_verification(
-      &session,
-      &window,
-      inputs,
-      &mut artifacts,
-      "playlist-play-post-foreground-click-playback-state",
-      before_bottom_text.as_deref(),
-    )?;
+    verification = capture_playlist_play_verification(&session, &window, inputs, before_bottom_text.as_deref())?;
   }
-  if verification.status != "passed" {
+  if !verification.passed() {
     known_limits.push("playlist play-all click did not change the bottom player from its pre-click state".to_string());
   }
 
@@ -1671,11 +1607,9 @@ fn run_playlist_play_resolved(
     command: "playlist.play".to_string(),
     query: query.to_string(),
     select,
-    steps,
     verification,
     diagnostics,
     known_limits,
-    artifacts,
   })
 }
 
@@ -1684,42 +1618,36 @@ fn capture_playlist_play_verification(
   session: &auv_driver_macos::MacosDriverSession,
   window: &auv_driver::Window,
   inputs: &Inputs,
-  artifacts: &mut Vec<String>,
-  artifact_stem: &str,
   before_bottom_text: Option<&str>,
 ) -> Result<PlaylistPlayVerification, String> {
   use crate::views::player::classify_bottom_playback_control_state;
 
-  let capture = session.window().capture(window).map_err(|error| format!("playlist play verification capture failed: {error}"))?;
-  let screenshot = inputs.artifact_dir.join(format!("{artifact_stem}.png"));
-  capture.image.save(&screenshot).map_err(|error| format!("failed to save {}: {error}", screenshot.display()))?;
-  artifacts.push(screenshot.display().to_string());
-  let control_state = classify_bottom_playback_control_state(&capture.image);
-  let bottom_text = recognize_playlist_bottom_text(session, &capture, inputs);
-  let verification_json = inputs.artifact_dir.join(format!("{artifact_stem}.json"));
-  let status = playlist_play_status_from_bottom_probe(control_state, before_bottom_text, bottom_text.as_deref());
-  let payload = serde_json::json!({
-    "method": "bottom_control_icon_with_player_change",
-    "status": status,
-    "control_state": control_state,
-    "before_bottom_text": before_bottom_text,
-    "observed_bottom_text": bottom_text,
-    "screenshot": screenshot.display().to_string(),
-  });
-  std::fs::write(
-    &verification_json,
-    serde_json::to_string_pretty(&payload).map_err(|error| format!("failed to serialize playlist play verification: {error}"))?,
-  )
-  .map_err(|error| format!("failed to write {}: {error}", verification_json.display()))?;
-  artifacts.push(verification_json.display().to_string());
+  auv_tracing::in_span!("auv.netease.playlist_play.verification", || {
+    let capture = session.window().capture(window).map_err(|error| format!("playlist play verification capture failed: {error}"))?;
+    crate::run_artifacts::emit_png("auv.netease.playlist_play.verification_capture", &capture.image);
+    let control_state = classify_bottom_playback_control_state(&capture.image);
+    let bottom_text = recognize_playlist_bottom_text(session, &capture, inputs);
+    let passed = playlist_play_verified_from_bottom_probe(control_state, before_bottom_text, bottom_text.as_deref());
+    let verification = if passed {
+      PlaylistPlayVerification::Passed {
+        control_state,
+        observed_bottom_text: bottom_text,
+      }
+    } else {
+      PlaylistPlayVerification::Failed {
+        control_state,
+        observed_bottom_text: bottom_text,
+      }
+    };
+    crate::run_artifacts::emit_json(
+      "auv.netease.playlist_play.verification",
+      &PlaylistPlayVerificationArtifact {
+        before_bottom_text,
+        verification: &verification,
+      },
+    );
 
-  Ok(PlaylistPlayVerification {
-    status: status.to_string(),
-    method: "bottom_control_icon_with_player_change".to_string(),
-    control_state: Some(control_state),
-    observed_bottom_text: bottom_text,
-    artifact: Some(verification_json.display().to_string()),
-    note: Some("verification checks the bottom playback control and rejects unchanged pre-click playback".to_string()),
+    Ok(verification)
   })
 }
 

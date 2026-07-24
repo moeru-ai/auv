@@ -1,10 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use auv_runtime::contract::{
-  NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox, RecognitionScope,
-  RecognitionSurface, SurfaceNode,
-};
 use auv_runtime::run_read::{
   ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, RootArtifactPublishError, RootArtifactReadError, SCAN_COVERAGE_PURPOSE, publish_scan_coverage,
   publish_scroll_scan, read_scroll_scan,
@@ -14,17 +10,15 @@ use auv_runtime::scroll_scan::{
   CollectionObservation, CompletenessClaim, ObservationCluster, SCROLL_SCAN_JSON_BYTE_LIMIT, SCROLL_SCAN_PAYLOAD_TOO_LARGE_CODE,
   SCROLL_SCAN_PURPOSE, ScanPageRecord, ScanRect, ScanRegion, ScanTarget, ScrollScanArtifact, StopEvidence, StopPolicy, StopReason,
 };
-use auv_scan::{CompletenessWire, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire};
+use auv_scan::{CoverageEntry, CoverageView, NegativeEvidence, ScanCoverageArtifact};
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError,
   Attributes, AuthorityId, BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey,
-  MemoryRunStore, NewArtifact, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore,
-  RunSubscription, Sha256Digest, SpanId, StoreArtifactRequest, configure, dispatcher,
+  JsonArtifactError, MemoryRunStore, NewArtifact, PageLimit, ReadArtifactError, ReadError, RunCommit, RunCommitPage, RunCommitRequest,
+  RunId, RunRevision, RunSnapshot, RunStore, RunSubscription, Sha256Digest, StoreArtifactRequest, configure, dispatcher,
 };
 use futures_util::io::Cursor;
 use sha2::{Digest, Sha256};
-
-static PRODUCED_COVERAGE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 struct RootRunFixture {
   store: Arc<MemoryRunStore>,
@@ -47,7 +41,7 @@ impl RootRunFixture {
     }
   }
 
-  async fn publish_coverage(&self, coverage: &ScanCoverageWire) -> ArtifactMetadata {
+  async fn publish_coverage(&self, coverage: &CoverageView) -> ArtifactMetadata {
     publish_scan_coverage(Some(&self.root), coverage).await.expect("publish scan coverage").expect("coverage publication enabled")
   }
 
@@ -248,44 +242,35 @@ impl RunStore for RejectArtifactStore {
   }
 }
 
-fn sample_coverage() -> ScanCoverageWire {
-  ScanCoverageWire {
-    schema_version: SCAN_COVERAGE_SCHEMA_VERSION.to_string(),
-    entries: vec![CoverageEntryWire {
+fn sample_coverage() -> CoverageView {
+  CoverageView::incomplete(
+    vec![CoverageEntry {
       track_id: "track-1".to_string(),
       last_seen_frame_id: "frame-2".to_string(),
       observation_count: 2,
     }],
-    open_uncertainty_codes: vec!["partial-occlusion".to_string()],
-    negative_evidence: vec![NegativeEvidenceWire {
+    "fixture retains one uncertainty",
+    vec!["partial-occlusion".to_string()],
+    vec![NegativeEvidence {
       code: "no-new-observation".to_string(),
       after_frame_id: "frame-2".to_string(),
     }],
-    completeness: CompletenessWire::Incomplete {
-      reason: "fixture retains one uncertainty".to_string(),
-    },
-  }
+  )
 }
 
-fn produced_coverage() -> ScanCoverageWire {
+fn produced_coverage() -> CoverageView {
   let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/auv-scan/tests/fixtures/scan/coverage/coverage_stable_v0");
-  let invocation = PRODUCED_COVERAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
-  let output_dir = std::env::temp_dir().join(format!("auv-scroll-scan-run-artifact-{}-{invocation}", std::process::id()));
-  let _ = std::fs::remove_dir_all(&output_dir);
-  let produced = auv_scan::produce_coverage_from_fixture_dir(&fixture_dir, &output_dir).expect("produce canonical scan coverage");
-  let _ = std::fs::remove_dir_all(output_dir);
-  produced.wire
+  auv_scan::build_coverage_fixture(&fixture_dir).expect("evaluate canonical scan coverage")
 }
 
-async fn direct_coverage_result(calls: &AtomicUsize, coverage: ScanCoverageWire) -> ScanCoverageWire {
+async fn direct_coverage_result(calls: &AtomicUsize, coverage: CoverageView) -> CoverageView {
   calls.fetch_add(1, Ordering::Relaxed);
   let context = Context::current();
   let _ = publish_scan_coverage(Some(&context), &coverage).await;
   coverage
 }
 
-fn sample_scroll_scan_artifact(run_id: RunId) -> ScrollScanArtifact {
-  let span_id = SpanId::new();
+fn sample_scroll_scan_artifact() -> ScrollScanArtifact {
   let observation = CollectionObservation {
     observation_id: "obs_0001_0001".to_string(),
     page_index: 0,
@@ -298,38 +283,7 @@ fn sample_scroll_scan_artifact(run_id: RunId) -> ScrollScanArtifact {
       height: 24,
     },
     section_context: None,
-    source_artifacts: Vec::new(),
-    attributes: std::collections::BTreeMap::from([("source".to_string(), "auv-driver.vision.ocr".to_string())]),
-  };
-  let node = SurfaceNode {
-    node_ref: NodeRef {
-      run_id,
-      span_id,
-      node_id: observation.observation_id.clone(),
-    },
-    kind: "auv-driver.vision.ocr".to_string(),
-    label: Some(observation.raw_text.clone()),
-    box_: RecognitionBox {
-      x: observation.bounds.x,
-      y: observation.bounds.y,
-      width: observation.bounds.width,
-      height: observation.bounds.height,
-    },
-    source_artifacts: Vec::new(),
-    recognition_id: None,
-    recognition_source: None,
-    recognition_surface: None,
-    recognized_item_id: None,
-    recognized_item_kind: None,
     provider_score: None,
-    detail: serde_json::json!({
-      "observation_id": observation.observation_id,
-      "page_index": observation.page_index,
-      "normalized_text_key": observation.normalized_text_key,
-      "section_context": observation.section_context,
-      "source_artifacts": [],
-      "attributes": observation.attributes,
-    }),
   };
   ScrollScanArtifact {
     scan_id: "scan_fixture".to_string(),
@@ -349,47 +303,10 @@ fn sample_scroll_scan_artifact(run_id: RunId) -> ScrollScanArtifact {
     },
     pages: vec![ScanPageRecord {
       page_index: 0,
-      observe_run_id: Some(run_id.to_string()),
-      screenshot_artifact: None,
       observation_count: 1,
       new_observation_count: 1,
-      summary: "observed 1 OCR region(s); 1 new scan signature(s)".to_string(),
     }],
     observations: vec![observation],
-    nodes: vec![node.clone()],
-    snapshots: vec![ObservationSnapshot {
-      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
-      snapshot_id: "snapshot_fixture_0001".to_string(),
-      run_id,
-      span_id,
-      captured_at_millis: 1,
-      source: ObservationSource::Ocr,
-      scope: RecognitionScope {
-        surface: RecognitionSurface::Region,
-        display_ref: None,
-        native_display_id: None,
-        app_bundle_id: Some("com.example.fixture".to_string()),
-        window_title: Some("Fixture".to_string()),
-        window_number: None,
-        region_hint: Some(RatioRegion {
-          left: 0.1,
-          top: 0.2,
-          right: 0.9,
-          bottom: 0.8,
-        }),
-        capture_artifact: None,
-        capture_contract_artifact: None,
-      },
-      capture_contract_ref: None,
-      evidence: Vec::new(),
-      nodes: vec![node],
-      detail: serde_json::json!({
-        "page_index": 0,
-        "observation_count": 1,
-        "new_observation_count": 1,
-      }),
-      known_limits: vec!["fixture observation has no capture contract".to_string()],
-    }],
     clusters: vec![ObservationCluster {
       cluster_id: "cluster_0001".to_string(),
       observation_ids: vec!["obs_0001_0001".to_string()],
@@ -397,9 +314,7 @@ fn sample_scroll_scan_artifact(run_id: RunId) -> ScrollScanArtifact {
       merge_reason: "single_observation".to_string(),
       confidence: 1.0,
     }],
-    section_candidates: Vec::new(),
     scroll_boundary_candidates: Vec::new(),
-    hook_decisions: Vec::new(),
     stop_evidence: StopEvidence {
       reason: StopReason::MaxPages,
       message: "fixture reached max pages".to_string(),
@@ -410,10 +325,42 @@ fn sample_scroll_scan_artifact(run_id: RunId) -> ScrollScanArtifact {
   }
 }
 
-async fn assert_invalid_scroll_scan(mutate: impl FnOnce(&mut ScrollScanArtifact, RunId), expected_message: &str) {
+#[test]
+fn scroll_scan_payload_contains_no_path_summary_or_generic_attribute_bags() {
+  let value = serde_json::to_value(sample_scroll_scan_artifact()).expect("serialize scroll scan");
+  let observation = &value["observations"][0];
+  let page = &value["pages"][0];
+
+  assert!(observation.get("source_artifacts").is_none());
+  assert!(observation.get("attributes").is_none());
+  assert!(page.get("screenshot_artifact").is_none());
+  assert!(page.get("summary").is_none());
+  assert!(value.get("hook_decisions").is_none());
+  assert!(value.get("section_candidates").is_none());
+}
+
+#[test]
+fn scroll_scan_contract_contains_only_producer_backed_states() {
+  let source = include_str!("../src/scroll_scan/mod.rs");
+
+  for forbidden in [
+    "HookDecisionRecord",
+    "HookAction",
+    "HookRequestedStop",
+    "UntilNextSection",
+    "SectionCandidate",
+    "PartialMaxDuration",
+    "PartialUnstableContent",
+    "PartialNextSectionCandidate",
+  ] {
+    assert!(!source.contains(forbidden), "scroll-scan still exposes unproduced contract {forbidden}");
+  }
+}
+
+async fn assert_invalid_scroll_scan(mutate: impl FnOnce(&mut ScrollScanArtifact), expected_message: &str) {
   let fixture = RootRunFixture::memory();
-  let mut artifact = sample_scroll_scan_artifact(fixture.run_id);
-  mutate(&mut artifact, fixture.run_id);
+  let mut artifact = sample_scroll_scan_artifact();
+  mutate(&mut artifact);
   let bytes = serde_json::to_vec(&artifact).expect("serialize invalid scroll scan");
   let published = fixture.publish_bytes(SCROLL_SCAN_PURPOSE, "application/json", bytes).await;
   let snapshot = fixture.snapshot().await;
@@ -427,7 +374,7 @@ async fn assert_invalid_scroll_scan(mutate: impl FnOnce(&mut ScrollScanArtifact,
 #[tokio::test]
 async fn scroll_scan_producer_round_trips_through_the_shared_reader() {
   let fixture = RootRunFixture::memory();
-  let expected = sample_scroll_scan_artifact(fixture.run_id);
+  let expected = sample_scroll_scan_artifact();
 
   let metadata = fixture.publish_scroll_scan(&expected).await;
   let snapshot = fixture.snapshot().await;
@@ -440,51 +387,36 @@ async fn scroll_scan_producer_round_trips_through_the_shared_reader() {
 }
 
 #[tokio::test]
-async fn scroll_scan_reader_rejects_invalid_scan_id_and_run_lineage() {
-  assert_invalid_scroll_scan(|artifact, _| artifact.scan_id.clear(), "scan_id").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.scan_id = "scan id with spaces".to_string(), "scan_id").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].observe_run_id = Some(RunId::new().to_string()), "observe_run_id").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.snapshots[0].run_id = RunId::new(), "snapshot run_id").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.nodes[0].node_ref.run_id = RunId::new(), "node run_id").await;
+async fn scroll_scan_reader_rejects_invalid_scan_id() {
+  assert_invalid_scroll_scan(|artifact| artifact.scan_id.clear(), "scan_id").await;
+  assert_invalid_scroll_scan(|artifact| artifact.scan_id = "scan id with spaces".to_string(), "scan_id").await;
 }
 
 #[tokio::test]
 async fn scroll_scan_reader_rejects_inconsistent_page_and_observation_ordering() {
-  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].page_index = 1, "page indices").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].observation_count = 2, "observation_count").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.observations[0].page_index = 1, "observation page_index").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.pages[0].new_observation_count = 0, "new_observation_count").await;
+  assert_invalid_scroll_scan(|artifact| artifact.pages[0].page_index = 1, "page indices").await;
+  assert_invalid_scroll_scan(|artifact| artifact.pages[0].observation_count = 2, "observation_count").await;
+  assert_invalid_scroll_scan(|artifact| artifact.observations[0].page_index = 1, "observation page_index").await;
+  assert_invalid_scroll_scan(|artifact| artifact.pages[0].new_observation_count = 0, "new_observation_count").await;
 }
 
 #[tokio::test]
 async fn scroll_scan_reader_rejects_incoherent_nested_references() {
-  assert_invalid_scroll_scan(|artifact, _| artifact.clusters[0].observation_ids[0] = "obs_missing".to_string(), "cluster observation").await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.nodes[0].node_ref.node_id = "obs_missing".to_string(), "node_id").await;
-  assert_invalid_scroll_scan(
-    |artifact, _| artifact.nodes[0].recognition_id = Some("orphan_recognition".to_string()),
-    "owning observation projection",
-  )
-  .await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.snapshots[0].detail["page_index"] = serde_json::json!(1), "snapshot page_index").await;
-  assert_invalid_scroll_scan(
-    |artifact, _| artifact.snapshots[0].evidence.push(ArtifactUri::from_ids(RunId::new(), ArtifactId::new())),
-    "snapshot artifact reference",
-  )
-  .await;
+  assert_invalid_scroll_scan(|artifact| artifact.clusters[0].observation_ids[0] = "obs_missing".to_string(), "cluster observation").await;
 }
 
 #[tokio::test]
 async fn scroll_scan_reader_rejects_incoherent_stop_and_completeness_status() {
-  assert_invalid_scroll_scan(|artifact, _| artifact.completeness_claim = CompletenessClaim::CompleteByReachedBoundary, "completeness_claim")
+  assert_invalid_scroll_scan(|artifact| artifact.completeness_claim = CompletenessClaim::CompleteByReachedBoundary, "completeness_claim")
     .await;
-  assert_invalid_scroll_scan(|artifact, _| artifact.stop_evidence.page_index = 1, "stop_evidence page_index").await;
+  assert_invalid_scroll_scan(|artifact| artifact.stop_evidence.page_index = 1, "stop_evidence page_index").await;
 }
 
 #[tokio::test]
 async fn scroll_scan_reader_checks_authority_owner_purpose_and_content_type() {
   let fixture = RootRunFixture::memory();
-  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact(fixture.run_id)).await;
-  let bytes = serde_json::to_vec(&sample_scroll_scan_artifact(fixture.run_id)).expect("serialize scroll scan");
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
+  let bytes = serde_json::to_vec(&sample_scroll_scan_artifact()).expect("serialize scroll scan");
   let wrong_purpose = fixture.publish_bytes("auv.runtime.other", "application/json", bytes.clone()).await;
   let wrong_content_type = fixture.publish_bytes(SCROLL_SCAN_PURPOSE, "application/problem+json", bytes).await;
   let snapshot = fixture.snapshot().await;
@@ -517,7 +449,7 @@ async fn scroll_scan_reader_checks_authority_owner_purpose_and_content_type() {
 #[tokio::test]
 async fn scroll_scan_reader_checks_committed_length_and_digest() {
   let fixture = RootRunFixture::memory();
-  let artifact = sample_scroll_scan_artifact(fixture.run_id);
+  let artifact = sample_scroll_scan_artifact();
   let bytes = serde_json::to_vec(&artifact).expect("serialize canonical scroll scan");
   let published = fixture.publish_scroll_scan(&artifact).await;
   let snapshot = fixture.snapshot().await;
@@ -552,7 +484,7 @@ async fn scroll_scan_reader_enforces_metadata_and_midstream_bounds() {
   assert_eq!(unopened.open_count(), 0, "metadata bounds must be enforced before opening the body");
 
   let fixture = RootRunFixture::memory();
-  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact(fixture.run_id)).await;
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
   let snapshot = fixture.snapshot().await;
   let first = vec![0; usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test payload size")];
   let streamed = ArtifactBytesStore::from_chunks(fixture.store.clone(), vec![first, vec![1]]);
@@ -567,7 +499,7 @@ async fn scroll_scan_reader_enforces_metadata_and_midstream_bounds() {
 #[tokio::test]
 async fn scroll_scan_reader_preserves_open_stream_and_json_failure_codes() {
   let fixture = RootRunFixture::memory();
-  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact(fixture.run_id)).await;
+  let published = fixture.publish_scroll_scan(&sample_scroll_scan_artifact()).await;
   let snapshot = fixture.snapshot().await;
   let open_store = ArtifactBytesStore::open_error(
     fixture.store.clone(),
@@ -599,7 +531,7 @@ async fn scroll_scan_reader_preserves_open_stream_and_json_failure_codes() {
 #[tokio::test]
 async fn scroll_scan_producer_rejects_payload_above_its_domain_bound_without_a_commit() {
   let fixture = RootRunFixture::memory();
-  let mut oversized = sample_scroll_scan_artifact(fixture.run_id);
+  let mut oversized = sample_scroll_scan_artifact();
   oversized.warnings = vec!["x".repeat(usize::try_from(SCROLL_SCAN_JSON_BYTE_LIMIT + 1).expect("test payload size"))];
   let future = fixture.root.in_scope(|| publish_scroll_scan(Some(&fixture.root), &oversized));
 
@@ -607,10 +539,10 @@ async fn scroll_scan_producer_rejects_payload_above_its_domain_bound_without_a_c
 
   assert!(matches!(
     error,
-    RootArtifactPublishError::PayloadTooLarge {
-      limit: SCROLL_SCAN_JSON_BYTE_LIMIT,
+    RootArtifactPublishError::Json {
+      source: JsonArtifactError::PayloadTooLarge { limit, .. },
       ..
-    }
+    } if limit.get() == SCROLL_SCAN_JSON_BYTE_LIMIT
   ));
   fixture.dispatch.flush().await.expect("construction failure emits no artifact job");
   assert!(fixture.store.load_snapshot(fixture.run_id).await.expect("load snapshot").is_none());
@@ -619,7 +551,7 @@ async fn scroll_scan_producer_rejects_payload_above_its_domain_bound_without_a_c
 #[tokio::test]
 async fn scroll_scan_producer_rejects_invalid_domain_payload_without_a_commit() {
   let fixture = RootRunFixture::memory();
-  let mut invalid = sample_scroll_scan_artifact(fixture.run_id);
+  let mut invalid = sample_scroll_scan_artifact();
   invalid.pages[0].observation_count = 2;
   let future = fixture.root.in_scope(|| publish_scroll_scan(Some(&fixture.root), &invalid));
 
@@ -658,7 +590,7 @@ async fn scan_coverage_round_trips_through_one_snapshot_authority() {
 #[tokio::test]
 async fn scan_coverage_reader_checks_authority_purpose_content_type_and_uniqueness() {
   let fixture = RootRunFixture::memory();
-  let bytes = serde_json::to_vec(&sample_coverage()).expect("serialize coverage");
+  let bytes = serde_json::to_vec(&ScanCoverageArtifact::new(sample_coverage())).expect("serialize coverage artifact");
   fixture.publish_bytes("auv.runtime.other", "application/json", bytes.clone()).await;
   let snapshot = fixture.snapshot().await;
 
@@ -666,7 +598,9 @@ async fn scan_coverage_reader_checks_authority_purpose_content_type_and_uniquene
   let wrong_store = MemoryRunStore::new(AuthorityId::new());
   assert!(matches!(
     read_scan_coverage(&wrong_store, &snapshot).await.expect_err("wrong authority"),
-    RootArtifactReadError::SnapshotAuthorityMismatch { .. }
+    RootArtifactReadError::Read {
+      source: ReadArtifactError::SnapshotAuthorityMismatch { .. }
+    }
   ));
 
   let wrong_content = RootRunFixture::memory();
@@ -674,7 +608,9 @@ async fn scan_coverage_reader_checks_authority_purpose_content_type_and_uniquene
   let snapshot = wrong_content.snapshot().await;
   assert!(matches!(
     read_scan_coverage(wrong_content.store.as_ref(), &snapshot).await.expect_err("wrong content type"),
-    RootArtifactReadError::WrongContentType { .. }
+    RootArtifactReadError::Read {
+      source: ReadArtifactError::WrongContentType { .. }
+    }
   ));
 
   let duplicate = RootRunFixture::memory();
@@ -691,14 +627,16 @@ async fn scan_coverage_reader_checks_authority_purpose_content_type_and_uniquene
 async fn scan_coverage_reader_checks_committed_length_and_digest() {
   let fixture = RootRunFixture::memory();
   let expected = sample_coverage();
-  let bytes = serde_json::to_vec(&expected).expect("serialize coverage");
+  let bytes = serde_json::to_vec(&ScanCoverageArtifact::new(expected.clone())).expect("serialize coverage artifact");
   fixture.publish_coverage(&expected).await;
   let snapshot = fixture.snapshot().await;
 
   let short_store = ArtifactBytesStore::new(fixture.store.clone(), bytes[..bytes.len() - 1].to_vec());
   assert!(matches!(
     read_scan_coverage(&short_store, &snapshot).await.expect_err("short artifact"),
-    RootArtifactReadError::LengthMismatch { .. }
+    RootArtifactReadError::Read {
+      source: ReadArtifactError::LengthMismatch { .. }
+    }
   ));
   assert_eq!(short_store.open_count(), 1);
 
@@ -707,7 +645,9 @@ async fn scan_coverage_reader_checks_committed_length_and_digest() {
   let corrupt_store = ArtifactBytesStore::new(fixture.store.clone(), changed);
   assert!(matches!(
     read_scan_coverage(&corrupt_store, &snapshot).await.expect_err("corrupt artifact"),
-    RootArtifactReadError::DigestMismatch { .. }
+    RootArtifactReadError::Read {
+      source: ReadArtifactError::DigestMismatch { .. }
+    }
   ));
 }
 
@@ -721,8 +661,9 @@ async fn scan_coverage_reader_rejects_committed_payload_above_the_canonical_boun
 
   assert!(matches!(
     read_scan_coverage(&store, &snapshot).await.expect_err("oversized coverage"),
-    RootArtifactReadError::PayloadTooLarge { limit, actual, .. }
-      if limit == ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT && actual == ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1
+    RootArtifactReadError::Read {
+      source: ReadArtifactError::PayloadTooLarge { limit, actual, .. }
+    } if limit.get() == ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT && actual == ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1
   ));
   assert_eq!(store.open_count(), 0, "metadata bounds must be enforced before reading the body");
 }
@@ -738,14 +679,14 @@ async fn scan_coverage_reader_rejects_malformed_json_and_wrong_schema() {
   ));
 
   let wrong_schema = RootRunFixture::memory();
-  let mut coverage = sample_coverage();
-  coverage.schema_version = "scan-coverage-v999".to_string();
-  let bytes = serde_json::to_vec(&coverage).expect("serialize wrong schema");
+  let mut artifact = serde_json::to_value(ScanCoverageArtifact::new(sample_coverage())).expect("serialize coverage artifact");
+  artifact["schema"] = serde_json::Value::String("auv.scan.coverage.v999".to_string());
+  let bytes = serde_json::to_vec(&artifact).expect("serialize wrong schema");
   wrong_schema.publish_bytes(SCAN_COVERAGE_PURPOSE, "application/json", bytes).await;
   let snapshot = wrong_schema.snapshot().await;
   assert!(matches!(
     read_scan_coverage(wrong_schema.store.as_ref(), &snapshot).await.expect_err("wrong schema"),
-    RootArtifactReadError::InvalidPayload { .. }
+    RootArtifactReadError::MalformedJson { .. }
   ));
 }
 
@@ -770,11 +711,10 @@ async fn recording_failure_does_not_replace_or_reexecute_the_direct_coverage_val
 #[test]
 fn scan_coverage_producer_reports_missing_source_without_manufacturing_output() {
   let fixture_dir = std::env::temp_dir().join(format!("auv-scroll-scan-missing-source-{}", std::process::id()));
-  let output_dir = fixture_dir.join("out");
   let _ = std::fs::remove_dir_all(&fixture_dir);
 
-  let error = auv_scan::produce_coverage_from_fixture_dir(&fixture_dir, &output_dir).expect_err("missing source must fail");
+  let error = auv_scan::build_coverage_fixture(&fixture_dir).expect_err("missing source must fail");
 
   assert!(matches!(error, auv_scan::CoverageProducerError::MissingManifest { .. }));
-  assert!(!output_dir.exists(), "a source failure must not leave a canonical coverage artifact");
+  assert!(!fixture_dir.exists(), "a source failure must not manufacture filesystem output");
 }

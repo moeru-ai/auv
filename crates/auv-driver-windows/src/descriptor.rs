@@ -38,7 +38,7 @@ pub const WINDOWS_DESKTOP_CAPABILITIES: &[&str] = &[
 pub struct WindowsDriverDescriptor {
   pub id: &'static str,
   pub platform: PlatformKind,
-  pub summary: &'static str,
+  pub description: &'static str,
 }
 
 impl WindowsDriverDescriptor {
@@ -46,7 +46,7 @@ impl WindowsDriverDescriptor {
     DriverDescriptor {
       id: self.id,
       platform: self.platform,
-      summary: self.summary,
+      description: self.description,
     }
   }
 }
@@ -55,6 +55,6 @@ pub fn windows_driver_descriptor() -> WindowsDriverDescriptor {
   WindowsDriverDescriptor {
     id: "windows.desktop",
     platform: PlatformKind::Windows,
-    summary: "Windows desktop driver: system OCR, display/region/window capture, window enumeration and mutation, foreground input, clipboard, permission probe, and UIA accessibility tree observation/focus.",
+    description: "Windows desktop driver: system OCR, display/region/window capture, window enumeration and mutation, foreground input, clipboard, permission probe, and UIA accessibility tree observation/focus.",
   }
 }

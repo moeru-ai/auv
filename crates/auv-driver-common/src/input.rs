@@ -318,8 +318,9 @@ impl InputAttempt {
   }
 }
 
-/// Artifact role for persisted [`InputActionResult`] JSON records.
-pub const INPUT_ACTION_RESULT_ARTIFACT_ROLE: &str = "input-action-result";
+/// Canonical artifact purpose used by recording adapters for
+/// [`InputActionResult`] JSON.
+pub const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
 
 /// Persisted record of one driver input delivery — clicks, scrolls,
 /// text submission, etc. Captures the attempt sequence, the path that
@@ -341,7 +342,7 @@ pub const INPUT_ACTION_RESULT_ARTIFACT_ROLE: &str = "input-action-result";
 ///   construct `InputActionResult` the same way.
 /// - **Downstream**: persisted as a standalone `input-action-result` JSON
 ///   artifact — **not** embedded in `OperationResult`. Read-side seam:
-///   see `src/contract.rs` module docs.
+///   see the owning runtime or frontend's purpose-specific reader.
 ///
 /// Do not introduce a new action-result schema beside `InputActionResult`
 /// without owner approval.
@@ -356,7 +357,6 @@ pub const INPUT_ACTION_RESULT_ARTIFACT_ROLE: &str = "input-action-result";
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,
   pub attempts: Vec<InputAttempt>,
-  pub fallback_reason: Option<String>,
   pub mouse_disturbance: DisturbanceLevel,
   pub focus_disturbance: DisturbanceLevel,
   pub clipboard_disturbance: DisturbanceLevel,
@@ -367,17 +367,38 @@ impl InputActionResult {
     Self {
       selected_path: path,
       attempts: vec![InputAttempt::success(path)],
-      fallback_reason: None,
       mouse_disturbance: DisturbanceLevel::None,
       focus_disturbance: DisturbanceLevel::None,
       clipboard_disturbance: DisturbanceLevel::None,
     }
+  }
+
+  /// Returns the first failed delivery attempt's diagnostic.
+  pub fn fallback_reason(&self) -> Option<&str> {
+    self.attempts.iter().find(|attempt| !attempt.succeeded).and_then(|attempt| attempt.message.as_deref())
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn fallback_reason_is_derived_from_attempts_and_not_duplicated_on_the_wire() {
+    let result = InputActionResult {
+      selected_path: InputDeliveryPath::ForegroundSystemEvents,
+      attempts: vec![
+        InputAttempt::failure(InputDeliveryPath::WindowTargetedMouse, "background delivery failed"),
+        InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
+      ],
+      mouse_disturbance: DisturbanceLevel::Temporary,
+      focus_disturbance: DisturbanceLevel::Foreground,
+      clipboard_disturbance: DisturbanceLevel::None,
+    };
+
+    assert_eq!(result.fallback_reason(), Some("background delivery failed"));
+    assert!(serde_json::to_value(result).expect("serialize input action result").get("fallback_reason").is_none());
+  }
 
   #[test]
   fn click_and_click_options_serde_roundtrip() {

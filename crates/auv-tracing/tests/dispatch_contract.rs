@@ -16,9 +16,9 @@ use support::{
   UnknownLookup, block_on_timeout,
 };
 
-struct SignalWake(SyncSender<()>);
+struct WakeNotifier(SyncSender<()>);
 
-impl futures_util::task::ArcWake for SignalWake {
+impl futures_util::task::ArcWake for WakeNotifier {
   fn wake_by_ref(wake: &Arc<Self>) {
     let _ = wake.0.try_send(());
   }
@@ -488,7 +488,7 @@ fn subscription_gap_recovers_from_revisioned_pages_and_resumes() {
 }
 
 #[test]
-fn permanently_waiting_subscription_does_not_block_observing_a_known_local_revision() {
+fn permanently_waiting_subscription_does_not_block_reaching_a_known_local_revision() {
   let store = CursorStore::pending_once();
   let projector = RecordingProjector::new();
   let dispatch =
@@ -817,7 +817,7 @@ fn completing_front_flush_drains_canceled_middle_and_wakes_third() {
   let mut third = dispatch.flush();
 
   let (wake_sender, wake_receiver) = sync_channel(1);
-  let wake = Arc::new(SignalWake(wake_sender));
+  let wake = Arc::new(WakeNotifier(wake_sender));
   let waker = futures_util::task::waker_ref(&wake);
   let mut task_context = TaskContext::from_waker(&waker);
   assert!(third.as_mut().poll(&mut task_context).is_pending());

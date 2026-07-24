@@ -1,6 +1,4 @@
-use std::sync::Mutex;
-
-use auv_driver::geometry::WindowPoint;
+use auv_driver::{InputActionResult, geometry::WindowPoint};
 use auv_game_osu::{VisualTruthQueryActionWiringLineage, VisualTruthQueryLiveClickExecutor};
 
 pub const QUERY_WIRED_LIVE_ACTION_OPERATION_ID: &str = "auv.osu.visual_truth_query_wired_live_action";
@@ -8,7 +6,6 @@ pub const QUERY_WIRED_LIVE_ACTION_OPERATION_ID: &str = "auv.osu.visual_truth_que
 pub struct DirectWindowPointClickExecutor {
   target_app: String,
   target_title: String,
-  actions: Mutex<Vec<auv_driver::InputActionResult>>,
 }
 
 impl DirectWindowPointClickExecutor {
@@ -16,17 +13,12 @@ impl DirectWindowPointClickExecutor {
     Self {
       target_app: target_app.into(),
       target_title: target_title.into(),
-      actions: Mutex::new(Vec::new()),
     }
-  }
-
-  pub fn actions(&self) -> Vec<auv_driver::InputActionResult> {
-    self.actions.lock().expect("osu click action mutex poisoned").clone()
   }
 }
 
 impl VisualTruthQueryLiveClickExecutor for DirectWindowPointClickExecutor {
-  fn attempt_click(&self, window_point: WindowPoint, _lineage: &VisualTruthQueryActionWiringLineage) -> Result<String, String> {
+  fn attempt_click(&self, window_point: WindowPoint, _lineage: &VisualTruthQueryActionWiringLineage) -> Result<InputActionResult, String> {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let window = session
       .window()
@@ -38,7 +30,6 @@ impl VisualTruthQueryLiveClickExecutor for DirectWindowPointClickExecutor {
       })
       .map_err(|error| error.to_string())?;
     let action = session.window().click(&window, window_point, auv_driver::ClickOptions::default()).map_err(|error| error.to_string())?;
-    self.actions.lock().expect("osu click action mutex poisoned").push(action);
-    Ok(format!("clicked window point ({:.3},{:.3}) in {}", window_point.point().x, window_point.point().y, window.reference.id))
+    Ok(action)
   }
 }

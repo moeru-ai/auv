@@ -5,9 +5,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::interaction::InteractionStep;
 #[cfg(target_os = "linux")]
-use crate::interaction::StepOutcome;
+use crate::tracing::NodeAction;
 #[cfg(target_os = "linux")]
 use crate::views::{MatchedNode, SettingsNode, find_labeled_node, visible_labels};
 use crate::windows::{OpenWindowReport, ResolveOptions, open_or_resolve};
@@ -27,17 +26,17 @@ impl Default for OpenInputs {
 pub struct OpenResult {
   pub command: &'static str,
   pub window: OpenWindowReport,
-  pub steps: Vec<InteractionStep>,
 }
 
 pub fn run_open(inputs: &OpenInputs) -> Result<OpenResult, String> {
-  let (_, window) = open_or_resolve(&ResolveOptions {
-    settle: Duration::from_millis(inputs.settle_ms),
-  })?;
-  Ok(OpenResult {
-    command: "open",
-    steps: window.steps.clone(),
-    window,
+  crate::tracing::open(|| {
+    let (_, window) = open_or_resolve(&ResolveOptions {
+      settle: Duration::from_millis(inputs.settle_ms),
+    })?;
+    Ok(OpenResult {
+      command: "open",
+      window,
+    })
   })
 }
 
@@ -46,8 +45,7 @@ pub(crate) fn select_visible_labeled_node(
   session: &auv_driver_linux::LinuxDriverSession,
   window: &auv_driver::Window,
   labels: crate::app::LabelSet,
-  step_name: &str,
-  steps: &mut Vec<InteractionStep>,
+  action: NodeAction,
 ) -> Result<MatchedNode, String> {
   let mut last_visible_labels = Vec::new();
   for _ in 0..8 {
@@ -57,7 +55,7 @@ pub(crate) fn select_visible_labeled_node(
       .ok_or_else(|| format!("could not find one of [{}]; visible labels: {}", labels.display(), last_visible_labels.join(" | ")))?;
     if node_is_visible(window, &matched) {
       let delivery = select_node_or_click(session, window, &matched)?;
-      steps.push(InteractionStep::new(step_name, StepOutcome::Selected).target(matched.label.clone()).note(format!("{delivery:?}")));
+      crate::tracing::node_input(action, matched.label.clone(), delivery);
       return Ok(matched);
     }
     scroll_toward_node(session, window, &matched)?;
@@ -71,10 +69,9 @@ pub(crate) fn click_visible_labeled_node(
   session: &auv_driver_linux::LinuxDriverSession,
   window: &auv_driver::Window,
   labels: crate::app::LabelSet,
-  step_name: &str,
-  steps: &mut Vec<InteractionStep>,
+  action: NodeAction,
 ) -> Result<MatchedNode, String> {
-  let (matched, _) = click_visible_labeled_node_with_delivery(session, window, labels, step_name, steps)?;
+  let (matched, _) = click_visible_labeled_node_with_delivery(session, window, labels, action)?;
   Ok(matched)
 }
 
@@ -83,8 +80,7 @@ pub(crate) fn click_visible_labeled_node_with_delivery(
   session: &auv_driver_linux::LinuxDriverSession,
   window: &auv_driver::Window,
   labels: crate::app::LabelSet,
-  step_name: &str,
-  steps: &mut Vec<InteractionStep>,
+  action: NodeAction,
 ) -> Result<(MatchedNode, auv_driver::InputActionResult), String> {
   let mut last_visible_labels = Vec::new();
   for _ in 0..8 {
@@ -104,7 +100,7 @@ pub(crate) fn click_visible_labeled_node_with_delivery(
           },
         )
         .map_err(|error| format!("failed to click {} at {}: {error}", matched.label, matched.path))?;
-      steps.push(InteractionStep::new(step_name, StepOutcome::Clicked).target(matched.label.clone()).note(format!("{delivery:?}")));
+      crate::tracing::node_input(action, matched.label.clone(), delivery.clone());
       return Ok((matched, delivery));
     }
     scroll_toward_node(session, window, &matched)?;

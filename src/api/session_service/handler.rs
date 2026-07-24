@@ -100,19 +100,9 @@ impl SessionApiHandler {
       command.invoke(input)
     });
     let command_result = root.instrument(future).await;
-    let result = InvokeResult::from_command_result(run_id.to_string(), &command, command_result);
+    let result = InvokeResult::from_command_result(run_id, &command, command_result);
     let recording_failure = dispatch.flush().await.err().map(|error| error.to_string());
     Ok(mapper::invoke_result_to_response(&result, recording_failure.as_deref()))
-  }
-
-  pub fn stream_session_events(&self, request: proto::StreamSessionEventsRequest) -> Result<Vec<proto::SessionEvent>, SessionApiError> {
-    let session = request.session.ok_or(SessionApiError::MissingField("session"))?;
-    if !self.registry.lock().expect("session registry mutex poisoned").contains(&session.session_id) {
-      return Err(SessionApiError::UnknownSession(session.session_id));
-    }
-    Err(SessionApiError::NotWired {
-      gate: "session event projector",
-    })
   }
 }
 
@@ -178,8 +168,8 @@ mod tests {
     };
     let first = handler.invoke(request()).await.expect("first invoke");
     let second = handler.invoke(request()).await.expect("second invoke");
-    assert_eq!(first.status, "completed");
-    assert_eq!(second.status, "completed");
+    assert!(matches!(first.terminal, Some(proto::invoke_response::Terminal::Completed(_))));
+    assert!(matches!(second.terminal, Some(proto::invoke_response::Terminal::Completed(_))));
     assert_ne!(first.run_id, second.run_id);
   }
 
@@ -189,11 +179,8 @@ mod tests {
     let handler = SessionApiHandler::with_store(store);
     let response = invoke_dry_run(&handler).await;
 
-    assert_eq!(response.status, "completed");
-    assert!(response.failure_message.is_empty());
-    assert!(response.artifacts.is_empty());
+    assert!(matches!(response.terminal, Some(proto::invoke_response::Terminal::Completed(_))));
     assert!(response.recording_failure.is_empty());
-    assert!(response.known_limits.is_empty());
   }
 
   async fn invoke_dry_run(handler: &SessionApiHandler) -> proto::InvokeResponse {

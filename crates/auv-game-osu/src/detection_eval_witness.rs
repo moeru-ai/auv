@@ -7,6 +7,7 @@ use auv_file::{
   write_json_file as write_json_file_helper,
 };
 use auv_stage_status::StageStatus;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -141,6 +142,7 @@ impl DetectionEvalWitnessReason {
   }
 }
 
+#[cfg(feature = "tracing")]
 pub async fn publish_osu_detection_eval_witness(
   context: Option<&Context>,
   witness: &DetectionEvalWitnessManifest,
@@ -148,6 +150,7 @@ pub async fn publish_osu_detection_eval_witness(
   crate::run_read::publish_json_artifact(context, OSU_DETECTION_EVAL_WITNESS_PURPOSE, witness, validate_witness_payload).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_osu_detection_eval_witness(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
@@ -258,7 +261,7 @@ pub fn build_detection_eval_witness(inputs: &DetectionEvalWitnessInputs) -> Dete
   fs::create_dir_all(&inputs.output_dir)
     .map_err(|error| format!("failed to create detection eval witness output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let generated_at_millis = crate::run_read::now_millis();
+  let generated_at_millis = crate::time::now_millis();
   let source_visual_eval_report_path = inputs.detection_eval_output_dir.join(VISUAL_EVAL_REPORT_FILE);
   let source_detection_eval_manifest_path = inputs.detection_eval_output_dir.join(DETECTION_EVAL_MANIFEST_FILE);
 

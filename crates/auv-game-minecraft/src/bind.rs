@@ -11,16 +11,6 @@ pub struct BoundSpatialFrame {
   pub capture_skew_ms: i64,
 }
 
-impl BoundSpatialFrame {
-  pub fn to_core_capture_binding(&self) -> Option<auv_driver::CaptureBinding> {
-    self.frame.screenshot_artifact_ref.as_ref().map(|screenshot_artifact_ref| {
-      auv_driver::CaptureBinding::new(self.frame.spatial_frame_id.clone(), screenshot_artifact_ref.clone(), self.capture_skew_ms)
-        .with_source_timestamp_millis(self.frame.monotonic_timestamp_ms)
-        .with_known_limit("minecraft capture binding relies on caller-aligned monotonic clock bases")
-    })
-  }
-}
-
 /// Bind a freshly ingested spatial frame to a real screenshot capture.
 ///
 /// The sidecar stamps each frame with `monotonic_timestamp_ms` from the running
@@ -38,13 +28,13 @@ impl BoundSpatialFrame {
 /// `mc_capture_skew_ms` this function writes.
 pub fn bind_capture_to_frame(
   mut frame: MinecraftSpatialFrame,
-  screenshot_artifact_ref: impl Into<String>,
+  screenshot_artifact_ref: Option<String>,
   capture_monotonic_timestamp_ms: u64,
 ) -> BoundSpatialFrame {
   let frame_ts = i64::try_from(frame.monotonic_timestamp_ms).unwrap_or(i64::MAX);
   let capture_ts = i64::try_from(capture_monotonic_timestamp_ms).unwrap_or(i64::MAX);
   let capture_skew_ms = frame_ts.saturating_sub(capture_ts);
-  frame.screenshot_artifact_ref = Some(screenshot_artifact_ref.into());
+  frame.screenshot_artifact_ref = screenshot_artifact_ref;
   frame.mc_capture_skew_ms = Some(capture_skew_ms);
   BoundSpatialFrame {
     frame,
@@ -84,35 +74,22 @@ mod tests {
 
   #[test]
   fn populates_screenshot_ref_and_positive_skew() {
-    let bound = bind_capture_to_frame(frame_at(2_000), "shot.png", 1_700);
+    let bound = bind_capture_to_frame(frame_at(2_000), Some("shot.png".to_string()), 1_700);
     assert_eq!(bound.capture_skew_ms, 300);
     assert_eq!(bound.frame.screenshot_artifact_ref.as_deref(), Some("shot.png"));
     assert_eq!(bound.frame.mc_capture_skew_ms, Some(300));
   }
 
   #[test]
-  fn bound_frame_exposes_core_capture_binding() {
-    let bound = bind_capture_to_frame(frame_at(2_000), "artifact://shot", 1_700);
-
-    let binding = bound.to_core_capture_binding().expect("bound frame should expose capture binding");
-
-    assert_eq!(binding.source_observation_id, "frame-1");
-    assert_eq!(binding.capture_ref, "artifact://shot");
-    assert_eq!(binding.capture_skew_ms, 300);
-    assert_eq!(binding.source_timestamp_millis, Some(2_000));
-    assert!(binding.known_limits.iter().any(|limit| limit.contains("monotonic clock")));
-  }
-
-  #[test]
   fn skew_is_negative_when_capture_is_after_frame() {
-    let bound = bind_capture_to_frame(frame_at(1_000), "shot.png", 1_450);
+    let bound = bind_capture_to_frame(frame_at(1_000), Some("shot.png".to_string()), 1_450);
     assert_eq!(bound.capture_skew_ms, -450);
     assert_eq!(bound.frame.mc_capture_skew_ms, Some(-450));
   }
 
   #[test]
   fn zero_skew_when_timestamps_match() {
-    let bound = bind_capture_to_frame(frame_at(5_000), "shot.png", 5_000);
+    let bound = bind_capture_to_frame(frame_at(5_000), Some("shot.png".to_string()), 5_000);
     assert_eq!(bound.capture_skew_ms, 0);
   }
 
@@ -122,7 +99,7 @@ mod tests {
     use crate::verify::{MismatchRefusalReason, evaluate_mismatch_refusal};
 
     // Bind a frame whose skew (600ms) exceeds a 250ms tolerance.
-    let bound = bind_capture_to_frame(frame_at(2_600), "shot.png", 2_000);
+    let bound = bind_capture_to_frame(frame_at(2_600), Some("shot.png".to_string()), 2_000);
     assert_eq!(bound.capture_skew_ms, 600);
 
     let projected = MinecraftProjectedPoint {

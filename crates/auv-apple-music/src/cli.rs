@@ -1,17 +1,15 @@
 //! CLI entry point for `auv-apple-music`.
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::commands::launch::OpenWindowInputs;
-use crate::commands::playback::PlaybackStatusInputs;
-use crate::commands::probe_macos::{DEFAULT_ACTIVATE_SETTLE_MS, DEFAULT_MUSIC_APP_BUNDLE_ID, ProbeInputs};
-use crate::commands::search::{
+use crate::{DEFAULT_ACTIVATE_SETTLE_MS, DEFAULT_MUSIC_APP_BUNDLE_ID, ProbeInputs};
+use crate::{
   DEFAULT_RESULT_SELECTION_TIMEOUT_MS, DEFAULT_SEARCH_SETTLE_MS, DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS, SearchInputs,
   SearchResultSelectInputs,
 };
-use crate::commands::transport::{TransportAction, TransportInputs};
+use crate::{LaunchEvent, OpenWindowInputs, PlaybackStatusInputs};
+use crate::{TransportAction, TransportInputs};
 use crate::{run_open_window, run_playback_status, run_probe, run_search, run_search_result_select, run_transport_action};
 
 #[derive(Clone, Debug, Parser)]
@@ -53,10 +51,6 @@ struct OpenWindowArgs {
 
 #[derive(Clone, Debug, Args)]
 struct PlaybackArgs {
-  /// Save a window capture PNG to this directory (for debugging).
-  #[arg(long = "artifact-dir", value_name = "DIR")]
-  artifact_dir: Option<PathBuf>,
-
   /// Output as JSON instead of human-readable text.
   #[arg(long)]
   json: bool,
@@ -90,10 +84,6 @@ struct SearchArgs {
   )]
   selection_timeout_ms: u64,
 
-  /// Save the final verification capture PNG to this directory.
-  #[arg(long = "artifact-dir", value_name = "DIR")]
-  artifact_dir: Option<PathBuf>,
-
   /// Output as JSON instead of human-readable text.
   #[arg(long)]
   json: bool,
@@ -123,10 +113,6 @@ struct ProbeMacosArgs {
   /// How long to wait after activation before capturing the AX tree (ms).
   #[arg(long = "activate-settle-ms", default_value_t = DEFAULT_ACTIVATE_SETTLE_MS)]
   activate_settle_ms: u64,
-
-  /// Persist the captured AX snapshot as JSON to this directory.
-  #[arg(long = "artifact-dir", value_name = "DIR")]
-  artifact_dir: Option<PathBuf>,
 
   /// Output as JSON instead of human-readable text.
   #[arg(long)]
@@ -180,9 +166,19 @@ fn run_open_window_cmd(args: OpenWindowArgs) -> ExitCode {
         if result.window_found {
           println!("  title: {title}");
         }
-        for step in &result.steps {
-          let note = step.note.as_deref().map(|n| format!(" ({n})")).unwrap_or_default();
-          println!("  step: {} -> {}{}", step.name, step.outcome, note);
+        for event in &result.events {
+          match event {
+            LaunchEvent::WindowResolved => println!("  window resolved"),
+            LaunchEvent::WindowNotFound => println!("  window not found"),
+            LaunchEvent::LaunchTargetsDiscovered { app_ids } => println!("  launch targets: {}", app_ids.join(", ")),
+            LaunchEvent::LaunchTargetsMissing => println!("  no registered launch target found"),
+            LaunchEvent::LaunchTargetDiscoveryFailed { message } => println!("  launch target discovery failed: {message}"),
+            LaunchEvent::LaunchSucceeded { app_id } => println!("  launched: {app_id}"),
+            LaunchEvent::LaunchFailed { app_id, message } => println!("  launch failed for {app_id}: {message}"),
+            LaunchEvent::WindowAppeared => println!("  window appeared"),
+            LaunchEvent::WindowWaitTimedOut { timeout_ms } => println!("  window did not appear within {timeout_ms}ms"),
+            LaunchEvent::UnsupportedPlatform => println!("  launch unsupported on this platform"),
+          }
         }
       }
       if result.window_found {
@@ -195,10 +191,7 @@ fn run_open_window_cmd(args: OpenWindowArgs) -> ExitCode {
 }
 
 fn run_playback_cmd(args: PlaybackArgs) -> ExitCode {
-  let inputs = PlaybackStatusInputs {
-    artifact_dir: args.artifact_dir,
-    ..PlaybackStatusInputs::default()
-  };
+  let inputs = PlaybackStatusInputs::default();
 
   match run_playback_status(&inputs) {
     Err(error) => {
@@ -213,9 +206,6 @@ fn run_playback_cmd(args: PlaybackArgs) -> ExitCode {
         println!("title:   {}", result.track_title.as_deref().unwrap_or("-"));
         println!("artist:  {}", result.artist.as_deref().unwrap_or("-"));
         println!("source:  {}", result.metadata_source);
-        if let Some(artifact) = &result.artifact {
-          println!("artifact: {artifact}");
-        }
         for note in &result.diagnostics {
           println!("note:    {note}");
         }
@@ -262,7 +252,6 @@ fn run_search_cmd(args: SearchArgs) -> ExitCode {
   let mut inputs = SearchInputs::with_query(args.query);
   inputs.settle_ms = args.settle_ms;
   inputs.verification_timeout_ms = args.verification_timeout_ms;
-  inputs.artifact_dir = args.artifact_dir;
 
   if let Some(anchor) = args.select {
     let selection_inputs = SearchResultSelectInputs {
@@ -306,9 +295,6 @@ fn run_search_cmd(args: SearchArgs) -> ExitCode {
         println!("query:        {}", result.query);
         println!("verification: {}", result.verification.status);
         println!("input path:   {:?}", result.query_input.selected_path);
-        if let Some(artifact) = &result.verification.artifact {
-          println!("artifact:     {artifact}");
-        }
         for note in &result.diagnostics {
           println!("note:         {note}");
         }
@@ -326,7 +312,6 @@ fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
   let inputs = ProbeInputs {
     bundle_id: args.bundle_id,
     activate_settle_ms: args.activate_settle_ms,
-    artifact_dir: args.artifact_dir,
   };
 
   match run_probe(&inputs) {
@@ -359,9 +344,6 @@ fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
             counts.navigation_children_count,
             inspection.available_actions,
           );
-        }
-        if let Some(artifact) = &result.artifact {
-          println!("artifact:         {artifact}");
         }
         for note in &result.diagnostics {
           println!("note:             {note}");

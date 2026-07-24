@@ -101,15 +101,11 @@ mod tests {
           height: 8,
         },
         viewport_bounds: None,
-        image: crate::frame::ScanImageRef {
-          file_name: "only.png".into(),
+        image_dimensions: crate::frame::ScanImageDimensions {
           width: 8,
           height: 8,
-          media_type: "image/png".into(),
         },
       }],
-      source_dir: PathBuf::from("/tmp"),
-      loaded_json_paths: Vec::new(),
     };
     let err = estimate_viewport_motion(&bundle).expect_err("single");
     assert!(matches!(err, MotionError::InsufficientFrames { found: 1 }));

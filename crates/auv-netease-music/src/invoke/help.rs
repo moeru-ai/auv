@@ -37,7 +37,7 @@ fn render_group_index(help: &mut String, group: &CommandGroup, depth: usize) {
         help.push_str(&"  ".repeat(depth + 1));
         help.push_str(command.id);
         help.push_str("  ");
-        help.push_str(command.summary);
+        help.push_str(command.description);
         help.push('\n');
       }
       auv_cli_invoke::CommandNode::Group(group) => render_group_index(help, group, depth + 1),
@@ -54,12 +54,12 @@ fn has_commands(group: &CommandGroup) -> bool {
 
 pub fn render_command_help(command: &InvokeCommand) -> String {
   let mut help = format!(
-    "COMMAND\n  {}\n\nUSAGE\n  {} {}{}\n\nSUMMARY\n  {}\n",
+    "COMMAND\n  {}\n\nUSAGE\n  {} {}{}\n\nDESCRIPTION\n  {}\n",
     command.id,
     BINARY_USAGE,
     command.id,
     render_usage_args(command.args),
-    command.summary
+    command.description
   );
 
   help.push_str("\nOPTIONS\n");

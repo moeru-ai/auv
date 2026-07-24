@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use auv_file::{JsonFileWriteError, JsonWriteOptions, write_json_file as write_json_file_helper};
 use auv_stage_status::StageStatus;
+#[cfg(feature = "tracing")]
 use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +89,7 @@ impl CardDetectionSemanticReason {
   }
 }
 
+#[cfg(feature = "tracing")]
 pub async fn publish_card_detection_semantic(
   context: Option<&Context>,
   semantic: &CardDetectionSemanticManifest,
@@ -95,16 +97,13 @@ pub async fn publish_card_detection_semantic(
   crate::run_read::publish_json_artifact(context, CARD_DETECTION_SEMANTIC_PURPOSE, semantic).await
 }
 
+#[cfg(feature = "tracing")]
 pub async fn read_card_detection_semantic(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
 ) -> Result<CardDetectionSemanticManifest, crate::BalatroArtifactReadError> {
-  let bytes = crate::run_read::read_json_artifact_bytes(store, snapshot, uri, CARD_DETECTION_SEMANTIC_PURPOSE).await?;
-  serde_json::from_slice(&bytes).map_err(|source| crate::BalatroArtifactReadError::MalformedJson {
-    uri: uri.clone(),
-    source,
-  })
+  crate::run_read::read_json_artifact(store, snapshot, uri, CARD_DETECTION_SEMANTIC_PURPOSE).await
 }
 
 pub fn validate_card_detection_semantic(

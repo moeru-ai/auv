@@ -58,7 +58,6 @@ fn window_mutation_result(kind: WindowMutationKind, outcome: NativeMutationOutco
       WindowMutationPath::PlatformNative,
       format!("{} via SetWindowPos/ShowWindow", window_mutation_kind_name(kind)),
     )],
-    fallback_reason: None,
     before_frame: Some(outcome.before_frame),
     after_frame: Some(outcome.after_frame),
     before_state: Some(WindowState {

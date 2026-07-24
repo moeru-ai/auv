@@ -1,16 +1,15 @@
 use std::path::PathBuf;
 
 use crate::{
-  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
+  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField,
   arg::{SCAN_COVERAGE_ARGS, SCAN_FRAME_ARGS},
-  artifact::{ArtifactInstrumentationReceipt, ArtifactPublication},
+  artifact::{emission_enabled, emit_bytes_with_receipt, emit_prepared},
   invoke_command,
 };
-use auv_scan::{produce_coverage_from_fixture_dir, produce_frame_from_fixture_dir};
-use auv_tracing::{ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, ContentType, Context, NewArtifact, Sha256Digest};
+use auv_scan::{build_coverage_fixture, load_frame_fixture};
+use auv_tracing::{ArtifactPurpose, ArtifactUri, Attributes, ByteLength, NewArtifact};
 use futures_util::io::Cursor as AsyncCursor;
-use sha2::{Digest, Sha256};
-use tempfile::TempDir;
+use serde::Serialize;
 
 const SCAN_COVERAGE_PURPOSE: &str = "auv.runtime.scan_coverage";
 const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
@@ -22,113 +21,151 @@ pub fn group() -> CommandGroup {
 #[invoke_command(
   id = "scan.frame",
   group = "scan",
-  summary = "Produce a single scan-frame-v0 artifact bundle from a hermetic fixture directory and stage it into the run.",
+  description = "Produce a single scan-frame-v0 artifact bundle from a hermetic fixture directory and stage it into the run.",
   args = SCAN_FRAME_ARGS,
 )]
 async fn frame(input: InvokeCommandInput) -> InvokeCommandResult {
   if input.dry_run {
-    let mut output = InvokeCommandOutput::new("scan.frame dry-run");
-    output.verification = Some("dry-run; no artifacts produced".to_string());
-    output.known_limits.push("scan.frame dry-run does not write scan artifacts.".to_string());
-    return Ok(output);
+    return Ok(InvokeCommandOutput::completed());
   }
 
   let fixture_dir = input.required_input("fixture-dir")?.to_string();
-  let (_, instrumentation) = produce_scan_frame(PathBuf::from(&fixture_dir)).await?.into_parts();
+  let frame = produce_scan_frame(PathBuf::from(&fixture_dir)).await?;
 
-  let mut output = InvokeCommandOutput::new(format!("scan frame produced from fixture {}", fixture_dir));
-  output.backend = Some("auv-scan.produce_frame_from_fixture_dir".to_string());
-  output.verification = Some("capture-only; no semantic success claim".to_string());
-  output.known_limits.push("scan.frame records a single scan-frame-v0 bundle only; multi-frame invoke is deferred.".to_string());
-  output.apply_artifact_instrumentation(instrumentation);
-  Ok(output)
+  scan_frame_output(&frame)
 }
 
-pub async fn produce_scan_frame(fixture_dir: PathBuf) -> Result<ArtifactPublication<auv_scan::ScanFrame>, String> {
+pub async fn produce_scan_frame(fixture_dir: PathBuf) -> Result<auv_scan::ScanFrame, String> {
   if !fixture_dir.is_dir() {
     return Err(format!("scan.frame fixture directory does not exist: {}", fixture_dir.display()));
   }
-  // The producer directory remains alive until both owned artifact readers are admitted.
-  let producer_out = TempDir::new().map_err(|error| format!("scan.frame failed to create producer output directory: {error}"))?;
-  let produced =
-    produce_frame_from_fixture_dir(&fixture_dir, producer_out.path()).map_err(|error| format!("scan.frame producer failed: {error}"))?;
-  let mut instrumentation = ArtifactInstrumentationReceipt::default();
-  instrumentation.publish_file("auv.scan.frame", "application/json", &produced.json_path).await;
-  instrumentation.publish_file("auv.scan.frame_image", "image/png", &produced.image_path).await;
-  Ok(ArtifactPublication::new(produced.frame, instrumentation))
+  let loaded = load_frame_fixture(&fixture_dir).map_err(|error| format!("scan.frame fixture decode failed: {error}"))?;
+  let (frame, image_bytes) = loaded.into_parts();
+  if let Some(image) = emit_bytes_with_receipt("auv.scan.frame_image", "image/png", image_bytes).await {
+    emit_prepared("auv.scan.frame", scan_frame_artifact(&frame, image.uri()));
+  }
+  Ok(frame)
+}
+
+#[derive(Serialize)]
+struct ScanFrameArtifact<'a> {
+  frame_id: &'a str,
+  sequence_index: u32,
+  captured_at_millis: u64,
+  window_bounds: &'a auv_scan::ScanBounds,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  viewport_bounds: Option<&'a auv_scan::ScanBounds>,
+  image: ScanFrameImageArtifact<'a>,
+}
+
+#[derive(Serialize)]
+struct ScanFrameImageArtifact<'a> {
+  artifact_uri: &'a ArtifactUri,
+  width: u32,
+  height: u32,
+}
+
+fn scan_frame_artifact(frame: &auv_scan::ScanFrame, image_uri: &ArtifactUri) -> Result<NewArtifact<AsyncCursor<Vec<u8>>>, String> {
+  NewArtifact::from_json(
+    ArtifactPurpose::parse("auv.scan.frame").map_err(|error| format!("invalid auv.scan.frame purpose: {error}"))?,
+    Attributes::empty(),
+    ByteLength::new(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).expect("static scan JSON limit is valid"),
+    &ScanFrameArtifact {
+      frame_id: &frame.frame_id,
+      sequence_index: frame.sequence_index,
+      captured_at_millis: frame.captured_at_millis,
+      window_bounds: &frame.window_bounds,
+      viewport_bounds: frame.viewport_bounds.as_ref(),
+      image: ScanFrameImageArtifact {
+        artifact_uri: image_uri,
+        width: frame.image_dimensions.width,
+        height: frame.image_dimensions.height,
+      },
+    },
+  )
+  .map_err(|error| format!("failed to construct auv.scan.frame artifact: {error}"))
+}
+
+fn scan_frame_output(frame: &auv_scan::ScanFrame) -> InvokeCommandResult {
+  let mut fields = vec![
+    InvokeReportField::new("Frame ID", &frame.frame_id),
+    InvokeReportField::new("Sequence", frame.sequence_index.to_string()),
+    InvokeReportField::new("Captured At", format!("{} ms", frame.captured_at_millis)),
+    InvokeReportField::new("Image", format!("{}x{}", frame.image_dimensions.width, frame.image_dimensions.height)),
+    InvokeReportField::new("Window Bounds", format_bounds(&frame.window_bounds)),
+  ];
+  if let Some(viewport) = &frame.viewport_bounds {
+    fields.push(InvokeReportField::new("Viewport Bounds", format_bounds(viewport)));
+  }
+  let mut output = InvokeCommandOutput::from_result(frame)?;
+  output.report = Some(InvokeReport::new(fields, Vec::new()));
+  Ok(output)
+}
+
+fn format_bounds(bounds: &auv_scan::ScanBounds) -> String {
+  format!("{},{} {}x{}", bounds.x, bounds.y, bounds.width, bounds.height)
 }
 
 #[invoke_command(
   id = "scan.coverage",
   group = "scan",
-  summary = "Produce a scan-coverage-v0 artifact from a coverage scenario fixture and stage it into the run.",
+  description = "Evaluate typed scan coverage from a fixture and record it in the active run.",
   args = SCAN_COVERAGE_ARGS,
 )]
 async fn coverage(input: InvokeCommandInput) -> InvokeCommandResult {
   if input.dry_run {
-    let mut output = InvokeCommandOutput::new("scan.coverage dry-run");
-    output.verification = Some("dry-run; no artifacts produced".to_string());
-    output.known_limits.push("scan.coverage dry-run does not write scan artifacts.".to_string());
-    return Ok(output);
+    return Ok(InvokeCommandOutput::completed());
   }
 
   let fixture_dir = input.required_input("fixture-dir")?.to_string();
-  let (_, recording) = produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
+  let coverage = produce_scan_coverage(PathBuf::from(&fixture_dir)).await?;
 
-  let mut output = InvokeCommandOutput::new(format!("scan coverage produced from fixture {fixture_dir}"));
-  output.backend = Some("auv-scan.produce_coverage_from_fixture_dir".to_string());
-  output.verification = Some("evaluator + projection; no semantic success claim".to_string());
-  output.known_limits.push(
-    "scan.coverage resolves frame PNGs via manifest frame_fixture cross-reference under .../scan/coverage/<scenario>/ layout only."
-      .to_string(),
-  );
-  output.artifacts.extend(recording);
-  Ok(output)
+  scan_coverage_output(&coverage)
 }
 
-pub async fn produce_scan_coverage(fixture_dir: PathBuf) -> Result<(auv_scan::ScanCoverageWire, Option<ArtifactMetadata>), String> {
+pub async fn produce_scan_coverage(fixture_dir: PathBuf) -> Result<auv_scan::CoverageView, String> {
   if !fixture_dir.is_dir() {
     return Err(format!("scan.coverage fixture directory does not exist: {}", fixture_dir.display()));
   }
-  // The producer directory remains alive until the owned artifact reader is admitted.
-  let producer_out = TempDir::new().map_err(|error| format!("scan.coverage failed to create producer output directory: {error}"))?;
-  let produced = produce_coverage_from_fixture_dir(&fixture_dir, producer_out.path())
-    .map_err(|error| format!("scan.coverage producer failed: {error}"))?;
-  let recording = publish_scan_coverage(&produced.wire).await?;
-  Ok((produced.wire, recording))
+  let coverage = build_coverage_fixture(&fixture_dir).map_err(|error| format!("scan.coverage fixture build failed: {error}"))?;
+  emit_scan_coverage(&coverage);
+  Ok(coverage)
 }
 
-async fn publish_scan_coverage(value: &auv_scan::ScanCoverageWire) -> Result<Option<ArtifactMetadata>, String> {
-  let context = Context::current();
-  if !context.can_publish_artifacts() {
-    return Ok(None);
+fn emit_scan_coverage(value: &auv_scan::CoverageView) {
+  if !emission_enabled() {
+    return;
   }
-  let artifact = scan_coverage_artifact(value)?;
-  context
-    .in_scope(|| auv_tracing::emit_artifact!(artifact))
-    .await
-    .map_err(|error| format!("failed to publish {SCAN_COVERAGE_PURPOSE} artifact: {error}"))
+  emit_prepared(SCAN_COVERAGE_PURPOSE, scan_coverage_artifact(value));
 }
 
-fn scan_coverage_artifact(value: &auv_scan::ScanCoverageWire) -> Result<NewArtifact<AsyncCursor<Vec<u8>>>, String> {
-  if value.schema_version != auv_scan::SCAN_COVERAGE_SCHEMA_VERSION {
-    return Err(format!("{SCAN_COVERAGE_PURPOSE} failed domain validation: schema version mismatch: found {}", value.schema_version));
-  }
-  let body = serde_json::to_vec(value).map_err(|error| format!("failed to serialize {SCAN_COVERAGE_PURPOSE} artifact: {error}"))?;
-  let byte_length = u64::try_from(body.len()).map_err(|_| format!("{SCAN_COVERAGE_PURPOSE} JSON length does not fit u64"))?;
-  if byte_length > ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
-    return Err(format!(
-      "{SCAN_COVERAGE_PURPOSE} is {byte_length} bytes, exceeding the {ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT}-byte limit"
-    ));
-  }
-  Ok(NewArtifact::new(
+fn scan_coverage_artifact(value: &auv_scan::CoverageView) -> Result<NewArtifact<AsyncCursor<Vec<u8>>>, String> {
+  let artifact = auv_scan::ScanCoverageArtifact::new(value.clone());
+  NewArtifact::from_json(
     ArtifactPurpose::parse(SCAN_COVERAGE_PURPOSE).map_err(|error| format!("invalid {SCAN_COVERAGE_PURPOSE} purpose: {error}"))?,
-    ContentType::parse("application/json").map_err(|error| format!("invalid {SCAN_COVERAGE_PURPOSE} content type: {error}"))?,
-    ByteLength::new(byte_length).map_err(|error| format!("invalid {SCAN_COVERAGE_PURPOSE} byte length: {error}"))?,
-    Sha256Digest::new(Sha256::digest(&body).into()),
     Attributes::empty(),
-    AsyncCursor::new(body),
-  ))
+    ByteLength::new(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).expect("static scan JSON limit is valid"),
+    &artifact,
+  )
+  .map_err(|error| format!("failed to construct {SCAN_COVERAGE_PURPOSE} artifact: {error}"))
+}
+
+fn scan_coverage_output(coverage: &auv_scan::CoverageView) -> InvokeCommandResult {
+  let completeness = match coverage.status() {
+    auv_scan::CoverageStatus::Complete => "complete".to_string(),
+    auv_scan::CoverageStatus::Incomplete { reason, .. } => format!("incomplete: {reason}"),
+  };
+  let mut output = InvokeCommandOutput::from_result(coverage)?;
+  output.report = Some(InvokeReport::new(
+    vec![
+      InvokeReportField::new("Entries", coverage.entries.len().to_string()),
+      InvokeReportField::new("Open Uncertainties", coverage.open_uncertainty_codes().len().to_string()),
+      InvokeReportField::new("Negative Evidence", coverage.negative_evidence().len().to_string()),
+      InvokeReportField::new("Completeness", completeness),
+    ],
+    Vec::new(),
+  ));
+  Ok(output)
 }
 
 #[cfg(test)]
@@ -151,8 +188,8 @@ mod tests {
   };
 
   use super::{
-    ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, coverage, coverage_invoke_command, frame, frame_invoke_command, produce_scan_coverage,
-    produce_scan_frame, publish_scan_coverage, scan_coverage_artifact,
+    ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, coverage, coverage_invoke_command, emit_scan_coverage, frame, frame_invoke_command,
+    produce_scan_coverage, produce_scan_frame, scan_coverage_artifact,
   };
 
   fn single_frame_fixture_dir() -> PathBuf {
@@ -161,6 +198,17 @@ mod tests {
 
   fn coverage_stable_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-scan/tests/fixtures/scan/coverage/coverage_stable_v0")
+  }
+
+  #[test]
+  fn scan_fixture_commands_admit_memory_without_a_temporary_artifact_store() {
+    let source = include_str!("scan.rs").split("#[cfg(test)]").next().expect("scan command implementation");
+
+    for forbidden in ["TempDir", "producer_out", "emit_file_with_receipt"] {
+      assert!(!source.contains(forbidden), "scan invoke still stages canonical artifacts through {forbidden}");
+    }
+    assert!(source.contains("load_frame_fixture"), "scan frame should load typed metadata and image bytes in memory");
+    assert!(source.contains("build_coverage_fixture"), "scan coverage should build its typed value without a filesystem output");
   }
 
   struct RejectArtifactStore {
@@ -267,42 +315,61 @@ mod tests {
     let frame = futures_executor::block_on(produce_scan_frame(single_frame_fixture_dir())).expect("typed frame");
     let coverage = futures_executor::block_on(produce_scan_coverage(coverage_stable_fixture_dir())).expect("typed coverage");
 
-    assert_eq!(frame.value().schema_version, auv_scan::SCAN_FRAME_SCHEMA_VERSION);
-    assert_eq!(coverage.0.schema_version, auv_scan::SCAN_COVERAGE_SCHEMA_VERSION);
-    assert!(coverage.1.is_none());
+    assert_eq!(frame.schema_version, auv_scan::SCAN_FRAME_SCHEMA_VERSION);
+    let frame_json = serde_json::to_value(&frame).expect("frame JSON");
+    assert!(!frame_json.to_string().contains("file_name"));
+    assert!(!frame_json.to_string().contains("media_type"));
+    assert_eq!(coverage.status(), &auv_scan::CoverageStatus::Complete);
   }
 
   #[tokio::test]
-  async fn scan_coverage_typed_call_propagates_enabled_publication_failure() {
+  async fn scan_coverage_typed_call_is_unchanged_by_publication_failure() {
     let store = Arc::new(RejectArtifactStore::new());
     let dispatch = configure().run_store(store.clone()).build().expect("rejecting dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let future = root.in_scope(|| produce_scan_coverage(coverage_stable_fixture_dir()));
 
-    let error = root.instrument(future).await.expect_err("enabled publication failure must propagate");
+    let coverage = root.instrument(future).await.expect("domain coverage remains successful");
 
-    assert!(error.contains("failed to publish"), "{error}");
+    assert_eq!(coverage.status(), &auv_scan::CoverageStatus::Complete);
+    assert!(dispatch.flush().await.is_err(), "recording failure remains on the dispatch");
     assert_eq!(store.writes.load(Ordering::SeqCst), 1);
   }
 
   #[tokio::test]
-  async fn scan_coverage_publication_short_circuits_without_run_context() {
-    let (mut coverage, recording) = produce_scan_coverage(coverage_stable_fixture_dir()).await.expect("typed coverage");
-    assert!(recording.is_none());
-    coverage.schema_version = "scan-coverage-v999".to_string();
+  async fn scan_frame_typed_call_does_not_publish_a_dangling_frame_when_image_publication_fails() {
+    let store = Arc::new(RejectArtifactStore::new());
+    let dispatch = configure().run_store(store.clone()).build().expect("rejecting dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+    let future = root.in_scope(|| produce_scan_frame(single_frame_fixture_dir()));
 
-    assert!(publish_scan_coverage(&coverage).await.expect("disabled telemetry skips domain validation").is_none());
+    let frame = root.instrument(future).await.expect("domain frame remains successful");
+
+    assert_eq!(frame.schema_version, auv_scan::SCAN_FRAME_SCHEMA_VERSION);
+    assert!(dispatch.flush().await.is_err(), "recording failure remains on the dispatch");
+    assert_eq!(store.writes.load(Ordering::SeqCst), 1, "frame payload must not be attempted without a committed image URI");
+  }
+
+  #[tokio::test]
+  async fn scan_coverage_publication_short_circuits_without_run_context() {
+    let coverage = auv_scan::CoverageView::incomplete(
+      Vec::new(),
+      "oversized detached fixture",
+      vec!["x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize)],
+      Vec::new(),
+    );
+
+    emit_scan_coverage(&coverage);
   }
 
   #[test]
-  fn scan_coverage_artifact_enforces_schema_and_four_mibibyte_bounds() {
-    let (mut invalid, _) = futures_executor::block_on(produce_scan_coverage(coverage_stable_fixture_dir())).expect("typed coverage");
-    invalid.schema_version = "scan-coverage-v999".to_string();
-    let schema_error = scan_coverage_artifact(&invalid).err().expect("wrong schema must fail");
-    assert!(schema_error.contains("schema version mismatch"));
-
-    let (mut oversized, _) = futures_executor::block_on(produce_scan_coverage(coverage_stable_fixture_dir())).expect("typed coverage");
-    oversized.open_uncertainty_codes = vec!["x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize)];
+  fn scan_coverage_artifact_enforces_four_mibibyte_bound() {
+    let oversized = auv_scan::CoverageView::incomplete(
+      Vec::new(),
+      "oversized fixture",
+      vec!["x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize)],
+      Vec::new(),
+    );
     let size_error = scan_coverage_artifact(&oversized).err().expect("oversized coverage must fail");
     assert!(size_error.contains("4194304-byte limit"));
   }
@@ -346,8 +413,7 @@ mod tests {
     }))
     .expect("dry-run should succeed");
 
-    assert!(output.artifact_failures.is_empty());
-    assert!(output.verification.as_deref().is_some_and(|claim| claim.contains("dry-run")));
+    assert!(output.report.is_none());
   }
 
   #[test]
@@ -361,8 +427,7 @@ mod tests {
     }))
     .expect("dry-run should succeed");
 
-    assert!(output.artifact_failures.is_empty());
-    assert!(output.verification.as_deref().is_some_and(|claim| claim.contains("dry-run")));
+    assert!(output.report.is_none());
   }
 
   #[test]
@@ -378,20 +443,62 @@ mod tests {
         cancellation: crate::InvokeCancellation::new(),
       },
     ));
+    let result = output.result().expect("scan.frame typed result");
+    assert_eq!(result["schema_version"], auv_scan::SCAN_FRAME_SCHEMA_VERSION);
+    assert_eq!(result["frame_id"], "frame-0001");
+    assert_eq!(result["image_dimensions"]["width"], 8);
+    let report = output.report.as_ref().expect("scan.frame direct value report");
+    assert_eq!(
+      report.fields.iter().map(|field| (field.label.as_str(), field.value.as_str())).collect::<Vec<_>>(),
+      vec![
+        ("Frame ID", "frame-0001"),
+        ("Sequence", "0"),
+        ("Captured At", "1700000000000 ms"),
+        ("Image", "8x8"),
+        ("Window Bounds", "0,0 800x600"),
+      ]
+    );
 
-    assert!(output.artifact_failures.is_empty(), "successful artifact publication records no instrumentation failure");
     let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("recorded run");
     let purposes = snapshot.artifacts().values().map(|publication| publication.metadata().purpose().as_str()).collect::<Vec<_>>();
     assert_eq!(purposes.len(), 2);
     assert!(purposes.contains(&"auv.scan.frame"));
     assert!(purposes.contains(&"auv.scan.frame_image"));
+
+    let frame_uri = snapshot
+      .artifacts()
+      .values()
+      .find(|publication| publication.metadata().purpose().as_str() == "auv.scan.frame")
+      .expect("frame payload artifact")
+      .metadata()
+      .uri()
+      .clone();
+    let image_uri = snapshot
+      .artifacts()
+      .values()
+      .find(|publication| publication.metadata().purpose().as_str() == "auv.scan.frame_image")
+      .expect("frame image artifact")
+      .metadata()
+      .uri()
+      .to_string();
+    let frame_payload = futures_executor::block_on(async {
+      let mut reader = store.open_artifact(frame_uri).await.expect("open frame payload");
+      let mut bytes = Vec::new();
+      while let Some(chunk) = reader.next().await {
+        bytes.extend_from_slice(&chunk.expect("frame payload chunk"));
+      }
+      serde_json::from_slice::<serde_json::Value>(&bytes).expect("frame payload JSON")
+    });
+
+    assert_eq!(frame_payload.pointer("/image/artifact_uri").and_then(serde_json::Value::as_str), Some(image_uri.as_str()));
+    assert!(frame_payload.pointer("/image/file_name").is_none());
+    assert!(frame_payload.pointer("/image/media_type").is_none());
   }
 
   #[test]
   fn scan_coverage_from_fixture_dir_emits_owned_artifact() {
     let fixture_dir = coverage_stable_fixture_dir();
-    let (expected, recording) = futures_executor::block_on(produce_scan_coverage(fixture_dir.clone())).expect("direct typed coverage");
-    assert!(recording.is_none());
+    let expected = futures_executor::block_on(produce_scan_coverage(fixture_dir.clone())).expect("direct typed coverage");
     let (output, store, run_id) = futures_executor::block_on(invoke_traced(
       coverage_invoke_command(),
       InvokeCommandInput {
@@ -402,8 +509,18 @@ mod tests {
         cancellation: crate::InvokeCancellation::new(),
       },
     ));
+    assert_eq!(output.result(), Some(&serde_json::to_value(&expected).expect("expected coverage JSON")));
+    let report = output.report.as_ref().expect("scan.coverage direct value report");
+    assert_eq!(
+      report.fields.iter().map(|field| (field.label.as_str(), field.value.as_str())).collect::<Vec<_>>(),
+      vec![
+        ("Entries", "1"),
+        ("Open Uncertainties", "0"),
+        ("Negative Evidence", "0"),
+        ("Completeness", "complete"),
+      ]
+    );
 
-    assert!(output.artifact_failures.is_empty(), "successful artifact publication records no instrumentation failure");
     let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("recorded run");
     let publication = snapshot.artifacts().values().next().expect("coverage artifact");
     assert_eq!(snapshot.artifacts().len(), 1);
@@ -415,7 +532,7 @@ mod tests {
       while let Some(chunk) = reader.next().await {
         bytes.extend_from_slice(&chunk.expect("coverage artifact chunk"));
       }
-      serde_json::from_slice::<auv_scan::ScanCoverageWire>(&bytes).expect("typed coverage payload")
+      serde_json::from_slice::<auv_scan::ScanCoverageArtifact>(&bytes).expect("typed coverage artifact").into_coverage()
     });
     assert_eq!(actual, expected);
   }

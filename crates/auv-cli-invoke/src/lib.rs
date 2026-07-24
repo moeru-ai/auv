@@ -19,7 +19,6 @@ pub mod registry;
 pub mod render;
 
 pub use arg::ArgSpec;
-pub use artifact::{ArtifactInstrumentationFailure, ArtifactInstrumentationReceipt, ArtifactPublication};
 pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{
   CommandGroup, CommandNode, InvokeCancellation, InvokeCancelled, InvokeCommand, InvokeCommandFuture, InvokeCommandHandler,
@@ -28,9 +27,9 @@ pub use command::{
 pub use help::{render_command_help, render_help_index};
 pub use models::{
   ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
-  InvokeRequest, InvokeResult, RunStatus,
+  InvokeRequest, InvokeResult, InvokeStatus,
 };
-pub(crate) use models::{InvokeReportLabels, InvokeReportValue, InvokeSignalValue, OptionalReportText};
+pub(crate) use models::{InvokeReportLabels, InvokeReportValue, OptionalReportText};
 pub use registry::{InvokeRegistry, default_registry};
 pub use render::{InvokeCliOutcome, render_invoke_result};
 
@@ -239,7 +238,7 @@ mod tests {
 
     assert_eq!(command.id, "scan.coverage");
     assert_eq!(command.namespace.as_str(), "scan");
-    assert_eq!(command.summary, "Produce a scan-coverage-v0 artifact from a coverage scenario fixture and stage it into the run.");
+    assert_eq!(command.description, "Evaluate typed scan coverage from a fixture and record it in the active run.");
     assert_eq!(command.args, crate::arg::SCAN_COVERAGE_ARGS);
   }
 
@@ -458,7 +457,7 @@ mod tests {
 
     assert!(help.contains("COMMAND\n  mediaControl.nowPlaying"));
     assert!(help.contains("USAGE\n  auv invoke mediaControl.nowPlaying"));
-    assert!(help.contains("SUMMARY\n  Read structured now-playing media state"));
+    assert!(help.contains("DESCRIPTION\n  Read structured now-playing media state"));
     assert!(help.contains("OPTIONS\n  --json"));
     assert!(help.contains("--detail"));
     assert!(help.contains("--wide"));

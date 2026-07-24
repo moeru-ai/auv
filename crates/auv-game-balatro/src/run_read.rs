@@ -1,23 +1,15 @@
 //! Canonical Balatro run-artifact transport shared by typed domain readers.
 
-use std::collections::TryReserveError;
-use std::io::Write;
-use std::num::TryFromIntError;
-
 use auv_tracing::{
-  ArtifactMetadata, ArtifactPurpose, ArtifactReadError, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId, ByteLength, ContentType,
-  Context, ErrorCode, NewArtifact, ReadError, RunId, RunSnapshot, RunStore, Sha256Digest, ValidationError,
+  ArtifactMetadata, ArtifactPurpose, ArtifactUri, ArtifactWriteError, Attributes, ByteLength, Context, ErrorCode, EventPayload,
+  JsonArtifactError, JsonArtifactReadError, ReadArtifactError, RunSnapshot, RunStore, ValidationError,
 };
-use futures_util::StreamExt;
-use futures_util::io::Cursor as AsyncCursor;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
+use serde::de::DeserializeOwned;
 
 /// Balatro card-detection manifests are structured metadata, not bulk media.
 pub const BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 pub const BALATRO_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE: &str = "auv.balatro.structured_artifact.payload_too_large";
-
-const JSON_CONTENT_TYPE: &str = "application/json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BalatroArtifactPublishError {
@@ -27,43 +19,11 @@ pub enum BalatroArtifactPublishError {
     #[source]
     source: ValidationError,
   },
-  #[error("invalid Balatro artifact content type {value:?} for {purpose}: {source}")]
-  InvalidContentType {
-    purpose: ArtifactPurpose,
-    value: &'static str,
-    #[source]
-    source: ValidationError,
-  },
-  #[error("Balatro artifact {purpose} JSON length {actual} cannot be represented as u64: {source}")]
-  LengthOutOfRange {
-    purpose: ArtifactPurpose,
-    actual: u128,
-    #[source]
-    source: TryFromIntError,
-  },
-  #[error("{BALATRO_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE}: {purpose} JSON is {actual} bytes, exceeding the {limit}-byte limit")]
-  PayloadTooLarge {
-    purpose: ArtifactPurpose,
-    limit: u64,
-    actual: u64,
-  },
-  #[error("failed to allocate {purpose} JSON bytes: {source}")]
-  Allocation {
+  #[error("failed to construct Balatro artifact {purpose}: {source}")]
+  Json {
     purpose: ArtifactPurpose,
     #[source]
-    source: TryReserveError,
-  },
-  #[error("failed to serialize {purpose} as JSON: {source}")]
-  Serialize {
-    purpose: ArtifactPurpose,
-    #[source]
-    source: serde_json::Error,
-  },
-  #[error("invalid byte length for Balatro artifact {purpose}: {source}")]
-  InvalidByteLength {
-    purpose: ArtifactPurpose,
-    #[source]
-    source: ValidationError,
+    source: JsonArtifactError,
   },
   #[error("failed to publish Balatro artifact {purpose}: {source}")]
   Publication {
@@ -81,74 +41,10 @@ pub enum BalatroArtifactReadError {
     #[source]
     source: ValidationError,
   },
-  #[error("invalid expected Balatro artifact content type {value:?}: {source}")]
-  InvalidExpectedContentType {
-    value: &'static str,
-    #[source]
-    source: ValidationError,
-  },
-  #[error("Balatro snapshot authority {snapshot_authority} does not match store authority {store_authority}")]
-  SnapshotAuthorityMismatch {
-    snapshot_authority: AuthorityId,
-    store_authority: AuthorityId,
-  },
-  #[error("Balatro artifact URI belongs to run {artifact_run_id}, not snapshot run {snapshot_run_id}")]
-  WrongOwner {
-    snapshot_run_id: RunId,
-    artifact_run_id: RunId,
-  },
-  #[error("Balatro artifact URI is not committed in the supplied snapshot: {uri}")]
-  DanglingUri { uri: ArtifactUri },
-  #[error("Balatro artifact {uri} has purpose {actual}, expected {expected}")]
-  WrongPurpose {
-    uri: Box<ArtifactUri>,
-    expected: ArtifactPurpose,
-    actual: ArtifactPurpose,
-  },
-  #[error("Balatro artifact {uri} has content type {actual}, expected {expected}")]
-  WrongContentType {
-    uri: Box<ArtifactUri>,
-    expected: Box<ContentType>,
-    actual: Box<ContentType>,
-  },
-  #[error("Balatro artifact {uri} is {actual} bytes, exceeding the {limit}-byte structured-artifact limit")]
-  PayloadTooLarge {
-    uri: ArtifactUri,
-    limit: u64,
-    actual: u64,
-  },
-  #[error("Balatro artifact {uri} byte length {actual} cannot be represented by this process")]
-  LengthOutOfRange { uri: ArtifactUri, actual: u64 },
-  #[error("failed to reserve {expected} bytes for Balatro artifact {uri}: {source}")]
-  Allocation {
-    uri: ArtifactUri,
-    expected: u64,
-    #[source]
-    source: TryReserveError,
-  },
-  #[error("failed to open Balatro artifact {uri}: {source}")]
-  Open {
-    uri: ArtifactUri,
-    #[source]
-    source: ReadError,
-  },
-  #[error("failed to stream Balatro artifact {uri}: {source}")]
-  Stream {
-    uri: ArtifactUri,
-    #[source]
-    source: ArtifactReadError,
-  },
-  #[error("Balatro artifact {uri} length mismatch: expected {expected}, read {actual}")]
-  LengthMismatch {
-    uri: ArtifactUri,
-    expected: u64,
-    actual: u64,
-  },
-  #[error("Balatro artifact {uri} digest mismatch: expected {expected}, read {actual}")]
-  DigestMismatch {
-    uri: Box<ArtifactUri>,
-    expected: Sha256Digest,
-    actual: Sha256Digest,
+  #[error("failed to read Balatro artifact: {source}")]
+  Read {
+    #[from]
+    source: ReadArtifactError,
   },
   #[error("Balatro artifact {uri} is not the expected JSON type: {source}")]
   MalformedJson {
@@ -161,22 +57,73 @@ pub enum BalatroArtifactReadError {
 impl BalatroArtifactReadError {
   pub fn code(&self) -> ErrorCode {
     let value = match self {
-      Self::InvalidExpectedPurpose { .. } | Self::InvalidExpectedContentType { .. } => "auv.balatro.artifact.invalid_reader_contract",
-      Self::SnapshotAuthorityMismatch { .. } => "auv.balatro.artifact.snapshot_authority_mismatch",
-      Self::WrongOwner { .. } => "auv.balatro.artifact.wrong_owner",
-      Self::DanglingUri { .. } => "auv.balatro.artifact.dangling_uri",
-      Self::WrongPurpose { .. } => "auv.balatro.artifact.wrong_purpose",
-      Self::WrongContentType { .. } => "auv.balatro.artifact.wrong_content_type",
-      Self::PayloadTooLarge { .. } => BALATRO_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE,
-      Self::LengthOutOfRange { .. } => "auv.balatro.artifact.length_out_of_range",
-      Self::Allocation { .. } => "auv.balatro.artifact.allocation_failed",
-      Self::Open { .. } => "auv.balatro.artifact.open_failed",
-      Self::Stream { .. } => "auv.balatro.artifact.stream_failed",
-      Self::LengthMismatch { .. } => "auv.balatro.artifact.length_mismatch",
-      Self::DigestMismatch { .. } => "auv.balatro.artifact.digest_mismatch",
+      Self::InvalidExpectedPurpose { .. } => "auv.balatro.artifact.invalid_reader_contract",
+      Self::Read {
+        source: ReadArtifactError::PayloadTooLarge { .. },
+      } => BALATRO_STRUCTURED_ARTIFACT_PAYLOAD_TOO_LARGE_CODE,
+      Self::Read {
+        source: ReadArtifactError::SnapshotAuthorityMismatch { .. },
+      } => "auv.balatro.artifact.snapshot_authority_mismatch",
+      Self::Read {
+        source: ReadArtifactError::WrongRun { .. },
+      } => "auv.balatro.artifact.wrong_owner",
+      Self::Read {
+        source: ReadArtifactError::NotCommitted { .. },
+      } => "auv.balatro.artifact.dangling_uri",
+      Self::Read {
+        source: ReadArtifactError::WrongPurpose { .. },
+      } => "auv.balatro.artifact.wrong_purpose",
+      Self::Read {
+        source: ReadArtifactError::WrongContentType { .. },
+      } => "auv.balatro.artifact.wrong_content_type",
+      Self::Read {
+        source: ReadArtifactError::LengthOutOfRange { .. },
+      } => "auv.balatro.artifact.length_out_of_range",
+      Self::Read {
+        source: ReadArtifactError::Allocation { .. },
+      } => "auv.balatro.artifact.allocation_failed",
+      Self::Read {
+        source: ReadArtifactError::Open { .. },
+      } => "auv.balatro.artifact.open_failed",
+      Self::Read {
+        source: ReadArtifactError::Stream { .. },
+      } => "auv.balatro.artifact.stream_failed",
+      Self::Read {
+        source: ReadArtifactError::LengthMismatch { .. },
+      } => "auv.balatro.artifact.length_mismatch",
+      Self::Read {
+        source: ReadArtifactError::DigestMismatch { .. },
+      } => "auv.balatro.artifact.digest_mismatch",
       Self::MalformedJson { .. } => "auv.balatro.artifact.malformed_json",
     };
     ErrorCode::parse(value).expect("static Balatro artifact error code is valid")
+  }
+}
+
+#[derive(Serialize)]
+struct BalatroArtifactPreparationFailed {
+  purpose: &'static str,
+  error: String,
+}
+
+impl EventPayload for BalatroArtifactPreparationFailed {
+  const NAME: &'static str = "auv.balatro.artifact_preparation_failed";
+  const VERSION: u32 = 1;
+}
+
+pub(crate) fn emit_json_artifact<T: Serialize>(purpose: &'static str, value: &T) {
+  let context = Context::current();
+  if !context.can_publish_artifacts() {
+    return;
+  }
+  match prepare_json_emission(purpose, value) {
+    Ok(emission) => drop(emission),
+    Err(error) => context.in_scope(|| {
+      auv_tracing::emit_event!(BalatroArtifactPreparationFailed {
+        purpose,
+        error: error.to_string(),
+      });
+    }),
   }
 }
 
@@ -191,35 +138,42 @@ pub(crate) async fn publish_json_artifact<T: Serialize>(
     return Ok(None);
   };
 
-  let purpose = ArtifactPurpose::parse(purpose).map_err(|source| BalatroArtifactPublishError::InvalidPurpose {
+  let purpose = parse_artifact_purpose(purpose)?;
+  let emission = context
+    .in_scope(|| {
+      auv_tracing::emit_json_artifact(
+        purpose.clone(),
+        Attributes::empty(),
+        ByteLength::new(BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).expect("static Balatro JSON limit is valid"),
+        value,
+      )
+    })
+    .map_err(|source| BalatroArtifactPublishError::Json {
+      purpose: purpose.clone(),
+      source,
+    })?;
+  emission.await.map_err(|source| BalatroArtifactPublishError::Publication { purpose, source })
+}
+
+fn parse_artifact_purpose(purpose: &'static str) -> Result<ArtifactPurpose, BalatroArtifactPublishError> {
+  ArtifactPurpose::parse(purpose).map_err(|source| BalatroArtifactPublishError::InvalidPurpose {
     value: purpose,
     source,
-  })?;
-  let body = serialize_json_bounded(&purpose, value)?;
-  let byte_length = u64::try_from(body.len()).map_err(|source| BalatroArtifactPublishError::LengthOutOfRange {
-    purpose: purpose.clone(),
-    actual: body.len() as u128,
-    source,
-  })?;
-  let artifact = NewArtifact::new(
+  })
+}
+
+fn prepare_json_emission<T: Serialize>(
+  purpose: &'static str,
+  value: &T,
+) -> Result<auv_tracing::ArtifactEmission, BalatroArtifactPublishError> {
+  let purpose = parse_artifact_purpose(purpose)?;
+  auv_tracing::emit_json_artifact(
     purpose.clone(),
-    ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| BalatroArtifactPublishError::InvalidContentType {
-      purpose: purpose.clone(),
-      value: JSON_CONTENT_TYPE,
-      source,
-    })?,
-    ByteLength::new(byte_length).map_err(|source| BalatroArtifactPublishError::InvalidByteLength {
-      purpose: purpose.clone(),
-      source,
-    })?,
-    Sha256Digest::new(Sha256::digest(&body).into()),
     Attributes::empty(),
-    AsyncCursor::new(body),
-  );
-  context
-    .in_scope(|| auv_tracing::emit_artifact!(artifact))
-    .await
-    .map_err(|source| BalatroArtifactPublishError::Publication { purpose, source })
+    ByteLength::new(BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).expect("static Balatro JSON limit is valid"),
+    value,
+  )
+  .map_err(|source| BalatroArtifactPublishError::Json { purpose, source })
 }
 
 pub(crate) fn artifact_uris_for_purpose(
@@ -242,214 +196,46 @@ pub(crate) fn artifact_uris_for_purpose(
 pub(crate) fn validate_snapshot_authority(store: &dyn RunStore, snapshot: &RunSnapshot) -> Result<(), BalatroArtifactReadError> {
   let store_authority = store.authority_id();
   if snapshot.authority_id() != store_authority {
-    return Err(BalatroArtifactReadError::SnapshotAuthorityMismatch {
-      snapshot_authority: snapshot.authority_id(),
-      store_authority,
-    });
+    return Err(
+      ReadArtifactError::SnapshotAuthorityMismatch {
+        snapshot_authority: snapshot.authority_id(),
+        store_authority,
+      }
+      .into(),
+    );
   }
   Ok(())
 }
 
-pub(crate) async fn read_json_artifact_bytes(
+pub(crate) async fn read_json_artifact<T>(
   store: &dyn RunStore,
   snapshot: &RunSnapshot,
   uri: &ArtifactUri,
   expected_purpose: &'static str,
-) -> Result<Vec<u8>, BalatroArtifactReadError> {
-  validate_snapshot_authority(store, snapshot)?;
+) -> Result<T, BalatroArtifactReadError>
+where
+  T: DeserializeOwned,
+{
   let expected_purpose = expected_artifact_purpose(expected_purpose)?;
-  let expected_content_type = expected_json_content_type()?;
-  if uri.run_id() != snapshot.run_id() {
-    return Err(BalatroArtifactReadError::WrongOwner {
-      snapshot_run_id: snapshot.run_id(),
-      artifact_run_id: uri.run_id(),
-    });
-  }
-  let metadata = snapshot.artifacts().get(uri).ok_or_else(|| BalatroArtifactReadError::DanglingUri { uri: uri.clone() })?.metadata();
-  if metadata.purpose() != &expected_purpose {
-    return Err(BalatroArtifactReadError::WrongPurpose {
-      uri: Box::new(uri.clone()),
-      expected: expected_purpose,
-      actual: metadata.purpose().clone(),
-    });
-  }
-  if metadata.content_type() != &expected_content_type {
-    return Err(BalatroArtifactReadError::WrongContentType {
-      uri: Box::new(uri.clone()),
-      expected: Box::new(expected_content_type),
-      actual: Box::new(metadata.content_type().clone()),
-    });
-  }
-
-  let expected_length = metadata.byte_length().get();
-  if expected_length > BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
-    return Err(BalatroArtifactReadError::PayloadTooLarge {
-      uri: uri.clone(),
-      limit: BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
-      actual: expected_length,
-    });
-  }
-  let expected_capacity = usize::try_from(expected_length).map_err(|_| BalatroArtifactReadError::LengthOutOfRange {
-    uri: uri.clone(),
-    actual: expected_length,
-  })?;
-  let mut bytes = Vec::new();
-  bytes.try_reserve_exact(expected_capacity).map_err(|source| BalatroArtifactReadError::Allocation {
-    uri: uri.clone(),
-    expected: expected_length,
-    source,
-  })?;
-  let mut reader = store.open_artifact(uri.clone()).await.map_err(|source| BalatroArtifactReadError::Open {
-    uri: uri.clone(),
-    source,
-  })?;
-  let mut actual_length = 0_u64;
-  while let Some(chunk) = reader.next().await {
-    let chunk = chunk.map_err(|source| BalatroArtifactReadError::Stream {
+  auv_tracing::read_json_artifact(
+    store,
+    snapshot,
+    uri,
+    &expected_purpose,
+    ByteLength::new(BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT).expect("static Balatro JSON limit is valid"),
+  )
+  .await
+  .map_err(|error| match error {
+    JsonArtifactReadError::Artifact(source) => BalatroArtifactReadError::Read { source },
+    JsonArtifactReadError::Decode { source, .. } => BalatroArtifactReadError::MalformedJson {
       uri: uri.clone(),
       source,
-    })?;
-    actual_length = actual_length.checked_add(chunk.len() as u64).ok_or_else(|| BalatroArtifactReadError::PayloadTooLarge {
-      uri: uri.clone(),
-      limit: BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
-      actual: u64::MAX,
-    })?;
-    if actual_length > BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT {
-      return Err(BalatroArtifactReadError::PayloadTooLarge {
-        uri: uri.clone(),
-        limit: BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT,
-        actual: actual_length,
-      });
-    }
-    if actual_length > expected_length {
-      return Err(BalatroArtifactReadError::LengthMismatch {
-        uri: uri.clone(),
-        expected: expected_length,
-        actual: actual_length,
-      });
-    }
-    bytes.extend_from_slice(&chunk);
-  }
-  if actual_length != expected_length {
-    return Err(BalatroArtifactReadError::LengthMismatch {
-      uri: uri.clone(),
-      expected: expected_length,
-      actual: actual_length,
-    });
-  }
-  let actual_digest = Sha256Digest::new(Sha256::digest(&bytes).into());
-  if actual_digest != metadata.sha256() {
-    return Err(BalatroArtifactReadError::DigestMismatch {
-      uri: Box::new(uri.clone()),
-      expected: metadata.sha256(),
-      actual: actual_digest,
-    });
-  }
-  Ok(bytes)
+    },
+  })
 }
 
 fn expected_artifact_purpose(value: &'static str) -> Result<ArtifactPurpose, BalatroArtifactReadError> {
   ArtifactPurpose::parse(value).map_err(|source| BalatroArtifactReadError::InvalidExpectedPurpose { value, source })
-}
-
-fn expected_json_content_type() -> Result<ContentType, BalatroArtifactReadError> {
-  ContentType::parse(JSON_CONTENT_TYPE).map_err(|source| BalatroArtifactReadError::InvalidExpectedContentType {
-    value: JSON_CONTENT_TYPE,
-    source,
-  })
-}
-
-fn serialize_json_bounded<T: Serialize>(purpose: &ArtifactPurpose, value: &T) -> Result<Vec<u8>, BalatroArtifactPublishError> {
-  let mut output = BoundedJsonBuffer::new(purpose, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
-  let result = serde_json::to_writer(&mut output, value);
-  if let Some(failure) = output.failure.take() {
-    return Err(match failure {
-      JsonBufferFailure::LengthOutOfRange { actual, source } => BalatroArtifactPublishError::LengthOutOfRange {
-        purpose: purpose.clone(),
-        actual,
-        source,
-      },
-      JsonBufferFailure::PayloadTooLarge { actual } => BalatroArtifactPublishError::PayloadTooLarge {
-        purpose: purpose.clone(),
-        limit: output.limit,
-        actual,
-      },
-      JsonBufferFailure::Allocation(source) => BalatroArtifactPublishError::Allocation {
-        purpose: purpose.clone(),
-        source,
-      },
-    });
-  }
-  result.map_err(|source| BalatroArtifactPublishError::Serialize {
-    purpose: purpose.clone(),
-    source,
-  })?;
-  Ok(output.bytes)
-}
-
-struct BoundedJsonBuffer<'a> {
-  purpose: &'a ArtifactPurpose,
-  limit: u64,
-  bytes: Vec<u8>,
-  failure: Option<JsonBufferFailure>,
-}
-
-enum JsonBufferFailure {
-  LengthOutOfRange {
-    actual: u128,
-    source: TryFromIntError,
-  },
-  PayloadTooLarge {
-    actual: u64,
-  },
-  Allocation(TryReserveError),
-}
-
-impl<'a> BoundedJsonBuffer<'a> {
-  fn new(purpose: &'a ArtifactPurpose, limit: u64) -> Self {
-    Self {
-      purpose,
-      limit,
-      bytes: Vec::new(),
-      failure: None,
-    }
-  }
-
-  fn fail(&mut self, failure: JsonBufferFailure) -> std::io::Error {
-    self.failure = Some(failure);
-    std::io::Error::other(format!("{} JSON exceeded its bounded buffer", self.purpose))
-  }
-}
-
-impl Write for BoundedJsonBuffer<'_> {
-  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-    let Some(next_length) = self.bytes.len().checked_add(buffer.len()) else {
-      return Err(self.fail(JsonBufferFailure::PayloadTooLarge { actual: u64::MAX }));
-    };
-    let next_length = match u64::try_from(next_length) {
-      Ok(length) => length,
-      Err(source) => {
-        return Err(self.fail(JsonBufferFailure::LengthOutOfRange {
-          actual: next_length as u128,
-          source,
-        }));
-      }
-    };
-    if next_length > self.limit {
-      return Err(self.fail(JsonBufferFailure::PayloadTooLarge {
-        actual: next_length,
-      }));
-    }
-    if let Err(source) = self.bytes.try_reserve(buffer.len()) {
-      return Err(self.fail(JsonBufferFailure::Allocation(source)));
-    }
-    self.bytes.extend_from_slice(buffer);
-    Ok(buffer.len())
-  }
-
-  fn flush(&mut self) -> std::io::Result<()> {
-    Ok(())
-  }
 }
 
 #[cfg(test)]
@@ -457,9 +243,10 @@ mod tests {
   use std::error::Error as _;
   use std::sync::Arc;
 
+  use auv_driver::{INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputDeliveryPath};
   use auv_tracing::{
-    BoxFuture, Context, MemoryRunStore, RunId, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure,
-    dispatcher,
+    AuthorityId, BoxFuture, Context, MemoryRunStore, RunId, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy,
+    configure, dispatcher,
   };
   use serde::Serializer;
 
@@ -534,6 +321,31 @@ mod tests {
         }
         other => panic!("expected invalid-purpose error, got {other:?}"),
       }
+    });
+  }
+
+  #[test]
+  fn detached_delivery_recording_keeps_the_direct_value_and_uses_the_active_run_store() {
+    futures_executor::block_on(async {
+      let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
+      let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
+      let run_id = RunId::new();
+      let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+      let delivery = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
+
+      let direct = root.in_scope(|| {
+        emit_json_artifact(INPUT_ACTION_RESULT_PURPOSE, &delivery);
+        42
+      });
+      dispatch.flush().await.expect("flush delivery artifact");
+      let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("delivery run");
+
+      assert_eq!(direct, 42);
+      assert_eq!(snapshot.artifacts().len(), 1);
+      assert_eq!(
+        snapshot.artifacts().values().next().expect("delivery artifact").metadata().purpose().as_str(),
+        INPUT_ACTION_RESULT_PURPOSE
+      );
     });
   }
 }

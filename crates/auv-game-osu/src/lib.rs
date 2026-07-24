@@ -1,5 +1,6 @@
-pub mod artifact_roles;
+#[cfg(feature = "tracing")]
 pub mod inspect;
+#[cfg(feature = "tracing")]
 pub mod run_read;
 
 pub mod benchmark;
@@ -14,10 +15,12 @@ pub mod visual_truth_spatial_query;
 pub mod visual_truth_spatial_query_action;
 pub mod visual_truth_spatial_query_action_wiring;
 
+mod time;
+
 pub use benchmark::{
-  BenchmarkEvidenceSummary, BenchmarkInputs, BenchmarkOutput, CapturePhase, CaptureSample, CaptureTraceSample, DetectionEvalInputs,
-  DetectionEvalManifest, DetectionEvalOutput, DispatchSample, LatencyReport, MapSummary, ObjectKind, RunMode, ScheduledAction,
-  VerificationSummary, evaluate_detection_fixture, run_benchmark,
+  BenchmarkInputs, BenchmarkOutput, BenchmarkReport, CaptureCoverageMetrics, CapturePhase, CaptureSample, CaptureTimingSample,
+  DetectionEvalInputs, DetectionEvalManifest, DetectionEvalOutput, DispatchSample, LatencyReport, MapSummary, ObjectKind, RunMode,
+  ScheduledAction, evaluate_detection_fixture, run_benchmark,
 };
 pub use dataset::{
   DatasetExportInputs, DatasetExportOutput, DatasetFrameRecord, DatasetLabelEntry, DatasetManifest, DatasetSkippedFrame, export_dataset,
@@ -56,6 +59,5 @@ pub use visual_truth_spatial_query_action_wiring::{
   wire_visual_truth_spatial_query_manifest_to_action,
 };
 
+#[cfg(feature = "tracing")]
 pub use inspect::{inspect_sections_detection_eval, inspect_sections_primary};
-
-pub use artifact_roles::*;

@@ -1,4 +1,3 @@
-use std::error::Error as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -23,9 +22,9 @@ use auv_game_osu::visual_truth_spatial_query::{
 use auv_stage_status::StageStatus;
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
-  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError,
-  RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription, Sha256Digest,
-  StoreArtifactRequest, configure, dispatcher,
+  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey, JsonArtifactError, MemoryRunStore,
+  PageLimit, ReadArtifactError, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore,
+  RunSubscription, Sha256Digest, StoreArtifactRequest, configure, dispatcher,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -457,9 +456,24 @@ fn reader_validates_authority_owner_and_membership_before_opening() {
     let membership =
       read_osu_projection(published.store.as_ref(), &published.snapshot, &dangling).await.expect_err("URI must be committed in snapshot");
 
-    assert!(matches!(authority, OsuArtifactReadError::SnapshotAuthorityMismatch { .. }));
-    assert!(matches!(owner, OsuArtifactReadError::WrongOwner { .. }));
-    assert!(matches!(membership, OsuArtifactReadError::DanglingUri { .. }));
+    assert!(matches!(
+      authority,
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::SnapshotAuthorityMismatch { .. }
+      }
+    ));
+    assert!(matches!(
+      owner,
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::WrongRun { .. }
+      }
+    ));
+    assert!(matches!(
+      membership,
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::NotCommitted { .. }
+      }
+    ));
   });
 }
 
@@ -479,8 +493,18 @@ fn reader_rejects_wrong_purpose_and_content_type_before_opening() {
     let purpose = read_osu_projection(&purpose_store, &wrong_purpose, &published.uri).await.expect_err("purpose must match");
     let content = read_osu_projection(&content_store, &wrong_content_type, &published.uri).await.expect_err("content type must match");
 
-    assert!(matches!(purpose, OsuArtifactReadError::WrongPurpose { .. }));
-    assert!(matches!(content, OsuArtifactReadError::WrongContentType { .. }));
+    assert!(matches!(
+      purpose,
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::WrongPurpose { .. }
+      }
+    ));
+    assert!(matches!(
+      content,
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::WrongContentType { .. }
+      }
+    ));
     assert_eq!(purpose_store.open_count(), 0);
     assert_eq!(content_store.open_count(), 0);
   });
@@ -521,28 +545,40 @@ fn reader_enforces_metadata_and_exact_stream_lengths() {
 
     assert!(matches!(
       read_osu_projection(published.store.as_ref(), &short_metadata, &published.uri).await.expect_err("metadata too short"),
-      OsuArtifactReadError::LengthMismatch { .. }
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::LengthMismatch { .. }
+      }
     ));
     assert!(matches!(
       read_osu_projection(published.store.as_ref(), &long_metadata, &published.uri).await.expect_err("metadata too long"),
-      OsuArtifactReadError::LengthMismatch { .. }
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::LengthMismatch { .. }
+      }
     ));
     assert!(matches!(
       read_osu_projection(&bounded, &oversized_metadata, &published.uri).await.expect_err("metadata over bound"),
-      OsuArtifactReadError::PayloadTooLarge { .. }
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::PayloadTooLarge { .. }
+      }
     ));
     assert_eq!(bounded.open_count(), 0);
     assert!(matches!(
       read_osu_projection(&stream_bound, &stream_bound_snapshot, &published.uri).await.expect_err("stream over bound"),
-      OsuArtifactReadError::PayloadTooLarge { .. }
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::PayloadTooLarge { .. }
+      }
     ));
     assert!(matches!(
       read_osu_projection(&short_stream, &published.snapshot, &published.uri).await.expect_err("short stream"),
-      OsuArtifactReadError::LengthMismatch { .. }
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::LengthMismatch { .. }
+      }
     ));
     assert!(matches!(
       read_osu_projection(&extra_stream, &published.snapshot, &published.uri).await.expect_err("extra stream"),
-      OsuArtifactReadError::LengthMismatch { .. }
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::LengthMismatch { .. }
+      }
     ));
   });
 }
@@ -561,7 +597,9 @@ fn reader_accepts_chunked_body_and_verifies_digest() {
     assert_eq!(read_osu_projection(&chunked, &published.snapshot, &published.uri).await.expect("chunked projection"), sample_projection());
     assert!(matches!(
       read_osu_projection(published.store.as_ref(), &wrong_digest, &published.uri).await.expect_err("digest mismatch"),
-      OsuArtifactReadError::DigestMismatch { .. }
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::DigestMismatch { .. }
+      }
     ));
   });
 }
@@ -582,10 +620,18 @@ fn reader_preserves_open_and_mid_stream_source_errors() {
     let open = read_osu_projection(&open_store, &published.snapshot, &published.uri).await.expect_err("open failure");
     let stream = read_osu_projection(&stream_store, &published.snapshot, &published.uri).await.expect_err("stream failure");
 
-    assert_eq!(open.source().and_then(|source| source.downcast_ref::<ReadError>()), Some(&open_source));
-    assert_eq!(stream.source().and_then(|source| source.downcast_ref::<ArtifactReadError>()), Some(&stream_source));
-    assert!(matches!(open, OsuArtifactReadError::Open { .. }));
-    assert!(matches!(stream, OsuArtifactReadError::Stream { .. }));
+    assert!(matches!(
+      open,
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::Open { source, .. }
+      } if source == open_source
+    ));
+    assert!(matches!(
+      stream,
+      OsuArtifactReadError::Read {
+        source: ReadArtifactError::Stream { source, .. }
+      } if source == stream_source
+    ));
   });
 }
 
@@ -645,7 +691,13 @@ fn publisher_rejects_json_over_bound_without_committing() {
 
     let error = publish_osu_visual_truth_semantic(Some(&root), &semantic).await.expect_err("oversized JSON");
 
-    assert!(matches!(error, OsuArtifactPublishError::PayloadTooLarge { .. }));
+    assert!(matches!(
+      error,
+      OsuArtifactPublishError::Json {
+        source: JsonArtifactError::PayloadTooLarge { .. },
+        ..
+      }
+    ));
     dispatch.flush().await.expect("flush oversized publication");
     assert!(store.load_snapshot(run_id).await.expect("load oversized run").is_none());
   });

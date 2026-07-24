@@ -1,18 +1,21 @@
 //! Adjacent-frame observation association (crate-local read-model).
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrameObservation {
   pub observation_id: String,
   pub label: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssociationDiagnostic {
   pub code: String,
   pub message: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum AssociationResult {
   Linked {
     track_id: String,
@@ -114,6 +117,17 @@ mod tests {
         label: o.label.clone(),
       })
       .collect()
+  }
+
+  #[test]
+  fn association_result_is_the_only_persisted_association_shape() {
+    let tracks = include_str!("tracks.rs").split("#[cfg(test)]").next().expect("tracks test boundary");
+    let root = include_str!("lib.rs");
+
+    assert!(!tracks.contains("AssociationResultWire"), "tracks duplicates the canonical association enum");
+    assert!(!tracks.contains("AssociationDiagnosticWire"), "tracks duplicates the canonical association diagnostic");
+    assert!(!root.contains("AssociationResultWire"), "crate root exports a duplicate association enum");
+    assert!(!root.contains("AssociationDiagnosticWire"), "crate root exports a duplicate association diagnostic");
   }
 
   #[test]

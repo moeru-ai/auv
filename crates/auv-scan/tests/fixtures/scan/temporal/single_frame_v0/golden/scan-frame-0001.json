@@ -10,10 +10,8 @@
     "height": 600
   },
   "viewport_bounds": null,
-  "image": {
-    "file_name": "frame-0001.png",
+  "image_dimensions": {
     "width": 8,
-    "height": 8,
-    "media_type": "image/png"
+    "height": 8
   }
 }

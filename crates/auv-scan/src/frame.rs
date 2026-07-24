@@ -4,8 +4,17 @@
 //! Motion, tracks, and evidence fusion types remain deferred per S1 plan.
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub const SCAN_FRAME_SCHEMA_VERSION: &str = "scan-frame-v0";
+
+#[derive(Debug, Error)]
+pub enum ScanFrameError {
+  #[error("schema_version mismatch: expected {SCAN_FRAME_SCHEMA_VERSION}, found {found}")]
+  SchemaMismatch { found: String },
+  #[error("invalid bounds for {field}")]
+  InvalidBounds { field: &'static str },
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanBounds {
@@ -16,23 +25,22 @@ pub struct ScanBounds {
 }
 
 impl ScanBounds {
-  pub fn validate_positive(&self, field: &'static str) -> Result<(), crate::artifact::ScanArtifactError> {
+  pub fn validate_positive(&self, field: &'static str) -> Result<(), ScanFrameError> {
     if self.width <= 0 {
-      return Err(crate::artifact::ScanArtifactError::InvalidBounds { field });
+      return Err(ScanFrameError::InvalidBounds { field });
     }
     if self.height <= 0 {
-      return Err(crate::artifact::ScanArtifactError::InvalidBounds { field });
+      return Err(ScanFrameError::InvalidBounds { field });
     }
     Ok(())
   }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScanImageRef {
-  pub file_name: String,
+#[serde(deny_unknown_fields)]
+pub struct ScanImageDimensions {
   pub width: u32,
   pub height: u32,
-  pub media_type: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,13 +52,13 @@ pub struct ScanFrame {
   pub window_bounds: ScanBounds,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub viewport_bounds: Option<ScanBounds>,
-  pub image: ScanImageRef,
+  pub image_dimensions: ScanImageDimensions,
 }
 
 impl ScanFrame {
-  pub fn validate_wire(&self) -> Result<(), crate::artifact::ScanArtifactError> {
+  pub fn validate_wire(&self) -> Result<(), ScanFrameError> {
     if self.schema_version != SCAN_FRAME_SCHEMA_VERSION {
-      return Err(crate::artifact::ScanArtifactError::SchemaMismatch {
+      return Err(ScanFrameError::SchemaMismatch {
         found: self.schema_version.clone(),
       });
     }

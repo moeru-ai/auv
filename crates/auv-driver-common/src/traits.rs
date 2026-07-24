@@ -20,7 +20,7 @@ pub enum PlatformKind {
 pub struct DriverDescriptor {
   pub id: &'static str,
   pub platform: PlatformKind,
-  pub summary: &'static str,
+  pub description: &'static str,
 }
 
 pub trait Driver {

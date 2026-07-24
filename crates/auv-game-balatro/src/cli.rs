@@ -14,17 +14,58 @@ use auv_task_object_detection::BoundingBox;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use image::{ImageError, RgbaImage};
 use serde::Serialize;
-use serde_json::Value;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::blind_action::{
+  BlindSelectConfirmation, BlindSelectConfirmationFailure, BlindSelectRequest, BlindSelectResult, BlindSkipConfirmation,
+  BlindSkipConfirmationFailure, BlindSkipRequest, BlindSkipResult, emit_blind_select_completed, emit_blind_skip_completed,
+  evaluate_blind_select_confirmation, evaluate_blind_skip_confirmation,
+};
+use crate::cards_action::{
+  CardCommitAction, CardCommitConfirmation, CardCommitKind, CardCommitRequest, CardCommitResult, CardCommitState, CardCommitStop,
+  CardsSelectRequest, CardsSelectResult, emit_card_commit_completed, emit_cards_select_completed, evaluate_card_commit_confirmation,
+};
+use crate::cards_clear::{
+  CardSelectionToggle, CardsClearIncompleteReason, CardsClearOutcome, CardsClearRequest, CardsClearResult, classify_cards_clear_outcome,
+  emit_cards_clear_completed,
+};
+use crate::cash_out::{
+  CashOutConfirmation, CashOutConfirmationRequest, CashOutRequest, CashOutResult, emit_cash_out_completed, evaluate_cash_out_confirmation,
+};
 use crate::config::BalatroModelConfig;
+use crate::consumable_use::{
+  ConsumableUseAction, ConsumableUseConfirmation, ConsumableUseControl, ConsumableUseRequest, ConsumableUseResult, ConsumableUseState,
+  ConsumableUseStop, emit_consumable_use_completed, evaluate_consumable_use_confirmation,
+};
+use crate::game_restart::{
+  GameRestartClick, GameRestartOutcome, GameRestartRequest, GameRestartResult, GameRestartTarget, classify_game_restart_outcome,
+  emit_game_restart_completed,
+};
+use crate::hand_selection::{HandSelectionResult, HandSelectionState, HandSelectionToggle, HandSelectionToggleKind};
 use crate::model::{
-  BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, RoundState, ScoreState, SlotId, StoreItem,
+  BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, ObjectZone, RoundState, ScoreState, SlotId, StoreItem,
+};
+use crate::object_sell::{
+  ObjectSellClick, ObjectSellConfirmation, ObjectSellIncompleteReason, ObjectSellOutcome, ObjectSellRequest, ObjectSellResult,
+  SellableObject, emit_object_sell_completed, evaluate_object_sell_confirmation,
 };
 use crate::observation::{ObservationError, observe_image};
 pub use crate::output::OutputMode;
+use crate::pack_choose::{
+  ObservedPackState, PackChoice, PackChoiceId, PackChooseAction, PackChooseConfirmation, PackChooseControl, PackChooseRequest,
+  PackChooseResult, PackChooseState, PackChooseStop, emit_pack_choose_completed, evaluate_pack_choose_confirmation,
+};
+use crate::pack_skip::{PackSkipConfirmation, PackSkipRequest, PackSkipResult, emit_pack_skip_completed, evaluate_pack_skip_confirmation};
+use crate::store_buy::{
+  StoreBuyClick, StoreBuyConfirmation, StoreBuyIncompleteReason, StoreBuyOutcome, StoreBuyRequest, StoreBuyResult, emit_store_buy_completed,
+  evaluate_store_buy_confirmation,
+};
+use crate::store_next_round::{
+  StoreNextRoundConfirmation, StoreNextRoundConfirmationRequest, StoreNextRoundRequest, StoreNextRoundResult, StoreNextRoundTarget,
+  emit_store_next_round_completed, evaluate_store_next_round_confirmation,
+};
 
 const DECK_ATLAS_LOVE_PATH: &str = "resources/textures/2x/8BitDeck.png";
 const DECK_ATLAS_CACHE_FILE: &str = "8BitDeck.png";
@@ -418,10 +459,10 @@ pub fn run(args: CliArgs) -> Result<(), CliError> {
     }) => click_cards_select(args),
     Command::Cards(CardsArgs {
       command: CardsCommand::Play(args),
-    }) => click_cards_commit("cards.play", "button_play", args),
+    }) => click_cards_commit(CardCommitKind::Play, args),
     Command::Cards(CardsArgs {
       command: CardsCommand::Discard(args),
-    }) => click_cards_commit("cards.discard", "button_discard", args),
+    }) => click_cards_commit(CardCommitKind::Discard, args),
     Command::Jokers(JokersArgs {
       command: JokersCommand::Ls(args),
     }) => write_observed_state(&args),
@@ -643,7 +684,13 @@ fn click_store_reroll(_args: OperationControlArgs) -> Result<(), CliError> {
 #[cfg(target_os = "macos")]
 fn click_joker_sell(args: SlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_joker_slot_index(&args.slot)?;
-  click_sell_object(ObjectReadZone::Joker, slot_index, args)
+  let result = object_sell(ObjectSellRequest {
+    target: args.control.target,
+    slot: SlotId::new(ObjectZone::Joker, slot_index),
+    confirm_sale: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.control.timeout_ms.unwrap_or(1000),
+  })?;
+  write_object_sell_output("jokers.sell", &result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -655,7 +702,13 @@ fn click_joker_sell(args: SlotOperationArgs) -> Result<(), CliError> {
 #[cfg(target_os = "macos")]
 fn click_consumable_sell(args: SlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_consumable_slot_index(&args.slot)?;
-  click_sell_object(ObjectReadZone::Consumable, slot_index, args)
+  let result = object_sell(ObjectSellRequest {
+    target: args.control.target,
+    slot: SlotId::new(ObjectZone::Consumable, slot_index),
+    confirm_sale: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.control.timeout_ms.unwrap_or(1000),
+  })?;
+  write_object_sell_output("consumables.sell", &result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -665,94 +718,135 @@ fn click_consumable_sell(args: SlotOperationArgs) -> Result<(), CliError> {
 }
 
 #[cfg(target_os = "macos")]
-fn click_sell_object(zone: ObjectReadZone, slot_index: u32, args: SlotOperationArgs) -> Result<(), CliError> {
+pub fn object_sell(request: ObjectSellRequest) -> Result<ObjectSellResult, CliError> {
+  if !matches!(request.slot.zone, ObjectZone::Joker | ObjectZone::Consumable) {
+    return Err(CliError::Message(format!("object sell requires a joker or consumable slot, got {}", request.slot)));
+  }
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
-  let operation = match zone {
-    ObjectReadZone::Joker => "jokers.sell",
-    ObjectReadZone::Consumable => "consumables.sell",
-    ObjectReadZone::Store => {
-      return Err(CliError::Message("store items are not sellable through object sell".to_string()));
-    }
-  };
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "object-sell-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
-  let object_point = match zone {
-    ObjectReadZone::Joker => {
-      let joker = select_joker(&before, slot_index)?;
-      window_point_from_joker(&before, &window, joker)
+  // TODO(balatro-object-sell-artifacts): emit captures through auv-tracing
+  // once the shared in-memory capture encoder is owner-approved.
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(before_image);
+  let before = before?;
+  let (object, object_point) = match request.slot.zone {
+    ObjectZone::Joker => {
+      let joker = select_joker(&before, request.slot.index)?.clone();
+      let point = window_point_from_joker(&before, &window, &joker);
+      (SellableObject::Joker { joker }, point)
     }
-    ObjectReadZone::Consumable => {
-      let consumable = select_consumable(&before, slot_index)?;
-      window_point_from_consumable(&before, &window, consumable)
+    ObjectZone::Consumable => {
+      let consumable = select_consumable(&before, request.slot.index)?.clone();
+      let point = window_point_from_consumable(&before, &window, &consumable);
+      (SellableObject::Consumable { consumable }, point)
     }
-    ObjectReadZone::Store => unreachable!("store sell is rejected above"),
+    _ => unreachable!("slot zone validated above"),
+  };
+  let selection = ObjectSellClick {
+    window_point: WindowPoint::new(object_point.x, object_point.y),
+    delivery: click_game_point(&session, &window, object_point)?,
   };
 
-  click_game_point(&session, &window, object_point)?;
   std::thread::sleep(Duration::from_millis(500));
-  let selected_image = capture_window_to_temp(&session, &window, "object-sell-selected")?;
-  let selected = observe_image(&selected_image, &BalatroModelConfig::default(), true)?;
-  let sell_button = find_button(&selected, "button_sell")?;
-  let sell_point = window_point_from_button(&selected, &window, sell_button);
-  click_game_point(&session, &window, sell_point)?;
+  let selected = match capture_window_to_temp(&session, &window, "object-sell-selected") {
+    Ok(image) => {
+      let selected = observe_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
+      let _ = fs::remove_file(image);
+      selected
+    }
+    Err(error) => Err(error.to_string()),
+  };
+  let selected = match selected {
+    Ok(selected) => selected,
+    Err(message) => {
+      let result = ObjectSellResult {
+        target: request.target,
+        slot: request.slot,
+        object,
+        outcome: ObjectSellOutcome::SelectionOnly {
+          selection,
+          reason: ObjectSellIncompleteReason::StateReadFailed { message },
+        },
+      };
+      emit_object_sell_completed(&result);
+      return Ok(result);
+    }
+  };
+  let sell_button = match find_button(&selected, "button_sell") {
+    Ok(button) => button.clone(),
+    Err(_) => {
+      let result = ObjectSellResult {
+        target: request.target,
+        slot: request.slot,
+        object,
+        outcome: ObjectSellOutcome::SelectionOnly {
+          selection,
+          reason: ObjectSellIncompleteReason::SellControlNotFound,
+        },
+      };
+      emit_object_sell_completed(&result);
+      return Ok(result);
+    }
+  };
+  let sell_point = window_point_from_button(&selected, &window, &sell_button);
+  let submission = ObjectSellClick {
+    window_point: WindowPoint::new(sell_point.x, sell_point.y),
+    delivery: click_game_point(&session, &window, sell_point)?,
+  };
 
-  let verification = if args.control.verify {
-    let (after_image, after_result) =
-      capture_observable_window(&session, &window, "object-sell-after", args.control.timeout_ms.unwrap_or(1000), 500)?;
-    if args.control.verify_mode == VerifyModeArg::ActivationOnly {
-      Some(json!({
-        "mode": args.control.verify_mode.to_string(),
-        "profile": "activation_only",
-        "evidence": ["object_click_completed", "sell_click_completed"],
-        "passed": true,
-        "after_image": after_image,
-      }))
-    } else {
-      match after_result {
-        Ok(after) => Some(json!({
-          "mode": args.control.verify_mode.to_string(),
-          "profile": "weak",
-          "evidence": sell_operation_evidence(zone, &before, &after),
-          "before_joker_count": before.jokers.len(),
-          "after_joker_count": after.jokers.len(),
-          "before_consumable_count": before.consumables.len(),
-          "after_consumable_count": after.consumables.len(),
-          "before_cash": before.rounds.cash,
-          "after_cash": after.rounds.cash,
-          "passed": verify_sell_operation(zone, &before, &after),
-          "after_image": after_image,
-        })),
-        Err(error) => Some(json!({
-          "mode": args.control.verify_mode.to_string(),
-          "profile": "weak",
-          "evidence": Vec::<&str>::new(),
-          "before_joker_count": before.jokers.len(),
-          "before_consumable_count": before.consumables.len(),
-          "before_cash": before.rounds.cash,
-          "passed": false,
-          "after_image": after_image,
-          "error": error.to_string(),
-        })),
+  let confirmation = if request.confirm_sale {
+    match capture_observable_window(&session, &window, "object-sell-after", request.timeout_ms, 500) {
+      Ok((image, after)) => {
+        let confirmation = evaluate_object_sell_confirmation(request.slot.zone, &before, after.as_ref().map_err(|error| error.to_string()));
+        let _ = fs::remove_file(image);
+        confirmation
       }
+      Err(error) => evaluate_object_sell_confirmation(request.slot.zone, &before, Err(error.to_string())),
     }
   } else {
-    None
+    ObjectSellConfirmation::NotRequested
   };
 
-  write_operation_output(
-    args.control.details,
-    json!({
-      "operation": operation,
-      "target": args.control.target,
-      "slot": args.slot,
-      "object_point": object_point,
-      "sell_button": sell_button,
-      "sell_point": sell_point,
-      "before_image": before_image,
-      "selected_image": selected_image,
-      "verification": verification,
-    }),
+  let result = ObjectSellResult {
+    target: request.target,
+    slot: request.slot,
+    object,
+    outcome: ObjectSellOutcome::Submitted {
+      selection,
+      sell_button,
+      submission,
+      confirmation,
+    },
+  };
+  emit_object_sell_completed(&result);
+  Ok(result)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn object_sell(_request: ObjectSellRequest) -> Result<ObjectSellResult, CliError> {
+  Err(CliError::Message("object sell live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct ObjectSellCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  slot: SlotId,
+  object: &'a SellableObject,
+  outcome: &'a ObjectSellOutcome,
+}
+
+fn write_object_sell_output(operation: &'static str, result: &ObjectSellResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &ObjectSellCliOutput {
+      operation,
+      target: &result.target,
+      slot: result.slot,
+      object: &result.object,
+      outcome: &result.outcome,
+    },
   )
 }
 
@@ -817,30 +911,10 @@ struct ObjectReadEvidence {
   hover_error: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ActionTargetSource {
-  YoloButton,
-  // TODO(store-object-target-v1): object-origin targets are reserved for
-  // store/pack item actions; Task 3 only resolves buttons and layout fallback.
-  #[allow(dead_code)]
-  YoloObject,
-  LayoutFallback,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
-struct ResolvedActionTarget {
-  source: ActionTargetSource,
-  label: String,
-  frame_point: Point,
-  fallback_reason: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-struct PackChoice {
-  slot_index: u32,
-  kind: String,
-  detector_label: String,
+struct PackReadChoice {
+  #[serde(flatten)]
+  choice: PackChoice,
   hint: String,
   hover_required: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -851,14 +925,12 @@ struct PackChoice {
   hover_ocr_region: Option<RatioRect>,
   #[serde(skip_serializing_if = "Option::is_none")]
   hover_error: Option<String>,
-  bbox: BoundingBox,
-  confidence: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct PackReadOutput {
   phase: BalatroPhase,
-  choices: Vec<PackChoice>,
+  choices: Vec<PackReadChoice>,
   skip_button: Option<ButtonTarget>,
   frame: crate::model::FrameRef,
 }
@@ -970,7 +1042,20 @@ fn write_pack_read(args: &ObserveArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_game_cash_out(args: OperationControlArgs) -> Result<(), CliError> {
-  click_single_button("game.cash_out", "button_cash_out", args)
+  let details = args.details;
+  let confirmation = if !args.verify || args.verify_mode == VerifyModeArg::ActivationOnly {
+    CashOutConfirmationRequest::None
+  } else if args.verify_mode == VerifyModeArg::Targeted {
+    CashOutConfirmationRequest::Targeted
+  } else {
+    CashOutConfirmationRequest::Weak
+  };
+  let result = cash_out(CashOutRequest {
+    target: args.target,
+    confirmation,
+    timeout_ms: args.timeout_ms.unwrap_or(1200),
+  })?;
+  write_cash_out_output(details, &result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -979,105 +1064,181 @@ fn click_game_cash_out(_args: OperationControlArgs) -> Result<(), CliError> {
 }
 
 #[cfg(target_os = "macos")]
-fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
+pub fn cash_out(request: CashOutRequest) -> Result<CashOutResult, CliError> {
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
-  let before_image = capture_window_to_temp(&session, &window, "game-restart-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true).ok();
-  let first_point = before
-    .as_ref()
-    .and_then(|state| {
-      restart_primary_button(&state.buttons).map(|button| (button.id.as_str(), window_point_from_button(state, &window, button)))
-    })
-    .unwrap_or_else(|| {
-      if before.is_none() {
-        // NOTICE: Game Over overlays and some localized title screens are not
-        // covered by the current Balatro YOLO UI dataset, so restart may begin
-        // from a no-detection frame. Prefer the Game Over "start new run" slot
-        // first because it is the common post-run recovery path; the localized
-        // title-screen fallback below is still tried if this does not reveal an
-        // observable new-run button.
-        return ("game_over_start_new_run_layout", normalized_window_point(&window, 0.62, 0.805));
-      }
-      // TODO(balatro-game-over-ui-v1): replace this Game Over layout fallback
-      // with YOLO button evidence once game-over overlay buttons are in the UI
-      // dataset.
-      ("game_over_start_new_run_layout", normalized_window_point(&window, 0.62, 0.815))
-    });
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let before_image = capture_window_to_temp(&session, &window, "game-cash-out-before")?;
+  // TODO(balatro-cash-out-artifacts): emit the before/after captures through
+  // auv-tracing once the shared in-memory capture encoder is owner-approved.
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(&before_image);
+  let before = before?;
+  let selected_button = find_button(&before, "button_cash_out")?.clone();
+  let point = window_point_from_button(&before, &window, &selected_button);
+  let delivery = click_game_point(&session, &window, point)?;
 
-  click_game_point(&session, &window, first_point.1)?;
-  if first_point.0 == "game_over_start_new_run_layout" {
+  let confirmation = if request.confirmation == CashOutConfirmationRequest::None {
+    CashOutConfirmation::NotRequested
+  } else {
+    let (after_image, after) = capture_observable_window(&session, &window, "game-cash-out-after", request.timeout_ms, 500)?;
+    let confirmation = evaluate_cash_out_confirmation(request.confirmation, &before, after.as_ref().map_err(|error| error.to_string()));
+    let _ = fs::remove_file(after_image);
+    confirmation
+  };
+
+  let result = CashOutResult {
+    target: request.target,
+    selected_button,
+    window_point: WindowPoint::new(point.x, point.y),
+    delivery,
+    confirmation,
+  };
+  emit_cash_out_completed(&result);
+  Ok(result)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cash_out(_request: CashOutRequest) -> Result<CashOutResult, CliError> {
+  Err(CliError::Message("game cash-out live operation is only available on macOS".to_string()))
+}
+
+#[cfg(feature = "tracing")]
+fn emit_input_delivery(delivery: &auv_driver::InputActionResult) {
+  crate::run_read::emit_json_artifact(auv_driver::INPUT_ACTION_RESULT_PURPOSE, delivery);
+}
+
+#[cfg(not(feature = "tracing"))]
+fn emit_input_delivery(_delivery: &auv_driver::InputActionResult) {}
+
+#[derive(Debug, Serialize)]
+struct CashOutCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  delivery: &'a auv_driver::InputActionResult,
+  confirmation: &'a CashOutConfirmation,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  selected_button: Option<&'a ButtonTarget>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  window_point: Option<WindowPoint>,
+}
+
+fn write_cash_out_output(details: bool, result: &CashOutResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &CashOutCliOutput {
+      operation: "game.cash_out",
+      target: &result.target,
+      delivery: &result.delivery,
+      confirmation: &result.confirmation,
+      selected_button: details.then_some(&result.selected_button),
+      window_point: details.then_some(result.window_point),
+    },
+  )
+}
+
+#[cfg(target_os = "macos")]
+fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
+  let result = game_restart(GameRestartRequest {
+    target: args.target,
+    confirm_started: args.verify && args.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.timeout_ms.unwrap_or(1800),
+  })?;
+  write_game_restart_output(&result)
+}
+
+#[cfg(target_os = "macos")]
+pub fn game_restart(request: GameRestartRequest) -> Result<GameRestartResult, CliError> {
+  let session = open_macos_session()?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let before_image = capture_window_to_temp(&session, &window, "game-restart-before")?;
+  // TODO(balatro-game-restart-artifacts): emit captures through auv-tracing
+  // once the shared in-memory capture encoder is owner-approved.
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true).ok();
+  let _ = fs::remove_file(before_image);
+  let (first_target, first_point) =
+    match before.as_ref().and_then(|state| restart_primary_button(&state.buttons).map(|button| (state, button))) {
+      Some((state, button)) => (
+        GameRestartTarget::DetectedButton {
+          button: button.clone(),
+        },
+        window_point_from_button(state, &window, button),
+      ),
+      None => {
+        // TODO(balatro-game-over-ui-v1): replace this layout target with a
+        // detector-backed button once game-over controls are in the UI dataset.
+        let y = if before.is_none() { 0.805 } else { 0.815 };
+        (GameRestartTarget::GameOverLayout, normalized_window_point(&window, 0.62, y))
+      }
+    };
+  let first_is_layout = matches!(first_target, GameRestartTarget::GameOverLayout);
+  let mut clicks = Vec::new();
+  deliver_game_restart_click(&session, &window, first_target, first_point, &mut clicks)?;
+  if first_is_layout {
     std::thread::sleep(Duration::from_millis(300));
-    click_game_point(&session, &window, first_point.1)?;
+    deliver_game_restart_click(&session, &window, GameRestartTarget::GameOverLayout, first_point, &mut clicks)?;
   }
 
   std::thread::sleep(Duration::from_millis(900));
-  let intermediate_image = capture_window_to_temp(&session, &window, "game-restart-intermediate")?;
-  let mut second_point = None;
-  if let Ok(intermediate) = observe_image(&intermediate_image, &BalatroModelConfig::default(), true) {
-    if let Some(button) = restart_primary_button(&intermediate.buttons) {
-      let point = window_point_from_button(&intermediate, &window, button);
-      click_game_point(&session, &window, point)?;
-      second_point = Some(point);
+  let intermediate = match capture_window_to_temp(&session, &window, "game-restart-intermediate") {
+    Ok(image) => {
+      let state = observe_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
+      let _ = fs::remove_file(image);
+      state
     }
-  } else if first_point.0 == "game_over_start_new_run_layout" {
-    // NOTICE: If the first no-detection click did not expose the new-run
-    // screen, treat the frame as the older localized title-screen fallback.
-    // This keeps restart usable until both layouts have detector-backed button
-    // classes.
-    let point = normalized_window_point(&window, 0.31, 0.84);
-    click_game_point(&session, &window, point)?;
-    second_point = Some(point);
-  }
-
-  let verification = if args.verify {
-    let (mut after_image, mut after_result) =
-      capture_observable_window(&session, &window, "game-restart-after", args.timeout_ms.unwrap_or(1800), 700)?;
-    let mut verification_retry_click_point = None;
-    if let Ok(after) = &after_result {
-      if after.phase == BalatroPhase::MainMenu {
-        if let Some(button) = restart_primary_button(&after.buttons) {
-          let point = window_point_from_button(after, &window, button);
-          click_game_point(&session, &window, point)?;
-          verification_retry_click_point = Some(point);
-          (after_image, after_result) =
-            capture_observable_window(&session, &window, "game-restart-after-retry", args.timeout_ms.unwrap_or(1800), 700)?;
-        }
+    Err(error) => Err(error.to_string()),
+  };
+  match intermediate {
+    Ok(intermediate) => {
+      if let Some(button) = restart_primary_button(&intermediate.buttons) {
+        let target = GameRestartTarget::DetectedButton {
+          button: button.clone(),
+        };
+        let point = window_point_from_button(&intermediate, &window, button);
+        deliver_game_restart_click(&session, &window, target, point, &mut clicks)?;
       }
     }
-    match after_result {
-      Ok(after) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "after_phase": after.phase,
-        "verification_retry_click_point": verification_retry_click_point,
-        "passed": matches!(after.phase, BalatroPhase::BlindSelect | BalatroPhase::Playing | BalatroPhase::Store),
-        "after_image": after_image,
-      })),
-      Err(error) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "verification_retry_click_point": verification_retry_click_point,
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
+    Err(_) if first_is_layout => {
+      // NOTICE: An unreadable intermediate frame after the game-over layout
+      // click may be the older localized title screen.
+      let point = normalized_window_point(&window, 0.31, 0.84);
+      deliver_game_restart_click(&session, &window, GameRestartTarget::LocalizedTitleLayout, point, &mut clicks)?;
     }
+    Err(_) => {}
+  }
+
+  let outcome = if request.confirm_started {
+    let read_after = |label: &str| match capture_observable_window(&session, &window, label, request.timeout_ms, 700) {
+      Ok((image, state)) => {
+        let state = state.map_err(|error| error.to_string());
+        let _ = fs::remove_file(image);
+        state
+      }
+      Err(error) => Err(error.to_string()),
+    };
+    let mut after = read_after("game-restart-after");
+    let late_button = after.as_ref().ok().and_then(|state| {
+      (state.phase == BalatroPhase::MainMenu).then(|| restart_primary_button(&state.buttons).map(|button| (state, button))).flatten()
+    });
+    if let Some((state, button)) = late_button {
+      let target = GameRestartTarget::DetectedButton {
+        button: button.clone(),
+      };
+      let point = window_point_from_button(state, &window, button);
+      deliver_game_restart_click(&session, &window, target, point, &mut clicks)?;
+      after = read_after("game-restart-after-late-control");
+    }
+    classify_game_restart_outcome(after.as_ref().map_err(Clone::clone))
   } else {
-    None
+    GameRestartOutcome::NotChecked
   };
 
-  write_operation_output(
-    args.details,
-    json!({
-      "operation": "game.restart",
-      "target": args.target,
-      "strategy": first_point.0,
-      "window_point": first_point.1,
-      "intermediate_image": intermediate_image,
-      "second_click_point": second_point,
-      "before_image": before_image,
-      "verification": verification,
-    }),
-  )
+  let result = GameRestartResult {
+    target: request.target,
+    clicks,
+    outcome,
+  };
+  emit_game_restart_completed(&result);
+  Ok(result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1085,79 +1246,186 @@ fn click_game_restart(_args: OperationControlArgs) -> Result<(), CliError> {
   Err(CliError::Message("game restart live operation is only available on macOS".to_string()))
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn game_restart(_request: GameRestartRequest) -> Result<GameRestartResult, CliError> {
+  Err(CliError::Message("game restart live operation is only available on macOS".to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn deliver_game_restart_click(
+  session: &auv_driver_macos::MacosDriverSession,
+  window: &auv_driver::window::Window,
+  target: GameRestartTarget,
+  point: Point,
+  clicks: &mut Vec<GameRestartClick>,
+) -> Result<(), CliError> {
+  let delivery = click_game_point(session, window, point)?;
+  clicks.push(GameRestartClick {
+    target,
+    window_point: WindowPoint::new(point.x, point.y),
+    delivery,
+  });
+  Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct GameRestartCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  clicks: &'a [GameRestartClick],
+  outcome: &'a GameRestartOutcome,
+}
+
+fn write_game_restart_output(result: &GameRestartResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &GameRestartCliOutput {
+      operation: "game.restart",
+      target: &result.target,
+      clicks: &result.clicks,
+      outcome: &result.outcome,
+    },
+  )
+}
+
 #[cfg(target_os = "macos")]
 fn click_store_buy(args: SlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_store_slot_index(&args.slot)?;
+  let result = store_buy(StoreBuyRequest {
+    target: args.control.target,
+    slot: SlotId::new(ObjectZone::Store, slot_index),
+    confirm_purchase: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.control.timeout_ms.unwrap_or(1000),
+  })?;
+  write_store_buy_output(&result)
+}
+
+#[cfg(target_os = "macos")]
+pub fn store_buy(request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
+  if request.slot.zone != ObjectZone::Store {
+    return Err(CliError::Message(format!("store buy requires a store slot, got {}", request.slot)));
+  }
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "store-buy-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
-  let item = select_store_item(&before, slot_index)?;
-  let item_point = window_point_from_store_item(&before, &window, item);
-
-  click_game_point(&session, &window, item_point)?;
-  std::thread::sleep(Duration::from_millis(500));
-  let selected_image = capture_window_to_temp(&session, &window, "store-buy-selected")?;
-  let selected = observe_image(&selected_image, &BalatroModelConfig::default(), true)?;
-  let confirm_button = select_store_buy_confirm_button(&selected)?;
-  let confirm_point = window_point_from_button(&selected, &window, confirm_button);
-  click_game_point(&session, &window, confirm_point)?;
-
-  let verification = if args.control.verify {
-    let (after_image, after_result) =
-      capture_observable_window(&session, &window, "store-buy-after", args.control.timeout_ms.unwrap_or(1000), 500)?;
-    match after_result {
-      Ok(after) => Some(json!({
-        "mode": args.control.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "after_phase": after.phase,
-        "before_store_item_count": before.store.items.len(),
-        "after_store_item_count": after.store.items.len(),
-        "before_joker_count": before.jokers.len(),
-        "after_joker_count": after.jokers.len(),
-        "before_consumable_count": before.consumables.len(),
-        "after_consumable_count": after.consumables.len(),
-        "evidence": store_buy_evidence(&before, &after),
-        "passed": verify_store_buy(&before, &after),
-        "after_image": after_image,
-      })),
-      Err(error) => Some(json!({
-        "mode": args.control.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "before_store_item_count": before.store.items.len(),
-        "before_joker_count": before.jokers.len(),
-        "before_consumable_count": before.consumables.len(),
-        "evidence": Vec::<&str>::new(),
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
-    }
-  } else {
-    None
+  // TODO(balatro-store-buy-artifacts): emit captures through auv-tracing once
+  // the shared in-memory capture encoder is owner-approved.
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(before_image);
+  let before = before?;
+  let item = select_store_item(&before, request.slot.index)?.clone();
+  let item_point = window_point_from_store_item(&before, &window, &item);
+  let selection = StoreBuyClick {
+    window_point: WindowPoint::new(item_point.x, item_point.y),
+    delivery: click_game_point(&session, &window, item_point)?,
   };
 
-  write_operation_output(
-    args.control.details,
-    json!({
-      "operation": "store.buy",
-      "target": args.control.target,
-      "slot": args.slot,
-      "store_item": item,
-      "item_point": item_point,
-      "before_image": before_image,
-      "confirm_button": confirm_button,
-      "confirm_point": confirm_point,
-      "selected_image": selected_image,
-      "verification": verification,
-    }),
-  )
+  std::thread::sleep(Duration::from_millis(500));
+  let selected = match capture_window_to_temp(&session, &window, "store-buy-selected") {
+    Ok(image) => {
+      let selected = observe_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
+      let _ = fs::remove_file(image);
+      selected
+    }
+    Err(error) => Err(error.to_string()),
+  };
+  let selected = match selected {
+    Ok(selected) => selected,
+    Err(message) => {
+      let result = StoreBuyResult {
+        target: request.target,
+        slot: request.slot,
+        item,
+        outcome: StoreBuyOutcome::SelectionOnly {
+          selection,
+          reason: StoreBuyIncompleteReason::StateReadFailed { message },
+        },
+      };
+      emit_store_buy_completed(&result);
+      return Ok(result);
+    }
+  };
+  let confirmation_button = match select_store_buy_confirm_button(&selected) {
+    Ok(button) => button.clone(),
+    Err(_) => {
+      let result = StoreBuyResult {
+        target: request.target,
+        slot: request.slot,
+        item,
+        outcome: StoreBuyOutcome::SelectionOnly {
+          selection,
+          reason: StoreBuyIncompleteReason::PurchaseControlNotFound,
+        },
+      };
+      emit_store_buy_completed(&result);
+      return Ok(result);
+    }
+  };
+  let confirm_point = window_point_from_button(&selected, &window, &confirmation_button);
+  let submission = StoreBuyClick {
+    window_point: WindowPoint::new(confirm_point.x, confirm_point.y),
+    delivery: click_game_point(&session, &window, confirm_point)?,
+  };
+
+  let confirmation = if request.confirm_purchase {
+    match capture_observable_window(&session, &window, "store-buy-after", request.timeout_ms, 500) {
+      Ok((image, after)) => {
+        let confirmation = evaluate_store_buy_confirmation(&before, after.as_ref().map_err(|error| error.to_string()));
+        let _ = fs::remove_file(image);
+        confirmation
+      }
+      Err(error) => evaluate_store_buy_confirmation(&before, Err(error.to_string())),
+    }
+  } else {
+    StoreBuyConfirmation::NotRequested
+  };
+
+  let result = StoreBuyResult {
+    target: request.target,
+    slot: request.slot,
+    item,
+    outcome: StoreBuyOutcome::Submitted {
+      selection,
+      confirmation_button,
+      submission,
+      confirmation,
+    },
+  };
+  emit_store_buy_completed(&result);
+  Ok(result)
 }
 
 #[cfg(not(target_os = "macos"))]
 fn click_store_buy(args: SlotOperationArgs) -> Result<(), CliError> {
   parse_store_slot_index(&args.slot)?;
   Err(CliError::Message("store buy live operation is only available on macOS".to_string()))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn store_buy(_request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
+  Err(CliError::Message("store buy live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct StoreBuyCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  slot: SlotId,
+  item: &'a StoreItem,
+  outcome: &'a StoreBuyOutcome,
+}
+
+fn write_store_buy_output(result: &StoreBuyResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &StoreBuyCliOutput {
+      operation: "store.buy",
+      target: &result.target,
+      slot: result.slot,
+      item: &result.item,
+      outcome: &result.outcome,
+    },
+  )
 }
 
 fn observe_from_args(args: &ObserveArgs) -> Result<BalatroState, CliError> {
@@ -1278,155 +1546,170 @@ where
   }
 }
 
-fn write_operation_output(details: bool, mut payload: Value) -> Result<(), CliError> {
-  if !details {
-    strip_operation_details(&mut payload);
-  }
-  write_output(OutputMode::Json, &payload)
-}
-
-fn strip_operation_details(value: &mut Value) {
-  match value {
-    Value::Object(map) => {
-      let generated_detail_keys = map
-        .keys()
-        .filter(|key| key.ends_with("_image") || key.ends_with("_images") || key.ends_with("_point") || key.ends_with("_points"))
-        .cloned()
-        .collect::<Vec<_>>();
-      for key in generated_detail_keys {
-        map.remove(&key);
-      }
-
-      for key in [
-        "after_image",
-        "after_store",
-        "before_image",
-        "before_interactions",
-        "bbox",
-        "button",
-        "button_point",
-        "buttons",
-        "card_points",
-        "choice",
-        "choice_point",
-        "click_targets",
-        "commit_button",
-        "confirm_button",
-        "confirm_point",
-        "confirm_target",
-        "consumable",
-        "consumable_point",
-        "hand",
-        "item_point",
-        "raw_entities",
-        "raw_ui",
-        "selected_button",
-        "selected_cards",
-        "selected_image",
-        "selected_interactions",
-        "selected_target",
-        "selection_evidence",
-        "store_item",
-        "use_button",
-        "use_point",
-        "window_point",
-      ] {
-        map.remove(key);
-      }
-      for value in map.values_mut() {
-        strip_operation_details(value);
-      }
-    }
-    Value::Array(values) => {
-      for value in values {
-        strip_operation_details(value);
-      }
-    }
-    _ => {}
-  }
-}
-
 #[cfg(target_os = "macos")]
 fn click_consumable_use(args: TargetSlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_consumable_slot_index(&args.slot)?;
   let target_indices = parse_hand_target_indices(&args.targets)?;
+  let details = args.control.details;
+  let result = consumable_use(ConsumableUseRequest {
+    target: args.control.target,
+    slot: SlotId::new(ObjectZone::Consumable, slot_index),
+    hand_targets: target_indices.into_iter().map(|index| SlotId::new(ObjectZone::Hand, index)).collect(),
+    confirm_use: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.control.timeout_ms.unwrap_or(1200),
+  })?;
+  write_consumable_use_output(details, &result)
+}
+
+#[cfg(target_os = "macos")]
+pub fn consumable_use(request: ConsumableUseRequest) -> Result<ConsumableUseResult, CliError> {
+  if request.slot.zone != ObjectZone::Consumable {
+    return Err(CliError::Message(format!("consumable use requires a consumable slot, got {}", request.slot)));
+  }
+  if let Some(target) = request.hand_targets.iter().find(|target| target.zone != ObjectZone::Hand) {
+    return Err(CliError::Message(format!("consumable use hand target must use the hand zone, got {target}")));
+  }
+
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "consumable-use-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
-  let target_selection = if target_indices.is_empty() {
-    None
-  } else {
-    Some(click_hand_targets(&session, &window, "consumable-use-targets", &before, &target_indices, args.control.timeout_ms)?)
-  };
-  let consumable = select_consumable(&before, slot_index)?;
-  let consumable_point = window_point_from_consumable(&before, &window, consumable);
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(&before_image);
+  let before = before?;
+  let consumable = select_consumable(&before, request.slot.index)?.clone();
+  let mut actions = Vec::new();
+  let mut current = before.clone();
 
-  click_game_point(&session, &window, consumable_point)?;
-  std::thread::sleep(Duration::from_millis(500));
-  let selected_image = capture_window_to_temp(&session, &window, "consumable-use-selected")?;
-  let selected = observe_image(&selected_image, &BalatroModelConfig::default(), true)?;
-  let use_target = resolve_consumable_use_target(&selected, slot_index)?;
-  let use_point = window_point_from_frame_point(&selected, &window, use_target.frame_point);
-  click_game_point(&session, &window, use_point)?;
-
-  let verification = if args.control.verify {
-    std::thread::sleep(Duration::from_millis(args.control.timeout_ms.unwrap_or(1200)));
-    let after_image = capture_window_to_temp(&session, &window, "consumable-use-after")?;
-    if args.control.verify_mode == VerifyModeArg::ActivationOnly {
-      Some(json!({
-        "mode": args.control.verify_mode.to_string(),
-        "profile": "activation_only",
-        "evidence": ["consumable_click_completed", "use_click_completed"],
-        "passed": true,
-        "after_image": after_image,
-      }))
-    } else {
-      match observe_image(&after_image, &BalatroModelConfig::default(), true) {
-        Ok(after) => Some(json!({
-          "mode": args.control.verify_mode.to_string(),
-          "profile": "weak",
-          "evidence": consumable_use_evidence(&before, &after),
-          "before_consumable_count": before.consumables.len(),
-          "after_consumable_count": after.consumables.len(),
-          "before_phase": before.phase,
-          "after_phase": after.phase,
-          "passed": verify_consumable_use(&before, &after),
-          "after_image": after_image,
-        })),
-        Err(error) => Some(json!({
-          "mode": args.control.verify_mode.to_string(),
-          "profile": "weak",
-          "evidence": Vec::<&str>::new(),
-          "before_consumable_count": before.consumables.len(),
-          "before_phase": before.phase,
-          "passed": false,
-          "after_image": after_image,
-          "error": error.to_string(),
-        })),
-      }
+  if !request.hand_targets.is_empty() {
+    let indices = request.hand_targets.iter().map(|target| target.index).collect::<Vec<_>>();
+    let (selection, selected_state) =
+      click_hand_targets(&session, &window, "consumable-use-targets", &before, &indices, Some(request.timeout_ms))?.into_parts();
+    let targets_ready = selection.is_matched();
+    actions.push(ConsumableUseAction::SelectHandTargets { selection });
+    if !targets_ready {
+      let result = ConsumableUseResult {
+        target: request.target,
+        slot: request.slot,
+        consumable,
+        actions,
+        state: ConsumableUseState::Stopped {
+          reason: ConsumableUseStop::HandTargetsNotReady,
+        },
+      };
+      emit_consumable_use_completed(&result);
+      return Ok(result);
     }
-  } else {
-    None
-  };
+    let Some(selected_state) = selected_state else {
+      unreachable!("a matched hand selection always retains its observed state");
+    };
+    current = selected_state;
+  }
 
-  write_operation_output(
-    args.control.details,
-    json!({
-      "operation": "consumables.use",
-      "target": args.control.target,
-      "slot": args.slot,
-      "targets": args.targets,
-      "consumable": consumable,
-      "consumable_point": consumable_point,
-      "before_image": before_image,
-      "target_selection": target_selection,
-      "use_target": use_target,
-      "use_point": use_point,
-      "selected_image": selected_image,
-      "verification": verification,
-    }),
-  )
+  let consumable_point = window_point_from_consumable(&current, &window, &consumable);
+  let selection_delivery = match click_game_point(&session, &window, consumable_point) {
+    Ok(delivery) => delivery,
+    Err(error) => {
+      let result = ConsumableUseResult {
+        target: request.target,
+        slot: request.slot,
+        consumable,
+        actions,
+        state: ConsumableUseState::Stopped {
+          reason: ConsumableUseStop::ConsumableSelectionFailed {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_consumable_use_completed(&result);
+      return Ok(result);
+    }
+  };
+  actions.push(ConsumableUseAction::SelectConsumable {
+    window_point: WindowPoint::new(consumable_point.x, consumable_point.y),
+    delivery: selection_delivery,
+  });
+
+  std::thread::sleep(Duration::from_millis(500));
+  let selected = match read_hand_selection_state(&session, &window, "consumable-use-selected", request.timeout_ms, 0) {
+    Ok(state) => state,
+    Err(message) => {
+      let result = ConsumableUseResult {
+        target: request.target,
+        slot: request.slot,
+        consumable,
+        actions,
+        state: ConsumableUseState::Stopped {
+          reason: ConsumableUseStop::SelectedStateReadFailed { message },
+        },
+      };
+      emit_consumable_use_completed(&result);
+      return Ok(result);
+    }
+  };
+  let (use_control, use_frame_point) = match resolve_consumable_use_target(&selected, request.slot.index) {
+    Ok(target) => target,
+    Err(error) => {
+      let result = ConsumableUseResult {
+        target: request.target,
+        slot: request.slot,
+        consumable,
+        actions,
+        state: ConsumableUseState::Stopped {
+          reason: ConsumableUseStop::UseControlNotFound {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_consumable_use_completed(&result);
+      return Ok(result);
+    }
+  };
+  let use_point = window_point_from_frame_point(&selected, &window, use_frame_point);
+  let submission_delivery = match click_game_point(&session, &window, use_point) {
+    Ok(delivery) => delivery,
+    Err(error) => {
+      let result = ConsumableUseResult {
+        target: request.target,
+        slot: request.slot,
+        consumable,
+        actions,
+        state: ConsumableUseState::Stopped {
+          reason: ConsumableUseStop::UseSubmissionFailed {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_consumable_use_completed(&result);
+      return Ok(result);
+    }
+  };
+  actions.push(ConsumableUseAction::SubmitUse {
+    control: use_control,
+    window_point: WindowPoint::new(use_point.x, use_point.y),
+    delivery: submission_delivery,
+  });
+
+  let confirmation = if request.confirm_use {
+    let after = match capture_observable_window(&session, &window, "consumable-use-after", request.timeout_ms, request.timeout_ms.min(500)) {
+      Ok((image, after)) => {
+        let _ = fs::remove_file(image);
+        after.map_err(|error| error.to_string())
+      }
+      Err(error) => Err(error.to_string()),
+    };
+    evaluate_consumable_use_confirmation(&before, after.as_ref().map_err(Clone::clone))
+  } else {
+    ConsumableUseConfirmation::NotRequested
+  };
+  let result = ConsumableUseResult {
+    target: request.target,
+    slot: request.slot,
+    consumable,
+    actions,
+    state: ConsumableUseState::Submitted { confirmation },
+  };
+  emit_consumable_use_completed(&result);
+  Ok(result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1436,58 +1719,79 @@ fn click_consumable_use(args: TargetSlotOperationArgs) -> Result<(), CliError> {
   Err(CliError::Message("consumables use live operation is only available on macOS".to_string()))
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn consumable_use(_request: ConsumableUseRequest) -> Result<ConsumableUseResult, CliError> {
+  Err(CliError::Message("consumables use live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct ConsumableUseCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  slot: SlotId,
+  actions: &'a [ConsumableUseAction],
+  state: &'a ConsumableUseState,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  consumable: Option<&'a ConsumableSlot>,
+}
+
+fn write_consumable_use_output(details: bool, result: &ConsumableUseResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &ConsumableUseCliOutput {
+      operation: "consumables.use",
+      target: &result.target,
+      slot: result.slot,
+      actions: &result.actions,
+      state: &result.state,
+      consumable: details.then_some(&result.consumable),
+    },
+  )
+}
+
 #[cfg(target_os = "macos")]
 fn click_pack_skip(args: OperationControlArgs) -> Result<(), CliError> {
+  let details = args.details;
+  let result = pack_skip(PackSkipRequest {
+    target: args.target,
+    confirm_exit: args.verify && args.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.timeout_ms.unwrap_or(1200),
+  })?;
+  write_pack_skip_output(details, &result)
+}
+
+#[cfg(target_os = "macos")]
+pub fn pack_skip(request: PackSkipRequest) -> Result<PackSkipResult, CliError> {
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "pack-skip-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
-  let button = find_button(&before, "button_card_pack_skip")?;
-  let point = window_point_from_button(&before, &window, button);
+  // TODO(balatro-pack-skip-artifacts): emit the before/after captures through
+  // auv-tracing once the shared in-memory capture encoder is owner-approved.
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(&before_image);
+  let before = before?;
+  let selected_button = find_button(&before, "button_card_pack_skip")?.clone();
+  let point = window_point_from_button(&before, &window, &selected_button);
+  let delivery = click_game_point(&session, &window, point)?;
 
-  click_game_point(&session, &window, point)?;
-
-  let verification = if args.verify {
-    std::thread::sleep(Duration::from_millis(args.timeout_ms.unwrap_or(1200)));
-    let after_image = capture_window_to_temp(&session, &window, "pack-skip-after")?;
-    match observe_image(&after_image, &BalatroModelConfig::default(), true) {
-      Ok(after) => {
-        let after_choice_count = active_pack_choices(&after).len();
-        Some(json!({
-          "mode": args.verify_mode.to_string(),
-          "before_phase": before.phase,
-          "after_phase": after.phase,
-          "before_choice_count": active_pack_choices(&before).len(),
-          "after_choice_count": after_choice_count,
-          "passed": best_button(&after.buttons, "button_card_pack_skip").is_none()
-            || after_choice_count == 0,
-          "after_image": after_image,
-        }))
-      }
-      Err(error) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "before_choice_count": active_pack_choices(&before).len(),
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
-    }
+  let confirmation = if request.confirm_exit {
+    let (after_image, after) = capture_observable_window(&session, &window, "pack-skip-after", request.timeout_ms, 500)?;
+    let confirmation = evaluate_pack_skip_confirmation(after.as_ref().map_err(|error| error.to_string()));
+    let _ = fs::remove_file(after_image);
+    confirmation
   } else {
-    None
+    PackSkipConfirmation::NotRequested
   };
 
-  write_operation_output(
-    args.details,
-    json!({
-      "operation": "pack.skip",
-      "target": args.target,
-      "selected_button": button,
-      "window_point": { "x": point.x, "y": point.y },
-      "before_image": before_image,
-      "verification": verification,
-    }),
-  )
+  let result = PackSkipResult {
+    target: request.target,
+    selected_button,
+    window_point: WindowPoint::new(point.x, point.y),
+    delivery,
+    confirmation,
+  };
+  emit_pack_skip_completed(&result);
+  Ok(result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1495,85 +1799,208 @@ fn click_pack_skip(_args: OperationControlArgs) -> Result<(), CliError> {
   Err(CliError::Message("pack skip live operation is only available on macOS".to_string()))
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn pack_skip(_request: PackSkipRequest) -> Result<PackSkipResult, CliError> {
+  Err(CliError::Message("pack skip live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct PackSkipCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  delivery: &'a auv_driver::InputActionResult,
+  confirmation: &'a PackSkipConfirmation,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  selected_button: Option<&'a ButtonTarget>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  window_point: Option<WindowPoint>,
+}
+
+fn write_pack_skip_output(details: bool, result: &PackSkipResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &PackSkipCliOutput {
+      operation: "pack.skip",
+      target: &result.target,
+      delivery: &result.delivery,
+      confirmation: &result.confirmation,
+      selected_button: details.then_some(&result.selected_button),
+      window_point: details.then_some(result.window_point),
+    },
+  )
+}
+
 #[cfg(target_os = "macos")]
 fn click_pack_choose(args: TargetSlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_pack_slot_index(&args.slot)?;
   let target_indices = parse_hand_target_indices(&args.targets)?;
+  let details = args.control.details;
+  let result = pack_choose(PackChooseRequest {
+    target: args.control.target,
+    choice: PackChoiceId::new(slot_index),
+    hand_targets: target_indices.into_iter().map(|index| SlotId::new(ObjectZone::Hand, index)).collect(),
+    confirm_applied: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.control.timeout_ms.unwrap_or(1200),
+  })?;
+  write_pack_choose_output(details, &result)
+}
+
+#[cfg(target_os = "macos")]
+pub fn pack_choose(request: PackChooseRequest) -> Result<PackChooseResult, CliError> {
+  if let Some(target) = request.hand_targets.iter().find(|target| target.zone != ObjectZone::Hand) {
+    return Err(CliError::Message(format!("pack choice hand target must use the hand zone, got {target}")));
+  }
+
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "pack-choose-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(&before_image);
+  let before = before?;
   let choices = active_pack_choices(&before);
-  let choice = select_pack_choice(&choices, slot_index)?;
-  let already_selected = target_indices.is_empty() && best_button(&before.buttons, "button_use").is_some();
-  let (choice_point, selected_image, mut selected) = if already_selected {
-    (None, before_image.clone(), before.clone())
+  let choice = select_pack_choice(&choices, request.choice.index())?.clone();
+  let before_choice_count = choices.len();
+  let choice_was_already_selected = request.hand_targets.is_empty() && best_button(&before.buttons, "button_use").is_some();
+  let mut actions = Vec::new();
+  let mut selected = if choice_was_already_selected {
+    before.clone()
   } else {
     let choice_point = window_point_from_frame_point(&before, &window, bbox_center_point(choice.bbox));
-
-    click_game_point(&session, &window, choice_point)?;
-    std::thread::sleep(Duration::from_millis(600));
-    let selected_image = capture_window_to_temp(&session, &window, "pack-choose-selected")?;
-    let selected = observe_image(&selected_image, &BalatroModelConfig::default(), true)?;
-    (Some(choice_point), selected_image, selected)
-  };
-  let target_selection = if target_indices.is_empty() {
-    None
-  } else {
-    let evidence = click_hand_targets(&session, &window, "pack-choose-targets", &selected, &target_indices, args.control.timeout_ms)?;
-    if let Some(after_targets) = evidence.state.clone() {
-      selected = after_targets;
-    }
-    Some(evidence)
-  };
-  let confirm = resolve_pack_confirm_target(&selected, choice)?;
-  let confirm_point = window_point_from_frame_point(&selected, &window, confirm.frame_point);
-  click_game_point(&session, &window, confirm_point)?;
-
-  let verification = if args.control.verify {
-    std::thread::sleep(Duration::from_millis(args.control.timeout_ms.unwrap_or(1200)));
-    let after_image = capture_window_to_temp(&session, &window, "pack-choose-after")?;
-    match observe_image(&after_image, &BalatroModelConfig::default(), true) {
-      Ok(after) => {
-        let after_choice_count = active_pack_choices(&after).len();
-        Some(json!({
-          "mode": args.control.verify_mode.to_string(),
-          "before_choice_count": choices.len(),
-          "after_choice_count": after_choice_count,
-          "passed": best_button(&after.buttons, "button_card_pack_skip").is_none()
-            || after_choice_count < choices.len(),
-          "after_image": after_image,
-        }))
+    let delivery = match click_game_point(&session, &window, choice_point) {
+      Ok(delivery) => delivery,
+      Err(error) => {
+        let result = PackChooseResult {
+          target: request.target,
+          choice,
+          choice_was_already_selected,
+          actions,
+          state: PackChooseState::Stopped {
+            reason: PackChooseStop::ChoiceSelectionFailed {
+              message: error.to_string(),
+            },
+          },
+        };
+        emit_pack_choose_completed(&result);
+        return Ok(result);
       }
-      Err(error) => Some(json!({
-        "mode": args.control.verify_mode.to_string(),
-        "before_choice_count": choices.len(),
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
+    };
+    actions.push(PackChooseAction::SelectChoice {
+      window_point: WindowPoint::new(choice_point.x, choice_point.y),
+      delivery,
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    match read_hand_selection_state(&session, &window, "pack-choose-selected", request.timeout_ms, 0) {
+      Ok(state) => state,
+      Err(message) => {
+        let result = PackChooseResult {
+          target: request.target,
+          choice,
+          choice_was_already_selected,
+          actions,
+          state: PackChooseState::Stopped {
+            reason: PackChooseStop::SelectedStateReadFailed { message },
+          },
+        };
+        emit_pack_choose_completed(&result);
+        return Ok(result);
+      }
     }
-  } else {
-    None
   };
 
-  write_operation_output(
-    args.control.details,
-    json!({
-      "operation": "pack.choose",
-      "target": args.control.target,
-      "slot": args.slot,
-      "targets": args.targets,
-      "choice": choice,
-      "choice_point": choice_point,
-      "before_image": before_image,
-      "target_selection": target_selection,
-      "confirm_target": confirm,
-      "confirm_point": confirm_point,
-      "selected_image": selected_image,
-      "verification": verification,
-    }),
-  )
+  if !request.hand_targets.is_empty() {
+    let target_indices = request.hand_targets.iter().map(|target| target.index).collect::<Vec<_>>();
+    let (selection, state) =
+      click_hand_targets(&session, &window, "pack-choose-targets", &selected, &target_indices, Some(request.timeout_ms))?.into_parts();
+    let targets_ready = selection.is_matched();
+    actions.push(PackChooseAction::SelectHandTargets { selection });
+    if !targets_ready {
+      let result = PackChooseResult {
+        target: request.target,
+        choice,
+        choice_was_already_selected,
+        actions,
+        state: PackChooseState::Stopped {
+          reason: PackChooseStop::HandTargetsNotReady,
+        },
+      };
+      emit_pack_choose_completed(&result);
+      return Ok(result);
+    }
+    let Some(state) = state else {
+      unreachable!("a matched hand selection always retains its observed state");
+    };
+    selected = state;
+  }
+
+  let (confirm_control, confirm_frame_point) = match resolve_pack_confirm_target(&selected, &choice) {
+    Ok(target) => target,
+    Err(error) => {
+      let result = PackChooseResult {
+        target: request.target,
+        choice,
+        choice_was_already_selected,
+        actions,
+        state: PackChooseState::Stopped {
+          reason: PackChooseStop::ConfirmControlNotFound {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_pack_choose_completed(&result);
+      return Ok(result);
+    }
+  };
+  let confirm_point = window_point_from_frame_point(&selected, &window, confirm_frame_point);
+  let delivery = match click_game_point(&session, &window, confirm_point) {
+    Ok(delivery) => delivery,
+    Err(error) => {
+      let result = PackChooseResult {
+        target: request.target,
+        choice,
+        choice_was_already_selected,
+        actions,
+        state: PackChooseState::Stopped {
+          reason: PackChooseStop::SubmissionFailed {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_pack_choose_completed(&result);
+      return Ok(result);
+    }
+  };
+  actions.push(PackChooseAction::SubmitChoice {
+    control: confirm_control,
+    window_point: WindowPoint::new(confirm_point.x, confirm_point.y),
+    delivery,
+  });
+
+  let confirmation = if request.confirm_applied {
+    let after = match capture_observable_window(&session, &window, "pack-choose-after", request.timeout_ms, request.timeout_ms.min(500)) {
+      Ok((image, after)) => {
+        let _ = fs::remove_file(image);
+        after
+          .map(|state| ObservedPackState {
+            choice_count: active_pack_choices(&state).len(),
+            skip_control_present: best_button(&state.buttons, "button_card_pack_skip").is_some(),
+          })
+          .map_err(|error| error.to_string())
+      }
+      Err(error) => Err(error.to_string()),
+    };
+    evaluate_pack_choose_confirmation(before_choice_count, after)
+  } else {
+    PackChooseConfirmation::NotRequested
+  };
+  let result = PackChooseResult {
+    target: request.target,
+    choice,
+    choice_was_already_selected,
+    actions,
+    state: PackChooseState::Submitted { confirmation },
+  };
+  emit_pack_choose_completed(&result);
+  Ok(result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1583,60 +2010,90 @@ fn click_pack_choose(args: TargetSlotOperationArgs) -> Result<(), CliError> {
   Err(CliError::Message("pack choose live operation is only available on macOS".to_string()))
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn pack_choose(_request: PackChooseRequest) -> Result<PackChooseResult, CliError> {
+  Err(CliError::Message("pack choose live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct PackChooseCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  choice: PackChoiceId,
+  choice_was_already_selected: bool,
+  actions: &'a [PackChooseAction],
+  state: &'a PackChooseState,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  choice_details: Option<&'a PackChoice>,
+}
+
+fn write_pack_choose_output(details: bool, result: &PackChooseResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &PackChooseCliOutput {
+      operation: "pack.choose",
+      target: &result.target,
+      choice: result.choice.id,
+      choice_was_already_selected: result.choice_was_already_selected,
+      actions: &result.actions,
+      state: &result.state,
+      choice_details: details.then_some(&result.choice),
+    },
+  )
+}
+
 #[cfg(target_os = "macos")]
 fn click_store_next_round(args: OperationControlArgs) -> Result<(), CliError> {
-  let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
-  let before_image = capture_window_to_temp(&session, &window, "store-next-round-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
-  let selected_target = resolve_store_next_round_target(&before)?;
-  let point = window_point_from_frame_point(&before, &window, selected_target.frame_point);
-
-  session.window().click(
-    &window,
-    WindowPoint::new(point.x, point.y),
-    ClickOptions {
-      policy: InputPolicy::ForegroundPreferred,
-      ..ClickOptions::default()
-    },
-  )?;
-
-  let verification = if args.verify {
-    std::thread::sleep(Duration::from_millis(args.timeout_ms.unwrap_or(1200)));
-    let after_image = capture_window_to_temp(&session, &window, "store-next-round-after")?;
-    match observe_image(&after_image, &BalatroModelConfig::default(), true) {
-      Ok(after) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "after_phase": after.phase,
-        "passed": has_store_layout_evidence(&before)
-          && after.phase != BalatroPhase::Store
-          && after.phase != BalatroPhase::Unknown,
-        "after_store": after.store,
-        "after_image": after_image,
-      })),
-      Err(error) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
-    }
+  let details = args.details;
+  let confirmation = if !args.verify || args.verify_mode == VerifyModeArg::ActivationOnly {
+    StoreNextRoundConfirmationRequest::None
+  } else if args.verify_mode == VerifyModeArg::Targeted {
+    StoreNextRoundConfirmationRequest::Targeted
   } else {
-    None
+    StoreNextRoundConfirmationRequest::Weak
+  };
+  let result = store_next_round(StoreNextRoundRequest {
+    target: args.target,
+    confirmation,
+    timeout_ms: args.timeout_ms.unwrap_or(1200),
+  })?;
+  write_store_next_round_output(details, &result)
+}
+
+#[cfg(target_os = "macos")]
+pub fn store_next_round(request: StoreNextRoundRequest) -> Result<StoreNextRoundResult, CliError> {
+  let session = open_macos_session()?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let before_image = capture_window_to_temp(&session, &window, "store-next-round-before")?;
+  // TODO(balatro-store-next-round-artifacts): emit the before/after captures
+  // through auv-tracing once the shared in-memory capture encoder is
+  // owner-approved.
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(&before_image);
+  let before = before?;
+  let selected_target = resolve_store_next_round_target(&before)?;
+  let point = window_point_from_frame_point(&before, &window, selected_target.frame_point());
+  let delivery = click_game_point(&session, &window, point)?;
+
+  let confirmation = if request.confirmation == StoreNextRoundConfirmationRequest::None {
+    StoreNextRoundConfirmation::NotRequested
+  } else {
+    let (after_image, after) = capture_observable_window(&session, &window, "store-next-round-after", request.timeout_ms, 500)?;
+    let confirmation =
+      evaluate_store_next_round_confirmation(request.confirmation, &before, after.as_ref().map_err(|error| error.to_string()));
+    let _ = fs::remove_file(after_image);
+    confirmation
   };
 
-  write_operation_output(
-    args.details,
-    json!({
-      "operation": "store.next_round",
-      "target": args.target,
-      "selected_target": selected_target,
-      "window_point": { "x": point.x, "y": point.y },
-      "verification": verification,
-    }),
-  )
+  let result = StoreNextRoundResult {
+    target: request.target,
+    selected_target,
+    window_point: WindowPoint::new(point.x, point.y),
+    delivery,
+    confirmation,
+  };
+  emit_store_next_round_completed(&result);
+  Ok(result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1644,9 +2101,46 @@ fn click_store_next_round(_args: OperationControlArgs) -> Result<(), CliError> {
   Err(CliError::Message("store next-round live operation is only available on macOS".to_string()))
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn store_next_round(_request: StoreNextRoundRequest) -> Result<StoreNextRoundResult, CliError> {
+  Err(CliError::Message("store next-round live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct StoreNextRoundCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  delivery: &'a auv_driver::InputActionResult,
+  confirmation: &'a StoreNextRoundConfirmation,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  selected_target: Option<&'a StoreNextRoundTarget>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  window_point: Option<WindowPoint>,
+}
+
+fn write_store_next_round_output(details: bool, result: &StoreNextRoundResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &StoreNextRoundCliOutput {
+      operation: "store.next_round",
+      target: &result.target,
+      delivery: &result.delivery,
+      confirmation: &result.confirmation,
+      selected_target: details.then_some(&result.selected_target),
+      window_point: details.then_some(result.window_point),
+    },
+  )
+}
+
 #[cfg(target_os = "macos")]
 fn click_cards_select(args: MultiSlotOperationArgs) -> Result<(), CliError> {
-  click_cards("cards.select", None, args)
+  let slot_indices = parse_hand_slot_indices(&args.slots)?;
+  let result = cards_select(CardsSelectRequest {
+    target: args.control.target,
+    slots: slot_indices.into_iter().map(|index| SlotId::new(ObjectZone::Hand, index)).collect(),
+    timeout_ms: args.control.timeout_ms.unwrap_or(1500),
+  })?;
+  write_cards_select_output(&result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1655,74 +2149,116 @@ fn click_cards_select(_args: MultiSlotOperationArgs) -> Result<(), CliError> {
 }
 
 #[cfg(target_os = "macos")]
-fn click_cards_clear(args: OperationControlArgs) -> Result<(), CliError> {
-  let operation = "cards.clear";
+pub fn cards_select(request: CardsSelectRequest) -> Result<CardsSelectResult, CliError> {
+  validate_hand_slots(&request.slots, "cards select")?;
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
-  let (before_image, before_result) = capture_observable_window(&session, &window, operation, args.timeout_ms.unwrap_or(1500), 0)?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let (before_image, before) = capture_observable_window(&session, &window, "cards-select-before", request.timeout_ms, 0)?;
+  let _ = fs::remove_file(before_image);
+  let before = before?;
+  let indices = request.slots.iter().map(|slot| slot.index).collect::<Vec<_>>();
+  let (selection, _) = click_hand_targets(&session, &window, "cards-select", &before, &indices, Some(request.timeout_ms))?.into_parts();
+  let result = CardsSelectResult {
+    target: request.target,
+    selection,
+  };
+  emit_cards_select_completed(&result);
+  Ok(result)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cards_select(_request: CardsSelectRequest) -> Result<CardsSelectResult, CliError> {
+  Err(CliError::Message("cards select live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct CardsSelectCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  selection: &'a HandSelectionResult,
+}
+
+fn write_cards_select_output(result: &CardsSelectResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &CardsSelectCliOutput {
+      operation: "cards.select",
+      target: &result.target,
+      selection: &result.selection,
+    },
+  )
+}
+
+#[cfg(target_os = "macos")]
+fn click_cards_clear(args: OperationControlArgs) -> Result<(), CliError> {
+  let result = cards_clear(CardsClearRequest {
+    target: args.target,
+    timeout_ms: args.timeout_ms.unwrap_or(1500),
+  })?;
+  write_cards_clear_output(&result)
+}
+
+#[cfg(target_os = "macos")]
+pub fn cards_clear(request: CardsClearRequest) -> Result<CardsClearResult, CliError> {
+  let session = open_macos_session()?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let (before_image, before_result) = capture_observable_window(&session, &window, "cards-clear-before", request.timeout_ms, 0)?;
+  // TODO(balatro-cards-clear-artifacts): emit captures through auv-tracing
+  // once the shared in-memory capture encoder is owner-approved.
+  let _ = fs::remove_file(before_image);
   let before = before_result?;
   let before_interactions = hand_card_interactions(&before);
-  let selected_slots =
-    before_interactions.iter().filter(|interaction| interaction.selected).map(|interaction| interaction.slot.index).collect::<Vec<_>>();
+  let initially_selected =
+    before_interactions.iter().filter(|interaction| interaction.selected).map(|interaction| interaction.slot).collect::<Vec<_>>();
 
   let mut click_state = before.clone();
-  let mut click_targets = Vec::new();
-  for slot_index in selected_slots {
-    let card = select_hand_card(&click_state, slot_index)?;
+  let mut toggles = Vec::new();
+  for slot in &initially_selected {
+    let card = select_hand_card(&click_state, slot.index)?;
     let point = window_point_from_hand_card(&click_state, &window, card);
-    click_targets.push(json!({
-      "phase": "clear_existing_selection",
-      "slot": card.slot,
-      "bbox": card.bbox,
-      "point": point,
-    }));
-    click_game_point(&session, &window, point)?;
-    std::thread::sleep(Duration::from_millis(160));
-    let (_, state_result) = capture_observable_window(&session, &window, operation, args.timeout_ms.unwrap_or(1500), 120)?;
-    click_state = state_result?;
-  }
-
-  let (after_image, after_result) = capture_observable_window(&session, &window, operation, args.timeout_ms.unwrap_or(1500), 250)?;
-  let after = after_result?;
-  let after_interactions = hand_card_interactions(&after);
-  let remaining_selected_slots =
-    after_interactions.iter().filter(|interaction| interaction.selected).map(|interaction| interaction.slot.index).collect::<Vec<_>>();
-  let passed = remaining_selected_slots.is_empty();
-
-  write_operation_output(
-    args.details,
-    json!({
-      "operation": operation,
-      "target": args.target,
-      "before_image": before_image,
-      "after_image": after_image,
-      "click_targets": click_targets,
-      "selection_evidence": {
-        "before_interactions": before_interactions,
-        "after_interactions": after_interactions,
-        "remaining_selected_slots": remaining_selected_slots,
-        "passed": passed,
-      },
-      "verification": if args.verify {
-        Some(json!({
-          "mode": args.verify_mode.to_string(),
-          "passed": passed,
-          "evidence": if passed {
-            vec!["no_selected_hand_cards_remaining"]
-          } else {
-            vec!["selected_hand_cards_remaining"]
+    let delivery = click_game_point(&session, &window, point)?;
+    toggles.push(CardSelectionToggle {
+      slot: *slot,
+      window_point: WindowPoint::new(point.x, point.y),
+      delivery,
+    });
+    let state_result = match capture_observable_window(&session, &window, "cards-clear-after-toggle", request.timeout_ms, 120) {
+      Ok((image, state_result)) => {
+        let _ = fs::remove_file(image);
+        state_result.map_err(|error| error.to_string())
+      }
+      Err(error) => Err(error.to_string()),
+    };
+    match state_result {
+      Ok(state) => click_state = state,
+      Err(message) => {
+        let result = CardsClearResult {
+          target: request.target,
+          initially_selected,
+          toggles,
+          outcome: CardsClearOutcome::Incomplete {
+            reason: CardsClearIncompleteReason::StateReadFailed { message },
           },
-        }))
-      } else {
-        None
-      },
-    }),
-  )?;
-
-  if args.verify && !passed {
-    return Err(CliError::Message("card clear verification failed; selected hand cards remain".to_string()));
+        };
+        emit_cards_clear_completed(&result);
+        return Ok(result);
+      }
+    }
   }
-  Ok(())
+
+  let remaining = hand_card_interactions(&click_state)
+    .into_iter()
+    .filter(|interaction| interaction.selected)
+    .map(|interaction| interaction.slot)
+    .collect();
+  let result = CardsClearResult {
+    target: request.target,
+    initially_selected,
+    toggles,
+    outcome: classify_cards_clear_outcome(remaining),
+  };
+  emit_cards_clear_completed(&result);
+  Ok(result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1730,216 +2266,216 @@ fn click_cards_clear(_args: OperationControlArgs) -> Result<(), CliError> {
   Err(CliError::Message("cards clear live operation is only available on macOS".to_string()))
 }
 
-#[cfg(target_os = "macos")]
-fn click_cards_commit(operation: &str, button_id: &str, args: MultiSlotOperationArgs) -> Result<(), CliError> {
-  click_cards(operation, Some(button_id), args)
-}
-
 #[cfg(not(target_os = "macos"))]
-fn click_cards_commit(_operation: &str, _button_id: &str, _args: MultiSlotOperationArgs) -> Result<(), CliError> {
-  Err(CliError::Message("cards play/discard live operations are only available on macOS".to_string()))
+pub fn cards_clear(_request: CardsClearRequest) -> Result<CardsClearResult, CliError> {
+  Err(CliError::Message("cards clear live operation is only available on macOS".to_string()))
 }
 
-#[cfg(target_os = "macos")]
-fn click_cards(operation: &str, commit_button_id: Option<&str>, args: MultiSlotOperationArgs) -> Result<(), CliError> {
-  let slot_indices = parse_hand_slot_indices(&args.slots)?;
-  let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
-  let (before_image, before_result) = capture_observable_window(&session, &window, operation, args.control.timeout_ms.unwrap_or(1500), 0)?;
-  let before = before_result?;
-  let cards = select_hand_cards(&before, &slot_indices)?;
-  let planned_card_points = cards.iter().map(|card| window_point_from_hand_card(&before, &window, card)).collect::<Vec<_>>();
+#[derive(Debug, Serialize)]
+struct CardsClearCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  initially_selected: &'a [SlotId],
+  toggles: &'a [CardSelectionToggle],
+  outcome: &'a CardsClearOutcome,
+}
 
-  let mut click_state = before.clone();
-  let mut click_targets = Vec::new();
-  let mut cleared_slots = Vec::new();
-  let mut kept_selected_slots = Vec::new();
-  if commit_button_id.is_some() {
-    kept_selected_slots = selected_hand_slot_indices(&click_state, &slot_indices);
-    for slot_index in selected_slots_to_clear(&click_state, &slot_indices) {
-      let card = select_hand_card(&click_state, slot_index)?;
-      let point = window_point_from_hand_card(&click_state, &window, card);
-      click_targets.push(json!({
-        "phase": "clear_existing_selection",
-        "slot": card.slot,
-        "bbox": card.bbox,
-        "point": point,
-      }));
-      click_game_point(&session, &window, point)?;
-      cleared_slots.push(slot_index);
-      std::thread::sleep(Duration::from_millis(160));
-      let (_, state_result) = capture_observable_window(&session, &window, operation, args.control.timeout_ms.unwrap_or(1500), 120)?;
-      click_state = state_result?;
-    }
-  }
-
-  for slot_index in requested_slots_to_select(&click_state, &slot_indices) {
-    // NOTICE: Balatro hand-card clicks can be dropped while the card hover
-    // description is appearing. Retry only after observing that the slot is
-    // still unselected; blind double-clicking would toggle a correctly selected
-    // card back off.
-    for attempt in 1..=2 {
-      if hand_slot_is_selected(&click_state, slot_index) {
-        break;
-      }
-      let card = select_hand_card(&click_state, slot_index)?;
-      let point = window_point_from_hand_card(&click_state, &window, card);
-      click_targets.push(json!({
-        "phase": "select_requested_slot",
-        "attempt": attempt,
-        "slot": card.slot,
-        "bbox": card.bbox,
-        "point": point,
-      }));
-      click_game_point(&session, &window, point)?;
-      std::thread::sleep(Duration::from_millis(180));
-      let (_, state_result) = capture_observable_window(&session, &window, operation, args.control.timeout_ms.unwrap_or(1500), 120)?;
-      click_state = state_result?;
-    }
-  }
-
-  // Planned hand slots are not trusted as semantic success. Balatro can move
-  // cards during selection, the window may change between capture and click,
-  // and jokers such as Hook can mutate the hand. Capture the selected state
-  // before committing so callers can inspect which cards the game actually
-  // accepted. Commit operations treat this as a hard gate: if the requested
-  // cards are not raised, the command refuses to press play/discard.
-  std::thread::sleep(Duration::from_millis(250));
-  let selected_image = capture_window_to_temp(&session, &window, operation)?;
-  let selected = observe_image(&selected_image, &BalatroModelConfig::default(), true)?;
-  let selected_interactions = hand_card_interactions(&selected);
-  let selected_slots = selected_hand_slot_indices(&selected, &hand_slot_indices(&selected));
-  let requested_selected_slots = selected_hand_slot_indices(&selected, &slot_indices);
-  let selection_passed = hand_selection_matches_requested(&selected, &slot_indices);
-  let selection_evidence = json!({
-    "selected_image": selected_image,
-    "phase": selected.phase,
-    "hand_count": selected.hand.len(),
-    "requested_slots": slot_indices,
-    "cleared_slots": cleared_slots,
-    "kept_selected_slots": kept_selected_slots,
-    "selected_slots": selected_slots,
-    "requested_selected_slots": requested_selected_slots,
-    "passed": selection_passed,
-    "selected_interactions": selected_interactions,
-    "hand": selected.hand.clone(),
-    "buttons": selected.buttons.clone(),
-  });
-
-  if commit_button_id.is_some() && !selection_passed {
-    write_operation_output(
-      args.control.details,
-      json!({
-        "operation": operation,
-        "target": args.control.target,
-        "slots": args.slots,
-        "before_image": before_image,
-        "selected_cards": cards,
-        "card_points": planned_card_points,
-        "click_targets": click_targets,
-        "selection_evidence": selection_evidence,
-        "verification": {
-          "mode": args.control.verify_mode.to_string(),
-          "passed": false,
-          "evidence": ["target_slots_not_selected_before_commit"],
-        },
-      }),
-    )?;
-    return Err(CliError::Message("card selection verification failed before commit; refusing to press play/discard".to_string()));
-  }
-  if commit_button_id.is_none() && args.control.verify && !selection_passed {
-    write_operation_output(
-      args.control.details,
-      json!({
-        "operation": operation,
-        "target": args.control.target,
-        "slots": args.slots,
-        "before_image": before_image,
-        "selected_cards": cards,
-        "card_points": planned_card_points,
-        "click_targets": click_targets,
-        "selection_evidence": selection_evidence,
-        "verification": {
-          "mode": args.control.verify_mode.to_string(),
-          "passed": false,
-          "evidence": ["selected_hand_slots_do_not_match_requested_slots"],
-        },
-      }),
-    )?;
-    return Err(CliError::Message("card select verification failed; selected hand slots do not match requested slots".to_string()));
-  }
-
-  let mut commit_button = None;
-  let mut button_point = None;
-  if let Some(button_id) = commit_button_id {
-    let button = find_button(&selected, button_id)?;
-    let point = window_point_from_button(&selected, &window, button);
-    session.window().click(
-      &window,
-      WindowPoint::new(point.x, point.y),
-      ClickOptions {
-        policy: InputPolicy::ForegroundPreferred,
-        ..ClickOptions::default()
-      },
-    )?;
-    commit_button = Some(button.clone());
-    button_point = Some(point);
-  }
-
-  let verification = if args.control.verify {
-    let (after_image, after_result) = capture_observable_window(&session, &window, operation, args.control.timeout_ms.unwrap_or(1500), 600)?;
-    match after_result {
-      Ok(after) => Some(json!({
-        "mode": args.control.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "after_phase": after.phase,
-        "before_hand_count": before.hand.len(),
-        "after_hand_count": after.hand.len(),
-        "evidence": card_operation_evidence(operation, &before, &after),
-        "passed": verify_card_operation(operation, &before, &after),
-        "after_image": after_image,
-      })),
-      Err(error) => Some(json!({
-        "mode": args.control.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "before_hand_count": before.hand.len(),
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
-    }
-  } else {
-    None
-  };
-
-  write_operation_output(
-    args.control.details,
-    json!({
-      "operation": operation,
-      "target": args.control.target,
-      "slots": args.slots,
-      "before_image": before_image,
-      "selected_cards": cards,
-      "card_points": planned_card_points,
-      "click_targets": click_targets,
-      "selection_evidence": selection_evidence,
-      "commit_button": commit_button,
-      "button_point": button_point,
-      "verification": verification,
-    }),
+fn write_cards_clear_output(result: &CardsClearResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &CardsClearCliOutput {
+      operation: "cards.clear",
+      target: &result.target,
+      initially_selected: &result.initially_selected,
+      toggles: &result.toggles,
+      outcome: &result.outcome,
+    },
   )
 }
 
 #[cfg(target_os = "macos")]
+fn click_cards_commit(kind: CardCommitKind, args: MultiSlotOperationArgs) -> Result<(), CliError> {
+  let slot_indices = parse_hand_slot_indices(&args.slots)?;
+  let request = CardCommitRequest {
+    target: args.control.target,
+    slots: slot_indices.into_iter().map(|index| SlotId::new(ObjectZone::Hand, index)).collect(),
+    confirm_change: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.control.timeout_ms.unwrap_or(1500),
+  };
+  let result = match kind {
+    CardCommitKind::Play => cards_play(request),
+    CardCommitKind::Discard => cards_discard(request),
+  }?;
+  write_card_commit_output(&result)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn click_cards_commit(_kind: CardCommitKind, _args: MultiSlotOperationArgs) -> Result<(), CliError> {
+  Err(CliError::Message("cards play/discard live operations are only available on macOS".to_string()))
+}
+
+#[cfg(target_os = "macos")]
+pub fn cards_play(request: CardCommitRequest) -> Result<CardCommitResult, CliError> {
+  card_commit(CardCommitKind::Play, request)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cards_play(_request: CardCommitRequest) -> Result<CardCommitResult, CliError> {
+  Err(CliError::Message("cards play live operation is only available on macOS".to_string()))
+}
+
+#[cfg(target_os = "macos")]
+pub fn cards_discard(request: CardCommitRequest) -> Result<CardCommitResult, CliError> {
+  card_commit(CardCommitKind::Discard, request)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cards_discard(_request: CardCommitRequest) -> Result<CardCommitResult, CliError> {
+  Err(CliError::Message("cards discard live operation is only available on macOS".to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn card_commit(kind: CardCommitKind, request: CardCommitRequest) -> Result<CardCommitResult, CliError> {
+  validate_hand_slots(&request.slots, "card commit")?;
+  let session = open_macos_session()?;
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let (before_image, before) = capture_observable_window(&session, &window, "card-commit-before", request.timeout_ms, 0)?;
+  let _ = fs::remove_file(before_image);
+  let before = before?;
+  let indices = request.slots.iter().map(|slot| slot.index).collect::<Vec<_>>();
+  select_hand_cards(&before, &indices)?;
+
+  let (selection, selected) =
+    click_hand_targets(&session, &window, "card-commit-targets", &before, &indices, Some(request.timeout_ms))?.into_parts();
+  let targets_ready = selection.is_matched();
+  let mut actions = vec![CardCommitAction::SelectHandTargets { selection }];
+  if !targets_ready {
+    let result = CardCommitResult {
+      target: request.target,
+      kind,
+      requested_slots: request.slots,
+      actions,
+      state: CardCommitState::Stopped {
+        reason: CardCommitStop::HandTargetsNotReady,
+      },
+    };
+    emit_card_commit_completed(&result);
+    return Ok(result);
+  }
+  let Some(selected) = selected else {
+    unreachable!("a matched hand selection always retains its observed state");
+  };
+
+  let button = match find_button(&selected, kind.button_id()) {
+    Ok(button) => button.clone(),
+    Err(error) => {
+      let result = CardCommitResult {
+        target: request.target,
+        kind,
+        requested_slots: request.slots,
+        actions,
+        state: CardCommitState::Stopped {
+          reason: CardCommitStop::CommitControlNotFound {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_card_commit_completed(&result);
+      return Ok(result);
+    }
+  };
+  let point = window_point_from_button(&selected, &window, &button);
+  let delivery = match click_game_point(&session, &window, point) {
+    Ok(delivery) => delivery,
+    Err(error) => {
+      let result = CardCommitResult {
+        target: request.target,
+        kind,
+        requested_slots: request.slots,
+        actions,
+        state: CardCommitState::Stopped {
+          reason: CardCommitStop::SubmissionFailed {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_card_commit_completed(&result);
+      return Ok(result);
+    }
+  };
+  actions.push(CardCommitAction::Submit {
+    button,
+    window_point: WindowPoint::new(point.x, point.y),
+    delivery,
+  });
+
+  let confirmation = if request.confirm_change {
+    let after = match capture_observable_window(&session, &window, "card-commit-after", request.timeout_ms, request.timeout_ms.min(600)) {
+      Ok((image, after)) => {
+        let _ = fs::remove_file(image);
+        after.map_err(|error| error.to_string())
+      }
+      Err(error) => Err(error.to_string()),
+    };
+    evaluate_card_commit_confirmation(&before, after.as_ref().map_err(Clone::clone))
+  } else {
+    CardCommitConfirmation::NotRequested
+  };
+  let result = CardCommitResult {
+    target: request.target,
+    kind,
+    requested_slots: request.slots,
+    actions,
+    state: CardCommitState::Submitted { confirmation },
+  };
+  emit_card_commit_completed(&result);
+  Ok(result)
+}
+
 #[derive(Debug, Serialize)]
-struct HandTargetSelection {
-  selected_image: PathBuf,
-  requested_slots: Vec<u32>,
-  selected_slots: Vec<u32>,
-  passed: bool,
-  click_targets: Vec<Value>,
-  #[serde(skip)]
-  state: Option<BalatroState>,
+struct CardCommitCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  requested_slots: &'a [SlotId],
+  actions: &'a [CardCommitAction],
+  state: &'a CardCommitState,
+}
+
+fn write_card_commit_output(result: &CardCommitResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &CardCommitCliOutput {
+      operation: match result.kind {
+        CardCommitKind::Play => "cards.play",
+        CardCommitKind::Discard => "cards.discard",
+      },
+      target: &result.target,
+      requested_slots: &result.requested_slots,
+      actions: &result.actions,
+      state: &result.state,
+    },
+  )
+}
+
+#[cfg(target_os = "macos")]
+enum HandSelectionExecution {
+  Observed {
+    result: HandSelectionResult,
+    state: BalatroState,
+  },
+  Incomplete {
+    result: HandSelectionResult,
+  },
+}
+
+#[cfg(target_os = "macos")]
+impl HandSelectionExecution {
+  fn into_parts(self) -> (HandSelectionResult, Option<BalatroState>) {
+    match self {
+      Self::Observed { result, state } => (result, Some(state)),
+      Self::Incomplete { result } => (result, None),
+    }
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -1950,23 +2486,36 @@ fn click_hand_targets(
   before: &BalatroState,
   slot_indices: &[u32],
   timeout_ms: Option<u64>,
-) -> Result<HandTargetSelection, CliError> {
+) -> Result<HandSelectionExecution, CliError> {
   let _cards = select_hand_cards(before, slot_indices)?;
+  let requested = slot_indices.iter().map(|index| SlotId::new(ObjectZone::Hand, *index)).collect::<Vec<_>>();
   let mut click_state = before.clone();
-  let mut click_targets = Vec::new();
+  let mut toggles = Vec::new();
   for slot_index in selected_slots_to_clear(&click_state, slot_indices) {
-    let card = select_hand_card(&click_state, slot_index)?;
+    let card = match select_hand_card(&click_state, slot_index) {
+      Ok(card) => card,
+      Err(error) => {
+        return Ok(incomplete_hand_selection(requested, toggles, &click_state, error.to_string()));
+      }
+    };
     let point = window_point_from_hand_card(&click_state, window, card);
-    click_targets.push(json!({
-      "phase": "clear_existing_selection",
-      "slot": card.slot,
-      "bbox": card.bbox,
-      "point": point,
-    }));
-    click_game_point(session, window, point)?;
+    let slot = card.slot;
+    let delivery = match click_game_point(session, window, point) {
+      Ok(delivery) => delivery,
+      Err(error) => return Ok(incomplete_hand_selection(requested, toggles, &click_state, error.to_string())),
+    };
+    toggles.push(HandSelectionToggle {
+      kind: HandSelectionToggleKind::ClearUnexpected,
+      attempt: 1,
+      slot,
+      window_point: WindowPoint::new(point.x, point.y),
+      delivery,
+    });
     std::thread::sleep(Duration::from_millis(160));
-    let (_, state_result) = capture_observable_window(session, window, operation, timeout_ms.unwrap_or(1500), 120)?;
-    click_state = state_result?;
+    match read_hand_selection_state(session, window, operation, timeout_ms.unwrap_or(1500), 120) {
+      Ok(state) => click_state = state,
+      Err(message) => return Ok(incomplete_hand_selection(requested, toggles, &click_state, message)),
+    }
   }
 
   for slot_index in requested_slots_to_select(&click_state, slot_indices) {
@@ -1974,45 +2523,112 @@ fn click_hand_targets(
       if hand_slot_is_selected(&click_state, slot_index) {
         break;
       }
-      let card = select_hand_card(&click_state, slot_index)?;
+      let card = match select_hand_card(&click_state, slot_index) {
+        Ok(card) => card,
+        Err(error) => {
+          return Ok(incomplete_hand_selection(requested, toggles, &click_state, error.to_string()));
+        }
+      };
       let point = window_point_from_hand_card(&click_state, window, card);
-      click_targets.push(json!({
-        "phase": "select_requested_slot",
-        "attempt": attempt,
-        "slot": card.slot,
-        "bbox": card.bbox,
-        "point": point,
-      }));
-      click_game_point(session, window, point)?;
+      let slot = card.slot;
+      let delivery = match click_game_point(session, window, point) {
+        Ok(delivery) => delivery,
+        Err(error) => return Ok(incomplete_hand_selection(requested, toggles, &click_state, error.to_string())),
+      };
+      toggles.push(HandSelectionToggle {
+        kind: HandSelectionToggleKind::SelectRequested,
+        attempt,
+        slot,
+        window_point: WindowPoint::new(point.x, point.y),
+        delivery,
+      });
       std::thread::sleep(Duration::from_millis(180));
-      let (_, state_result) = capture_observable_window(session, window, operation, timeout_ms.unwrap_or(1500), 120)?;
-      click_state = state_result?;
+      match read_hand_selection_state(session, window, operation, timeout_ms.unwrap_or(1500), 120) {
+        Ok(state) => click_state = state,
+        Err(message) => return Ok(incomplete_hand_selection(requested, toggles, &click_state, message)),
+      }
     }
   }
 
   std::thread::sleep(Duration::from_millis(250));
-  let selected_image = capture_window_to_temp(session, window, operation)?;
-  let selected = observe_image(&selected_image, &BalatroModelConfig::default(), true)?;
-  let selected_slots = selected_hand_slot_indices(&selected, &hand_slot_indices(&selected));
-  let passed = hand_selection_matches_requested(&selected, slot_indices);
-  if !passed {
-    return Err(CliError::Message("target hand selection verification failed; refusing to use consumable".to_string()));
-  }
-
-  Ok(HandTargetSelection {
-    selected_image,
-    requested_slots: slot_indices.to_vec(),
-    selected_slots,
-    passed,
-    click_targets,
-    state: Some(selected),
+  let selected = match read_hand_selection_state(session, window, operation, timeout_ms.unwrap_or(1500), 0) {
+    Ok(selected) => selected,
+    Err(message) => return Ok(incomplete_hand_selection(requested, toggles, &click_state, message)),
+  };
+  let selected_slots = selected_hand_slot_indices(&selected, &hand_slot_indices(&selected))
+    .into_iter()
+    .map(|index| SlotId::new(ObjectZone::Hand, index))
+    .collect();
+  let state = if hand_selection_matches_requested(&selected, slot_indices) {
+    HandSelectionState::Matched {
+      selected: selected_slots,
+    }
+  } else {
+    HandSelectionState::NotMatched {
+      selected: selected_slots,
+    }
+  };
+  Ok(HandSelectionExecution::Observed {
+    result: HandSelectionResult {
+      requested,
+      toggles,
+      state,
+    },
+    state: selected,
   })
+}
+
+#[cfg(target_os = "macos")]
+fn read_hand_selection_state(
+  session: &auv_driver_macos::MacosDriverSession,
+  window: &auv_driver::window::Window,
+  operation: &str,
+  timeout_ms: u64,
+  initial_delay_ms: u64,
+) -> Result<BalatroState, String> {
+  match capture_observable_window(session, window, operation, timeout_ms, initial_delay_ms) {
+    Ok((image, state)) => {
+      let state = state.map_err(|error| error.to_string());
+      let _ = fs::remove_file(image);
+      state
+    }
+    Err(error) => Err(error.to_string()),
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn incomplete_hand_selection(
+  requested: Vec<SlotId>,
+  toggles: Vec<HandSelectionToggle>,
+  last_state: &BalatroState,
+  message: String,
+) -> HandSelectionExecution {
+  let last_selected = selected_hand_slot_indices(last_state, &hand_slot_indices(last_state))
+    .into_iter()
+    .map(|index| SlotId::new(ObjectZone::Hand, index))
+    .collect();
+  HandSelectionExecution::Incomplete {
+    result: HandSelectionResult {
+      requested,
+      toggles,
+      state: HandSelectionState::Incomplete {
+        last_selected,
+        message,
+      },
+    },
+  }
 }
 
 #[cfg(target_os = "macos")]
 fn click_blind_select(args: SlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_blind_slot_index(&args.slot)?;
-  click_blind_button("blinds.select", "button_level_select", Some(slot_index), args.control)
+  let result = blind_select(BlindSelectRequest {
+    target: args.control.target,
+    slot: SlotId::new(ObjectZone::Blind, slot_index),
+    confirm_started: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.control.timeout_ms.unwrap_or(1200),
+  })?;
+  write_blind_select_output(&result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2022,7 +2638,12 @@ fn click_blind_select(_args: SlotOperationArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_blind_skip(args: OperationControlArgs) -> Result<(), CliError> {
-  click_blind_button("blinds.skip", "button_level_skip", None, args)
+  let result = blind_skip(BlindSkipRequest {
+    target: args.target,
+    confirm_exit: args.verify && args.verify_mode != VerifyModeArg::ActivationOnly,
+    timeout_ms: args.timeout_ms.unwrap_or(1200),
+  })?;
+  write_blind_skip_output(&result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2031,110 +2652,152 @@ fn click_blind_skip(_args: OperationControlArgs) -> Result<(), CliError> {
 }
 
 #[cfg(target_os = "macos")]
-fn click_blind_button(operation: &str, button_id: &str, slot_index: Option<u32>, args: OperationControlArgs) -> Result<(), CliError> {
+pub fn blind_select(request: BlindSelectRequest) -> Result<BlindSelectResult, CliError> {
+  if request.slot.zone != ObjectZone::Blind {
+    return Err(CliError::Message(format!("blind select requires a blind slot, got {}", request.slot)));
+  }
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
-  let before_image = capture_window_to_temp(&session, &window, operation)?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
-  let button = select_button_for_slot(&before.buttons, button_id, slot_index)?;
-  let point = window_point_from_button(&before, &window, button);
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let before_image = capture_window_to_temp(&session, &window, "blind-select-before")?;
+  // TODO(balatro-blind-action-artifacts): emit captures through auv-tracing
+  // once the shared in-memory capture encoder is owner-approved.
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(before_image);
+  let before = before?;
+  let selected_button = select_button_for_slot(&before.buttons, "button_level_select", Some(request.slot.index))?.clone();
+  let point = window_point_from_button(&before, &window, &selected_button);
+  let delivery = click_game_point(&session, &window, point)?;
 
-  session.window().click(
-    &window,
-    WindowPoint::new(point.x, point.y),
-    ClickOptions {
-      policy: InputPolicy::ForegroundPreferred,
-      ..ClickOptions::default()
-    },
-  )?;
-
-  let verification = if args.verify {
-    let (after_image, after_result) = capture_observable_window(&session, &window, operation, args.timeout_ms.unwrap_or(1200), 500)?;
-    match after_result {
-      Ok(after) => {
-        let passed = match operation {
-          "blinds.select" => before.phase == BalatroPhase::BlindSelect && (after.phase == BalatroPhase::Playing || !after.hand.is_empty()),
-          "blinds.skip" => before.phase == BalatroPhase::BlindSelect && after.phase != BalatroPhase::BlindSelect,
-          _ => false,
-        };
-        Some(json!({
-          "mode": args.verify_mode.to_string(),
-          "before_phase": before.phase,
-          "after_phase": after.phase,
-          "after_hand_count": after.hand.len(),
-          "passed": passed,
-          "after_image": after_image,
-        }))
+  let confirmation = if request.confirm_started {
+    match capture_observable_window(&session, &window, "blind-select-after", request.timeout_ms, 500) {
+      Ok((after_image, after)) => {
+        let confirmation = evaluate_blind_select_confirmation(&before, after.as_ref().map_err(|error| error.to_string()));
+        let _ = fs::remove_file(after_image);
+        confirmation
       }
-      Err(error) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
+      Err(error) => BlindSelectConfirmation::NotStarted {
+        before_phase: before.phase,
+        after_phase: None,
+        reason: BlindSelectConfirmationFailure::StateReadFailed {
+          message: error.to_string(),
+        },
+      },
     }
   } else {
-    None
+    BlindSelectConfirmation::NotRequested
   };
 
-  write_operation_output(
-    args.details,
-    json!({
-      "operation": operation,
-      "target": args.target,
-      "slot_index": slot_index,
-      "selected_button": button,
-      "window_point": { "x": point.x, "y": point.y },
-      "verification": verification,
-    }),
-  )
+  let result = BlindSelectResult {
+    target: request.target,
+    slot: request.slot,
+    selected_button,
+    window_point: WindowPoint::new(point.x, point.y),
+    delivery,
+    confirmation,
+  };
+  emit_blind_select_completed(&result);
+  Ok(result)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn blind_select(_request: BlindSelectRequest) -> Result<BlindSelectResult, CliError> {
+  Err(CliError::Message("blinds select live operation is only available on macOS".to_string()))
 }
 
 #[cfg(target_os = "macos")]
-fn click_single_button(operation: &str, button_id: &str, args: OperationControlArgs) -> Result<(), CliError> {
+pub fn blind_skip(request: BlindSkipRequest) -> Result<BlindSkipResult, CliError> {
   let session = open_macos_session()?;
-  let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
-  let before_image = capture_window_to_temp(&session, &window, operation)?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
-  let button = find_button(&before, button_id)?;
-  let point = window_point_from_button(&before, &window, button);
+  let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
+  let before_image = capture_window_to_temp(&session, &window, "blind-skip-before")?;
+  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let _ = fs::remove_file(before_image);
+  let before = before?;
+  let selected_button = select_button_for_slot(&before.buttons, "button_level_skip", None)?.clone();
+  let point = window_point_from_button(&before, &window, &selected_button);
+  let delivery = click_game_point(&session, &window, point)?;
 
-  click_game_point(&session, &window, point)?;
-
-  let verification = if args.verify {
-    let (after_image, after_result) = capture_observable_window(&session, &window, operation, args.timeout_ms.unwrap_or(1200), 500)?;
-    match after_result {
-      Ok(after) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "after_phase": after.phase,
-        "button_still_visible": best_button(&after.buttons, button_id).is_some(),
-        "passed": verify_single_button_activation(button_id, &before, &after),
-        "after_image": after_image,
-      })),
-      Err(error) => Some(json!({
-        "mode": args.verify_mode.to_string(),
-        "before_phase": before.phase,
-        "passed": false,
-        "after_image": after_image,
-        "error": error.to_string(),
-      })),
+  let confirmation = if request.confirm_exit {
+    match capture_observable_window(&session, &window, "blind-skip-after", request.timeout_ms, 500) {
+      Ok((after_image, after)) => {
+        let confirmation = evaluate_blind_skip_confirmation(&before, after.as_ref().map_err(|error| error.to_string()));
+        let _ = fs::remove_file(after_image);
+        confirmation
+      }
+      Err(error) => BlindSkipConfirmation::NotExited {
+        before_phase: before.phase,
+        after_phase: None,
+        reason: BlindSkipConfirmationFailure::StateReadFailed {
+          message: error.to_string(),
+        },
+      },
     }
   } else {
-    None
+    BlindSkipConfirmation::NotRequested
   };
 
-  write_operation_output(
-    args.details,
-    json!({
-      "operation": operation,
-      "target": args.target,
-      "button": button,
-      "window_point": point,
-      "before_image": before_image,
-      "verification": verification,
-    }),
+  let result = BlindSkipResult {
+    target: request.target,
+    selected_button,
+    window_point: WindowPoint::new(point.x, point.y),
+    delivery,
+    confirmation,
+  };
+  emit_blind_skip_completed(&result);
+  Ok(result)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn blind_skip(_request: BlindSkipRequest) -> Result<BlindSkipResult, CliError> {
+  Err(CliError::Message("blinds skip live operation is only available on macOS".to_string()))
+}
+
+#[derive(Debug, Serialize)]
+struct BlindSelectCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  slot: SlotId,
+  delivery: &'a auv_driver::InputActionResult,
+  confirmation: &'a BlindSelectConfirmation,
+  selected_button: &'a ButtonTarget,
+  window_point: WindowPoint,
+}
+
+fn write_blind_select_output(result: &BlindSelectResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &BlindSelectCliOutput {
+      operation: "blinds.select",
+      target: &result.target,
+      slot: result.slot,
+      delivery: &result.delivery,
+      confirmation: &result.confirmation,
+      selected_button: &result.selected_button,
+      window_point: result.window_point,
+    },
+  )
+}
+
+#[derive(Debug, Serialize)]
+struct BlindSkipCliOutput<'a> {
+  operation: &'static str,
+  target: &'a str,
+  delivery: &'a auv_driver::InputActionResult,
+  confirmation: &'a BlindSkipConfirmation,
+  selected_button: &'a ButtonTarget,
+  window_point: WindowPoint,
+}
+
+fn write_blind_skip_output(result: &BlindSkipResult) -> Result<(), CliError> {
+  write_output(
+    OutputMode::Json,
+    &BlindSkipCliOutput {
+      operation: "blinds.skip",
+      target: &result.target,
+      delivery: &result.delivery,
+      confirmation: &result.confirmation,
+      selected_button: &result.selected_button,
+      window_point: result.window_point,
+    },
   )
 }
 
@@ -2193,7 +2856,7 @@ fn read_pack_live(args: &ObserveArgs) -> Result<PackReadOutput, CliError> {
   let capture = capture_window(&session, &window)?;
   let frame = save_capture_to_temp(&capture, "pack-read")?;
   let state = observe_image_with_ui_readings(&frame, &config, args.no_cache)?;
-  let mut choices = active_pack_choices(&state);
+  let mut choices = active_pack_choices(&state).into_iter().map(pack_read_choice).collect::<Vec<_>>();
   let original_mouse = auv_driver_macos::native::pointer::current_mouse_logical_point().ok();
 
   for choice in &mut choices {
@@ -2222,9 +2885,9 @@ fn hover_read_pack_choice(
   session: &auv_driver_macos::MacosDriverSession,
   window: &auv_driver::window::Window,
   state: &BalatroState,
-  choice: &mut PackChoice,
+  choice: &mut PackReadChoice,
 ) -> Result<(), CliError> {
-  let point = window_point_from_frame_point(state, window, bbox_center_point(choice.bbox));
+  let point = window_point_from_frame_point(state, window, bbox_center_point(choice.choice.bbox));
   let screen = session.window().to_screen_point(window, WindowPoint::new(point.x, point.y))?;
   let screen = screen.point();
   auv_driver_macos::native::pointer::move_point(screen.x, screen.y, 0).map_err(CliError::Message)?;
@@ -2285,8 +2948,8 @@ fn click_game_point(
   session: &auv_driver_macos::MacosDriverSession,
   window: &auv_driver::window::Window,
   point: Point,
-) -> Result<(), CliError> {
-  session.window().click(
+) -> Result<auv_driver::InputActionResult, CliError> {
+  let delivery = session.window().click(
     window,
     WindowPoint::new(point.x, point.y),
     ClickOptions {
@@ -2294,7 +2957,8 @@ fn click_game_point(
       ..ClickOptions::default()
     },
   )?;
-  Ok(())
+  emit_input_delivery(&delivery);
+  Ok(delivery)
 }
 
 #[cfg(target_os = "macos")]
@@ -2543,13 +3207,10 @@ fn restart_primary_button(buttons: &[ButtonTarget]) -> Option<&ButtonTarget> {
   best_button(buttons, "button_new_run_play").or_else(|| best_button(buttons, "button_main_menu_play"))
 }
 
-fn resolve_store_next_round_target(state: &BalatroState) -> Result<ResolvedActionTarget, CliError> {
+fn resolve_store_next_round_target(state: &BalatroState) -> Result<StoreNextRoundTarget, CliError> {
   if let Some(button) = best_button(&state.buttons, "button_store_next_round") {
-    return Ok(ResolvedActionTarget {
-      source: ActionTargetSource::YoloButton,
-      label: button.id.clone(),
-      frame_point: bbox_center_point(button.bbox),
-      fallback_reason: None,
+    return Ok(StoreNextRoundTarget::DetectedButton {
+      button: button.clone(),
     });
   }
 
@@ -2563,25 +3224,22 @@ fn resolve_store_next_round_target(state: &BalatroState) -> Result<ResolvedActio
     // NOTICE: Fallback ratios come from a live 1646x963 store capture point
     // around (594,429), normalized to (0.361,0.446). Remove this once stable
     // YOLO/button target detection covers `button_store_next_round`.
-    return Ok(ResolvedActionTarget {
-      source: ActionTargetSource::LayoutFallback,
-      label: "button_store_next_round".to_string(),
+    return Ok(StoreNextRoundTarget::StoreLayout {
       frame_point: Point::new(f64::from(state.frame.image_size.width) * 0.361, f64::from(state.frame.image_size.height) * 0.446),
-      fallback_reason: Some("yolo_button_missing_visible_layout_match".to_string()),
     });
   }
 
   Err(CliError::Message("could not find button_store_next_round in observed Balatro frame".to_string()))
 }
 
-fn resolve_consumable_use_target(state: &BalatroState, slot_index: u32) -> Result<ResolvedActionTarget, CliError> {
+fn resolve_consumable_use_target(state: &BalatroState, slot_index: u32) -> Result<(ConsumableUseControl, Point), CliError> {
   if let Some(button) = best_button(&state.buttons, "button_use") {
-    return Ok(ResolvedActionTarget {
-      source: ActionTargetSource::YoloButton,
-      label: button.id.clone(),
-      frame_point: bbox_center_point(button.bbox),
-      fallback_reason: None,
-    });
+    return Ok((
+      ConsumableUseControl::DetectedButton {
+        button: button.clone(),
+      },
+      bbox_center_point(button.bbox),
+    ));
   }
 
   let consumable = select_consumable(state, slot_index)?;
@@ -2589,12 +3247,7 @@ fn resolve_consumable_use_target(state: &BalatroState, slot_index: u32) -> Resul
   let height = consumable.bbox.height().max(1.0);
   let x = (consumable.bbox.x2 + width * 0.32).min(state.frame.image_size.width as f32 - 1.0);
   let y = (consumable.bbox.y1 + height * 0.60).min(state.frame.image_size.height as f32 - 1.0);
-  Ok(ResolvedActionTarget {
-    source: ActionTargetSource::LayoutFallback,
-    label: "button_use".to_string(),
-    frame_point: Point::new(f64::from(x), f64::from(y)),
-    fallback_reason: Some("consumable_use_button_missing_selected_card_layout_match".to_string()),
-  })
+  Ok((ConsumableUseControl::SelectedConsumableLayout, Point::new(f64::from(x), f64::from(y))))
 }
 
 fn has_store_layout_evidence(state: &BalatroState) -> bool {
@@ -2631,14 +3284,14 @@ fn has_empty_store_shell_evidence(state: &BalatroState) -> bool {
     && best_button(&state.buttons, "button_level_skip").is_none()
 }
 
-fn resolve_pack_confirm_target(state: &BalatroState, choice: &PackChoice) -> Result<ResolvedActionTarget, CliError> {
+fn resolve_pack_confirm_target(state: &BalatroState, choice: &PackChoice) -> Result<(PackChooseControl, Point), CliError> {
   if let Some(button) = best_button(&state.buttons, "button_use") {
-    return Ok(ResolvedActionTarget {
-      source: ActionTargetSource::YoloButton,
-      label: button.id.clone(),
-      frame_point: bbox_center_point(button.bbox),
-      fallback_reason: None,
-    });
+    return Ok((
+      PackChooseControl::DetectedButton {
+        button: button.clone(),
+      },
+      bbox_center_point(button.bbox),
+    ));
   }
 
   if best_button(&state.buttons, "button_card_pack_skip").is_none() && active_pack_choices(state).is_empty() {
@@ -2648,12 +3301,10 @@ fn resolve_pack_confirm_target(state: &BalatroState, choice: &PackChoice) -> Res
   // NOTICE: The 0.82 height fallback comes from live active-pack captures where
   // Balatro places the confirm button below the selected choice. Remove this
   // fallback once `button_use` detection is stable for active pack selections.
-  Ok(ResolvedActionTarget {
-    source: ActionTargetSource::LayoutFallback,
-    label: "pack_confirm".to_string(),
-    frame_point: Point::new(f64::from((choice.bbox.x1 + choice.bbox.x2) / 2.0), f64::from(state.frame.image_size.height) * 0.82),
-    fallback_reason: Some("pack_confirm_button_missing_visible_layout_match".to_string()),
-  })
+  Ok((
+    PackChooseControl::ActivePackLayout,
+    Point::new(f64::from((choice.bbox.x1 + choice.bbox.x2) / 2.0), f64::from(state.frame.image_size.height) * 0.82),
+  ))
 }
 
 fn blind_buttons(state: &BalatroState) -> Vec<&ButtonTarget> {
@@ -2730,6 +3381,19 @@ fn parse_hand_target_indices(targets: &[String]) -> Result<Vec<u32>, CliError> {
         .map_err(|_| CliError::Message(format!("targeted consumable operation requires --targets hand:N[,hand:N...], got {target}")))
     })
     .collect()
+}
+
+fn validate_hand_slots(slots: &[SlotId], operation: &str) -> Result<(), CliError> {
+  if slots.is_empty() {
+    return Err(CliError::Message(format!("{operation} requires at least one hand slot")));
+  }
+  if let Some(slot) = slots.iter().find(|slot| slot.zone != ObjectZone::Hand) {
+    return Err(CliError::Message(format!("{operation} requires hand slots, got {slot}")));
+  }
+  if let Some(slot) = slots.iter().enumerate().find_map(|(index, slot)| slots[..index].contains(slot).then_some(slot)) {
+    return Err(CliError::Message(format!("{operation} received duplicate slot {slot}")));
+  }
+  Ok(())
 }
 
 fn parse_card_read_slots(slot: &str) -> Result<Option<Vec<u32>>, CliError> {
@@ -3308,15 +3972,8 @@ fn active_pack_choices(state: &BalatroState) -> Vec<PackChoice> {
       let is_choice = matches!(detection.label.as_str(), "joker_card" | "tarot_card" | "planet_card" | "spectral_card" | "poker_card_front")
         && in_choice_area;
       is_choice.then(|| PackChoice {
-        slot_index: 0,
-        kind: detection.label.clone(),
+        id: PackChoiceId::new(0),
         detector_label: detection.label.clone(),
-        hint: pack_choice_hint(&detection.label).to_string(),
-        hover_required: true,
-        hover_text: None,
-        hover_frame: None,
-        hover_ocr_region: None,
-        hover_error: None,
         bbox: detection.bbox,
         confidence: detection.confidence,
       })
@@ -3324,9 +3981,21 @@ fn active_pack_choices(state: &BalatroState) -> Vec<PackChoice> {
     .collect::<Vec<_>>();
   choices.sort_by(|left, right| left.bbox.x1.partial_cmp(&right.bbox.x1).unwrap_or(std::cmp::Ordering::Equal));
   for (index, choice) in choices.iter_mut().enumerate() {
-    choice.slot_index = index as u32;
+    choice.id = PackChoiceId::new(index as u32);
   }
   choices
+}
+
+fn pack_read_choice(choice: PackChoice) -> PackReadChoice {
+  PackReadChoice {
+    hint: pack_choice_hint(&choice.detector_label).to_string(),
+    choice,
+    hover_required: true,
+    hover_text: None,
+    hover_frame: None,
+    hover_ocr_region: None,
+    hover_error: None,
+  }
 }
 
 fn pack_choice_hint(label: &str) -> &'static str {
@@ -3815,128 +4484,10 @@ fn hand_card_click_frame_point(state: &BalatroState, card: &CardSlot) -> Point {
   Point::new(f64::from(x), f64::from(card.bbox.y1 + height * 0.52))
 }
 
-fn verify_card_operation(operation: &str, before: &BalatroState, after: &BalatroState) -> bool {
-  match operation {
-    "cards.select" => before.phase == BalatroPhase::Playing && after.phase == BalatroPhase::Playing,
-    "cards.play" | "cards.discard" => {
-      before.phase == BalatroPhase::Playing
-        && (after.phase != BalatroPhase::Playing || after.hand.len() != before.hand.len() || hand_fingerprints_changed(before, after))
-    }
-    _ => false,
-  }
-}
-
-fn card_operation_evidence(operation: &str, before: &BalatroState, after: &BalatroState) -> Vec<&'static str> {
-  let mut evidence = Vec::new();
-  if before.phase == BalatroPhase::Playing {
-    evidence.push("before_phase_playing");
-  }
-  if after.phase != before.phase {
-    evidence.push("phase_changed");
-  }
-  if after.hand.len() != before.hand.len() {
-    evidence.push("hand_count_changed");
-  }
-  if matches!(operation, "cards.play" | "cards.discard") && hand_fingerprints_changed(before, after) {
-    evidence.push("hand_fingerprints_changed");
-  }
-  evidence
-}
-
-fn hand_fingerprints_changed(before: &BalatroState, after: &BalatroState) -> bool {
-  let before_fingerprints = hand_fingerprints(before);
-  let after_fingerprints = hand_fingerprints(after);
-  !before_fingerprints.is_empty() && !after_fingerprints.is_empty() && before_fingerprints != after_fingerprints
-}
-
-fn hand_fingerprints(state: &BalatroState) -> Vec<&str> {
-  state.hand.iter().filter_map(|card| card.cache.visual_fingerprint.as_deref()).collect()
-}
-
-fn verify_store_buy(before: &BalatroState, after: &BalatroState) -> bool {
-  after.store.items.len() < before.store.items.len()
-    || after.jokers.len() > before.jokers.len()
-    || after.consumables.len() > before.consumables.len()
-    || after.phase != before.phase
-}
-
-fn store_buy_evidence(before: &BalatroState, after: &BalatroState) -> Vec<&'static str> {
-  let mut evidence = Vec::new();
-  if after.store.items.len() < before.store.items.len() {
-    evidence.push("store_item_count_decreased");
-  }
-  if after.jokers.len() > before.jokers.len() {
-    evidence.push("joker_count_increased");
-  }
-  if after.consumables.len() > before.consumables.len() {
-    evidence.push("consumable_count_increased");
-  }
-  if after.phase != before.phase {
-    evidence.push("phase_changed");
-  }
-  evidence
-}
-
-fn verify_sell_operation(zone: ObjectReadZone, before: &BalatroState, after: &BalatroState) -> bool {
-  match zone {
-    ObjectReadZone::Joker => after.jokers.len() < before.jokers.len() || cash_changed(before, after),
-    ObjectReadZone::Consumable => after.consumables.len() < before.consumables.len() || cash_changed(before, after),
-    ObjectReadZone::Store => false,
-  }
-}
-
-fn sell_operation_evidence(zone: ObjectReadZone, before: &BalatroState, after: &BalatroState) -> Vec<&'static str> {
-  let mut evidence = Vec::new();
-  if zone == ObjectReadZone::Joker && after.jokers.len() < before.jokers.len() {
-    evidence.push("joker_count_decreased");
-  }
-  if zone == ObjectReadZone::Consumable && after.consumables.len() < before.consumables.len() {
-    evidence.push("consumable_count_decreased");
-  }
-  if cash_changed(before, after) {
-    evidence.push("cash_changed");
-  }
-  evidence
-}
-
-fn cash_changed(before: &BalatroState, after: &BalatroState) -> bool {
-  matches!(
-    (&before.rounds.cash, &after.rounds.cash),
-    (Some(before_cash), Some(after_cash)) if before_cash != after_cash
-  )
-}
-
-fn verify_single_button_activation(button_id: &str, before: &BalatroState, after: &BalatroState) -> bool {
-  match button_id {
-    "button_cash_out" => {
-      best_button(&before.buttons, "button_cash_out").is_some()
-        && (best_button(&after.buttons, "button_cash_out").is_none() || after.phase == BalatroPhase::Store || after.store.is_store)
-    }
-    _ => best_button(&before.buttons, button_id).is_some() && best_button(&after.buttons, button_id).is_none(),
-  }
-}
-
-fn verify_consumable_use(before: &BalatroState, after: &BalatroState) -> bool {
-  after.consumables.len() < before.consumables.len() || after.phase != before.phase || after.scores != before.scores
-}
-
-fn consumable_use_evidence(before: &BalatroState, after: &BalatroState) -> Vec<&'static str> {
-  let mut evidence = Vec::new();
-  if after.consumables.len() < before.consumables.len() {
-    evidence.push("consumable_count_decreased");
-  }
-  if after.phase != before.phase {
-    evidence.push("phase_changed");
-  }
-  if after.scores != before.scores {
-    evidence.push("scores_changed");
-  }
-  evidence
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::cash_out::{CashOutConfirmationBasis, CashOutConfirmationFailure};
   use crate::model::{
     BALATRO_STATE_SCHEMA_VERSION, CacheHint, ConsumableKind, ConsumableSlot, FrameRef, JokerSlot, ObjectZone, Reading, RoundState,
     ScoreState, SlotId, StoreItem, StoreItemKind, StoreState,
@@ -3956,6 +4507,71 @@ mod tests {
       },
       confidence,
     }
+  }
+
+  fn cash_out_state(phase: BalatroPhase, cash_out_button_visible: bool) -> BalatroState {
+    let mut state = synthetic_store_state(Vec::new());
+    state.phase = phase;
+    state.store.is_store = phase == BalatroPhase::Store;
+    if cash_out_button_visible {
+      state.buttons.push(button("button_cash_out", 100.0, 0.95));
+    }
+    state
+  }
+
+  #[test]
+  fn targeted_cash_out_confirmation_requires_the_store_state() {
+    let before = cash_out_state(BalatroPhase::Playing, true);
+    let button_disappeared = cash_out_state(BalatroPhase::Playing, false);
+    let store = cash_out_state(BalatroPhase::Store, false);
+
+    assert!(matches!(
+      evaluate_cash_out_confirmation(CashOutConfirmationRequest::Targeted, &before, Ok(&button_disappeared)),
+      CashOutConfirmation::NotConfirmed {
+        reason: CashOutConfirmationFailure::NoStoreTransition,
+        ..
+      }
+    ));
+    assert!(matches!(
+      evaluate_cash_out_confirmation(CashOutConfirmationRequest::Targeted, &before, Ok(&store)),
+      CashOutConfirmation::Confirmed {
+        basis: CashOutConfirmationBasis::StoreObserved,
+        ..
+      }
+    ));
+  }
+
+  #[test]
+  fn weak_cash_out_confirmation_accepts_button_disappearance() {
+    let before = cash_out_state(BalatroPhase::Playing, true);
+    let after = cash_out_state(BalatroPhase::Playing, false);
+
+    assert!(matches!(
+      evaluate_cash_out_confirmation(CashOutConfirmationRequest::Weak, &before, Ok(&after)),
+      CashOutConfirmation::Confirmed {
+        basis: CashOutConfirmationBasis::CashOutButtonDisappeared,
+        ..
+      }
+    ));
+  }
+
+  #[test]
+  fn cash_out_result_serializes_delivery_without_generic_verification_or_local_artifact_locators() {
+    let result = CashOutResult {
+      target: "Balatro".to_string(),
+      selected_button: button("button_cash_out", 100.0, 0.95),
+      window_point: WindowPoint::new(120.0, 80.0),
+      delivery: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
+      confirmation: CashOutConfirmation::NotRequested,
+    };
+
+    let value = serde_json::to_value(result).expect("typed cash-out result");
+
+    assert_eq!(value.pointer("/delivery/selected_path").and_then(serde_json::Value::as_str), Some("window_targeted_mouse"));
+    assert_eq!(value.pointer("/confirmation").and_then(serde_json::Value::as_str), Some("not_requested"));
+    assert!(value.get("verification").is_none());
+    assert!(!value.to_string().contains("_image"));
+    assert!(!value.to_string().contains("file_name"));
   }
 
   #[test]
@@ -4173,7 +4789,7 @@ mod tests {
 
     assert_eq!(choices.len(), 5);
     assert_eq!(
-      choices.iter().map(|choice| choice.kind.as_str()).collect::<Vec<_>>(),
+      choices.iter().map(|choice| choice.detector_label.as_str()).collect::<Vec<_>>(),
       vec![
         "poker_card_front",
         "tarot_card",
@@ -4182,7 +4798,7 @@ mod tests {
         "joker_card"
       ]
     );
-    assert_eq!(choices.iter().map(|choice| choice.slot_index).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
+    assert_eq!(choices.iter().map(|choice| choice.id.index()).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
   }
 
   #[test]
@@ -4195,15 +4811,8 @@ mod tests {
     let mut state = synthetic_store_state(Vec::new());
     state.phase = BalatroPhase::Unknown;
     let choice = PackChoice {
-      slot_index: 0,
-      kind: "tarot_card".to_string(),
+      id: PackChoiceId::new(0),
       detector_label: "tarot_card".to_string(),
-      hint: pack_choice_hint("tarot_card").to_string(),
-      hover_required: true,
-      hover_text: None,
-      hover_frame: None,
-      hover_ocr_region: None,
-      hover_error: None,
       bbox: BoundingBox {
         x1: 540.0,
         y1: 610.0,
@@ -4216,14 +4825,13 @@ mod tests {
     assert!(resolve_pack_confirm_target(&state, &choice).is_err());
 
     state.buttons.push(button("button_use", 760.0, 0.96));
-    let use_button = resolve_pack_confirm_target(&state, &choice).unwrap();
-    assert_eq!(use_button.source, ActionTargetSource::YoloButton);
+    let (use_button, _) = resolve_pack_confirm_target(&state, &choice).unwrap();
+    assert!(matches!(use_button, PackChooseControl::DetectedButton { .. }));
 
     state.buttons.clear();
     state.buttons.push(button("button_card_pack_skip", 1080.0, 0.95));
-    let fallback = resolve_pack_confirm_target(&state, &choice).unwrap();
-    assert_eq!(fallback.source, ActionTargetSource::LayoutFallback);
-    assert_eq!(fallback.fallback_reason.as_deref(), Some("pack_confirm_button_missing_visible_layout_match"));
+    let (fallback, _) = resolve_pack_confirm_target(&state, &choice).unwrap();
+    assert_eq!(fallback, PackChooseControl::ActivePackLayout);
   }
 
   #[test]
@@ -4231,14 +4839,13 @@ mod tests {
     let mut state = synthetic_store_state(Vec::new());
     state.consumables = vec![consumable_item(0, 1250.0)];
     state.buttons.push(button("button_use", 1420.0, 0.96));
-    let use_button = resolve_consumable_use_target(&state, 0).unwrap();
-    assert_eq!(use_button.source, ActionTargetSource::YoloButton);
+    let (use_button, _) = resolve_consumable_use_target(&state, 0).unwrap();
+    assert!(matches!(use_button, ConsumableUseControl::DetectedButton { .. }));
 
     state.buttons.clear();
-    let fallback = resolve_consumable_use_target(&state, 0).unwrap();
-    assert_eq!(fallback.source, ActionTargetSource::LayoutFallback);
-    assert_eq!(fallback.fallback_reason.as_deref(), Some("consumable_use_button_missing_selected_card_layout_match"));
-    assert!(fallback.frame_point.x > 1250.0);
+    let (fallback, fallback_point) = resolve_consumable_use_target(&state, 0).unwrap();
+    assert_eq!(fallback, ConsumableUseControl::SelectedConsumableLayout);
+    assert!(fallback_point.x > 1250.0);
   }
 
   #[test]
@@ -4246,14 +4853,13 @@ mod tests {
     let mut state = synthetic_store_state(Vec::new());
     state.buttons.push(button("button_store_next_round", 490.0, 0.98));
     let target = resolve_store_next_round_target(&state).unwrap();
-    assert_eq!(target.source, ActionTargetSource::YoloButton);
+    assert!(matches!(target, StoreNextRoundTarget::DetectedButton { .. }));
 
     state.buttons.clear();
     state.store.is_store = true;
     state.store.can_next_round = false;
     let fallback = resolve_store_next_round_target(&state).unwrap();
-    assert_eq!(fallback.source, ActionTargetSource::LayoutFallback);
-    assert_eq!(fallback.fallback_reason.as_deref(), Some("yolo_button_missing_visible_layout_match"));
+    assert!(matches!(fallback, StoreNextRoundTarget::StoreLayout { .. }));
 
     state.buttons.push(button("button_purchase", 580.0, 0.96));
     assert!(resolve_store_next_round_target(&state).is_err());
@@ -4271,8 +4877,7 @@ mod tests {
 
     let fallback = resolve_store_next_round_target(&state).unwrap();
 
-    assert_eq!(fallback.source, ActionTargetSource::LayoutFallback);
-    assert_eq!(fallback.fallback_reason.as_deref(), Some("yolo_button_missing_visible_layout_match"));
+    assert!(matches!(fallback, StoreNextRoundTarget::StoreLayout { .. }));
   }
 
   #[test]
@@ -4299,8 +4904,7 @@ mod tests {
 
     let fallback = resolve_store_next_round_target(&state).unwrap();
 
-    assert_eq!(fallback.source, ActionTargetSource::LayoutFallback);
-    assert_eq!(fallback.fallback_reason.as_deref(), Some("yolo_button_missing_visible_layout_match"));
+    assert!(matches!(fallback, StoreNextRoundTarget::StoreLayout { .. }));
   }
 
   #[test]
@@ -4339,58 +4943,49 @@ mod tests {
   }
 
   #[test]
-  fn card_operation_verification_accepts_changed_hand_fingerprints() {
-    let mut before = synthetic_store_state(Vec::new());
-    before.phase = BalatroPhase::Playing;
-    before.hand = vec![
-      hand_card(0, "before-a"),
-      hand_card(1, "before-b"),
-      hand_card(2, "before-c"),
-    ];
-
-    let mut after = before.clone();
-    after.hand = vec![
-      hand_card(0, "after-a"),
-      hand_card(1, "after-b"),
-      hand_card(2, "after-c"),
-    ];
-
-    assert!(verify_card_operation("cards.play", &before, &after));
-    assert!(verify_card_operation("cards.discard", &before, &after));
-  }
-
-  #[test]
-  fn sell_operation_verification_accepts_joker_count_decrease() {
+  fn sell_confirmation_accepts_joker_count_decrease() {
     let mut before = synthetic_store_state(Vec::new());
     before.jokers = vec![joker_item(0, 100.0), joker_item(1, 140.0)];
     let mut after = before.clone();
     after.jokers.pop();
 
-    assert!(verify_sell_operation(ObjectReadZone::Joker, &before, &after));
-    assert_eq!(sell_operation_evidence(ObjectReadZone::Joker, &before, &after), vec!["joker_count_decreased"]);
+    assert_eq!(
+      evaluate_object_sell_confirmation(ObjectZone::Joker, &before, Ok(&after)),
+      ObjectSellConfirmation::Sold {
+        basis: crate::object_sell::ObjectSellConfirmationBasis::ObjectRemoved,
+      }
+    );
   }
 
   #[test]
-  fn sell_operation_verification_accepts_consumable_count_decrease() {
+  fn sell_confirmation_accepts_consumable_count_decrease() {
     let mut before = synthetic_store_state(Vec::new());
     before.consumables = vec![consumable_item(0, 100.0), consumable_item(1, 140.0)];
     let mut after = before.clone();
     after.consumables.pop();
 
-    assert!(verify_sell_operation(ObjectReadZone::Consumable, &before, &after));
-    assert_eq!(sell_operation_evidence(ObjectReadZone::Consumable, &before, &after), vec!["consumable_count_decreased"]);
+    assert_eq!(
+      evaluate_object_sell_confirmation(ObjectZone::Consumable, &before, Ok(&after)),
+      ObjectSellConfirmation::Sold {
+        basis: crate::object_sell::ObjectSellConfirmationBasis::ObjectRemoved,
+      }
+    );
   }
 
   #[test]
-  fn sell_operation_verification_accepts_cash_change_when_detection_is_noisy() {
+  fn sell_confirmation_accepts_cash_change_when_detection_is_noisy() {
     let mut before = synthetic_store_state(Vec::new());
     before.jokers = vec![joker_item(0, 100.0)];
     before.rounds.cash = Some("$7".to_string());
     let mut after = before.clone();
     after.rounds.cash = Some("$9".to_string());
 
-    assert!(verify_sell_operation(ObjectReadZone::Joker, &before, &after));
-    assert_eq!(sell_operation_evidence(ObjectReadZone::Joker, &before, &after), vec!["cash_changed"]);
+    assert_eq!(
+      evaluate_object_sell_confirmation(ObjectZone::Joker, &before, Ok(&after)),
+      ObjectSellConfirmation::Sold {
+        basis: crate::object_sell::ObjectSellConfirmationBasis::CashChanged,
+      }
+    );
   }
 
   #[test]
@@ -4547,62 +5142,6 @@ mod tests {
     assert_eq!(interactions[1].visual_fingerprint.as_deref(), Some("card-b"));
     assert!(interactions[1].click_frame_point.x > state.hand[0].bbox.x2 as f64);
     assert!(interactions[1].click_frame_point.x < state.hand[2].bbox.x1 as f64);
-  }
-
-  #[test]
-  fn operation_summary_strips_bbox_and_trace_details() {
-    let mut payload = json!({
-      "operation": "cards.select",
-      "target": "Balatro",
-      "selected_cards": [
-        {
-          "slot": { "zone": "hand", "index": 0 },
-          "bbox": { "x1": 1.0, "y1": 2.0, "x2": 3.0, "y2": 4.0 },
-        }
-      ],
-      "click_targets": [
-        {
-          "slot": { "zone": "hand", "index": 0 },
-          "bbox": { "x1": 1.0, "y1": 2.0, "x2": 3.0, "y2": 4.0 },
-          "point": { "x": 12.0, "y": 34.0 },
-        }
-      ],
-      "selection_evidence": {
-        "requested_slots": [0],
-        "selected_slots": [0],
-        "passed": true
-      },
-      "verification": {
-        "mode": "targeted",
-        "passed": true,
-        "after_image": "/tmp/after.png",
-        "retry_click_point": { "x": 1.0, "y": 2.0 },
-      }
-    });
-
-    strip_operation_details(&mut payload);
-
-    assert_eq!(payload["operation"], "cards.select");
-    assert_eq!(payload["verification"]["passed"], true);
-    assert!(payload.get("selected_cards").is_none());
-    assert!(payload.get("click_targets").is_none());
-    assert!(payload.get("selection_evidence").is_none());
-    assert!(payload["verification"].get("after_image").is_none());
-    assert!(payload["verification"].get("retry_click_point").is_none());
-  }
-
-  #[test]
-  fn operation_details_are_left_intact_when_not_stripped() {
-    let payload = json!({
-      "operation": "cards.select",
-      "selected_cards": [
-        {
-          "bbox": { "x1": 1.0, "y1": 2.0, "x2": 3.0, "y2": 4.0 },
-        }
-      ],
-    });
-
-    assert!(payload["selected_cards"][0].get("bbox").is_some());
   }
 
   #[test]

@@ -14,12 +14,13 @@ repository.workspace = true
 
 [features]
 default = []
+tracing = ["dep:auv-tracing"]
 card-corner-onnx = ["dep:auv-inference-ort"]
 
 [dependencies]
 auv-file = { path = "../auv-file" }
 auv-stage-status = { path = "../auv-stage-status" }
-auv-tracing = { path = "../auv-tracing" }
+auv-tracing = { path = "../auv-tracing", optional = true }
 auv-driver = { path = "../auv-driver" }
 auv-inference-common = { path = "../auv-inference-common" }
 auv-inference-ort = { path = "../auv-inference-ort", optional = true }
@@ -41,3 +42,7 @@ auv-driver-macos = { path = "../auv-driver-macos" }
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
 tempfile = "3"
+
+[[test]]
+name = "tracing_contract"
+required-features = ["tracing"]

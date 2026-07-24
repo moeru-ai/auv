@@ -12,11 +12,6 @@ use std::process::{self, ExitCode};
 use std::sync::Arc;
 
 use crate::cli::{CliCommand, InspectClientOptions, help_text, parse_cli, parse_donor_cli, root_donor_tombstone, version_text};
-use crate::integrations::minecraft::verification::query_wired_verification_readable;
-use crate::integrations::minecraft::{
-  QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action,
-};
-use auv_runtime::app::{analyze_app_probe, probe_app};
 
 #[allow(dead_code)] // used by root bin; donor bins only call run_donor_bin
 pub async fn run_root() -> Result<i32, String> {
@@ -86,7 +81,7 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       host: host.clone(),
       port: *port,
     };
-    auv_inspect_server::serve(store, config, Arc::new(crate::projection::ProductInspectReadProjection::default())).await?;
+    auv_inspect_server::serve(store, config).await?;
     return Ok(0);
   }
 
@@ -156,7 +151,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       }
       let output = output?;
       println!("runId: {run_id}");
-      print_minecraft_projection_publications(&output.publications);
       print_minecraft_projection_refusal(&output.evidence);
     }
     CliCommand::MinecraftCalibrateProjection {
@@ -187,7 +181,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       }
       let output = output?;
       println!("runId: {run_id}");
-      print_minecraft_projection_publications(&output.publications);
       print_minecraft_projection_refusal(&output.evidence);
     }
     CliCommand::MinecraftLiveClick {
@@ -224,8 +217,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       }
       let output = output?;
       println!("runId: {run_id}");
-      print_minecraft_projection_publications(&output.publications);
-      println!("inputSummary: {}", output.input_summary);
       println!("inputPath: {:?}", output.input_action.selected_path);
       println!("inputSucceeded: {}", output.input_action.attempts.last().is_some_and(|attempt| attempt.succeeded));
       println!("verificationExecuted: {}", output.verification.executed);
@@ -256,7 +247,7 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       let output = output?;
       println!("runId: {export_run_id}");
       println!("status: completed");
-      println!("sourceRunId: {}", output.manifest.source_run.source_run_id);
+      println!("sourceRunId: {}", output.manifest.source_run.run_id);
       println!("spatialFrames: {}", output.manifest.counts.spatial_frames);
       println!("screenshots: {}", output.manifest.counts.screenshots);
       println!("verification: {}", output.manifest.counts.verification);
@@ -292,541 +283,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       println!("manifest: {}", output.manifest_path.display());
       println!("cameras: {}", output.cameras_path.display());
       println!("output: {}", output.output_dir.display());
-    }
-    CliCommand::MinecraftExport3dgsTrainingPackage {
-      scene_packet_manifest_path,
-      output_dir,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_package_export(
-          PathBuf::from(scene_packet_manifest_path),
-          PathBuf::from(output_dir),
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training package export recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("status: completed");
-      println!("trainingPackageSchema: {}", output.manifest.schema_version);
-      println!("sourceRuns: {}", output.manifest.source_run_ids.join(","));
-      println!("frames: {}", output.manifest.counts.frames);
-      println!("images: {}", output.manifest.counts.images);
-      println!(
-        "compatibilityStatus: {}",
-        match output.inspect_report.compatibility_views[0].status {
-          auv_game_minecraft::TrainingCompatibilityStatus::Ready => "ready",
-          auv_game_minecraft::TrainingCompatibilityStatus::Partial => "partial",
-          auv_game_minecraft::TrainingCompatibilityStatus::Blocked => "blocked",
-        }
-      );
-      println!("compatibilityExportedFrames: {}", output.manifest.counts.compatibility_exported_frames);
-      println!("manifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-      if let Some(transforms_path) = output.compatibility_transforms_path.as_ref() {
-        println!("nerfstudioTransforms: {}", transforms_path.display());
-      } else {
-        println!("nerfstudioTransforms: none");
-      }
-      println!("output: {}", output.output_dir.display());
-    }
-    CliCommand::MinecraftPrepare3dgsTraining {
-      training_package_manifest_path,
-      output_dir,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_launch_preparation(
-          PathBuf::from(training_package_manifest_path),
-          PathBuf::from(output_dir),
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training launch preparation recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("status: completed");
-      println!("trainerBackend: {}", output.manifest.trainer_backend);
-      println!(
-        "trainerReadiness: {}",
-        match output.inspect_report.trainer_readiness {
-          auv_game_minecraft::TrainingLaunchReadiness::Ready => "ready",
-          auv_game_minecraft::TrainingLaunchReadiness::Blocked => "blocked",
-        }
-      );
-      println!(
-        "readinessBlocker: {}",
-        match output.inspect_report.readiness_blocker {
-          Some(auv_game_minecraft::TrainingLaunchReadinessBlocker::CompatibilityViewBlocked) => {
-            "compatibility_view_blocked"
-          }
-          Some(auv_game_minecraft::TrainingLaunchReadinessBlocker::TransformsMissing) => {
-            "transforms_missing"
-          }
-          Some(auv_game_minecraft::TrainingLaunchReadinessBlocker::TrainerCommandUnavailable) => {
-            "trainer_command_unavailable"
-          }
-          None => "none",
-        }
-      );
-      println!("launchCommand: {}", output.manifest.launch_command);
-      println!("launchPlan: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-      println!("runbook: {}", output.runbook_path.display());
-      println!("output: {}", output.output_dir.display());
-    }
-    CliCommand::MinecraftLaunch3dgsTrainingJob {
-      training_launch_plan_path,
-      output_dir,
-      training_job_endpoint,
-      training_job_token,
-      training_job_submit_command,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_job_launch_with_environment(
-          PathBuf::from(training_launch_plan_path),
-          PathBuf::from(output_dir),
-          training_job_endpoint,
-          training_job_token,
-          training_job_submit_command,
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training job launch recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("remoteJobStatus: {}", output.inspect_report.status.as_str());
-      println!("trainerBackend: {}", output.manifest.trainer_backend);
-      println!("providerBackend: {}", output.manifest.provider_backend);
-      println!("jobBackend: {}", output.manifest.job_backend);
-      println!(
-        "submissionState: {}",
-        match output.inspect_report.status {
-          auv_game_minecraft::TrainingLaunchJobStatus::Blocked => "blocked_before_submission",
-          auv_game_minecraft::TrainingLaunchJobStatus::Failed => "submission_failed",
-          auv_game_minecraft::TrainingLaunchJobStatus::Queued
-          | auv_game_minecraft::TrainingLaunchJobStatus::Submitted
-          | auv_game_minecraft::TrainingLaunchJobStatus::Succeeded => {
-            "submission_submitted_or_queued"
-          }
-        }
-      );
-      println!("acceptedByProvider: {}", output.inspect_report.accepted_by_provider);
-      println!(
-        "submissionRecordedAtMillis: {}",
-        output.inspect_report.submission_recorded_at_millis.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string())
-      );
-      println!(
-        "readinessBlocker: {}",
-        match output.inspect_report.readiness_blocker {
-          Some(auv_game_minecraft::TrainingLaunchJobBlocker::MissingConfiguration) => {
-            "missing_configuration"
-          }
-          Some(auv_game_minecraft::TrainingLaunchJobBlocker::MissingAuthentication) => {
-            "missing_authentication"
-          }
-          Some(auv_game_minecraft::TrainingLaunchJobBlocker::IncompleteLaunchPlan) => {
-            "incomplete_launch_plan"
-          }
-          Some(auv_game_minecraft::TrainingLaunchJobBlocker::UnsupportedBackend) => {
-            "unsupported_backend"
-          }
-          Some(auv_game_minecraft::TrainingLaunchJobBlocker::SubmissionFailed) => {
-            "submission_failed"
-          }
-          None => "none",
-        }
-      );
-      println!("launchCommand: {}", output.manifest.launch_command);
-      println!("configuredJobSubmissionCommand: {}", output.manifest.job_submission_command);
-      println!("launchPlan: {}", output.manifest.source_training_launch_plan_path);
-      println!("manifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-      println!("runbook: {}", output.runbook_path.display());
-      println!("output: {}", output.output_dir.display());
-    }
-    CliCommand::MinecraftCollect3dgsTrainingJobResult {
-      training_job_manifest_path,
-      output_dir,
-      training_job_endpoint,
-      training_job_token,
-      training_job_status_command,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
-          PathBuf::from(training_job_manifest_path),
-          PathBuf::from(output_dir),
-          training_job_endpoint,
-          training_job_token,
-          training_job_status_command,
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training result collection recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("status: {}", output.inspect_report.status.as_str());
-      println!("statusMessage: {}", output.inspect_report.status_message.as_deref().unwrap_or("none"));
-      println!("remoteResultStatus: {}", output.inspect_report.status.as_str());
-      println!("trainerBackend: {}", output.manifest.trainer_backend);
-      println!("jobBackend: {}", output.manifest.job_backend);
-      println!(
-        "statusReason: {}",
-        match output.inspect_report.status_reason {
-          Some(auv_game_minecraft::TrainingResultReason::MissingConfiguration) => {
-            "missing_configuration"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::MissingAuthentication) => {
-            "missing_authentication"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::LaunchBlocked) => "launch_blocked",
-          Some(auv_game_minecraft::TrainingResultReason::RemoteStatusUnavailable) => {
-            "remote_status_unavailable"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::ProviderReportedFailed) => {
-            "provider_reported_failed"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::ResultDirectoryMissing) => {
-            "result_directory_missing"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::ResultArtifactsMissing) => {
-            "result_artifacts_missing"
-          }
-          None => "none",
-        }
-      );
-      println!(
-        "resultStateInterpretation: {}",
-        match output.inspect_report.status_reason {
-          Some(auv_game_minecraft::TrainingResultReason::MissingConfiguration) => {
-            "blocked_without_remote_configuration"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::MissingAuthentication) => {
-            "blocked_without_remote_authentication"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::LaunchBlocked) => {
-            "upstream_job_never_submitted"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::RemoteStatusUnavailable) => {
-            "remote_job_state_not_yet_readable"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::ProviderReportedFailed) => {
-            "provider_reported_training_failed"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::ResultDirectoryMissing) => {
-            "legacy_adapter_result_dir_missing"
-          }
-          Some(auv_game_minecraft::TrainingResultReason::ResultArtifactsMissing) => {
-            "legacy_adapter_key_result_artifacts_missing"
-          }
-          None => match output.inspect_report.status {
-            auv_game_minecraft::TrainingResultStatus::Succeeded
-            | auv_game_minecraft::TrainingResultStatus::Submitted
-            | auv_game_minecraft::TrainingResultStatus::Queued => {
-              if !output.inspect_report.result_dir_exists || !output.inspect_report.key_result_artifacts_present {
-                "provider_status_recorded_local_results_not_yet_observed"
-              } else {
-                "provider_status_matches_local_result_observation"
-              }
-            }
-            _ => "provider_status_recorded",
-          },
-        }
-      );
-      println!("jobId: {}", output.manifest.job_id);
-      println!("jobUrl: {}", output.manifest.job_url.as_deref().unwrap_or("none"));
-      println!("resultDir: {}", output.manifest.result_dir);
-      println!("resultDirExists: {}", output.inspect_report.result_dir_exists);
-      println!("keyResultArtifactsPresent: {}", output.inspect_report.key_result_artifacts_present);
-      println!("manifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-      println!("runbook: {}", output.runbook_path.display());
-      println!("output: {}", output.output_dir.display());
-    }
-    CliCommand::MinecraftFetch3dgsTrainingResultArtifacts {
-      training_result_manifest_path,
-      output_dir,
-      training_job_endpoint,
-      training_job_token,
-      artifact_fetch_command,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_result_artifact_fetch(
-          PathBuf::from(training_result_manifest_path),
-          PathBuf::from(output_dir),
-          training_job_endpoint,
-          training_job_token,
-          artifact_fetch_command,
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training result artifact fetch recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("fetchStatus: {}", output.inspect_report.fetch_status.as_str());
-      println!("trainerBackend: {}", output.manifest.trainer_backend);
-      println!("jobBackend: {}", output.manifest.job_backend);
-      println!("sourceResultStatus: {}", output.manifest.source_result_status.as_str());
-      println!("fetchReason: {}", output.inspect_report.fetch_reason.map(|reason| reason.as_str()).unwrap_or("none"));
-      println!("sourceResultDir: {}", output.manifest.source_result_dir);
-      println!("normalizedResultDir: {}", output.manifest.normalized_result_dir);
-      println!("normalizedArtifactCount: {}", output.inspect_report.normalized_artifact_count);
-      println!("requiredArtifactsPresent: {}", output.inspect_report.required_artifacts_present);
-      println!("manifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-      println!("output: {}", output.output_dir.display());
-    }
-
-    CliCommand::MinecraftInspect3dgsTrainingResultHoldout {
-      training_result_semantic_manifest_path,
-      holdout_frame_index,
-      holdout_render_command,
-      output_dir,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_result_holdout_preview(
-          PathBuf::from(training_result_semantic_manifest_path),
-          holdout_frame_index,
-          holdout_render_command,
-          PathBuf::from(output_dir),
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training holdout inspection recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("status: {}", output.manifest.status.as_str());
-      println!("reason: {}", output.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
-      println!("holdoutFrameIndex: {}", output.manifest.holdout_frame_index);
-      println!(
-        "spatialFrameId: {}",
-        output.manifest.holdout_frame.as_ref().map(|witness| witness.spatial_frame_id.as_str()).unwrap_or("none")
-      );
-      println!("basisCheckpointPath: {}", output.manifest.basis_checkpoint_path.as_deref().unwrap_or("none"));
-      println!("holdoutScreenshotPath: {}", output.manifest.holdout_screenshot_path.as_deref().unwrap_or("none"));
-      println!("holdoutPreviewManifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-    }
-
-    CliCommand::MinecraftMeasure3dgsHoldoutRenderQuality {
-      training_result_semantic_manifest_path,
-      holdout_preview_manifest_path,
-      render_command,
-      output_dir,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_measure_3dgs_holdout_render_quality(
-          PathBuf::from(training_result_semantic_manifest_path),
-          PathBuf::from(holdout_preview_manifest_path),
-          render_command,
-          PathBuf::from(output_dir),
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft holdout render quality recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("status: {}", output.manifest.status.as_str());
-      println!("verdict: {}", output.manifest.verdict.as_str());
-      println!("imageSizeMatch: {}", output.manifest.image_size_match);
-      let metrics = output.manifest.metrics.as_ref();
-      println!(
-        "l1Mean: {}",
-        metrics.and_then(|metrics| metrics.l1_mean).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string())
-      );
-      println!("mse: {}", metrics.and_then(|metrics| metrics.mse).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()));
-      println!("psnr: {}", metrics.and_then(|metrics| metrics.psnr).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()));
-      println!("manifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-      println!("output: {}", output.output_dir.display());
-    }
-    CliCommand::MinecraftQuery3dgsTrainingResult {
-      training_result_semantic_manifest_path,
-      target_block,
-      target_face,
-      target_semantics,
-      query_command,
-      use_checkpoint_native_provider,
-      use_closed_scene_toy_provider,
-      closed_scene_fixture_path,
-      output_dir,
-      inspect,
-    } => {
-      let target_block = parse_block_position(&target_block)?;
-      let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
-      let target_semantics = parse_target_semantics(&target_semantics)?;
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_result_spatial_query(
-          PathBuf::from(training_result_semantic_manifest_path),
-          target_block,
-          target_face,
-          target_semantics,
-          query_command,
-          use_checkpoint_native_provider,
-          use_closed_scene_toy_provider,
-          closed_scene_fixture_path.map(PathBuf::from),
-          PathBuf::from(output_dir),
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training spatial query recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("status: {}", output.manifest.status.as_str());
-      if matches!(
-        output.manifest.status,
-        auv_game_minecraft::TrainingResultSpatialQueryStatus::Blocked | auv_game_minecraft::TrainingResultSpatialQueryStatus::Failed
-      ) {
-        println!("reason: {}", output.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
-      }
-      println!("selectedBackend: {}", output.manifest.selected_backend.map(|backend| backend.as_str()).unwrap_or("none"));
-      println!(
-        "visibility: {}",
-        output.manifest.visibility.map(|visibility| format!("{visibility:?}")).unwrap_or_else(|| "none".to_string())
-      );
-      if let Some(screen_point) = output.manifest.screen_point {
-        println!("screenPoint: {},{}", screen_point.x, screen_point.y);
-      } else {
-        println!("screenPoint: none");
-      }
-      println!("basisFrameId: {}", output.manifest.basis_frame_id.as_deref().unwrap_or("none"));
-      println!("comparisonVerdict: {}", output.manifest.comparison_verdict.map(|verdict| verdict.as_str()).unwrap_or("none"));
-      println!("queryManifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
-    }
-    CliCommand::MinecraftQueryWiredLiveClick {
-      training_result_semantic_manifest_path,
-      target_block,
-      target_face,
-      target_semantics,
-      query_command,
-      use_checkpoint_native_provider,
-      use_closed_scene_toy_provider,
-      closed_scene_fixture_path,
-      output_dir,
-      target_app,
-      target_title,
-      telemetry_sample,
-      post_telemetry_sample,
-      verification_expected_item_id,
-      inspect,
-    } => {
-      let target_block = parse_block_position(&target_block)?;
-      let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
-      let target_semantics = parse_target_semantics(&target_semantics)?;
-      let telemetry_witness = telemetry_sample.map(|pre_sample| QueryWiredLiveActionTelemetryWitness {
-        pre_telemetry_sample: PathBuf::from(pre_sample),
-        post_telemetry_sample: post_telemetry_sample.map(PathBuf::from),
-      });
-      let inputs = QueryWiredLiveActionInputs {
-        training_result_semantic_manifest_path: PathBuf::from(training_result_semantic_manifest_path),
-        target_block,
-        target_face,
-        target_semantics,
-        query_command,
-        use_checkpoint_native_provider,
-        use_closed_scene_toy_provider,
-        closed_scene_fixture_path: closed_scene_fixture_path.map(PathBuf::from),
-        output_dir: PathBuf::from(output_dir),
-        target_app,
-        target_title,
-        telemetry_witness,
-        verification_expected_item_id,
-      };
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        run_minecraft_query_wired_live_action(inputs)
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: query-wired action recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("queryStatus: {}", output.query.manifest.status.as_str());
-      println!("wiringAttempted: {}", output.wiring.attempted);
-      println!("actionEligibility: {}", output.wiring.action_eligibility.as_str());
-      println!("inputActionCount: {}", output.input_actions.len());
-      println!("verificationCount: {}", output.verifications.len());
-      if query_wired_verification_readable(&output.wiring) && should_write_local(&inspect) {
-        println!("{}", format_query_wired_inspect_hint(run_id, &inspect));
-      }
-    }
-    CliCommand::MinecraftValidate3dgsTrainingResult {
-      training_result_artifact_manifest_path,
-      output_dir,
-      inspect,
-    } => {
-      let authority = build_cli_authority(&project_root, &inspect).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        crate::integrations::minecraft::run_minecraft_3dgs_training_result_semantic_validation(
-          PathBuf::from(training_result_artifact_manifest_path),
-          PathBuf::from(output_dir),
-        )
-      });
-      let output = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: Minecraft training result validation recording failure for run {run_id}: {failure}");
-      }
-      let output = output?;
-      println!("status: {}", output.inspect_report.semantic_status.as_str());
-      println!("reason: {}", output.inspect_report.semantic_reason.map(|reason| reason.as_str()).unwrap_or("none"));
-      println!("trainerBackend: {}", output.manifest.trainer_backend);
-      println!("checkpointCount: {}", output.inspect_report.checkpoint_count);
-      println!("configTrainer: {}", output.inspect_report.config_trainer.as_deref().unwrap_or("none"));
-      println!("semanticManifest: {}", output.manifest_path.display());
-      println!("inspectReport: {}", output.inspect_report_path.display());
     }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
@@ -946,36 +402,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
         print!("{}", auv_cli_invoke::render_help_index(&registry));
       }
     }
-    CliCommand::AppProbe {
-      bundle_id,
-      output_dir,
-    } => {
-      let authority = build_cli_authority(&project_root, &InspectClientOptions::default()).await?;
-      let run_id = auv_tracing::RunId::new();
-      let root = auv_tracing::dispatcher::with_default(&authority.dispatch, || auv_tracing::Context::root(run_id));
-      let future = root.in_scope(|| {
-        auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
-        async move { probe_app(&project_root, &bundle_id, output_dir.map(PathBuf::from)) }
-      });
-      let probe = root.instrument(future).await;
-      if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
-        eprintln!("warning: app probe recording failure for run {run_id}: {failure}");
-      }
-      let probe = probe?;
-      println!("runId: {run_id}");
-      println!("app: {}", probe.app.bundle_id);
-      println!("status: {}", app_probe_presentation_status(&probe.steps));
-      println!("probe: {}", probe.output_dir.join("probe.json").display());
-      println!("steps: {}", probe.steps.len());
-    }
-    CliCommand::AppAnalyze { query } => {
-      let output = analyze_app_probe(&PathBuf::from(query))?;
-      println!("app: {}", output.analysis.app_identity.bundle_id);
-      println!("status: analyzed");
-      println!("analysis: {}", output.analysis_path.display());
-      println!("report: {}", output.report_path.display());
-      println!("annotations: {}", output.analysis.annotation_candidates.len());
-    }
     CliCommand::GodotCapabilityQuery { json } => {
       let capabilities = auv_godot::query_current_capabilities().map_err(|error| error.to_string())?;
       if json {
@@ -1044,8 +470,8 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       println!("status: completed");
       println!("beatmap: {}", output.map_summary.beatmap_path);
       println!("objects: {}", output.map_summary.total_objects);
-      println!("latencyP95Ms: {}", output.latency_report.p95_error_ms);
-      println!("jitterMs: {}", output.latency_report.jitter_ms);
+      println!("latencyP95Ms: {}", output.benchmark_report.latency.p95_error_ms);
+      println!("jitterMs: {}", output.benchmark_report.latency.jitter_ms);
       println!("output: {}", output.output_dir.display());
     }
     CliCommand::OsuBenchmarkDispatch {
@@ -1085,11 +511,11 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       println!("status: completed");
       println!("beatmap: {}", output.map_summary.beatmap_path);
       println!("objects: {}", output.map_summary.total_objects);
-      println!("latencyP95Ms: {}", output.latency_report.p95_error_ms);
-      println!("jitterMs: {}", output.latency_report.jitter_ms);
-      if let Some(summary) = &output.verification_summary {
-        println!("verificationCapturedActions: {}", summary.captured_action_count);
-        println!("verificationMissingFrames: {}", summary.missing_frame_count);
+      println!("latencyP95Ms: {}", output.benchmark_report.latency.p95_error_ms);
+      println!("jitterMs: {}", output.benchmark_report.latency.jitter_ms);
+      if let Some(coverage) = &output.benchmark_report.capture_coverage {
+        println!("captureCoveredActions: {}", coverage.captured_action_count);
+        println!("captureMissingActions: {}", coverage.missing_action_count);
       }
       println!("output: {}", output.output_dir.display());
     }
@@ -1172,24 +598,15 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       println!("status: completed");
       println!("beatmap: {}", output.map_summary.beatmap_path);
       println!("objects: {}", output.map_summary.total_objects);
-      println!("latencyP95Ms: {}", output.latency_report.p95_error_ms);
-      println!("jitterMs: {}", output.latency_report.jitter_ms);
-      println!("dispatchSamples: {}", output.dispatch_trace.len());
-      println!("captureArtifacts: {}", output.capture_trace.len());
-      println!(
-        "evidenceNotes: {}",
-        if output.evidence_summary.evidence_notes.is_empty() {
-          "none".to_string()
-        } else {
-          output.evidence_summary.evidence_notes.join(" | ")
-        }
-      );
-      println!("hasEvidenceArtifact: {}", output.output_dir.join("evidence_summary.json").exists());
+      println!("latencyP95Ms: {}", output.benchmark_report.latency.p95_error_ms);
+      println!("jitterMs: {}", output.benchmark_report.latency.jitter_ms);
+      println!("dispatchSamples: {}", output.dispatch_samples.len());
+      println!("captureSamples: {}", output.capture_samples.len());
       println!("hasProjectionArtifact: {}", output.projection.as_ref().is_some());
       println!("hasVisualTruthManifest: {}", output.visual_truth_manifest.as_ref().is_some());
-      if let Some(summary) = &output.verification_summary {
-        println!("verificationCapturedActions: {}", summary.captured_action_count);
-        println!("verificationMissingFrames: {}", summary.missing_frame_count);
+      if let Some(coverage) = &output.benchmark_report.capture_coverage {
+        println!("captureCoveredActions: {}", coverage.captured_action_count);
+        println!("captureMissingActions: {}", coverage.missing_action_count);
       }
       println!("output: {}", output.output_dir.display());
     }
@@ -1221,10 +638,7 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
       if let Some(failure) = flush_cli_recording(&authority.dispatch).await {
         eprintln!("warning: invoke recording failure for run {run_id}: {failure}");
       }
-      let result = auv_cli_invoke::InvokeResult::from_command_result(run_id.to_string(), &command, direct_result);
-      for failure in &result.artifact_failures {
-        eprintln!("warning: artifact instrumentation failed for {}: {}", failure.purpose, failure.message);
-      }
+      let result = auv_cli_invoke::InvokeResult::from_command_result(run_id, &command, direct_result);
       let outcome = auv_cli_invoke::render_invoke_result(&result, output)?;
       exit_code = outcome.exit_code;
     }
@@ -1254,44 +668,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
   }
 
   Ok(exit_code)
-}
-
-fn app_probe_presentation_status(steps: &[auv_runtime::app::AppProbeStep]) -> &'static str {
-  if !steps.is_empty() && steps.iter().all(|step| step.status == "completed") {
-    "captured"
-  } else if steps.is_empty() || steps.iter().all(|step| step.status == "failed") {
-    "failed"
-  } else {
-    "partial"
-  }
-}
-
-fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> {
-  match raw {
-    "up" => Ok(auv_game_minecraft::BlockFace::Up),
-    "down" => Ok(auv_game_minecraft::BlockFace::Down),
-    "north" => Ok(auv_game_minecraft::BlockFace::North),
-    "south" => Ok(auv_game_minecraft::BlockFace::South),
-    "east" => Ok(auv_game_minecraft::BlockFace::East),
-    "west" => Ok(auv_game_minecraft::BlockFace::West),
-    other => Err(format!("invalid --target-face {other:?}; expected up, down, north, south, east, or west")),
-  }
-}
-
-fn print_minecraft_projection_publications(
-  publications: &crate::integrations::minecraft::projection_workflow::MinecraftProjectionPublications,
-) {
-  for (label, artifact) in [
-    ("screenshotArtifact", publications.screenshot.as_ref()),
-    ("spatialFrameArtifact", publications.spatial_frame.as_ref()),
-    ("projectionArtifact", publications.projection.as_ref()),
-    ("overlayArtifact", publications.overlay.as_ref()),
-    ("calibrationArtifact", publications.calibration.as_ref()),
-  ] {
-    if let Some(artifact) = artifact {
-      println!("{label}: {}", artifact.uri());
-    }
-  }
 }
 
 fn print_minecraft_projection_refusal(evidence: &auv_game_minecraft::evidence::ProjectionEvidence) {
@@ -1412,23 +788,6 @@ fn permission_status_line(status: &str) -> String {
     "granted" => "[ok] granted".to_string(),
     "missing" => "[missing] missing".to_string(),
     other => format!("[unknown] {other}"),
-  }
-}
-
-fn shell_quote_hint_path(path: &str) -> String {
-  if path.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-')) {
-    path.to_string()
-  } else {
-    format!("'{}'", path.replace('\'', "'\"'\"'"))
-  }
-}
-
-fn format_query_wired_inspect_hint(run_id: impl std::fmt::Display, inspect: &InspectClientOptions) -> String {
-  if let Some(store_root) = inspect.store_root.as_deref() {
-    let store_root = shell_quote_hint_path(store_root);
-    format!("inspectHint: run `auv inspect {run_id} --store-root {store_root}` to view verification_outcome")
-  } else {
-    format!("inspectHint: run `auv inspect {run_id}` to view verification_outcome")
   }
 }
 
@@ -1597,28 +956,6 @@ mod tests {
     assert_eq!(exit_status(Ok(0)), std::process::ExitCode::SUCCESS);
     assert_eq!(exit_status(Ok(7)), std::process::ExitCode::from(7));
     assert_eq!(exit_status(Err("failed".to_string())), std::process::ExitCode::FAILURE);
-  }
-
-  #[test]
-  fn app_probe_status_is_captured_only_when_every_step_completed() {
-    let step = |status: &str| auv_runtime::app::AppProbeStep {
-      id: format!("step-{status}"),
-      command_id: "app.probePermissions".to_string(),
-      target_application_id: None,
-      inputs: Default::default(),
-      run_id: RunId::new().to_string(),
-      span_id: String::new(),
-      status: status.to_string(),
-      output_summary: status.to_string(),
-      artifact_paths: Vec::new(),
-      artifacts: Vec::new(),
-      failure_message: (status != "completed").then(|| status.to_string()),
-    };
-
-    assert_eq!(app_probe_presentation_status(&[step("completed"), step("completed")]), "captured");
-    assert_eq!(app_probe_presentation_status(&[step("completed"), step("failed")]), "partial");
-    assert_eq!(app_probe_presentation_status(&[step("failed")]), "failed");
-    assert_eq!(app_probe_presentation_status(&[]), "failed");
   }
 
   fn minecraft_dispatch_fixture(label: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
@@ -1793,7 +1130,7 @@ mod tests {
     assert_eq!(result, Ok(0));
     let manifest = crate::integrations::minecraft::read_spatial_bundle_manifest(output_dir.join("run.json"))
       .expect("Minecraft bundle manifest should parse");
-    assert_eq!(manifest.source_run.source_run_id, source_run_id.to_string());
+    assert_eq!(manifest.source_run.run_id, source_run_id.into());
     assert_eq!(manifest.counts.spatial_frames, 1);
     fs::remove_dir_all(&root).expect("remove Minecraft spatial-bundle fixture");
   }
@@ -1995,56 +1332,6 @@ mod tests {
   }
 
   #[test]
-  fn format_query_wired_inspect_hint_omits_store_root_when_default_store() {
-    let inspect = InspectClientOptions {
-      store_root: None,
-      ..InspectClientOptions::default()
-    };
-    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1` to view verification_outcome");
-  }
-
-  #[test]
-  fn format_query_wired_inspect_hint_echoes_custom_store_root() {
-    let inspect = InspectClientOptions {
-      store_root: Some("/tmp/mc20-store".to_string()),
-      ..InspectClientOptions::default()
-    };
-    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root /tmp/mc20-store` to view verification_outcome");
-  }
-
-  #[test]
-  fn format_query_wired_inspect_hint_quotes_store_root_with_whitespace() {
-    let inspect = InspectClientOptions {
-      store_root: Some("/tmp/mc20 store".to_string()),
-      ..InspectClientOptions::default()
-    };
-    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20 store'` to view verification_outcome");
-  }
-
-  #[test]
-  fn format_query_wired_inspect_hint_quotes_store_root_with_single_quote() {
-    let inspect = InspectClientOptions {
-      store_root: Some("/tmp/mc20'store".to_string()),
-      ..InspectClientOptions::default()
-    };
-    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20'\"'\"'store'` to view verification_outcome");
-  }
-
-  #[test]
-  fn format_query_wired_inspect_hint_quotes_store_root_with_shell_metacharacters() {
-    let inspect = InspectClientOptions {
-      store_root: Some("/tmp/(mc20)[store]".to_string()),
-      ..InspectClientOptions::default()
-    };
-    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/(mc20)[store]'` to view verification_outcome");
-  }
-
-  #[test]
   fn inspect_server_target_uses_explicit_url() {
     let inspect = InspectClientOptions {
       server_url: Some("http://127.0.0.1:9876/".to_string()),
@@ -2062,7 +1349,7 @@ mod tests {
     let _ = fs::remove_dir_all(&root);
     let store = open_inspect_authority_store(&root).expect("file authority should open");
     let authority_id = store.authority_id();
-    let app = auv_inspect_server::router_with_extension(store, Arc::new(crate::projection::ProductInspectReadProjection::default()));
+    let app = auv_inspect_server::router(store);
 
     let response = app
       .clone()
@@ -2080,62 +1367,5 @@ mod tests {
     assert_eq!(legacy.status(), StatusCode::NOT_FOUND);
     assert_eq!(open_inspect_authority_store(&root).unwrap().authority_id(), authority_id);
     let _ = fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn minecraft_world_diff_verification_maps_success_verdict() {
-    let verdict = auv_game_minecraft::verify::WorldDiffVerdict {
-      executed: true,
-      state_changed: true,
-      semantic_matched: Some(true),
-      failure: None,
-      observed_block_id: Some("minecraft:air".to_string()),
-      observed_item_delta: Some(1),
-    };
-
-    let verification = crate::integrations::minecraft::verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
-
-    assert_eq!(verification.method, auv_runtime::contract::VerificationMethod::SemanticMatch);
-    assert_eq!(verification.executed, true);
-    assert_eq!(verification.state_changed, true);
-    assert_eq!(verification.semantic_matched, Some(true));
-    assert_eq!(verification.failure_layer, None);
-    assert_eq!(verification.observed_label.as_deref(), Some("minecraft:air"));
-  }
-
-  #[test]
-  fn minecraft_world_diff_verification_maps_failure_layers() {
-    let cases = [
-      (
-        auv_game_minecraft::verify::WorldDiffFailure::VerificationUnreliable,
-        Some(auv_runtime::contract::FailureLayer::VerificationUnreliable),
-        None,
-      ),
-      (
-        auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch,
-        Some(auv_runtime::contract::FailureLayer::StateChangedNoMatch),
-        Some(false),
-      ),
-      (
-        auv_game_minecraft::verify::WorldDiffFailure::SemanticMismatch,
-        Some(auv_runtime::contract::FailureLayer::SemanticMismatch),
-        Some(false),
-      ),
-    ];
-
-    for (failure, expected_layer, semantic_matched) in cases {
-      let verdict = auv_game_minecraft::verify::WorldDiffVerdict {
-        executed: true,
-        state_changed: matches!(failure, auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch),
-        semantic_matched,
-        failure: Some(failure),
-        observed_block_id: Some("minecraft:stone".to_string()),
-        observed_item_delta: Some(0),
-      };
-
-      let verification = crate::integrations::minecraft::verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
-      assert_eq!(verification.failure_layer, expected_layer);
-      assert_eq!(verification.observed_label.as_deref(), Some("minecraft:stone"));
-    }
   }
 }

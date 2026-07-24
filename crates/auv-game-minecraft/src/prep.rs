@@ -51,7 +51,6 @@ pub struct TextureSweepPreparationManifest {
   pub resourcepacks_dir: String,
   pub pack_format: u32,
   pub profiles: Vec<TextureSweepPreparedProfile>,
-  pub live_run_sequence: Vec<TextureSweepRunStep>,
   pub final_eval_command: String,
   pub known_limits: Vec<String>,
 }
@@ -65,14 +64,6 @@ pub struct TextureSweepPreparedProfile {
   pub expected_telemetry_resource_pack_id: String,
   pub required_duration_seconds: f64,
   pub texture_overrides: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TextureSweepRunStep {
-  pub texture_profile: String,
-  pub options_resource_packs_value: String,
-  pub expected_telemetry_resource_pack_id: String,
-  pub acceptance_note: String,
 }
 
 pub fn prepare_texture_sweep_resource_packs(inputs: TextureSweepPreparationInputs) -> PrepResult<TextureSweepPreparationOutput> {
@@ -97,26 +88,13 @@ pub fn prepare_texture_sweep_resource_packs(inputs: TextureSweepPreparationInput
     });
   }
 
-  let live_run_sequence = profiles
-    .iter()
-    .map(|profile| TextureSweepRunStep {
-      texture_profile: profile.texture_profile.clone(),
-      options_resource_packs_value: profile.options_resource_packs_value.clone(),
-      expected_telemetry_resource_pack_id: profile.expected_telemetry_resource_pack_id.clone(),
-      acceptance_note: format!(
-        "collect at least {:.0}s of in_game telemetry plus at least one exercised refusal before export",
-        profile.required_duration_seconds
-      ),
-    })
-    .collect::<Vec<_>>();
   let manifest = TextureSweepPreparationManifest {
     schema_version: TEXTURE_SWEEP_PREP_SCHEMA_VERSION,
-    generated_at_millis: crate::run_read::now_millis(),
+    generated_at_millis: crate::now_millis(),
     sidecar_run_dir: inputs.sidecar_run_dir.to_string_lossy().into_owned(),
     resourcepacks_dir: resourcepacks_dir.to_string_lossy().into_owned(),
     pack_format: MINECRAFT_1_21_1_RESOURCE_PACK_FORMAT,
     profiles,
-    live_run_sequence,
     final_eval_command:
       "auv-cli minecraft eval-texture-sweep --samples <real-samples.json> --output-dir <dir> --require-real-source --store-root .auv --inspect-server-write false"
         .to_string(),
@@ -210,10 +188,10 @@ fn render_runbook(manifest: &TextureSweepPreparationManifest) -> String {
   output.push_str("# MC-6 texture sweep runbook\n\n");
   output.push_str("This is a preparation artifact. It does not prove MC-6 closure.\n\n");
   output.push_str("For each profile, set `devtools/auv-game-minecraft/run/options.txt` to the listed `resourcePacks` value, launch the Fabric client manually, collect at least 30 seconds of in-game telemetry, and exercise at least one refusal frame before exporting the source run.\n\n");
-  for step in &manifest.live_run_sequence {
+  for profile in &manifest.profiles {
     output.push_str(&format!(
       "- `{}`: `resourcePacks:{}`; expect telemetry id `{}`.\n",
-      step.texture_profile, step.options_resource_packs_value, step.expected_telemetry_resource_pack_id
+      profile.texture_profile, profile.options_resource_packs_value, profile.expected_telemetry_resource_pack_id
     ));
   }
   output.push_str("\nAfter all three source runs are exported as spatial bundles, build the sample file and evaluate with:\n\n");
@@ -253,6 +231,8 @@ mod tests {
     assert_eq!(output.manifest.schema_version, 1);
     assert_eq!(output.manifest.pack_format, 34);
     assert_eq!(output.manifest.profiles.len(), 3);
+    let manifest_json = serde_json::to_value(&output.manifest).expect("manifest should encode");
+    assert!(manifest_json.get("live_run_sequence").is_none());
     for profile in &output.manifest.profiles {
       let pack_dir = PathBuf::from(&profile.pack_dir);
       assert!(pack_dir.join("pack.mcmeta").is_file());

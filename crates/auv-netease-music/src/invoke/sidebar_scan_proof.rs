@@ -1,11 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_cli_invoke::{ArgSpec, ArtifactInstrumentationFailure, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput};
-use auv_driver::vision::TextRecognitionOptions;
-
-use crate::recording::{PLAYLIST_SIDEBAR_SCAN_PURPOSE, persist_playlist_ls_artifacts};
-use crate::{DEFAULT_APP_ID, Inputs, PlaylistCategory, PlaylistSidebarScan, decode_playlist_sidebar_scan_json};
+use crate::run_artifacts::{PLAYLIST_SIDEBAR_SCAN_PURPOSE, emit_playlist_sidebar_scan};
+use crate::{PlaylistSidebarScan, decode_playlist_sidebar_scan_json};
+use auv_cli_invoke::{ArgSpec, InvokeCommandFuture, InvokeCommandInput, InvokeCommandOutput, InvokeReport, InvokeReportField};
 
 pub const SIDEBAR_SCAN_PROOF_COMMAND_ID: &str = "netease.playlist.sidebarScanProof";
 pub const SCAN_FIXTURE_FILE: &str = "playlist-sidebar-scan.json";
@@ -32,22 +30,6 @@ pub fn build_scan_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSidebar
   decode_playlist_sidebar_scan_json(json).map_err(|error| error.to_string())
 }
 
-/// Minimal [`Inputs`] used only to derive the persisted app-local lineage.
-pub fn persist_inputs_for_sidebar_scan_proof(scan: &PlaylistSidebarScan) -> Inputs {
-  let app_id = scan.app().app_id.clone().filter(|value| !value.is_empty()).unwrap_or_else(|| DEFAULT_APP_ID.to_string());
-
-  Inputs {
-    app_id,
-    artifact_dir: PathBuf::new(),
-    max_scrolls: 0,
-    scroll_amount: 0.0,
-    scroll_settle_ms: 0,
-    sidebar_region: None,
-    ocr_options: TextRecognitionOptions::default(),
-    category: PlaylistCategory::All,
-  }
-}
-
 pub fn sidebar_scan_proof_handler(input: InvokeCommandInput) -> InvokeCommandFuture {
   Box::pin(sidebar_scan_proof(input))
 }
@@ -57,41 +39,24 @@ async fn sidebar_scan_proof(input: InvokeCommandInput) -> Result<InvokeCommandOu
   let fixture_path = Path::new(&fixture_dir);
   let scan = build_scan_from_fixture_dir(fixture_path)?;
 
-  if input.dry_run {
-    let section_count = scan.projection().sections.len();
-    let mut output = InvokeCommandOutput::new(format!(
-      "validated hermetic sidebar scan proof fixture at {} ({section_count} projection sections)",
-      fixture_dir
-    ));
-    output.verification = Some("dry-run; no run artifact written".to_string());
-    output.known_limits.push("hermetic_fixture_only".to_string());
-    output.signals.insert("fixture_dir".to_string(), fixture_dir);
-    return Ok(output);
+  if !input.dry_run {
+    emit_playlist_sidebar_scan(&scan);
   }
 
-  let inputs = persist_inputs_for_sidebar_scan_proof(&scan);
-  let mut output = match persist_playlist_ls_artifacts(&scan, &inputs, false).await {
-    Ok(Some(persisted)) => {
-      let run_id = persisted.lineage.scan_uri.run_id().to_string();
-      let mut output = InvokeCommandOutput::new(format!("persisted hermetic sidebar scan proof in run {run_id}"));
-      output.signals.insert("run_id".to_string(), run_id);
-      output.signals.insert("scan_uri".to_string(), persisted.lineage.scan_uri.to_string());
-      output
-    }
-    Ok(None) => InvokeCommandOutput::new("validated hermetic sidebar scan proof fixture; run artifact publication was disabled"),
-    Err(error) => {
-      let mut output = InvokeCommandOutput::new("validated hermetic sidebar scan proof fixture; run artifact was not published");
-      output.artifact_failures.push(ArtifactInstrumentationFailure {
-        purpose: PLAYLIST_SIDEBAR_SCAN_PURPOSE.to_string(),
-        message: error.to_string(),
-      });
-      output
-    }
-  };
-  output.verification = Some("hermetic fixture proof only; no live scan or view-memory write".to_string());
-  output.known_limits.push("hermetic_fixture_only".to_string());
-  output.signals.insert("artifact_purpose".to_string(), PLAYLIST_SIDEBAR_SCAN_PURPOSE.to_string());
+  let mut output = InvokeCommandOutput::from_result(&scan)?;
+  output.report = Some(sidebar_scan_proof_report(&fixture_dir, scan.projection().sections.len()));
   Ok(output)
+}
+
+fn sidebar_scan_proof_report(fixture_dir: &str, section_count: usize) -> InvokeReport {
+  InvokeReport::new(
+    vec![
+      InvokeReportField::new("Fixture", fixture_dir),
+      InvokeReportField::new("Projection sections", section_count.to_string()),
+      InvokeReportField::new("Artifact purpose", PLAYLIST_SIDEBAR_SCAN_PURPOSE),
+    ],
+    Vec::new(),
+  )
 }
 
 fn required_input<'a>(input: &'a InvokeCommandInput, key: &str) -> Result<&'a str, String> {
@@ -114,6 +79,7 @@ mod tests {
   use auv_cli_invoke::default_registry;
 
   use super::*;
+  use crate::DEFAULT_APP_ID;
   use crate::invoke::netease_registry;
 
   #[test]
@@ -152,8 +118,10 @@ mod tests {
     }))
     .expect("fixture validation remains the direct result");
 
-    assert!(output.summary.contains("publication was disabled"));
-    assert!(output.artifact_failures.is_empty());
+    assert!(output.report.is_some());
+    let expected = build_scan_from_fixture_dir(&hermetic_sidebar_scan_proof_fixture_dir()).expect("fixture should decode");
+    let result = auv_cli_invoke::InvokeResult::from_command_result(auv_tracing::RunId::new(), &command, Ok(output));
+    assert_eq!(result.result(), Some(&serde_json::to_value(expected).expect("fixture scan should serialize")));
   }
 
   #[test]

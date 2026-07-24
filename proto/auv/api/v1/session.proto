@@ -14,18 +14,10 @@ service SessionService {
   // Blocking terminal invoke: the RPC does not return until the command finishes
   // or fails on the synchronous path (not a fire-and-forget job submit).
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
-  rpc StreamSessionEvents(StreamSessionEventsRequest)
-      returns (stream SessionEvent);
 }
 
 message SessionRef {
   string session_id = 1;
-}
-
-message ArtifactRef {
-  string run_id = 1;
-  string artifact_id = 2;
-  string role = 3;
 }
 
 message CreateSessionRequest {
@@ -44,34 +36,24 @@ message InvokeRequest {
 }
 
 message InvokeResponse {
-  // Canonical run identity for inspection. Invoke is synchronous and does not
-  // persist a generic operation result or status for later readback.
+  // Canonical run identity for inspection. Invoke is synchronous; its direct
+  // result does not depend on reading the run store.
   string run_id = 1;
-  string status = 2; // "completed" | "failed" (string, not enum — experimental)
-  repeated ArtifactRef artifacts = 3;
-  repeated string known_limits = 4;
-  string failure_message = 5; // empty when absent; failure detail on sync path
+  oneof terminal {
+    InvokeCompleted completed = 2;
+    InvokeFailed failed = 3;
+  }
   // Non-authoritative post-execution recording failure. Direct command status
-  // and failure_message remain unchanged when recording fails.
-  string recording_failure = 6;
+  // and terminal value remain unchanged when recording fails.
+  string recording_failure = 4;
 }
 
-message StreamSessionEventsRequest {
-  SessionRef session = 1;
+message InvokeCompleted {
+  // UTF-8 JSON for the command's typed direct result. Commands without a
+  // result encode JSON null so all frontends preserve the same result shape.
+  bytes result_json = 1;
 }
 
-// Stream events are typed by event_type; only the nested refs listed per type are
-// valid (others must be empty/default). No oneof or sequence field in v1 — clients
-// must not infer ordering guarantees beyond transport delivery.
-message SessionEvent {
-  string event_type = 1;
-  // session_created: session set; run_id, artifact empty.
-  // invoke_started: session + run_id set; artifact empty.
-  // invoke_completed: session + run_id set; artifact empty; summary optional.
-  // invoke_failed: session + run_id set; artifact empty; summary may hold failure detail.
-  // artifact_recorded: session + run_id + artifact set.
-  SessionRef session = 2;
-  string run_id = 3;
-  ArtifactRef artifact = 4;
-  string summary = 5;
+message InvokeFailed {
+  string message = 1;
 }

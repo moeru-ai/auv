@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use auv_driver::geometry::WindowPoint;
+use auv_driver::{InputActionResult, geometry::WindowPoint};
 use auv_file::{JsonFileReadError, read_json_file as read_json_file_helper};
 
 use crate::benchmark::{CapturePhase, ObjectKind};
@@ -30,12 +30,12 @@ pub struct VisualTruthQueryActionWiringOutcome {
   pub refusal_reason: Option<String>,
   pub pixel_point: Option<(f32, f32)>,
   pub window_point: Option<WindowPoint>,
-  pub click_summary: Option<String>,
+  pub input_action: Option<InputActionResult>,
   pub known_limits: Vec<String>,
 }
 
 pub trait VisualTruthQueryLiveClickExecutor {
-  fn attempt_click(&self, window_point: WindowPoint, lineage: &VisualTruthQueryActionWiringLineage) -> Result<String, String>;
+  fn attempt_click(&self, window_point: WindowPoint, lineage: &VisualTruthQueryActionWiringLineage) -> Result<InputActionResult, String>;
 }
 
 pub fn wire_visual_truth_spatial_query_manifest_to_action(
@@ -81,19 +81,19 @@ fn wire_readiness_to_action(
           refusal_reason: Some("click_ready eligibility missing live window_point from playfield projection; defensive refusal".to_string()),
           pixel_point,
           window_point: None,
-          click_summary: None,
+          input_action: None,
           known_limits,
         };
       };
 
       match executor.attempt_click(window_point, lineage) {
-        Ok(summary) => VisualTruthQueryActionWiringOutcome {
+        Ok(input_action) => VisualTruthQueryActionWiringOutcome {
           attempted: true,
           action_eligibility: readiness.eligibility,
           refusal_reason: None,
           pixel_point,
           window_point: Some(window_point),
-          click_summary: Some(summary),
+          input_action: Some(input_action),
           known_limits,
         },
         Err(message) => VisualTruthQueryActionWiringOutcome {
@@ -102,7 +102,7 @@ fn wire_readiness_to_action(
           refusal_reason: Some(message),
           pixel_point,
           window_point: Some(window_point),
-          click_summary: None,
+          input_action: None,
           known_limits,
         },
       }
@@ -114,7 +114,7 @@ fn wire_readiness_to_action(
         refusal_reason: readiness.refusal_reason.clone(),
         pixel_point,
         window_point: None,
-        click_summary: None,
+        input_action: None,
         known_limits,
       }
     }
@@ -170,27 +170,26 @@ mod tests {
 
   struct CountingExecutor {
     calls: Cell<usize>,
-    summary: Option<String>,
-    error: Option<String>,
+    action: InputActionResult,
   }
 
   impl CountingExecutor {
-    fn success(summary: impl Into<String>) -> Self {
+    fn success() -> Self {
       Self {
         calls: Cell::new(0),
-        summary: Some(summary.into()),
-        error: None,
+        action: InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       }
     }
   }
 
   impl VisualTruthQueryLiveClickExecutor for CountingExecutor {
-    fn attempt_click(&self, _window_point: WindowPoint, _lineage: &VisualTruthQueryActionWiringLineage) -> Result<String, String> {
+    fn attempt_click(
+      &self,
+      _window_point: WindowPoint,
+      _lineage: &VisualTruthQueryActionWiringLineage,
+    ) -> Result<InputActionResult, String> {
       self.calls.set(self.calls.get() + 1);
-      if let Some(error) = &self.error {
-        return Err(error.clone());
-      }
-      Ok(self.summary.clone().unwrap_or_else(|| "clicked".to_string()))
+      Ok(self.action.clone())
     }
   }
 
@@ -304,7 +303,7 @@ mod tests {
     let visual_truth_path = write_probe_fixture(temp.path());
     let manifest = base_manifest(&visual_truth_path);
     let lineage = lineage_for(&manifest);
-    let executor = CountingExecutor::success("live click dispatched");
+    let executor = CountingExecutor::success();
     let projection = live_projection();
 
     let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);
@@ -314,7 +313,7 @@ mod tests {
     assert_eq!(outcome.action_eligibility, VisualTruthSpatialQueryActionEligibility::ClickReady);
     assert_eq!(outcome.pixel_point, Some((400.0, 300.0)));
     assert_eq!(outcome.window_point, Some(WindowPoint::new(400.0, 300.0)));
-    assert_eq!(outcome.click_summary.as_deref(), Some("live click dispatched"));
+    assert_eq!(outcome.input_action.as_ref(), Some(&executor.action));
     assert!(outcome.refusal_reason.is_none());
     assert!(outcome.known_limits.iter().any(|limit| limit == OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
   }
@@ -328,7 +327,7 @@ mod tests {
     manifest.pixel_x = Some(900.0);
     manifest.pixel_y = Some(300.0);
     let lineage = lineage_for(&manifest);
-    let executor = CountingExecutor::success("should not run");
+    let executor = CountingExecutor::success();
     let projection = live_projection();
 
     let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);
@@ -337,7 +336,7 @@ mod tests {
     assert!(!outcome.attempted);
     assert_eq!(outcome.action_eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
     assert_eq!(outcome.refusal_reason.as_deref(), Some("pixel_visibility=outside_capture"));
-    assert!(outcome.click_summary.is_none());
+    assert!(outcome.input_action.is_none());
   }
 
   #[test]
@@ -351,7 +350,7 @@ mod tests {
     manifest.pixel_x = None;
     manifest.pixel_y = None;
     let lineage = lineage_for(&manifest);
-    let executor = CountingExecutor::success("should not run");
+    let executor = CountingExecutor::success();
     let projection = live_projection();
 
     let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);
@@ -360,7 +359,7 @@ mod tests {
     assert!(!outcome.attempted);
     assert_eq!(outcome.action_eligibility, VisualTruthSpatialQueryActionEligibility::NotConsumable);
     assert_eq!(outcome.refusal_reason.as_deref(), Some("status=failed reason=target_absent_from_visual_truth"));
-    assert!(outcome.click_summary.is_none());
+    assert!(outcome.input_action.is_none());
   }
 
   #[test]
@@ -370,7 +369,7 @@ mod tests {
     let mut manifest = base_manifest(&visual_truth_path);
     manifest.source_visual_truth_manifest_path = "/tmp/missing-visual-truth.json".to_string();
     let lineage = lineage_for(&manifest);
-    let executor = CountingExecutor::success("should not run");
+    let executor = CountingExecutor::success();
     let projection = live_projection();
 
     let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);

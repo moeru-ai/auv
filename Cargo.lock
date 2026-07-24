@@ -347,7 +347,10 @@ dependencies = [
  "auv-driver",
  "auv-driver-macos",
  "auv-driver-windows",
+ "auv-tracing",
  "clap",
+ "futures-executor",
+ "image",
  "serde",
  "serde_json",
 ]
@@ -358,7 +361,9 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-tracing",
  "clap",
+ "futures-executor",
  "serde",
 ]
 
@@ -368,8 +373,11 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-tracing",
  "clap",
+ "futures-executor",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -430,7 +438,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -587,7 +594,9 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-linux",
+ "auv-tracing",
  "clap",
+ "futures-executor",
  "serde",
  "serde_json",
 ]
@@ -694,7 +703,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -712,7 +720,9 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-tracing",
  "clap",
+ "futures-executor",
  "serde",
 ]
 
@@ -759,7 +769,6 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -880,6 +889,7 @@ dependencies = [
 name = "auv-view"
 version = "0.0.1"
 dependencies = [
+ "auv-tracing",
  "image",
  "serde",
  "serde_json",

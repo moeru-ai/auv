@@ -1,4 +1,3 @@
-use std::error::Error as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -22,9 +21,10 @@ use auv_game_balatro::{
 use auv_stage_status::StageStatus;
 use auv_tracing::{
   ArtifactBody, ArtifactId, ArtifactPurpose, ArtifactReadError, ArtifactReader, ArtifactUri, ArtifactWriteError, Attributes, AuthorityId,
-  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey, MemoryRunStore, PageLimit, ReadError,
-  RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore, RunSubscription, Sha256Digest,
-  StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure, dispatcher,
+  BoxFuture, ByteLength, CommitError, CommitResult, ContentType, Context, ErrorCode, IdempotencyKey, JsonArtifactError, MemoryRunStore,
+  PageLimit, ReadArtifactError, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore,
+  RunSubscription, Sha256Digest, StoreArtifactRequest, TelemetryError, TelemetryItem, TelemetryProjector, TelemetryRoutePolicy, configure,
+  dispatcher,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -165,14 +165,13 @@ fn enabled_publication_rejects_json_over_the_balatro_limit() {
     let error = publish_card_detection_witness(Some(&root), &witness).await.expect_err("oversized JSON must not be published");
 
     match error {
-      BalatroArtifactPublishError::PayloadTooLarge {
+      BalatroArtifactPublishError::Json {
         purpose,
-        limit,
-        actual,
+        source: JsonArtifactError::PayloadTooLarge { limit, actual },
       } => {
         assert_eq!(purpose, ArtifactPurpose::parse(CARD_DETECTION_EVAL_WITNESS_PURPOSE).expect("witness purpose"));
-        assert_eq!(limit, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
-        assert!(actual > limit);
+        assert_eq!(limit.get(), BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
+        assert!(actual > limit.get());
       }
       other => panic!("expected typed payload-too-large error, got {other:?}"),
     }
@@ -189,7 +188,12 @@ fn reader_rejects_snapshot_from_another_authority() {
       .await
       .expect_err("snapshot authority must match store authority");
 
-    assert!(matches!(error, BalatroArtifactReadError::SnapshotAuthorityMismatch { .. }));
+    assert!(matches!(
+      error,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::SnapshotAuthorityMismatch { .. }
+      }
+    ));
   });
 }
 
@@ -203,7 +207,12 @@ fn reader_rejects_uri_owned_by_another_run() {
       .await
       .expect_err("artifact URI owner must match snapshot run");
 
-    assert!(matches!(error, BalatroArtifactReadError::WrongOwner { .. }));
+    assert!(matches!(
+      error,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::WrongRun { .. }
+      }
+    ));
   });
 }
 
@@ -217,7 +226,12 @@ fn reader_rejects_same_run_uri_absent_from_the_snapshot() {
       .await
       .expect_err("artifact URI must be committed in the supplied snapshot");
 
-    assert!(matches!(error, BalatroArtifactReadError::DanglingUri { .. }));
+    assert!(matches!(
+      error,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::NotCommitted { .. }
+      }
+    ));
   });
 }
 
@@ -234,12 +248,14 @@ fn reader_rejects_wrong_committed_purpose() {
       .expect_err("committed purpose must match the typed reader");
 
     match error {
-      BalatroArtifactReadError::WrongPurpose {
-        uri,
-        expected,
-        actual,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::WrongPurpose {
+          uri,
+          expected,
+          actual,
+        },
       } => {
-        assert_eq!(*uri, published.uri);
+        assert_eq!(uri, published.uri);
         assert_eq!(expected, ArtifactPurpose::parse(CARD_DETECTION_EVAL_WITNESS_PURPOSE).expect("witness purpose"));
         assert_eq!(actual, ArtifactPurpose::parse(CARD_DETECTION_QUALITY_PURPOSE).expect("quality purpose"));
       }
@@ -261,14 +277,16 @@ fn reader_rejects_wrong_committed_content_type() {
       .expect_err("committed content type must be application/json");
 
     match error {
-      BalatroArtifactReadError::WrongContentType {
-        uri,
-        expected,
-        actual,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::WrongContentType {
+          uri,
+          expected,
+          actual,
+        },
       } => {
-        assert_eq!(*uri, published.uri);
-        assert_eq!(*expected, ContentType::parse("application/json").expect("JSON content type"));
-        assert_eq!(*actual, ContentType::parse("text/plain").expect("plain-text content type"));
+        assert_eq!(uri, published.uri);
+        assert_eq!(expected, ContentType::parse("application/json").expect("JSON content type"));
+        assert_eq!(actual, ContentType::parse("text/plain").expect("plain-text content type"));
       }
       other => panic!("expected typed wrong-content-type error, got {other:?}"),
     }
@@ -294,8 +312,18 @@ fn reader_rejects_committed_length_mismatches_in_both_directions() {
       .await
       .expect_err("bytes shorter than committed metadata must fail");
 
-    assert!(matches!(shorter_error, BalatroArtifactReadError::LengthMismatch { .. }));
-    assert!(matches!(longer_error, BalatroArtifactReadError::LengthMismatch { .. }));
+    assert!(matches!(
+      shorter_error,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::LengthMismatch { .. }
+      }
+    ));
+    assert!(matches!(
+      longer_error,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::LengthMismatch { .. }
+      }
+    ));
   });
 }
 
@@ -309,9 +337,10 @@ fn typed_reader_preserves_open_artifact_failures() {
     let error =
       read_card_detection_witness(&store, &published.snapshot, &published.uri).await.expect_err("open failure must reach the typed reader");
 
-    assert_eq!(error.source().and_then(|source| source.downcast_ref::<ReadError>()), Some(&expected_source));
     match error {
-      BalatroArtifactReadError::Open { uri, source } => {
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::Open { uri, source },
+      } => {
         assert_eq!(uri, published.uri);
         assert_eq!(source, expected_source);
       }
@@ -336,9 +365,10 @@ fn typed_reader_preserves_mid_stream_artifact_failures() {
       .await
       .expect_err("mid-stream failure must reach the typed reader");
 
-    assert_eq!(error.source().and_then(|source| source.downcast_ref::<ArtifactReadError>()), Some(&expected_source));
     match error {
-      BalatroArtifactReadError::Stream { uri, source } => {
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::Stream { uri, source },
+      } => {
         assert_eq!(uri, published.uri);
         assert_eq!(source, expected_source);
       }
@@ -380,13 +410,16 @@ fn typed_reader_reports_a_partial_stream_length() {
       .expect_err("partial stream must fail committed length validation");
 
     match error {
-      BalatroArtifactReadError::LengthMismatch {
-        uri,
-        expected: error_expected,
-        actual: error_actual,
+      BalatroArtifactReadError::Read {
+        source:
+          ReadArtifactError::LengthMismatch {
+            uri,
+            expected: error_expected,
+            actual: error_actual,
+          },
       } => {
         assert_eq!(uri, published.uri);
-        assert_eq!(error_expected, expected);
+        assert_eq!(error_expected.get(), expected);
         assert_eq!(error_actual, actual);
       }
       other => panic!("expected typed length mismatch, got {other:?}"),
@@ -411,13 +444,16 @@ fn typed_reader_reports_an_extra_stream_length() {
       .expect_err("extra stream must fail committed length validation");
 
     match error {
-      BalatroArtifactReadError::LengthMismatch {
-        uri,
-        expected: error_expected,
-        actual: error_actual,
+      BalatroArtifactReadError::Read {
+        source:
+          ReadArtifactError::LengthMismatch {
+            uri,
+            expected: error_expected,
+            actual: error_actual,
+          },
       } => {
         assert_eq!(uri, published.uri);
-        assert_eq!(error_expected, expected);
+        assert_eq!(error_expected.get(), expected);
         assert_eq!(error_actual, actual);
       }
       other => panic!("expected typed length mismatch, got {other:?}"),
@@ -439,12 +475,14 @@ fn reader_rejects_wrong_committed_digest() {
       .expect_err("committed digest must match streamed bytes");
 
     match error {
-      BalatroArtifactReadError::DigestMismatch {
-        uri,
-        expected,
-        actual,
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::DigestMismatch {
+          uri,
+          expected,
+          actual,
+        },
       } => {
-        assert_eq!(*uri, published.uri);
+        assert_eq!(uri, published.uri);
         assert_eq!(expected, Sha256Digest::new([0; 32]));
         assert_eq!(actual, published.snapshot.artifacts().get(&published.uri).expect("published witness").metadata().sha256());
       }
@@ -465,9 +503,11 @@ fn reader_rejects_committed_json_over_the_balatro_limit_before_opening() {
     let error = read_card_detection_witness(&store, &snapshot, &published.uri).await.expect_err("oversized committed JSON must be rejected");
 
     match error {
-      BalatroArtifactReadError::PayloadTooLarge { uri, limit, actual } => {
+      BalatroArtifactReadError::Read {
+        source: ReadArtifactError::PayloadTooLarge { uri, limit, actual },
+      } => {
         assert_eq!(uri, published.uri);
-        assert_eq!(limit, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
+        assert_eq!(limit.get(), BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT);
         assert_eq!(actual, BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1);
       }
       other => panic!("expected typed payload-too-large error, got {other:?}"),
