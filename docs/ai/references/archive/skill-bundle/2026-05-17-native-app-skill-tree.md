@@ -97,9 +97,18 @@ After the freeze, the repo gained a local NetEaseMusic fixed-layout playback
 baseline under `recipes/macos/netease-cloud-music/`.
 
 That baseline is real, but it is not part of the frozen phase-1 skill tree.
-It currently belongs to the V2 lane as a useful local sample that still needs
-workflow-backed promotion truth instead of being stuffed directly into the
-bundle.
+At the time, it belonged to the V2 lane as a useful local sample that still
+needed workflow-backed promotion truth instead of being stuffed directly into
+the bundle. The recipe and bundle surfaces were later retired.
+
+## Documentation Boundary
+
+The working distillation template and broad V2 plan were retired from active
+ops references on 2026-07-24. Current app command truth lives in
+`docs/ai/references/ops/2026-05-18-app-probe-analyze-workflow.md`. The surviving
+surface-candidate and compatibility-taxonomy boundary lives in
+`docs/ai/references/ops/2026-05-28-surface-analyze-v0.md`. The exact historical
+prompt and plan remain recoverable from Git history.
 
 ## Evidence
 
@@ -108,11 +117,11 @@ bundle.
 - QQ音乐 row fallback: `docs/ai/references/apps/qqmusic/2026-05-16-qqmusic-row-fallback-case-matrix.md`
 - QQ音乐 narrow coverage: `docs/ai/references/apps/qqmusic/2026-05-17-qqmusic-narrow-skill-coverage.md`
 - Phase 1 freeze note: `docs/ai/references/archive/phase-history/2026-05-18-phase-1-freeze.md`
-- Phase 2 / V2 contract: `docs/ai/references/ops/2026-05-19-v2-docs-contract.md`
 - Notes sample: `docs/ai/references/archive/ax-copilot/2026-05-17-notes-ax-text-sample.md`
 - TextEdit sample: `recipes/macos/textedit/README.md`
 - NetEaseMusic fixed-layout baseline: `docs/ai/references/apps/netease-music/2026-05-19-netease-cloud-music-fixed-layout-baseline.md`
-- Distillation template: `docs/ai/references/ops/2026-05-17-distillation-template-v0.md`
+- Current app probe/analyze workflow: `docs/ai/references/ops/2026-05-18-app-probe-analyze-workflow.md`
+- Surface analyze boundary: `docs/ai/references/ops/2026-05-28-surface-analyze-v0.md`
 - Notes live replay: `run_1778947574511_68037_4`
 - TextEdit live replay: `run_1778949229186_72054_3`
 - QQ音乐 validated narrow skill commit: `42f3a18`
