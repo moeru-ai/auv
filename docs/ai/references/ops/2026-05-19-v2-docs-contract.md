@@ -2,7 +2,26 @@
 
 Date: 2026-05-19
 
-Status: working phase-2 contract
+Status: historical phase-2 contract
+
+## Current Status
+
+This note assumes the old app-surface product lane:
+
+`probe -> analyze -> distill -> validate -> promote`
+
+That lane is no longer the current repo contract.
+
+As of `main` at `a41f4c29`, `crates/auv-cli/src/cli.rs` only keeps:
+
+- `app probe`
+- `app analyze`
+
+and rejects `app distill` / `app validate`.
+
+Use [`2026-07-24-app-probe-analyze-current-state-reference.md`](2026-07-24-app-probe-analyze-current-state-reference.md)
+for current CLI truth. The remainder of this note is retained as historical
+phase-2 design material.
 
 ## Purpose
 

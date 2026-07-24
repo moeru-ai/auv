@@ -2,7 +2,28 @@
 
 Date: 2026-05-18
 
-Status: active reference
+Status: historical workflow note
+
+## Current Status
+
+This note records the May 2026 four-stage phase-2 workflow:
+
+`probe -> analyze -> distill -> validate`
+
+That is no longer the current CLI contract.
+
+As of `main` at `a41f4c29`, `crates/auv-cli/src/cli.rs` only supports:
+
+- `auv app probe <bundle-id> [--output-dir <dir>]`
+- `auv app analyze <probe-dir-or-probe-json>`
+
+and `parse_app()` rejects `app distill` / `app validate` with:
+
+`app recipe distillation has been removed; use app-local Rust commands instead`
+
+Use [`2026-07-24-app-probe-analyze-current-state-reference.md`](2026-07-24-app-probe-analyze-current-state-reference.md)
+for the live contract. The remainder of this note is preserved as historical
+phase-2 design context.
 
 ## Purpose
 

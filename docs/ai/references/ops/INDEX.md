@@ -2,7 +2,7 @@
 
 Setup, tooling, feature gates, cross-cutting notes
 
-Count: **27**
+Count: **28**
 
 - [`2026-05-12-setup.md`](2026-05-12-setup.md)
 - [`2026-05-13-airi-desktop-reuse.md`](2026-05-13-airi-desktop-reuse.md)
@@ -31,6 +31,7 @@ Count: **27**
 - [`2026-06-26-apple-music-windows-command-reference.md`](2026-06-26-apple-music-windows-command-reference.md)
 - [`2026-07-03-qodana-operating-model.md`](2026-07-03-qodana-operating-model.md)
 - [`2026-07-07-inference-task-object-detection-simplification-plan.md`](2026-07-07-inference-task-object-detection-simplification-plan.md)
+- [`2026-07-24-app-probe-analyze-current-state-reference.md`](2026-07-24-app-probe-analyze-current-state-reference.md)
 
 ## Related
 
