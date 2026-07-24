@@ -7,12 +7,13 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::scene_packet::{ScenePacketCameraRecord, ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest};
-use crate::types::{MinecraftSpatialFrame, Viewport};
+use crate::types::{BlockPosition, MinecraftSpatialFrame, Vec3, Viewport};
 
 pub type TrainingPackageResult<T> = Result<T, String>;
 
 pub const TRAINING_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_PACKAGE_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+const SEED_POINT_CLOUD_KNOWN_LIMIT: &str = "MC-7 D3 seed point cloud is a sparse raycast-hit initialization cloud for OpenSplat compatibility only; it is not dense scene geometry; densification from nearby_blocks is deferred to a separate owner-approved slice";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrainingPackageInputs {
@@ -157,6 +158,13 @@ struct NerfstudioTransforms {
   k2: f64,
   p1: f64,
   p2: f64,
+  // Relative path to the seed point cloud the Nerfstudio reader resolves against
+  // this file's directory. Absent when no Ready frame yields a raycast seed point;
+  // OpenSplat's nerfstudio reader aborts on an empty/dangling value, so we omit it
+  // entirely rather than emit an empty string. See github.com/pierotofy/OpenSplat
+  // nerfstudio.cpp (`if (t.plyFilePath.empty()) throw`).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  ply_file_path: Option<&'static str>,
   frames: Vec<NerfstudioFrame>,
 }
 
@@ -207,6 +215,10 @@ pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPa
   let mut frame_decisions = Vec::new();
   let mut exported_frame_indices = Vec::new();
   let mut nerfstudio_frames = Vec::new();
+  // Seed point cloud for OpenSplat initialization, deduplicated by block and kept
+  // in sorted order for deterministic output. Only Ready frames contribute, so the
+  // cloud shares the exported-frame coordinate space.
+  let mut seed_block_positions = BTreeSet::<(i32, i32, i32)>::new();
   let mut compatibility_baseline = None::<CompatibilityIntrinsics>;
   let mut legacy_fallback_frame_indices = Vec::new();
   let mut frame_indices = BTreeSet::new();
@@ -278,6 +290,10 @@ pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPa
         file_path: format!("images/frame_{:06}.{}", frame_record.frame_index, extension_for(&compatibility_image_relative_path)),
         transform_matrix: matrix_rows(&evaluation.camera_to_world.expect("ready compatibility frame must include camera transform")),
       });
+      if let Some(raycast_hit) = &frame_payload.spatial_frame.raycast_hit {
+        let block = raycast_hit.block_pos;
+        seed_block_positions.insert((block.x, block.y, block.z));
+      }
     }
 
     frame_records.push(TrainingPackageFrameRecord {
@@ -314,6 +330,17 @@ pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPa
       legacy_fallback_frame_indices.iter().map(|index| index.to_string()).collect::<Vec<_>>().join(",")
     ));
   }
+  // The seed point cloud is emitted only for a non-Blocked view that has at least
+  // one raycast-derived block. It is intentionally sparse (one point per hit block)
+  // and exists to satisfy OpenSplat's required initialization input, not to provide
+  // dense geometry. Densification from `nearby_blocks` is deferred to its own slice.
+  // TODO(mc7-seed-cloud-densify): replace raycast-hit seed points with a dense
+  // `nearby_blocks`-derived cloud once telemetry populates nearby_blocks through the
+  // scene-packet export and an owner names that slice.
+  let emit_seed_point_cloud = compatibility_status != TrainingCompatibilityStatus::Blocked && !seed_block_positions.is_empty();
+  if emit_seed_point_cloud {
+    known_limits.insert(SEED_POINT_CLOUD_KNOWN_LIMIT.to_string());
+  }
   let known_limits = known_limits.into_iter().collect::<Vec<_>>();
   let warnings = warnings.into_iter().collect::<Vec<_>>();
 
@@ -327,11 +354,11 @@ pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPa
   let compatibility_export_report_relative_path = "compat/nerfstudio/export_report.json".to_string();
   let compatibility_transforms_relative_path =
     (compatibility_status != TrainingCompatibilityStatus::Blocked).then_some("compat/nerfstudio/transforms.json".to_string());
-  let compatibility_known_limits = if legacy_fallback_frame_indices.is_empty() {
-    Vec::new()
-  } else {
-    known_limits.iter().filter(|value| value.contains("legacy rotation-only view_matrix fallback")).cloned().collect::<Vec<_>>()
-  };
+  let compatibility_known_limits = known_limits
+    .iter()
+    .filter(|value| value.contains("legacy rotation-only view_matrix fallback") || value.as_str() == SEED_POINT_CLOUD_KNOWN_LIMIT)
+    .cloned()
+    .collect::<Vec<_>>();
   let compatibility_report = TrainingCompatibilityViewReport {
     view_name: "nerfstudio".to_string(),
     status: compatibility_status,
@@ -370,6 +397,21 @@ pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPa
   write_json(&cameras_path, &camera_records.values().cloned().collect::<Vec<ScenePacketCameraRecord>>(), "MC-7 D3 cameras JSON")?;
   write_json(&known_limits_path, &known_limits, "MC-7 D3 known limits JSON")?;
   write_json(&compatibility_export_report_path, &compatibility_report, "MC-7 D3 Nerfstudio compatibility export report JSON")?;
+  // The seed cloud lives beside transforms.json so `ply_file_path` is a bare
+  // relative name the Nerfstudio reader resolves against the transforms directory.
+  const SEED_POINT_CLOUD_FILE_NAME: &str = "points3d.ply";
+  let ply_file_path = if emit_seed_point_cloud {
+    if let Some(transforms_path) = compatibility_transforms_path.as_ref() {
+      let ply_path = transforms_path.with_file_name(SEED_POINT_CLOUD_FILE_NAME);
+      let seed_points = seed_block_positions.iter().map(|&(x, y, z)| BlockPosition::new(x, y, z).center()).collect::<Vec<_>>();
+      write_seed_point_cloud(&ply_path, &seed_points)?;
+      Some(SEED_POINT_CLOUD_FILE_NAME)
+    } else {
+      None
+    }
+  } else {
+    None
+  };
   if let (Some(transforms_path), Some(intrinsics)) = (compatibility_transforms_path.as_ref(), compatibility_baseline) {
     write_json(
       transforms_path,
@@ -385,6 +427,7 @@ pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPa
         k2: 0.0,
         p1: 0.0,
         p2: 0.0,
+        ply_file_path,
         frames: nerfstudio_frames,
       },
       "MC-7 D3 Nerfstudio transforms JSON",
@@ -781,6 +824,28 @@ fn copy_file(source: &Path, destination: &Path, label: &str) -> TrainingPackageR
   Ok(())
 }
 
+// Writes a minimal ASCII PLY point cloud (XYZ float vertices) that OpenSplat's
+// `readPointSet` accepts as the Nerfstudio seed cloud. Callers guarantee `points`
+// is non-empty; an empty cloud would make the downstream reader abort.
+fn write_seed_point_cloud(path: &Path, points: &[Vec3]) -> TrainingPackageResult<()> {
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent)
+      .map_err(|error| format!("failed to create MC-7 D3 seed point cloud directory {}: {error}", parent.display()))?;
+  }
+  let mut ply = String::new();
+  ply.push_str("ply\n");
+  ply.push_str("format ascii 1.0\n");
+  ply.push_str(&format!("element vertex {}\n", points.len()));
+  ply.push_str("property float x\n");
+  ply.push_str("property float y\n");
+  ply.push_str("property float z\n");
+  ply.push_str("end_header\n");
+  for point in points {
+    ply.push_str(&format!("{} {} {}\n", point.x, point.y, point.z));
+  }
+  fs::write(path, ply.as_bytes()).map_err(|error| format!("failed to write MC-7 D3 seed point cloud {}: {error}", path.display()))
+}
+
 fn write_json(path: &Path, value: &impl Serialize, label: &str) -> TrainingPackageResult<()> {
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
@@ -822,6 +887,9 @@ mod tests {
     projection_matrix: [f64; 16],
     viewport: Viewport,
     player_eye: Vec3,
+    // `Some(block)` injects a raycast hit at that block (the seed-point source);
+    // `None` exercises frames that produce no seed point.
+    raycast_block: Option<BlockPosition>,
   }
 
   enum ScreenshotDisposition {
@@ -1037,6 +1105,118 @@ mod tests {
     assert!(output.inspect_report.known_limits.iter().any(|value| value.contains("legacy rotation-only view_matrix fallback")));
   }
 
+  // ROOT CAUSE:
+  //
+  // OpenSplat's nerfstudio reader aborts with "ply_file_path is empty" when the
+  // transforms.json has no initial point cloud; unlike nerfstudio's own splatfacto
+  // it has no random-init fallback (github.com/pierotofy/OpenSplat nerfstudio.cpp).
+  //
+  // Before this slice, the export emitted poses/intrinsics/images but no seed cloud,
+  // so an OpenSplat run could never start. The fix emits a raycast-hit seed PLY and
+  // references it from transforms.json so the reader is satisfied.
+  #[test]
+  fn exports_raycast_seed_point_cloud_and_references_it_from_transforms() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let scene_packet_manifest_path = write_scene_packet_fixture(
+      &temp,
+      vec![
+        synthetic_frame(1, "run_1", "file/auv-mc6-rich"),
+        synthetic_frame(2, "run_2", "file/auv-mc6-rich"),
+        synthetic_frame(3, "run_3", "file/auv-mc6-flat"),
+        SyntheticFrameSpec {
+          raycast_block: Some(BlockPosition::new(1, 0, 0)),
+          ..synthetic_frame(4, "run_4", "file/auv-mc6-rich")
+        },
+      ],
+    );
+
+    let output = export_3dgs_training_package(TrainingPackageInputs {
+      scene_packet_manifest_path,
+      output_dir: temp.path().join("training-package"),
+    })
+    .expect("training package export should succeed");
+
+    let ply_path = output.output_dir.join("compat/nerfstudio/points3d.ply");
+    assert!(ply_path.is_file(), "seed point cloud PLY should be written");
+
+    // transforms.json must reference the seed cloud by the relative name the
+    // Nerfstudio reader resolves against the transforms.json directory.
+    let transforms: serde_json::Value =
+      serde_json::from_str(&fs::read_to_string(output.output_dir.join("compat/nerfstudio/transforms.json")).expect("read transforms"))
+        .expect("parse transforms");
+    assert_eq!(transforms.get("ply_file_path").and_then(|value| value.as_str()), Some("points3d.ply"));
+
+    // Four Ready frames include one repeated block, so the PLY must contain three
+    // sorted, deduplicated block centers.
+    let ply = fs::read_to_string(&ply_path).expect("read ply");
+    assert!(ply.starts_with("ply\n"), "PLY must begin with the magic line: {ply}");
+    assert!(ply.contains("format ascii 1.0"), "PLY must declare ascii format: {ply}");
+    assert!(ply.contains("element vertex 3"), "four frames with one repeated raycast block => three seed points: {ply}");
+    assert!(ply.contains("property float x"), "PLY must declare x property: {ply}");
+    assert!(ply.contains("end_header\n"), "PLY must terminate the header: {ply}");
+    let vertices = ply.split_once("end_header\n").expect("PLY header terminator").1.lines().collect::<Vec<_>>();
+    assert_eq!(vertices, vec!["1.5 0.5 0.5", "2.5 0.5 0.5", "3.5 0.5 0.5"]);
+    assert!(
+      output.inspect_report.known_limits.iter().any(|value| value.contains("seed point cloud") && value.contains("nearby_blocks")),
+      "known_limits should disclose the sparse seed cloud: {:?}",
+      output.inspect_report.known_limits
+    );
+    let compatibility_report = &output.inspect_report.compatibility_views[0];
+    assert!(
+      compatibility_report.known_limits.iter().any(|value| value == SEED_POINT_CLOUD_KNOWN_LIMIT),
+      "compatibility view should disclose the sparse seed cloud: {:?}",
+      compatibility_report.known_limits
+    );
+    let persisted_compatibility_report: TrainingCompatibilityViewReport = serde_json::from_str(
+      &fs::read_to_string(output.output_dir.join("compat/nerfstudio/export_report.json")).expect("read compatibility report"),
+    )
+    .expect("parse compatibility report");
+    assert!(
+      persisted_compatibility_report.known_limits.iter().any(|value| value == SEED_POINT_CLOUD_KNOWN_LIMIT),
+      "persisted compatibility report should disclose the sparse seed cloud: {:?}",
+      persisted_compatibility_report.known_limits
+    );
+  }
+
+  // ROOT CAUSE:
+  //
+  // If no Ready frame carries a raycast hit there are no seed points, and emitting
+  // an empty PLY or a dangling `ply_file_path` would make OpenSplat abort mid-read
+  // rather than fail cleanly. The fix omits both the PLY and the field in that case.
+  #[test]
+  fn omits_ply_and_ply_file_path_when_no_raycast_hits() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let scene_packet_manifest_path = write_scene_packet_fixture(
+      &temp,
+      vec![
+        SyntheticFrameSpec {
+          raycast_block: None,
+          ..synthetic_frame(1, "run_1", "file/auv-mc6-rich")
+        },
+        SyntheticFrameSpec {
+          raycast_block: None,
+          ..synthetic_frame(2, "run_2", "file/auv-mc6-rich")
+        },
+      ],
+    );
+
+    let output = export_3dgs_training_package(TrainingPackageInputs {
+      scene_packet_manifest_path,
+      output_dir: temp.path().join("training-package"),
+    })
+    .expect("training package export should succeed");
+
+    // Ready view is still produced (poses are valid); only the seed cloud is absent.
+    assert_eq!(output.inspect_report.compatibility_views[0].status, TrainingCompatibilityStatus::Ready);
+    assert!(output.output_dir.join("compat/nerfstudio/transforms.json").is_file());
+    assert!(!output.output_dir.join("compat/nerfstudio/points3d.ply").exists(), "no raycast hits => no PLY");
+
+    let transforms: serde_json::Value =
+      serde_json::from_str(&fs::read_to_string(output.output_dir.join("compat/nerfstudio/transforms.json")).expect("read transforms"))
+        .expect("parse transforms");
+    assert!(transforms.get("ply_file_path").is_none(), "ply_file_path must be absent when no seed cloud exists: {transforms}");
+  }
+
   fn synthetic_frame(frame_index: usize, source_run_id: &str, file_pack: &str) -> SyntheticFrameSpec {
     SyntheticFrameSpec {
       frame_index,
@@ -1055,6 +1235,8 @@ mod tests {
       ],
       viewport: Viewport::new(800, 600),
       player_eye: Vec3::new(0.0, 0.0, 0.0),
+      // Distinct block per frame so the deduplicated seed cloud has one point per frame.
+      raycast_block: Some(BlockPosition::new(frame_index as i32, 0, 0)),
     }
   }
 
@@ -1089,8 +1271,8 @@ mod tests {
           yaw: 0.0,
           pitch: 0.0,
         },
-        raycast_hit: Some(RaycastHit {
-          block_pos: BlockPosition::new(0, 0, 0),
+        raycast_hit: spec.raycast_block.map(|block_pos| RaycastHit {
+          block_pos,
           face: BlockFace::North,
           block_id: "minecraft:stone".to_string(),
         }),
