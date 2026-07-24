@@ -1,22 +1,35 @@
-  # AUV App Probe and Analyze Workflow v0
+# AUV App Probe and Analyze Workflow
 
 Date: 2026-05-18
 
-Status: active reference
+Status: active reference, updated for current CLI surface on 2026-07-24
 
 ## Purpose
 
-This workflow is the current phase-2 entrypoint for `probe -> analyze -> distill -> validate`.
+This note describes the current `auv app` workflow that still exists on
+`main`.
 
-It exists to stop the next distillation loop from starting with free-form model
-opinions. The `analyze` step must be grounded in deterministic probe artifacts.
+Today that workflow is:
 
-## CLI Entry Points
+```text
+probe -> analyze
+```
 
-- `auv-cli app probe <bundle-id> [--output-dir <dir>]`
-- `auv-cli app analyze <probe-dir-or-probe-json>`
-- `auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]`
-- `auv-cli app validate <distill-dir-or-distillation-json>`
+The older `distill -> validate` tail documented in May 2026 was removed from
+the CLI. This file now records the current command surface and the honesty
+boundary that still matters for `app analyze`.
+
+## Current CLI Entry Points
+
+- `auv app probe <bundle-id> [--output-dir <dir>]`
+- `auv app analyze <probe-dir-or-probe-json>`
+
+Current parser/runtime truth:
+
+- `crates/auv-cli/src/cli.rs` only accepts `probe` and `analyze` under
+  `auv app`.
+- `distill` and `validate` now hard-error with:
+  `app recipe distillation has been removed; use app-local Rust commands instead`
 
 ## Probe Output
 
@@ -24,50 +37,31 @@ opinions. The `analyze` step must be grounded in deterministic probe artifacts.
 
 - `probe.json`
 
-The current implementation records:
+The probe records app identity plus these invoke-backed steps:
 
-1. app identity
-  - bundle id
-  - app name
-  - app path
-   - main executable path
-   - version and build version
-   - URL schemes
-   - AppleScript addressability
+1. `probe-permissions` -> `app.probePermissions`
+2. `list-displays` -> `display.list`
+3. `activate-target-app` -> `app.activate`, when AppleScript-addressable
+4. `list-windows` -> `window.list`
+5. `capture-ax-tree` -> `window.captureAxTree`
+6. `capture-window` -> `window.capture`
+7. `ocr-sample` -> `window.observeRegion`
 
-2. deterministic runtime-backed probe steps
-   - `debug.probePermissions`
-   - `debug.listDisplays`
-   - `debug.probeCoordinateReadiness`
-   - `debug.activateApp`
-   - `debug.observeWindows`
-   - `debug.observeAxTree`
-   - `debug.captureDisplay`
-   - `debug.findImageText` as a sample OCR-on-artifact pass
+Each step preserves its command inputs, target application, run/span identity,
+status, output summary, artifacts, and optional failure message.
 
-Each recorded step includes:
+On the `a41f4c29` baseline, `resolve_probe_ocr_sample_query` still looks up the
+legacy step ids `observe-windows` and `observe-window-tree`. The producer ids
+above are canonical, but that analyzer fallback is not yet migrated and may
+fall back to the app name or bundle id instead.
 
-- command id
-- target application id
-- exact inputs
-- run id
-- output summary
-- artifact paths
-- inspect path
+Important current behavior:
 
-This means distillation can start from actual runtime traces instead of chat
-memory.
-
-Important:
-
-- `app probe` is now allowed to capture a **partial** app identity when
-  LaunchServices or Spotlight cannot resolve the bundle id to an installed app
-  bundle.
-- target-specific probe steps such as AX tree observation or app-targeted
-  capture are also allowed to fail without aborting the whole probe
-  directory.
-- those failures are recorded into `probe.json` and must later surface as
-  analysis boundaries rather than being silently ignored.
+- partial app identity is allowed when LaunchServices or Spotlight cannot fully
+  resolve the bundle id
+- target-specific failures are allowed to survive inside `probe.json`
+- missing or failed probe steps are analysis boundaries, not permission to
+  fabricate a cleaner story later
 
 ## Analyze Output
 
@@ -76,267 +70,68 @@ Important:
 - `analysis.json`
 - `report.md`
 
-The current report shape covers:
+The current report/output shape is still review-oriented. It covers:
 
 1. app basic information
 2. available surfaces
 3. grounding assessment
-4. candidate / annotation layer
-5. control strategy
-6. verification assessment
-7. known boundaries
-8. recommended candidate strategies
+4. control assessment
+5. verification assessment
+6. known boundaries
+7. recommended strategies
+8. surface candidates and candidate-query evidence where available
 
-The structured `analysis.json` is the machine-facing handoff to later
-distillation. The Markdown report is for humans and LLM review.
+`analysis.json` remains the machine-readable output. `report.md` remains the
+human-facing summary.
 
-The current `analysis.json` also carries structured candidate annotations rather
-than only prose. These candidates are the first machine-consumable layer for
-list-like UI targets and ambiguous grounding:
+## Current Honesty Boundary
 
-- AX focus-query candidates
-- OCR anchor-text candidates
-- grouped visible-row candidates when the sampled surface looks collection-like
-- primary-window region candidates
+`app analyze` is not a validator and does not emit a promoted
+`contract::Candidate`. It does carry review-time `promotion_gate` metadata,
+including `action_grade_candidate` classifications for the currently supported
+families.
 
-Candidate objects should now be read as small target specs, not just labels.
-At minimum they may carry:
+It may:
 
-- `coordinate_space`
-- `bounds`
-- `click_point`
-- `input_bindings`
-- `compatibility.direct_taxonomy_ids`
-- `compatibility.context_taxonomy_ids`
+- classify observable surfaces from probe artifacts
+- emit reviewable surface candidates
+- attach candidate queries, evidence refs, and known limits
+- report the analyzer's current promotion classification
+- recommend only strategies that current runtime/action contracts can actually
+  express
 
-This is the start of a contract that can later describe fixed-layout or
-window-relative action targets without collapsing back into ad-hoc README prose.
+It must not:
 
-The important distinction is:
+- silently turn weak OCR or row evidence into semantic success claims
+- treat a classification as proof that a runtime action executed or verified
+  semantic success
+- hide missing probe truth behind prose-only optimism
 
-- direct taxonomy ids mean the candidate can already project concrete recipe
-  inputs for that taxonomy
-- context taxonomy ids mean the candidate is still useful evidence, but not yet
-  a direct recipe-input source
-
-When the semantic surface is weak but the probe still exposed a stable primary
-window region, `app analyze` may now emit a `window-primary-region` annotation
-derived from either the visible window snapshot or the AX root window fallback.
-
-If the probe captured only a partial app identity or some target-specific
-steps failed, `app analyze` should still produce `analysis.json` and `report.md`
-as long as enough deterministic baseline facts remain to speak honestly. In
-that situation the output should prefer:
+When probe truth is weak, the correct output is still:
 
 - zero candidates
 - zero recommended strategies
-- explicit `known_boundaries`
+- explicit known boundaries
 
-over manufacturing candidate slices from missing evidence.
+That is more useful than fake genericity.
 
-## Distill Output
+## Historical Boundary
 
-`app distill` consumes `analysis.json` and writes:
+One May 2026 note remains as historical contract context:
 
-- `distillation.json`
-- `report.md`
-- `candidates/*.recipe.json`
-- `candidates/*.cases.json`
+- [`2026-05-28-surface-analyze-v0.md`](2026-05-28-surface-analyze-v0.md)
 
-The current distill step is intentionally narrow:
+Use it for the historical `surface analyze` candidate boundary:
 
-- it generates candidate recipe and case-matrix scaffolds
-- it carries forward suggested annotation ids from the source analysis
-- it now also records a machine-readable `candidate_shape` per distilled
-  candidate:
-  - direct candidate ids
-  - context candidate ids
-  - provided inputs
-  - shape notes
-- it validates those generated artifacts against the current skill validators
-- it does **not** promote them to validated skills
+- what `AppSurfaceCandidate` was allowed to mean
+- why surface candidates were kept separate from `contract::Candidate`
+- what the old analyze-only promotion gate closed
 
-This means `distill` is allowed to produce useful candidate shapes, but not to
-invent success claims.
+Do not use that note as proof that `auv app distill` or `auv app validate`
+still exist on the current CLI. They do not.
 
-## Validate Output
+## Related Current Code
 
-`app validate` consumes `distillation.json` and writes:
-
-- `validation.json`
-- `validation-report.md`
-
-The current validate step is also intentionally narrow:
-
-- it loads candidate recipe/case-matrix pairs from the distillation output
-- it first applies any `candidate_shape.provided_inputs` from distill
-- it then applies only conservative auto-grounding from the structured analysis candidates
-- it classifies each candidate as:
-  - `validated`
-  - `candidate`
-  - `rejected`
-- it does **not** promote validated candidates into the main skill tree
-
-The current honesty rule is:
-
-- unresolved `TODO_*` inputs or missing grounding inputs move the candidate to
-  `rejected` before execution
-- live runtime failures move a runnable candidate to `rejected`
-- only successful live execution moves a candidate to `validated`
-
-This is deliberately stricter than the distillation phase. `app distill` may
-emit candidate scaffolds, but `app validate` must not preserve an unresolved
-candidate as if validation had made progress. It writes the validation report
-with the unresolved inputs and fails the validation command.
-
-## Truth Boundaries
-
-`app analyze` is not a validator.
-
-It can recommend candidate strategies, but it must not silently promote them to
-validated skills. Its output is bounded by:
-
-- probe artifacts
-- current runtime contracts
-- current strategy taxonomy
-
-It should prefer:
-
-- `candidate`
-- `partial`
-- `likely`
-- `unknown`
-
-over false certainty.
-
-## What This Workflow Does Not Prove
-
-This workflow does not prove:
-
-- semantic success
-- full skill stability
-- cross-app reuse
-- cross-platform reuse
-
-It only establishes a probe-backed app-surface baseline that later `distill`
-and `validate` steps can consume.
-
-## First Smoke Result
-
-The first live smoke target was `com.apple.TextEdit`.
-
-That smoke run showed the intended behavior:
-
-- `search-entry.ax-text-input.clipboard-submit.capture-evidence`
-- `native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text`
-
-were emitted as candidate strategies.
-
-It intentionally did **not** emit a bogus `result-selection` candidate just
-because a sample OCR query matched some visible text.
-
-This is the current honesty bar for `app analyze`: avoid over-claiming generic
-skill shapes that the sampled app surface does not justify.
-
-The same honesty bar now applies to `app distill`: candidate files must be
-machine-valid and strategy-consistent, but they must stay clearly marked as
-candidate-only until the validate/promote path proves them live.
-
-The same honesty bar now applies to `app validate`: auto-grounding can help,
-but it must stay conservative. If validate cannot resolve a `focus_query`,
-`anchor_text`, or similar candidate input honestly, it must reject that
-candidate before execution rather than manufacturing a fake validated result.
-
-The current honesty bar also applies to the candidate layer itself: a noisy OCR
-match should still be emitted as a noisy OCR candidate instead of being silently
-rewritten into a cleaner but false anchor.
-
-The same rule now applies one step earlier to `app probe`: missing app identity
-resolution, failed AX capture, or failed app-targeted screenshot should survive
-as recorded probe truth. They are boundaries, not excuses to abort the entire
-workflow before analysis can describe the problem.
-
-The OCR sample inside `app probe` also now prefers observable window/app labels
-over metadata-only names when those labels are available from the live surface.
-This matters for localized desktop apps where:
-
-- `app.app_name` may come back as an English bundle-facing name
-- the visible UI may expose a different localized app name
-- blindly probing OCR with metadata can create a false-zero sample
-
-That change improves probe honesty because the sample query is now closer to
-the text a human would actually expect to find on the captured window.
-
-## Second Smoke Result
-
-The current `TextEdit` smoke now covers the full phase-2 chain:
-
-- `app probe`
-- `app analyze`
-- `app distill`
-- `app validate`
-
-That smoke produced two candidate outcomes:
-
-- `macos.textedit.native_text_candidate.v0` -> `validated`
-  - validate reused a live AX text-surface query (`First Text View`)
-  - the marker paste completed
-  - `debug.verifyAxText` verified the same marker through AX
-
-- `macos.textedit.search_entry_candidate.v0` -> `rejected`
-  - validate refused to invent a fake `focus_query`
-  - it only auto-filled the trivial `query`
-  - the candidate therefore failed before execution with explicit unresolved
-    grounding inputs
-
-This is the current honesty bar for `app validate`:
-
-- promote only the slices that really run live
-- reject unresolved candidate slices before execution
-- do not use auto-grounding as permission to fabricate validation
-
-## Fixed-Layout Pointer Result
-
-The current NetEaseMusic V2 pass now covers a different kind of truth:
-
-- `app probe` now recovers one localized OCR sample query (`网易云音乐`) instead
-  of blindly reusing the English metadata name (`NeteaseMusic`)
-- that sample now yields visible OCR anchors, but only at the app-title layer
-- `app analyze` can recover one `window-primary-region` candidate from the AX
-  root window even when `observe-windows` reports zero visible windows
-- `app distill` can emit one generic
-  `window-action.window-point.pointer-click.capture-evidence` candidate
-- that candidate now carries machine-readable `window_bounds`, `relative_x`,
-  and `relative_y` bindings derived from the primary window region
-- `app validate` can conservatively auto-ground `relative_x` and `relative_y`
-  from that same annotation and run the slice live
-- the current live NetEaseMusic smoke therefore validates one
-  `window-action.window-point.pointer-click.capture-evidence` slice through:
-  - `debug.activateApp`
-  - `debug.clickWindowPoint`
-  - `debug.captureWindow`
-
-That is the current honesty bar for fixed-layout baselines:
-
-- keep the window-relative pointer slice machine-readable
-- allow activation-level pointer slices to validate when the analysis really
-  carries enough grounding data
-- keep weak OCR-title anchors as weak OCR-title anchors instead of inflating
-  them into result-selection truth
-- do not pretend that this is already a semantic search, result-selection, or
-  playback skill
-
-## Relationship To V2
-
-This workflow is the execution spine for V2, not the full V2 scope by itself.
-
-See also:
-
-- `docs/ai/references/ops/2026-05-19-v2-docs-contract.md`
-
-That note defines:
-
-- what V2 is allowed to focus on
-- what V2 must not reopen
-- why `xcap` capture should now be consumed as current truth instead of
-  redesigned again inside this phase
+- [`crates/auv-cli/src/cli.rs`](../../../../crates/auv-cli/src/cli.rs)
+- [`src/app/mod.rs`](../../../../src/app/mod.rs)
+- [`src/app/analysis.rs`](../../../../src/app/analysis.rs)

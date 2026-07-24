@@ -2,16 +2,16 @@
 
 Date: 2026-05-28
 
-Status: contract note, v0 boundary
+Status: historical contract note; the candidate boundary remains present in
+`app analyze`, but the old `distill -> validate` CLI tail has been removed
 
 Implementation baseline: `b702be0`
 
 ## Purpose
 
-`app analyze` is the bridge between an app probe and later distillation. Its job
-is to turn probe evidence into honest surface candidates, not to pretend that
-every visible text box, OCR fragment, or row-like band is already an
-action-grade semantic target.
+`app analyze` turns app-probe evidence into honest surface candidates. Its job
+is not to pretend that every visible text box, OCR fragment, or row-like band is
+already an action-grade semantic target.
 
 This document freezes the v0 boundary for:
 
@@ -109,11 +109,11 @@ the target before acting.
 - promote row/list bands into a result-selection recipe without a row action and
   semantic verification path
 - treat icon recognition as action success
-- invent a strategy taxonomy that recipe rendering cannot validate
+- invent a strategy taxonomy that current runtime/action contracts cannot express
 - create a second runtime `Candidate` schema outside `src/contract.rs`
 - hide provider uncertainty behind a single top-level confidence number
 
-## Promotion Gate
+## Promotion Gate Design Boundary
 
 Promotion is the transition:
 
@@ -121,7 +121,7 @@ Promotion is the transition:
 AppSurfaceCandidate -> contract::Candidate -> ActionResolver / operation
 ```
 
-Promotion is allowed only when all required gates are satisfied:
+The v0 design required all of these gates:
 
 | Gate | Requirement |
 | --- | --- |
@@ -133,10 +133,15 @@ Promotion is allowed only when all required gates are satisfied:
 | Control | Required focus, foreground, clipboard, keyboard, pointer, or AX behavior is explicit. |
 | Failure layer | Failure can be classified as grounding, candidate expiration, control, verification, or semantic mismatch. |
 
-If any gate is missing, keep the item as a surface candidate and record the
-blocker in `AppSurfaceCandidate.promotion_gate.missing_gates`. Use candidate
-notes or known boundaries for prose context, but do not rely on Markdown-only
-text as the machine-readable gate.
+The current implementation is narrower than that table.
+`promotion_gate_for_candidate` records the generic `artifact_ref` and
+`relocation_query_or_inputs` blockers plus a few surface-specific blockers. It
+does not encode explicit `liveness`, `control`, or `failure_layer` checks for
+every candidate family, and some supported families may be classified
+`action_grade_candidate` without those checks appearing in `missing_gates`.
+
+Treat the table as the historical design boundary, not as proof that
+`AppCandidatePromotionGate` exhaustively enforces every row.
 
 This gate is the seam between `app analyze` and `ActionResolver`. Do not bypass
 it by letting a driver action consume `AppSurfaceCandidate` directly.
@@ -198,8 +203,8 @@ probe artifact
   -> VerificationResult records outcome and failure layer
 ```
 
-Do not collapse these lifecycles too early. `app analyze` is for review and
-distillation decisions; operation results are for machine consumption and replay.
+Do not collapse these lifecycles too early. `app analyze` is a review-oriented
+evidence summary; operation results are for machine consumption and replay.
 
 ## V0 Done Criteria
 
@@ -213,13 +218,36 @@ distillation decisions; operation results are for machine consumption and replay
 - keep OCR-visible text as text evidence unless a semantic verifier exists
 - keep row/list bands as structural evidence unless a row action and verifier
   exist
-- recommend only strategies that current recipe/action/verification contracts can
+- recommend only strategies that current runtime/action/verification contracts can
   express
 - write a report that makes promotion blockers visible to a human reviewer
 - write JSON that another operation can use without scraping Markdown
 
 Anything beyond this, including full DOM selectors, YOLO, broad visual
 segmentation, or a new orchestration language, is outside v0.
+
+## Closure Summary
+
+The May 2026 slice closed a narrow analysis boundary:
+
+- `AppSurfaceCandidate` can carry selector queries and evidence refs
+- promotion metadata is machine-readable in the analysis output
+- OCR-visible text and row grouping remain review evidence rather than semantic
+  success
+- an analysis surface candidate is not automatically a runtime
+  `contract::Candidate`
+
+It did not close:
+
+- a production `AppSurfaceCandidate -> contract::Candidate` consumer path
+- row action plus semantic verification
+- OCR-anchor semantic success
+- broader surface-kind coverage
+- generic view reconstruction
+
+The later [`View*` parser line](../view-memory/2026-05-29-view-parser-v0-overview.md)
+is a separate reconstruction responsibility, not another tail step for this
+surface-analysis slice.
 
 ## Implementation Status
 
@@ -234,10 +262,9 @@ analyze contract on top of the `b702be0` selector baseline:
    explicit in the analyze report contract instead of being inferred from
    reviewer notes.
 3. JSON/read-side closure for the analyze boundary landed after the initial
-   evidence and promotion-gate slices. Regression coverage now preserves
-   evidence refs, promotion gates, review-only row candidates, and unresolved
-   grounding semantics across persisted `analysis.json`, `distillation.json`,
-   and `validation.json` artifacts.
+   evidence and promotion-gate slices. Current regression coverage preserves
+   evidence refs, promotion gates, and review-only row candidates in the
+   persisted analysis output.
 4. OCR visible text and row/list grouping remain surface candidates, not
    action-grade runtime candidates. The v0 boundary still treats them as
    observable evidence unless a later slice provides the missing action,
@@ -245,10 +272,14 @@ analyze contract on top of the `b702be0` selector baseline:
 5. Coordinate and capture context remain candidate-side detail rather than being
    pushed into a separate evidence-ref schema.
 
-The remaining future step is still the same seam:
+The former `app distill` and `app validate` commands and their output artifacts
+are historical context, not part of the current CLI contract.
+
+The unresolved boundary remains:
 
 ```text
 AppSurfaceCandidate -> contract::Candidate
 ```
 
-That promotion work is intentionally outside the current v0 analyze closure.
+This note records the gate; it does not approve implementing that promotion
+without a current production consumer and an owner-approved slice.

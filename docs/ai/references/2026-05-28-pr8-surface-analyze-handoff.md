@@ -1,5 +1,7 @@
-# Moved
+# Folded
 
-This note moved to [`ops/2026-05-28-pr8-surface-analyze-handoff.md`](ops/2026-05-28-pr8-surface-analyze-handoff.md).
+This intermediate handoff was folded into
+[`ops/2026-05-28-surface-analyze-v0.md`](ops/2026-05-28-surface-analyze-v0.md).
 
-Reason: references reorganized by responsibility folder; engineering slice codes removed from navigation.
+Reason: branch-local coordination belongs in Git history, while the durable
+surface-candidate boundary remains in the v0 contract note.

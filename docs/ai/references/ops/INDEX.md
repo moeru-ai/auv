@@ -2,7 +2,7 @@
 
 Setup, tooling, feature gates, cross-cutting notes
 
-Count: **27**
+Count: **25**
 
 - [`2026-05-12-setup.md`](2026-05-12-setup.md)
 - [`2026-05-13-airi-desktop-reuse.md`](2026-05-13-airi-desktop-reuse.md)
@@ -18,8 +18,6 @@ Count: **27**
 - [`2026-05-24-structured-observation-roadmap.md`](2026-05-24-structured-observation-roadmap.md)
 - [`2026-05-25-dream-architecture-rust-engineering.md`](2026-05-25-dream-architecture-rust-engineering.md)
 - [`2026-05-25-projects-research-and-repl-api.md`](2026-05-25-projects-research-and-repl-api.md)
-- [`2026-05-28-pr8-surface-analyze-handoff.md`](2026-05-28-pr8-surface-analyze-handoff.md)
-- [`2026-05-28-surface-analyze-closure.md`](2026-05-28-surface-analyze-closure.md)
 - [`2026-05-28-surface-analyze-v0.md`](2026-05-28-surface-analyze-v0.md)
 - [`2026-06-02-background-scroll-policy-design.md`](2026-06-02-background-scroll-policy-design.md)
 - [`2026-06-04-inference-yolo-design.md`](2026-06-04-inference-yolo-design.md)
