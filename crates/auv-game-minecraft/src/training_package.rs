@@ -13,7 +13,7 @@ pub type TrainingPackageResult<T> = Result<T, String>;
 
 pub const TRAINING_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_PACKAGE_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
-const SEED_POINT_CLOUD_KNOWN_LIMIT: &str = "OpenSplat seed point cloud is a sparse raycast-hit initialization cloud for structural compatibility only; it is not dense scene geometry; densification from nearby_blocks is deferred to a separate owner-approved slice";
+const SEED_POINT_CLOUD_KNOWN_LIMIT: &str = "OpenSplat seed point cloud is a sparse raycast-hit initialization cloud with neutral placeholder RGB values; it is not dense scene geometry or measured surface color; densification from nearby_blocks is deferred to a separate owner-approved slice";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrainingPackageInputs {
@@ -824,9 +824,10 @@ fn copy_file(source: &Path, destination: &Path, label: &str) -> TrainingPackageR
   Ok(())
 }
 
-// Writes a minimal ASCII PLY point cloud (XYZ float vertices) that OpenSplat's
-// `readPointSet` accepts as the Nerfstudio seed cloud. Callers guarantee `points`
-// is non-empty; an empty cloud would make the downstream reader abort.
+// Writes an ASCII PLY seed cloud with XYZ and neutral RGB. OpenSplat's reader
+// treats colors as optional, but its model initialization consumes one RGB row
+// per point, so colorless input is not a complete training initialization shape.
+// Callers guarantee `points` is non-empty.
 fn write_seed_point_cloud(path: &Path, points: &[Vec3]) -> TrainingPackageResult<()> {
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent)
@@ -839,9 +840,12 @@ fn write_seed_point_cloud(path: &Path, points: &[Vec3]) -> TrainingPackageResult
   ply.push_str("property float x\n");
   ply.push_str("property float y\n");
   ply.push_str("property float z\n");
+  ply.push_str("property uchar red\n");
+  ply.push_str("property uchar green\n");
+  ply.push_str("property uchar blue\n");
   ply.push_str("end_header\n");
   for point in points {
-    ply.push_str(&format!("{} {} {}\n", point.x, point.y, point.z));
+    ply.push_str(&format!("{} {} {} 128 128 128\n", point.x, point.y, point.z));
   }
   fs::write(path, ply.as_bytes()).map_err(|error| format!("failed to write OpenSplat seed point cloud {}: {error}", path.display()))
 }
@@ -1153,9 +1157,17 @@ mod tests {
     assert!(ply.contains("format ascii 1.0"), "PLY must declare ascii format: {ply}");
     assert!(ply.contains("element vertex 3"), "four frames with one repeated raycast block => three seed points: {ply}");
     assert!(ply.contains("property float x"), "PLY must declare x property: {ply}");
+    assert!(ply.contains("property uchar red"), "PLY must declare RGB properties for OpenSplat model initialization: {ply}");
     assert!(ply.contains("end_header\n"), "PLY must terminate the header: {ply}");
     let vertices = ply.split_once("end_header\n").expect("PLY header terminator").1.lines().collect::<Vec<_>>();
-    assert_eq!(vertices, vec!["1.5 0.5 0.5", "2.5 0.5 0.5", "3.5 0.5 0.5"]);
+    assert_eq!(
+      vertices,
+      vec![
+        "1.5 0.5 0.5 128 128 128",
+        "2.5 0.5 0.5 128 128 128",
+        "3.5 0.5 0.5 128 128 128"
+      ]
+    );
     assert!(
       output.inspect_report.known_limits.iter().any(|value| value.contains("seed point cloud") && value.contains("nearby_blocks")),
       "known_limits should disclose the sparse seed cloud: {:?}",
