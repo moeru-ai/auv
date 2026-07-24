@@ -141,7 +141,7 @@ mod platform {
     // --- Capture window (always, for OCR fallback + optional artifact) ---
     let capture = session.window().capture(window).map_err(|e| format!("window capture failed: {e}"))?;
 
-    crate::tracing::capture_artifact("auv.apple_music.playback.capture", &capture);
+    crate::tracing::image_artifact("auv.apple_music.playback.capture", &capture.image);
 
     // --- OCR fallback for track metadata ---
     let (ocr_track, ocr_artist) = if ax_track.is_none() || ax_artist.is_none() {

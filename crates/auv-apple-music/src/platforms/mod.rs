@@ -4,6 +4,11 @@
 //! driver calls, platform UI interpretation, and platform-only verification.
 //! Platform-neutral frontends consume the typed results re-exported here.
 
+// TODO(apple-music-view-parser-platform): Apple Music has no approved view
+// parser slice yet. When one is approved, keep its platform acquisition and
+// adapter in a `<capability>_<platform>.rs` module here while shared parser IR
+// remains platform-neutral.
+
 mod launch_windows;
 mod playback_windows;
 mod probe_macos;

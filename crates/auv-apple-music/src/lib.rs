@@ -64,13 +64,13 @@ mod tracing {
     }
   }
 
-  pub(super) fn capture_artifact(purpose: &'static str, capture: &auv_driver::capture::Capture) {
+  pub(super) fn image_artifact(purpose: &'static str, image: &image::RgbaImage) {
     if !auv_tracing::Context::current().can_publish_artifacts() {
       return;
     }
     let mut body = Vec::new();
     let prepared = PngEncoder::new(&mut body)
-      .write_image(capture.image.as_raw(), capture.image.width(), capture.image.height(), ExtendedColorType::Rgba8)
+      .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
       .map_err(|error| format!("encode PNG artifact failed: {error}"))
       .and_then(|()| emit_bytes(purpose, "image/png", body));
     match prepared {
@@ -79,12 +79,12 @@ mod tracing {
     }
   }
 
-  pub(super) fn capture_artifact_with(purpose: &'static str, capture: impl FnOnce() -> Result<auv_driver::capture::Capture, String>) {
+  pub(super) fn image_artifact_with(purpose: &'static str, capture: impl FnOnce() -> Result<image::RgbaImage, String>) {
     if !auv_tracing::Context::current().can_publish_artifacts() {
       return;
     }
     match capture() {
-      Ok(capture) => capture_artifact(purpose, &capture),
+      Ok(image) => image_artifact(purpose, &image),
       Err(error) => preparation_failed(purpose, error),
     }
   }
@@ -136,9 +136,9 @@ mod tracing {
 
   pub(super) fn json_artifact<T: Serialize>(_purpose: &'static str, _value: &T) {}
 
-  pub(super) fn capture_artifact(_purpose: &'static str, _capture: &auv_driver::capture::Capture) {}
+  pub(super) fn image_artifact<T>(_purpose: &'static str, _image: &T) {}
 
-  pub(super) fn capture_artifact_with(_purpose: &'static str, _capture: impl FnOnce() -> Result<auv_driver::capture::Capture, String>) {}
+  pub(super) fn image_artifact_with<T>(_purpose: &'static str, _capture: impl FnOnce() -> Result<T, String>) {}
 }
 
 pub use platforms::*;
@@ -196,9 +196,9 @@ mod tracing_tests {
   fn disabled_runtime_does_not_invoke_artifact_capture() {
     let invoked = Cell::new(false);
 
-    tracing::capture_artifact_with("auv.apple_music.test_capture", || {
+    tracing::image_artifact_with("auv.apple_music.test_capture", || {
       invoked.set(true);
-      Err("capture should not run".to_string())
+      Err::<image::RgbaImage, _>("capture should not run".to_string())
     });
 
     assert!(!invoked.get());
@@ -212,7 +212,9 @@ mod tracing_tests {
     let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
 
     let direct_value = root.in_scope(|| {
-      let _ = tracing::capture_artifact_with("auv.apple_music.test_capture", || Err("capture unavailable".to_string()));
+      let _ = tracing::image_artifact_with("auv.apple_music.test_capture", || {
+        Err::<image::RgbaImage, _>("capture unavailable".to_string())
+      });
       42
     });
 

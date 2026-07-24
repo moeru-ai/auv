@@ -350,8 +350,13 @@ mod platform {
           query,
           snapshot.nodes.iter().map(|node| (node.name.as_str(), node.value.as_deref(), node.control_type.as_str(), node.focused)),
         ) {
-          crate::tracing::capture_artifact_with("auv.apple_music.search.verification_capture", || {
-            self.session.window().capture(window).map_err(|error| format!("search artifact capture failed: {error}"))
+          crate::tracing::image_artifact_with("auv.apple_music.search.verification_capture", || {
+            self
+              .session
+              .window()
+              .capture(window)
+              .map(|capture| capture.image)
+              .map_err(|error| format!("search artifact capture failed: {error}"))
           });
           return Ok(SearchVerification {
             status: SearchVerificationStatus::Verified,
@@ -379,7 +384,7 @@ mod platform {
         .recognize_text_in_capture(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0))
         .map_err(|error| format!("search fallback OCR failed: {error}"))?;
       let verified = normalized(&recognition.text).contains(&normalized(query));
-      crate::tracing::capture_artifact("auv.apple_music.search.verification_capture", &capture);
+      crate::tracing::image_artifact("auv.apple_music.search.verification_capture", &capture.image);
       Ok(SearchVerification {
         status: if verified {
           SearchVerificationStatus::Verified

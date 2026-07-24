@@ -32,6 +32,24 @@ export default defineConfig([
     },
   },
   {
+    name: "auv/app-integration-directories",
+    directories: [
+      "crates/auv-apple-music",
+      "crates/auv-apple-notes",
+      "crates/auv-apple-textedit",
+      "crates/auv-gnome-control-center",
+      "crates/auv-netease-music",
+      "crates/auv-qqmusic",
+    ],
+    agent: createApeiraAdapter(),
+    plugins: {
+      rust: auv,
+    },
+    rules: {
+      "rust/require-platform-scoped-app-integration": "warn",
+    },
+  },
+  {
     name: "auv/repo-text-and-scripts",
     files: ["**/*.{toml,md,yml,yaml,json,js,mjs,cjs,ts,tsx,mts,cts,vue}"],
   },
