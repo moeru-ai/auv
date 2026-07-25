@@ -9,24 +9,21 @@ pub struct InvokeCliOutcome {
   pub exit_code: i32,
 }
 
-impl InvokeCliOutcome {
-  pub fn from_status(status: InvokeStatus) -> Self {
-    Self {
-      exit_code: if status == InvokeStatus::Failed { 1 } else { 0 },
-    }
-  }
-}
-
 pub fn render_invoke_result(result: &InvokeResult, options: InvokeOutputOptions) -> Result<InvokeCliOutcome, String> {
   if options.json {
     let mut stdout = io::stdout().lock();
-    result.write_json(&mut stdout, options)?;
+    result.write_json(&mut stdout)?;
   } else {
     let stdout = io::stdout();
     let mut stream = AutoStream::new(stdout.lock(), ColorChoice::Auto);
     result.write_human(&mut stream, options, true)?;
   }
-  Ok(InvokeCliOutcome::from_status(result.status()))
+  Ok(InvokeCliOutcome {
+    exit_code: match result.status() {
+      InvokeStatus::Completed => 0,
+      InvokeStatus::Failed => 1,
+    },
+  })
 }
 
 #[cfg(test)]
@@ -114,7 +111,7 @@ mod tests {
     assert!(output.contains("Result: observed"));
     assert!(output.contains("REF"));
     assert!(output.contains("fixture_0"));
-    assert!(output.contains("Fixture Appli..."));
+    assert!(output.contains("Fixture..."));
     assert!(!output.contains("Fixture Application With A Long Display Name"));
     assert!(output.contains("fixture_0"));
     assert!(!output.contains("PID"));

@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use anstyle::{AnsiColor, Style};
-use comfy_table::{Cell, Table, presets::NOTHING};
+use comfy_table::{Cell, ColumnConstraint, ContentArrangement, Row, Table, Width, presets::NOTHING};
 
 use super::InvokeOutputOptions;
 
@@ -78,9 +78,12 @@ pub struct InvokeReportTable {
 }
 
 impl InvokeReportTable {
-  pub fn new(columns: Vec<String>, rows: Vec<InvokeReportTableRow>) -> Self {
+  pub fn new<C>(columns: impl IntoIterator<Item = C>, rows: Vec<InvokeReportTableRow>) -> Self
+  where
+    C: AsRef<str>,
+  {
     Self {
-      columns,
+      columns: columns.into_iter().map(|column| column.as_ref().to_string()).collect(),
       rows,
       display_max_chars: Vec::new(),
     }
@@ -91,36 +94,26 @@ impl InvokeReportTable {
     self
   }
 
-  pub fn from_columns(columns: &[&str], rows: Vec<InvokeReportTableRow>) -> Self {
-    Self::new(columns.iter().map(|column| (*column).to_string()).collect(), rows)
-  }
-
-  pub fn from_columns_with_display_max_chars(
-    columns: &[&str],
-    rows: Vec<InvokeReportTableRow>,
-    display_max_chars: Vec<Option<usize>>,
-  ) -> Self {
-    Self::from_columns(columns, rows).with_display_max_chars(display_max_chars)
-  }
-
   pub(crate) fn write_human<W: Write>(&self, writer: &mut W) -> Result<(), String> {
     let mut rendered = Table::new();
     rendered.load_preset(NOTHING);
+    rendered.set_content_arrangement(ContentArrangement::Dynamic);
     rendered.set_header(self.columns.iter().map(Cell::new));
+    rendered.set_constraints(
+      self
+        .display_max_chars
+        .iter()
+        .map(|limit| ColumnConstraint::UpperBoundary(Width::Fixed(limit.and_then(|value| u16::try_from(value).ok()).unwrap_or(u16::MAX)))),
+    );
     for row in &self.rows {
-      rendered.add_row(row.cells.iter().enumerate().map(|(index, cell)| Cell::new(self.display_cell(index, cell))));
+      let mut rendered_row = Row::from(row.cells.iter().map(Cell::new).collect::<Vec<_>>());
+      rendered_row.max_height(1);
+      rendered.add_row(rendered_row);
     }
     for line in rendered.to_string().lines() {
       writeln!(writer, "  {}", line.trim()).map_err(write_error)?;
     }
     Ok(())
-  }
-
-  fn display_cell(&self, column_index: usize, value: &str) -> String {
-    match self.display_max_chars.get(column_index).copied().flatten() {
-      Some(max_chars) => truncate(value, max_chars),
-      None => value.to_string(),
-    }
   }
 }
 
@@ -130,12 +123,10 @@ pub struct InvokeReportTableRow {
 }
 
 impl InvokeReportTableRow {
-  pub fn new(cells: Vec<String>) -> Self {
-    Self { cells }
-  }
-
-  pub fn from_cells(cells: impl IntoIterator<Item = String>) -> Self {
-    Self::new(cells.into_iter().collect())
+  pub fn new(cells: impl IntoIterator<Item = String>) -> Self {
+    Self {
+      cells: cells.into_iter().collect(),
+    }
   }
 }
 
@@ -155,6 +146,12 @@ impl InvokeReportValue for auv_driver::Rect {
   }
 }
 
+impl InvokeReportValue for auv_scan::ScanBounds {
+  fn report_value(&self) -> String {
+    format!("{},{} {}x{}", self.x, self.y, self.width, self.height)
+  }
+}
+
 pub(crate) trait OptionalReportText<'a> {
   fn report_or(self, fallback: &'a str) -> &'a str;
 }
@@ -165,16 +162,6 @@ impl<'a> OptionalReportText<'a> for Option<&'a str> {
   }
 }
 
-pub(crate) trait InvokeReportLabels {
-  fn report_labels(&self) -> String;
-}
-
-impl InvokeReportLabels for Vec<&'static str> {
-  fn report_labels(&self) -> String {
-    self.join(",")
-  }
-}
-
 pub(super) fn write_field_rows<W: Write>(writer: &mut W, fields: &[InvokeReportField], color: bool) -> Result<(), String> {
   for field in fields {
     writeln!(writer, "  {}: {}", label(&field.label, color), field.value).map_err(write_error)?;
@@ -182,7 +169,7 @@ pub(super) fn write_field_rows<W: Write>(writer: &mut W, fields: &[InvokeReportF
   Ok(())
 }
 
-fn label(value: &str, color: bool) -> String {
+pub(super) fn label(value: &str, color: bool) -> String {
   if color {
     let style: Style = AnsiColor::BrightBlack.on_default();
     format!("{style}{value}{style:#}")
@@ -191,18 +178,6 @@ fn label(value: &str, color: bool) -> String {
   }
 }
 
-fn truncate(value: &str, max_chars: usize) -> String {
-  if value.chars().count() <= max_chars {
-    return value.to_string();
-  }
-  if max_chars <= 3 {
-    return ".".repeat(max_chars);
-  }
-  let mut truncated = value.chars().take(max_chars - 3).collect::<String>();
-  truncated.push_str("...");
-  truncated
-}
-
-fn write_error(error: io::Error) -> String {
+pub(super) fn write_error(error: io::Error) -> String {
   format!("failed to write invoke output: {error}")
 }

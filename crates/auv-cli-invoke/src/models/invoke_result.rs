@@ -4,7 +4,7 @@ use auv_tracing::RunId;
 use serde::Serialize;
 
 use super::{InvokeOutputOptions, InvokeReport, InvokeReportField};
-use crate::models::invoke_report::write_field_rows;
+use crate::models::invoke_report::{label, write_error, write_field_rows};
 use crate::{InvokeCommand, InvokeCommandResult};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -92,22 +92,24 @@ impl InvokeResult {
     }
   }
 
-  pub(crate) fn write_rendered<W: Write>(&self, writer: &mut W, options: InvokeOutputOptions) -> Result<(), String> {
-    if options.json {
-      self.write_json(writer, options)
-    } else {
-      self.write_human(writer, options, false)
-    }
-  }
-
-  pub(crate) fn write_json<W: Write>(&self, writer: &mut W, options: InvokeOutputOptions) -> Result<(), String> {
-    let output = InvokeResultJsonOutput::from_result(self, options);
+  pub(crate) fn write_json<W: Write>(&self, writer: &mut W) -> Result<(), String> {
+    let output = InvokeResultJsonOutput {
+      run_id: &self.run_id,
+      status: self.status().as_str(),
+      command_id: &self.command_id,
+      result: self.result(),
+      failure: self.failure(),
+    };
     serde_json::to_writer_pretty(&mut *writer, &output).map_err(|error| format!("failed to serialize invoke output: {error}"))?;
     writeln!(writer).map_err(|error| format!("failed to write invoke output: {error}"))
   }
 
   pub(crate) fn write_human<W: Write>(&self, writer: &mut W, options: InvokeOutputOptions, color: bool) -> Result<(), String> {
-    writeln!(writer, "{}. {}: {}", self.terminal_status(), label("Run", color), self.run_id).map_err(write_error)?;
+    let terminal_status = match self.status() {
+      InvokeStatus::Completed => "OK",
+      InvokeStatus::Failed => "ERROR",
+    };
+    writeln!(writer, "{}. {}: {}", terminal_status, label("Run", color), self.run_id).map_err(write_error)?;
     writeln!(writer).map_err(write_error)?;
     writeln!(writer, "● {} - {}", self.command_id, self.command_description).map_err(write_error)?;
 
@@ -136,15 +138,12 @@ impl InvokeResult {
 
   pub fn render_to_string(&self, options: InvokeOutputOptions) -> Result<String, String> {
     let mut bytes = Vec::new();
-    self.write_rendered(&mut bytes, options)?;
-    String::from_utf8(bytes).map_err(|error| format!("renderer emitted invalid UTF-8: {error}"))
-  }
-
-  fn terminal_status(&self) -> &'static str {
-    match self.status() {
-      InvokeStatus::Completed => "OK",
-      InvokeStatus::Failed => "ERROR",
+    if options.json {
+      self.write_json(&mut bytes)?;
+    } else {
+      self.write_human(&mut bytes, options, false)?;
     }
+    String::from_utf8(bytes).map_err(|error| format!("renderer emitted invalid UTF-8: {error}"))
   }
 }
 
@@ -156,31 +155,6 @@ struct InvokeResultJsonOutput<'a> {
   result: Option<&'a serde_json::Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
   failure: Option<&'a str>,
-}
-
-impl<'a> InvokeResultJsonOutput<'a> {
-  fn from_result(result: &'a InvokeResult, _options: InvokeOutputOptions) -> Self {
-    Self {
-      run_id: &result.run_id,
-      status: result.status().as_str(),
-      command_id: &result.command_id,
-      result: result.result(),
-      failure: result.failure(),
-    }
-  }
-}
-
-fn label(value: &str, color: bool) -> String {
-  if color {
-    let style: anstyle::Style = anstyle::AnsiColor::BrightBlack.on_default();
-    format!("{style}{value}{style:#}")
-  } else {
-    value.to_string()
-  }
-}
-
-fn write_error(error: std::io::Error) -> String {
-  format!("failed to write invoke output: {error}")
 }
 
 #[cfg(test)]

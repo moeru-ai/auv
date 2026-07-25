@@ -3,39 +3,15 @@
 //! Native AX capture/focus stay behind this module. Product and app crates
 //! should call [`crate::session::AccessibilityApi`] instead of `native`.
 
-use auv_driver_common::error::{DriverError, DriverResult};
-use auv_driver_common::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
-use serde::{Deserialize, Serialize};
-
 use crate::support::{find_best_ax_node, score_ax_node_match};
 use crate::types::{ObservedAxNode, ObservedAxTreeSnapshot};
+use auv_driver_common::accessibility::{AxFocusResult, AxTextRead};
+use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
 
 /// Default AX tree capture bounds for TextEdit-sized document trees.
 pub const DEFAULT_AX_MAX_DEPTH: i64 = 16;
 pub const DEFAULT_AX_MAX_CHILDREN: i64 = 64;
-
-/// Evidence returned after focusing a selected AX node.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AxFocusResult {
-  pub app: String,
-  pub pid: i32,
-  pub path: String,
-  pub role: String,
-  pub title: String,
-  pub value: String,
-  pub query: String,
-  pub input_action_result: InputActionResult,
-}
-
-/// Observed AX facts returned after reading text from a node.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AxTextRead {
-  pub app: String,
-  pub pid: i32,
-  pub path: String,
-  pub role: String,
-  pub matched_text: String,
-}
 
 pub fn capture_app_tree(app: &str, max_depth: i64, max_children: i64) -> DriverResult<ObservedAxTreeSnapshot> {
   let capture = crate::native::tree::capture_ax_tree_snapshot(app, max_depth, max_children).map_err(backend)?;

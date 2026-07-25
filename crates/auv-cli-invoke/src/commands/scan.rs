@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use crate::{
-  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField,
+  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportValue,
   arg::{SCAN_COVERAGE_ARGS, SCAN_FRAME_ARGS},
-  artifact::{emission_enabled, emit_bytes_with_receipt, emit_prepared},
+  artifact::{emit_bytes_with_receipt, emit_prepared},
   invoke_command,
 };
 use auv_scan::{build_coverage_fixture, load_frame_fixture};
@@ -92,18 +92,14 @@ fn scan_frame_output(frame: &auv_scan::ScanFrame) -> InvokeCommandResult {
     InvokeReportField::new("Sequence", frame.sequence_index.to_string()),
     InvokeReportField::new("Captured At", format!("{} ms", frame.captured_at_millis)),
     InvokeReportField::new("Image", format!("{}x{}", frame.image_dimensions.width, frame.image_dimensions.height)),
-    InvokeReportField::new("Window Bounds", format_bounds(&frame.window_bounds)),
+    InvokeReportField::new("Window Bounds", frame.window_bounds.report_value()),
   ];
   if let Some(viewport) = &frame.viewport_bounds {
-    fields.push(InvokeReportField::new("Viewport Bounds", format_bounds(viewport)));
+    fields.push(InvokeReportField::new("Viewport Bounds", viewport.report_value()));
   }
   let mut output = InvokeCommandOutput::from_result(frame)?;
   output.report = Some(InvokeReport::new(fields, Vec::new()));
   Ok(output)
-}
-
-fn format_bounds(bounds: &auv_scan::ScanBounds) -> String {
-  format!("{},{} {}x{}", bounds.x, bounds.y, bounds.width, bounds.height)
 }
 
 #[invoke_command(
@@ -133,7 +129,7 @@ pub async fn produce_scan_coverage(fixture_dir: PathBuf) -> Result<auv_scan::Cov
 }
 
 fn emit_scan_coverage(value: &auv_scan::CoverageView) {
-  if !emission_enabled() {
+  if !auv_tracing::Context::current().can_publish_artifacts() {
     return;
   }
   emit_prepared(SCAN_COVERAGE_PURPOSE, scan_coverage_artifact(value));
@@ -177,11 +173,9 @@ mod tests {
   use std::sync::atomic::{AtomicUsize, Ordering};
 
   use auv_tracing::{
-    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, Context, ErrorCode,
-    IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunStore,
-    RunSubscription, StoreArtifactRequest, configure, dispatcher,
+    ArtifactBody, ArtifactMetadata, ArtifactRequest, BoxFuture, Context, ErrorCode, MemoryTracingStore, RunId, StoreError, TraceRecord,
+    TracingStore, configure, dispatcher,
   };
-  use futures_util::StreamExt;
 
   use crate::{
     InvokeCommand, InvokeCommandInput, InvokeCommandOutput, InvokeNamespace, arg::SCAN_COVERAGE_ARGS, default_registry, render_command_help,
@@ -201,67 +195,40 @@ mod tests {
   }
 
   struct RejectArtifactStore {
-    inner: MemoryRunStore,
     writes: AtomicUsize,
   }
 
   impl RejectArtifactStore {
     fn new() -> Self {
       Self {
-        inner: MemoryRunStore::new(AuthorityId::new()),
         writes: AtomicUsize::new(0),
       }
     }
   }
 
-  impl RunStore for RejectArtifactStore {
-    fn authority_id(&self) -> AuthorityId {
-      self.inner.authority_id()
+  impl TracingStore for RejectArtifactStore {
+    fn write(&self, _record: TraceRecord) -> BoxFuture<'_, Result<(), StoreError>> {
+      Box::pin(async { Ok(()) })
     }
 
-    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
-      self.inner.commit(request)
-    }
-
-    fn write_artifact(
-      &self,
-      _request: StoreArtifactRequest,
-      _body: ArtifactBody,
-    ) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
+    fn write_artifact(&self, _request: ArtifactRequest, _body: ArtifactBody) -> BoxFuture<'_, Result<ArtifactMetadata, StoreError>> {
       self.writes.fetch_add(1, Ordering::SeqCst);
-      Box::pin(async { Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.scan_coverage_rejected").expect("test error code"))) })
+      Box::pin(async { Err(StoreError::new(ErrorCode::parse("auv.test.scan_coverage_rejected").expect("test error code"))) })
     }
 
-    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
-      self.inner.lookup_commit(run_id, key)
-    }
-
-    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
-      self.inner.load_snapshot(run_id)
-    }
-
-    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
-      self.inner.commits_after(run_id, after, limit)
-    }
-
-    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
-      self.inner.subscribe(run_id, after)
-    }
-
-    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
-      self.inner.open_artifact(uri)
+    fn flush(&self) -> BoxFuture<'_, Result<(), StoreError>> {
+      Box::pin(async { Ok(()) })
     }
   }
 
-  async fn invoke_traced(command: InvokeCommand, input: InvokeCommandInput) -> (InvokeCommandOutput, Arc<MemoryRunStore>, RunId) {
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store.clone()).build().expect("dispatch should build");
-    let run_id = RunId::new();
-    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+  async fn invoke_traced(command: InvokeCommand, input: InvokeCommandInput) -> (InvokeCommandOutput, Arc<MemoryTracingStore>) {
+    let store = Arc::new(MemoryTracingStore::new());
+    let dispatch = configure().tracing_store(store.clone()).build().expect("dispatch should build");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let future = root.in_scope(|| command.invoke(input));
     let output = root.instrument(future).await.expect("invoke should succeed");
     dispatch.flush().await.expect("tracing should flush");
-    (output, store, run_id)
+    (output, store)
   }
 
   #[test]
@@ -314,7 +281,7 @@ mod tests {
   #[tokio::test]
   async fn scan_coverage_typed_call_is_unchanged_by_publication_failure() {
     let store = Arc::new(RejectArtifactStore::new());
-    let dispatch = configure().run_store(store.clone()).build().expect("rejecting dispatch");
+    let dispatch = configure().tracing_store(store.clone()).build().expect("rejecting dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let future = root.in_scope(|| produce_scan_coverage(coverage_stable_fixture_dir()));
 
@@ -328,7 +295,7 @@ mod tests {
   #[tokio::test]
   async fn scan_frame_typed_call_does_not_publish_a_dangling_frame_when_image_publication_fails() {
     let store = Arc::new(RejectArtifactStore::new());
-    let dispatch = configure().run_store(store.clone()).build().expect("rejecting dispatch");
+    let dispatch = configure().tracing_store(store.clone()).build().expect("rejecting dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let future = root.in_scope(|| produce_scan_frame(single_frame_fixture_dir()));
 
@@ -422,7 +389,7 @@ mod tests {
   #[test]
   fn scan_frame_from_fixture_dir_emits_owned_artifacts() {
     let fixture_dir = single_frame_fixture_dir();
-    let (output, store, run_id) = futures_executor::block_on(invoke_traced(
+    let (output, store) = futures_executor::block_on(invoke_traced(
       frame_invoke_command(),
       InvokeCommandInput {
         command_id: "scan.frame".to_string(),
@@ -448,36 +415,29 @@ mod tests {
       ]
     );
 
-    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("recorded run");
-    let purposes = snapshot.artifacts().values().map(|publication| publication.metadata().purpose().as_str()).collect::<Vec<_>>();
+    let records = store.records();
+    let artifacts = records
+      .iter()
+      .filter_map(|record| match record {
+        TraceRecord::Artifact { metadata, .. } => Some(metadata),
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    let purposes = artifacts.iter().map(|metadata| metadata.purpose().as_str()).collect::<Vec<_>>();
     assert_eq!(purposes.len(), 2);
     assert!(purposes.contains(&"auv.scan.frame"));
     assert!(purposes.contains(&"auv.scan.frame_image"));
 
-    let frame_uri = snapshot
-      .artifacts()
-      .values()
-      .find(|publication| publication.metadata().purpose().as_str() == "auv.scan.frame")
-      .expect("frame payload artifact")
-      .metadata()
-      .uri()
-      .clone();
-    let image_uri = snapshot
-      .artifacts()
-      .values()
-      .find(|publication| publication.metadata().purpose().as_str() == "auv.scan.frame_image")
+    let frame_metadata =
+      artifacts.iter().find(|metadata| metadata.purpose().as_str() == "auv.scan.frame").expect("frame payload artifact").to_owned();
+    let image_uri = artifacts
+      .iter()
+      .find(|metadata| metadata.purpose().as_str() == "auv.scan.frame_image")
       .expect("frame image artifact")
-      .metadata()
       .uri()
       .to_string();
-    let frame_payload = futures_executor::block_on(async {
-      let mut reader = store.open_artifact(frame_uri).await.expect("open frame payload");
-      let mut bytes = Vec::new();
-      while let Some(chunk) = reader.next().await {
-        bytes.extend_from_slice(&chunk.expect("frame payload chunk"));
-      }
-      serde_json::from_slice::<serde_json::Value>(&bytes).expect("frame payload JSON")
-    });
+    let frame_payload = serde_json::from_slice::<serde_json::Value>(&store.artifact(frame_metadata.uri()).expect("frame payload body"))
+      .expect("frame payload JSON");
 
     assert_eq!(frame_payload.pointer("/image/artifact_uri").and_then(serde_json::Value::as_str), Some(image_uri.as_str()));
     assert!(frame_payload.pointer("/image/file_name").is_none());
@@ -488,7 +448,7 @@ mod tests {
   fn scan_coverage_from_fixture_dir_emits_owned_artifact() {
     let fixture_dir = coverage_stable_fixture_dir();
     let expected = futures_executor::block_on(produce_scan_coverage(fixture_dir.clone())).expect("direct typed coverage");
-    let (output, store, run_id) = futures_executor::block_on(invoke_traced(
+    let (output, store) = futures_executor::block_on(invoke_traced(
       coverage_invoke_command(),
       InvokeCommandInput {
         command_id: "scan.coverage".to_string(),
@@ -510,19 +470,21 @@ mod tests {
       ]
     );
 
-    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("recorded run");
-    let publication = snapshot.artifacts().values().next().expect("coverage artifact");
-    assert_eq!(snapshot.artifacts().len(), 1);
-    assert_eq!(publication.metadata().purpose().as_str(), "auv.runtime.scan_coverage");
-    assert_eq!(publication.metadata().content_type().to_string(), "application/json");
-    let actual = futures_executor::block_on(async {
-      let mut reader = store.open_artifact(publication.metadata().uri().clone()).await.expect("open coverage artifact");
-      let mut bytes = Vec::new();
-      while let Some(chunk) = reader.next().await {
-        bytes.extend_from_slice(&chunk.expect("coverage artifact chunk"));
-      }
-      serde_json::from_slice::<auv_scan::ScanCoverageArtifact>(&bytes).expect("typed coverage artifact").into_coverage()
-    });
+    let records = store.records();
+    let artifacts = records
+      .iter()
+      .filter_map(|record| match record {
+        TraceRecord::Artifact { metadata, .. } => Some(metadata),
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    let metadata = artifacts.first().expect("coverage artifact");
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(metadata.purpose().as_str(), "auv.runtime.scan_coverage");
+    assert_eq!(metadata.content_type().to_string(), "application/json");
+    let actual = serde_json::from_slice::<auv_scan::ScanCoverageArtifact>(&store.artifact(metadata.uri()).expect("coverage artifact body"))
+      .expect("typed coverage artifact")
+      .into_coverage();
     assert_eq!(actual, expected);
   }
 

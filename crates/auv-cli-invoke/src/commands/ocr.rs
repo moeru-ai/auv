@@ -28,16 +28,10 @@ pub(super) fn match_report(matches: &[auv_driver::OcrMatch], selected_index: Opt
       "Result",
       format!("{} text match(es)", matches.len()),
     )],
-    tables: vec![InvokeReportTable::from_columns_with_display_max_chars(
-      columns,
-      match_rows(matches, selected_index, false),
-      display_max_chars,
-    )],
-    wide_tables: vec![InvokeReportTable::from_columns_with_display_max_chars(
-      wide_columns,
-      match_rows(matches, selected_index, true),
-      wide_display_max_chars,
-    )],
+    tables: vec![InvokeReportTable::new(columns, match_rows(matches, selected_index, false)).with_display_max_chars(display_max_chars)],
+    wide_tables: vec![
+      InvokeReportTable::new(wide_columns, match_rows(matches, selected_index, true)).with_display_max_chars(wide_display_max_chars),
+    ],
     sections: Vec::new(),
   }
 }
@@ -60,7 +54,7 @@ fn match_rows(matches: &[auv_driver::OcrMatch], selected_index: Option<usize>, w
       if wide {
         cells.push(format!("{:.3}", matched.confidence));
       }
-      InvokeReportTableRow::from_cells(cells)
+      InvokeReportTableRow::new(cells)
     })
     .collect()
 }

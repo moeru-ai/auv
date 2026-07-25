@@ -4,7 +4,7 @@ use crate::{
     KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS, QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS,
     WINDOW_CLICK_POINT_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
   },
-  artifact::{emission_enabled, emit_prepared},
+  artifact::emit_prepared,
   invoke_command,
 };
 use crate::{InvokeReport, InvokeReportField};
@@ -37,16 +37,27 @@ pub fn group() -> CommandGroup {
   description = "Focus a target macOS text input through AX, either by --query text or by a promoted --candidate JSON payload.",
   args = QUERY_OR_CANDIDATE_ARGS,
 )]
-async fn focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
-  focus_text().await?;
-  Ok(InvokeCommandOutput::completed())
+async fn focus_text_input(input: InvokeCommandInput) -> InvokeCommandResult {
+  if input.dry_run {
+    return Ok(InvokeCommandOutput::completed());
+  }
+  let app = input.target_or_input_target().ok_or_else(|| "input.focusText requires --target".to_string())?.to_string();
+  let query = input.inputs.get("query").cloned().unwrap_or_default();
+  let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
+  InvokeCommandOutput::from_result(&focus_text(app, query, candidate).await?)
 }
 
-pub async fn focus_text() -> Result<(), String> {
-  // TODO(invoke-input-ax-focus): focusText still depends on the archived
-  // root AX candidate/action adapter; move a typed focus API before enabling
-  // this direct invoke command.
-  Err("input.focusText requires a typed AX/text focus API".to_string())
+pub async fn focus_text(app: String, query: String, candidate: String) -> Result<auv_driver::AxFocusResult, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    session.accessibility().focus_text_by_query(&app, &query, None, &candidate).map_err(|error| error.to_string())
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (app, query, candidate);
+    Err("input.focusText is only available on macOS".to_string())
+  }
 }
 
 #[invoke_command(
@@ -56,15 +67,9 @@ pub async fn focus_text() -> Result<(), String> {
   args = QUERY_ARGS,
 )]
 async fn press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
-  press_button_by_query().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn press_button_by_query() -> Result<(), String> {
-  // TODO(invoke-input-ax-press): pressButton still depends on root AX query
-  // resolution; move a typed button press API before enabling this direct
-  // invoke command.
-  Err("input.pressButton requires a typed AX/button press API".to_string())
+  // TODO(invoke-input-ax-press): implement after AccessibilityApi owns a
+  // query-to-press operation returning InputActionResult.
+  unimplemented!("input.pressButton")
 }
 
 #[invoke_command(
@@ -74,15 +79,8 @@ pub async fn press_button_by_query() -> Result<(), String> {
   args = QUERY_OVERLAY_ARGS,
 )]
 async fn ax_press_button(_input: InvokeCommandInput) -> InvokeCommandResult {
-  press_button_with_ax().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn press_button_with_ax() -> Result<(), String> {
-  // TODO(invoke-input-ax-press): AXUIElementPerformAction routing has not
-  // moved into a stable typed driver API yet; enable this after that boundary
-  // exists.
-  Err("input.axPressButton requires a typed AX press API".to_string())
+  // TODO(invoke-input-ax-press): see `press_button`.
+  unimplemented!("input.axPressButton")
 }
 
 #[invoke_command(
@@ -91,15 +89,14 @@ pub async fn press_button_with_ax() -> Result<(), String> {
   description = "Focus a text input by query or promoted --candidate JSON via AXUIElementSetAttributeValue(kAXFocusedAttribute) without moving the real cursor. Pass --overlay true for the dual-cursor visual. Errors when the target does not accept programmatic focus; use input.focusText if pointer movement is acceptable.",
   args = QUERY_OR_CANDIDATE_OVERLAY_ARGS,
 )]
-async fn ax_focus_text_input(_input: InvokeCommandInput) -> InvokeCommandResult {
-  focus_text_with_ax().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn focus_text_with_ax() -> Result<(), String> {
-  // TODO(invoke-input-ax-focus): AX focus-by-query/candidate has not moved
-  // into a stable typed driver API yet; enable this after that boundary exists.
-  Err("input.axFocusText requires a typed AX focus API".to_string())
+async fn ax_focus_text_input(input: InvokeCommandInput) -> InvokeCommandResult {
+  if input.dry_run {
+    return Ok(InvokeCommandOutput::completed());
+  }
+  let app = input.target_or_input_target().ok_or_else(|| "input.axFocusText requires --target".to_string())?.to_string();
+  let query = input.inputs.get("query").cloned().unwrap_or_default();
+  let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
+  InvokeCommandOutput::from_result(&focus_text(app, query, candidate).await?)
 }
 
 #[invoke_command(
@@ -109,15 +106,9 @@ pub async fn focus_text_with_ax() -> Result<(), String> {
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
 async fn ax_click_window_text(_input: InvokeCommandInput) -> InvokeCommandResult {
-  click_window_text_with_ax().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn click_window_text_with_ax() -> Result<(), String> {
-  // TODO(invoke-input-ax-click-window-text): OCR-to-AX click resolution still
-  // lives in the root macOS command adapter; move a typed resolver API before
-  // enabling this direct invoke command.
-  Err("input.axClickWindowText requires a typed OCR-to-AX click API".to_string())
+  // TODO(invoke-input-ax-click-window-text): implement after the driver owns
+  // OCR-to-AX resolution and returns InputActionResult evidence.
+  unimplemented!("input.axClickWindowText")
 }
 
 #[invoke_command(
@@ -127,15 +118,9 @@ pub async fn click_window_text_with_ax() -> Result<(), String> {
   args = WINDOW_QUERY_OVERLAY_ARGS,
 )]
 async fn smart_press(_input: InvokeCommandInput) -> InvokeCommandResult {
-  resolve_and_press().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn resolve_and_press() -> Result<(), String> {
-  // TODO(invoke-input-smart-press): ActionResolver execution still lives in
-  // the root macOS command adapter; move the typed resolver boundary before
-  // enabling this direct invoke command.
-  Err("input.smartPress requires a typed ActionResolver invoke API".to_string())
+  // TODO(invoke-input-smart-press): implement only after an owner-approved
+  // resolver consumes current typed recognition and input results.
+  unimplemented!("input.smartPress")
 }
 
 #[invoke_command(
@@ -149,7 +134,7 @@ async fn type_text(input: InvokeCommandInput) -> InvokeCommandResult {
   {
     reject_target_activation(&input, "input.typeText")?;
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let text = input.required_input("text")?.to_string();
@@ -189,7 +174,7 @@ async fn paste_text_preserve_clipboard(input: InvokeCommandInput) -> InvokeComma
   {
     reject_target_activation(&input, "input.pasteText")?;
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let text = input.required_input("text")?.to_string();
@@ -235,14 +220,16 @@ async fn press_key(input: InvokeCommandInput) -> InvokeCommandResult {
   {
     reject_target_activation(&input, "input.key")?;
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let key = input.required_input("key")?.to_string();
     let result = press_key_in_active_app(key.clone()).await?;
-    let mut output = input_action_output(&result)?;
-    attach_input_key_report(&mut output, &key, Some("active app"), Some("auv-driver-macos.input"), &result);
-    Ok(output)
+    let mut fields = input_action_report_fields(&result);
+    fields.insert(1, InvokeReportField::new("Key", key));
+    fields.insert(2, InvokeReportField::new("Target", "active app"));
+    fields.push(InvokeReportField::new("Backend", "auv-driver-macos.input"));
+    Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -279,15 +266,9 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
   args = TARGET_ARGS,
 )]
 async fn click_point(_input: InvokeCommandInput) -> InvokeCommandResult {
-  click_global_point().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn click_global_point() -> Result<(), String> {
-  // TODO(invoke-input-click-point): InputApi::click_at exists, but this
-  // invoke command exposes no x/y point args; add direct point inputs before
-  // enabling this command.
-  Err("input.clickPoint requires direct x/y point inputs".to_string())
+  // TODO(invoke-input-click-point): add global x/y arguments before calling
+  // InputApi::click_at; the current command schema cannot express a point.
+  unimplemented!("input.clickPoint")
 }
 
 #[invoke_command(
@@ -421,7 +402,9 @@ impl WindowPointInput {
   fn resolve(&self, window: &auv_driver::Window, command_id: &str) -> Result<auv_driver::geometry::WindowPoint, String> {
     let point = match self.0 {
       WindowPointKind::Offset(point) => point,
-      WindowPointKind::Relative(relative) => window_relative_window_point(window, relative.x, relative.y),
+      WindowPointKind::Relative(relative) => {
+        auv_driver::geometry::WindowPoint::new(window.frame.size.width * relative.x, window.frame.size.height * relative.y)
+      }
     };
     let coordinates = point.point();
     if !(0.0..=window.frame.size.width).contains(&coordinates.x) || !(0.0..=window.frame.size.height).contains(&coordinates.y) {
@@ -491,10 +474,19 @@ fn window_point_click_output(outcome: WindowPointClickOutcome) -> InvokeCommandR
       Ok(output)
     }
     Some(action) => {
-      let mut output = InvokeCommandOutput::from_result(&result)?;
-      output.report = Some(InvokeReport::new(input_action_report_fields(action), Vec::new()));
-      append_click_window_report(&mut output, &result.window, result.point);
-      Ok(output)
+      let mut fields = input_action_report_fields(action);
+      fields.push(InvokeReportField::new("Window ID", result.window.reference.id.clone()));
+      if let Some(title) = &result.window.title {
+        fields.push(InvokeReportField::new("Window title", title.clone()));
+      }
+      if let Some(app_name) = &result.window.app_name {
+        fields.push(InvokeReportField::new("Application", app_name.clone()));
+      }
+      if let Some(bundle_id) = &result.window.app_bundle_id {
+        fields.push(InvokeReportField::new("Bundle ID", bundle_id.clone()));
+      }
+      fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)));
+      Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
     }
   }
 }
@@ -538,15 +530,9 @@ where
   args = WINDOW_ARGS,
 )]
 async fn teach_click(_input: InvokeCommandInput) -> InvokeCommandResult {
-  teach_click_workflow().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn teach_click_workflow() -> Result<(), String> {
-  // TODO(invoke-input-teach-click): teach-click is an interactive root
-  // adapter workflow, not a stable typed input API; move the workflow boundary
-  // before enabling this direct invoke command.
-  Err("input.teachClick requires a typed teach-click workflow API".to_string())
+  // TODO(invoke-input-teach-click): implement after an owning module exposes
+  // a typed interactive workflow result shared by frontends.
+  unimplemented!("input.teachClick")
 }
 
 #[invoke_command(
@@ -556,15 +542,9 @@ pub async fn teach_click_workflow() -> Result<(), String> {
   args = TARGET_ARGS,
 )]
 async fn scroll_point(_input: InvokeCommandInput) -> InvokeCommandResult {
-  scroll_global_point().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn scroll_global_point() -> Result<(), String> {
-  // TODO(invoke-input-scroll-point): InputApi::scroll_global_hid exists, but
-  // this invoke command exposes no x/y point or delta args; add direct scroll
-  // inputs before enabling this command.
-  Err("input.scrollPoint requires direct x/y point and scroll delta inputs".to_string())
+  // TODO(invoke-input-scroll-point): add point and delta arguments before
+  // calling InputApi::scroll_global_hid.
+  unimplemented!("input.scrollPoint")
 }
 
 fn required_number(inputs: &std::collections::BTreeMap<String, String>, name: &str, command_id: &str) -> Result<f64, String> {
@@ -592,10 +572,6 @@ fn required_relative_number(inputs: &std::collections::BTreeMap<String, String>,
   Ok(value)
 }
 
-fn window_relative_window_point(window: &auv_driver::Window, relative_x: f64, relative_y: f64) -> auv_driver::geometry::WindowPoint {
-  auv_driver::geometry::WindowPoint::new(window.frame.size.width * relative_x, window.frame.size.height * relative_y)
-}
-
 fn click_window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelector {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
@@ -612,27 +588,6 @@ fn click_window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelect
   selector
 }
 
-fn append_click_window_report(
-  output: &mut InvokeCommandOutput,
-  window: &auv_driver::Window,
-  window_point: auv_driver::geometry::WindowPoint,
-) {
-  let Some(report) = output.report.as_mut() else {
-    return;
-  };
-  report.fields.push(InvokeReportField::new("Window ID", window.reference.id.clone()));
-  if let Some(title) = &window.title {
-    report.fields.push(InvokeReportField::new("Window title", title.clone()));
-  }
-  if let Some(app_name) = &window.app_name {
-    report.fields.push(InvokeReportField::new("Application", app_name.clone()));
-  }
-  if let Some(bundle_id) = &window.app_bundle_id {
-    report.fields.push(InvokeReportField::new("Bundle ID", bundle_id.clone()));
-  }
-  report.fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", window_point.point().x, window_point.point().y)));
-}
-
 fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
   if input.target_application_id.is_some() {
     // TODO(invoke-input-target-activation): foreground input APIs currently
@@ -643,14 +598,8 @@ fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Res
   Ok(())
 }
 
-fn dry_run_output(_command_id: &str) -> InvokeCommandOutput {
-  InvokeCommandOutput::completed()
-}
-
 fn input_action_output(result: &auv_driver::InputActionResult) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(result)?;
-  output.report = Some(InvokeReport::new(input_action_report_fields(result), Vec::new()));
-  Ok(output)
+  Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(input_action_report_fields(result), Vec::new())))
 }
 
 fn input_action_report_fields(result: &auv_driver::InputActionResult) -> Vec<InvokeReportField> {
@@ -669,7 +618,7 @@ fn input_action_report_fields(result: &auv_driver::InputActionResult) -> Vec<Inv
 }
 
 pub(super) fn emit_input_action_result(result: &auv_driver::InputActionResult) {
-  if !emission_enabled() {
+  if !auv_tracing::Context::current().can_publish_artifacts() {
     return;
   }
   emit_prepared(INPUT_ACTION_RESULT_PURPOSE, input_action_result_artifact(result));
@@ -689,36 +638,11 @@ fn input_action_result_artifact(result: &auv_driver::InputActionResult) -> Resul
   .map_err(|error| format!("failed to construct {INPUT_ACTION_RESULT_PURPOSE} artifact: {error}"))
 }
 
-fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, result: &auv_driver::InputActionResult) -> InvokeReport {
-  let mut fields = input_action_report_fields(result);
-  fields.insert(1, report_field("Key", key));
-  fields.insert(2, report_field("Target", target.unwrap_or("active app")));
-  if let Some(backend) = backend {
-    fields.push(report_field("Backend", backend));
-  }
-  InvokeReport::new(fields, Vec::new())
-}
-
-fn attach_input_key_report(
-  output: &mut InvokeCommandOutput,
-  key: &str,
-  target: Option<&str>,
-  backend: Option<&str>,
-  result: &auv_driver::InputActionResult,
-) {
-  output.report = Some(input_key_report(key, target, backend, result));
-}
-
-fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
-  InvokeReportField::new(label, value)
-}
-
 #[cfg(test)]
 mod click_window_point_tests {
   use super::*;
   use auv_driver::{InputActionResult, InputDeliveryPath};
-  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
-  use futures_util::StreamExt;
+  use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
   use std::collections::BTreeMap;
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
@@ -858,28 +782,29 @@ mod click_window_point_tests {
   #[tokio::test]
   async fn resolved_window_click_returns_direct_action_and_publishes_through_typed_root_contract() {
     let capability = ControlledWindowCapability::new();
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
-    let run_id = RunId::new();
-    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let store = Arc::new(MemoryTracingStore::new());
+    let dispatch = configure().tracing_store(store.clone()).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let expected = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
     let future =
       root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
 
     let delivered = root.instrument(future).await.expect("direct window click result");
     dispatch.flush().await.expect("flush input action telemetry");
-    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("input run");
+    let records = store.records();
 
     assert_eq!(delivered.action, expected);
-    let publication = snapshot.artifacts().values().next().expect("input action artifact");
-    assert_eq!(snapshot.artifacts().len(), 1);
-    assert_eq!(publication.metadata().purpose().as_str(), INPUT_ACTION_RESULT_PURPOSE);
-    assert_eq!(publication.metadata().content_type().to_string(), "application/json");
-    let mut reader = store.open_artifact(publication.metadata().uri().clone()).await.expect("open input action artifact");
-    let mut bytes = Vec::new();
-    while let Some(chunk) = reader.next().await {
-      bytes.extend_from_slice(&chunk.expect("input action artifact chunk"));
-    }
+    let metadata = records
+      .iter()
+      .find_map(|record| match record {
+        TraceRecord::Artifact { metadata, .. } => Some(metadata),
+        _ => None,
+      })
+      .expect("input action artifact");
+    assert_eq!(records.iter().filter(|record| matches!(record, TraceRecord::Artifact { .. })).count(), 1);
+    assert_eq!(metadata.purpose().as_str(), INPUT_ACTION_RESULT_PURPOSE);
+    assert_eq!(metadata.content_type().to_string(), "application/json");
+    let bytes = store.artifact(metadata.uri()).expect("input action artifact body");
     let recorded: InputActionResult = serde_json::from_slice(&bytes).expect("typed input action payload");
     assert_eq!(recorded, expected);
   }
@@ -896,20 +821,21 @@ mod click_window_point_tests {
       clipboard_disturbance: auv_driver::DisturbanceLevel::None,
     };
     let capability = ControlledWindowCapability::new().with_action(invalid.clone());
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
-    let run_id = RunId::new();
-    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let store = Arc::new(MemoryTracingStore::new());
+    let dispatch = configure().tracing_store(store.clone()).build().expect("memory dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let future =
       root.in_scope(|| click_resolved_window_point(&capability, test_window(), auv_driver::geometry::WindowPoint::new(640.0, 360.0)));
 
     let delivered = root.instrument(future).await.expect("artifact preparation must not replace the direct input result");
     dispatch.flush().await.expect("typed preparation diagnostic should flush");
-    let snapshot = store.load_snapshot(run_id).await.expect("snapshot read").expect("diagnostic run");
 
     assert_eq!(delivered.action, invalid);
     assert_eq!(capability.click_count(), 1, "artifact preparation must not reexecute direct input");
-    assert!(snapshot.artifacts().is_empty(), "invalid evidence must not commit an artifact");
+    assert!(
+      store.records().iter().all(|record| !matches!(record, TraceRecord::Artifact { .. })),
+      "invalid evidence must not commit an artifact"
+    );
   }
 
   #[tokio::test]
@@ -1106,25 +1032,6 @@ mod click_window_point_tests {
       is_main: true,
       is_visible: true,
     }
-  }
-
-  #[test]
-  fn input_key_report_includes_delivered_key_target_and_backend() {
-    let result = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
-
-    let mut output = InvokeCommandOutput::completed();
-    attach_input_key_report(&mut output, "Cmd+L", Some("active app"), Some("auv-driver-macos.input"), &result);
-    assert!(
-      output.report.is_some(),
-      "input.key live path calls this helper after driver delivery, so this stable helper test verifies report population without sending a real key"
-    );
-    let report = output.report.as_ref().expect("report should be set");
-
-    assert_eq!(field_value(report, "Result"), "delivered");
-    assert_eq!(field_value(report, "Key"), "Cmd+L");
-    assert_eq!(field_value(report, "Target"), "active app");
-    assert_eq!(field_value(report, "Backend"), "auv-driver-macos.input");
-    assert_eq!(field_value(report, "Path"), "foreground_system_events");
   }
 
   #[test]

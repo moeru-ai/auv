@@ -1,3 +1,4 @@
+pub mod accessibility;
 pub mod capture;
 pub mod display;
 pub mod error;
@@ -10,6 +11,7 @@ pub mod traits;
 pub mod vision;
 pub mod window;
 
+pub use accessibility::{AxFocusResult, AxTextRead};
 pub use capture::{Activation, Capture, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};

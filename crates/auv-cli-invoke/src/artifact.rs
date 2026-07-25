@@ -1,11 +1,5 @@
-use std::io::Write;
-
-use auv_tracing::{ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, ContentType, EventPayload, NewArtifact, Sha256Digest};
-use futures_util::io::Cursor as AsyncCursor;
+use auv_tracing::{ArtifactMetadata, ArtifactPurpose, Attributes, ContentType, EventPayload, NewArtifact};
 use image::{ExtendedColorType, ImageEncoder, RgbaImage, codecs::png::PngEncoder};
-use sha2::{Digest, Sha256};
-
-pub(crate) type OwnedArtifact = NewArtifact<AsyncCursor<Vec<u8>>>;
 
 #[derive(serde::Serialize)]
 struct ArtifactPreparationFailed {
@@ -19,17 +13,43 @@ impl EventPayload for ArtifactPreparationFailed {
 }
 
 pub(crate) fn emit_png(purpose: &str, image: &RgbaImage) {
-  if emission_enabled() {
-    emit_prepared(purpose, png_artifact(purpose, image, Attributes::empty()));
+  if !auv_tracing::Context::current().can_publish_artifacts() {
+    return;
+  }
+  let mut body = Vec::new();
+  let emission = PngEncoder::new(&mut body)
+    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
+    .map_err(|error| format!("failed to encode {purpose} PNG artifact: {error}"))
+    .and_then(|()| {
+      auv_tracing::emit_bytes_artifact(
+        ArtifactPurpose::parse(purpose).map_err(|error| format!("invalid {purpose} artifact purpose: {error}"))?,
+        ContentType::parse("image/png").expect("static PNG content type is valid"),
+        Attributes::empty(),
+        body,
+      )
+      .map_err(|error| format!("invalid {purpose} artifact bytes: {error}"))
+    });
+  match emission {
+    Ok(emission) => drop(emission),
+    Err(error) => auv_tracing::emit_event!(ArtifactPreparationFailed {
+      purpose: purpose.to_string(),
+      error,
+    }),
   }
 }
 
 pub(crate) async fn emit_bytes_with_receipt(purpose: &str, content_type: &str, body: Vec<u8>) -> Option<ArtifactMetadata> {
-  if !emission_enabled() {
+  if !auv_tracing::Context::current().can_publish_artifacts() {
     return None;
   }
-  let artifact = match bytes_artifact(purpose, content_type, body, Attributes::empty()) {
-    Ok(artifact) => artifact,
+  let emission = match ArtifactPurpose::parse(purpose).map_err(|error| format!("invalid {purpose} artifact purpose: {error}")).and_then(
+    |parsed_purpose| {
+      let content_type = ContentType::parse(content_type).map_err(|error| format!("invalid artifact content type: {error}"))?;
+      auv_tracing::emit_bytes_artifact(parsed_purpose, content_type, Attributes::empty(), body)
+        .map_err(|error| format!("invalid {purpose} artifact bytes: {error}"))
+    },
+  ) {
+    Ok(emission) => emission,
     Err(error) => {
       auv_tracing::emit_event!(ArtifactPreparationFailed {
         purpose: purpose.to_string(),
@@ -38,14 +58,14 @@ pub(crate) async fn emit_bytes_with_receipt(purpose: &str, content_type: &str, b
       return None;
     }
   };
-  auv_tracing::emit_artifact!(artifact).await.ok().flatten()
+  emission.await.ok().flatten()
 }
 
 pub(crate) fn emit_prepared<R>(purpose: &str, artifact: Result<NewArtifact<R>, String>)
 where
   R: futures_util::io::AsyncRead + Unpin + Send + 'static,
 {
-  if !emission_enabled() {
+  if !auv_tracing::Context::current().can_publish_artifacts() {
     return;
   }
   match artifact {
@@ -57,208 +77,44 @@ where
   }
 }
 
-pub(crate) fn emission_enabled() -> bool {
-  auv_tracing::Context::current().can_publish_artifacts()
-}
-
-pub(crate) fn png_artifact(purpose: &str, image: &RgbaImage, attributes: Attributes) -> Result<OwnedArtifact, String> {
-  let body = encode_png_exact(purpose, image)?;
-  bytes_artifact(purpose, "image/png", body, attributes)
-}
-
-fn bytes_artifact(purpose: &str, content_type: &str, body: Vec<u8>, attributes: Attributes) -> Result<OwnedArtifact, String> {
-  NewArtifact::from_bytes(parse_purpose(purpose)?, parse_content_type(purpose, content_type)?, attributes, body)
-    .map_err(|error| format!("invalid {purpose} artifact bytes: {error}"))
-}
-
-fn parse_purpose(purpose: &str) -> Result<ArtifactPurpose, String> {
-  ArtifactPurpose::parse(purpose).map_err(|error| format!("invalid {purpose} artifact purpose: {error}"))
-}
-
-fn parse_content_type(purpose: &str, content_type: &str) -> Result<ContentType, String> {
-  ContentType::parse(content_type).map_err(|error| format!("invalid {purpose} artifact content type: {error}"))
-}
-
-fn bounded_length(purpose: &str, length: usize) -> Result<ByteLength, String> {
-  let length = u64::try_from(length).map_err(|_| format!("{purpose} artifact length does not fit u64"))?;
-  ByteLength::new(length).map_err(|error| format!("invalid {purpose} artifact length: {error}"))
-}
-
-fn encode_png_exact(purpose: &str, image: &RgbaImage) -> Result<Vec<u8>, String> {
-  // RunStore admission needs the encoded length and digest up front. Measure
-  // without retaining bytes, then encode once into that fixed allocation.
-  bounded_length(purpose, image.as_raw().len())?;
-  let mut measurement = ArtifactLengthMeasurement::new(purpose);
-  PngEncoder::new(&mut measurement)
-    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
-    .map_err(|error| format!("failed to measure encoded {purpose} artifact: {error}"))?;
-  let (measured_length, measured_digest) = measurement.finish();
-  let measured_length = usize::try_from(measured_length).map_err(|_| format!("{purpose} artifact length does not fit usize"))?;
-  let mut body = ExactArtifactBuffer::try_new(purpose, measured_length)?;
-  PngEncoder::new(&mut body)
-    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
-    .map_err(|error| format!("failed to encode {purpose} artifact: {error}"))?;
-  body.finish(measured_digest).ok_or_else(|| {
-    format!("failed to encode {purpose} artifact deterministically: encoded bytes changed between measurement and construction")
-  })
-}
-
-struct ArtifactLengthMeasurement<'a> {
-  purpose: &'a str,
-  byte_length: u64,
-  hasher: Sha256,
-}
-
-impl<'a> ArtifactLengthMeasurement<'a> {
-  fn new(purpose: &'a str) -> Self {
-    Self {
-      purpose,
-      byte_length: 0,
-      hasher: Sha256::new(),
-    }
-  }
-
-  fn finish(self) -> (u64, Sha256Digest) {
-    (self.byte_length, Sha256Digest::new(self.hasher.finalize().into()))
-  }
-}
-
-impl Write for ArtifactLengthMeasurement<'_> {
-  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-    let buffer_length = u64::try_from(buffer.len()).map_err(std::io::Error::other)?;
-    let actual = self
-      .byte_length
-      .checked_add(buffer_length)
-      .ok_or_else(|| std::io::Error::other(format!("{} artifact length overflow", self.purpose)))?;
-    ByteLength::new(actual).map_err(|error| std::io::Error::other(error.to_string()))?;
-    self.hasher.update(buffer);
-    self.byte_length = actual;
-    Ok(buffer.len())
-  }
-
-  fn flush(&mut self) -> std::io::Result<()> {
-    Ok(())
-  }
-}
-
-struct ExactArtifactBuffer {
-  bytes: Vec<u8>,
-  measured_length: usize,
-  actual_length: usize,
-  hasher: Sha256,
-}
-
-impl ExactArtifactBuffer {
-  fn try_new(purpose: &str, measured_length: usize) -> Result<Self, String> {
-    let mut bytes = Vec::new();
-    bytes.try_reserve_exact(measured_length).map_err(|error| format!("failed to allocate {purpose} artifact bytes: {error}"))?;
-    Ok(Self {
-      bytes,
-      measured_length,
-      actual_length: 0,
-      hasher: Sha256::new(),
-    })
-  }
-
-  fn finish(self, measured_digest: Sha256Digest) -> Option<Vec<u8>> {
-    if self.actual_length != self.measured_length || Sha256Digest::new(self.hasher.finalize().into()) != measured_digest {
-      return None;
-    }
-    Some(self.bytes)
-  }
-}
-
-impl Write for ExactArtifactBuffer {
-  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-    self.actual_length =
-      self.actual_length.checked_add(buffer.len()).ok_or_else(|| std::io::Error::other("artifact buffer length overflow"))?;
-    self.hasher.update(buffer);
-    let remaining = self.measured_length - self.bytes.len();
-    self.bytes.extend_from_slice(&buffer[..buffer.len().min(remaining)]);
-    Ok(buffer.len())
-  }
-
-  fn flush(&mut self) -> std::io::Result<()> {
-    Ok(())
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use std::sync::Arc;
 
   use super::*;
   use auv_tracing::{
-    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, Context, ErrorCode,
-    IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunStore,
-    RunSubscription, StoreArtifactRequest, configure, dispatcher,
+    ArtifactBody, ArtifactRequest, BoxFuture, Context, ErrorCode, MemoryTracingStore, RunId, StoreError, TraceRecord, TracingStore,
+    configure, dispatcher,
   };
-  use futures_util::StreamExt;
 
   #[test]
-  fn png_artifact_stream_decodes_to_the_exact_source_pixels() {
+  fn emitted_png_decodes_to_the_exact_source_pixels() {
     let image = RgbaImage::from_fn(2, 3, |x, y| image::Rgba([x as u8, y as u8, (x + y) as u8, 255]));
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store.clone()).build().expect("dispatch");
-    let run_id = RunId::new();
-    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+    let store = Arc::new(MemoryTracingStore::new());
+    let dispatch = configure().tracing_store(store.clone()).build().expect("dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
 
-    let artifact = png_artifact("auv.test.png", &image, Attributes::empty()).expect("artifact");
-    let metadata = futures_executor::block_on(root.in_scope(|| auv_tracing::emit_artifact!(artifact)))
-      .expect("publication")
-      .expect("enabled publication");
+    root.in_scope(|| emit_png("auv.test.png", &image));
     futures_executor::block_on(dispatch.flush()).expect("flush");
-    let mut reader = futures_executor::block_on(store.open_artifact(metadata.uri().clone())).expect("open PNG artifact");
-    let mut encoded = Vec::new();
-    futures_executor::block_on(async {
-      while let Some(chunk) = reader.next().await {
-        encoded.extend_from_slice(&chunk.expect("PNG chunk"));
-      }
-    });
+    let records = store.records();
+    let metadata = records
+      .iter()
+      .find_map(|record| match record {
+        TraceRecord::Artifact { metadata, .. } => Some(metadata),
+        _ => None,
+      })
+      .expect("PNG artifact");
+    let encoded = store.artifact(metadata.uri()).expect("PNG body");
     let decoded = image::load_from_memory_with_format(&encoded, image::ImageFormat::Png).expect("decode PNG").into_rgba8();
 
     assert_eq!(metadata.byte_length().get(), encoded.len() as u64);
-    assert_eq!(metadata.sha256(), Sha256Digest::new(Sha256::digest(&encoded).into()));
     assert_eq!(decoded, image);
-  }
-
-  #[test]
-  fn png_encoding_preserves_the_measured_payload() {
-    let image = RgbaImage::from_fn(257, 257, |x, y| image::Rgba([x as u8, y as u8, (x ^ y) as u8, 255]));
-
-    let body = encode_png_exact("auv.test.png", &image).expect("encode PNG");
-
-    assert_eq!(image::load_from_memory_with_format(&body, image::ImageFormat::Png).expect("decode PNG").into_rgba8(), image);
-  }
-
-  #[test]
-  fn exact_artifact_buffer_accepts_the_measured_payload() {
-    let expected = b"measured payload";
-    let measured_digest = Sha256Digest::new(Sha256::digest(expected).into());
-    let mut body = ExactArtifactBuffer::try_new("auv.test.measured", expected.len()).expect("bounded buffer");
-
-    body.write_all(expected).expect("write measured payload");
-
-    assert_eq!(body.finish(measured_digest), Some(expected.to_vec()));
-  }
-
-  #[test]
-  fn exact_artifact_buffer_rejects_writes_beyond_the_measured_length() {
-    let measured_length = 3;
-    let written = b"four";
-    let written_digest = Sha256Digest::new(Sha256::digest(written).into());
-    let mut body = ExactArtifactBuffer::try_new("auv.test.overlong", measured_length).expect("bounded buffer");
-
-    body.write_all(written).expect("bounded write");
-
-    assert_eq!(body.bytes, written[..measured_length]);
-    assert!(body.finish(written_digest).is_none());
   }
 
   #[test]
   fn detached_artifact_failure_does_not_change_primary_value() {
     let store = Arc::new(RejectArtifactStore::new());
-    let dispatch = configure().run_store(store).build().expect("dispatch");
+    let dispatch = configure().tracing_store(store).build().expect("dispatch");
     let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let image = RgbaImage::new(1, 1);
     let value = root.in_scope(|| {
@@ -271,70 +127,42 @@ mod tests {
   }
 
   #[test]
-  fn detached_artifact_publication_is_read_from_the_run_store() {
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store.clone()).build().expect("dispatch");
-    let run_id = RunId::new();
-    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
+  fn detached_artifact_publication_is_read_from_the_tracing_store() {
+    let store = Arc::new(MemoryTracingStore::new());
+    let dispatch = configure().tracing_store(store.clone()).build().expect("dispatch");
+    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
     let image = RgbaImage::new(1, 1);
     root.in_scope(|| {
       emit_png("auv.test.direct_metadata", &image);
     });
 
     futures_executor::block_on(dispatch.flush()).expect("detached publication must flush");
-    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("run snapshot");
-    let artifacts = snapshot.artifacts().values().collect::<Vec<_>>();
-    assert_eq!(artifacts.len(), 1);
-    assert_eq!(artifacts[0].metadata().purpose().as_str(), "auv.test.direct_metadata");
+    let records = store.records();
+    assert!(matches!(
+      records.as_slice(),
+      [TraceRecord::Artifact { metadata, .. }] if metadata.purpose().as_str() == "auv.test.direct_metadata"
+    ));
   }
 
-  struct RejectArtifactStore {
-    inner: MemoryRunStore,
-  }
+  struct RejectArtifactStore;
 
   impl RejectArtifactStore {
     fn new() -> Self {
-      Self {
-        inner: MemoryRunStore::new(AuthorityId::new()),
-      }
+      Self
     }
   }
 
-  impl RunStore for RejectArtifactStore {
-    fn authority_id(&self) -> AuthorityId {
-      self.inner.authority_id()
+  impl TracingStore for RejectArtifactStore {
+    fn write(&self, _record: TraceRecord) -> BoxFuture<'_, Result<(), StoreError>> {
+      Box::pin(async { Ok(()) })
     }
 
-    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
-      self.inner.commit(request)
+    fn write_artifact(&self, _request: ArtifactRequest, _body: ArtifactBody) -> BoxFuture<'_, Result<ArtifactMetadata, StoreError>> {
+      Box::pin(async { Err(StoreError::new(ErrorCode::parse("auv.test.artifact_rejected").unwrap())) })
     }
 
-    fn write_artifact(
-      &self,
-      _request: StoreArtifactRequest,
-      _body: ArtifactBody,
-    ) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
-      Box::pin(async { Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.artifact_rejected").unwrap())) })
-    }
-
-    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
-      self.inner.lookup_commit(run_id, key)
-    }
-
-    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<auv_tracing::RunSnapshot>, ReadError>> {
-      self.inner.load_snapshot(run_id)
-    }
-
-    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
-      self.inner.commits_after(run_id, after, limit)
-    }
-
-    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
-      self.inner.subscribe(run_id, after)
-    }
-
-    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
-      self.inner.open_artifact(uri)
+    fn flush(&self) -> BoxFuture<'_, Result<(), StoreError>> {
+      Box::pin(async { Ok(()) })
     }
   }
 }

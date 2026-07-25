@@ -66,7 +66,7 @@ async fn capture_region(input: InvokeCommandInput) -> InvokeCommandResult {
   let region = Region::parse(&input.inputs, &input.command_id)?.into_rect();
   input.cancellation.check().map_err(|error| error.to_string())?;
   if input.dry_run {
-    return Ok(dry_run_output(&input.command_id));
+    return Ok(InvokeCommandOutput::completed());
   }
 
   #[cfg(target_os = "macos")]
@@ -125,7 +125,7 @@ async fn find_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
   {
     reject_target_activation(&input, "screen.findText")?;
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let query = input.required_input("query")?.to_string();
@@ -150,7 +150,7 @@ async fn wait_for_screen_text(input: InvokeCommandInput) -> InvokeCommandResult 
   {
     reject_target_activation(&input, "screen.waitForText")?;
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let query = input.required_input("query")?.to_string();
@@ -212,15 +212,9 @@ fn screen_text_matches_output(_command_id: &str, matches: &auv_driver::OcrMatche
   args = TARGET_ARGS,
 )]
 async fn find_screen_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
-  find_screen_rows_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn find_screen_rows_domain() -> Result<(), String> {
-  // TODO(invoke-screen-rows): row-band detection still lives in the root
-  // macOS command adapter; move a typed screen-row API before enabling this
-  // direct invoke command.
-  Err("screen.findRows requires a typed screen row detection API".to_string())
+  // TODO(invoke-screen-rows): implement after VisionApi exposes typed row
+  // detection and the command schema can express its region and thresholds.
+  unimplemented!("screen.findRows")
 }
 
 #[invoke_command(
@@ -230,15 +224,9 @@ pub async fn find_screen_rows_domain() -> Result<(), String> {
   args = TARGET_ARGS,
 )]
 async fn wait_for_screen_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
-  wait_for_screen_rows_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn wait_for_screen_rows_domain() -> Result<(), String> {
-  // TODO(invoke-screen-rows): row wait/polling still lives in the root macOS
-  // command adapter; move a typed screen-row API before enabling this direct
-  // invoke command.
-  Err("screen.waitForRows requires a typed screen row wait API".to_string())
+  // TODO(invoke-screen-rows): see `find_screen_rows`; waiting additionally
+  // needs an owned polling and timeout policy.
+  unimplemented!("screen.waitForRows")
 }
 
 #[invoke_command(
@@ -248,15 +236,9 @@ pub async fn wait_for_screen_rows_domain() -> Result<(), String> {
   args = IMAGE_TEXT_ARGS,
 )]
 async fn find_image_text(_input: InvokeCommandInput) -> InvokeCommandResult {
-  recognize_image_text().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn recognize_image_text() -> Result<(), String> {
-  // TODO(invoke-image-ocr): the invoke crate cannot yet decode an image path
-  // into the typed VisionApi capture/image contract without adding a stable
-  // image-artifact boundary; add that API before enabling this command.
-  Err("screen.findImageText requires a typed image OCR API for image artifacts".to_string())
+  // TODO(invoke-image-ocr): implement after VisionApi accepts a typed image
+  // artifact input instead of a frontend-local path.
+  unimplemented!("screen.findImageText")
 }
 
 #[invoke_command(
@@ -272,7 +254,7 @@ async fn click_screen_text(input: InvokeCommandInput) -> InvokeCommandResult {
 
     reject_target_activation(&input, "screen.clickText")?;
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let query = input.required_input("query")?.to_string();
@@ -337,15 +319,9 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
   args = TARGET_ARGS,
 )]
 async fn click_screen_row(_input: InvokeCommandInput) -> InvokeCommandResult {
-  click_screen_row_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn click_screen_row_domain() -> Result<(), String> {
-  // TODO(invoke-screen-rows): click-row depends on the same typed row-band
-  // detector plus row-to-click-point policy; move that API before enabling
-  // this direct invoke command.
-  Err("screen.clickRow requires a typed screen row click API".to_string())
+  // TODO(invoke-screen-rows): implement after typed row detection and
+  // row-to-point policy can feed InputApi and return InputActionResult.
+  unimplemented!("screen.clickRow")
 }
 
 fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
@@ -356,10 +332,6 @@ fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Res
     return Err(format!("{command_id} cannot use --target until typed app activation is available"));
   }
   Ok(())
-}
-
-fn dry_run_output(_command_id: &str) -> InvokeCommandOutput {
-  InvokeCommandOutput::completed()
 }
 
 #[cfg(test)]

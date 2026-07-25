@@ -76,10 +76,6 @@ impl InvokeCommandInput {
       .ok_or_else(|| format!("{} requires --{name}", self.command_id))
   }
 
-  pub fn required_f64(&self, name: &str) -> Result<f64, String> {
-    self.required_input(name)?.parse::<f64>().map_err(|error| format!("{} received invalid --{name}: {error}", self.command_id))
-  }
-
   pub fn target_or_input_target(&self) -> Option<&str> {
     self.target_application_id.as_deref().or_else(|| self.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
   }
@@ -104,6 +100,11 @@ impl InvokeCommandOutput {
       report: None,
       result: Some(serde_json::to_value(result).map_err(|error| format!("failed to serialize invoke result: {error}"))?),
     })
+  }
+
+  pub fn with_report(mut self, report: InvokeReport) -> Self {
+    self.report = Some(report);
+    self
   }
 
   pub(crate) fn result(&self) -> Option<&serde_json::Value> {

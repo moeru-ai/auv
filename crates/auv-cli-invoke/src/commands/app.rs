@@ -20,7 +20,7 @@ async fn probe_permissions(input: InvokeCommandInput) -> InvokeCommandResult {
     return Ok(InvokeCommandOutput::completed());
   }
   let permissions = read_permissions().await?;
-  permission_probe_output(&permissions)
+  Ok(InvokeCommandOutput::from_result(&permissions)?.with_report(permission_report(&permissions)))
 }
 
 pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, String> {
@@ -47,35 +47,37 @@ async fn activate_app(input: InvokeCommandInput) -> InvokeCommandResult {
 }
 
 pub async fn activate_application(_target_application_id: Option<String>) -> Result<(), String> {
-  // TODO(invoke-app-activation): app activation still lives behind the root
-  // macOS command adapter; migrate it to `auv-driver-macos` before enabling
-  // this direct invoke command.
-  Err("app.activate requires a typed app activation API in auv-driver-macos".to_string())
-}
+  let target_application_id = _target_application_id
+    .as_deref()
+    .filter(|value| !value.trim().is_empty())
+    .ok_or_else(|| "app.activate requires --target".to_string())?;
+  #[cfg(target_os = "macos")]
+  {
+    use auv_driver_macos::ApplicationControl;
 
-fn permission_probe_output(permissions: &auv_driver::PermissionProbe) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(permissions)?;
-  output.report = Some(permission_report(&permissions));
-  Ok(output)
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    session.activate_bundle_id(target_application_id, std::time::Duration::from_millis(150)).map_err(|error| error.to_string())
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = target_application_id;
+    Err("app.activate is only available on macOS".to_string())
+  }
 }
 
 fn permission_report(permissions: &auv_driver::PermissionProbe) -> InvokeReport {
   InvokeReport::new(
-    vec![report_field("Result", "permissions probed")],
+    vec![InvokeReportField::new("Result", "permissions probed")],
     vec![InvokeReportSection {
       title: "Permissions".to_string(),
       fields: vec![
-        report_field("Screen Recording", permissions.screen_recording.as_str()),
-        report_field("ScreenCaptureKit", permissions.screen_capture_kit.as_str()),
-        report_field("Accessibility", permissions.accessibility.as_str()),
-        report_field("Automation to System Events", permissions.automation_to_system_events.as_str()),
+        InvokeReportField::new("Screen Recording", permissions.screen_recording.as_str()),
+        InvokeReportField::new("ScreenCaptureKit", permissions.screen_capture_kit.as_str()),
+        InvokeReportField::new("Accessibility", permissions.accessibility.as_str()),
+        InvokeReportField::new("Automation to System Events", permissions.automation_to_system_events.as_str()),
       ],
     }],
   )
-}
-
-fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
-  InvokeReportField::new(label, value)
 }
 
 #[cfg(test)]
@@ -93,7 +95,9 @@ mod tests {
       automation_to_system_events: PermissionStatus::Granted,
     };
 
-    let output = permission_probe_output(&permissions).expect("permission result should serialize");
+    let output = InvokeCommandOutput::from_result(&permissions)
+      .expect("permission result should serialize")
+      .with_report(permission_report(&permissions));
     assert!(
       output.report.is_some(),
       "app.probePermissions live path calls this helper after OS probing, so this stable helper test verifies report population without requiring live permission state"
@@ -111,10 +115,10 @@ mod tests {
   }
 
   #[test]
-  fn typed_app_activation_api_is_callable_without_cli_context() {
-    let error = futures_executor::block_on(activate_application(None)).expect_err("deferred activation should fail");
+  fn app_activation_requires_a_target() {
+    let error = futures_executor::block_on(activate_application(None)).expect_err("missing activation target should fail");
 
-    assert!(error.contains("typed app activation API"));
+    assert_eq!(error, "app.activate requires --target");
   }
 
   fn field_value<'a>(section: &'a InvokeReportSection, label: &str) -> &'a str {

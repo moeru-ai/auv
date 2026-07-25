@@ -4,7 +4,7 @@ mod invoke_report;
 mod invoke_result;
 
 pub use invoke_report::{InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow};
-pub(crate) use invoke_report::{InvokeReportLabels, InvokeReportValue, OptionalReportText};
+pub(crate) use invoke_report::{InvokeReportValue, OptionalReportText};
 pub use invoke_result::{InvokeResult, InvokeStatus};
 
 #[derive(Clone, Debug, Default)]

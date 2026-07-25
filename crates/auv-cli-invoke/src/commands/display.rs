@@ -25,7 +25,10 @@ async fn capture_display(input: InvokeCommandInput) -> InvokeCommandResult {
     return Ok(InvokeCommandOutput::completed());
   }
   let result = capture_primary_display().await?;
-  display_capture_output(&result)
+  Ok(
+    InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture))?
+      .with_report(display_capture_report(&result)),
+  )
 }
 
 pub async fn capture_primary_display() -> Result<auv_driver::DisplayCapture, String> {
@@ -53,7 +56,7 @@ async fn list_displays(input: InvokeCommandInput) -> InvokeCommandResult {
     return Ok(InvokeCommandOutput::completed());
   }
   let displays = observe_displays().await?;
-  display_list_output(&displays)
+  Ok(InvokeCommandOutput::from_result(&displays)?.with_report(display_list_report(&displays.displays)))
 }
 
 pub async fn observe_displays() -> Result<auv_driver::ObservedDisplays, String> {
@@ -75,15 +78,9 @@ pub async fn observe_displays() -> Result<auv_driver::ObservedDisplays, String> 
   args = NO_ARGS,
 )]
 async fn project_screenshot_point(_input: InvokeCommandInput) -> InvokeCommandResult {
-  project_primary_screenshot_point().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn project_primary_screenshot_point() -> Result<(), String> {
-  // TODO(invoke-display-typed-api): projectScreenshotPoint needs a typed
-  // display projection API before this invoke command can replace root-driver
-  // routing.
-  Err("display.projectScreenshotPoint requires a typed display API for screenshot point projection".to_string())
+  // TODO(invoke-display-point): add screenshot x/y arguments and expose the
+  // projection through DisplayApi before implementing this command.
+  unimplemented!("display.projectScreenshotPoint")
 }
 
 #[invoke_command(
@@ -93,26 +90,9 @@ pub async fn project_primary_screenshot_point() -> Result<(), String> {
   args = NO_ARGS,
 )]
 async fn identify_point(_input: InvokeCommandInput) -> InvokeCommandResult {
-  identify_display_point().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn identify_display_point() -> Result<(), String> {
-  // TODO(invoke-display-typed-api): identifyPoint needs a typed display point
-  // resolution API before this invoke command can replace root-driver routing.
-  Err("display.identifyPoint requires a typed display API for point identification".to_string())
-}
-
-fn display_list_output(displays: &auv_driver::ObservedDisplays) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(displays)?;
-  output.report = Some(display_list_report(&displays.displays));
-  Ok(output)
-}
-
-fn display_capture_output(result: &auv_driver::DisplayCapture) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture))?;
-  output.report = Some(display_capture_report(result));
-  Ok(output)
+  // TODO(invoke-display-point): add logical x/y arguments and expose display
+  // point resolution through DisplayApi before implementing this command.
+  unimplemented!("display.identifyPoint")
 }
 
 fn display_capture_report(result: &auv_driver::DisplayCapture) -> InvokeReport {
@@ -140,14 +120,19 @@ fn display_list_report(displays: &[auv_driver::Display]) -> InvokeReport {
       "Result",
       format!("{} display(s)", displays.len()),
     )],
-    tables: vec![InvokeReportTable::from_columns(
+    tables: vec![InvokeReportTable::new(
       &["REF", "ROLE", "NAME", "FRAME", "SCALE"],
       displays
         .iter()
         .map(|display| {
-          InvokeReportTableRow::from_cells([
+          InvokeReportTableRow::new([
             display.id.clone(),
-            display_role(display).to_string(),
+            if display.is_primary {
+              "primary"
+            } else {
+              "secondary"
+            }
+            .to_string(),
             display_label(display),
             display.frame.report_value(),
             format!("{:.3}", display.scale_factor),
@@ -155,18 +140,28 @@ fn display_list_report(displays: &[auv_driver::Display]) -> InvokeReport {
         })
         .collect(),
     )],
-    wide_tables: vec![InvokeReportTable::from_columns(
+    wide_tables: vec![InvokeReportTable::new(
       &["REF", "ROLE", "NAME", "FRAME", "SCALE", "KIND"],
       displays
         .iter()
         .map(|display| {
-          InvokeReportTableRow::from_cells([
+          InvokeReportTableRow::new([
             display.id.clone(),
-            display_role(display).to_string(),
+            if display.is_primary {
+              "primary"
+            } else {
+              "secondary"
+            }
+            .to_string(),
             display_label(display),
             display.frame.report_value(),
             format!("{:.3}", display.scale_factor),
-            display_kind(display).to_string(),
+            match display.is_builtin {
+              Some(true) => "built-in",
+              Some(false) => "external",
+              None => "unknown",
+            }
+            .to_string(),
           ])
         })
         .collect(),
@@ -175,26 +170,8 @@ fn display_list_report(displays: &[auv_driver::Display]) -> InvokeReport {
   }
 }
 
-fn display_role(display: &auv_driver::Display) -> &'static str {
-  if display.is_primary {
-    "primary"
-  } else {
-    "secondary"
-  }
-}
-
-fn display_kind(display: &auv_driver::Display) -> &'static str {
-  match display.is_builtin {
-    Some(true) => "built-in",
-    Some(false) => "external",
-    None => "unknown",
-  }
-}
-
 #[cfg(test)]
 mod tests {
-  use std::collections::BTreeMap;
-
   use auv_driver::{
     Capture, CoordinateSpace, Display, DisplayCapture,
     geometry::{Point, Rect, Size},
@@ -202,16 +179,6 @@ mod tests {
   use image::RgbaImage;
 
   use super::*;
-
-  fn input(command_id: &str, inputs: &BTreeMap<String, String>) -> InvokeCommandInput {
-    InvokeCommandInput {
-      command_id: command_id.to_string(),
-      target_application_id: None,
-      inputs: inputs.clone(),
-      dry_run: false,
-      cancellation: crate::InvokeCancellation::new(),
-    }
-  }
 
   #[test]
   fn display_list_report_uses_human_first_table_and_wide_kind_column() {
@@ -243,7 +210,9 @@ mod tests {
     ];
 
     let observed = auv_driver::ObservedDisplays { displays };
-    let output = display_list_output(&observed).expect("display result should serialize");
+    let output = InvokeCommandOutput::from_result(&observed)
+      .expect("display result should serialize")
+      .with_report(display_list_report(&observed.displays));
     assert!(
       output.report.is_some(),
       "display.list live path calls this helper after OS enumeration, so this stable helper test verifies report population without requiring live display state"
@@ -300,7 +269,9 @@ mod tests {
       },
     };
 
-    let output = display_capture_output(&capture).expect("capture result should serialize");
+    let output = InvokeCommandOutput::from_result(&super::super::display_capture_result(&capture.display, &capture.capture))
+      .expect("capture result should serialize")
+      .with_report(display_capture_report(&capture));
     let result = output.result().expect("capture should have a result");
 
     assert_eq!(result["display"]["id"], "display_0");
@@ -308,21 +279,5 @@ mod tests {
     assert_eq!(result["capture"]["pixel_dimensions"]["height"], 1800);
     assert_eq!(result["capture"]["backend"], "fixture-capture");
     assert!(result.get("image").is_none());
-  }
-
-  #[test]
-  fn commands_without_typed_display_api_report_explicit_gap() {
-    let inputs = BTreeMap::new();
-
-    for command in [
-      identify_point_invoke_command(),
-      project_screenshot_point_invoke_command(),
-    ] {
-      let command_id = command.id;
-      let error =
-        futures_executor::block_on(command.invoke(input(command_id, &inputs))).expect_err("command should not route to root driver");
-
-      assert!(error.contains("typed display API"), "{command_id} returned unclear error: {error}");
-    }
   }
 }

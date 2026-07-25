@@ -1,6 +1,6 @@
 use crate::{
-  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportLabels,
-  InvokeReportTable, InvokeReportTableRow, InvokeReportValue, OptionalReportText,
+  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
+  InvokeReportTableRow, InvokeReportValue, OptionalReportText,
   arg::{NO_ARGS, WINDOW_ARGS, WINDOW_TEXT_ARGS, WINDOW_VERIFY_TEXT_ARGS},
   artifact::emit_png,
   invoke_command,
@@ -33,11 +33,11 @@ async fn list_windows(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let windows = observe_windows().await?;
-    window_list_output(&windows)
+    Ok(InvokeCommandOutput::from_result(&windows)?.with_report(window_list_report(&windows)))
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -68,7 +68,7 @@ async fn capture_window(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let result = capture_selected_window(window_selector(&input)).await?;
@@ -135,15 +135,9 @@ pub async fn capture_selected_window(selector: auv_driver::WindowSelector) -> Re
   args = WINDOW_ARGS,
 )]
 async fn capture_ax_tree(_input: InvokeCommandInput) -> InvokeCommandResult {
-  capture_ax_tree_snapshot().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn capture_ax_tree_snapshot() -> Result<(), String> {
-  // TODO(invoke-window-ax-tree): AX tree capture still lives in the root
-  // macOS command adapter; move a typed AX snapshot API before enabling this
-  // direct invoke command.
-  Err("window.captureAxTree requires a typed AX tree capture API".to_string())
+  // TODO(invoke-window-ax-tree): promote ObservedAxTreeSnapshot into the
+  // platform-neutral driver contract before sharing it across frontends.
+  unimplemented!("window.captureAxTree")
 }
 
 #[invoke_command(
@@ -156,7 +150,7 @@ async fn find_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let query = input.required_input("query")?.to_string();
@@ -180,7 +174,7 @@ async fn wait_for_window_text(input: InvokeCommandInput) -> InvokeCommandResult 
   #[cfg(target_os = "macos")]
   {
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let query = input.required_input("query")?.to_string();
@@ -201,15 +195,9 @@ async fn wait_for_window_text(input: InvokeCommandInput) -> InvokeCommandResult 
   args = WINDOW_ARGS,
 )]
 async fn find_window_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
-  find_window_rows_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn find_window_rows_domain() -> Result<(), String> {
-  // TODO(invoke-window-rows): row-band detection still lives in the root
-  // macOS command adapter; move a typed window-row API before enabling this
-  // direct invoke command.
-  Err("window.findRows requires a typed window row detection API".to_string())
+  // TODO(invoke-window-rows): implement after VisionApi owns typed row-band
+  // detection for a resolved window.
+  unimplemented!("window.findRows")
 }
 
 #[invoke_command(
@@ -219,15 +207,9 @@ pub async fn find_window_rows_domain() -> Result<(), String> {
   args = WINDOW_ARGS,
 )]
 async fn wait_for_window_rows(_input: InvokeCommandInput) -> InvokeCommandResult {
-  wait_for_window_rows_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn wait_for_window_rows_domain() -> Result<(), String> {
-  // TODO(invoke-window-rows): row wait/polling still lives in the root macOS
-  // command adapter; move a typed window-row API before enabling this direct
-  // invoke command.
-  Err("window.waitForRows requires a typed window row wait API".to_string())
+  // TODO(invoke-window-rows): see `find_window_rows`; waiting additionally
+  // needs an owned polling and timeout policy.
+  unimplemented!("window.waitForRows")
 }
 
 #[invoke_command(
@@ -237,15 +219,9 @@ pub async fn wait_for_window_rows_domain() -> Result<(), String> {
   args = WINDOW_ARGS,
 )]
 async fn observe_window_region(_input: InvokeCommandInput) -> InvokeCommandResult {
-  observe_window_region_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn observe_window_region_domain() -> Result<(), String> {
-  // TODO(invoke-window-observe-region): region observation still lives in the
-  // root macOS command adapter and needs a typed region/OCR result API before
-  // this direct invoke command can run.
-  Err("window.observeRegion requires a typed window region observation API".to_string())
+  // TODO(invoke-window-observe-region): add region arguments and a typed
+  // observation result before implementing this command.
+  unimplemented!("window.observeRegion")
 }
 
 #[invoke_command(
@@ -255,15 +231,9 @@ pub async fn observe_window_region_domain() -> Result<(), String> {
   args = WINDOW_ARGS,
 )]
 async fn find_icon_match(_input: InvokeCommandInput) -> InvokeCommandResult {
-  find_window_icon_match().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn find_window_icon_match() -> Result<(), String> {
-  // TODO(invoke-window-icon-match): icon/template matching has no stable typed
-  // invoke input contract for the template image and threshold yet; add that
-  // API before enabling this command.
-  Err("window.findIconMatch requires a typed icon-match API and invoke args".to_string())
+  // TODO(invoke-window-icon-match): add template artifact and threshold
+  // arguments before routing through a typed VisionApi operation.
+  unimplemented!("window.findIconMatch")
 }
 
 #[invoke_command(
@@ -273,15 +243,9 @@ pub async fn find_window_icon_match() -> Result<(), String> {
   args = WINDOW_ARGS,
 )]
 async fn scroll_window_region(_input: InvokeCommandInput) -> InvokeCommandResult {
-  scroll_window_region_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn scroll_window_region_domain() -> Result<(), String> {
-  // TODO(invoke-window-scroll-region): WindowApi::scroll exists, but this
-  // invoke command exposes only window selection args; add typed region point
-  // and delta inputs before enabling direct scroll delivery.
-  Err("window.scrollRegion requires direct region point and scroll delta inputs".to_string())
+  // TODO(invoke-window-scroll-region): add point and delta arguments before
+  // routing through WindowApi::scroll.
+  unimplemented!("window.scrollRegion")
 }
 
 #[invoke_command(
@@ -291,15 +255,9 @@ pub async fn scroll_window_region_domain() -> Result<(), String> {
   args = WINDOW_VERIFY_TEXT_ARGS,
 )]
 async fn verify_ax_text(_input: InvokeCommandInput) -> InvokeCommandResult {
-  verify_window_ax_text().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn verify_window_ax_text() -> Result<(), String> {
-  // TODO(invoke-window-verify-ax-text): AX text verification still lives in
-  // the root macOS command adapter; move a typed AX text query API before
-  // enabling this direct invoke command.
-  Err("window.verifyText requires a typed AX text verification API".to_string())
+  // TODO(invoke-window-verify-ax-text): add an AX role argument and an
+  // app/window selector contract before calling AccessibilityApi::verify_text.
+  unimplemented!("window.verifyText")
 }
 
 #[invoke_command(
@@ -314,7 +272,7 @@ async fn click_window_text(input: InvokeCommandInput) -> InvokeCommandResult {
     use auv_driver::{ClickOptions, RatioRect, ScreenPoint};
 
     if input.dry_run {
-      return Ok(dry_run_output(&input.command_id));
+      return Ok(InvokeCommandOutput::completed());
     }
 
     let query = input.required_input("query")?.to_string();
@@ -339,14 +297,11 @@ pub struct WindowTextClick {
 
 #[cfg(target_os = "macos")]
 fn window_text_click_output(result: &WindowTextClick) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(result)?;
-  output.report = Some(crate::commands::ocr::match_report(&result.matches.matches, Some(0)));
-  append_window_report_fields(&mut output, &result.window);
-  if let Some(report) = output.report.as_mut() {
-    report.fields.push(InvokeReportField::new("Input path", result.action.selected_path.as_str()));
-    report.fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)));
-  }
-  Ok(output)
+  let mut report = crate::commands::ocr::match_report(&result.matches.matches, Some(0));
+  report.fields.extend(window_report_fields(&result.window));
+  report.fields.push(InvokeReportField::new("Input path", result.action.selected_path.as_str()));
+  report.fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)));
+  Ok(InvokeCommandOutput::from_result(result)?.with_report(report))
 }
 
 pub async fn click_recognized_window_text(selector: auv_driver::WindowSelector, query: String) -> Result<WindowTextClick, String> {
@@ -385,15 +340,9 @@ pub async fn click_recognized_window_text(selector: auv_driver::WindowSelector, 
   args = WINDOW_ARGS,
 )]
 async fn click_window_row(_input: InvokeCommandInput) -> InvokeCommandResult {
-  click_window_row_domain().await?;
-  Ok(InvokeCommandOutput::completed())
-}
-
-pub async fn click_window_row_domain() -> Result<(), String> {
-  // TODO(invoke-window-rows): click-row depends on typed row-band detection
-  // plus row-to-click-point policy; move that API before enabling this direct
-  // invoke command.
-  Err("window.clickRow requires a typed window row click API".to_string())
+  // TODO(invoke-window-rows): implement after typed row detection and
+  // row-to-point policy can feed WindowApi and return InputActionResult.
+  unimplemented!("window.clickRow")
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -446,10 +395,9 @@ pub async fn recognize_window_text(
 
 #[cfg(target_os = "macos")]
 fn window_text_matches_output(_command_id: &str, result: &WindowTextRecognition) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(result)?;
-  output.report = Some(crate::commands::ocr::match_report(&result.matches.matches, None));
-  append_window_report_fields(&mut output, &result.window);
-  Ok(output)
+  let mut report = crate::commands::ocr::match_report(&result.matches.matches, None);
+  report.fields.extend(window_report_fields(&result.window));
+  Ok(InvokeCommandOutput::from_result(result)?.with_report(report))
 }
 
 #[cfg(target_os = "macos")]
@@ -467,17 +415,6 @@ fn window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelector {
     selector.title = Some(TextMatcher::Contains(title.clone()));
   }
   selector
-}
-
-fn dry_run_output(_command_id: &str) -> InvokeCommandOutput {
-  InvokeCommandOutput::completed()
-}
-
-#[cfg(target_os = "macos")]
-fn append_window_report_fields(output: &mut InvokeCommandOutput, window: &auv_driver::Window) {
-  if let Some(report) = output.report.as_mut() {
-    report.fields.extend(window_report_fields(window));
-  }
 }
 
 #[cfg(target_os = "macos")]
@@ -498,66 +435,60 @@ fn window_report_fields(window: &auv_driver::Window) -> Vec<InvokeReportField> {
   fields
 }
 
-fn window_list_output(windows: &[auv_driver::Window]) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(windows)?;
-  output.report = Some(window_list_report(windows));
-  Ok(output)
-}
-
 fn window_list_report(windows: &[auv_driver::Window]) -> InvokeReport {
   InvokeReport {
     fields: vec![InvokeReportField::new(
       "Result",
       format!("{} window(s)", windows.len()),
     )],
-    tables: vec![InvokeReportTable::from_columns_with_display_max_chars(
-      &["REF", "APP", "TITLE", "FRAME"],
-      windows
-        .iter()
-        .map(|window| {
-          InvokeReportTableRow::from_cells([
-            window.reference.id.clone(),
-            window.app_name.as_deref().report_or("unknown").to_string(),
-            window.title.as_deref().report_or("untitled").to_string(),
-            window.frame.report_value(),
-          ])
-        })
-        .collect(),
-      vec![None, Some(18), Some(40), None],
-    )],
-    wide_tables: vec![InvokeReportTable::from_columns_with_display_max_chars(
-      &["REF", "APP", "TITLE", "FRAME", "BUNDLE", "PID", "FLAGS"],
-      windows
-        .iter()
-        .map(|window| {
-          InvokeReportTableRow::from_cells([
-            window.reference.id.clone(),
-            window.app_name.as_deref().report_or("unknown").to_string(),
-            window.title.as_deref().report_or("untitled").to_string(),
-            window.frame.report_value(),
-            window.app_bundle_id.as_deref().report_or("unknown").to_string(),
-            window.process_id.map(|pid| pid.to_string()).unwrap_or_else(|| "unknown".to_string()),
-            window_flags(window),
-          ])
-        })
-        .collect(),
-      vec![None, Some(18), Some(40), None, Some(32), None, None],
-    )],
+    tables: vec![
+      InvokeReportTable::new(
+        &["REF", "APP", "TITLE", "FRAME"],
+        windows
+          .iter()
+          .map(|window| {
+            InvokeReportTableRow::new([
+              window.reference.id.clone(),
+              window.app_name.as_deref().report_or("unknown").to_string(),
+              window.title.as_deref().report_or("untitled").to_string(),
+              window.frame.report_value(),
+            ])
+          })
+          .collect(),
+      )
+      .with_display_max_chars(vec![None, Some(18), Some(40), None]),
+    ],
+    wide_tables: vec![
+      InvokeReportTable::new(
+        &["REF", "APP", "TITLE", "FRAME", "BUNDLE", "PID", "FLAGS"],
+        windows
+          .iter()
+          .map(|window| {
+            let mut flags = Vec::new();
+            if window.is_main {
+              flags.push("main");
+            }
+            flags.push(if window.is_visible {
+              "visible"
+            } else {
+              "hidden"
+            });
+            InvokeReportTableRow::new([
+              window.reference.id.clone(),
+              window.app_name.as_deref().report_or("unknown").to_string(),
+              window.title.as_deref().report_or("untitled").to_string(),
+              window.frame.report_value(),
+              window.app_bundle_id.as_deref().report_or("unknown").to_string(),
+              window.process_id.map(|pid| pid.to_string()).unwrap_or_else(|| "unknown".to_string()),
+              flags.join(","),
+            ])
+          })
+          .collect(),
+      )
+      .with_display_max_chars(vec![None, Some(18), Some(40), None, Some(32), None, None]),
+    ],
     sections: Vec::new(),
   }
-}
-
-fn window_flags(window: &auv_driver::Window) -> String {
-  let mut flags = Vec::new();
-  if window.is_main {
-    flags.push("main");
-  }
-  if window.is_visible {
-    flags.push("visible");
-  } else {
-    flags.push("hidden");
-  }
-  flags.report_labels()
 }
 
 #[cfg(test)]
@@ -598,7 +529,8 @@ mod tests {
       },
     ];
 
-    let output = window_list_output(&windows).expect("window result should serialize");
+    let output =
+      InvokeCommandOutput::from_result(&windows).expect("window result should serialize").with_report(window_list_report(&windows));
     let report = output.report.as_ref().expect("window.list should expose a human-readable report");
 
     assert_eq!(report.fields[0].value, "2 window(s)");
@@ -635,7 +567,8 @@ mod tests {
       is_visible: true,
     }];
 
-    let output = window_list_output(&windows).expect("window result should serialize");
+    let output =
+      InvokeCommandOutput::from_result(&windows).expect("window result should serialize").with_report(window_list_report(&windows));
     let report = output.report.as_ref().expect("window.list should expose a report");
 
     assert_eq!(report.tables[0].rows[0].cells[1], long_app_name);

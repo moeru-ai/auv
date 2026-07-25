@@ -249,6 +249,16 @@ pub fn send_command(command: MediaCommand) -> Result<(), MediaError> {
   tracing::send_command(command, || Err(MediaError::Unsupported))
 }
 
+/// Send a transport command and observe the resulting now-playing state.
+pub fn control(command: MediaCommand) -> Result<output::MediaControlOutcome, MediaError> {
+  let before = now_playing()?;
+  send_command(command)?;
+  #[cfg(target_os = "macos")]
+  std::thread::sleep(std::time::Duration::from_millis(200));
+  let after = now_playing()?;
+  Ok(output::MediaControlOutcome::new(command, &before, &after))
+}
+
 /// Seek the current now-playing app to `position` from the start of the track.
 #[cfg(target_os = "macos")]
 pub fn seek(position: std::time::Duration) -> Result<(), MediaError> {

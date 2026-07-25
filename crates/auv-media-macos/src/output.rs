@@ -2,7 +2,7 @@
 //! crate so the `auv-now-playing` binary and any embedding CLI (e.g. the
 //! `auv-netease-music now-playing` subcommand) emit one identical shape.
 
-use crate::NowPlayingState;
+use crate::{MediaCommand, NowPlayingState};
 
 /// Stable schema identifier for the JSON output.
 pub const SCHEMA_VERSION: &str = "now-playing-v0";
@@ -25,6 +25,39 @@ pub struct NowPlayingOutput {
   // state — never NetEase or local files. See `NowPlayingState::supports_like`.
   pub supports_like: Option<bool>,
   pub is_liked: Option<bool>,
+}
+
+/// Observable result of one media transport command.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MediaControlOutcome {
+  pub command: &'static str,
+  pub before: NowPlayingOutput,
+  pub after: NowPlayingOutput,
+  pub verified: bool,
+}
+
+impl MediaControlOutcome {
+  pub(crate) fn new(command: MediaCommand, before: &NowPlayingState, after: &NowPlayingState) -> Self {
+    Self {
+      command: command.label(),
+      before: build_now_playing_output(before),
+      after: build_now_playing_output(after),
+      verified: command_verified(command, before, after),
+    }
+  }
+}
+
+fn command_verified(command: MediaCommand, before: &NowPlayingState, after: &NowPlayingState) -> bool {
+  match command {
+    MediaCommand::Play => after.present && after.is_playing,
+    MediaCommand::Pause => after.present && !after.is_playing,
+    MediaCommand::TogglePlayPause => before.present && after.present && before.is_playing != after.is_playing,
+    MediaCommand::NextTrack | MediaCommand::PreviousTrack => {
+      before.present
+        && after.present
+        && (before.content_item_id != after.content_item_id || before.title != after.title || before.artist != after.artist)
+    }
+  }
 }
 
 /// Build the versioned output object from a [`NowPlayingState`].
@@ -137,5 +170,18 @@ mod tests {
     let mut state = playing_state();
     state.is_liked = Some(true);
     assert!(render_human_summary(&state).ends_with("♥"));
+  }
+
+  #[test]
+  fn transport_verification_uses_observed_playback_state() {
+    let before = playing_state();
+    let mut paused = before.clone();
+    paused.is_playing = false;
+    assert!(MediaControlOutcome::new(MediaCommand::Pause, &before, &paused).verified);
+    assert!(MediaControlOutcome::new(MediaCommand::TogglePlayPause, &before, &paused).verified);
+
+    let mut next = before.clone();
+    next.content_item_id = Some("next".to_string());
+    assert!(MediaControlOutcome::new(MediaCommand::NextTrack, &before, &next).verified);
   }
 }

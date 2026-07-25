@@ -132,13 +132,13 @@ impl AccessibilityApi<'_> {
     query: &str,
     expected_role: Option<&str>,
     candidate: &str,
-  ) -> DriverResult<crate::accessibility::AxFocusResult> {
+  ) -> DriverResult<auv_driver_common::AxFocusResult> {
     let _ = self.session;
     crate::accessibility::focus_text_by_query(app, query, expected_role, candidate)
   }
 
   /// Captures the current AX tree and verifies expected text on a role-matched node.
-  pub fn verify_text(&self, app: &str, expected_text: &str, expected_role: &str) -> DriverResult<crate::accessibility::AxTextRead> {
+  pub fn verify_text(&self, app: &str, expected_text: &str, expected_role: &str) -> DriverResult<auv_driver_common::AxTextRead> {
     let _ = self.session;
     crate::accessibility::verify_text(app, expected_text, expected_role)
   }

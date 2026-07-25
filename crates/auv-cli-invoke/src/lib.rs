@@ -16,7 +16,6 @@ pub mod commands;
 pub mod help;
 pub mod models;
 pub mod registry;
-mod registry_cli;
 pub mod render;
 
 pub use arg::ArgSpec;
@@ -30,9 +29,8 @@ pub use models::{
   ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
   InvokeRequest, InvokeResult, InvokeStatus,
 };
-pub(crate) use models::{InvokeReportLabels, InvokeReportValue, OptionalReportText};
+pub(crate) use models::{InvokeReportValue, OptionalReportText};
 pub use registry::{InvokeRegistry, default_registry};
-pub use registry_cli::{InvokeCli, InvokeCliAction, RegistryInvokeRequest};
 pub use render::{InvokeCliOutcome, render_invoke_result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,16 +48,15 @@ pub enum InvokeCliParse {
 }
 
 pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String> {
-  let tokens = normalize_invoke_arguments(arguments);
-  if tokens.is_empty() {
-    return Ok(InvokeCliParse::Help { command_id: None });
-  }
-
+  let tokens = match arguments.first().map(String::as_str) {
+    Some("invoke") => &arguments[1..],
+    _ => arguments,
+  };
   if tokens.is_empty() || tokens.first().is_some_and(|token| token == "help") {
     return Ok(InvokeCliParse::Help { command_id: None });
   }
 
-  let normalized = normalize_for_clap(&tokens)?;
+  let normalized = normalize_for_clap(tokens)?;
   if let Some(help) = normalized.help {
     return Ok(help);
   }
@@ -96,13 +93,6 @@ struct NormalizedInvokeArguments {
   clap_arguments: Vec<String>,
   inputs: BTreeMap<String, String>,
   help: Option<InvokeCliParse>,
-}
-
-fn normalize_invoke_arguments(arguments: &[String]) -> Vec<String> {
-  match arguments.first().map(String::as_str) {
-    Some("invoke") => arguments.iter().skip(1).cloned().collect(),
-    _ => arguments.to_vec(),
-  }
 }
 
 fn invoke_cli_command() -> Command {
@@ -177,74 +167,8 @@ fn normalize_for_clap(tokens: &[String]) -> Result<NormalizedInvokeArguments, St
 #[cfg(test)]
 mod tests {
   use super::{
-    CommandGroup, InvokeCli, InvokeCliAction, InvokeOutputOptions, InvokeRegistry, default_registry, invoke_cli_command,
-    render_command_help, render_help_index,
+    CommandGroup, InvokeOutputOptions, InvokeRegistry, default_registry, invoke_cli_command, render_command_help, render_help_index,
   };
-
-  #[test]
-  fn registry_cli_uses_clap_for_command_schema_and_help() {
-    let registry = default_registry();
-    let cli = InvokeCli::new(&registry, "auv-test invoke");
-
-    let InvokeCliAction::Help(index_help) = cli.parse(&[]).expect("empty invoke args should display help") else {
-      panic!("empty invoke args should render the command index");
-    };
-    assert!(index_help.contains("auv-test invoke"));
-    assert!(index_help.contains("scan.frame"));
-
-    let InvokeCliAction::Help(command_help) =
-      cli.parse(&["scan.frame".to_string(), "--help".to_string()]).expect("command help should be rendered by clap")
-    else {
-      panic!("command --help should render command-specific help");
-    };
-    assert!(command_help.contains("auv-test invoke scan.frame"));
-    assert!(command_help.contains("--fixture-dir <PATH>"));
-
-    let missing = cli.parse(&["scan.frame".to_string()]).expect_err("required command args must be rejected");
-    assert!(missing.contains("--fixture-dir <PATH>"));
-
-    let unknown = cli
-      .parse(&[
-        "scan.frame".to_string(),
-        "--fixture-dir".to_string(),
-        "fixture".to_string(),
-        "--unknown".to_string(),
-        "value".to_string(),
-      ])
-      .expect_err("unknown command args must be rejected");
-    assert!(unknown.contains("unexpected argument '--unknown'"));
-  }
-
-  #[test]
-  fn registry_cli_accepts_global_dry_run_before_or_after_command() {
-    let registry = default_registry();
-    let cli = InvokeCli::new(&registry, "auv-test invoke");
-    let before = cli
-      .parse(&[
-        "--dry-run".to_string(),
-        "scan.frame".to_string(),
-        "--fixture-dir".to_string(),
-        "fixture".to_string(),
-      ])
-      .expect("global dry-run should parse before the command");
-    let after = cli
-      .parse(&[
-        "scan.frame".to_string(),
-        "--fixture-dir".to_string(),
-        "fixture".to_string(),
-        "--dry-run".to_string(),
-      ])
-      .expect("global dry-run should parse after the command");
-
-    for parsed in [before, after] {
-      let InvokeCliAction::Invoke(parsed) = parsed else {
-        panic!("valid invoke args should dispatch");
-      };
-      assert_eq!(parsed.command_id, "scan.frame");
-      assert_eq!(parsed.inputs.get("fixture-dir").map(String::as_str), Some("fixture"));
-      assert!(parsed.dry_run);
-    }
-  }
 
   #[test]
   fn help_index_groups_commands_by_namespace() {

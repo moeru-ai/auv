@@ -259,16 +259,39 @@ fn window_selector(input: &McpInvokeInput) -> auv_driver::WindowSelector {
 }
 
 macro_rules! deferred_adapter {
-  ($id:literal, $call:expr) => {
-    McpInvokeAdapter::new($id, |_input| async move {
-      $call.await?;
-      Ok(completed(serde_json::Value::Null))
-    })
+  ($id:literal) => {
+    McpInvokeAdapter::new($id, |_input| async move { unimplemented!($id) })
   };
 }
 
 fn click_window_point_adapter() -> McpInvokeAdapter {
   click_window_point_adapter_with(auv_cli_invoke::commands::input::click_window_point_domain)
+}
+
+fn media_control_adapter(id: &'static str, command: auv_media_macos::MediaCommand) -> McpInvokeAdapter {
+  McpInvokeAdapter::new(id, move |_input| async move {
+    let result = auv_cli_invoke::commands::media_control::control_media(command).await?;
+    McpInvokeSuccess::from_result(&result)
+  })
+}
+
+fn focus_text_adapter(id: &'static str) -> McpInvokeAdapter {
+  McpInvokeAdapter::new(id, move |input| async move {
+    if input.dry_run {
+      return Ok(completed(Value::Null));
+    }
+    let app = input
+      .target_application_id
+      .as_deref()
+      .or_else(|| input.inputs.get("target").map(String::as_str))
+      .filter(|value| !value.trim().is_empty())
+      .ok_or_else(|| format!("{id} requires --target"))?
+      .to_string();
+    let query = input.inputs.get("query").cloned().unwrap_or_default();
+    let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
+    let result = auv_cli_invoke::commands::input::focus_text(app, query, candidate).await?;
+    McpInvokeSuccess::from_result(&result)
+  })
 }
 
 fn click_window_point_adapter_with<F, Fut>(execute: F) -> McpInvokeAdapter
@@ -441,47 +464,50 @@ pub fn core_invoke_adapters() -> Vec<McpInvokeAdapter> {
   ];
 
   adapters.extend([
-    deferred_adapter!("display.projectScreenshotPoint", auv_cli_invoke::commands::display::project_primary_screenshot_point()),
-    deferred_adapter!("display.identifyPoint", auv_cli_invoke::commands::display::identify_display_point()),
-    deferred_adapter!("input.focusText", auv_cli_invoke::commands::input::focus_text()),
-    deferred_adapter!("input.pressButton", auv_cli_invoke::commands::input::press_button_by_query()),
-    deferred_adapter!("input.axPressButton", auv_cli_invoke::commands::input::press_button_with_ax()),
-    deferred_adapter!("input.axFocusText", auv_cli_invoke::commands::input::focus_text_with_ax()),
-    deferred_adapter!("input.axClickWindowText", auv_cli_invoke::commands::input::click_window_text_with_ax()),
-    deferred_adapter!("input.smartPress", auv_cli_invoke::commands::input::resolve_and_press()),
-    deferred_adapter!("input.clickPoint", auv_cli_invoke::commands::input::click_global_point()),
-    deferred_adapter!("input.teachClick", auv_cli_invoke::commands::input::teach_click_workflow()),
-    deferred_adapter!("input.scrollPoint", auv_cli_invoke::commands::input::scroll_global_point()),
-    deferred_adapter!("screen.findRows", auv_cli_invoke::commands::screen::find_screen_rows_domain()),
-    deferred_adapter!("screen.waitForRows", auv_cli_invoke::commands::screen::wait_for_screen_rows_domain()),
-    deferred_adapter!("screen.findImageText", auv_cli_invoke::commands::screen::recognize_image_text()),
-    deferred_adapter!("screen.clickRow", auv_cli_invoke::commands::screen::click_screen_row_domain()),
-    deferred_adapter!("window.captureAxTree", auv_cli_invoke::commands::window::capture_ax_tree_snapshot()),
-    deferred_adapter!("window.findRows", auv_cli_invoke::commands::window::find_window_rows_domain()),
-    deferred_adapter!("window.waitForRows", auv_cli_invoke::commands::window::wait_for_window_rows_domain()),
-    deferred_adapter!("window.observeRegion", auv_cli_invoke::commands::window::observe_window_region_domain()),
-    deferred_adapter!("window.findIconMatch", auv_cli_invoke::commands::window::find_window_icon_match()),
-    deferred_adapter!("window.scrollRegion", auv_cli_invoke::commands::window::scroll_window_region_domain()),
-    deferred_adapter!("window.verifyText", auv_cli_invoke::commands::window::verify_window_ax_text()),
-    deferred_adapter!("window.clickRow", auv_cli_invoke::commands::window::click_window_row_domain()),
-    deferred_adapter!("overlay.clickPoint", auv_cli_invoke::commands::overlay::click_point()),
-    deferred_adapter!("overlay.showCursor", auv_cli_invoke::commands::overlay::show_cursor()),
-    deferred_adapter!("overlay.showDualCursor", auv_cli_invoke::commands::overlay::show_dual_cursor()),
-    deferred_adapter!("overlay.applyCursorBatch", auv_cli_invoke::commands::overlay::apply_cursor_batch()),
-    deferred_adapter!("overlay.setCursor", auv_cli_invoke::commands::overlay::set_cursor()),
-    deferred_adapter!("overlay.moveCursor", auv_cli_invoke::commands::overlay::move_cursor()),
-    deferred_adapter!("overlay.moveCursorById", auv_cli_invoke::commands::overlay::move_cursor_by_id()),
-    deferred_adapter!("overlay.flashCursor", auv_cli_invoke::commands::overlay::flash_cursor()),
-    deferred_adapter!("overlay.flashCursorById", auv_cli_invoke::commands::overlay::flash_cursor_by_id()),
-    deferred_adapter!("overlay.hideCursorId", auv_cli_invoke::commands::overlay::hide_cursor_by_id()),
-    deferred_adapter!("overlay.hideCursor", auv_cli_invoke::commands::overlay::hide_cursor()),
-    deferred_adapter!("overlay.shutdown", auv_cli_invoke::commands::overlay::shutdown()),
-    deferred_adapter!("mediaControl.nowPlaying", auv_cli_invoke::commands::media_control::read_now_playing()),
-    deferred_adapter!("mediaControl.play", auv_cli_invoke::commands::media_control::play_media()),
-    deferred_adapter!("mediaControl.pause", auv_cli_invoke::commands::media_control::pause_media()),
-    deferred_adapter!("mediaControl.togglePlayPause", auv_cli_invoke::commands::media_control::toggle_play_pause()),
-    deferred_adapter!("mediaControl.next", auv_cli_invoke::commands::media_control::next_track()),
-    deferred_adapter!("mediaControl.previous", auv_cli_invoke::commands::media_control::previous_track()),
+    deferred_adapter!("display.projectScreenshotPoint"),
+    deferred_adapter!("display.identifyPoint"),
+    focus_text_adapter("input.focusText"),
+    deferred_adapter!("input.pressButton"),
+    deferred_adapter!("input.axPressButton"),
+    focus_text_adapter("input.axFocusText"),
+    deferred_adapter!("input.axClickWindowText"),
+    deferred_adapter!("input.smartPress"),
+    deferred_adapter!("input.clickPoint"),
+    deferred_adapter!("input.teachClick"),
+    deferred_adapter!("input.scrollPoint"),
+    deferred_adapter!("screen.findRows"),
+    deferred_adapter!("screen.waitForRows"),
+    deferred_adapter!("screen.findImageText"),
+    deferred_adapter!("screen.clickRow"),
+    deferred_adapter!("window.captureAxTree"),
+    deferred_adapter!("window.findRows"),
+    deferred_adapter!("window.waitForRows"),
+    deferred_adapter!("window.observeRegion"),
+    deferred_adapter!("window.findIconMatch"),
+    deferred_adapter!("window.scrollRegion"),
+    deferred_adapter!("window.verifyText"),
+    deferred_adapter!("window.clickRow"),
+    deferred_adapter!("overlay.clickPoint"),
+    deferred_adapter!("overlay.showCursor"),
+    deferred_adapter!("overlay.showDualCursor"),
+    deferred_adapter!("overlay.applyCursorBatch"),
+    deferred_adapter!("overlay.setCursor"),
+    deferred_adapter!("overlay.moveCursor"),
+    deferred_adapter!("overlay.moveCursorById"),
+    deferred_adapter!("overlay.flashCursor"),
+    deferred_adapter!("overlay.flashCursorById"),
+    deferred_adapter!("overlay.hideCursorId"),
+    deferred_adapter!("overlay.hideCursor"),
+    deferred_adapter!("overlay.shutdown"),
+    McpInvokeAdapter::new("mediaControl.nowPlaying", |_input| async move {
+      let result = auv_cli_invoke::commands::media_control::read_now_playing().await?;
+      McpInvokeSuccess::from_result(&result)
+    }),
+    media_control_adapter("mediaControl.play", auv_media_macos::MediaCommand::Play),
+    media_control_adapter("mediaControl.pause", auv_media_macos::MediaCommand::Pause),
+    media_control_adapter("mediaControl.togglePlayPause", auv_media_macos::MediaCommand::TogglePlayPause),
+    media_control_adapter("mediaControl.next", auv_media_macos::MediaCommand::NextTrack),
+    media_control_adapter("mediaControl.previous", auv_media_macos::MediaCommand::PreviousTrack),
   ]);
   adapters
 }
