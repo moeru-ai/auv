@@ -1,4 +1,4 @@
-//! Apple Music window resolution via the Windows driver.
+//! Apple Music window resolution through the Windows driver.
 //!
 //! Apple Music ships as a Microsoft Store (MSIX) package on Windows. Its
 //! top-level window carries the title "Apple Music" and its process is named

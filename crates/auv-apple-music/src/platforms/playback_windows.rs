@@ -1,4 +1,4 @@
-//! `playback status` command: read play/pause state, track title, and artist
+//! Read play/pause state, track title, and artist through the Windows driver
 //! from the running Apple Music window on Windows.
 //!
 //! ## Detection strategy
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::app::ResolveOptions;
+use super::window_windows::ResolveOptions;
 
 // NOTICE: bottom-bar strip covers the now-playing bar at the bottom of the
 // Apple Music window. 0.82–1.0 captures the transport area on typical window
@@ -133,8 +133,8 @@ mod platform {
   use auv_driver::geometry::RatioRect;
   use auv_driver::vision::TextRecognitionOptions;
 
+  use super::super::window_windows::resolve_window;
   use super::{BOTTOM_BAR_TOP, MetadataSource, PlaybackState, PlaybackStatus, PlaybackStatusInputs};
-  use crate::app::resolve_window;
   pub fn run(inputs: &PlaybackStatusInputs) -> Result<PlaybackStatus, String> {
     let mut diagnostics: Vec<String> = Vec::new();
 

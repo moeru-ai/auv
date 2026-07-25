@@ -1,4 +1,4 @@
-//! Search submission for Apple Music on Windows.
+//! Search Apple Music through the Windows driver.
 //!
 //! The command composes the typed Windows driver surfaces:
 //!
@@ -19,7 +19,7 @@ use auv_driver::input::InputActionResult;
 use auv_driver::window::WindowMutationResult;
 use serde::{Deserialize, Serialize};
 
-use crate::app::ResolveOptions;
+use super::window_windows::ResolveOptions;
 
 pub const DEFAULT_SEARCH_SETTLE_MS: u64 = 300;
 pub const DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS: u64 = 5_000;
@@ -222,7 +222,7 @@ mod platform {
   impl super::SearchDriver for UnsupportedSearchDriver {
     fn prepare_window(
       &mut self,
-      _resolve: &crate::app::ResolveOptions,
+      _resolve: &super::super::window_windows::ResolveOptions,
       _settle: std::time::Duration,
     ) -> Result<(Option<String>, auv_driver::window::WindowMutationResult), String> {
       unreachable!("non-Windows search driver cannot be opened")
@@ -265,11 +265,11 @@ mod platform {
   use auv_driver::window::{Window, WindowMutationOptions, WindowMutationVerification};
   use auv_driver_windows::WindowsDriverSession;
 
+  use super::super::window_windows::{ResolveOptions, resolve_window};
   use super::{
     SearchDriver, SearchResultMatch, SearchVerification, SearchVerificationStatus, normalized, resolve_result_match, search_input_path,
     selection_navigation_evidence, uia_query_evidence,
   };
-  use crate::app::{ResolveOptions, resolve_window};
   pub(super) struct WindowsSearchDriver {
     session: WindowsDriverSession,
     window: Option<Window>,

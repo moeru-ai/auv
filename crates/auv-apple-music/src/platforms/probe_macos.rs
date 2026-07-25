@@ -1,4 +1,4 @@
-//! macOS Music.app AX surface probe.
+//! Bounded macOS Accessibility probe for Apple Music.
 //!
 //! Bounded search-field discovery plus toolbar reachability diagnostics. See
 //! `docs/ai/references/apps/apple-music/2026-07-15-apple-music-macos-ax-probe.md`.

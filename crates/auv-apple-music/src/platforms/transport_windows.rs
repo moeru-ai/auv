@@ -1,4 +1,4 @@
-//! Transport control commands: play/pause, next track, previous track.
+//! Transport controls through Windows media-key delivery.
 //!
 //! ## Delivery mechanism
 //!
@@ -22,7 +22,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::ResolveOptions;
+use super::window_windows::ResolveOptions;
 
 /// A transport action to perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,8 +112,8 @@ mod platform {
 
   use auv_driver::input::KeyPressOptions;
 
+  use super::super::window_windows::resolve_window;
   use super::{TransportInputs, TransportResult, media_key_name};
-  use crate::app::resolve_window;
   pub fn run(inputs: &TransportInputs) -> Result<TransportResult, String> {
     let mut diagnostics: Vec<String> = Vec::new();
     let key = media_key_name(inputs.action);

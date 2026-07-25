@@ -4,14 +4,12 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::commands::launch::OpenWindowInputs;
-use crate::commands::playback::PlaybackStatusInputs;
-use crate::commands::probe_macos::{DEFAULT_ACTIVATE_SETTLE_MS, DEFAULT_MUSIC_APP_BUNDLE_ID, ProbeInputs};
-use crate::commands::search::{
+use crate::{DEFAULT_ACTIVATE_SETTLE_MS, DEFAULT_MUSIC_APP_BUNDLE_ID, OpenWindowInputs, PlaybackStatusInputs, ProbeInputs};
+use crate::{
   DEFAULT_RESULT_SELECTION_TIMEOUT_MS, DEFAULT_SEARCH_SETTLE_MS, DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS, SearchInputs,
   SearchResultSelectInputs,
 };
-use crate::commands::transport::{TransportAction, TransportInputs};
+use crate::{TransportAction, TransportInputs};
 use crate::{run_open_window, run_playback_status, run_probe, run_search, run_search_result_select, run_transport_action};
 
 #[derive(Clone, Debug, Parser)]

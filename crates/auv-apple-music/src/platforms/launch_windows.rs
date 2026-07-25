@@ -1,4 +1,4 @@
-//! `open-window` command: ensure Apple Music is running and its window is
+//! Ensure Apple Music is running through Windows app tooling and its window is
 //! visible, optionally waiting for the window to appear after launch.
 //!
 //! The command tries three steps in order:
@@ -13,10 +13,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::{AppleMusicWindow, ResolveOptions, resolve_window};
+use super::window_windows::{AppleMusicWindow, ResolveOptions, resolve_window};
 
 #[cfg(target_os = "windows")]
-use crate::app::APPLE_MUSIC_TITLE;
+use super::window_windows::APPLE_MUSIC_TITLE;
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
