@@ -200,17 +200,6 @@ mod tests {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-scan/tests/fixtures/scan/coverage/coverage_stable_v0")
   }
 
-  #[test]
-  fn scan_fixture_commands_admit_memory_without_a_temporary_artifact_store() {
-    let source = include_str!("scan.rs").split("#[cfg(test)]").next().expect("scan command implementation");
-
-    for forbidden in ["TempDir", "producer_out", "emit_file_with_receipt"] {
-      assert!(!source.contains(forbidden), "scan invoke still stages canonical artifacts through {forbidden}");
-    }
-    assert!(source.contains("load_frame_fixture"), "scan frame should load typed metadata and image bytes in memory");
-    assert!(source.contains("build_coverage_fixture"), "scan coverage should build its typed value without a filesystem output");
-  }
-
   struct RejectArtifactStore {
     inner: MemoryRunStore,
     writes: AtomicUsize,

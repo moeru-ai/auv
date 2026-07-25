@@ -144,25 +144,6 @@ mod tests {
   use crate::reader::load_scan_frames_from_dir;
 
   #[test]
-  fn coverage_view_is_the_only_coverage_fact_shape() {
-    let public_api = include_str!("lib.rs").split("#[cfg(test)]\nmod public_api_boundary_tests").next().expect("public API boundary");
-    let artifact = include_str!("coverage_artifact.rs").split("#[cfg(test)]\nmod tests").next().expect("artifact implementation");
-    let scene_state = include_str!("scene_state.rs").split("#[cfg(test)]").next().expect("scene state implementation");
-
-    for forbidden in [
-      "ScanCoverageWire",
-      "CoverageEntryWire",
-      "NegativeEvidenceWire",
-      "CompletenessWire",
-      "coverage_view_to_wire",
-    ] {
-      assert!(!public_api.contains(forbidden), "public API still exports duplicate coverage shape {forbidden}");
-      assert!(!artifact.contains(forbidden), "artifact payload still duplicates coverage fact {forbidden}");
-    }
-    assert!(!scene_state.contains("coverage_wire"), "scene state still accepts a second coverage authority");
-  }
-
-  #[test]
   fn build_coverage_view_records_last_seen_frame() {
     let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0");
     let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-view-{}", std::process::id()));

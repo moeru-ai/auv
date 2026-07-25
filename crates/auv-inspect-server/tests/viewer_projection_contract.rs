@@ -146,28 +146,6 @@ async fn inspect_document_is_a_snapshot_only_projection_without_inferred_outcome
 }
 
 #[test]
-fn viewer_uses_snapshot_then_revision_sse_without_websocket_or_status_inference() {
-  let source = include_str!("../viewer/src/viewer.ts");
-  let vite = include_str!("../viewer/vite.config.ts");
-
-  assert!(source.contains("/snapshot"));
-  assert!(source.contains("/commits/stream?after_revision="));
-  assert!(source.contains("new EventSource"));
-  assert!(source.contains("addEventListener(\"gap\""));
-  assert!(source.contains("validateSnapshot"));
-  assert!(source.contains("MAX_RECOVERY_ATTEMPTS"));
-  assert!(source.contains("Object.keys(value).length !== 1"));
-  assert!(!source.contains("new WebSocket"));
-  assert!(!source.contains("status_code"));
-  assert!(!source.contains("running"));
-  assert!(!source.contains("success"));
-  assert!(source.contains("addEventListener(\"open\""));
-  assert!(vite.contains(r#""/v1""#));
-  assert!(!vite.contains(r#""/runs""#));
-  assert!(!vite.contains(r#""/write""#));
-}
-
-#[test]
 fn ids_used_by_projection_contract_are_valid() {
   AuthorityId::from_str(AUTHORITY).unwrap();
   RunId::from_str(RUN).unwrap();

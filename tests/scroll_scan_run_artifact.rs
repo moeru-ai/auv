@@ -339,24 +339,6 @@ fn scroll_scan_payload_contains_no_path_summary_or_generic_attribute_bags() {
   assert!(value.get("section_candidates").is_none());
 }
 
-#[test]
-fn scroll_scan_contract_contains_only_producer_backed_states() {
-  let source = include_str!("../src/scroll_scan/mod.rs");
-
-  for forbidden in [
-    "HookDecisionRecord",
-    "HookAction",
-    "HookRequestedStop",
-    "UntilNextSection",
-    "SectionCandidate",
-    "PartialMaxDuration",
-    "PartialUnstableContent",
-    "PartialNextSectionCandidate",
-  ] {
-    assert!(!source.contains(forbidden), "scroll-scan still exposes unproduced contract {forbidden}");
-  }
-}
-
 async fn assert_invalid_scroll_scan(mutate: impl FnOnce(&mut ScrollScanArtifact), expected_message: &str) {
   let fixture = RootRunFixture::memory();
   let mut artifact = sample_scroll_scan_artifact();

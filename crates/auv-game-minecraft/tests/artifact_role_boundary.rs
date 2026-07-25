@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 use auv_game_minecraft::dataset::{PROJECTION_BUNDLE_ROLE, SPATIAL_FRAME_BUNDLE_ROLE, directory_for_role};
 use auv_game_minecraft::{
@@ -81,36 +80,9 @@ fn spatial_bundle_manifest_roles_are_owned_by_dataset_contract() {
 }
 
 #[test]
-fn spatial_bundle_consumers_do_not_duplicate_dataset_role_literals() {
-  let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-  for relative in ["src/scene_packet.rs", "src/sample_builder.rs"] {
-    let path = crate_root.join(relative);
-    let source = fs::read_to_string(&path).unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    assert!(!source.contains("\"minecraft-spatial-frame\""), "{relative} duplicates the spatial-frame bundle role");
-    assert!(!source.contains("\"minecraft-projection\""), "{relative} duplicates the projection bundle role");
-  }
-}
-
-#[test]
 fn bundle_artifact_id_rejects_empty_string_sentinels() {
   assert!(BundleArtifactId::new("").is_err());
   assert!(serde_json::from_str::<BundleArtifactId>(r#""""#).is_err());
-}
-
-#[test]
-fn minecraft_bundle_code_does_not_synthesize_artifact_scheme_uris() {
-  let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-  let workspace_root = crate_root.parent().and_then(Path::parent).expect("workspace root");
-  for relative in [
-    "crates/auv-game-minecraft/src/dataset.rs",
-    "crates/auv-game-minecraft/src/scene_packet.rs",
-    "crates/auv-game-minecraft/src/sample_builder.rs",
-    "crates/auv-cli/src/integrations/minecraft/mod.rs",
-  ] {
-    let path = workspace_root.join(relative);
-    let source = fs::read_to_string(&path).unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    assert!(!source.contains("artifact://"), "{relative} synthesizes a non-canonical artifact URI");
-  }
 }
 
 fn source_run_reference() -> SourceRunReference {

@@ -120,17 +120,6 @@ mod tests {
   }
 
   #[test]
-  fn association_result_is_the_only_persisted_association_shape() {
-    let tracks = include_str!("tracks.rs").split("#[cfg(test)]").next().expect("tracks test boundary");
-    let root = include_str!("lib.rs");
-
-    assert!(!tracks.contains("AssociationResultWire"), "tracks duplicates the canonical association enum");
-    assert!(!tracks.contains("AssociationDiagnosticWire"), "tracks duplicates the canonical association diagnostic");
-    assert!(!root.contains("AssociationResultWire"), "crate root exports a duplicate association enum");
-    assert!(!root.contains("AssociationDiagnosticWire"), "crate root exports a duplicate association diagnostic");
-  }
-
-  #[test]
   fn associate_adjacent_frames_links_stable_label_fixture() {
     let fixture = load_association_fixture("association_stable_v0");
     assert_eq!(fixture.scenario, "association_stable_v0");

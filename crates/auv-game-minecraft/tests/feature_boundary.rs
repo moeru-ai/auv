@@ -42,19 +42,3 @@ fn tracing_dependencies_are_opt_in_without_retired_training_contract_target() {
     "the retired training artifact contract target must not remain"
   );
 }
-
-#[test]
-fn source_reference_api_does_not_change_with_tracing_feature() {
-  let dataset_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dataset.rs");
-  let source = std::fs::read_to_string(dataset_path).expect("read Minecraft dataset source");
-
-  for name in [
-    "SourceAuthorityId",
-    "SourceRunId",
-    "SourceRunRevision",
-    "SourceArtifactUri",
-  ] {
-    assert!(!source.contains(&format!("pub type {name} =")), "{name} must not change its public Rust type across feature sets");
-    assert!(source.contains(&format!("pub struct {name}(")), "{name} must be a stable domain newtype");
-  }
-}

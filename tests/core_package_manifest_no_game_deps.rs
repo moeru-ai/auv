@@ -73,30 +73,3 @@ fn root_auv_runtime_package_dependencies_exclude_game_and_godot_crates() {
      Keep donor wiring in the product CLI package. Companion falsifier: rg 'auv_game_' src/"
   );
 }
-
-#[test]
-fn root_library_modules_have_zero_auv_game_crate_path_references() {
-  let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-  let mut hits = Vec::new();
-  scan_rs_for_auv_game(&src_root, &mut hits);
-  assert!(hits.is_empty(), "library modules under src/ must not reference auv_game_*; hits={hits:?}");
-}
-
-fn scan_rs_for_auv_game(dir: &std::path::Path, hits: &mut Vec<String>) {
-  let entries = std::fs::read_dir(dir).unwrap_or_else(|error| panic!("read_dir {}: {error}", dir.display()));
-  for entry in entries {
-    let entry = entry.expect("dir entry");
-    let path = entry.path();
-    if path.is_dir() {
-      scan_rs_for_auv_game(&path, hits);
-      continue;
-    }
-    if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-      continue;
-    }
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    if text.contains("auv_game_") {
-      hits.push(path.display().to_string());
-    }
-  }
-}

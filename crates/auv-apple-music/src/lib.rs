@@ -212,9 +212,7 @@ mod tracing_tests {
     let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
 
     let direct_value = root.in_scope(|| {
-      let _ = tracing::image_artifact_with("auv.apple_music.test_capture", || {
-        Err::<image::RgbaImage, _>("capture unavailable".to_string())
-      });
+      let _ = tracing::image_artifact_with("auv.apple_music.test_capture", || Err::<image::RgbaImage, _>("capture unavailable".to_string()));
       42
     });
 

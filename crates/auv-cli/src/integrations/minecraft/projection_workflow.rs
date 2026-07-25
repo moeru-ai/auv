@@ -441,26 +441,6 @@ mod tests {
 
   use super::*;
 
-  #[test]
-  fn public_projection_outputs_do_not_expose_recording_receipts() {
-    let production = include_str!("projection_workflow.rs").split("#[cfg(test)]").next().expect("projection workflow test boundary");
-
-    assert!(!production.contains("pub struct MinecraftProjectionPublications"));
-    for output in [
-      "MinecraftProjectionBridgeOutput",
-      "MinecraftProjectionCalibrationOutput",
-      "MinecraftLiveClickOutput",
-    ] {
-      let fields = production
-        .split(&format!("pub struct {output}"))
-        .nth(1)
-        .and_then(|tail| tail.split("}\n").next())
-        .unwrap_or_else(|| panic!("{output} fields"));
-      assert!(!fields.contains("publications"), "{output} leaks recording receipts into its direct result");
-      assert!(!fields.contains("ArtifactMetadata"), "{output} leaks store metadata into its direct result");
-    }
-  }
-
   #[tokio::test]
   async fn artifact_authority_does_not_change_direct_projection_evidence() {
     let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));

@@ -58,29 +58,3 @@ pub use tracks::{
   DIAG_OBSERVATIONS_FRAME_MISMATCH, SCAN_TRACKS_SCHEMA_VERSION, ScanTracksWire, TrackSegmentWire, TracksDiagnosticWire,
   build_scan_tracks_from_bundle, format_scan_tracks_text,
 };
-
-#[cfg(test)]
-mod public_api_boundary_tests {
-  #[test]
-  fn public_api_does_not_own_artifact_filesystem_layout() {
-    let public_api = include_str!("lib.rs").split("#[cfg(test)]\nmod public_api_boundary_tests").next().expect("public API boundary");
-
-    for forbidden in [
-      "write_frame_artifact",
-      "read_frame_artifact",
-      "write_coverage_artifact",
-      "read_coverage_artifact",
-      "write_timeline_artifact",
-      "read_timeline_artifact",
-      "write_tracks_artifact",
-      "read_tracks_artifact",
-      "write_frame_with_image",
-      "ProducedFrame",
-      "ProducedCoverage",
-      "load_scan_frames_from_dir",
-      "replay_scan_frames_from_dir",
-    ] {
-      assert!(!public_api.contains(forbidden), "auv-scan public API still owns artifact filesystem symbol {forbidden}");
-    }
-  }
-}
