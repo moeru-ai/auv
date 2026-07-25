@@ -1,5 +1,10 @@
 # `auv-tracing` 与 OpenTelemetry Rust SDK 结构对照
 
+> **历史审查（已于 2026-07-26 被取代）：** 本文描述的是重构前源码，不能作为
+> 当前架构建议。authority、commit、revision、snapshot 与 read-side `RunStore`
+> 已被删除；当前契约见
+> [`2026-07-26-tracing-write-pipeline.md`](../references/inspect/2026-07-26-tracing-write-pipeline.md)。
+
 ## 目的与范围
 
 本文对照 `auv-tracing` 与 OpenTelemetry Rust SDK 的概念、公开类型、扩展

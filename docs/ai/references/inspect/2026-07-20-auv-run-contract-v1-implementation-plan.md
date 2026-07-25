@@ -1,5 +1,9 @@
 # AUV Tracing Contract V1 Implementation Plan
 
+> **Superseded (2026-07-26):** the authority/commit/snapshot/read-store plan is
+> historical. Current guidance is
+> [`2026-07-26-tracing-write-pipeline.md`](2026-07-26-tracing-write-pipeline.md).
+
 > **NetEase retirement note (2026-07-25):** the fixture-only select proof and
 > NetEase-owned run-artifact read/reuse steps in this historical plan were
 > superseded by

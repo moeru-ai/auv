@@ -6,15 +6,8 @@ terms, not stable public API names.
 
 ## Run
 
-A run is an explicitly created correlation, persistence, inspection, and replay
-scope. It has no start, finish, status, or seal fact in V1 and is not an
-OpenTelemetry trace.
-
-## AuthorityId
-
-An `AuthorityId` is the stable, non-secret identity of the sole authority
-`RunStore` selected to persist a run. It prevents one propagated `RunId` from
-silently splitting canonical history across stores.
+A run is an explicitly created correlation scope carried by trace records. It
+is not a storage transaction, session, revision stream, or OpenTelemetry trace.
 
 ## Operation Scope
 
@@ -26,23 +19,13 @@ operation trait, runner, execution id, or session object.
 
 A direct result is the typed result returned by an app or driver operation
 directly to its CLI, MCP, or library caller. Recording consumes facts and
-artifacts emitted by that execution; `RunStore`, run snapshots, and inspection
-projections never reconstruct, gate, or replace the direct application result path.
-
-## Run Commit
-
-A run commit is one atomic, ordered set of facts accepted by the authority
-`RunStore`. Accepted commits are the canonical durable truth for a run.
-
-## Run Snapshot
-
-A run snapshot is a disposable read model reduced from accepted commits through
-one revision. `through_revision` is a read cursor, not a schema version.
+artifacts emitted by that execution; tracing and later inspection projections
+never reconstruct, gate, or replace the direct application result path.
 
 ## Dispatch
 
-`Dispatch` routes typed AUV emissions to configured authority and projection
-destinations. It owns routing policy and does not execute operations, schedule
+`Dispatch` routes typed AUV emissions to a configured `TracingStore` and zero
+or more `TraceExporter` destinations. It owns routing policy and does not execute operations, schedule
 application work, or contain an operation catalog.
 
 ## Context
@@ -51,40 +34,46 @@ application work, or contain an operation catalog.
 together with its associated `Dispatch`. It propagates instrumentation scope;
 it is not an operation session or application runtime.
 
-## RunStore
+## Trace Record
 
-`RunStore` is the authority storage and read port for ordered commits, artifacts,
-snapshots, history, and recovery. It is not an exporter, hook, subscriber,
-application runtime, or operation handler.
+A `TraceRecord` is one full-fidelity producer observation: span start, span end,
+typed event with canonical payload, or stored artifact metadata. Records are
+append-only observations. They do not imply commits, revisions, snapshots,
+idempotency, recovery, or reconstructed operation results.
+
+## TracingStore
+
+`TracingStore` is the write-only port for full-fidelity trace records and
+artifact bodies. It exposes `write`, `write_artifact`, and `flush`; generic
+lookup, snapshots, pagination, subscriptions, and artifact reads do not belong
+to this producer-side port. Concrete in-memory stores may expose observations
+for tests without turning those methods into the generic store contract.
+
+## Trace Exporter
+
+`TraceExporter` receives trace records for an intentionally lossy external
+telemetry representation. OpenTelemetry is one exporter. Exporters do not own
+artifact bytes, install application-global providers, or become canonical AUV
+storage.
 
 ## Projection
 
-A projection is a deliberately lossy mapping from canonical AUV run data into
+A projection is a deliberately lossy mapping from AUV trace records into
 another read or telemetry model. Projections support presentation and external
-observability; they are not canonical run truth.
+observability; they are not storage or reconstructed operation truth.
 
 ## Verification
 
 Verification evaluates asserted external state. It is independent from target
 resolution, input delivery, operation completion, and persistence.
 
-## Inspect Document
+## Inspector (deferred)
 
-`auv_inspect_model::InspectDocument` is the disposable viewer projection of one
-canonical `RunSnapshot`. It carries the authority, run, and through-revision
-identity together with projected spans, events, and committed artifact
-metadata. It is not a second persistence model and does not own artifact bytes.
-
-Core projection is deterministic from the snapshot. Product-specific text
-documents may wrap this canonical projection with app-owned sections, but there
-is no shared section registry or composer in `auv-inspect-model`.
-
-## Inspect Run Extension
-
-`auv_inspect_server::InspectRunExtension` is the optional read-side contract for
-named product JSON at `/v1/runs/{run_id}/extensions/{extension}`. An extension
-receives the selected authority `RunStore` and canonical `RunSnapshot`; it may
-derive product data but cannot create another authority or alter run history.
+An inspector is a future read-side component that may ingest durable trace
+records, build indexes and read models, and present artifacts. It is explicitly
+outside `auv-tracing`. The current `auv-inspect-model` and `auv-inspect-server`
+crates do not define this boundary, and this document does not stabilize an
+inspector API yet.
 
 ## Product CLI package / auv-cli (provisional)
 
@@ -131,33 +120,28 @@ device-level action locks remain separate future decisions.
 
 An AUV span is an optional timed diagnostic scope inside a run. Spans may form
 a tree through `parent_span_id`. An operation scope is one ordinary caller-named
-use of this span API; spans need not belong to a persisted operation entity and
-do not create an independent tracing authority.
-
-A span becomes durable only when the run's authority `RunStore` accepts it
-through a `RunCommit`. Until then it is transient diagnostic data.
-OpenTelemetry spans are projections, not AUV persistence identity.
+use of this span API; spans need not belong to a persisted operation entity.
+Span start and end are separate `TraceRecord` values. OpenTelemetry spans are
+lossy exports, not AUV persistence identity.
 
 ## Event
 
 An AUV event is an optional typed, timestamped point-in-time fact associated
 with the current run and, optionally, a span. Events need not belong to a
-persisted operation entity and do not create an independent event or tracing
-authority.
+persisted operation entity.
 
 Examples include `command.resolved`, `driver.invoke`, `action.started`,
 `artifact.captured`, `assertion.passed`, and `assertion.failed`.
 
-An event becomes durable only when the run's authority `RunStore` accepts it
-through a `RunCommit`. Events should describe small occurrences; structured or
-large payloads belong in typed values or artifacts.
+An event record includes its canonical typed JSON payload. Events should
+describe small occurrences; large payloads belong in artifacts.
 
 ## Artifact
 
-An artifact is committed inspection, evidence, replay, or domain-output
-material owned by a run. It combines typed metadata with authority-owned bytes
-and becomes visible only when the authority `RunStore` atomically includes it
-in a `RunCommit` after validating the complete byte stream.
+An artifact is inspection, evidence, replay, or domain-output material
+correlated with a run. A `TracingStore` writes its bytes and then emits an
+artifact metadata record after validating the complete byte stream. This is a
+simple write pipeline, not a run transaction or commit protocol.
 
 Artifacts may optionally be associated with a span. V1 does not assign artifact
 ownership to a persisted operation entity or verification. Artifacts may
@@ -167,10 +151,10 @@ Examples include screenshots, click-overlay images, accessibility snapshots,
 driver input/output JSON, distillation reports, validation reports, and video
 segments.
 
-Committed typed facts and resources refer to artifacts through `ArtifactUri`.
+Typed facts and resources refer to artifacts through `ArtifactUri`.
 An `ArtifactUri` is the transport-independent identity of an artifact. Spans
 and events may add diagnostic links, but they do not own artifacts; large
-payloads remain authority-owned bytes rather than embedded event data.
+payloads remain store-owned bytes rather than embedded event data.
 
 ## View Memory (retired experimental contract)
 
@@ -183,7 +167,7 @@ Candidate identifiers remain local observation facts. No current frontend may
 carry a candidate or scan artifact URI into a later application call. A future
 cross-run reacquisition contract requires owner approval and must live on the
 shared runtime and inspection model rather than an app-local manifest,
-artifact directory, process-global cache, or application-owned `RunStore`
+artifact directory, process-global cache, or application-owned tracing-store
 reader.
 
 ## Observation Scope
@@ -546,31 +530,13 @@ why a capture was rejected.
 Capture contracts are produced alongside display, region, and window captures.
 They are inspection artifacts, not screenshots.
 
-## Inspect Server
+## Inspect Server (legacy, not the inspector boundary)
 
-The inspect server is an HTTP and SSE access layer over stored and live run
-data. It is not the runtime execution API.
-
-The server exists so browser viewers, Android WebViews, IDE integrations, and
-other tools can list runs, fetch run structure, load artifacts, and subscribe to
-live run events.
-
-V1 selects exactly one authority `RunStore` for each run. An inspect
-implementation has one of two relationships to that authority:
-
-- it reads snapshots, commits, subscriptions, and artifacts from the selected
-  authority `RunStore`; or
-- it is selected as the authority `RunStore`, with `InspectRunStore` carrying
-  the store contract over the Inspect HTTP/SSE protocol.
-
-Only `RunCommit` values accepted by the selected authority define durable run
-truth. Inspect projections, rendering, and live broadcasts, including SSE
-delivery, are non-authoritative and cannot change committed history.
-
-Reliable replication between authorities requires a separate protocol with an
-outbox, acknowledgement, resume cursor, and conflict policy; that protocol is
-deferred. Artifact metadata and bytes are committed atomically through the
-authority `RunStore` artifact contract.
+The existing inspect server is not the future `auv-inspector` and must not
+shape the producer-side tracing API. A later owner-approved inspector slice may
+define ingestion, indexing, artifact resolution, subscriptions, and viewer
+protocols over data written by `TracingStore`. No such API is part of the
+current tracing contract.
 
 ## Interaction Instrumentation
 
@@ -586,7 +552,7 @@ introduce a separate interaction tracing crate or recorder.
 ## Direct Operation Result
 
 An operation's direct result is the app- or driver-owned Rust `Result<T, E>`
-returned to its caller. It is not reconstructed from a run store and is not a
+returned to its caller. It is not reconstructed from tracing and is not a
 generic persisted `OperationResult` entity.
 
 CLI and MCP adapters may call the same typed operation, but each frontend owns
@@ -627,10 +593,10 @@ recording. The CLI-only `InvokeCommandOutput` may carry a frontend report for
 human or `--json` presentation; it does not carry a generic summary, backend,
 notes, known-limits, verification, signal, or artifact bag. Command failure is
 the `Err` branch rather than a successful output with an optional failure field.
-Detached artifacts are read from the selected `RunStore` or Inspect API by
-`run_id`; CLI and MCP invoke responses do not duplicate the authority's artifact
-list. MCP maps the same typed domain function through its own adapter and does
-not reuse the CLI output type.
+Artifact discovery and reading are deferred to a separate inspector boundary;
+CLI and MCP invoke responses do not reconstruct their direct result from trace
+records. MCP maps the same typed domain function through its own adapter and
+does not reuse the CLI output type.
 
 ## Historical Terms
 
@@ -640,22 +606,10 @@ retired rather than compatibility-supported. The repository audit and migration
 record remain in
 [`docs/ai/references/inspect/2026-07-17-auv-tracing-contract-and-invoke-output-design.md`](ai/references/inspect/2026-07-17-auv-tracing-contract-and-invoke-output-design.md).
 
-## Inspect Server Session
-
-An inspect server session is a local discovery descriptor written by
-`inspect serve` when write mode is enabled. It contains the local server URL,
-store root, write-enabled state, optional write token, process id, and start
-time.
-
-Ordinary CLI runs may use this descriptor when inspect server reporting is left
-at its default. Discovery must use a user-private session path and reject unsafe
-or non-local descriptors before sending run data.
-
 ## Viewer
 
-A viewer is any UI that renders run data from the inspect server or directly
-from the run store. The first viewer is expected to be browser-based so it can
-work across desktop, remote, and mobile contexts.
+A viewer is a future UI over inspector-owned read models. It must not read
+through the producer-side `TracingStore` trait.
 
 The viewer should render spans, events, and artifacts as an inspectable
 timeline.

@@ -1,5 +1,6 @@
 [package]
 name = "auv-tracing-otel"
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -21,3 +22,6 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["l
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
 futures-util = { workspace = true, features = ["io"] }
+
+[[test]]
+name = "exporter_contract"

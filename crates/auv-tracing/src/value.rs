@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use serde::de::{self, MapAccess, Visitor};
@@ -13,7 +12,6 @@ const MAX_NAMESPACED_NAME_BYTES: usize = 128;
 const MAX_ATTRIBUTE_COUNT: usize = 32;
 const MAX_ATTRIBUTE_STRING_BYTES: usize = 1_024;
 const MAX_ATTRIBUTES_JSON_BYTES: usize = 16_384;
-const MAX_PAGE_LIMIT: u32 = 1_024;
 const MAX_CONTENT_TYPE_BYTES: usize = 256;
 const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -88,70 +86,9 @@ macro_rules! uuid_id {
 }
 
 uuid_id!(RunId, "Identifies one explicit AUV run scope.");
-uuid_id!(AuthorityId, "Identifies the store authoritative for a run.");
 uuid_id!(SpanId, "Identifies a span within a run.");
 uuid_id!(EventId, "Identifies an immutable event within a run.");
 uuid_id!(ArtifactId, "Identifies an artifact within a run.");
-uuid_id!(IdempotencyKey, "Identifies one idempotent store operation.");
-
-/// A browser-exact run ordering cursor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct RunRevision(u64);
-
-impl RunRevision {
-  /// Validates a run revision, including revision zero as the pre-history cursor.
-  pub fn new(value: u64) -> Result<Self, ValidationError> {
-    if value > JAVASCRIPT_EXACT_INTEGER_MAX {
-      return Err(ValidationError::new("run revision exceeds the JavaScript exact integer limit"));
-    }
-    Ok(Self(value))
-  }
-
-  /// Returns the numeric revision.
-  pub fn get(self) -> u64 {
-    self.0
-  }
-}
-
-impl<'de> Deserialize<'de> for RunRevision {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    Self::new(u64::deserialize(deserializer)?).map_err(de::Error::custom)
-  }
-}
-
-/// A bounded non-zero commit page size.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct PageLimit(NonZeroU32);
-
-impl PageLimit {
-  /// Creates a page limit in `1..=1024`.
-  pub fn new(value: u32) -> Result<Self, ValidationError> {
-    let value = NonZeroU32::new(value).ok_or_else(|| ValidationError::new("page limit must be non-zero"))?;
-    if value.get() > MAX_PAGE_LIMIT {
-      return Err(ValidationError::new("page limit exceeds 1024 commits"));
-    }
-    Ok(Self(value))
-  }
-
-  /// Returns the non-zero page limit.
-  pub fn get(self) -> NonZeroU32 {
-    self.0
-  }
-}
-
-impl<'de> Deserialize<'de> for PageLimit {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    Self::new(u32::deserialize(deserializer)?).map_err(de::Error::custom)
-  }
-}
 
 /// A string bounded for use as an attribute scalar.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -214,51 +151,6 @@ impl<'de> Deserialize<'de> for FiniteF64 {
     D: Deserializer<'de>,
   {
     Self::new(f64::deserialize(deserializer)?).map_err(de::Error::custom)
-  }
-}
-
-/// A vector that always contains at least one item.
-// TODO(run-history-v1): The 256-item mutation/fact bound belongs to the Task 3
-// commit constructors; keep this reusable value responsible only for non-emptiness.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct NonEmptyVec<T>(Vec<T>);
-
-impl<T> NonEmptyVec<T> {
-  /// Rejects an empty vector.
-  pub fn new(values: Vec<T>) -> Result<Self, ValidationError> {
-    if values.is_empty() {
-      return Err(ValidationError::new("vector must not be empty"));
-    }
-    Ok(Self(values))
-  }
-
-  /// Returns the item count, which is always non-zero.
-  #[allow(clippy::len_without_is_empty)]
-  pub fn len(&self) -> usize {
-    self.0.len()
-  }
-
-  /// Borrows the items.
-  pub fn as_slice(&self) -> &[T] {
-    &self.0
-  }
-
-  /// Consumes the wrapper and returns the items.
-  pub fn into_vec(self) -> Vec<T> {
-    self.0
-  }
-}
-
-impl<'de, T> Deserialize<'de> for NonEmptyVec<T>
-where
-  T: Deserialize<'de>,
-{
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    Self::new(Vec::deserialize(deserializer)?).map_err(de::Error::custom)
   }
 }
 

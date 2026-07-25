@@ -1,6 +1,9 @@
 # AUV Tracing, Run Storage, And Inspection Contract V1
 
-Status: implemented V1 contract
+Status: superseded on 2026-07-26 by
+[`2026-07-26-tracing-write-pipeline.md`](2026-07-26-tracing-write-pipeline.md).
+The authority/commit/snapshot/read-store model below is historical and must not
+be used as current implementation guidance.
 
 Responsibility: typed instrumentation / context propagation / run storage /
 artifact routing / inspection / telemetry projection

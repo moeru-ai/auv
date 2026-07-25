@@ -2,16 +2,14 @@
 
 AUV tracing, run storage, artifact delivery, and inspect viewer contracts
 
-Count: **12**
+Count: **13**
 
-## Current V1
+## Current
 
-- [`2026-07-20-auv-run-recording-contract-v1-spec.md`](2026-07-20-auv-run-recording-contract-v1-spec.md)
-  (normative `auv-tracing` V1 contract; canonical core implemented, workspace migration in progress)
-- [`2026-07-20-auv-run-contract-v1-implementation-plan.md`](2026-07-20-auv-run-contract-v1-implementation-plan.md)
-  (active implementation and migration record)
+- [`2026-07-26-tracing-write-pipeline.md`](2026-07-26-tracing-write-pipeline.md)
+  (current producer-side `auv-tracing` contract and implementation handoff)
 
-The V1 spec is normative and wins if any historical record conflicts with it.
+This contract wins if a historical record conflicts with it.
 
 ## Historical / Superseded Pre-V1 Records
 
@@ -28,6 +26,8 @@ The 2026-07-17 document is preserved research and repository audit material.
 - [`2026-07-10-inspect-server-crate-viewer-spec.md`](2026-07-10-inspect-server-crate-viewer-spec.md)
 - [`2026-07-13-inspect-composition-s4-migration.md`](2026-07-13-inspect-composition-s4-migration.md)
 - [`2026-07-17-auv-tracing-contract-and-invoke-output-design.md`](2026-07-17-auv-tracing-contract-and-invoke-output-design.md)
+- [`2026-07-20-auv-run-recording-contract-v1-spec.md`](2026-07-20-auv-run-recording-contract-v1-spec.md)
+- [`2026-07-20-auv-run-contract-v1-implementation-plan.md`](2026-07-20-auv-run-contract-v1-implementation-plan.md)
 
 ## Related
 

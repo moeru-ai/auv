@@ -1,14 +1,12 @@
-use crate::{AuthorityId, ErrorCode, RunId, SpanId};
+use crate::{ErrorCode, RunId, SpanId};
 
 const CONTEXT_VERSION: &str = "auv-context-version";
 const RUN_ID: &str = "auv-run-id";
-const AUTHORITY_ID: &str = "auv-authority-id";
 const SPAN_ID: &str = "auv-span-id";
-const FIELD_NAMES: [&str; 4] = [CONTEXT_VERSION, RUN_ID, AUTHORITY_ID, SPAN_ID];
+const FIELD_NAMES: [&str; 3] = [CONTEXT_VERSION, RUN_ID, SPAN_ID];
 
 /// Extracted cross-process run correlation without any local routing state.
 pub struct RemoteContext {
-  pub(crate) authority_id: Option<AuthorityId>,
   pub(crate) run_id: RunId,
   pub(crate) remote_span_id: Option<SpanId>,
 }
@@ -55,10 +53,9 @@ impl PropagationError {
 pub fn extract(carrier: &dyn TextMapReader) -> Result<Option<RemoteContext>, PropagationError> {
   let version = single_value(carrier, CONTEXT_VERSION)?;
   let run_id = single_value(carrier, RUN_ID)?;
-  let authority_id = single_value(carrier, AUTHORITY_ID)?;
   let remote_span_id = single_value(carrier, SPAN_ID)?;
 
-  if version.is_none() && run_id.is_none() && authority_id.is_none() && remote_span_id.is_none() {
+  if version.is_none() && run_id.is_none() && remote_span_id.is_none() {
     return Ok(None);
   }
 
@@ -69,16 +66,14 @@ pub fn extract(carrier: &dyn TextMapReader) -> Result<Option<RemoteContext>, Pro
   }
 
   let run_id = run_id.parse().map_err(|_| invalid_id())?;
-  let authority_id = authority_id.map(str::parse).transpose().map_err(|_| invalid_id())?;
   let remote_span_id = remote_span_id.map(str::parse).transpose().map_err(|_| invalid_id())?;
   Ok(Some(RemoteContext {
-    authority_id,
     run_id,
     remote_span_id,
   }))
 }
 
-pub(crate) fn inject(carrier: &mut dyn TextMapWriter, authority_id: Option<AuthorityId>, run_id: Option<RunId>, span_id: Option<SpanId>) {
+pub(crate) fn inject(carrier: &mut dyn TextMapWriter, run_id: Option<RunId>, span_id: Option<SpanId>) {
   for name in FIELD_NAMES {
     carrier.remove(name);
   }
@@ -88,16 +83,9 @@ pub(crate) fn inject(carrier: &mut dyn TextMapWriter, authority_id: Option<Autho
   };
   carrier.set(CONTEXT_VERSION, "1");
   carrier.set(RUN_ID, &run_id.to_string());
-  if let Some(authority_id) = authority_id {
-    carrier.set(AUTHORITY_ID, &authority_id.to_string());
-  }
   if let Some(span_id) = span_id {
     carrier.set(SPAN_ID, &span_id.to_string());
   }
-}
-
-pub(crate) fn authority_mismatch() -> PropagationError {
-  PropagationError::new("auv.propagation.authority_mismatch")
 }
 
 fn single_value<'a>(carrier: &'a dyn TextMapReader, name: &str) -> Result<Option<&'a str>, PropagationError> {
