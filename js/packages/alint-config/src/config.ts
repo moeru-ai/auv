@@ -19,6 +19,19 @@ export default defineConfig([
     },
   },
   {
+    name: "auv/rust-test-contracts",
+    files: ["src/**/*.rs", "tests/**/*.rs", "crates/*/src/**/*.rs", "crates/*/tests/**/*.rs"],
+    language: "text/plain",
+    agent: createApeiraAdapter(),
+    plugins: {
+      rust: auv,
+    },
+    rules: {
+      "rust/no-mod-names-checks-in-tests": "error",
+      "rust/no-source-files-compare-in-tests": "error",
+    },
+  },
+  {
     name: "auv/repo-text-and-scripts",
     files: ["**/*.{toml,md,yml,yaml,json,js,mjs,cjs,ts,tsx,mts,cts,vue}"],
   },

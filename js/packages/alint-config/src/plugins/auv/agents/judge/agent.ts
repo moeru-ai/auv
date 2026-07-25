@@ -24,7 +24,7 @@ const toolName = "report_findings";
 export async function judgeSource(options: JudgeSourceOptions): Promise<JudgeFinding[]> {
   const model = await options.context.model();
   const response = await requestToolResult(model, {
-    instructions: options.instructions,
+    instructions: `${options.instructions}\n\nCall ${toolName} exactly once. Use an empty findings array when there is no qualifying issue.`,
     prompt: [
       `Review operation: ${options.operation}`,
       options.prompt,
@@ -53,10 +53,11 @@ async function requestToolResult(
       ],
       model: model.id,
       temperature: 0,
-      tool_choice: {
-        function: { name: toolName },
-        type: "function",
-      },
+      // NOTICE: Alibaba thinking-mode models reject required/object tool_choice.
+      // Auto remains portable while the system instruction still requires exactly
+      // one report call. Remove this workaround when those providers accept the
+      // standard forced-function request used by OpenAI-compatible endpoints.
+      tool_choice: "auto",
       tools: [
         {
           function: {
