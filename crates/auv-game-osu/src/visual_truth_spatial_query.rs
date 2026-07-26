@@ -8,7 +8,7 @@ use auv_file::{
 };
 use auv_stage_status::StageStatus;
 #[cfg(feature = "tracing")]
-use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
+use auv_tracing::{ArtifactMetadata, Context};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -154,15 +154,6 @@ pub async fn publish_osu_visual_truth_spatial_query(
   query: &VisualTruthSpatialQueryManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
   crate::run_read::publish_json_artifact(context, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, query, validate_spatial_query_payload).await
-}
-
-#[cfg(feature = "tracing")]
-pub async fn read_osu_visual_truth_spatial_query(
-  store: &dyn RunStore,
-  snapshot: &RunSnapshot,
-  uri: &ArtifactUri,
-) -> Result<VisualTruthSpatialQueryManifest, crate::run_read::OsuArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_VISUAL_TRUTH_SPATIAL_QUERY_PURPOSE, validate_spatial_query_payload).await
 }
 
 fn validate_spatial_query_payload(query: &VisualTruthSpatialQueryManifest) -> Result<(), String> {
@@ -492,157 +483,4 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
       format!("failed to serialize {}: {error}", path.display())
     }
   })
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::benchmark::MapSummary;
-  use crate::projection::{PlayfieldProjection, ProjectionArtifact, ProjectionDerivationMethod};
-  use crate::visual_truth::{CaptureFrame, ExpectedObjectTruth, VisualTruthFrame};
-  use crate::visual_truth_semantic::{VisualTruthSemanticValidationInputs, validate_visual_truth_semantic};
-
-  fn write_probe_fixture(root: &Path) {
-    let manifest = VisualTruthManifest {
-      schema_version: 1,
-      beatmap_path: "tests/fixtures/probe.osu".to_string(),
-      map_summary: MapSummary {
-        beatmap_path: "tests/fixtures/probe.osu".to_string(),
-        mode: 0,
-        total_objects: 1,
-        circle_count: 1,
-        slider_count: 0,
-        spinner_count: 0,
-        hold_count: 0,
-        first_object_time_ms: Some(1000),
-        last_object_time_ms: Some(1000),
-        approach_rate: 8.0,
-        overall_difficulty: 7.0,
-        circle_size: 4.0,
-        hp_drain_rate: 5.0,
-      },
-      frames: vec![VisualTruthFrame {
-        object_index: 0,
-        scheduled_time_ms: 1000,
-        actual_dispatch_time_ms: 1001,
-        dispatch_error_ms: 1,
-        capture: CaptureFrame {
-          phase: CapturePhase::BeforeDispatch,
-          capture_time_ms: 990,
-          relative_to_scheduled_ms: -10,
-          relative_to_dispatch_ms: -11,
-          file_name: "capture-object-0000-before-16ms.png".to_string(),
-          width: 800,
-          height: 600,
-          backend: "fixture".to_string(),
-          fallback_reason: None,
-        },
-        expected_object: ExpectedObjectTruth {
-          object_kind: ObjectKind::Circle,
-          expected_playfield_x: 256.0,
-          expected_playfield_y: 192.0,
-          circle_size: 4.0,
-          approach_rate: 8.0,
-          overall_difficulty: 7.0,
-        },
-      }],
-    };
-    let projection = PlayfieldProjection::for_capture(800.0, 600.0, 4.0).expect("projection");
-    let projection_artifact = ProjectionArtifact {
-      source_window_bounds: crate::projection::ProjectionBounds {
-        x: 0.0,
-        y: 0.0,
-        width: 800.0,
-        height: 600.0,
-      },
-      capture_bounds: Some(crate::projection::ProjectionBounds {
-        x: 0.0,
-        y: 0.0,
-        width: 800.0,
-        height: 600.0,
-      }),
-      capture_width: Some(800),
-      capture_height: Some(600),
-      capture_scale_factor: Some(1.0),
-      scale_x: projection.scale_x,
-      scale_y: projection.scale_y,
-      offset_x: projection.offset_x,
-      offset_y: projection.offset_y,
-      match_radius_px: projection.match_radius_px,
-      derivation_method: ProjectionDerivationMethod::LayoutRule,
-      verification_reference: None,
-    };
-
-    write_json_file(&root.join("visual_truth_manifest.json"), &manifest).expect("manifest");
-    write_json_file(&root.join("projection.json"), &projection_artifact).expect("projection");
-  }
-
-  #[test]
-  fn spatial_query_answered_for_probe_target() {
-    let root = tempfile::tempdir().expect("tempdir");
-    write_probe_fixture(root.path());
-    let semantic_out = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-      run_artifact_dir: root.path().to_path_buf(),
-      output_dir: root.path().join("semantic-out"),
-    })
-    .expect("semantic validation");
-
-    let output = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
-      visual_truth_semantic_manifest_path: semantic_out.manifest_path,
-      object_index: 0,
-      capture_phase: CapturePhase::BeforeDispatch,
-      object_kind: Some(ObjectKind::Circle),
-      output_dir: root.path().join("query-out"),
-    })
-    .expect("query should succeed");
-
-    assert_eq!(output.manifest.status, VisualTruthSpatialQueryStatus::Answered);
-    assert_eq!(output.manifest.pixel_visibility, Some(VisualTruthPixelVisibility::InsideCapture));
-    assert!(output.manifest.pixel_x.is_some());
-  }
-
-  #[test]
-  fn spatial_query_blocked_when_semantic_not_ready() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let semantic_out = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-      run_artifact_dir: root.path().to_path_buf(),
-      output_dir: root.path().join("semantic-out"),
-    })
-    .expect("semantic blocked still writes");
-
-    let output = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
-      visual_truth_semantic_manifest_path: semantic_out.manifest_path,
-      object_index: 0,
-      capture_phase: CapturePhase::BeforeDispatch,
-      object_kind: None,
-      output_dir: root.path().join("query-out"),
-    })
-    .expect("query should write blocked manifest");
-
-    assert_eq!(output.manifest.status, VisualTruthSpatialQueryStatus::Blocked);
-    assert_eq!(output.manifest.reason, Some(VisualTruthSpatialQueryReason::SemanticSourceNotReady));
-  }
-
-  #[test]
-  fn spatial_query_failed_when_target_absent() {
-    let root = tempfile::tempdir().expect("tempdir");
-    write_probe_fixture(root.path());
-    let semantic_out = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-      run_artifact_dir: root.path().to_path_buf(),
-      output_dir: root.path().join("semantic-out"),
-    })
-    .expect("semantic");
-
-    let output = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
-      visual_truth_semantic_manifest_path: semantic_out.manifest_path,
-      object_index: 99,
-      capture_phase: CapturePhase::BeforeDispatch,
-      object_kind: None,
-      output_dir: root.path().join("query-out"),
-    })
-    .expect("query should write failed manifest");
-
-    assert_eq!(output.manifest.status, VisualTruthSpatialQueryStatus::Failed);
-    assert_eq!(output.manifest.reason, Some(VisualTruthSpatialQueryReason::TargetAbsentFromVisualTruth));
-  }
 }

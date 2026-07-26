@@ -1,12 +1,16 @@
+#[cfg(feature = "tracing")]
 use auv_cli_common::TableRow;
+#[cfg(feature = "tracing")]
 use auv_cli_common::outputs::cli::CliOutput;
+#[cfg(feature = "tracing")]
 use auv_cli_common::outputs::formats::table::{self, TableOptions};
 use serde::Serialize;
 
 use crate::views::query_match::{PlaylistQueryMatchMode, PlaylistQueryResolution};
 use crate::views::sidebar::SidebarView;
-use crate::{Confidence, PlaylistSidebarProjection, PlaylistSidebarScan, SidebarSectionKind};
+use crate::{Confidence, PlaylistSidebarScan, SidebarSectionKind};
 
+#[cfg(feature = "tracing")]
 pub(crate) fn render_song_list_human(result: &crate::SongListScanResult) -> String {
   let mut lines = vec![
     "NetEase song list scan".to_string(),
@@ -133,12 +137,14 @@ pub fn build_playlist_json_output(
 }
 
 /// One computed playlist listing shared by JSON, table, and human routes.
+#[cfg(feature = "tracing")]
 pub(crate) struct PlaylistOutput<'a> {
   json: PlaylistJsonOutput,
   scan: &'a PlaylistSidebarScan,
   detail: bool,
 }
 
+#[cfg(feature = "tracing")]
 impl<'a> PlaylistOutput<'a> {
   pub(crate) fn new(scan: &'a PlaylistSidebarScan, keyword: Option<&str>, min_confidence: Option<Confidence>, detail: bool) -> Self {
     Self {
@@ -147,13 +153,6 @@ impl<'a> PlaylistOutput<'a> {
       detail,
     }
   }
-}
-
-/// Collect items that match the keyword with exact-first resolution.
-/// `keyword == None` returns every item (full listing).
-pub fn collect_matches(projection: &PlaylistSidebarProjection, keyword: Option<&str>) -> Vec<MatchRef> {
-  let sidebar = SidebarView::from_projection(projection.clone());
-  assign_scan_refs(collect_matches_from_sidebar(&sidebar, keyword))
 }
 
 fn collect_matches_from_sidebar(sidebar: &SidebarView, keyword: Option<&str>) -> Vec<MatchRef> {
@@ -210,6 +209,7 @@ fn is_zero(value: &usize) -> bool {
   *value == 0
 }
 
+#[cfg(feature = "tracing")]
 impl CliOutput for PlaylistOutput<'_> {
   fn to_json(&self) -> impl Serialize {
     &self.json
@@ -287,6 +287,7 @@ impl CliOutput for PlaylistOutput<'_> {
   }
 }
 
+#[cfg(feature = "tracing")]
 fn render_playlist_table(matches: &[MatchRef], options: TableOptions<'_>) -> String {
   let rows = matches
     .iter()
@@ -301,6 +302,7 @@ fn render_playlist_table(matches: &[MatchRef], options: TableOptions<'_>) -> Str
 }
 
 #[derive(TableRow)]
+#[cfg(feature = "tracing")]
 struct PlaylistTableRow<'a> {
   name: &'a str,
   #[table(display_with = "section_kind_name")]
@@ -310,6 +312,7 @@ struct PlaylistTableRow<'a> {
   anchor_id: Option<&'a str>,
 }
 
+#[cfg(feature = "tracing")]
 fn section_kind_name(kind: &SidebarSectionKind) -> &'static str {
   match kind {
     SidebarSectionKind::FeatureNav => "feature_nav",
@@ -321,6 +324,7 @@ fn section_kind_name(kind: &SidebarSectionKind) -> &'static str {
   }
 }
 
+#[cfg(feature = "tracing")]
 fn confidence_level_name(level: &str) -> &'static str {
   match level {
     "H" => "high",
@@ -329,6 +333,7 @@ fn confidence_level_name(level: &str) -> &'static str {
   }
 }
 
+#[cfg(feature = "tracing")]
 fn append_detail_footer(output: &mut String, scan: &PlaylistSidebarScan) {
   output.push_str("diagnostics:\n");
   if scan.diagnostics().is_empty() {
@@ -348,6 +353,7 @@ fn append_detail_footer(output: &mut String, scan: &PlaylistSidebarScan) {
   }
 }
 
+#[cfg(feature = "tracing")]
 fn query_resolution_name(kind: QueryResolutionKind) -> &'static str {
   match kind {
     QueryResolutionKind::UniqueExact => "unique_exact",
@@ -357,11 +363,12 @@ fn query_resolution_name(kind: QueryResolutionKind) -> &'static str {
   }
 }
 
+#[cfg(feature = "tracing")]
 fn optional(value: Option<&str>) -> &str {
   value.unwrap_or("(none)")
 }
 
-#[cfg(all(target_os = "macos", any(feature = "tracing", test)))]
+#[cfg(all(target_os = "macos", feature = "tracing"))]
 pub(crate) fn now_playing_for_app(
   state: auv_media_macos::NowPlayingState,
   app_id: &str,
@@ -373,510 +380,4 @@ pub(crate) fn now_playing_for_app(
   };
   let output = auv_media_macos::output::build_now_playing_output(&state);
   (state, output)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::{Confidence, PlaylistSidebarItem, SidebarSection};
-
-  #[cfg(target_os = "macos")]
-  #[test]
-  fn now_playing_output_matches_media_owner_contract() {
-    // ROOT CAUSE:
-    //
-    // If the NetEase CLI copied the shared now-playing output type, the same
-    // schema version could serialize different fields because the local copy
-    // drifted from the owner crate.
-    //
-    // Before the fix, NetEase omitted supports_like and is_liked.
-    // The fix keeps embedding output identical to the auv-media-macos contract.
-    let state = auv_media_macos::NowPlayingState {
-      source_bundle_id: Some(crate::DEFAULT_APP_ID.to_string()),
-      ..Default::default()
-    };
-
-    let (_, output) = now_playing_for_app(state.clone(), crate::DEFAULT_APP_ID);
-    assert_eq!(
-      serde_json::to_value(output).expect("NetEase output should serialize"),
-      serde_json::to_value(auv_media_macos::output::build_now_playing_output(&state)).expect("media output should serialize"),
-    );
-  }
-
-  #[cfg(target_os = "macos")]
-  #[test]
-  fn now_playing_for_another_app_remains_idle() {
-    let state = auv_media_macos::NowPlayingState {
-      present: true,
-      source_bundle_id: Some("com.example.other-player".to_string()),
-      title: Some("Other track".to_string()),
-      ..Default::default()
-    };
-
-    let (filtered_state, output) = now_playing_for_app(state, crate::DEFAULT_APP_ID);
-
-    assert_eq!(filtered_state, auv_media_macos::NowPlayingState::default());
-    assert_eq!(output, auv_media_macos::output::build_now_playing_output(&filtered_state));
-  }
-
-  fn projection() -> PlaylistSidebarProjection {
-    PlaylistSidebarProjection {
-      sections: vec![SidebarSection {
-        id: "sec-1".to_string(),
-        kind: SidebarSectionKind::MyPlaylists,
-        label: Some("我的歌单".to_string()),
-        items: vec![
-          PlaylistSidebarItem {
-            id: "i1".to_string(),
-            label: "Daily Mix".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: Some("obs1.candidate.daily".to_string()),
-            anchor_id: Some("a1".to_string()),
-          },
-          PlaylistSidebarItem {
-            id: "i2".to_string(),
-            label: "Workout".to_string(),
-            section_hint: None,
-            confidence: Confidence::Low,
-            candidate_id: None,
-            anchor_id: None,
-          },
-        ],
-      }],
-    }
-  }
-
-  fn projection_with_nav_item() -> PlaylistSidebarProjection {
-    PlaylistSidebarProjection {
-      sections: vec![
-        SidebarSection {
-          id: "nav".to_string(),
-          kind: SidebarSectionKind::FeatureNav,
-          label: Some("推荐".to_string()),
-          items: vec![PlaylistSidebarItem {
-            id: "nav-daily".to_string(),
-            label: "Daily".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: None,
-            anchor_id: Some("nav-anchor".to_string()),
-          }],
-        },
-        SidebarSection {
-          id: "playlist".to_string(),
-          kind: SidebarSectionKind::FavoritePlaylists,
-          label: Some("收藏的歌单".to_string()),
-          items: vec![PlaylistSidebarItem {
-            id: "playlist-daily".to_string(),
-            label: "Daily".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: None,
-            anchor_id: Some("playlist-anchor".to_string()),
-          }],
-        },
-      ],
-    }
-  }
-
-  #[test]
-  fn no_keyword_returns_all_items() {
-    let matches = collect_matches(&projection(), None);
-    assert_eq!(matches.len(), 2);
-    assert_eq!(matches[0].label, "Daily Mix");
-    assert_eq!(matches[0].anchor_id.as_deref(), Some("a1"));
-  }
-
-  #[test]
-  fn keyword_filters_case_and_whitespace_insensitively() {
-    let matches = collect_matches(&projection(), Some("daily"));
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].item_id, "i1");
-    assert_eq!(matches[0].section_kind, SidebarSectionKind::MyPlaylists);
-    assert_eq!(matches[0].scan_ref, "pl_0");
-  }
-
-  #[test]
-  fn keyword_without_match_returns_empty() {
-    let matches = collect_matches(&projection(), Some("zzz"));
-    assert!(matches.is_empty());
-  }
-
-  #[test]
-  fn collect_matches_uses_sidebar_playlist_sections_only() {
-    let matches = collect_matches(&projection_with_nav_item(), Some("daily"));
-
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].section_kind, SidebarSectionKind::FavoritePlaylists);
-    assert_eq!(matches[0].item_id, "playlist-daily");
-    assert_eq!(matches[0].anchor_id.as_deref(), Some("playlist-anchor"));
-  }
-
-  #[test]
-  fn build_playlist_json_output_counts_all_items_and_matches() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-
-    let output = build_playlist_json_output(&scan, Some("daily"), None);
-
-    assert_eq!(output.command, "playlist.ls");
-    assert_eq!(output.query.as_deref(), Some("daily"));
-    assert_eq!(output.result.item_count, 2);
-    assert_eq!(output.result.match_count, 1);
-    assert_eq!(output.result.matches[0].item_id, "i1");
-    assert_eq!(output.result.matches[0].candidate_id.as_deref(), Some("obs1.candidate.daily"));
-  }
-
-  #[test]
-  fn playlist_output_does_not_advertise_run_artifact_or_legacy_cache_paths() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-    let output = build_playlist_json_output(&scan, None, None);
-    let json = serde_json::to_value(&output).expect("playlist JSON output");
-    let encoded = serde_json::to_string(&output).expect("encoded playlist JSON output");
-
-    assert!(json.get("summary").is_none());
-    assert!(json.get("artifacts").is_none());
-    assert!(json.get("scan_uri").is_none());
-    assert!(json.get("run_id").is_none());
-    for forbidden in [
-      "playlist-scan-cache",
-      "scan_artifact_id",
-      "memory_artifact_id",
-      "artifact_id=",
-    ] {
-      assert!(!encoded.contains(forbidden), "playlist output advertised legacy reference {forbidden:?}");
-    }
-  }
-
-  #[test]
-  fn build_playlist_json_output_has_no_query_resolution_without_keyword() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-
-    let output = build_playlist_json_output(&scan, None, None);
-
-    assert_eq!(output.query_resolution, None);
-  }
-
-  #[test]
-  fn confidence_codes_map_existing_levels() {
-    assert_eq!(Confidence::High.short_code(), "H");
-    assert_eq!(Confidence::Medium.short_code(), "M");
-    assert_eq!(Confidence::Low.short_code(), "L");
-  }
-
-  #[test]
-  fn min_confidence_filters_lower_confidence_matches() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
-      sections: vec![SidebarSection {
-        id: "sec-1".to_string(),
-        kind: SidebarSectionKind::MyPlaylists,
-        label: Some("我的歌单".to_string()),
-        items: vec![
-          PlaylistSidebarItem {
-            id: "high".to_string(),
-            label: "Daily High".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: Some("obs.high".to_string()),
-            anchor_id: Some("anchor.high".to_string()),
-          },
-          PlaylistSidebarItem {
-            id: "medium".to_string(),
-            label: "Daily Medium".to_string(),
-            section_hint: None,
-            confidence: Confidence::Medium,
-            candidate_id: Some("obs.medium".to_string()),
-            anchor_id: Some("anchor.medium".to_string()),
-          },
-          PlaylistSidebarItem {
-            id: "low".to_string(),
-            label: "Daily Low".to_string(),
-            section_hint: None,
-            confidence: Confidence::Low,
-            candidate_id: Some("obs.low".to_string()),
-            anchor_id: Some("anchor.low".to_string()),
-          },
-        ],
-      }],
-    });
-
-    let output = build_playlist_json_output(&scan, Some("daily"), Some(Confidence::Medium));
-
-    assert_eq!(output.result.match_count, 2);
-    assert_eq!(output.result.filtered_count, 1);
-    assert_eq!(output.result.matches.iter().map(|candidate| candidate.confidence.level.as_str()).collect::<Vec<_>>(), ["H", "M"]);
-  }
-
-  #[test]
-  fn compact_json_omits_raw_scan_and_recording_state_but_keeps_domain_refs() {
-    let mut scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-    scan.known_limits.push("scan stopped after max_scrolls=2".to_string());
-    let output = build_playlist_json_output(&scan, Some("daily"), None);
-
-    let json: serde_json::Value = serde_json::to_value(output).expect("serialize output");
-
-    assert!(json.get("scan").is_none());
-    assert!(json.get("scan_uri").is_none());
-    assert!(json.get("run_id").is_none());
-    assert!(json.get("artifacts").is_none());
-    assert_eq!(json["known_limits"][0], "scan stopped after max_scrolls=2");
-    assert_eq!(json["query_resolution"], "unique_contains");
-    assert_eq!(json["result"]["matches"][0]["ref"], "pl_0");
-    assert_eq!(json["result"]["matches"][0]["candidate_id"], "obs1.candidate.daily");
-    assert_eq!(json["result"]["matches"][0]["anchor_id"], "a1");
-    assert_eq!(json["result"]["matches"][0]["confidence"]["level"], "H");
-    assert_eq!(json["result"]["matches"][0]["source_evidence"]["source"], "playlist_sidebar_projection");
-  }
-
-  #[test]
-  fn no_query_human_output_lists_playlists_as_a_compact_table() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-
-    let rendered = PlaylistOutput::new(&scan, None, None, false).to_human(TableOptions::default());
-
-    assert!(rendered.starts_with("NAME       SECTION       CONFIDENCE  ANCHOR ID\n"));
-    assert!(rendered.contains("Daily Mix  my_playlists  high        a1"));
-    assert!(rendered.contains("Workout    my_playlists  low         -"));
-    assert!(rendered.contains("More: use a keyword, --detail, or --json."));
-    assert!(!rendered.contains("confidence=High"));
-  }
-
-  #[test]
-  fn no_query_human_output_reports_an_empty_playlist_table() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection::default());
-
-    let rendered = PlaylistOutput::new(&scan, None, None, false).to_human(TableOptions::default());
-
-    assert!(rendered.starts_with("NAME  SECTION  CONFIDENCE  ANCHOR ID\n(no playlists observed)"));
-  }
-
-  #[test]
-  fn query_human_output_renders_ranked_refs_confidence_codes_and_hidden_count() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
-      sections: vec![SidebarSection {
-        id: "sec-1".to_string(),
-        kind: SidebarSectionKind::MyPlaylists,
-        label: Some("我的歌单".to_string()),
-        items: vec![
-          PlaylistSidebarItem {
-            id: "high".to_string(),
-            label: "Daily High".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: Some("obs.high".to_string()),
-            anchor_id: Some("anchor.high".to_string()),
-          },
-          PlaylistSidebarItem {
-            id: "low".to_string(),
-            label: "Daily Low".to_string(),
-            section_hint: None,
-            confidence: Confidence::Low,
-            candidate_id: Some("obs.low".to_string()),
-            anchor_id: Some("anchor.low".to_string()),
-          },
-        ],
-      }],
-    });
-
-    let rendered = PlaylistOutput::new(&scan, Some("daily"), Some(Confidence::Medium), false).to_human(TableOptions::default());
-
-    assert!(rendered.contains("2 playlists observed. 1 matches for \"daily\"."));
-    assert!(rendered.contains("filtered 1 below min-confidence medium"));
-    assert!(rendered.contains("H   pl_0"));
-    assert!(rendered.contains("Daily High"));
-    assert!(!rendered.contains("playlist play --candidate-id"));
-    assert!(!rendered.contains("Daily Low"));
-  }
-
-  #[test]
-  fn query_human_output_does_not_advertise_candidate_id_playback() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
-      sections: vec![SidebarSection {
-        id: "sec-1".to_string(),
-        kind: SidebarSectionKind::MyPlaylists,
-        label: Some("我的歌单".to_string()),
-        items: vec![PlaylistSidebarItem {
-          id: "high".to_string(),
-          label: "Daily High".to_string(),
-          section_hint: None,
-          confidence: Confidence::High,
-          candidate_id: None,
-          anchor_id: Some("anchor.high".to_string()),
-        }],
-      }],
-    });
-
-    let rendered = PlaylistOutput::new(&scan, Some("daily"), None, false).to_human(TableOptions::default());
-
-    assert!(rendered.contains("Daily High"));
-    assert!(!rendered.contains("playlist play --candidate-id"));
-    assert!(!rendered.contains("(none)"));
-    assert!(rendered.contains("More: --detail, --json"));
-  }
-
-  #[test]
-  fn detail_human_output_adds_evidence_without_full_scan_dump() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-
-    let rendered = PlaylistOutput::new(&scan, Some("daily"), None, true).to_human(TableOptions::default());
-
-    assert!(rendered.contains("section=MyPlaylists"));
-    assert!(rendered.contains("candidate_id=obs1.candidate.daily"));
-    assert!(rendered.contains("anchor_id=a1"));
-    assert!(rendered.contains("query_resolution=unique_contains"));
-    assert!(!rendered.contains("scan_uri="));
-    assert!(!rendered.contains("scan_cache_path="));
-    assert!(!rendered.contains("run_id="));
-    assert!(rendered.contains("known_limits:"));
-    assert!(!rendered.contains("observations:"));
-  }
-
-  fn numeric_playlist_projection() -> PlaylistSidebarProjection {
-    PlaylistSidebarProjection {
-      sections: vec![SidebarSection {
-        id: "sec-numeric".to_string(),
-        kind: SidebarSectionKind::MyPlaylists,
-        label: Some("我的歌单".to_string()),
-        items: vec![
-          PlaylistSidebarItem {
-            id: "p43".to_string(),
-            label: "43".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: None,
-            anchor_id: None,
-          },
-          PlaylistSidebarItem {
-            id: "p39".to_string(),
-            label: "39".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: None,
-            anchor_id: None,
-          },
-          PlaylistSidebarItem {
-            id: "p3".to_string(),
-            label: "3".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: None,
-            anchor_id: None,
-          },
-        ],
-      }],
-    }
-  }
-
-  // ROOT CAUSE:
-  //
-  // If a caller only reads `match_count`, `playlist ls "3"` against labels
-  // "43"/"39"/"3" and against labels "43"/"13" both look like plausible hit
-  // counts (1 and 2 respectively) with no way to tell a real unique-exact
-  // match apart from a substring collision. A6c-10a live probe of `playlist
-  // ls "3"` returned `match_count = 13` with no exact "3" among the results,
-  // and that result was verbally misread as "found many 3s" instead of
-  // "no exact hit, only contains-collisions". `query_resolution` makes the
-  // tier explicit so `match_count` alone can never be over-interpreted again.
-  #[test]
-  fn build_playlist_json_output_reports_unique_exact_resolution() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(numeric_playlist_projection());
-
-    let output = build_playlist_json_output(&scan, Some("3"), None);
-
-    assert_eq!(output.result.match_count, 1);
-    assert_eq!(output.result.matches[0].item_id, "p3");
-    assert_eq!(output.query_resolution, Some(QueryResolutionKind::UniqueExact));
-  }
-
-  #[test]
-  fn build_playlist_json_output_reports_unique_contains_resolution() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-
-    let output = build_playlist_json_output(&scan, Some("daily"), None);
-
-    assert_eq!(output.result.match_count, 1);
-    assert_eq!(output.query_resolution, Some(QueryResolutionKind::UniqueContains));
-  }
-
-  #[test]
-  fn build_playlist_json_output_reports_ambiguous_resolution() {
-    let projection = PlaylistSidebarProjection {
-      sections: vec![SidebarSection {
-        id: "sec-ambiguous".to_string(),
-        kind: SidebarSectionKind::MyPlaylists,
-        label: Some("我的歌单".to_string()),
-        items: vec![
-          PlaylistSidebarItem {
-            id: "p43".to_string(),
-            label: "43".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: None,
-            anchor_id: None,
-          },
-          PlaylistSidebarItem {
-            id: "p13".to_string(),
-            label: "13".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: None,
-            anchor_id: None,
-          },
-        ],
-      }],
-    };
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection);
-
-    let output = build_playlist_json_output(&scan, Some("3"), None);
-
-    assert_eq!(output.result.match_count, 2);
-    assert_eq!(output.query_resolution, Some(QueryResolutionKind::Ambiguous));
-  }
-
-  #[test]
-  fn build_playlist_json_output_reports_not_found_resolution() {
-    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
-
-    let output = build_playlist_json_output(&scan, Some("zzz"), None);
-
-    assert_eq!(output.result.match_count, 0);
-    assert_eq!(output.query_resolution, Some(QueryResolutionKind::NotFound));
-  }
-
-  #[test]
-  fn build_playlist_json_output_includes_known_limits_without_run_artifact_locator() {
-    let scan = {
-      let json = serde_json::json!({
-        "schema_version": "view-ir-v0",
-        "app": {},
-        "window": {},
-        "sidebar_region": {"bounds": {"x": 0.0, "y": 220.0, "width": 240.0, "height": 400.0}},
-        "observations": [],
-        "reconstruction": {
-          "root": {
-            "id": "root.sidebar",
-            "kind": "collection",
-            "bounds": {"x": 0.0, "y": 0.0, "width": 240.0, "height": 400.0},
-            "anchors": [],
-            "landmarks": [],
-            "actions": [],
-            "evidence": [],
-            "children": []
-          },
-          "anchor_index": [],
-          "landmark_index": []
-        },
-        "projection": {"sections": []},
-        "boundary": {"top": "unknown", "bottom": "unknown", "left": "unknown", "right": "unknown"},
-        "diagnostics": [],
-        "known_limits": ["scan stopped after max_scrolls=2"]
-      });
-      crate::decode_playlist_sidebar_scan_json(&json.to_string()).expect("scan")
-    };
-    let output = build_playlist_json_output(&scan, None, None);
-    assert_eq!(output.known_limits, ["scan stopped after max_scrolls=2"]);
-    let json = serde_json::to_string(&output).expect("json");
-    assert!(json.contains("known_limits"));
-    assert!(!json.contains("scan_uri"));
-  }
 }

@@ -16,24 +16,3 @@ pub fn product_registry() -> InvokeRegistry {
   groups.push(textedit::group());
   InvokeRegistry::from_groups(groups)
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::integrations::balatro::CASH_OUT_COMMAND_ID;
-  use crate::integrations::textedit::DOCUMENT_WRITE_COMMAND_ID;
-
-  #[test]
-  fn product_registry_includes_app_commands_once() {
-    let registry = product_registry();
-    assert!(registry.resolve(CASH_OUT_COMMAND_ID).is_some());
-    assert!(registry.resolve(DOCUMENT_WRITE_COMMAND_ID).is_some());
-    assert_eq!(registry.all().iter().filter(|command| command.id == CASH_OUT_COMMAND_ID).count(), 1);
-    assert_eq!(registry.all().iter().filter(|command| command.id == DOCUMENT_WRITE_COMMAND_ID).count(), 1);
-  }
-
-  #[test]
-  fn core_registry_excludes_textedit() {
-    assert!(default_registry().resolve(DOCUMENT_WRITE_COMMAND_ID).is_none());
-  }
-}

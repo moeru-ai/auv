@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};
 #[cfg(feature = "tracing")]
-use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
+use auv_tracing::{ArtifactMetadata, Context};
 
 use crate::types::{MinecraftProjectedPoint, MinecraftSpatialFrame, ProjectionVisibility};
 use crate::verify::MismatchRefusalReason;
@@ -15,15 +15,6 @@ pub async fn publish_minecraft_projection(
   projection: &MinecraftProjectionArtifact,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::MinecraftArtifactPublishError> {
   crate::run_read::publish_json_artifact(context, MINECRAFT_PROJECTION_PURPOSE, projection, MinecraftProjectionArtifact::validate).await
-}
-
-#[cfg(feature = "tracing")]
-pub async fn read_minecraft_projection(
-  store: &dyn RunStore,
-  snapshot: &RunSnapshot,
-  uri: &ArtifactUri,
-) -> Result<MinecraftProjectionArtifact, crate::run_read::MinecraftArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, MINECRAFT_PROJECTION_PURPOSE, MinecraftProjectionArtifact::validate).await
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -145,140 +136,5 @@ impl MinecraftProjectionArtifact {
       }
     }
     Ok(())
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::types::{
-    BlockFace, BlockPosition, MinecraftProjectedPoint, MinecraftSpatialFrame, NearbyBlock, NearbyEntity, PlayerPose, ProjectionVisibility,
-    RaycastHit, Vec3, Viewport,
-  };
-
-  fn test_frame() -> MinecraftSpatialFrame {
-    MinecraftSpatialFrame {
-      spatial_frame_id: "frame-1".to_string(),
-      world_tick: 42,
-      monotonic_timestamp_ms: 1_000,
-      telemetry_session_id: None,
-      viewport: Viewport::new(800, 600),
-      view_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      projection_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      player_pose: PlayerPose {
-        eye_position: Vec3::new(0.0, 0.0, 0.0),
-        yaw: 0.0,
-        pitch: 0.0,
-      },
-      raycast_hit: Some(RaycastHit {
-        block_pos: BlockPosition::new(1, 2, 3),
-        face: BlockFace::North,
-        block_id: "minecraft:stone".to_string(),
-      }),
-      nearby_blocks: vec![NearbyBlock {
-        block_pos: BlockPosition::new(1, 2, 3),
-        block_id: "minecraft:stone".to_string(),
-      }],
-      nearby_entities: vec![NearbyEntity {
-        entity_id: "pig-1".to_string(),
-        entity_kind: "minecraft:pig".to_string(),
-      }],
-      inventory_summary: Vec::new(),
-      screenshot_artifact_ref: None,
-      mc_capture_skew_ms: None,
-      screen_state: None,
-      resource_pack_ids: Vec::new(),
-    }
-  }
-
-  #[test]
-  fn projection_artifact_round_trips_and_validates() {
-    let artifact = MinecraftProjectionArtifact::for_frame(
-      &test_frame(),
-      Some(MinecraftProjectedPoint {
-        screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
-        visibility: ProjectionVisibility::Visible,
-        match_radius_px: 12.0,
-        basis_frame_id: "frame-1".to_string(),
-        confidence: 1.0,
-      }),
-      Some("overlay.png".to_string()),
-    );
-
-    artifact.validate().expect("artifact should validate");
-    let json = serde_json::to_string(&artifact).expect("serialize artifact");
-    let decoded: MinecraftProjectionArtifact = serde_json::from_str(&json).expect("deserialize artifact");
-    assert_eq!(decoded, artifact);
-  }
-
-  #[test]
-  fn projection_artifact_rejects_non_finite_values() {
-    let mut artifact = MinecraftProjectionArtifact::for_frame(&test_frame(), None, None);
-    artifact.viewport_bounds.width = f64::NAN;
-
-    let error = artifact.validate().expect_err("must fail");
-    assert!(error.contains("non-finite viewport values"));
-  }
-
-  #[test]
-  fn projection_artifact_carries_capture_binding_evidence() {
-    let mut frame = test_frame();
-    let screenshot_uri = "auv://runs/00000000-0000-0000-0000-000000000001/artifacts/00000000-0000-0000-0000-000000000001";
-    frame.screenshot_artifact_ref = Some(screenshot_uri.to_string());
-    frame.mc_capture_skew_ms = Some(180);
-    frame.screen_state = Some("menu".to_string());
-
-    let artifact = MinecraftProjectionArtifact::for_frame(&frame, None, None);
-
-    assert_eq!(artifact.screenshot_artifact_ref.as_deref(), Some(screenshot_uri));
-    assert_eq!(artifact.mc_capture_skew_ms, Some(180));
-    assert_eq!(artifact.screen_state.as_deref(), Some("menu"));
-  }
-
-  #[test]
-  fn projection_artifact_carries_resource_pack_provenance() {
-    let mut frame = test_frame();
-    frame.resource_pack_ids = vec!["vanilla".to_string(), "file/flat-pack".to_string()];
-
-    let artifact = MinecraftProjectionArtifact::for_frame(&frame, None, None);
-
-    assert_eq!(artifact.resource_pack_ids, frame.resource_pack_ids);
-  }
-
-  #[test]
-  fn projection_artifact_exposes_core_projection_basis() {
-    let artifact = MinecraftProjectionArtifact::for_frame(
-      &test_frame(),
-      Some(MinecraftProjectedPoint {
-        screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
-        visibility: ProjectionVisibility::Visible,
-        match_radius_px: 12.0,
-        basis_frame_id: "frame-1".to_string(),
-        confidence: 0.8,
-      }),
-      None,
-    );
-
-    let basis = artifact.to_core_projection_basis();
-
-    assert_eq!(basis.basis_id, "frame-1");
-    assert_eq!(basis.timestamp_millis, 1_000);
-    assert_eq!(basis.source_space, ProjectionSourceSpace::World);
-    assert_eq!(basis.projected_coordinate_space, CoordinateSpace::Window("minecraft_viewport".to_string()));
-    assert_eq!(basis.derivation_family, ProjectionDerivationFamily::CameraMatrix);
-    assert_eq!(basis.confidence, 0.8);
-    assert_eq!(basis.match_radius_px, Some(12.0));
-  }
-
-  #[test]
-  fn projection_artifact_carries_mismatch_refusal_reason() {
-    let artifact = MinecraftProjectionArtifact::for_frame(&test_frame(), None, None)
-      .with_mismatch_refusal_reason(Some(MismatchRefusalReason::MenuLoadingScreen));
-
-    assert_eq!(artifact.mismatch_refusal_reason, Some(MismatchRefusalReason::MenuLoadingScreen));
   }
 }

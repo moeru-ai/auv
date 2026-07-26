@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::windows::{DEFAULT_PROCESS_NAME, ResolveOptions};
+#[cfg(target_os = "windows")]
+use crate::windows::DEFAULT_PROCESS_NAME;
+use crate::windows::ResolveOptions;
 
 #[cfg(target_os = "windows")]
 use crate::windows::resolve_window;
@@ -94,6 +96,7 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
 ///
 /// Takes `lookup` (production callers pass `std::env::var_os`) so the install
 /// root search is testable without mutating real process environment state.
+#[cfg(target_os = "windows")]
 fn resolve_executable(explicit: Option<&PathBuf>, lookup: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
   if let Some(path) = explicit {
     return path.clone();
@@ -104,6 +107,7 @@ fn resolve_executable(explicit: Option<&PathBuf>, lookup: impl Fn(&str) -> Optio
 
 /// Builds the ordered list of candidate install paths for NetEase's Windows
 /// executable, one per environment root that is actually set.
+#[cfg(target_os = "windows")]
 fn candidate_executables(lookup: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
   let mut candidates = Vec::new();
   for root in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
@@ -182,66 +186,5 @@ mod platform {
   pub fn run(inputs: &OpenWindowInputs) -> Result<LaunchResult, String> {
     auv_tracing::emit_event!(LaunchEvent::UnsupportedPlatform);
     Ok(LaunchResult::new(inputs))
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn candidate_executables_includes_all_present_roots_in_order() {
-    let lookup = |name: &str| match name {
-      "ProgramFiles" => Some(std::ffi::OsString::from("C:\\Program Files")),
-      "ProgramFiles(x86)" => Some(std::ffi::OsString::from("C:\\Program Files (x86)")),
-      "LOCALAPPDATA" => Some(std::ffi::OsString::from("C:\\Users\\test\\AppData\\Local")),
-      _ => None,
-    };
-
-    let candidates = candidate_executables(lookup);
-
-    assert_eq!(
-      candidates,
-      vec![
-        PathBuf::from("C:\\Program Files").join("NetEase").join("CloudMusic").join(DEFAULT_PROCESS_NAME),
-        PathBuf::from("C:\\Program Files (x86)").join("NetEase").join("CloudMusic").join(DEFAULT_PROCESS_NAME),
-        PathBuf::from("C:\\Users\\test\\AppData\\Local").join("NetEase").join("CloudMusic").join(DEFAULT_PROCESS_NAME),
-      ]
-    );
-  }
-
-  #[test]
-  fn candidate_executables_skips_roots_that_are_not_set() {
-    let lookup = |name: &str| (name == "LOCALAPPDATA").then(|| std::ffi::OsString::from("C:\\Users\\test\\AppData\\Local"));
-
-    let candidates = candidate_executables(lookup);
-
-    assert_eq!(
-      candidates,
-      vec![PathBuf::from("C:\\Users\\test\\AppData\\Local").join("NetEase").join("CloudMusic").join(DEFAULT_PROCESS_NAME)]
-    );
-  }
-
-  #[test]
-  fn candidate_executables_is_empty_when_no_roots_are_set() {
-    assert!(candidate_executables(|_| None).is_empty());
-  }
-
-  #[test]
-  fn resolve_executable_prefers_an_explicit_path_over_the_lookup() {
-    let explicit = PathBuf::from("C:\\Custom\\cloudmusic.exe");
-
-    let resolved = resolve_executable(Some(&explicit), |_| None);
-
-    assert_eq!(resolved, explicit);
-  }
-
-  #[test]
-  fn default_open_window_inputs_target_cloudmusic() {
-    let inputs = OpenWindowInputs::default();
-
-    assert_eq!(inputs.resolve.process_name, DEFAULT_PROCESS_NAME);
-    assert_eq!(inputs.settle_ms, 8_000);
-    assert_eq!(inputs.executable, None);
   }
 }

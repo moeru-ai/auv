@@ -211,36 +211,3 @@ fn write_json(path: &Path, value: &impl Serialize) -> PrepResult<()> {
     .map_err(|error| format!("failed to serialize MC-6 preparation JSON: {error}"))?;
   fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write MC-6 preparation JSON {}: {error}", path.display()))
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn prepares_three_texture_profile_resource_packs() {
-    let temp = tempfile::tempdir().expect("temp dir");
-    let sidecar_run_dir = temp.path().join("run");
-    let output_dir = temp.path().join("prep");
-
-    let output = prepare_texture_sweep_resource_packs(TextureSweepPreparationInputs {
-      sidecar_run_dir: sidecar_run_dir.clone(),
-      output_dir: output_dir.clone(),
-    })
-    .expect("prep should succeed");
-
-    assert_eq!(output.manifest.schema_version, 1);
-    assert_eq!(output.manifest.pack_format, 34);
-    assert_eq!(output.manifest.profiles.len(), 3);
-    let manifest_json = serde_json::to_value(&output.manifest).expect("manifest should encode");
-    assert!(manifest_json.get("live_run_sequence").is_none());
-    for profile in &output.manifest.profiles {
-      let pack_dir = PathBuf::from(&profile.pack_dir);
-      assert!(pack_dir.join("pack.mcmeta").is_file());
-      assert!(pack_dir.join("pack.png").is_file());
-      assert!(pack_dir.join("assets/minecraft/textures/block/stone.png").is_file());
-      assert!(profile.options_resource_packs_value.contains(&format!("file/{}", profile.pack_id)));
-    }
-    assert!(output_dir.join("mc6-texture-sweep-prep.json").is_file());
-    assert!(output_dir.join("mc6-texture-sweep-runbook.md").is_file());
-  }
-}

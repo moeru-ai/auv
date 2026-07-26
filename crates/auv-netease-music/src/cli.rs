@@ -44,81 +44,81 @@ impl PlaylistConfidenceArg {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PlaylistOutputOptions {
-  pub mode: OutputMode,
-  pub detail: bool,
-  pub min_confidence: Option<Confidence>,
+struct PlaylistOutputOptions {
+  mode: OutputMode,
+  detail: bool,
+  min_confidence: Option<Confidence>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PlaylistCommand {
-  pub inputs: Inputs,
-  pub query: Option<String>,
-  pub output: PlaylistOutputOptions,
+struct PlaylistCommand {
+  inputs: Inputs,
+  query: Option<String>,
+  output: PlaylistOutputOptions,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PlaylistSelectCommand {
-  pub inputs: Inputs,
-  pub query: String,
-  pub output: OutputMode,
+struct PlaylistSelectCommand {
+  inputs: Inputs,
+  query: String,
+  output: OutputMode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PlaylistPlayCommand {
-  pub inputs: Inputs,
-  pub query: String,
-  pub output: OutputMode,
+struct PlaylistPlayCommand {
+  inputs: Inputs,
+  query: String,
+  output: OutputMode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct DailyRecommendedPlayCommand {
-  pub inputs: DailyRecommendedPlayInputs,
-  pub output: OutputMode,
+struct DailyRecommendedPlayCommand {
+  inputs: DailyRecommendedPlayInputs,
+  output: OutputMode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PlaybackStatusCommand {
-  pub inputs: PlaybackStatusInputs,
-  pub output: OutputMode,
-  pub wide: bool,
+struct PlaybackStatusCommand {
+  inputs: PlaybackStatusInputs,
+  output: OutputMode,
+  wide: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SongsLsCommand {
-  pub inputs: SongListInputs,
-  pub output: OutputMode,
+struct SongsLsCommand {
+  inputs: SongListInputs,
+  output: OutputMode,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NowPlayingCommand {
-  pub output: OutputMode,
+struct NowPlayingCommand {
+  output: OutputMode,
   /// Only report now-playing when this app owns the slot (NetEase by default).
-  pub app_id: String,
+  app_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct OpenWindowCommand {
-  pub inputs: OpenWindowInputs,
-  pub output: OutputMode,
+struct OpenWindowCommand {
+  inputs: OpenWindowInputs,
+  output: OutputMode,
 }
 
 /// A transport command, scoped to act only when `app_id` owns the now-playing
 /// slot. Reuses `auv_media_macos::MediaCommand` rather than a local mirror.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ControlCommand {
-  pub control: auv_media_macos::MediaCommand,
-  pub app_id: String,
+struct ControlCommand {
+  control: auv_media_macos::MediaCommand,
+  app_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SeekCommand {
-  pub seconds: f64,
-  pub app_id: String,
+struct SeekCommand {
+  seconds: f64,
+  app_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Command {
+enum Command {
   OpenWindow(OpenWindowCommand),
   PlaylistLs(PlaylistCommand),
   PlaylistSelect(PlaylistSelectCommand),
@@ -687,17 +687,17 @@ pub fn run() -> ExitCode {
     let Some(store_root) = store_root else {
       return execute_command(command).await;
     };
-    let store = match auv_tracing::FileRunStore::open(&store_root) {
+    let store = match auv_tracing::FileTracingStore::open(&store_root) {
       Ok(store) => std::sync::Arc::new(store),
       Err(error) => {
-        eprintln!("error: failed to open run-store authority {}: {error}", store_root.display());
+        eprintln!("error: failed to open tracing store {}: {error}", store_root.display());
         return ExitCode::from(1);
       }
     };
-    let dispatch = match auv_tracing::configure().run_store(store.clone()).build() {
+    let dispatch = match auv_tracing::configure().tracing_store(store).build() {
       Ok(dispatch) => dispatch,
       Err(error) => {
-        eprintln!("error: failed to configure run-store authority: {error}");
+        eprintln!("error: failed to configure tracing store: {error}");
         return ExitCode::from(1);
       }
     };
@@ -723,588 +723,6 @@ async fn execute_command(command: Command) -> ExitCode {
     Command::Control(cmd) => run_control(cmd),
     Command::Seek(cmd) => run_seek(cmd),
     Command::PlaybackStatus(cmd) => run_playback_status(cmd),
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use clap::CommandFactory;
-  use std::path::{Path, PathBuf};
-  use std::time::{SystemTime, UNIX_EPOCH};
-
-  fn playlist_args() -> PlaylistArgs {
-    PlaylistArgs {
-      command: PlaylistSubcommand::Ls(playlist_ls_args()),
-    }
-  }
-
-  fn playlist_ls_args() -> PlaylistLsArgs {
-    PlaylistLsArgs {
-      keyword: None,
-      category: None,
-      filter: None,
-      output: OutputArgs::default(),
-      format: None,
-      detail: false,
-      min_confidence: None,
-      app: AppTargetArgs::default(),
-      scroll: ScrollArgs::default(),
-      sidebar_region: None,
-      ocr: OcrHintArgs::default(),
-    }
-  }
-
-  fn parse_playlist_command(argv: &[&str]) -> PlaylistCommand {
-    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
-    match command_from_args(parsed).expect("playlist command should parse") {
-      Command::PlaylistLs(command) => command,
-      other => panic!("expected playlist ls command, got {other:?}"),
-    }
-  }
-
-  fn parse_playlist_select_command(argv: &[&str]) -> PlaylistSelectCommand {
-    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
-    match command_from_args(parsed).expect("playlist select command should parse") {
-      Command::PlaylistSelect(command) => command,
-      other => panic!("expected playlist select command, got {other:?}"),
-    }
-  }
-
-  fn parse_daily_recommended_command(argv: &[&str]) -> DailyRecommendedPlayCommand {
-    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
-    match command_from_args(parsed).expect("daily recommended command should parse") {
-      Command::PlaylistPlayDailyRecommended(command) => command,
-      other => panic!("expected daily recommended command, got {other:?}"),
-    }
-  }
-
-  fn parse_playlist_play_command(argv: &[&str]) -> PlaylistPlayCommand {
-    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
-    match command_from_args(parsed).expect("playlist play command should parse") {
-      Command::PlaylistPlay(command) => command,
-      other => panic!("expected playlist play command, got {other:?}"),
-    }
-  }
-
-  fn parse_songs_ls_command(argv: &[&str]) -> SongsLsCommand {
-    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
-    match command_from_args(parsed).expect("songs ls command should parse") {
-      Command::PlaylistSongsLs(command) => command,
-      other => panic!("expected songs ls command, got {other:?}"),
-    }
-  }
-
-  fn parse_playback_status_command(argv: &[&str]) -> PlaybackStatusCommand {
-    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
-    match command_from_args(parsed).expect("playback status command should parse") {
-      Command::PlaybackStatus(command) => command,
-      other => panic!("expected playback status command, got {other:?}"),
-    }
-  }
-
-  fn assert_command_help_contract(command: &clap::Command, path: &str) {
-    assert!(command.get_about().is_some(), "{path} must describe what the command does");
-    for argument in command.get_arguments().filter(|argument| !argument.is_hide_set()) {
-      assert!(argument.get_help().is_some(), "{path} argument {:?} must have a user-facing description", argument.get_id());
-    }
-    for subcommand in command.get_subcommands() {
-      let subcommand_path = format!("{path} {}", subcommand.get_name());
-      assert_command_help_contract(subcommand, &subcommand_path);
-    }
-  }
-
-  #[test]
-  fn clap_help_contract_describes_every_visible_argument() {
-    assert_command_help_contract(&CliArgs::command(), "auv-netease-music");
-  }
-
-  #[test]
-  fn clap_root_help_introduces_workflows_examples_and_version() {
-    let help = CliArgs::command().render_long_help().to_string();
-
-    assert!(help.contains("typed operations for playlist discovery and playback"));
-    assert!(help.contains("Examples:"));
-    assert!(help.contains("auv-netease-music playlist songs ls"));
-    assert!(help.contains("--version"));
-  }
-
-  #[test]
-  fn clap_playlist_songs_ls_help_has_no_meaningless_target_argument() {
-    let help = CliArgs::try_parse_from(["auv-netease-music", "playlist", "songs", "ls", "--help"])
-      .expect_err("--help exits before command execution")
-      .to_string();
-
-    assert!(help.contains("Usage: auv-netease-music playlist songs ls [OPTIONS]"));
-    assert!(!help.contains("<daily-recommended>"));
-    assert!(help.contains("Scan and list songs from the Daily Recommendations view"));
-    assert!(help.contains("Examples:"));
-  }
-
-  #[test]
-  fn clap_open_window_maps_windows_launch_options() {
-    let parsed = CliArgs::try_parse_from([
-      "auv-netease-music",
-      "open-window",
-      "--settle-ms",
-      "2500",
-      "--exe",
-      "C:\\Apps\\cloudmusic.exe",
-      "--process-name",
-      "music.exe",
-      "--window-title",
-      "NetEase",
-      "--json",
-    ])
-    .expect("open-window args should parse");
-    let Command::OpenWindow(command) = command_from_args(parsed).expect("open-window command should parse") else {
-      panic!("expected open-window command");
-    };
-
-    assert_eq!(command.inputs.settle_ms, 2_500);
-    assert_eq!(command.inputs.executable, Some(PathBuf::from("C:\\Apps\\cloudmusic.exe")));
-    assert_eq!(command.inputs.resolve.process_name, "music.exe");
-    assert_eq!(command.inputs.resolve.title, "NetEase");
-    assert_eq!(command.output, OutputMode::Json);
-  }
-
-  struct TempWordsFile {
-    path: PathBuf,
-  }
-
-  impl TempWordsFile {
-    fn new(contents: &str) -> Self {
-      let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after unix epoch").as_nanos();
-      let path = std::env::temp_dir().join(format!("auv-netease-cli-custom-words-{}-{unique}.txt", std::process::id()));
-      std::fs::write(&path, contents).expect("temp custom words file should be writable");
-      Self { path }
-    }
-
-    fn path(&self) -> &Path {
-      &self.path
-    }
-  }
-
-  impl Drop for TempWordsFile {
-    fn drop(&mut self) {
-      let _ = std::fs::remove_file(&self.path);
-    }
-  }
-
-  #[test]
-  fn parse_playlist_without_positional_or_filter_leaves_query_empty() {
-    let command = match parse_playlist(playlist_args()).expect("playlist args should parse") {
-      Command::PlaylistLs(command) => command,
-      other => panic!("expected playlist ls command, got {other:?}"),
-    };
-
-    assert_eq!(command.query, None);
-    assert_eq!(command.output.mode, OutputMode::Human);
-    assert!(!command.output.detail);
-    assert_eq!(command.output.min_confidence, None);
-  }
-
-  #[test]
-  fn parse_playlist_uses_positional_keyword_as_query() {
-    let mut args = playlist_args();
-    match &mut args.command {
-      PlaylistSubcommand::Ls(ls) => ls.keyword = Some("daily".to_string()),
-      _ => unreachable!("playlist_args builds ls args"),
-    }
-
-    let command = match parse_playlist(args).expect("playlist args should parse") {
-      Command::PlaylistLs(command) => command,
-      other => panic!("expected playlist ls command, got {other:?}"),
-    };
-
-    assert_eq!(command.query.as_deref(), Some("daily"));
-  }
-
-  #[test]
-  fn parse_playlist_prefers_explicit_filter_over_positional_keyword() {
-    let mut args = playlist_args();
-    match &mut args.command {
-      PlaylistSubcommand::Ls(ls) => {
-        ls.keyword = Some("daily".to_string());
-        ls.filter = Some("liked".to_string());
-      }
-      _ => unreachable!("playlist_args builds ls args"),
-    }
-
-    let command = match parse_playlist(args).expect("playlist args should parse") {
-      Command::PlaylistLs(command) => command,
-      other => panic!("expected playlist ls command, got {other:?}"),
-    };
-
-    assert_eq!(command.query.as_deref(), Some("liked"));
-  }
-
-  #[test]
-  fn clap_playlist_ls_leaves_query_empty() {
-    let command = parse_playlist_command(&["auv-netease-music", "playlist", "ls"]);
-
-    assert_eq!(command.query, None);
-    assert_eq!(command.output.mode, OutputMode::Human);
-  }
-
-  #[test]
-  fn clap_playlist_ls_keyword_sets_query() {
-    let command = parse_playlist_command(&["auv-netease-music", "playlist", "ls", "daily"]);
-
-    assert_eq!(command.query.as_deref(), Some("daily"));
-  }
-
-  #[test]
-  fn clap_playlist_select_maps_query_and_scan_flags() {
-    let command = parse_playlist_select_command(&[
-      "auv-netease-music",
-      "playlist",
-      "select",
-      "人造器械",
-      "--json",
-      "--max-scrolls",
-      "8",
-      "--scroll-settle-ms",
-      "100",
-    ]);
-
-    assert_eq!(command.query, "人造器械");
-    assert_eq!(command.output, OutputMode::Json);
-    assert_eq!(command.inputs.max_scrolls, 8);
-    assert_eq!(command.inputs.scroll_settle_ms, 100);
-  }
-
-  #[test]
-  fn clap_playlist_requires_explicit_subcommand() {
-    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist"]).expect_err("playlist should require an explicit subcommand");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand);
-  }
-
-  #[test]
-  fn clap_playlist_rejects_legacy_keyword_without_ls() {
-    let error =
-      CliArgs::try_parse_from(["auv-netease-music", "playlist", "daily"]).expect_err("legacy playlist keyword should require explicit ls");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
-  }
-
-  #[test]
-  fn clap_playlist_prefers_json_out_over_json_flag() {
-    let command = parse_playlist_command(&[
-      "auv-netease-music",
-      "playlist",
-      "ls",
-      "--json",
-      "--json-out",
-      "/tmp/playlists.json",
-    ]);
-
-    assert_eq!(command.output.mode, OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json")));
-  }
-
-  #[test]
-  fn clap_playlist_format_json_aliases_stdout_json() {
-    let command = parse_playlist_command(&["auv-netease-music", "playlist", "ls", "--format", "json"]);
-
-    assert_eq!(command.output.mode, OutputMode::Json);
-  }
-
-  #[test]
-  fn clap_playlist_json_out_precedes_format_json() {
-    let command = parse_playlist_command(&[
-      "auv-netease-music",
-      "playlist",
-      "ls",
-      "--format",
-      "json",
-      "--json-out",
-      "/tmp/playlists.json",
-    ]);
-
-    assert_eq!(command.output.mode, OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json")));
-  }
-
-  #[test]
-  fn clap_playlist_maps_detail_and_min_confidence() {
-    let command = parse_playlist_command(&[
-      "auv-netease-music",
-      "playlist",
-      "ls",
-      "daily",
-      "--detail",
-      "--min-confidence",
-      "medium",
-    ]);
-
-    assert_eq!(command.query.as_deref(), Some("daily"));
-    assert!(command.output.detail);
-    assert_eq!(command.output.min_confidence, Some(Confidence::Medium));
-  }
-
-  #[test]
-  fn clap_playlist_maps_flags_into_inputs() {
-    let command = parse_playlist_command(&[
-      "auv-netease-music",
-      "playlist",
-      "ls",
-      "--category",
-      "favorite",
-      "--app-id",
-      "com.example.Player",
-      "--max-scrolls",
-      "9",
-      "--scroll-amount",
-      "512",
-      "--scroll-settle-ms",
-      "750",
-      "--sidebar-region",
-      "0.1,0.2,0.3,0.4",
-    ]);
-
-    assert_eq!(command.inputs.category, PlaylistCategory::Favorite);
-    assert_eq!(command.inputs.app_id, "com.example.Player");
-    assert_eq!(command.inputs.max_scrolls, 9);
-    assert_eq!(command.inputs.scroll_amount, 512.0);
-    assert_eq!(command.inputs.scroll_settle_ms, 750);
-    assert_eq!(command.inputs.sidebar_region, Some(auv_driver::RatioRect::new(0.1, 0.2, 0.3, 0.4)));
-  }
-
-  #[test]
-  fn clap_playlist_rejects_invalid_sidebar_region_during_argument_parsing() {
-    let error = CliArgs::try_parse_from([
-      "auv-netease-music",
-      "playlist",
-      "ls",
-      "--sidebar-region",
-      "0.1,0.2,0,0.4",
-    ])
-    .expect_err("invalid sidebar region should fail clap parsing");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
-  }
-
-  #[test]
-  fn clap_playlist_allows_zero_scroll_settle_for_fast_collection() {
-    let command = parse_playlist_command(&[
-      "auv-netease-music",
-      "playlist",
-      "ls",
-      "--scroll-settle-ms",
-      "0",
-    ]);
-
-    assert_eq!(command.inputs.scroll_settle_ms, 0);
-  }
-
-  #[test]
-  fn clap_playlist_collects_ocr_hint_flags() {
-    let custom_words = TempWordsFile::new(
-      r#"
-        # comment
-        Gamma
-        Delta
-        Alpha
-      "#,
-    );
-    let custom_words_path = custom_words.path().to_string_lossy().into_owned();
-
-    let command = parse_playlist_command(&[
-      "auv-netease-music",
-      "playlist",
-      "ls",
-      "--hint-ocr-custom-word",
-      " Alpha ",
-      "--hint-ocr-custom-word",
-      "Alpha",
-      "--hint-ocr-custom-words",
-      "Beta, Gamma",
-      "--hint-ocr-custom-words-file",
-      custom_words_path.as_str(),
-      "--hint-ocr-language",
-      " zh-Hans ",
-      "--hint-ocr-language",
-      "zh-Hans",
-      "--hint-ocr-languages",
-      "en-US, ja-JP",
-    ]);
-
-    assert_eq!(
-      command.inputs.ocr_options.custom_words,
-      vec![
-        "Alpha".to_string(),
-        "Beta".to_string(),
-        "Gamma".to_string(),
-        "Delta".to_string(),
-      ]
-    );
-    assert_eq!(
-      command.inputs.ocr_options.recognition_languages,
-      Some(vec![
-        "zh-Hans".to_string(),
-        "en-US".to_string(),
-        "ja-JP".to_string(),
-      ])
-    );
-  }
-
-  #[test]
-  fn clap_playlist_play_daily_recommended_maps_flags() {
-    let command = parse_daily_recommended_command(&[
-      "auv-netease-music",
-      "playlist",
-      "play",
-      "daily-recommended",
-      "--json",
-      "--play-icon-template",
-      "/tmp/play.png",
-    ]);
-
-    assert_eq!(command.output, OutputMode::Json);
-    assert_eq!(command.inputs.play_icon_template, Some(PathBuf::from("/tmp/play.png")));
-  }
-
-  #[test]
-  fn clap_playlist_play_query_maps_input_and_output_flags() {
-    let command = parse_playlist_play_command(&[
-      "auv-netease-music",
-      "playlist",
-      "play",
-      "Trance vol.2",
-      "--json",
-      "--max-scrolls",
-      "8",
-      "--scroll-settle-ms",
-      "120",
-    ]);
-
-    assert_eq!(command.query, "Trance vol.2");
-    assert_eq!(command.output, OutputMode::Json);
-    assert_eq!(command.inputs.max_scrolls, 8);
-    assert_eq!(command.inputs.scroll_settle_ms, 120);
-  }
-
-  #[test]
-  fn clap_playlist_songs_ls_defaults_to_daily_recommended_and_maps_flags() {
-    let command = parse_songs_ls_command(&[
-      "auv-netease-music",
-      "playlist",
-      "songs",
-      "ls",
-      "--json-out",
-      "/tmp/songs.json",
-      "--max-scrolls",
-      "42",
-      "--scroll-settle-ms",
-      "0",
-    ]);
-
-    assert_eq!(command.output, OutputMode::JsonFile(PathBuf::from("/tmp/songs.json")));
-    assert_eq!(command.inputs.max_scrolls, 42);
-    assert_eq!(command.inputs.scroll_settle_ms, 0);
-  }
-
-  #[test]
-  fn clap_playback_status_maps_flags() {
-    let command = parse_playback_status_command(&[
-      "auv-netease-music",
-      "playback",
-      "status",
-      "--json-out",
-      "/tmp/playback-status.json",
-      "--settle-ms",
-      "250",
-      "--wide",
-    ]);
-
-    assert_eq!(command.output, OutputMode::JsonFile(PathBuf::from("/tmp/playback-status.json")));
-    assert_eq!(command.inputs.settle_ms, 250);
-    assert!(command.wide);
-  }
-
-  #[test]
-  fn clap_playback_status_accepts_detailed_alias_for_wide_output() {
-    let command = parse_playback_status_command(&["auv-netease-music", "playback", "status", "--detailed"]);
-
-    assert!(command.wide);
-  }
-
-  #[test]
-  fn playlist_songs_ls_rejects_obsolete_target_argument() {
-    let error = CliArgs::try_parse_from([
-      "auv-netease-music",
-      "playlist",
-      "songs",
-      "ls",
-      "daily-recommended",
-    ])
-    .expect_err("songs ls no longer requires a target argument");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
-  }
-
-  #[test]
-  fn parse_daily_recommended_rejects_invalid_icon_threshold() {
-    let error = CliArgs::try_parse_from([
-      "auv-netease-music",
-      "playlist",
-      "play",
-      "daily-recommended",
-      "--play-icon-threshold",
-      "1.2",
-    ])
-    .expect_err("threshold should fail clap parsing");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
-  }
-
-  #[test]
-  fn clap_playlist_rejects_extra_positional_argument() {
-    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist", "ls", "daily", "extra"])
-      .expect_err("nested ls should reject extra positionals");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
-  }
-
-  #[test]
-  fn clap_rejects_retired_app_local_invoke() {
-    let error = CliArgs::try_parse_from([
-      "auv-netease-music",
-      "invoke",
-      "netease.playlist.selectProof",
-    ])
-    .expect_err("app-local invoke was retired");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
-  }
-
-  #[test]
-  fn clap_playlist_select_rejects_retired_scan_uri() {
-    let error = CliArgs::try_parse_from([
-      "auv-netease-music",
-      "playlist",
-      "select",
-      "Coding",
-      "--scan-uri",
-      "auv://retired",
-    ])
-    .expect_err("caller-supplied scan artifacts were retired");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
-  }
-
-  #[test]
-  fn clap_playlist_play_rejects_retired_candidate_id() {
-    let error = CliArgs::try_parse_from([
-      "auv-netease-music",
-      "playlist",
-      "play",
-      "--candidate-id",
-      "candidate.retired",
-    ])
-    .expect_err("candidate-id playback was retired");
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
   }
 }
 

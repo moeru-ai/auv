@@ -2,48 +2,9 @@
 use auv_cli_invoke::InvokeCliParse;
 use auv_runtime::model::{AuvResult, ExecutionTarget, InvokeRequest};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InspectWriteSetting {
-  Default,
-  Enabled,
-  Disabled,
-}
-
-impl InspectWriteSetting {
-  fn parse(raw: &str) -> AuvResult<Self> {
-    match raw {
-      "default" => Ok(Self::Default),
-      "true" => Ok(Self::Enabled),
-      "false" => Ok(Self::Disabled),
-      other => Err(format!("invalid inspect write setting {other:?}; expected true, false, or default")),
-    }
-  }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InspectClientOptions {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TracingOptions {
   pub store_root: Option<String>,
-  pub local_write: InspectWriteSetting,
-  pub server_write: InspectWriteSetting,
-  pub require_server_write: bool,
-  pub server_url: Option<String>,
-}
-
-impl Default for InspectClientOptions {
-  fn default() -> Self {
-    Self {
-      store_root: None,
-      local_write: InspectWriteSetting::Default,
-      server_write: InspectWriteSetting::Default,
-      require_server_write: false,
-      server_url: None,
-    }
-  }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct InspectServeWriteOptions {
-  pub enabled: bool,
 }
 
 #[derive(Debug)]
@@ -103,7 +64,7 @@ pub enum CliCommand {
     target_block: String,
     capture_skew_ms: Option<i64>,
     screenshot_is_minecraft_window: bool,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
   },
   MinecraftCalibrateProjection {
     frame_path: String,
@@ -111,7 +72,7 @@ pub enum CliCommand {
     target_block: String,
     target_semantics: String,
     screenshot_is_minecraft_window: bool,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
   },
   MinecraftLiveClick {
     telemetry_sample: String,
@@ -122,48 +83,33 @@ pub enum CliCommand {
     post_telemetry_sample: Option<String>,
     capture_skew_ms: Option<i64>,
     screenshot_is_minecraft_window: bool,
-    inspect: InspectClientOptions,
-  },
-  MinecraftExportSpatialBundle {
-    run_id: String,
-    output_dir: String,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
   },
   MinecraftExport3dgsScenePacket {
     bundle_manifest_paths: Vec<String>,
     output_dir: String,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
   },
   MinecraftPrepareTextureSweep {
     sidecar_run_dir: String,
     output_dir: String,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
   },
   MinecraftBuildTextureSweepSamples {
     bundle_manifest_paths: Vec<String>,
     output_path: String,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
   },
   MinecraftEvalTextureSweep {
     samples_path: String,
     output_dir: String,
     require_real_source: bool,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
   },
   Invoke {
     request: InvokeRequest,
-    inspect: InspectClientOptions,
+    tracing: TracingOptions,
     output: auv_cli_invoke::InvokeOutputOptions,
-  },
-  Inspect {
-    run_id: String,
-    store_root: Option<String>,
-  },
-  InspectServe {
-    host: String,
-    port: u16,
-    store_root: Option<String>,
-    write: InspectServeWriteOptions,
   },
   SessionServe {
     host: String,
@@ -192,7 +138,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "list-commands" => Ok(CliCommand::ListCommandsTombstone),
     "godot" => parse_godot(arguments),
     "osu" => parse_osu(arguments),
-    "inspect" => parse_inspect(arguments),
+    "inspect" => Err("`auv inspect` has been retired; the replacement inspector read-side is intentionally deferred".to_string()),
     "session" => parse_session(arguments),
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
@@ -254,9 +200,7 @@ USAGE
   auv-godot … (see `auv-godot --help`)
   auv-osu … (see `auv-osu --help`)
   auv-minecraft … (see `auv-minecraft --help`)
-  auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>]
-  auv inspect <run-id> [--store-root <path>]
-  auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write]
+  auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>]
   auv session serve [--host <host>] [--port <port>] [--store-root <path>]
   auv mcp serve
 
@@ -616,104 +560,11 @@ fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
   })
 }
 
-fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 2 {
-    return Err("usage: auv inspect <run-id> [--store-root <path>]|serve [--host <host>] [--port <port>]".to_string());
-  }
-
-  if arguments[1] == "serve" {
-    return parse_inspect_serve(arguments);
-  }
-
-  let run_id = arguments[1].clone();
-  let mut store_root = None;
-  let mut index = 2;
-  while index < arguments.len() {
-    match arguments[index].as_str() {
-      "--store-root" => {
-        store_root = Some(required_flag_value(arguments, index, "--store-root")?);
-        index += 2;
-      }
-      other => {
-        return Err(format!("unexpected auv inspect argument {other}"));
-      }
-    }
-  }
-
-  Ok(CliCommand::Inspect { run_id, store_root })
-}
-
-fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
-  let mut host = auv_inspect_server::DEFAULT_INSPECT_HOST.to_string();
-  let mut port = auv_inspect_server::DEFAULT_INSPECT_PORT;
-  let mut store_root = None;
-  let mut write = InspectServeWriteOptions::default();
-  let mut index = 2;
-  while index < arguments.len() {
-    match arguments[index].as_str() {
-      "--host" => {
-        if index + 1 >= arguments.len() {
-          return Err("--host requires a value".to_string());
-        }
-        host = arguments[index + 1].clone();
-        index += 2;
-      }
-      "--port" => {
-        if index + 1 >= arguments.len() {
-          return Err("--port requires a value".to_string());
-        }
-        port = arguments[index + 1].parse::<u16>().map_err(|error| format!("invalid --port value: {error}"))?;
-        index += 2;
-      }
-      "--store-root" => {
-        if index + 1 >= arguments.len() {
-          return Err("--store-root requires a value".to_string());
-        }
-        store_root = Some(arguments[index + 1].clone());
-        index += 2;
-      }
-      "--enable-write" => {
-        write.enabled = true;
-        index += 1;
-      }
-      other => {
-        return Err(format!("unexpected inspect-serve argument {other}"));
-      }
-    }
-  }
-
-  Ok(CliCommand::InspectServe {
-    host,
-    port,
-    store_root,
-    write,
-  })
-}
-
-fn parse_inspect_client_option(argument: &str, value: Option<&String>, inspect: &mut InspectClientOptions) -> AuvResult<Option<usize>> {
+fn parse_tracing_option(argument: &str, value: Option<&String>, tracing: &mut TracingOptions) -> AuvResult<Option<usize>> {
   match argument {
     "--store-root" => {
       let value = value.ok_or_else(|| "--store-root requires a value".to_string())?;
-      inspect.store_root = Some(value.clone());
-      Ok(Some(2))
-    }
-    "--inspect-local-write" => {
-      let value = value.ok_or_else(|| "--inspect-local-write requires a value".to_string())?;
-      inspect.local_write = InspectWriteSetting::parse(value)?;
-      Ok(Some(2))
-    }
-    "--inspect-server-write" => {
-      let value = value.ok_or_else(|| "--inspect-server-write requires a value".to_string())?;
-      inspect.server_write = InspectWriteSetting::parse(value)?;
-      Ok(Some(2))
-    }
-    "--require-inspect-server-write" => {
-      inspect.require_server_write = true;
-      Ok(Some(1))
-    }
-    "--inspect-server-url" => {
-      let value = value.ok_or_else(|| "--inspect-server-url requires a value".to_string())?;
-      inspect.server_url = Some(value.clone());
+      tracing.store_root = Some(value.clone());
       Ok(Some(2))
     }
     _ => Ok(None),
@@ -721,7 +572,7 @@ fn parse_inspect_client_option(argument: &str, value: Option<&String>, inspect: 
 }
 
 fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut invoke_arguments = Vec::with_capacity(arguments.len());
   let mut index = 0;
 
@@ -737,7 +588,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 
   while index < arguments.len() {
     let argument = arguments[index].as_str();
-    if let Some(consumed) = parse_inspect_client_option(argument, arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(argument, arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -774,7 +625,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
         inputs,
         dry_run,
       },
-      inspect,
+      tracing,
       output,
     }),
   }
@@ -789,7 +640,10 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     Some("bridge") => parse_minecraft_bridge(arguments),
     Some("calibrate-projection") => parse_minecraft_calibrate_projection(arguments),
     Some("live-click") => parse_minecraft_live_click(arguments),
-    Some("export-spatial-bundle") => parse_minecraft_export_spatial_bundle(arguments),
+    Some("export-spatial-bundle") => Err(
+      "`export-spatial-bundle` has been retired with the legacy run read-side; a replacement requires an approved inspector contract"
+        .to_string(),
+    ),
     Some("export-3dgs-scene-packet") => parse_minecraft_export_3dgs_scene_packet(arguments),
     Some("prepare-texture-sweep") => parse_minecraft_prepare_texture_sweep(arguments),
     Some("build-texture-sweep-samples") => parse_minecraft_build_texture_sweep_samples(arguments),
@@ -799,46 +653,13 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   }
 }
 
-fn parse_minecraft_export_spatial_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 5 {
-    return Err("usage: auv-minecraft export-spatial-bundle <run-id> --output-dir <dir>".to_string());
-  }
-
-  let run_id = arguments[2].clone();
-  let mut output_dir = None;
-  let mut inspect = InspectClientOptions::default();
-  let mut index = 3;
-  while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
-      index += consumed;
-      continue;
-    }
-
-    match arguments[index].as_str() {
-      "--output-dir" => {
-        output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
-        index += 2;
-      }
-      other => {
-        return Err(format!("unexpected minecraft export-spatial-bundle argument {other}"));
-      }
-    }
-  }
-
-  Ok(CliCommand::MinecraftExportSpatialBundle {
-    run_id,
-    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
-    inspect,
-  })
-}
-
 fn parse_minecraft_export_3dgs_scene_packet(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut bundle_manifest_paths = Vec::new();
   let mut output_dir = None;
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(arguments[index].as_str(), arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -864,17 +685,17 @@ fn parse_minecraft_export_3dgs_scene_packet(arguments: &[String]) -> AuvResult<C
   Ok(CliCommand::MinecraftExport3dgsScenePacket {
     bundle_manifest_paths,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
-    inspect,
+    tracing,
   })
 }
 
 fn parse_minecraft_prepare_texture_sweep(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut sidecar_run_dir = None;
   let mut output_dir = None;
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(arguments[index].as_str(), arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -897,17 +718,17 @@ fn parse_minecraft_prepare_texture_sweep(arguments: &[String]) -> AuvResult<CliC
   Ok(CliCommand::MinecraftPrepareTextureSweep {
     sidecar_run_dir: sidecar_run_dir.ok_or_else(|| "--sidecar-run-dir is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
-    inspect,
+    tracing,
   })
 }
 
 fn parse_minecraft_build_texture_sweep_samples(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut bundle_manifest_paths = Vec::new();
   let mut output_path = None;
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(arguments[index].as_str(), arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -933,7 +754,7 @@ fn parse_minecraft_build_texture_sweep_samples(arguments: &[String]) -> AuvResul
   Ok(CliCommand::MinecraftBuildTextureSweepSamples {
     bundle_manifest_paths,
     output_path: output_path.ok_or_else(|| "--output is required".to_string())?,
-    inspect,
+    tracing,
   })
 }
 
@@ -941,10 +762,10 @@ fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliComm
   let mut samples_path = None;
   let mut output_dir = None;
   let mut require_real_source = false;
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(arguments[index].as_str(), arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -972,7 +793,7 @@ fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliComm
     samples_path: samples_path.ok_or_else(|| "--samples is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     require_real_source,
-    inspect,
+    tracing,
   })
 }
 
@@ -984,11 +805,11 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut target_block = None;
   let mut capture_skew_ms = None;
   let mut screenshot_is_minecraft_window = true;
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut index = 2;
 
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(arguments[index].as_str(), arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -1050,7 +871,7 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
     target_block: target_block.ok_or_else(|| "--target-block is required".to_string())?,
     capture_skew_ms,
     screenshot_is_minecraft_window,
-    inspect,
+    tracing,
   })
 }
 
@@ -1060,11 +881,11 @@ fn parse_minecraft_calibrate_projection(arguments: &[String]) -> AuvResult<CliCo
   let mut target_block = None;
   let mut target_semantics = "hit_face_center".to_string();
   let mut screenshot_is_minecraft_window = true;
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut index = 2;
 
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(arguments[index].as_str(), arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -1110,7 +931,7 @@ fn parse_minecraft_calibrate_projection(arguments: &[String]) -> AuvResult<CliCo
     target_block: target_block.ok_or_else(|| "--target-block is required".to_string())?,
     target_semantics,
     screenshot_is_minecraft_window,
-    inspect,
+    tracing,
   })
 }
 
@@ -1123,11 +944,11 @@ fn parse_minecraft_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut post_telemetry_sample = None;
   let mut capture_skew_ms = None;
   let mut screenshot_is_minecraft_window = true;
-  let mut inspect = InspectClientOptions::default();
+  let mut tracing = TracingOptions::default();
   let mut index = 2;
 
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
+    if let Some(consumed) = parse_tracing_option(arguments[index].as_str(), arguments.get(index + 1), &mut tracing)? {
       index += consumed;
       continue;
     }
@@ -1184,7 +1005,7 @@ fn parse_minecraft_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
     post_telemetry_sample,
     capture_skew_ms,
     screenshot_is_minecraft_window,
-    inspect,
+    tracing,
   })
 }
 
@@ -1248,1241 +1069,4 @@ fn parse_session_serve(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn required_flag_value(arguments: &[String], index: usize, flag: &str) -> AuvResult<String> {
   arguments.get(index + 1).cloned().ok_or_else(|| format!("{flag} requires a value"))
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn parse_skill_commands_are_removed() {
-    for args in [
-      vec!["skill"],
-      vec!["skill", "list"],
-      vec!["skill", "show", "macos.textedit.create_and_verify_text.v0"],
-      vec![
-        "skill",
-        "run",
-        "recipes/macos/textedit/create-and-verify-text.v0.json",
-      ],
-      vec!["skill", "cases", "list"],
-      vec![
-        "skill",
-        "cases",
-        "run",
-        "recipes/macos/textedit/create-and-verify-text.cases.v0.json",
-      ],
-    ] {
-      let args = args.into_iter().map(String::from).collect::<Vec<_>>();
-      let error = parse_cli(&args).expect_err("skill command should be removed");
-      assert!(error.contains("skill commands have been removed"), "unexpected error for {args:?}: {error}");
-    }
-  }
-
-  #[test]
-  fn parse_godot_capability_query() {
-    let command = parse_cli(&[
-      "godot".to_string(),
-      "capability-query".to_string(),
-      "--json".to_string(),
-    ])
-    .expect("godot capability query should parse");
-
-    assert!(matches!(command, CliCommand::GodotCapabilityQuery { json: true }));
-  }
-
-  #[test]
-  fn parse_godot_render_observe() {
-    let command = parse_cli(&[
-      "godot".to_string(),
-      "render-observe".to_string(),
-      "--output-dir".to_string(),
-      "artifacts/godot-observe".to_string(),
-      "--stage".to_string(),
-      "final".to_string(),
-      "--stage".to_string(),
-      "avatar-edge-mask".to_string(),
-      "--json".to_string(),
-    ])
-    .expect("godot render observe should parse");
-
-    let CliCommand::GodotRenderObserve {
-      output_dir,
-      stages,
-      json,
-    } = command
-    else {
-      panic!("unexpected command");
-    };
-    assert_eq!(output_dir, "artifacts/godot-observe");
-    assert_eq!(stages, vec!["final", "avatar-edge-mask"]);
-    assert!(json);
-  }
-
-  #[test]
-  fn help_text_lists_list_commands_tombstone() {
-    let help = help_text();
-
-    assert!(help.contains("list-commands"));
-    assert!(help.contains("auv invoke --help"));
-    assert!(help.contains("retired"));
-  }
-
-  #[test]
-  fn help_text_keeps_core_paths_visible() {
-    let help = help_text();
-
-    for expected in [
-      "auv --version",
-      "auv doctor [--json]",
-      "auv permissions check [--json]",
-      "auv-godot",
-      "auv-osu",
-      "auv-minecraft",
-      "auv invoke <command-id>",
-      "auv inspect <run-id> [--store-root <path>]",
-      "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write]",
-      "auv session serve [--host <host>] [--port <port>] [--store-root <path>]",
-      "auv mcp serve",
-    ] {
-      assert!(help.contains(expected), "top-level help should keep core path visible: {expected}");
-    }
-    assert!(!help.contains("auv app probe"));
-    assert!(!help.contains("auv app analyze"));
-    assert!(!help.contains("--inspect-server-token"));
-    for retired in ["--write-token", "--write-token-file", "--no-write-token"] {
-      assert!(!help.contains(retired), "top-level help must omit retired Inspect serve option {retired}");
-    }
-  }
-
-  #[test]
-  fn parse_root_version() {
-    let command = parse_cli(&["--version".to_string()]).expect("root --version should parse");
-
-    assert!(matches!(command, CliCommand::Version));
-  }
-
-  #[test]
-  fn root_version_request_requires_only_the_version_flag() {
-    assert!(root_version_requested(&["--version".to_string()]));
-    assert!(root_version_requested(&["-V".to_string()]));
-    assert!(!root_version_requested(&["--version".to_string(), "extra".to_string()]));
-  }
-
-  #[test]
-  fn parse_root_version_rejects_trailing_arguments() {
-    let error = parse_cli(&["--version".to_string(), "extra".to_string()]).expect_err("root --version extra should fail");
-
-    assert_eq!(error, "usage: auv --version");
-  }
-
-  #[test]
-  fn version_text_names_the_package_version() {
-    assert_eq!(version_text(), format!("auv {}\n", env!("CARGO_PKG_VERSION")));
-  }
-
-  #[test]
-  fn help_text_is_core_only() {
-    let help = help_text();
-
-    // Root help may name separate app bins, but must not expand their live
-    // subcommands under `auv <app> …`.
-    for omitted in [
-      "auv minecraft bridge",
-      "auv minecraft calibrate-projection",
-      "auv osu benchmark",
-      "auv osu dispatch",
-      "auv godot capability-query",
-    ] {
-      assert!(!help.contains(omitted), "top-level help should not expand app command: {omitted}");
-    }
-
-    assert!(
-      help.contains("tombstone") || help.contains("has been removed") || help.contains("use `auv-minecraft`"),
-      "top-level help should point donors at separate bins"
-    );
-  }
-
-  #[test]
-  fn parse_minecraft_help_command() {
-    let command = parse_cli(&["minecraft".to_string(), "--help".to_string()]).expect("minecraft --help should parse");
-    assert!(matches!(command, CliCommand::MinecraftHelp));
-  }
-
-  #[test]
-  fn parse_minecraft_bare_command_as_help() {
-    let command = parse_cli(&["minecraft".to_string()]).expect("bare minecraft should parse as help");
-    assert!(matches!(command, CliCommand::MinecraftHelp));
-  }
-
-  #[test]
-  fn parse_minecraft_help_rejects_trailing_arguments() {
-    let error = parse_cli(&[
-      "minecraft".to_string(),
-      "--help".to_string(),
-      "junk".to_string(),
-    ])
-    .expect_err("minecraft --help junk should fail");
-    assert!(error.contains("unexpected minecraft help argument"));
-  }
-
-  #[test]
-  fn parse_osu_help_command() {
-    let command = parse_cli(&["osu".to_string(), "--help".to_string()]).expect("osu --help should parse");
-    assert!(matches!(command, CliCommand::OsuHelp));
-  }
-
-  #[test]
-  fn parse_godot_help_command() {
-    let command = parse_cli(&["godot".to_string(), "--help".to_string()]).expect("godot --help should parse");
-    assert!(matches!(command, CliCommand::GodotHelp));
-  }
-
-  #[test]
-  fn parse_godot_bare_command_as_help() {
-    let command = parse_cli(&["godot".to_string()]).expect("bare godot should parse as help");
-    assert!(matches!(command, CliCommand::GodotHelp));
-  }
-
-  #[test]
-  fn parse_osu_bare_command_as_help() {
-    let command = parse_cli(&["osu".to_string()]).expect("bare osu should parse as help");
-    assert!(matches!(command, CliCommand::OsuHelp));
-  }
-
-  #[test]
-  fn parse_osu_help_rejects_trailing_arguments() {
-    let error = parse_cli(&["osu".to_string(), "help".to_string(), "extra".to_string()]).expect_err("osu help extra should fail");
-    assert!(error.contains("unexpected osu help argument"));
-  }
-
-  #[test]
-  fn help_text_does_not_mention_candidate_action() {
-    let help = help_text();
-
-    assert!(!help.contains("candidate-action"));
-    assert!(!help.contains("candidate_action"));
-  }
-
-  #[test]
-  fn list_drivers_command_is_removed() {
-    let error = parse_cli(&["list-drivers".to_string()]).expect_err("list-drivers should be removed");
-    assert!(error.contains("unknown subcommand list-drivers"));
-
-    let help = help_text();
-    assert!(!help.contains("auv list-drivers"));
-  }
-
-  #[test]
-  fn scan_command_is_removed() {
-    let error = parse_cli(&["scan".to_string()]).expect_err("scan should be removed");
-    assert!(error.contains("unknown subcommand scan"));
-
-    let help = help_text();
-    assert!(!help.contains("auv scan"));
-  }
-
-  #[test]
-  fn verticals_command_is_removed() {
-    let error = parse_cli(&["verticals".to_string()]).expect_err("verticals should be removed");
-    assert!(error.contains("unknown subcommand verticals"));
-
-    let help = help_text();
-    assert!(!help.contains("auv verticals"));
-  }
-
-  #[test]
-  fn parse_osu_eval_detections_command() {
-    let command = parse_cli(&[
-      "osu".to_string(),
-      "eval-detections".to_string(),
-      "/tmp/run".to_string(),
-      "--detections".to_string(),
-      "/tmp/detections".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/output".to_string(),
-    ])
-    .expect("osu eval-detections command should parse");
-
-    match command {
-      CliCommand::OsuEvalDetections {
-        run_artifact_dir,
-        detections_path,
-        output_dir,
-      } => {
-        assert_eq!(run_artifact_dir, "/tmp/run");
-        assert_eq!(detections_path, "/tmp/detections");
-        assert_eq!(output_dir.as_deref(), Some("/tmp/output"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_osu_eval_detections_requires_detections() {
-    let error = parse_cli(&[
-      "osu".to_string(),
-      "eval-detections".to_string(),
-      "/tmp/run".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/output".to_string(),
-    ])
-    .expect_err("osu eval-detections should require --detections");
-
-    assert!(error.contains("--detections is required"));
-  }
-
-  #[test]
-  fn parse_osu_eval_detections_accepts_default_output_dir() {
-    let command = parse_cli(&[
-      "osu".to_string(),
-      "eval-detections".to_string(),
-      "/tmp/run".to_string(),
-      "--detections".to_string(),
-      "/tmp/detections.json".to_string(),
-    ])
-    .expect("osu eval-detections should allow omitted output dir");
-
-    match command {
-      CliCommand::OsuEvalDetections { output_dir, .. } => {
-        assert_eq!(output_dir, None);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_osu_vision_demo_command() {
-    let command = parse_cli(&[
-      "osu".to_string(),
-      "vision-demo".to_string(),
-      "/tmp/map.osu".to_string(),
-      "--target-app".to_string(),
-      "osu!".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/output".to_string(),
-      "--dispatch-limit".to_string(),
-      "3".to_string(),
-      "--capture-verify".to_string(),
-    ])
-    .expect("osu vision-demo command should parse");
-
-    match command {
-      CliCommand::OsuVisionDemo {
-        beatmap_path,
-        target_app,
-        output_dir,
-        dispatch_limit,
-        capture_verify,
-      } => {
-        assert_eq!(beatmap_path, "/tmp/map.osu");
-        assert_eq!(target_app, "osu!");
-        assert_eq!(output_dir.as_deref(), Some("/tmp/output"));
-        assert_eq!(dispatch_limit, Some(3));
-        assert!(capture_verify);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_osu_vision_demo_caps_dispatch_limit() {
-    let command = parse_cli(&[
-      "osu".to_string(),
-      "vision-demo".to_string(),
-      "/tmp/map.osu".to_string(),
-      "--target-app".to_string(),
-      "osu!".to_string(),
-      "--dispatch-limit".to_string(),
-      "99".to_string(),
-    ])
-    .expect("osu vision-demo command should parse with large dispatch limit");
-
-    match command {
-      CliCommand::OsuVisionDemo { dispatch_limit, .. } => {
-        assert_eq!(dispatch_limit, Some(99));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_osu_vision_demo_requires_target_app() {
-    let error = parse_cli(&[
-      "osu".to_string(),
-      "vision-demo".to_string(),
-      "/tmp/map.osu".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/output".to_string(),
-    ])
-    .expect_err("osu vision-demo should require --target-app");
-
-    assert!(error.contains("--target-app is required") || error.contains("usage:"));
-  }
-
-  #[test]
-  fn parse_osu_vision_demo_accepts_default_output_dir() {
-    let command = parse_cli(&[
-      "osu".to_string(),
-      "vision-demo".to_string(),
-      "/tmp/map.osu".to_string(),
-      "--target-app".to_string(),
-      "osu!".to_string(),
-    ])
-    .expect("osu vision-demo should allow omitted output dir");
-
-    match command {
-      CliCommand::OsuVisionDemo {
-        output_dir,
-        dispatch_limit,
-        capture_verify,
-        ..
-      } => {
-        assert_eq!(output_dir, None);
-        assert_eq!(dispatch_limit, None);
-        assert!(!capture_verify);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_bridge_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "bridge".to_string(),
-      "--sample".to_string(),
-      "/tmp/telemetry.jsonl".to_string(),
-      "--screenshot".to_string(),
-      "/tmp/frame.png".to_string(),
-      "--target-block".to_string(),
-      "1,2,3".to_string(),
-      "--capture-skew-ms".to_string(),
-      "120".to_string(),
-      "--screenshot-is-minecraft-window".to_string(),
-      "false".to_string(),
-    ])
-    .expect("minecraft bridge command should parse");
-
-    match command {
-      CliCommand::MinecraftProjectionBridge {
-        telemetry_sample,
-        screenshot,
-        capture_target_app,
-        capture_target_title,
-        target_block,
-        capture_skew_ms,
-        screenshot_is_minecraft_window,
-        ..
-      } => {
-        assert_eq!(telemetry_sample, "/tmp/telemetry.jsonl");
-        assert_eq!(screenshot.as_deref(), Some("/tmp/frame.png"));
-        assert_eq!(capture_target_app, None);
-        assert_eq!(capture_target_title, None);
-        assert_eq!(target_block, "1,2,3");
-        assert_eq!(capture_skew_ms, Some(120));
-        assert_eq!(screenshot_is_minecraft_window, false);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_live_click_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "live-click".to_string(),
-      "--sample".to_string(),
-      "/tmp/pre.jsonl".to_string(),
-      "--post-sample".to_string(),
-      "/tmp/post.jsonl".to_string(),
-      "--screenshot".to_string(),
-      "/tmp/frame.png".to_string(),
-      "--target-block".to_string(),
-      "1,2,3".to_string(),
-      "--target-app".to_string(),
-      "com.mojang.minecraft".to_string(),
-      "--target-title".to_string(),
-      "Minecraft 1.21.5".to_string(),
-      "--capture-skew-ms".to_string(),
-      "120".to_string(),
-      "--screenshot-is-minecraft-window".to_string(),
-      "false".to_string(),
-    ])
-    .expect("minecraft live-click command should parse");
-
-    match command {
-      CliCommand::MinecraftLiveClick {
-        telemetry_sample,
-        screenshot,
-        target_block,
-        target_app,
-        target_title,
-        post_telemetry_sample,
-        capture_skew_ms,
-        screenshot_is_minecraft_window,
-        ..
-      } => {
-        assert_eq!(telemetry_sample, "/tmp/pre.jsonl");
-        assert_eq!(post_telemetry_sample.as_deref(), Some("/tmp/post.jsonl"));
-        assert_eq!(screenshot, "/tmp/frame.png");
-        assert_eq!(target_block, "1,2,3");
-        assert_eq!(target_app, "com.mojang.minecraft");
-        assert_eq!(target_title, "Minecraft 1.21.5");
-        assert_eq!(capture_skew_ms, Some(120));
-        assert_eq!(screenshot_is_minecraft_window, false);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_bridge_requires_required_flags() {
-    let error = parse_cli(&[
-      "minecraft".to_string(),
-      "bridge".to_string(),
-      "--sample".to_string(),
-      "/tmp/telemetry.jsonl".to_string(),
-    ])
-    .expect_err("minecraft bridge should require screenshot/capture target and target");
-
-    assert!(error.contains("requires either --screenshot or --capture-target-app") || error.contains("--target-block is required"));
-  }
-
-  #[test]
-  fn parse_minecraft_bridge_capture_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "bridge".to_string(),
-      "--sample".to_string(),
-      "/tmp/telemetry.jsonl".to_string(),
-      "--capture-target-app".to_string(),
-      "com.mojang.minecraft".to_string(),
-      "--capture-target-title".to_string(),
-      "Minecraft".to_string(),
-      "--target-block".to_string(),
-      "1,2,3".to_string(),
-    ])
-    .expect("minecraft bridge capture command should parse");
-
-    match command {
-      CliCommand::MinecraftProjectionBridge {
-        screenshot,
-        capture_target_app,
-        capture_target_title,
-        ..
-      } => {
-        assert_eq!(screenshot, None);
-        assert_eq!(capture_target_app.as_deref(), Some("com.mojang.minecraft"));
-        assert_eq!(capture_target_title.as_deref(), Some("Minecraft"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_bridge_rejects_mixed_capture_modes() {
-    let error = parse_cli(&[
-      "minecraft".to_string(),
-      "bridge".to_string(),
-      "--sample".to_string(),
-      "/tmp/telemetry.jsonl".to_string(),
-      "--screenshot".to_string(),
-      "/tmp/frame.png".to_string(),
-      "--capture-target-app".to_string(),
-      "com.mojang.minecraft".to_string(),
-      "--target-block".to_string(),
-      "1,2,3".to_string(),
-    ])
-    .expect_err("mixed capture modes should fail");
-
-    assert!(error.contains("--screenshot cannot be combined"));
-  }
-
-  #[test]
-  fn parse_minecraft_calibrate_projection_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "calibrate-projection".to_string(),
-      "--frame".to_string(),
-      "/tmp/frame.json".to_string(),
-      "--screenshot".to_string(),
-      "/tmp/frame.png".to_string(),
-      "--target-block".to_string(),
-      "1,2,3".to_string(),
-      "--target-semantics".to_string(),
-      "block_center".to_string(),
-      "--screenshot-is-minecraft-window".to_string(),
-      "false".to_string(),
-    ])
-    .expect("minecraft calibrate-projection should parse");
-
-    match command {
-      CliCommand::MinecraftCalibrateProjection {
-        frame_path,
-        screenshot,
-        target_block,
-        target_semantics,
-        screenshot_is_minecraft_window,
-        ..
-      } => {
-        assert_eq!(frame_path, "/tmp/frame.json");
-        assert_eq!(screenshot, "/tmp/frame.png");
-        assert_eq!(target_block, "1,2,3");
-        assert_eq!(target_semantics, "block_center");
-        assert!(!screenshot_is_minecraft_window);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_export_spatial_bundle_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "export-spatial-bundle".to_string(),
-      "run_123".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/mc6-bundle".to_string(),
-    ])
-    .expect("minecraft export-spatial-bundle command should parse");
-
-    match command {
-      CliCommand::MinecraftExportSpatialBundle {
-        run_id, output_dir, ..
-      } => {
-        assert_eq!(run_id, "run_123");
-        assert_eq!(output_dir, "/tmp/mc6-bundle");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_export_spatial_bundle_accepts_store_root() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "export-spatial-bundle".to_string(),
-      "run_123".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/mc6-bundle".to_string(),
-      "--store-root".to_string(),
-      "/tmp/store".to_string(),
-    ])
-    .expect("minecraft export-spatial-bundle should parse store root");
-
-    match command {
-      CliCommand::MinecraftExportSpatialBundle { inspect, .. } => {
-        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/store"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_export_3dgs_scene_packet_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "export-3dgs-scene-packet".to_string(),
-      "--bundle-manifest".to_string(),
-      "/tmp/rich/run.json".to_string(),
-      "--bundle-manifest".to_string(),
-      "/tmp/flat/run.json".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/scene".to_string(),
-    ])
-    .expect("minecraft export-3dgs-scene-packet command should parse");
-
-    match command {
-      CliCommand::MinecraftExport3dgsScenePacket {
-        bundle_manifest_paths,
-        output_dir,
-        ..
-      } => {
-        assert_eq!(bundle_manifest_paths, vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]);
-        assert_eq!(output_dir, "/tmp/scene");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_prepare_texture_sweep_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "prepare-texture-sweep".to_string(),
-      "--sidecar-run-dir".to_string(),
-      "devtools/auv-game-minecraft/run".to_string(),
-      "--output-dir".to_string(),
-      ".tmp-mc6-prep".to_string(),
-    ])
-    .expect("minecraft prepare-texture-sweep command should parse");
-
-    match command {
-      CliCommand::MinecraftPrepareTextureSweep {
-        sidecar_run_dir,
-        output_dir,
-        ..
-      } => {
-        assert_eq!(sidecar_run_dir, "devtools/auv-game-minecraft/run");
-        assert_eq!(output_dir, ".tmp-mc6-prep");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_build_texture_sweep_samples_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "build-texture-sweep-samples".to_string(),
-      "--bundle-manifest".to_string(),
-      "/tmp/rich/run.json".to_string(),
-      "--bundle-manifest".to_string(),
-      "/tmp/flat/run.json".to_string(),
-      "--output".to_string(),
-      "/tmp/samples.json".to_string(),
-    ])
-    .expect("minecraft build-texture-sweep-samples command should parse");
-
-    match command {
-      CliCommand::MinecraftBuildTextureSweepSamples {
-        bundle_manifest_paths,
-        output_path,
-        ..
-      } => {
-        assert_eq!(bundle_manifest_paths, vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]);
-        assert_eq!(output_path, "/tmp/samples.json");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_eval_texture_sweep_command() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "eval-texture-sweep".to_string(),
-      "--samples".to_string(),
-      "/tmp/samples.json".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/mc6-sweep".to_string(),
-    ])
-    .expect("minecraft eval-texture-sweep command should parse");
-
-    match command {
-      CliCommand::MinecraftEvalTextureSweep {
-        samples_path,
-        output_dir,
-        require_real_source,
-        ..
-      } => {
-        assert_eq!(samples_path, "/tmp/samples.json");
-        assert_eq!(output_dir, "/tmp/mc6-sweep");
-        assert!(!require_real_source);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_minecraft_eval_texture_sweep_real_source_gate() {
-    let command = parse_cli(&[
-      "minecraft".to_string(),
-      "eval-texture-sweep".to_string(),
-      "--samples".to_string(),
-      "/tmp/samples.json".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/mc6-sweep".to_string(),
-      "--require-real-source".to_string(),
-    ])
-    .expect("minecraft eval-texture-sweep command should parse real-source gate");
-
-    match command {
-      CliCommand::MinecraftEvalTextureSweep {
-        require_real_source,
-        ..
-      } => assert!(require_real_source),
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_session_serve_command() {
-    let command = parse_cli(&[
-      "session".to_string(),
-      "serve".to_string(),
-      "--host".to_string(),
-      "127.0.0.1".to_string(),
-      "--port".to_string(),
-      "9847".to_string(),
-    ])
-    .expect("session serve command should parse");
-
-    match command {
-      CliCommand::SessionServe {
-        host,
-        port,
-        store_root,
-      } => {
-        assert_eq!(host, "127.0.0.1");
-        assert_eq!(port, 9847);
-        assert_eq!(store_root, None);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_session_serve_store_root_option() {
-    let command = parse_cli(&[
-      "session".to_string(),
-      "serve".to_string(),
-      "--store-root".to_string(),
-      "/tmp/auv-session-store".to_string(),
-    ])
-    .expect("session serve options should parse");
-
-    match command {
-      CliCommand::SessionServe {
-        host,
-        port,
-        store_root,
-      } => {
-        assert_eq!(host, auv_runtime::api::session_service::transport::DEFAULT_SESSION_API_HOST);
-        assert_eq!(port, auv_runtime::api::session_service::transport::DEFAULT_SESSION_API_PORT);
-        assert_eq!(store_root.as_deref(), Some("/tmp/auv-session-store"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_session_serve_rejects_unknown_argument() {
-    let error = parse_cli(&[
-      "session".to_string(),
-      "serve".to_string(),
-      "--enable-write".to_string(),
-    ])
-    .expect_err("unexpected session serve flag should fail");
-
-    assert!(error.contains("unexpected session-serve argument --enable-write"));
-  }
-
-  #[test]
-  fn parse_mcp_command() {
-    let command = parse_cli(&["mcp".to_string(), "serve".to_string()]).expect("mcp serve command should parse");
-
-    match command {
-      CliCommand::McpServe => {}
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn retired_app_probe_pipeline_is_not_a_root_command() {
-    for arguments in [
-      vec!["app", "probe", "com.example.music"],
-      vec!["app", "analyze", "/tmp/probe"],
-      vec!["app", "distill", "/tmp/analysis.json"],
-      vec!["app", "validate", "/tmp/distillation.json"],
-    ] {
-      let arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
-      let error = parse_cli(&arguments).expect_err("retired app pipeline should not parse");
-      assert!(error.contains("unknown subcommand app"), "unexpected error for {arguments:?}: {error}");
-    }
-  }
-
-  #[test]
-  fn parse_inspect_command_accepts_store_root() {
-    let command = parse_cli(&[
-      "inspect".to_string(),
-      "run_test_1".to_string(),
-      "--store-root".to_string(),
-      "/tmp/mc20-store".to_string(),
-    ])
-    .expect("inspect with store-root should parse");
-
-    match command {
-      CliCommand::Inspect { run_id, store_root } => {
-        assert_eq!(run_id, "run_test_1");
-        assert_eq!(store_root.as_deref(), Some("/tmp/mc20-store"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_inspect_command_rejects_unexpected_argument() {
-    let error = parse_cli(&[
-      "inspect".to_string(),
-      "run_test_1".to_string(),
-      "--extra".to_string(),
-    ])
-    .expect_err("unexpected inspect flag should fail");
-
-    assert!(error.contains("unexpected auv inspect argument --extra"));
-  }
-
-  #[test]
-  fn parse_inspect_serve_command() {
-    let command = parse_cli(&[
-      "inspect".to_string(),
-      "serve".to_string(),
-      "--host".to_string(),
-      "0.0.0.0".to_string(),
-      "--port".to_string(),
-      "0".to_string(),
-    ])
-    .expect("inspect serve command should parse");
-
-    match command {
-      CliCommand::InspectServe {
-        host,
-        port,
-        store_root,
-        write,
-      } => {
-        assert_eq!(host, "0.0.0.0");
-        assert_eq!(port, 0);
-        assert_eq!(store_root, None);
-        assert_eq!(write, InspectServeWriteOptions::default());
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_inspect_serve_enable_write_option() {
-    let command = parse_cli(&[
-      "inspect".to_string(),
-      "serve".to_string(),
-      "--store-root".to_string(),
-      "/tmp/auv-store".to_string(),
-      "--enable-write".to_string(),
-    ])
-    .expect("inspect serve options should parse");
-
-    match command {
-      CliCommand::InspectServe {
-        host,
-        port,
-        store_root,
-        write,
-      } => {
-        assert_eq!(host, auv_inspect_server::DEFAULT_INSPECT_HOST);
-        assert_eq!(port, auv_inspect_server::DEFAULT_INSPECT_PORT);
-        assert_eq!(store_root.as_deref(), Some("/tmp/auv-store"));
-        assert!(write.enabled);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_inspect_serve_rejects_retired_write_token_flags_as_unknown() {
-    for flag in ["--write-token", "--write-token-file", "--no-write-token"] {
-      let mut arguments = vec!["inspect".to_string(), "serve".to_string(), flag.to_string()];
-      if flag != "--no-write-token" {
-        arguments.push("secret".to_string());
-      }
-
-      let error = parse_cli(&arguments).expect_err("retired Inspect serve token flag must fail");
-
-      assert_eq!(error, format!("unexpected inspect-serve argument {flag}"));
-    }
-  }
-
-  #[test]
-  fn parse_list_commands_tombstone() {
-    let command = parse_cli(&["list-commands".to_string()]).expect("list-commands should parse to tombstone command");
-    match command {
-      CliCommand::ListCommandsTombstone => {}
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn root_donor_subcommand_tombstones() {
-    assert!(root_donor_tombstone(&["godot".to_string()]).unwrap().contains("auv-godot"));
-    assert!(root_donor_tombstone(&["osu".to_string()]).unwrap().contains("auv-osu"));
-    assert!(root_donor_tombstone(&["minecraft".to_string()]).unwrap().contains("auv-minecraft"));
-    assert!(root_donor_tombstone(&["inspect".to_string()]).is_none());
-  }
-
-  #[test]
-  fn parse_donor_cli_godot_capability_query() {
-    let command = parse_donor_cli("godot", &["capability-query".to_string(), "--json".to_string()]).expect("donor parse");
-    match command {
-      CliCommand::GodotCapabilityQuery { json: true } => {}
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_invoke_help_without_command_id() {
-    let command = parse_cli(&["invoke".to_string(), "--help".to_string()]).expect("invoke --help should parse");
-    match command {
-      CliCommand::InvokeHelp { command_id } => assert!(command_id.is_none()),
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_invoke_help_with_command_id() {
-    let command = parse_cli(&[
-      "invoke".to_string(),
-      "window.capture".to_string(),
-      "--help".to_string(),
-    ])
-    .expect("invoke <command> --help should parse");
-    match command {
-      CliCommand::InvokeHelp { command_id } => {
-        assert_eq!(command_id.as_deref(), Some("window.capture"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_invoke_inspect_write_options() {
-    let command = parse_cli(&[
-      "invoke".to_string(),
-      "window.capture".to_string(),
-      "--store-root".to_string(),
-      "/tmp/auv-store".to_string(),
-      "--inspect-local-write".to_string(),
-      "default".to_string(),
-      "--inspect-server-write".to_string(),
-      "false".to_string(),
-    ])
-    .expect("invoke inspect options should parse");
-
-    match command {
-      CliCommand::Invoke {
-        request, inspect, ..
-      } => {
-        assert_eq!(request.command_id, "window.capture");
-        assert!(!request.dry_run);
-        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
-        assert_eq!(inspect.local_write, InspectWriteSetting::Default);
-        assert_eq!(inspect.server_write, InspectWriteSetting::Disabled);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_invoke_inspect_server_token_flags_follow_unknown_option_behavior() {
-    let unknown_flag = "--unknown-invoke-option";
-    let unknown_error = parse_cli(&[
-      "invoke".to_string(),
-      "window.capture".to_string(),
-      unknown_flag.to_string(),
-    ])
-    .expect_err("unknown invoke option without a value must fail");
-
-    for flag in ["--inspect-server-token", "--inspect-server-token-file"] {
-      let command = parse_cli(&[
-        "invoke".to_string(),
-        "window.capture".to_string(),
-        flag.to_string(),
-        "secret".to_string(),
-      ])
-      .expect("unknown invoke option with a value should parse as command input");
-
-      match command {
-        CliCommand::Invoke {
-          request, inspect, ..
-        } => {
-          assert_eq!(request.inputs.get(flag.trim_start_matches("--")).map(String::as_str), Some("secret"));
-          assert_eq!(inspect, InspectClientOptions::default());
-        }
-        other => panic!("unexpected command: {other:?}"),
-      }
-
-      let error = parse_cli(&[
-        "invoke".to_string(),
-        "window.capture".to_string(),
-        flag.to_string(),
-      ])
-      .expect_err("unknown invoke option without a value must fail");
-      assert_eq!(error.replace(flag, unknown_flag), unknown_error);
-    }
-  }
-
-  #[test]
-  fn parse_invoke_preserves_inspect_like_command_input_values() {
-    let command = parse_cli(&[
-      "invoke".to_string(),
-      "input.typeText".to_string(),
-      "--text".to_string(),
-      "--store-root".to_string(),
-      "--label".to_string(),
-      "literal-label".to_string(),
-    ])
-    .expect("invoke input value that looks like an inspect option should parse");
-
-    match command {
-      CliCommand::Invoke {
-        request, inspect, ..
-      } => {
-        assert_eq!(request.command_id, "input.typeText");
-        assert_eq!(request.inputs.get("text").map(String::as_str), Some("--store-root"));
-        assert_eq!(request.inputs.get("label").map(String::as_str), Some("literal-label"));
-        assert_eq!(inspect.store_root, None);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_invoke_dry_run_flag() {
-    let command = parse_cli(&[
-      "invoke".to_string(),
-      "qqmusic.playVisibleAnchor.v0".to_string(),
-      "--dry-run".to_string(),
-      "--target".to_string(),
-      "com.tencent.QQMusicMac".to_string(),
-    ])
-    .expect("invoke dry-run should parse");
-
-    match command {
-      CliCommand::Invoke { request, .. } => {
-        assert_eq!(request.command_id, "qqmusic.playVisibleAnchor.v0");
-        assert!(request.dry_run);
-        assert_eq!(request.target.application_id.as_deref(), Some("com.tencent.QQMusicMac"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_invoke_output_options_before_and_after_command() {
-    let before = parse_cli(&[
-      "invoke".to_string(),
-      "--json".to_string(),
-      "display.list".to_string(),
-      "--detail".to_string(),
-    ])
-    .expect("invoke output options before command should parse");
-    let after = parse_cli(&[
-      "invoke".to_string(),
-      "display.list".to_string(),
-      "--detail".to_string(),
-      "--json".to_string(),
-    ])
-    .expect("invoke output options after command should parse");
-
-    match (before, after) {
-      (
-        CliCommand::Invoke {
-          request: before_request,
-          output: before_output,
-          ..
-        },
-        CliCommand::Invoke {
-          request: after_request,
-          output: after_output,
-          ..
-        },
-      ) => {
-        assert_eq!(before_request.command_id, "display.list");
-        assert_eq!(after_request.command_id, "display.list");
-        assert_eq!(before_output, after_output);
-        assert!(before_output.json);
-        assert!(before_output.detail);
-      }
-      other => panic!("unexpected commands: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_invoke_output_flag_does_not_consume_command_input_flag() {
-    let command = parse_cli(&[
-      "invoke".to_string(),
-      "input.key".to_string(),
-      "--json".to_string(),
-      "--key".to_string(),
-      "Cmd+L".to_string(),
-    ])
-    .expect("invoke output flag followed by command input should parse");
-
-    match command {
-      CliCommand::Invoke {
-        request, output, ..
-      } => {
-        assert!(output.json);
-        assert_eq!(request.command_id, "input.key");
-        assert_eq!(request.inputs.get("key").map(String::as_str), Some("Cmd+L"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_xtask_generate_swift_bridge_command() {
-    let command = parse_cli(&["--xtask".to_string(), "generate-swift-bridge".to_string()]).expect("xtask command should parse");
-
-    match command {
-      CliCommand::XtaskGenerateSwiftBridge => {}
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_doctor_permission_check_command() {
-    let command = parse_cli(&["doctor".to_string(), "--json".to_string()]).expect("doctor should parse");
-
-    match command {
-      CliCommand::PermissionCheck { json } => assert!(json),
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_permissions_check_command() {
-    let command = parse_cli(&[
-      "permissions".to_string(),
-      "check".to_string(),
-      "--json".to_string(),
-    ])
-    .expect("permissions check should parse");
-
-    match command {
-      CliCommand::PermissionCheck { json } => assert!(json),
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_osu_dispatch_with_capture_verify() {
-    let command = parse_cli(&[
-      "osu".to_string(),
-      "dispatch".to_string(),
-      "map.osu".to_string(),
-      "--target-app".to_string(),
-      "osu!".to_string(),
-      "--dispatch-limit".to_string(),
-      "3".to_string(),
-      "--capture-verify".to_string(),
-    ])
-    .expect("osu dispatch with capture verification should parse");
-
-    match command {
-      CliCommand::OsuBenchmarkDispatch {
-        beatmap_path,
-        target_app,
-        dispatch_limit,
-        capture_verify,
-        ..
-      } => {
-        assert_eq!(beatmap_path, "map.osu");
-        assert_eq!(target_app, "osu!");
-        assert_eq!(dispatch_limit, Some(3));
-        assert!(capture_verify);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
 }

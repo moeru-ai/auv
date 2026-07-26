@@ -32,7 +32,3 @@ auv-driver-windows = { path = "../auv-driver-windows" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }
-
-[dev-dependencies]
-auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
-futures-executor = "0.3"

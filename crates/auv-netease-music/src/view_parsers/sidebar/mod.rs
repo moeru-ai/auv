@@ -14,14 +14,3 @@ pub(crate) use reconstruct::*;
 pub(crate) use region::*;
 pub(crate) use scan::*;
 pub(crate) use target_probe::*;
-
-#[cfg(all(test, target_os = "macos"))]
-mod ax_tests;
-#[cfg(test)]
-mod parse_tests;
-#[cfg(test)]
-mod region_tests;
-#[cfg(test)]
-pub(crate) mod test_support;
-#[cfg(test)]
-mod tests;

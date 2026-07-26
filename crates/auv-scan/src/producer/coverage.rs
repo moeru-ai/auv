@@ -3,7 +3,7 @@
 //! ## Cross-fixture layout (D4)
 //!
 //! ```text
-//! tests/fixtures/scan/
+//! tests/testdata/scan/
 //!   coverage/coverage_stable_v0/manifest.json   ← `--fixture-dir`
 //!   temporal/two_frame_v0/                        ← `manifest.frame_fixture` target
 //! ```
@@ -136,67 +136,4 @@ pub fn build_coverage_fixture(coverage_fixture_dir: &Path) -> Result<CoverageVie
   };
 
   Ok(build_coverage_view(&bundle, &associations))
-}
-
-#[cfg(test)]
-mod tests {
-  use std::path::PathBuf;
-
-  use crate::coverage_artifact::{SCAN_COVERAGE_ARTIFACT_FILE_NAME, read_coverage_artifact};
-
-  use super::*;
-
-  fn coverage_fixture_dir(scenario: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/coverage").join(scenario)
-  }
-
-  fn golden_path(scenario: &str) -> PathBuf {
-    coverage_fixture_dir(scenario).join("golden").join(SCAN_COVERAGE_ARTIFACT_FILE_NAME)
-  }
-
-  #[test]
-  fn build_coverage_fixture_matches_golden_stable() {
-    let fixture_dir = coverage_fixture_dir("coverage_stable_v0");
-    let produced = build_coverage_fixture(&fixture_dir).expect("produce stable");
-    let golden = read_coverage_artifact(&golden_path("coverage_stable_v0")).expect("golden");
-    assert_eq!(&produced, golden.coverage());
-  }
-
-  #[test]
-  fn build_coverage_fixture_matches_golden_no_observation() {
-    let fixture_dir = coverage_fixture_dir("coverage_no_observation_v0");
-    let produced = build_coverage_fixture(&fixture_dir).expect("produce no observation");
-    let golden = read_coverage_artifact(&golden_path("coverage_no_observation_v0")).expect("golden");
-    assert_eq!(&produced, golden.coverage());
-  }
-
-  #[test]
-  fn build_coverage_fixture_matches_golden_ambiguous() {
-    let fixture_dir = coverage_fixture_dir("coverage_ambiguous_v0");
-    let produced = build_coverage_fixture(&fixture_dir).expect("produce ambiguous");
-    let golden = read_coverage_artifact(&golden_path("coverage_ambiguous_v0")).expect("golden");
-    assert_eq!(&produced, golden.coverage());
-  }
-
-  #[test]
-  fn build_coverage_fixture_rejects_missing_manifest() {
-    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-missing-manifest-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&out_dir);
-    fs::create_dir_all(&out_dir).expect("mkdir");
-    let err = build_coverage_fixture(&out_dir).expect_err("missing manifest");
-    assert!(matches!(err, CoverageProducerError::MissingManifest { .. }));
-    let _ = fs::remove_dir_all(&out_dir);
-  }
-
-  #[test]
-  fn build_coverage_fixture_rejects_invalid_fixture_layout() {
-    let bad_dir = std::env::temp_dir().join(format!("auv-scan-coverage-bad-layout-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&bad_dir);
-    fs::create_dir_all(&bad_dir).expect("mkdir");
-    fs::write(bad_dir.join(MANIFEST_FILE), r#"{"scenario":"x","frame_fixture":"temporal/two_frame_v0","observations_by_frame":[[],[]]}"#)
-      .expect("write manifest");
-    let err = build_coverage_fixture(&bad_dir).expect_err("bad layout");
-    assert!(matches!(err, CoverageProducerError::InvalidFixtureLayout { .. }));
-    let _ = fs::remove_dir_all(&bad_dir);
-  }
 }

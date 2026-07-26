@@ -1,6 +1,4 @@
 #[cfg(feature = "tracing")]
-pub mod inspect;
-#[cfg(feature = "tracing")]
 pub mod run_read;
 
 pub mod artifact;
@@ -26,10 +24,7 @@ pub use dataset::{
   SpatialBundleSourceArtifact, export_spatial_bundle,
 };
 #[allow(deprecated)]
-pub use ingest::{
-  LatestFrameScan, TailFrameWaitConfig, read_latest_spatial_frame, read_latest_spatial_frame_from_tail,
-  read_latest_spatial_frame_newer_than, scan_latest_spatial_frame,
-};
+pub use ingest::{TailFrameWaitConfig, read_latest_spatial_frame_from_tail, read_latest_spatial_frame_newer_than};
 pub use input_target::projected_window_point;
 pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,
@@ -43,7 +38,7 @@ pub use prep::{
 };
 pub use projection::MinecraftProjector;
 #[cfg(feature = "tracing")]
-pub use run_read::{MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, MinecraftArtifactPublishError, MinecraftArtifactReadError};
+pub use run_read::{MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, MinecraftArtifactPublishError};
 pub use sample_builder::{
   TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
   build_texture_sweep_samples_from_bundles,
@@ -67,9 +62,6 @@ pub use verify::{
 // proven from projection visibility, telemetry ordering, pre/post witness quality, and screenshot
 // binding metadata already present on `MinecraftSpatialFrame`; real client samples are still required
 // before this can claim live acceptance coverage for occlusion, skew thresholds, or runtime wiring.
-
-#[cfg(feature = "tracing")]
-pub use inspect::inspect_sections_primary;
 
 pub(crate) fn now_millis() -> u64 {
   u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)

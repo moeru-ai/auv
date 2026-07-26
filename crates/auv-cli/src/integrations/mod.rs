@@ -1,4 +1,4 @@
-//! App integration wiring for direct typed CLI, inspect, and MCP calls.
+//! App integration wiring for direct typed CLI and MCP calls.
 //!
 //! Domain logic lives in `crates/auv-game-*`; this tree maps product inputs and
 //! uses the current tracing context for optional typed instrumentation.

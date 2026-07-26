@@ -121,18 +121,6 @@ impl InvokeResult {
       report.write_human(writer, options, color)?;
     }
 
-    if self.status() == InvokeStatus::Failed && options.inspect_hint {
-      writeln!(writer).map_err(write_error)?;
-      write_field_rows(
-        writer,
-        &[InvokeReportField::new(
-          "Inspect",
-          format!("auv inspect {}", self.run_id),
-        )],
-        color,
-      )?;
-    }
-
     Ok(())
   }
 
@@ -155,23 +143,4 @@ struct InvokeResultJsonOutput<'a> {
   result: Option<&'a serde_json::Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
   failure: Option<&'a str>,
-}
-
-#[cfg(test)]
-mod tests {
-  use auv_tracing::RunId;
-
-  use crate::{InvokeCommandOutput, default_registry};
-
-  use super::InvokeResult;
-
-  #[test]
-  fn direct_command_result_does_not_require_store_readback() {
-    let registry = default_registry();
-    let command = registry.resolve("scan.coverage").expect("command");
-    let result = InvokeResult::from_command_result(RunId::new(), command, Ok(InvokeCommandOutput::completed()));
-
-    assert_eq!(result.status(), super::InvokeStatus::Completed);
-    assert!(result.failure().is_none());
-  }
 }

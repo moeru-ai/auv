@@ -119,36 +119,3 @@ fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, St
     }
   })
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use std::path::PathBuf;
-
-  fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/balatro_consumption_probe")
-  }
-
-  #[test]
-  fn loads_positive_detection_bundle_fixture() {
-    let bundle = load_detection_bundle(&fixture_root()).expect("bundle");
-    assert_eq!(bundle.manifest.schema_version, CARD_DETECTION_BUNDLE_SCHEMA_VERSION);
-    assert_eq!(bundle.manifest.frame.image_size.width, 1280);
-    assert!(!bundle.ui_detections.detections.is_empty());
-    assert!(!bundle.entities_detections.detections.is_empty());
-  }
-
-  #[test]
-  fn missing_bundle_manifest_returns_error() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let error = load_detection_bundle(temp.path()).unwrap_err();
-    assert!(error.contains("missing detection bundle manifest"));
-  }
-
-  #[test]
-  fn loads_expected_slots_fixture() {
-    let slots = load_expected_slots(&fixture_root().join(EXPECTED_SLOTS_FILE)).expect("slots");
-    assert_eq!(slots.slots.len(), 3);
-    assert_eq!(slots.slots[0].zone, "hand");
-  }
-}

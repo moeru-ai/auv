@@ -8,7 +8,7 @@ use auv_file::{
 };
 use auv_stage_status::StageStatus;
 #[cfg(feature = "tracing")]
-use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
+use auv_tracing::{ArtifactMetadata, Context};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -108,15 +108,6 @@ pub async fn publish_osu_visual_truth_semantic(
   semantic: &VisualTruthSemanticManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
   crate::run_read::publish_json_artifact(context, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE, semantic, validate_semantic_payload).await
-}
-
-#[cfg(feature = "tracing")]
-pub async fn read_osu_visual_truth_semantic(
-  store: &dyn RunStore,
-  snapshot: &RunSnapshot,
-  uri: &ArtifactUri,
-) -> Result<VisualTruthSemanticManifest, crate::run_read::OsuArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_VISUAL_TRUTH_SEMANTIC_PURPOSE, validate_semantic_payload).await
 }
 
 #[cfg(feature = "tracing")]
@@ -341,143 +332,4 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
       format!("failed to serialize {}: {error}", path.display())
     }
   })
-}
-
-#[cfg(test)]
-mod tests {
-  use std::path::PathBuf;
-
-  use super::*;
-  use crate::benchmark::{CapturePhase, MapSummary, ObjectKind};
-  use crate::projection::{PlayfieldProjection, ProjectionArtifact, ProjectionDerivationMethod};
-  use crate::visual_truth::{CaptureFrame, ExpectedObjectTruth, VisualTruthFrame};
-
-  #[test]
-  fn stage_status_preserves_wire_labels() {
-    for (status, wire) in [
-      (StageStatus::Ready, "\"ready\""),
-      (StageStatus::Blocked, "\"blocked\""),
-      (StageStatus::Failed, "\"failed\""),
-    ] {
-      assert_eq!(serde_json::to_string(&status).expect("serialize"), wire);
-      let decoded: StageStatus = serde_json::from_str(wire).expect("deserialize");
-      assert_eq!(decoded, status);
-    }
-  }
-
-  fn write_probe_fixture(root: &Path) {
-    let manifest = VisualTruthManifest {
-      schema_version: 1,
-      beatmap_path: "tests/fixtures/probe.osu".to_string(),
-      map_summary: MapSummary {
-        beatmap_path: "tests/fixtures/probe.osu".to_string(),
-        mode: 0,
-        total_objects: 1,
-        circle_count: 1,
-        slider_count: 0,
-        spinner_count: 0,
-        hold_count: 0,
-        first_object_time_ms: Some(1000),
-        last_object_time_ms: Some(1000),
-        approach_rate: 8.0,
-        overall_difficulty: 7.0,
-        circle_size: 4.0,
-        hp_drain_rate: 5.0,
-      },
-      frames: vec![VisualTruthFrame {
-        object_index: 0,
-        scheduled_time_ms: 1000,
-        actual_dispatch_time_ms: 1001,
-        dispatch_error_ms: 1,
-        capture: CaptureFrame {
-          phase: CapturePhase::BeforeDispatch,
-          capture_time_ms: 990,
-          relative_to_scheduled_ms: -10,
-          relative_to_dispatch_ms: -11,
-          file_name: "capture-object-0000-before-16ms.png".to_string(),
-          width: 800,
-          height: 600,
-          backend: "fixture".to_string(),
-          fallback_reason: None,
-        },
-        expected_object: ExpectedObjectTruth {
-          object_kind: ObjectKind::Circle,
-          expected_playfield_x: 256.0,
-          expected_playfield_y: 192.0,
-          circle_size: 4.0,
-          approach_rate: 8.0,
-          overall_difficulty: 7.0,
-        },
-      }],
-    };
-    let projection = PlayfieldProjection::for_capture(800.0, 600.0, 4.0).expect("projection");
-    let projection_artifact = ProjectionArtifact {
-      source_window_bounds: crate::projection::ProjectionBounds {
-        x: 0.0,
-        y: 0.0,
-        width: 800.0,
-        height: 600.0,
-      },
-      capture_bounds: Some(crate::projection::ProjectionBounds {
-        x: 0.0,
-        y: 0.0,
-        width: 800.0,
-        height: 600.0,
-      }),
-      capture_width: Some(800),
-      capture_height: Some(600),
-      capture_scale_factor: Some(1.0),
-      scale_x: projection.scale_x,
-      scale_y: projection.scale_y,
-      offset_x: projection.offset_x,
-      offset_y: projection.offset_y,
-      match_radius_px: projection.match_radius_px,
-      derivation_method: ProjectionDerivationMethod::LayoutRule,
-      verification_reference: None,
-    };
-
-    write_json_file(&root.join(VISUAL_TRUTH_MANIFEST_FILE), &manifest).expect("manifest");
-    write_json_file(&root.join(PROJECTION_FILE), &projection_artifact).expect("projection");
-  }
-
-  #[test]
-  fn semantic_validation_ready_on_probe_fixture() {
-    let root = tempfile::tempdir().expect("tempdir");
-    write_probe_fixture(root.path());
-
-    let output = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-      run_artifact_dir: root.path().to_path_buf(),
-      output_dir: root.path().join("semantic-out"),
-    })
-    .expect("semantic validation should succeed");
-
-    assert_eq!(output.manifest.semantic_status, StageStatus::Ready);
-    assert_eq!(output.manifest.frame_count, 1);
-    assert!(output.manifest_path.exists());
-    assert!(output.inspect_report_path.exists());
-  }
-
-  #[test]
-  fn semantic_validation_blocked_when_projection_missing() {
-    let root = tempfile::tempdir().expect("tempdir");
-    write_probe_fixture(root.path());
-    fs::remove_file(root.path().join(PROJECTION_FILE)).expect("remove projection");
-
-    let output = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
-      run_artifact_dir: root.path().to_path_buf(),
-      output_dir: root.path().join("semantic-out"),
-    })
-    .expect("semantic validation should still write artifacts");
-
-    assert_eq!(output.manifest.semantic_status, StageStatus::Blocked);
-    assert_eq!(output.manifest.semantic_reason, Some(VisualTruthSemanticReason::MissingProjection));
-  }
-
-  #[test]
-  fn committed_fixture_path_is_available() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let fixture_root = repo_root.join("tests/fixtures/osu_visual_truth_probe");
-    assert!(fixture_root.join(VISUAL_TRUTH_MANIFEST_FILE).is_file());
-    assert!(fixture_root.join(PROJECTION_FILE).is_file());
-  }
 }

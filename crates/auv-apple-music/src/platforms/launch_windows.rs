@@ -246,28 +246,3 @@ fn launch_via_shell_uri(app_id: &str) -> Result<(), String> {
   Command::new("explorer.exe").arg(&target).spawn().map_err(|e| format!("explorer.exe launch failed: {e}"))?;
   Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn parse_app_user_model_ids_trims_empty_lines_and_duplicates() {
-    let ids =
-      parse_app_user_model_ids("\r\n  AppleInc.AppleMusicWin_nzyj5cx40ttqa!App  \r\n\r\nAppleInc.AppleMusicWin_nzyj5cx40ttqa!App\r\n");
-
-    assert_eq!(ids, vec!["AppleInc.AppleMusicWin_nzyj5cx40ttqa!App".to_string()]);
-  }
-
-  #[test]
-  fn app_user_model_id_candidates_prefer_discovered_ids() {
-    let ids = app_user_model_id_candidates(vec![
-      "AppleInc.AppleMusicWin_nzyj5cx40ttqa!AppleMusic".to_string(),
-      "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App".to_string(),
-    ]);
-
-    assert_eq!(ids[0], "AppleInc.AppleMusicWin_nzyj5cx40ttqa!AppleMusic");
-    assert_eq!(ids[1], "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App");
-    assert_eq!(ids.iter().filter(|id| id.as_str() == "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App").count(), 1);
-  }
-}

@@ -12,13 +12,6 @@
 //! use auv_scan::frame::ScanFrame;
 //! ```
 
-#[cfg(test)]
-mod fixture;
-#[cfg(test)]
-mod scene_fixture_support;
-
-#[cfg(test)]
-mod artifact;
 mod association;
 mod coverage;
 mod coverage_artifact;
@@ -39,8 +32,8 @@ pub use frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanFrameError
 pub use lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, TransitionEvidence, evaluate_lifecycle};
 pub use motion::{MotionError, MotionEstimate, MotionResult, MotionUnknown, estimate_viewport_motion};
 pub use producer::{
-  CoverageProducerError, FrameCaptureMeta, LoadedFrameFixture, ScanProducerError, bounds_to_scan_bounds, bounds_to_scan_bounds_f64,
-  build_coverage_fixture, build_scan_frame, frame_from_capture, load_frame_fixture,
+  CoverageProducerError, FrameCaptureMeta, LoadedFrameFixture, ScanProducerError, bounds_to_scan_bounds, build_coverage_fixture,
+  build_scan_frame, frame_from_capture, load_frame_fixture,
 };
 pub use reader::{ScanFrameBundle, summarize_scan_frame_text};
 pub use scene_state::{

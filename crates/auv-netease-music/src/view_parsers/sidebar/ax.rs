@@ -71,3 +71,6 @@ pub(crate) fn vertical_scrollbar_boundary_from_nodes(
     _ => None,
   }
 }
+#[cfg(all(test, target_os = "macos"))]
+#[path = "ax_test.rs"]
+mod tests;

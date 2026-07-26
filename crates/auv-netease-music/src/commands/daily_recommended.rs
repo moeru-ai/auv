@@ -756,7 +756,7 @@ pub(crate) fn best_text_match(
     .cloned()
 }
 
-pub(crate) fn daily_recommended_card_click_point(title_bounds: ViewBounds) -> auv_driver::Point {
+fn daily_recommended_card_click_point(title_bounds: ViewBounds) -> auv_driver::Point {
   // NOTICE(netease-daily-card-hit-target): live NetEase testing showed the
   // OCR title text and bottom title strip on the recommendation card may not
   // activate navigation reliably. Target the cover/body area derived from the
@@ -778,32 +778,5 @@ fn daily_recommended_window_click_options() -> auv_driver::ClickOptions {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn daily_recommended_card_click_point_targets_card_body_from_title_bounds() {
-    let bounds = ViewBounds::new(430.0, 102.0, 72.0, 20.0);
-
-    let point = daily_recommended_card_click_point(bounds);
-
-    assert_eq!(point, auv_driver::Point::new(485.0, 182.0));
-  }
-
-  #[test]
-  fn daily_recommended_card_click_point_handles_bottom_title_bounds() {
-    let bounds = ViewBounds::new(430.0, 278.0, 145.0, 36.0);
-
-    let point = daily_recommended_card_click_point(bounds);
-
-    assert_eq!(point, auv_driver::Point::new(500.0, 183.0));
-  }
-
-  #[test]
-  fn daily_recommended_uses_background_preferred_window_click_by_default() {
-    let options = daily_recommended_window_click_options();
-
-    assert_eq!(options.policy, auv_driver::InputPolicy::BackgroundPreferred);
-    assert_eq!(options.window_strategy, auv_driver::WindowClickStrategy::ChromiumCompatible);
-  }
-}
+#[path = "daily_recommended_test.rs"]
+mod tests;

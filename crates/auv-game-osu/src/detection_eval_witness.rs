@@ -8,7 +8,7 @@ use auv_file::{
 };
 use auv_stage_status::StageStatus;
 #[cfg(feature = "tracing")]
-use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
+use auv_tracing::{ArtifactMetadata, Context};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -148,15 +148,6 @@ pub async fn publish_osu_detection_eval_witness(
   witness: &DetectionEvalWitnessManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::run_read::OsuArtifactPublishError> {
   crate::run_read::publish_json_artifact(context, OSU_DETECTION_EVAL_WITNESS_PURPOSE, witness, validate_witness_payload).await
-}
-
-#[cfg(feature = "tracing")]
-pub async fn read_osu_detection_eval_witness(
-  store: &dyn RunStore,
-  snapshot: &RunSnapshot,
-  uri: &ArtifactUri,
-) -> Result<DetectionEvalWitnessManifest, crate::run_read::OsuArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, OSU_DETECTION_EVAL_WITNESS_PURPOSE, validate_witness_payload).await
 }
 
 pub(crate) fn validate_witness_payload(witness: &DetectionEvalWitnessManifest) -> Result<(), String> {
@@ -602,150 +593,5 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::visual_eval::{FrameEvaluation, FrameKey, FrameLabelOutcome, FrameSpatialOutcome};
-  use crate::{CapturePhase, ObjectKind};
-  use std::path::PathBuf;
-
-  fn fixture_eval_dir() -> (tempfile::TempDir, PathBuf) {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_run_artifacts");
-    let detections_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_detection");
-    let eval_output = temp.path().join("eval");
-    crate::evaluate_detection_fixture(&crate::DetectionEvalInputs {
-      run_artifact_dir: manifest_dir,
-      detections_path,
-      output_dir: eval_output.clone(),
-    })
-    .expect("eval");
-    (temp, eval_output)
-  }
-
-  #[test]
-  fn witness_from_fixture_eval_records_frame_outcomes_and_lineage() {
-    let (temp, eval_output) = fixture_eval_dir();
-    let witness_output = temp.path().join("witness");
-    let output = build_detection_eval_witness(&DetectionEvalWitnessInputs {
-      detection_eval_output_dir: eval_output.clone(),
-      output_dir: witness_output,
-    })
-    .expect("witness");
-
-    assert_eq!(output.manifest.status, StageStatus::Ready, "warnings: {:?}", output.inspect_report.warnings);
-    assert_eq!(output.manifest.total_frames, 3);
-    assert_eq!(output.manifest.label_matched_frames, 1);
-    assert_eq!(output.manifest.spatial_matched_frames, 1);
-    assert_eq!(output.manifest.frame_witnesses.len(), 3);
-    assert!(output.manifest.source_visual_eval_report_path.contains("visual_eval_report.json"));
-    assert_eq!(output.manifest.detector_model_id.as_deref(), Some("direct_detection_result"));
-    assert!(output.manifest_path.exists());
-    assert!(output.inspect_report_path.exists());
-  }
-
-  #[test]
-  fn witness_blocked_when_visual_eval_report_missing() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let output = build_detection_eval_witness(&DetectionEvalWitnessInputs {
-      detection_eval_output_dir: temp.path().to_path_buf(),
-      output_dir: temp.path().join("witness"),
-    })
-    .expect("witness");
-
-    assert_eq!(output.manifest.status, StageStatus::Blocked);
-    assert_eq!(output.manifest.reason, Some(DetectionEvalWitnessReason::MissingVisualEvalReport));
-    assert_eq!(output.manifest.frame_witnesses.len(), 0);
-  }
-
-  #[test]
-  fn witness_maps_label_and_spatial_outcomes_from_report_frames() {
-    use crate::visual_eval::{EvalProjection, VisualEvalReport};
-
-    let report = VisualEvalReport {
-      total_frames: 1,
-      label_matched_frames: 1,
-      label_missing_frames: 0,
-      label_unmapped_frames: 0,
-      spatial_matched_frames: 0,
-      spatial_missing_frames: 0,
-      spatial_unscored_frames: 1,
-      spurious_detection_count: 0,
-      projection: EvalProjection::Unavailable {
-        reason: "test".to_string(),
-      },
-      frames: vec![FrameEvaluation {
-        frame: FrameKey::from_parts(0, CapturePhase::AfterDispatch, "frame.png"),
-        object_kind: ObjectKind::Circle,
-        expected_label: Some("hit_circle".to_string()),
-        label_outcome: FrameLabelOutcome::Matched,
-        spatial_outcome: FrameSpatialOutcome::NotScored,
-        spurious_detection_count: 0,
-      }],
-      known_limits: vec![],
-      detector_provenance: None,
-    };
-    let witnesses = frame_witnesses_from_report(&report);
-    assert_eq!(witnesses.len(), 1);
-    assert_eq!(witnesses[0].label_outcome, "matched");
-    assert_eq!(witnesses[0].spatial_outcome, "not_scored");
-  }
-
-  fn valid_projection_json() -> serde_json::Value {
-    serde_json::json!({
-      "kind": "playfield_to_pixels",
-      "scale_x": 1.0,
-      "scale_y": 1.0,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "match_radius_px": 20.0
-    })
-  }
-
-  #[test]
-  fn split_projection_decoder_rejects_inconsistent_tagged_union_fields() {
-    let path = Path::new("visual-eval.json");
-    let cases = [
-      serde_json::json!({"kind": "unavailable", "reason": "missing", "scale_x": 1.0}),
-      {
-        let mut value = valid_projection_json();
-        value["reason"] = serde_json::json!("not unavailable");
-        value
-      },
-      {
-        let mut value = valid_projection_json();
-        value["extra"] = serde_json::json!(true);
-        value
-      },
-    ];
-
-    for value in cases {
-      assert!(decode_eval_projection(&value, path).is_err(), "accepted inconsistent projection {value}");
-    }
-  }
-
-  #[test]
-  fn split_projection_decoder_rejects_invalid_positive_fields() {
-    let path = Path::new("visual-eval.json");
-    for (field, value) in [
-      ("scale_x", 0.0),
-      ("scale_y", -1.0),
-      ("match_radius_px", 0.0),
-      ("match_radius_px", -1.0),
-      ("scale_x", 1.0e-100),
-      ("match_radius_px", 1.0e-100),
-    ] {
-      let mut projection = valid_projection_json();
-      projection[field] = serde_json::json!(value);
-      assert!(decode_eval_projection(&projection, path).is_err(), "accepted {field}={value}");
-    }
-  }
-
-  #[test]
-  fn split_projection_decoder_rejects_number_outside_f64_range() {
-    let value: serde_json::Value =
-      serde_json::from_str(r#"{"kind":"playfield_to_pixels","scale_x":1e400,"scale_y":1,"offset_x":0,"offset_y":0,"match_radius_px":20}"#)
-        .expect("arbitrary-precision JSON number");
-
-    assert!(decode_eval_projection(&value, Path::new("visual-eval.json")).is_err());
-  }
-}
+#[path = "detection_eval_witness_test.rs"]
+mod tests;

@@ -1,14 +1,9 @@
 use thiserror::Error;
 
-#[cfg(test)]
-use crate::artifact::ScanArtifactError;
 use crate::frame::ScanFrameError;
 
 #[derive(Debug, Error)]
 pub enum ScanProducerError {
-  #[cfg(test)]
-  #[error(transparent)]
-  Artifact(#[from] ScanArtifactError),
   #[error(transparent)]
   Frame(#[from] ScanFrameError),
   #[error("fixture image missing: {path}")]

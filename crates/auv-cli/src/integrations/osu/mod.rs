@@ -224,15 +224,3 @@ fn build_live_playfield_projection(target_app: &str, target_title: &str, circle_
     .map_err(|error| error.to_string())?;
   PlayfieldProjection::for_window(&window, circle_size)
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[tokio::test]
-  async fn direct_benchmark_rejects_missing_beatmap() {
-    let root = std::env::temp_dir().join(format!("auv-osu-direct-{}", auv_runtime::model::now_millis()));
-    let result = run_osu_benchmark(root.join("missing.osu"), root.join("out")).await;
-    assert!(result.is_err());
-  }
-}

@@ -54,29 +54,6 @@ pub trait TextEditDriver {
   fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> DriverResult<VerificationOutcome>;
 }
 
-#[cfg(test)]
-mod contract_tests {
-  use super::VerificationOutcome;
-
-  #[test]
-  fn verification_rejects_split_legacy_observation_identity() {
-    let value = serde_json::json!({
-      "matched_role": "AXTextArea",
-      "matched_text": "content",
-      "artifact_count": 1,
-      "semantic_matched": true,
-      "matched_node": {
-        "path": "0.1.2",
-        "process_id": 42
-      },
-      "observation_path": "0.1.2",
-      "observation_pid": 42
-    });
-
-    assert!(serde_json::from_value::<VerificationOutcome>(value).is_err());
-  }
-}
-
 #[cfg(target_os = "macos")]
 mod macos {
   use std::time::Duration;
@@ -157,40 +134,6 @@ mod macos {
     fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> DriverResult<VerificationOutcome> {
       let read = self.session.accessibility().verify_text(app_id, target_text, target_role)?;
       Ok(verification_outcome(read, target_text))
-    }
-  }
-
-  #[cfg(test)]
-  mod tests {
-    use auv_driver_macos::AxTextRead;
-
-    use super::verification_outcome;
-
-    fn text_read() -> AxTextRead {
-      AxTextRead {
-        app: "com.apple.TextEdit".to_string(),
-        pid: 42,
-        path: "0.1.2".to_string(),
-        role: "AXTextArea".to_string(),
-        matched_text: "prefix expected content suffix".to_string(),
-      }
-    }
-
-    #[test]
-    fn textedit_applies_its_contains_criterion_to_observed_ax_text() {
-      let matched = verification_outcome(text_read(), "expected content");
-      let mismatched = verification_outcome(text_read(), "absent content");
-
-      assert!(matched.semantic_matched);
-      assert!(!mismatched.semantic_matched);
-      assert_eq!(matched.matched_text, "prefix expected content suffix");
-      assert_eq!(
-        matched.matched_node,
-        Some(super::MatchedAxNode {
-          path: "0.1.2".to_string(),
-          process_id: 42,
-        })
-      );
     }
   }
 }

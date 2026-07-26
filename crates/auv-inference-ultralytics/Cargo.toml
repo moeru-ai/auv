@@ -1,5 +1,6 @@
 [package]
 name = "auv-inference-ultralytics"
+autoexamples = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +12,10 @@ description.workspace = true
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
+
+[[example]]
+name = "detect"
+path = "examples/detect.rs"
 
 [features]
 # NOTICE: Initial adapter exposes the currently planned desktop/provider

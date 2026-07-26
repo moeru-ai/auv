@@ -15,30 +15,26 @@ repository.workspace = true
 [features]
 default = []
 tracing = [
-  "dep:auv-inspect-model",
   "dep:auv-tracing",
-  "dep:futures-util",
-  "dep:sha2",
   "dep:thiserror",
 ]
 
 [dependencies]
-auv-inspect-model = { path = "../auv-inspect-model", optional = true }
 auv-compare = { path = "../auv-compare" }
 auv-file = { path = "../auv-file" }
 auv-query-readiness = { path = "../auv-query-readiness" }
 auv-stage-status = { path = "../auv-stage-status" }
 auv-driver = { path = "../auv-driver" }
 auv-tracing = { path = "../auv-tracing", optional = true }
-futures-util = { workspace = true, features = ["io"], optional = true }
 image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-sha2 = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
-tempfile = "3"
+
+[[test]]
+name = "integrated"

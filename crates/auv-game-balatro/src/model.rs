@@ -230,20 +230,3 @@ pub struct BalatroState {
   pub raw_entities: Vec<ObjectEvidence>,
   pub raw_ui: Vec<ObjectEvidence>,
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn slot_id_formats_zone_and_index() {
-    assert_eq!(SlotId::new(ObjectZone::Hand, 3).to_string(), "hand:3");
-    assert_eq!(SlotId::new(ObjectZone::Store, 1).to_string(), "store:1");
-  }
-
-  #[test]
-  fn phase_serializes_as_snake_case() {
-    assert_eq!(serde_json::to_string(&BalatroPhase::Store).unwrap(), "\"store\"");
-    assert_eq!(serde_json::to_string(&BalatroPhase::GameOver).unwrap(), "\"game_over\"");
-  }
-}

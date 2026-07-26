@@ -156,34 +156,9 @@ impl<'de> Deserialize<'de> for SourceArtifactUri {
   }
 }
 
-#[cfg(feature = "tracing")]
-impl From<auv_tracing::AuthorityId> for SourceAuthorityId {
-  fn from(value: auv_tracing::AuthorityId) -> Self {
-    Self(value.to_string())
-  }
-}
-
-#[cfg(feature = "tracing")]
-impl From<auv_tracing::RunId> for SourceRunId {
-  fn from(value: auv_tracing::RunId) -> Self {
-    Self(value.to_string())
-  }
-}
-
-#[cfg(feature = "tracing")]
-impl From<auv_tracing::RunRevision> for SourceRunRevision {
-  fn from(value: auv_tracing::RunRevision) -> Self {
-    Self(value.get())
-  }
-}
-
-#[cfg(feature = "tracing")]
-impl From<auv_tracing::ArtifactUri> for SourceArtifactUri {
-  fn from(value: auv_tracing::ArtifactUri) -> Self {
-    Self(value.to_string())
-  }
-}
-
+// TODO(auv-inspector): conversions from read-side authority/revision records
+// remain omitted with the retired RunStore model. Reintroduce them only with
+// an owner-approved typed source-run discovery contract.
 fn validate_source_identifier(kind: &str, value: String) -> DatasetResult<String> {
   if value.is_empty() {
     return Err(format!("Minecraft source {kind} must not be empty"));
@@ -422,93 +397,4 @@ fn write_manifest(path: &Path, manifest: &SpatialBundleManifest) -> DatasetResul
     })
     .map_err(|error| format!("failed to serialize minecraft spatial bundle manifest: {error}"))?;
   fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write minecraft spatial bundle manifest {}: {error}", path.display()))
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  fn source_run_reference() -> SourceRunReference {
-    SourceRunReference {
-      authority_id: SourceAuthorityId::new("authority_1").expect("source authority"),
-      run_id: SourceRunId::new("run_1").expect("source run"),
-      through_revision: SourceRunRevision::new(7).expect("source revision"),
-    }
-  }
-
-  fn source_artifact_uri(index: u128) -> SourceArtifactUri {
-    SourceArtifactUri::new(format!("auv://runs/00000000-0000-0000-0000-000000000001/artifacts/00000000-0000-0000-0000-{index:012}"))
-      .expect("source artifact URI")
-  }
-
-  #[test]
-  fn maps_known_roles_to_bundle_directories() {
-    assert_eq!(directory_for_role("minecraft-screenshot"), Some(SpatialBundleDirectory::Screenshots));
-    assert_eq!(directory_for_role(SPATIAL_FRAME_BUNDLE_ROLE), Some(SpatialBundleDirectory::SpatialFrames));
-    assert_eq!(directory_for_role(PROJECTION_BUNDLE_ROLE), Some(SpatialBundleDirectory::SpatialFrames));
-    assert_eq!(directory_for_role("operation-result"), Some(SpatialBundleDirectory::Verification));
-    assert_eq!(directory_for_role("minecraft-overlay"), Some(SpatialBundleDirectory::Overlays));
-    assert_eq!(directory_for_role("telemetry-sample"), None);
-  }
-
-  #[test]
-  fn exports_bundle_manifest_and_copied_artifacts() {
-    let temp = tempfile::tempdir().expect("temp dir");
-    let source_root = temp.path().join("source");
-    let output_dir = temp.path().join("bundle");
-    fs::create_dir_all(&source_root).expect("source dir");
-    let screenshot = source_root.join("frame.png");
-    let frame = source_root.join("frame.json");
-    let operation = source_root.join("operation-result.json");
-    fs::write(&screenshot, b"png").expect("screenshot");
-    fs::write(&frame, b"{}").expect("frame");
-    fs::write(&operation, b"{}").expect("operation");
-
-    let output = export_spatial_bundle(SpatialBundleInputs {
-      output_dir: output_dir.clone(),
-      source_run: source_run_reference(),
-      exported_at_millis: 123,
-      artifacts: vec![
-        SpatialBundleSourceArtifact {
-          source_artifact_uri: source_artifact_uri(1),
-          bundle_artifact_id: BundleArtifactId::new("bundle-000001").expect("bundle artifact id"),
-          role: "minecraft-screenshot".to_string(),
-          source_file: screenshot,
-          screenshot_bundle_artifact_id: None,
-        },
-        SpatialBundleSourceArtifact {
-          source_artifact_uri: source_artifact_uri(2),
-          bundle_artifact_id: BundleArtifactId::new("bundle-000002").expect("bundle artifact id"),
-          role: SPATIAL_FRAME_BUNDLE_ROLE.to_string(),
-          source_file: frame,
-          screenshot_bundle_artifact_id: None,
-        },
-        SpatialBundleSourceArtifact {
-          source_artifact_uri: source_artifact_uri(3),
-          bundle_artifact_id: BundleArtifactId::new("bundle-000003").expect("bundle artifact id"),
-          role: "operation-result".to_string(),
-          source_file: operation,
-          screenshot_bundle_artifact_id: None,
-        },
-        SpatialBundleSourceArtifact {
-          source_artifact_uri: source_artifact_uri(4),
-          bundle_artifact_id: BundleArtifactId::new("bundle-000004").expect("bundle artifact id"),
-          role: "telemetry-sample".to_string(),
-          source_file: source_root.join("telemetry.jsonl"),
-          screenshot_bundle_artifact_id: None,
-        },
-      ],
-    })
-    .expect("bundle should export");
-
-    assert_eq!(output.manifest.schema_version, 1);
-    assert_eq!(output.manifest.counts.screenshots, 1);
-    assert_eq!(output.manifest.counts.spatial_frames, 1);
-    assert_eq!(output.manifest.counts.verification, 1);
-    assert_eq!(output.manifest.counts.skipped, 1);
-    assert!(output_dir.join("run.json").is_file());
-    assert_eq!(fs::read_dir(output_dir.join("screenshots")).expect("screenshots").count(), 1);
-    assert_eq!(fs::read_dir(output_dir.join("spatial_frames")).expect("frames").count(), 1);
-    assert_eq!(fs::read_dir(output_dir.join("verification")).expect("verification").count(), 1);
-  }
 }

@@ -4,7 +4,9 @@ use auv_driver::{InputActionResult, WindowPoint};
 use auv_task_object_detection::BoundingBox;
 use serde::{Deserialize, Serialize};
 
-use crate::hand_selection::{HandSelectionResult, HandSelectionState};
+use crate::hand_selection::HandSelectionResult;
+#[cfg(feature = "tracing")]
+use crate::hand_selection::HandSelectionState;
 use crate::model::{ButtonTarget, SlotId};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -238,122 +240,5 @@ pub(crate) fn evaluate_pack_choose_confirmation(
       before_choice_count,
       after_choice_count: Some(after.choice_count),
     },
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use auv_driver::InputDeliveryPath;
-
-  use super::*;
-
-  #[test]
-  fn unchanged_open_pack_is_not_confirmed() {
-    assert_eq!(
-      evaluate_pack_choose_confirmation(
-        3,
-        Ok(ObservedPackState {
-          choice_count: 3,
-          skip_control_present: true,
-        }),
-      ),
-      PackChooseConfirmation::NotConfirmed {
-        reason: PackChooseConfirmationFailure::NoPackStateChange,
-        before_choice_count: 3,
-        after_choice_count: Some(3),
-      }
-    );
-  }
-
-  #[test]
-  fn stopped_result_retains_choice_delivery_without_generic_verification() {
-    let result = PackChooseResult {
-      target: "Balatro".to_string(),
-      choice: PackChoice {
-        id: PackChoiceId::new(1),
-        detector_label: "tarot_card".to_string(),
-        bbox: BoundingBox {
-          x1: 1.0,
-          y1: 2.0,
-          x2: 3.0,
-          y2: 4.0,
-        },
-        confidence: 0.95,
-      },
-      choice_was_already_selected: false,
-      actions: vec![PackChooseAction::SelectChoice {
-        window_point: WindowPoint::new(12.0, 34.0),
-        delivery: InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse),
-      }],
-      state: PackChooseState::Stopped {
-        reason: PackChooseStop::SelectedStateReadFailed {
-          message: "capture failed".to_string(),
-        },
-      },
-    };
-
-    let value = serde_json::to_value(result).expect("serialize pack-choose result");
-
-    assert!(value["actions"][0]["select_choice"].get("delivery").is_some());
-    assert!(value.get("verification").is_none());
-    assert!(value.get("before_image").is_none());
-    assert!(value.get("selected_image").is_none());
-  }
-}
-
-#[cfg(all(test, feature = "tracing"))]
-mod tracing_tests {
-  use std::sync::Arc;
-
-  use auv_driver::InputDeliveryPath;
-  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
-
-  use super::*;
-
-  #[test]
-  fn completed_event_projects_action_facts_without_copying_delivery() {
-    futures_executor::block_on(async {
-      let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-      let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
-      let run_id = RunId::new();
-      let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
-      let result = PackChooseResult {
-        target: "Balatro".to_string(),
-        choice: PackChoice {
-          id: PackChoiceId::new(1),
-          detector_label: "tarot_card".to_string(),
-          bbox: BoundingBox {
-            x1: 1.0,
-            y1: 2.0,
-            x2: 3.0,
-            y2: 4.0,
-          },
-          confidence: 0.95,
-        },
-        choice_was_already_selected: false,
-        actions: vec![PackChooseAction::SelectChoice {
-          window_point: WindowPoint::new(12.0, 34.0),
-          delivery: InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse),
-        }],
-        state: PackChooseState::Stopped {
-          reason: PackChooseStop::SelectedStateReadFailed {
-            message: "capture failed".to_string(),
-          },
-        },
-      };
-
-      root.in_scope(|| emit_pack_choose_completed(&result));
-      dispatch.flush().await.expect("flush completed event");
-      let snapshot = store.load_snapshot(run_id).await.expect("load snapshot").expect("pack-choose run");
-      let event = snapshot
-        .events()
-        .iter()
-        .find(|event| event.schema().name().as_str() == "auv.balatro.pack_choose.completed")
-        .expect("pack-choose completed event");
-
-      assert!(event.payload().get().contains("\"select_choice\""));
-      assert!(!event.payload().get().contains("\"delivery\""));
-      assert!(!event.payload().get().contains("verification"));
-    });
   }
 }

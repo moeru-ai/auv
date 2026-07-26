@@ -98,3 +98,6 @@ pub(crate) fn classify_sidebar_text(label: &str, x: f64) -> SidebarCandidateKind
     SidebarCandidateKind::Unknown
   }
 }
+#[cfg(test)]
+#[path = "parse_test.rs"]
+mod tests;

@@ -40,16 +40,5 @@ fn permission_status_label(status: NativePermissionStatus) -> &'static str {
 }
 
 #[cfg(all(test, target_os = "macos"))]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn permission_status_label_maps_granted() {
-    assert_eq!(permission_status_label(NativePermissionStatus::Granted), "granted");
-  }
-
-  #[test]
-  fn permission_status_label_maps_missing() {
-    assert_eq!(permission_status_label(NativePermissionStatus::Missing), "missing");
-  }
-}
+#[path = "permission_test.rs"]
+mod tests;

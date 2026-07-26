@@ -185,34 +185,3 @@ pub use commands::mouse::{
 };
 pub use commands::system_details::{CopySystemDetailsInputs, CopySystemDetailsResult, run_copy_system_details};
 pub use commands::{OpenInputs, OpenResult, run_open};
-
-#[cfg(all(test, feature = "tracing"))]
-mod tracing_tests {
-  use std::sync::Arc;
-
-  use auv_tracing::{AuthorityId, Context, MemoryRunStore, RunId, RunStore, configure, dispatcher};
-
-  use super::*;
-
-  #[test]
-  fn command_uses_the_caller_context_without_owning_a_run() {
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
-    let run_id = RunId::new();
-    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
-    let inputs = PointerSpeedSetInputs {
-      position: f64::NAN,
-      settle_ms: 0,
-    };
-
-    let result = root.in_scope(|| run_pointer_speed_set(&inputs));
-
-    assert!(result.is_err());
-    futures_executor::block_on(dispatch.flush()).expect("flush");
-    let snapshot = futures_executor::block_on(store.load_snapshot(run_id)).expect("snapshot read").expect("run snapshot");
-    let span = snapshot.spans().values().next().expect("command span");
-    assert_eq!(span.started().name().as_str(), "auv.gnome_control_center.mouse.pointer_speed.set");
-    assert!(span.started().attributes().is_empty());
-    assert!(span.ended().is_some());
-  }
-}

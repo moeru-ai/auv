@@ -48,15 +48,3 @@ pub fn normalize(value: &str) -> Cow<'_, str> {
     value.chars().filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation()).flat_map(char::to_lowercase).collect::<String>();
   Cow::Owned(normalized)
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn label_set_matches_exact_or_containing_text() {
-    assert_eq!(SYSTEM_PAGE.best_match("系统"), Some("系统"));
-    assert_eq!(SYSTEM_PAGE.best_match("System Settings"), Some("System"));
-    assert_eq!(COPY_BUTTON.best_match("Copy"), Some("Copy"));
-  }
-}

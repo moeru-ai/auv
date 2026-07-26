@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use auv_file::{JsonFileWriteError, JsonWriteOptions, write_json_file as write_json_file_helper};
 use auv_stage_status::StageStatus;
 #[cfg(feature = "tracing")]
-use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
+use auv_tracing::{ArtifactMetadata, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::card_detection_producer::{LoadedDetectionBundle, load_detection_bundle, resolve_bundle_manifest_path, total_detection_count};
@@ -95,15 +95,6 @@ pub async fn publish_card_detection_semantic(
   semantic: &CardDetectionSemanticManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::BalatroArtifactPublishError> {
   crate::run_read::publish_json_artifact(context, CARD_DETECTION_SEMANTIC_PURPOSE, semantic).await
-}
-
-#[cfg(feature = "tracing")]
-pub async fn read_card_detection_semantic(
-  store: &dyn RunStore,
-  snapshot: &RunSnapshot,
-  uri: &ArtifactUri,
-) -> Result<CardDetectionSemanticManifest, crate::BalatroArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, CARD_DETECTION_SEMANTIC_PURPOSE).await
 }
 
 pub fn validate_card_detection_semantic(
@@ -246,75 +237,4 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 
 fn now_millis() -> u64 {
   u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use std::path::PathBuf;
-
-  fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/balatro_consumption_probe")
-  }
-
-  #[test]
-  fn stage_status_preserves_wire_labels() {
-    for (status, wire) in [
-      (StageStatus::Ready, "\"ready\""),
-      (StageStatus::Blocked, "\"blocked\""),
-      (StageStatus::Failed, "\"failed\""),
-    ] {
-      assert_eq!(serde_json::to_string(&status).unwrap(), wire);
-    }
-  }
-
-  #[test]
-  fn positive_fixture_yields_ready() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let output = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
-      bundle_input: fixture_root(),
-      output_dir: temp.path().join("semantic"),
-    })
-    .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, StageStatus::Ready);
-    assert!(output.manifest_path.exists());
-  }
-
-  #[test]
-  fn missing_bundle_yields_blocked() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let output = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
-      bundle_input: temp.path().join("missing"),
-      output_dir: temp.path().join("semantic"),
-    })
-    .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, StageStatus::Blocked);
-    assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::MissingDetectionBundle));
-  }
-
-  #[test]
-  fn empty_detections_yields_blocked() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let bundle = fixture_root().join("broken/empty_detections");
-    let output = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
-      bundle_input: bundle,
-      output_dir: temp.path().join("semantic"),
-    })
-    .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, StageStatus::Blocked);
-    assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::EmptyDetections));
-  }
-
-  #[test]
-  fn bad_schema_yields_failed() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let bundle = fixture_root().join("broken/bad_schema");
-    let output = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
-      bundle_input: bundle,
-      output_dir: temp.path().join("semantic"),
-    })
-    .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, StageStatus::Failed);
-    assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::BundleParseFailed));
-  }
 }

@@ -1,10 +1,8 @@
 #[cfg(feature = "tracing")]
-pub mod inspect;
-#[cfg(feature = "tracing")]
 mod run_read;
 
 #[cfg(feature = "tracing")]
-pub use run_read::{BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, BalatroArtifactPublishError, BalatroArtifactReadError};
+pub use run_read::{BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, BalatroArtifactPublishError};
 
 mod blind_action;
 pub mod cache;
@@ -103,6 +101,3 @@ pub use card_detection_spatial_query::{
   CardDetectionSpatialQueryManifest, CardDetectionSpatialQueryOutput, CardDetectionSpatialQueryReason, CardDetectionSpatialQueryStatus,
   query_card_detection_spatial,
 };
-
-#[cfg(feature = "tracing")]
-pub use inspect::inspect_sections;

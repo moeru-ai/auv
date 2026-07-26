@@ -1,7 +1,7 @@
 //! Direct Minecraft projection workflows used by CLI and library frontends.
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use auv_game_minecraft::evidence::{ProjectionEvidence, ScreenshotCapture, build_projection_evidence};
@@ -14,15 +14,10 @@ use auv_tracing::{
   ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, ContentType, Context, EventPayload, NewArtifact, Sha256Digest,
 };
 use futures_util::io::Cursor as AsyncCursor;
-use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, ImageReader, RgbImage, codecs::png::PngEncoder};
+use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, ImageReader, Limits, RgbImage, codecs::png::PngEncoder};
 use sha2::{Digest, Sha256};
 
 use super::query_live_action::DirectWindowPointClickExecutor;
-use super::{
-  BoundedBytes, MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT, minecraft_decoded_image_buffer_length, minecraft_image_decode_limits,
-  validate_minecraft_image_buffer,
-};
-
 pub const MINECRAFT_SCREENSHOT_PURPOSE: &str = "auv.minecraft.screenshot";
 pub const MINECRAFT_SPATIAL_FRAME_PURPOSE: &str = "auv.minecraft.spatial_frame";
 pub const MINECRAFT_OVERLAY_PURPOSE: &str = "auv.minecraft.projection_overlay";
@@ -31,6 +26,9 @@ pub const MINECRAFT_OVERLAY_PURPOSE: &str = "auv.minecraft.projection_overlay";
 pub const MINECRAFT_PROJECTION_CALIBRATION_PURPOSE: &str = "auv.minecraft.projection_calibration";
 
 const LIVE_CLICK_POST_FRAME_WAIT: TailFrameWaitConfig = TailFrameWaitConfig::new(750, 25);
+const MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT: u64 = 32 * 1024 * 1024;
+const MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT: u64 = 256 * 1024 * 1024;
+const MINECRAFT_IMAGE_DIMENSION_LIMIT: u32 = 16_384;
 
 #[derive(Clone, Debug)]
 /// Typed inputs for binding telemetry to a supplied or freshly captured image.
@@ -426,218 +424,67 @@ async fn publish_bytes(context: &Context, purpose: &'static str, content_type: &
   super::keep_artifact_receipt(purpose, context.in_scope(|| auv_tracing::emit_artifact!(artifact)).await)
 }
 
-#[cfg(test)]
-mod tests {
-  use std::sync::Arc;
-  use std::sync::atomic::{AtomicBool, Ordering};
+fn minecraft_image_decode_limits() -> Limits {
+  let mut limits = Limits::default();
+  limits.max_image_width = Some(MINECRAFT_IMAGE_DIMENSION_LIMIT);
+  limits.max_image_height = Some(MINECRAFT_IMAGE_DIMENSION_LIMIT);
+  limits.max_alloc = Some(MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT);
+  limits
+}
 
-  use auv_tracing::{
-    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, ErrorCode,
-    IdempotencyKey, MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot,
-    RunStore, RunSubscription, StoreArtifactRequest, configure, dispatcher,
-  };
-  use image::{Rgb, RgbImage};
-  use serde::Serialize;
-
-  use super::*;
-
-  #[tokio::test]
-  async fn artifact_authority_does_not_change_direct_projection_evidence() {
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store.clone()).build().expect("memory dispatch");
-    let run_id = RunId::new();
-    let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
-    let target = MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0));
-    let future =
-      root.in_scope(|| project_capture(projection_test_frame(), RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])), &target, Some(0), true));
-
-    let projected = root.instrument(future).await.expect("projection");
-
-    assert_eq!(projected.bound_frame.screenshot_artifact_ref, None);
-    assert_eq!(projected.evidence.artifact().screenshot_artifact_ref, None);
-    let snapshot = store.load_snapshot(run_id).await.expect("load run").expect("recorded run");
-    assert!(snapshot.artifacts().len() >= 3, "recording should remain available independently from the direct evidence");
+fn validate_minecraft_image_buffer(width: u32, height: u32, byte_length: usize, label: &str) -> AuvResult<()> {
+  if width > MINECRAFT_IMAGE_DIMENSION_LIMIT || height > MINECRAFT_IMAGE_DIMENSION_LIMIT {
+    return Err(format!("{label} dimensions {width}x{height} exceed the {MINECRAFT_IMAGE_DIMENSION_LIMIT}-pixel per-axis limit"));
   }
-
-  // ROOT CAUSE:
-  //
-  // An authority-backed artifact write failed after projection had already
-  // produced its direct domain value.
-  //
-  // Before the fix, the recording failure replaced that direct result. The
-  // projection now survives with every unavailable artifact reference absent.
-  #[tokio::test]
-  async fn project_capture_preserves_direct_projection_when_store_rejects_recording() {
-    let store = Arc::new(RejectArtifactStore::new());
-    let dispatch = configure().run_store(store).build().expect("rejecting dispatch");
-    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
-    let target = MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0));
-    let future =
-      root.in_scope(|| project_capture(projection_test_frame(), RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])), &target, Some(0), true));
-
-    let projected = root.instrument(future).await.expect("projection result must survive recording failure");
-
-    assert_eq!(projected.bound_frame.screenshot_artifact_ref, None);
-    assert_eq!(projected.evidence.artifact().screenshot_artifact_ref, None);
-    assert!(projected.recorded_spatial_frame.is_none());
+  let byte_length = u64::try_from(byte_length).map_err(|_| format!("{label} byte length does not fit u64"))?;
+  if byte_length > MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT {
+    return Err(format!("{label} buffer is {byte_length} bytes, exceeding the {MINECRAFT_IMAGE_DECODE_ALLOCATION_LIMIT}-byte limit"));
   }
+  Ok(())
+}
 
-  // ROOT CAUSE:
-  //
-  // If artifact recording was disabled, projection invented an unrecorded URI
-  // even though no artifact existed.
-  //
-  // Before the fix, optional telemetry looked like durable evidence. The fix
-  // keeps the reference absent whenever no publication authority exists.
-  #[tokio::test]
-  async fn project_capture_without_artifact_authority_leaves_screenshot_reference_absent() {
-    let projected = project_capture(
-      projection_test_frame(),
-      RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])),
-      &MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0)),
-      Some(0),
-      true,
-    )
-    .await
-    .expect("disabled recording must not change direct projection behavior");
+fn minecraft_decoded_image_buffer_length(width: u32, height: u32) -> AuvResult<usize> {
+  let byte_length = u64::from(width)
+    .checked_mul(u64::from(height))
+    .and_then(|pixels| pixels.checked_mul(8))
+    .ok_or_else(|| format!("decoded dimensions {width}x{height} overflow the image byte-length calculation"))?;
+  usize::try_from(byte_length).map_err(|_| format!("decoded dimensions {width}x{height} do not fit this process"))
+}
 
-    assert_eq!(projected.bound_frame.screenshot_artifact_ref, None);
-    assert_eq!(projected.evidence.artifact().screenshot_artifact_ref, None);
-    assert!(projected.recorded_spatial_frame.is_none());
-  }
+struct BoundedBytes {
+  label: String,
+  byte_limit: u64,
+  bytes: Vec<u8>,
+}
 
-  #[tokio::test]
-  async fn disabled_json_publication_does_not_serialize_the_direct_value() {
-    let serialized = AtomicBool::new(false);
-
-    drop(publish_json_artifact("auv.minecraft.test_probe", &SerializationProbe(&serialized)).await);
-
-    assert!(!serialized.load(Ordering::SeqCst), "disabled publication must not inspect or serialize direct output");
-  }
-
-  #[tokio::test]
-  async fn enabled_json_publication_drops_oversized_recording_without_failing_the_caller() {
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store).build().expect("memory dispatch");
-    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
-    let oversized =
-      "x".repeat(usize::try_from(auv_game_minecraft::MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT + 1).expect("test limit fits usize"));
-    let future = root.in_scope(|| publish_json_artifact("auv.minecraft.test_oversized", &oversized));
-
-    assert!(root.instrument(future).await.expect("recording preparation failure is not a domain failure").is_none());
-  }
-
-  #[tokio::test]
-  async fn enabled_json_publication_drops_serialization_failure_without_failing_the_caller() {
-    let store = Arc::new(MemoryRunStore::new(AuthorityId::new()));
-    let dispatch = configure().run_store(store).build().expect("memory dispatch");
-    let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
-    let future = root.in_scope(|| publish_json_artifact("auv.minecraft.test_serialization_failure", &FailingSerializationProbe));
-
-    assert!(root.instrument(future).await.expect("recording serialization failure is not a domain failure").is_none());
-  }
-
-  struct SerializationProbe<'a>(&'a AtomicBool);
-
-  impl Serialize for SerializationProbe<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-      S: serde::Serializer,
-    {
-      self.0.store(true, Ordering::SeqCst);
-      serializer.serialize_str("serialized")
+impl BoundedBytes {
+  fn new(label: &str, byte_limit: u64) -> Self {
+    Self {
+      label: label.to_string(),
+      byte_limit,
+      bytes: Vec::new(),
     }
   }
 
-  struct FailingSerializationProbe;
+  fn into_inner(self) -> Vec<u8> {
+    self.bytes
+  }
+}
 
-  impl Serialize for FailingSerializationProbe {
-    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
-    where
-      S: serde::Serializer,
-    {
-      Err(<S::Error as serde::ser::Error>::custom("intentional serialization failure"))
+impl Write for BoundedBytes {
+  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    let next_length =
+      self.bytes.len().checked_add(buffer.len()).ok_or_else(|| std::io::Error::other(format!("{} length overflow", self.label)))?;
+    let next_length = u64::try_from(next_length).map_err(|_| std::io::Error::other(format!("{} length does not fit u64", self.label)))?;
+    if next_length > self.byte_limit {
+      return Err(std::io::Error::other(format!("{} is {next_length} bytes, exceeding the {}-byte limit", self.label, self.byte_limit)));
     }
+    self.bytes.try_reserve(buffer.len()).map_err(std::io::Error::other)?;
+    self.bytes.extend_from_slice(buffer);
+    Ok(buffer.len())
   }
 
-  fn projection_test_frame() -> MinecraftSpatialFrame {
-    MinecraftSpatialFrame {
-      spatial_frame_id: "projection-test-frame".to_string(),
-      world_tick: 1,
-      monotonic_timestamp_ms: 1_000,
-      telemetry_session_id: None,
-      viewport: auv_game_minecraft::Viewport::new(64, 64),
-      view_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      projection_matrix: [
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-      ],
-      player_pose: auv_game_minecraft::PlayerPose {
-        eye_position: auv_game_minecraft::Vec3::new(0.0, 0.0, 0.0),
-        yaw: 0.0,
-        pitch: 0.0,
-      },
-      raycast_hit: None,
-      nearby_blocks: Vec::new(),
-      nearby_entities: Vec::new(),
-      inventory_summary: Vec::new(),
-      screenshot_artifact_ref: None,
-      mc_capture_skew_ms: None,
-      screen_state: Some("in_game".to_string()),
-      resource_pack_ids: vec!["file/test-pack".to_string()],
-    }
-  }
-
-  struct RejectArtifactStore {
-    inner: MemoryRunStore,
-  }
-
-  impl RejectArtifactStore {
-    fn new() -> Self {
-      Self {
-        inner: MemoryRunStore::new(AuthorityId::new()),
-      }
-    }
-  }
-
-  impl RunStore for RejectArtifactStore {
-    fn authority_id(&self) -> AuthorityId {
-      self.inner.authority_id()
-    }
-
-    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
-      self.inner.commit(request)
-    }
-
-    fn write_artifact(
-      &self,
-      _request: StoreArtifactRequest,
-      _body: ArtifactBody,
-    ) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
-      Box::pin(async {
-        Err(ArtifactWriteError::Rejected(ErrorCode::parse("auv.test.minecraft_artifact_rejected").expect("test error code")))
-      })
-    }
-
-    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
-      self.inner.lookup_commit(run_id, key)
-    }
-
-    fn load_snapshot(&self, run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
-      self.inner.load_snapshot(run_id)
-    }
-
-    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
-      self.inner.commits_after(run_id, after, limit)
-    }
-
-    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
-      self.inner.subscribe(run_id, after)
-    }
-
-    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
-      self.inner.open_artifact(uri)
-    }
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
   }
 }

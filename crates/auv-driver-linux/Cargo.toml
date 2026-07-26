@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+autoexamples = false
+
+[[example]]
+name = "validate"
+path = "examples/validate.rs"
 
 [dependencies]
 auv-driver-common = { path = "../auv-driver-common" }

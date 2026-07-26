@@ -21,7 +21,3 @@ auv-driver-macos = { path = "../auv-driver-macos" }
 auv-tracing = { path = "../auv-tracing", optional = true }
 clap = { version = "4", features = ["derive"] }
 serde.workspace = true
-
-[dev-dependencies]
-auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
-futures-executor = "0.3"

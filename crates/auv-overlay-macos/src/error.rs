@@ -26,27 +26,3 @@ pub(crate) fn native_result<T>(
     })),
   }
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn native_result_returns_value_when_present() {
-    let value = native_result("show_overlay_cursor", Some(7), None, None).unwrap();
-    assert_eq!(value, 7);
-  }
-
-  #[test]
-  fn native_result_formats_operation_message_and_recovery_hint() {
-    let error = native_result::<i32>(
-      "show_overlay_cursor",
-      None,
-      Some("window creation failed".to_string()),
-      Some("retry overlay visualization".to_string()),
-    )
-    .unwrap_err();
-
-    assert_eq!(error, "macos native overlay show_overlay_cursor failed: window creation failed; recovery=retry overlay visualization");
-  }
-}

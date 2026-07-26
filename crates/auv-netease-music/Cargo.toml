@@ -43,10 +43,3 @@ auv-driver-macos = { path = "../auv-driver-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 auv-driver-windows = { path = "../auv-driver-windows" }
-
-[dev-dependencies]
-auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
-
-[[test]]
-name = "tracing_opt_in"
-required-features = ["tracing"]

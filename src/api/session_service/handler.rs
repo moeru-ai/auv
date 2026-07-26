@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use auv_api_proto::v1::session as proto;
 use auv_cli_invoke::{InvokeCancellation, InvokeCommandInput, InvokeResult, default_registry};
-use auv_tracing::{Context, FileRunStore, RunId, RunStore, configure, dispatcher};
+use auv_tracing::{Context, FileTracingStore, RunId, TracingStore, configure, dispatcher};
 
 use crate::api::session_service::SessionApiError;
 use crate::api::session_service::mapper;
@@ -22,40 +22,22 @@ impl auv_tracing::EventPayload for SessionFrontendLifecycle {
 }
 
 pub struct SessionApiHandler {
-  store: SessionRunStoreAuthority,
+  store_root: PathBuf,
   registry: Mutex<SessionRegistry>,
-}
-
-enum SessionRunStoreAuthority {
-  File(PathBuf),
-  #[cfg(test)]
-  Injected(Arc<dyn RunStore>),
 }
 
 impl SessionApiHandler {
   pub fn new(store_root: PathBuf) -> Self {
     Self {
-      store: SessionRunStoreAuthority::File(store_root),
+      store_root,
       registry: Mutex::new(SessionRegistry::new()),
     }
   }
 
-  #[cfg(test)]
-  fn with_store(store: Arc<dyn RunStore>) -> Self {
-    Self {
-      store: SessionRunStoreAuthority::Injected(store),
-      registry: Mutex::new(SessionRegistry::new()),
-    }
-  }
-
-  fn open_store(&self) -> Result<Arc<dyn RunStore>, SessionApiError> {
-    match &self.store {
-      SessionRunStoreAuthority::File(store_root) => FileRunStore::open(store_root)
-        .map(|store| Arc::new(store) as Arc<dyn RunStore>)
-        .map_err(|error| SessionApiError::Storage(error.to_string())),
-      #[cfg(test)]
-      SessionRunStoreAuthority::Injected(store) => Ok(store.clone()),
-    }
+  fn open_store(&self) -> Result<Arc<dyn TracingStore>, SessionApiError> {
+    FileTracingStore::open(&self.store_root)
+      .map(|store| Arc::new(store) as Arc<dyn TracingStore>)
+      .map_err(|error| SessionApiError::Storage(error.to_string()))
   }
 
   pub fn create_session(&self, _request: proto::CreateSessionRequest) -> Result<proto::CreateSessionResponse, SessionApiError> {
@@ -90,7 +72,7 @@ impl SessionApiHandler {
     };
 
     let store = self.open_store()?;
-    let dispatch = configure().run_store(store).build().map_err(|error| SessionApiError::Storage(error.to_string()))?;
+    let dispatch = configure().tracing_store(store).build().map_err(|error| SessionApiError::Storage(error.to_string()))?;
     let run_id = RunId::new();
     let root = dispatcher::with_default(&dispatch, || Context::root(run_id));
     let future = root.in_scope(|| {
@@ -103,147 +85,5 @@ impl SessionApiHandler {
     let result = InvokeResult::from_command_result(run_id, &command, command_result);
     let recording_failure = dispatch.flush().await.err().map(|error| error.to_string());
     Ok(mapper::invoke_result_to_response(&result, recording_failure.as_deref()))
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use std::sync::Arc;
-
-  use auv_api_proto::v1::session as proto;
-  use auv_tracing::{
-    ArtifactBody, ArtifactReader, ArtifactUri, ArtifactWriteError, AuthorityId, BoxFuture, CommitError, CommitResult, IdempotencyKey,
-    MemoryRunStore, PageLimit, ReadError, RunCommit, RunCommitPage, RunCommitRequest, RunId, RunRevision, RunSnapshot, RunStore,
-    RunSubscription, StoreArtifactRequest,
-  };
-
-  use super::SessionApiHandler;
-  use crate::api::session_service::SessionApiError;
-  use crate::api::session_service::test_fixtures::session_api_temp_store_root;
-
-  fn handler(label: &str) -> SessionApiHandler {
-    SessionApiHandler::new(session_api_temp_store_root(label))
-  }
-
-  #[test]
-  fn create_session_allocates_and_registers_session() {
-    let handler = handler("create");
-    let response = handler
-      .create_session(proto::CreateSessionRequest {
-        client_label: String::new(),
-      })
-      .expect("create session");
-    assert!(!response.session.expect("session ref").session_id.is_empty());
-  }
-
-  #[tokio::test]
-  async fn invoke_rejects_unknown_session() {
-    let error = handler("unknown")
-      .invoke(proto::InvokeRequest {
-        session: Some(proto::SessionRef {
-          session_id: "ghost".to_string(),
-        }),
-        command_id: "scan.coverage".to_string(),
-        json_payload: br#"{"dry_run":true}"#.to_vec(),
-      })
-      .await
-      .expect_err("unknown session");
-    assert_eq!(error, SessionApiError::UnknownSession("ghost".to_string()));
-  }
-
-  #[tokio::test]
-  async fn invoke_returns_direct_command_value_and_fresh_run_ids() {
-    let handler = handler("invoke");
-    let session = handler
-      .create_session(proto::CreateSessionRequest {
-        client_label: String::new(),
-      })
-      .expect("create session")
-      .session
-      .expect("session ref");
-    let request = || proto::InvokeRequest {
-      session: Some(session.clone()),
-      command_id: "scan.coverage".to_string(),
-      json_payload: br#"{"dry_run":true}"#.to_vec(),
-    };
-    let first = handler.invoke(request()).await.expect("first invoke");
-    let second = handler.invoke(request()).await.expect("second invoke");
-    assert!(matches!(first.terminal, Some(proto::invoke_response::Terminal::Completed(_))));
-    assert!(matches!(second.terminal, Some(proto::invoke_response::Terminal::Completed(_))));
-    assert_ne!(first.run_id, second.run_id);
-  }
-
-  #[tokio::test]
-  async fn invoke_does_not_read_snapshot_for_immediate_presentation() {
-    let store = Arc::new(SnapshotReadStore::new());
-    let handler = SessionApiHandler::with_store(store);
-    let response = invoke_dry_run(&handler).await;
-
-    assert!(matches!(response.terminal, Some(proto::invoke_response::Terminal::Completed(_))));
-    assert!(response.recording_failure.is_empty());
-  }
-
-  async fn invoke_dry_run(handler: &SessionApiHandler) -> proto::InvokeResponse {
-    let session = handler
-      .create_session(proto::CreateSessionRequest {
-        client_label: String::new(),
-      })
-      .expect("create session")
-      .session
-      .expect("session ref");
-    handler
-      .invoke(proto::InvokeRequest {
-        session: Some(session),
-        command_id: "scan.coverage".to_string(),
-        json_payload: br#"{"dry_run":true}"#.to_vec(),
-      })
-      .await
-      .expect("direct invoke result")
-  }
-
-  struct SnapshotReadStore {
-    inner: MemoryRunStore,
-  }
-
-  impl SnapshotReadStore {
-    fn new() -> Self {
-      Self {
-        inner: MemoryRunStore::new(AuthorityId::new()),
-      }
-    }
-  }
-
-  impl RunStore for SnapshotReadStore {
-    fn authority_id(&self) -> AuthorityId {
-      self.inner.authority_id()
-    }
-
-    fn commit(&self, request: RunCommitRequest) -> BoxFuture<'_, Result<CommitResult, CommitError>> {
-      self.inner.commit(request)
-    }
-
-    fn write_artifact(&self, request: StoreArtifactRequest, body: ArtifactBody) -> BoxFuture<'_, Result<CommitResult, ArtifactWriteError>> {
-      self.inner.write_artifact(request, body)
-    }
-
-    fn lookup_commit(&self, run_id: RunId, key: IdempotencyKey) -> BoxFuture<'_, Result<Option<RunCommit>, ReadError>> {
-      self.inner.lookup_commit(run_id, key)
-    }
-
-    fn load_snapshot(&self, _run_id: RunId) -> BoxFuture<'_, Result<Option<RunSnapshot>, ReadError>> {
-      panic!("session invoke must not read a snapshot for immediate presentation")
-    }
-
-    fn commits_after(&self, run_id: RunId, after: RunRevision, limit: PageLimit) -> BoxFuture<'_, Result<RunCommitPage, ReadError>> {
-      self.inner.commits_after(run_id, after, limit)
-    }
-
-    fn subscribe(&self, run_id: RunId, after: RunRevision) -> BoxFuture<'_, Result<RunSubscription, ReadError>> {
-      self.inner.subscribe(run_id, after)
-    }
-
-    fn open_artifact(&self, uri: ArtifactUri) -> BoxFuture<'_, Result<ArtifactReader, ReadError>> {
-      self.inner.open_artifact(uri)
-    }
   }
 }

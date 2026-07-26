@@ -24,7 +24,3 @@ serde_json.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 auv-driver-linux = { path = "../auv-driver-linux" }
-
-[dev-dependencies]
-auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
-futures-executor = "0.3"

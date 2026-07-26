@@ -41,8 +41,6 @@ auv-driver-macos = { path = "../auv-driver-macos" }
 [dev-dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
-tempfile = "3"
 
 [[test]]
-name = "tracing_contract"
-required-features = ["tracing"]
+name = "integrated"

@@ -9,7 +9,7 @@ use auv_file::{
 use auv_stage_status::StageStatus;
 use auv_task_object_detection::Detection;
 #[cfg(feature = "tracing")]
-use auv_tracing::{ArtifactMetadata, ArtifactUri, Context, RunSnapshot, RunStore};
+use auv_tracing::{ArtifactMetadata, Context};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -140,15 +140,6 @@ pub async fn publish_card_detection_spatial_query(
   query: &CardDetectionSpatialQueryManifest,
 ) -> Result<Option<ArtifactMetadata>, crate::BalatroArtifactPublishError> {
   crate::run_read::publish_json_artifact(context, CARD_DETECTION_SPATIAL_QUERY_PURPOSE, query).await
-}
-
-#[cfg(feature = "tracing")]
-pub async fn read_card_detection_spatial_query(
-  store: &dyn RunStore,
-  snapshot: &RunSnapshot,
-  uri: &ArtifactUri,
-) -> Result<CardDetectionSpatialQueryManifest, crate::BalatroArtifactReadError> {
-  crate::run_read::read_json_artifact(store, snapshot, uri, CARD_DETECTION_SPATIAL_QUERY_PURPOSE).await
 }
 
 pub fn query_card_detection_spatial(
@@ -381,67 +372,4 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 
 fn now_millis() -> u64 {
   u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(u64::MAX)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::card_detection_semantic::{CardDetectionSemanticValidationInputs, validate_card_detection_semantic};
-  use std::path::PathBuf;
-
-  fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/balatro_consumption_probe")
-  }
-
-  fn semantic_manifest_for(bundle: PathBuf, temp: &tempfile::TempDir) -> PathBuf {
-    validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
-      bundle_input: bundle,
-      output_dir: temp.path().join("semantic"),
-    })
-    .expect("semantic")
-    .manifest_path
-  }
-
-  #[test]
-  fn positive_hand_slot_query_yields_answered_with_center() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path = semantic_manifest_for(fixture_root(), &temp);
-    let output = query_card_detection_spatial(CardDetectionSpatialQueryInputs {
-      card_detection_semantic_manifest_path: semantic_path,
-      target_slot: SlotId::new(ObjectZone::Hand, 0),
-      output_dir: temp.path().join("query"),
-    })
-    .expect("query");
-    assert_eq!(output.manifest.status, CardDetectionSpatialQueryStatus::Answered);
-    assert!(output.manifest.pixel_x.is_some());
-    assert!(output.manifest.pixel_y.is_some());
-  }
-
-  #[test]
-  fn missing_target_slot_yields_blocked() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path = semantic_manifest_for(fixture_root().join("query/missing_target_slot"), &temp);
-    let output = query_card_detection_spatial(CardDetectionSpatialQueryInputs {
-      card_detection_semantic_manifest_path: semantic_path,
-      target_slot: SlotId::new(ObjectZone::Hand, 99),
-      output_dir: temp.path().join("query"),
-    })
-    .expect("query");
-    assert_eq!(output.manifest.status, CardDetectionSpatialQueryStatus::Blocked);
-    assert_eq!(output.manifest.reason, Some(CardDetectionSpatialQueryReason::TargetSlotNotFound));
-  }
-
-  #[test]
-  fn out_of_bounds_slot_yields_blocked() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path = semantic_manifest_for(fixture_root().join("query/out_of_bounds"), &temp);
-    let output = query_card_detection_spatial(CardDetectionSpatialQueryInputs {
-      card_detection_semantic_manifest_path: semantic_path,
-      target_slot: SlotId::new(ObjectZone::Hand, 0),
-      output_dir: temp.path().join("query"),
-    })
-    .expect("query");
-    assert_eq!(output.manifest.status, CardDetectionSpatialQueryStatus::Blocked);
-    assert_eq!(output.manifest.reason, Some(CardDetectionSpatialQueryReason::SlotOutOfBounds));
-  }
 }

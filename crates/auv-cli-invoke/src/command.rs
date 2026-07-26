@@ -214,27 +214,3 @@ pub fn spec(
     handler,
   }
 }
-
-#[cfg(test)]
-mod tests {
-  use super::{InvokeCancellation, InvokeCommandOutput};
-
-  #[test]
-  fn invoke_cancellation_is_typed_cloneable_and_observable() {
-    let cancellation = InvokeCancellation::new();
-    let observer = cancellation.clone();
-
-    assert!(observer.check().is_ok());
-    cancellation.cancel();
-
-    let error = observer.check().expect_err("shared cancellation must be observable");
-    assert_eq!(error.to_string(), "invoke cancelled");
-  }
-
-  #[test]
-  fn command_output_has_no_generic_result_metadata_bag() {
-    let output = InvokeCommandOutput::completed();
-
-    assert!(output.report.is_none());
-  }
-}

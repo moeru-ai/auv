@@ -10,14 +10,11 @@ members = [
   "crates/auv-compare",
   "crates/auv-file",
   "crates/auv-godot",
-  "crates/auv-inspect-server",
-  "crates/auv-inspect-model",
   "crates/auv-cli",
   "crates/auv-cli-common",
   "crates/auv-cli-common-macros",
   "crates/auv-query-readiness",
   "crates/auv-tracing",
-  "crates/auv-tracing-inspect",
   "crates/auv-tracing-otel",
   "crates/auv-scan",
   "crates/auv-stage-status",
@@ -109,8 +106,6 @@ auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-media-macos = { path = "crates/auv-media-macos" }
 auv-tracing = { path = "crates/auv-tracing", features = ["file-store"] }
 auv-api-proto = { path = "crates/auv-api-proto" }
-auv-inspect-server = { path = "crates/auv-inspect-server" }
-auv-inspect-model = { path = "crates/auv-inspect-model" }
 auv-scan = { path = "crates/auv-scan" }
 auv-view = { path = "crates/auv-view" }
 serde.workspace = true

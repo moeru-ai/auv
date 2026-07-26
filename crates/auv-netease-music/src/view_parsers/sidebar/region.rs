@@ -210,27 +210,5 @@ pub(crate) fn detect_blocking_modal(recognition: &TextRecognition) -> Option<Par
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use auv_driver::Size;
-
-  #[test]
-  fn playlist_sidebar_bottom_subtracts_panel_height_when_window_has_room() {
-    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, 600.0)), 518.0);
-  }
-
-  #[test]
-  fn playlist_sidebar_bottom_clamps_to_zero_when_window_smaller_than_panel() {
-    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, 40.0)), 0.0);
-  }
-
-  #[test]
-  fn playlist_sidebar_bottom_returns_zero_when_window_height_is_zero() {
-    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, 0.0)), 0.0);
-  }
-
-  #[test]
-  fn playlist_sidebar_bottom_returns_zero_when_window_height_is_negative() {
-    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, -10.0)), 0.0);
-  }
-}
+#[path = "region_test.rs"]
+mod tests;

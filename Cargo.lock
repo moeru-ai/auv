@@ -343,7 +343,6 @@ dependencies = [
  "auv-driver-windows",
  "auv-tracing",
  "clap",
- "futures-executor",
  "image",
  "serde",
  "serde_json",
@@ -357,7 +356,6 @@ dependencies = [
  "auv-driver-macos",
  "auv-tracing",
  "clap",
- "futures-executor",
  "serde",
 ]
 
@@ -369,9 +367,7 @@ dependencies = [
  "auv-driver-macos",
  "auv-tracing",
  "clap",
- "futures-executor",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -388,14 +384,11 @@ dependencies = [
  "auv-game-minecraft",
  "auv-game-osu",
  "auv-godot",
- "auv-inspect-model",
- "auv-inspect-server",
  "auv-query-readiness",
  "auv-runtime",
  "auv-stage-status",
  "auv-task-object-detection",
  "auv-tracing",
- "auv-tracing-inspect",
  "axum",
  "futures-util",
  "image",
@@ -530,7 +523,6 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -554,7 +546,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -565,18 +556,14 @@ dependencies = [
  "auv-compare",
  "auv-driver",
  "auv-file",
- "auv-inspect-model",
  "auv-query-readiness",
  "auv-stage-status",
  "auv-tracing",
  "futures-executor",
- "futures-util",
  "image",
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2 0.10.9",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -592,13 +579,10 @@ dependencies = [
  "auv-task-object-detection",
  "auv-tracing",
  "futures-executor",
- "futures-util",
  "image",
  "rosu-map",
  "serde",
  "serde_json",
- "sha2 0.10.9",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -610,7 +594,6 @@ dependencies = [
  "auv-driver-linux",
  "auv-tracing",
  "clap",
- "futures-executor",
  "serde",
  "serde_json",
 ]
@@ -659,41 +642,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "auv-inspect-model"
-version = "0.0.1"
-dependencies = [
- "auv-tracing",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "auv-inspect-server"
-version = "0.0.1"
-dependencies = [
- "auv-inspect-model",
- "auv-tracing",
- "auv-tracing-inspect",
- "axum",
- "base64",
- "futures-util",
- "http-body-util",
- "libc",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tower",
- "url",
-]
-
-[[package]]
 name = "auv-media-macos"
 version = "0.0.1"
 dependencies = [
  "auv-tracing",
  "clap",
- "futures-executor",
  "serde",
  "serde_json",
 ]
@@ -735,7 +688,6 @@ dependencies = [
  "auv-driver-macos",
  "auv-tracing",
  "clap",
- "futures-executor",
  "serde",
 ]
 
@@ -752,8 +704,6 @@ dependencies = [
  "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
- "auv-inspect-model",
- "auv-inspect-server",
  "auv-media-macos",
  "auv-scan",
  "auv-tracing",
@@ -791,7 +741,6 @@ name = "auv-stage-status"
 version = "0.0.1"
 dependencies = [
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -813,10 +762,7 @@ dependencies = [
  "auv-inference-common",
  "auv-inference-ultralytics",
  "image",
- "ndarray",
  "serde",
- "serde_json",
- "ultralytics-inference",
 ]
 
 [[package]]
@@ -835,27 +781,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "auv-tracing-inspect"
-version = "0.0.1"
-dependencies = [
- "auv-inspect-server",
- "auv-tracing",
- "axum",
- "base64",
- "bytes",
- "futures-util",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
  "url",
  "uuid",
 ]
@@ -954,13 +879,10 @@ checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
  "bytes",
- "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
  "http-body-util",
- "hyper",
- "hyper-util",
  "itoa",
  "matchit",
  "memchr",
@@ -968,15 +890,10 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
- "serde_json",
- "serde_path_to_error",
- "serde_urlencoded",
  "sync_wrapper",
- "tokio",
  "tower",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -995,7 +912,6 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -5046,14 +4962,12 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams 0.4.2",
  "web-sys",
  "webpki-roots",
 ]
@@ -5099,7 +5013,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams 0.5.0",
+ "wasm-streams",
  "web-sys",
 ]
 
@@ -5521,17 +5435,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "serde_path_to_error"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
-dependencies = [
- "itoa",
- "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -6158,7 +6061,6 @@ checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
 dependencies = [
  "bytes",
  "futures-core",
- "futures-io",
  "futures-sink",
  "futures-util",
  "pin-project-lite",
@@ -6352,7 +6254,6 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
- "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
@@ -6855,19 +6756,6 @@ dependencies = [
  "indexmap",
  "wasm-encoder",
  "wasmparser",
-]
-
-[[package]]
-name = "wasm-streams"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
-dependencies = [
- "futures-util",
- "js-sys",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]

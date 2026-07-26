@@ -111,11 +111,5 @@ fn inferred_header(field_name: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::inferred_header;
-
-  #[test]
-  fn header_uses_uppercase_words() {
-    assert_eq!(inferred_header("install_dir"), "INSTALL DIR");
-  }
-}
+#[path = "table_row_test.rs"]
+mod tests;
