@@ -2,7 +2,10 @@ use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCap
 use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
-use auv_driver_common::input::{Click, InputActionResult, KeyPressOptions, Scroll, TypeTextOptions};
+use auv_driver_common::input::{
+  Click, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
+  TypeTextOptions,
+};
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
 use auv_driver_common::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
@@ -144,6 +147,45 @@ impl WindowApi<'_> {
   pub fn to_window_point(&self, window: &Window, point: ScreenPoint) -> DriverResult<WindowPoint> {
     let _ = self.session;
     Ok(window_point_for_screen_point(window, point))
+  }
+
+  /// Delivers a foreground wheel event at a window-relative point.
+  pub fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    let candidates = match options.policy {
+      InputPolicy::ForegroundPreferred => vec![ScrollDeliveryCandidate::ForegroundHid],
+      InputPolicy::BackgroundPreferred => options.delivery_strategy.candidates.clone(),
+      InputPolicy::BackgroundOnly => return Err(invalid_input("windows window.scroll cannot use background_only input policy")),
+    };
+    let mut attempts = Vec::new();
+    for candidate in candidates {
+      match candidate {
+        ScrollDeliveryCandidate::AxScroll => attempts
+          .push(InputAttempt::failure(InputDeliveryPath::AxScroll, "windows window.scroll does not support accessibility scroll delivery")),
+        ScrollDeliveryCandidate::WindowTargetedWheel => attempts.push(InputAttempt::failure(
+          InputDeliveryPath::WindowTargetedWheel,
+          "windows window.scroll does not support window-targeted background wheel delivery",
+        )),
+        ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => attempts.push(InputAttempt::failure(
+          InputDeliveryPath::WindowTargetedKeyboardScroll,
+          "windows window.scroll does not support window-targeted keyboard scroll delivery",
+        )),
+        ScrollDeliveryCandidate::ForegroundHid => {
+          let screen_point = self.to_screen_point(window, point)?.point();
+          let result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
+          attempts.extend(result.attempts);
+          return Ok(InputActionResult {
+            selected_path: result.selected_path,
+            attempts,
+            mouse_disturbance: result.mouse_disturbance,
+            focus_disturbance: result.focus_disturbance,
+            clipboard_disturbance: result.clipboard_disturbance,
+          });
+        }
+      }
+    }
+    Err(invalid_input(
+      "windows window.scroll needs ForegroundHid in the delivery strategy because background window scroll is not available",
+    ))
   }
 
   pub fn move_to(&self, window: &Window, point: Point, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
