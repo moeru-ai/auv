@@ -29,8 +29,23 @@ const OPEN_SPLAT_CONTRACT_REVISION: &str = "9fb62fde8b7b8c416121d3cbdcda278ffd96
 // slice that restores that family onto the current frontend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrainingBackend {
+  // NOTICE: not reachable on Apple Silicon. `splatfacto.py` hardcodes `.cuda()`
+  // (L208, L535) and its rasterizer `gsplat` builds `CUDAExtension`
+  // (setup.py L203/L226/L249), so the probe can succeed while training can never
+  // run on that host. Kept because it stays correct on CUDA hosts, and because
+  // launch evidence must still name the backend it prepared for. See
+  // docs/ai/references/apps/minecraft/2026-07-26-minecraft-3dgs-trainer-backend-evidence.md.
   NerfstudioSplatfacto,
   OpenSplat,
+  // TODO(3dgs-brush-backend): Brush (ArthurBrussee/brush, wgpu/Metal) is the
+  // best-fit backend on the M4 target: it ships a prebuilt aarch64-apple-darwin
+  // binary, runs headless on a positional directory, reads the transforms.json
+  // shape this crate already writes with the same OpenGL camera-to-world
+  // convention, and accepts the bare XYZ+RGB seed cloud emitted by
+  // `write_seed_point_cloud`. Deferred because its seed load fails *silently*
+  // (missing ply => random init, no error), so a variant needs a readiness rule
+  // that proves the seed was consumed rather than trusting exit status. Unlocks
+  // when the owner names that slice; evidence is in the reference doc above.
 }
 
 impl TrainingBackend {
