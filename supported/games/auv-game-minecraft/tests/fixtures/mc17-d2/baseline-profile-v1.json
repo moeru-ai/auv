@@ -1,0 +1,14 @@
+{
+  "profile_id": "mc17-d2-primary-v1",
+  "training_result_semantic_manifest_path": ".tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json",
+  "query_target_block": "511,73,728",
+  "query_target_face": "north",
+  "query_target_semantics": "hit_face_center",
+  "holdout_frame_index": 6,
+  "basis_checkpoint_suffix": "step-000001.ckpt",
+  "recorded_run_ids": {
+    "mc12": "run_1782594518255_60230_0",
+    "mc16": "run_1782594524936_60749_0",
+    "mc17": "run_1782594531314_61141_0"
+  }
+}

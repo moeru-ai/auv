@@ -5,6 +5,7 @@ pub mod run_read;
 
 pub mod artifact;
 pub mod bind;
+pub mod closed_scene_toy_fixture;
 pub mod dataset;
 pub mod evidence;
 pub mod ingest;
@@ -15,6 +16,18 @@ pub mod prep;
 pub mod projection;
 pub mod sample_builder;
 pub mod scene_packet;
+pub mod training_job;
+pub mod training_launch;
+pub mod training_package;
+pub mod training_result;
+pub mod training_result_artifact;
+pub mod training_result_holdout_preview;
+pub mod training_result_holdout_render_quality;
+pub mod training_result_semantic;
+pub mod training_result_spatial_query;
+pub mod training_result_spatial_query_action;
+pub mod training_result_spatial_query_action_wiring;
+pub mod training_result_spatial_query_provider;
 pub mod types;
 pub mod verify;
 
@@ -49,6 +62,72 @@ pub use scene_packet::{
   SCENE_PACKET_INSPECT_REPORT_SCHEMA_VERSION, SCENE_PACKET_SCHEMA_VERSION, ScenePacketAnomalies, ScenePacketCameraRecord, ScenePacketCounts,
   ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketInputs, ScenePacketInspectCounts, ScenePacketInspectReport,
   ScenePacketManifest, ScenePacketOutput, ScenePacketResourcePackCoverage, export_3dgs_scene_packet,
+};
+pub use training_job::{
+  TRAINING_JOB_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_JOB_MANIFEST_SCHEMA_VERSION, TrainingJobEnvironment, TrainingLaunchJobBlocker,
+  TrainingLaunchJobCounts, TrainingLaunchJobInputs, TrainingLaunchJobInspectReport, TrainingLaunchJobManifest, TrainingLaunchJobOutput,
+  TrainingLaunchJobRequest, TrainingLaunchJobStatus, TrainingLaunchJobSubmission, launch_3dgs_training_job,
+  launch_3dgs_training_job_with_environment,
+};
+pub use training_launch::{
+  TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_LAUNCH_PLAN_SCHEMA_VERSION, TrainingLaunchInspectReport,
+  TrainingLaunchPlanManifest, TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingLaunchReadiness,
+  TrainingLaunchReadinessBlocker, prepare_3dgs_training_launch,
+};
+pub use training_package::{
+  TRAINING_PACKAGE_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_PACKAGE_SCHEMA_VERSION, TrainingCompatibilityFrameDecision,
+  TrainingCompatibilitySkipReason, TrainingCompatibilitySkipReasonCount, TrainingCompatibilityStatus, TrainingCompatibilityViewReport,
+  TrainingPackageCounts, TrainingPackageFrameRecord, TrainingPackageInputs, TrainingPackageInspectReport, TrainingPackageManifest,
+  TrainingPackageOutput, export_3dgs_training_package,
+};
+pub use training_result::{
+  TRAINING_RESULT_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_RESULT_MANIFEST_SCHEMA_VERSION, TrainingResultArtifactRecord,
+  TrainingResultEnvironment, TrainingResultInputs, TrainingResultInspectReport, TrainingResultManifest, TrainingResultOutput,
+  TrainingResultReason, TrainingResultRequest, TrainingResultStatus, collect_3dgs_training_job_result,
+  collect_3dgs_training_job_result_with_environment,
+};
+pub use training_result_artifact::{
+  TRAINING_RESULT_ARTIFACT_FETCH_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_RESULT_ARTIFACT_FETCH_MANIFEST_SCHEMA_VERSION,
+  TrainingResultArtifactFetchEnvironment, TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchInspectReport,
+  TrainingResultArtifactFetchManifest, TrainingResultArtifactFetchOutput, TrainingResultArtifactFetchReason,
+  TrainingResultArtifactFetchStatus, TrainingResultNormalizedArtifactKind, TrainingResultNormalizedArtifactRecord,
+  fetch_3dgs_training_result_artifacts, fetch_3dgs_training_result_artifacts_with_command,
+  fetch_3dgs_training_result_artifacts_with_environment,
+};
+pub use training_result_holdout_preview::{
+  HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewAnswer, HoldoutPreviewReason, HoldoutPreviewRequest,
+  MC16_V1_HOLDOUT_PREVIEW_KNOWN_LIMIT, TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_REPORT_SCHEMA_VERSION,
+  TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION, TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutPreviewInspectReport,
+  TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutPreviewOutput, inspect_3dgs_training_result_holdout,
+};
+pub use training_result_holdout_render_quality::{
+  HoldoutRenderQualityAnswer, HoldoutRenderQualityBackend, HoldoutRenderQualityImageSize, HoldoutRenderQualityMetrics,
+  HoldoutRenderQualityReason, HoldoutRenderQualityRequest, HoldoutRenderQualityVerdict, MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT,
+  TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_MANIFEST_SCHEMA_VERSION,
+  TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityInspectReport, TrainingResultHoldoutRenderQualityManifest,
+  TrainingResultHoldoutRenderQualityOutput, measure_3dgs_holdout_render_quality,
+};
+pub use training_result_semantic::{
+  TRAINING_RESULT_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION,
+  TrainingResultSemanticCheckpointRecord, TrainingResultSemanticInspectReport, TrainingResultSemanticManifest, TrainingResultSemanticReason,
+  TrainingResultSemanticValidationInputs, TrainingResultSemanticValidationOutput, validate_3dgs_training_result,
+};
+pub use training_result_spatial_query::{
+  TRAINING_RESULT_SPATIAL_QUERY_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_RESULT_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION,
+  TrainingResultSpatialQueryAnswer, TrainingResultSpatialQueryBackend, TrainingResultSpatialQueryComparisonVerdict,
+  TrainingResultSpatialQueryInputs, TrainingResultSpatialQueryInspectReport, TrainingResultSpatialQueryKind,
+  TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryOutput, TrainingResultSpatialQueryReason, TrainingResultSpatialQueryRequest,
+  TrainingResultSpatialQueryStatus, query_3dgs_training_result,
+};
+pub use training_result_spatial_query_action::{
+  TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness, derive_action_readiness,
+};
+pub use training_result_spatial_query_action_wiring::{
+  MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, QueryActionWiringLineage, QueryActionWiringOutcome, QueryLiveClickExecutor,
+  query_action_wiring_lineage_from_manifest, wire_query_manifest_to_action,
+};
+pub use training_result_spatial_query_provider::{
+  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint, MinecraftSpatialFrame,
