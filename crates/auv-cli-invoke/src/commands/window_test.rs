@@ -107,6 +107,17 @@ fn window_capture_result_keeps_pixels_out_of_json() {
   let output = window_capture_output(&capture).expect("window capture result should serialize");
   let result = output.result().expect("capture should have a result");
 
+  // ROOT CAUSE:
+  //
+  // If this output was compiled outside macOS, report construction failed
+  // because its pure formatting helper was incorrectly gated to macOS.
+  //
+  // Before the fix, `cargo check` failed on Linux and Windows. The fix keeps
+  // capture delivery platform-specific while report construction stays portable.
+  let report = output.report.as_ref().expect("capture should expose a report");
+  assert_eq!(report.fields[0].value, "window_capture");
+  assert_eq!(report.fields[1].value, "10,20 640x480");
+  assert_eq!(report.fields[5].value, "1280x960");
   assert_eq!(result["window"]["reference"]["id"], "window_capture");
   assert_eq!(result["capture"]["pixel_dimensions"]["width"], 1280);
   assert_eq!(result["capture"]["backend"], "fixture-window");

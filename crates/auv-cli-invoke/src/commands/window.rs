@@ -2,9 +2,11 @@ use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
   InvokeReportTableRow, InvokeReportValue, OptionalReportText,
   arg::{NO_ARGS, WINDOW_ARGS, WINDOW_TEXT_ARGS, WINDOW_VERIFY_TEXT_ARGS},
-  artifact::emit_png,
   invoke_command,
 };
+
+#[cfg(target_os = "macos")]
+use crate::artifact::emit_png;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("window", "WINDOW")
@@ -417,7 +419,6 @@ fn window_selector(input: &InvokeCommandInput) -> auv_driver::WindowSelector {
   selector
 }
 
-#[cfg(target_os = "macos")]
 fn window_report_fields(window: &auv_driver::Window) -> Vec<InvokeReportField> {
   let mut fields = vec![
     InvokeReportField::new("Window ID", window.reference.id.clone()),

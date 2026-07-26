@@ -1,9 +1,11 @@
 use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField,
   arg::{IMAGE_TEXT_ARGS, REGION_ARGS, SCREEN_TEXT_ARGS, TARGET_ARGS},
-  artifact::emit_png,
   invoke_command,
 };
+
+#[cfg(target_os = "macos")]
+use crate::artifact::emit_png;
 
 /// A complete, finite capture region with a strictly positive size.
 #[derive(Clone, Copy, Debug, PartialEq)]

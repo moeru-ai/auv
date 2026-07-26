@@ -2,9 +2,11 @@ use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
   InvokeReportTableRow, InvokeReportValue,
   arg::{NO_ARGS, TARGET_ARGS},
-  artifact::emit_png,
   invoke_command,
 };
+
+#[cfg(target_os = "macos")]
+use crate::artifact::emit_png;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("display", "DISPLAY")
