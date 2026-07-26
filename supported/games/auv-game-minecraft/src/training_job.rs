@@ -248,14 +248,14 @@ fn launch_3dgs_training_job_with_submit_and_env<F>(
 where
   F: FnOnce(&TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission,
 {
-  let launch_plan = read_json_file::<TrainingLaunchPlanManifest>(&inputs.training_launch_plan_path, "MC-7 D5 training launch plan")?;
+  let launch_plan = read_json_file::<TrainingLaunchPlanManifest>(&inputs.training_launch_plan_path, "training launch plan")?;
   let training_package_manifest_path = PathBuf::from(&launch_plan.source_training_package_manifest_path);
   let training_package_dir = training_package_manifest_path
     .parent()
-    .ok_or_else(|| format!("MC-7 D5 training package manifest {} has no parent directory", training_package_manifest_path.display()))?;
+    .ok_or_else(|| format!("training package manifest {} has no parent directory", training_package_manifest_path.display()))?;
   let training_package_inspect_report_path = PathBuf::from(&launch_plan.source_training_package_inspect_report_path);
   let training_package_inspect_report =
-    read_json_file::<TrainingPackageInspectReport>(&training_package_inspect_report_path, "MC-7 D5 training package inspect report")?;
+    read_json_file::<TrainingPackageInspectReport>(&training_package_inspect_report_path, "training package inspect report")?;
 
   let submit_endpoint = env.submit_endpoint;
   let submit_token = env.submit_token;
@@ -281,7 +281,10 @@ where
     "MC-9 D1 binds this training job lane to one provider contract; multi-provider expansion is deferred by owner approval".to_string(),
   );
 
-  let blocker = if launch_plan.compatibility_view_name != "nerfstudio" {
+  // TODO(opensplat-remote-training): OpenSplat launch preparation is local-contract
+  // evidence only; add a submit/result provider only after an owner approves that
+  // backend and names the provider contract.
+  let blocker = if launch_plan.compatibility_view_name != "nerfstudio" || launch_plan.trainer_backend != TRAINER_BACKEND {
     Some(TrainingLaunchJobBlocker::UnsupportedBackend)
   } else if launch_plan.source_run_ids.is_empty()
     || launch_plan.source_scene_packet_manifest_path.is_empty()
@@ -297,11 +300,12 @@ where
   } else {
     None
   };
+  let (probe_command, probe_succeeded) = trainer_probe_status(&launch_plan.trainer_backend);
 
   let request = TrainingLaunchJobRequest {
     provider_backend: PROVIDER_BACKEND.to_string(),
     job_backend: JOB_BACKEND.to_string(),
-    trainer_backend: TRAINER_BACKEND.to_string(),
+    trainer_backend: launch_plan.trainer_backend.clone(),
     endpoint: job_submission_endpoint.clone(),
     submit_command: submit_command.clone(),
     token_present: submit_token.is_some(),
@@ -343,7 +347,7 @@ where
     },
     compatibility_view_name: launch_plan.compatibility_view_name.clone(),
     provider_backend: PROVIDER_BACKEND.to_string(),
-    trainer_backend: TRAINER_BACKEND.to_string(),
+    trainer_backend: launch_plan.trainer_backend.clone(),
     job_backend: JOB_BACKEND.to_string(),
     job_submission_endpoint: job_submission_endpoint.clone(),
     job_submission_command: submit_command.clone(),
@@ -373,7 +377,7 @@ where
     source_run_ids: launch_plan.source_run_ids.clone(),
     provider_backend: PROVIDER_BACKEND.to_string(),
     job_backend: JOB_BACKEND.to_string(),
-    trainer_backend: TRAINER_BACKEND.to_string(),
+    trainer_backend: launch_plan.trainer_backend.clone(),
     job_submission_endpoint: job_submission_endpoint.clone(),
     job_submission_command: submit_command.clone(),
     submission_recorded_at_millis,
@@ -382,8 +386,8 @@ where
     job_id: submission.job_id,
     job_url: submission.job_url,
     readiness_blocker: submission.blocker,
-    probe_command: "ns-train --help".to_string(),
-    probe_succeeded: Command::new("ns-train").arg("--help").status().map(|status| status.success()).unwrap_or(false),
+    probe_command,
+    probe_succeeded,
     exported_frame_count: launch_plan.counts.compatibility_exported_frames,
     skipped_frame_count: launch_plan.counts.compatibility_skipped_frames,
     transforms_present: transforms_path.is_some(),
@@ -405,6 +409,23 @@ where
     manifest,
     inspect_report,
   })
+}
+
+fn trainer_probe_status(trainer_backend: &str) -> (String, bool) {
+  let Some((command, arguments)) = trainer_probe_command(trainer_backend) else {
+    return ("unavailable".to_string(), false);
+  };
+  let probe_command = format!("{command} {}", arguments.join(" "));
+  let probe_succeeded = Command::new(command).args(arguments).status().map(|status| status.success()).unwrap_or(false);
+  (probe_command, probe_succeeded)
+}
+
+fn trainer_probe_command(trainer_backend: &str) -> Option<(&'static str, &'static [&'static str])> {
+  match trainer_backend {
+    TRAINER_BACKEND => Some(("ns-train", &["--help"])),
+    "opensplat" => Some(("opensplat", &["--help"])),
+    _ => None,
+  }
 }
 
 fn default_submit_job(request: &TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission {
@@ -537,6 +558,24 @@ mod tests {
     include_transforms: bool,
     with_config: bool,
   ) -> PathBuf {
+    write_launch_plan_fixture_for_backend(
+      temp,
+      compatibility_view_name,
+      TRAINER_BACKEND,
+      exported_frame_count,
+      include_transforms,
+      with_config,
+    )
+  }
+
+  fn write_launch_plan_fixture_for_backend(
+    temp: &TempDir,
+    compatibility_view_name: &str,
+    trainer_backend: &str,
+    exported_frame_count: usize,
+    include_transforms: bool,
+    with_config: bool,
+  ) -> PathBuf {
     let package_dir = temp.path().join("training-package");
     let compat_dir = package_dir.join("compat/nerfstudio");
     fs::create_dir_all(&compat_dir).expect("compat dir");
@@ -573,7 +612,7 @@ mod tests {
         compatibility_skipped_frames: 0,
       },
       compatibility_view_name: compatibility_view_name.to_string(),
-      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      trainer_backend: trainer_backend.to_string(),
       training_data_dir: compat_dir.display().to_string(),
       transforms_path: include_transforms.then_some("compat/nerfstudio/transforms.json".to_string()),
       export_report_path: "compat/nerfstudio/export_report.json".to_string(),
@@ -682,6 +721,31 @@ mod tests {
 
     assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Blocked);
     assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchJobBlocker::UnsupportedBackend));
+  }
+
+  #[test]
+  fn job_launch_blocks_opensplat_plan_before_remote_submission() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture_for_backend(&temp, "nerfstudio", "opensplat", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      |_request| unreachable!("OpenSplat launch preparation has no remote-submit contract"),
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret".to_string()),
+        submit_command: Some("remote-submit --dry-run".to_string()),
+      },
+    )
+    .expect("unsupported backend should still write blocked outputs");
+
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchJobBlocker::UnsupportedBackend));
+    assert_eq!(output.manifest.trainer_backend, "opensplat");
+    assert_eq!(output.inspect_report.trainer_backend, "opensplat");
+    assert_eq!(output.inspect_report.probe_command, "opensplat --help");
   }
 
   #[test]

@@ -70,7 +70,7 @@ pub use training_job::{
   launch_3dgs_training_job_with_environment,
 };
 pub use training_launch::{
-  TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_LAUNCH_PLAN_SCHEMA_VERSION, TrainingLaunchInspectReport,
+  TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_LAUNCH_PLAN_SCHEMA_VERSION, TrainingBackend, TrainingLaunchInspectReport,
   TrainingLaunchPlanManifest, TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingLaunchReadiness,
   TrainingLaunchReadinessBlocker, prepare_3dgs_training_launch,
 };

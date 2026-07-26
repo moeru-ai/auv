@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use serde::de::DeserializeOwned;
@@ -17,16 +17,71 @@ pub const TRAINING_LAUNCH_PLAN_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
 
 const NERFSTUDIO_VIEW_NAME: &str = "nerfstudio";
-const TRAINER_BACKEND: &str = "nerfstudio.splatfacto";
-const TRAINER_PROBE_COMMAND: &str = "ns-train --help";
-// TODO(mc7-d6-trainer-backends): D5 intentionally fixes one trainer backend and one launch shape.
-// Add backend selection only in an owner-approved follow-up that keeps D5 launch-prep evidence stable.
-const TRAINER_LAUNCH_SUBCOMMAND: &str = "splatfacto";
+// Source snapshot used to review the offline OpenSplat CLI and Nerfstudio input contract.
+// The local `--help` probe checks command availability only, not this revision.
+const OPEN_SPLAT_CONTRACT_REVISION: &str = "9fb62fde8b7b8c416121d3cbdcda278ffd9682f7";
+
+/// Trainer command contract selected for offline launch preparation.
+// TODO(3dgs-training-cli-restore): no CLI frontend selects this backend yet. The
+// pre-#130 `auv-minecraft prepare-3dgs-training --trainer-backend` wiring (stranded
+// commit 9c9296ef) patches a training CLI command family that #130 deleted and the
+// restore lane has not brought back; port the CLI surface only in an owner-approved
+// slice that restores that family onto the current frontend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrainingBackend {
+  NerfstudioSplatfacto,
+  OpenSplat,
+}
+
+impl TrainingBackend {
+  /// Stable backend name persisted in launch evidence.
+  pub fn manifest_name(self) -> &'static str {
+    match self {
+      Self::NerfstudioSplatfacto => "nerfstudio.splatfacto",
+      Self::OpenSplat => "opensplat",
+    }
+  }
+
+  fn probe_program(self) -> &'static str {
+    match self {
+      Self::NerfstudioSplatfacto => "ns-train",
+      Self::OpenSplat => "opensplat",
+    }
+  }
+
+  fn probe_arguments(self) -> &'static [&'static str] {
+    &["--help"]
+  }
+
+  fn probe_command(self) -> String {
+    format!("{} {}", self.probe_program(), self.probe_arguments().join(" "))
+  }
+
+  fn suggested_output_dir(self, output_dir: &Path) -> PathBuf {
+    match self {
+      Self::NerfstudioSplatfacto => output_dir.join("trainer-output/nerfstudio-splatfacto"),
+      Self::OpenSplat => output_dir.join("trainer-output/opensplat"),
+    }
+  }
+
+  fn launch_command(self, training_data_dir: &Path, suggested_output_dir: &Path) -> String {
+    match self {
+      Self::NerfstudioSplatfacto => {
+        format!("ns-train splatfacto --data {} --output-dir {}", sh_quote(training_data_dir), sh_quote(suggested_output_dir))
+      }
+      Self::OpenSplat => {
+        let output_file = suggested_output_dir.join("splat.ply");
+        format!("opensplat {} --output {}", sh_quote(training_data_dir), sh_quote(&output_file))
+      }
+    }
+  }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrainingLaunchPreparationInputs {
   pub training_package_manifest_path: PathBuf,
   pub output_dir: PathBuf,
+  pub trainer_backend: TrainingBackend,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,7 +149,14 @@ pub enum TrainingLaunchReadiness {
 pub enum TrainingLaunchReadinessBlocker {
   CompatibilityViewBlocked,
   TransformsMissing,
+  SeedPointCloudMissing,
   TrainerCommandUnavailable,
+}
+
+#[derive(Debug, Deserialize)]
+struct NerfstudioTransformsSeedCloud {
+  #[serde(default)]
+  ply_file_path: Option<String>,
 }
 
 pub fn prepare_3dgs_training_launch(
@@ -111,45 +173,51 @@ where
   F: Fn(&str, &[&str]) -> bool,
 {
   let training_package_manifest =
-    read_json_file::<TrainingPackageManifest>(&inputs.training_package_manifest_path, "MC-7 D3 training package manifest")?;
-  let training_package_dir = inputs.training_package_manifest_path.parent().ok_or_else(|| {
-    format!("MC-7 D3 training package manifest {} has no parent directory", inputs.training_package_manifest_path.display())
-  })?;
+    read_json_file::<TrainingPackageManifest>(&inputs.training_package_manifest_path, "training package manifest")?;
+  let training_package_dir = inputs
+    .training_package_manifest_path
+    .parent()
+    .ok_or_else(|| format!("training package manifest {} has no parent directory", inputs.training_package_manifest_path.display()))?;
 
   let training_package_inspect_report_path = training_package_dir.join("inspect_report.json");
   let training_package_inspect_report =
-    read_json_file::<TrainingPackageInspectReport>(&training_package_inspect_report_path, "MC-7 D3 training package inspect report")?;
+    read_json_file::<TrainingPackageInspectReport>(&training_package_inspect_report_path, "training package inspect report")?;
 
-  let manifest_view = find_compatibility_view(&training_package_manifest.compatibility_views, "MC-7 D3 training package manifest")?;
-  let inspect_view =
-    find_compatibility_view(&training_package_inspect_report.compatibility_views, "MC-7 D3 training package inspect report")?;
+  let manifest_view = find_compatibility_view(&training_package_manifest.compatibility_views, "training package manifest")?;
+  let inspect_view = find_compatibility_view(&training_package_inspect_report.compatibility_views, "training package inspect report")?;
 
   let compatibility_export_report_path = training_package_dir.join(&inspect_view.export_report_path);
-  ensure_file_readable(&compatibility_export_report_path, "MC-7 D3 Nerfstudio compatibility export report JSON")?;
+  ensure_file_readable(&compatibility_export_report_path, "Nerfstudio compatibility export report JSON")?;
 
   let transforms_path = inspect_view.transforms_path.as_ref().map(|path| training_package_dir.join(path));
   if inspect_view.transforms_path.is_some() {
     let declared_path = transforms_path.as_ref().expect("transforms path should exist when declared");
-    ensure_file_readable(declared_path, "MC-7 D3 Nerfstudio transforms JSON")?;
+    ensure_file_readable(declared_path, "Nerfstudio transforms JSON")?;
   }
 
   let training_data_dir = training_package_dir.join("compat/nerfstudio");
   let compatibility_images_dir = training_data_dir.join("images");
   if inspect_view.exported_frame_count > 0 {
-    ensure_directory_exists(&training_data_dir, "MC-7 D3 Nerfstudio compatibility data directory")?;
-    ensure_directory_exists(&compatibility_images_dir, "MC-7 D3 Nerfstudio compatibility images directory")?;
+    ensure_directory_exists(&training_data_dir, "Nerfstudio compatibility data directory")?;
+    ensure_directory_exists(&compatibility_images_dir, "Nerfstudio compatibility images directory")?;
   }
 
-  let suggested_output_dir = inputs.output_dir.join("trainer-output/nerfstudio-splatfacto");
-  let launch_command =
-    format!("ns-train {TRAINER_LAUNCH_SUBCOMMAND} --data {} --output-dir {}", sh_quote(&training_data_dir), sh_quote(&suggested_output_dir));
-  let probe_succeeded = probe("ns-train", &["--help"]);
+  let seed_point_cloud_present = if inputs.trainer_backend == TrainingBackend::OpenSplat {
+    transforms_path.as_ref().map(|path| resolve_seed_point_cloud_path(path)).transpose()?.flatten().is_some()
+  } else {
+    false
+  };
+  let suggested_output_dir = inputs.trainer_backend.suggested_output_dir(&inputs.output_dir);
+  let launch_command = inputs.trainer_backend.launch_command(&training_data_dir, &suggested_output_dir);
+  let probe_succeeded = probe(inputs.trainer_backend.probe_program(), inputs.trainer_backend.probe_arguments());
 
   let transforms_present = transforms_path.is_some();
   let (trainer_readiness, readiness_blocker) = if inspect_view.status == TrainingCompatibilityStatus::Blocked {
     (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::CompatibilityViewBlocked))
   } else if inspect_view.exported_frame_count > 0 && !transforms_present {
     (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::TransformsMissing))
+  } else if inspect_view.exported_frame_count > 0 && inputs.trainer_backend == TrainingBackend::OpenSplat && !seed_point_cloud_present {
+    (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::SeedPointCloudMissing))
   } else if !probe_succeeded {
     (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::TrainerCommandUnavailable))
   } else {
@@ -159,7 +227,7 @@ where
   let generated_at_millis = crate::now_millis();
   let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-launch-plan.json");
   let inspect_report_path = inputs.output_dir.join("minecraft-3dgs-training-launch-inspect.json");
-  let runbook_path = inputs.output_dir.join("mc7-training-launch-runbook.md");
+  let runbook_path = inputs.output_dir.join("training-launch-runbook.md");
 
   let mut warnings = BTreeSet::new();
   warnings.extend(training_package_inspect_report.warnings.iter().cloned());
@@ -168,7 +236,12 @@ where
   let mut known_limits = BTreeSet::new();
   known_limits.extend(training_package_manifest.known_limits.iter().cloned());
   known_limits.extend(training_package_inspect_report.known_limits.iter().cloned());
-  known_limits.insert("MC-7 D5 training launch prep only; no trainer process is started and no trained splat is produced".to_string());
+  known_limits.insert("training launch preparation only; no trainer process is started and no trained splat is produced".to_string());
+  if inputs.trainer_backend == TrainingBackend::OpenSplat {
+    known_limits.insert(format!(
+      "OpenSplat readiness targets upstream source revision {OPEN_SPLAT_CONTRACT_REVISION} and checks only the local launch contract: command probe, transforms.json, and referenced seed point cloud; binary version and real training are not verified"
+    ));
+  }
 
   let manifest = TrainingLaunchPlanManifest {
     schema_version: TRAINING_LAUNCH_PLAN_SCHEMA_VERSION,
@@ -180,7 +253,7 @@ where
     source_run_ids: training_package_manifest.source_run_ids.clone(),
     counts: training_package_manifest.counts.clone(),
     compatibility_view_name: manifest_view.view_name.clone(),
-    trainer_backend: TRAINER_BACKEND.to_string(),
+    trainer_backend: inputs.trainer_backend.manifest_name().to_string(),
     training_data_dir: training_data_dir.to_string_lossy().into_owned(),
     transforms_path: inspect_view.transforms_path.clone(),
     export_report_path: inspect_view.export_report_path.clone(),
@@ -188,7 +261,7 @@ where
     launch_command,
     known_limits: known_limits.iter().cloned().collect(),
   };
-  write_json(&manifest_path, &manifest, "MC-7 D5 training launch plan JSON")?;
+  write_json(&manifest_path, &manifest, "training launch plan JSON")?;
 
   let inspect_report = TrainingLaunchInspectReport {
     schema_version: TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION,
@@ -201,7 +274,7 @@ where
     compatibility_status: inspect_view.status,
     trainer_readiness,
     readiness_blocker,
-    probe_command: TRAINER_PROBE_COMMAND.to_string(),
+    probe_command: inputs.trainer_backend.probe_command(),
     probe_succeeded,
     exported_frame_count: inspect_view.exported_frame_count,
     skipped_frame_count: inspect_view.skipped_frame_count,
@@ -209,12 +282,12 @@ where
     warnings: warnings.iter().cloned().collect(),
     known_limits: known_limits.iter().cloned().collect(),
   };
-  write_json(&inspect_report_path, &inspect_report, "MC-7 D5 training launch inspect JSON")?;
+  write_json(&inspect_report_path, &inspect_report, "training launch inspect JSON")?;
 
   fs::create_dir_all(&inputs.output_dir)
-    .map_err(|error| format!("failed to create MC-7 D5 training launch output directory {}: {error}", inputs.output_dir.display()))?;
+    .map_err(|error| format!("failed to create training launch output directory {}: {error}", inputs.output_dir.display()))?;
   fs::write(&runbook_path, render_runbook(&manifest, &inspect_report).as_bytes())
-    .map_err(|error| format!("failed to write MC-7 D5 training launch runbook {}: {error}", runbook_path.display()))?;
+    .map_err(|error| format!("failed to write training launch runbook {}: {error}", runbook_path.display()))?;
 
   Ok(TrainingLaunchPreparationOutput {
     output_dir: inputs.output_dir,
@@ -230,10 +303,71 @@ fn default_trainer_probe(command: &str, arguments: &[&str]) -> bool {
   Command::new(command).args(arguments).status().map(|status| status.success()).unwrap_or(false)
 }
 
+fn resolve_seed_point_cloud_path(transforms_path: &Path) -> TrainingLaunchPreparationResult<Option<PathBuf>> {
+  let transforms = read_json_file::<NerfstudioTransformsSeedCloud>(transforms_path, "Nerfstudio transforms JSON")?;
+  let Some(relative_path) = transforms.ply_file_path.filter(|path| !path.trim().is_empty()) else {
+    return Ok(None);
+  };
+  let relative_path = Path::new(&relative_path);
+  if relative_path.is_absolute()
+    || relative_path.components().any(|component| !matches!(component, Component::CurDir | Component::Normal(_)))
+  {
+    return Err(format!(
+      "OpenSplat seed point cloud path {:?} in {} must stay relative to the training dataset",
+      relative_path,
+      transforms_path.display()
+    ));
+  }
+  let dataset_root = transforms_path.parent().unwrap_or(Path::new("."));
+  let resolved_path = dataset_root.join(relative_path);
+  let Ok(metadata) = fs::symlink_metadata(&resolved_path) else {
+    return Ok(None);
+  };
+  if metadata.file_type().is_symlink() {
+    ensure_path_stays_within_dataset_root(dataset_root, &resolved_path)?;
+    return Err(format!(
+      "OpenSplat seed point cloud {} must not resolve through symlinks inside the training dataset",
+      resolved_path.display()
+    ));
+  }
+  if !metadata.is_file() {
+    return Ok(None);
+  }
+  ensure_path_stays_within_dataset_root(dataset_root, &resolved_path)?;
+  Ok(Some(resolved_path))
+}
+
+fn ensure_path_stays_within_dataset_root(dataset_root: &Path, resolved_path: &Path) -> TrainingLaunchPreparationResult<()> {
+  let canonical_dataset_root = fs::canonicalize(dataset_root)
+    .map_err(|error| format!("failed to canonicalize training dataset root {}: {error}", dataset_root.display()))?;
+  let canonical_resolved_path = fs::canonicalize(resolved_path)
+    .map_err(|error| format!("failed to canonicalize OpenSplat seed point cloud {}: {error}", resolved_path.display()))?;
+  if !canonical_resolved_path.starts_with(&canonical_dataset_root) {
+    return Err(format!(
+      "OpenSplat seed point cloud {} must stay within the training dataset rooted at {}",
+      resolved_path.display(),
+      dataset_root.display()
+    ));
+  }
+
+  let relative_path = resolved_path.strip_prefix(dataset_root).unwrap_or(resolved_path);
+  let mut current_path = dataset_root.to_path_buf();
+  for component in relative_path.components() {
+    current_path.push(component.as_os_str());
+    if fs::symlink_metadata(&current_path).map(|metadata| metadata.file_type().is_symlink()).unwrap_or(false) {
+      return Err(format!(
+        "OpenSplat seed point cloud {} must not resolve through symlinks inside the training dataset",
+        resolved_path.display()
+      ));
+    }
+  }
+  Ok(())
+}
+
 fn render_runbook(manifest: &TrainingLaunchPlanManifest, inspect_report: &TrainingLaunchInspectReport) -> String {
   let mut output = String::new();
-  output.push_str("# MC-7 training launch runbook\n\n");
-  output.push_str("This is a preparation artifact. It does not start a trainer process and does not prove MC-7 training quality.\n\n");
+  output.push_str("# 3DGS training launch runbook\n\n");
+  output.push_str("This is a preparation artifact. It does not start a trainer process and does not prove training quality.\n\n");
   output.push_str(&format!(
     "- trainer backend: `{}`\n- compatibility view: `{}`\n- readiness: `{}`\n",
     manifest.trainer_backend,
@@ -249,6 +383,7 @@ fn render_runbook(manifest: &TrainingLaunchPlanManifest, inspect_report: &Traini
       match blocker {
         TrainingLaunchReadinessBlocker::CompatibilityViewBlocked => "compatibility_view_blocked",
         TrainingLaunchReadinessBlocker::TransformsMissing => "transforms_missing",
+        TrainingLaunchReadinessBlocker::SeedPointCloudMissing => "seed_point_cloud_missing",
         TrainingLaunchReadinessBlocker::TrainerCommandUnavailable => {
           "trainer_command_unavailable"
         }
@@ -263,13 +398,20 @@ fn render_runbook(manifest: &TrainingLaunchPlanManifest, inspect_report: &Traini
   output.push_str(&manifest.launch_command);
   output.push_str("\n```\n\n");
   output.push_str("Notes:\n");
-  output.push_str("- D5 keeps the D3 package authoritative; it does not copy training inputs into a second dataset tree.\n");
-  output.push_str("- If readiness is `trainer_command_unavailable`, install a local Nerfstudio CLI and rerun `prepare-3dgs-training`.\n");
+  output.push_str("- The training package remains authoritative; this step does not copy inputs into a second dataset tree.\n");
+  if manifest.trainer_backend == TrainingBackend::OpenSplat.manifest_name() {
+    output.push_str("- If readiness is `trainer_command_unavailable`, install a local OpenSplat CLI and rerun `prepare-3dgs-training`.\n");
+    output.push_str(
+      "- If readiness is `seed_point_cloud_missing`, regenerate the training package from captures that include raycast hits so transforms.json can reference a seed point cloud.\n",
+    );
+  } else {
+    output.push_str("- If readiness is `trainer_command_unavailable`, install a local Nerfstudio CLI and rerun `prepare-3dgs-training`.\n");
+  }
   output.push_str(
-    "- If readiness is `compatibility_view_blocked`, regenerate D3 from a package that exports at least one Nerfstudio-compatible frame.\n",
+    "- If readiness is `compatibility_view_blocked`, regenerate the training package from captures that export at least one Nerfstudio-compatible frame.\n",
   );
   output.push_str(
-    "- If readiness is `transforms_missing`, treat the D3 package as corrupted input and rebuild D3 before attempting training.\n",
+    "- If readiness is `transforms_missing`, treat the training package as corrupted input and rebuild it before attempting training.\n",
   );
   output
 }
@@ -345,11 +487,11 @@ mod tests {
         warnings: vec![],
       },
     );
-
     let output = prepare_3dgs_training_launch_with_probe(
       TrainingLaunchPreparationInputs {
         training_package_manifest_path: manifest_path,
         output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::NerfstudioSplatfacto,
       },
       |_command, _arguments| true,
     )
@@ -379,11 +521,11 @@ mod tests {
         warnings: vec![],
       },
     );
-
     let output = prepare_3dgs_training_launch_with_probe(
       TrainingLaunchPreparationInputs {
         training_package_manifest_path: manifest_path,
         output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::NerfstudioSplatfacto,
       },
       |_command, _arguments| false,
     )
@@ -412,11 +554,11 @@ mod tests {
         warnings: vec!["one frame skipped".to_string()],
       },
     );
-
     let output = prepare_3dgs_training_launch_with_probe(
       TrainingLaunchPreparationInputs {
         training_package_manifest_path: manifest_path,
         output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::NerfstudioSplatfacto,
       },
       |_command, _arguments| true,
     )
@@ -447,6 +589,7 @@ mod tests {
       TrainingLaunchPreparationInputs {
         training_package_manifest_path: manifest_path,
         output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::NerfstudioSplatfacto,
       },
       |_command, _arguments| true,
     )
@@ -480,12 +623,13 @@ mod tests {
       TrainingLaunchPreparationInputs {
         training_package_manifest_path: manifest_path,
         output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::NerfstudioSplatfacto,
       },
       |_command, _arguments| true,
     )
     .expect_err("missing inspect report should fail");
 
-    assert!(error.contains("failed to open MC-7 D3 training package inspect report"));
+    assert!(error.contains("failed to open training package inspect report"));
   }
 
   #[test]
@@ -509,12 +653,13 @@ mod tests {
       TrainingLaunchPreparationInputs {
         training_package_manifest_path: manifest_path,
         output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::NerfstudioSplatfacto,
       },
       |_command, _arguments| true,
     )
     .expect_err("missing export report should fail");
 
-    assert!(error.contains("failed to open MC-7 D3 Nerfstudio compatibility export report JSON"));
+    assert!(error.contains("failed to open Nerfstudio compatibility export report JSON"));
   }
 
   #[test]
@@ -538,12 +683,162 @@ mod tests {
       TrainingLaunchPreparationInputs {
         training_package_manifest_path: manifest_path,
         output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::NerfstudioSplatfacto,
       },
       |_command, _arguments| true,
     )
     .expect_err("missing declared transforms should fail");
 
-    assert!(error.contains("failed to open MC-7 D3 Nerfstudio transforms JSON"));
+    assert!(error.contains("failed to open Nerfstudio transforms JSON"));
+  }
+
+  #[test]
+  fn opensplat_ready_when_seed_point_cloud_exists_and_probe_succeeds() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "points3d.ply", true);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::OpenSplat,
+      },
+      |command, arguments| {
+        assert_eq!(command, "opensplat");
+        assert_eq!(arguments, ["--help"]);
+        true
+      },
+    )
+    .expect("launch prep should succeed");
+
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Ready);
+    assert_eq!(output.inspect_report.readiness_blocker, None);
+    assert_eq!(output.manifest.trainer_backend, "opensplat");
+    assert_eq!(output.inspect_report.probe_command, "opensplat --help");
+    assert!(output.manifest.launch_command.starts_with("opensplat "));
+    assert!(output.manifest.launch_command.contains("--output"));
+    assert!(output.manifest.launch_command.contains("trainer-output/opensplat/splat.ply"));
+    assert!(
+      output.manifest.known_limits.iter().any(|limit| limit.contains(OPEN_SPLAT_CONTRACT_REVISION)),
+      "launch evidence should pin the reviewed OpenSplat contract revision"
+    );
+    assert!(output.runbook_path.ends_with("training-launch-runbook.md"));
+  }
+
+  #[test]
+  fn opensplat_blocks_when_command_probe_fails() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "points3d.ply", true);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::OpenSplat,
+      },
+      |command, arguments| {
+        assert_eq!(command, "opensplat");
+        assert_eq!(arguments, ["--help"]);
+        false
+      },
+    )
+    .expect("unavailable trainer should still write blocked outputs");
+
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchReadinessBlocker::TrainerCommandUnavailable));
+  }
+
+  #[test]
+  fn opensplat_blocks_when_transforms_have_no_seed_point_cloud_reference() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::OpenSplat,
+      },
+      |_command, _arguments| true,
+    )
+    .expect("launch prep should still write blocked outputs");
+
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchReadinessBlocker::SeedPointCloudMissing));
+  }
+
+  #[test]
+  fn opensplat_blocks_when_seed_point_cloud_file_is_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "points3d.ply", false);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::OpenSplat,
+      },
+      |_command, _arguments| true,
+    )
+    .expect("launch prep should still write blocked outputs");
+
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchReadinessBlocker::SeedPointCloudMissing));
+  }
+
+  #[test]
+  fn opensplat_rejects_seed_point_cloud_path_outside_dataset() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "../outside.ply", false);
+
+    let error = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::OpenSplat,
+      },
+      |_command, _arguments| true,
+    )
+    .expect_err("seed point cloud reference must remain inside the dataset");
+
+    assert!(error.contains("must stay relative to the training dataset"), "unexpected error: {error}");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn opensplat_rejects_seed_point_cloud_symlink_outside_dataset() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "points3d.ply", false);
+
+    let outside_dir = temp.path().join("outside");
+    fs::create_dir_all(&outside_dir).expect("outside dir");
+    let outside_seed = outside_dir.join("points3d.ply");
+    fs::write(
+      &outside_seed,
+      b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n1.0 1.0 1.0 128 128 128\n",
+    )
+    .expect("outside seed write");
+    let linked_seed = manifest_path.parent().expect("training package directory").join("compat/nerfstudio/points3d.ply");
+    symlink(&outside_seed, &linked_seed).expect("seed symlink");
+
+    let error = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::OpenSplat,
+      },
+      |_command, _arguments| true,
+    )
+    .expect_err("seed point cloud symlink must be rejected");
+
+    assert!(error.contains("must stay within the training dataset"), "unexpected error: {error}");
   }
 
   #[derive(Clone)]
@@ -556,6 +851,22 @@ mod tests {
     create_inspect_report: bool,
     create_export_report: bool,
     warnings: Vec<String>,
+  }
+
+  fn write_ready_training_package_fixture(temp: &TempDir) -> PathBuf {
+    write_training_package_fixture(
+      temp,
+      TrainingPackageFixtureSpec {
+        compatibility_status: TrainingCompatibilityStatus::Ready,
+        exported_frame_count: 1,
+        skipped_frame_count: 0,
+        declare_transforms_path: true,
+        create_transforms_file: true,
+        create_inspect_report: true,
+        create_export_report: true,
+        warnings: Vec::new(),
+      },
+    )
   }
 
   fn write_training_package_fixture(temp: &TempDir, spec: TrainingPackageFixtureSpec) -> PathBuf {
@@ -580,7 +891,7 @@ mod tests {
           "exported_frame_count": spec.exported_frame_count,
           "skipped_frame_count": spec.skipped_frame_count
         }),
-        "MC-7 D5 fixture export report JSON",
+        "training launch fixture export report JSON",
       )
       .expect("export report write");
     }
@@ -591,7 +902,7 @@ mod tests {
           "camera_model": "OPENCV",
           "frames": [{"file_path": "images/frame_000001.png", "transform_matrix": [[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]]}]
         }),
-        "MC-7 D5 fixture transforms JSON",
+        "training launch fixture transforms JSON",
       )
       .expect("transforms write");
     }
@@ -668,7 +979,7 @@ mod tests {
       compatibility_views: vec![compatibility_view.clone()],
       known_limits: vec!["canonical package only; no trainer output".to_string()],
     };
-    write_json(&training_dir.join("run.json"), &manifest, "MC-7 D5 fixture training package manifest JSON").expect("manifest write");
+    write_json(&training_dir.join("run.json"), &manifest, "training launch fixture package manifest JSON").expect("manifest write");
 
     if spec.create_inspect_report {
       let inspect_report = TrainingPackageInspectReport {
@@ -683,11 +994,30 @@ mod tests {
         warnings: spec.warnings,
         known_limits: vec!["canonical package only; no trainer output".to_string()],
       };
-      write_json(&training_dir.join("inspect_report.json"), &inspect_report, "MC-7 D5 fixture training package inspect report JSON")
+      write_json(&training_dir.join("inspect_report.json"), &inspect_report, "training launch fixture package inspect report JSON")
         .expect("inspect write");
     }
 
     training_dir.join("run.json")
+  }
+
+  fn set_seed_point_cloud_fixture(manifest_path: &Path, relative_path: &str, create_file: bool) {
+    let transforms_path = manifest_path.parent().expect("training package directory").join("compat/nerfstudio/transforms.json");
+    let mut transforms: serde_json::Value =
+      serde_json::from_slice(&fs::read(&transforms_path).expect("read transforms")).expect("parse transforms");
+    transforms
+      .as_object_mut()
+      .expect("transforms object")
+      .insert("ply_file_path".to_string(), serde_json::Value::String(relative_path.to_string()));
+    write_json(&transforms_path, &transforms, "training launch fixture transforms JSON").expect("rewrite transforms");
+
+    if create_file {
+      fs::write(
+        transforms_path.parent().expect("transforms directory").join(relative_path),
+        b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n0.5 0.5 0.5 128 128 128\n",
+      )
+      .expect("seed point cloud write");
+    }
   }
 
   fn write_png(path: &Path) {
