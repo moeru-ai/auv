@@ -3,8 +3,8 @@ use auv_driver_common::display::ObservedDisplays;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
-  Click, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
-  TypeTextOptions,
+  Click, ClickOptions, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, ScrollDeliveryCandidate,
+  ScrollOptions, TypeTextOptions,
 };
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
@@ -147,6 +147,30 @@ impl WindowApi<'_> {
   pub fn to_window_point(&self, window: &Window, point: ScreenPoint) -> DriverResult<WindowPoint> {
     let _ = self.session;
     Ok(window_point_for_screen_point(window, point))
+  }
+
+  /// Delivers a foreground click at a window-relative point.
+  pub fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    if matches!(options.policy, InputPolicy::BackgroundOnly) {
+      return Err(invalid_input("windows window.click cannot use background_only input policy"));
+    }
+
+    // TODO(windows-window-targeted-click): `window_strategy` selects a
+    // background delivery route that Windows does not implement. Honor it when
+    // a verified Windows window-targeted backend is owner-approved.
+    let _ = options.window_strategy;
+    let screen_point = self.to_screen_point(window, point)?.point();
+    let mut result = self.session.input().click_at(screen_point, options.click)?;
+    if matches!(options.policy, InputPolicy::BackgroundPreferred) {
+      result.attempts.insert(
+        0,
+        InputAttempt::failure(
+          InputDeliveryPath::WindowTargetedMouse,
+          "windows window.click used foreground SendInput because window-targeted background pointer delivery is not available",
+        ),
+      );
+    }
+    Ok(result)
   }
 
   /// Delivers a foreground wheel event at a window-relative point.
