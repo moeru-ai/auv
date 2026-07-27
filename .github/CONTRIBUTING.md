@@ -98,8 +98,6 @@ For the CLI smoke check:
 
 ```shell
 cargo run --quiet -- invoke --help
-bash scripts/ci/public-claims-check.sh
-bash scripts/ci/install-smoke.sh
 ```
 
 For docs-only changes, `git diff --check` is enough unless the docs change a
