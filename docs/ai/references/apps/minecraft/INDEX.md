@@ -2,7 +2,7 @@
 
 Minecraft spatial probe (paused)
 
-Count: **42**
+Count: **43**
 
 - [`2026-06-14-3d-minecraft-spatial-skill.md`](2026-06-14-3d-minecraft-spatial-skill.md)
 - [`2026-06-15-minecraft-graduation-design-closure.md`](2026-06-15-minecraft-graduation-design-closure.md)
@@ -46,6 +46,7 @@ Count: **42**
 - [`2026-06-30-minecraft-query-wired-post-action-verification-design.md`](2026-06-30-minecraft-query-wired-post-action-verification-design.md)
 - [`2026-06-30-minecraft-semantic-pass-fail-closure-design.md`](2026-06-30-minecraft-semantic-pass-fail-closure-design.md)
 - [`2026-07-26-minecraft-3dgs-trainer-backend-evidence.md`](2026-07-26-minecraft-3dgs-trainer-backend-evidence.md)
+- [`2026-07-26-minecraft-spatial-memory-reacquisition-direction.md`](2026-07-26-minecraft-spatial-memory-reacquisition-direction.md)
 
 ## Related
 
