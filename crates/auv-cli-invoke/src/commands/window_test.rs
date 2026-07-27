@@ -1,5 +1,4 @@
 use auv_driver::{CoordinateSpace, Rect, Window, WindowRef};
-use image::RgbaImage;
 
 use super::*;
 
@@ -77,40 +76,6 @@ fn window_list_report_preserves_full_cell_values_for_human_rendering() {
   assert_eq!(report.tables[0].rows[0].cells[1], long_app_name);
   assert_eq!(report.tables[0].rows[0].cells[2], long_title);
   assert_eq!(report.wide_tables[0].rows[0].cells[4], long_bundle_id);
-}
-
-#[test]
-fn window_capture_result_keeps_pixels_out_of_json() {
-  let capture = WindowCapture {
-    window: Window {
-      reference: WindowRef {
-        id: "window_capture".to_string(),
-      },
-      title: Some("Fixture".to_string()),
-      app_name: Some("Fixture App".to_string()),
-      app_bundle_id: Some("com.example.Fixture".to_string()),
-      process_id: Some(42),
-      frame: Rect::new(10.0, 20.0, 640.0, 480.0),
-      coordinate_space: CoordinateSpace::Screen,
-      is_main: true,
-      is_visible: true,
-    },
-    capture: auv_driver::Capture {
-      image: RgbaImage::new(1280, 960),
-      bounds: Rect::new(10.0, 20.0, 640.0, 480.0),
-      scale_factor: 2.0,
-      backend: "fixture-window".to_string(),
-      fallback_reason: None,
-    },
-  };
-
-  let output = InvokeCommandOutput::from_result(&window_capture_result(&capture)).expect("window capture result should serialize");
-  let result = output.result().expect("capture should have a result");
-
-  assert_eq!(result["window"]["reference"]["id"], "window_capture");
-  assert_eq!(result["capture"]["pixel_dimensions"]["width"], 1280);
-  assert_eq!(result["capture"]["backend"], "fixture-window");
-  assert!(result["capture"].get("image").is_none());
 }
 
 #[cfg(target_os = "macos")]

@@ -10,3 +10,5 @@ mod registry_contract;
 mod scan_command_api;
 #[path = "integrated/scan_typed_api/cases.rs"]
 mod scan_typed_api;
+#[path = "integrated/window_capture_result/cases.rs"]
+mod window_capture_result;
