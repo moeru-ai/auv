@@ -67,13 +67,18 @@ pub enum ReacquisitionStatus {
   // A target behind a wall therefore reports `Reacquired` with a precise screen
   // point, so callers must not read this as "the agent can see it".
   //
-  // TODO(reacquisition-occlusion): the Fabric telemetry already carries the
-  // stronger signal — `MinecraftSpatialFrame::raycast_hit` is the truth source's
-  // own first-hit result — so occlusion can be decided without any learned
-  // backend. Deferred because a correct rule must separate "another block
-  // occludes the target" from "the ray simply pointed elsewhere", which is a
-  // visibility-semantics decision rather than a projection fix. Unlocks when an
-  // owner names that slice.
+  // TODO(reacquisition-occlusion): current telemetry carries no signal that can
+  // decide this. `verify::evaluate_mismatch_refusal` does yield
+  // `MismatchRefusalReason::TargetOccluded` from `raycast_hit`, but that rule
+  // does not transfer here: it is sound only for aim confirmation, where the
+  // crosshair is expected to be on the target, so a mismatched first hit implies
+  // something blocks it. Reacquisition asks where an *off-centre* target sits, so
+  // `raycast_hit != target` is the normal case — reusing the rule would report
+  // `TargetOccluded` for nearly every successful reacquisition. A single
+  // centre-screen ray cannot witness occlusion for points it was not aimed at.
+  // Deciding this needs a signal telemetry does not emit: a depth buffer, a ray
+  // aimed at the specific target, or per-block visibility. Unlocks when one of
+  // those lands and an owner names the visibility-semantics slice.
   Reacquired,
   /// Target is geometrically not visible (behind camera, out of frustum, or
   /// outside the viewport bounds).
