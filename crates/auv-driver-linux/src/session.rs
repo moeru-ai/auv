@@ -6,7 +6,7 @@ use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver_common::input::{
   Click, ClickOptions, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
-  ScrollDeliveryCandidate, ScrollOptions, TypeTextOptions, WaitOptions,
+  ScrollDeliveryCandidate, ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
 };
 use auv_driver_common::permission::PermissionProbe;
 use auv_driver_common::selector::WindowSelector;
@@ -187,7 +187,7 @@ impl WindowApi<'_> {
     Ok(WindowPoint::new(point.x - window.frame.origin.x, point.y - window.frame.origin.y))
   }
 
-  pub fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+  fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
     if matches!(options.policy, InputPolicy::BackgroundOnly) {
       return Err(invalid_input("linux window.click cannot use background_only input policy"));
     }
@@ -206,7 +206,7 @@ impl WindowApi<'_> {
     Ok(result)
   }
 
-  pub fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+  fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
     if matches!(options.policy, InputPolicy::BackgroundOnly) {
       return Err(invalid_input("linux window.scroll cannot use background_only input policy"));
     }
@@ -225,6 +225,16 @@ impl WindowApi<'_> {
       "linux window.scroll used foreground RemoteDesktop portal input; Wayland window-targeted background wheel delivery is not available in this slice",
     );
     Ok(result)
+  }
+}
+
+impl WindowInput for WindowApi<'_> {
+  fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    self.click_impl(window, point, options)
+  }
+
+  fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    self.scroll_impl(window, point, scroll, options)
   }
 }
 

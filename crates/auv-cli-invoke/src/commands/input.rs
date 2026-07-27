@@ -11,7 +11,7 @@ use crate::{InvokeReport, InvokeReportField};
 use auv_tracing::{ArtifactPurpose, Attributes, ByteLength, NewArtifact};
 use futures_util::io::Cursor as AsyncCursor;
 
-use auv_driver::INPUT_ACTION_RESULT_PURPOSE;
+use auv_driver::{INPUT_ACTION_RESULT_PURPOSE, WindowInput as _};
 const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 
 pub fn group() -> CommandGroup {

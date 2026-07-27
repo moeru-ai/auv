@@ -1,5 +1,8 @@
 use crate::*;
 
+#[cfg(target_os = "macos")]
+use auv_driver::WindowInput as _;
+
 #[cfg(not(target_os = "macos"))]
 pub fn run_live_scan(_inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   Err("live NetEase playlist sidebar scan is only supported on macOS".to_string())

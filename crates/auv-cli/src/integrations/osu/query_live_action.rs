@@ -1,4 +1,4 @@
-use auv_driver::{InputActionResult, geometry::WindowPoint};
+use auv_driver::{InputActionResult, WindowInput as _, geometry::WindowPoint};
 use auv_game_osu::{VisualTruthQueryActionWiringLineage, VisualTruthQueryLiveClickExecutor};
 
 pub const QUERY_WIRED_LIVE_ACTION_OPERATION_ID: &str = "auv.osu.visual_truth_query_wired_live_action";

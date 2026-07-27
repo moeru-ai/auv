@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
-use auv_driver::{InputActionResult, WindowPoint};
+use auv_driver::{InputActionResult, WindowInput as _, WindowPoint};
 use serde::{Deserialize, Serialize};
 
 use crate::views::MatchedNode;

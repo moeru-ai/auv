@@ -1,6 +1,6 @@
-use auv_driver_common::Driver;
 use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
 use auv_driver_common::window::{Window, WindowRef};
+use auv_driver_common::{Driver, WindowInput as _};
 
 use super::*;
 use crate::LinuxDriver;

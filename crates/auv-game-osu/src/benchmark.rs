@@ -22,7 +22,7 @@ use auv_task_object_detection::DetectionResult;
 #[cfg(target_os = "macos")]
 use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
-use auv_driver::{App, Click, ClickOptions, InputPolicy, WindowClickStrategy, WindowPoint, WindowSelector};
+use auv_driver::{App, Click, ClickOptions, InputPolicy, WindowClickStrategy, WindowInput as _, WindowPoint, WindowSelector};
 
 pub type OsuResult<T> = Result<T, String>;
 

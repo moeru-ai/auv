@@ -11,7 +11,7 @@ use auv_driver_common::geometry::{CoordinateSpace, Point, RatioRect, Rect, Scree
 use auv_driver_common::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
   InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
-  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
 };
 use auv_driver_common::permission::{PermissionProbe, PermissionStatus};
 use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
@@ -296,7 +296,7 @@ impl WindowApi<'_> {
     self.mutate(window, WindowMutationKind::Zoom, options)
   }
 
-  pub fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+  fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
     let pid = window_pid(window)?;
     let number = window_number(window)?;
     let screen_point = self.to_screen_point(window, point)?;
@@ -386,7 +386,7 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+  fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
     let mut attempts = Vec::new();
     for candidate in scroll_attempt_candidates(&options) {
       match candidate {
@@ -547,6 +547,16 @@ impl WindowApi<'_> {
       thread::sleep(settle);
     }
     Ok(())
+  }
+}
+
+impl WindowInput for WindowApi<'_> {
+  fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    self.click_impl(window, point, options)
+  }
+
+  fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    self.scroll_impl(window, point, scroll, options)
   }
 }
 

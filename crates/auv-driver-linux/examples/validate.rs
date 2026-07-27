@@ -41,6 +41,8 @@
 //! cargo run -p auv-driver-linux --example validate -- capture-screen -- clipboard
 //! ```
 
+use auv_driver_common::WindowInput as _;
+
 use std::error::Error;
 
 use auv_driver_common::Driver;

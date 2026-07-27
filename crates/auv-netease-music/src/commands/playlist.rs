@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use crate::run_live_scan_until_query;
 use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget};
+#[cfg(target_os = "macos")]
+use auv_driver::WindowInput as _;
 
 const PLAYLIST_SELECT_BOTTOM_SAFE_PADDING: f64 = 128.0;
 

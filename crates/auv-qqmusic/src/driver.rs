@@ -3,7 +3,7 @@ use std::time::Duration;
 use auv_driver::LocalDriverSession;
 use auv_driver::{
   ActivationPolicy, App, Click, ClickOptions, InputPolicy, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, TextSubmit,
-  WaitOptions, Window, WindowPoint, WindowSelector,
+  WaitOptions, Window, WindowInput as _, WindowPoint, WindowSelector,
 };
 use auv_driver_macos::MacosDriverSession;
 

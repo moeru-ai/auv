@@ -10,6 +10,8 @@ use crate::tracing::NodeAction;
 #[cfg(target_os = "linux")]
 use crate::views::{MatchedNode, SettingsNode, find_labeled_node, visible_labels};
 use crate::windows::{OpenWindowReport, ResolveOptions, open_or_resolve};
+#[cfg(target_os = "linux")]
+use auv_driver::WindowInput as _;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenInputs {

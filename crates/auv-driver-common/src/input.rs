@@ -2,6 +2,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::DriverResult;
+use crate::geometry::WindowPoint;
+use crate::window::Window;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MouseButton {
@@ -232,6 +236,17 @@ impl ScrollDeliveryStrategy {
       candidates: vec![ScrollDeliveryCandidate::ForegroundHid],
     }
   }
+}
+
+/// Window-relative pointer input exposed consistently by desktop drivers.
+///
+/// Each platform adapter must either implement the operation or reject it as
+/// unsupported. This keeps the capability contract shared without copying
+/// another platform's delivery policy into an adapter that cannot provide it.
+pub trait WindowInput {
+  fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult>;
+
+  fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

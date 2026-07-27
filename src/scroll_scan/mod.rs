@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use crate::model::{AuvResult, now_millis};
 use crate::run_read::{emit_scan_coverage, emit_scroll_scan};
+use auv_driver::WindowInput as _;
 use auv_scan::{CoverageEntry, CoverageView, NegativeEvidence};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};

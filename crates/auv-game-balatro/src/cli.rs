@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use auv_driver::WindowInput as _;
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
 use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
 use auv_driver::input::{ClickOptions, InputPolicy};

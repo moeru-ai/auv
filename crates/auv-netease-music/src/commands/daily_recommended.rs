@@ -3,7 +3,7 @@ use crate::*;
 #[cfg(target_os = "macos")]
 use crate::telemetry::{DailyRecommendedInputDelivered, DailyRecommendedPlayAllChecked};
 #[cfg(target_os = "macos")]
-use auv_driver::{InputActionResult, InputDeliveryPath};
+use auv_driver::{InputActionResult, InputDeliveryPath, WindowInput as _};
 
 #[cfg(target_os = "macos")]
 #[derive(serde::Serialize)]

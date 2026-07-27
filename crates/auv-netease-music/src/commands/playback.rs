@@ -3,6 +3,8 @@ use std::fmt;
 use auv_cli_common::TableRow;
 use auv_cli_common::outputs::cli::CliOutput;
 use auv_cli_common::outputs::formats::table::{self, TableOptions};
+#[cfg(target_os = "macos")]
+use auv_driver::WindowInput as _;
 use auv_driver::vision::TextRecognitionOptions;
 use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext};
 use serde::{Deserialize, Serialize};

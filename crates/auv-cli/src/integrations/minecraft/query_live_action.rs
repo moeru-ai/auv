@@ -1,4 +1,4 @@
-use auv_driver::{InputActionResult, geometry::WindowPoint};
+use auv_driver::{InputActionResult, WindowInput as _, geometry::WindowPoint};
 
 /// Delivers direct Minecraft window clicks for live projection workflows.
 pub struct DirectWindowPointClickExecutor {
