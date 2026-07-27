@@ -47,6 +47,14 @@
           "z": -1
         },
         "block_id": "minecraft:stone"
+      },
+      {
+        "block_pos": {
+          "x": 13,
+          "y": 65,
+          "z": -1
+        },
+        "block_id": "minecraft:grass_block"
       }
     ],
     "inventory_summary": [
@@ -61,5 +69,5 @@
     ],
     "screen_state": "menu"
   },
-  "notice": "Matrices are serialized in column-major order to match the Rust projector. resource_pack_ids records the client-enabled pack ids used for MC-6 provenance; it does not prove the sweep sampled every required profile by itself. This schema still does not prove screenshot binding, live input, or live world-diff verification."
+  "notice": "Matrices are serialized in column-major order to match the Rust projector. resource_pack_ids records the client-enabled pack ids used for MC-6 provenance; it does not prove the sweep sampled every required profile by itself. nearby_blocks holds surface-exposed blocks (non-air with at least one air neighbour) within a radius of the player's eye, nearest first, capped per frame; it is radius-bounded rather than view-bounded, so it is not a visibility claim and may include blocks behind the player. This schema still does not prove screenshot binding, live input, or live world-diff verification."
 }
