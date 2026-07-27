@@ -132,13 +132,8 @@ private func axFirstWindow(_ appElement: AXUIElement) -> AXUIElement? {
   return axElementArrayAttribute(appElement, kAXWindowsAttribute as String).first
 }
 
-// NOTICE: `AxPathResolutionFailure` and `axObservedPathIndices` live in
-// `AxPath.swift` — the pure, AX-free parse layer. They are `internal` (not
-// `private`) so a standalone `swiftc` characterization harness can compile that
-// one file in isolation (the full module cannot be linked under `swift test`
-// because the generated `SwiftBridgeCore.swift` references Rust FFI symbols only
-// present in the cargo-built static lib). See
-// `docs/ai/references/driver/2026-07-19-ax-path-resolution-characterization.md`.
+// `AxPathResolutionFailure` and `axObservedPathIndices` live in `AxPath.swift`
+// because path parsing is shared by the AX tree operations in this file.
 
 private func axResolveObservedPath(
   pid: pid_t,

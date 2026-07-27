@@ -232,9 +232,7 @@ fn non_negative_count(value: i64) -> usize {
 // decode boundary that converts the unstructured native response into a
 // structured variant. Callers above this layer match on the variant, never on
 // the message string (AGENTS.md: no `contains("stale")` control flow in the
-// operation/CLI layers). The matched substrings are the observed-path failure
-// contract characterized in
-// `docs/ai/references/driver/2026-07-19-ax-path-resolution-characterization.md`.
+// operation/CLI layers).
 //
 // NOTICE(ax-native-error-kind): the ideal is for Swift to emit a structured
 // error kind over FFI so this layer maps a code, not a substring. That is
