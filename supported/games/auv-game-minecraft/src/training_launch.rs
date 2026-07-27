@@ -20,6 +20,16 @@ const NERFSTUDIO_VIEW_NAME: &str = "nerfstudio";
 // Source snapshot used to review the offline OpenSplat CLI and Nerfstudio input contract.
 // The local `--help` probe checks command availability only, not this revision.
 const OPEN_SPLAT_CONTRACT_REVISION: &str = "9fb62fde8b7b8c416121d3cbdcda278ffd9682f7";
+// Release tag whose prebuilt `brush-app-aarch64-apple-darwin` asset and CLI surface were
+// reviewed for this contract. Pinned to a tag rather than a commit because the launch plan
+// targets the published macOS binary; the local `--help` probe does not verify the version.
+const BRUSH_CONTRACT_REVISION: &str = "v0.3.0";
+// Brush substitutes `{iter}` with the zero-padded training step
+// (`brush-process/src/train_stream.rs`: `export_name.replace("{iter}", ...)`). Keeping the
+// placeholder matters because Brush exports every `--export-every` steps in addition to the
+// last step, so a fixed filename would let an unfinished checkpoint occupy the path a
+// downstream collector would otherwise read as the final splat.
+const BRUSH_EXPORT_NAME_TEMPLATE: &str = "splat_{iter}.ply";
 
 /// Trainer command contract selected for offline launch preparation.
 // TODO(3dgs-training-cli-restore): no CLI frontend selects this backend yet. The
@@ -37,15 +47,24 @@ pub enum TrainingBackend {
   // docs/ai/references/apps/minecraft/2026-07-26-minecraft-3dgs-trainer-backend-evidence.md.
   NerfstudioSplatfacto,
   OpenSplat,
-  // TODO(3dgs-brush-backend): Brush (ArthurBrussee/brush, wgpu/Metal) is the
-  // best-fit backend on the M4 target: it ships a prebuilt aarch64-apple-darwin
-  // binary, runs headless on a positional directory, reads the transforms.json
-  // shape this crate already writes with the same OpenGL camera-to-world
-  // convention, and accepts the bare XYZ+RGB seed cloud emitted by
-  // `write_seed_point_cloud`. Deferred because its seed load fails *silently*
-  // (missing ply => random init, no error), so a variant needs a readiness rule
-  // that proves the seed was consumed rather than trusting exit status. Unlocks
-  // when the owner names that slice; evidence is in the reference doc above.
+  /// wgpu/Metal trainer (ArthurBrussee/brush): the only backend here that can
+  /// actually train on the Apple Silicon target.
+  // NOTICE: unlike OpenSplat, Brush does not fail when the seed point cloud is
+  // unreadable. `brush-dataset/src/formats/nerfstudio.rs` wraps the load in
+  // `if let Ok(ply_data)` with no else branch, leaving `init_splat = None`, and
+  // `brush-process/src/train_stream.rs` then takes `else { // Default: just use
+  // random splats }`, announcing it only through `log::info!`. A silently
+  // seedless run therefore exits 0 and writes a plausible splat that ignores the
+  // exported Minecraft geometry, so seed presence must be a launch-time
+  // readiness precondition rather than something inferred from exit status.
+  Brush,
+  // TODO(3dgs-seed-consumption-verification): readiness proves the seed cloud
+  // *exists and resolves inside the dataset*, not that the trainer parsed it.
+  // Verifying real consumption needs either a post-run splat-count/extent check
+  // against the seed, or scraping the trainer's info log for the random-init
+  // line; both require actually running a trainer, which this offline
+  // preparation module deliberately does not do. Unlocks when an owner names a
+  // slice that runs a real training job and asserts on its output.
 }
 
 impl TrainingBackend {
@@ -54,6 +73,7 @@ impl TrainingBackend {
     match self {
       Self::NerfstudioSplatfacto => "nerfstudio.splatfacto",
       Self::OpenSplat => "opensplat",
+      Self::Brush => "brush",
     }
   }
 
@@ -61,6 +81,20 @@ impl TrainingBackend {
     match self {
       Self::NerfstudioSplatfacto => "ns-train",
       Self::OpenSplat => "opensplat",
+      Self::Brush => "brush",
+    }
+  }
+
+  /// Whether the backend consumes the Nerfstudio `ply_file_path` seed cloud, and so
+  /// must not be reported Ready without one. True for both reasons a backend can
+  /// need it: OpenSplat aborts without it, Brush silently trains on random
+  /// initialization instead.
+  fn consumes_seed_point_cloud(self) -> bool {
+    match self {
+      // NOTICE: splatfacto seeds from the dataparser's own point cloud and supports
+      // `random_init`, so a missing seed cloud is not a launch-time blocker here.
+      Self::NerfstudioSplatfacto => false,
+      Self::OpenSplat | Self::Brush => true,
     }
   }
 
@@ -76,6 +110,7 @@ impl TrainingBackend {
     match self {
       Self::NerfstudioSplatfacto => output_dir.join("trainer-output/nerfstudio-splatfacto"),
       Self::OpenSplat => output_dir.join("trainer-output/opensplat"),
+      Self::Brush => output_dir.join("trainer-output/brush"),
     }
   }
 
@@ -87,6 +122,20 @@ impl TrainingBackend {
       Self::OpenSplat => {
         let output_file = suggested_output_dir.join("splat.ply");
         format!("opensplat {} --output {}", sh_quote(training_data_dir), sh_quote(&output_file))
+      }
+      // NOTICE: Brush takes the dataset as a positional argument and disables its viewer on
+      // its own once one is present (`with_viewer` is declared
+      // `default_value_if("source", ArgPredicate::IsPresent, "false")`), so the plan must not
+      // pass an explicit headless flag. `--export-path` is a directory and `--export-name` is
+      // a filename joined onto it, not a second path (`train_stream.rs`:
+      // `export_path.join(&export_name)`).
+      Self::Brush => {
+        format!(
+          "brush {} --export-path {} --export-name {}",
+          sh_quote(training_data_dir),
+          sh_quote(suggested_output_dir),
+          sh_quote(Path::new(BRUSH_EXPORT_NAME_TEMPLATE))
+        )
       }
     }
   }
@@ -217,7 +266,7 @@ where
     ensure_directory_exists(&compatibility_images_dir, "Nerfstudio compatibility images directory")?;
   }
 
-  let seed_point_cloud_present = if inputs.trainer_backend == TrainingBackend::OpenSplat {
+  let seed_point_cloud_present = if inputs.trainer_backend.consumes_seed_point_cloud() {
     transforms_path.as_ref().map(|path| resolve_seed_point_cloud_path(path)).transpose()?.flatten().is_some()
   } else {
     false
@@ -231,7 +280,7 @@ where
     (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::CompatibilityViewBlocked))
   } else if inspect_view.exported_frame_count > 0 && !transforms_present {
     (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::TransformsMissing))
-  } else if inspect_view.exported_frame_count > 0 && inputs.trainer_backend == TrainingBackend::OpenSplat && !seed_point_cloud_present {
+  } else if inspect_view.exported_frame_count > 0 && inputs.trainer_backend.consumes_seed_point_cloud() && !seed_point_cloud_present {
     (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::SeedPointCloudMissing))
   } else if !probe_succeeded {
     (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::TrainerCommandUnavailable))
@@ -252,10 +301,27 @@ where
   known_limits.extend(training_package_manifest.known_limits.iter().cloned());
   known_limits.extend(training_package_inspect_report.known_limits.iter().cloned());
   known_limits.insert("training launch preparation only; no trainer process is started and no trained splat is produced".to_string());
-  if inputs.trainer_backend == TrainingBackend::OpenSplat {
-    known_limits.insert(format!(
-      "OpenSplat readiness targets upstream source revision {OPEN_SPLAT_CONTRACT_REVISION} and checks only the local launch contract: command probe, transforms.json, and referenced seed point cloud; binary version and real training are not verified"
-    ));
+  match inputs.trainer_backend {
+    TrainingBackend::NerfstudioSplatfacto => {}
+    TrainingBackend::OpenSplat => {
+      known_limits.insert(format!(
+        "OpenSplat readiness targets upstream source revision {OPEN_SPLAT_CONTRACT_REVISION} and checks only the local launch contract: command probe, transforms.json, and referenced seed point cloud; binary version and real training are not verified"
+      ));
+    }
+    TrainingBackend::Brush => {
+      known_limits.insert(format!(
+        "Brush readiness targets upstream release {BRUSH_CONTRACT_REVISION} and checks only the local launch contract: command probe, transforms.json, and referenced seed point cloud; binary version and real training are not verified"
+      ));
+      // Both limits below exist because Brush degrades instead of failing, so a zero exit
+      // status is weaker evidence here than it is for OpenSplat.
+      known_limits.insert(
+        "Brush does not fail when the referenced seed point cloud is unreadable; it reports the fallback at info level and trains from random initialization, so a completed run does not prove the exported Minecraft geometry was used"
+          .to_string(),
+      );
+      known_limits.insert(
+        "Brush treats a failed splat export as a warning rather than a fatal error, so a zero exit status does not prove an exported ply exists".to_string(),
+      );
+    }
   }
 
   let manifest = TrainingLaunchPlanManifest {
@@ -418,6 +484,16 @@ fn render_runbook(manifest: &TrainingLaunchPlanManifest, inspect_report: &Traini
     output.push_str("- If readiness is `trainer_command_unavailable`, install a local OpenSplat CLI and rerun `prepare-3dgs-training`.\n");
     output.push_str(
       "- If readiness is `seed_point_cloud_missing`, regenerate the training package from captures that include raycast hits so transforms.json can reference a seed point cloud.\n",
+    );
+  } else if manifest.trainer_backend == TrainingBackend::Brush.manifest_name() {
+    output.push_str(
+      "- If readiness is `trainer_command_unavailable`, install the prebuilt Brush binary for this platform and rerun `prepare-3dgs-training`.\n",
+    );
+    output.push_str(
+      "- If readiness is `seed_point_cloud_missing`, regenerate the training package from captures that include raycast hits so transforms.json can reference a seed point cloud. Brush will not surface this itself: it reports the dropped seed at info level and trains from random initialization instead of failing.\n",
+    );
+    output.push_str(
+      "- A completed Brush run is not evidence on its own. It exits successfully both when the seed cloud was ignored and when the splat export failed, so confirm the exported ply exists under the suggested output directory before treating the result as trained on this scene.\n",
     );
   } else {
     output.push_str("- If readiness is `trainer_command_unavailable`, install a local Nerfstudio CLI and rerun `prepare-3dgs-training`.\n");
@@ -854,6 +930,130 @@ mod tests {
     .expect_err("seed point cloud symlink must be rejected");
 
     assert!(error.contains("must stay within the training dataset"), "unexpected error: {error}");
+  }
+
+  #[test]
+  fn brush_ready_when_seed_point_cloud_exists_and_probe_succeeds() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "points3d.ply", true);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::Brush,
+      },
+      |command, arguments| {
+        assert_eq!(command, "brush");
+        assert_eq!(arguments, ["--help"]);
+        true
+      },
+    )
+    .expect("launch prep should succeed");
+
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Ready);
+    assert_eq!(output.inspect_report.readiness_blocker, None);
+    assert_eq!(output.manifest.trainer_backend, "brush");
+    assert_eq!(output.inspect_report.probe_command, "brush --help");
+    // Brush takes the dataset as a positional path and runs headless as soon as one
+    // is present, so the plan must not pass a `--source`/`--with-viewer` pair.
+    assert!(output.manifest.launch_command.starts_with("brush "), "unexpected command: {}", output.manifest.launch_command);
+    assert!(!output.manifest.launch_command.contains("--with-viewer"));
+    assert!(output.manifest.launch_command.contains("--export-path"));
+    // `--export-name` is a filename that Brush joins onto `--export-path`, not a path of
+    // its own, and it must keep the `{iter}` placeholder so the guaranteed last-step
+    // export does not overwrite, or get overwritten by, a periodic one.
+    assert!(
+      output.manifest.launch_command.contains(&format!("--export-name \"{BRUSH_EXPORT_NAME_TEMPLATE}\"")),
+      "unexpected command: {}",
+      output.manifest.launch_command
+    );
+    assert!(!output.manifest.launch_command.contains("trainer-output/brush/splat"));
+    assert!(
+      output.manifest.known_limits.iter().any(|limit| limit.contains(BRUSH_CONTRACT_REVISION)),
+      "launch evidence should pin the reviewed Brush contract revision"
+    );
+    assert!(
+      output.manifest.known_limits.iter().any(|limit| limit.contains("random")),
+      "launch evidence must record that a dropped seed cloud silently degrades to random initialization"
+    );
+  }
+
+  // ROOT CAUSE:
+  //
+  // If the trainer backend silently tolerates a missing seed point cloud, readiness
+  // computed from the command probe alone reports Ready for a run that will train on
+  // random initialization instead of the exported Minecraft geometry.
+  //
+  // Before the fix, only OpenSplat gated on the seed cloud, because OpenSplat aborts
+  // without one (`nerfstudio.cpp`: `if (t.plyFilePath.empty()) throw`).
+  // Brush instead falls back without an error: `nerfstudio.rs:377` wraps the load in
+  // `if let Ok(ply_data)` with no else branch, and `train_stream.rs:124-130` takes the
+  // `else { // Default: just use random splats }` path, logging only at info level.
+  // The fix keeps the seed cloud a readiness precondition for every backend that
+  // consumes one, so evidence cannot claim Ready for a silently seedless run.
+  #[test]
+  fn brush_blocks_when_seed_point_cloud_is_missing_despite_silent_trainer_fallback() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "points3d.ply", false);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::Brush,
+      },
+      |_command, _arguments| true,
+    )
+    .expect("launch prep should still write blocked outputs");
+
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchReadinessBlocker::SeedPointCloudMissing));
+  }
+
+  #[test]
+  fn brush_blocks_when_transforms_have_no_seed_point_cloud_reference() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::Brush,
+      },
+      |_command, _arguments| true,
+    )
+    .expect("launch prep should still write blocked outputs");
+
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchReadinessBlocker::SeedPointCloudMissing));
+  }
+
+  #[test]
+  fn brush_runbook_explains_silent_seed_fallback_recovery() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_ready_training_package_fixture(&temp);
+    set_seed_point_cloud_fixture(&manifest_path, "points3d.ply", true);
+
+    let output = prepare_3dgs_training_launch_with_probe(
+      TrainingLaunchPreparationInputs {
+        training_package_manifest_path: manifest_path,
+        output_dir: temp.path().join("launch"),
+        trainer_backend: TrainingBackend::Brush,
+      },
+      |_command, _arguments| true,
+    )
+    .expect("launch prep should succeed");
+
+    let runbook = fs::read_to_string(&output.runbook_path).expect("runbook should be written");
+    assert!(runbook.contains("brush"), "runbook should name the Brush backend");
+    assert!(
+      runbook.contains("random"),
+      "runbook must warn that Brush degrades to random initialization instead of failing when the seed cloud is unreadable"
+    );
   }
 
   #[derive(Clone)]
