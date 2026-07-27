@@ -101,7 +101,7 @@ State these explicitly; earlier summaries overstated them.
 | --- | --- | --- |
 | Contract | `TrainingResultSpatialQueryInputs` has no viewpoint parameter; `select_reference_frame` searches for a past frame that *saw* the target | Structural — the old path cannot express reacquisition |
 | Capture | ~~`TelemetryRecorder` has no `populateNearbyBlocks`~~ — closed by `ef43bd92`. Existing captures are unaffected; only new recordings carry the field | Was a capability gap; now a re-capture requirement |
-| Data | 34k frames hold exactly 1 camera pose, 1 unique hit block, 0 screenshots | Process — no parallax, so no reacquisition scoring is possible |
+| Data | 34k frames hold exactly 1 camera pose, 1 unique hit block, 0 screenshots | Process only — the capture chain is already built, so this needs an operating session, not code. See the protocol section |
 | Occlusion | A single centre-screen ray cannot witness occlusion for off-centre points; telemetry carries no depth | Signal coverage |
 
 The layering matters: fixing capture and data still leaves reacquisition
@@ -160,6 +160,66 @@ separators plus the nested `block_pos` object — had never been exercised by re
 data, and the existing ingest fixtures could not catch a mismatch because they
 build a frame through serde and round-trip Rust's own output.
 
+## Capture protocol for slice 3 (no new code required)
+
+Traced on 2026-07-27. Every link in the chain already exists; slice 3 is an
+operating procedure, not an implementation.
+
+The chain, with the code that already closes each link:
+
+| Link | Where it already lives |
+| --- | --- |
+| Capture the client window through the driver | `capture_target_screenshot` in [`projection_workflow.rs`](../../../../../crates/auv-cli/src/integrations/minecraft/projection_workflow.rs) |
+| Bind image to frame, record signed skew | `bind_capture_to_frame` → `mc_capture_skew_ms` |
+| Publish PNG, then stamp the frame with its URI | `project_capture` sets `recorded_frame.screenshot_artifact_ref` before publishing the frame JSON |
+| Pair frame↔screenshot inside a run | `resolve_spatial_frame_screenshot_bundle_ids` in [`mod.rs`](../../../../../crates/auv-cli/src/integrations/minecraft/mod.rs) parses `screenshot_artifact_ref` back into a bundle-local id |
+| Merge many bundles into one packet | `export_3dgs_scene_packet` iterates `bundle_manifest_paths`; the CLI accepts `--bundle-manifest` repeatedly |
+
+**One bridge invocation is one run.** `cli_frontend.rs` mints a fresh
+`RunId::new()` per bridge call, so N poses produce N runs and N bundles. That is
+fine — the scene packet merges them — but it means the procedure is
+`bridge × N`, then `export-spatial-bundle × N`, then one
+`export-3dgs-scene-packet`. Each bridge call prints `runId: <id>`; keep those.
+
+Per pose (stand still, then run):
+
+```bash
+auv-minecraft bridge --sample "$HOME/Library/Application Support/minecraft/auv/telemetry.jsonl" --capture-target-app com.mojang.minecraft --target-block 513,72,726
+```
+
+Then per recorded run id, and finally once across all bundles:
+
+```bash
+auv-minecraft export-spatial-bundle <run-id> --output-dir out/bundles/<run-id>
+```
+
+Protocol constraints that decide whether the result is usable:
+
+- **Move between poses.** The blocker this slice exists to clear is 34k frames
+  holding one camera pose. Nothing in the pipeline enforces pose distinctness, so
+  a session that samples from one spot reproduces the original blocker with more
+  screenshots attached. Photogrammetry wants a baseline-to-depth ratio near 1:10,
+  so for structures ~10 m away, move on the order of 1 m between samples.
+- **Rotation is not a substitute for translation.** Pure yaw/pitch adds no
+  parallax and cannot be triangulated. A panorama sweep from one position is the
+  degenerate case, not a multi-pose capture.
+- **Stand still while sampling.** `--capture-skew-ms` is a *declared* offset, not
+  a measurement: `capture_timestamp` just shifts the frame timestamp by whatever
+  the operator passes. Minecraft walking is ~4.3 m/s, so the live-click path's
+  250 ms tolerance is ~1.1 m of travel — the same magnitude as the pose-spacing
+  target above. Sampling while stationary is what makes the binding meaningful.
+- **A refused projection still records the pair.** `project_capture` publishes
+  the PNG and the stamped frame on both the `Bound` and `Refused` arms, so a pose
+  where the target is occluded or out of frustum still contributes a usable
+  frame↔screenshot pair. Refusals are expected in a multi-pose sweep and are not
+  a protocol failure.
+
+Measure on the first real session: slice 2 emits up to 128 `nearby_blocks` per
+line and the mod writes one line per *rendered* frame regardless of whether that
+frame was sampled. At 60 fps a several-minute session is tens of thousands of
+lines, so record the actual per-line size and `telemetry.jsonl` growth. That
+converts slice 2's unmeasured-growth limit into a measurement.
+
 ## Next slices, with unlock conditions
 
 Ordered by dependency, not priority. Slices 1 and 2 landed on 2026-07-27; the
@@ -173,7 +233,10 @@ rest are not owner-approved.
    The mod now also carries `TODO(nearby-blocks-frustum-culling)`, which points
    at slice 5.
 3. **Capture protocol: multi-pose plus screenshot binding.** Requires the owner
-   to operate the client. Precondition for slices 4 and 6.
+   to operate the client. Precondition for slices 4 and 6. **Needs no new Rust
+   code** — see the protocol section below. Corrected on 2026-07-27: this slice
+   was framed as a capability gap, but the whole capture→bind→pair→packet chain
+   already exists and is reachable from the CLI.
 4. **Reacquisition scoring harness.** Anchor a target from viewpoint A, query
    from viewpoint B, score against B's own raycast and projection truth. Depends
    on 3. This is what turns the geometry backend from a candidate into a
