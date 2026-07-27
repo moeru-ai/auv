@@ -14,9 +14,9 @@ pub mod measurement;
 pub mod overlay;
 pub mod prep;
 pub mod projection;
+pub mod reacquisition;
 pub mod sample_builder;
 pub mod scene_packet;
-pub mod reacquisition;
 pub mod training_job;
 pub mod training_launch;
 pub mod training_package;
@@ -53,11 +53,9 @@ pub use prep::{
   prepare_texture_sweep_resource_packs,
 };
 pub use projection::MinecraftProjector;
+pub use reacquisition::{ReacquisitionAnswer, ReacquisitionQuery, ReacquisitionStatus, reacquire_from_geometry};
 #[cfg(feature = "tracing")]
 pub use run_read::{MINECRAFT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT, MinecraftArtifactPublishError};
-pub use reacquisition::{
-  ReacquisitionAnswer, ReacquisitionQuery, ReacquisitionStatus, reacquire_from_geometry,
-};
 pub use sample_builder::{
   TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
   build_texture_sweep_samples_from_bundles,
