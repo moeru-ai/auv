@@ -1,4 +1,4 @@
-# Minecraft 3DGS → spatial-memory lane handoff (2026-07-25)
+# Minecraft 3DGS → spatial-memory lane handoff (2026-07-27)
 
 Records what landed on `research/3dgs-restore-lane`, what it does and does not
 prove, and which gaps remain with their unlock conditions.

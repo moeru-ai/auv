@@ -45,9 +45,9 @@ Count: **44**
 - [`2026-06-30-minecraft-query-wired-live-click-cli-design.md`](2026-06-30-minecraft-query-wired-live-click-cli-design.md)
 - [`2026-06-30-minecraft-query-wired-post-action-verification-design.md`](2026-06-30-minecraft-query-wired-post-action-verification-design.md)
 - [`2026-06-30-minecraft-semantic-pass-fail-closure-design.md`](2026-06-30-minecraft-semantic-pass-fail-closure-design.md)
-- [`2026-07-25-minecraft-3dgs-spatial-memory-lane-handoff.md`](2026-07-25-minecraft-3dgs-spatial-memory-lane-handoff.md)
 - [`2026-07-26-minecraft-3dgs-trainer-backend-evidence.md`](2026-07-26-minecraft-3dgs-trainer-backend-evidence.md)
 - [`2026-07-26-minecraft-spatial-memory-reacquisition-direction.md`](2026-07-26-minecraft-spatial-memory-reacquisition-direction.md)
+- [`2026-07-27-minecraft-3dgs-spatial-memory-lane-handoff.md`](2026-07-27-minecraft-3dgs-spatial-memory-lane-handoff.md)
 
 ## Related
 
