@@ -493,8 +493,17 @@ mod tests {
     }
   }
 
+  // https://github.com/moeru-ai/auv/actions/runs/30577666189/job/90989876962
   #[tokio::test]
   async fn mcp_uses_the_same_typed_range_validation_as_cli() {
+    // ROOT CAUSE:
+    //
+    // If invalid window-point coordinates were invoked outside macOS, the
+    // platform rejection won because typed coordinate validation lived inside
+    // the macOS-only command body.
+    //
+    // Before the fix, Linux CI observed a platform error instead of the shared
+    // validation error. The fix validates command inputs before platform dispatch.
     let adapters = core_invoke_adapters();
     let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.clickWindowPoint").expect("click-window-point adapter");
     let error = adapter

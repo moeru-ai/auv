@@ -328,11 +328,11 @@ impl InputPolicyArg {
   input = ClickWindowPointArgs,
 )]
 async fn click_window_point(input: InvokeCommandInput, args: ClickWindowPointArgs) -> InvokeCommandResult {
+  let point = args.point(&input.command_id)?;
+  let options = args.click_options();
   #[cfg(target_os = "macos")]
   {
     let presentation_input = input.clone();
-    let point = args.point(&input.command_id)?;
-    let options = args.click_options();
     let capability = LocalWindowPointCapability::open()?;
     let outcome = click_resolved_point_with_capability(input, args.title.as_deref(), point, options, &capability).await?;
     let result = outcome.into_result();
@@ -352,7 +352,7 @@ async fn click_window_point(input: InvokeCommandInput, args: ClickWindowPointArg
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = input;
+    let _ = (input, point, options);
     Err("input.clickWindowPoint is only available on macOS".to_string())
   }
 }
