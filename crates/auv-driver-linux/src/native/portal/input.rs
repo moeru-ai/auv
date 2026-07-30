@@ -9,7 +9,7 @@ use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use crate::capture::list_displays;
-use crate::error::backend;
+use crate::error::{backend, invalid_input};
 
 use super::request::{close_session, create_remote_desktop_session, portal_proxy, session_connection, session_request};
 use super::{ScreenCastStream, decode_streams, select_monitor_sources};
@@ -97,12 +97,9 @@ impl InputSession {
   }
 
   pub fn click_at(&mut self, point: Point, click: Click) -> DriverResult<()> {
+    let (count, interval) = click_parts(&click)?;
     self.require_pointer()?;
     self.move_pointer_to(point)?;
-    let (count, interval) = match click {
-      Click::Single => (1, Duration::ZERO),
-      Click::Double { interval } => (2, interval),
-    };
     for index in 0..count {
       self.notify_pointer_button(MouseButton::Left, STATE_PRESSED)?;
       self.notify_pointer_button(MouseButton::Left, STATE_RELEASED)?;
@@ -228,6 +225,14 @@ impl Drop for InputSession {
   fn drop(&mut self) {
     let _ = close_session(&self.connection, &self.session_handle);
   }
+}
+
+fn click_parts(click: &Click) -> DriverResult<(u8, Duration)> {
+  let count = click.count();
+  if count == 0 {
+    return Err(invalid_input("repeated click count must be greater than zero"));
+  }
+  Ok((count, click.interval().unwrap_or(Duration::ZERO)))
 }
 
 fn start_remote_desktop(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<HashMap<String, OwnedValue>> {

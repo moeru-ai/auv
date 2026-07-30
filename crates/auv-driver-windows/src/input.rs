@@ -50,16 +50,17 @@ struct KeyChord {
 }
 
 pub fn click_at(point: Point, click: Click) -> DriverResult<InputActionResult> {
-  let count = match click {
-    Click::Single => 1u32,
-    Click::Double { .. } => 2,
-  };
-  let interval = match click {
-    Click::Single => Duration::ZERO,
-    Click::Double { interval } => interval,
-  };
+  let (count, interval) = click_parts(&click)?;
   native::click(point, count, interval)?;
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+}
+
+fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
+  let count = click.count();
+  if count == 0 {
+    return Err(invalid_input("repeated click count must be greater than zero"));
+  }
+  Ok((u32::from(count), click.interval().unwrap_or(Duration::ZERO)))
 }
 
 pub fn scroll_at(point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
