@@ -17,11 +17,18 @@ pub fn group() -> CommandGroup {
   input = ProbePermissionsArgs,
 )]
 async fn probe_permissions(input: InvokeCommandInput, _args: ProbePermissionsArgs) -> InvokeCommandResult {
+  if input.target_application_id.is_some() {
+    return Err("app.probePermissions cannot use --target".to_string());
+  }
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
   let permissions = read_permissions().await?;
-  Ok(InvokeCommandOutput::from_result(&permissions)?.with_report(permission_report(&permissions)))
+  permission_probe_output(&permissions)
+}
+
+pub fn permission_probe_output(permissions: &auv_driver::PermissionProbe) -> InvokeCommandResult {
+  Ok(InvokeCommandOutput::from_result(permissions)?.with_report(permission_report(permissions)))
 }
 
 pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, String> {
@@ -48,6 +55,10 @@ struct ActivateAppArgs {}
 )]
 async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> InvokeCommandResult {
   let result = activate_application(input.target_application_id).await?;
+  activation_output(&result)
+}
+
+pub fn activation_output(result: &auv_driver::ApplicationActivationResult) -> InvokeCommandResult {
   let mut fields = vec![
     InvokeReportField::new("Requested target", &result.requested_bundle_id),
     InvokeReportField::new("Result", "activation request completed"),
@@ -59,7 +70,7 @@ async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> Invo
   if let auv_driver::ApplicationActivationVerification::Unavailable { reason } = &result.verification {
     fields.push(InvokeReportField::new("Verification detail", reason));
   }
-  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+  Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
 pub async fn activate_application(_target_application_id: Option<String>) -> Result<auv_driver::ApplicationActivationResult, String> {

@@ -1,0 +1,66 @@
+{
+  "name": "@auv/api-client",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts"
+    },
+    "./gen/core/device": {
+      "import": "./src/gen/auv/api/core/v1/device_pb.ts"
+    },
+    "./gen/core/discovery": {
+      "import": "./src/gen/auv/api/core/v1/discovery_pb.ts"
+    },
+    "./gen/core/run": {
+      "import": "./src/gen/auv/api/core/v1/run_pb.ts"
+    },
+    "./gen/core/runner": {
+      "import": "./src/gen/auv/api/core/v1/runner_pb.ts"
+    },
+    "./gen/core/resource": {
+      "import": "./src/gen/auv/api/core/v1/resource_pb.ts"
+    },
+    "./gen/driver/display": {
+      "import": "./src/gen/auv/api/driver/v1/display_pb.ts"
+    },
+    "./gen/driver/capture": {
+      "import": "./src/gen/auv/api/driver/v1/capture_pb.ts"
+    },
+    "./gen/driver/geometry": {
+      "import": "./src/gen/auv/api/driver/v1/geometry_pb.ts"
+    },
+    "./gen/driver/input": {
+      "import": "./src/gen/auv/api/driver/v1/input_pb.ts"
+    },
+    "./gen/driver/text-recognition": {
+      "import": "./src/gen/auv/api/driver/v1/text_recognition_pb.ts"
+    },
+    "./gen/driver/window": {
+      "import": "./src/gen/auv/api/driver/v1/window_pb.ts"
+    },
+    "./gen/driver/macos/permission": {
+      "import": "./src/gen/auv/api/driver/macos/v1/permission_pb.ts"
+    },
+    "./gen/driver/macos/application": {
+      "import": "./src/gen/auv/api/driver/macos/v1/application_pb.ts"
+    },
+    "./gen/object-detection": {
+      "import": "./src/gen/auv/api/inference/v1/object_detection_pb.ts"
+    },
+    "./gen/image": {
+      "import": "./src/gen/auv/api/image/v1/image_pb.ts"
+    },
+    "./gen/image/region": {
+      "import": "./src/gen/auv/api/image/v1/region_pb.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.13.0",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-node": "2.1.2"
+  }
+}

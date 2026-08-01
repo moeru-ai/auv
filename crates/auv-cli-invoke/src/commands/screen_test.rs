@@ -82,7 +82,6 @@ fn region_capture_result_keeps_pixels_out_of_json() {
   assert!(result.get("image").is_none());
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn screen_text_click_result_keeps_resolution_and_delivery_together() {
   let click = ScreenTextClick {
@@ -109,7 +108,6 @@ fn screen_text_click_result_keeps_resolution_and_delivery_together() {
   assert_eq!(report_field(report, "Path"), "foreground_system_events");
 }
 
-#[cfg(target_os = "macos")]
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }

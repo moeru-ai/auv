@@ -114,24 +114,8 @@ struct OutlineArgs {
   input = OutlineArgs,
 )]
 async fn show_outline(input: InvokeCommandInput, args: OutlineArgs) -> InvokeCommandResult {
-  let rect = rect_input(&input.command_id, args.x, args.y, args.width, args.height)?;
-  let style = outline_style(
-    &input.command_id,
-    OutlineStyle::new(),
-    args.padding,
-    args.border_color.as_deref(),
-    args.border_width,
-    args.corner_radius,
-  )?;
-  let mut outline = Outline::new(rect).with_style(style);
-  if let Some(label) = args.label {
-    outline = outline.with_label(label);
-  }
-  if args.label_visible.unwrap_or(false) {
-    outline = outline.with_label_visible();
-  }
-  let options = show_options(args.motion_duration_ms, args.hold_duration_ms);
-  debug_output(&input, "Outline", Overlay::new().with_layer(outline), options)
+  let plan = plan_outline(&input.command_id, args)?;
+  debug_output(&input, plan.component, plan.overlay, plan.options)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -177,26 +161,8 @@ struct CursorArgs {
   input = CursorArgs,
 )]
 async fn show_cursor(input: InvokeCommandInput, args: CursorArgs) -> InvokeCommandResult {
-  let style = cursor_style(
-    &input.command_id,
-    args.padding,
-    args.foreground_color.as_deref(),
-    args.background_color.as_deref(),
-    args.corner_radius,
-    args.sprite_size,
-  )?;
-  let mut cursor = Cursor::new(point_input(&input.command_id, args.x, args.y)?).with_style(style);
-  if let Some(label) = args.label {
-    cursor = cursor.with_label(label);
-  }
-  if args.label_visible.unwrap_or(false) {
-    cursor = cursor.with_label_visible();
-  }
-  if let Some(svg) = args.svg {
-    cursor = cursor.with_image(CursorImage::svg(svg));
-  }
-  let options = show_options(args.motion_duration_ms, args.hold_duration_ms);
-  debug_output(&input, "Cursor", Overlay::new().with_layer(cursor), options)
+  let plan = plan_cursor(&input.command_id, args)?;
+  debug_output(&input, plan.component, plan.overlay, plan.options)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -235,11 +201,8 @@ struct StatusArgs {
   input = StatusArgs,
 )]
 async fn show_status(input: InvokeCommandInput, args: StatusArgs) -> InvokeCommandResult {
-  let style =
-    status_style(&input.command_id, args.padding, args.foreground_color.as_deref(), args.background_color.as_deref(), args.corner_radius)?;
-  let status = Status::new(point_input(&input.command_id, args.x, args.y)?, args.text).with_style(style);
-  let options = show_options(args.motion_duration_ms, args.hold_duration_ms);
-  debug_output(&input, "Status", Overlay::new().with_layer(status), options)
+  let plan = plan_status(&input.command_id, args)?;
+  debug_output(&input, plan.component, plan.overlay, plan.options)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -284,24 +247,8 @@ struct CaptureFrameArgs {
   input = CaptureFrameArgs,
 )]
 async fn show_capture_frame(input: InvokeCommandInput, args: CaptureFrameArgs) -> InvokeCommandResult {
-  let rect = rect_input(&input.command_id, args.x, args.y, args.width, args.height)?;
-  let style = outline_style(
-    &input.command_id,
-    OutlineStyle::capture(),
-    args.padding,
-    args.border_color.as_deref(),
-    args.border_width,
-    args.corner_radius,
-  )?;
-  let mut frame = CaptureFrame::new(rect).with_style(style);
-  if let Some(label) = args.label {
-    frame = frame.with_label(label);
-  }
-  if args.label_visible.unwrap_or(false) {
-    frame = frame.with_label_visible();
-  }
-  let options = show_options(args.motion_duration_ms, args.hold_duration_ms);
-  debug_output(&input, "CaptureFrame", Overlay::new().with_layer(frame), options)
+  let plan = plan_capture_frame(&input.command_id, args)?;
+  debug_output(&input, plan.component, plan.overlay, plan.options)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -368,10 +315,115 @@ struct ClickTargetArgs {
   input = ClickTargetArgs,
 )]
 async fn show_click_target(input: InvokeCommandInput, args: ClickTargetArgs) -> InvokeCommandResult {
-  let rect = rect_input(&input.command_id, args.x, args.y, args.width, args.height)?;
+  let plan = plan_click_target(&input.command_id, args)?;
+  debug_output(&input, plan.component, plan.overlay, plan.options)
+}
+
+pub struct OverlayPlan {
+  pub component: &'static str,
+  pub overlay: Overlay,
+  pub options: ShowOptions,
+}
+
+pub fn plan_overlay(input: &InvokeCommandInput) -> Result<OverlayPlan, String> {
+  let args = input.typed_args.as_ref().ok_or_else(|| format!("{} omitted typed arguments", input.command_id))?;
+  match input.command_id.as_str() {
+    "overlay.outline" => {
+      plan_outline(&input.command_id, args.get::<OutlineArgs>().cloned().ok_or("overlay.outline argument type mismatch")?)
+    }
+    "overlay.cursor" => plan_cursor(&input.command_id, args.get::<CursorArgs>().cloned().ok_or("overlay.cursor argument type mismatch")?),
+    "overlay.status" => plan_status(&input.command_id, args.get::<StatusArgs>().cloned().ok_or("overlay.status argument type mismatch")?),
+    "overlay.captureFrame" => {
+      plan_capture_frame(&input.command_id, args.get::<CaptureFrameArgs>().cloned().ok_or("overlay.captureFrame argument type mismatch")?)
+    }
+    "overlay.clickTarget" => {
+      plan_click_target(&input.command_id, args.get::<ClickTargetArgs>().cloned().ok_or("overlay.clickTarget argument type mismatch")?)
+    }
+    _ => Err(format!("{} is not an overlay planner command", input.command_id)),
+  }
+}
+
+fn plan_outline(command_id: &str, args: OutlineArgs) -> Result<OverlayPlan, String> {
+  let rect = rect_input(command_id, args.x, args.y, args.width, args.height)?;
+  let style =
+    outline_style(command_id, OutlineStyle::new(), args.padding, args.border_color.as_deref(), args.border_width, args.corner_radius)?;
+  let mut outline = Outline::new(rect).with_style(style);
+  if let Some(label) = args.label {
+    outline = outline.with_label(label);
+  }
+  if args.label_visible.unwrap_or(false) {
+    outline = outline.with_label_visible();
+  }
+  Ok(OverlayPlan {
+    component: "Outline",
+    overlay: Overlay::new().with_layer(outline),
+    options: show_options(args.motion_duration_ms, args.hold_duration_ms),
+  })
+}
+
+fn plan_cursor(command_id: &str, args: CursorArgs) -> Result<OverlayPlan, String> {
+  let style = cursor_style(
+    command_id,
+    args.padding,
+    args.foreground_color.as_deref(),
+    args.background_color.as_deref(),
+    args.corner_radius,
+    args.sprite_size,
+  )?;
+  let mut cursor = Cursor::new(point_input(command_id, args.x, args.y)?).with_style(style);
+  if let Some(label) = args.label {
+    cursor = cursor.with_label(label);
+  }
+  if args.label_visible.unwrap_or(false) {
+    cursor = cursor.with_label_visible();
+  }
+  if let Some(svg) = args.svg {
+    if svg.len() > 256 * 1024 {
+      return Err(format!("{command_id} cursor SVG exceeds 256 KiB"));
+    }
+    cursor = cursor.with_image(CursorImage::svg(svg));
+  }
+  Ok(OverlayPlan {
+    component: "Cursor",
+    overlay: Overlay::new().with_layer(cursor),
+    options: show_options(args.motion_duration_ms, args.hold_duration_ms),
+  })
+}
+
+fn plan_status(command_id: &str, args: StatusArgs) -> Result<OverlayPlan, String> {
+  let style =
+    status_style(command_id, args.padding, args.foreground_color.as_deref(), args.background_color.as_deref(), args.corner_radius)?;
+  let status = Status::new(point_input(command_id, args.x, args.y)?, args.text).with_style(style);
+  Ok(OverlayPlan {
+    component: "Status",
+    overlay: Overlay::new().with_layer(status),
+    options: show_options(args.motion_duration_ms, args.hold_duration_ms),
+  })
+}
+
+fn plan_capture_frame(command_id: &str, args: CaptureFrameArgs) -> Result<OverlayPlan, String> {
+  let rect = rect_input(command_id, args.x, args.y, args.width, args.height)?;
+  let style =
+    outline_style(command_id, OutlineStyle::capture(), args.padding, args.border_color.as_deref(), args.border_width, args.corner_radius)?;
+  let mut frame = CaptureFrame::new(rect).with_style(style);
+  if let Some(label) = args.label {
+    frame = frame.with_label(label);
+  }
+  if args.label_visible.unwrap_or(false) {
+    frame = frame.with_label_visible();
+  }
+  Ok(OverlayPlan {
+    component: "CaptureFrame",
+    overlay: Overlay::new().with_layer(frame),
+    options: show_options(args.motion_duration_ms, args.hold_duration_ms),
+  })
+}
+
+fn plan_click_target(command_id: &str, args: ClickTargetArgs) -> Result<OverlayPlan, String> {
+  let rect = rect_input(command_id, args.x, args.y, args.width, args.height)?;
   let point = ScreenPoint::new(rect.origin.x + rect.size.width / 2.0, rect.origin.y + rect.size.height / 2.0);
   let outline_style = outline_style(
-    &input.command_id,
+    command_id,
     OutlineStyle::selected(),
     args.outline_padding,
     args.border_color.as_deref(),
@@ -395,17 +447,24 @@ async fn show_click_target(input: InvokeCommandInput, args: ClickTargetArgs) -> 
     target = target.with_cursor_label_visible();
   }
   target = target.with_status_style(status_style(
-    &input.command_id,
+    command_id,
     args.status_padding,
     args.status_foreground_color.as_deref(),
     args.status_background_color.as_deref(),
     args.status_corner_radius,
   )?);
   let options = show_options(args.motion_duration_ms, args.hold_duration_ms);
-  debug_output(&input, "ClickTarget", Overlay::new().with_layer(target), options)
+  Ok(OverlayPlan {
+    component: "ClickTarget",
+    overlay: Overlay::new().with_layer(target),
+    options,
+  })
 }
 
 fn debug_output(input: &InvokeCommandInput, component: &str, overlay: Overlay, options: ShowOptions) -> InvokeCommandResult {
+  if input.target_application_id.is_some() {
+    return Err(format!("{} cannot use --target; overlays use global screen coordinates", input.command_id));
+  }
   let layers = overlay.layers().len();
   let status = if input.dry_run || !input.overlay_enabled()? {
     OverlayStatus::Disabled
@@ -447,6 +506,23 @@ fn debug_output(input: &InvokeCommandInput, component: &str, overlay: Overlay, o
         ),
       ),
       status.report_field(),
+    ],
+    Vec::new(),
+  )))
+}
+
+pub fn selected_overlay_output(plan: &OverlayPlan, shown: bool) -> InvokeCommandResult {
+  let hold = match plan.options.lifecycle().removal() {
+    auv_driver::overlay::Removal::AutoAfter(duration) => duration,
+    auv_driver::overlay::Removal::Manual => Duration::ZERO,
+  };
+  Ok(InvokeCommandOutput::completed().with_report(InvokeReport::new(
+    vec![
+      InvokeReportField::new("Component", plan.component),
+      InvokeReportField::new("Layers", plan.overlay.layers().len().to_string()),
+      InvokeReportField::new("Motion", format!("{} ms", plan.options.motion().duration().as_millis())),
+      InvokeReportField::new("Hold", format!("{} ms", hold.as_millis())),
+      InvokeReportField::new("Overlay", if shown { "shown" } else { "disabled" }),
     ],
     Vec::new(),
   )))

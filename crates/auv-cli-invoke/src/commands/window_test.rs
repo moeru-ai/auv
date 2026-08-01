@@ -129,9 +129,8 @@ fn window_text_result_keeps_resolved_window_and_ocr_matches_together() {
   assert_eq!(outline.rect(), Rect::new(40.0, 50.0, 70.0, 20.0));
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn window_text_click_result_keeps_resolution_and_delivery_together() {
+fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
   let click = WindowTextClick {
     window: Window {
       reference: WindowRef {
@@ -165,8 +164,14 @@ fn window_text_click_result_keeps_resolution_and_delivery_together() {
     action: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
   };
 
-  let output =
-    window_text_click_output(&click, crate::commands::overlay::OverlayStatus::Disabled).expect("window click result should serialize");
+  let capture = auv_driver::Capture {
+    image: image::RgbaImage::new(1, 1),
+    bounds: Rect::new(10.0, 20.0, 1.0, 1.0),
+    scale_factor: 1.0,
+    backend: "fixture".to_string(),
+    fallback_reason: None,
+  };
+  let output = recorded_window_text_click_output(&click, &capture).expect("window click result should serialize");
   let result = output.result().expect("click should have a result");
 
   assert_eq!(result["window"]["reference"]["id"], "window_click");
@@ -182,10 +187,8 @@ fn window_text_click_result_keeps_resolution_and_delivery_together() {
   assert_eq!(report_field(report, "Input policy"), "foreground_preferred");
   assert_eq!(report_field(report, "Click count"), "3");
   assert_eq!(report_field(report, "Click interval"), "60 ms");
-  assert_eq!(report_field(report, "Overlay"), "disabled");
 }
 
-#[cfg(target_os = "macos")]
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }

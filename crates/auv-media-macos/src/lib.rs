@@ -240,11 +240,22 @@ pub fn send_command(command: MediaCommand) -> Result<(), MediaError> {
 
 /// Send a transport command and observe the resulting now-playing state.
 pub fn control(command: MediaCommand) -> Result<output::MediaControlOutcome, MediaError> {
-  let before = now_playing()?;
-  send_command(command)?;
-  #[cfg(target_os = "macos")]
-  std::thread::sleep(std::time::Duration::from_millis(200));
-  let after = now_playing()?;
+  control_with(command, now_playing, send_command, || {
+    #[cfg(target_os = "macos")]
+    std::thread::sleep(std::time::Duration::from_millis(200));
+  })
+}
+
+fn control_with(
+  command: MediaCommand,
+  mut read: impl FnMut() -> Result<NowPlayingState, MediaError>,
+  send: impl FnOnce(MediaCommand) -> Result<(), MediaError>,
+  settle: impl FnOnce(),
+) -> Result<output::MediaControlOutcome, MediaError> {
+  let before = read()?;
+  send(command)?;
+  settle();
+  let after = read()?;
   Ok(output::MediaControlOutcome::new(command, &before, &after))
 }
 
@@ -258,4 +269,82 @@ pub fn seek(position: std::time::Duration) -> Result<(), MediaError> {
 #[cfg(not(target_os = "macos"))]
 pub fn seek(position: std::time::Duration) -> Result<(), MediaError> {
   tracing::seek(position, || Err(MediaError::Unsupported))
+}
+
+#[cfg(test)]
+mod tests {
+  use std::cell::{Cell, RefCell};
+
+  use super::*;
+
+  fn state(title: &str, is_playing: bool) -> NowPlayingState {
+    NowPlayingState {
+      present: true,
+      title: Some(title.to_string()),
+      artist: Some("Artist".to_string()),
+      content_item_id: Some(title.to_string()),
+      is_playing,
+      ..Default::default()
+    }
+  }
+
+  fn outcome(command: MediaCommand, before: NowPlayingState, after: NowPlayingState) -> output::MediaControlOutcome {
+    let reads = RefCell::new(vec![before, after].into_iter());
+    control_with(command, || Ok(reads.borrow_mut().next().expect("two reads")), |_| Ok(()), || {}).expect("control")
+  }
+
+  #[test]
+  fn control_reads_sends_once_settles_and_reads_in_order() {
+    let events = RefCell::new(Vec::new());
+    let reads = RefCell::new(vec![state("Before", false), state("After", true)].into_iter());
+    let result = control_with(
+      MediaCommand::Play,
+      || {
+        events.borrow_mut().push("read");
+        Ok(reads.borrow_mut().next().expect("two reads"))
+      },
+      |command| {
+        assert_eq!(command, MediaCommand::Play);
+        events.borrow_mut().push("send");
+        Ok(())
+      },
+      || events.borrow_mut().push("settle"),
+    )
+    .expect("control");
+
+    assert_eq!(*events.borrow(), ["read", "send", "settle", "read"]);
+    assert_eq!(result.command, "play");
+    assert!(result.verified);
+  }
+
+  #[test]
+  fn control_does_not_send_when_the_before_read_fails() {
+    let sent = Cell::new(false);
+    let error = control_with(
+      MediaCommand::NextTrack,
+      || Err(MediaError::Unsupported),
+      |_| {
+        sent.set(true);
+        Ok(())
+      },
+      || {},
+    )
+    .expect_err("before read");
+    assert_eq!(error, MediaError::Unsupported);
+    assert!(!sent.get());
+  }
+
+  #[test]
+  fn verification_matches_each_command_postcondition() {
+    assert!(outcome(MediaCommand::Play, state("A", false), state("A", true)).verified);
+    assert!(outcome(MediaCommand::Pause, state("A", true), state("A", false)).verified);
+    assert!(outcome(MediaCommand::TogglePlayPause, state("A", false), state("A", true)).verified);
+    assert!(outcome(MediaCommand::NextTrack, state("A", true), state("B", true)).verified);
+    assert!(outcome(MediaCommand::PreviousTrack, state("B", true), state("A", true)).verified);
+
+    assert!(!outcome(MediaCommand::Play, state("A", false), state("A", false)).verified);
+    assert!(!outcome(MediaCommand::Pause, state("A", true), state("A", true)).verified);
+    assert!(!outcome(MediaCommand::TogglePlayPause, state("A", true), state("A", true)).verified);
+    assert!(!outcome(MediaCommand::NextTrack, state("A", true), state("A", true)).verified);
+  }
 }

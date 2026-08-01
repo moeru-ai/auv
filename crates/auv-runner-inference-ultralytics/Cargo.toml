@@ -1,0 +1,31 @@
+[package]
+name = "auv-runner-inference-ultralytics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Daemon-supervised Ultralytics object-detection Runner for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-api-proto = { path = "../auv-api-proto" }
+auv-inference-common = { path = "../auv-inference-common" }
+auv-inference-ultralytics = { path = "../auv-inference-ultralytics" }
+auv-runner-protocol = { path = "../auv-runner-protocol" }
+auv-task-object-detection = { path = "../auv-task-object-detection", features = ["ultralytics"] }
+image.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tonic = { version = "0.14", features = ["transport"] }
+tonic-health = "0.14"
+tonic-reflection = "0.14"
+
+[dev-dependencies]
+auv-api-client = { path = "../auv-api-client" }
+auv-api-server = { path = "../auv-api-server" }
+tempfile.workspace = true
+tokio-util = "0.7"

@@ -1,0 +1,28 @@
+// EXPERIMENTAL / UNSTABLE
+// Resource references are separated from service descriptors so custom and
+// process Runner reflection can publish an exact transitive schema closure.
+syntax = "proto3";
+
+package auv.api.core.v1;
+
+message DeviceRef {
+  string device_id = 1;
+}
+
+message RunRef {
+  string run_id = 1;
+}
+
+message RunnerClassRef {
+  string runner_class = 1;
+}
+
+message RunnerRef {
+  string runner_id = 1;
+}
+
+message RunnerLeaseRef {
+  RunRef run = 1;
+  RunnerRef runner = 2;
+  string lease_id = 3;
+}

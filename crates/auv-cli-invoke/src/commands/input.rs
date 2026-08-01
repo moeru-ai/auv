@@ -49,7 +49,19 @@ pub async fn focus_text(app: String, query: String, candidate: String) -> Result
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    session.accessibility().focus_text_by_query(&app, &query, None, &candidate).map_err(|error| error.to_string())
+    let selector = if candidate.trim().is_empty() {
+      auv_driver::AxTextSelector::Query(query)
+    } else {
+      auv_driver::AxTextSelector::Path(candidate)
+    };
+    session
+      .accessibility()
+      .focus_text(auv_driver::FocusTextOptions {
+        app,
+        selector,
+        expected_role: None,
+      })
+      .map_err(|error| error.to_string())
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -66,10 +78,14 @@ struct AxFocusTextArgs {
   query: String,
 }
 
+// NOTICE(input-ax-focus-text-alias): this command is a compatibility alias for
+// input.focusText. Both use the same typed macOS AX focus operation; it does
+// not provide an overlay, pointer fallback, or post-delivery focus readback.
+// Remove the alias only after an owner-approved CLI compatibility boundary.
 #[invoke_command(
   id = "input.axFocusText",
   group = "input",
-  description = "Focus a text input by visible text via AXUIElementSetAttributeValue(kAXFocusedAttribute) without moving the real cursor. Errors when the target does not accept programmatic focus; use input.focusText if pointer movement is acceptable.",
+  description = "Compatibility alias for input.focusText; focuses a text input through the same macOS AX focus operation.",
   input = AxFocusTextArgs,
 )]
 async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) -> InvokeCommandResult {
@@ -209,11 +225,7 @@ async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> InvokeComma
     }
 
     let result = press_key_in_active_app(key.clone()).await?;
-    let mut fields = input_action_report_fields(&result);
-    fields.insert(1, InvokeReportField::new("Key", key));
-    fields.insert(2, InvokeReportField::new("Target", "active app"));
-    fields.push(InvokeReportField::new("Backend", "auv-driver-macos.input"));
-    Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+    press_key_output(&result, &key)
   }
   #[cfg(not(target_os = "macos"))]
   {
@@ -497,6 +509,14 @@ impl WindowPointClickOutcome {
 }
 
 fn window_point_click_output(result: WindowPointClickResult, overlay: super::overlay::OverlayStatus) -> InvokeCommandResult {
+  let mut output = window_point_click_output_without_overlay(result)?;
+  output.report.as_mut().expect("window point output always has a report").fields.push(overlay.report_field());
+  Ok(output)
+}
+
+/// Builds the transport-independent `input.clickWindowPoint` result. Visual
+/// overlay presentation remains a local frontend concern.
+pub fn window_point_click_output_without_overlay(result: WindowPointClickResult) -> InvokeCommandResult {
   match &result.action {
     None => {
       let mut output = InvokeCommandOutput::from_result(&result)?;
@@ -506,7 +526,6 @@ fn window_point_click_output(result: WindowPointClickResult, overlay: super::ove
           InvokeReportField::new("Verification", "validation_only"),
           InvokeReportField::new("Window ID", result.window.reference.id.clone()),
           InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)),
-          overlay.report_field(),
         ],
         Vec::new(),
       ));
@@ -525,7 +544,6 @@ fn window_point_click_output(result: WindowPointClickResult, overlay: super::ove
         fields.push(InvokeReportField::new("Bundle ID", bundle_id.clone()));
       }
       fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)));
-      fields.push(overlay.report_field());
       Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
     }
   }
@@ -598,11 +616,23 @@ fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Res
   Ok(())
 }
 
-fn input_action_output(result: &auv_driver::InputActionResult) -> InvokeCommandResult {
+/// Builds the transport-independent delivery result used by local and
+/// daemon-backed input frontends.
+pub fn input_action_output(result: &auv_driver::InputActionResult) -> InvokeCommandResult {
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(input_action_report_fields(result), Vec::new())))
 }
 
-fn focus_text_output(result: &auv_driver::AxFocusResult, candidate: &str) -> InvokeCommandResult {
+/// Builds the shared `input.key` result while keeping transport selection out
+/// of the command's public output contract.
+pub fn press_key_output(result: &auv_driver::InputActionResult, key: &str) -> InvokeCommandResult {
+  let mut fields = input_action_report_fields(result);
+  fields.insert(1, InvokeReportField::new("Key", key));
+  fields.insert(2, InvokeReportField::new("Target", "active app"));
+  fields.push(InvokeReportField::new("Backend", "auv-driver-macos.input"));
+  Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+pub fn focus_text_output(result: &auv_driver::AxFocusResult, candidate: &str) -> InvokeCommandResult {
   let mut fields = vec![
     InvokeReportField::new("Delivery", "delivered"),
     InvokeReportField::new("Target", result.app.clone()),

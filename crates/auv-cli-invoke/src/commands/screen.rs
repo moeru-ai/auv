@@ -2,7 +2,6 @@ use crate::{CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommand
 use auv_tracing::ArtifactMetadata;
 use clap::Args;
 
-#[cfg(target_os = "macos")]
 use crate::artifact::{emit_png, emit_png_with_receipt};
 
 pub fn group() -> CommandGroup {
@@ -102,6 +101,13 @@ fn region_capture_output(capture: &auv_driver::RegionCapture, artifact: Option<A
     Vec::new(),
   ));
   Ok(output.with_artifacts(artifact))
+}
+
+/// Records and projects a region capture returned by either a local or remote
+/// Driver.
+pub async fn recorded_region_capture_output(capture: &auv_driver::RegionCapture) -> InvokeCommandResult {
+  let artifact = emit_png_with_receipt("auv.driver.screen_region_capture", &capture.capture.image).await;
+  region_capture_output(capture, artifact)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -204,11 +210,17 @@ pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_dr
   Err("screen text OCR is only available on macOS".to_string())
 }
 
-#[cfg(target_os = "macos")]
 fn screen_text_matches_output(matches: &auv_driver::OcrMatches) -> InvokeCommandResult {
   let mut output = InvokeCommandOutput::from_result(matches)?;
   output.report = Some(crate::commands::ocr::match_report(&matches.matches, None));
   Ok(output)
+}
+
+/// Records the OCR source and builds the transport-independent
+/// `screen.findText` result.
+pub fn recorded_screen_text_matches_output(matches: &auv_driver::OcrMatches, capture: &auv_driver::Capture) -> InvokeCommandResult {
+  emit_png("auv.driver.screen_ocr_source", &capture.image);
+  screen_text_matches_output(matches)
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -251,7 +263,6 @@ pub struct ScreenTextClick {
   pub action: auv_driver::InputActionResult,
 }
 
-#[cfg(target_os = "macos")]
 fn screen_text_click_output(result: &ScreenTextClick) -> InvokeCommandResult {
   let mut output = InvokeCommandOutput::from_result(result)?;
   output.report = Some(crate::commands::ocr::match_report(&result.matches.matches, Some(0)));
@@ -260,6 +271,13 @@ fn screen_text_click_output(result: &ScreenTextClick) -> InvokeCommandResult {
     report.fields.push(InvokeReportField::new("Click point", format!("{:.0},{:.0}", result.point.x, result.point.y)));
   }
   Ok(output)
+}
+
+/// Builds the transport-independent `screen.clickText` result and records the
+/// OCR source capture through the shared tracing artifact path.
+pub fn recorded_screen_text_click_output(result: &ScreenTextClick, capture: &auv_driver::Capture) -> InvokeCommandResult {
+  emit_png("auv.driver.screen_ocr_source", &capture.image);
+  screen_text_click_output(result)
 }
 
 pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, String> {

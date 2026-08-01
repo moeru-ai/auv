@@ -12,7 +12,7 @@ pub mod traits;
 pub mod vision;
 pub mod window;
 
-pub use accessibility::{AxFocusResult, AxTextRead};
+pub use accessibility::{AxFocusResult, AxTextRead, AxTextSelector, FocusTextOptions};
 pub use application::{ApplicationActivationResult, ApplicationActivationVerification};
 pub use capture::{Activation, Capture, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};

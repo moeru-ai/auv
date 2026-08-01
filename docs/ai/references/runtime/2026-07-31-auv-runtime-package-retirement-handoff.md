@@ -26,7 +26,7 @@ The evidence for retirement was the current workspace dependency graph:
 | Former root surface | Current owner |
 |---|---|
 | `src/mcp.rs` | `crates/auv-cli/src/mcp.rs` |
-| `src/api/session_service` | `crates/auv-cli/src/session_service` |
+| `src/api/session_service` | `crates/auv-api-server` |
 | `src/model.rs` invoke re-exports | direct imports from `auv-cli-invoke` |
 | `src/model.rs` result/time aliases | crate-local aliases or functions |
 | input-action artifact validation | `InputActionResult::validate` in `auv-driver-common` |
@@ -57,7 +57,7 @@ crate. A future shared type needs a named producer, consumer, and owner.
 ## Execution and recording after retirement
 
 ```text
-CLI / MCP / session frontend
+CLI / MCP / API server frontend
   -> auv-cli-invoke command or app-owned typed operation
     -> auv-driver capability
       -> direct typed result

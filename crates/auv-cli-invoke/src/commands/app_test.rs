@@ -31,3 +31,17 @@ fn permission_report_groups_readable_statuses() {
 fn field_value<'a>(section: &'a InvokeReportSection, label: &str) -> &'a str {
   section.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("field should exist")
 }
+
+#[test]
+fn permission_probe_rejects_target_before_platform_access() {
+  let input = crate::InvokeCommandInput {
+    command_id: "app.probePermissions".to_string(),
+    target_application_id: Some("com.example.App".to_string()),
+    inputs: Default::default(),
+    typed_args: None,
+    dry_run: false,
+    cancellation: crate::InvokeCancellation::new(),
+  };
+  let error = futures_executor::block_on(probe_permissions_invoke_command().invoke(input)).expect_err("target must fail before probing");
+  assert_eq!(error, "app.probePermissions cannot use --target");
+}

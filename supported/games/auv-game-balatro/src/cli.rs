@@ -45,14 +45,15 @@ use crate::game_restart::{
   emit_game_restart_completed,
 };
 use crate::hand_selection::{HandSelectionResult, HandSelectionState, HandSelectionToggle, HandSelectionToggleKind};
-use crate::model::{
-  BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, ObjectZone, RoundState, ScoreState, SlotId, StoreItem,
-};
+use crate::model::{BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, ObjectZone, SlotId, StoreItem};
 use crate::object_sell::{
   ObjectSellClick, ObjectSellConfirmation, ObjectSellIncompleteReason, ObjectSellOutcome, ObjectSellRequest, ObjectSellResult,
   SellableObject, emit_object_sell_completed, evaluate_object_sell_confirmation,
 };
-use crate::observation::{ObservationError, observe_image};
+use crate::observation::{
+  ObservationError, apply_ui_numeric_reading, is_numeric_ui_label, is_score_ui_label, is_single_ui_digit_label, observe_image,
+  observe_live_via_api,
+};
 pub use crate::output::OutputMode;
 use crate::pack_choose::{
   ObservedPackState, PackChoice, PackChoiceId, PackChooseAction, PackChooseConfirmation, PackChooseControl, PackChooseRequest,
@@ -1431,9 +1432,34 @@ fn write_store_buy_output(result: &StoreBuyResult) -> Result<(), CliError> {
 
 fn observe_from_args(args: &ObserveArgs) -> Result<BalatroState, CliError> {
   let config = BalatroModelConfig::from_observe_args(args);
+  let inherited_context = std::env::var_os("AUV_CONTEXT").is_some();
+  let endpoint = if inherited_context {
+    None
+  } else {
+    auv_api_client::discovery::resolve(None).map_err(|error| CliError::Message(error.to_string()))?
+  };
   if let Some(image) = args.image.as_deref() {
+    if inherited_context || endpoint.is_some() {
+      let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+      let mut state = runtime.block_on(crate::observation::observe_image_via_api(image, &config, endpoint.clone(), args.no_cache))?;
+      enrich_ui_numeric_readings_from_image(&mut state, image);
+      return Ok(state);
+    }
     return observe_image_with_ui_readings(image, &config, args.no_cache);
   }
+  if inherited_context || endpoint.is_some() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+      .enable_all()
+      .build()
+      .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+    return runtime.block_on(observe_live_via_api(&args.target, &config, endpoint, args.no_cache)).map_err(Into::into);
+  }
+  // TODO(balatro-daemon-actions): live card/object reads and action
+  // verification retain their command-local driver sessions. Move those paths
+  // only after an owner-approved typed action/verification contract exists.
   observe_live_target(&args.target, &config, args.no_cache)
 }
 
@@ -3443,40 +3469,6 @@ fn enrich_ui_numeric_readings_from_image(state: &mut BalatroState, image: &Path)
   }
 }
 
-fn is_score_ui_label(label: &str) -> bool {
-  matches!(label, "ui_score_chips" | "ui_score_current" | "ui_score_mult" | "ui_score_round_score" | "ui_score_target_score")
-}
-
-fn is_numeric_ui_label(label: &str) -> bool {
-  matches!(
-    label,
-    "ui_score_chips"
-      | "ui_score_current"
-      | "ui_score_mult"
-      | "ui_score_round_score"
-      | "ui_score_target_score"
-      | "ui_data_cash"
-      | "ui_data_discards_left"
-      | "ui_data_hands_left"
-      | "ui_round_ante_current"
-      | "ui_round_ante_left"
-      | "ui_round_round_current"
-      | "ui_round_round_left"
-  )
-}
-
-fn is_single_ui_digit_label(label: &str) -> bool {
-  matches!(
-    label,
-    "ui_data_discards_left"
-      | "ui_data_hands_left"
-      | "ui_round_ante_current"
-      | "ui_round_ante_left"
-      | "ui_round_round_current"
-      | "ui_round_round_left"
-  )
-}
-
 fn is_allowed_single_ui_digit(label: &str, digit: u8) -> bool {
   match label {
     "ui_data_discards_left" | "ui_data_hands_left" => digit <= 5,
@@ -3517,27 +3509,6 @@ fn score_ui_digit_foreground(label: &str) -> UiDigitForeground {
 
 fn use_score_digit_reader(label: &str) -> bool {
   matches!(label, "ui_score_chips" | "ui_score_current" | "ui_score_mult" | "ui_score_round_score")
-}
-
-fn apply_ui_numeric_reading(label: &str, text: &str, scores: &mut ScoreState, rounds: &mut RoundState) {
-  let Some(value) = normalize_ui_numeric_text_for_label(label, text) else {
-    return;
-  };
-  match label {
-    "ui_score_chips" => scores.chips = Some(value),
-    "ui_score_current" => scores.current_score = Some(value),
-    "ui_score_mult" => scores.mult = Some(value),
-    "ui_score_round_score" => scores.round_score = Some(value),
-    "ui_score_target_score" => scores.target_score = Some(value),
-    "ui_data_cash" => rounds.cash = Some(value),
-    "ui_data_discards_left" => rounds.discards_left = Some(value),
-    "ui_data_hands_left" => rounds.hands_left = Some(value),
-    "ui_round_ante_current" => rounds.ante_current = Some(value),
-    "ui_round_ante_left" => rounds.ante_left = Some(value),
-    "ui_round_round_current" => rounds.round_current = Some(value),
-    "ui_round_round_left" => rounds.round_left = Some(value),
-    _ => {}
-  }
 }
 
 fn infer_single_ui_digit_from_crop(crop: &Path) -> Option<u8> {
@@ -3758,28 +3729,6 @@ const UI_DIGIT_TEMPLATES: &[UiDigitTemplate] = &[
     ],
   },
 ];
-
-fn normalize_ui_numeric_text_for_label(label: &str, text: &str) -> Option<String> {
-  let value = normalize_ui_numeric_text(text)?;
-  if is_single_ui_digit_label(label) {
-    return value.chars().find(|character| character.is_ascii_digit()).map(|character| character.to_string());
-  }
-  Some(value)
-}
-
-fn normalize_ui_numeric_text(text: &str) -> Option<String> {
-  let normalized = text
-    .chars()
-    .filter_map(|character| match character {
-      '0'..='9' | '$' | '/' | '+' | '-' | '.' => Some(character),
-      'x' | 'X' | '×' => Some('x'),
-      'O' | 'o' | '〇' | '○' => Some('0'),
-      ',' | ' ' | '\n' | '\r' | '\t' => None,
-      _ => None,
-    })
-    .collect::<String>();
-  (!normalized.is_empty()).then_some(normalized)
-}
 
 fn crop_detection_to_temp(image: &RgbaImage, bbox: BoundingBox, label: &str) -> Option<PathBuf> {
   let image_w = image.width().max(1);

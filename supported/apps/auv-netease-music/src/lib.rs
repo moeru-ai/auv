@@ -1,11 +1,13 @@
 //! NetEase Music product CLI library: sidebar playlist scan + agent-callable output.
 
+pub mod api;
 pub mod app;
 #[cfg(feature = "tracing")]
 pub mod cli;
 pub mod commands;
 pub mod models;
 pub mod output;
+pub mod runner;
 pub mod scroll;
 mod telemetry;
 pub mod view_parsers;

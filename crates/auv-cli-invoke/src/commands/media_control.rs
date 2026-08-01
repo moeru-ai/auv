@@ -23,8 +23,16 @@ pub fn group() -> CommandGroup {
   description = "Read structured now-playing media state from the desktop backend.",
   input = NowPlayingArgs,
 )]
-async fn media_control_now_playing(_input: InvokeCommandInput, _args: NowPlayingArgs) -> InvokeCommandResult {
+async fn media_control_now_playing(input: InvokeCommandInput, _args: NowPlayingArgs) -> InvokeCommandResult {
+  if input.target_application_id.is_some() {
+    return Err("mediaControl.nowPlaying cannot use --target; the macOS now-playing state is system-wide".to_string());
+  }
   let result = read_now_playing().await?;
+  Ok(InvokeCommandOutput::from_result(&result)?.with_report(now_playing_report(&result)))
+}
+
+pub fn now_playing_state_output(state: &auv_media_macos::NowPlayingState) -> InvokeCommandResult {
+  let result = auv_media_macos::output::build_now_playing_output(state);
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(now_playing_report(&result)))
 }
 
@@ -43,7 +51,8 @@ struct PlayArgs {}
   description = "Send a generic system media play command and read now-playing state for verification.",
   input = PlayArgs,
 )]
-async fn media_control_play(_input: InvokeCommandInput, _args: PlayArgs) -> InvokeCommandResult {
+async fn media_control_play(input: InvokeCommandInput, _args: PlayArgs) -> InvokeCommandResult {
+  reject_media_target(&input, "mediaControl.play")?;
   media_control_output(&control_media(auv_media_macos::MediaCommand::Play).await?)
 }
 
@@ -57,7 +66,8 @@ struct PauseArgs {}
   description = "Send a generic system media pause command and read now-playing state for verification.",
   input = PauseArgs,
 )]
-async fn media_control_pause(_input: InvokeCommandInput, _args: PauseArgs) -> InvokeCommandResult {
+async fn media_control_pause(input: InvokeCommandInput, _args: PauseArgs) -> InvokeCommandResult {
+  reject_media_target(&input, "mediaControl.pause")?;
   media_control_output(&control_media(auv_media_macos::MediaCommand::Pause).await?)
 }
 
@@ -71,7 +81,8 @@ struct TogglePlayPauseArgs {}
   description = "Send a generic system media play/pause toggle command and compare now-playing state before and after.",
   input = TogglePlayPauseArgs,
 )]
-async fn media_control_toggle_play_pause(_input: InvokeCommandInput, _args: TogglePlayPauseArgs) -> InvokeCommandResult {
+async fn media_control_toggle_play_pause(input: InvokeCommandInput, _args: TogglePlayPauseArgs) -> InvokeCommandResult {
+  reject_media_target(&input, "mediaControl.togglePlayPause")?;
   media_control_output(&control_media(auv_media_macos::MediaCommand::TogglePlayPause).await?)
 }
 
@@ -85,7 +96,8 @@ struct NextArgs {}
   description = "Send a generic system media next-track command and compare now-playing identity before and after.",
   input = NextArgs,
 )]
-async fn media_control_next(_input: InvokeCommandInput, _args: NextArgs) -> InvokeCommandResult {
+async fn media_control_next(input: InvokeCommandInput, _args: NextArgs) -> InvokeCommandResult {
+  reject_media_target(&input, "mediaControl.next")?;
   media_control_output(&control_media(auv_media_macos::MediaCommand::NextTrack).await?)
 }
 
@@ -99,7 +111,8 @@ struct PreviousArgs {}
   description = "Send a generic system media previous-track command and compare now-playing identity before and after.",
   input = PreviousArgs,
 )]
-async fn media_control_previous(_input: InvokeCommandInput, _args: PreviousArgs) -> InvokeCommandResult {
+async fn media_control_previous(input: InvokeCommandInput, _args: PreviousArgs) -> InvokeCommandResult {
+  reject_media_target(&input, "mediaControl.previous")?;
   media_control_output(&control_media(auv_media_macos::MediaCommand::PreviousTrack).await?)
 }
 
@@ -107,7 +120,7 @@ pub async fn control_media(command: auv_media_macos::MediaCommand) -> Result<auv
   auv_media_macos::control(command).map_err(|error| error.to_string())
 }
 
-fn media_control_output(result: &MediaControlOutcome) -> InvokeCommandResult {
+pub fn media_control_output(result: &MediaControlOutcome) -> InvokeCommandResult {
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(
     vec![
       InvokeReportField::new("Command", result.command),
@@ -117,6 +130,13 @@ fn media_control_output(result: &MediaControlOutcome) -> InvokeCommandResult {
     ],
     Vec::new(),
   )))
+}
+
+fn reject_media_target(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
+  if input.target_application_id.is_some() {
+    return Err(format!("{command_id} cannot use --target; macOS media controls are system-wide"));
+  }
+  Ok(())
 }
 
 fn now_playing_report(result: &NowPlayingOutput) -> InvokeReport {

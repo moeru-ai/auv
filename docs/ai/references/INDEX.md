@@ -36,7 +36,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 |---|---|---|---|
 | [`runtime/`](runtime/INDEX.md) | Active | Execution, contract, action seam, admission, query readiness | |
 | [`invoke-cli/`](invoke-cli/INDEX.md) | Active | Invoke routing, CLI handlers, catalog | |
-| [`session-api/`](session-api/INDEX.md) | Active | Session API, proto, MCP frontend | |
+| [`session-api/`](session-api/INDEX.md) | Active | Device, Run, Runner, aggregated API, proto, MCP frontend; folder name retained from the session prototype | |
 | [`inspect/`](inspect/INDEX.md) | Active | Run recording, inspect viewer, trace | |
 | [`driver/`](driver/INDEX.md) | Active | Platform drivers, input, window, permissions | |
 | [`view-memory/`](view-memory/INDEX.md) | Active | View-parser IR and view memory | |
@@ -66,7 +66,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | Invoke / CLI design | [`invoke-cli/2026-06-11-cli-invoke-driver-console-design.md`](invoke-cli/2026-06-11-cli-invoke-driver-console-design.md) |
 | Current AUV tracing / run storage / Inspect contract | [`inspect/INDEX.md`](inspect/INDEX.md) |
 | Temporal scan | [`scan/INDEX.md`](scan/INDEX.md) |
-| Session API / MCP | [`session-api/INDEX.md`](session-api/INDEX.md) |
+| Device / Run / Runner API and MCP | [`session-api/INDEX.md`](session-api/INDEX.md) |
 | Design system / viewer UI | [`../../design/README.md`](../../design/README.md) |
 | Agent writing rules | [`../../../AGENTS.md`](../../../AGENTS.md) |
 | Archived AX copilot | [`../../archive/verticals/ax-copilot/`](../../archive/verticals/ax-copilot/) |

@@ -77,11 +77,16 @@ cargo check -p auv-api-proto
 cargo test -p auv-api-proto
 nix --extra-experimental-features nix-command --extra-experimental-features flakes develop --command buf lint proto
 nix --extra-experimental-features nix-command --extra-experimental-features flakes develop --command buf generate proto --template proto/buf.gen.yaml
+pnpm --filter @auv/api-client typecheck
 ```
 
+Cargo is the only Rust generation owner. `proto/buf.gen.yaml` pins the remote
+Protobuf-ES plugin and owns the checked-in TypeScript output. Run `buf breaking
+proto --against '.git#branch=main,subdir=proto'` before changing the wire
+contract; do not weaken `FILE` policy to hide an experimental breaking change.
 The `.prototools` file records the Buf plugin source for tools that understand
-proto tool plugin manifests. The Nix dev shell remains the expected setup for
-schema work in this repository.
+proto tool plugin manifests. The flake-pinned Nix dev shell remains the expected
+setup for schema work in this repository.
 
 ## Before commit
 

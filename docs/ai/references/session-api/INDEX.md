@@ -1,11 +1,23 @@
-# session-api
+# Device / Run / Runner API
 
-Session API, proto, MCP frontend, operator guides
+Device/Run/Runner control API, protobuf, Runner aggregation, MCP frontend, and
+the tombstone for the retired SessionService prototype. The folder name is
+retained as a stable responsibility path; Session is not a public resource.
 
-Current ownership: MCP and the session server are built into `auv-cli`; see the
-[`auv-runtime` package retirement handoff](../runtime/2026-07-31-auv-runtime-package-retirement-handoff.md).
+Target architecture: [`2026-07-31-device-run-runner-aggregated-api-design.md`](2026-07-31-device-run-runner-aggregated-api-design.md).
+The Device/Run/Runner contracts are implemented. Public SessionService,
+session-scoped Connection, legacy VisionService, and `/v1/*:verb` routes were
+removed on 2026-07-31.
 
-Count: **9**
+Current implementation ownership: `auv-api-proto` owns the wire contract,
+`auv-api-server` owns control/capability serving, `auv-api-client` owns typed
+transport and placement clients, and `auv-cli` hosts the process frontend. MCP
+remains in `auv-cli`.
+
+Count: **11**
+
+- [`2026-07-31-device-run-runner-aggregated-api-design.md`](2026-07-31-device-run-runner-aggregated-api-design.md)
+- [`2026-07-31-daemon-session-api-architecture.md`](2026-07-31-daemon-session-api-architecture.md)
 
 - [`2026-06-10-stateful-session-daemon-js-repl-v0.md`](2026-06-10-stateful-session-daemon-js-repl-v0.md)
 - [`2026-06-11-mcp-frontend-surface-v0.md`](2026-06-11-mcp-frontend-surface-v0.md)

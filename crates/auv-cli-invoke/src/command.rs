@@ -54,7 +54,7 @@ impl TypedInvokeArgs {
     Self(Arc::new(args))
   }
 
-  fn get<T: Any>(&self) -> Option<&T> {
+  pub(crate) fn get<T: Any>(&self) -> Option<&T> {
     self.0.downcast_ref()
   }
 }

@@ -41,6 +41,30 @@ fn style_arguments_refine_presets_deterministically() {
   assert_eq!(style.corner_radius, 12.0);
 }
 
+#[test]
+fn overlay_commands_reject_target_before_native_rendering() {
+  let registry = crate::default_registry();
+  for (command_id, inputs) in [
+    ("overlay.outline", rect_inputs()),
+    ("overlay.cursor", point_inputs()),
+    ("overlay.status", status_inputs()),
+    ("overlay.captureFrame", rect_inputs()),
+    ("overlay.clickTarget", click_target_inputs()),
+  ] {
+    let command = registry.resolve(command_id).expect("registered overlay command");
+    let error = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command_id.to_string(),
+      target_application_id: Some("com.example.App".to_string()),
+      inputs,
+      typed_args: None,
+      dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
+    }))
+    .expect_err("target must fail before native rendering");
+    assert_eq!(error, format!("{command_id} cannot use --target; overlays use global screen coordinates"));
+  }
+}
+
 fn rect_inputs() -> BTreeMap<String, String> {
   pairs([
     ("x", "100"),

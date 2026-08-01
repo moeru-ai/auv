@@ -42,17 +42,18 @@
               clang
             ];
 
-            buildInputs = with pkgs; [
-              wayland
-              libglvnd
+            buildInputs = (with pkgs; [
               openssl
-              pipewire
               tesseract
               leptonica
               llvmPackages.libclang
+            ]) ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+              wayland
+              libglvnd
+              pipewire
               libgbm
               xorg.libxcb
-            ];
+            ]);
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";

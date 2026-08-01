@@ -18,6 +18,8 @@ tracing = ["dep:auv-tracing"]
 card-corner-onnx = ["dep:auv-inference-ort"]
 
 [dependencies]
+auv-api-client = { path = "../../../crates/auv-api-client" }
+auv-api-proto = { path = "../../../crates/auv-api-proto" }
 auv-file = { path = "../../../crates/auv-file" }
 auv-tracing = { path = "../../../crates/auv-tracing", optional = true }
 auv-driver = { path = "../../../crates/auv-driver" }
@@ -29,10 +31,12 @@ clap = { version = "4.5", features = ["derive"] }
 hf-hub = { version = "1.0.0-rc.1", features = ["blocking", "rustls-tls"] }
 image.workspace = true
 futures-util = { workspace = true, features = ["io"] }
+prost-types = "0.14"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tokio = { version = "1", features = ["rt"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../../../crates/auv-driver-macos" }

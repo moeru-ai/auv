@@ -1,2 +1,3 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+js/packages/api-client/src/gen/**/*.ts text eol=lf whitespace=-blank-at-eof

@@ -6,14 +6,21 @@ terms, not stable public API names.
 
 ## Run
 
-A run is an explicitly created correlation scope carried by trace records. It
-is not a storage transaction, session, revision stream, or OpenTelemetry trace.
+A Run is one explicitly created correlation and control scope from creation
+through a terminal phase. Pending, running, succeeded, failed, and canceled are
+phases of the same Run, not separate Workflow or Execution resources.
+
+A Run may select several Devices, lease several Runners, and contain several
+typed operations. One-shot frontends may create an implicit Run; callers may
+also append later calls to an existing Run. Trace records and future Inspect
+projections can carry the Run identity, but a Run is not a storage transaction,
+revision stream, OpenTelemetry trace, or public Session.
 
 ## Operation Scope
 
 An operation scope is an ordinary caller-named AUV span around app or driver
-work. It is not a persisted operation entity and does not require an AUV-owned
-operation trait, runner, execution id, or session object.
+work. It may execute through a Runner and belong to a Run, but it is not yet an
+independently persisted operation entity.
 
 ## Direct Result
 
@@ -86,7 +93,7 @@ inspector API yet.
 The core command frontend package (`auv-cli`, located at `crates/auv-cli`):
 
 - Owns the root `auv` binary, core CLI frontend, core invoke entrypoint,
-  built-in MCP server, session serving, and development xtasks.
+  built-in MCP server, foreground serving frontend, and development xtasks.
 - Depends directly on the command, driver, protocol, and tracing crates needed
   by those frontends. There is no `auv-runtime` package or root Cargo package.
 - Supported app/game packages own their command frontends and integration
@@ -110,34 +117,197 @@ operating-system arguments unchanged, and exposes its executable through
 `AUV_PATH`. Plugins own their nested command trees and help; they are not loaded
 into the core invoke or MCP registry.
 
+Root Device and Run flags written before the plugin name are parent context.
+The root resolves them and supplies `AuvContext` as inline JSON in `AUV_CONTEXT`.
+Flags written after the plugin name remain plugin-owned; a plugin may use AUV
+CLI utilities to expose equivalent overrides. `auv invoke` remains restricted
+to atomic operations registered by `auv-cli-invoke` and does not invoke plugin
+commands.
+
+## AuvContext
+
+`AuvContext` is the process/client context supplied to a CLI plugin as inline
+JSON in `AUV_CONTEXT`. It carries resolved references such as Device ID,
+optional Run ID, daemon discovery, configuration profile, and
+credential-profile reference. It must not contain private keys, bearer tokens,
+or other reusable credentials. Parsers ignore unknown fields and apply normal
+configuration/default resolution when optional fields are absent; the contract
+does not use a separate context version variable.
+
+`AUV_PATH` independently identifies the root `auv` executable that launched the
+plugin. It lets a plugin invoke the same AUV installation and does not carry or
+select Device, Run, configuration, credential, or transport context.
+
+A plugin can construct an AUV client from this context without reproducing
+Device-name ambiguity rules or daemon discovery. A plugin's explicit flags may
+override inherited values only when that plugin deliberately supports them.
+
 ## Device
 
-A device is the controllable/observable computer target a run executes
-against. Examples include the local macOS host, a remote macOS host, a macOS
-or Windows VM, a container desktop, and future browser-like sandboxes.
+A Device is an addressable execution node and trust boundary. Examples include
+the local macOS host, a remote host, a VM, a container desktop, and a future
+browser-like sandbox. It has a stable unique ID, an optional non-unique display
+name, connection/trust profiles, labels, registered Runner classes, and live
+Runners.
 
-Device identity is not a required field in the V1 run contract. Callers may
-record it as domain metadata when a workflow needs to distinguish targets.
+The current machine is represented by an implicit local Device. Omitting a
+Device selection uses this local Device rather than bypassing the Device model.
+Device names may be ambiguous; a Device ID is canonical.
 
-The current AUV release only executes on the local macOS host. Remote, VM,
-and container devices are a planned protocol direction; they are not
-implemented yet.
+Device-, Run-, and Runner-producing clients select local or remote execution
+automatically by default from explicit options, inherited `AuvContext`, Run
+placement, Runner claims, and configured Device availability. With no stronger
+selection, they use the implicit local Device. A `local` shortcut constrains
+placement to that Device and forbids remote fallback or offload; it does not
+bypass Device, Run, Runner, lease, capability, or authorization semantics.
+Combining the shortcut with a conflicting remote Device selection is an error.
+
+Pairing is the process that enrolls or establishes trust with a Device. Device
+is the resource exposed through `auv devices`; pairing is not a top-level
+resource name.
+
+## Daemon
+
+The AUV daemon is the long-lived process role that owns API listeners,
+Device authority, Runner creation, private Runner IPC, routing, health,
+draining, and reusable resources. It is not a catch-all Rust runtime crate.
+
+The accepted foreground role is `auv serve` with one or more listeners. A
+future `auv daemon start|status|stop` frontend may integrate with launchd,
+systemd, or brew services while executing the same serving implementation.
+Listener type is transport configuration rather than a separate server role.
 
 ## Session
 
-A session is the automation context on a device. It groups target app/window
-defaults, observation cache, run recording state, and per-session
-permission/capability profile.
+Session is not a public AUV control-plane resource. It may name an internal
+Driver session, ONNX session, SDK connection pool, or Runner-owned cache. An
+internal session is not canonical Run identity, Device identity, or an
+authentication credential.
 
-The V1 run contract does not require a `session_id` or an AUV session object.
-Application runtimes may use session concepts for caches, namespaces, and
-action locks without making them canonical run identity.
+The retired experimental daemon once exposed a public `SessionService`. That
+prototype, its session-scoped `Connection`, and legacy `VisionService` were
+removed on 2026-07-31. Public control now uses Device, Run, Runner, and typed
+capability services.
 
-Today the session service has only a lightweight handle registry used to
-validate frontend requests. It does not own command execution, run recording,
-observation providers, or a generic in-process session runtime. Daemon
-transport, JS/REPL handles, session-scoped artifact namespaces, and
-device-level action locks remain separate future decisions.
+## RunnerClass
+
+A RunnerClass is the discoverable description of a kind of Runner a Device can
+create. It identifies the allowed service bundle and the lifecycle or
+configuration contract for that process. One RunnerClass may implement many
+protobuf services and support many application/plugin subcommands.
+
+The daemon-side factory that realizes a RunnerClass is a RunnerProvider.
+Provider is an implementation boundary; RunnerClass is the public control
+resource. A custom RunnerProvider is admitted from operator-owned daemon
+configuration that pins its RunnerRuntime, canonical protobuf descriptor
+digest, service exposure, lifecycle policies, and capacity. Runtime Health,
+Reflection, metadata, and status prove that the implementation matches that
+configuration; they never grant it authority to self-register or widen public
+routes.
+
+## RunnerRuntime
+
+RunnerRuntime is the daemon-side Rust/configuration transport used by a
+RunnerProvider. It is not a protobuf resource or a client-visible placement
+choice. `Executable` starts an arbitrary approved binary with arguments over
+daemon-owned private IPC; first-party classes use this variant to self-spawn
+the root `auv` binary. `RemoteGrpc` attaches an existing compatible gRPC
+endpoint without taking ownership of its process. Both must implement typed
+RunnerRuntimeService metadata/status/watch/drain plus Health, Reflection, and
+their admitted business services. Stopping a RemoteGrpc-backed Runner detaches
+the daemon and does not implicitly drain or terminate the remote endpoint.
+
+## Runner
+
+A Runner is one daemon-owned process/runtime on exactly one Device. It exposes
+a validated set of versioned typed services over daemon-private IPC. A Runner
+does not span several Devices; a Run composes work across several Runners and
+Devices.
+
+A Runner uses one lifecycle policy:
+
+- `ephemeral`: stop after the last Run releases it;
+- `unless-idle`: stop after it has no active Run leases and no active
+  operations for the configured idle timeout;
+- `unless-shutdown`: do not stop automatically when idle; remain ready until
+  explicit stop or Device/daemon shutdown.
+
+For lifecycle decisions, a Runner is idle only when both
+`active_run_leases == 0` and `active_operations == 0`. An `unless-idle` Runner
+starts its idle timeout after both conditions become true; becoming idle does
+not stop it immediately. A Runner owns runtime resources such as Driver handles,
+app state, OCR engines, or inference model sessions. The daemon owns its
+creation, readiness, health, capacity, draining, routing, and termination.
+
+Application/game implementations such as NetEase Music or Balatro may provide
+RunnerClasses. Their CLI plugins remain separate frontend processes even when
+both roles reuse the same Rust package and typed service implementation.
+
+## Runner lease and claim
+
+A Runner lease attaches a Run to a Runner and participates in retention and
+capacity. It is not caller identity or an authentication credential. Stopping
+a Run releases its leases; `unless-idle` and `unless-shutdown` policy decides
+whether the Runner remains ready.
+
+A Runner claim is a provisional typed scheduling request that describes Device
+selection, required services, RunnerClass or label constraints, resources,
+reuse policy, lease deadline, and concurrency. The daemon may bind it to a
+ready compatible Runner or create another one.
+
+## Capability manifest
+
+A capability manifest is the authoritative set of versioned protobuf services
+and methods a ready Runner has registered and is allowed to implement. Labels
+may mirror capabilities for selection, but caller-writable labels do not prove
+service availability or authority.
+
+The daemon derives the manifest from validated protobuf descriptors,
+RunnerClass policy, and health. Service registration is flat; generated clients
+and domain facades may organize calls hierarchically.
+
+AUV method annotations do not grant capabilities or authority. An optional
+`discoverable` marker includes a concrete typed RPC in DevTools, Inspector,
+capability panels, and future JavaScript REPL discovery. Its required effect
+classification distinguishes read-only, mutation, and input-delivery calls for
+tool presentation and confirmation. Unannotated RPCs remain callable through
+their generated typed clients. Device authentication/authorization and optional
+Run association are independent of these developer-tool annotations.
+
+## Driver API
+
+The Driver API is the typed protobuf projection of `auv-driver` capabilities.
+Portable services use the `auv.api.driver.v1` package. Platform-specific
+services use `auv.api.driver.<platform>.v1`, such as
+`auv.api.driver.macos.v1`; they extend the available service set rather than
+inherit from or reinterpret a portable service. Device, Run, and Runner
+control-plane resources remain in `auv.api.core.v1`.
+
+A Runner advertises the exact portable and platform Driver services/methods it
+implements. Calling a method that the selected Runner or platform does not
+implement returns gRPC `UNIMPLEMENTED`. Missing OS permission, temporary
+unavailability, missing target resources, and invalid requests are distinct
+failures and do not use `UNIMPLEMENTED`.
+
+Reusable image values such as image frames, sizes, pixel formats, pixel regions,
+and normalized regions belong to `auv.api.image.v1`; that package does not own
+capture, recognition, or inference service behavior. Screen/window coordinate
+types belong to `auv.api.driver.v1`. AUV does not define a global `geometry`
+package or a coordinate-free `Rect`: screen, window, image-pixel, normalized,
+and inference-specific geometry remain distinct types unless their semantics
+and compatibility requirements are the same.
+
+## Principal
+
+A principal is the authenticated authority identity projected from transport
+context before an API handler executes. It is not a caller-provided protobuf
+field, Device ID, Run ID, Runner lease, or internal session.
+
+Local owner-checked transport and paired mutual TLS are current ways to derive a
+principal. The target authorization decision includes Principal, target
+Device, optional Run, selected Runner, and protobuf service/method. The daemon
+performs this check before forwarding to private Runner IPC. Runner processes
+do not repeat external authentication.
 
 ## Span
 

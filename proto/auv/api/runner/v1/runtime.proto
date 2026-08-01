@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package auv.api.runner.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// RunnerRuntimeService is the minimum control contract implemented by every
+// process or remote gRPC endpoint that can back an AUV Runner.
+service RunnerRuntimeService {
+  // GetMetadata returns stable identity and scheduling information.
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+
+  // GetStatus returns a complete current runtime status snapshot.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // WatchStatus sends a complete snapshot immediately, then sends another
+  // complete snapshot whenever the observable runtime status changes. Clients
+  // reconnect and call GetStatus after any stream interruption.
+  rpc WatchStatus(WatchStatusRequest) returns (stream WatchStatusResponse);
+
+  // Drain idempotently stops admission of new operations and waits for active
+  // operations to finish until grace_period expires. It does not terminate the
+  // process or remote endpoint that implements this service.
+  rpc Drain(DrainRequest) returns (DrainResponse);
+}
+
+// GetMetadataRequest selects stable metadata for this runtime.
+message GetMetadataRequest {}
+
+// GetMetadataResponse describes one compatible Runner runtime.
+message GetMetadataResponse {
+  string runner_class = 1;
+  string display_name = 2;
+  map<string, string> labels = 3;
+  uint32 operation_capacity = 4;
+}
+
+// GetStatusRequest selects the current runtime status.
+message GetStatusRequest {}
+
+// WatchStatusRequest selects runtime status updates.
+message WatchStatusRequest {}
+
+// GetStatusResponse carries the current runtime status.
+message GetStatusResponse {
+  RunnerRuntimeStatus status = 1;
+}
+
+// WatchStatusResponse carries one complete runtime status snapshot.
+message WatchStatusResponse {
+  RunnerRuntimeStatus status = 1;
+}
+
+// DrainRequest configures the maximum graceful drain interval.
+message DrainRequest {
+  google.protobuf.Duration grace_period = 1;
+}
+
+// DrainResponse carries the status observed when the drain RPC completes.
+message DrainResponse {
+  RunnerRuntimeStatus status = 1;
+}
+
+// RunnerRuntimeStatus is the current dynamic state reported by a runtime.
+message RunnerRuntimeStatus {
+  RunnerRuntimePhase phase = 1;
+  RunnerRuntimeOperationsStatus operations = 2;
+  google.protobuf.Timestamp observed_at = 3;
+
+  // TODO(runner-runtime-conditions): add structured conditions only after a
+  // concrete scheduler or inspector consumer requires reasoned health history.
+}
+
+// RunnerRuntimeOperationsStatus reports instantaneous operation gauges.
+message RunnerRuntimeOperationsStatus {
+  uint32 active = 1;
+  uint32 queued = 2;
+  uint32 capacity = 3;
+}
+
+// RunnerRuntimePhase describes admission and availability of the runtime.
+enum RunnerRuntimePhase {
+  RUNNER_RUNTIME_PHASE_UNSPECIFIED = 0;
+  RUNNER_RUNTIME_PHASE_STARTING = 1;
+  RUNNER_RUNTIME_PHASE_READY = 2;
+  RUNNER_RUNTIME_PHASE_DRAINING = 3;
+  RUNNER_RUNTIME_PHASE_STOPPING = 4;
+  RUNNER_RUNTIME_PHASE_FAILED = 5;
+}

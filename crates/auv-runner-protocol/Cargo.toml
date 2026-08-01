@@ -1,0 +1,27 @@
+[package]
+name = "auv-runner-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Private inherited transport contract for daemon-owned AUV Runner processes"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-api-proto = { path = "../auv-api-proto" }
+http = "1"
+http-body = "1"
+libc = "0.2"
+tokio = { version = "1", features = ["net", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tonic = { version = "0.14", features = ["transport"] }
+tonic-reflection = "0.14"
+tower = "0.5"
+prost-reflect = "0.16"
+prost = "0.14"
+prost-types = "0.14"

@@ -14,7 +14,6 @@ use auv_tracing::ArtifactMetadata;
 use clap::{Args, ValueEnum};
 use std::time::Duration;
 
-#[cfg(target_os = "macos")]
 use crate::artifact::{emit_png, emit_png_with_receipt};
 
 pub fn group() -> CommandGroup {
@@ -46,13 +45,21 @@ async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> Invo
     }
 
     let windows = observe_windows().await?;
-    Ok(InvokeCommandOutput::from_result(&windows)?.with_report(window_list_report(&windows)))
+    list_windows_output(&windows)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = input;
     Err("window.list is only available on macOS".to_string())
   }
+}
+
+/// Builds the transport-independent direct result for `window.list`.
+///
+/// Local and daemon-backed frontends use this same projection so selecting a
+/// Device changes placement without changing the command result schema.
+pub fn list_windows_output(windows: &[auv_driver::Window]) -> InvokeCommandResult {
+  Ok(InvokeCommandOutput::from_result(windows)?.with_report(window_list_report(windows)))
 }
 
 pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, String> {
@@ -128,15 +135,26 @@ fn window_capture_output(
   artifact: Option<ArtifactMetadata>,
   overlay: super::overlay::OverlayStatus,
 ) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(&window_capture_result(result))?;
-  let mut fields = window_report_fields(&result.window);
-  fields.push(InvokeReportField::new("Pixel size", format!("{}x{}", result.capture.image.width(), result.capture.image.height())));
-  fields.push(overlay.report_field());
-  output.report = Some(InvokeReport::new(fields, Vec::new()));
+  let mut output = window_capture_output_with_artifact(result, artifact)?;
+  output.report.as_mut().expect("window capture output always has a report").fields.push(overlay.report_field());
   // TODO(invoke-window-capture-backend): live testing on 2026-06-18 showed
   // ScreenCaptureKit single-window capture can time out and xcap fallback can
   // fail for Chrome/NetEase windows. Stabilize the typed window capture backend
   // before treating window.* evidence as reliably available.
+  Ok(output)
+}
+
+/// Records and projects a capture returned by either a local or remote Driver.
+pub async fn recorded_window_capture_output(result: &WindowCapture) -> InvokeCommandResult {
+  let artifact = emit_png_with_receipt("auv.driver.window_capture", &result.capture.image).await;
+  window_capture_output_with_artifact(result, artifact)
+}
+
+fn window_capture_output_with_artifact(result: &WindowCapture, artifact: Option<ArtifactMetadata>) -> InvokeCommandResult {
+  let mut output = InvokeCommandOutput::from_result(&window_capture_result(result))?;
+  let mut fields = window_report_fields(&result.window);
+  fields.push(InvokeReportField::new("Pixel size", format!("{}x{}", result.capture.image.width(), result.capture.image.height())));
+  output.report = Some(InvokeReport::new(fields, Vec::new()));
   Ok(output.with_artifacts(artifact))
 }
 
@@ -329,6 +347,20 @@ pub struct WindowTextClick {
 
 #[cfg(target_os = "macos")]
 fn window_text_click_output(result: &WindowTextClick, overlay: super::overlay::OverlayStatus) -> InvokeCommandResult {
+  let mut output = window_text_click_output_base(result)?;
+  output.report.as_mut().expect("window text click output always has a report").fields.push(overlay.report_field());
+  Ok(output)
+}
+
+/// Records the exact OCR source and typed delivery evidence, then builds the
+/// transport-independent `window.clickText` result.
+pub fn recorded_window_text_click_output(result: &WindowTextClick, capture: &auv_driver::Capture) -> InvokeCommandResult {
+  emit_png("auv.driver.window_ocr_source", &capture.image);
+  super::input::emit_input_action_result(&result.action);
+  window_text_click_output_base(result)
+}
+
+fn window_text_click_output_base(result: &WindowTextClick) -> InvokeCommandResult {
   let mut report = crate::commands::ocr::match_report(&result.matches.matches, Some(0));
   report.fields.extend(window_report_fields(&result.window));
   report.fields.extend(super::input::input_action_report_fields(&result.action));
@@ -338,7 +370,6 @@ fn window_text_click_output(result: &WindowTextClick, overlay: super::overlay::O
     report.fields.push(InvokeReportField::new("Click interval", format!("{} ms", interval.as_millis())));
   }
   report.fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)));
-  report.fields.push(overlay.report_field());
   Ok(InvokeCommandOutput::from_result(result)?.with_report(report))
 }
 
@@ -448,15 +479,26 @@ pub async fn recognize_window_text(
   Err("window text OCR is only available on macOS".to_string())
 }
 
-#[cfg(target_os = "macos")]
 fn window_text_matches_output(
   _command_id: &str,
   result: &WindowTextRecognition,
   overlay: super::overlay::OverlayStatus,
 ) -> InvokeCommandResult {
+  let mut output = window_text_matches_output_base(result)?;
+  output.report.as_mut().expect("window text output always has a report").fields.push(overlay.report_field());
+  Ok(output)
+}
+
+/// Records the OCR source and builds the transport-independent
+/// `window.findText` result.
+pub fn recorded_window_text_matches_output(result: &WindowTextRecognition, capture: &auv_driver::Capture) -> InvokeCommandResult {
+  emit_png("auv.driver.window_ocr_source", &capture.image);
+  window_text_matches_output_base(result)
+}
+
+fn window_text_matches_output_base(result: &WindowTextRecognition) -> InvokeCommandResult {
   let mut report = crate::commands::ocr::match_report(&result.matches.matches, None);
   report.fields.extend(window_report_fields(&result.window));
-  report.fields.push(overlay.report_field());
   Ok(InvokeCommandOutput::from_result(result)?.with_report(report))
 }
 
@@ -504,7 +546,6 @@ fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> auv_drive
   selector
 }
 
-#[cfg(target_os = "macos")]
 fn window_report_fields(window: &auv_driver::Window) -> Vec<InvokeReportField> {
   let mut fields = vec![
     InvokeReportField::new("Window ID", window.reference.id.clone()),

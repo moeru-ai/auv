@@ -1,0 +1,179 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.core.v1 is not a long-term public compatibility promise.
+syntax = "proto3";
+
+package auv.api.core.v1;
+
+import "auv/api/core/v1/resource.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+service RunnerService {
+  rpc CreateRunner(CreateRunnerRequest) returns (CreateRunnerResponse);
+  rpc ListRunners(ListRunnersRequest) returns (ListRunnersResponse);
+  rpc GetRunner(GetRunnerRequest) returns (GetRunnerResponse);
+  rpc DeleteRunner(DeleteRunnerRequest) returns (DeleteRunnerResponse);
+  rpc ClaimRunner(ClaimRunnerRequest) returns (ClaimRunnerResponse);
+  rpc ReleaseRunnerLease(ReleaseRunnerLeaseRequest) returns (ReleaseRunnerLeaseResponse);
+}
+
+service RunnerClassService {
+  rpc ListRunnerClasses(ListRunnerClassesRequest) returns (ListRunnerClassesResponse);
+  rpc GetRunnerClass(GetRunnerClassRequest) returns (GetRunnerClassResponse);
+}
+
+message RunnerClass {
+  RunnerClassRef ref = 1;
+  DeviceRef device = 2;
+  string display_name = 3;
+  repeated RunnerLifecycle supported_lifecycles = 4;
+  repeated RunnerCapability capabilities = 5;
+  bool available = 6;
+}
+
+enum RunnerLifecycle {
+  RUNNER_LIFECYCLE_UNSPECIFIED = 0;
+  RUNNER_LIFECYCLE_EPHEMERAL = 1;
+  RUNNER_LIFECYCLE_UNLESS_IDLE = 2;
+  RUNNER_LIFECYCLE_UNLESS_SHUTDOWN = 3;
+}
+
+enum RunnerPhase {
+  RUNNER_PHASE_UNSPECIFIED = 0;
+  RUNNER_PHASE_STARTING = 1;
+  RUNNER_PHASE_READY = 2;
+  RUNNER_PHASE_DRAINING = 3;
+  RUNNER_PHASE_STOPPED = 4;
+  RUNNER_PHASE_FAILED = 5;
+}
+
+message Runner {
+  RunnerRef ref = 1;
+  DeviceRef device = 2;
+  RunnerClassRef runner_class = 3;
+  map<string, string> labels = 4;
+  RunnerLifecycle lifecycle = 5;
+  google.protobuf.Duration idle_timeout = 6;
+  RunnerPhase phase = 7;
+  google.protobuf.Timestamp created_at = 8;
+  repeated RunnerCapability capabilities = 9;
+  // SHA-256 of the validated transitive FileDescriptorSet snapshot.
+  bytes descriptor_set_sha256 = 10;
+  // OS process identifier for daemon-owned process Runners. This is
+  // diagnostic evidence, not a stable resource identity.
+  uint32 process_id = 11;
+  uint32 operation_capacity = 12;
+  uint32 active_run_leases = 13;
+  uint32 active_operations = 14;
+  google.protobuf.Timestamp idle_deadline = 15;
+}
+
+message RunnerCapability {
+  // Fully-qualified protobuf service name.
+  string service = 1;
+  // Exact RPC method names implemented from that service descriptor.
+  repeated string methods = 2;
+}
+
+message CreateRunnerRequest {
+  // Absence selects the implicit local Device.
+  DeviceRef device = 1;
+  RunnerClassRef runner_class = 2;
+  map<string, string> labels = 3;
+  RunnerLifecycle lifecycle = 4;
+  // Required only for RUNNER_LIFECYCLE_UNLESS_IDLE.
+  google.protobuf.Duration idle_timeout = 5;
+}
+
+message CreateRunnerResponse {
+  Runner runner = 1;
+}
+
+message ListRunnersRequest {}
+
+message ListRunnersResponse {
+  repeated Runner runners = 1;
+}
+
+message GetRunnerRequest {
+  RunnerRef runner = 1;
+}
+
+message GetRunnerResponse {
+  Runner runner = 1;
+}
+
+message DeleteRunnerRequest {
+  RunnerRef runner = 1;
+}
+
+message DeleteRunnerResponse {
+  Runner runner = 1;
+}
+
+enum RunnerReusePolicy {
+  RUNNER_REUSE_POLICY_UNSPECIFIED = 0;
+  RUNNER_REUSE_POLICY_PREFER_EXISTING = 1;
+  RUNNER_REUSE_POLICY_REQUIRE_EXISTING = 2;
+  RUNNER_REUSE_POLICY_CREATE_NEW = 3;
+}
+
+message RunnerClaim {
+  RunRef run = 1;
+  // Absence selects a Device already attached to the Run.
+  DeviceRef device = 2;
+  map<string, string> device_match_labels = 3;
+  RunnerClassRef runner_class = 4;
+  repeated RunnerCapability required_capabilities = 5;
+  map<string, string> match_labels = 6;
+  RunnerReusePolicy reuse_policy = 7;
+  optional RunnerLifecycle lifecycle = 8;
+  google.protobuf.Duration idle_timeout = 9;
+  // Zero selects the provider default.
+  uint32 operation_capacity = 10;
+  // TODO(runner-lease-expiry): add lease TTL, expiry, and renewal together
+  // after distributed coordinator clock/ownership semantics are approved.
+}
+
+message RunnerLease {
+  RunnerLeaseRef ref = 1;
+  google.protobuf.Timestamp created_at = 2;
+  uint32 operation_capacity = 3;
+}
+
+message ClaimRunnerRequest {
+  RunnerClaim claim = 1;
+}
+
+message ClaimRunnerResponse {
+  Runner runner = 1;
+  RunnerLease lease = 2;
+  bool runner_created = 3;
+}
+
+message ReleaseRunnerLeaseRequest {
+  RunnerLeaseRef lease = 1;
+}
+
+message ReleaseRunnerLeaseResponse {
+  bool released = 1;
+}
+
+message ListRunnerClassesRequest {
+  // Absence selects the implicit local Device.
+  DeviceRef device = 1;
+}
+
+message ListRunnerClassesResponse {
+  repeated RunnerClass runner_classes = 1;
+}
+
+message GetRunnerClassRequest {
+  // Absence selects the implicit local Device.
+  DeviceRef device = 1;
+  RunnerClassRef runner_class = 2;
+}
+
+message GetRunnerClassResponse {
+  RunnerClass runner_class = 1;
+}

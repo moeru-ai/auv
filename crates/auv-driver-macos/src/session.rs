@@ -157,15 +157,9 @@ impl AccessibilityApi<'_> {
   }
 
   /// Resolves a document/text node by query (or exact path candidate) and focuses it.
-  pub fn focus_text_by_query(
-    &self,
-    app: &str,
-    query: &str,
-    expected_role: Option<&str>,
-    candidate: &str,
-  ) -> DriverResult<auv_driver_common::AxFocusResult> {
+  pub fn focus_text(&self, options: auv_driver_common::FocusTextOptions) -> DriverResult<auv_driver_common::AxFocusResult> {
     let _ = self.session;
-    crate::accessibility::focus_text_by_query(app, query, expected_role, candidate)
+    crate::accessibility::focus_text(options)
   }
 
   /// Captures the current AX tree and verifies expected text on a role-matched node.

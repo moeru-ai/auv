@@ -1,0 +1,35 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.netease_music.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+
+// Application-owned API. The schema remains with auv-netease-music rather
+// than entering AUV's core/Driver protobuf module.
+service NeteaseMusicService {
+  rpc GetNowPlaying(GetNowPlayingRequest) returns (GetNowPlayingResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+message GetNowPlayingRequest {
+  // Absence uses com.netease.163music.
+  optional string application_bundle_id = 1;
+}
+
+message GetNowPlayingResponse {
+  bool present = 1;
+  bool is_playing = 2;
+  optional string source_bundle_id = 3;
+  optional string title = 4;
+  optional string artist = 5;
+  optional string album = 6;
+  optional double duration_seconds = 7;
+  optional double elapsed_seconds = 8;
+  optional double playback_rate = 9;
+  optional string content_item_id = 10;
+  optional bool supports_like = 11;
+  optional bool is_liked = 12;
+}

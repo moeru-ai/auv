@@ -39,7 +39,7 @@ After adding a reference: add one line to that folder’s [`INDEX.md`](ai/refere
 
 | Category | Meaning | Examples |
 |---|---|---|
-| **Core responsibilities** | invoke, runtime, inspect, driver, view-memory, scan, session-api | `runtime/`, `inspect/`, `scan/` |
+| **Core responsibilities** | invoke, runtime, inspect, driver, view-memory, scan, Device/Run/Runner API | `runtime/`, `inspect/`, `session-api/` |
 | **Apps / probes** | app-local crates or consumption probes | `apps/netease-music/`, `apps/minecraft/` |
 | **Archive** | retired surfaces, frozen phases, archived verticals | `archive/*`, `docs/archive/` |
 
@@ -52,6 +52,7 @@ After adding a reference: add one line to that folder’s [`INDEX.md`](ai/refere
 | Shared vocabulary | [`TERMS_AND_CONCEPTS.md`](TERMS_AND_CONCEPTS.md) |
 | Browse references by responsibility | [`ai/references/INDEX.md`](ai/references/INDEX.md) |
 | Core roadmap | [`ai/references/runtime/`](ai/references/runtime/) |
+| Device / Run / Runner API design | [`ai/references/session-api/2026-07-31-device-run-runner-aggregated-api-design.md`](ai/references/session-api/2026-07-31-device-run-runner-aggregated-api-design.md) |
 | Invoke / CLI design | [`ai/references/invoke-cli/`](ai/references/invoke-cli/) |
 | Inspect viewer design | [`ai/references/inspect/`](ai/references/inspect/) |
 | Design system / viewer UI | [`design/README.md`](design/README.md) |

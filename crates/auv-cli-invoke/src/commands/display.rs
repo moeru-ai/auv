@@ -7,7 +7,6 @@ use clap::Args;
 
 use auv_tracing::ArtifactMetadata;
 
-#[cfg(target_os = "macos")]
 use crate::artifact::emit_png_with_receipt;
 #[cfg(target_os = "macos")]
 use auv_driver::overlay::{Overlay, components::CaptureFrame};
@@ -50,18 +49,28 @@ async fn capture_display(input: InvokeCommandInput, _args: CaptureDisplayArgs) -
         .with_motion_ease(Duration::from_millis(120), auv_driver::overlay::Easing::EaseInOutExpo)
         .with_auto_removal_after(Duration::from_millis(180)),
     )?;
-    let mut report = display_capture_report(&result);
-    report.fields.push(overlay.report_field());
-    Ok(
-      InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture))?
-        .with_report(report)
-        .with_artifacts(artifact),
-    )
+    let mut output = display_capture_output(&result, artifact)?;
+    output.report.as_mut().expect("display capture output always has a report").fields.push(overlay.report_field());
+    Ok(output)
   }
   #[cfg(not(target_os = "macos"))]
   {
     Err("display.capture is only available on macOS through auv-driver-macos".to_string())
   }
+}
+
+/// Records and projects a capture returned by either a local or remote Driver.
+pub async fn recorded_display_capture_output(result: &auv_driver::DisplayCapture) -> InvokeCommandResult {
+  let artifact = emit_png_with_receipt("auv.driver.display_capture", &result.capture.image).await;
+  display_capture_output(result, artifact)
+}
+
+fn display_capture_output(result: &auv_driver::DisplayCapture, artifact: Option<ArtifactMetadata>) -> InvokeCommandResult {
+  Ok(
+    InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture))?
+      .with_report(display_capture_report(result))
+      .with_artifacts(artifact),
+  )
 }
 
 pub async fn capture_primary_display() -> Result<auv_driver::DisplayCapture, String> {
@@ -104,7 +113,15 @@ async fn list_displays(input: InvokeCommandInput, _args: ListDisplaysArgs) -> In
     return Ok(InvokeCommandOutput::completed());
   }
   let displays = observe_displays().await?;
-  Ok(InvokeCommandOutput::from_result(&displays)?.with_report(display_list_report(&displays.displays)))
+  list_displays_output(&displays)
+}
+
+/// Builds the transport-independent direct result for `display.list`.
+///
+/// Local and daemon-backed frontends use this same projection so selecting a
+/// Device changes placement without creating a second command result schema.
+pub fn list_displays_output(displays: &auv_driver::ObservedDisplays) -> InvokeCommandResult {
+  Ok(InvokeCommandOutput::from_result(displays)?.with_report(display_list_report(&displays.displays)))
 }
 
 pub async fn observe_displays() -> Result<auv_driver::ObservedDisplays, String> {

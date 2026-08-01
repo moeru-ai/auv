@@ -105,7 +105,16 @@ mod macos {
     }
 
     fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> DriverResult<TextEditActionResult> {
-      let focus = self.session.accessibility().focus_text_by_query(app_id, query, Some("AXTextArea"), candidate)?;
+      let selector = if candidate.trim().is_empty() {
+        auv_driver::AxTextSelector::Query(query.to_string())
+      } else {
+        auv_driver::AxTextSelector::Path(candidate.to_string())
+      };
+      let focus = self.session.accessibility().focus_text(auv_driver::FocusTextOptions {
+        app: app_id.to_string(),
+        selector,
+        expected_role: Some("AXTextArea".to_string()),
+      })?;
       Ok(TextEditActionResult {
         action: TextEditAction::FocusTextInput,
         input_action_result: Some(focus.input_action_result),

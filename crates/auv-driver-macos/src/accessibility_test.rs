@@ -74,6 +74,34 @@ fn select_focus_node_rejects_unknown_candidate_without_fallback() {
 }
 
 #[test]
+fn focus_text_options_validate_selector_before_native_capture() {
+  for options in [
+    FocusTextOptions {
+      app: "".to_string(),
+      selector: AxTextSelector::Query("Search".to_string()),
+      expected_role: None,
+    },
+    FocusTextOptions {
+      app: "com.example.Editor".to_string(),
+      selector: AxTextSelector::Query("".to_string()),
+      expected_role: None,
+    },
+    FocusTextOptions {
+      app: "com.example.Editor".to_string(),
+      selector: AxTextSelector::Path("  ".to_string()),
+      expected_role: None,
+    },
+    FocusTextOptions {
+      app: "com.example.Editor".to_string(),
+      selector: AxTextSelector::Query("Search".to_string()),
+      expected_role: Some("".to_string()),
+    },
+  ] {
+    assert!(options.validate().is_err());
+  }
+}
+
+#[test]
 fn select_text_node_by_role_ignores_expected_content() {
   let snapshot = sample_snapshot();
   let node = select_text_node_by_role(&snapshot, "AXTextArea").expect("role node");
