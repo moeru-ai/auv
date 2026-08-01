@@ -624,7 +624,14 @@ fn focus_text_output(result: &auv_driver::AxFocusResult, candidate: &str) -> Inv
 pub(super) fn input_action_report_fields(result: &auv_driver::InputActionResult) -> Vec<InvokeReportField> {
   let mut fields = vec![
     InvokeReportField::new("Delivery", "delivered"),
-    InvokeReportField::new("Verification", "delivery_only"),
+    InvokeReportField::new(
+      "Verification",
+      if result.verified {
+        "verified"
+      } else {
+        "delivery_only"
+      },
+    ),
     InvokeReportField::new("Path", result.selected_path.as_str()),
     InvokeReportField::new("Attempts", result.attempts.len().to_string()),
     InvokeReportField::new("Mouse disturbance", result.mouse_disturbance.as_str()),

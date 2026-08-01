@@ -30,6 +30,7 @@ pub fn focus_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResul
       succeeded: true,
       message: Some(format!("focused AX path {path} role {expected_role}")),
     }],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Temporary,
     clipboard_disturbance: DisturbanceLevel::None,

@@ -328,9 +328,32 @@ impl WindowApi<'_> {
   }
 
   fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    let screen_point = self.to_screen_point(window, point)?;
+    if click_attempt_candidates(options.policy) == [InputDeliveryPath::ForegroundSystemEvents] {
+      // NOTICE(qemu-foreground-click): A pid-targeted CGEvent can be accepted
+      // by macOS while a focus-sensitive host window (notably QEMU) discards
+      // it before forwarding input to its guest. ForegroundPreferred must use
+      // the global HID route first; remove this note only if the native route
+      // gains consumption evidence rather than dispatch-only success.
+      let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::from_millis(50)))?;
+      let action_result = self.session.input().click_at(screen_point.point(), options.click);
+      let restore_result = self.restore_input(lease);
+      action_result?;
+      restore_result?;
+      return Ok(InputActionResult {
+        selected_path: InputDeliveryPath::ForegroundSystemEvents,
+        attempts: vec![InputAttempt::success(
+          InputDeliveryPath::ForegroundSystemEvents,
+        )],
+        verified: false,
+        mouse_disturbance: DisturbanceLevel::Temporary,
+        focus_disturbance: DisturbanceLevel::Foreground,
+        clipboard_disturbance: DisturbanceLevel::None,
+      });
+    }
+
     let pid = window_pid(window)?;
     let number = window_number(window)?;
-    let screen_point = self.to_screen_point(window, point)?;
     let screen = screen_point.point();
     let window_point = point.point();
     let (click_count, click_interval_ms) = click_parts(&options.click)?;
@@ -338,7 +361,7 @@ impl WindowApi<'_> {
       WindowClickStrategy::ChromiumCompatible => 0,
       WindowClickStrategy::PidTargeted => 1,
     };
-    let background_result = crate::native::input::click_window_point(
+    crate::native::input::click_window_point(
       pid,
       number,
       screen.x,
@@ -350,32 +373,8 @@ impl WindowApi<'_> {
       click_interval_ms,
       window_strategy_code,
     )
-    .map_err(backend);
-
-    match background_result {
-      Ok(()) => Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse)),
-      Err(background_error) => match options.policy {
-        InputPolicy::BackgroundOnly | InputPolicy::BackgroundPreferred => Err(background_error),
-        InputPolicy::ForegroundPreferred => {
-          let fallback_reason = background_error.to_string();
-          let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::ZERO))?;
-          let action_result = self.session.input().click_at(screen_point.point(), options.click.clone());
-          let restore_result = self.restore_input(lease);
-          action_result?;
-          restore_result?;
-          Ok(InputActionResult {
-            selected_path: InputDeliveryPath::ForegroundSystemEvents,
-            attempts: vec![
-              InputAttempt::failure(InputDeliveryPath::WindowTargetedMouse, fallback_reason.clone()),
-              InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
-            ],
-            mouse_disturbance: DisturbanceLevel::Temporary,
-            focus_disturbance: DisturbanceLevel::Foreground,
-            clipboard_disturbance: DisturbanceLevel::None,
-          })
-        }
-      },
-    }
+    .map_err(backend)?;
+    Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
   }
 
   pub fn type_text(&self, window: &Window, text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
@@ -407,6 +406,7 @@ impl WindowApi<'_> {
               InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboard, fallback_reason.clone()),
               InputAttempt::success(InputDeliveryPath::ClipboardPaste),
             ],
+            verified: false,
             mouse_disturbance: DisturbanceLevel::None,
             focus_disturbance: DisturbanceLevel::Foreground,
             clipboard_disturbance: DisturbanceLevel::Temporary,
@@ -435,6 +435,7 @@ impl WindowApi<'_> {
             return Ok(InputActionResult {
               selected_path: InputDeliveryPath::WindowTargetedWheel,
               attempts,
+              verified: false,
               mouse_disturbance: DisturbanceLevel::None,
               focus_disturbance: DisturbanceLevel::None,
               clipboard_disturbance: DisturbanceLevel::None,
@@ -462,6 +463,7 @@ impl WindowApi<'_> {
           return Ok(InputActionResult {
             selected_path: result.selected_path,
             attempts,
+            verified: result.verified,
             mouse_disturbance: result.mouse_disturbance,
             focus_disturbance: result.focus_disturbance,
             clipboard_disturbance: result.clipboard_disturbance,
@@ -610,6 +612,7 @@ impl InputApi<'_> {
       attempts: vec![InputAttempt::success(
         InputDeliveryPath::ForegroundSystemEvents,
       )],
+      verified: false,
       mouse_disturbance: DisturbanceLevel::Temporary,
       focus_disturbance: DisturbanceLevel::Unknown,
       clipboard_disturbance: DisturbanceLevel::None,
@@ -677,6 +680,7 @@ impl InputApi<'_> {
       (Ok(()), Ok(())) => Ok(InputActionResult {
         selected_path: InputDeliveryPath::ClipboardPaste,
         attempts: vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)],
+        verified: false,
         mouse_disturbance: DisturbanceLevel::None,
         focus_disturbance: DisturbanceLevel::Unknown,
         clipboard_disturbance: DisturbanceLevel::Temporary,
@@ -1121,6 +1125,7 @@ fn foreground_system_events_result(
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
+    verified: false,
     mouse_disturbance,
     focus_disturbance,
     clipboard_disturbance,
@@ -1140,6 +1145,13 @@ fn scroll_attempt_candidates(options: &ScrollOptions) -> Vec<ScrollDeliveryCandi
       options.delivery_strategy.candidates.iter().copied().filter(|candidate| *candidate != ScrollDeliveryCandidate::ForegroundHid).collect()
     }
     InputPolicy::BackgroundPreferred => options.delivery_strategy.candidates.clone(),
+  }
+}
+
+fn click_attempt_candidates(policy: InputPolicy) -> Vec<InputDeliveryPath> {
+  match policy {
+    InputPolicy::ForegroundPreferred => vec![InputDeliveryPath::ForegroundSystemEvents],
+    InputPolicy::BackgroundOnly | InputPolicy::BackgroundPreferred => vec![InputDeliveryPath::WindowTargetedMouse],
   }
 }
 
@@ -1409,19 +1421,25 @@ fn foreground_prepare_options(settle: Duration) -> PrepareForInputOptions {
 }
 
 fn activate_app_for_window(window: &Window) -> DriverResult<()> {
-  if let Some(bundle_id) = &window.app_bundle_id {
-    run_osascript(&[&format!(
-      "tell application id \"{}\" to activate",
-      escape_applescript(bundle_id)
-    )])
-  } else if let Some(app_name) = &window.app_name {
-    run_osascript(&[&format!(
-      "tell application \"{}\" to activate",
-      escape_applescript(app_name)
-    )])
-  } else {
-    Ok(())
+  run_osascript(&[&foreground_activation_script(window)?])
+}
+
+fn foreground_activation_script(window: &Window) -> DriverResult<String> {
+  if let Some(pid) = window.process_id {
+    // NOTICE(bundleless-window-activation): `tell application ... to activate`
+    // cannot resolve executables without a bundle id, including Android
+    // Emulator's `qemu-system-aarch64`. System Events can activate the owning
+    // application process by pid. Keep the bundle/name fallback only for
+    // legacy Window values without an observed owner pid.
+    return Ok(format!("tell application \"System Events\" to set frontmost of first application process whose unix id is {pid} to true"));
   }
+  if let Some(bundle_id) = &window.app_bundle_id {
+    return Ok(format!("tell application id \"{}\" to activate", escape_applescript(bundle_id)));
+  }
+  if let Some(app_name) = &window.app_name {
+    return Ok(format!("tell application \"{}\" to activate", escape_applescript(app_name)));
+  }
+  Err(invalid_input("foreground input requires a window owner pid, bundle id, or application name"))
 }
 
 #[derive(Clone, Debug)]

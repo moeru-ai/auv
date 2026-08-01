@@ -115,6 +115,7 @@ fn foreground_result(
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
+    verified: false,
     mouse_disturbance,
     focus_disturbance,
     clipboard_disturbance,

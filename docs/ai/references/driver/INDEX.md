@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **22**
+Count: **23**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -28,6 +28,7 @@ Count: **22**
 - [`2026-06-18-driver-windows-v0-implementation.md`](2026-06-18-driver-windows-v0-implementation.md)
 - [`2026-07-19-error-chain-inventory.md`](2026-07-19-error-chain-inventory.md)
 - [`2026-07-30-overlay-interface-and-debug-commands-handoff.md`](2026-07-30-overlay-interface-and-debug-commands-handoff.md)
+- [`2026-08-01-qemu-window-input-framework-research.md`](2026-08-01-qemu-window-input-framework-research.md)
 
 ## Related
 

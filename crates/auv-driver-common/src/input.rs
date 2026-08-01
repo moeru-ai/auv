@@ -403,6 +403,13 @@ pub const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,
   pub attempts: Vec<InputAttempt>,
+  /// Whether a post-action observation proved the requested semantic effect.
+  ///
+  /// NOTICE(input-delivery-verification): A successful OS/driver dispatch is
+  /// not consumption evidence. Raw CGEvent, SendInput, XTest, and AX action
+  /// APIs can report success while the target ignores the event, so producers
+  /// must leave this false unless they performed an explicit read-back.
+  pub verified: bool,
   pub mouse_disturbance: DisturbanceLevel,
   pub focus_disturbance: DisturbanceLevel,
   pub clipboard_disturbance: DisturbanceLevel,
@@ -413,6 +420,7 @@ impl InputActionResult {
     Self {
       selected_path: path,
       attempts: vec![InputAttempt::success(path)],
+      verified: false,
       mouse_disturbance: DisturbanceLevel::None,
       focus_disturbance: DisturbanceLevel::None,
       clipboard_disturbance: DisturbanceLevel::None,

@@ -12,6 +12,7 @@ fn select_node_reports_atspi_action_path() {
       succeeded: true,
       message: Some("click".to_string()),
     }],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -40,6 +41,7 @@ fn focus_result_uses_ax_focus_path() {
   let result = InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
     attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,

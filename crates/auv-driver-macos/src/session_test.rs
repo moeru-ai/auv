@@ -396,6 +396,28 @@ mod no_steal_tests {
   }
 
   #[test]
+  fn click_attempt_candidates_foreground_preferred_uses_foreground_hid_first() {
+    // ROOT CAUSE:
+    //
+    // If a pid-targeted CGEvent was accepted by macOS but ignored by a
+    // focus-sensitive host window such as QEMU, ForegroundPreferred stopped
+    // because dispatch success was mistaken for guest-visible success.
+    //
+    // Before the fix, click always attempted WindowTargetedMouse first.
+    // The fix makes the policy name literal and selects foreground HID first.
+    let candidates = click_attempt_candidates(InputPolicy::ForegroundPreferred);
+
+    assert_eq!(candidates, vec![InputDeliveryPath::ForegroundSystemEvents]);
+  }
+
+  #[test]
+  fn foreground_activation_targets_bundleless_windows_by_pid() {
+    let script = foreground_activation_script(&sample_window()).expect("foreground activation script");
+
+    assert_eq!(script, "tell application \"System Events\" to set frontmost of first application process whose unix id is 123 to true");
+  }
+
+  #[test]
   fn scroll_attempt_candidates_foreground_preferred_uses_foreground_hid_first() {
     let candidates = scroll_attempt_candidates(&ScrollOptions {
       policy: InputPolicy::ForegroundPreferred,

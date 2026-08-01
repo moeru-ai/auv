@@ -98,6 +98,7 @@ pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: P
     (Ok(()), Ok(())) => Ok(InputActionResult {
       selected_path: InputDeliveryPath::ClipboardPaste,
       attempts: vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)],
+      verified: false,
       mouse_disturbance: DisturbanceLevel::None,
       focus_disturbance: DisturbanceLevel::Unknown,
       clipboard_disturbance: DisturbanceLevel::Temporary,
@@ -118,6 +119,7 @@ pub fn reserved_input_result(reason: impl Into<String>) -> InputActionResult {
       InputDeliveryPath::Unsupported,
       reason.clone(),
     )],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::None,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -141,6 +143,7 @@ fn keyboard_result() -> InputActionResult {
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Unknown,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -153,6 +156,7 @@ fn pointer_result() -> InputActionResult {
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::Temporary,
     focus_disturbance: DisturbanceLevel::Unknown,
     clipboard_disturbance: DisturbanceLevel::None,

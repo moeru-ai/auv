@@ -647,9 +647,11 @@ into operation failure.
 
 Delivery and semantic verification remain separate domain facts. A typed
 `InputActionResult` can prove which input path was delivered without proving
-the expected UI state; an app-owned typed result can state what was checked and
-what the app observed without redefining the operation's Rust return type. V1
-intentionally has no shared `VerificationResult`, `VerificationMethod`,
+the expected UI state. Its `verified` field is `false` for dispatch-only
+results and may be `true` only when a post-action observation proved the
+requested semantic effect. An app-owned typed result can state what was checked
+and what the app observed without redefining the operation's Rust return type.
+V1 intentionally has no shared `VerificationResult`, `VerificationMethod`,
 `OperationStatus`, `ControlFailure`, or persisted operation-result record in
 `auv-tracing`.
 

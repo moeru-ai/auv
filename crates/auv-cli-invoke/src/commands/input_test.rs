@@ -219,6 +219,7 @@ async fn invalid_input_artifact_does_not_change_the_typed_call_or_reexecute_driv
     attempts: vec![auv_driver::InputAttempt::success(
       InputDeliveryPath::AxPress,
     )],
+    verified: false,
     mouse_disturbance: auv_driver::DisturbanceLevel::None,
     focus_disturbance: auv_driver::DisturbanceLevel::None,
     clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -254,6 +255,7 @@ async fn input_action_emission_short_circuits_without_run_context() {
     attempts: vec![auv_driver::InputAttempt::success(
       InputDeliveryPath::AxPress,
     )],
+    verified: false,
     mouse_disturbance: auv_driver::DisturbanceLevel::None,
     focus_disturbance: auv_driver::DisturbanceLevel::None,
     clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -269,6 +271,7 @@ fn input_action_artifact_enforces_domain_and_four_mibibyte_bounds() {
     attempts: vec![auv_driver::InputAttempt::success(
       InputDeliveryPath::AxPress,
     )],
+    verified: false,
     mouse_disturbance: auv_driver::DisturbanceLevel::None,
     focus_disturbance: auv_driver::DisturbanceLevel::None,
     clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -282,6 +285,7 @@ fn input_action_artifact_enforces_domain_and_four_mibibyte_bounds() {
       auv_driver::InputAttempt::failure(InputDeliveryPath::AxPress, "x".repeat(ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT as usize)),
       auv_driver::InputAttempt::success(InputDeliveryPath::WindowTargetedMouse),
     ],
+    verified: false,
     mouse_disturbance: auv_driver::DisturbanceLevel::None,
     focus_disturbance: auv_driver::DisturbanceLevel::None,
     clipboard_disturbance: auv_driver::DisturbanceLevel::None,
@@ -382,6 +386,7 @@ fn input_action_output_reports_explicit_domain_values() {
   let result = InputActionResult {
     selected_path: InputDeliveryPath::WindowTargetedKeyboardScroll,
     attempts: vec![],
+    verified: false,
     mouse_disturbance: auv_driver::DisturbanceLevel::None,
     focus_disturbance: auv_driver::DisturbanceLevel::Foreground,
     clipboard_disturbance: auv_driver::DisturbanceLevel::Temporary,
@@ -397,6 +402,17 @@ fn input_action_output_reports_explicit_domain_values() {
   assert_eq!(field_value(report, "Focus disturbance"), "foreground");
   assert_eq!(field_value(report, "Clipboard disturbance"), "temporary");
   assert_eq!(output.result(), Some(&serde_json::to_value(&result).expect("fixture should serialize")));
+}
+
+#[test]
+fn input_action_output_reports_semantic_verification_when_present() {
+  let mut result = InputActionResult::single_success(InputDeliveryPath::AxPress);
+  result.verified = true;
+
+  let output = input_action_output(&result).expect("verified input result should serialize");
+  let report = output.report.as_ref().expect("input action report");
+
+  assert_eq!(field_value(report, "Verification"), "verified");
 }
 
 #[test]
