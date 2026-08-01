@@ -1,5 +1,33 @@
 use super::*;
 
+// https://github.com/moeru-ai/auv/actions/runs/30574130256/job/90978006366
+#[test]
+fn ci_90978006366_click_parts_support_repeated_clicks() {
+  // ROOT CAUSE:
+  //
+  // If Click::Repeated was passed to the Windows driver, the crate failed to
+  // compile because click_at still matched only the older single/double shape.
+  //
+  // Before the fix, Windows CI stopped at a non-exhaustive match.
+  // The fix keeps every shared Click variant mapped to native count/interval values.
+  assert_eq!(
+    click_parts(&Click::Repeated {
+      count: 3,
+      interval: Duration::from_millis(60),
+    })
+    .expect("repeated click"),
+    (3, Duration::from_millis(60))
+  );
+  assert!(matches!(
+    click_parts(&Click::Repeated {
+      count: 0,
+      interval: Duration::from_millis(60),
+    }),
+    Err(auv_driver_common::error::DriverError::InvalidInput { message })
+      if message == "repeated click count must be greater than zero"
+  ));
+}
+
 #[test]
 fn normalize_absolute_maps_axis_endpoints() {
   // A 1920-wide desktop starting at origin 0 maps x=0 -> 0 and x=1919 -> 65535.

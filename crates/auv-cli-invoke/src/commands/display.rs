@@ -5,12 +5,14 @@ use crate::{
 use auv_cli_common::{TableRow, outputs::formats::table::TableOptions};
 use clap::Args;
 
-use auv_driver::overlay::{Overlay, components::CaptureFrame};
 use auv_tracing::ArtifactMetadata;
-use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use crate::artifact::emit_png_with_receipt;
+#[cfg(target_os = "macos")]
+use auv_driver::overlay::{Overlay, components::CaptureFrame};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
 pub fn group() -> CommandGroup {
   // TODO(invoke-display-stubs): point commands stay intentionally unregistered
@@ -33,30 +35,33 @@ async fn capture_display(input: InvokeCommandInput, _args: CaptureDisplayArgs) -
     return Ok(InvokeCommandOutput::completed());
   }
   #[cfg(target_os = "macos")]
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-  #[cfg(target_os = "macos")]
-  let (result, artifact) = capture_primary_display_recorded_with_session(&session).await?;
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let (result, artifact) = capture_primary_display_recorded_with_session(&session).await?;
+    let capture_overlay = Overlay::new().with_layer(
+      CaptureFrame::new(result.display.frame)
+        .with_label(result.display.name.clone().unwrap_or_else(|| format!("display {}", result.display.id))),
+    );
+    let overlay = super::overlay::show_overlay(
+      &input,
+      &session,
+      capture_overlay,
+      auv_driver::overlay::ShowOptions::new()
+        .with_motion_ease(Duration::from_millis(120), auv_driver::overlay::Easing::EaseInOutExpo)
+        .with_auto_removal_after(Duration::from_millis(180)),
+    )?;
+    let mut report = display_capture_report(&result);
+    report.fields.push(overlay.report_field());
+    Ok(
+      InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture))?
+        .with_report(report)
+        .with_artifacts(artifact),
+    )
+  }
   #[cfg(not(target_os = "macos"))]
-  return Err("display.capture is only available on macOS through auv-driver-macos".to_string());
-  let capture_overlay = Overlay::new().with_layer(
-    CaptureFrame::new(result.display.frame)
-      .with_label(result.display.name.clone().unwrap_or_else(|| format!("display {}", result.display.id))),
-  );
-  let overlay = super::overlay::show_overlay(
-    &input,
-    &session,
-    capture_overlay,
-    auv_driver::overlay::ShowOptions::new()
-      .with_motion_ease(Duration::from_millis(120), auv_driver::overlay::Easing::EaseInOutExpo)
-      .with_auto_removal_after(Duration::from_millis(180)),
-  )?;
-  let mut report = display_capture_report(&result);
-  report.fields.push(overlay.report_field());
-  Ok(
-    InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture))?
-      .with_report(report)
-      .with_artifacts(artifact),
-  )
+  {
+    Err("display.capture is only available on macOS through auv-driver-macos".to_string())
+  }
 }
 
 pub async fn capture_primary_display() -> Result<auv_driver::DisplayCapture, String> {
