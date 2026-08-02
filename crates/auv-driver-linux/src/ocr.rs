@@ -8,7 +8,7 @@
 use std::fmt;
 
 use auv_driver_common::geometry::Rect;
-use auv_driver_common::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
+use auv_driver_common::vision::{OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions};
 #[cfg(target_os = "linux")]
 use image::ImageEncoder;
 
@@ -35,8 +35,9 @@ impl fmt::Display for OcrError {
 
 impl std::error::Error for OcrError {}
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Word {
+  text: String,
   left: f64,
   top: f64,
   width: f64,
@@ -57,6 +58,24 @@ struct Line {
 /// to Tesseract language ids and joined with `+`; the default is `eng`.
 #[cfg(target_os = "linux")]
 pub fn recognize_text_in_rgba(rgba: &[u8], width: u32, height: u32, options: &TextRecognitionOptions) -> Result<TextRecognition, OcrError> {
+  let tsv = tesseract_tsv_from_rgba(rgba, width, height, options)?;
+  Ok(text_recognition_from_tsv(&tsv))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn find_text_in_rgba(
+  rgba: &[u8],
+  width: u32,
+  height: u32,
+  query: &str,
+  options: &TextRecognitionOptions,
+) -> Result<OcrMatches, OcrError> {
+  let tsv = tesseract_tsv_from_rgba(rgba, width, height, options)?;
+  Ok(text_matches_from_tsv(&tsv, query))
+}
+
+#[cfg(target_os = "linux")]
+fn tesseract_tsv_from_rgba(rgba: &[u8], width: u32, height: u32, options: &TextRecognitionOptions) -> Result<String, OcrError> {
   let expected = (width as usize) * (height as usize) * 4;
   if rgba.len() != expected {
     return Err(OcrError::InvalidImage {
@@ -82,9 +101,7 @@ pub fn recognize_text_in_rgba(rgba: &[u8], width: u32, height: u32, options: &Te
   // weighting is deferred until an owner-approved OCR-quality slice needs it.
   tess.set_image_from_mem(&png).map_err(|error| OcrError::Runtime(format!("failed to load image into Tesseract: {error}")))?;
   tess.set_source_resolution(144);
-  let tsv = tess.get_tsv_text(0).map_err(|error| OcrError::Runtime(format!("failed to read Tesseract TSV: {error}")))?;
-
-  Ok(text_recognition_from_tsv(&tsv))
+  tess.get_tsv_text(0).map_err(|error| OcrError::Runtime(format!("failed to read Tesseract TSV: {error}")))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -94,6 +111,17 @@ pub fn recognize_text_in_rgba(
   _height: u32,
   _options: &TextRecognitionOptions,
 ) -> Result<TextRecognition, OcrError> {
+  Err(OcrError::Unsupported)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn find_text_in_rgba(
+  _rgba: &[u8],
+  _width: u32,
+  _height: u32,
+  _query: &str,
+  _options: &TextRecognitionOptions,
+) -> Result<OcrMatches, OcrError> {
   Err(OcrError::Unsupported)
 }
 
@@ -136,6 +164,54 @@ fn text_recognition_from_tsv(tsv: &str) -> TextRecognition {
   }
 }
 
+fn text_matches_from_tsv(tsv: &str, query: &str) -> OcrMatches {
+  let normalized_query = normalize_match_text(query);
+  if normalized_query.is_empty() {
+    return OcrMatches::default();
+  }
+
+  let mut matches = Vec::new();
+  for line in parse_tsv_lines(tsv) {
+    for start in 0..line.words.len() {
+      let mut candidate = String::new();
+      for end in start..line.words.len() {
+        if !candidate.is_empty() {
+          candidate.push(' ');
+        }
+        candidate.push_str(&line.words[end].text);
+        if !normalize_match_text(&candidate).contains(&normalized_query) {
+          continue;
+        }
+        let words = &line.words[start..=end];
+        let Some(bounds) = union_words(words) else {
+          break;
+        };
+        matches.push(OcrMatch {
+          text: candidate,
+          confidence: mean_confidence(words).unwrap_or_default() as f64,
+          bounds,
+        });
+        break;
+      }
+    }
+  }
+  let candidates = matches.clone();
+  matches.retain(|candidate| !candidates.iter().any(|other| candidate != other && rect_strictly_contains(candidate.bounds, other.bounds)));
+  OcrMatches { matches }
+}
+
+fn rect_strictly_contains(container: Rect, candidate: Rect) -> bool {
+  let contains = candidate.origin.x >= container.origin.x
+    && candidate.origin.y >= container.origin.y
+    && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
+    && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height;
+  contains && candidate.size.width * candidate.size.height < container.size.width * container.size.height
+}
+
+fn normalize_match_text(text: &str) -> String {
+  text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 fn parse_tsv_lines(tsv: &str) -> Vec<Line> {
   let mut lines = Vec::<((String, String, String), Line)>::new();
   for row in tsv.lines().skip(1) {
@@ -147,7 +223,7 @@ fn parse_tsv_lines(tsv: &str) -> Vec<Line> {
     if text.is_empty() {
       continue;
     }
-    let Some(word) = parse_word(&columns) else {
+    let Some(word) = parse_word(&columns, text.clone()) else {
       continue;
     };
     let key = (columns[2].to_string(), columns[3].to_string(), columns[4].to_string());
@@ -170,8 +246,9 @@ fn parse_tsv_lines(tsv: &str) -> Vec<Line> {
   lines.into_iter().map(|(_, line)| line).collect()
 }
 
-fn parse_word(columns: &[&str]) -> Option<Word> {
+fn parse_word(columns: &[&str], text: String) -> Option<Word> {
   Some(Word {
+    text,
     left: columns.get(6)?.parse().ok()?,
     top: columns.get(7)?.parse().ok()?,
     width: columns.get(8)?.parse().ok()?,

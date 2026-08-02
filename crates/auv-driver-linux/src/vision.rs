@@ -11,7 +11,7 @@ pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 use auv_driver_common::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 
 use crate::error::backend;
-use crate::ocr::recognize_text_in_rgba;
+use crate::ocr::{find_text_in_rgba, recognize_text_in_rgba};
 
 pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: &TextRecognitionOptions) -> DriverResult<TextRecognition> {
   let crop = crop_pixels(capture, region);
@@ -30,8 +30,13 @@ pub fn find_text_in_capture(
   region: RatioRect,
   options: &TextRecognitionOptions,
 ) -> DriverResult<OcrMatches> {
-  let recognition = recognize_text_in_capture(capture, region, options)?;
-  Ok(ocr_matches_from_recognition(&recognition, query))
+  let crop = crop_pixels(capture, region);
+  if crop.width == 0 || crop.height == 0 {
+    return Ok(OcrMatches::default());
+  }
+  let cropped = image::imageops::crop_imm(&capture.image, crop.x, crop.y, crop.width, crop.height).to_image();
+  let matches = find_text_in_rgba(cropped.as_raw(), crop.width, crop.height, query, options).map_err(|error| backend(error.to_string()))?;
+  Ok(map_matches_to_capture(&matches, capture, crop))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -65,6 +70,36 @@ fn ratio_to_pixel(ratio: f64, extent: u32) -> u32 {
 }
 
 fn map_recognition_to_capture(recognition: &TextRecognition, capture: &Capture, crop: CropPixels) -> TextRecognition {
+  let regions = recognition
+    .regions
+    .iter()
+    .map(|region| RecognizedText {
+      text: region.text.clone(),
+      confidence: region.confidence,
+      bounds: map_rect_to_capture(region.bounds, capture, crop),
+    })
+    .collect::<Vec<_>>();
+  TextRecognition {
+    text: regions.iter().map(|region| region.text.as_str()).collect::<Vec<_>>().join("\n"),
+    regions,
+  }
+}
+
+fn map_matches_to_capture(matches: &OcrMatches, capture: &Capture, crop: CropPixels) -> OcrMatches {
+  OcrMatches {
+    matches: matches
+      .matches
+      .iter()
+      .map(|matched| OcrMatch {
+        text: matched.text.clone(),
+        confidence: matched.confidence,
+        bounds: map_rect_to_capture(matched.bounds, capture, crop),
+      })
+      .collect(),
+  }
+}
+
+fn map_rect_to_capture(bounds: Rect, capture: &Capture, crop: CropPixels) -> Rect {
   let x_scale = if capture.bounds.size.width > 0.0 {
     f64::from(capture.image.width()) / capture.bounds.size.width
   } else {
@@ -75,30 +110,17 @@ fn map_recognition_to_capture(recognition: &TextRecognition, capture: &Capture, 
   } else {
     1.0
   };
-  let regions = recognition
-    .regions
-    .iter()
-    .map(|region| {
-      let full_x = region.bounds.origin.x + f64::from(crop.x);
-      let full_y = region.bounds.origin.y + f64::from(crop.y);
-      RecognizedText {
-        text: region.text.clone(),
-        confidence: region.confidence,
-        bounds: Rect::new(
-          capture.bounds.origin.x + full_x / x_scale,
-          capture.bounds.origin.y + full_y / y_scale,
-          region.bounds.size.width / x_scale,
-          region.bounds.size.height / y_scale,
-        ),
-      }
-    })
-    .collect::<Vec<_>>();
-  TextRecognition {
-    text: regions.iter().map(|region| region.text.as_str()).collect::<Vec<_>>().join("\n"),
-    regions,
-  }
+  let full_x = bounds.origin.x + f64::from(crop.x);
+  let full_y = bounds.origin.y + f64::from(crop.y);
+  Rect::new(
+    capture.bounds.origin.x + full_x / x_scale,
+    capture.bounds.origin.y + full_y / y_scale,
+    bounds.size.width / x_scale,
+    bounds.size.height / y_scale,
+  )
 }
 
+#[cfg(test)]
 fn ocr_matches_from_recognition(recognition: &TextRecognition, query: &str) -> OcrMatches {
   let matches = recognition
     .find_contains(query)

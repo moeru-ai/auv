@@ -75,6 +75,57 @@ fn resolve_from_windows_matches_app_name_contains_case_insensitive() {
 }
 
 #[test]
+fn main_visible_prefers_application_window_over_desktop_shell_surface() {
+  // ROOT CAUSE:
+  //
+  // If AT-SPI enumerated GNOME Shell before the active application, the shell
+  // surface was marked main and won the default selector even though it was not
+  // the application window the user could operate.
+  //
+  // Before the fix, `window.findText` captured the shell surface and projected
+  // OCR coordinates through its unrelated bounds. The fix excludes desktop
+  // shell surfaces while normal application windows are available.
+  let shell = Window {
+    reference: WindowRef {
+      id: "shell".to_string(),
+    },
+    title: Some("Main stage".to_string()),
+    app_name: Some("gnome-shell".to_string()),
+    app_bundle_id: Some("org.gnome.Shell".to_string()),
+    process_id: None,
+    frame: Rect::new(0.0, 55.0, 100.0, 56.0),
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: true,
+    is_visible: true,
+  };
+  let application = Window {
+    reference: WindowRef {
+      id: "code".to_string(),
+    },
+    title: Some("AGENTS.md - Visual Studio Code".to_string()),
+    app_name: Some("code".to_string()),
+    app_bundle_id: None,
+    process_id: None,
+    frame: Rect::new(0.0, 32.0, 2560.0, 1408.0),
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: false,
+    is_visible: true,
+  };
+  let selector = WindowSelector {
+    app: Some(AppSelector {
+      frontmost: true,
+      ..AppSelector::default()
+    }),
+    main_visible: true,
+    ..WindowSelector::default()
+  };
+
+  let resolved = resolve_from_windows(&[shell, application.clone()], &selector).expect("application window resolves");
+
+  assert_eq!(resolved, application);
+}
+
+#[test]
 fn crop_capture_to_window_uses_window_extents_inside_display_capture() {
   let mut image = image::RgbaImage::new(10, 10);
   image.put_pixel(3, 4, image::Rgba([1, 2, 3, 4]));
@@ -91,30 +142,4 @@ fn crop_capture_to_window_uses_window_extents_inside_display_capture() {
   assert_eq!(cropped.width(), 2);
   assert_eq!(cropped.height(), 2);
   assert_eq!(*cropped.get_pixel(0, 0), image::Rgba([1, 2, 3, 4]));
-}
-
-#[test]
-fn window_source_scale_rejects_unmatched_stream_bounds() {
-  let image = image::RgbaImage::new(5504, 2304);
-
-  let error = window_source_scale_factor(&image, Rect::new(0.0, 0.0, 1505.0, 1077.0)).expect_err("non-uniform scale should be rejected");
-
-  assert!(error.to_string().contains("not consistent with AT-SPI window bounds"));
-}
-
-#[test]
-fn window_source_normalization_trims_black_portal_padding() {
-  let mut image = image::RgbaImage::new(11, 6);
-  for y in 1..4 {
-    for x in 1..5 {
-      image.put_pixel(x, y, image::Rgba([20, 20, 20, 255]));
-    }
-  }
-
-  let (normalized, scale) =
-    normalize_window_source_image(image, Rect::new(0.0, 0.0, 2.0, 1.5)).expect("black padding trims to target aspect");
-
-  assert_eq!(normalized.width(), 4);
-  assert_eq!(normalized.height(), 3);
-  assert_eq!(scale, 2.0);
 }

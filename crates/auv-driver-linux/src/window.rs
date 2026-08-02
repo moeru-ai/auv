@@ -8,8 +8,6 @@ use crate::capture::capture_display;
 #[cfg(target_os = "linux")]
 use crate::driver::LinuxDriverSessionState;
 use crate::error::{invalid_input, not_found};
-#[cfg(target_os = "linux")]
-use crate::native::portal::capture_window_frame;
 use auv_driver_common::capture::Capture;
 use auv_driver_common::error::DriverResult;
 #[cfg(any(target_os = "linux", test))]
@@ -35,21 +33,20 @@ pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
 #[cfg(target_os = "linux")]
 pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Window) -> DriverResult<Capture> {
   atspi::ObjectRef::decode(&window.reference.id)?;
-  match capture_window_from_source(window) {
-    Ok(capture) => return Ok(capture),
-    Err(error) => {
-      validate_display_crop_fallback(window, &error.to_string())?;
-      let display = capture_display(state, None)?;
-      let crop = crop_capture_to_window(&display.capture, window.frame)?;
-      return Ok(Capture {
-        image: crop,
-        bounds: window.frame,
-        scale_factor: display.capture.scale_factor,
-        backend: format!("atspi.extents+{}.crop", display.capture.backend),
-        fallback_reason: Some(window_capture_fallback_reason(&error.to_string(), display.capture.fallback_reason)),
-      });
-    }
-  }
+  // TODO(linux-window-source-target-binding): XDG portal WINDOW capture is
+  // picker-driven and does not expose a stable mapping to an AT-SPI WindowRef.
+  // Re-enable it only when the selected portal source can be proven to identify
+  // this exact window; geometry similarity alone is insufficient for input.
+  validate_display_crop_fallback(window, "portal WINDOW source is not identity-bound to the requested AT-SPI WindowRef")?;
+  let display = capture_display(state, None)?;
+  let crop = crop_capture_to_window(&display.capture, window.frame)?;
+  Ok(Capture {
+    image: crop,
+    bounds: window.frame,
+    scale_factor: display.capture.scale_factor,
+    backend: format!("atspi.extents+{}.crop", display.capture.backend),
+    fallback_reason: Some(display_crop_reason(display.capture.fallback_reason)),
+  })
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -66,6 +63,7 @@ fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> Driver
   if selector.main_visible {
     matches.sort_by_key(|window| {
       std::cmp::Reverse((
+        !is_desktop_shell_surface(window),
         window.is_main,
         window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
         (window.frame.size.width * window.frame.size.height).round() as i64,
@@ -101,7 +99,11 @@ fn matches_window_selector_except_main_visible(window: &Window, selector: &Windo
 
 fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
   if selector.frontmost {
-    return window.is_main;
+    // GNOME Shell can expose its focused stage as the first/main AT-SPI
+    // surface even while a normal application window is foreground. Keep all
+    // applications eligible here and let main-visible ranking reject desktop
+    // shell surfaces before considering AT-SPI's main hint.
+    return true;
   }
   if let Some(pid) = selector.process_id
     && window.process_id != Some(pid)
@@ -127,6 +129,11 @@ fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
   true
 }
 
+fn is_desktop_shell_surface(window: &Window) -> bool {
+  matches!(window.app_name.as_deref(), Some("gnome-shell" | "plasmashell"))
+    || matches!(window.app_bundle_id.as_deref(), Some("org.gnome.Shell" | "org.kde.plasmashell"))
+}
+
 fn matches_text(value: &str, matcher: &TextMatcher) -> bool {
   match matcher {
     TextMatcher::Exact(expected) => value == expected,
@@ -149,96 +156,10 @@ fn crop_capture_to_window(capture: &Capture, frame: Rect) -> DriverResult<image:
 }
 
 #[cfg(target_os = "linux")]
-fn capture_window_from_source(window: &Window) -> DriverResult<Capture> {
-  let frame = capture_window_frame()?;
-  let (image, scale_factor) = normalize_window_source_image(frame.image, window.frame)?;
-  Ok(Capture {
-    image,
-    bounds: window.frame,
-    scale_factor,
-    backend: "atspi.extents+xdg-desktop-portal.screencast.window.pipewire".to_string(),
-    fallback_reason: Some(
-      "portal window source is user-selected; Linux Wayland backend cannot yet verify it matches the AT-SPI window reference".to_string(),
-    ),
-  })
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn normalize_window_source_image(image: image::RgbaImage, bounds: Rect) -> DriverResult<(image::RgbaImage, f64)> {
-  match window_source_scale_factor(&image, bounds) {
-    Ok(scale_factor) => Ok((image, scale_factor)),
-    Err(original_error) => {
-      let Some(trimmed) = trim_portal_window_padding(&image) else {
-        return Err(original_error);
-      };
-      match window_source_scale_factor(&trimmed, bounds) {
-        Ok(scale_factor) => Ok((trimmed, scale_factor)),
-        Err(_) => Err(original_error),
-      }
-    }
-  }
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn window_source_scale_factor(image: &image::RgbaImage, bounds: Rect) -> DriverResult<f64> {
-  if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
-    return Err(invalid_input("window bounds must be positive"));
-  }
-  let scale_x = f64::from(image.width()) / bounds.size.width;
-  let scale_y = f64::from(image.height()) / bounds.size.height;
-  let ratio = scale_x / scale_y;
-  if !(0.8..=1.25).contains(&ratio) {
-    return Err(invalid_input(format!(
-      "portal WINDOW stream size {}x{} is not consistent with AT-SPI window bounds {:?}",
-      image.width(),
-      image.height(),
-      bounds
-    )));
-  }
-  Ok(scale_x)
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn trim_portal_window_padding(image: &image::RgbaImage) -> Option<image::RgbaImage> {
-  let mut min_x = image.width();
-  let mut min_y = image.height();
-  let mut max_x = 0;
-  let mut max_y = 0;
-  for (x, y, pixel) in image.enumerate_pixels() {
-    if is_window_source_content(*pixel) {
-      min_x = min_x.min(x);
-      min_y = min_y.min(y);
-      max_x = max_x.max(x);
-      max_y = max_y.max(y);
-    }
-  }
-  if min_x > max_x || min_y > max_y {
-    return None;
-  }
-  if min_x == 0 && min_y == 0 && max_x + 1 == image.width() && max_y + 1 == image.height() {
-    return None;
-  }
-  Some(image::imageops::crop_imm(image, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1).to_image())
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn is_window_source_content(pixel: image::Rgba<u8>) -> bool {
-  pixel[3] != 0 && (pixel[0] > 8 || pixel[1] > 8 || pixel[2] > 8)
-}
-
-#[cfg(target_os = "linux")]
-fn window_capture_fallback_reason(window_source_error: &str, display_fallback_reason: Option<String>) -> String {
-  // TODO(linux-window-source-target-binding): XDG portal WINDOW capture is
-  // picker-driven, and this slice does not have a compositor-independent way to
-  // bind the returned stream to the AT-SPI window ref. Revisit when a portal or
-  // compositor exposes stable window mapping metadata we can verify.
+fn display_crop_reason(display_fallback_reason: Option<String>) -> String {
   match display_fallback_reason {
-    Some(reason) => format!(
-      "xdg-desktop-portal.screencast WINDOW source failed ({window_source_error}); {reason}; window pixels were cropped from display capture using AT-SPI window extents"
-    ),
-    None => format!(
-      "xdg-desktop-portal.screencast WINDOW source failed ({window_source_error}); window pixels were cropped from display capture using AT-SPI window extents"
-    ),
+    Some(reason) => format!("{reason}; window pixels were cropped from display capture using AT-SPI screen extents"),
+    None => "window pixels were cropped from display capture using AT-SPI screen extents".to_string(),
   }
 }
 
