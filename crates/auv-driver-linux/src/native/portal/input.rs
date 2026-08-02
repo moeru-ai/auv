@@ -11,12 +11,17 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use crate::capture::list_displays;
 use crate::error::{backend, invalid_input};
 
-use super::request::{close_session, create_remote_desktop_session, portal_proxy, session_connection, session_request};
+use super::persistence::{RestoreTokenKind, RestoreTokenStore};
+use super::request::{
+  close_session, create_remote_desktop_session, interface_version, portal_proxy, restore_token, session_connection, session_request,
+};
 use super::{ScreenCastStream, decode_streams, select_monitor_sources};
 
 const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
 const DEVICE_KEYBOARD: u32 = 1;
 const DEVICE_POINTER: u32 = 2;
+const PERSIST_UNTIL_REVOKED: u32 = 2;
+const PERSISTENCE_INTERFACE_VERSION: u32 = 2;
 const STATE_RELEASED: u32 = 0;
 const STATE_PRESSED: u32 = 1;
 const BUTTON_LEFT: i32 = 0x110;
@@ -26,8 +31,8 @@ const BUTTON_MIDDLE: i32 = 0x112;
 pub struct PortalInput;
 
 impl PortalInput {
-  pub fn open() -> DriverResult<InputSession> {
-    InputSession::open()
+  pub fn open(restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<InputSession> {
+    InputSession::open(restore_tokens)
   }
 }
 
@@ -52,30 +57,52 @@ impl std::fmt::Debug for InputSession {
 }
 
 impl InputSession {
-  fn open() -> DriverResult<Self> {
+  fn open(restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<Self> {
     let connection = session_connection()?;
     let session_handle = create_remote_desktop_session(&connection)?;
-    let mut options = HashMap::new();
-    options.insert("types", Value::from(DEVICE_KEYBOARD | DEVICE_POINTER));
-    session_request(&connection, REMOTE_DESKTOP_INTERFACE, "SelectDevices", &session_handle, options)?;
-    select_monitor_sources(&connection, &session_handle)?;
-    let results = start_remote_desktop(&connection, &session_handle)?;
-    let streams = decode_streams(&results)?;
-    if streams.is_empty() {
-      return Err(backend("remote desktop portal started without screencast streams"));
+    let result = (|| {
+      let persistent =
+        restore_tokens.is_some() && interface_version(&connection, REMOTE_DESKTOP_INTERFACE)? >= PERSISTENCE_INTERFACE_VERSION;
+      let results = if let Some(restore_tokens) = restore_tokens.filter(|_| persistent) {
+        restore_tokens.rotate(RestoreTokenKind::RemoteDesktopInput, |current| {
+          select_input_devices(&connection, &session_handle, current, true)?;
+          select_monitor_sources(&connection, &session_handle)?;
+          let results = start_remote_desktop(&connection, &session_handle)?;
+          let replacement = restore_token(&results, REMOTE_DESKTOP_INTERFACE)?;
+          Ok((results, replacement))
+        })?
+      } else {
+        select_input_devices(&connection, &session_handle, None, false)?;
+        select_monitor_sources(&connection, &session_handle)?;
+        start_remote_desktop(&connection, &session_handle)?
+      };
+      let streams = decode_streams(&results)?;
+      if streams.is_empty() {
+        return Err(backend("remote desktop portal started without screencast streams"));
+      }
+      let devices = results.get("devices").and_then(|value| u32::try_from(value).ok()).unwrap_or(0);
+      if devices & DEVICE_KEYBOARD == 0 && devices & DEVICE_POINTER == 0 {
+        return Err(backend("remote desktop portal started without keyboard or pointer access"));
+      }
+      let output_mappings = remote_desktop_output_mappings(&streams).unwrap_or_default();
+      Ok((devices, streams, output_mappings))
+    })();
+    match result {
+      Ok((devices, streams, output_mappings)) => Ok(Self {
+        connection,
+        session_handle,
+        devices,
+        streams,
+        output_mappings,
+      }),
+      Err(error) => {
+        let close_result = close_session(&connection, &session_handle);
+        match close_result {
+          Ok(()) => Err(error),
+          Err(close_error) => Err(backend(format!("{error}; also failed to close remote desktop portal session: {close_error}"))),
+        }
+      }
     }
-    let devices = results.get("devices").and_then(|value| u32::try_from(value).ok()).unwrap_or(0);
-    if devices & DEVICE_KEYBOARD == 0 && devices & DEVICE_POINTER == 0 {
-      return Err(backend("remote desktop portal started without keyboard or pointer access"));
-    }
-    let output_mappings = remote_desktop_output_mappings(&streams).unwrap_or_default();
-    Ok(Self {
-      connection,
-      session_handle,
-      devices,
-      streams,
-      output_mappings,
-    })
   }
 
   pub fn key_press(&mut self, keysym: i32) -> DriverResult<()> {
@@ -219,6 +246,24 @@ impl InputSession {
       .find(|mapping| rect_contains_point(mapping.logical_rect, point))
       .map(|mapping| mapping.to_motion_target(point))
   }
+}
+
+fn select_input_devices(
+  connection: &Connection,
+  session_handle: &OwnedObjectPath,
+  restore: Option<&str>,
+  persistent: bool,
+) -> DriverResult<()> {
+  let mut options = HashMap::new();
+  options.insert("types", Value::from(DEVICE_KEYBOARD | DEVICE_POINTER));
+  if persistent {
+    options.insert("persist_mode", Value::from(PERSIST_UNTIL_REVOKED));
+    if let Some(restore) = restore {
+      options.insert("restore_token", Value::from(restore));
+    }
+  }
+  session_request(connection, REMOTE_DESKTOP_INTERFACE, "SelectDevices", session_handle, options)?;
+  Ok(())
 }
 
 impl Drop for InputSession {

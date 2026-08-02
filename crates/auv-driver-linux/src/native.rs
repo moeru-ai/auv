@@ -38,8 +38,17 @@ pub mod portal {
   pub struct PortalInput;
 
   impl PortalInput {
-    pub fn open() -> DriverResult<InputSession> {
+    pub fn open(_restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<InputSession> {
       Err(DriverError::unsupported("linux.portal.input"))
+    }
+  }
+
+  #[derive(Clone, Debug, Default)]
+  pub struct RestoreTokenStore;
+
+  impl RestoreTokenStore {
+    pub(crate) fn new(_root: std::path::PathBuf) -> Self {
+      Self
     }
   }
 
@@ -72,7 +81,7 @@ pub mod portal {
   pub struct ScreenCastSession;
 
   impl ScreenCastSession {
-    pub fn open_monitor() -> DriverResult<Self> {
+    pub fn open_monitor(_restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<Self> {
       Err(DriverError::unsupported("linux.portal.screencast"))
     }
   }

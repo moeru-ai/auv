@@ -130,7 +130,8 @@ fn with_input_session<T>(
 ) -> DriverResult<T> {
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.input_session.is_none() {
-    state.input_session = Some(PortalInput::open()?);
+    let restore_tokens = state.restore_tokens.clone();
+    state.input_session = Some(PortalInput::open(restore_tokens.as_ref())?);
   }
   operation(state.input_session.as_mut().expect("input session was just initialized"))
 }

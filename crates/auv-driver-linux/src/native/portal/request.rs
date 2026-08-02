@@ -19,6 +19,21 @@ pub(super) fn portal_proxy<'a>(connection: &'a Connection, interface: &'static s
     .map_err(|error| backend(format!("failed to create {interface} proxy: {error}")))
 }
 
+pub(super) fn interface_version(connection: &Connection, interface: &'static str) -> DriverResult<u32> {
+  portal_proxy(connection, interface)?
+    .get_property("version")
+    .map_err(|error| backend(format!("failed to read {interface}.version: {error}")))
+}
+
+pub(super) fn restore_token(results: &HashMap<String, OwnedValue>, interface: &'static str) -> DriverResult<Option<String>> {
+  let Some(value) = results.get("restore_token") else {
+    return Ok(None);
+  };
+  <&str>::try_from(value)
+    .map(|value| Some(value.to_string()))
+    .map_err(|error| backend(format!("failed to decode {interface} restore token: {error}")))
+}
+
 pub(super) fn call_request(
   connection: &Connection,
   interface: &'static str,

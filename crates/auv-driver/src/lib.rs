@@ -29,6 +29,12 @@ impl LocalDriver {
       inner: auv_driver_windows::WindowsDriver::new(),
     }
   }
+
+  #[cfg(target_os = "linux")]
+  pub fn with_linux_portal_state_root(mut self, root: std::path::PathBuf) -> Self {
+    self.inner = self.inner.with_portal_state_root(root);
+    self
+  }
 }
 
 #[derive(Clone, Debug)]

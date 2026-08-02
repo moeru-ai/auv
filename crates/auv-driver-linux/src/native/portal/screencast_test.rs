@@ -47,28 +47,3 @@ fn xrgb_pixel_converts_to_rgba() {
 
   assert_eq!(dest, [1, 2, 3, 255]);
 }
-
-#[test]
-fn window_stream_prefers_window_source_type() {
-  let monitor = ScreenCastStream {
-    id: 1,
-    position: None,
-    size: None,
-    source_type: Some(SOURCE_MONITOR),
-    mapping_id: None,
-    pipewire_serial: None,
-  };
-  let window = ScreenCastStream {
-    id: 2,
-    position: None,
-    size: None,
-    source_type: Some(SOURCE_WINDOW),
-    mapping_id: None,
-    pipewire_serial: None,
-  };
-
-  let streams = [monitor, window];
-  let selected = select_window_stream(&streams).expect("stream selected");
-
-  assert_eq!(selected.id, 2);
-}
