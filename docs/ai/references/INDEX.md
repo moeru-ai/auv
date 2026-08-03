@@ -41,6 +41,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | [`driver/`](driver/INDEX.md) | Active | Platform drivers, input, window, permissions | |
 | [`view-memory/`](view-memory/INDEX.md) | Active | View-parser IR and view memory | |
 | [`scan/`](scan/INDEX.md) | Active | Temporal scan / surface observation | |
+| [`3dgs/`](3dgs/INDEX.md) | Proposed | 3DGS spatial memory acquisition, evidence, and memory write boundary | **重点设计入口**；先用 Minecraft 验证 |
 | [`scenebridge/`](scenebridge/INDEX.md) | Active | Cross-app scene identity / grounding | |
 | [`recognition/`](recognition/INDEX.md) | Active | RecognitionResult, detectors | |
 | [`apps/textedit/`](apps/textedit/INDEX.md) | Product | TextEdit document.write golden path | |
@@ -66,6 +67,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | Invoke / CLI design | [`invoke-cli/2026-06-11-cli-invoke-driver-console-design.md`](invoke-cli/2026-06-11-cli-invoke-driver-console-design.md) |
 | Current AUV tracing / run storage / Inspect contract | [`inspect/INDEX.md`](inspect/INDEX.md) |
 | Temporal scan | [`scan/INDEX.md`](scan/INDEX.md) |
+| 3DGS spatial memory design | **重点** [`3dgs/INDEX.md`](3dgs/INDEX.md) |
 | Session API / MCP | [`session-api/INDEX.md`](session-api/INDEX.md) |
 | Design system / viewer UI | [`../../design/README.md`](../../design/README.md) |
 | Agent writing rules | [`../../../AGENTS.md`](../../../AGENTS.md) |
