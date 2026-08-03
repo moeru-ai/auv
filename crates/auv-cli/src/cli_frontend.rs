@@ -48,22 +48,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
     return Ok(0);
   }
 
-  if let CliCommand::SessionServe {
-    host,
-    port,
-    store_root,
-  } = &command
-  {
-    let store_root = resolve_store_root(&project_root, store_root.as_ref());
-    let config = crate::session_service::transport::SessionApiServeConfig {
-      host: host.clone(),
-      port: *port,
-      store_root,
-    };
-    crate::session_service::transport::serve(config).await?;
-    return Ok(0);
-  }
-
   let mut exit_code = 0;
   match command {
     CliCommand::Help(help) => {
@@ -127,9 +111,6 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
     }
     CliCommand::McpServe => {
       unreachable!("mcp serve is handled before runtime setup")
-    }
-    CliCommand::SessionServe { .. } => {
-      unreachable!("session serve is handled before runtime setup")
     }
     CliCommand::PluginList => {
       exit_code = crate::plugin::list()?;

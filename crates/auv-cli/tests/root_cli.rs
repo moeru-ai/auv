@@ -44,30 +44,21 @@ fn root_help_does_not_advertise_supported_app_or_game_frontends() {
     !help.lines().any(|line| line.trim_start().starts_with("permissions ")),
     "root help must not advertise the removed permissions command:\n{help}"
   );
+  assert!(
+    !help.lines().any(|line| line.trim_start().starts_with("session ")),
+    "root help must not advertise the retired session command:\n{help}"
+  );
 
   for expected in [
     "Commands:",
     "doctor",
     "invoke",
-    "session",
     "mcp",
     "plugin",
     "Examples:",
   ] {
     assert!(help.contains(expected), "root help must contain {expected:?}:\n{help}");
   }
-}
-
-#[test]
-fn nested_builtin_help_is_rendered_by_clap() {
-  let output = run(&["session", "serve", "--help"]);
-
-  assert_eq!(output.status.code(), Some(0), "session help must exit 0; stderr={}", stderr(&output));
-  let help = stdout(&output);
-  assert!(help.contains("Serve the lightweight AUV session API"), "unexpected session help:\n{help}");
-  assert!(help.contains("--host <HOST>"), "unexpected session help:\n{help}");
-  assert!(help.contains("--port <PORT>"), "unexpected session help:\n{help}");
-  assert!(help.contains("--store-root <PATH>"), "unexpected session help:\n{help}");
 }
 
 #[test]

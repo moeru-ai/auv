@@ -10,7 +10,6 @@ use crate::commands::doctor::DoctorArgs;
 use crate::commands::invoke::InvokeArgs;
 use crate::commands::mcp::{McpArgs, McpCommand};
 use crate::commands::plugin::{PluginArgs, PluginCommand};
-use crate::commands::session::{SessionArgs, SessionCommand};
 
 type AuvResult<T> = Result<T, String>;
 
@@ -35,11 +34,6 @@ pub enum CliCommand {
     tracing: TracingOptions,
     output: auv_cli_invoke::InvokeOutputOptions,
   },
-  SessionServe {
-    host: String,
-    port: u16,
-    store_root: Option<PathBuf>,
-  },
   McpServe,
   PluginList,
   External {
@@ -54,7 +48,7 @@ pub enum CliCommand {
   name = "auv",
   version,
   about = "Invoke and inspect core computer-use capabilities",
-  long_about = "AUV turns computer-use operations into command-like, inspectable, and recorded runs.\n\nThe root CLI owns core invoke, doctor, session, and MCP frontends. Installed auv-* executables extend it with application-owned commands.",
+  long_about = "AUV turns computer-use operations into command-like, inspectable, and recorded runs.\n\nThe root CLI owns core invoke, doctor, and MCP frontends. Installed auv-* executables extend it with application-owned commands.",
   after_long_help = "Examples:\n  # Inspect available core invoke commands\n  auv invoke --help\n\n  # Diagnose local automation readiness\n  auv doctor\n\n  # Run an installed application plugin\n  auv balatro --help\n\nUse `auv plugin list` to inspect external commands visible on PATH."
 )]
 struct RootArgs {
@@ -73,9 +67,6 @@ enum RootCommand {
 
   /// Invoke one core computer-use capability and record its run.
   Invoke(InvokeArgs),
-
-  /// Manage the lightweight AUV session API.
-  Session(SessionArgs),
 
   /// Expose core AUV capabilities through MCP.
   Mcp(McpArgs),
@@ -126,13 +117,6 @@ pub fn parse_cli_os(arguments: impl IntoIterator<Item = OsString>) -> AuvResult<
     None => Ok(CliCommand::Help(help_text())),
     Some(RootCommand::Doctor(args)) => Ok(CliCommand::PermissionCheck { json: args.json }),
     Some(RootCommand::Invoke(args)) => parse_invoke(args.arguments),
-    Some(RootCommand::Session(args)) => match args.command {
-      SessionCommand::Serve(args) => Ok(CliCommand::SessionServe {
-        host: args.host,
-        port: args.port,
-        store_root: args.store_root,
-      }),
-    },
     Some(RootCommand::Mcp(args)) => match args.command {
       McpCommand::Serve => Ok(CliCommand::McpServe),
     },

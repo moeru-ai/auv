@@ -4,4 +4,3 @@ pub mod doctor;
 pub mod invoke;
 pub mod mcp;
 pub mod plugin;
-pub mod session;
