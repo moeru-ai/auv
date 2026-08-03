@@ -8,12 +8,12 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
-use auv_stage_status::StageStatus;
 use image::RgbImage;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::scene_packet::ScenePacketFramePayload;
+use crate::stage_status::StageStatus;
 use crate::training_result_holdout_preview::{HoldoutFrameWitness, TrainingResultHoldoutPreviewManifest};
 use crate::training_result_semantic::TrainingResultSemanticManifest;
 use crate::types::{MinecraftSpatialFrame, PlayerPose, Viewport};

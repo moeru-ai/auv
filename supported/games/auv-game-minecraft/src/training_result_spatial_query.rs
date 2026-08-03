@@ -4,8 +4,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use auv_compare::{
-  DualBackendAnswer, DualBackendCompareVerdict, DualBackendSelectedSide, DualBackendStageStatus, compare_dual_backend_verdict,
+use crate::compare::{
+  DualBackendAnswer, DualBackendCompareVerdict, DualBackendSelectedSide, DualBackendStageStatus, ScreenPoint, compare_dual_backend_verdict,
   pick_blocked_or_failed_preferred, screen_points_match_with_tolerance, select_dual_backend_outcome,
 };
 use auv_driver::geometry::Point;
@@ -13,12 +13,12 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
-use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::projection::MinecraftProjector;
 use crate::scene_packet::{ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest};
+use crate::stage_status::StageStatus;
 use crate::training_result_semantic::TrainingResultSemanticManifest;
 use crate::training_result_spatial_query_provider::{
   MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT,
@@ -483,8 +483,8 @@ impl DualBackendAnswer for TrainingResultSpatialQueryAnswer {
     self.visibility
   }
 
-  fn screen_point(&self) -> Option<auv_compare::ScreenPoint> {
-    self.screen_point.map(|point| auv_compare::ScreenPoint {
+  fn screen_point(&self) -> Option<ScreenPoint> {
+    self.screen_point.map(|point| ScreenPoint {
       x: point.x,
       y: point.y,
     })
@@ -554,11 +554,11 @@ fn answers_match(provider: &TrainingResultSpatialQueryAnswer, reference: &Traini
   }
   match (provider.screen_point, reference.screen_point) {
     (Some(provider_point), Some(reference_point)) => screen_points_match_with_tolerance(
-      auv_compare::ScreenPoint {
+      ScreenPoint {
         x: provider_point.x,
         y: provider_point.y,
       },
-      auv_compare::ScreenPoint {
+      ScreenPoint {
         x: reference_point.x,
         y: reference_point.y,
       },

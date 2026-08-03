@@ -86,7 +86,6 @@ fn tail_scan_handles_line_larger_than_chunk() {
   assert_eq!(frame.monotonic_timestamp_ms, 9000);
 }
 
-
 // ROOT CAUSE:
 //
 // The Fabric mod hand-builds its JSONL line in TelemetrySample.toJsonLine()
@@ -106,9 +105,7 @@ fn parses_mod_written_tail_line_with_populated_nearby_blocks() {
   let body = r#"{"spatial_frame_id":"frame-1234-5678","world_tick":1234,"monotonic_timestamp_ms":98765,"telemetry_session_id":"session-abc","viewport":{"width":1708,"height":960},"view_matrix":[1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000],"projection_matrix":[1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000],"player_pose":{"eye_position":{"x":511.028439,"y":73.620000,"z":728.652906},"yaw":-45.000000,"pitch":9.500000},"raycast_hit":{"block_pos":{"x":513,"y":72,"z":726},"face":"north","block_id":"minecraft:stone"},"nearby_blocks":[{"block_pos":{"x":513,"y":72,"z":726},"block_id":"minecraft:stone"},{"block_pos":{"x":511,"y":73,"z":727},"block_id":"minecraft:grass_block"},{"block_pos":{"x":-4,"y":-61,"z":-9},"block_id":"minecraft:deepslate"}],"inventory_summary":[{"item_id":"minecraft:stone","count":2}],"resource_pack_ids":["vanilla"],"screen_state":"in_game"}"#;
   let mut cursor = Cursor::new(format!("{body}\n").into_bytes());
 
-  let frame = scan_latest_spatial_frame_from_tail(&mut cursor)
-    .expect("tail scan succeeds")
-    .expect("frame should parse");
+  let frame = scan_latest_spatial_frame_from_tail(&mut cursor).expect("tail scan succeeds").expect("frame should parse");
 
   assert_eq!(
     frame.nearby_blocks,
@@ -127,12 +124,7 @@ fn parses_mod_written_tail_line_with_populated_nearby_blocks() {
       },
     ]
   );
-  assert!(
-    frame
-      .nearby_blocks
-      .iter()
-      .any(|block| block.block_pos == BlockPosition::new(511, 73, 727))
-  );
+  assert!(frame.nearby_blocks.iter().any(|block| block.block_pos == BlockPosition::new(511, 73, 727)));
   assert_eq!(frame.raycast_hit.expect("hit").block_pos, BlockPosition::new(513, 72, 726));
   assert!(frame.nearby_entities.is_empty());
 }

@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use auv_stage_status::StageStatus;
-
 use crate::closed_scene_toy_fixture::load_closed_scene_fixture;
 use crate::scene_packet::ScenePacketManifest;
+use crate::stage_status::StageStatus;
 use crate::training_result_semantic::{TrainingResultSemanticCheckpointRecord, TrainingResultSemanticManifest, collect_checkpoint_files};
 use crate::training_result_spatial_query::{
   BackendOutcome, TrainingResultSpatialQueryAnswer, TrainingResultSpatialQueryInputs, TrainingResultSpatialQueryKind,

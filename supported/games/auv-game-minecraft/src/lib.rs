@@ -6,6 +6,7 @@ pub mod run_read;
 pub mod artifact;
 pub mod bind;
 pub mod closed_scene_toy_fixture;
+mod compare;
 pub mod dataset;
 pub mod evidence;
 pub mod ingest;
@@ -17,6 +18,7 @@ pub mod projection;
 pub mod reacquisition;
 pub mod sample_builder;
 pub mod scene_packet;
+pub mod stage_status;
 pub mod training_job;
 pub mod training_launch;
 pub mod training_package;
@@ -65,6 +67,7 @@ pub use scene_packet::{
   ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketInputs, ScenePacketInspectCounts, ScenePacketInspectReport,
   ScenePacketManifest, ScenePacketOutput, ScenePacketResourcePackCoverage, export_3dgs_scene_packet,
 };
+pub use stage_status::StageStatus;
 pub use training_job::{
   TRAINING_JOB_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_JOB_MANIFEST_SCHEMA_VERSION, TrainingJobEnvironment, TrainingLaunchJobBlocker,
   TrainingLaunchJobCounts, TrainingLaunchJobInputs, TrainingLaunchJobInspectReport, TrainingLaunchJobManifest, TrainingLaunchJobOutput,

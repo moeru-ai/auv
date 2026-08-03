@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "fixture_id": "mc18-smoke-v1",
+  "generated_at": "2026-06-27T00:00:00Z",
+  "labels": [
+    {
+      "id": "door-north",
+      "block": { "x": 511, "y": 73, "z": 728 },
+      "face": "north",
+      "semantics": "hit_face_center"
+    }
+  ],
+  "frames": [
+    {
+      "basis_frame_id": "frame-0003",
+      "answers": [
+        {
+          "label_id": "door-north",
+          "visibility": "outside_window",
+          "screen_point": { "x": 1200.0, "y": 360.0 }
+        }
+      ]
+    }
+  ]
+}

@@ -33,6 +33,7 @@ thiserror = { workspace = true, optional = true }
 [dev-dependencies]
 auv-tracing = { path = "../../../crates/auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
+tempfile.workspace = true
 
 [[test]]
 name = "integrated"

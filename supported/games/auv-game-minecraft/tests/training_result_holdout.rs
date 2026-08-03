@@ -11,12 +11,11 @@ use std::process::{Command, Stdio};
 use auv_game_minecraft::training_result_holdout_render_quality::{HoldoutRenderQualityAnswer, HoldoutRenderQualityRequest};
 use auv_game_minecraft::types::{PlayerPose, Vec3, Viewport};
 use auv_game_minecraft::{
-  BlockPosition, HoldoutRenderQualityVerdict, MinecraftTargetSemantics, SCENE_PACKET_SCHEMA_VERSION, ScenePacketInputs,
+  BlockPosition, HoldoutRenderQualityVerdict, MinecraftTargetSemantics, SCENE_PACKET_SCHEMA_VERSION, ScenePacketInputs, StageStatus,
   TrainingPackageInputs, TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutRenderQualityInputs, TrainingResultSemanticManifest,
   TrainingResultSpatialQueryInputs, export_3dgs_scene_packet, export_3dgs_training_package, inspect_3dgs_training_result_holdout,
   measure_3dgs_holdout_render_quality, query_3dgs_training_result,
 };
-use auv_stage_status::StageStatus;
 use serde_json::json;
 use tempfile::TempDir;
 

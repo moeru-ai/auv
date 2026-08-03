@@ -6,11 +6,11 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
-use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
+use crate::stage_status::StageStatus;
 use crate::training_result::TrainingResultStatus;
 use crate::training_result_artifact::TrainingResultArtifactFetchManifest;
 
