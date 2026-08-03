@@ -304,6 +304,25 @@ Minecraft 同时扮演“有答案键的验证环境”和“可模拟黑盒输�
 
 这一步不需要 3DGS 训练。
 
+**当前状态（2026-08-03）：M0 已落地。**
+
+`supported/games/auv-game-minecraft/src/spatial_memory_observation.rs` 现在提供
+了 signal tier、`SpatialObservationPacket`、`SpatialHypothesisPatch`、内置
+`SINGLE_VIEW_SPATIAL_MEMORY_PROMPT` 和只允许追加 hypothesis/candidate 的
+`SpatialHypothesisMemory`。validator 会拒绝：
+
+- Prompt 直接写入 confirmed memory；
+- patch 或 observation schema 不匹配；
+- 黑盒输入未提供的 raycast/world pose/depth 等信号；
+- 没有 screenshot artifact ref 的 RGB observation；
+- 没有 world pose 却声称 world 坐标；
+- 超出 `[0, 1]` 的 confidence。
+
+本地验证结果：`cargo test -p auv-game-minecraft --lib --quiet` 为 **180 passed**，
+`cargo check -p auv-game-minecraft --all-targets --quiet` 通过。这里没有 LLM
+transport、真实 Minecraft capture、多观察合并或 confirmed-memory promotion；
+这些仍属于后续 M1-M3 验证，不是 M0 的隐含成果。
+
 ### M1：黑盒单视角 baseline
 
 模型只接收：
