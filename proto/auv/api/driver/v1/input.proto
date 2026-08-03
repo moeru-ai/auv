@@ -1,0 +1,194 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/geometry.proto";
+import "auv/api/driver/v1/window.proto";
+import "google/protobuf/duration.proto";
+
+service InputService {
+  rpc ClickWindowPoint(ClickWindowPointRequest) returns (ClickWindowPointResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc ClickScreenPoint(ClickScreenPointRequest) returns (ClickScreenPointResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc TypeText(TypeTextRequest) returns (TypeTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc PasteText(PasteTextRequest) returns (PasteTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc PressKey(PressKeyRequest) returns (PressKeyResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+enum InputPolicy {
+  INPUT_POLICY_UNSPECIFIED = 0;
+  INPUT_POLICY_BACKGROUND_ONLY = 1;
+  INPUT_POLICY_BACKGROUND_PREFERRED = 2;
+  INPUT_POLICY_FOREGROUND_PREFERRED = 3;
+}
+
+enum WindowClickStrategy {
+  WINDOW_CLICK_STRATEGY_UNSPECIFIED = 0;
+  WINDOW_CLICK_STRATEGY_CHROMIUM_COMPATIBLE = 1;
+  WINDOW_CLICK_STRATEGY_PID_TARGETED = 2;
+}
+
+enum TextSubmit {
+  TEXT_SUBMIT_UNSPECIFIED = 0;
+  TEXT_SUBMIT_NONE = 1;
+  TEXT_SUBMIT_RETURN = 2;
+  TEXT_SUBMIT_SEARCH = 3;
+  TEXT_SUBMIT_DONE = 4;
+  TEXT_SUBMIT_GO = 5;
+}
+
+enum InputDeliveryPath {
+  INPUT_DELIVERY_PATH_UNSPECIFIED = 0;
+  INPUT_DELIVERY_PATH_NOOP = 1;
+  INPUT_DELIVERY_PATH_AX_PRESS = 2;
+  INPUT_DELIVERY_PATH_AX_FOCUS = 3;
+  INPUT_DELIVERY_PATH_AX_SET_VALUE = 4;
+  INPUT_DELIVERY_PATH_AX_SCROLL = 5;
+  INPUT_DELIVERY_PATH_AX_SELECTED_TEXT = 6;
+  INPUT_DELIVERY_PATH_WINDOW_TARGETED_MOUSE = 7;
+  INPUT_DELIVERY_PATH_WINDOW_TARGETED_WHEEL = 8;
+  INPUT_DELIVERY_PATH_WINDOW_TARGETED_KEYBOARD = 9;
+  INPUT_DELIVERY_PATH_WINDOW_TARGETED_KEYBOARD_SCROLL = 10;
+  INPUT_DELIVERY_PATH_CLIPBOARD_PASTE = 11;
+  INPUT_DELIVERY_PATH_FOREGROUND_SYSTEM_EVENTS = 12;
+  INPUT_DELIVERY_PATH_UNSUPPORTED = 13;
+}
+
+enum DisturbanceLevel {
+  DISTURBANCE_LEVEL_UNSPECIFIED = 0;
+  DISTURBANCE_LEVEL_NONE = 1;
+  DISTURBANCE_LEVEL_TEMPORARY = 2;
+  DISTURBANCE_LEVEL_FOREGROUND = 3;
+  DISTURBANCE_LEVEL_UNKNOWN = 4;
+}
+
+message ClickOptions {
+  InputPolicy policy = 1;
+  Click click = 2;
+  WindowClickStrategy window_strategy = 3;
+}
+
+// Screen-point delivery has no target Window policy or strategy. Keeping its
+// options separate prevents callers from requesting behavior the Driver would
+// have to ignore.
+message ScreenClickOptions {
+  Click click = 1;
+}
+
+message Click {
+  // Must be in [1, 255]. One is a single click, two is a double click, and
+  // larger values are repeated clicks.
+  uint32 count = 1;
+  // Required and positive when count is greater than one; omitted for a
+  // single click.
+  google.protobuf.Duration interval = 2;
+}
+
+message TypeTextOptions {
+  InputPolicy policy = 1;
+  bool replace_existing = 2;
+  TextSubmit submit = 3;
+  // Absence uses the portable 8 ms default.
+  google.protobuf.Duration inter_char_delay = 4;
+  bool allow_clipboard_fallback = 5;
+  google.protobuf.Duration settle = 6;
+}
+
+message PasteTextOptions {
+  bool replace_existing = 1;
+  TextSubmit submit = 2;
+  google.protobuf.Duration settle = 3;
+}
+
+message InputAttempt {
+  InputDeliveryPath path = 1;
+  bool succeeded = 2;
+  optional string message = 3;
+}
+
+// Wire projection of auv_driver::InputActionResult. This is delivery evidence,
+// not proof that the target application reached a desired semantic state.
+message InputActionResult {
+  InputDeliveryPath selected_path = 1;
+  repeated InputAttempt attempts = 2;
+  DisturbanceLevel mouse_disturbance = 3;
+  DisturbanceLevel focus_disturbance = 4;
+  DisturbanceLevel clipboard_disturbance = 5;
+}
+
+message ClickWindowPointRequest {
+  reserved 1;
+  reserved "lease";
+  // A previously resolved child resource. The Runner refreshes this reference
+  // before delivery so stale platform handles are never trusted as snapshots.
+  WindowRef window = 2;
+  WindowPoint point = 3;
+  ClickOptions options = 4;
+}
+
+message ClickWindowPointResponse {
+  Window window = 1;
+  WindowPoint point = 2;
+  InputActionResult action = 3;
+}
+
+message ClickScreenPointRequest {
+  reserved 1;
+  reserved "lease";
+  ScreenPoint point = 2;
+  ScreenClickOptions options = 3;
+}
+
+message ClickScreenPointResponse {
+  ScreenPoint point = 1;
+  InputActionResult action = 2;
+}
+
+message TypeTextRequest {
+  reserved 1;
+  reserved "lease";
+  string text = 2;
+  TypeTextOptions options = 3;
+}
+
+message TypeTextResponse {
+  InputActionResult action = 1;
+}
+
+message PasteTextRequest {
+  reserved 1;
+  reserved "lease";
+  string text = 2;
+  PasteTextOptions options = 3;
+}
+
+message PasteTextResponse {
+  InputActionResult action = 1;
+}
+
+message PressKeyRequest {
+  reserved 1;
+  reserved "lease";
+  string key = 2;
+  google.protobuf.Duration settle = 3;
+}
+
+message PressKeyResponse {
+  InputActionResult action = 1;
+}

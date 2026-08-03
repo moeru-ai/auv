@@ -1,0 +1,21 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.annotations.v1;
+
+import "google/protobuf/descriptor.proto";
+
+enum MethodEffect {
+  METHOD_EFFECT_UNSPECIFIED = 0;
+  METHOD_EFFECT_READ_ONLY = 1;
+  METHOD_EFFECT_MUTATION = 2;
+  METHOD_EFFECT_INPUT = 3;
+  METHOD_EFFECT_ADMINISTRATION = 4;
+}
+
+// Optional DevTools/Inspector discovery metadata. These options do not define
+// routing, authentication, Device context, or Run context.
+extend google.protobuf.MethodOptions {
+  bool discoverable = 51001;
+  MethodEffect effect = 51002;
+}

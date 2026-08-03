@@ -1,0 +1,73 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.daemon.v1 is not a long-term public compatibility promise.
+syntax = "proto3";
+
+package auv.api.daemon.v1;
+
+import "auv/api/daemon/v1/resource.proto";
+import "google/protobuf/timestamp.proto";
+
+service RunService {
+  rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc StopRun(StopRunRequest) returns (StopRunResponse);
+}
+
+enum RunPhase {
+  RUN_PHASE_UNSPECIFIED = 0;
+  RUN_PHASE_PENDING = 1;
+  RUN_PHASE_RUNNING = 2;
+  RUN_PHASE_SUCCEEDED = 3;
+  RUN_PHASE_FAILED = 4;
+  RUN_PHASE_CANCELED = 5;
+}
+
+enum RunOutcome {
+  RUN_OUTCOME_UNSPECIFIED = 0;
+  RUN_OUTCOME_SUCCEEDED = 1;
+  RUN_OUTCOME_FAILED = 2;
+  RUN_OUTCOME_CANCELED = 3;
+}
+
+message Run {
+  RunRef ref = 1;
+  RunPhase phase = 2;
+  repeated DeviceRef devices = 3;
+  map<string, string> labels = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp completed_at = 6;
+}
+
+message CreateRunRequest {
+  // Empty selects the implicit local Device.
+  repeated DeviceRef devices = 1;
+  map<string, string> labels = 2;
+}
+
+message CreateRunResponse {
+  Run run = 1;
+}
+
+message ListRunsRequest {}
+
+message ListRunsResponse {
+  repeated Run runs = 1;
+}
+
+message GetRunRequest {
+  RunRef run = 1;
+}
+
+message GetRunResponse {
+  Run run = 1;
+}
+
+message StopRunRequest {
+  RunRef run = 1;
+  RunOutcome outcome = 2;
+}
+
+message StopRunResponse {
+  Run run = 1;
+}

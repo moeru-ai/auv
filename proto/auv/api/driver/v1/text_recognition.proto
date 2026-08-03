@@ -1,0 +1,87 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/capture.proto";
+import "auv/api/driver/v1/display.proto";
+import "auv/api/driver/v1/geometry.proto";
+import "auv/api/driver/v1/window.proto";
+import "auv/api/image/v1/region.proto";
+
+service TextRecognitionService {
+  rpc RecognizeText(RecognizeTextRequest) returns (RecognizeTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+  rpc FindWindowText(FindWindowTextRequest) returns (FindWindowTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+  rpc FindDisplayText(FindDisplayTextRequest) returns (FindDisplayTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+message RecognizedText {
+  string text = 1;
+  ScreenRect bounds = 2;
+  optional float confidence = 3;
+}
+
+message TextMatch {
+  string text = 1;
+  ScreenRect bounds = 2;
+  double confidence = 3;
+}
+
+message RecognizeTextRequest {
+  reserved 1;
+  reserved "lease";
+  CapturedFrame capture = 2;
+  optional auv.api.image.v1.NormalizedRect region = 3;
+  repeated string custom_words = 4;
+  repeated string recognition_languages = 5;
+}
+
+message RecognizeTextResponse {
+  string text = 1;
+  repeated RecognizedText regions = 2;
+}
+
+message FindWindowTextRequest {
+  reserved 1;
+  reserved "lease";
+  WindowRef window = 2;
+  string query = 3;
+  optional auv.api.image.v1.NormalizedRect region = 4;
+  repeated string custom_words = 5;
+  repeated string recognition_languages = 6;
+}
+
+message FindWindowTextResponse {
+  Window window = 1;
+  repeated TextMatch matches = 2;
+  // Source evidence used to produce matches. Clients may persist it as an
+  // artifact without repeating a possibly different capture.
+  CapturedFrame capture = 3;
+}
+
+message FindDisplayTextRequest {
+  reserved 1;
+  reserved "lease";
+  // Absence selects the primary display.
+  DisplaySelector selector = 2;
+  string query = 3;
+  optional auv.api.image.v1.NormalizedRect region = 4;
+  repeated string custom_words = 5;
+  repeated string recognition_languages = 6;
+}
+
+message FindDisplayTextResponse {
+  Display display = 1;
+  repeated TextMatch matches = 2;
+  CapturedFrame capture = 3;
+}

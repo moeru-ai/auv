@@ -1,0 +1,46 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.macos.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/input.proto";
+
+// Exposes macOS Accessibility operations whose semantics are not portable
+// Driver capabilities. FocusText performs AX focus delivery only; it does not
+// promise pointer fallback or semantic focus readback.
+service AccessibilityService {
+  rpc FocusText(FocusTextRequest) returns (FocusTextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+message FocusTextRequest {
+  reserved 1;
+  reserved "lease";
+  // Application name or bundle identifier accepted by the owning macOS Driver.
+  string application = 2;
+  oneof selector {
+    string query = 3;
+    // Exact path from a current macOS accessibility tree observation.
+    string path = 4;
+  }
+  optional string expected_role = 5;
+}
+
+message FocusTextResponse {
+  AxFocusResult result = 1;
+}
+
+// Exact wire projection of auv_driver::AxFocusResult.
+message AxFocusResult {
+  string app = 1;
+  int32 pid = 2;
+  string path = 3;
+  string role = 4;
+  string title = 5;
+  string value = 6;
+  string query = 7;
+  auv.api.driver.v1.InputActionResult action = 8;
+}

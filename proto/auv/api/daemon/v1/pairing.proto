@@ -1,0 +1,50 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.daemon.v1 is not a long-term public compatibility promise.
+syntax = "proto3";
+
+package auv.api.daemon.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// PairingService manages bootstrap tokens and paired Device credentials.
+service PairingService {
+  rpc CreatePairingToken(CreatePairingTokenRequest) returns (CreatePairingTokenResponse);
+  rpc PairDevice(PairDeviceRequest) returns (PairDeviceResponse);
+  rpc RevokeDeviceCredential(RevokeDeviceCredentialRequest) returns (RevokeDeviceCredentialResponse);
+}
+
+message CreatePairingTokenRequest {
+  // Omit ttl to create a token with no expiry. A token remains one-time even
+  // when it has no deadline.
+  google.protobuf.Duration ttl = 1;
+  reserved 2;
+  reserved "scopes";
+}
+
+message CreatePairingTokenResponse {
+  // Returned once. The daemon persists only a digest.
+  string token = 1;
+  // Absent when the caller did not request a TTL.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message PairDeviceRequest {
+  string token = 1;
+  string device_id = 2;
+  string label = 3;
+}
+
+message PairDeviceResponse {
+  string device_id = 1;
+  // Opaque long-lived bearer returned once. The daemon persists only a digest.
+  string device_credential = 2;
+}
+
+message RevokeDeviceCredentialRequest {
+  string device_id = 1;
+}
+
+message RevokeDeviceCredentialResponse {
+  bool revoked = 1;
+}

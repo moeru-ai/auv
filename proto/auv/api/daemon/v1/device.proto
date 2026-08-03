@@ -1,0 +1,42 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.daemon.v1 is not a long-term public compatibility promise.
+syntax = "proto3";
+
+package auv.api.daemon.v1;
+
+import "auv/api/daemon/v1/resource.proto";
+
+service DeviceService {
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc GetDevice(GetDeviceRequest) returns (GetDeviceResponse);
+}
+
+enum DevicePlatform {
+  DEVICE_PLATFORM_UNSPECIFIED = 0;
+  DEVICE_PLATFORM_LINUX = 1;
+  DEVICE_PLATFORM_MACOS = 2;
+  DEVICE_PLATFORM_WINDOWS = 3;
+}
+
+message Device {
+  DeviceRef ref = 1;
+  // Optional, non-unique display name.
+  string name = 2;
+  DevicePlatform platform = 3;
+  bool local = 4;
+  map<string, string> labels = 5;
+}
+
+message ListDevicesRequest {}
+
+message ListDevicesResponse {
+  repeated Device devices = 1;
+}
+
+message GetDeviceRequest {
+  DeviceRef device = 1;
+}
+
+message GetDeviceResponse {
+  Device device = 1;
+}

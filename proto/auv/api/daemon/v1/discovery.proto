@@ -1,0 +1,66 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.daemon.v1 is not a long-term public compatibility promise.
+syntax = "proto3";
+
+package auv.api.daemon.v1;
+
+// DiscoveryService describes the AUV-owned REST and gRPC API namespace.
+service DiscoveryService {
+  rpc ListApiNamespaces(ListApiNamespacesRequest) returns (ListApiNamespacesResponse);
+  rpc GetApiNamespace(GetApiNamespaceRequest) returns (GetApiNamespaceResponse);
+  rpc GetApiGroupVersion(GetApiGroupVersionRequest) returns (GetApiGroupVersionResponse);
+}
+
+message ApiNamespace {
+  // Stable first path segment below /apis.
+  string name = 1;
+}
+
+message ListApiNamespacesRequest {}
+
+message ListApiNamespacesResponse {
+  repeated ApiNamespace namespaces = 1;
+}
+
+message ApiGroup {
+  string name = 1;
+  repeated string versions = 2;
+}
+
+message GetApiNamespaceRequest {
+  string namespace = 1;
+}
+
+message GetApiNamespaceResponse {
+  string namespace = 1;
+  repeated ApiGroup groups = 2;
+}
+
+enum ApiResourceOperation {
+  API_RESOURCE_OPERATION_UNSPECIFIED = 0;
+  API_RESOURCE_OPERATION_LIST = 1;
+  API_RESOURCE_OPERATION_GET = 2;
+  API_RESOURCE_OPERATION_CREATE = 3;
+  API_RESOURCE_OPERATION_DELETE = 4;
+  // TODO(watch-v1): add WATCH only after collection resource versions,
+  // retention, reconnect, and stale-version behavior have an approved owner.
+}
+
+message ApiResource {
+  string name = 1;
+  string kind = 2;
+  repeated ApiResourceOperation operations = 3;
+}
+
+message GetApiGroupVersionRequest {
+  string namespace = 1;
+  string group = 2;
+  string version = 3;
+}
+
+message GetApiGroupVersionResponse {
+  string namespace = 1;
+  string group = 2;
+  string version = 3;
+  repeated ApiResource resources = 4;
+}

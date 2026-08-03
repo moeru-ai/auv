@@ -1,0 +1,66 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/geometry.proto";
+
+service WindowService {
+  rpc ListWindows(ListWindowsRequest) returns (ListWindowsResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+  rpc ResolveWindow(ResolveWindowRequest) returns (ResolveWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+message WindowRef {
+  string window_id = 1;
+}
+
+message WindowSelector {
+  oneof application {
+    string application_bundle_id = 1;
+    string application_name = 2;
+    uint32 process_id = 3;
+    bool frontmost_application = 4;
+  }
+  oneof window {
+    string title_exact = 5;
+    string title_contains = 6;
+    bool main_visible = 7;
+  }
+}
+
+message Window {
+  WindowRef ref = 1;
+  optional string title = 2;
+  optional string application_name = 3;
+  optional string application_bundle_id = 4;
+  optional uint32 process_id = 5;
+  ScreenRect frame = 6;
+  bool is_main = 7;
+  bool is_visible = 8;
+}
+
+message ListWindowsRequest {
+  reserved 1;
+  reserved "lease";
+}
+
+message ListWindowsResponse {
+  repeated Window windows = 1;
+}
+
+message ResolveWindowRequest {
+  reserved 1;
+  reserved "lease";
+  WindowSelector selector = 2;
+}
+
+message ResolveWindowResponse {
+  Window window = 1;
+}

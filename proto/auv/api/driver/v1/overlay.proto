@@ -1,0 +1,127 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/geometry.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+
+service OverlayService {
+  rpc ShowOverlay(ShowOverlayRequest) returns (ShowOverlayResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
+  }
+  rpc RemoveOverlay(RemoveOverlayRequest) returns (RemoveOverlayResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_MUTATION;
+  }
+}
+
+message ShowOverlayRequest {
+  reserved 1;
+  reserved "lease";
+  Overlay overlay = 2;
+  ShowOptions options = 3;
+}
+message ShowOverlayResponse {}
+message RemoveOverlayRequest {
+  reserved 1;
+  reserved "lease";
+}
+message RemoveOverlayResponse {}
+
+message Overlay {
+  repeated OverlayLayer layers = 1;
+}
+message OverlayLayer {
+  oneof layer {
+    Cursor cursor = 1;
+    Outline outline = 2;
+    Status status = 3;
+  }
+}
+message Cursor {
+  ScreenPoint point = 1;
+  optional string label = 2;
+  bool label_visible = 3;
+  CursorImage image = 4;
+  CursorStyle style = 5;
+}
+message CursorImage {
+  oneof image {
+    BuiltInCursor built_in = 1;
+    string svg = 2;
+  }
+}
+enum BuiltInCursor {
+  BUILT_IN_CURSOR_UNSPECIFIED = 0;
+  BUILT_IN_CURSOR_AUV = 1;
+  BUILT_IN_CURSOR_AUV_CLICK = 2;
+  BUILT_IN_CURSOR_YOU = 3;
+}
+message Outline {
+  ScreenRect rect = 1;
+  optional string label = 2;
+  bool label_visible = 3;
+  OutlineStyle style = 4;
+}
+message Status {
+  ScreenPoint point = 1;
+  string text = 2;
+  StatusStyle style = 3;
+}
+message Color {
+  double red = 1;
+  double green = 2;
+  double blue = 3;
+  double alpha = 4;
+}
+message Insets {
+  double top = 1;
+  double right = 2;
+  double bottom = 3;
+  double left = 4;
+}
+message Stroke {
+  Color color = 1;
+  double width = 2;
+}
+message OutlineStyle {
+  Stroke stroke = 1;
+  Insets padding = 2;
+  double corner_radius = 3;
+}
+message CursorStyle {
+  Color label_foreground = 1;
+  Color label_background = 2;
+  Insets label_padding = 3;
+  double label_corner_radius = 4;
+  double sprite_size = 5;
+  double label_gap = 6;
+}
+message StatusStyle {
+  Color foreground = 1;
+  Color background = 2;
+  Insets padding = 3;
+  double corner_radius = 4;
+}
+enum Easing {
+  EASING_UNSPECIFIED = 0;
+  EASING_EASE_IN_OUT_EXPO = 1;
+}
+message MotionOptions {
+  google.protobuf.Duration duration = 1;
+  optional Easing easing = 2;
+}
+message LifecycleOptions {
+  oneof removal {
+    google.protobuf.Empty manual = 1;
+    google.protobuf.Duration auto_after = 2;
+  }
+}
+message ShowOptions {
+  MotionOptions motion = 1;
+  LifecycleOptions lifecycle = 2;
+}

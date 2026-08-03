@@ -1,0 +1,84 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.inference.v1 is not a long-term public compatibility promise.
+syntax = "proto3";
+
+package auv.api.inference.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/image/v1/image.proto";
+
+// ObjectDetectionService executes typed object detection in an inference
+// Runner. Detector models are loaded lazily and cached by their complete
+// normalized specification for that Runner's lifetime.
+service ObjectDetectionService {
+  rpc DetectObjects(DetectObjectsRequest) returns (DetectObjectsResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+enum InferenceDeviceKind {
+  INFERENCE_DEVICE_KIND_UNSPECIFIED = 0;
+  INFERENCE_DEVICE_KIND_CPU = 1;
+  INFERENCE_DEVICE_KIND_CUDA = 2;
+  INFERENCE_DEVICE_KIND_CORE_ML = 3;
+  INFERENCE_DEVICE_KIND_DIRECT_ML = 4;
+  INFERENCE_DEVICE_KIND_OPEN_VINO = 5;
+  INFERENCE_DEVICE_KIND_XNNPACK = 6;
+  INFERENCE_DEVICE_KIND_TENSOR_RT = 7;
+  INFERENCE_DEVICE_KIND_ROCM = 8;
+}
+
+message InferenceDevice {
+  InferenceDeviceKind kind = 1;
+  // Required for CUDA, DirectML, TensorRT, and ROCm. It must be absent for
+  // devices that do not select an indexed provider.
+  optional uint32 index = 2;
+}
+
+message ObjectDetectorSpec {
+  // Caller-defined diagnostic identity; it is part of the cache key.
+  string detector_id = 1;
+  // Path on the daemon host. Remote principals must not receive this capability
+  // until model-source authorization is implemented.
+  string model_path = 2;
+  optional uint32 input_size = 3;
+  optional float confidence_threshold = 4;
+  optional float iou_threshold = 5;
+  optional uint32 max_detections = 6;
+  InferenceDevice device = 7;
+  // Empty selects class labels embedded in the model.
+  repeated string class_names = 8;
+}
+
+message DetectObjectsRequest {
+  reserved 1;
+  reserved "lease";
+  ObjectDetectorSpec detector = 2;
+  auv.api.image.v1.RgbFrame frame = 3;
+}
+
+message DetectObjectsResponse {
+  ImageSize image_size = 1;
+  repeated Detection detections = 2;
+}
+
+message ImageSize {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+message Detection {
+  uint32 class_id = 1;
+  string label = 2;
+  float confidence = 3;
+  BoundingBox bounding_box = 4;
+}
+
+message BoundingBox {
+  // Source-image pixel coordinates.
+  float x1 = 1;
+  float y1 = 2;
+  float x2 = 3;
+  float y2 = 4;
+}

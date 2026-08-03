@@ -4,6 +4,7 @@ members = [
   "supported/apps/auv-apple-notes",
   "supported/apps/auv-apple-textedit",
   "crates/auv-api-proto",
+  "crates/auv-api-client",
   "crates/auv-cli-invoke-macros",
   "crates/auv-cli-invoke",
   "crates/auv-file",
