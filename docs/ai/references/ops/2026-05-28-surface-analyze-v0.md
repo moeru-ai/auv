@@ -192,6 +192,16 @@ third incompatible reference schema.
 `CandidateRef`, `VerificationResult`, and `ArtifactRef` live in `src/contract.rs`
 and define the runtime/action contract.
 
+The analyze compatibility report keeps two taxonomy lists with different
+meanings:
+
+- `direct_taxonomy_ids` means the candidate can project concrete inputs for
+  that taxonomy.
+- `context_taxonomy_ids` means the taxonomy is relevant evidence or context,
+  but the candidate is not an honest direct-input source for it.
+
+Do not collapse those lists; doing so would overstate candidate actionability.
+
 The v0 direction is:
 
 ```text

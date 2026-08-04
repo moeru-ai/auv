@@ -2,13 +2,11 @@
 
 Setup, tooling, feature gates, cross-cutting notes
 
-Count: **25**
+Count: **23**
 
 - [`2026-05-12-setup.md`](2026-05-12-setup.md)
 - [`2026-05-13-airi-desktop-reuse.md`](2026-05-13-airi-desktop-reuse.md)
-- [`2026-05-17-distillation-template-v0.md`](2026-05-17-distillation-template-v0.md)
 - [`2026-05-18-app-probe-analyze-workflow.md`](2026-05-18-app-probe-analyze-workflow.md)
-- [`2026-05-19-v2-docs-contract.md`](2026-05-19-v2-docs-contract.md)
 - [`2026-05-20-cursor-warp-jitter-smoke.md`](2026-05-20-cursor-warp-jitter-smoke.md)
 - [`2026-05-20-route-b-click-wrapper-smoke.md`](2026-05-20-route-b-click-wrapper-smoke.md)
 - [`2026-05-21-dual-cursor-notes-demo-boundary.md`](2026-05-21-dual-cursor-notes-demo-boundary.md)
