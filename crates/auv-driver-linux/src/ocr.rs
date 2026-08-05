@@ -93,6 +93,9 @@ fn tesseract_tsv_from_rgba(rgba: &[u8], width: u32, height: u32, options: &TextR
     .map_err(|error| OcrError::Runtime(format!("failed to encode RGBA image as PNG: {error}")))?;
 
   let language = tesseract_language(options);
+  // TODO(linux-tesseract-session-reuse): cache language-keyed engines only
+  // after the Driver owns their thread/concurrency lifecycle; current profiling
+  // shows image scope and remote frame transport dominate engine initialization.
   let mut tess =
     leptess::LepTess::new(None, &language).map_err(|error| OcrError::Runtime(format!("failed to initialize Tesseract: {error}")))?;
 

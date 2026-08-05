@@ -400,6 +400,44 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
           crate::commands::input::press_key_output(&action, &key)
         }),
     },
+    "input.moveMouse" => {
+      async {
+        let point = selected_screen_point(&input, "input.moveMouse")?;
+        let mut stream = runner
+          .input()
+          .move_mouse(auv_driver::MouseMotionPlan::direct(point.point()))
+          .await
+          .map_err(|status| format!("InputService/MoveMouse failed: {status}"))?;
+        while let Some(event) = stream.next().await.map_err(|status| format!("InputService/MoveMouse failed: {status}"))? {
+          if let auv::client::runner::MouseMotionEvent::Completed { point, action } = event {
+            crate::emit_input_action_result(&action);
+            return crate::commands::input::mouse_move_output(crate::commands::input::MouseMoveResult {
+              point: auv_driver::ScreenPoint::new(point.x, point.y),
+              action: Some(action),
+            });
+          }
+        }
+        Err("InputService/MoveMouse ended without completion evidence".to_string())
+      }
+      .await
+    }
+    "input.clickScreenPoint" => {
+      async {
+        let point = selected_screen_point(&input, "input.clickScreenPoint")?;
+        let click = selected_click_options(&input)?.click;
+        let response = runner
+          .input()
+          .click_screen_point(point.point(), click)
+          .await
+          .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
+        crate::emit_input_action_result(&response.action);
+        crate::commands::input::screen_point_click_output(crate::commands::input::ScreenPointClickResult {
+          point: auv_driver::ScreenPoint::new(response.point.x, response.point.y),
+          action: Some(response.action),
+        })
+      }
+      .await
+    }
     "input.clickWindowPoint" => match runner.windows().resolve(selected_window_selector(&input)).await {
       Err(status) => Err(format!("WindowService/ResolveWindow failed: {status}")),
       Ok(resolved) => {
@@ -423,6 +461,23 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     _ => unreachable!("typed Runner adapter was selected above"),
   };
   invoked
+}
+
+fn selected_screen_point(input: &crate::InvokeCommandInput, command_id: &str) -> Result<auv_driver::ScreenPoint, String> {
+  let number = |name: &str| {
+    input
+      .inputs
+      .get(name)
+      .ok_or_else(|| format!("{command_id} omitted its {name} coordinate"))?
+      .parse::<f64>()
+      .map_err(|error| format!("{command_id} has invalid {name} coordinate: {error}"))
+  };
+  let x = number("x")?;
+  let y = number("y")?;
+  if !x.is_finite() || !y.is_finite() {
+    return Err(format!("{command_id} requires finite coordinates"));
+  }
+  Ok(auv_driver::ScreenPoint::new(x, y))
 }
 
 fn selected_screen_region(input: &crate::InvokeCommandInput) -> Result<auv_driver::Rect, String> {

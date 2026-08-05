@@ -17,7 +17,70 @@ pub fn group() -> CommandGroup {
     .command(type_text_invoke_command())
     .command(paste_text_preserve_clipboard_invoke_command())
     .command(press_key_invoke_command())
+    .command(move_mouse_invoke_command())
+    .command(click_screen_point_invoke_command())
     .command(click_window_point_invoke_command())
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(after_long_help = "Examples:\n  auv invoke input.moveMouse 1032.5 1212")]
+struct MoveMouseArgs {
+  /// Logical screen X coordinate.
+  x: f64,
+  /// Logical screen Y coordinate.
+  y: f64,
+}
+
+#[invoke_command(
+  id = "input.moveMouse",
+  group = "input",
+  description = "Move the pointer to a logical screen coordinate without activating it.",
+  input = MoveMouseArgs,
+)]
+async fn move_mouse(input: InvokeCommandInput, args: MoveMouseArgs) -> InvokeCommandResult {
+  if !args.x.is_finite() || !args.y.is_finite() {
+    return Err("input.moveMouse requires finite coordinates".to_string());
+  }
+  let point = ScreenPoint::new(args.x, args.y);
+  if input.dry_run {
+    return mouse_move_output(MouseMoveResult {
+      point,
+      action: None,
+    });
+  }
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let action = session.input().move_to(point.point()).map_err(|error| error.to_string())?;
+    emit_input_action_result(&action);
+    mouse_move_output(MouseMoveResult {
+      point,
+      action: Some(action),
+    })
+  }
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  {
+    let _ = input;
+    Err("input.moveMouse is unavailable on this platform".to_string())
+  }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct MouseMoveResult {
+  pub point: ScreenPoint,
+  pub action: Option<auv_driver::InputActionResult>,
+}
+
+pub fn mouse_move_output(result: MouseMoveResult) -> InvokeCommandResult {
+  let mut fields = match result.action.as_ref() {
+    Some(action) => input_action_report_fields(action),
+    None => vec![
+      InvokeReportField::new("Delivery", "not_performed"),
+      InvokeReportField::new("Verification", "validation_only"),
+    ],
+  };
+  fields.push(InvokeReportField::new("Screen point", format!("{:.1},{:.1}", result.point.point().x, result.point.point().y)));
+  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -253,6 +316,76 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
     let _ = key;
     Err("input.key is only available on macOS".to_string())
   }
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(after_long_help = "Examples:\n  auv invoke input.clickScreenPoint 1032.5 1212")]
+struct ClickScreenPointArgs {
+  /// Logical screen X coordinate.
+  x: f64,
+  /// Logical screen Y coordinate.
+  y: f64,
+  /// Number of consecutive clicks.
+  #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
+  #[serde(rename = "click-count", default)]
+  click_count: Option<u8>,
+  /// Delay between clicks in milliseconds.
+  #[arg(long)]
+  #[serde(rename = "click-interval-ms", default)]
+  click_interval_ms: Option<u64>,
+}
+
+#[invoke_command(
+  id = "input.clickScreenPoint",
+  group = "input",
+  description = "Click a logical screen coordinate through the platform input driver.",
+  input = ClickScreenPointArgs,
+)]
+async fn click_screen_point(input: InvokeCommandInput, args: ClickScreenPointArgs) -> InvokeCommandResult {
+  if !args.x.is_finite() || !args.y.is_finite() {
+    return Err("input.clickScreenPoint requires finite coordinates".to_string());
+  }
+  let point = ScreenPoint::new(args.x, args.y);
+  let click = click_options(None, args.click_count, args.click_interval_ms).click;
+  if input.dry_run {
+    return screen_point_click_output(ScreenPointClickResult {
+      point,
+      action: None,
+    });
+  }
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  {
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let action = session.input().click_at(point.point(), click).map_err(|error| error.to_string())?;
+    emit_input_action_result(&action);
+    screen_point_click_output(ScreenPointClickResult {
+      point,
+      action: Some(action),
+    })
+  }
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  {
+    let _ = (input, click);
+    Err("input.clickScreenPoint is unavailable on this platform".to_string())
+  }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ScreenPointClickResult {
+  pub point: ScreenPoint,
+  pub action: Option<auv_driver::InputActionResult>,
+}
+
+pub fn screen_point_click_output(result: ScreenPointClickResult) -> InvokeCommandResult {
+  let mut fields = match result.action.as_ref() {
+    Some(action) => input_action_report_fields(action),
+    None => vec![
+      InvokeReportField::new("Delivery", "not_performed"),
+      InvokeReportField::new("Verification", "validation_only"),
+    ],
+  };
+  fields.push(InvokeReportField::new("Screen point", format!("{:.1},{:.1}", result.point.point().x, result.point.point().y)));
+  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]

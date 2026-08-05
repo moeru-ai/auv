@@ -12,6 +12,11 @@ use auv_api_proto::auv::api::driver::v1::input_service_server::{InputService, In
 use auv_api_proto::auv::api::driver::v1::overlay_service_server::{OverlayService, OverlayServiceServer};
 use auv_api_proto::auv::api::driver::v1::text_recognition_service_server::{TextRecognitionService, TextRecognitionServiceServer};
 use auv_api_proto::auv::api::driver::v1::window_service_server::{WindowService, WindowServiceServer};
+use std::pin::Pin;
+
+use futures_core::Stream;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use auv_driver::{Driver as _, WindowInput as _};
@@ -34,6 +39,9 @@ struct LocalTextRecognitionService {
 
 struct LocalInputService {
   session: auv_driver::LocalDriverSession,
+  /// Serializes global pointer ownership so concurrent trajectories and
+  /// screen clicks cannot interleave samples on one desktop.
+  mouse_motion: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 struct LocalOverlayService {
@@ -511,6 +519,9 @@ fn permission_status_to_proto(status: auv_driver::PermissionStatus) -> macos_pro
 
 #[tonic::async_trait]
 impl InputService for LocalInputService {
+  type MoveMouseStream = Pin<Box<dyn Stream<Item = Result<proto::MoveMouseStreamResponse, Status>> + Send>>;
+  type StreamMouseMotionStream = Pin<Box<dyn Stream<Item = Result<proto::StreamMouseMotionResponse, Status>> + Send>>;
+
   async fn click_window_point(
     &self,
     request: Request<proto::ClickWindowPointRequest>,
@@ -537,6 +548,7 @@ impl InputService for LocalInputService {
     &self,
     request: Request<proto::ClickScreenPointRequest>,
   ) -> Result<Response<proto::ClickScreenPointResponse>, Status> {
+    let _motion = self.mouse_motion.lock().await;
     let request = request.into_inner();
     let point = screen_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
     let click = screen_click_options_from_proto(request.options)?;
@@ -545,6 +557,42 @@ impl InputService for LocalInputService {
       point: Some(screen_point_to_proto(point)),
       action: Some(input_action_to_proto(action)?),
     }))
+  }
+
+  async fn move_mouse(&self, request: Request<proto::MoveMouseRequest>) -> Result<Response<Self::MoveMouseStream>, Status> {
+    let plan = mouse_motion_plan_from_proto(request.into_inner().plan.ok_or_else(|| Status::invalid_argument("plan is required"))?)?;
+    let (sender, receiver) = tokio::sync::mpsc::channel(16);
+    let session = self.session.clone();
+    let mouse_motion = self.mouse_motion.clone();
+    tokio::spawn(async move {
+      let _motion = mouse_motion.lock().await;
+      run_mouse_motion(session, plan, |event| async { sender.send(event.map(move_mouse_stream_event)).await.map_err(|_| ()) }).await;
+    });
+    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+  }
+
+  async fn stream_mouse_motion(
+    &self,
+    request: Request<tonic::Streaming<proto::StreamMouseMotionRequest>>,
+  ) -> Result<Response<Self::StreamMouseMotionStream>, Status> {
+    let mut requests = request.into_inner();
+    let (sender, receiver) = tokio::sync::mpsc::channel(16);
+    let session = self.session.clone();
+    let mouse_motion = self.mouse_motion.clone();
+    tokio::spawn(async move {
+      let result = collect_mouse_motion(&mut requests, &sender).await;
+      match result {
+        Ok(Some(plan)) => {
+          let _motion = mouse_motion.lock().await;
+          run_mouse_motion(session, plan, |event| async { sender.send(event.map(stream_mouse_motion_event)).await.map_err(|_| ()) }).await;
+        }
+        Ok(None) => {}
+        Err(status) => {
+          let _ = sender.send(Err(status)).await;
+        }
+      }
+    });
+    Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
   }
 
   async fn type_text(&self, request: Request<proto::TypeTextRequest>) -> Result<Response<proto::TypeTextResponse>, Status> {
@@ -621,6 +669,277 @@ fn screen_point_from_proto(point: proto::ScreenPoint) -> Result<auv_driver::Scre
     return Err(Status::invalid_argument("point coordinates must be finite"));
   }
   Ok(auv_driver::ScreenPoint::new(point.x, point.y))
+}
+
+enum MouseMotionEvent {
+  Started(proto::MouseMotionStarted),
+  Progress(proto::MouseMotionProgress),
+  Completed(proto::MouseMotionCompleted),
+}
+
+async fn run_mouse_motion<F, Fut>(session: auv_driver::LocalDriverSession, plan: auv_driver::MouseMotionPlan, mut send: F)
+where
+  F: FnMut(Result<MouseMotionEvent, Status>) -> Fut,
+  Fut: std::future::Future<Output = Result<(), ()>>,
+{
+  let resolved_start = match plan.start {
+    auv_driver::MouseStart::Current => match tokio::task::spawn_blocking({
+      let session = session.clone();
+      move || session.input().current_position()
+    })
+    .await
+    .map_err(|error| Status::internal(format!("mouse position task failed: {error}")))
+    .and_then(|result| result.map_err(driver_status))
+    {
+      Ok(point) => point,
+      Err(status) => {
+        let _ = send(Err(status)).await;
+        return;
+      }
+    },
+    auv_driver::MouseStart::Screen(point) => point,
+  };
+  let samples = match plan.samples(resolved_start).map_err(driver_status) {
+    Ok(samples) => samples,
+    Err(status) => {
+      let _ = send(Err(status)).await;
+      return;
+    }
+  };
+  if send(Ok(MouseMotionEvent::Started(proto::MouseMotionStarted {
+    resolved_start: Some(raw_screen_point_to_proto(resolved_start)),
+    planned_sample_count: samples.len() as u32,
+    duration: Some(duration_to_proto(plan.options.duration)),
+  })))
+  .await
+  .is_err()
+  {
+    return;
+  }
+
+  let started = tokio::time::Instant::now();
+  let mut final_action = None;
+  let mut next_index = 0;
+  while next_index < samples.len() {
+    let index = latest_due_mouse_sample(&samples, next_index, started.elapsed());
+    let sample = &samples[index];
+    tokio::time::sleep_until(started + sample.elapsed).await;
+    let action = match tokio::task::spawn_blocking({
+      let session = session.clone();
+      let point = sample.point;
+      move || session.input().move_to(point)
+    })
+    .await
+    .map_err(|error| Status::internal(format!("mouse delivery task failed: {error}")))
+    .and_then(|result| result.map_err(driver_status))
+    {
+      Ok(action) => action,
+      Err(status) => {
+        let _ = send(Err(status)).await;
+        return;
+      }
+    };
+    final_action = Some(action);
+    if send(Ok(MouseMotionEvent::Progress(proto::MouseMotionProgress {
+      sample_index: index as u32,
+      point: Some(raw_screen_point_to_proto(sample.point)),
+      scheduled_elapsed: Some(duration_to_proto(sample.elapsed)),
+    })))
+    .await
+    .is_err()
+    {
+      return;
+    }
+    next_index = index + 1;
+  }
+  let Some(last) = samples.last() else { return };
+  let action = match final_action {
+    Some(action) => match input_action_to_proto(action) {
+      Ok(action) => action,
+      Err(status) => {
+        let _ = send(Err(status)).await;
+        return;
+      }
+    },
+    None => {
+      let _ = send(Err(Status::internal("mouse motion completed without delivery evidence"))).await;
+      return;
+    }
+  };
+  let _ = send(Ok(MouseMotionEvent::Completed(proto::MouseMotionCompleted {
+    point: Some(raw_screen_point_to_proto(last.point)),
+    action: Some(action),
+  })))
+  .await;
+}
+
+fn latest_due_mouse_sample(samples: &[auv_driver::MouseMotionSample], next_index: usize, elapsed: std::time::Duration) -> usize {
+  let mut index = next_index;
+  while index + 1 < samples.len() && samples[index + 1].elapsed <= elapsed {
+    index += 1;
+  }
+  index
+}
+
+fn move_mouse_stream_event(event: MouseMotionEvent) -> proto::MoveMouseStreamResponse {
+  use proto::move_mouse_stream_response::Event;
+  proto::MoveMouseStreamResponse {
+    event: Some(match event {
+      MouseMotionEvent::Started(value) => Event::Started(value),
+      MouseMotionEvent::Progress(value) => Event::Progress(value),
+      MouseMotionEvent::Completed(value) => Event::Completed(value),
+    }),
+  }
+}
+
+fn stream_mouse_motion_event(event: MouseMotionEvent) -> proto::StreamMouseMotionResponse {
+  use proto::stream_mouse_motion_response::Event;
+  proto::StreamMouseMotionResponse {
+    event: Some(match event {
+      MouseMotionEvent::Started(value) => Event::Started(value),
+      MouseMotionEvent::Progress(value) => Event::Progress(value),
+      MouseMotionEvent::Completed(value) => Event::Completed(value),
+    }),
+  }
+}
+
+async fn collect_mouse_motion<S>(
+  requests: &mut S,
+  sender: &tokio::sync::mpsc::Sender<Result<proto::StreamMouseMotionResponse, Status>>,
+) -> Result<Option<auv_driver::MouseMotionPlan>, Status>
+where
+  S: Stream<Item = Result<proto::StreamMouseMotionRequest, Status>> + Unpin,
+{
+  // TODO(mouse-motion-live-batches): V1 buffers until finish because duration
+  // applies to the complete curve. Execute batches before finish only after a
+  // per-batch or absolute timing contract receives owner approval.
+  let mut begin = None;
+  let mut segments = Vec::new();
+  let mut next_sequence = 0;
+  while let Some(request) = requests.next().await.transpose()? {
+    use proto::stream_mouse_motion_request::Event;
+    match request.event.ok_or_else(|| Status::invalid_argument("moveMouse event is required"))? {
+      Event::Begin(value) if begin.is_none() => {
+        begin = Some(value);
+        sender
+          .send(Ok(proto::StreamMouseMotionResponse {
+            event: Some(proto::stream_mouse_motion_response::Event::Accepted(proto::StreamMouseMotionAccepted { next_sequence })),
+          }))
+          .await
+          .map_err(|_| Status::cancelled("moveMouse client disconnected"))?;
+      }
+      Event::Append(value) if begin.is_some() => {
+        if value.sequence != next_sequence {
+          return Err(Status::invalid_argument(format!("moveMouse append sequence must be {next_sequence}")));
+        }
+        if segments.len() + value.segments.len() > auv_driver::MOUSE_MOTION_MAX_SEGMENTS {
+          return Err(Status::invalid_argument("moveMouse curve has too many segments"));
+        }
+        for segment in value.segments {
+          segments.push(mouse_segment_from_proto(segment)?);
+        }
+        next_sequence += 1;
+        sender
+          .send(Ok(proto::StreamMouseMotionResponse {
+            event: Some(proto::stream_mouse_motion_response::Event::Accepted(proto::StreamMouseMotionAccepted { next_sequence })),
+          }))
+          .await
+          .map_err(|_| Status::cancelled("moveMouse client disconnected"))?;
+      }
+      Event::Finish(_) if begin.is_some() => {
+        let begin = begin.take().expect("guarded begin");
+        return Ok(Some(mouse_motion_plan_from_parts(begin, segments)?));
+      }
+      Event::Cancel(_) if begin.is_some() => {
+        let _ = sender
+          .send(Ok(proto::StreamMouseMotionResponse {
+            event: Some(proto::stream_mouse_motion_response::Event::Cancelled(proto::MouseMotionCancelled {})),
+          }))
+          .await;
+        return Ok(None);
+      }
+      Event::Begin(_) => return Err(Status::invalid_argument("moveMouse begin must be the first and only begin event")),
+      Event::Append(_) => return Err(Status::invalid_argument("moveMouse append requires begin")),
+      Event::Finish(_) => return Err(Status::invalid_argument("moveMouse finish requires begin")),
+      Event::Cancel(_) => return Err(Status::invalid_argument("moveMouse cancel requires begin")),
+    }
+  }
+  Err(Status::invalid_argument("moveMouse stream ended before finish or cancel"))
+}
+
+fn mouse_motion_plan_from_proto(value: proto::MouseMotionPlan) -> Result<auv_driver::MouseMotionPlan, Status> {
+  let curve = value.curve.ok_or_else(|| Status::invalid_argument("plan.curve is required"))?;
+  Ok(auv_driver::MouseMotionPlan {
+    start: mouse_start_from_proto(value.start.ok_or_else(|| Status::invalid_argument("plan.start is required"))?)?,
+    curve: auv_driver::MouseCurve {
+      start: mouse_curve_point_from_proto(curve.start.ok_or_else(|| Status::invalid_argument("plan.curve.start is required"))?),
+      segments: curve.segments.into_iter().map(mouse_segment_from_proto).collect::<Result<_, _>>()?,
+    },
+    mapping: mouse_mapping_from_proto(value.mapping.ok_or_else(|| Status::invalid_argument("plan.mapping is required"))?),
+    options: mouse_options_from_proto(value.options.ok_or_else(|| Status::invalid_argument("plan.options is required"))?)?,
+  })
+}
+
+fn mouse_motion_plan_from_parts(
+  value: proto::StreamMouseMotionBegin,
+  segments: Vec<auv_driver::MouseCubicBezierSegment>,
+) -> Result<auv_driver::MouseMotionPlan, Status> {
+  Ok(auv_driver::MouseMotionPlan {
+    start: mouse_start_from_proto(value.start.ok_or_else(|| Status::invalid_argument("begin.start is required"))?)?,
+    curve: auv_driver::MouseCurve {
+      start: mouse_curve_point_from_proto(value.curve_start.ok_or_else(|| Status::invalid_argument("begin.curve_start is required"))?),
+      segments,
+    },
+    mapping: mouse_mapping_from_proto(value.mapping.ok_or_else(|| Status::invalid_argument("begin.mapping is required"))?),
+    options: mouse_options_from_proto(value.options.ok_or_else(|| Status::invalid_argument("begin.options is required"))?)?,
+  })
+}
+
+fn mouse_start_from_proto(value: proto::MouseStart) -> Result<auv_driver::MouseStart, Status> {
+  match value.source.ok_or_else(|| Status::invalid_argument("mouse start source is required"))? {
+    proto::mouse_start::Source::Point(point) => Ok(auv_driver::MouseStart::Screen(screen_point_from_proto(point)?.point())),
+    proto::mouse_start::Source::Current(_) => Ok(auv_driver::MouseStart::Current),
+  }
+}
+
+fn mouse_curve_point_from_proto(value: proto::MouseCurvePoint) -> auv_driver::Point {
+  auv_driver::Point::new(value.x, value.y)
+}
+
+fn mouse_segment_from_proto(value: proto::MouseCubicBezierSegment) -> Result<auv_driver::MouseCubicBezierSegment, Status> {
+  Ok(auv_driver::MouseCubicBezierSegment {
+    control_1: mouse_curve_point_from_proto(value.control_1.ok_or_else(|| Status::invalid_argument("segment.control_1 is required"))?),
+    control_2: mouse_curve_point_from_proto(value.control_2.ok_or_else(|| Status::invalid_argument("segment.control_2 is required"))?),
+    end: mouse_curve_point_from_proto(value.end.ok_or_else(|| Status::invalid_argument("segment.end is required"))?),
+  })
+}
+
+fn mouse_mapping_from_proto(value: proto::MouseCurveMapping) -> auv_driver::MouseCurveMapping {
+  auv_driver::MouseCurveMapping {
+    width: value.width,
+    height: value.height,
+  }
+}
+
+fn mouse_options_from_proto(value: proto::MouseMotionOptions) -> Result<auv_driver::MouseMotionOptions, Status> {
+  Ok(auv_driver::MouseMotionOptions {
+    duration: duration_from_proto(value.duration, std::time::Duration::ZERO, "mouse options.duration")?,
+    sample_rate_hz: value.sample_rate_hz,
+  })
+}
+
+fn raw_screen_point_to_proto(point: auv_driver::Point) -> proto::ScreenPoint {
+  proto::ScreenPoint {
+    x: point.x,
+    y: point.y,
+  }
+}
+
+fn duration_to_proto(value: std::time::Duration) -> prost_types::Duration {
+  prost_types::Duration {
+    seconds: value.as_secs() as i64,
+    nanos: value.subsec_nanos() as i32,
+  }
 }
 
 fn screen_rect_from_proto(rect: proto::ScreenRect) -> Result<auv_driver::Rect, Status> {
@@ -1232,6 +1551,7 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
   let input = InputServiceServer::new(LocalInputService {
     session: session.clone(),
+    mouse_motion: std::sync::Arc::new(tokio::sync::Mutex::new(())),
   });
   let permission = PermissionServiceServer::new(LocalPermissionService {
     session: session.clone(),

@@ -588,6 +588,18 @@ impl WindowInput for WindowApi<'_> {
 }
 
 impl InputApi<'_> {
+  pub fn current_position(&self) -> DriverResult<Point> {
+    let _ = self.session;
+    let (x, y) = crate::native::pointer::current_mouse_logical_point().map_err(backend)?;
+    Ok(Point::new(x, y))
+  }
+
+  pub fn move_to(&self, point: Point) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    crate::native::pointer::move_point(point.x, point.y, 0).map_err(backend)?;
+    Ok(foreground_system_events_result(DisturbanceLevel::Temporary, DisturbanceLevel::None, DisturbanceLevel::None))
+  }
+
   pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
     let _ = self.session;
     let (count, interval) = click_parts(&click)?;

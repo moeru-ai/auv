@@ -5,6 +5,7 @@ pub mod display;
 pub mod error;
 pub mod geometry;
 pub mod input;
+pub mod mouse;
 pub mod permission;
 pub mod readiness;
 pub mod selector;
@@ -25,6 +26,10 @@ pub use input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputAttempt, InputDeliveryPath,
   InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate,
   ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
+};
+pub use mouse::{
+  MOUSE_MOTION_MAX_SEGMENTS, MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionPlan, MouseMotionSample,
+  MouseStart,
 };
 pub use permission::{PermissionProbe, PermissionStatus};
 pub use readiness::{ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus};

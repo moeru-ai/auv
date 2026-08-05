@@ -30,6 +30,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tonic = { version = "0.14", features = ["transport"] }
+tokio = { version = "1", features = ["sync"] }
+tokio-stream = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
@@ -39,4 +41,4 @@ windows = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tempfile.workspace = true
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }

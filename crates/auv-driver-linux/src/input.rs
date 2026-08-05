@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::driver::LinuxDriverSessionState;
 use crate::error::invalid_input;
 use crate::native::portal::{InputSession, PortalInput};
-use auv_driver_common::error::DriverResult;
+use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::Point;
 use auv_driver_common::input::{
   Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
@@ -16,6 +16,18 @@ use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_t
 pub(crate) fn click_at(state: &Arc<Mutex<LinuxDriverSessionState>>, point: Point, click: Click) -> DriverResult<InputActionResult> {
   with_input_session(state, |session| session.click_at(point, click))?;
   Ok(pointer_result())
+}
+
+pub(crate) fn move_to(state: &Arc<Mutex<LinuxDriverSessionState>>, point: Point) -> DriverResult<InputActionResult> {
+  with_input_session(state, |session| session.move_to(point))?;
+  Ok(pointer_result())
+}
+
+pub(crate) fn current_position() -> DriverResult<Point> {
+  // TODO(linux-wayland-pointer-position): The RemoteDesktop portal can inject
+  // motion but cannot report the current logical pointer position. Add this
+  // capability when a compositor-neutral Wayland or portal API can supply it.
+  Err(DriverError::unsupported("linux.input.current_position on Wayland"))
 }
 
 pub(crate) fn scroll_at(
@@ -135,7 +147,15 @@ fn with_input_session<T>(
     let restore_tokens = state.restore_tokens.clone();
     state.input_session = Some(PortalInput::open(restore_tokens.as_ref())?);
   }
-  operation(state.input_session.as_mut().expect("input session was just initialized"))
+  let result = operation(state.input_session.as_mut().expect("input session was just initialized"));
+  if result.is_err() {
+    // A successful RemoteDesktop D-Bus call does not prove that a restored
+    // stream still delivers events. Drop a failed session so the next action
+    // reopens it through the durable restore-token rotation instead of reusing
+    // a stale stream indefinitely.
+    state.input_session = None;
+  }
+  result
 }
 
 fn keyboard_result() -> InputActionResult {
@@ -216,6 +236,15 @@ mod keysym {
   pub const TAB: i32 = 0xff09;
   pub const RETURN: i32 = 0xff0d;
   pub const ESCAPE: i32 = 0xff1b;
+  pub const HOME: i32 = 0xff50;
+  pub const LEFT: i32 = 0xff51;
+  pub const UP: i32 = 0xff52;
+  pub const RIGHT: i32 = 0xff53;
+  pub const DOWN: i32 = 0xff54;
+  pub const PAGE_UP: i32 = 0xff55;
+  pub const PAGE_DOWN: i32 = 0xff56;
+  pub const END: i32 = 0xff57;
+  pub const INSERT: i32 = 0xff63;
   pub const DELETE: i32 = 0xffff;
   pub const SHIFT_L: i32 = 0xffe1;
   pub const CONTROL_L: i32 = 0xffe3;
@@ -258,13 +287,33 @@ mod keysym {
   }
 
   fn named(raw: &str) -> Option<i32> {
-    match raw.to_ascii_lowercase().as_str() {
+    let normalized = raw.to_ascii_lowercase();
+    if let Some(number) =
+      normalized.strip_prefix('f').and_then(|number| number.parse::<i32>().ok()).filter(|number| (1..=12).contains(number))
+    {
+      // Portal keysym values assign F1 through F12 consecutively from 0xffbe.
+      return Some(0xffbd + number);
+    }
+    match normalized.as_str() {
       "return" | "enter" => Some(RETURN),
       "tab" => Some(TAB),
       "escape" | "esc" => Some(ESCAPE),
+      "home" => Some(HOME),
+      "left" | "arrowleft" => Some(LEFT),
+      "up" | "arrowup" => Some(UP),
+      "right" | "arrowright" => Some(RIGHT),
+      "down" | "arrowdown" => Some(DOWN),
+      "pageup" | "page_up" => Some(PAGE_UP),
+      "pagedown" | "page_down" => Some(PAGE_DOWN),
+      "end" => Some(END),
+      "insert" => Some(INSERT),
       "space" => Some(' ' as i32),
       "delete" => Some(DELETE),
       "backspace" | "back" => Some(BACKSPACE),
+      "ctrl" | "control" => Some(CONTROL_L),
+      "shift" => Some(SHIFT_L),
+      "alt" | "option" => Some(ALT_L),
+      "super" | "win" | "cmd" | "command" | "meta" => Some(SUPER_L),
       _ => None,
     }
   }

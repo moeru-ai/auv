@@ -797,6 +797,42 @@ fn typed_invoke_ranges_are_rejected_by_the_handler() {
 }
 
 #[test]
+fn screen_point_click_dry_run_reports_the_validated_coordinate() {
+  let output = run(&[
+    "invoke",
+    "input.clickScreenPoint",
+    "1032.5",
+    "1212",
+    "--dry-run",
+    "--json",
+  ]);
+
+  assert!(output.status.success(), "unexpected diagnostic:\n{}", stderr(&output));
+  let value: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("JSON output");
+  assert_eq!(value["result"]["point"]["x"], 1032.5);
+  assert_eq!(value["result"]["point"]["y"], 1212.0);
+  assert!(value["result"]["action"].is_null());
+}
+
+#[test]
+fn mouse_move_dry_run_reports_the_validated_coordinate() {
+  let output = run(&[
+    "invoke",
+    "input.moveMouse",
+    "1032.5",
+    "1212",
+    "--dry-run",
+    "--json",
+  ]);
+
+  assert!(output.status.success(), "unexpected diagnostic:\n{}", stderr(&output));
+  let value: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("JSON output");
+  assert_eq!(value["result"]["point"]["x"], 1032.5);
+  assert_eq!(value["result"]["point"]["y"], 1212.0);
+  assert!(value["result"]["action"].is_null());
+}
+
+#[test]
 fn invoke_store_root_cannot_consume_the_next_flag() {
   let output = run(&[
     "invoke",

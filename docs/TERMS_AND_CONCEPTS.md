@@ -1335,3 +1335,22 @@ A tombstone is a short file or module-level comment left after a path is removed
 or archived. It contains no execution logic, names the removed path, points to
 the replacement owner, and states the exact condition for deleting the
 tombstone.
+
+### Mouse motion plan
+
+A **mouse motion plan** is typed input intent containing a start policy, a
+local vector curve, a mapping into logical screen displacement, and timing
+options. Its local curve is independent of display or editor dimensions. A
+completed motion produces `InputActionResult` delivery evidence; application
+meaning still requires separate verification.
+
+A **mouse motion timing** value is a provisional extension to a mouse motion
+plan. It will map elapsed time to distance along the path and determine planned
+speed and tangential acceleration. The V1 contract has only a fixed duration
+and linear arc-length timing. The path owns direction and curvature; a future
+timing value will not steer the pointer away from the path.
+
+A **resolved motion profile** is the sampled result of a path and its current
+fixed-duration timing. This internal value contains scheduled positions and
+times. It is not caller input. The name also applies when the provisional
+mouse motion timing extension lands.

@@ -1,5 +1,4 @@
 use super::*;
-use auv_api_proto::auv::api::driver::v1 as proto;
 
 #[tokio::test]
 async fn selected_now_playing_rejects_application_target_before_daemon_resolution() {
@@ -140,66 +139,6 @@ async fn selected_text_wait_preserves_timeout_semantics_after_one_exact_call() {
 }
 
 #[test]
-fn input_action_projection_preserves_typed_delivery_evidence() {
-  let action = input_action_from_proto(proto::InputActionResult {
-    selected_path: proto::InputDeliveryPath::ForegroundSystemEvents as i32,
-    attempts: vec![proto::InputAttempt {
-      path: proto::InputDeliveryPath::ForegroundSystemEvents as i32,
-      succeeded: true,
-      message: None,
-    }],
-    mouse_disturbance: proto::DisturbanceLevel::None as i32,
-    focus_disturbance: proto::DisturbanceLevel::Foreground as i32,
-    clipboard_disturbance: proto::DisturbanceLevel::None as i32,
-  })
-  .expect("valid protobuf delivery evidence");
-
-  assert_eq!(action.selected_path, auv_driver::InputDeliveryPath::ForegroundSystemEvents);
-  assert_eq!(
-    action.attempts,
-    vec![auv_driver::InputAttempt::success(
-      auv_driver::InputDeliveryPath::ForegroundSystemEvents
-    )]
-  );
-  assert_eq!(action.focus_disturbance, auv_driver::DisturbanceLevel::Foreground);
-}
-
-#[test]
-fn input_action_projection_rejects_unspecified_wire_enums() {
-  let error = input_action_from_proto(proto::InputActionResult {
-    selected_path: proto::InputDeliveryPath::Unspecified as i32,
-    ..Default::default()
-  })
-  .expect_err("unspecified path must not become canonical driver evidence");
-  assert!(error.contains("must not be unspecified"));
-}
-
-#[test]
-fn capture_projection_preserves_rgba_and_screen_contract() {
-  let capture = capture_from_proto(proto::CapturedFrame {
-    image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
-      width: 2,
-      height: 1,
-      data: vec![1, 2, 3, 4, 5, 6, 7, 8],
-    }),
-    bounds: Some(proto::ScreenRect {
-      x: -10.0,
-      y: 4.0,
-      width: 2.0,
-      height: 1.0,
-    }),
-    scale_factor: 1.0,
-    backend: "fixture".to_string(),
-    fallback_reason: None,
-  })
-  .expect("valid RGBA capture");
-
-  assert_eq!(capture.image.as_raw(), &[1, 2, 3, 4, 5, 6, 7, 8]);
-  assert_eq!(capture.bounds, auv_driver::Rect::new(-10.0, 4.0, 2.0, 1.0));
-  assert_eq!(capture.backend, "fixture");
-}
-
-#[test]
 fn selected_window_selector_keeps_hierarchical_parent_context() {
   let mut inputs = std::collections::BTreeMap::new();
   inputs.insert("title".to_string(), "Preferences".to_string());
@@ -212,8 +151,8 @@ fn selected_window_selector_keeps_hierarchical_parent_context() {
     cancellation: Default::default(),
   });
 
-  assert_eq!(selector.application, Some(proto::window_selector::Application::ApplicationBundleId("com.example.app".to_string())));
-  assert_eq!(selector.window, Some(proto::window_selector::Window::TitleContains("Preferences".to_string())));
+  assert_eq!(selector.app, Some(auv_driver::App::bundle("com.example.app")));
+  assert_eq!(selector.title, Some(auv_driver::TextMatcher::Contains("Preferences".to_string())));
 }
 
 #[test]
@@ -248,9 +187,26 @@ fn selected_window_point_projects_relative_coordinates_and_click_policy() {
 
   assert_eq!(selected_window_point(&input, &window).unwrap(), auv_driver::WindowPoint::new(100.0, 100.0));
   let options = selected_click_options(&input).unwrap();
-  assert_eq!(options.policy, proto::InputPolicy::BackgroundOnly as i32);
-  assert_eq!(options.click.as_ref().map(|click| click.count), Some(2));
-  assert_eq!(options.click.and_then(|click| click.interval).map(|duration| duration.nanos), Some(80_000_000));
+  assert_eq!(options.policy, auv_driver::InputPolicy::BackgroundOnly);
+  assert_eq!(options.click.count(), 2);
+  assert_eq!(options.click.interval(), Some(std::time::Duration::from_millis(80)));
+}
+
+#[test]
+fn selected_screen_point_preserves_logical_coordinates() {
+  let input = crate::InvokeCommandInput {
+    command_id: "input.clickScreenPoint".to_string(),
+    target_application_id: None,
+    inputs: std::collections::BTreeMap::from([
+      ("x".to_string(), "768".to_string()),
+      ("y".to_string(), "1139.5".to_string()),
+    ]),
+    typed_args: None,
+    dry_run: false,
+    cancellation: Default::default(),
+  };
+
+  assert_eq!(selected_screen_point(&input, "input.clickScreenPoint").unwrap(), auv_driver::ScreenPoint::new(768.0, 1139.5));
 }
 
 #[test]
@@ -265,8 +221,8 @@ fn selected_screen_text_click_defaults_to_foreground_input() {
   };
 
   let options = selected_click_options(&input).expect("screen click options");
-  assert_eq!(options.policy, proto::InputPolicy::ForegroundPreferred as i32);
-  assert_eq!(options.click.as_ref().map(|click| click.count), Some(1));
+  assert_eq!(options.policy, auv_driver::InputPolicy::ForegroundPreferred);
+  assert_eq!(options.click, auv_driver::Click::Single);
 }
 
 #[test]
@@ -304,9 +260,8 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
     dry_run: false,
     cancellation: Default::default(),
   };
-  let wire = selected_click_options(&input).unwrap();
   assert_eq!(
-    driver_click_options_from_proto(&wire).unwrap(),
+    selected_click_options(&input).unwrap(),
     auv_driver::ClickOptions {
       policy: auv_driver::InputPolicy::ForegroundPreferred,
       click: auv_driver::Click::Repeated {

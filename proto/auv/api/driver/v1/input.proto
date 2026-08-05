@@ -17,6 +17,19 @@ service InputService {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
+  // Accepts one complete motion and streams delivery progress. Invalid input
+  // ends the RPC with a gRPC status before the first pointer event.
+  rpc MoveMouse(MoveMouseRequest) returns (stream MoveMouseStreamResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // Accepts one begin packet, ordered append packets, then finish or cancel.
+  // Acceptance events can precede finish. Delivery starts only after finish,
+  // because duration applies to the complete curve.
+  rpc StreamMouseMotion(stream StreamMouseMotionRequest) returns (stream StreamMouseMotionResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
   rpc TypeText(TypeTextRequest) returns (TypeTextResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
@@ -158,6 +171,126 @@ message ClickScreenPointRequest {
 message ClickScreenPointResponse {
   ScreenPoint point = 1;
   InputActionResult action = 2;
+}
+
+message MouseCurrentPosition {}
+
+message MouseStart {
+  oneof source {
+    ScreenPoint point = 1;
+    MouseCurrentPosition current = 2;
+  }
+}
+
+message MouseCurvePoint {
+  double x = 1;
+  double y = 2;
+}
+
+message MouseCubicBezierSegment {
+  MouseCurvePoint control_1 = 1;
+  MouseCurvePoint control_2 = 2;
+  MouseCurvePoint end = 3;
+}
+
+message MouseCurve {
+  MouseCurvePoint start = 1;
+  repeated MouseCubicBezierSegment segments = 2;
+}
+
+message MouseCurveMapping {
+  // Logical screen displacement represented by one local curve unit.
+  double width = 1;
+  double height = 2;
+}
+
+message MouseMotionOptions {
+  google.protobuf.Duration duration = 1;
+  uint32 sample_rate_hz = 2;
+}
+
+message MouseMotionPlan {
+  MouseStart start = 1;
+  MouseCurve curve = 2;
+  MouseCurveMapping mapping = 3;
+  MouseMotionOptions options = 4;
+}
+
+message MoveMouseRequest {
+  MouseMotionPlan plan = 1;
+}
+
+message MouseMotionStarted {
+  ScreenPoint resolved_start = 1;
+  // Planned samples can be skipped when delivery falls behind schedule.
+  uint32 planned_sample_count = 2;
+  google.protobuf.Duration duration = 3;
+}
+
+message MouseMotionProgress {
+  // This index can skip values when overdue intermediate samples are coalesced.
+  uint32 sample_index = 1;
+  ScreenPoint point = 2;
+  google.protobuf.Duration scheduled_elapsed = 3;
+}
+
+message MouseMotionCompleted {
+  ScreenPoint point = 1;
+  InputActionResult action = 2;
+}
+
+message MoveMouseStreamResponse {
+  oneof event {
+    MouseMotionStarted started = 1;
+    MouseMotionProgress progress = 2;
+    MouseMotionCompleted completed = 3;
+  }
+}
+
+message StreamMouseMotionBegin {
+  MouseStart start = 1;
+  MouseCurvePoint curve_start = 2;
+  MouseCurveMapping mapping = 3;
+  MouseMotionOptions options = 4;
+}
+
+message StreamMouseMotionAppend {
+  // Starts at zero and must increase by one for every accepted batch.
+  uint32 sequence = 1;
+  repeated MouseCubicBezierSegment segments = 2;
+}
+
+message StreamMouseMotionFinish {}
+
+message StreamMouseMotionCancel {}
+
+message StreamMouseMotionRequest {
+  // Begin must occur once and first. Append can repeat with consecutive
+  // sequence values. Finish or cancel must occur once and last.
+  oneof event {
+    StreamMouseMotionBegin begin = 1;
+    StreamMouseMotionAppend append = 2;
+    StreamMouseMotionFinish finish = 3;
+    StreamMouseMotionCancel cancel = 4;
+  }
+}
+
+message StreamMouseMotionAccepted {
+  uint32 next_sequence = 1;
+}
+
+message MouseMotionCancelled {}
+
+message StreamMouseMotionResponse {
+  // Accepted can repeat before finish. Started, progress, and completed occur
+  // in that order after finish. Cancelled is terminal and replaces delivery.
+  oneof event {
+    StreamMouseMotionAccepted accepted = 1;
+    MouseMotionStarted started = 2;
+    MouseMotionProgress progress = 3;
+    MouseMotionCompleted completed = 4;
+    MouseMotionCancelled cancelled = 5;
+  }
 }
 
 message TypeTextRequest {

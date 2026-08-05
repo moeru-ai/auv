@@ -106,3 +106,6 @@ CONTRIBUTING.local.md
 
 # Local Codex review brain (never hook-injected)
 codex.md
+
+# Protobuf
+gen/

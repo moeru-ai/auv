@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn overdue_mouse_samples_coalesce_but_keep_the_final_sample() {
+  let samples = [
+    auv_driver::MouseMotionSample {
+      point: auv_driver::Point::new(0.0, 0.0),
+      elapsed: std::time::Duration::ZERO,
+    },
+    auv_driver::MouseMotionSample {
+      point: auv_driver::Point::new(1.0, 1.0),
+      elapsed: std::time::Duration::from_millis(8),
+    },
+    auv_driver::MouseMotionSample {
+      point: auv_driver::Point::new(2.0, 2.0),
+      elapsed: std::time::Duration::from_millis(16),
+    },
+  ];
+
+  assert_eq!(latest_due_mouse_sample(&samples, 0, std::time::Duration::from_millis(12)), 1);
+  assert_eq!(latest_due_mouse_sample(&samples, 2, std::time::Duration::from_secs(1)), 2);
+}
+
+#[tokio::test]
+async fn streamed_mouse_motion_rejects_cancel_before_begin() {
+  let mut requests = tokio_stream::iter([Ok(proto::StreamMouseMotionRequest {
+    event: Some(proto::stream_mouse_motion_request::Event::Cancel(proto::StreamMouseMotionCancel {})),
+  })]);
+  let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+
+  let status = collect_mouse_motion(&mut requests, &sender).await.expect_err("cancel must follow begin");
+
+  assert_eq!(status.code(), tonic::Code::InvalidArgument);
+  assert_eq!(status.message(), "moveMouse cancel requires begin");
+}
+
+#[test]
 fn overlay_thread_guard_rejects_a_different_execution_thread_without_ui() {
   let owner = std::thread::current().id();
   ensure_overlay_owner_thread(owner).expect("owner thread");

@@ -12,7 +12,7 @@ use crate::capture::{capture_display, capture_region, capture_window, list_displ
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::WindowsDriverSession;
 use crate::error::invalid_input;
-use crate::input::{click_at, copy, paste, press_key, scroll_at, type_text};
+use crate::input::{click_at, copy, current_position, move_to, paste, press_key, scroll_at, type_text};
 use crate::mutation::mutate_window;
 use crate::permission::{WindowsPermissionProbe, probe as probe_permissions};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
@@ -225,6 +225,17 @@ impl VisionApi<'_> {
 }
 
 impl InputApi<'_> {
+  pub fn current_position(&self) -> DriverResult<Point> {
+    let _ = self.session;
+    current_position()
+  }
+
+  /// Moves the pointer to `point` without activating the target beneath it.
+  pub fn move_to(&self, point: Point) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    move_to(point)
+  }
+
   /// Moves the pointer to `point` (screen coordinates) and issues a click.
   pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
     let _ = self.session;

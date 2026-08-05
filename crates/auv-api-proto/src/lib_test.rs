@@ -149,7 +149,16 @@ fn daemon_control_services_are_typed_and_do_not_claim_watch() {
     vec![
       ("DeviceService", vec!["ListDevices", "GetDevice"]),
       ("DiscoveryService", vec!["ListApiNamespaces", "GetApiNamespace", "GetApiGroupVersion"],),
-      ("PairingService", vec!["CreatePairingToken", "PairDevice", "RevokeDeviceCredential"],),
+      (
+        "PairingService",
+        vec![
+          "CreatePairingToken",
+          "PairDevice",
+          "RevokeDeviceCredential",
+          "SetPairedDeviceEnabled",
+          "UnpairDevice"
+        ],
+      ),
       ("RunService", vec!["CreateRun", "ListRuns", "GetRun", "StopRun"]),
       ("RunnerClassService", vec!["ListRunnerClasses", "GetRunnerClass"]),
       ("RunnerService", vec!["CreateRunner", "ListRunners", "GetRunner", "DeleteRunner"],),
@@ -295,14 +304,28 @@ fn driver_input_service_is_route_independent_and_returns_delivery_evidence() {
     vec![
       "ClickWindowPoint",
       "ClickScreenPoint",
+      "MoveMouse",
+      "StreamMouseMotion",
       "TypeText",
       "PasteText",
       "PressKey"
     ]
   );
+  let complete = service.method.iter().find(|method| method.name.as_deref() == Some("MoveMouse")).expect("MoveMouse");
+  assert!(!complete.client_streaming.unwrap_or(false));
+  assert!(complete.server_streaming.unwrap_or(false));
+  assert_eq!(complete.input_type.as_deref(), Some(".auv.api.driver.v1.MoveMouseRequest"));
+  assert_eq!(complete.output_type.as_deref(), Some(".auv.api.driver.v1.MoveMouseStreamResponse"));
+  let streaming = service.method.iter().find(|method| method.name.as_deref() == Some("StreamMouseMotion")).expect("StreamMouseMotion");
+  assert!(streaming.client_streaming.unwrap_or(false));
+  assert!(streaming.server_streaming.unwrap_or(false));
+  assert_eq!(streaming.input_type.as_deref(), Some(".auv.api.driver.v1.StreamMouseMotionRequest"));
+  assert_eq!(streaming.output_type.as_deref(), Some(".auv.api.driver.v1.StreamMouseMotionResponse"));
   for request_name in [
     "ClickWindowPointRequest",
     "ClickScreenPointRequest",
+    "MoveMouseRequest",
+    "StreamMouseMotionRequest",
     "TypeTextRequest",
     "PasteTextRequest",
     "PressKeyRequest",
@@ -313,6 +336,7 @@ fn driver_input_service_is_route_independent_and_returns_delivery_evidence() {
   for response_name in [
     "ClickWindowPointResponse",
     "ClickScreenPointResponse",
+    "MouseMotionCompleted",
     "TypeTextResponse",
     "PasteTextResponse",
     "PressKeyResponse",
