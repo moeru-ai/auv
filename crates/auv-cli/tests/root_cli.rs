@@ -358,24 +358,30 @@ fn local_daemon_routes_runner_grpc_without_claims_or_leases() {
   daemon.0.wait().expect("wait for local daemon");
 }
 
-#[test]
 // https://github.com/moeru-ai/auv/actions/runs/31052479884/job/92462591348
 // ROOT CAUSE:
 //
-// On Windows, this platform-neutral pairing test failed before startup because
-// it also configured an unrelated Unix-domain listener.
+// On Windows, this pairing test cannot construct its required caller-local
+// listener because that trust boundary is currently a Unix-domain socket.
 //
-// Before the fix, only Unix runners could reach the ambiguity assertion. The
-// fix uses the TCP pairing listener that the test exercises on every platform.
+// Before the fix, Windows attempted to parse the Unix endpoint. The fix limits
+// this topology test to platforms that implement its local transport.
+// TODO(windows-local-pairing-test): Add Windows coverage when an owner-approved
+// local authenticated transport can create pairing tokens beside remote TCP.
+#[cfg(unix)]
+#[test]
 fn device_trust_name_requires_a_unique_paired_device() {
   let directory = tempfile::tempdir().expect("temporary pairing directory");
   let store_path = directory.path().join("pairings.json");
+  let socket = directory.path().join("auv.sock");
   let discovery = directory.path().join("daemon.json");
   let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
   let mut daemon = ChildGuard(
     Command::new(env!("CARGO_BIN_EXE_auv"))
       .args([
         "serve",
+        "--listen",
+        &format!("unix://{}", socket.display()),
         "--listen",
         &format!("http://127.0.0.1:{port}"),
         "--pairing-store",
