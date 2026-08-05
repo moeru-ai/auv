@@ -1,8 +1,8 @@
 #![cfg(all(unix, target_os = "macos"))]
 
 use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
-use auv_api_server::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
-use auv_api_server::server::{ListenEndpoint, Server, ServerConfig};
+use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
+use auv_daemon::{Config, ListenEndpoint, Server};
 
 #[tokio::test]
 async fn daemon_supervises_and_aggregates_the_netease_runner() {
@@ -12,12 +12,13 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
   let mut runner_environment = std::collections::BTreeMap::new();
   runner_environment.insert("AUV_RUNNER_TEST_CONTEXT".to_string(), child_context_path.display().to_string());
   runner_environment.insert("AUV_RUNNER_TEST_BINARY".to_string(), env!("CARGO_BIN_EXE_auv-runner-netease-music").to_string());
-  let bound = Server::bind(ServerConfig {
+  let bound = Server::bind(Config {
     pairing_store: None,
-    listen: ListenEndpoint::Unix {
+    listeners: vec![ListenEndpoint::Unix {
       path: socket.clone(),
-    },
-    additional_listeners: Vec::new(),
+    }],
+    discovery_file: None,
+    publish_discovery: false,
     store_root: directory.path().join("store"),
     runner_providers: vec![RunnerProviderConfig {
       runner_class: "auv.app.netease_music".to_string(),

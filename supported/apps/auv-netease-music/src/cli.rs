@@ -858,12 +858,12 @@ async fn remote_now_playing(context: auv::AuvContext, app_id: &str) -> Result<au
   let run = auv.run(Default::default()).await.map_err(|error| format!("resolve inherited NetEase Run failed: {error}"))?;
   let runner = run
     .runner(auv::client::RunnerOptions {
-      runner_class: "auv.app.netease_music".to_string(),
+      runner_class: "auv.app.netease_music".parse().expect("the NetEase RunnerClass ID is valid"),
       ..Default::default()
     })
     .await
     .map_err(|error| format!("construct NetEase Runner route failed: {error}"))?;
-  let transport = runner.transport().map_err(|status| status.to_string())?;
+  let transport = runner.extension_transport().map_err(|error| error.to_string())?;
   let mut service = crate::api::v1::netease_music_service_client::NeteaseMusicServiceClient::new(transport);
   let result = service
     .get_now_playing(crate::api::v1::GetNowPlayingRequest {
