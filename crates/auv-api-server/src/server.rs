@@ -154,11 +154,20 @@ impl Server {
       endpoints.push(endpoint);
       listeners.push(BoundListenerState { listener, auth });
     }
-    let mut parent_endpoint = endpoints
-      .iter()
-      .find(|endpoint| matches!(endpoint, BoundEndpoint::Unix(_)))
-      .or_else(|| endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_))))
-      .map(ToString::to_string);
+    let mut parent_endpoint = {
+      #[cfg(unix)]
+      {
+        endpoints
+          .iter()
+          .find(|endpoint| matches!(endpoint, BoundEndpoint::Unix(_)))
+          .or_else(|| endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_))))
+      }
+      #[cfg(not(unix))]
+      {
+        endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_)))
+      }
+    }
+    .map(ToString::to_string);
     if parent_endpoint.is_none()
       && let Some(path) = config.internal_runner_parent
     {
