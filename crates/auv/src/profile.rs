@@ -467,12 +467,12 @@ fn write_document(path: &Path, document: &ConfigDocument) -> Result<(), ProfileE
       path: temporary.clone(),
       source,
     })?;
-    std::fs::rename(&temporary, path).map_err(|source| ProfileError::Write {
+    publish_document(&temporary, path).map_err(|source| ProfileError::Write {
       kind: "config profile store",
       path: path.to_path_buf(),
       source,
     })?;
-    File::open(parent).and_then(|directory| directory.sync_all()).map_err(|source| ProfileError::Write {
+    sync_parent(parent).map_err(|source| ProfileError::Write {
       kind: "config profile store",
       path: parent.to_path_buf(),
       source,
@@ -482,6 +482,37 @@ fn write_document(path: &Path, document: &ConfigDocument) -> Result<(), ProfileE
     let _ = std::fs::remove_file(&temporary);
   }
   result
+}
+
+#[cfg(not(windows))]
+fn publish_document(temporary: &Path, path: &Path) -> std::io::Result<()> {
+  std::fs::rename(temporary, path)
+}
+
+#[cfg(windows)]
+fn publish_document(temporary: &Path, path: &Path) -> std::io::Result<()> {
+  use windows::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
+  use windows::core::HSTRING;
+
+  let temporary = HSTRING::from(temporary);
+  let path = HSTRING::from(path);
+  // SAFETY: Both HSTRING values own valid, NUL-terminated UTF-16 paths for the
+  // duration of the call. The mutation lock serializes writers, and the
+  // temporary file is created beside the destination so the move stays on the
+  // same volume. No pointers escape this call.
+  unsafe { MoveFileExW(&temporary, &path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }.map_err(std::io::Error::other)
+}
+
+#[cfg(unix)]
+fn sync_parent(parent: &Path) -> std::io::Result<()> {
+  File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent(_parent: &Path) -> std::io::Result<()> {
+  // Windows does not permit opening an ordinary directory through File::open.
+  // MOVEFILE_WRITE_THROUGH above supplies the durability boundary there.
+  Ok(())
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path, kind: &'static str) -> Result<T, ProfileError> {

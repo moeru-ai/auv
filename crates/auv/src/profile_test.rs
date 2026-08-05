@@ -61,6 +61,14 @@ fn duplicate_device_names_report_canonical_candidate_ids() {
   assert!(matches!(error, ProfileError::AmbiguousDevice(ids) if ids == "device_a, device_b"));
 }
 
+// https://github.com/moeru-ai/auv/actions/runs/31051684740/job/92460058236
+// ROOT CAUSE:
+//
+// On Windows, opening the parent directory through File::open failed with
+// Access Denied after the first profile document had already been published.
+//
+// Before the fix, profile CRUD only completed on Unix. The fix keeps atomic
+// replacement and durability guarantees behind platform-specific operations.
 #[test]
 fn profile_crud_is_atomic_and_stores_the_opaque_bearer_inline() {
   let directory = tempfile::tempdir().unwrap();
