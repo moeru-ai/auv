@@ -1,7 +1,7 @@
 use auv_driver::{InputActionResult, WindowPoint};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BalatroPhase, BalatroState, ButtonTarget, SlotId};
+use crate::model::{ActionPoint, BalatroPhase, BalatroState, ButtonTarget, SlotId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlindSelectRequest {
@@ -65,12 +65,17 @@ pub enum BlindSkipConfirmation {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BlindSelectAttempt {
+  pub selected_button: ButtonTarget,
+  pub point: ActionPoint,
+  pub delivery: InputActionResult,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BlindSelectResult {
   pub target: String,
   pub slot: SlotId,
-  pub selected_button: ButtonTarget,
-  pub window_point: WindowPoint,
-  pub delivery: InputActionResult,
+  pub attempts: Vec<BlindSelectAttempt>,
   pub confirmation: BlindSelectConfirmation,
 }
 
@@ -78,6 +83,8 @@ pub struct BlindSelectResult {
 pub struct BlindSkipResult {
   pub target: String,
   pub selected_button: ButtonTarget,
+  // TODO(balatro-remote-blind-skip): migrate this to ActionPoint when the
+  // owner-approved remote skip operation lands.
   pub window_point: WindowPoint,
   pub delivery: InputActionResult,
   pub confirmation: BlindSkipConfirmation,
@@ -88,15 +95,14 @@ pub struct BlindSkipResult {
 struct BlindSelectCompleted<'a> {
   target: &'a str,
   slot: SlotId,
-  selected_button: &'a ButtonTarget,
-  window_point: WindowPoint,
+  attempts: &'a [BlindSelectAttempt],
   confirmation: &'a BlindSelectConfirmation,
 }
 
 #[cfg(feature = "tracing")]
 impl auv_tracing::EventPayload for BlindSelectCompleted<'_> {
   const NAME: &'static str = "auv.balatro.blind_select.completed";
-  const VERSION: u32 = 1;
+  const VERSION: u32 = 3;
 }
 
 #[cfg(feature = "tracing")]
@@ -104,8 +110,7 @@ pub(crate) fn emit_blind_select_completed(result: &BlindSelectResult) {
   auv_tracing::emit_event!(BlindSelectCompleted {
     target: &result.target,
     slot: result.slot,
-    selected_button: &result.selected_button,
-    window_point: result.window_point,
+    attempts: &result.attempts,
     confirmation: &result.confirmation,
   });
 }

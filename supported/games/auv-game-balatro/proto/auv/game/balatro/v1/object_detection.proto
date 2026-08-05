@@ -13,6 +13,12 @@ service BalatroDetectionService {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
   }
+  // Sends one source frame once and runs independent cached detectors in
+  // parallel inside the Runner.
+  rpc DetectObjectsBatch(DetectObjectsBatchRequest) returns (DetectObjectsBatchResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
 }
 
 enum InferenceDeviceKind {
@@ -37,10 +43,11 @@ message InferenceDevice {
 message ObjectDetectorSpec {
   // Caller-defined diagnostic identity; it is part of the cache key.
   string detector_id = 1;
-  // Path on the Runner host.
-  // TODO(balatro-model-source): replace host paths with an authorized model
-  // source before registering this Runner against a different host.
-  string model_path = 2;
+  oneof source {
+    // Explicit path on the Runner host. A caller-local path is never implied.
+    string runner_path = 2;
+    HuggingFaceAsset hugging_face = 9;
+  }
   optional uint32 input_size = 3;
   optional float confidence_threshold = 4;
   optional float iou_threshold = 5;
@@ -48,6 +55,19 @@ message ObjectDetectorSpec {
   InferenceDevice device = 7;
   // Empty selects class labels embedded in the model.
   repeated string class_names = 8;
+}
+
+message HuggingFaceAsset {
+  enum RepositoryKind {
+    REPOSITORY_KIND_UNSPECIFIED = 0;
+    REPOSITORY_KIND_MODEL = 1;
+    REPOSITORY_KIND_DATASET = 2;
+  }
+
+  RepositoryKind repository_kind = 1;
+  string owner = 2;
+  string repository = 3;
+  string filename = 4;
 }
 
 message DetectObjectsRequest {
@@ -58,6 +78,20 @@ message DetectObjectsRequest {
 message DetectObjectsResponse {
   ImageSize image_size = 1;
   repeated Detection detections = 2;
+}
+
+message DetectObjectsBatchRequest {
+  repeated ObjectDetectorSpec detectors = 1;
+  auv.api.image.v1.RgbFrame frame = 2;
+}
+
+message DetectObjectsBatchResponse {
+  repeated DetectObjectsBatchResult results = 1;
+}
+
+message DetectObjectsBatchResult {
+  string detector_id = 1;
+  DetectObjectsResponse result = 2;
 }
 
 message ImageSize {

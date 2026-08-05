@@ -9,6 +9,7 @@ use auv_api_proto::auv::api::image::v1 as image_proto;
 use auv_inference_common::{ImageFrame, ModelId};
 use auv_inference_ultralytics::InferenceDevice;
 use auv_task_object_detection::{DetectionOptions, UltralyticsObjectDetector, UltralyticsObjectDetectorConfig};
+use hf_hub::HFClientSync;
 use tonic::{Request, Response, Status};
 
 use crate::api::v1 as proto;
@@ -29,6 +30,19 @@ impl BalatroDetectionService for Service {
     tokio::task::spawn_blocking(move || detect_objects(&detectors, detector, frame))
       .await
       .map_err(|error| Status::internal(format!("object-detection task failed: {error}")))?
+      .map(Response::new)
+  }
+
+  async fn detect_objects_batch(
+    &self,
+    request: Request<proto::DetectObjectsBatchRequest>,
+  ) -> Result<Response<proto::DetectObjectsBatchResponse>, Status> {
+    let request = request.into_inner();
+    let frame = request.frame.ok_or_else(|| Status::invalid_argument("frame is required"))?;
+    let detectors = Arc::clone(&self.detectors);
+    tokio::task::spawn_blocking(move || detect_objects_batch(&detectors, request.detectors, frame))
+      .await
+      .map_err(|error| Status::internal(format!("object-detection batch task failed: {error}")))?
       .map(Response::new)
   }
 }
@@ -101,7 +115,7 @@ impl DetectorKey {
     if spec.detector_id.trim().is_empty() {
       return Err(Status::invalid_argument("detector.detector_id must not be empty"));
     }
-    let model_path = PathBuf::from(spec.model_path);
+    let model_path = resolve_model_source(spec.source)?;
     let defaults = DetectionOptions::default();
     let max_detections = usize::try_from(spec.max_detections.unwrap_or(defaults.max_detections as u32))
       .map_err(|_| Status::invalid_argument("detector.max_detections is too large"))?;
@@ -123,6 +137,34 @@ impl DetectorKey {
       device: DeviceKey::from_proto(spec.device)?,
       class_names: spec.class_names,
     })
+  }
+}
+
+fn resolve_model_source(source: Option<proto::object_detector_spec::Source>) -> Result<PathBuf, Status> {
+  match source.ok_or_else(|| Status::invalid_argument("detector.source is required"))? {
+    proto::object_detector_spec::Source::RunnerPath(path) if !path.trim().is_empty() => Ok(PathBuf::from(path)),
+    proto::object_detector_spec::Source::RunnerPath(_) => Err(Status::invalid_argument("detector.runner_path must not be empty")),
+    proto::object_detector_spec::Source::HuggingFace(asset) => {
+      if asset.owner.trim().is_empty() || asset.repository.trim().is_empty() || asset.filename.trim().is_empty() {
+        return Err(Status::invalid_argument("detector.hugging_face owner, repository, and filename are required"));
+      }
+      let kind = proto::hugging_face_asset::RepositoryKind::try_from(asset.repository_kind)
+        .map_err(|_| Status::invalid_argument("detector.hugging_face.repository_kind is unknown"))?;
+      let client =
+        HFClientSync::new().map_err(|error| Status::failed_precondition(format!("failed to initialize Hugging Face client: {error}")))?;
+      match kind {
+        proto::hugging_face_asset::RepositoryKind::Model => {
+          client.model(asset.owner, asset.repository).download_file().filename(asset.filename).send()
+        }
+        proto::hugging_face_asset::RepositoryKind::Dataset => {
+          client.dataset(asset.owner, asset.repository).download_file().filename(asset.filename).send()
+        }
+        proto::hugging_face_asset::RepositoryKind::Unspecified => {
+          return Err(Status::invalid_argument("detector.hugging_face.repository_kind is required"));
+        }
+      }
+      .map_err(|error| Status::failed_precondition(format!("failed to resolve Runner model asset: {error}")))
+    }
   }
 }
 
@@ -169,6 +211,41 @@ fn detect_objects(
   detector: proto::ObjectDetectorSpec,
   frame: image_proto::RgbFrame,
 ) -> Result<proto::DetectObjectsResponse, Status> {
+  let frame = image_frame_from_proto(frame)?;
+  detect_frame(detectors, detector, &frame)
+}
+
+fn detect_objects_batch(
+  detectors: &LazyResourceCache<DetectorKey, UltralyticsObjectDetector>,
+  specs: Vec<proto::ObjectDetectorSpec>,
+  frame: image_proto::RgbFrame,
+) -> Result<proto::DetectObjectsBatchResponse, Status> {
+  if specs.is_empty() {
+    return Err(Status::invalid_argument("detectors must not be empty"));
+  }
+  let frame = image_frame_from_proto(frame)?;
+  let results = std::thread::scope(|scope| {
+    let frame = &frame;
+    specs
+      .into_iter()
+      .map(|spec| {
+        let detector_id = spec.detector_id.clone();
+        scope.spawn(move || {
+          detect_frame(detectors, spec, frame).map(|result| proto::DetectObjectsBatchResult {
+            detector_id,
+            result: Some(result),
+          })
+        })
+      })
+      .collect::<Vec<_>>()
+      .into_iter()
+      .map(|thread| thread.join().map_err(|_| Status::internal("object detector thread panicked"))?)
+      .collect::<Result<Vec<_>, Status>>()
+  })?;
+  Ok(proto::DetectObjectsBatchResponse { results })
+}
+
+fn image_frame_from_proto(frame: image_proto::RgbFrame) -> Result<ImageFrame, Status> {
   let expected_len = usize::try_from(frame.width)
     .ok()
     .and_then(|width| usize::try_from(frame.height).ok().and_then(|height| width.checked_mul(height)))
@@ -184,12 +261,31 @@ fn detect_objects(
   }
   let image = image::RgbImage::from_raw(frame.width, frame.height, frame.data)
     .ok_or_else(|| Status::invalid_argument("frame.data is not a valid tightly packed RGB8 image"))?;
+  Ok(ImageFrame::new(image))
+}
+
+fn detect_frame(
+  detectors: &LazyResourceCache<DetectorKey, UltralyticsObjectDetector>,
+  detector: proto::ObjectDetectorSpec,
+  frame: &ImageFrame,
+) -> Result<proto::DetectObjectsResponse, Status> {
   let key = DetectorKey::from_proto(detector)?;
   let detector = detectors
     .get_or_try_init(key.clone(), |key| {
       let device = match key.device {
         DeviceKey::Cpu => InferenceDevice::Cpu,
-        DeviceKey::Cuda(index) => InferenceDevice::Cuda(index),
+        DeviceKey::Cuda(index) => {
+          #[cfg(feature = "cuda")]
+          {
+            InferenceDevice::Cuda(index)
+          }
+          #[cfg(not(feature = "cuda"))]
+          {
+            return Err(Arc::<str>::from(format!(
+              "CUDA device {index} was requested, but the Balatro Runner was built without its `cuda` feature"
+            )));
+          }
+        }
         DeviceKey::CoreMl => InferenceDevice::CoreMl,
         DeviceKey::DirectMl(index) => InferenceDevice::DirectMl(index),
         DeviceKey::OpenVino => InferenceDevice::OpenVino,
@@ -212,8 +308,7 @@ fn detect_objects(
       .map_err(|error| Arc::<str>::from(error.to_string()))
     })
     .map_err(|error| Status::failed_precondition(format!("failed to load detector {}: {error}", key.detector_id)))?;
-  let result =
-    detector.detect_frame(&ImageFrame::new(image)).map_err(|error| Status::internal(format!("object detection failed: {error}")))?;
+  let result = detector.detect_frame(frame).map_err(|error| Status::internal(format!("object detection failed: {error}")))?;
   Ok(proto::DetectObjectsResponse {
     image_size: Some(proto::ImageSize {
       width: result.image_size.width,

@@ -10,6 +10,10 @@ const ENTITIES_DATASET_REPO: &str = "games-balatro-2024-entities-detection";
 const UI_MODEL_REPO: &str = "games-balatro-2024-yolo-ui-detection";
 const UI_DATASET_REPO: &str = "games-balatro-2024-ui-detection";
 const CARD_CORNER_MODEL_REPO: &str = "games-balatro-2024-card-corner-classifier";
+const CARD_IDENTITY_MODEL_REPO: &str = "games-balatro-2024-yolo-card-identity-detection-mod-ground-truth";
+const CARD_ENHANCEMENT_MODEL_REPO: &str = "games-balatro-2024-yolo-card-enhancement-detection-mod-ground-truth";
+const CARD_EDITION_MODEL_REPO: &str = "games-balatro-2024-yolo-card-edition-detection-mod-ground-truth";
+const CARD_SEAL_MODEL_REPO: &str = "games-balatro-2024-yolo-card-seal-detection-mod-ground-truth";
 const ONNX_MODEL_FILE: &str = "onnx/model.onnx";
 const CLASSES_FILE: &str = "data/train/yolo/classes.txt";
 
@@ -34,6 +38,11 @@ pub enum HuggingFaceRepoKind {
 pub struct BalatroModelConfig {
   pub entities_model: BalatroModelAsset,
   pub entities_classes: BalatroModelAsset,
+  pub cards_model: Option<BalatroModelAsset>,
+  pub card_identity_model: BalatroModelAsset,
+  pub card_enhancement_model: BalatroModelAsset,
+  pub card_edition_model: BalatroModelAsset,
+  pub card_seal_model: BalatroModelAsset,
   pub ui_model: BalatroModelAsset,
   pub ui_classes: BalatroModelAsset,
   pub card_corner_model: BalatroModelAsset,
@@ -44,6 +53,11 @@ pub struct BalatroModelConfig {
 pub struct ResolvedBalatroModelConfig {
   pub entities_model: PathBuf,
   pub entities_classes: PathBuf,
+  pub cards_model: Option<PathBuf>,
+  pub card_identity_model: PathBuf,
+  pub card_enhancement_model: PathBuf,
+  pub card_edition_model: PathBuf,
+  pub card_seal_model: PathBuf,
   pub ui_model: PathBuf,
   pub ui_classes: PathBuf,
   pub device: InferenceDevice,
@@ -70,10 +84,24 @@ impl BalatroModelConfig {
     Self {
       entities_model: args.entities_model.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.entities_model),
       entities_classes: args.entities_classes.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.entities_classes),
+      cards_model: args.cards_model.clone().map(BalatroModelAsset::Local).or(defaults.cards_model),
+      card_identity_model: args.card_identity_model.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.card_identity_model),
+      card_enhancement_model: args.card_enhancement_model.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.card_enhancement_model),
+      card_edition_model: args.card_edition_model.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.card_edition_model),
+      card_seal_model: args.card_seal_model.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.card_seal_model),
       ui_model: args.ui_model.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.ui_model),
       ui_classes: args.ui_classes.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.ui_classes),
       card_corner_model: args.card_corner_model.clone().map(BalatroModelAsset::Local).unwrap_or(defaults.card_corner_model),
       device: args.device.clone(),
+    }
+  }
+
+  pub fn from_operation_args(args: &crate::cli::OperationControlArgs) -> Self {
+    let defaults = Self::default();
+    Self {
+      cards_model: args.cards_model.clone().map(BalatroModelAsset::Local).or_else(|| defaults.cards_model.clone()),
+      device: args.device.clone(),
+      ..defaults
     }
   }
 
@@ -82,6 +110,11 @@ impl BalatroModelConfig {
     Ok(ResolvedBalatroModelConfig {
       entities_model: self.entities_model.resolve_with_client(&mut client)?,
       entities_classes: self.entities_classes.resolve_with_client(&mut client)?,
+      cards_model: self.cards_model.as_ref().map(|asset| asset.resolve_with_client(&mut client)).transpose()?,
+      card_identity_model: self.card_identity_model.resolve_with_client(&mut client)?,
+      card_enhancement_model: self.card_enhancement_model.resolve_with_client(&mut client)?,
+      card_edition_model: self.card_edition_model.resolve_with_client(&mut client)?,
+      card_seal_model: self.card_seal_model.resolve_with_client(&mut client)?,
       ui_model: self.ui_model.resolve_with_client(&mut client)?,
       ui_classes: self.ui_classes.resolve_with_client(&mut client)?,
       device: self.device.clone(),
@@ -150,6 +183,14 @@ impl Default for BalatroModelConfig {
     Self {
       entities_model: BalatroModelAsset::hugging_face_model(HF_OWNER, ENTITIES_MODEL_REPO, ONNX_MODEL_FILE),
       entities_classes: BalatroModelAsset::hugging_face_dataset(HF_OWNER, ENTITIES_DATASET_REPO, CLASSES_FILE),
+      // TODO(card-detector-publication): Keep the card-specialized model
+      // opt-in until its game-asset/derived-weight rights are reviewed and the
+      // private Hugging Face repository can become a usable default.
+      cards_model: None,
+      card_identity_model: BalatroModelAsset::hugging_face_model(HF_OWNER, CARD_IDENTITY_MODEL_REPO, ONNX_MODEL_FILE),
+      card_enhancement_model: BalatroModelAsset::hugging_face_model(HF_OWNER, CARD_ENHANCEMENT_MODEL_REPO, ONNX_MODEL_FILE),
+      card_edition_model: BalatroModelAsset::hugging_face_model(HF_OWNER, CARD_EDITION_MODEL_REPO, ONNX_MODEL_FILE),
+      card_seal_model: BalatroModelAsset::hugging_face_model(HF_OWNER, CARD_SEAL_MODEL_REPO, ONNX_MODEL_FILE),
       ui_model: BalatroModelAsset::hugging_face_model(HF_OWNER, UI_MODEL_REPO, ONNX_MODEL_FILE),
       ui_classes: BalatroModelAsset::hugging_face_dataset(HF_OWNER, UI_DATASET_REPO, CLASSES_FILE),
       card_corner_model: BalatroModelAsset::hugging_face_model(HF_OWNER, CARD_CORNER_MODEL_REPO, ONNX_MODEL_FILE),

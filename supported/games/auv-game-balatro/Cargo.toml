@@ -16,6 +16,7 @@ repository.workspace = true
 default = ["tracing"]
 tracing = ["dep:auv-tracing", "dep:futures-executor"]
 card-corner-onnx = ["dep:auv-inference-ort"]
+cuda = ["auv-inference-ultralytics/cuda"]
 
 [dependencies]
 auv = { path = "../../../crates/auv" }

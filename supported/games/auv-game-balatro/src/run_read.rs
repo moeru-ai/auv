@@ -1,6 +1,9 @@
 //! Balatro tracing artifact producers.
 
-use auv_tracing::{ArtifactMetadata, ArtifactPurpose, Attributes, ByteLength, Context, EventPayload, JsonArtifactError, StoreError};
+use auv_tracing::{
+  ArtifactMetadata, ArtifactPurpose, AttributeValue, Attributes, ByteLength, Context, EmitBytesOptions, EventPayload, JsonArtifactError,
+  StoreError,
+};
 use serde::Serialize;
 
 pub const BALATRO_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
@@ -38,6 +41,37 @@ pub(crate) fn emit_json_artifact<T: Serialize>(purpose: &'static str, value: &T)
     return;
   }
   match prepare_json_emission(purpose, value) {
+    Ok(emission) => drop(emission),
+    Err(error) => context.in_scope(|| {
+      auv_tracing::emit_event!(BalatroArtifactPreparationFailed {
+        purpose,
+        error: error.to_string(),
+      });
+    }),
+  }
+}
+
+pub(crate) fn emit_png_artifact(purpose: &'static str, source: &str, image: &image::RgbaImage) {
+  let context = Context::current();
+  if !context.can_publish_artifacts() {
+    return;
+  }
+  let mut encoded = std::io::Cursor::new(Vec::new());
+  if let Err(error) = image::DynamicImage::ImageRgba8(image.clone()).write_to(&mut encoded, image::ImageFormat::Png) {
+    context.in_scope(|| {
+      auv_tracing::emit_event!(BalatroArtifactPreparationFailed {
+        purpose,
+        error: error.to_string(),
+      });
+    });
+    return;
+  }
+  let options = EmitBytesOptions::new()
+    .with_purpose(purpose)
+    .with_content_type("image/png")
+    .with_file_extension("png")
+    .with_attributes(Attributes::from_iter([("source", AttributeValue::string(source))]));
+  match auv_tracing::emit_bytes_artifact(options, encoded.into_inner()) {
     Ok(emission) => drop(emission),
     Err(error) => context.in_scope(|| {
       auv_tracing::emit_event!(BalatroArtifactPreparationFailed {
@@ -89,3 +123,28 @@ fn prepare_json_emission<T: Serialize>(
 
 // TODO(auv-inspector): typed Balatro artifact readers remain deferred until an
 // owner-approved inspector contract defines discovery and validation inputs.
+
+#[cfg(test)]
+mod tests {
+  use std::sync::Arc;
+
+  use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
+
+  use super::emit_png_artifact;
+
+  #[test]
+  fn observed_frame_png_is_visible_in_the_run_store() {
+    futures_executor::block_on(async {
+      let store = Arc::new(MemoryTracingStore::new());
+      let dispatch = configure().tracing_store(store.clone()).build().expect("memory tracing dispatch");
+      let context = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
+
+      context.in_scope(|| emit_png_artifact("auv.balatro.observation.capture", "fixture://before", &image::RgbaImage::new(2, 2)));
+      dispatch.flush().await.expect("flush tracing");
+
+      assert!(store.records().iter().any(|record| {
+        matches!(record, TraceRecord::Artifact { metadata, .. } if metadata.purpose().as_str() == "auv.balatro.observation.capture")
+      }));
+    });
+  }
+}

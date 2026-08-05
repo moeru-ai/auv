@@ -1,7 +1,7 @@
-use auv_driver::{InputActionResult, WindowPoint};
+use auv_driver::InputActionResult;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BalatroPhase, BalatroState, ButtonTarget};
+use crate::model::{ActionPoint, BalatroPhase, BalatroState, ButtonTarget};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GameRestartRequest {
@@ -14,6 +14,8 @@ pub struct GameRestartRequest {
 #[serde(rename_all = "snake_case")]
 pub enum GameRestartTarget {
   DetectedButton { button: ButtonTarget },
+  NewRunTabLayout,
+  NewRunPlayLayout,
   GameOverLayout,
   LocalizedTitleLayout,
 }
@@ -21,7 +23,7 @@ pub enum GameRestartTarget {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct GameRestartClick {
   pub target: GameRestartTarget,
-  pub window_point: WindowPoint,
+  pub point: ActionPoint,
   pub delivery: InputActionResult,
 }
 
@@ -45,7 +47,7 @@ pub struct GameRestartResult {
 #[derive(Serialize)]
 struct GameRestartClickFact<'a> {
   target: &'a GameRestartTarget,
-  window_point: WindowPoint,
+  point: &'a ActionPoint,
 }
 
 #[cfg(feature = "tracing")]
@@ -59,7 +61,7 @@ struct GameRestartCompleted<'a> {
 #[cfg(feature = "tracing")]
 impl auv_tracing::EventPayload for GameRestartCompleted<'_> {
   const NAME: &'static str = "auv.balatro.game_restart.completed";
-  const VERSION: u32 = 1;
+  const VERSION: u32 = 2;
 }
 
 #[cfg(feature = "tracing")]
@@ -71,7 +73,7 @@ pub(crate) fn emit_game_restart_completed(result: &GameRestartResult) {
       .iter()
       .map(|click| GameRestartClickFact {
         target: &click.target,
-        window_point: click.window_point,
+        point: &click.point,
       })
       .collect(),
     outcome: &result.outcome,

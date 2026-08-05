@@ -2,19 +2,20 @@
 
 use auv_api_proto::auv::api::daemon::v1 as daemon_proto;
 use auv_api_proto::auv::api::image::v1 as image_proto;
-use auv_api_server::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
-use auv_api_server::server::{ListenEndpoint, Server, ServerConfig};
+use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerProviderConfig, RunnerRuntime};
+use auv_daemon::{Config, ListenEndpoint, Server};
 
 #[tokio::test]
 async fn daemon_routes_the_app_owned_balatro_runner() {
   let directory = tempfile::tempdir().expect("create isolated daemon state");
   let socket = directory.path().join("auv.sock");
-  let bound = Server::bind(ServerConfig {
+  let bound = Server::bind(Config {
     pairing_store: None,
-    listen: ListenEndpoint::Unix {
+    listeners: vec![ListenEndpoint::Unix {
       path: socket.clone(),
-    },
-    additional_listeners: Vec::new(),
+    }],
+    discovery_file: None,
+    publish_discovery: false,
     store_root: directory.path().join("store"),
     runner_providers: vec![RunnerProviderConfig {
       runner_class: "auv.game.balatro".to_string(),
@@ -59,7 +60,7 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
     .detect_objects(auv_game_balatro::api::v1::DetectObjectsRequest {
       detector: Some(auv_game_balatro::api::v1::ObjectDetectorSpec {
         detector_id: "test".to_string(),
-        model_path: "/missing/model.onnx".to_string(),
+        source: Some(auv_game_balatro::api::v1::object_detector_spec::Source::RunnerPath("/missing/model.onnx".to_string())),
         ..Default::default()
       }),
       frame: Some(image_proto::RgbFrame {

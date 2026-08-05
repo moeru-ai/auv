@@ -1,7 +1,7 @@
-use auv_driver::{InputActionResult, WindowPoint};
+use auv_driver::InputActionResult;
 use serde::Serialize;
 
-use crate::model::SlotId;
+use crate::model::{ActionPoint, SlotId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,7 +15,7 @@ pub struct HandSelectionToggle {
   pub kind: HandSelectionToggleKind,
   pub attempt: u8,
   pub slot: SlotId,
-  pub window_point: WindowPoint,
+  pub point: ActionPoint,
   pub delivery: InputActionResult,
 }
 

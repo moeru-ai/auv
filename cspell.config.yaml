@@ -8,6 +8,8 @@ words:
   - antfu
   - apalis
   - apeira
+  - Balatro
+  - bbox
   - clippy
   - conv
   - cust
@@ -47,6 +49,7 @@ words:
   - serde
   - sonarjs
   - sqlx
+  - ultralytics
   - utoipa
   - uuidv
   - vchord

@@ -1,0 +1,12 @@
+{
+  "runner_class": "auv.game.balatro",
+  "runtime": {
+    "type": "executable",
+    "config": {
+      "executable": "../../../target/debug/auv-runner-balatro",
+      "arguments": [],
+      "working_directory": "../../..",
+      "environment": {}
+    }
+  }
+}

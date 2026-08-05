@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use auv::AuvContext;
 use auv_driver::WindowInput as _;
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
 use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
@@ -20,20 +21,23 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::blind_action::{
-  BlindSelectConfirmation, BlindSelectConfirmationFailure, BlindSelectRequest, BlindSelectResult, BlindSkipConfirmation,
+  BlindSelectAttempt, BlindSelectConfirmation, BlindSelectConfirmationFailure, BlindSelectRequest, BlindSelectResult, BlindSkipConfirmation,
   BlindSkipConfirmationFailure, BlindSkipRequest, BlindSkipResult, emit_blind_select_completed, emit_blind_skip_completed,
   evaluate_blind_select_confirmation, evaluate_blind_skip_confirmation,
 };
 use crate::cards_action::{
-  CardCommitAction, CardCommitConfirmation, CardCommitKind, CardCommitRequest, CardCommitResult, CardCommitState, CardCommitStop,
-  CardsSelectRequest, CardsSelectResult, emit_card_commit_completed, emit_cards_select_completed, evaluate_card_commit_confirmation,
+  CardCommitAction, CardCommitConfirmation, CardCommitControl, CardCommitKind, CardCommitRequest, CardCommitResult, CardCommitState,
+  CardCommitStop, CardsSelectRequest, CardsSelectResult, card_commit_confirmation_allows_resubmit,
+  card_commit_confirmation_has_structural_change, emit_card_commit_completed, emit_cards_select_completed,
+  evaluate_card_commit_confirmation, reject_fingerprint_only_confirmation,
 };
 use crate::cards_clear::{
   CardSelectionToggle, CardsClearIncompleteReason, CardsClearOutcome, CardsClearRequest, CardsClearResult, classify_cards_clear_outcome,
   emit_cards_clear_completed,
 };
 use crate::cash_out::{
-  CashOutConfirmation, CashOutConfirmationRequest, CashOutRequest, CashOutResult, emit_cash_out_completed, evaluate_cash_out_confirmation,
+  CashOutAttempt, CashOutConfirmation, CashOutConfirmationRequest, CashOutRequest, CashOutResult, emit_cash_out_completed,
+  evaluate_cash_out_confirmation,
 };
 use crate::config::BalatroModelConfig;
 use crate::consumable_use::{
@@ -45,14 +49,17 @@ use crate::game_restart::{
   emit_game_restart_completed,
 };
 use crate::hand_selection::{HandSelectionResult, HandSelectionState, HandSelectionToggle, HandSelectionToggleKind};
-use crate::model::{BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, ObjectZone, SlotId, StoreItem};
+use crate::model::{
+  ActionPoint, BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, ObjectZone, Reading, ReadingStatus, SlotId,
+  StoreItem,
+};
 use crate::object_sell::{
   ObjectSellClick, ObjectSellConfirmation, ObjectSellIncompleteReason, ObjectSellOutcome, ObjectSellRequest, ObjectSellResult,
   SellableObject, emit_object_sell_completed, evaluate_object_sell_confirmation,
 };
 use crate::observation::{
-  ObservationError, apply_ui_numeric_reading, is_numeric_ui_label, is_score_ui_label, is_single_ui_digit_label, observe_image,
-  observe_live_via_api,
+  HoverReadRequest, ObservationError, apply_ui_numeric_reading, click_display_frame_point_via_api, hover_read_display_frame_points_via_api,
+  is_numeric_ui_label, is_score_ui_label, is_single_ui_digit_label, move_display_frame_point_via_api, observe_image, observe_live_via_api,
 };
 pub use crate::output::OutputMode;
 use crate::pack_choose::{
@@ -65,8 +72,8 @@ use crate::store_buy::{
   evaluate_store_buy_confirmation,
 };
 use crate::store_next_round::{
-  StoreNextRoundConfirmation, StoreNextRoundConfirmationRequest, StoreNextRoundRequest, StoreNextRoundResult, StoreNextRoundTarget,
-  emit_store_next_round_completed, evaluate_store_next_round_confirmation,
+  StoreNextRoundAttempt, StoreNextRoundConfirmation, StoreNextRoundConfirmationRequest, StoreNextRoundRequest, StoreNextRoundResult,
+  StoreNextRoundTarget, emit_store_next_round_completed, evaluate_store_next_round_confirmation,
 };
 
 const DECK_ATLAS_LOVE_PATH: &str = "resources/textures/2x/8BitDeck.png";
@@ -118,6 +125,8 @@ pub struct CliArgs {
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 pub enum Command {
   Game(GameArgs),
+  /// Annotate one fixed frame and emit detection/click diagnostics.
+  Diagnostics(DiagnosticsArgs),
   Objective(ObjectiveArgs),
   Scores(ScoresArgs),
   Rounds(RoundsArgs),
@@ -128,6 +137,19 @@ pub enum Command {
   Pack(PackArgs),
   Blinds(BlindsArgs),
   Setup(SetupArgs),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Args)]
+pub struct DiagnosticsArgs {
+  #[command(flatten)]
+  pub observe: ObserveArgs,
+  /// Expected selected hand slots, for example `hand:0,hand:1`.
+  #[arg(long, value_name = "HAND_SLOTS")]
+  pub requested_slots: Option<String>,
+  #[arg(long, value_name = "PATH")]
+  pub annotated_out: PathBuf,
+  #[arg(long, value_name = "PATH")]
+  pub report_out: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Args)]
@@ -192,6 +214,21 @@ pub struct ObserveArgs {
   pub entities_model: Option<PathBuf>,
   #[arg(long, value_name = "PATH")]
   pub entities_classes: Option<PathBuf>,
+  /// Optional card-specialized detector applied only to the normalized hand region.
+  #[arg(long, value_name = "PATH")]
+  pub cards_model: Option<PathBuf>,
+  /// Full-frame rank/suit detector. Defaults to the published Mod ground-truth model.
+  #[arg(long, value_name = "PATH")]
+  pub card_identity_model: Option<PathBuf>,
+  /// Full-frame enhancement detector. Defaults to the published Mod ground-truth model.
+  #[arg(long, value_name = "PATH")]
+  pub card_enhancement_model: Option<PathBuf>,
+  /// Full-frame edition detector. Defaults to the published Mod ground-truth model.
+  #[arg(long, value_name = "PATH")]
+  pub card_edition_model: Option<PathBuf>,
+  /// Full-frame seal detector. Defaults to the published Mod ground-truth model.
+  #[arg(long, value_name = "PATH")]
+  pub card_seal_model: Option<PathBuf>,
   #[arg(long, value_name = "PATH")]
   pub ui_model: Option<PathBuf>,
   #[arg(long, value_name = "PATH")]
@@ -226,6 +263,12 @@ pub struct OperationControlArgs {
   pub timeout_ms: Option<u64>,
   #[arg(long, alias = "detailed")]
   pub details: bool,
+  /// Optional card-specialized detector used by every observation in this operation.
+  #[arg(long, value_name = "PATH")]
+  pub cards_model: Option<PathBuf>,
+  /// Inference device used by every observation in this operation.
+  #[arg(long, default_value = "cpu", value_parser = clap::value_parser!(InferenceDevice))]
+  pub device: InferenceDevice,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Args)]
@@ -426,11 +469,74 @@ fn open_macos_session() -> Result<auv_driver::LocalDriverSession, CliError> {
 }
 
 pub fn run_from_env() -> Result<(), CliError> {
-  run(CliArgs::parse())
+  let args = CliArgs::parse();
+  #[cfg(feature = "tracing")]
+  {
+    run_with_inherited_tracing(args)
+  }
+  #[cfg(not(feature = "tracing"))]
+  {
+    run(args)
+  }
+}
+
+#[cfg(feature = "tracing")]
+fn run_with_inherited_tracing(args: CliArgs) -> Result<(), CliError> {
+  use std::sync::Arc;
+
+  let Some(store_root) = std::env::var_os(auv_tracing::STORE_ROOT_ENV) else {
+    return run(args);
+  };
+  let context = AuvContext::from_env().map_err(|error| CliError::Message(format!("invalid inherited AUV context: {error}")))?;
+  let Some(control_run_id) = context.run_id.as_deref() else {
+    return run(args);
+  };
+  // TODO(resource-id-migration): Remove the legacy `run_` branch after old
+  // control-plane stores no longer expose prefixed UUID Run identities.
+  let run_uuid = uuid::Uuid::parse_str(control_run_id.strip_prefix("run_").unwrap_or(control_run_id))
+    .map_err(|error| CliError::Message(format!("inherited Run ID {control_run_id:?} is invalid for tracing: {error}")))?;
+  let run_id = run_uuid
+    .to_string()
+    .parse::<auv_tracing::RunId>()
+    .map_err(|error| CliError::Message(format!("inherited Run ID {control_run_id:?} is invalid for tracing: {error}")))?;
+  let store = Arc::new(
+    auv_tracing::FileTracingStore::open(PathBuf::from(store_root))
+      .map_err(|error| CliError::Message(format!("failed to open inherited tracing store: {error}")))?,
+  );
+  let dispatch = auv_tracing::configure()
+    .tracing_store(store)
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to configure Balatro tracing: {error}")))?;
+  let result = auv_tracing::dispatcher::with_default(&dispatch, || {
+    let root = auv_tracing::Context::root(run_id);
+    root.in_scope(|| {
+      auv_tracing::emit_event!(BalatroFrontendLifecycle { frontend: "plugin" });
+      run(args)
+    })
+  });
+  let flush = futures_executor::block_on(dispatch.flush());
+  match (result, flush) {
+    (Ok(()), Ok(())) => Ok(()),
+    (Err(error), _) => Err(error),
+    (Ok(()), Err(error)) => Err(CliError::Message(format!("failed to flush Balatro tracing: {error}"))),
+  }
+}
+
+#[cfg(feature = "tracing")]
+#[derive(Serialize)]
+struct BalatroFrontendLifecycle {
+  frontend: &'static str,
+}
+
+#[cfg(feature = "tracing")]
+impl auv_tracing::EventPayload for BalatroFrontendLifecycle {
+  const NAME: &'static str = "auv.frontend.lifecycle";
+  const VERSION: u32 = 1;
 }
 
 pub fn run(args: CliArgs) -> Result<(), CliError> {
   match args.command {
+    Command::Diagnostics(args) => write_frame_diagnostics(args),
     Command::Game(GameArgs {
       command: GameCommand::State(args),
     }) => write_observed_state(&args),
@@ -467,7 +573,7 @@ pub fn run(args: CliArgs) -> Result<(), CliError> {
     }) => click_cards_commit(CardCommitKind::Discard, args),
     Command::Jokers(JokersArgs {
       command: JokersCommand::Ls(args),
-    }) => write_observed_state(&args),
+    }) => write_jokers(&args),
     Command::Jokers(JokersArgs {
       command: JokersCommand::Read(args),
     }) => write_object_read(&args, ObjectReadZone::Joker),
@@ -943,6 +1049,8 @@ struct CardReadValue {
   raw_text: Option<String>,
   normalized_text: Option<String>,
   rank: Option<String>,
+  rank_candidate: Option<String>,
+  rank_candidate_confidence: Option<f32>,
   suit: Option<String>,
   suit_symbol: Option<String>,
   short_code: Option<String>,
@@ -958,6 +1066,8 @@ impl CardReadValue {
       raw_text: None,
       normalized_text: None,
       rank: None,
+      rank_candidate: None,
+      rank_candidate_confidence: None,
       suit: None,
       suit_symbol: None,
       short_code: None,
@@ -977,6 +1087,9 @@ struct CardReadEvidence {
 
 fn write_observed_state(args: &ObserveArgs) -> Result<(), CliError> {
   let state = observe_from_args(args)?;
+  // TODO(balatro-state-human-output): the default renderer still prints Rust
+  // Debug output. Add an app-owned table only after its stable summary columns
+  // are owner-approved; see `2026-08-05-linux-live-gameplay-evidence.md`.
   write_output(args.output_mode(), &state)
 }
 
@@ -988,6 +1101,18 @@ fn write_scores(args: &ObserveArgs) -> Result<(), CliError> {
 fn write_rounds(args: &ObserveArgs) -> Result<(), CliError> {
   let state = observe_from_args(args)?;
   write_output(args.output_mode(), &state.rounds)
+}
+
+fn write_jokers(args: &ObserveArgs) -> Result<(), CliError> {
+  let mut state = observe_from_args(args)?;
+  if args.image.is_none() && std::env::var_os("AUV_CONTEXT").is_some() {
+    hover_read_jokers_via_api(&mut state)?;
+  } else {
+    // TODO(balatro-local-joker-auto-read): batch local hover OCR after the
+    // app-owned operation can retain one native session across list output;
+    // the current owner-approved slice is the routed Linux gameplay path.
+  }
+  write_output(args.output_mode(), &state.jokers)
 }
 
 fn write_card_read(args: &SlotObserveArgs) -> Result<(), CliError> {
@@ -1044,6 +1169,7 @@ fn write_pack_read(args: &ObserveArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_game_cash_out(args: OperationControlArgs) -> Result<(), CliError> {
+  let config = BalatroModelConfig::from_operation_args(&args);
   let details = args.details;
   let confirmation = if !args.verify || args.verify_mode == VerifyModeArg::ActivationOnly {
     CashOutConfirmationRequest::None
@@ -1052,17 +1178,42 @@ fn click_game_cash_out(args: OperationControlArgs) -> Result<(), CliError> {
   } else {
     CashOutConfirmationRequest::Weak
   };
-  let result = cash_out(CashOutRequest {
+  let request = CashOutRequest {
     target: args.target,
     confirmation,
     timeout_ms: args.timeout_ms.unwrap_or(1200),
-  })?;
+  };
+  let result = if std::env::var_os("AUV_CONTEXT").is_some() {
+    cash_out_via_api(request, config)?
+  } else {
+    cash_out(request)?
+  };
   write_cash_out_output(details, &result)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn click_game_cash_out(_args: OperationControlArgs) -> Result<(), CliError> {
-  Err(CliError::Message("game cash-out live operation is only available on macOS".to_string()))
+fn click_game_cash_out(args: OperationControlArgs) -> Result<(), CliError> {
+  if std::env::var_os("AUV_CONTEXT").is_none() {
+    return Err(CliError::Message("game cash-out requires macOS locally or an inherited AUV device context".to_string()));
+  }
+  let config = BalatroModelConfig::from_operation_args(&args);
+  let confirmation = if !args.verify || args.verify_mode == VerifyModeArg::ActivationOnly {
+    CashOutConfirmationRequest::None
+  } else if args.verify_mode == VerifyModeArg::Targeted {
+    CashOutConfirmationRequest::Targeted
+  } else {
+    CashOutConfirmationRequest::Weak
+  };
+  let details = args.details;
+  let result = cash_out_via_api(
+    CashOutRequest {
+      target: args.target,
+      confirmation,
+      timeout_ms: args.timeout_ms.unwrap_or(1200),
+    },
+    config,
+  )?;
+  write_cash_out_output(details, &result)
 }
 
 #[cfg(target_os = "macos")]
@@ -1090,9 +1241,11 @@ pub fn cash_out(request: CashOutRequest) -> Result<CashOutResult, CliError> {
 
   let result = CashOutResult {
     target: request.target,
-    selected_button,
-    window_point: WindowPoint::new(point.x, point.y),
-    delivery,
+    attempts: vec![CashOutAttempt {
+      selected_button,
+      point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(point.x, point.y)),
+      delivery,
+    }],
     confirmation,
   };
   emit_cash_out_completed(&result);
@@ -1102,6 +1255,66 @@ pub fn cash_out(request: CashOutRequest) -> Result<CashOutResult, CliError> {
 #[cfg(not(target_os = "macos"))]
 pub fn cash_out(_request: CashOutRequest) -> Result<CashOutResult, CliError> {
   Err(CliError::Message("game cash-out live operation is only available on macOS".to_string()))
+}
+
+fn cash_out_via_api(request: CashOutRequest, config: BalatroModelConfig) -> Result<CashOutResult, CliError> {
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  let before = runtime.block_on(observe_live_via_api(&request.target, &config, None, true))?;
+  let mut current = before.clone();
+  let mut attempts = Vec::new();
+  let mut confirmation = CashOutConfirmation::NotRequested;
+  let attempt_limit = if request.confirmation == CashOutConfirmationRequest::None {
+    1
+  } else {
+    2
+  };
+  for attempt in 0..attempt_limit {
+    let selected_button = find_button(&current, "button_cash_out")?.clone();
+    let (screen_point, delivery) =
+      runtime.block_on(click_display_frame_point_via_api(&current.frame, bbox_center_point(selected_button.bbox)))?;
+    attempts.push(CashOutAttempt {
+      selected_button,
+      point: ActionPoint::screen(screen_point),
+      delivery,
+    });
+    if request.confirmation == CashOutConfirmationRequest::None {
+      break;
+    }
+    let settle_deadline = Instant::now() + Duration::from_millis((request.timeout_ms / attempt_limit as u64).max(350));
+    loop {
+      std::thread::sleep(Duration::from_millis(250));
+      match runtime.block_on(observe_live_via_api(&request.target, &config, None, true)) {
+        Ok(after) => {
+          confirmation = evaluate_cash_out_confirmation(request.confirmation, &before, Ok(&after));
+          current = after;
+          if matches!(confirmation, CashOutConfirmation::Confirmed { .. }) || Instant::now() >= settle_deadline {
+            break;
+          }
+        }
+        Err(error) => {
+          confirmation = evaluate_cash_out_confirmation(request.confirmation, &before, Err(error.to_string()));
+          break;
+        }
+      }
+    }
+    if matches!(confirmation, CashOutConfirmation::Confirmed { .. }) {
+      break;
+    }
+    if attempt + 1 < attempt_limit {
+      std::thread::sleep(Duration::from_millis(250));
+    }
+  }
+
+  let result = CashOutResult {
+    target: request.target,
+    attempts,
+    confirmation,
+  };
+  emit_cash_out_completed(&result);
+  Ok(result)
 }
 
 #[cfg(feature = "tracing")]
@@ -1116,30 +1329,35 @@ fn emit_input_delivery(_delivery: &auv_driver::InputActionResult) {}
 struct CashOutCliOutput<'a> {
   operation: &'static str,
   target: &'a str,
-  delivery: &'a auv_driver::InputActionResult,
   confirmation: &'a CashOutConfirmation,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  selected_button: Option<&'a ButtonTarget>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  window_point: Option<WindowPoint>,
+  attempts: &'a [CashOutAttempt],
 }
 
-fn write_cash_out_output(details: bool, result: &CashOutResult) -> Result<(), CliError> {
+fn write_cash_out_output(_details: bool, result: &CashOutResult) -> Result<(), CliError> {
   write_output(
     OutputMode::Json,
     &CashOutCliOutput {
       operation: "game.cash_out",
       target: &result.target,
-      delivery: &result.delivery,
       confirmation: &result.confirmation,
-      selected_button: details.then_some(&result.selected_button),
-      window_point: details.then_some(result.window_point),
+      attempts: &result.attempts,
     },
   )
 }
 
 #[cfg(target_os = "macos")]
 fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
+  if std::env::var_os("AUV_CONTEXT").is_some() {
+    let config = BalatroModelConfig::from_operation_args(&args);
+    return write_game_restart_output(&game_restart_via_api(
+      GameRestartRequest {
+        target: args.target,
+        confirm_started: args.verify && args.verify_mode != VerifyModeArg::ActivationOnly,
+        timeout_ms: args.timeout_ms.unwrap_or(1800),
+      },
+      config,
+    )?);
+  }
   let result = game_restart(GameRestartRequest {
     target: args.target,
     confirm_started: args.verify && args.verify_mode != VerifyModeArg::ActivationOnly,
@@ -1244,8 +1462,19 @@ pub fn game_restart(request: GameRestartRequest) -> Result<GameRestartResult, Cl
 }
 
 #[cfg(not(target_os = "macos"))]
-fn click_game_restart(_args: OperationControlArgs) -> Result<(), CliError> {
-  Err(CliError::Message("game restart live operation is only available on macOS".to_string()))
+fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
+  if std::env::var_os("AUV_CONTEXT").is_some() {
+    let config = BalatroModelConfig::from_operation_args(&args);
+    return write_game_restart_output(&game_restart_via_api(
+      GameRestartRequest {
+        target: args.target,
+        confirm_started: args.verify && args.verify_mode != VerifyModeArg::ActivationOnly,
+        timeout_ms: args.timeout_ms.unwrap_or(1800),
+      },
+      config,
+    )?);
+  }
+  Err(CliError::Message("game restart live operation requires macOS locally or an inherited AUV device context".to_string()))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1264,10 +1493,127 @@ fn deliver_game_restart_click(
   let delivery = click_game_point(session, window, point)?;
   clicks.push(GameRestartClick {
     target,
-    window_point: WindowPoint::new(point.x, point.y),
+    point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(point.x, point.y)),
     delivery,
   });
   Ok(())
+}
+
+fn game_restart_via_api(request: GameRestartRequest, config: BalatroModelConfig) -> Result<GameRestartResult, CliError> {
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  let mut state = observe_restart_state_via_api(&runtime, &request.target, &config, RestartObservation::AnyControl)?;
+  let mut clicks = Vec::new();
+
+  for _ in 0..6 {
+    let Some(button) = restart_primary_button(&state.buttons).cloned() else {
+      state = observe_restart_state_via_api(&runtime, &request.target, &config, RestartObservation::AnyControl)?;
+      continue;
+    };
+    let opens_new_run_modal = button.id == "button_main_menu_play";
+    if button.id == "button_new_run_play" {
+      // TODO(balatro-new-run-tab-detector): replace this layout point after the
+      // New Run/Continue/Challenge tabs are represented in the UI dataset.
+      // Selecting New Run is required because Continue may hold a stale run.
+      let tab_point = Point::new(f64::from(state.frame.image_size.width) * 0.505, f64::from(state.frame.image_size.height) * 0.333);
+      let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&state.frame, tab_point))?;
+      clicks.push(GameRestartClick {
+        target: GameRestartTarget::NewRunTabLayout,
+        point: ActionPoint::screen(screen_point),
+        delivery,
+      });
+      // The modal is translucent, so a fresh detector frame can momentarily
+      // prefer the occluded main-menu button. The modal geometry does not move
+      // when changing tabs; retain this frame's detector-backed Play target.
+      std::thread::sleep(Duration::from_millis(350));
+    }
+    let target = GameRestartTarget::DetectedButton {
+      button: button.clone(),
+    };
+    let point = bbox_center_point(button.bbox);
+    let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&state.frame, point))?;
+    clicks.push(GameRestartClick {
+      target,
+      point: ActionPoint::screen(screen_point),
+      delivery,
+    });
+    std::thread::sleep(Duration::from_millis(900));
+    if opens_new_run_modal {
+      // TODO(balatro-new-run-modal-layout): replace both modal layout points
+      // after tab and Play recognition are reliable on translucent frames.
+      let tab_point = Point::new(f64::from(state.frame.image_size.width) * 0.505, f64::from(state.frame.image_size.height) * 0.333);
+      let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&state.frame, tab_point))?;
+      clicks.push(GameRestartClick {
+        target: GameRestartTarget::NewRunTabLayout,
+        point: ActionPoint::screen(screen_point),
+        delivery,
+      });
+      std::thread::sleep(Duration::from_millis(350));
+      let play_point = Point::new(f64::from(state.frame.image_size.width) * 0.593, f64::from(state.frame.image_size.height) * 0.823);
+      let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&state.frame, play_point))?;
+      clicks.push(GameRestartClick {
+        target: GameRestartTarget::NewRunPlayLayout,
+        point: ActionPoint::screen(screen_point),
+        delivery,
+      });
+      std::thread::sleep(Duration::from_millis(900));
+    }
+    let expected = if opens_new_run_modal {
+      RestartObservation::Started
+    } else {
+      RestartObservation::Started
+    };
+    state = observe_restart_state_via_api(&runtime, &request.target, &config, expected)?;
+    if matches!(state.phase, BalatroPhase::BlindSelect | BalatroPhase::Playing | BalatroPhase::Store) {
+      break;
+    }
+  }
+
+  let outcome = if request.confirm_started {
+    classify_game_restart_outcome(Ok(&state))
+  } else {
+    GameRestartOutcome::NotChecked
+  };
+  let result = GameRestartResult {
+    target: request.target,
+    clicks,
+    outcome,
+  };
+  emit_game_restart_completed(&result);
+  Ok(result)
+}
+
+#[derive(Clone, Copy)]
+enum RestartObservation {
+  AnyControl,
+  Started,
+}
+
+fn observe_restart_state_via_api(
+  runtime: &tokio::runtime::Runtime,
+  target: &str,
+  config: &BalatroModelConfig,
+  expected: RestartObservation,
+) -> Result<BalatroState, CliError> {
+  let mut last = None;
+  for attempt in 0..3 {
+    let state = runtime.block_on(observe_live_via_api(target, config, None, true))?;
+    let started = matches!(state.phase, BalatroPhase::BlindSelect | BalatroPhase::Playing | BalatroPhase::Store);
+    let matches_expected = match expected {
+      RestartObservation::AnyControl => restart_primary_button(&state.buttons).is_some() || started,
+      RestartObservation::Started => started,
+    };
+    if matches_expected {
+      return Ok(state);
+    }
+    last = Some(state);
+    if attempt < 2 {
+      std::thread::sleep(Duration::from_millis(250));
+    }
+  }
+  Ok(last.expect("bounded restart observation loop always records a state"))
 }
 
 #[derive(Debug, Serialize)]
@@ -1293,12 +1639,18 @@ fn write_game_restart_output(result: &GameRestartResult) -> Result<(), CliError>
 #[cfg(target_os = "macos")]
 fn click_store_buy(args: SlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_store_slot_index(&args.slot)?;
-  let result = store_buy(StoreBuyRequest {
+  let config = BalatroModelConfig::from_operation_args(&args.control);
+  let request = StoreBuyRequest {
     target: args.control.target,
     slot: SlotId::new(ObjectZone::Store, slot_index),
     confirm_purchase: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
     timeout_ms: args.control.timeout_ms.unwrap_or(1000),
-  })?;
+  };
+  let result = if std::env::var_os("AUV_CONTEXT").is_some() {
+    store_buy_via_api(request, config)?
+  } else {
+    store_buy(request)?
+  };
   write_store_buy_output(&result)
 }
 
@@ -1318,7 +1670,7 @@ pub fn store_buy(request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
   let item = select_store_item(&before, request.slot.index)?.clone();
   let item_point = window_point_from_store_item(&before, &window, &item);
   let selection = StoreBuyClick {
-    window_point: WindowPoint::new(item_point.x, item_point.y),
+    point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(item_point.x, item_point.y)),
     delivery: click_game_point(&session, &window, item_point)?,
   };
 
@@ -1365,7 +1717,7 @@ pub fn store_buy(request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
   };
   let confirm_point = window_point_from_button(&selected, &window, &confirmation_button);
   let submission = StoreBuyClick {
-    window_point: WindowPoint::new(confirm_point.x, confirm_point.y),
+    point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(confirm_point.x, confirm_point.y)),
     delivery: click_game_point(&session, &window, confirm_point)?,
   };
 
@@ -1399,13 +1751,113 @@ pub fn store_buy(request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
 
 #[cfg(not(target_os = "macos"))]
 fn click_store_buy(args: SlotOperationArgs) -> Result<(), CliError> {
-  parse_store_slot_index(&args.slot)?;
-  Err(CliError::Message("store buy live operation is only available on macOS".to_string()))
+  if std::env::var_os("AUV_CONTEXT").is_none() {
+    return Err(CliError::Message("store buy requires macOS locally or an inherited AUV device context".to_string()));
+  }
+  let slot_index = parse_store_slot_index(&args.slot)?;
+  let config = BalatroModelConfig::from_operation_args(&args.control);
+  let result = store_buy_via_api(
+    StoreBuyRequest {
+      target: args.control.target,
+      slot: SlotId::new(ObjectZone::Store, slot_index),
+      confirm_purchase: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+      timeout_ms: args.control.timeout_ms.unwrap_or(1000),
+    },
+    config,
+  )?;
+  write_store_buy_output(&result)
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn store_buy(_request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
   Err(CliError::Message("store buy live operation is only available on macOS".to_string()))
+}
+
+fn store_buy_via_api(request: StoreBuyRequest, config: BalatroModelConfig) -> Result<StoreBuyResult, CliError> {
+  if request.slot.zone != ObjectZone::Store {
+    return Err(CliError::Message(format!("store buy requires a store slot, got {}", request.slot)));
+  }
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  let probe = runtime.block_on(observe_live_via_api(&request.target, &config, None, true))?;
+  // A preceding read may leave a tooltip covering store detections. Move to a
+  // display corner outside the observed game viewport and obtain a fresh,
+  // stable frame before resolving the caller's slot index.
+  runtime.block_on(move_display_frame_point_via_api(&probe.frame, Point::new(1.0, 1.0)))?;
+  std::thread::sleep(Duration::from_millis(400));
+  let before = runtime.block_on(observe_live_via_api(&request.target, &config, None, true))?;
+  let item = select_store_item(&before, request.slot.index)?.clone();
+  let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&before.frame, bbox_center_point(item.bbox)))?;
+  let selection = StoreBuyClick {
+    point: ActionPoint::screen(screen_point),
+    delivery,
+  };
+
+  std::thread::sleep(Duration::from_millis(500));
+  let selected = match runtime.block_on(observe_live_via_api(&request.target, &config, None, true)) {
+    Ok(selected) => selected,
+    Err(error) => {
+      let result = StoreBuyResult {
+        target: request.target,
+        slot: request.slot,
+        item,
+        outcome: StoreBuyOutcome::SelectionOnly {
+          selection,
+          reason: StoreBuyIncompleteReason::StateReadFailed {
+            message: error.to_string(),
+          },
+        },
+      };
+      emit_store_buy_completed(&result);
+      return Ok(result);
+    }
+  };
+  let confirmation_button = match select_store_buy_confirm_button(&selected) {
+    Ok(button) => button.clone(),
+    Err(_) => {
+      let result = StoreBuyResult {
+        target: request.target,
+        slot: request.slot,
+        item,
+        outcome: StoreBuyOutcome::SelectionOnly {
+          selection,
+          reason: StoreBuyIncompleteReason::PurchaseControlNotFound,
+        },
+      };
+      emit_store_buy_completed(&result);
+      return Ok(result);
+    }
+  };
+  let (screen_point, delivery) =
+    runtime.block_on(click_display_frame_point_via_api(&selected.frame, bbox_center_point(confirmation_button.bbox)))?;
+  let submission = StoreBuyClick {
+    point: ActionPoint::screen(screen_point),
+    delivery,
+  };
+  let confirmation = if request.confirm_purchase {
+    std::thread::sleep(Duration::from_millis(request.timeout_ms.max(500)));
+    evaluate_store_buy_confirmation(
+      &before,
+      runtime.block_on(observe_live_via_api(&request.target, &config, None, true)).as_ref().map_err(ToString::to_string),
+    )
+  } else {
+    StoreBuyConfirmation::NotRequested
+  };
+  let result = StoreBuyResult {
+    target: request.target,
+    slot: request.slot,
+    item,
+    outcome: StoreBuyOutcome::Submitted {
+      selection,
+      confirmation_button,
+      submission,
+      confirmation,
+    },
+  };
+  emit_store_buy_completed(&result);
+  Ok(result)
 }
 
 #[derive(Debug, Serialize)]
@@ -1463,6 +1915,223 @@ fn observe_from_args(args: &ObserveArgs) -> Result<BalatroState, CliError> {
   observe_live_target(&args.target, &config, args.no_cache)
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct HandSlotDiagnostic {
+  slot: SlotId,
+  bbox: BoundingBox,
+  confidence: f32,
+  selected: bool,
+  requested: bool,
+  click_frame_point: Point,
+  click_inside_bbox: bool,
+  visual_fingerprint: Option<String>,
+  reading: Option<CardReadValue>,
+}
+
+#[derive(Debug, Serialize)]
+struct FrameDiagnosticReport<'a> {
+  schema_version: &'static str,
+  frame: &'a crate::model::FrameRef,
+  phase: BalatroPhase,
+  scores: &'a crate::model::ScoreState,
+  rounds: &'a crate::model::RoundState,
+  consumables: &'a [ConsumableSlot],
+  requested_slots: Vec<SlotId>,
+  selection_matches_request: Option<bool>,
+  hand: Vec<HandSlotDiagnostic>,
+  raw_entities: &'a [crate::model::ObjectEvidence],
+  raw_ui: &'a [crate::model::ObjectEvidence],
+  state_diagnostics: &'a [crate::model::BalatroDiagnostic],
+  warnings: Vec<String>,
+}
+
+fn write_frame_diagnostics(args: DiagnosticsArgs) -> Result<(), CliError> {
+  let image_path = args
+    .observe
+    .image
+    .as_deref()
+    .ok_or_else(|| CliError::Message("diagnostics requires --image PATH so the annotated output is reproducible".to_string()))?;
+  let state = observe_from_args(&args.observe)?;
+  let requested = args.requested_slots.as_deref().map(parse_hand_slot_indices).transpose()?.unwrap_or_default();
+  let interactions = hand_card_interactions(&state);
+  let mut read_indices = requested.clone();
+  read_indices.extend(interactions.iter().filter(|interaction| interaction.selected).map(|interaction| interaction.slot.index));
+  read_indices.sort_unstable();
+  read_indices.dedup();
+  if read_indices.is_empty() {
+    read_indices.extend(interactions.iter().map(|interaction| interaction.slot.index));
+  }
+  let reads = diagnostic_card_reads(image_path, &state, &read_indices)?;
+  let hand = interactions
+    .iter()
+    .map(|interaction| HandSlotDiagnostic {
+      slot: interaction.slot,
+      bbox: interaction.bbox,
+      confidence: interaction.confidence,
+      selected: interaction.selected,
+      requested: requested.contains(&interaction.slot.index),
+      click_frame_point: interaction.click_frame_point,
+      click_inside_bbox: point_inside_bbox(interaction.click_frame_point, interaction.bbox),
+      visual_fingerprint: interaction.visual_fingerprint.clone(),
+      reading: reads.iter().find(|read| read.slot == interaction.slot).map(|read| read.reading.clone()),
+    })
+    .collect::<Vec<_>>();
+  let selection_matches_request = (!requested.is_empty()).then(|| {
+    let mut selected = hand.iter().filter(|slot| slot.selected).map(|slot| slot.slot.index).collect::<Vec<_>>();
+    let mut requested = requested.clone();
+    selected.sort_unstable();
+    requested.sort_unstable();
+    selected == requested
+  });
+  let mut warnings = Vec::new();
+  if selection_matches_request == Some(false) {
+    warnings.push("observed raised-card selection does not match --requested-slots".to_string());
+  }
+  if hand.iter().any(|slot| !slot.click_inside_bbox) {
+    warnings.push("at least one computed hand click lies outside its detected bbox".to_string());
+  }
+  if hand.iter().any(|slot| slot.reading.as_ref().is_some_and(|reading| !reading.valid)) {
+    warnings.push("at least one requested or selected card could not be read as rank+suit".to_string());
+  }
+  let report = FrameDiagnosticReport {
+    schema_version: "auv.game.balatro.frame_diagnostic.v1",
+    frame: &state.frame,
+    phase: state.phase,
+    scores: &state.scores,
+    rounds: &state.rounds,
+    consumables: &state.consumables,
+    requested_slots: requested.into_iter().map(|index| SlotId::new(ObjectZone::Hand, index)).collect(),
+    selection_matches_request,
+    hand,
+    raw_entities: &state.raw_entities,
+    raw_ui: &state.raw_ui,
+    state_diagnostics: &state.diagnostics,
+    warnings,
+  };
+
+  let mut annotated = image::open(image_path)?.to_rgba8();
+  draw_frame_diagnostics(&mut annotated, &state, &report.hand);
+  ensure_parent_directory(&args.annotated_out)?;
+  annotated.save(&args.annotated_out)?;
+  ensure_parent_directory(&args.report_out)?;
+  fs::write(&args.report_out, serde_json::to_vec_pretty(&report)?)?;
+  println!(
+    "{}",
+    serde_json::to_string_pretty(&json!({
+      "annotated": args.annotated_out,
+      "report": args.report_out,
+      "phase": state.phase,
+      "selection_matches_request": report.selection_matches_request,
+      "warnings": report.warnings,
+    }))?
+  );
+  Ok(())
+}
+
+fn ensure_parent_directory(path: &Path) -> Result<(), CliError> {
+  if let Some(parent) = path.parent()
+    && !parent.as_os_str().is_empty()
+  {
+    fs::create_dir_all(parent)?;
+  }
+  Ok(())
+}
+
+fn point_inside_bbox(point: Point, bbox: BoundingBox) -> bool {
+  point.x >= f64::from(bbox.x1) && point.x <= f64::from(bbox.x2) && point.y >= f64::from(bbox.y1) && point.y <= f64::from(bbox.y2)
+}
+
+fn draw_frame_diagnostics(image: &mut RgbaImage, state: &BalatroState, hand: &[HandSlotDiagnostic]) {
+  for evidence in &state.raw_entities {
+    draw_bbox(image, evidence.detection.bbox, image::Rgba([40, 220, 90, 255]), 2);
+  }
+  for evidence in &state.raw_ui {
+    draw_bbox(image, evidence.detection.bbox, image::Rgba([40, 180, 255, 255]), 2);
+  }
+  for slot in hand {
+    let color = if slot.selected {
+      image::Rgba([255, 60, 210, 255])
+    } else {
+      image::Rgba([255, 210, 40, 255])
+    };
+    draw_bbox(image, slot.bbox, color, 4);
+    draw_cross(image, slot.click_frame_point, image::Rgba([255, 40, 40, 255]));
+  }
+}
+
+fn draw_bbox(image: &mut RgbaImage, bbox: BoundingBox, color: image::Rgba<u8>, thickness: u32) {
+  let max_x = image.width().saturating_sub(1);
+  let max_y = image.height().saturating_sub(1);
+  let x1 = bbox.x1.max(0.0).floor() as u32;
+  let y1 = bbox.y1.max(0.0).floor() as u32;
+  let x2 = bbox.x2.max(0.0).ceil() as u32;
+  let y2 = bbox.y2.max(0.0).ceil() as u32;
+  let (x1, x2) = (x1.min(max_x), x2.min(max_x));
+  let (y1, y2) = (y1.min(max_y), y2.min(max_y));
+  for offset in 0..thickness {
+    let left = x1.saturating_add(offset).min(x2);
+    let right = x2.saturating_sub(offset).max(x1);
+    let top = y1.saturating_add(offset).min(y2);
+    let bottom = y2.saturating_sub(offset).max(y1);
+    for x in left..=right {
+      image.put_pixel(x, top, color);
+      image.put_pixel(x, bottom, color);
+    }
+    for y in top..=bottom {
+      image.put_pixel(left, y, color);
+      image.put_pixel(right, y, color);
+    }
+  }
+}
+
+fn draw_cross(image: &mut RgbaImage, point: Point, color: image::Rgba<u8>) {
+  let x = point.x.round() as i64;
+  let y = point.y.round() as i64;
+  for delta in -9..=9 {
+    for (px, py) in [(x + delta, y), (x, y + delta)] {
+      if px >= 0 && py >= 0 && px < i64::from(image.width()) && py < i64::from(image.height()) {
+        image.put_pixel(px as u32, py as u32, color);
+      }
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn diagnostic_card_reads(image: &Path, state: &BalatroState, indices: &[u32]) -> Result<Vec<CardReadResult>, CliError> {
+  let session = open_macos_session()?;
+  let capture = capture_from_image(image)?;
+  let templates = load_deck_rank_templates();
+  indices
+    .iter()
+    .map(|index| {
+      let card = select_hand_card(state, *index)?;
+      read_card_from_capture(&session, &capture, image, state, card, templates.as_deref())
+    })
+    .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn diagnostic_card_reads(image: &Path, state: &BalatroState, indices: &[u32]) -> Result<Vec<CardReadResult>, CliError> {
+  indices
+    .iter()
+    .map(|index| {
+      let card = select_hand_card(state, *index)?;
+      Ok(CardReadResult {
+        slot: card.slot,
+        bbox: card.bbox,
+        confidence: card.confidence,
+        reading: CardReadValue::unread(),
+        evidence: CardReadEvidence {
+          frame: image.display().to_string(),
+          ocr_region: ocr_region_for_card(state, card),
+          corner_crop: None,
+          source: "image_without_ocr_non_macos".to_string(),
+        },
+      })
+    })
+    .collect()
+}
+
 fn observe_image_with_ui_readings(image: &Path, config: &BalatroModelConfig, no_cache: bool) -> Result<BalatroState, CliError> {
   let mut state = observe_image(image, config, no_cache)?;
   enrich_ui_numeric_readings_from_image(&mut state, image);
@@ -1480,6 +2149,9 @@ fn read_cards_from_args(args: &SlotObserveArgs) -> Result<Vec<CardReadResult>, C
 
 #[cfg(target_os = "macos")]
 fn read_object_live(args: &SlotObserveArgs, zone: ObjectReadZone) -> Result<ObjectReadResult, CliError> {
+  if std::env::var_os("AUV_CONTEXT").is_some() {
+    return read_object_live_via_api(args, zone);
+  }
   let config = BalatroModelConfig::from_observe_args(&args.observe);
   let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.observe.target.clone())))?;
@@ -1505,8 +2177,112 @@ fn read_object_live(args: &SlotObserveArgs, zone: ObjectReadZone) -> Result<Obje
 
 #[cfg(not(target_os = "macos"))]
 fn read_object_live(args: &SlotObserveArgs, zone: ObjectReadZone) -> Result<ObjectReadResult, CliError> {
+  read_object_live_via_api(args, zone)
+}
+
+fn read_object_live_via_api(args: &SlotObserveArgs, zone: ObjectReadZone) -> Result<ObjectReadResult, CliError> {
   let state = observe_from_args(&args.observe)?;
-  object_read_from_state(&state, &args.slot, zone)
+  let mut read = object_read_from_state(&state, &args.slot, zone)?;
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  let request = HoverReadRequest {
+    point: bbox_center_point(read.bbox),
+    region: object_hover_ocr_region(),
+    custom_words: object_ocr_words().into_iter().map(str::to_string).collect(),
+  };
+  match runtime.block_on(hover_read_display_frame_points_via_api(&state.frame, &[request])) {
+    Ok(mut observations) => {
+      let observation = observations.pop().expect("one hover request returns one observation");
+      apply_hover_read_observation(&mut read, observation.recognition, observation.frame_source);
+    }
+    Err(error) => {
+      read.evidence.source = "remote_hover_ocr_failed".to_string();
+      read.evidence.hover_error = Some(error.to_string());
+    }
+  }
+  Ok(read)
+}
+
+fn hover_read_jokers_via_api(state: &mut BalatroState) -> Result<(), CliError> {
+  let pending = state
+    .jokers
+    .iter()
+    .enumerate()
+    .filter(|(_, joker)| joker.cache.needs_reading || joker.reading.text.is_none())
+    .map(|(index, joker)| {
+      (
+        index,
+        HoverReadRequest {
+          point: bbox_center_point(joker.bbox),
+          region: object_hover_ocr_region(),
+          custom_words: object_ocr_words().into_iter().map(str::to_string).collect(),
+        },
+      )
+    })
+    .collect::<Vec<_>>();
+  if pending.is_empty() {
+    return Ok(());
+  }
+  let requests = pending.iter().map(|(_, request)| request.clone()).collect::<Vec<_>>();
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  let observations = runtime.block_on(hover_read_display_frame_points_via_api(&state.frame, &requests))?;
+  for ((index, _), observation) in pending.into_iter().zip(observations) {
+    if let Some((text, confidence)) = tooltip_recognition(&observation.recognition, state.jokers[index].bbox) {
+      let joker = &mut state.jokers[index];
+      joker.reading = Reading {
+        status: ReadingStatus::Read,
+        text: Some(text),
+        confidence,
+      };
+      joker.cache.needs_reading = false;
+      joker.cache.changed_since_last_read = false;
+    }
+  }
+  Ok(())
+}
+
+fn apply_hover_read_observation(read: &mut ObjectReadResult, recognition: auv_driver::TextRecognition, frame_source: String) {
+  if let Some((text, confidence)) = tooltip_recognition(&recognition, read.bbox) {
+    read.reading = ObjectReadValue {
+      status: "read",
+      raw_text: Some(text),
+      confidence,
+    };
+    read.evidence.hover_required = false;
+  }
+  read.evidence.source = "remote_hover_ocr".to_string();
+  read.evidence.hover_frame = Some(frame_source);
+  read.evidence.hover_ocr_region = Some(object_hover_ocr_region());
+}
+
+fn tooltip_recognition(recognition: &auv_driver::TextRecognition, bbox: BoundingBox) -> Option<(String, Option<f32>)> {
+  let width = f64::from((bbox.x2 - bbox.x1).max(1.0));
+  let height = f64::from((bbox.y2 - bbox.y1).max(1.0));
+  let x1 = f64::from(bbox.x1) - width * 1.8;
+  let y1 = f64::from(bbox.y1) - height * 0.7;
+  let x2 = f64::from(bbox.x2) + width * 1.8;
+  let y2 = f64::from(bbox.y2) + height * 0.7;
+  let regions = recognition
+    .regions
+    .iter()
+    .filter(|region| {
+      let bounds = region.bounds;
+      bounds.origin.x + bounds.size.width >= x1
+        && bounds.origin.x <= x2
+        && bounds.origin.y + bounds.size.height >= y1
+        && bounds.origin.y <= y2
+    })
+    .collect::<Vec<_>>();
+  let text = regions.iter().map(|region| region.text.trim()).filter(|text| !text.is_empty()).collect::<Vec<_>>().join("\n");
+  let text = non_empty_trimmed_text(&text).or_else(|| non_empty_trimmed_text(&recognition.text))?;
+  let confidences = regions.iter().filter_map(|region| region.confidence).collect::<Vec<_>>();
+  let confidence = (!confidences.is_empty()).then(|| confidences.iter().sum::<f32>() / confidences.len() as f32);
+  Some((text, confidence))
 }
 
 #[cfg(target_os = "macos")]
@@ -2071,6 +2847,7 @@ fn write_pack_choose_output(details: bool, result: &PackChooseResult) -> Result<
 
 #[cfg(target_os = "macos")]
 fn click_store_next_round(args: OperationControlArgs) -> Result<(), CliError> {
+  let config = BalatroModelConfig::from_operation_args(&args);
   let details = args.details;
   let confirmation = if !args.verify || args.verify_mode == VerifyModeArg::ActivationOnly {
     StoreNextRoundConfirmationRequest::None
@@ -2079,11 +2856,16 @@ fn click_store_next_round(args: OperationControlArgs) -> Result<(), CliError> {
   } else {
     StoreNextRoundConfirmationRequest::Weak
   };
-  let result = store_next_round(StoreNextRoundRequest {
+  let request = StoreNextRoundRequest {
     target: args.target,
     confirmation,
     timeout_ms: args.timeout_ms.unwrap_or(1200),
-  })?;
+  };
+  let result = if std::env::var_os("AUV_CONTEXT").is_some() {
+    store_next_round_via_api(request, config)?
+  } else {
+    store_next_round(request)?
+  };
   write_store_next_round_output(details, &result)
 }
 
@@ -2114,9 +2896,11 @@ pub fn store_next_round(request: StoreNextRoundRequest) -> Result<StoreNextRound
 
   let result = StoreNextRoundResult {
     target: request.target,
-    selected_target,
-    window_point: WindowPoint::new(point.x, point.y),
-    delivery,
+    attempts: vec![StoreNextRoundAttempt {
+      selected_target,
+      point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(point.x, point.y)),
+      delivery,
+    }],
     confirmation,
   };
   emit_store_next_round_completed(&result);
@@ -2124,8 +2908,28 @@ pub fn store_next_round(request: StoreNextRoundRequest) -> Result<StoreNextRound
 }
 
 #[cfg(not(target_os = "macos"))]
-fn click_store_next_round(_args: OperationControlArgs) -> Result<(), CliError> {
-  Err(CliError::Message("store next-round live operation is only available on macOS".to_string()))
+fn click_store_next_round(args: OperationControlArgs) -> Result<(), CliError> {
+  if std::env::var_os("AUV_CONTEXT").is_none() {
+    return Err(CliError::Message("store next-round requires macOS locally or an inherited AUV device context".to_string()));
+  }
+  let config = BalatroModelConfig::from_operation_args(&args);
+  let details = args.details;
+  let confirmation = if !args.verify || args.verify_mode == VerifyModeArg::ActivationOnly {
+    StoreNextRoundConfirmationRequest::None
+  } else if args.verify_mode == VerifyModeArg::Targeted {
+    StoreNextRoundConfirmationRequest::Targeted
+  } else {
+    StoreNextRoundConfirmationRequest::Weak
+  };
+  let result = store_next_round_via_api(
+    StoreNextRoundRequest {
+      target: args.target,
+      confirmation,
+      timeout_ms: args.timeout_ms.unwrap_or(1200),
+    },
+    config,
+  )?;
+  write_store_next_round_output(details, &result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2133,28 +2937,80 @@ pub fn store_next_round(_request: StoreNextRoundRequest) -> Result<StoreNextRoun
   Err(CliError::Message("store next-round live operation is only available on macOS".to_string()))
 }
 
+fn store_next_round_via_api(request: StoreNextRoundRequest, config: BalatroModelConfig) -> Result<StoreNextRoundResult, CliError> {
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  let before = runtime.block_on(observe_live_via_api(&request.target, &config, None, true))?;
+  let mut current = before.clone();
+  let mut attempts = Vec::new();
+  let mut confirmation = StoreNextRoundConfirmation::NotRequested;
+  let attempt_limit = if request.confirmation == StoreNextRoundConfirmationRequest::None {
+    1
+  } else {
+    2
+  };
+  for attempt in 0..attempt_limit {
+    let selected_target = resolve_store_next_round_target(&current)?;
+    let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&current.frame, selected_target.frame_point()))?;
+    attempts.push(StoreNextRoundAttempt {
+      selected_target,
+      point: ActionPoint::screen(screen_point),
+      delivery,
+    });
+    if request.confirmation == StoreNextRoundConfirmationRequest::None {
+      break;
+    }
+    let deadline = Instant::now() + Duration::from_millis((request.timeout_ms / attempt_limit as u64).max(350));
+    loop {
+      std::thread::sleep(Duration::from_millis(250));
+      match runtime.block_on(observe_live_via_api(&request.target, &config, None, true)) {
+        Ok(after) => {
+          confirmation = evaluate_store_next_round_confirmation(request.confirmation, &before, Ok(&after));
+          current = after;
+          if matches!(confirmation, StoreNextRoundConfirmation::Confirmed { .. }) || Instant::now() >= deadline {
+            break;
+          }
+        }
+        Err(error) => {
+          confirmation = evaluate_store_next_round_confirmation(request.confirmation, &before, Err(error.to_string()));
+          break;
+        }
+      }
+    }
+    if matches!(confirmation, StoreNextRoundConfirmation::Confirmed { .. }) {
+      break;
+    }
+    if attempt + 1 < attempt_limit {
+      std::thread::sleep(Duration::from_millis(250));
+    }
+  }
+  let result = StoreNextRoundResult {
+    target: request.target,
+    attempts,
+    confirmation,
+  };
+  emit_store_next_round_completed(&result);
+  Ok(result)
+}
+
 #[derive(Debug, Serialize)]
 struct StoreNextRoundCliOutput<'a> {
   operation: &'static str,
   target: &'a str,
-  delivery: &'a auv_driver::InputActionResult,
   confirmation: &'a StoreNextRoundConfirmation,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  selected_target: Option<&'a StoreNextRoundTarget>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  window_point: Option<WindowPoint>,
+  attempts: &'a [StoreNextRoundAttempt],
 }
 
-fn write_store_next_round_output(details: bool, result: &StoreNextRoundResult) -> Result<(), CliError> {
+fn write_store_next_round_output(_details: bool, result: &StoreNextRoundResult) -> Result<(), CliError> {
   write_output(
     OutputMode::Json,
     &StoreNextRoundCliOutput {
       operation: "store.next_round",
       target: &result.target,
-      delivery: &result.delivery,
       confirmation: &result.confirmation,
-      selected_target: details.then_some(&result.selected_target),
-      window_point: details.then_some(result.window_point),
+      attempts: &result.attempts,
     },
   )
 }
@@ -2323,22 +3179,44 @@ fn write_cards_clear_output(result: &CardsClearResult) -> Result<(), CliError> {
 #[cfg(target_os = "macos")]
 fn click_cards_commit(kind: CardCommitKind, args: MultiSlotOperationArgs) -> Result<(), CliError> {
   let slot_indices = parse_hand_slot_indices(&args.slots)?;
+  let config = BalatroModelConfig::from_operation_args(&args.control);
   let request = CardCommitRequest {
     target: args.control.target,
     slots: slot_indices.into_iter().map(|index| SlotId::new(ObjectZone::Hand, index)).collect(),
     confirm_change: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
     timeout_ms: args.control.timeout_ms.unwrap_or(1500),
   };
-  let result = match kind {
-    CardCommitKind::Play => cards_play(request),
-    CardCommitKind::Discard => cards_discard(request),
-  }?;
+  let result = if std::env::var_os("AUV_CONTEXT").is_some() {
+    card_commit_via_api(kind, request, config)?
+  } else {
+    match kind {
+      CardCommitKind::Play => cards_play(request),
+      CardCommitKind::Discard => cards_discard(request),
+    }?
+  };
   write_card_commit_output(&result)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn click_cards_commit(_kind: CardCommitKind, _args: MultiSlotOperationArgs) -> Result<(), CliError> {
-  Err(CliError::Message("cards play/discard live operations are only available on macOS".to_string()))
+fn click_cards_commit(kind: CardCommitKind, args: MultiSlotOperationArgs) -> Result<(), CliError> {
+  if std::env::var_os("AUV_CONTEXT").is_none() {
+    return Err(CliError::Message(
+      "cards play/discard live operations require macOS locally or an inherited AUV device context".to_string(),
+    ));
+  }
+  let slot_indices = parse_hand_slot_indices(&args.slots)?;
+  let config = BalatroModelConfig::from_operation_args(&args.control);
+  let result = card_commit_via_api(
+    kind,
+    CardCommitRequest {
+      target: args.control.target,
+      slots: slot_indices.into_iter().map(|index| SlotId::new(ObjectZone::Hand, index)).collect(),
+      confirm_change: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+      timeout_ms: args.control.timeout_ms.unwrap_or(1500),
+    },
+    config,
+  )?;
+  write_card_commit_output(&result)
 }
 
 #[cfg(target_os = "macos")]
@@ -2393,8 +3271,8 @@ fn card_commit(kind: CardCommitKind, request: CardCommitRequest) -> Result<CardC
     unreachable!("a matched hand selection always retains its observed state");
   };
 
-  let button = match find_button(&selected, kind.button_id()) {
-    Ok(button) => button.clone(),
+  let (control, frame_point) = match resolve_card_commit_target(&selected, kind) {
+    Ok(target) => target,
     Err(error) => {
       let result = CardCommitResult {
         target: request.target,
@@ -2411,7 +3289,7 @@ fn card_commit(kind: CardCommitKind, request: CardCommitRequest) -> Result<CardC
       return Ok(result);
     }
   };
-  let point = window_point_from_button(&selected, &window, &button);
+  let point = window_point_from_frame_point(&selected, &window, frame_point);
   let delivery = match click_game_point(&session, &window, point) {
     Ok(delivery) => delivery,
     Err(error) => {
@@ -2431,8 +3309,8 @@ fn card_commit(kind: CardCommitKind, request: CardCommitRequest) -> Result<CardC
     }
   };
   actions.push(CardCommitAction::Submit {
-    button,
-    window_point: WindowPoint::new(point.x, point.y),
+    control,
+    point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(point.x, point.y)),
     delivery,
   });
 
@@ -2444,10 +3322,161 @@ fn card_commit(kind: CardCommitKind, request: CardCommitRequest) -> Result<CardC
       }
       Err(error) => Err(error.to_string()),
     };
-    evaluate_card_commit_confirmation(&before, after.as_ref().map_err(Clone::clone))
+    evaluate_card_commit_confirmation(&selected, after.as_ref().map_err(Clone::clone))
   } else {
     CardCommitConfirmation::NotRequested
   };
+  let result = CardCommitResult {
+    target: request.target,
+    kind,
+    requested_slots: request.slots,
+    actions,
+    state: CardCommitState::Submitted { confirmation },
+  };
+  emit_card_commit_completed(&result);
+  Ok(result)
+}
+
+fn card_commit_via_api(kind: CardCommitKind, request: CardCommitRequest, config: BalatroModelConfig) -> Result<CardCommitResult, CliError> {
+  validate_hand_slots(&request.slots, "card commit")?;
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  // TODO(balatro-remote-operation-session): observations still open several
+  // short-lived API clients. Reuse one operation session after that lifecycle
+  // contract is owner-approved; see
+  // `2026-08-05-linux-live-gameplay-evidence.md`.
+  let before = runtime.block_on(observe_live_via_api(&request.target, &config, None, true))?;
+  let requested = request.slots.iter().map(|slot| slot.index).collect::<Vec<_>>();
+  select_hand_cards(&before, &requested)?;
+  let mut current = before.clone();
+  let mut toggles = Vec::new();
+
+  for attempt in 1..=2 {
+    let clear = selected_slots_to_clear(&current, &requested);
+    let select = requested_slots_to_select(&current, &requested);
+    if clear.is_empty() && select.is_empty() {
+      break;
+    }
+    for (kind, indices) in [
+      (HandSelectionToggleKind::ClearUnexpected, clear),
+      (HandSelectionToggleKind::SelectRequested, select),
+    ] {
+      for index in indices {
+        let card = select_hand_card(&current, index)?;
+        let frame_point = hand_card_click_frame_point(&current, card);
+        let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&current.frame, frame_point))?;
+        toggles.push(HandSelectionToggle {
+          kind,
+          attempt,
+          slot: SlotId::new(ObjectZone::Hand, index),
+          point: ActionPoint::screen(screen_point),
+          delivery,
+        });
+        std::thread::sleep(Duration::from_millis(220));
+      }
+    }
+    std::thread::sleep(Duration::from_millis(650));
+    current = runtime.block_on(observe_live_via_api(&request.target, &config, None, true))?;
+  }
+
+  let selected = selected_hand_slot_indices(&current, &hand_slot_indices(&current))
+    .into_iter()
+    .map(|index| SlotId::new(ObjectZone::Hand, index))
+    .collect::<Vec<_>>();
+  let matched = hand_selection_matches_requested(&current, &requested);
+  let selection = HandSelectionResult {
+    requested: request.slots.clone(),
+    toggles,
+    state: if matched {
+      HandSelectionState::Matched { selected }
+    } else {
+      HandSelectionState::NotMatched { selected }
+    },
+  };
+  let mut actions = vec![CardCommitAction::SelectHandTargets { selection }];
+  if !matched {
+    let result = CardCommitResult {
+      target: request.target,
+      kind,
+      requested_slots: request.slots,
+      actions,
+      state: CardCommitState::Stopped {
+        reason: CardCommitStop::HandTargetsNotReady,
+      },
+    };
+    emit_card_commit_completed(&result);
+    return Ok(result);
+  }
+
+  let selected_before_submit = current.clone();
+  let mut submit_state = current;
+  let mut confirmation = CardCommitConfirmation::NotRequested;
+  let submit_attempts = if request.confirm_change { 2 } else { 1 };
+  for attempt in 0..submit_attempts {
+    let (control, frame_point) = match resolve_card_commit_target(&submit_state, kind) {
+      Ok(target) => target,
+      Err(error) if attempt == 0 => {
+        let result = CardCommitResult {
+          target: request.target,
+          kind,
+          requested_slots: request.slots,
+          actions,
+          state: CardCommitState::Stopped {
+            reason: CardCommitStop::CommitControlNotFound {
+              message: error.to_string(),
+            },
+          },
+        };
+        emit_card_commit_completed(&result);
+        return Ok(result);
+      }
+      Err(_) => break,
+    };
+    let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&submit_state.frame, frame_point))?;
+    actions.push(CardCommitAction::Submit {
+      control,
+      point: ActionPoint::screen(screen_point),
+      delivery,
+    });
+    if !request.confirm_change {
+      break;
+    }
+    let settle_deadline = Instant::now() + Duration::from_millis(request.timeout_ms.min(1200));
+    let mut observation_count = 0;
+    loop {
+      std::thread::sleep(Duration::from_millis(if observation_count == 0 { 750 } else { 500 }));
+      observation_count += 1;
+      match runtime.block_on(observe_live_via_api(&request.target, &config, None, true)) {
+        Ok(after) => {
+          confirmation = evaluate_card_commit_confirmation(&selected_before_submit, Ok(&after));
+          submit_state = after;
+          if card_commit_confirmation_has_structural_change(&confirmation) {
+            break;
+          }
+          // A changed hand with no stable score/round OCR is normally a frame
+          // captured during Balatro's scoring animation. Observe once more,
+          // but never turn that partial success evidence into a second click.
+          if observation_count >= 2 || (!matches!(confirmation, CardCommitConfirmation::Applied { .. }) && Instant::now() >= settle_deadline)
+          {
+            break;
+          }
+        }
+        Err(error) => {
+          confirmation = evaluate_card_commit_confirmation(&selected_before_submit, Err(error.to_string()));
+          break;
+        }
+      }
+    }
+    if card_commit_confirmation_has_structural_change(&confirmation) {
+      break;
+    }
+    if !card_commit_confirmation_allows_resubmit(&confirmation) {
+      break;
+    }
+  }
+  confirmation = reject_fingerprint_only_confirmation(confirmation);
   let result = CardCommitResult {
     target: request.target,
     kind,
@@ -2535,7 +3564,7 @@ fn click_hand_targets(
       kind: HandSelectionToggleKind::ClearUnexpected,
       attempt: 1,
       slot,
-      window_point: WindowPoint::new(point.x, point.y),
+      point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(point.x, point.y)),
       delivery,
     });
     std::thread::sleep(Duration::from_millis(160));
@@ -2566,7 +3595,7 @@ fn click_hand_targets(
         kind: HandSelectionToggleKind::SelectRequested,
         attempt,
         slot,
-        window_point: WindowPoint::new(point.x, point.y),
+        point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(point.x, point.y)),
         delivery,
       });
       std::thread::sleep(Duration::from_millis(180));
@@ -2649,18 +3678,38 @@ fn incomplete_hand_selection(
 #[cfg(target_os = "macos")]
 fn click_blind_select(args: SlotOperationArgs) -> Result<(), CliError> {
   let slot_index = parse_blind_slot_index(&args.slot)?;
-  let result = blind_select(BlindSelectRequest {
+  let config = BalatroModelConfig::from_operation_args(&args.control);
+  let request = BlindSelectRequest {
     target: args.control.target,
     slot: SlotId::new(ObjectZone::Blind, slot_index),
     confirm_started: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
     timeout_ms: args.control.timeout_ms.unwrap_or(1200),
-  })?;
+  };
+  let result = if std::env::var_os("AUV_CONTEXT").is_some() {
+    blind_select_via_api(request, config)?
+  } else {
+    blind_select(request)?
+  };
   write_blind_select_output(&result)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn click_blind_select(_args: SlotOperationArgs) -> Result<(), CliError> {
-  Err(CliError::Message("blinds select live operation is only available on macOS".to_string()))
+fn click_blind_select(args: SlotOperationArgs) -> Result<(), CliError> {
+  if std::env::var_os("AUV_CONTEXT").is_none() {
+    return Err(CliError::Message("blinds select live operation requires macOS locally or an inherited AUV device context".to_string()));
+  }
+  let slot_index = parse_blind_slot_index(&args.slot)?;
+  let config = BalatroModelConfig::from_operation_args(&args.control);
+  let result = blind_select_via_api(
+    BlindSelectRequest {
+      target: args.control.target,
+      slot: SlotId::new(ObjectZone::Blind, slot_index),
+      confirm_started: args.control.verify && args.control.verify_mode != VerifyModeArg::ActivationOnly,
+      timeout_ms: args.control.timeout_ms.unwrap_or(1200),
+    },
+    config,
+  )?;
+  write_blind_select_output(&result)
 }
 
 #[cfg(target_os = "macos")]
@@ -2717,9 +3766,64 @@ pub fn blind_select(request: BlindSelectRequest) -> Result<BlindSelectResult, Cl
   let result = BlindSelectResult {
     target: request.target,
     slot: request.slot,
-    selected_button,
-    window_point: WindowPoint::new(point.x, point.y),
-    delivery,
+    attempts: vec![BlindSelectAttempt {
+      selected_button,
+      point: ActionPoint::window(window.reference.id.clone(), WindowPoint::new(point.x, point.y)),
+      delivery,
+    }],
+    confirmation,
+  };
+  emit_blind_select_completed(&result);
+  Ok(result)
+}
+
+fn blind_select_via_api(request: BlindSelectRequest, config: BalatroModelConfig) -> Result<BlindSelectResult, CliError> {
+  if request.slot.zone != ObjectZone::Blind {
+    return Err(CliError::Message(format!("blind select requires a blind slot, got {}", request.slot)));
+  }
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
+  let before = runtime.block_on(observe_live_via_api(&request.target, &config, None, true))?;
+  let mut current = before.clone();
+  let mut attempts = Vec::new();
+  let mut confirmation = BlindSelectConfirmation::NotRequested;
+  let attempt_limit = if request.confirm_started { 2 } else { 1 };
+  for attempt in 0..attempt_limit {
+    let selected_button = select_button_for_slot(&current.buttons, "button_level_select", Some(request.slot.index))?.clone();
+    let frame_point = bbox_center_point(selected_button.bbox);
+    let (screen_point, delivery) = runtime.block_on(click_display_frame_point_via_api(&current.frame, frame_point))?;
+    attempts.push(BlindSelectAttempt {
+      selected_button,
+      point: ActionPoint::screen(screen_point),
+      delivery,
+    });
+    if !request.confirm_started {
+      break;
+    }
+    std::thread::sleep(Duration::from_millis(650));
+    match runtime.block_on(observe_live_via_api(&request.target, &config, None, true)) {
+      Ok(after) => {
+        confirmation = evaluate_blind_select_confirmation(&before, Ok(&after));
+        current = after;
+        if matches!(confirmation, BlindSelectConfirmation::Started { .. }) {
+          break;
+        }
+        if attempt + 1 < attempt_limit {
+          std::thread::sleep(Duration::from_millis(350));
+        }
+      }
+      Err(error) => {
+        confirmation = evaluate_blind_select_confirmation(&before, Err(error.to_string()));
+        break;
+      }
+    }
+  }
+  let result = BlindSelectResult {
+    target: request.target,
+    slot: request.slot,
+    attempts,
     confirmation,
   };
   emit_blind_select_completed(&result);
@@ -2783,10 +3887,8 @@ struct BlindSelectCliOutput<'a> {
   operation: &'static str,
   target: &'a str,
   slot: SlotId,
-  delivery: &'a auv_driver::InputActionResult,
   confirmation: &'a BlindSelectConfirmation,
-  selected_button: &'a ButtonTarget,
-  window_point: WindowPoint,
+  attempts: &'a [BlindSelectAttempt],
 }
 
 fn write_blind_select_output(result: &BlindSelectResult) -> Result<(), CliError> {
@@ -2796,10 +3898,8 @@ fn write_blind_select_output(result: &BlindSelectResult) -> Result<(), CliError>
       operation: "blinds.select",
       target: &result.target,
       slot: result.slot,
-      delivery: &result.delivery,
       confirmation: &result.confirmation,
-      selected_button: &result.selected_button,
-      window_point: result.window_point,
+      attempts: &result.attempts,
     },
   )
 }
@@ -3009,10 +4109,14 @@ fn read_card_from_capture(
   let mut source = "macos_vision_corner_ocr".to_string();
   let mut reading = parse_card_reading(&recognition.text, suit, None);
   if reading.rank.is_none()
-    && let Some((rank, confidence)) = infer_rank_from_deck_template(&corner_capture.image, rank_templates, suit)
+    && let Some((rank, confidence)) = best_rank_candidate_from_deck_template(&corner_capture.image, rank_templates, suit)
   {
-    apply_inferred_rank(&mut reading, rank, confidence);
-    source = format!("{source}+deck_template_rank");
+    reading.rank_candidate = Some(rank.clone());
+    reading.rank_candidate_confidence = Some(confidence);
+    // TODO(balatro-rank-template-calibration): Do not promote this candidate
+    // into verified card content until a committed fixed-frame corpus proves
+    // rank accuracy across scaled and perspective captures.
+    source = format!("{source}+deck_template_rank_candidate");
   }
   Ok(CardReadResult {
     slot: card.slot,
@@ -3217,6 +4321,63 @@ fn find_button<'a>(state: &'a BalatroState, id: &str) -> Result<&'a ButtonTarget
   select_button_for_slot(&state.buttons, id, None)
 }
 
+fn resolve_card_commit_target(state: &BalatroState, kind: CardCommitKind) -> Result<(CardCommitControl, Point), CliError> {
+  if let Ok(button) = find_button(state, kind.button_id()) {
+    let button = button.clone();
+    let point = bbox_center_point(button.bbox);
+    return Ok((CardCommitControl::DetectedButton { button }, point));
+  }
+
+  if state.phase != BalatroPhase::Playing || state.hand.is_empty() {
+    return Err(CliError::Message(format!("could not find {} without an observed playing hand", kind.button_id())));
+  }
+  let sort_rank = best_button(&state.buttons, "button_sort_hand_rank")
+    .ok_or_else(|| CliError::Message(format!("could not find {} or button_sort_hand_rank", kind.button_id())))?
+    .clone();
+  let sort_suits = best_button(&state.buttons, "button_sort_hand_suits")
+    .ok_or_else(|| CliError::Message(format!("could not find {} or button_sort_hand_suits", kind.button_id())))?
+    .clone();
+  let rank_center = bbox_center_point(sort_rank.bbox);
+  let suits_center = bbox_center_point(sort_suits.bbox);
+  let frame_width = f64::from(state.frame.image_size.width.max(1));
+  let frame_height = f64::from(state.frame.image_size.height.max(1));
+  if sort_rank.bbox.x1 >= sort_suits.bbox.x1
+    || (rank_center.y - suits_center.y).abs() > frame_height * 0.04
+    || rank_center.y < frame_height * 0.65
+  {
+    return Err(CliError::Message(format!(
+      "refusing {} layout fallback because Sort Hand controls are not a plausible lower-screen pair",
+      kind.button_id()
+    )));
+  }
+
+  let group_left = f64::from(sort_rank.bbox.x1);
+  let group_right = f64::from(sort_suits.bbox.x2);
+  let group_width = group_right - group_left;
+  if group_width <= frame_width * 0.03 || group_width >= frame_width * 0.20 {
+    return Err(CliError::Message(format!("refusing {} layout fallback because Sort Hand control width is implausible", kind.button_id())));
+  }
+  // NOTICE: Balatro places Play Hand and Discard immediately beside the
+  // two-button Sort Hand group. The 0.75 group-width offset is derived from a
+  // live 2560x1440 Linux capture (Sort Hand x=1112..1283, Play center x≈984,
+  // Discard center x≈1411). Keep the detected Sort Hand pair as the safety
+  // anchor; remove this fallback once the UI model reliably emits both active
+  // commit controls across live themes and scales.
+  let x = match kind {
+    CardCommitKind::Play => group_left - group_width * 0.75,
+    CardCommitKind::Discard => group_right + group_width * 0.75,
+  }
+  .clamp(0.0, frame_width - 1.0);
+  let y = ((rank_center.y + suits_center.y) / 2.0).clamp(0.0, frame_height - 1.0);
+  Ok((
+    CardCommitControl::PlayingHandLayout {
+      sort_rank,
+      sort_suits,
+    },
+    Point::new(x, y),
+  ))
+}
+
 fn select_store_buy_confirm_button(state: &BalatroState) -> Result<&ButtonTarget, CliError> {
   best_button(&state.buttons, "button_purchase")
     .or_else(|| best_button(&state.buttons, "button_use"))
@@ -3231,7 +4392,9 @@ fn best_button<'a>(buttons: &'a [ButtonTarget], id: &str) -> Option<&'a ButtonTa
 }
 
 fn restart_primary_button(buttons: &[ButtonTarget]) -> Option<&ButtonTarget> {
-  best_button(buttons, "button_new_run_play").or_else(|| best_button(buttons, "button_main_menu_play"))
+  best_button(buttons, "button_new_run")
+    .or_else(|| best_button(buttons, "button_new_run_play"))
+    .or_else(|| best_button(buttons, "button_main_menu_play"))
 }
 
 fn resolve_store_next_round_target(state: &BalatroState) -> Result<StoreNextRoundTarget, CliError> {
@@ -3440,7 +4603,7 @@ fn enrich_ui_numeric_readings_from_image(state: &mut BalatroState, image: &Path)
     .iter()
     .filter_map(|evidence| {
       let label = evidence.detection.label.as_str();
-      if state.phase != BalatroPhase::Playing && is_score_ui_label(label) {
+      if !matches!(state.phase, BalatroPhase::Playing | BalatroPhase::CashOut) && is_score_ui_label(label) {
         return None;
       }
       is_numeric_ui_label(label)
@@ -3528,19 +4691,22 @@ fn infer_ui_digit_text_from_image_with_foreground(image: &RgbaImage, foreground:
   let mut digits = String::new();
   for points in ui_digit_glyph_segments(image, foreground)? {
     let mask = normalized_ui_digit_mask_from_points(points)?;
-    if let Some(digit) = infer_ui_digit_from_mask(&mask) {
-      digits.push(char::from(b'0' + digit));
-    }
+    let digit = infer_ui_digit_from_mask(&mask)?;
+    digits.push(char::from(b'0' + digit));
   }
   (!digits.is_empty()).then_some(digits)
 }
 
 fn infer_ui_digit_from_mask(mask: &[bool; UI_DIGIT_MASK_CELLS]) -> Option<u8> {
-  UI_DIGIT_TEMPLATES
-    .iter()
-    .map(|template| (template.digit, ui_digit_mask_distance(&mask, template.rows)))
-    .min_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(std::cmp::Ordering::Equal))
-    .and_then(|(digit, distance)| (distance <= 0.32).then_some(digit))
+  let mut candidates =
+    UI_DIGIT_TEMPLATES.iter().map(|template| (template.digit, ui_digit_mask_distance(mask, template.rows))).collect::<Vec<_>>();
+  candidates.sort_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(std::cmp::Ordering::Equal));
+  let (digit, distance) = *candidates.first()?;
+  let runner_up = candidates.get(1).map(|candidate| candidate.1).unwrap_or(1.0);
+  // A wrong number is more harmful than an unread score. Require both an
+  // absolute template fit and separation from the next-best digit; live
+  // evidence showed Balatro's scaled `5` otherwise being reported as `3`.
+  (distance <= 0.32 && runner_up - distance >= 0.04).then_some(digit)
 }
 
 fn normalized_ui_digit_mask_from_points(foreground: Vec<(u32, u32)>) -> Option<[bool; UI_DIGIT_MASK_CELLS]> {
@@ -3701,7 +4867,7 @@ const UI_DIGIT_TEMPLATES: &[UiDigitTemplate] = &[
   UiDigitTemplate {
     digit: 5,
     rows: [
-      "#####", "#....", "#....", "#####", "....#", "....#", "#####",
+      "#####", "#####", "####.", "#####", "...##", "#####", "#####",
     ],
   },
   UiDigitTemplate {
@@ -3778,7 +4944,7 @@ fn hand_card_interactions(state: &BalatroState) -> Vec<HandCardInteraction> {
     .iter()
     .map(|card| HandCardInteraction {
       slot: card.slot,
-      bbox: card.bbox.clone(),
+      bbox: card.bbox,
       confidence: card.confidence,
       selected: hand_slot_is_selected(state, card.slot.index),
       click_frame_point: hand_card_click_frame_point(state, card),
@@ -3812,12 +4978,6 @@ fn requested_slots_to_select(state: &BalatroState, requested: &[u32]) -> Vec<u32
 }
 
 fn hand_slot_is_selected(state: &BalatroState, slot_index: u32) -> bool {
-  if best_button(&state.buttons, "button_play").is_none()
-    && best_button(&state.buttons, "button_discard").is_none()
-    && best_button(&state.buttons, "button_use").is_none()
-  {
-    return false;
-  }
   let Some(baseline_y) = hand_selection_baseline_y(state) else {
     return false;
   };
@@ -3828,7 +4988,7 @@ fn hand_slot_is_selected(state: &BalatroState, slot_index: u32) -> bool {
   // discard button is pressed. Use the current hand's lower row as the baseline
   // so stale selections from an earlier failed command are visible and can be
   // cleared before a new play/discard operation.
-  card.bbox.y1 <= baseline_y - 18.0
+  card.bbox.y1 <= baseline_y - 24.0
 }
 
 fn hand_selection_baseline_y(state: &BalatroState) -> Option<f32> {
@@ -4061,12 +5221,17 @@ fn card_corner_capture(capture: &Capture, state: &BalatroState, card: &CardSlot)
 #[cfg(target_os = "macos")]
 fn infer_suit_from_card_corner(capture: &Capture, state: &BalatroState, card: &CardSlot) -> Option<&'static str> {
   let (x, y, width, height) = card_corner_pixels(capture, state, card);
+  let suit_x_end = x + ((width as f32 * 0.58).ceil() as u32).max(1);
+  let suit_y_start = y + (height as f32 * 0.28).floor() as u32;
   let mut hearts = 0u32;
   let mut diamonds = 0u32;
   let mut clubs = 0u32;
   let mut spades = 0u32;
-  for py in y..(y + height) {
-    for px in x..(x + width) {
+  // The full corner of face cards includes colored portrait pixels. Restrict
+  // classification to the narrow glyph band directly below the rank so a
+  // queen's artwork cannot outvote its heart/diamond suit symbol.
+  for py in suit_y_start..(y + height) {
+    for px in x..suit_x_end {
       let [r, g, b, a] = capture.image.get_pixel(px, py).0;
       let r16 = i16::from(r);
       let g16 = i16::from(g);
@@ -4142,9 +5307,9 @@ fn load_deck_rank_templates() -> Option<Vec<RankTemplate>> {
       let x = rank_index as u32 * cell_w;
       let y = suit_index as u32 * cell_h;
       let width = (cell_w as f32 * 0.26).ceil() as u32;
-      let height = (cell_h as f32 * 0.35).ceil() as u32;
+      let height = (cell_h as f32 * 0.36).ceil() as u32;
       let crop = image::imageops::crop_imm(&atlas, x, y, width, height).to_image();
-      if let Some(mask) = normalized_foreground_mask(&crop) {
+      if let Some(mask) = top_glyph_mask(&crop) {
         templates.push(RankTemplate { rank, suit, mask });
       }
     }
@@ -4173,48 +5338,52 @@ fn load_deck_atlas_from_setup_cache(cache_dir: &Path) -> Option<RgbaImage> {
 }
 
 #[cfg(target_os = "macos")]
-fn infer_rank_from_deck_template(corner: &RgbaImage, templates: Option<&[RankTemplate]>, suit: Option<&str>) -> Option<(String, f32)> {
-  let width = (corner.width() as f32 * 0.45).ceil() as u32;
-  let height = (corner.height() as f32 * 0.56).ceil() as u32;
-  let observed_region = image::imageops::crop_imm(corner, 0, 0, width.max(1), height.max(1)).to_image();
-  let observed = normalized_observed_rank_mask(&observed_region)?;
+fn best_rank_candidate_from_deck_template(
+  corner: &RgbaImage,
+  templates: Option<&[RankTemplate]>,
+  suit: Option<&str>,
+) -> Option<(String, f32)> {
+  let x = (corner.width() as f32 * 0.12).floor() as u32;
+  let y = (corner.height() as f32 * 0.12).floor() as u32;
+  let width = (corner.width() as f32 * 0.48).ceil() as u32;
+  let height = (corner.height() as f32 * 0.50).ceil() as u32;
+  let observed_region =
+    image::imageops::crop_imm(corner, x, y, width.min(corner.width() - x).max(1), height.min(corner.height() - y).max(1)).to_image();
+  let observed = top_glyph_mask(&observed_region)?;
   templates?
     .iter()
     .filter(|template| suit.is_none_or(|suit| template.suit == suit))
     .map(|template| {
-      let distance = mask_distance(&observed, &template.mask);
-      (template.rank, 1.0 - distance)
+      let similarity = mask_similarity(&observed, &template.mask);
+      (template.rank, similarity)
     })
     .max_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(std::cmp::Ordering::Equal))
-    .and_then(|(rank, confidence)| (confidence >= 0.75).then(|| (rank.to_string(), confidence.clamp(0.0, 1.0))))
+    .map(|(rank, confidence)| (rank.to_string(), confidence.clamp(0.0, 1.0)))
 }
 
 #[cfg(target_os = "macos")]
-fn normalized_observed_rank_mask(image: &RgbaImage) -> Option<NormalizedMask> {
-  let mut min_x = image.width();
-  let mut min_y = image.height();
-  let mut max_x = 0;
-  let mut max_y = 0;
-  for y in 0..image.height() {
-    for x in 0..image.width() {
-      if is_card_glyph_pixel(image.get_pixel(x, y).0) {
-        min_x = min_x.min(x);
-        min_y = min_y.min(y);
-        max_x = max_x.max(x);
-        max_y = max_y.max(y);
+fn top_glyph_mask(image: &RgbaImage) -> Option<NormalizedMask> {
+  let active_rows = (0..image.height())
+    .map(|y| (0..image.width()).filter(|x| is_card_glyph_pixel(image.get_pixel(*x, y).0)).count() >= 2)
+    .collect::<Vec<_>>();
+  let start = active_rows.iter().position(|active| *active)? as u32;
+  let mut end = image.height();
+  let mut blank_run = 0u32;
+  for y in start..image.height() {
+    if active_rows[y as usize] {
+      blank_run = 0;
+    } else {
+      blank_run += 1;
+      if blank_run >= 3 {
+        end = y + 1 - blank_run;
+        break;
       }
     }
   }
-  if min_x > max_x || min_y > max_y {
+  if end <= start {
     return None;
   }
-
-  // The card-corner crop contains rank above suit. OCR benefits from seeing
-  // both, but template matching must isolate the rank glyph or a `9♥` can look
-  // closer to another rank plus suit blob than to the rank alone.
-  let bbox_h = max_y - min_y + 1;
-  let rank_h = ((bbox_h as f32 * 0.45).ceil() as u32).max(1);
-  let crop = image::imageops::crop_imm(image, min_x, min_y, max_x - min_x + 1, rank_h).to_image();
+  let crop = image::imageops::crop_imm(image, 0, start, image.width(), end - start).to_image();
   normalized_foreground_mask(&crop)
 }
 
@@ -4265,9 +5434,13 @@ fn is_card_glyph_pixel([r, g, b, a]: [u8; 4]) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn mask_distance(left: &NormalizedMask, right: &NormalizedMask) -> f32 {
-  let different = left.pixels.iter().zip(&right.pixels).filter(|(left, right)| left != right).count();
-  different as f32 / left.pixels.len().max(1) as f32
+fn mask_similarity(left: &NormalizedMask, right: &NormalizedMask) -> f32 {
+  let intersection = left.pixels.iter().zip(&right.pixels).filter(|(left, right)| **left && **right).count();
+  let foreground = left.pixels.iter().filter(|pixel| **pixel).count() + right.pixels.iter().filter(|pixel| **pixel).count();
+  if foreground == 0 {
+    return 0.0;
+  }
+  2.0 * intersection as f32 / foreground as f32
 }
 
 fn parse_card_reading(raw_text: &str, suit: Option<&str>, confidence: Option<f32>) -> CardReadValue {
@@ -4293,31 +5466,14 @@ fn parse_card_reading(raw_text: &str, suit: Option<&str>, confidence: Option<f32
     raw_text: (!raw_text.trim().is_empty()).then(|| raw_text.to_string()),
     normalized_text: (!normalized.is_empty()).then_some(normalized),
     rank,
+    rank_candidate: None,
+    rank_candidate_confidence: None,
     suit,
     suit_symbol,
     short_code,
     confidence,
     valid,
   }
-}
-
-fn apply_inferred_rank(reading: &mut CardReadValue, rank: String, confidence: f32) {
-  reading.rank = Some(rank);
-  reading.confidence = Some(reading.confidence.unwrap_or(confidence).max(confidence));
-  reading.short_code = reading.rank.as_ref().zip(reading.suit.as_deref()).map(|(rank, suit)| {
-    format!(
-      "{rank}{}",
-      match suit {
-        "hearts" => "H",
-        "diamonds" => "D",
-        "clubs" => "C",
-        "spades" => "S",
-        _ => "?",
-      }
-    )
-  });
-  reading.valid = reading.rank.is_some() && reading.suit.is_some();
-  reading.status = if reading.valid { "read" } else { "partial" };
 }
 
 fn should_hover_reread_card(reading: &CardReadValue) -> bool {

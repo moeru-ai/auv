@@ -34,7 +34,7 @@ mod store_buy;
 mod store_next_round;
 
 pub use blind_action::{
-  BlindSelectConfirmation, BlindSelectConfirmationFailure, BlindSelectRequest, BlindSelectResult, BlindSkipConfirmation,
+  BlindSelectAttempt, BlindSelectConfirmation, BlindSelectConfirmationFailure, BlindSelectRequest, BlindSelectResult, BlindSkipConfirmation,
   BlindSkipConfirmationFailure, BlindSkipRequest, BlindSkipResult,
 };
 pub use cards_action::{
@@ -43,7 +43,8 @@ pub use cards_action::{
 };
 pub use cards_clear::{CardSelectionToggle, CardsClearIncompleteReason, CardsClearOutcome, CardsClearRequest, CardsClearResult};
 pub use cash_out::{
-  CashOutConfirmation, CashOutConfirmationBasis, CashOutConfirmationFailure, CashOutConfirmationRequest, CashOutRequest, CashOutResult,
+  CashOutAttempt, CashOutConfirmation, CashOutConfirmationBasis, CashOutConfirmationFailure, CashOutConfirmationRequest, CashOutRequest,
+  CashOutResult,
 };
 pub use cli::{
   CliArgs, Command, OutputMode, blind_select, blind_skip, cards_clear, cards_discard, cards_play, cards_select, cash_out, consumable_use,
@@ -57,8 +58,8 @@ pub use consumable_use::{
 pub use game_restart::{GameRestartClick, GameRestartOutcome, GameRestartRequest, GameRestartResult, GameRestartTarget};
 pub use hand_selection::{HandSelectionResult, HandSelectionState, HandSelectionToggle, HandSelectionToggleKind};
 pub use model::{
-  BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, ObjectZone, RoundState, ScoreState, SlotId, StoreItem,
-  StoreState,
+  ActionPoint, BalatroPhase, BalatroState, ButtonTarget, CardSlot, ConsumableSlot, JokerSlot, ObjectZone, RoundState, ScoreState, SlotId,
+  StoreItem, StoreState,
 };
 pub use object_sell::{
   ObjectSellClick, ObjectSellConfirmation, ObjectSellConfirmationBasis, ObjectSellConfirmationFailure, ObjectSellIncompleteReason,
@@ -75,8 +76,8 @@ pub use store_buy::{
   StoreBuyRequest, StoreBuyResult,
 };
 pub use store_next_round::{
-  StoreNextRoundConfirmation, StoreNextRoundConfirmationFailure, StoreNextRoundConfirmationRequest, StoreNextRoundConfirmationStrength,
-  StoreNextRoundRequest, StoreNextRoundResult, StoreNextRoundTarget,
+  StoreNextRoundAttempt, StoreNextRoundConfirmation, StoreNextRoundConfirmationFailure, StoreNextRoundConfirmationRequest,
+  StoreNextRoundConfirmationStrength, StoreNextRoundRequest, StoreNextRoundResult, StoreNextRoundTarget,
 };
 
 pub use card_detection_eval_witness::{
