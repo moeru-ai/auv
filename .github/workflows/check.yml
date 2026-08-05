@@ -41,6 +41,7 @@ jobs:
             libdbus-1-dev \
             libpipewire-0.3-dev \
             libwayland-dev \
+            libxkbcommon-dev \
             libegl-dev \
             libleptonica-dev \
             libtesseract-dev

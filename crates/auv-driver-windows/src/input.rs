@@ -364,7 +364,7 @@ mod native {
   }
 
   pub(super) fn scroll(point: Point, scroll: Scroll) -> DriverResult<()> {
-    move_cursor(point)?;
+    move_to(point)?;
     let mut inputs = Vec::new();
     // Windows wheel deltas are signed multiples of WHEEL_DELTA (120). Positive
     // vertical scrolls up and positive horizontal scrolls right, per the Win32
