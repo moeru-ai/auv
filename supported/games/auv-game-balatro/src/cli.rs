@@ -217,16 +217,16 @@ pub struct ObserveArgs {
   /// Optional card-specialized detector applied only to the normalized hand region.
   #[arg(long, value_name = "PATH")]
   pub cards_model: Option<PathBuf>,
-  /// Full-frame rank/suit detector. Defaults to the published Mod ground-truth model.
+  /// Hand-region rank/suit detector. Defaults to the published Mod ground-truth model.
   #[arg(long, value_name = "PATH")]
   pub card_identity_model: Option<PathBuf>,
-  /// Full-frame enhancement detector. Defaults to the published Mod ground-truth model.
+  /// Hand-region enhancement detector. Defaults to the published Mod ground-truth model.
   #[arg(long, value_name = "PATH")]
   pub card_enhancement_model: Option<PathBuf>,
-  /// Full-frame edition detector. Defaults to the published Mod ground-truth model.
+  /// Hand-region edition detector. Defaults to the published Mod ground-truth model.
   #[arg(long, value_name = "PATH")]
   pub card_edition_model: Option<PathBuf>,
-  /// Full-frame seal detector. Defaults to the published Mod ground-truth model.
+  /// Hand-region seal detector. Defaults to the published Mod ground-truth model.
   #[arg(long, value_name = "PATH")]
   pub card_seal_model: Option<PathBuf>,
   #[arg(long, value_name = "PATH")]

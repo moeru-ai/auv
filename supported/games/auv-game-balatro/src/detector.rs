@@ -110,16 +110,26 @@ impl BalatroDetectors {
   }
 
   pub fn detect_path(&self, image: impl AsRef<Path>) -> InferenceResult<BalatroDetectionSets> {
-    let image = image.as_ref();
-    let entities = self.entities.detect_path(image)?;
-    let cards = self.cards.as_ref().map(|detector| detect_hand_cards(detector, &image::open(image)?.to_rgb8())).transpose()?;
-    let card_attributes = CardAttributeDetectionSets {
-      identity: Some(self.card_identity.detect_path(image)?),
-      enhancement: Some(self.card_enhancement.detect_path(image)?),
-      edition: Some(self.card_edition.detect_path(image)?),
-      seal: Some(self.card_seal.detect_path(image)?),
+    let image_path = image.as_ref();
+    let image = image::open(image_path)?.to_rgb8();
+    let image_size = ImageSize {
+      width: image.width(),
+      height: image.height(),
     };
-    let ui = self.ui.detect_path(image)?;
+    let (hand_crop, hand_frame) = crop_hand_frame(&image);
+    let entities = self.entities.detect_path(image_path)?;
+    let cards = self
+      .cards
+      .as_ref()
+      .map(|detector| detector.detect_frame(&hand_frame).map(|result| remap_hand_detections(result, hand_crop, image_size)))
+      .transpose()?;
+    let card_attributes = CardAttributeDetectionSets {
+      identity: Some(remap_card_attribute_detections(self.card_identity.detect_frame(&hand_frame)?, hand_crop, image_size)),
+      enhancement: Some(remap_card_attribute_detections(self.card_enhancement.detect_frame(&hand_frame)?, hand_crop, image_size)),
+      edition: Some(remap_card_attribute_detections(self.card_edition.detect_frame(&hand_frame)?, hand_crop, image_size)),
+      seal: Some(remap_card_attribute_detections(self.card_seal.detect_frame(&hand_frame)?, hand_crop, image_size)),
+    };
+    let ui = self.ui.detect_path(image_path)?;
     Ok(BalatroDetectionSets {
       entities,
       cards,
@@ -332,6 +342,10 @@ pub(crate) fn remap_hand_detections(mut result: DetectionResult, crop: HandCrop,
   result
     .detections
     .retain(|detection| matches!(detection.label.as_str(), "poker_card_front" | "poker_card_back") && is_complete_hand_card(detection));
+  remap_card_attribute_detections(result, crop, image_size)
+}
+
+pub(crate) fn remap_card_attribute_detections(mut result: DetectionResult, crop: HandCrop, image_size: ImageSize) -> DetectionResult {
   for detection in &mut result.detections {
     detection.bbox.x1 += crop.x as f32;
     detection.bbox.x2 += crop.x as f32;
@@ -346,15 +360,6 @@ fn is_complete_hand_card(detection: &Detection) -> bool {
   let width = detection.bbox.x2 - detection.bbox.x1;
   let height = detection.bbox.y2 - detection.bbox.y1;
   width.is_finite() && height.is_finite() && height > 0.0 && width / height >= 0.30
-}
-
-fn detect_hand_cards(detector: &UltralyticsObjectDetector, image: &RgbImage) -> InferenceResult<DetectionResult> {
-  let image_size = ImageSize {
-    width: image.width(),
-    height: image.height(),
-  };
-  let (crop, frame) = crop_hand_frame(image);
-  detector.detect_frame(&frame).map(|result| remap_hand_detections(result, crop, image_size))
 }
 
 fn balatro_detection_options() -> DetectionOptions {
@@ -529,6 +534,59 @@ mod tests {
 
     assert_eq!(remapped.image_size, image_size);
     assert_eq!(remapped.detections.len(), 1);
+    assert_eq!(
+      remapped.detections[0].bbox,
+      BoundingBox {
+        x1: 551.0,
+        y1: 605.0,
+        x2: 651.0,
+        y2: 805.0,
+      }
+    );
+  }
+
+  #[test]
+  fn remap_card_attribute_detections_restores_full_frame_coordinates_without_filtering_labels() {
+    // ROOT CAUSE:
+    //
+    // If card-attribute models received the full game frame, unrelated UI
+    // regions produced high-confidence identities while the hand became too
+    // small to read. Attribute inference must use the normalized hand crop,
+    // then restore every attribute label to full-frame coordinates before
+    // slot association.
+    let crop = HandCrop {
+      x: 541,
+      y: 585,
+      width: 1124,
+      height: 360,
+    };
+    let image_size = ImageSize {
+      width: 2043,
+      height: 1126,
+    };
+    let result = DetectionResult {
+      image_size: ImageSize {
+        width: crop.width,
+        height: crop.height,
+      },
+      detections: vec![Detection {
+        class_id: 51,
+        label: "S_A".to_string(),
+        confidence: 0.99,
+        bbox: BoundingBox {
+          x1: 10.0,
+          y1: 20.0,
+          x2: 110.0,
+          y2: 220.0,
+        },
+      }],
+    };
+
+    let remapped = remap_card_attribute_detections(result, crop, image_size);
+
+    assert_eq!(remapped.image_size, image_size);
+    assert_eq!(remapped.detections.len(), 1);
+    assert_eq!(remapped.detections[0].label, "S_A");
     assert_eq!(
       remapped.detections[0].bbox,
       BoundingBox {

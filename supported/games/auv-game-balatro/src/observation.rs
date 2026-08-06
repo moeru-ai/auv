@@ -16,7 +16,10 @@ use auv_api_proto::auv::api::image::v1 as image_proto;
 use crate::api::v1 as balatro_proto;
 use crate::cache::cache_hint_for_detection;
 use crate::config::{BalatroModelAsset, BalatroModelConfig, HuggingFaceRepoKind};
-use crate::detector::{BalatroDetectionSets, BalatroDetectors, CardAttributeDetectionSets, crop_hand_frame, remap_hand_detections};
+use crate::detector::{
+  BalatroDetectionSets, BalatroDetectors, CardAttributeDetectionSets, crop_hand_frame, remap_card_attribute_detections,
+  remap_hand_detections,
+};
 use crate::model::{
   BALATRO_STATE_SCHEMA_VERSION, BalatroDiagnostic, BalatroPhase, BalatroState, ButtonTarget, CacheHint, CardAttribute, CardAttributes,
   CardSlot, ConsumableKind, ConsumableSlot, FrameRef, JokerSlot, ObjectEvidence, ObjectZone, Reading, ReadingStatus, RoundState, ScoreState,
@@ -320,80 +323,86 @@ async fn detect_via_api(
     balatro_proto::balatro_detection_service_client::BalatroDetectionServiceClient::new(balatro.extension_transport().map_err(api_error)?)
       .max_decoding_message_size(auv::client::runner::IMAGE_RPC_MESSAGE_SIZE_LIMIT)
       .max_encoding_message_size(auv::client::runner::IMAGE_RPC_MESSAGE_SIZE_LIMIT);
-  let batch_detectors = vec![
+  let full_image_size = ImageSize {
+    width: frame.width,
+    height: frame.height,
+  };
+  let image = RgbImage::from_raw(frame.width, frame.height, frame.data.clone())
+    .ok_or_else(|| ObservationError::Api("card attribute detectors received an invalid RGB frame".to_string()))?;
+  let (hand_crop, hand_frame) = crop_hand_frame(&image);
+  let hand_frame = image_proto::RgbFrame {
+    width: hand_frame.image.width(),
+    height: hand_frame.image.height(),
+    data: hand_frame.image.into_raw(),
+  };
+  let full_frame_detectors = vec![
     detector_spec("balatro-entities", &config.entities_model, &config.device, 640, entities_classes.clone())?,
     detector_spec("balatro-ui", &config.ui_model, &config.device, 640, ui_classes)?,
+  ];
+  let mut hand_frame_detectors = vec![
     detector_spec("balatro-card-identity", &config.card_identity_model, &config.device, 960, Vec::new())?,
     detector_spec("balatro-card-enhancement", &config.card_enhancement_model, &config.device, 640, Vec::new())?,
     detector_spec("balatro-card-edition", &config.card_edition_model, &config.device, 640, Vec::new())?,
     detector_spec("balatro-card-seal", &config.card_seal_model, &config.device, 640, Vec::new())?,
   ];
-  let cards_request = if let Some(cards_model) = &config.cards_model {
-    let full_image_size = ImageSize {
-      width: frame.width,
-      height: frame.height,
-    };
-    let image = RgbImage::from_raw(frame.width, frame.height, frame.data.clone())
-      .ok_or_else(|| ObservationError::Api("card detector received an invalid RGB frame".to_string()))?;
-    let (crop, hand_frame) = crop_hand_frame(&image);
-    let hand_frame = image_proto::RgbFrame {
-      width: hand_frame.image.width(),
-      height: hand_frame.image.height(),
-      data: hand_frame.image.into_raw(),
-    };
-    Some((
-      balatro_proto::DetectObjectsRequest {
-        detector: Some(detector_spec("balatro-cards", cards_model, &config.device, 640, entities_classes)?),
-        frame: Some(hand_frame),
-      },
-      crop,
-      full_image_size,
-    ))
-  } else {
-    None
-  };
+  if let Some(cards_model) = &config.cards_model {
+    hand_frame_detectors.push(detector_spec("balatro-cards", cards_model, &config.device, 640, entities_classes)?);
+  }
 
-  let detect = |mut client: balatro_proto::balatro_detection_service_client::BalatroDetectionServiceClient<_>, request| async move {
-    client.detect_objects(request).await.map(|response| response.into_inner()).map_err(api_error)
-  };
-  let cards = async {
-    let Some((request, crop, full_image_size)) = cards_request else {
-      return Ok(None);
-    };
-    let response = detect(balatro.clone(), request).await?;
-    Ok::<_, ObservationError>(Some(remap_hand_detections(detection_result_from_proto(response)?, crop, full_image_size)))
-  };
-  let batch = async {
-    let mut client = balatro.clone();
+  let detect_batch = |mut client: balatro_proto::balatro_detection_service_client::BalatroDetectionServiceClient<_>, detectors, frame| async move {
     client
       .detect_objects_batch(balatro_proto::DetectObjectsBatchRequest {
-        detectors: batch_detectors,
+        detectors,
         frame: Some(frame),
       })
       .await
       .map(|response| response.into_inner())
       .map_err(api_error)
   };
-  let (batch, cards) = tokio::try_join!(batch, cards)?;
-  let mut batch = batch
+  let (full_frame_batch, hand_frame_batch) = tokio::try_join!(
+    detect_batch(balatro.clone(), full_frame_detectors, frame),
+    detect_batch(balatro.clone(), hand_frame_detectors, hand_frame),
+  )?;
+  let mut full_frame_batch = batch_results(full_frame_batch)?;
+  let mut hand_frame_batch = batch_results(hand_frame_batch)?;
+  let cards = config
+    .cards_model
+    .as_ref()
+    .map(|_| {
+      take_batch_result(&mut hand_frame_batch, "balatro-cards")
+        .and_then(detection_result_from_proto)
+        .map(|result| remap_hand_detections(result, hand_crop, full_image_size))
+    })
+    .transpose()?;
+  let mut card_attribute = |detector_id| {
+    take_batch_result(&mut hand_frame_batch, detector_id)
+      .and_then(detection_result_from_proto)
+      .map(|result| remap_card_attribute_detections(result, hand_crop, full_image_size))
+  };
+  Ok(BalatroDetectionSets {
+    entities: detection_result_from_proto(take_batch_result(&mut full_frame_batch, "balatro-entities")?)?,
+    cards,
+    card_attributes: CardAttributeDetectionSets {
+      identity: Some(card_attribute("balatro-card-identity")?),
+      enhancement: Some(card_attribute("balatro-card-enhancement")?),
+      edition: Some(card_attribute("balatro-card-edition")?),
+      seal: Some(card_attribute("balatro-card-seal")?),
+    },
+    ui: detection_result_from_proto(take_batch_result(&mut full_frame_batch, "balatro-ui")?)?,
+  })
+}
+
+fn batch_results(
+  batch: balatro_proto::DetectObjectsBatchResponse,
+) -> Result<HashMap<String, balatro_proto::DetectObjectsResponse>, ObservationError> {
+  batch
     .results
     .into_iter()
     .map(|entry| {
       let result = entry.result.ok_or_else(|| ObservationError::Api(format!("batch result {} omitted result", entry.detector_id)))?;
       Ok((entry.detector_id, result))
     })
-    .collect::<Result<HashMap<_, _>, ObservationError>>()?;
-  Ok(BalatroDetectionSets {
-    entities: detection_result_from_proto(take_batch_result(&mut batch, "balatro-entities")?)?,
-    cards,
-    card_attributes: CardAttributeDetectionSets {
-      identity: Some(detection_result_from_proto(take_batch_result(&mut batch, "balatro-card-identity")?)?),
-      enhancement: Some(detection_result_from_proto(take_batch_result(&mut batch, "balatro-card-enhancement")?)?),
-      edition: Some(detection_result_from_proto(take_batch_result(&mut batch, "balatro-card-edition")?)?),
-      seal: Some(detection_result_from_proto(take_batch_result(&mut batch, "balatro-card-seal")?)?),
-    },
-    ui: detection_result_from_proto(take_batch_result(&mut batch, "balatro-ui")?)?,
-  })
+    .collect()
 }
 
 fn take_batch_result(
