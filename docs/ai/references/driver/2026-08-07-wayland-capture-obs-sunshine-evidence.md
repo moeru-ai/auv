@@ -255,3 +255,28 @@ Live probing on `neko-gpu-1` separated the phases:
 The accuracy samples from that final timing run are not model-quality
 evidence: Steam was in front of Balatro in the captured desktop. They confirm
 the capture and inference execution paths only.
+
+A corrected foreground probe activated the existing Proton/XWayland Balatro
+window and verified the result with a fresh Wayland PipeWire screenshot before
+measurement. The frame contained eight visible hand cards. Twenty consecutive
+CUDA observations returned the same eight readings (`S_K`, `C_Q`, `S_T`,
+`S_8`, `D_8`, `S_7`, `H_4`, `D_2`) with no missing slots; the first observation
+reported identity confidences from 0.973 to 0.999. This is single-frame
+repeatability evidence, not a dataset-level accuracy rate.
+
+The Cargo feature graph confirmed that `auv-game-balatro --features cuda`
+enabled CUDA in `auv-inference-ultralytics`, `ultralytics-inference`, `ort`, and
+`ort-sys`. The initial CPU fallback happened because the daemon-launched Runner
+could not resolve the CUDA 12 runtime libraries required by ONNX Runtime;
+`nvidia-smi` alone provides a working driver, not those user-space libraries.
+After the Balatro Runner provider supplied the installed CUDA 12 library paths,
+`nvidia-smi` reported `auv-runner-balatro` using 1416 MiB of GPU memory.
+
+On that foreground frame, CUDA cold start took 2.68 seconds. Twenty warm live
+observations averaged 1.413 seconds (1.260--1.567 seconds), versus 1.556 seconds
+for six warm CPU observations. Fixed-image inference averaged 1.340 seconds on
+CUDA and 1.453 seconds on CPU; ten complete display captures averaged 111 ms.
+CUDA was therefore active but improved this seven-small-model pipeline by only
+about nine percent. The remaining cost is inside inference and its CPU
+pre/post-processing, image copies, and multi-session scheduling rather than
+window lookup or OCR.
