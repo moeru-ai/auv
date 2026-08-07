@@ -236,6 +236,22 @@ Live probing on `neko-gpu-1` separated the phases:
 - After the GNOME portal session was restarted, the stored restore token no
   longer completed unattended `Start`. Stage probes measured CreateSession and
   SelectSources method/response pairs below 2 ms each, followed by the full
-  ten-second wait for `ScreenCast.Start` response. The final repeated-frame
-  throughput therefore still requires one interactive source authorization;
-  it was not inferred from the unit tests.
+  ten-second wait for `ScreenCast.Start` response. One interactive source
+  authorization produced a replacement restore token; the next daemon restart
+  then restored capture without another prompt.
+- After authorization, ten complete remote `display.capture` CLI invocations
+  measured 336 ms for the first sample and 86--132 ms for the next nine
+  samples. The hot mean was 112 ms. These measurements include daemon routing,
+  gRPC image transfer, 2560x1440 PNG encoding, run recording, and artifact
+  persistence, not only the PipeWire snapshot.
+- A separate Balatro probe showed that an unsuccessful AT-SPI window lookup
+  still cost 2.44 seconds per observation on this GNOME Wayland/Wine desktop.
+  Fixed-image inference through the persistent seven-model Runner averaged
+  1.37 seconds, while the live path averaged 3.81 seconds. Linux Balatro now
+  skips the unavailable accessibility-window lookup and uses the persistent
+  display stream directly; eight live samples then averaged 1.40 seconds
+  (1.12--1.52 seconds).
+
+The accuracy samples from that final timing run are not model-quality
+evidence: Steam was in front of Balatro in the captured desktop. They confirm
+the capture and inference execution paths only.
