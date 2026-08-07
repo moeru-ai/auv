@@ -629,8 +629,10 @@ dependencies = [
 name = "auv-driver-linux"
 version = "0.0.1"
 dependencies = [
+ "async-io",
  "auv-driver-common",
  "fs2",
+ "futures-lite",
  "image",
  "leptess",
  "pipewire",

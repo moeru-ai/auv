@@ -421,23 +421,44 @@ async fn observe_live_with_runners(
   ui_classes: Vec<String>,
   no_cache: bool,
 ) -> Result<BalatroState, ObservationError> {
-  // TODO(balatro-window-resolution-cache): cache a resolved Window only after
-  // Linux exposes a typed move/resize/close invalidation signal; stale window
-  // identity or geometry is worse than the current per-observation lookup.
-  let window = driver
-    .windows()
-    .resolve(auv_driver::WindowSelector {
-      app: Some(auv_driver::App::name(target)),
-      main_visible: true,
-      ..Default::default()
-    })
-    .await;
-  let (source, captured) = match window {
-    Ok(window) => (format!("daemon://window/{}", window.reference().id), window.capture().await.map_err(api_error)?.capture),
-    Err(error) if matches!(error.client_kind(), Some(auv::error::ClientErrorKind::NotFound | auv::error::ClientErrorKind::Unsupported)) => {
-      ("daemon://display/primary?fallback=window_unavailable".to_string(), driver.displays().capture(None).await.map_err(api_error)?.capture)
+  #[cfg(target_os = "linux")]
+  let (source, captured) = {
+    let _ = target;
+    // NOTICE(balatro-linux-display-capture): Wine/Proton Balatro windows are
+    // not exposed through AT-SPI on GNOME Wayland. Resolving one therefore
+    // performs a full accessibility-tree scan before every frame and always
+    // falls back to the display. The image pipeline already resolves the game
+    // viewport from the captured frame, so use the persistent display stream
+    // directly on Linux.
+    // TODO(balatro-linux-window-capture): reconsider window capture only when
+    // a compositor-native window identity and invalidation contract exists.
+    ("daemon://display/primary?window_resolution=unavailable".to_string(), driver.displays().capture(None).await.map_err(api_error)?.capture)
+  };
+  #[cfg(not(target_os = "linux"))]
+  let (source, captured) = {
+    // TODO(balatro-window-resolution-cache): cache a resolved Window only after
+    // the platform exposes a typed move/resize/close invalidation signal; stale
+    // window identity or geometry is worse than the current per-observation lookup.
+    let window = driver
+      .windows()
+      .resolve(auv_driver::WindowSelector {
+        app: Some(auv_driver::App::name(target)),
+        main_visible: true,
+        ..Default::default()
+      })
+      .await;
+    match window {
+      Ok(window) => (format!("daemon://window/{}", window.reference().id), window.capture().await.map_err(api_error)?.capture),
+      Err(error)
+        if matches!(error.client_kind(), Some(auv::error::ClientErrorKind::NotFound | auv::error::ClientErrorKind::Unsupported)) =>
+      {
+        (
+          "daemon://display/primary?fallback=window_unavailable".to_string(),
+          driver.displays().capture(None).await.map_err(api_error)?.capture,
+        )
+      }
+      Err(error) => return Err(api_error(error)),
     }
-    Err(error) => return Err(api_error(error)),
   };
   let capture = captured;
   #[cfg(feature = "tracing")]

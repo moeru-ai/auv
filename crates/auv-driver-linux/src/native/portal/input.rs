@@ -302,9 +302,7 @@ fn start_remote_desktop(connection: &Connection, session_handle: &OwnedObjectPat
   let proxy = portal_proxy(connection, REMOTE_DESKTOP_INTERFACE)?;
   let mut options = HashMap::new();
   options.insert("handle_token", Value::from(handle_token.as_str()));
-  proxy
-    .call_method("Start", &(session_handle, "", options))
-    .map_err(|error| backend(format!("failed to start remote desktop portal session: {error}")))?;
+  super::request::call_method(&proxy, REMOTE_DESKTOP_INTERFACE, "Start", &(session_handle, "", options))?;
   super::request::wait_response(&mut responses, REMOTE_DESKTOP_INTERFACE, "Start")
 }
 
