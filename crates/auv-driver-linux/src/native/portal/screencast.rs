@@ -1,7 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::os::fd::OwnedFd as StdOwnedFd;
 use std::rc::Rc;
+use std::sync::{Arc, mpsc};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use auv_driver_common::error::DriverResult;
@@ -27,6 +30,7 @@ const CURSOR_HIDDEN: u32 = 1;
 const PERSIST_UNTIL_REVOKED: u32 = 2;
 const PERSISTENCE_INTERFACE_VERSION: u32 = 4;
 const PIPEWIRE_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
+const PIPEWIRE_REFRESH_WAIT: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub struct ScreenCastFrame {
@@ -139,6 +143,7 @@ pub struct ScreenCastSession {
   connection: Connection,
   session_handle: OwnedObjectPath,
   streams: Vec<ScreenCastStream>,
+  receivers: FrameReceiverPool,
 }
 
 impl ScreenCastSession {
@@ -150,14 +155,17 @@ impl ScreenCastSession {
 
   pub fn capture_monitor_frame(&mut self, target_bounds: Option<Rect>) -> DriverResult<ScreenCastFrame> {
     let stream = select_stream(&self.streams, target_bounds)?.clone();
-    let fd = open_pipewire_remote(&self.connection, &self.session_handle)?;
-    let image = read_pipewire_frame(fd.into(), stream.id)?;
+    let image = self.receivers.capture(stream.id, || {
+      let fd = open_pipewire_remote(&self.connection, &self.session_handle)?;
+      Ok(Box::new(PipeWireFrameReceiver::open(fd.into(), stream.id)?))
+    })?;
     Ok(ScreenCastFrame { stream, image })
   }
 }
 
 impl Drop for ScreenCastSession {
   fn drop(&mut self) {
+    self.receivers.clear();
     let _ = close_session(&self.connection, &self.session_handle);
   }
 }
@@ -200,6 +208,7 @@ fn start_session(
     connection,
     session_handle,
     streams,
+    receivers: FrameReceiverPool::default(),
   })
 }
 
@@ -210,21 +219,18 @@ fn start_screencast(connection: &Connection, session_handle: &OwnedObjectPath) -
   let proxy = portal_proxy(connection, SCREENCAST_INTERFACE)?;
   let mut options = HashMap::new();
   options.insert("handle_token", Value::from(handle_token.as_str()));
-  proxy
-    .call_method("Start", &(session_handle, "", options))
-    .map_err(|error| backend(format!("failed to start screencast portal session: {error}")))?;
+  super::request::call_method(&proxy, SCREENCAST_INTERFACE, "Start", &(session_handle, "", options))?;
   wait_response(&mut responses, SCREENCAST_INTERFACE, "Start")
 }
 
 fn open_pipewire_remote(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<ZbusOwnedFd> {
   let proxy = portal_proxy(connection, SCREENCAST_INTERFACE)?;
   let options: HashMap<&str, Value<'_>> = HashMap::new();
-  proxy
-    .call("OpenPipeWireRemote", &(session_handle, options))
-    .map_err(|error| backend(format!("failed to open portal PipeWire remote: {error}")))
+  let response = super::request::call_method(&proxy, SCREENCAST_INTERFACE, "OpenPipeWireRemote", &(session_handle, options))?;
+  response.body().deserialize().map_err(|error| backend(format!("failed to decode portal PipeWire remote: {error}")))
 }
 
-fn select_stream<'a>(streams: &'a [ScreenCastStream], target_bounds: Option<Rect>) -> DriverResult<&'a ScreenCastStream> {
+fn select_stream(streams: &[ScreenCastStream], target_bounds: Option<Rect>) -> DriverResult<&ScreenCastStream> {
   if let Some(target_bounds) = target_bounds {
     return streams
       .iter()
@@ -243,18 +249,161 @@ fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
 
 struct PipeWireCaptureState {
   format: spa::param::video::VideoInfoRaw,
-  result: Rc<RefCell<Option<DriverResult<image::RgbaImage>>>>,
+  latest: Rc<RefCell<Option<Arc<image::RgbaImage>>>>,
+  pending: Rc<RefCell<Option<PendingFrameRequest>>>,
+  terminal_error: Rc<RefCell<Option<String>>>,
 }
 
-fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::RgbaImage> {
-  pw::init();
+type WorkerFrameResult = Result<Arc<image::RgbaImage>, String>;
+
+struct PendingFrameRequest {
+  sender: mpsc::SyncSender<WorkerFrameResult>,
+  stale_after: Option<Instant>,
+}
+
+fn take_stale_frame_response(
+  pending: &RefCell<Option<PendingFrameRequest>>,
+  latest: &RefCell<Option<Arc<image::RgbaImage>>>,
+  now: Instant,
+) -> Option<(mpsc::SyncSender<WorkerFrameResult>, Arc<image::RgbaImage>)> {
+  let is_stale = pending.borrow().as_ref().and_then(|request| request.stale_after).is_some_and(|deadline| now >= deadline);
+  if !is_stale {
+    return None;
+  }
+  let sender = pending.borrow_mut().take()?.sender;
+  let image = latest.borrow().clone()?;
+  Some((sender, image))
+}
+
+trait FrameReceiver: Send {
+  fn capture_frame(&mut self) -> DriverResult<image::RgbaImage>;
+}
+
+#[derive(Default)]
+struct FrameReceiverPool {
+  receivers: HashMap<u32, Box<dyn FrameReceiver>>,
+}
+
+impl fmt::Debug for FrameReceiverPool {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.debug_struct("FrameReceiverPool").field("stream_ids", &self.receivers.keys()).finish()
+  }
+}
+
+impl FrameReceiverPool {
+  fn capture(&mut self, stream_id: u32, create: impl FnOnce() -> DriverResult<Box<dyn FrameReceiver>>) -> DriverResult<image::RgbaImage> {
+    if let std::collections::hash_map::Entry::Vacant(entry) = self.receivers.entry(stream_id) {
+      entry.insert(create()?);
+    }
+    let result = self.receivers.get_mut(&stream_id).expect("receiver was inserted above").capture_frame();
+    if result.is_err() {
+      self.receivers.remove(&stream_id);
+    }
+    result
+  }
+
+  fn clear(&mut self) {
+    self.receivers.clear();
+  }
+}
+
+enum PipeWireWorkerCommand {
+  Capture(mpsc::SyncSender<WorkerFrameResult>),
+  Stop,
+}
+
+struct PipeWireFrameReceiver {
+  commands: mpsc::Sender<PipeWireWorkerCommand>,
+  worker: Option<thread::JoinHandle<()>>,
+}
+
+impl fmt::Debug for PipeWireFrameReceiver {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.debug_struct("PipeWireFrameReceiver").finish_non_exhaustive()
+  }
+}
+
+impl PipeWireFrameReceiver {
+  fn open(fd: StdOwnedFd, node_id: u32) -> DriverResult<Self> {
+    let (commands, command_receiver) = mpsc::channel();
+    let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+    let worker = thread::Builder::new()
+      .name(format!("auv-pipewire-{node_id}"))
+      .spawn(move || {
+        if let Err(error) = run_pipewire_receiver(fd, node_id, command_receiver, &ready_sender) {
+          let _ = ready_sender.try_send(Err(error.to_string()));
+        }
+      })
+      .map_err(|error| backend(format!("failed to start PipeWire capture worker: {error}")))?;
+    let mut receiver = Self {
+      commands,
+      worker: Some(worker),
+    };
+    match ready_receiver.recv_timeout(PIPEWIRE_FRAME_TIMEOUT) {
+      Ok(Ok(())) => Ok(receiver),
+      Ok(Err(error)) => {
+        receiver.stop();
+        Err(backend(error))
+      }
+      Err(mpsc::RecvTimeoutError::Timeout) => {
+        receiver.stop();
+        Err(backend("timed out initializing PipeWire screencast receiver"))
+      }
+      Err(mpsc::RecvTimeoutError::Disconnected) => {
+        receiver.stop();
+        Err(backend("PipeWire screencast receiver stopped during initialization"))
+      }
+    }
+  }
+
+  fn stop(&mut self) {
+    let _ = self.commands.send(PipeWireWorkerCommand::Stop);
+    if let Some(worker) = self.worker.take() {
+      let _ = worker.join();
+    }
+  }
+}
+
+impl FrameReceiver for PipeWireFrameReceiver {
+  fn capture_frame(&mut self) -> DriverResult<image::RgbaImage> {
+    let (frame_sender, frame_receiver) = mpsc::sync_channel(1);
+    self.commands.send(PipeWireWorkerCommand::Capture(frame_sender)).map_err(|_| backend("PipeWire screencast receiver stopped"))?;
+    match frame_receiver.recv_timeout(PIPEWIRE_FRAME_TIMEOUT) {
+      Ok(Ok(image)) => Ok((*image).clone()),
+      Ok(Err(error)) => Err(backend(error)),
+      Err(mpsc::RecvTimeoutError::Timeout) => Err(backend("timed out waiting for PipeWire screencast frame")),
+      Err(mpsc::RecvTimeoutError::Disconnected) => Err(backend("PipeWire screencast receiver stopped while waiting for a frame")),
+    }
+  }
+}
+
+impl Drop for PipeWireFrameReceiver {
+  fn drop(&mut self) {
+    self.stop();
+  }
+}
+
+fn run_pipewire_receiver(
+  fd: StdOwnedFd,
+  node_id: u32,
+  commands: mpsc::Receiver<PipeWireWorkerCommand>,
+  ready: &mpsc::SyncSender<Result<(), String>>,
+) -> DriverResult<()> {
+  // TODO(pipewire-serial-target): ScreenCast v6 deprecates reusable numeric
+  // node IDs in favor of `pipewire-serial` plus PW_KEY_TARGET_OBJECT. Keep the
+  // current node ID until the minimum portal/PipeWire compatibility boundary
+  // is explicitly raised and tested.
   let mainloop = pw::main_loop::MainLoop::new(None).map_err(|error| backend(format!("failed to create PipeWire mainloop: {error}")))?;
   let context = pw::context::Context::new(&mainloop).map_err(|error| backend(format!("failed to create PipeWire context: {error}")))?;
   let core = context.connect_fd(fd, None).map_err(|error| backend(format!("failed to connect to portal PipeWire remote: {error}")))?;
-  let result = Rc::new(RefCell::new(None));
+  let latest = Rc::new(RefCell::new(None));
+  let pending = Rc::new(RefCell::new(None));
+  let terminal_error = Rc::new(RefCell::new(None));
   let state = PipeWireCaptureState {
     format: Default::default(),
-    result: Rc::clone(&result),
+    latest: Rc::clone(&latest),
+    pending: Rc::clone(&pending),
+    terminal_error: Rc::clone(&terminal_error),
   };
   let stream = pw::stream::Stream::new(
     &core,
@@ -270,7 +419,11 @@ fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::Rgba
     .add_local_listener_with_user_data(state)
     .state_changed(|_, state, _, new| {
       if let pw::stream::StreamState::Error(error) = new {
-        *state.result.borrow_mut() = Some(Err(backend(format!("PipeWire stream error: {error}"))));
+        let error = format!("PipeWire stream error: {error}");
+        *state.terminal_error.borrow_mut() = Some(error.clone());
+        if let Some(pending) = state.pending.borrow_mut().take() {
+          let _ = pending.sender.send(Err(error));
+        }
       }
     })
     .param_changed(|_, state, id, param| {
@@ -281,30 +434,52 @@ fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::Rgba
         return;
       }
       let Ok((media_type, media_subtype)) = spa::param::format_utils::parse_format(param) else {
-        *state.result.borrow_mut() = Some(Err(backend("failed to parse PipeWire stream format")));
+        *state.terminal_error.borrow_mut() = Some("failed to parse PipeWire stream format".to_string());
         return;
       };
       if media_type != spa::param::format::MediaType::Video || media_subtype != spa::param::format::MediaSubtype::Raw {
-        *state.result.borrow_mut() = Some(Err(backend(format!("unsupported PipeWire stream media type {media_type:?}/{media_subtype:?}"))));
+        *state.terminal_error.borrow_mut() = Some(format!("unsupported PipeWire stream media type {media_type:?}/{media_subtype:?}"));
         return;
       }
       if let Err(error) = state.format.parse(param) {
-        *state.result.borrow_mut() = Some(Err(backend(format!("failed to parse PipeWire raw video format: {error}"))));
+        *state.terminal_error.borrow_mut() = Some(format!("failed to parse PipeWire raw video format: {error}"));
       }
     })
     .process(|stream, state| {
-      if state.result.borrow().is_some() {
+      let pending = state.pending.borrow_mut().take();
+      let Some(mut buffer) = stream.dequeue_buffer() else {
+        if let Some(pending) = pending {
+          *state.pending.borrow_mut() = Some(pending);
+        }
+        return;
+      };
+      if pending.is_none() && state.latest.borrow().is_some() {
+        // Dequeue and immediately release frames when nobody is waiting. This
+        // keeps the persistent stream live without continuously converting a
+        // full RGBA display while AUV is idle.
         return;
       }
-      let Some(mut buffer) = stream.dequeue_buffer() else {
-        return;
-      };
       let datas = buffer.datas_mut();
       let Some(data) = datas.first_mut() else {
+        if let Some(pending) = pending {
+          let _ = pending.sender.send(Err("PipeWire frame contained no data planes".to_string()));
+        }
         return;
       };
-      let frame = decode_pipewire_frame(data, state.format);
-      *state.result.borrow_mut() = Some(frame);
+      match decode_pipewire_frame(data, state.format) {
+        Ok(image) => {
+          let image = Arc::new(image);
+          *state.latest.borrow_mut() = Some(Arc::clone(&image));
+          if let Some(pending) = pending {
+            let _ = pending.sender.send(Ok(image));
+          }
+        }
+        Err(error) => {
+          if let Some(pending) = pending {
+            let _ = pending.sender.send(Err(error.to_string()));
+          }
+        }
+      }
     })
     .register()
     .map_err(|error| backend(format!("failed to register PipeWire stream listener: {error}")))?;
@@ -320,11 +495,30 @@ fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::Rgba
     )
     .map_err(|error| backend(format!("failed to connect PipeWire stream {node_id}: {error}")))?;
 
-  let deadline = Instant::now() + PIPEWIRE_FRAME_TIMEOUT;
-  while result.borrow().is_none() && Instant::now() < deadline {
-    mainloop.loop_().iterate(Duration::from_millis(100));
+  ready.send(Ok(())).map_err(|_| backend("PipeWire receiver initializer stopped waiting"))?;
+  loop {
+    match commands.try_recv() {
+      Ok(PipeWireWorkerCommand::Capture(sender)) => {
+        if let Some(error) = terminal_error.borrow().clone() {
+          let _ = sender.send(Err(error));
+        } else if pending.borrow().is_some() {
+          let _ = sender.send(Err("PipeWire receiver already has a pending frame request".to_string()));
+        } else {
+          *pending.borrow_mut() = Some(PendingFrameRequest {
+            sender,
+            stale_after: latest.borrow().as_ref().map(|_| Instant::now() + PIPEWIRE_REFRESH_WAIT),
+          });
+        }
+      }
+      Ok(PipeWireWorkerCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
+      Err(mpsc::TryRecvError::Empty) => {}
+    }
+    mainloop.loop_().iterate(Duration::from_millis(20));
+    if let Some((sender, latest)) = take_stale_frame_response(&pending, &latest, Instant::now()) {
+      let _ = sender.send(Ok(latest));
+    }
   }
-  result.borrow_mut().take().unwrap_or_else(|| Err(backend("timed out waiting for PipeWire screencast frame")))
+  Ok(())
 }
 
 fn pipewire_raw_video_format_param() -> Vec<u8> {

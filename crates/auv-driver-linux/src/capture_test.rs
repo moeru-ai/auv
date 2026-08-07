@@ -19,3 +19,13 @@ fn portal_crop_maps_logical_bounds_to_screenshot_pixels() {
   assert_eq!(cropped.height(), 10);
   assert_eq!(*cropped.get_pixel(0, 0), image::Rgba([1, 2, 3, 4]));
 }
+
+#[test]
+fn fallback_failure_preserves_the_primary_capture_error() {
+  let primary = backend("screencast timed out");
+
+  let error = capture_fallback::<()>("portal.screencast", &primary, || Err(backend("screenshot returned no URI")))
+    .expect_err("both capture paths fail");
+
+  assert_eq!(error.to_string(), "portal.screencast failed: screencast timed out; fallback capture also failed: screenshot returned no URI");
+}

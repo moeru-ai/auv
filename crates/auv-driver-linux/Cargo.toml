@@ -23,7 +23,9 @@ image.workspace = true
 serde.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+async-io = "2"
 fs2.workspace = true
+futures-lite = "2"
 leptess.workspace = true
 pipewire = "0.8"
 wayland-client = "0.31"

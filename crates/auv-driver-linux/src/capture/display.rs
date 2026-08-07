@@ -33,6 +33,9 @@ pub struct DisplayTarget {
 
 #[cfg(target_os = "linux")]
 pub fn list_targets() -> DriverResult<Vec<DisplayTarget>> {
+  // TODO(wayland-output-cache): output metadata still performs compositor
+  // roundtrips per call. Cache it only with an owner-approved hotplug and
+  // invalidation contract so stale geometry cannot corrupt window crops.
   wayland_display_targets()
 }
 
