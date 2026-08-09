@@ -38,6 +38,7 @@ members = [
   "crates/auv-media-macos",
   "supported/apps/auv-netease-music",
   "crates/auv-driver-overlay-macos",
+  "crates/auv-driver-overlay-windows",
   "supported/apps/auv-steam",
   "crates/auv-view",
 ]

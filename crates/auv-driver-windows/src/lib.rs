@@ -5,6 +5,7 @@
 //! capability is system OCR backed by `Windows.Media.Ocr`.
 
 pub mod accessibility;
+mod application;
 pub mod capture;
 pub mod clipboard;
 mod descriptor;
@@ -14,14 +15,18 @@ pub mod input;
 pub mod mutation;
 pub mod ocr;
 pub mod permission;
+mod readiness;
 mod session;
 pub mod vision;
 pub mod window;
 
 pub use accessibility::{AxNode, AxTreeSnapshot, focus_node, select_node, snapshot_window};
+pub use application::ApplicationControl;
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
+pub use auv_driver_common::{ProcessActivationResult, ProcessActivationVerification};
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
 pub use driver::{WindowsDriver, WindowsDriverSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{WindowsPermissionProbe, probe as probe_permissions};
+pub use readiness::assess_readiness;
 pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};

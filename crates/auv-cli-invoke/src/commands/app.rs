@@ -88,6 +88,12 @@ pub async fn activate_application(_target_application_id: Option<String>) -> Res
   #[cfg(not(target_os = "macos"))]
   {
     let _ = target_application_id;
+    // TODO(app-activate-windows-cli): auv-driver-windows now implements
+    // process-name activation (`auv_driver_windows::ApplicationControl::
+    // activate_process_name`, returning `ProcessActivationResult`), but this
+    // command's output type is the macOS-specific `ApplicationActivationResult`
+    // (bundle-id shaped). Wiring Windows here needs an owner-approved decision
+    // on the shared CLI output contract before this branch changes.
     Err("app.activate is only available on macOS".to_string())
   }
 }

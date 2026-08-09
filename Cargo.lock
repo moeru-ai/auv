@@ -663,6 +663,7 @@ version = "0.0.1"
 dependencies = [
  "auv-driver-overlay-common",
  "auv-driver-overlay-macos",
+ "auv-driver-overlay-windows",
 ]
 
 [[package]]
@@ -683,10 +684,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-driver-overlay-windows"
+version = "0.0.1"
+dependencies = [
+ "auv-driver-common",
+ "auv-driver-overlay-common",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "auv-driver-windows"
 version = "0.0.1"
 dependencies = [
  "auv-driver-common",
+ "auv-driver-overlay",
  "image",
  "thiserror 2.0.18",
  "windows 0.58.0",

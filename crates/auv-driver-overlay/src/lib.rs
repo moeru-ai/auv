@@ -15,7 +15,15 @@ pub fn show(overlay: &Overlay, options: ShowOptions) -> OverlayResult<()> {
     return auv_driver_overlay_macos::render(overlay, options).map_err(OverlayError::backend);
   }
 
-  #[cfg(not(all(target_os = "macos", feature = "macos")))]
+  #[cfg(all(target_os = "windows", feature = "windows"))]
+  {
+    return auv_driver_overlay_windows::render(overlay, options).map_err(OverlayError::backend);
+  }
+
+  #[cfg(not(any(
+    all(target_os = "macos", feature = "macos"),
+    all(target_os = "windows", feature = "windows")
+  )))]
   {
     let _ = (overlay, options);
     Err(OverlayError::Unavailable {
@@ -31,7 +39,15 @@ pub fn remove() -> OverlayResult<()> {
     return auv_driver_overlay_macos::remove().map_err(OverlayError::backend);
   }
 
-  #[cfg(not(all(target_os = "macos", feature = "macos")))]
+  #[cfg(all(target_os = "windows", feature = "windows"))]
+  {
+    return auv_driver_overlay_windows::remove().map_err(OverlayError::backend);
+  }
+
+  #[cfg(not(any(
+    all(target_os = "macos", feature = "macos"),
+    all(target_os = "windows", feature = "windows")
+  )))]
   {
     Err(OverlayError::Unavailable {
       reason: "no overlay platform adapter is enabled for this target".to_string(),

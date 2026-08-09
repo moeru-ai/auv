@@ -18,6 +18,10 @@ auv-driver-overlay-common = { path = "../auv-driver-overlay-common" }
 [features]
 default = []
 macos = ["dep:auv-driver-overlay-macos"]
+windows = ["dep:auv-driver-overlay-windows"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-overlay-macos = { path = "../auv-driver-overlay-macos", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+auv-driver-overlay-windows = { path = "../auv-driver-overlay-windows", optional = true }

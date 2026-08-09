@@ -9,7 +9,10 @@ pub enum OverlayError {
 }
 
 impl OverlayError {
-  #[cfg(all(target_os = "macos", feature = "macos"))]
+  #[cfg(any(
+    all(target_os = "macos", feature = "macos"),
+    all(target_os = "windows", feature = "windows")
+  ))]
   pub(crate) fn backend(message: String) -> Self {
     Self::Backend { message }
   }

@@ -8,10 +8,9 @@
 //! [`PermissionStatus`] vocabulary: `Granted` when the condition holds,
 //! `Missing` when it does not, and `Unknown` when the underlying query failed
 //! (or the platform cannot determine it).
-// TODO(windows-readiness-assessment): a target-aware readiness assessment that
-// combines this probe with window/frontmost/frame-drift checks (mirroring the
-// macOS `assess_readiness`) is deferred until an owner-approved slice; it needs
-// Windows equivalents for the macOS app-bundle/frontmost concepts first.
+//!
+//! Combined with window/frontmost/frame-drift checks, this probe backs
+//! `crate::readiness::assess_readiness`.
 
 use auv_driver_common::permission::PermissionStatus;
 

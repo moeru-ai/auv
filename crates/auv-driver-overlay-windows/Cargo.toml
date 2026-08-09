@@ -1,0 +1,13 @@
+[package]
+name = "auv-driver-overlay-windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+auv-driver-common = { path = "../auv-driver-common" }
+auv-driver-overlay-common = { path = "../auv-driver-overlay-common" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = ["Win32_System_LibraryLoader"] }

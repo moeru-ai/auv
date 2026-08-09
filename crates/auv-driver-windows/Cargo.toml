@@ -7,12 +7,11 @@ publish.workspace = true
 
 [features]
 default = []
-# TODO(driver-overlay-windows): add the Windows adapter after its native window
-# implementation is approved; this feature currently exposes no renderer.
-overlay = []
+overlay = ["dep:auv-driver-overlay"]
 
 [dependencies]
 auv-driver-common = { path = "../auv-driver-common" }
+auv-driver-overlay = { path = "../auv-driver-overlay", features = ["windows"], optional = true }
 image.workspace = true
 thiserror.workspace = true
 

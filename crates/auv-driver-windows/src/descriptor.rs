@@ -4,8 +4,10 @@ use auv_driver_common::{DriverDescriptor, PlatformKind};
 ///
 /// This list grows as capability slices land. Today the implemented surface is
 /// system OCR over a provided image, display/region/window capture, top-level
-/// window enumeration/resolution, foreground pointer/keyboard input, and text
-/// clipboard snapshot/restore/set.
+/// window enumeration/resolution, foreground pointer/keyboard input,
+/// window-targeted click/scroll (foreground-only; Windows has no
+/// AX/UIA-targeted background pointer path), window-scoped OCR polling, and
+/// text clipboard snapshot/restore/set.
 // TODO(windows-driver): extend as further slices land, mirroring
 // `MACOS_DESKTOP_CAPABILITIES`. Window mutation (move/resize/minimize) is
 // exposed on WindowApi but, like the macOS driver, is not represented as a
@@ -13,6 +15,8 @@ use auv_driver_common::{DriverDescriptor, PlatformKind};
 pub const WINDOWS_DESKTOP_CAPABILITIES: &[&str] = &[
   "desktop.recognize-image-text",
   "desktop.find-image-text",
+  "desktop.find-window-text",
+  "desktop.wait-window-text",
   "desktop.list-displays",
   "desktop.capture-display",
   "desktop.capture-region",
@@ -20,6 +24,8 @@ pub const WINDOWS_DESKTOP_CAPABILITIES: &[&str] = &[
   "desktop.list-windows",
   "control.click-point",
   "control.scroll-point",
+  "control.click-window-point",
+  "control.scroll-window-point",
   "control.type-text",
   "control.press-key",
   "control.copy",

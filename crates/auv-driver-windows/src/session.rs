@@ -1,8 +1,13 @@
+use std::thread;
+
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::ObservedDisplays;
-use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
-use auv_driver_common::input::{Click, InputActionResult, KeyPressOptions, Scroll, TypeTextOptions, WindowInput};
+use auv_driver_common::input::{
+  Click, ClickOptions, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, ScrollDeliveryCandidate,
+  ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
+};
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
 use auv_driver_common::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
@@ -11,12 +16,15 @@ use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_win
 use crate::capture::{capture_display, capture_region, capture_window, list_displays};
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::WindowsDriverSession;
-use crate::error::invalid_input;
+use crate::error::{invalid_input, not_found};
 use crate::input::{click_at, copy, current_position, move_to, paste, press_key, scroll_at, type_text};
 use crate::mutation::mutate_window;
 use crate::permission::{WindowsPermissionProbe, probe as probe_permissions};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
 use crate::window::{activate_window, list_windows, resolve_window};
+
+#[cfg(feature = "overlay")]
+use auv_driver_overlay::{Overlay, ShowOptions};
 
 /// Display-targeted capture capabilities.
 ///
@@ -80,6 +88,16 @@ pub struct AccessibilityApi<'a> {
   session: &'a WindowsDriverSession,
 }
 
+/// Overlay show/remove capabilities.
+///
+/// Mirrors the macOS driver's `OverlayApi`, dispatching through the shared
+/// `auv-driver-overlay` facade with its `windows` backend enabled.
+#[cfg(feature = "overlay")]
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayApi<'a> {
+  session: &'a WindowsDriverSession,
+}
+
 impl WindowsDriverSession {
   pub fn display(&self) -> DisplayApi<'_> {
     DisplayApi { session: self }
@@ -107,6 +125,28 @@ impl WindowsDriverSession {
 
   pub fn accessibility(&self) -> AccessibilityApi<'_> {
     AccessibilityApi { session: self }
+  }
+
+  #[cfg(feature = "overlay")]
+  pub fn overlay(&self) -> OverlayApi<'_> {
+    OverlayApi { session: self }
+  }
+}
+
+#[cfg(feature = "overlay")]
+impl OverlayApi<'_> {
+  pub fn show(&self, overlay: &Overlay, options: ShowOptions) -> DriverResult<()> {
+    let _ = self.session;
+    auv_driver_overlay::show(overlay, options).map_err(|error| auv_driver_common::error::DriverError::Backend {
+      message: error.to_string(),
+    })
+  }
+
+  pub fn remove(&self) -> DriverResult<()> {
+    let _ = self.session;
+    auv_driver_overlay::remove().map_err(|error| auv_driver_common::error::DriverError::Backend {
+      message: error.to_string(),
+    })
   }
 }
 
@@ -146,6 +186,32 @@ impl WindowApi<'_> {
     Ok(window_point_for_screen_point(window, point))
   }
 
+  /// Polls `window`'s capture for `query` text until it appears or `wait`'s
+  /// timeout elapses, returning whatever matches (possibly none) were last
+  /// observed.
+  pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+    let started = std::time::Instant::now();
+    loop {
+      let capture = self.capture(window)?;
+      let matches = self.session.vision().find_text_in_capture(&capture, query, region)?;
+      if !matches.matches.is_empty() || started.elapsed() >= wait.timeout {
+        return Ok(matches);
+      }
+      thread::sleep(wait.poll_interval);
+    }
+  }
+
+  /// Like [`Self::find_text`], but fails with `NotFound` when the timeout
+  /// elapses without a match instead of returning an empty result.
+  pub fn wait_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
+    let matches = self.find_text(window, query, region, wait)?;
+    if matches.matches.is_empty() {
+      Err(not_found(format!("text {query:?} before timeout")))
+    } else {
+      Ok(matches)
+    }
+  }
+
   pub fn move_to(&self, window: &Window, point: Point, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::MoveTo { point }, options)
@@ -175,21 +241,80 @@ impl WindowApi<'_> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::Zoom, options)
   }
+
+  fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    if matches!(options.policy, InputPolicy::BackgroundOnly) {
+      return Err(invalid_input("windows window.click cannot use background_only input policy"));
+    }
+    // TODO(windows-window-targeted-background-input): `window_strategy` is a
+    // macOS background-routing selector. Windows has no AX/UIA-targeted pointer
+    // delivery path (UIPI blocks cross-process synthetic input to
+    // higher-integrity windows); revisit if UI Automation exposes a verified
+    // window-targeted pointer route.
+    let _ = options.window_strategy;
+    let activation_attempt = foreground_window_attempt(window, "pointer delivery");
+    let screen_point = self.to_screen_point(window, point)?.point();
+    let mut result = self.session.input().click_at(screen_point, options.click)?;
+    result.attempts.insert(0, activation_attempt);
+    add_foreground_window_fallback_reason(
+      &mut result,
+      InputDeliveryPath::WindowTargetedMouse,
+      "windows window.click used foreground SendInput; Windows has no window-targeted background pointer delivery path",
+    );
+    Ok(result)
+  }
+
+  fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    if matches!(options.policy, InputPolicy::BackgroundOnly) {
+      return Err(invalid_input("windows window.scroll cannot use background_only input policy"));
+    }
+    if !options.delivery_strategy.candidates.contains(&ScrollDeliveryCandidate::ForegroundHid) {
+      return Err(invalid_input(
+        "windows window.scroll needs ForegroundHid in the delivery strategy because Windows has no other scroll delivery path",
+      ));
+    }
+    let activation_attempt = foreground_window_attempt(window, "wheel delivery");
+    let screen_point = self.to_screen_point(window, point)?.point();
+    let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
+    result.attempts.insert(0, activation_attempt);
+    add_foreground_window_fallback_reason(
+      &mut result,
+      InputDeliveryPath::WindowTargetedWheel,
+      "windows window.scroll used foreground SendInput; Windows has no window-targeted background wheel delivery path",
+    );
+    Ok(result)
+  }
 }
 
 impl WindowInput for WindowApi<'_> {
-  fn click(&self, _window: &Window, _point: WindowPoint, _options: auv_driver_common::ClickOptions) -> DriverResult<InputActionResult> {
-    Err(DriverError::unsupported("window.click"))
+  fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    self.click_impl(window, point, options)
   }
 
-  fn scroll(
-    &self,
-    _window: &Window,
-    _point: WindowPoint,
-    _scroll: Scroll,
-    _options: auv_driver_common::ScrollOptions,
-  ) -> DriverResult<InputActionResult> {
-    Err(DriverError::unsupported("window.scroll"))
+  fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    self.scroll_impl(window, point, scroll, options)
+  }
+}
+
+/// Foregrounds `window` before a foreground-only input delivery, reporting the
+/// outcome as an attempt instead of failing the whole delivery on activation
+/// trouble (the subsequent `SendInput` call still targets the window's frame).
+fn foreground_window_attempt(window: &Window, purpose: &str) -> InputAttempt {
+  match activate_window(window) {
+    Ok(()) => InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
+    Err(error) => InputAttempt::failure(
+      InputDeliveryPath::ForegroundSystemEvents,
+      format!("failed to foreground target window before {purpose}: {error}"),
+    ),
+  }
+}
+
+/// Records that a window-targeted delivery actually went through the
+/// foreground path, unless an earlier attempt already reported a fallback
+/// reason.
+fn add_foreground_window_fallback_reason(result: &mut InputActionResult, unavailable_path: InputDeliveryPath, reason: &str) {
+  if result.fallback_reason().is_none() {
+    result.attempts.insert(0, InputAttempt::failure(unavailable_path, reason));
   }
 }
 
