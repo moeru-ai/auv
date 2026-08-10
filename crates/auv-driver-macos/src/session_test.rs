@@ -282,6 +282,8 @@ mod no_steal_tests {
   fn permission_status_from_label_handles_native_labels() {
     assert_eq!(permission_status_from_label("granted"), PermissionStatus::Granted);
     assert_eq!(permission_status_from_label("missing"), PermissionStatus::Missing);
+    assert_eq!(permission_status_from_label("timed_out"), PermissionStatus::Unknown);
+    assert_eq!(permission_status_from_label("failed"), PermissionStatus::Unknown);
     assert_eq!(permission_status_from_label("new-native-status"), PermissionStatus::Unknown);
   }
 

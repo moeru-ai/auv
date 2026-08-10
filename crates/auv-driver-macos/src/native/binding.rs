@@ -8,6 +8,8 @@ pub(crate) mod ffi {
   enum NativePermissionStatus {
     Granted,
     Missing,
+    TimedOut,
+    Failed,
   }
 
   enum NativeHumanApprovalStatus {
@@ -21,6 +23,7 @@ pub(crate) mod ffi {
   struct NativePermissionProbeResponse {
     screen_recording: NativePermissionStatus,
     screen_capture_kit: NativePermissionStatus,
+    screen_capture_kit_error: Option<String>,
     accessibility: NativePermissionStatus,
   }
 

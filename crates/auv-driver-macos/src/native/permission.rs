@@ -17,6 +17,7 @@ pub fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
 pub struct NativePermissionProbe {
   pub screen_recording: &'static str,
   pub screen_capture_kit: &'static str,
+  pub screen_capture_kit_error: Option<String>,
   pub accessibility: &'static str,
 }
 
@@ -26,6 +27,7 @@ impl From<NativePermissionProbeResponse> for NativePermissionProbe {
     Self {
       screen_recording: permission_status_label(value.screen_recording),
       screen_capture_kit: permission_status_label(value.screen_capture_kit),
+      screen_capture_kit_error: value.screen_capture_kit_error,
       accessibility: permission_status_label(value.accessibility),
     }
   }
@@ -36,6 +38,8 @@ fn permission_status_label(status: NativePermissionStatus) -> &'static str {
   match status {
     NativePermissionStatus::Granted => "granted",
     NativePermissionStatus::Missing => "missing",
+    NativePermissionStatus::TimedOut => "timed_out",
+    NativePermissionStatus::Failed => "failed",
   }
 }
 
