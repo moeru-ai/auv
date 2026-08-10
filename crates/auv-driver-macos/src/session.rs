@@ -627,12 +627,12 @@ impl InputApi<'_> {
 
   pub fn copy(&self) -> DriverResult<()> {
     let _ = self.session;
-    run_osascript(&["tell application \"System Events\" to keystroke \"c\" using command down"])
+    crate::native::input::hotkey_foreground(8, true, false, false, false).map_err(backend)
   }
 
   pub fn paste(&self) -> DriverResult<()> {
     let _ = self.session;
-    run_osascript(&["tell application \"System Events\" to keystroke \"v\" using command down"])
+    crate::native::input::hotkey_foreground(9, true, false, false, false).map_err(backend)
   }
 
   pub fn type_text(&self, text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
@@ -661,21 +661,18 @@ impl InputApi<'_> {
       let submit_key_code = text_submit_key_code(options.submit)?;
       crate::native::clipboard::set_clipboard_text(&options.text).map_err(backend)?;
 
-      let mut lines = vec!["tell application \"System Events\"".to_string()];
       if options.replace_existing {
-        lines.push("keystroke \"a\" using {command down}".to_string());
-        lines.push("delay 0.05".to_string());
-        lines.push("key code 51".to_string());
-        lines.push("delay 0.05".to_string());
+        crate::native::input::hotkey_foreground(0, true, false, false, false).map_err(backend)?;
+        thread::sleep(Duration::from_millis(50));
+        crate::native::input::press_key_foreground(51).map_err(backend)?;
+        thread::sleep(Duration::from_millis(50));
       }
-      lines.push("keystroke \"v\" using {command down}".to_string());
-      lines.push("delay 0.15".to_string());
+      crate::native::input::hotkey_foreground(9, true, false, false, false).map_err(backend)?;
+      thread::sleep(Duration::from_millis(150));
       if let Some(key_code) = submit_key_code {
-        lines.push("delay 0.05".to_string());
-        lines.push(format!("key code {key_code}"));
+        thread::sleep(Duration::from_millis(50));
+        crate::native::input::press_key_foreground(key_code).map_err(backend)?;
       }
-      lines.push("end tell".to_string());
-      run_osascript_lines(&lines)?;
       if !options.settle.is_zero() {
         thread::sleep(options.settle);
       }
@@ -981,46 +978,22 @@ fn type_text_foreground(text: &str, options: TypeTextOptions) -> DriverResult<()
     return Err(invalid_input("foreground type_text cannot use background_only input policy"));
   }
 
-  let submit_key_code = text_submit_key_code(options.submit)?;
-  let inter_char_delay = duration_millis(options.inter_char_delay)?;
-  let mut lines = vec!["tell application \"System Events\"".to_string()];
+  let (submit_key_code, inter_char_delay_ms) = type_text_parts(options)?;
   if options.replace_existing {
-    lines.push("keystroke \"a\" using {command down}".to_string());
-    lines.push("delay 0.05".to_string());
-    lines.push("key code 51".to_string());
-    lines.push("delay 0.05".to_string());
+    crate::native::input::hotkey_foreground(0, true, false, false, false).map_err(backend)?;
+    thread::sleep(Duration::from_millis(50));
+    crate::native::input::press_key_foreground(51).map_err(backend)?;
+    thread::sleep(Duration::from_millis(50));
   }
-  push_text_keystroke_lines(&mut lines, text, inter_char_delay);
+  crate::native::input::type_text_foreground(text.to_string(), inter_char_delay_ms).map_err(backend)?;
   if let Some(key_code) = submit_key_code {
-    lines.push("delay 0.05".to_string());
-    lines.push(format!("key code {key_code}"));
+    thread::sleep(Duration::from_millis(50));
+    crate::native::input::press_key_foreground(key_code).map_err(backend)?;
   }
-  lines.push("end tell".to_string());
-  run_osascript_lines(&lines)?;
   if !options.settle.is_zero() {
     thread::sleep(options.settle);
   }
   Ok(())
-}
-
-fn push_text_keystroke_lines(lines: &mut Vec<String>, text: &str, inter_char_delay_ms: u64) {
-  for character in text.chars() {
-    lines.push(text_keystroke_line(character));
-    if inter_char_delay_ms > 0 {
-      lines.push(format_delay_millis(inter_char_delay_ms));
-    }
-  }
-}
-
-fn text_keystroke_line(character: char) -> String {
-  match character {
-    // NOTICE(macos-system-events-underscore): `keystroke "_"` is layout/input
-    // source sensitive and was observed to emit ` a ` on this smoke host.
-    // Keep the workaround until foreground typing moves to a native Unicode
-    // event path instead of System Events.
-    '_' => "key code 27 using {shift down}".to_string(),
-    _ => format!("keystroke {}", osascript_string_literal(&character.to_string())),
-  }
 }
 
 fn press_key_foreground(options: &KeyPressOptions) -> DriverResult<()> {
@@ -1030,18 +1003,13 @@ fn press_key_foreground(options: &KeyPressOptions) -> DriverResult<()> {
   }
 
   if key.contains('+') {
-    press_shortcut_foreground(key)?;
+    let shortcut = parse_shortcut(key)?;
+    crate::native::input::hotkey_foreground(shortcut.key_code, shortcut.command, shortcut.shift, shortcut.option, shortcut.control)
+      .map_err(backend)?;
   } else if let Ok(key_code) = special_key_code(key) {
-    run_osascript_lines(&[
-      "tell application \"System Events\"".to_string(),
-      format!("key code {key_code}"),
-      "end tell".to_string(),
-    ])?;
+    crate::native::input::press_key_foreground(key_code).map_err(backend)?;
   } else if key.chars().count() == 1 {
-    run_osascript(&[&format!(
-      "tell application \"System Events\" to keystroke {}",
-      osascript_string_literal(key)
-    )])?;
+    crate::native::input::type_text_foreground(key.to_string(), 0).map_err(backend)?;
   } else {
     return Err(invalid_input(format!(
       "invalid key {key}; use a special key like Return, a shortcut like cmd+f, or type_text for multi-character text"
@@ -1054,24 +1022,13 @@ fn press_key_foreground(options: &KeyPressOptions) -> DriverResult<()> {
   Ok(())
 }
 
-fn press_shortcut_foreground(shortcut: &str) -> DriverResult<()> {
-  let parsed = parse_shortcut(shortcut)?;
-  let line = if parsed.modifiers.is_empty() {
-    format!("tell application \"System Events\" to keystroke {}", osascript_string_literal(&parsed.key))
-  } else {
-    format!(
-      "tell application \"System Events\" to keystroke {} using {{{}}}",
-      osascript_string_literal(&parsed.key),
-      parsed.modifiers.join(", ")
-    )
-  };
-  run_osascript(&[&line])
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct ParsedShortcut {
-  key: String,
-  modifiers: Vec<&'static str>,
+  key_code: i32,
+  command: bool,
+  shift: bool,
+  option: bool,
+  control: bool,
 }
 
 fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
@@ -1080,31 +1037,93 @@ fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
     return Err(invalid_input(format!("invalid shortcut {shortcut}; expected a form like cmd+f or cmd+shift+p")));
   }
 
-  let key = raw_parts
-    .last()
-    .map(|value| value.to_ascii_lowercase())
-    .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; missing key")))?;
-  if key.chars().count() != 1 {
-    return Err(invalid_input(format!("invalid shortcut {shortcut}; only single-character keys are currently supported")));
-  }
-
-  let mut modifiers = Vec::new();
+  let key = raw_parts.last().ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; missing key")))?;
+  let mut key_chars = key.chars();
+  let key_character = key_chars
+    .next()
+    .filter(|_| key_chars.next().is_none())
+    .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; only single-character keys are currently supported")))?;
+  let mut parsed = ParsedShortcut {
+    key_code: macos_virtual_key_code(key_character)?,
+    command: false,
+    shift: key_character.is_ascii_uppercase()
+      || matches!(
+        key_character,
+        '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '_' | '+' | '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?'
+      ),
+    option: false,
+    control: false,
+  };
   for raw_modifier in &raw_parts[..raw_parts.len() - 1] {
-    let modifier = match raw_modifier.to_ascii_lowercase().as_str() {
-      "cmd" | "command" => "command down",
-      "shift" => "shift down",
-      "alt" | "option" => "option down",
-      "ctrl" | "control" => "control down",
+    match raw_modifier.to_ascii_lowercase().as_str() {
+      "cmd" | "command" => parsed.command = true,
+      "shift" => parsed.shift = true,
+      "alt" | "option" => parsed.option = true,
+      "ctrl" | "control" => parsed.control = true,
       other => {
         return Err(invalid_input(format!("invalid shortcut {shortcut}; unsupported modifier {other}")));
       }
-    };
-    if !modifiers.contains(&modifier) {
-      modifiers.push(modifier);
     }
   }
 
-  Ok(ParsedShortcut { key, modifiers })
+  Ok(parsed)
+}
+
+/// Maps an ANSI shortcut character to the physical key used by macOS CGEvent.
+/// Text input does not use this table; Unicode payloads preserve layout and
+/// non-ASCII characters without pretending they are physical shortcut keys.
+fn macos_virtual_key_code(character: char) -> DriverResult<i32> {
+  let code = match character.to_ascii_lowercase() {
+    'a' => 0,
+    's' => 1,
+    'd' => 2,
+    'f' => 3,
+    'h' => 4,
+    'g' => 5,
+    'z' => 6,
+    'x' => 7,
+    'c' => 8,
+    'v' => 9,
+    'b' => 11,
+    'q' => 12,
+    'w' => 13,
+    'e' => 14,
+    'r' => 15,
+    'y' => 16,
+    't' => 17,
+    '1' | '!' => 18,
+    '2' | '@' => 19,
+    '3' | '#' => 20,
+    '4' | '$' => 21,
+    '6' | '^' => 22,
+    '5' | '%' => 23,
+    '=' | '+' => 24,
+    '9' | '(' => 25,
+    '7' | '&' => 26,
+    '-' | '_' => 27,
+    '8' | '*' => 28,
+    '0' | ')' => 29,
+    ']' | '}' => 30,
+    'o' => 31,
+    'u' => 32,
+    '[' | '{' => 33,
+    'i' => 34,
+    'p' => 35,
+    'l' => 37,
+    'j' => 38,
+    '\'' | '"' => 39,
+    'k' => 40,
+    ';' | ':' => 41,
+    '\\' | '|' => 42,
+    ',' | '<' => 43,
+    '/' | '?' => 44,
+    'n' => 45,
+    'm' => 46,
+    '.' | '>' => 47,
+    '`' | '~' => 50,
+    other => return Err(invalid_input(format!("unsupported macOS shortcut key {other}"))),
+  };
+  Ok(code)
 }
 
 fn special_key_code(raw: &str) -> DriverResult<i32> {
@@ -1782,19 +1801,6 @@ fn run_osascript(scripts: &[&str]) -> DriverResult<()> {
   }
 }
 
-fn run_osascript_lines(lines: &[String]) -> DriverResult<()> {
-  let mut command = Command::new("osascript");
-  for line in lines {
-    command.arg("-e").arg(line);
-  }
-  let output = command.output().map_err(|error| backend(format!("failed to run osascript: {error}")))?;
-  if output.status.success() {
-    Ok(())
-  } else {
-    Err(backend(String::from_utf8_lossy(&output.stderr).trim()))
-  }
-}
-
 fn permission_status_from_label(label: &str) -> PermissionStatus {
   match label {
     "granted" => PermissionStatus::Granted,
@@ -1879,15 +1885,6 @@ fn process_is_alive(pid: u32) -> bool {
 
 fn escape_applescript(value: &str) -> String {
   value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn osascript_string_literal(value: &str) -> String {
-  format!("\"{}\"", escape_applescript(value))
-}
-
-fn format_delay_millis(milliseconds: u64) -> String {
-  let seconds = milliseconds as f64 / 1_000.0;
-  format!("delay {seconds:.3}")
 }
 
 fn backend(message: impl std::fmt::Display) -> DriverError {

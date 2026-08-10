@@ -21,8 +21,9 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags([
                     "-import-objc-header",
-                    // NOTICE: SwiftPM invokes swiftc from `native/`, not this manifest's directory.
-                    "swift/Sources/AuvMacosNative/Generated/native-bridging-header.h"
+                    // NOTICE: The generated bridge is ignored by git and must be created with
+                    // `scripts/generate-swift-bridge` before SwiftPM or SourceKit validation.
+                    "Sources/AuvMacosNative/Generated/native-bridging-header.h"
                 ])
             ]
         ),

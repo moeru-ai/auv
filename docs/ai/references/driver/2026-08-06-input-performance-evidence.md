@@ -6,14 +6,36 @@ changes on 2026-08-06. It is not a platform support claim, and it measures API
 return latency rather than semantic UI success. The returned
 `InputActionResult` values were delivery evidence with `verified = false`.
 
+## 2026-08-10 native-keyboard update
+
+The foreground macOS keyboard implementation has since moved from
+`osascript`/System Events to the existing Swift/CoreGraphics backend. Foreground
+text uses Unicode `CGEvent` pairs; physical keys and shortcuts use virtual
+keycodes with explicit modifier down/up events. The foreground source uses
+CoreGraphics private state and posts at the session event tap, while the
+existing PID-targeted path keeps HID-system state and `postToPid`.
+
+The 2026-08-06 keyboard timing tables below are retained as historical baseline
+evidence and no longer describe the current backend. A new same-host benchmark
+has not yet been run, so this update makes no replacement latency claim.
+
+Live semantic evidence on 2026-08-10 used the foreground NetEaseMusic window
+(`com.netease.163music`) and its declared Space shortcut. Native `input.key`
+changed system now-playing state from paused to playing, and a later invocation
+with the target confirmed frontmost changed it back to paused. This proves that
+the native foreground keyboard path was consumed by that application in this
+probe; it is not a general support claim.
+
 ## Summary
 
 - Direct macOS PID-targeted mouse and window-targeted Unicode keyboard delivery
   are already in the single-digit microsecond range. Rust/Swift FFI is not the
   limiting factor for these paths.
-- Global macOS click, Chromium-compatible click, foreground click, and
-  foreground keyboard operations are dominated by deliberate sleeps or a new
-  `osascript`/System Events process, not Rust dispatch.
+- At the measured 2026-08-06 commit, global macOS click,
+  Chromium-compatible click, foreground click, and foreground keyboard
+  operations were dominated by deliberate sleeps or a new
+  `osascript`/System Events process, not Rust dispatch. Foreground keyboard no
+  longer uses that process boundary after the 2026-08-10 update above.
 - Local daemon + gRPC over a Unix domain socket is inexpensive after the client
   channel and a run-affined Runner are warm: the measured routed validation
   path had a 0.066-0.502 ms p50 across repeated runs. This overhead is negligible
@@ -74,15 +96,16 @@ Measured component baselines:
 | `sleep(100 ms)` | 103.568 ms | 104.537 ms | 105.015 ms |
 | `sleep(150 ms)` | 153.786 ms | 154.510 ms | 155.021 ms |
 
-The source matches the measurements:
+The source at the measured commit matched the measurements:
 
 - Global pointer delivery sleeps for 15 ms after moving the pointer in
   `native/swift/Sources/AuvMacosNative/Pointer.swift`.
 - Chromium-compatible delivery contains 1 ms and 100 ms waits in the same
   native pointer implementation.
 - Foreground preparation requests a 50 ms settle in `src/session.rs`.
-- Foreground text, key, copy, and paste operations synchronously launch
-  `/usr/bin/osascript` from `src/session.rs`.
+- Foreground text, key, copy, and paste operations synchronously launched
+  `/usr/bin/osascript` from `src/session.rs`; this item is superseded by the
+  2026-08-10 native-keyboard update.
 
 These waits are wall time and do not appear as CPU samples. Time Profiler is
 useful for native call attribution, but source-level wait accounting is needed
@@ -154,10 +177,11 @@ not support attributing the 8-10 ms difference entirely to transport: the
 transport-only routed probe was sub-millisecond, while `osascript` itself had
 large variance.
 
-The practical interpretation is:
+The historical practical interpretation at the measured commit was:
 
-- For foreground key/text/copy/paste, daemon + gRPC is not the bottleneck. The
-  System Events backend and configured settles dominate.
+- For foreground key/text/copy/paste, daemon + gRPC was not the bottleneck. The
+  System Events backend and configured settles dominated. The backend portion
+  must be remeasured after the native-keyboard migration.
 - For direct PID-targeted click or window Unicode typing, warm gRPC changes the
   cost class from a few microseconds to roughly hundreds of microseconds. The
   relative multiplier is large, but absolute latency remains below 1 ms on a
@@ -227,8 +251,8 @@ Three consequences matter:
   direct function call; it means lifecycle reuse outweighs IPC for this
   process-per-command comparison.
 - `input.key` was effectively tied at about 117-119 ms p50 because both paths
-  are dominated by the System Events subprocess. CLI and gRPC overhead are
-  secondary on that operation.
+  were dominated by the System Events subprocess. These values are historical
+  after the native-keyboard migration.
 
 ## Usage guidance
 
@@ -250,8 +274,8 @@ For local daemon workflows:
 If the product needs consistently sub-millisecond end-to-end actions, the next
 benchmark slice should alternate direct and run-affined calls against the same
 backend state and record Runner lifecycle spans. Optimization should first
-target Runner cold-start policy and the `osascript` process boundary, not
-protobuf serialization.
+target Runner cold-start policy and remeasure the native keyboard backend
+before considering protobuf serialization.
 
 ## Linux context
 

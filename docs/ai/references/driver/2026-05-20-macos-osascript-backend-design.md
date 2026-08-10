@@ -1,5 +1,10 @@
 # macOS osascript Backend Design
 
+> Status update (2026-08-10): foreground keyboard, text, copy, and paste input
+> moved to the native Swift/CoreGraphics backend. `osascript` remains only for
+> application/Apple Events operations and the Automation-to-System-Events
+> permission probe; the keyboard portions below describe the earlier design.
+
 ## Context
 
 AUV currently uses `/usr/bin/osascript` for a small set of macOS automation

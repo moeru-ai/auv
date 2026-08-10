@@ -305,27 +305,11 @@ mod no_steal_tests {
   }
 
   #[test]
-  fn foreground_text_keystroke_lines_keep_spaces_as_separate_events() {
-    let mut lines = Vec::new();
-    push_text_keystroke_lines(&mut lines, "For_Me", 20);
-
-    assert_eq!(
-      lines,
-      vec![
-        "keystroke \"F\"",
-        "delay 0.020",
-        "keystroke \"o\"",
-        "delay 0.020",
-        "keystroke \"r\"",
-        "delay 0.020",
-        "key code 27 using {shift down}",
-        "delay 0.020",
-        "keystroke \"M\"",
-        "delay 0.020",
-        "keystroke \"e\"",
-        "delay 0.020",
-      ]
-    );
+  fn macos_virtual_key_code_covers_shortcut_characters() {
+    assert_eq!(macos_virtual_key_code('a').expect("a"), 0);
+    assert_eq!(macos_virtual_key_code('F').expect("F"), 3);
+    assert_eq!(macos_virtual_key_code('0').expect("0"), 29);
+    assert_eq!(macos_virtual_key_code('_').expect("_"), 27);
   }
 
   #[test]
@@ -335,8 +319,11 @@ mod no_steal_tests {
     assert_eq!(
       parsed,
       ParsedShortcut {
-        key: "p".to_string(),
-        modifiers: vec!["command down", "shift down"],
+        key_code: 35,
+        command: true,
+        shift: true,
+        option: false,
+        control: false,
       }
     );
   }

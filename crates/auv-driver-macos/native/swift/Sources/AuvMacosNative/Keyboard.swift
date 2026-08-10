@@ -2,10 +2,6 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-private func keyboardEventSource() -> CGEventSource? {
-  CGEventSource(stateID: .hidSystemState)
-}
-
 private func stampKeyboardTarget(_ event: CGEvent, pid: Int64, windowNumber: Int64) {
   event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
   event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowNumber)
@@ -18,9 +14,41 @@ private func stampKeyboardTarget(_ event: CGEvent, pid: Int64, windowNumber: Int
   }
 }
 
-private func postKeyboardEvent(_ event: CGEvent, pid: Int64, windowNumber: Int64) {
-  stampKeyboardTarget(event, pid: pid, windowNumber: windowNumber)
-  event.postToPid(pid_t(pid))
+private enum KeyboardDelivery {
+  case foreground
+  case process(pid: Int64, windowNumber: Int64)
+
+  var label: String {
+    switch self {
+    case .foreground:
+      return "foreground"
+    case .process:
+      return "window-targeted"
+    }
+  }
+
+  var eventSource: CGEventSource? {
+    switch self {
+    case .foreground:
+      // Sunshine uses a private source and the session tap for foreground
+      // keyboard delivery. Keep this separate from PID-targeted delivery,
+      // whose event state is intentionally derived from the HID system.
+      // https://github.com/LizardByte/Sunshine/blob/25c06d79b54f3d092d3fedd5f5ba44989f394692/src/platform/macos/input.cpp#L329-L375
+      return CGEventSource(stateID: .privateState)
+    case .process:
+      return CGEventSource(stateID: .hidSystemState)
+    }
+  }
+
+  func post(_ event: CGEvent) {
+    switch self {
+    case .foreground:
+      event.post(tap: .cgSessionEventTap)
+    case let .process(pid, windowNumber):
+      stampKeyboardTarget(event, pid: pid, windowNumber: windowNumber)
+      event.postToPid(pid_t(pid))
+    }
+  }
 }
 
 private func modifierFlags(
@@ -90,15 +118,14 @@ private func makeKeyboardEvent(
   return event
 }
 
-func type_text_in_window(
-  pid: Int64,
-  window_number: Int64,
-  text: RustString,
+private func typeText(
+  delivery: KeyboardDelivery,
+  text: String,
   inter_char_delay_ms: UInt64
 ) -> NativeActionResponse {
-  let source = keyboardEventSource()
+  let source = delivery.eventSource
   let delaySeconds = Double(inter_char_delay_ms) / 1000.0
-  let characters = Array(text.toString())
+  let characters = Array(text)
 
   for (index, character) in characters.enumerated() {
     guard
@@ -106,7 +133,7 @@ func type_text_in_window(
       let up = makeKeyboardEvent(source: source, keyCode: 0, keyDown: false)
     else {
       return nativeActionError(
-        "failed to create window-targeted keyboard event",
+        "failed to create \(delivery.label) keyboard event",
         "grant Accessibility permission and retry"
       )
     }
@@ -120,8 +147,8 @@ func type_text_in_window(
     // Provenance: CUA keyboard and KWWK keyboard background dispatch patterns.
     // https://github.com/trycua/cua/blob/a3448588286b6373013a5fa9072ac8bafb6681d6/libs/cua-driver-rs/crates/platform-macos/src/input/keyboard.rs#L35-L90
     // https://github.com/EYHN/kwwk-computer-use-core/blob/eddd9e5475095de58bcb81cafbad79d1f5c5495d/Sources/KWWKComputerUseCore/BackgroundInputDispatcher.swift#L264-L333
-    postKeyboardEvent(down, pid: pid, windowNumber: window_number)
-    postKeyboardEvent(up, pid: pid, windowNumber: window_number)
+    delivery.post(down)
+    delivery.post(up)
 
     if index < characters.count - 1 && delaySeconds > 0 {
       Thread.sleep(forTimeInterval: delaySeconds)
@@ -131,11 +158,11 @@ func type_text_in_window(
   return nativeActionOk()
 }
 
-func press_key_in_window(pid: Int64, window_number: Int64, key_code: Int32) -> NativeActionResponse {
-  let source = keyboardEventSource()
-  guard let virtualKey = validatedKeyCode(key_code) else {
+private func pressKey(delivery: KeyboardDelivery, keyCode: Int32) -> NativeActionResponse {
+  let source = delivery.eventSource
+  guard let virtualKey = validatedKeyCode(keyCode) else {
     return nativeActionError(
-      "invalid key_code \(key_code)",
+      "invalid key_code \(keyCode)",
       "pass a key_code between 0 and \(UInt16.max)"
     )
   }
@@ -144,29 +171,28 @@ func press_key_in_window(pid: Int64, window_number: Int64, key_code: Int32) -> N
     let up = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: false)
   else {
     return nativeActionError(
-      "failed to create window-targeted key press event",
+      "failed to create \(delivery.label) key press event",
       "grant Accessibility permission and retry"
     )
   }
 
-  postKeyboardEvent(down, pid: pid, windowNumber: window_number)
-  postKeyboardEvent(up, pid: pid, windowNumber: window_number)
+  delivery.post(down)
+  delivery.post(up)
   return nativeActionOk()
 }
 
-func hotkey_in_window(
-  pid: Int64,
-  window_number: Int64,
-  key_code: Int32,
+private func hotkey(
+  delivery: KeyboardDelivery,
+  keyCode: Int32,
   command: Bool,
   shift: Bool,
   option: Bool,
   control: Bool
 ) -> NativeActionResponse {
-  let source = keyboardEventSource()
-  guard let virtualKey = validatedKeyCode(key_code) else {
+  let source = delivery.eventSource
+  guard let virtualKey = validatedKeyCode(keyCode) else {
     return nativeActionError(
-      "invalid key_code \(key_code)",
+      "invalid key_code \(keyCode)",
       "pass a key_code between 0 and \(UInt16.max)"
     )
   }
@@ -186,7 +212,7 @@ func hotkey_in_window(
       )
     else {
       return nativeActionError(
-        "failed to create window-targeted modifier key event",
+        "failed to create \(delivery.label) modifier key event",
         "grant Accessibility permission and retry"
       )
     }
@@ -198,7 +224,7 @@ func hotkey_in_window(
     let up = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: false, flags: fullFlags)
   else {
     return nativeActionError(
-      "failed to create window-targeted hotkey event",
+      "failed to create \(delivery.label) hotkey event",
       "grant Accessibility permission and retry"
     )
   }
@@ -216,7 +242,7 @@ func hotkey_in_window(
       )
     else {
       return nativeActionError(
-        "failed to create window-targeted modifier key event",
+        "failed to create \(delivery.label) modifier key event",
         "grant Accessibility permission and retry"
       )
     }
@@ -224,8 +250,72 @@ func hotkey_in_window(
   }
 
   for event in events {
-    postKeyboardEvent(event, pid: pid, windowNumber: window_number)
+    delivery.post(event)
   }
 
   return nativeActionOk()
+}
+
+func type_text_foreground(text: RustString, inter_char_delay_ms: UInt64) -> NativeActionResponse {
+  typeText(delivery: .foreground, text: text.toString(), inter_char_delay_ms: inter_char_delay_ms)
+}
+
+func press_key_foreground(key_code: Int32) -> NativeActionResponse {
+  pressKey(delivery: .foreground, keyCode: key_code)
+}
+
+func hotkey_foreground(
+  key_code: Int32,
+  command: Bool,
+  shift: Bool,
+  option: Bool,
+  control: Bool
+) -> NativeActionResponse {
+  hotkey(
+    delivery: .foreground,
+    keyCode: key_code,
+    command: command,
+    shift: shift,
+    option: option,
+    control: control
+  )
+}
+
+func type_text_in_window(
+  pid: Int64,
+  window_number: Int64,
+  text: RustString,
+  inter_char_delay_ms: UInt64
+) -> NativeActionResponse {
+  typeText(
+    delivery: .process(pid: pid, windowNumber: window_number),
+    text: text.toString(),
+    inter_char_delay_ms: inter_char_delay_ms
+  )
+}
+
+func press_key_in_window(pid: Int64, window_number: Int64, key_code: Int32) -> NativeActionResponse {
+  pressKey(
+    delivery: .process(pid: pid, windowNumber: window_number),
+    keyCode: key_code
+  )
+}
+
+func hotkey_in_window(
+  pid: Int64,
+  window_number: Int64,
+  key_code: Int32,
+  command: Bool,
+  shift: Bool,
+  option: Bool,
+  control: Bool
+) -> NativeActionResponse {
+  hotkey(
+    delivery: .process(pid: pid, windowNumber: window_number),
+    keyCode: key_code,
+    command: command,
+    shift: shift,
+    option: option,
+    control: control
+  )
 }

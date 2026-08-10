@@ -33,7 +33,7 @@ Count: **28**
 - [`2026-08-05-mouse-motion-streaming-design.md`](2026-08-05-mouse-motion-streaming-design.md)
 - [`2026-08-06-open-source-mouse-motion-implementation-research.md`](2026-08-06-open-source-mouse-motion-implementation-research.md)
 - [`2026-08-06-input-performance-evidence.md`](2026-08-06-input-performance-evidence.md)
-- [`2026-08-07-wayland-capture-obs-sunshine-evidence.md`](2026-08-07-wayland-capture-obs-sunshine-evidence.md)
+- [`2026-08-09-orca-computer-use-comparison-note.md`](2026-08-09-orca-computer-use-comparison-note.md)
 
 ## Related
 

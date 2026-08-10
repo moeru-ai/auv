@@ -173,7 +173,7 @@ struct TypeTextArgs {
 #[invoke_command(
   id = "input.typeText",
   group = "input",
-  description = "Type text into the active macOS control through System Events.",
+  description = "Type text into the active macOS control through native CoreGraphics events.",
   input = TypeTextArgs,
 )]
 async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> InvokeCommandResult {
@@ -275,7 +275,7 @@ struct PressKeyArgs {
 #[invoke_command(
   id = "input.key",
   group = "input",
-  description = "Press a keyboard key or shortcut in the active macOS app through System Events.",
+  description = "Press a keyboard key or shortcut in the active macOS app through native CoreGraphics events.",
   input = PressKeyArgs,
 )]
 async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> InvokeCommandResult {
