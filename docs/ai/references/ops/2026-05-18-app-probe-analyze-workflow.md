@@ -50,10 +50,9 @@ The probe records app identity plus these invoke-backed steps:
 Each step preserves its command inputs, target application, run/span identity,
 status, output summary, artifacts, and optional failure message.
 
-On the `a41f4c29` baseline, `resolve_probe_ocr_sample_query` still looks up the
-legacy step ids `observe-windows` and `observe-window-tree`. The producer ids
-above are canonical, but that analyzer fallback is not yet migrated and may
-fall back to the app name or bundle id instead.
+The analyzer prefers the current `list-windows` and `capture-ax-tree` step ids.
+It also accepts the legacy `observe-windows` and `observe-window-tree` ids when
+reading older `probe.json` records.
 
 Important current behavior:
 
