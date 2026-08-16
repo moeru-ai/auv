@@ -87,8 +87,10 @@ export function contextFromEnv(
   })
 }
 
-function inferredTransport(endpoint: string): 'grpc' | 'unix' {
-  return endpoint.startsWith('unix:') ? 'unix' : 'grpc'
+function inferredTransport(endpoint: string): 'grpc' | 'npipe' | 'unix' {
+  if (endpoint.startsWith('unix:'))
+    return 'unix'
+  return endpoint.startsWith('npipe:') ? 'npipe' : 'grpc'
 }
 
 function optionalString(source: Readonly<Record<string, unknown>>, field: string): string | undefined {

@@ -99,7 +99,9 @@ async fn execute(
   let future = root.in_scope(|| async move {
     auv_tracing::emit_event!(InvokeFrontendLifecycle { frontend: "cli" });
     match remote_context {
-      Some(context) => auv_cli_invoke::runner::invoke(input, context).await,
+      // The typed remote adapter contains the complete invoke command match.
+      // Keep that large async state machine off the Windows main-thread stack.
+      Some(context) => Box::pin(auv_cli_invoke::runner::invoke(input, context)).await,
       None => invoked_command.invoke(input).await,
     }
   });

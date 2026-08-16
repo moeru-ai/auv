@@ -369,6 +369,11 @@ future `auv daemon start|status|stop` frontend may integrate with launchd,
 systemd, or brew services while executing the same serving implementation.
 Listener type is transport configuration rather than a separate server role.
 
+The default local listener does not bind TCP. Linux and macOS use an owner-only
+Unix socket. Windows uses an owner-scoped named pipe and rejects remote pipe
+clients. A caller must use `--listen http://...` to bind TCP. A non-loopback
+TCP listener requires the paired-bearer trust boundary.
+
 The daemon control protobuf package is `auv.api.daemon.v1`. It owns Device,
 pairing, discovery, Run, RunnerClass, and Runner services and messages. It
 replaced the experimental `auv.api.core.v1` package before stabilization so the
@@ -477,13 +482,13 @@ shutdown behavior. No AUV-specific runtime service or business capability API
 is implied by this transport helper.
 
 An `Executable` Runner does not bind or advertise its own listener. The daemon
-creates a connected local IPC transport before spawning, keeps the parent end,
-and passes the child end as an inherited platform handle. The child adopts that
-handle and serves HTTP/2 gRPC directly; standard output and error remain normal
-log streams. Unix uses an inherited file descriptor, while other platforms may
-use the equivalent inherited handle without exposing that platform detail in
-business APIs. The outbound client connection described by injected
-`AuvContext` is separate from this inbound serving transport.
+creates private local IPC before spawning and keeps the client-facing end. The
+child adopts the supplied endpoint and serves HTTP/2 gRPC directly; standard
+output and error remain normal log streams. Unix passes one connected stream as
+an inherited file descriptor. Windows creates one local-only named-pipe
+instance and passes its unadvertised name to the owned child. This platform
+detail does not enter business APIs. The outbound client connection described
+by injected `AuvContext` is separate from this inbound serving transport.
 
 ## Runner
 
@@ -640,7 +645,7 @@ Local owner-checked transport is the authority for pairing administration. The
 accepted paired-Device credential is an opaque bearer obtained by consuming a
 one-time bootstrap token; bearer lookup uses the current pairing-store snapshot
 so revocation applies to the next request without a certificate revocation
-list. The owner creates tokens through the daemon's same-UID Unix socket.
+list. The owner creates tokens through same-UID Unix IPC or a Windows pipe ACL.
 `auv devices pair connect` consumes a token remotely, saves the returned bearer
 in a local Device profile, and does not print it. Tokens and bearers are
 unversioned CSPRNG-generated hexadecimal secrets; their format carries no

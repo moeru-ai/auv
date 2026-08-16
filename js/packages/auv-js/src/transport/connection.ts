@@ -23,7 +23,7 @@ export interface ConnectOptions extends OperationOptions {
   endpoint?: string | URL
   local?: boolean
   route?: ConnectionRoute
-  transport?: 'grpc' | 'http' | 'unix' | Transport
+  transport?: 'grpc' | 'http' | 'npipe' | 'unix' | Transport
 }
 
 /** Opaque long-lived credential issued by successful Device pairing. */

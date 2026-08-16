@@ -17,7 +17,7 @@ auv-api-proto = { path = "../auv-api-proto" }
 http = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 prost-types = "0.14"
-tokio = { version = "1", features = ["net"] }
+tokio = { version = "1", features = ["net", "time"] }
 tonic = { version = "0.14", features = ["transport", "tls-ring"] }
 tower = { version = "0.5", features = ["util"] }
 thiserror.workspace = true

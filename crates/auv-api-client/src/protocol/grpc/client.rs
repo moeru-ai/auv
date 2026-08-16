@@ -20,6 +20,10 @@ pub const ROUTE_DEVICE_METADATA: &str = "auv-device-id";
 pub const ROUTE_RUN_METADATA: &str = "auv-run-id";
 pub const ROUTE_RUNNER_CLASS_METADATA: &str = "auv-runner-class";
 
+// Tonic requires an HTTP origin even when a custom connector supplies local
+// IPC. The connector discards this URI and opens the socket or pipe directly.
+const LOCAL_IPC_ORIGIN: &str = "http://localhost";
+
 /// Daemon routing input carried as gRPC metadata, independently of the
 /// application-owned protobuf request and response messages.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +133,9 @@ pub enum ConnectEndpoint {
   /// gRPC over HTTP/2 carried by a local Unix domain socket.
   #[cfg(unix)]
   Unix(PathBuf),
+  /// gRPC over HTTP/2 carried by a local Windows named pipe.
+  #[cfg(windows)]
+  NamedPipe(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -137,6 +144,8 @@ pub enum EndpointParseError {
   InvalidUri(String),
   #[error("Unix endpoint path must be absolute: {0}")]
   RelativeUnixPath(String),
+  #[error("invalid Windows named-pipe endpoint: {0}")]
+  InvalidNamedPipe(String),
   #[error("unsupported AUV API endpoint scheme: {0}")]
   UnsupportedScheme(String),
 }
@@ -154,6 +163,15 @@ impl FromStr for ConnectEndpoint {
       return Ok(Self::Unix(path));
       #[cfg(not(unix))]
       return Err(EndpointParseError::UnsupportedScheme("unix".to_string()));
+    }
+    if let Some(name) = value.strip_prefix("npipe://./pipe/") {
+      if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')) {
+        return Err(EndpointParseError::InvalidNamedPipe(value.to_string()));
+      }
+      #[cfg(windows)]
+      return Ok(Self::NamedPipe(name.to_string()));
+      #[cfg(not(windows))]
+      return Err(EndpointParseError::UnsupportedScheme("npipe".to_string()));
     }
 
     let uri = value.parse::<http::Uri>().map_err(|error| EndpointParseError::InvalidUri(error.to_string()))?;
@@ -175,6 +193,8 @@ impl std::fmt::Display for ConnectEndpoint {
       Self::Tcp(uri) => write!(formatter, "http://{}", uri.authority().expect("validated TCP endpoint has authority")),
       #[cfg(unix)]
       Self::Unix(path) => write!(formatter, "unix://{}", path.display()),
+      #[cfg(windows)]
+      Self::NamedPipe(name) => write!(formatter, "npipe://./pipe/{name}"),
     }
   }
 }
@@ -261,11 +281,21 @@ impl Client {
       ConnectEndpoint::Tcp(uri) => Endpoint::from_shared(uri.to_string())?.connect().await?,
       #[cfg(unix)]
       ConnectEndpoint::Unix(path) => {
-        let endpoint = Endpoint::from_static("http://[::]:50051");
+        let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
         endpoint
           .connect_with_connector(tower::service_fn(move |_: http::Uri| {
             let path = path.clone();
             async move { tokio::net::UnixStream::connect(path).await.map(hyper_util::rt::TokioIo::new) }
+          }))
+          .await?
+      }
+      #[cfg(windows)]
+      ConnectEndpoint::NamedPipe(name) => {
+        let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
+        endpoint
+          .connect_with_connector(tower::service_fn(move |_: http::Uri| {
+            let path = format!(r"\\.\pipe\{name}");
+            async move { open_named_pipe(path).await }
           }))
           .await?
       }
@@ -281,6 +311,24 @@ impl Client {
     authorization.set_sensitive(true);
     let channel = Endpoint::from_shared(config.endpoint.to_string())?.connect().await?;
     Ok(Self::from_channel_with_authorization(channel, Some(authorization)))
+  }
+}
+
+#[cfg(windows)]
+async fn open_named_pipe(path: String) -> std::io::Result<hyper_util::rt::TokioIo<tokio::net::windows::named_pipe::NamedPipeClient>> {
+  const ERROR_PIPE_BUSY: i32 = 231;
+  // NOTICE(named-pipe-busy-retry): Windows exposes no async accept backlog for
+  // named pipes. Retry the transient busy state while the server creates its
+  // next instance. Remove this policy if Tokio adds an async WaitNamedPipe API.
+  let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+  loop {
+    match tokio::net::windows::named_pipe::ClientOptions::new().open(&path) {
+      Ok(client) => return Ok(hyper_util::rt::TokioIo::new(client)),
+      Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) && tokio::time::Instant::now() < deadline => {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+      }
+      Err(error) => return Err(error),
+    }
   }
 }
 

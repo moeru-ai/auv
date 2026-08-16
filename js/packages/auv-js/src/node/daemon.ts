@@ -5,10 +5,12 @@ import type { OperationOptions } from '../transport/types'
 
 import process from 'node:process'
 
+import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { merge } from '@moeru/std/merge'
+import { isWindows } from 'std-env'
 import { x } from 'tinyexec'
 
 import { checkHealth } from '../apis/auv-daemon/health'
@@ -37,13 +39,13 @@ export interface AuvDaemon {
 export interface AuvDaemonConnectionOptions {
   readonly endpoint: string
   readonly local: boolean
-  readonly transport: 'http' | 'unix'
+  readonly transport: 'http' | 'npipe' | 'unix'
 }
 
 /** Options accepted when connecting to a daemon started by this process. */
 export interface AuvDaemonConnectOptions extends OperationOptions {
   credential?: DeviceCredential
-  transport?: 'grpc' | 'http' | 'unix'
+  transport?: 'grpc' | 'http' | 'npipe' | 'unix'
 }
 
 /** Observable completion of an app-owned AUV child process. */
@@ -68,7 +70,7 @@ export interface StartAuvOptions extends OperationOptions {
   /**
    * Listener URIs passed as repeated `--listen` arguments. Ports must be
    * explicit. An empty list uses a caller-local Unix socket below `storeRoot`,
-   * or `http://127.0.0.1:9847` on Windows.
+   * or an owner-protected named pipe on Windows.
    * @default []
    */
   listeners?: readonly string[]
@@ -175,7 +177,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   const workingDirectory = resolve(configuredWorkingDirectory)
   const storeRoot = resolve(workingDirectory, configuredStoreRoot ?? join('.auv', 'store'))
   const endpoints = Object.freeze(listeners.length === 0
-    ? [process.platform === 'win32' ? 'http://127.0.0.1:9847' : `unix://${join(storeRoot, 'auv.sock')}`]
+    ? [isWindows ? `npipe://./pipe/auv-${randomUUID()}` : `unix://${join(storeRoot, 'auv.sock')}`]
     : [...listeners])
 
   for (const endpoint of endpoints) {
@@ -284,7 +286,14 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 }
 
 function preferredConnection(endpoints: readonly string[], pairedHttp: boolean): AuvDaemonConnectionOptions {
-  const endpoint = endpoints.find(value => value.startsWith('unix://')) ?? endpoints[0]!
+  const endpoint = endpoints.find(value => value.startsWith('unix://') || value.startsWith('npipe://')) ?? endpoints[0]!
+  if (endpoint.startsWith('npipe://')) {
+    return {
+      endpoint,
+      local: true,
+      transport: 'npipe',
+    }
+  }
   if (endpoint.startsWith('unix://')) {
     return {
       endpoint: endpoint.slice('unix://'.length),
@@ -357,11 +366,12 @@ async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, 
       let connection: AuvConnection | undefined
       try {
         const unix = endpoint.startsWith('unix://')
+        const namedPipe = endpoint.startsWith('npipe://')
         connection = await connect({
           endpoint: unix ? endpoint.slice('unix://'.length) : endpoint,
-          local: unix || !pairedHttp,
+          local: unix || namedPipe || !pairedHttp,
           signal,
-          transport: unix ? 'unix' : 'http',
+          transport: unix ? 'unix' : namedPipe ? 'npipe' : 'http',
         })
         await checkHealth(connection, { signal })
         return

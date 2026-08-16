@@ -33,6 +33,9 @@ tower-http = { version = "0.6", features = ["cors"] }
 libc = "0.2"
 thiserror.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
 [build-dependencies]
 auv-api-proto = { path = "../auv-api-proto" }
 tonic-rest-build = "=0.1.5"

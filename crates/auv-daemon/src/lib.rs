@@ -39,7 +39,12 @@ pub fn default_local_listener(discovery_file: Option<&Path>) -> Result<String, S
     let parent = descriptor.parent().ok_or_else(|| format!("daemon descriptor path has no parent: {}", descriptor.display()))?;
     Ok(format!("unix://{}", parent.join("auv.sock").display()))
   }
-  #[cfg(not(unix))]
+  #[cfg(windows)]
+  {
+    let _ = discovery_file;
+    Ok(format!("npipe://./pipe/auv-{}", uuid::Uuid::now_v7()))
+  }
+  #[cfg(not(any(unix, windows)))]
   Ok(format!("http://{}:{}", auv_api_server::server::DEFAULT_API_HOST, auv_api_server::server::DEFAULT_API_PORT))
 }
 
@@ -63,6 +68,8 @@ pub fn parse_listener(listener: &str, paired_tcp: bool) -> Result<ListenEndpoint
     }),
     #[cfg(unix)]
     auv_api_client::ConnectEndpoint::Unix(path) => Ok(ListenEndpoint::Unix { path }),
+    #[cfg(windows)]
+    auv_api_client::ConnectEndpoint::NamedPipe(name) => Ok(ListenEndpoint::NamedPipe { name }),
   }
 }
 
@@ -84,14 +91,23 @@ impl Server {
       .map(|store| std::sync::Arc::new(store) as std::sync::Arc<dyn auv_api_server::control::Pairing>);
     let mut listeners = config.listeners.into_iter();
     let listen = listeners.next().ok_or_else(|| "daemon requires at least one listener".to_string())?;
-    let executable_runner_requires_parent =
-      config.runner_providers.iter().any(|provider| matches!(provider.runtime, runner_provider::RunnerRuntime::Executable(_)))
-        || config
-          .first_party_runners
-          .local_driver
-          .as_ref()
-          .is_some_and(|runtime| matches!(runtime, runner_provider::RunnerRuntime::Executable(_)));
-    let internal_runner_parent = executable_runner_requires_parent.then(|| internal_runner_parent_socket(&config.store_root));
+    let internal_runner_parent = {
+      #[cfg(unix)]
+      {
+        let executable_runner_requires_parent =
+          config.runner_providers.iter().any(|provider| matches!(provider.runtime, runner_provider::RunnerRuntime::Executable(_)))
+            || config
+              .first_party_runners
+              .local_driver
+              .as_ref()
+              .is_some_and(|runtime| matches!(runtime, runner_provider::RunnerRuntime::Executable(_)));
+        executable_runner_requires_parent.then(|| internal_runner_parent_socket(&config.store_root))
+      }
+      #[cfg(not(unix))]
+      {
+        None
+      }
+    };
     let store_root = config.store_root;
     let runner_providers = config.runner_providers;
     let first_party_runners = config.first_party_runners;
@@ -145,6 +161,7 @@ impl Server {
   }
 }
 
+#[cfg(unix)]
 fn internal_runner_parent_socket(store_root: &Path) -> PathBuf {
   use std::hash::{Hash as _, Hasher as _};
   let mut hash = std::collections::hash_map::DefaultHasher::new();

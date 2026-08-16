@@ -6,7 +6,7 @@ use clap::Args;
 /// Run the AUV daemon API in the foreground.
 #[derive(Clone, Debug, Args)]
 pub struct ServeArgs {
-  /// Listener URI. May be repeated with unix:// or http://IP:PORT.
+  /// Listener URI. May be repeated with unix://, npipe://, or http://IP:PORT.
   #[arg(long = "listen", value_name = "URI")]
   pub listeners: Vec<String>,
 
@@ -116,27 +116,22 @@ fn resolve_path(root: &std::path::Path, path: &std::path::Path) -> PathBuf {
 }
 
 fn first_party_runner_runtimes(store_root: &std::path::Path) -> Result<auv_daemon::runner_provider::FirstPartyRunnerRuntimes, String> {
-  #[cfg(unix)]
-  {
-    use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerRuntime};
-    use std::collections::BTreeMap;
-    let executable = std::env::current_exe().map_err(|error| format!("failed to resolve the auv executable for Runner hosting: {error}"))?;
-    let runner_state_root = store_root.join("runner-state").join("auv.core.local");
-    let runner_state_root =
-      runner_state_root.to_str().ok_or_else(|| format!("local Runner state path is not valid UTF-8: {}", runner_state_root.display()))?;
-    let environment = BTreeMap::from([(crate::runner::STATE_ROOT_ENV.to_string(), runner_state_root.to_string())]);
-    Ok(auv_daemon::runner_provider::FirstPartyRunnerRuntimes {
-      local_driver: Some(RunnerRuntime::Executable(ExecutableRunnerRuntime {
-        executable,
-        arguments: vec![
-          crate::runner::INTERNAL_SENTINEL.to_string(),
-          crate::runner::LOCAL_DRIVER_ROLE.to_string(),
-        ],
-        working_directory: None,
-        environment,
-      })),
-    })
-  }
-  #[cfg(not(unix))]
-  Ok(Default::default())
+  use auv_daemon::runner_provider::{ExecutableRunnerRuntime, RunnerRuntime};
+  use std::collections::BTreeMap;
+  let executable = std::env::current_exe().map_err(|error| format!("failed to resolve the auv executable for Runner hosting: {error}"))?;
+  let runner_state_root = store_root.join("runner-state").join("auv.core.local");
+  let runner_state_root =
+    runner_state_root.to_str().ok_or_else(|| format!("local Runner state path is not valid UTF-8: {}", runner_state_root.display()))?;
+  let environment = BTreeMap::from([(crate::runner::STATE_ROOT_ENV.to_string(), runner_state_root.to_string())]);
+  Ok(auv_daemon::runner_provider::FirstPartyRunnerRuntimes {
+    local_driver: Some(RunnerRuntime::Executable(ExecutableRunnerRuntime {
+      executable,
+      arguments: vec![
+        crate::runner::INTERNAL_SENTINEL.to_string(),
+        crate::runner::LOCAL_DRIVER_ROLE.to_string(),
+      ],
+      working_directory: None,
+      environment,
+    })),
+  })
 }

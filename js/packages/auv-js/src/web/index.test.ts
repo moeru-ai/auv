@@ -1,9 +1,10 @@
+import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
 import { setupPairedAuvDaemon } from '../tutils/auv-daemon'
 import { listDevices } from './index'
 
-describe.skipIf(process.platform === 'win32')('public Device operations against an AUV daemon', () => {
+describe.skipIf(isWindows)('public Device operations against an AUV daemon', () => {
   it('lists Devices through an authenticated HTTP connection', async () => {
     const daemon = await setupPairedAuvDaemon('listed-device')
     try {

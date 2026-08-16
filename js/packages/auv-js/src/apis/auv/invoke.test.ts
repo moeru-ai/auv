@@ -1,5 +1,6 @@
 import type { Transport } from '../../transport/types'
 
+import { isWindows } from 'std-env'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
@@ -53,7 +54,7 @@ describe('typed remote invoke', () => {
 //
 // Before the fix, collection failed on an invalid Windows Unix-socket URL. The
 // fix keeps fixture side effects in hooks that do not run for a skipped suite.
-describe.skipIf(process.platform === 'win32')('invoke against an authenticated AUV daemon', () => {
+describe.skipIf(isWindows)('invoke against an authenticated AUV daemon', () => {
   let credential = ''
   let daemon: Awaited<ReturnType<typeof setupAuvDaemon>> | undefined
 

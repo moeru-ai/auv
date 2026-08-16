@@ -1,4 +1,4 @@
-//! Inherited local transport for daemon-owned AUV Runner processes.
+//! Private local transport for daemon-owned AUV Runner processes.
 //!
 //! This crate deliberately does not define a private Runner control protocol.
 //! A Runner serves its own gRPC services plus standard Health and Reflection;
@@ -11,11 +11,14 @@ use std::os::fd::{FromRawFd as _, RawFd};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio_stream::StreamExt as _;
 
 /// Environment variable naming the inherited Runner IPC file descriptor.
 pub const RUNNER_IPC_FD_ENV: &str = "AUV_RUNNER_IPC_FD";
+#[cfg(windows)]
+/// Environment variable naming the daemon-created Runner named pipe.
+pub const RUNNER_IPC_PIPE_ENV: &str = "AUV_RUNNER_IPC_PIPE";
 #[cfg(unix)]
 /// Fixed file descriptor used for inherited Runner IPC on Unix.
 pub const RUNNER_IPC_FD: RawFd = 3;
@@ -65,15 +68,60 @@ impl tonic::transport::server::Connected for InheritedStream {
   fn connect_info(&self) -> Self::ConnectInfo {}
 }
 
+#[cfg(windows)]
+/// Connected Runner IPC stream that signals when its parent side disconnects.
+pub struct InheritedStream {
+  inner: tokio::net::windows::named_pipe::NamedPipeClient,
+  disconnected: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+#[cfg(windows)]
+impl tokio::io::AsyncRead for InheritedStream {
+  fn poll_read(mut self: Pin<&mut Self>, context: &mut Context<'_>, buffer: &mut tokio::io::ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+    Pin::new(&mut self.inner).poll_read(context, buffer)
+  }
+}
+
+#[cfg(windows)]
+impl tokio::io::AsyncWrite for InheritedStream {
+  fn poll_write(mut self: Pin<&mut Self>, context: &mut Context<'_>, buffer: &[u8]) -> Poll<Result<usize, std::io::Error>> {
+    Pin::new(&mut self.inner).poll_write(context, buffer)
+  }
+
+  fn poll_flush(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+    Pin::new(&mut self.inner).poll_flush(context)
+  }
+
+  fn poll_shutdown(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+    Pin::new(&mut self.inner).poll_shutdown(context)
+  }
+}
+
+#[cfg(windows)]
+impl Drop for InheritedStream {
+  fn drop(&mut self) {
+    if let Some(disconnected) = self.disconnected.take() {
+      let _ = disconnected.send(());
+    }
+  }
+}
+
+#[cfg(windows)]
+impl tonic::transport::server::Connected for InheritedStream {
+  type ConnectInfo = ();
+
+  fn connect_info(&self) -> Self::ConnectInfo {}
+}
+
 /// One adopted daemon connection and a shutdown signal that resolves when the
 /// parent side disconnects.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub struct InheritedTransport {
   stream: InheritedStream,
   parent_disconnected: tokio::sync::oneshot::Receiver<()>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl InheritedTransport {
   /// Splits the transport into tonic's incoming stream and a parent-disconnect
   /// shutdown signal.
@@ -120,9 +168,24 @@ pub fn inherited_transport() -> Result<InheritedTransport, String> {
   })
 }
 
-#[cfg(not(unix))]
+/// Opens the private named pipe created by the parent daemon.
+#[cfg(windows)]
+pub fn inherited_transport() -> Result<InheritedTransport, String> {
+  let pipe = std::env::var_os(RUNNER_IPC_PIPE_ENV).ok_or_else(|| format!("{RUNNER_IPC_PIPE_ENV} is required"))?;
+  let stream = tokio::net::windows::named_pipe::ClientOptions::new()
+    .open(&pipe)
+    .map_err(|error| format!("failed to open inherited Runner named pipe {}: {error}", std::path::Path::new(&pipe).display()))?;
+  let (disconnected, parent_disconnected) = tokio::sync::oneshot::channel();
+  Ok(InheritedTransport {
+    stream: InheritedStream {
+      inner: stream,
+      disconnected: Some(disconnected),
+    },
+    parent_disconnected,
+  })
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn inherited_transport() -> Result<(), String> {
-  // TODO(runner-named-pipe-v1): add the Windows inherited named-pipe/handle
-  // transport when daemon-owned Windows custom Runners are implemented.
-  Err("the inherited Runner transport currently requires Unix".to_string())
+  Err("the inherited Runner transport is not supported on this platform".to_string())
 }

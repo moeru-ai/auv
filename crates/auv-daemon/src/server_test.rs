@@ -24,6 +24,38 @@ fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
 const DISPLAY_SERVICE: &str = "auv.api.driver.v1.DisplayService";
 const TEST_RUNNER_CLASS: &str = "example.runner.remote";
 
+#[cfg(windows)]
+#[tokio::test]
+async fn owner_named_pipe_serves_the_typed_control_api() {
+  let root = tempfile::tempdir().unwrap();
+  let name = format!("auv-test-{}", uuid::Uuid::now_v7());
+  let server = Server::bind(config(vec![ListenEndpoint::NamedPipe { name: name.clone() }], root.path())).await.unwrap();
+  assert_eq!(server.endpoint(), &BoundEndpoint::NamedPipe(name.clone()));
+  assert_eq!(server.discovery_endpoint(), Some(&BoundEndpoint::NamedPipe(name.clone())));
+
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+  // ROOT CAUSE:
+  //
+  // If two clients opened the pipe together, Windows returned ERROR_PIPE_BUSY
+  // before the server created its next listening instance.
+  //
+  // Before the fix, one concurrent connection failed immediately. The client
+  // now retries only this transient error within a bounded local window.
+  let (first, second) = tokio::join!(
+    GrpcClient::connect(auv_api_client::ConnectEndpoint::NamedPipe(name.clone())),
+    GrpcClient::connect(auv_api_client::ConnectEndpoint::NamedPipe(name)),
+  );
+  for client in [first.unwrap(), second.unwrap()] {
+    let devices = client.devices().list_devices().await.unwrap();
+    assert_eq!(devices.len(), 1);
+    assert!(devices[0].local);
+  }
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}
+
 #[derive(Default)]
 struct DisplayFixture;
 

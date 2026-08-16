@@ -533,21 +533,19 @@ ordinary release. It cannot inherit changes made only to
 | macOS arm64 | Yes: `auv-aarch64-apple-darwin.tar.gz` | Yes: Unix executable Runner | Close | Same as macOS x64; verify native arm64 rather than Rosetta fallback. |
 | Linux x64 GNU | Yes | Yes: Unix executable Runner | Conditional | Inspect ELF runtime dependencies; declare/bundle them for deb/rpm/AppImage; verify X11/Wayland portal input/capture and Flatpak permissions. |
 | Linux arm64 GNU | Yes | Yes: Unix executable Runner | Conditional | Same as Linux x64 plus native arm64 dependency and portal testing. |
-| Windows x64 MSVC | No AUV release artifact | No: `first_party_runner_runtimes` returns empty on non-Unix | Blocked | Owner-approved Windows release artifact and inherited-handle/local Runner implementation, then signing/NSIS/SmartScreen validation. |
+| Windows x64 MSVC | No AUV release artifact | Yes from source: loopback daemon plus named-pipe executable Runner, tested 2026-08-16 | Blocked on packaging | Publish and sign the Windows artifact, then validate staging, NSIS, SmartScreen, and live Driver behavior. |
 
-### Windows is not a packaging-only gap
+### Windows runtime gap closed; packaging remains
 
-AIRI builds Windows x64, but AUV's release matrix contains no Windows target.
-More importantly, AUV's `first_party_runner_runtimes` is guarded by
-`#[cfg(unix)]`; on `#[cfg(not(unix))]` it returns an empty runtime set. See
-[`serve.rs`](https://github.com/moeru-ai/auv/blob/1ca775f957dd11b96ddc73f77e8e5f3c38d8bd4a/crates/auv-cli/src/commands/serve.rs#L118-L142).
+The 2026-08-16 AUV slice enabled the first-party local Driver Runner and custom
+executable Runners on Windows. The daemon uses one local-only named pipe per
+Runner. An automated test routes `invoke display.list` through this boundary.
+See
+[`2026-08-16-windows-local-runner-ipc-handoff.md`](2026-08-16-windows-local-runner-ipc-handoff.md).
 
-A custom-built `auv.exe serve` may host the daemon control API, but it cannot
-currently provide the first-party local Driver path AIRI needs. The accepted
-architecture reference already lists the Windows inherited-handle
-implementation as deferred. Do not add a nominal Windows binary to AIRI until
-that AUV slice exists and a Driver operation passes through the packaged
-daemon.
+AUV still publishes no Windows release artifact. AIRI integration therefore
+remains blocked on artifact publication, signing, packaging, and packaged live
+Driver evidence. Do not infer bundle readiness from source-tree tests.
 
 Once implemented, the Windows executable must be included before NSIS signing
 and verified in both unpacked output and the final signed installer. AIRI's
@@ -645,7 +643,7 @@ This answers the highest-risk questions before multiplying CI matrix work.
 
 This belongs first in AUV, not AIRI packaging:
 
-- implement and test the non-Unix first-party local Runner transport;
+- [x] implement and test the Windows first-party local Runner transport;
 - publish signed `x86_64-pc-windows-msvc` AUV artifacts;
 - then add AIRI staging, supervisor, NSIS, updater, and Driver behavior tests.
 

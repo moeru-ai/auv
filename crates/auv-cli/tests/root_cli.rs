@@ -350,7 +350,7 @@ fn local_daemon_routes_runner_grpc_without_claims_or_leases() {
     if runners.as_array().is_some_and(Vec::is_empty) {
       break;
     }
-    assert!(Instant::now() < deadline, "ephemeral route-created Runner did not stop after the RPC body completed");
+    assert!(Instant::now() < deadline, "ephemeral route-created Runner did not stop after the RPC body completed: {runners}");
     std::thread::sleep(Duration::from_millis(25));
   }
 
@@ -358,16 +358,95 @@ fn local_daemon_routes_runner_grpc_without_claims_or_leases() {
   daemon.0.wait().expect("wait for local daemon");
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_local_daemon_routes_runner_grpc_over_named_pipe() {
+  let directory = tempfile::tempdir().expect("temporary daemon directory");
+  let store = directory.path().join("store");
+  let discovery = directory.path().join("daemon.json");
+  let child = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "serve",
+      "--store-root",
+      store.to_str().unwrap(),
+      "--discovery-file",
+      discovery.to_str().unwrap(),
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .expect("start Windows daemon");
+  let mut daemon = ChildGuard(child);
+  wait_for_path(&mut daemon.0, &discovery);
+  let descriptor: serde_json::Value =
+    serde_json::from_slice(&std::fs::read(&discovery).expect("read discovery descriptor")).expect("decode discovery descriptor");
+  let endpoint = descriptor["endpoint"].as_str().expect("discovery endpoint").to_string();
+  assert!(endpoint.starts_with("npipe://./pipe/auv-"), "default Windows endpoint must be a named pipe: {endpoint}");
+
+  let device_id = tokio::runtime::Runtime::new().expect("test runtime").block_on(async {
+    let client =
+      auv_api_client::protocol::grpc::Client::connect(endpoint.parse().expect("daemon endpoint")).await.expect("connect API client");
+    client
+      .devices()
+      .list_devices()
+      .await
+      .expect("list daemon Devices")
+      .into_iter()
+      .next()
+      .and_then(|device| device.r#ref.map(|reference| reference.device_id))
+      .expect("local Device ID")
+  });
+
+  // ROOT CAUSE:
+  //
+  // On Windows, the complete typed remote invoke future overflowed the CLI
+  // main-thread stack before it could send DisplayService/ListDisplays.
+  //
+  // Before the fix, Runner Health succeeded but selected `auv invoke` aborted
+  // with STATUS_STACK_OVERFLOW. The fix keeps the remote adapter future on the
+  // heap and proves the public CLI reaches the named-pipe-backed Runner.
+  let invoked = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "--device-id",
+      &device_id,
+      "invoke",
+      "display.list",
+      "--json",
+    ])
+    .env("AUV_DISCOVERY_FILE", &discovery)
+    .output()
+    .expect("invoke selected Windows Device");
+  assert!(invoked.status.success(), "stdout={} stderr={}", stdout(&invoked), stderr(&invoked));
+  let invoked: serde_json::Value = serde_json::from_slice(&invoked.stdout).expect("invoke result JSON");
+  assert_eq!(invoked["status"], "completed", "{invoked}");
+  assert!(invoked["result"]["displays"].as_array().is_some_and(|displays| !displays.is_empty()), "{invoked}");
+
+  // A Run-affine route creates an UnlessShutdown Runner. The daemon reuses it
+  // after the implicit Run ends instead of applying Ephemeral route cleanup.
+  let listed =
+    Command::new(env!("CARGO_BIN_EXE_auv")).args(["runner", "list", "--endpoint", &endpoint, "--json"]).output().expect("list Runners");
+  assert!(listed.status.success(), "stderr={}", stderr(&listed));
+  let runners: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("Runner list JSON");
+  let runners = runners.as_array().expect("Runner list array");
+  assert_eq!(runners.len(), 1, "{runners:?}");
+  assert_eq!(runners[0]["runner_class"], "auv.core.local");
+  assert_eq!(runners[0]["phase"], "RUNNER_PHASE_READY");
+
+  daemon.0.kill().expect("stop Windows daemon");
+  daemon.0.wait().expect("wait for Windows daemon");
+}
+
 // https://github.com/moeru-ai/auv/actions/runs/31052479884/job/92462591348
 // ROOT CAUSE:
 //
-// On Windows, this pairing test cannot construct its required caller-local
-// listener because that trust boundary is currently a Unix-domain socket.
+// This topology fixture still constructs its caller-local listener through a
+// filesystem socket path and therefore remains Unix-specific.
 //
 // Before the fix, Windows attempted to parse the Unix endpoint. The fix limits
 // this topology test to platforms that implement its local transport.
-// TODO(windows-local-pairing-test): Add Windows coverage when an owner-approved
-// local authenticated transport can create pairing tokens beside remote TCP.
+// TODO(windows-local-pairing-test): Port this pairing fixture to the Windows
+// named-pipe listener when pairing-topology coverage is an approved slice.
 #[cfg(unix)]
 #[test]
 fn device_trust_name_requires_a_unique_paired_device() {

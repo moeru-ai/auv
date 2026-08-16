@@ -1,4 +1,4 @@
-//! Daemon-owned process Runner supervision and private Unix gRPC routing.
+//! Daemon-owned process Runner supervision and private local gRPC routing.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -14,6 +14,9 @@ use super::runner_provider::{
 };
 
 const RUNNER_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+// Tonic requires an HTTP origin even when the custom connector supplies local
+// IPC. The connector discards this URI and adopts the inherited stream.
+const LOCAL_IPC_ORIGIN: &str = "http://localhost";
 
 pub(crate) struct RunnerSupervisor {
   providers: RunnerProviderRegistry,
@@ -546,7 +549,7 @@ async fn spawn_executable_ready(
   drop(child_stream);
   let stream = tokio::net::UnixStream::from_std(parent).map_err(|error| RunnerError::Start(error.to_string()))?;
   let once = std::sync::Arc::new(tokio::sync::Mutex::new(Some(stream)));
-  let endpoint = Endpoint::from_static("http://[::]:50051");
+  let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
   let connect = endpoint.connect_with_connector(tower::service_fn(move |_: http::Uri| {
     let once = once.clone();
     async move {
@@ -584,10 +587,98 @@ async fn spawn_executable_ready(
   })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+async fn spawn_ready(provider: &RegisteredRunnerProvider, parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
+  match &provider.runtime {
+    RunnerRuntime::Executable(runtime) => spawn_executable_ready(provider, runtime, parent_context).await,
+    RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
+  }
+}
+
+#[cfg(windows)]
+async fn spawn_executable_ready(
+  provider: &RegisteredRunnerProvider,
+  runtime: &super::runner_provider::ExecutableRunnerRuntime,
+  parent_context: Option<&str>,
+) -> Result<ReadyRunner, RunnerError> {
+  use tokio::net::windows::named_pipe::ServerOptions;
+
+  let pipe_name = format!(r"\\.\pipe\auv-runner-{}", uuid::Uuid::now_v7());
+  let pipe = ServerOptions::new()
+    .first_pipe_instance(true)
+    .reject_remote_clients(true)
+    .create(&pipe_name)
+    .map_err(|error| RunnerError::Start(format!("failed to create Runner named pipe: {error}")))?;
+  let mut command = tokio::process::Command::new(&runtime.executable);
+  command
+    .args(&runtime.arguments)
+    // Preserve the interactive desktop and application environment used by
+    // the daemon host while keeping AUV-owned routing values authoritative.
+    .envs(&runtime.environment)
+    .env_remove("AUV_CONTEXT")
+    .env(auv_api_server::runner_transport::RUNNER_IPC_PIPE_ENV, &pipe_name)
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::inherit());
+  if let Some(parent_context) = parent_context {
+    command.env("AUV_CONTEXT", parent_context);
+  }
+  if let Some(working_directory) = &runtime.working_directory {
+    command.current_dir(working_directory);
+  }
+  let mut child = command.spawn().map_err(|error| RunnerError::Start(error.to_string()))?;
+  let connected = tokio::select! {
+    result = pipe.connect() => result.map_err(|error| RunnerError::Start(format!("failed to connect Runner named pipe: {error}"))),
+    result = child.wait() => {
+      let status = result.map_err(|error| RunnerError::Start(error.to_string()))?;
+      Err(RunnerError::Start(format!("Runner process exited before connecting to its named pipe: {status}")))
+    }
+  };
+  if let Err(error) = connected {
+    let _ = terminate_child(&mut child).await;
+    return Err(error);
+  }
+  let once = std::sync::Arc::new(tokio::sync::Mutex::new(Some(pipe)));
+  let endpoint = Endpoint::from_static(LOCAL_IPC_ORIGIN);
+  let connect = endpoint.connect_with_connector(tower::service_fn(move |_: http::Uri| {
+    let once = once.clone();
+    async move {
+      once
+        .lock()
+        .await
+        .take()
+        .map(hyper_util::rt::TokioIo::new)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "Runner IPC stream already consumed"))
+    }
+  }));
+  let channel = match connect.await {
+    Ok(channel) => channel,
+    Err(error) => {
+      let _ = terminate_child(&mut child).await;
+      return Err(RunnerError::Start(error.to_string()));
+    }
+  };
+  let reflected = match validate_ready(channel.clone(), provider).await {
+    Ok(reflected) => reflected,
+    Err(error) => {
+      let _ = terminate_child(&mut child).await;
+      return Err(error);
+    }
+  };
+  let process_id = child.id().ok_or_else(|| RunnerError::Start("Runner process omitted its PID".to_string()))?;
+  Ok(ReadyRunner {
+    runtime: ManagedRunnerRuntime::Executable { child },
+    channel,
+    display_name: reflected.display_name,
+    labels: reflected.labels,
+    process_id,
+  })
+}
+
+#[cfg(not(any(unix, windows)))]
 async fn spawn_ready(provider: &RegisteredRunnerProvider, _parent_context: Option<&str>) -> Result<ReadyRunner, RunnerError> {
   match &provider.runtime {
-    RunnerRuntime::Executable(_) => Err(RunnerError::Start("inherited-stream Runner IPC requires Unix".to_string())),
+    RunnerRuntime::Executable(_) => Err(RunnerError::Start("executable Runner IPC is not supported on this platform".to_string())),
     RunnerRuntime::RemoteGrpc(runtime) => connect_remote_ready(provider, runtime).await,
   }
 }

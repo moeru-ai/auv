@@ -1107,49 +1107,8 @@ fn duration_from_proto(
 }
 
 fn input_action_to_proto(action: auv_driver::InputActionResult) -> Result<proto::InputActionResult, Status> {
-  action.validate().map_err(|error| Status::internal(format!("driver returned invalid InputActionResult: {error}")))?;
-  Ok(proto::InputActionResult {
-    selected_path: input_delivery_path_to_proto(action.selected_path) as i32,
-    attempts: action
-      .attempts
-      .into_iter()
-      .map(|attempt| proto::InputAttempt {
-        path: input_delivery_path_to_proto(attempt.path) as i32,
-        succeeded: attempt.succeeded,
-        message: attempt.message,
-      })
-      .collect(),
-    mouse_disturbance: disturbance_to_proto(action.mouse_disturbance) as i32,
-    focus_disturbance: disturbance_to_proto(action.focus_disturbance) as i32,
-    clipboard_disturbance: disturbance_to_proto(action.clipboard_disturbance) as i32,
-  })
-}
-
-fn input_delivery_path_to_proto(path: auv_driver::InputDeliveryPath) -> proto::InputDeliveryPath {
-  match path {
-    auv_driver::InputDeliveryPath::Noop => proto::InputDeliveryPath::Noop,
-    auv_driver::InputDeliveryPath::AxPress => proto::InputDeliveryPath::AxPress,
-    auv_driver::InputDeliveryPath::AxFocus => proto::InputDeliveryPath::AxFocus,
-    auv_driver::InputDeliveryPath::AxSetValue => proto::InputDeliveryPath::AxSetValue,
-    auv_driver::InputDeliveryPath::AxScroll => proto::InputDeliveryPath::AxScroll,
-    auv_driver::InputDeliveryPath::AxSelectedText => proto::InputDeliveryPath::AxSelectedText,
-    auv_driver::InputDeliveryPath::WindowTargetedMouse => proto::InputDeliveryPath::WindowTargetedMouse,
-    auv_driver::InputDeliveryPath::WindowTargetedWheel => proto::InputDeliveryPath::WindowTargetedWheel,
-    auv_driver::InputDeliveryPath::WindowTargetedKeyboard => proto::InputDeliveryPath::WindowTargetedKeyboard,
-    auv_driver::InputDeliveryPath::WindowTargetedKeyboardScroll => proto::InputDeliveryPath::WindowTargetedKeyboardScroll,
-    auv_driver::InputDeliveryPath::ClipboardPaste => proto::InputDeliveryPath::ClipboardPaste,
-    auv_driver::InputDeliveryPath::ForegroundSystemEvents => proto::InputDeliveryPath::ForegroundSystemEvents,
-    auv_driver::InputDeliveryPath::Unsupported => proto::InputDeliveryPath::Unsupported,
-  }
-}
-
-fn disturbance_to_proto(level: auv_driver::DisturbanceLevel) -> proto::DisturbanceLevel {
-  match level {
-    auv_driver::DisturbanceLevel::None => proto::DisturbanceLevel::None,
-    auv_driver::DisturbanceLevel::Temporary => proto::DisturbanceLevel::Temporary,
-    auv_driver::DisturbanceLevel::Foreground => proto::DisturbanceLevel::Foreground,
-    auv_driver::DisturbanceLevel::Unknown => proto::DisturbanceLevel::Unknown,
-  }
+  auv::client::runner::input_action_result_to_proto(action)
+    .map_err(|error| Status::internal(format!("driver returned invalid InputActionResult: {error}")))
 }
 
 #[tonic::async_trait]
@@ -1525,9 +1484,9 @@ impl DisplayService for LocalDisplayService {
   }
 }
 
-#[cfg(unix)]
-/// Serves the first-party local driver over the daemon-inherited socket.
+/// Serves the first-party local driver over daemon-owned private IPC.
 ///
+#[cfg(any(unix, windows))]
 pub(super) async fn serve_inherited() -> Result<(), String> {
   let (incoming, parent_disconnected) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
 
@@ -1626,9 +1585,9 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
     .map_err(|error| format!("Runner transport failed: {error}"))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub async fn serve_inherited() -> Result<(), String> {
-  Err("the first local driver Runner requires Unix inherited-stream IPC".to_string())
+  Err("the first local driver Runner is not supported on this platform".to_string())
 }
 
 #[cfg(test)]

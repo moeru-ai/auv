@@ -1,3 +1,4 @@
+import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -8,7 +9,7 @@ import {
 } from '../../node/index'
 import { setupAuvDaemon } from '../../tutils/auv-daemon'
 
-describe.skipIf(process.platform === 'win32')('pairing operations against an AUV daemon', () => {
+describe.skipIf(isWindows)('pairing operations against an AUV daemon', () => {
   it('creates a one-time token with an explicit TTL', async () => {
     const daemon = await setupAuvDaemon()
 

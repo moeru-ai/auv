@@ -2,6 +2,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
 import { checkHealth, listDevices } from '../apis'
@@ -54,9 +55,41 @@ describe('startAuv', () => {
       const firstExit = await daemon.stop()
       const secondExit = await daemon.stop()
       expect(secondExit).toEqual(firstExit)
-      expect(firstExit).toEqual(process.platform === 'win32'
+      expect(firstExit).toEqual(isWindows
         ? { code: null, signal: 'SIGINT' }
         : { code: 0, signal: null })
+    }
+    finally {
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  it.runIf(isWindows)('uses a named pipe for the default app-owned daemon', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-npipe-'))
+    const daemon = await startAuv({
+      binaryPath: join(workspace, 'target', 'debug', 'auv'),
+      noDiscovery: true,
+      storeRoot: 'state',
+      workingDirectory,
+    })
+
+    try {
+      expect(daemon.endpoints).toHaveLength(1)
+      expect(daemon.endpoints[0]).toMatch(/^npipe:\/\/\.\/pipe\/auv-/)
+      expect(daemon.connectionOptions).toEqual({
+        endpoint: daemon.endpoints[0],
+        local: true,
+        transport: 'npipe',
+      })
+      const connections = await Promise.all([daemon.connect(), daemon.connect()])
+      try {
+        await Promise.all(connections.map(connection => expect(checkHealth(connection)).resolves.toBe('serving')))
+      }
+      finally {
+        await Promise.all(connections.map(connection => connection.close()))
+      }
     }
     finally {
       await daemon.stop()
@@ -71,7 +104,7 @@ describe('startAuv', () => {
     })).rejects.toBeInstanceOf(AuvDaemonStartError)
   })
 
-  it.skipIf(process.platform === 'win32')('lets tinyexec stop the daemon when its lifecycle signal aborts', async () => {
+  it.skipIf(isWindows)('lets tinyexec stop the daemon when its lifecycle signal aborts', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-abort-'))
     const controller = new AbortController()
@@ -93,7 +126,7 @@ describe('startAuv', () => {
     }
   })
 
-  it.skipIf(process.platform === 'win32')('exposes public health over Unix, gRPC, and HTTP', async () => {
+  it.skipIf(isWindows)('exposes public health over Unix, gRPC, and HTTP', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-health-'))
     const socket = join(workingDirectory, 'auv.sock')

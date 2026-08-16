@@ -98,6 +98,7 @@ windows = { version = "0.58", features = [
   "Storage_Streams",
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Authorization",
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",

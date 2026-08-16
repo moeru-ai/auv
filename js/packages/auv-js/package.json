@@ -47,6 +47,7 @@
     "@grpc/grpc-js": "catalog:",
     "@moeru/std": "catalog:",
     "date-fns": "catalog:",
+    "std-env": "catalog:",
     "tinyexec": "catalog:"
   },
   "devDependencies": {

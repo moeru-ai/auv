@@ -116,7 +116,8 @@ const auv = createAuv(connection)
 
 const displays = await auv
   .runner({ runnerClass: 'auv.core.local' })
-  .displays.list()
+  .displays
+  .list()
 ```
 
 `contextFromEnv` accepts any read-only environment-shaped object, so embedded

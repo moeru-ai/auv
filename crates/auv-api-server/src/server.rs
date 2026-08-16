@@ -4,7 +4,9 @@ pub(crate) mod runner_grpc_proxy;
 
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::authentication::Authenticator;
@@ -22,6 +24,8 @@ use auv_api_proto::auv::api::daemon::v1::runner_service_server::RunnerServiceSer
 use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 #[cfg(unix)]
 use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
@@ -59,6 +63,12 @@ pub enum ListenEndpoint {
     /// Unix-domain socket path.
     path: PathBuf,
   },
+  /// Local gRPC over a Windows named pipe protected for its owner.
+  #[cfg(windows)]
+  NamedPipe {
+    /// Pipe name below the local `\\.\pipe\` namespace.
+    name: String,
+  },
 }
 
 impl Default for ListenEndpoint {
@@ -81,8 +91,9 @@ pub struct BindConfig {
   pub pairing: Option<Arc<dyn Pairing>>,
   /// Optional inactivity deadline applied to daemon-owned runner supervision.
   pub daemon_idle_timeout: Option<std::time::Duration>,
-  /// Private listener used by executable Runners when no caller-local
-  /// listener was configured. The daemon SDK owns the path decision.
+  /// Private Unix listener used by executable Runners when no caller-local
+  /// Unix listener was configured. Windows Runners use per-process named
+  /// pipes instead. The daemon SDK owns the path decision.
   pub internal_runner_parent: Option<PathBuf>,
 }
 
@@ -96,6 +107,9 @@ pub enum BoundEndpoint {
   #[cfg(unix)]
   /// Bound caller-local Unix-domain socket path.
   Unix(PathBuf),
+  #[cfg(windows)]
+  /// Bound caller-local Windows named-pipe name.
+  NamedPipe(String),
 }
 
 impl fmt::Display for BoundEndpoint {
@@ -105,6 +119,8 @@ impl fmt::Display for BoundEndpoint {
       Self::Remote(address) => write!(f, "http://{address}"),
       #[cfg(unix)]
       Self::Unix(path) => write!(f, "unix://{}", path.display()),
+      #[cfg(windows)]
+      Self::NamedPipe(name) => write!(f, "npipe://./pipe/{name}"),
     }
   }
 }
@@ -115,6 +131,11 @@ enum BoundListener {
   Unix {
     listener: UnixListener,
     cleanup: UnixSocketCleanup,
+  },
+  #[cfg(windows)]
+  NamedPipe {
+    server: NamedPipeServer,
+    name: String,
   },
 }
 
@@ -166,8 +187,16 @@ impl Server {
           .or_else(|| endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_))))
       }
       #[cfg(not(unix))]
+      #[cfg(not(windows))]
       {
         endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_)))
+      }
+      #[cfg(windows)]
+      {
+        endpoints
+          .iter()
+          .find(|endpoint| matches!(endpoint, BoundEndpoint::NamedPipe(_)))
+          .or_else(|| endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_))))
       }
     }
     .map(ToString::to_string);
@@ -182,6 +211,8 @@ impl Server {
         host: DEFAULT_API_HOST.to_string(),
         port: 0,
       };
+      #[cfg(not(unix))]
+      let _ = path;
 
       let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing).await?;
       parent_endpoint = Some(endpoint.to_string());
@@ -210,11 +241,15 @@ impl Server {
     &self.endpoints
   }
 
-  /// Endpoint safe for caller-local discovery, preferring Unix over loopback
-  /// TCP and never returning a credential-dependent remote endpoint.
+  /// Endpoint safe for caller-local discovery, preferring owner-protected IPC
+  /// over loopback TCP and never returning a paired remote endpoint.
   pub fn discovery_endpoint(&self) -> Option<&BoundEndpoint> {
     #[cfg(unix)]
     if let Some(endpoint) = self.endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Unix(_))) {
+      return Some(endpoint);
+    }
+    #[cfg(windows)]
+    if let Some(endpoint) = self.endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::NamedPipe(_))) {
       return Some(endpoint);
     }
     self.endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_)))
@@ -317,6 +352,22 @@ async fn serve_listener(listener: BoundListenerState, daemon: Arc<dyn Control>, 
       .serve_with_incoming_shutdown(UnixListenerStream::new(listener), shutdown.cancelled_owned())
       .await
       .map_err(|error| format!("API server failed: {error}")),
+    #[cfg(windows)]
+    BoundListener::NamedPipe { server, name } => {
+      let incoming = futures_util::stream::try_unfold((server, name), |(server, name)| async move {
+        server.connect().await?;
+        // Create the next listening instance before yielding the connected one,
+        // so a concurrent caller does not observe a gap in pipe availability.
+        let next = create_named_pipe(&name, false)?;
+        Ok::<_, std::io::Error>(Some((NamedPipeIo(server), (next, name))))
+      });
+      tonic::transport::Server::builder()
+        .accept_http1(true)
+        .add_routes(routes.into())
+        .serve_with_incoming_shutdown(incoming, shutdown.cancelled_owned())
+        .await
+        .map_err(|error| format!("API server failed: {error}"))
+    }
   }
 }
 
@@ -373,7 +424,101 @@ async fn bind_listener(
       let owner_uid = cleanup.owner_uid;
       (BoundListener::Unix { listener, cleanup }, BoundEndpoint::Unix(path), Authenticator::local(Some(owner_uid), pairing))
     }
+    #[cfg(windows)]
+    ListenEndpoint::NamedPipe { name } => {
+      let server = create_named_pipe(&name, true).map_err(|error| format!("failed to bind API named pipe {name:?}: {error}"))?;
+      (
+        BoundListener::NamedPipe {
+          server,
+          name: name.clone(),
+        },
+        BoundEndpoint::NamedPipe(name),
+        Authenticator::local(pairing),
+      )
+    }
   })
+}
+
+#[cfg(windows)]
+fn create_named_pipe(name: &str, first: bool) -> std::io::Result<NamedPipeServer> {
+  use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+  use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+  use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+  use windows::core::w;
+
+  if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')) {
+    return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "named-pipe name contains unsupported characters"));
+  }
+
+  let mut descriptor = PSECURITY_DESCRIPTOR::default();
+  // `OW` is the object-owner SID. The protected DACL grants full access only
+  // to the creating user and LocalSystem; no Everyone or Administrators ACE is
+  // inherited. PIPE_REJECT_REMOTE_CLIENTS independently rejects network opens.
+  // SAFETY: `descriptor` is valid writable output storage, the SDDL literal is
+  // NUL-terminated, and the returned allocation is released with LocalFree
+  // after CreateNamedPipeW has synchronously copied the security descriptor.
+  unsafe {
+    ConvertStringSecurityDescriptorToSecurityDescriptorW(w!("D:P(A;;GA;;;SY)(A;;GA;;;OW)"), SDDL_REVISION_1, &mut descriptor, None)
+      .map_err(std::io::Error::other)?;
+  }
+  let mut attributes = SECURITY_ATTRIBUTES {
+    nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+    lpSecurityDescriptor: descriptor.0,
+    bInheritHandle: BOOL(0),
+  };
+  let mut options = ServerOptions::new();
+  options.first_pipe_instance(first).reject_remote_clients(true);
+  let path = format!(r"\\.\pipe\{name}");
+  // SAFETY: `attributes` and its descriptor remain live for this synchronous
+  // call. Tokio only forwards the pointer to CreateNamedPipeW and does not
+  // retain it in the returned server handle.
+  let result = unsafe { options.create_with_security_attributes_raw(&path, (&raw mut attributes).cast()) };
+  // SAFETY: ConvertStringSecurityDescriptorToSecurityDescriptorW returned this
+  // allocation and transfers ownership to the caller, which must use LocalFree.
+  unsafe {
+    let _ = LocalFree(HLOCAL(descriptor.0));
+  }
+  result
+}
+
+#[cfg(windows)]
+struct NamedPipeIo(NamedPipeServer);
+
+#[cfg(windows)]
+impl tokio::io::AsyncRead for NamedPipeIo {
+  fn poll_read(
+    mut self: std::pin::Pin<&mut Self>,
+    context: &mut std::task::Context<'_>,
+    buffer: &mut tokio::io::ReadBuf<'_>,
+  ) -> std::task::Poll<std::io::Result<()>> {
+    std::pin::Pin::new(&mut self.0).poll_read(context, buffer)
+  }
+}
+
+#[cfg(windows)]
+impl tokio::io::AsyncWrite for NamedPipeIo {
+  fn poll_write(
+    mut self: std::pin::Pin<&mut Self>,
+    context: &mut std::task::Context<'_>,
+    buffer: &[u8],
+  ) -> std::task::Poll<std::io::Result<usize>> {
+    std::pin::Pin::new(&mut self.0).poll_write(context, buffer)
+  }
+
+  fn poll_flush(mut self: std::pin::Pin<&mut Self>, context: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+    std::pin::Pin::new(&mut self.0).poll_flush(context)
+  }
+
+  fn poll_shutdown(mut self: std::pin::Pin<&mut Self>, context: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+    std::pin::Pin::new(&mut self.0).poll_shutdown(context)
+  }
+}
+
+#[cfg(windows)]
+impl tonic::transport::server::Connected for NamedPipeIo {
+  type ConnectInfo = ();
+
+  fn connect_info(&self) -> Self::ConnectInfo {}
 }
 
 fn resolve_remote_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String> {

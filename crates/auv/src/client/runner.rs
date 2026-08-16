@@ -772,9 +772,8 @@ fn ax_focus_result_from_proto(response: macos_proto::FocusTextResponse) -> Resul
   })
 }
 
-/// Converts the Driver Runner wire result into the shared typed input-delivery
-/// contract used by app-owned operations.
-fn input_action_result_from_proto(action: proto::InputActionResult) -> Result<auv_driver::InputActionResult, CapabilityError> {
+/// Converts a Driver wire result into the shared input-delivery contract.
+pub fn input_action_result_from_proto(action: proto::InputActionResult) -> Result<auv_driver::InputActionResult, CapabilityError> {
   fn path(value: i32) -> Result<auv_driver::InputDeliveryPath, CapabilityError> {
     use proto::InputDeliveryPath as Wire;
     Ok(match Wire::try_from(value).map_err(|_| CapabilityError::InvalidResponse("unknown InputDeliveryPath".to_string()))? {
@@ -828,6 +827,52 @@ fn input_action_result_from_proto(action: proto::InputActionResult) -> Result<au
   };
   action.validate().map_err(CapabilityError::InvalidResponse)?;
   Ok(action)
+}
+
+/// Converts the shared input-delivery contract into its Driver wire result.
+pub fn input_action_result_to_proto(action: auv_driver::InputActionResult) -> Result<proto::InputActionResult, String> {
+  fn path(value: auv_driver::InputDeliveryPath) -> proto::InputDeliveryPath {
+    match value {
+      auv_driver::InputDeliveryPath::Noop => proto::InputDeliveryPath::Noop,
+      auv_driver::InputDeliveryPath::AxPress => proto::InputDeliveryPath::AxPress,
+      auv_driver::InputDeliveryPath::AxFocus => proto::InputDeliveryPath::AxFocus,
+      auv_driver::InputDeliveryPath::AxSetValue => proto::InputDeliveryPath::AxSetValue,
+      auv_driver::InputDeliveryPath::AxScroll => proto::InputDeliveryPath::AxScroll,
+      auv_driver::InputDeliveryPath::AxSelectedText => proto::InputDeliveryPath::AxSelectedText,
+      auv_driver::InputDeliveryPath::WindowTargetedMouse => proto::InputDeliveryPath::WindowTargetedMouse,
+      auv_driver::InputDeliveryPath::WindowTargetedWheel => proto::InputDeliveryPath::WindowTargetedWheel,
+      auv_driver::InputDeliveryPath::WindowTargetedKeyboard => proto::InputDeliveryPath::WindowTargetedKeyboard,
+      auv_driver::InputDeliveryPath::WindowTargetedKeyboardScroll => proto::InputDeliveryPath::WindowTargetedKeyboardScroll,
+      auv_driver::InputDeliveryPath::ClipboardPaste => proto::InputDeliveryPath::ClipboardPaste,
+      auv_driver::InputDeliveryPath::ForegroundSystemEvents => proto::InputDeliveryPath::ForegroundSystemEvents,
+      auv_driver::InputDeliveryPath::Unsupported => proto::InputDeliveryPath::Unsupported,
+    }
+  }
+  fn disturbance(value: auv_driver::DisturbanceLevel) -> proto::DisturbanceLevel {
+    match value {
+      auv_driver::DisturbanceLevel::None => proto::DisturbanceLevel::None,
+      auv_driver::DisturbanceLevel::Temporary => proto::DisturbanceLevel::Temporary,
+      auv_driver::DisturbanceLevel::Foreground => proto::DisturbanceLevel::Foreground,
+      auv_driver::DisturbanceLevel::Unknown => proto::DisturbanceLevel::Unknown,
+    }
+  }
+
+  action.validate()?;
+  Ok(proto::InputActionResult {
+    selected_path: path(action.selected_path) as i32,
+    attempts: action
+      .attempts
+      .into_iter()
+      .map(|attempt| proto::InputAttempt {
+        path: path(attempt.path) as i32,
+        succeeded: attempt.succeeded,
+        message: attempt.message,
+      })
+      .collect(),
+    mouse_disturbance: disturbance(action.mouse_disturbance) as i32,
+    focus_disturbance: disturbance(action.focus_disturbance) as i32,
+    clipboard_disturbance: disturbance(action.clipboard_disturbance) as i32,
+  })
 }
 
 impl ApplicationClient {

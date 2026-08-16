@@ -2,6 +2,7 @@ import type { RunPhase as ProtoRunPhase } from '../../gen/auv/api/daemon/v1/run_
 import type { Transport } from '../../web/index'
 
 import { create, toBinary } from '@bufbuild/protobuf'
+import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
 import { CreateRunResponseSchema } from '../../gen/auv/api/daemon/v1/run_pb'
@@ -49,7 +50,7 @@ describe('run and Runner operations', () => {
   })
 })
 
-describe.skipIf(process.platform === 'win32')('run and Runner operations against an AUV daemon', () => {
+describe.skipIf(isWindows)('run and Runner operations against an AUV daemon', () => {
   it('creates a Run with explicit Device placement and labels', async () => {
     const daemon = await setupPairedAuvDaemon('run-device')
     try {

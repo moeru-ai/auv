@@ -13,6 +13,10 @@ export interface GrpcTransportOptions {
   endpoint?: string | URL
 }
 
+export interface NamedPipeTransportOptions {
+  path: string | URL
+}
+
 export interface UnixSocketTransportOptions {
   path: string | URL
 }
@@ -21,6 +25,13 @@ export interface UnixSocketTransportOptions {
 export function createGrpcTransport(options: GrpcTransportOptions = {}): Transport {
   const endpoint = grpcEndpoint(options.endpoint ?? 'http://127.0.0.1:9847')
   return grpcTransport(endpoint.target, endpoint.credentials)
+}
+
+/** Creates a Node.js gRPC transport over an AUV Windows named pipe. */
+export function createNamedPipeTransport(options: NamedPipeTransportOptions): Transport {
+  const value = options.path.toString()
+  const path = value.startsWith('npipe://') ? namedPipePath(new URL(value)) : value
+  return grpcTransport(`unix:${path}`, ChannelCredentials.createInsecure())
 }
 
 /** Creates a Node.js gRPC transport over an AUV Unix socket. */
@@ -178,6 +189,14 @@ function grpcUnary(client: Client, call: UnaryCall): Promise<Uint8Array> {
     if (call.signal?.aborted)
       onAbort()
   })
+}
+
+function namedPipePath(url: URL): string {
+  const prefix = '/pipe/'
+  const name = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : ''
+  if (url.protocol !== 'npipe:' || url.hostname !== '.' || !/^[\w.-]+$/.test(name))
+    throw new TypeError(`invalid AUV named-pipe endpoint: ${url.toString()}`)
+  return `\\\\.\\pipe\\${name}`
 }
 
 function waitForReady(client: Client, options: OperationOptions): Promise<void> {

@@ -23,6 +23,15 @@ fn endpoint_parser_round_trips_absolute_unix_path() {
   assert_eq!(endpoint.to_string(), "unix:///tmp/auv.sock");
 }
 
+#[cfg(windows)]
+#[test]
+fn endpoint_parser_round_trips_windows_named_pipe() {
+  let endpoint = "npipe://./pipe/auv-0198-test".parse::<ConnectEndpoint>().expect("named-pipe endpoint");
+  assert_eq!(endpoint.to_string(), "npipe://./pipe/auv-0198-test");
+  assert!("npipe://./pipe/".parse::<ConnectEndpoint>().is_err());
+  assert!("npipe://./pipe/auv/nested".parse::<ConnectEndpoint>().is_err());
+}
+
 #[test]
 fn endpoint_parser_accepts_remote_http_and_rejects_unsupported_tls() {
   assert!("http://example.com:9847".parse::<ConnectEndpoint>().is_ok());
