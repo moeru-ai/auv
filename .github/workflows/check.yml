@@ -51,4 +51,17 @@ jobs:
       - run: cargo check
       - run: cargo test
       - run: cargo run --quiet -- invoke --help
+      # `swift test` builds every target in the package, including
+      # `AuvMacosNative`, whose bridging header lives under the gitignored
+      # `Generated/`. Generate it before the Swift tests run.
+      - name: Generate Swift bridge sources
+        if: runner.os == 'macOS'
+        run: bash scripts/generate-swift-bridge
+      # Covers the AX observed-path parse contract (root marker, non-negative
+      # integer segments, offset reporting, per-operation verb interpolation)
+      # via the pure `AuvAxPath` target. No Accessibility grant needed.
+      - name: Swift tests (AX path parse contract)
+        if: runner.os == 'macOS'
+        working-directory: crates/auv-driver-macos/native/swift
+        run: swift test
       - run: git diff --check

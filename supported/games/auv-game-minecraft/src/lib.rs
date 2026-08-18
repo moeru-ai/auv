@@ -11,6 +11,7 @@ pub mod dataset;
 pub mod evidence;
 pub mod ingest;
 pub mod input_target;
+pub mod m1_black_box_baseline;
 pub mod measurement;
 pub mod overlay;
 pub mod prep;
@@ -45,6 +46,10 @@ pub use dataset::{
 #[allow(deprecated)]
 pub use ingest::{TailFrameWaitConfig, read_latest_spatial_frame_from_tail, read_latest_spatial_frame_newer_than};
 pub use input_target::projected_window_point;
+pub use m1_black_box_baseline::{
+  M1_BLACK_BOX_REQUEST_SCHEMA_VERSION, M1_BLACK_BOX_RESPONSE_REPORT_SCHEMA_VERSION, M1BlackBoxRequest, M1BlackBoxRequestError,
+  M1BlackBoxResponseReport, M1BlackBoxResponseStatus, inspect_m1_black_box_response, prepare_m1_black_box_request,
+};
 pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,
   TextureSweepSampleSet, TextureSweepSampleSource, TextureSweepThresholds, build_texture_sweep_report, evaluate_texture_sweep,

@@ -81,3 +81,41 @@ fn fails_when_pose_or_iou_threshold_is_missed() {
   let flat = report.rows.iter().find(|row| row.resource_pack == "flat-pack").expect("flat row");
   assert!(!flat.occlusion_passed);
 }
+
+#[test]
+fn thresholds_validate_rejects_blank_and_empty_fields() {
+  let mut thresholds = TextureSweepThresholds::mc6_v0();
+  thresholds.pose_error_p95_max_px = 0.0;
+  assert_eq!(thresholds.validate(), Err("pose_error_p95_max_px must be positive finite, got 0".to_string()));
+
+  let mut thresholds = TextureSweepThresholds::mc6_v0();
+  thresholds.occlusion_iou_min = 1.5;
+  assert_eq!(thresholds.validate(), Err("occlusion_iou_min must be between 0 and 1, got 1.5".to_string()));
+
+  let mut thresholds = TextureSweepThresholds::mc6_v0();
+  thresholds.resource_pack_count = 0;
+  assert_eq!(thresholds.validate(), Err("resource_pack_count must be greater than 0".to_string()));
+
+  let mut thresholds = TextureSweepThresholds::mc6_v0();
+  thresholds.required_texture_profiles.clear();
+  assert_eq!(thresholds.validate(), Err("required_texture_profiles must not be empty".to_string()));
+
+  let mut thresholds = TextureSweepThresholds::mc6_v0();
+  thresholds.per_pack_duration_seconds = f64::NAN;
+  assert_eq!(thresholds.validate(), Err("per_pack_duration_seconds must be positive finite, got NaN".to_string()));
+
+  let mut thresholds = TextureSweepThresholds::mc6_v0();
+  thresholds.refuse_on_noise_rule = "   ".to_string();
+  assert_eq!(thresholds.validate(), Err("refuse_on_noise_rule must be defined".to_string()));
+}
+
+#[test]
+fn sample_statistics_validate_empty_and_invalid_values() {
+  assert_eq!(percentile_95(vec![]), Ok(None));
+  assert_eq!(min_finite(vec![]), Ok(None));
+  assert_eq!(max_finite(vec![]), Ok(0.0));
+
+  assert_eq!(percentile_95(vec![1.0, f64::NAN]), Err("pose_error_px samples must be finite and non-negative".to_string()));
+  assert_eq!(min_finite(vec![1.0, f64::NAN]), Err("occlusion_iou samples must be finite".to_string()));
+  assert_eq!(max_finite(vec![1.0, -1.0]), Err("duration_seconds samples must be finite and non-negative".to_string()));
+}

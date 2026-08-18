@@ -102,15 +102,15 @@ impl MinecraftProjectionArtifact {
   }
 
   pub fn validate(&self) -> Result<(), String> {
-    let values = [
-      self.viewport_bounds.x,
-      self.viewport_bounds.y,
-      self.viewport_bounds.width,
-      self.viewport_bounds.height,
-    ];
-    if values.iter().any(|value| !value.is_finite()) {
-      return Err("projection artifact contains non-finite viewport values".to_string());
-    }
+    Self::ensure_all_finite(
+      &[
+        self.viewport_bounds.x,
+        self.viewport_bounds.y,
+        self.viewport_bounds.width,
+        self.viewport_bounds.height,
+      ],
+      "projection artifact contains non-finite viewport values",
+    )?;
     if self.viewport_bounds.width <= 0.0 || self.viewport_bounds.height <= 0.0 {
       return Err(format!(
         "projection artifact must have positive viewport size, got {}x{}",
@@ -118,22 +118,36 @@ impl MinecraftProjectionArtifact {
       ));
     }
     if let Some(projected_point) = &self.projected_point {
-      let point_values = [projected_point.match_radius_px, projected_point.confidence];
-      if point_values.iter().any(|value| !value.is_finite()) {
-        return Err("projection artifact contains non-finite projected-point values".to_string());
-      }
-      if let Some(screen_point) = projected_point.screen_point {
-        let screen_values = [screen_point.x, screen_point.y];
-        if screen_values.iter().any(|value| !value.is_finite()) {
-          return Err("projection artifact contains non-finite screen-point values".to_string());
-        }
-      }
-      if projected_point.match_radius_px <= 0.0 {
-        return Err(format!("projection artifact must have positive match_radius_px, got {}", projected_point.match_radius_px));
-      }
-      if !(0.0..=1.0).contains(&projected_point.confidence) {
-        return Err(format!("projection artifact confidence must be between 0 and 1, got {}", projected_point.confidence));
-      }
+      Self::validate_projected_point(projected_point)?;
+    }
+    Ok(())
+  }
+
+  fn validate_projected_point(projected_point: &MinecraftProjectedPoint) -> Result<(), String> {
+    Self::ensure_all_finite(
+      &[projected_point.match_radius_px, projected_point.confidence],
+      "projection artifact contains non-finite projected-point values",
+    )?;
+    if let Some(screen_point) = projected_point.screen_point {
+      Self::ensure_all_finite(&[screen_point.x, screen_point.y], "projection artifact contains non-finite screen-point values")?;
+    }
+    Self::ensure_positive(projected_point.match_radius_px, "match_radius_px")?;
+    if !(0.0..=1.0).contains(&projected_point.confidence) {
+      return Err(format!("projection artifact confidence must be between 0 and 1, got {}", projected_point.confidence));
+    }
+    Ok(())
+  }
+
+  fn ensure_all_finite(values: &[f64], message: &str) -> Result<(), String> {
+    if values.iter().any(|value| !value.is_finite()) {
+      return Err(message.to_string());
+    }
+    Ok(())
+  }
+
+  fn ensure_positive(value: f64, field_name: &str) -> Result<(), String> {
+    if value <= 0.0 {
+      return Err(format!("projection artifact must have positive {field_name}, got {value}"));
     }
     Ok(())
   }

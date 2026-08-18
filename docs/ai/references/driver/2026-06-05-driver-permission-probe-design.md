@@ -19,10 +19,12 @@ contract and no `MacosDriverSession` permission API.
   platform probing behind the typed driver session.
 - Emit stable permission signals from the command response.
 
-## Non-Goals
+## Original Non-Goals
 
 - Do not change the command catalog ID or CLI arguments.
-- Do not add permission prompting or remediation flows.
+- Permission prompting and remediation flows were intentionally out of scope
+  for the original probe-only design. The current CLI has since added an
+  explicit request path; see the status section below.
 - Do not change overlay behavior.
 - Do not move unrelated OCR, AX, or app analysis commands in this slice.
 
@@ -70,6 +72,17 @@ The command response emits:
 - `permission.screen_capture_kit`
 - `permission.accessibility`
 - `permission.automation_to_system_events`
+
+## Current Request Path (2026-08-12)
+
+`auv doctor --request-permissions` explicitly asks macOS to show the
+Accessibility and Screen Recording permission prompts, then reruns the native
+probe. Plain `auv doctor` remains read-only so a diagnostic command does not
+change TCC state unexpectedly. The report distinguishes the ScreenCaptureKit
+probe from Screen Recording preflight; when preflight is granted but
+ScreenCaptureKit is still unavailable, the recommendation names that exact
+failure and tells the operator to restart the app that launched `auv` before
+rerunning the check.
 
 ## Deferred Work
 

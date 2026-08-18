@@ -34,6 +34,9 @@ impl TailFrameWaitConfig {
   }
 }
 
+/// Poll the tail reader until it sees a frame newer than the watermark.
+///
+/// Returns `None` when the wait budget expires before a newer frame appears.
 pub fn read_latest_spatial_frame_newer_than(
   path: &Path,
   min_monotonic_timestamp_ms: u64,
@@ -49,13 +52,18 @@ pub fn read_latest_spatial_frame_newer_than(
 
     let now = Instant::now();
     if now >= deadline {
-      return Ok(frame);
+      return Ok(None);
     }
 
     let remaining = deadline.saturating_duration_since(now);
     let sleep_for = remaining.min(Duration::from_millis(wait.poll_interval_ms.max(1)));
     sleep(sleep_for);
   }
+}
+
+struct TailChunkScanResult {
+  frame: Option<MinecraftSpatialFrame>,
+  carry_start: usize,
 }
 
 fn scan_latest_spatial_frame_from_tail<R: Read + Seek>(reader: &mut R) -> Result<Option<MinecraftSpatialFrame>, String> {
@@ -71,35 +79,58 @@ fn scan_latest_spatial_frame_from_tail<R: Read + Seek>(reader: &mut R) -> Result
   let mut chunk = vec![0_u8; TAIL_CHUNK_BYTES];
 
   while position > 0 {
-    let read_len =
-      usize::try_from(position.min(TAIL_CHUNK_BYTES as u64)).map_err(|error| format!("telemetry chunk length overflow: {error}"))?;
+    let read_len = read_tail_chunk(reader, position, &mut chunk)?;
     position -= read_len as u64;
-    reader.seek(SeekFrom::Start(position)).map_err(|error| format!("failed to seek telemetry sample chunk: {error}"))?;
-    reader.read_exact(&mut chunk[..read_len]).map_err(|error| format!("failed to read telemetry sample tail chunk: {error}"))?;
 
     let mut combined = Vec::with_capacity(read_len + carry.len());
     combined.extend_from_slice(&chunk[..read_len]);
     combined.extend_from_slice(&carry);
 
-    let mut line_end = combined.len();
-    let mut prefix_end = line_end;
-    for index in (0..combined.len()).rev() {
-      if combined[index] != b'\n' {
-        continue;
-      }
-
-      let line = &combined[index + 1..line_end];
-      if let Some(frame) = parse_frame_line(line)? {
-        return Ok(Some(frame));
-      }
-      prefix_end = index;
-      line_end = index;
+    let scan_result = scan_tail_chunk_for_frame(&combined)?;
+    if let Some(frame) = scan_result.frame {
+      return Ok(Some(frame));
     }
 
-    carry = combined[..prefix_end].to_vec();
+    carry = combined[..scan_result.carry_start].to_vec();
   }
 
   parse_frame_line(&carry)
+}
+
+fn read_tail_chunk<R: Read + Seek>(reader: &mut R, end_position: u64, chunk: &mut [u8]) -> Result<usize, String> {
+  let read_len =
+    usize::try_from(end_position.min(chunk.len() as u64)).map_err(|error| format!("telemetry chunk length overflow: {error}"))?;
+  let chunk_start = end_position - read_len as u64;
+  reader.seek(SeekFrom::Start(chunk_start)).map_err(|error| format!("failed to seek telemetry sample chunk: {error}"))?;
+  reader.read_exact(&mut chunk[..read_len]).map_err(|error| format!("failed to read telemetry sample tail chunk: {error}"))?;
+  Ok(read_len)
+}
+
+/// Scan one combined tail chunk from newest to oldest line.
+///
+/// If no valid frame is found, `carry_start` marks the prefix that should be
+/// prepended to the previous chunk before scanning again.
+fn scan_tail_chunk_for_frame(bytes: &[u8]) -> Result<TailChunkScanResult, String> {
+  let mut line_end = bytes.len();
+  let mut carry_start = line_end;
+
+  while let Some(line_start) = bytes[..line_end].iter().rposition(|&byte| byte == b'\n') {
+    let line = &bytes[line_start + 1..line_end];
+    if let Some(frame) = parse_frame_line(line)? {
+      return Ok(TailChunkScanResult {
+        frame: Some(frame),
+        carry_start: 0,
+      });
+    }
+
+    carry_start = line_start;
+    line_end = line_start;
+  }
+
+  Ok(TailChunkScanResult {
+    frame: None,
+    carry_start,
+  })
 }
 
 fn parse_frame_line(bytes: &[u8]) -> Result<Option<MinecraftSpatialFrame>, String> {

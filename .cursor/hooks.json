@@ -89,6 +89,11 @@
         "description": "Inject CONTRIBUTING.local.md, cursor.md, and AGENTS.md on every prompt (never codex.md)"
       },
       {
+        "command": "node .cursor/hooks/inject-neko-code-guidance.js",
+        "event": "beforeSubmitPrompt",
+        "description": "Read the Neko-derived anti-spaghetti code guidance once before every prompt"
+      },
+      {
         "command": "node .cursor/hooks/inject-pending-edit-review.js",
         "event": "beforeSubmitPrompt",
         "description": "Inject anti-garbage edit review queue before each prompt"

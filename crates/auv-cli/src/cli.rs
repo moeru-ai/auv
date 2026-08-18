@@ -25,6 +25,7 @@ pub enum CliCommand {
   Version,
   PermissionCheck {
     json: bool,
+    request_permissions: bool,
   },
   InvokeHelp {
     command_id: Option<String>,
@@ -124,7 +125,10 @@ pub fn parse_cli_os(arguments: impl IntoIterator<Item = OsString>) -> AuvResult<
 
   match parsed.command {
     None => Ok(CliCommand::Help(help_text())),
-    Some(RootCommand::Doctor(args)) => Ok(CliCommand::PermissionCheck { json: args.json }),
+    Some(RootCommand::Doctor(args)) => Ok(CliCommand::PermissionCheck {
+      json: args.json,
+      request_permissions: args.request_permissions,
+    }),
     Some(RootCommand::Invoke(args)) => parse_invoke(args.arguments),
     Some(RootCommand::Session(args)) => match args.command {
       SessionCommand::Serve(args) => Ok(CliCommand::SessionServe {

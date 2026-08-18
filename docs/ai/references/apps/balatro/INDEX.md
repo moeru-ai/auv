@@ -10,6 +10,8 @@ Count: **3**
 
 ## Related
 
+- Cross-cutting code guidance from the Balatro and alint implementation study:
+  [`../../ops/2026-08-03-neko-code-study-and-anti-spaghetti-guidance-note.md`](../../ops/2026-08-03-neko-code-study-and-anti-spaghetti-guidance-note.md)
 - Parent index: [`../../INDEX.md`](../../INDEX.md)
 - Docs overview: [`../../../../README.md`](../../../../README.md)
 - Shared vocabulary: [`../../../../TERMS_AND_CONCEPTS.md`](../../../../TERMS_AND_CONCEPTS.md)

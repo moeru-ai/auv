@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rustrover": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:64522/stream",
+      "headers": {
+        "IJ_MCP_SERVER_PROJECT_PATH": "/Users/liuziheng/https-github-com-moeru-ai-auv"
+      }
+    }
+  }
+}

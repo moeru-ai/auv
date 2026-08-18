@@ -2,11 +2,28 @@ use serde::{Deserialize, Serialize};
 
 use auv_driver::geometry::{Point, Rect, Size};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Vec3 {
-  pub x: f64,
-  pub y: f64,
-  pub z: f64,
+macro_rules! serializable_struct {
+  (derive($($derive:ident),+ $(,)?)
+    $(#[$meta:meta])*
+    $vis:vis struct $name:ident {
+      $($field_vis:vis $field:ident : $ty:ty),* $(,)?
+    }
+  ) => {
+    $(#[$meta])*
+    #[derive($($derive),+, Serialize, Deserialize)]
+    $vis struct $name {
+      $($field_vis $field: $ty),*
+    }
+  };
+}
+
+serializable_struct! {
+  derive(Clone, Copy, Debug, Default, PartialEq)
+  pub struct Vec3 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+  }
 }
 
 impl Vec3 {
@@ -40,11 +57,13 @@ impl BlockFace {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockPosition {
-  pub x: i32,
-  pub y: i32,
-  pub z: i32,
+serializable_struct! {
+  derive(Clone, Copy, Debug, PartialEq, Eq)
+  pub struct BlockPosition {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+  }
 }
 
 impl BlockPosition {
@@ -82,10 +101,12 @@ impl BlockPosition {
   }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Viewport {
-  pub width: u32,
-  pub height: u32,
+serializable_struct! {
+  derive(Clone, Copy, Debug, Default, PartialEq)
+  pub struct Viewport {
+    pub width: u32,
+    pub height: u32,
+  }
 }
 
 impl Viewport {
@@ -105,36 +126,46 @@ impl Viewport {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlayerPose {
-  pub eye_position: Vec3,
-  pub yaw: f64,
-  pub pitch: f64,
+serializable_struct! {
+  derive(Clone, Copy, Debug, PartialEq)
+  pub struct PlayerPose {
+    pub eye_position: Vec3,
+    pub yaw: f64,
+    pub pitch: f64,
+  }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RaycastHit {
-  pub block_pos: BlockPosition,
-  pub face: BlockFace,
-  pub block_id: String,
+serializable_struct! {
+  derive(Clone, Debug, PartialEq, Eq)
+  pub struct RaycastHit {
+    pub block_pos: BlockPosition,
+    pub face: BlockFace,
+    pub block_id: String,
+  }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NearbyBlock {
-  pub block_pos: BlockPosition,
-  pub block_id: String,
+serializable_struct! {
+  derive(Clone, Debug, PartialEq, Eq)
+  pub struct NearbyBlock {
+    pub block_pos: BlockPosition,
+    pub block_id: String,
+  }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NearbyEntity {
-  pub entity_id: String,
-  pub entity_kind: String,
+serializable_struct! {
+  derive(Clone, Debug, PartialEq, Eq)
+  pub struct NearbyEntity {
+    pub entity_id: String,
+    pub entity_kind: String,
+  }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InventorySummaryEntry {
-  pub item_id: String,
-  pub count: u32,
+serializable_struct! {
+  derive(Clone, Debug, PartialEq, Eq)
+  pub struct InventorySummaryEntry {
+    pub item_id: String,
+    pub count: u32,
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

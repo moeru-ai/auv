@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::Cursor;
 
 use super::*;
@@ -127,4 +128,21 @@ fn parses_mod_written_tail_line_with_populated_nearby_blocks() {
   assert!(frame.nearby_blocks.iter().any(|block| block.block_pos == BlockPosition::new(511, 73, 727)));
   assert_eq!(frame.raycast_hit.expect("hit").block_pos, BlockPosition::new(513, 72, 726));
   assert!(frame.nearby_entities.is_empty());
+}
+
+// ROOT CAUSE:
+//
+// The timeout branch used to return the last observed frame even when it was
+// still older than the caller's watermark. In the live-click path that let a
+// stale pre-action frame flow into post-action verification.
+// The fix keeps timeout as None so callers only get a truly newer frame.
+#[test]
+fn read_latest_spatial_frame_newer_than_times_out_without_stale_frame() {
+  let temp = tempfile::tempdir().expect("temp dir");
+  let path = temp.path().join("telemetry.jsonl");
+  fs::write(&path, format!("{}\n", frame_line("stale", 1, 1000))).expect("write telemetry sample");
+
+  let frame = read_latest_spatial_frame_newer_than(&path, 2000, TailFrameWaitConfig::new(0, 1)).expect("read succeeds");
+
+  assert_eq!(frame, None);
 }

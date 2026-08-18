@@ -1,6 +1,6 @@
 // File: src/driver/macos/native/permission.rs
 #[cfg(target_os = "macos")]
-use super::binding::ffi::{NativePermissionProbeResponse, NativePermissionStatus, probe_permissions};
+use super::binding::ffi::{NativePermissionProbeResponse, NativePermissionStatus, probe_permissions, request_permissions};
 use super::types::AuvResult;
 
 #[cfg(target_os = "macos")]
@@ -8,9 +8,20 @@ pub fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
   Ok(NativePermissionProbe::from(probe_permissions()))
 }
 
+#[cfg(target_os = "macos")]
+pub fn request_native_permissions() -> AuvResult<()> {
+  request_permissions();
+  Ok(())
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
   Err("macOS native permission probe is unsupported on this target".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn request_native_permissions() -> AuvResult<()> {
+  Err("macOS native permission request is unsupported on this target".to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

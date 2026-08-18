@@ -336,6 +336,34 @@ transport、真实 Minecraft capture、多观察合并或 confirmed-memory promo
 事后用 Minecraft telemetry/world state 给 claim 打分，测量 Prompt 在不作弊时
 能产生多有用的假设。
 
+**当前状态（2026-08-12）：M1 请求/响应边界已开始落地，但真实 baseline 仍未完成。**
+
+`m1_black_box_baseline.rs` 现在可以生成 provider-neutral 的请求 artifact，且只接受
+Tier 0 黑盒信号；它按 signal kind 和 tier 双重 allowlist 拒绝 derived、render 或
+engine-truth signal，并约束 provenance、input action 和 canonical AUV screenshot
+artifact URI，避免把自由字符串当成隐藏真值通道。反序列化后的请求还会重新验证
+schema 和内置 Prompt，不能靠持久化请求篡改绕开 constructor。序列化后的模型请求
+不含 camera matrix、player pose、raycast、nearby blocks、telemetry 或 depth buffer。
+外部模型返回的 JSON 会被解析成
+`SpatialHypothesisPatch`，再经过 M0 validator 和 M1 follow-up gate；parse/contract
+failure 会形成明确的 rejected report。
+
+本 slice **没有**选择或调用 LLM provider，也没有把“JSON 合法”当成语义正确。
+仓库当前不存在可复用的 LLM/VLM transport，直接添加 OpenAI/Anthropic HTTP client
+会凭空冻结新的 secret、provider 和 retry 接口。真实模型 transport、原始响应
+artifact 持久化，以及 withheld Minecraft truth scorer 仍是后续 slice。这里的 core
+graduation 结论是 **保持 app-specific**；至少需要真实 M1 消费证据和第二个应用消费者，
+才考虑抽 shared helper。
+
+本 slice 暂时保留 serde 对未知 response 字段的 forward-compatible 忽略策略，因为
+真实 provider/version migration 证据尚不存在。若真实 M1 运行表明原始响应审计需要
+严格 wire schema，再引入 app-local strict envelope；不要为此修改共享 M0 patch type。
+
+这里的 allowlist 只约束 AUV request wire shape 和显式 metadata，不是对恶意 capture
+producer 的形式化信息流证明。截图像素、capture timestamp 及其 artifact 内容仍属于
+producer trust boundary；真实 M1 运行必须固定 producer、保留原始 artifact，并让
+Minecraft 答案键只进入事后 scorer。
+
 ### M2：多视角 capture 和绑定
 
 围绕一个目标或局部区域至少采集三次：

@@ -87,24 +87,16 @@ where
   A: DualBackendAnswer + Clone,
   F: FnOnce(Option<&A>, Option<&A>) -> A,
 {
-  let provider_answered = provider_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
-  let reference_answered = reference_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
-
-  if provider_answered {
-    let answer = provider_answer.expect("provider answered implies provider answer present").clone();
-    let comparison_verdict = compare_dual_backend_verdict(provider_answer, reference_answer);
-    return (DualBackendSelectedSide::Provider, answer, comparison_verdict);
-  }
-
-  if reference_answered {
-    let answer = reference_answer.expect("reference answered implies reference answer present").clone();
-    let comparison_verdict = compare_dual_backend_verdict(provider_answer, reference_answer);
-    return (DualBackendSelectedSide::Reference, answer, comparison_verdict);
-  }
-
-  let answer = pick_fallback(provider_answer, reference_answer);
   let comparison_verdict = compare_dual_backend_verdict(provider_answer, reference_answer);
-  (DualBackendSelectedSide::Neither, answer, comparison_verdict)
+
+  match (
+    provider_answer.filter(|answer| answer.stage_status() == DualBackendStageStatus::Answered),
+    reference_answer.filter(|answer| answer.stage_status() == DualBackendStageStatus::Answered),
+  ) {
+    (Some(answer), _) => (DualBackendSelectedSide::Provider, answer.clone(), comparison_verdict),
+    (None, Some(answer)) => (DualBackendSelectedSide::Reference, answer.clone(), comparison_verdict),
+    (None, None) => (DualBackendSelectedSide::Neither, pick_fallback(provider_answer, reference_answer), comparison_verdict),
+  }
 }
 
 pub fn pick_blocked_or_failed_preferred<'a, T>(

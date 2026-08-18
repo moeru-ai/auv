@@ -1,0 +1,5 @@
+---
+inclusion: always
+---
+
+@cursor.md

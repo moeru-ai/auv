@@ -376,6 +376,7 @@ pub(crate) mod ffi {
 
   extern "Swift" {
     fn probe_permissions() -> NativePermissionProbeResponse;
+    fn request_permissions();
     fn request_human_approval(reason: String, timeout_ms: u64) -> NativeHumanApprovalResponse;
     fn list_displays() -> NativeDisplayListResponse;
     fn list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse;

@@ -43,8 +43,12 @@ pub(crate) async fn dispatch(command: CliCommand) -> Result<i32, String> {
     return Ok(0);
   }
 
-  if let CliCommand::PermissionCheck { json } = &command {
-    run_permission_check(*json)?;
+  if let CliCommand::PermissionCheck {
+    json,
+    request_permissions,
+  } = &command
+  {
+    run_permission_check(*json, *request_permissions)?;
     return Ok(0);
   }
 
@@ -158,7 +162,19 @@ struct PermissionCheckReport {
   recommendation: String,
 }
 
-fn run_permission_check(json: bool) -> Result<(), String> {
+fn run_permission_check(json: bool, request_permissions: bool) -> Result<(), String> {
+  if request_permissions {
+    #[cfg(target_os = "macos")]
+    {
+      let native = auv_driver_macos::native::permission::probe_native_permissions()?;
+      let has_missing_permission =
+        native.accessibility == "missing" || native.screen_recording == "missing" || native.screen_capture_kit == "missing";
+      if has_missing_permission {
+        auv_driver_macos::native::permission::request_native_permissions()?;
+      }
+    }
+  }
+
   let report = collect_permission_check()?;
 
   if json {
@@ -192,7 +208,7 @@ fn collect_permission_check() -> Result<PermissionCheckReport, String> {
     screen_capture_kit: native.screen_capture_kit,
     all_ok,
     warnings,
-    recommendation: permission_recommendation(native.accessibility, native.screen_capture_kit),
+    recommendation: permission_recommendation(native.accessibility, native.screen_recording, native.screen_capture_kit),
   })
 }
 
@@ -201,16 +217,42 @@ fn collect_permission_check() -> Result<PermissionCheckReport, String> {
   Err("permission check is currently implemented only for macOS".to_string())
 }
 
-fn permission_recommendation(accessibility: &str, screen_capture_kit: &str) -> String {
-  match (accessibility, screen_capture_kit) {
-    ("granted", "granted") => "AUV has the macOS permissions needed for capture and AX-backed automation.".to_string(),
-    ("missing", "missing") => {
-      "Grant Accessibility and Screen Recording to the terminal or app that launches auv, then rerun this check.".to_string()
-    }
-    ("missing", _) => "Grant Accessibility to the terminal or app that launches auv, then rerun this check.".to_string(),
-    (_, "missing") => "Grant Screen Recording to the terminal or app that launches auv, then rerun this check.".to_string(),
-    _ => "Review the permission statuses above before running desktop automation.".to_string(),
+fn permission_recommendation(accessibility: &str, screen_recording: &str, screen_capture_kit: &str) -> String {
+  const REQUEST_COMMAND: &str = "`auv doctor --request-permissions`";
+
+  if accessibility == "granted" && screen_recording == "granted" && screen_capture_kit == "granted" {
+    return "AUV has the macOS permissions needed for capture and AX-backed automation.".to_string();
   }
+
+  if accessibility != "missing" && screen_recording == "missing" && screen_capture_kit == "granted" {
+    return "Screen Recording preflight is missing for this process, but the ScreenCaptureKit probe works; this can reflect TCC attribution to the app that launched auv. Rerun the check from that same app or restart it if capture still fails.".to_string();
+  }
+
+  if accessibility != "missing" && screen_recording == "granted" && screen_capture_kit == "missing" {
+    return format!(
+      "ScreenCaptureKit is unavailable although Screen Recording preflight is granted. Run {REQUEST_COMMAND}; if it remains missing, restart the app that launches auv, then rerun `auv doctor --json`."
+    );
+  }
+
+  let mut missing = Vec::new();
+  if accessibility == "missing" {
+    missing.push("Accessibility");
+  }
+  if screen_recording == "missing" {
+    missing.push("Screen Recording preflight");
+  }
+  if screen_capture_kit == "missing" {
+    missing.push("ScreenCaptureKit");
+  }
+
+  if missing.is_empty() {
+    return "Review the permission statuses above before running desktop automation.".to_string();
+  }
+
+  format!(
+    "Missing: {}. Run {REQUEST_COMMAND}, approve the macOS prompts, then rerun `auv doctor --json`. If ScreenCaptureKit remains missing after Screen Recording is granted, restart the app that launches auv.",
+    missing.join(", ")
+  )
 }
 
 fn print_permission_check_report(report: &PermissionCheckReport) {
@@ -235,6 +277,43 @@ fn permission_status_line(status: &str) -> String {
     "granted" => "[ok] granted".to_string(),
     "missing" => "[missing] missing".to_string(),
     other => format!("[unknown] {other}"),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::permission_recommendation;
+
+  #[test]
+  fn recommendation_names_screen_capture_kit_when_preflight_is_granted() {
+    let recommendation = permission_recommendation("granted", "granted", "missing");
+
+    assert!(recommendation.contains("ScreenCaptureKit is unavailable"));
+    assert!(recommendation.contains("auv doctor --request-permissions"));
+    assert!(!recommendation.starts_with("Grant Screen Recording"));
+  }
+
+  #[test]
+  fn recommendation_names_both_missing_permissions() {
+    let recommendation = permission_recommendation("missing", "missing", "missing");
+
+    assert!(recommendation.contains("Missing: Accessibility, Screen Recording preflight, ScreenCaptureKit"));
+    assert!(recommendation.contains("auv doctor --request-permissions"));
+  }
+
+  #[test]
+  fn recommendation_reports_accessibility_and_capture_kit_together() {
+    let recommendation = permission_recommendation("missing", "granted", "missing");
+
+    assert!(recommendation.contains("Missing: Accessibility, ScreenCaptureKit"));
+  }
+
+  #[test]
+  fn recommendation_explains_tcc_attribution_mismatch() {
+    let recommendation = permission_recommendation("granted", "missing", "granted");
+
+    assert!(recommendation.contains("TCC attribution"));
+    assert!(recommendation.contains("app that launched auv"));
   }
 }
 

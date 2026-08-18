@@ -85,3 +85,18 @@ fn unknown_top_level_names_are_reserved_for_external_plugins() {
   let command = parse_cli(&arguments(&["inspect", "019f8b1e-4b2d-7a00-8f00-0000000000aa"])).expect("external command should parse");
   assert!(matches!(command, CliCommand::External { .. }));
 }
+
+#[test]
+fn doctor_can_explicitly_request_missing_permissions() {
+  let command = parse_cli(&arguments(&["doctor", "--json", "--request-permissions"])).expect("doctor should parse");
+  let CliCommand::PermissionCheck {
+    json,
+    request_permissions,
+  } = command
+  else {
+    panic!("expected permission check command");
+  };
+
+  assert!(json);
+  assert!(request_permissions);
+}

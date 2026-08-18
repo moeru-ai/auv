@@ -45,26 +45,75 @@ impl TextureSweepThresholds {
   }
 
   pub fn validate(&self) -> MeasurementResult<()> {
-    if !self.pose_error_p95_max_px.is_finite() || self.pose_error_p95_max_px <= 0.0 {
-      return Err(format!("pose_error_p95_max_px must be positive finite, got {}", self.pose_error_p95_max_px));
-    }
-    if !self.occlusion_iou_min.is_finite() || !(0.0..=1.0).contains(&self.occlusion_iou_min) {
-      return Err(format!("occlusion_iou_min must be between 0 and 1, got {}", self.occlusion_iou_min));
-    }
-    if self.resource_pack_count == 0 {
-      return Err("resource_pack_count must be greater than 0".to_string());
-    }
-    if self.required_texture_profiles.is_empty() {
-      return Err("required_texture_profiles must not be empty".to_string());
-    }
-    if !self.per_pack_duration_seconds.is_finite() || self.per_pack_duration_seconds <= 0.0 {
-      return Err(format!("per_pack_duration_seconds must be positive finite, got {}", self.per_pack_duration_seconds));
-    }
-    if self.refuse_on_noise_rule.trim().is_empty() {
-      return Err("refuse_on_noise_rule must be defined".to_string());
-    }
+    ensure_positive_finite(self.pose_error_p95_max_px, "pose_error_p95_max_px")?;
+    ensure_unit_interval(self.occlusion_iou_min, "occlusion_iou_min")?;
+    ensure_non_zero(self.resource_pack_count, "resource_pack_count")?;
+    ensure_non_empty(&self.required_texture_profiles, "required_texture_profiles")?;
+    ensure_positive_finite(self.per_pack_duration_seconds, "per_pack_duration_seconds")?;
+    ensure_trimmed_non_empty(&self.refuse_on_noise_rule, "refuse_on_noise_rule")?;
     Ok(())
   }
+}
+
+#[derive(Clone, Copy)]
+enum SampleValueConstraint {
+  Finite,
+  FiniteNonNegative,
+}
+
+fn validated_sample_values(values: Vec<f64>, field_name: &str, constraint: SampleValueConstraint) -> MeasurementResult<Option<Vec<f64>>> {
+  if values.is_empty() {
+    return Ok(None);
+  }
+
+  let invalid = match constraint {
+    SampleValueConstraint::Finite => values.iter().any(|value| !value.is_finite()),
+    SampleValueConstraint::FiniteNonNegative => values.iter().any(|value| !value.is_finite() || *value < 0.0),
+  };
+  if invalid {
+    let suffix = match constraint {
+      SampleValueConstraint::Finite => "must be finite",
+      SampleValueConstraint::FiniteNonNegative => "must be finite and non-negative",
+    };
+    return Err(format!("{field_name} samples {suffix}"));
+  }
+
+  Ok(Some(values))
+}
+
+fn ensure_positive_finite(value: f64, field_name: &str) -> MeasurementResult<()> {
+  if !value.is_finite() || value <= 0.0 {
+    return Err(format!("{field_name} must be positive finite, got {value}"));
+  }
+  Ok(())
+}
+
+fn ensure_unit_interval(value: f64, field_name: &str) -> MeasurementResult<()> {
+  if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+    return Err(format!("{field_name} must be between 0 and 1, got {value}"));
+  }
+  Ok(())
+}
+
+fn ensure_non_zero(value: usize, field_name: &str) -> MeasurementResult<()> {
+  if value == 0 {
+    return Err(format!("{field_name} must be greater than 0"));
+  }
+  Ok(())
+}
+
+fn ensure_non_empty<T>(values: &[T], field_name: &str) -> MeasurementResult<()> {
+  if values.is_empty() {
+    return Err(format!("{field_name} must not be empty"));
+  }
+  Ok(())
+}
+
+fn ensure_trimmed_non_empty(value: &str, field_name: &str) -> MeasurementResult<()> {
+  if value.trim().is_empty() {
+    return Err(format!("{field_name} must be defined"));
+  }
+  Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -269,35 +318,26 @@ fn write_report(path: &Path, report: &TextureSweepReport) -> MeasurementResult<(
   fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write minecraft texture sweep report {}: {error}", path.display()))
 }
 
-fn percentile_95(mut values: Vec<f64>) -> MeasurementResult<Option<f64>> {
-  if values.is_empty() {
+fn percentile_95(values: Vec<f64>) -> MeasurementResult<Option<f64>> {
+  let Some(mut values) = validated_sample_values(values, "pose_error_px", SampleValueConstraint::FiniteNonNegative)? else {
     return Ok(None);
-  }
-  if values.iter().any(|value| !value.is_finite() || *value < 0.0) {
-    return Err("pose_error_px samples must be finite and non-negative".to_string());
-  }
+  };
   values.sort_by(|left, right| left.total_cmp(right));
   let index = ((values.len() as f64) * 0.95).ceil() as usize - 1;
   Ok(values.get(index).copied())
 }
 
 fn min_finite(values: Vec<f64>) -> MeasurementResult<Option<f64>> {
-  if values.is_empty() {
+  let Some(values) = validated_sample_values(values, "occlusion_iou", SampleValueConstraint::Finite)? else {
     return Ok(None);
-  }
-  if values.iter().any(|value| !value.is_finite()) {
-    return Err("occlusion_iou samples must be finite".to_string());
-  }
+  };
   Ok(values.into_iter().reduce(f64::min))
 }
 
 fn max_finite(values: Vec<f64>) -> MeasurementResult<f64> {
-  if values.is_empty() {
+  let Some(values) = validated_sample_values(values, "duration_seconds", SampleValueConstraint::FiniteNonNegative)? else {
     return Ok(0.0);
-  }
-  if values.iter().any(|value| !value.is_finite() || *value < 0.0) {
-    return Err("duration_seconds samples must be finite and non-negative".to_string());
-  }
+  };
   Ok(values.into_iter().fold(0.0, f64::max))
 }
 

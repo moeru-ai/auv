@@ -2,6 +2,14 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+// NOTICE: `AxPath.swift` is a separate SwiftPM target (`AuvAxPath`) so `swift test`
+// can cover the pure parse layer, but `build.rs` compiles it into this same flat
+// `AuvMacosNative` module. SwiftPM defines `SWIFT_PACKAGE`; the bare `swiftc`
+// invocation in `build.rs` does not, and there the symbols are same-module.
+#if SWIFT_PACKAGE
+  import AuvAxPath
+#endif
+
 private func emptyAxTreeResponse(message: String, recovery: String) -> NativeAxTreeResponse {
   NativeAxTreeResponse(
     observed_at: nativeNowIso8601(),
