@@ -2,19 +2,23 @@ use std::thread;
 
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::ObservedDisplays;
-use auv_driver_common::error::DriverResult;
+use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
-  Click, ClickOptions, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, ScrollDeliveryCandidate,
-  ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
+  Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll,
+  ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TypeTextOptions, WaitOptions, WindowInput,
 };
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
 use auv_driver_common::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
+use crate::background_input;
 use crate::capture::{capture_display, capture_region, capture_window, list_displays};
-use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
+use crate::clipboard::{
+  ClipboardSnapshot, restore as restore_clipboard, restore_rich as restore_clipboard_rich, set_text as set_clipboard_text, snapshot,
+  snapshot_rich as snapshot_clipboard_rich,
+};
 use crate::driver::WindowsDriverSession;
 use crate::error::{invalid_input, not_found};
 use crate::input::{click_at, copy, current_position, move_to, paste, press_key, scroll_at, type_text};
@@ -60,10 +64,12 @@ pub struct InputApi<'a> {
   session: &'a WindowsDriverSession,
 }
 
-/// Text clipboard snapshot/restore/set capabilities.
+/// Text and rich clipboard snapshot/restore/set capabilities.
 ///
-/// Mirrors the macOS driver's `ClipboardApi`, modeling the clipboard as a
-/// single text payload over the Win32 clipboard.
+/// Mirrors the macOS driver's `ClipboardApi` for the text-only `snapshot`/
+/// `restore`/`set_text` methods. `snapshot_rich`/`restore_rich` are a
+/// Windows-only addition that preserve every memory-backed clipboard format,
+/// not just text.
 #[derive(Clone, Copy, Debug)]
 pub struct ClipboardApi<'a> {
   session: &'a WindowsDriverSession,
@@ -242,47 +248,81 @@ impl WindowApi<'_> {
     mutate_window(window, WindowMutationKind::Zoom, options)
   }
 
+  /// Delivers a window-targeted click.
+  ///
+  /// `ForegroundPreferred` foregrounds the window and uses the same
+  /// `SendInput` route as global clicks. `BackgroundOnly`/`BackgroundPreferred`
+  /// instead post `WM_LBUTTONDOWN`/`WM_LBUTTONUP` directly to the control
+  /// hit-tested under `point` (`background_input::click_at_window`), which
+  /// does not raise or focus the window. `window_strategy` is a macOS
+  /// background-routing selector; Windows has only one posted-message route
+  /// today, so both variants resolve to it.
   fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
-    if matches!(options.policy, InputPolicy::BackgroundOnly) {
-      return Err(invalid_input("windows window.click cannot use background_only input policy"));
-    }
-    // TODO(windows-window-targeted-background-input): `window_strategy` is a
-    // macOS background-routing selector. Windows has no AX/UIA-targeted pointer
-    // delivery path (UIPI blocks cross-process synthetic input to
-    // higher-integrity windows); revisit if UI Automation exposes a verified
-    // window-targeted pointer route.
-    let _ = options.window_strategy;
-    let activation_attempt = foreground_window_attempt(window, "pointer delivery");
     let screen_point = self.to_screen_point(window, point)?.point();
-    let mut result = self.session.input().click_at(screen_point, options.click)?;
-    result.attempts.insert(0, activation_attempt);
-    add_foreground_window_fallback_reason(
-      &mut result,
-      InputDeliveryPath::WindowTargetedMouse,
-      "windows window.click used foreground SendInput; Windows has no window-targeted background pointer delivery path",
-    );
-    Ok(result)
+    if matches!(options.policy, InputPolicy::ForegroundPreferred) {
+      let activation_attempt = foreground_window_attempt(window, "pointer delivery");
+      let mut result = self.session.input().click_at(screen_point, options.click)?;
+      result.attempts.insert(0, activation_attempt);
+      return Ok(result);
+    }
+    let _ = options.window_strategy;
+    background_input::click_at_window(window, screen_point, options.click)?;
+    Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
   }
 
+  /// Delivers a window-targeted wheel scroll by trying each candidate in
+  /// `options.delivery_strategy` in order (mirroring the macOS driver's
+  /// candidate loop). `WindowTargetedWheel` posts `WM_MOUSEWHEEL`/
+  /// `WM_MOUSEHWHEEL` to the control under `point`
+  /// (`background_input::scroll_at_window`); `AxScroll` and
+  /// `WindowTargetedKeyboardScroll` are not implemented on Windows and are
+  /// recorded as failed attempts; `ForegroundHid` foregrounds the window and
+  /// falls back to `SendInput`.
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
-    if matches!(options.policy, InputPolicy::BackgroundOnly) {
-      return Err(invalid_input("windows window.scroll cannot use background_only input policy"));
+    let mut attempts = Vec::new();
+    for candidate in scroll_attempt_candidates(options.policy, &options.delivery_strategy) {
+      match candidate {
+        ScrollDeliveryCandidate::AxScroll => {
+          attempts.push(InputAttempt::failure(InputDeliveryPath::AxScroll, "AX scroll is not supported by the windows desktop driver"));
+        }
+        ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => {
+          attempts.push(InputAttempt::failure(
+            InputDeliveryPath::WindowTargetedKeyboardScroll,
+            "window-targeted keyboard scroll is not supported by the windows desktop driver",
+          ));
+        }
+        ScrollDeliveryCandidate::WindowTargetedWheel => {
+          let screen_point = self.to_screen_point(window, point)?.point();
+          match background_input::scroll_at_window(window, screen_point, scroll) {
+            Ok(()) => {
+              attempts.push(InputAttempt::success(InputDeliveryPath::WindowTargetedWheel));
+              return Ok(InputActionResult {
+                selected_path: InputDeliveryPath::WindowTargetedWheel,
+                attempts,
+                verified: false,
+                mouse_disturbance: DisturbanceLevel::None,
+                focus_disturbance: DisturbanceLevel::None,
+                clipboard_disturbance: DisturbanceLevel::None,
+              });
+            }
+            Err(error) => attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedWheel, error.to_string())),
+          }
+        }
+        ScrollDeliveryCandidate::ForegroundHid => {
+          if options.policy == InputPolicy::BackgroundOnly {
+            continue;
+          }
+          let activation_attempt = foreground_window_attempt(window, "wheel delivery");
+          let screen_point = self.to_screen_point(window, point)?.point();
+          let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
+          attempts.push(activation_attempt);
+          attempts.append(&mut result.attempts);
+          result.attempts = attempts;
+          return Ok(result);
+        }
+      }
     }
-    if !options.delivery_strategy.candidates.contains(&ScrollDeliveryCandidate::ForegroundHid) {
-      return Err(invalid_input(
-        "windows window.scroll needs ForegroundHid in the delivery strategy because Windows has no other scroll delivery path",
-      ));
-    }
-    let activation_attempt = foreground_window_attempt(window, "wheel delivery");
-    let screen_point = self.to_screen_point(window, point)?.point();
-    let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
-    result.attempts.insert(0, activation_attempt);
-    add_foreground_window_fallback_reason(
-      &mut result,
-      InputDeliveryPath::WindowTargetedWheel,
-      "windows window.scroll used foreground SendInput; Windows has no window-targeted background wheel delivery path",
-    );
-    Ok(result)
+    Err(DriverError::unsupported("background_scroll"))
   }
 }
 
@@ -309,12 +349,17 @@ fn foreground_window_attempt(window: &Window, purpose: &str) -> InputAttempt {
   }
 }
 
-/// Records that a window-targeted delivery actually went through the
-/// foreground path, unless an earlier attempt already reported a fallback
-/// reason.
-fn add_foreground_window_fallback_reason(result: &mut InputActionResult, unavailable_path: InputDeliveryPath, reason: &str) {
-  if result.fallback_reason().is_none() {
-    result.attempts.insert(0, InputAttempt::failure(unavailable_path, reason));
+/// Orders scroll delivery candidates for a policy, mirroring the macOS
+/// driver's candidate selection: `ForegroundPreferred` uses only `SendInput`;
+/// `BackgroundOnly` drops `ForegroundHid` from the caller's strategy;
+/// `BackgroundPreferred` tries the caller's strategy as given.
+fn scroll_attempt_candidates(policy: InputPolicy, delivery_strategy: &ScrollDeliveryStrategy) -> Vec<ScrollDeliveryCandidate> {
+  match policy {
+    InputPolicy::ForegroundPreferred => vec![ScrollDeliveryCandidate::ForegroundHid],
+    InputPolicy::BackgroundOnly => {
+      delivery_strategy.candidates.iter().copied().filter(|candidate| *candidate != ScrollDeliveryCandidate::ForegroundHid).collect()
+    }
+    InputPolicy::BackgroundPreferred => delivery_strategy.candidates.clone(),
   }
 }
 
@@ -416,6 +461,19 @@ impl ClipboardApi<'_> {
   pub fn set_text(&self, text: &str) -> DriverResult<()> {
     let _ = self.session;
     set_clipboard_text(text)
+  }
+
+  /// Captures every present clipboard format for exact, format-preserving
+  /// restore, unlike `snapshot`, which is text-only.
+  pub fn snapshot_rich(&self) -> DriverResult<ClipboardSnapshot> {
+    let _ = self.session;
+    snapshot_clipboard_rich()
+  }
+
+  /// Restores a snapshot captured by `snapshot_rich`.
+  pub fn restore_rich(&self, snapshot: &ClipboardSnapshot) -> DriverResult<()> {
+    let _ = self.session;
+    restore_clipboard_rich(snapshot)
   }
 }
 

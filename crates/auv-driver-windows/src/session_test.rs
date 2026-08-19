@@ -73,7 +73,7 @@ fn capture_region_requires_region() {
 }
 
 #[test]
-fn window_click_rejects_background_only_policy() {
+fn window_click_background_only_fails_for_invalid_window_handle() {
   let window = sample_window();
   let error = session()
     .window()
@@ -85,13 +85,13 @@ fn window_click_rejects_background_only_policy() {
         ..ClickOptions::default()
       },
     )
-    .expect_err("background-only window click is rejected before SendInput delivery");
+    .expect_err("background click posts window messages, so a fake test window handle fails at the Win32 call");
 
-  assert!(error.to_string().contains("background_only"));
+  assert!(error.to_string().contains("ScreenToClient"));
 }
 
 #[test]
-fn window_scroll_rejects_background_only_policy() {
+fn window_scroll_background_only_fails_for_invalid_window_handle() {
   let window = sample_window();
   let error = session()
     .window()
@@ -104,13 +104,13 @@ fn window_scroll_rejects_background_only_policy() {
         ..ScrollOptions::default()
       },
     )
-    .expect_err("background-only window scroll is rejected before SendInput delivery");
+    .expect_err("background scroll posts window messages, so a fake test window handle fails at the Win32 call");
 
-  assert!(error.to_string().contains("background_only"));
+  assert!(error.to_string().contains("background_scroll is not supported"));
 }
 
 #[test]
-fn window_scroll_requires_foreground_candidate() {
+fn window_scroll_attempts_window_targeted_wheel_without_requiring_foreground_candidate() {
   let window = sample_window();
   let error = session()
     .window()
@@ -125,9 +125,11 @@ fn window_scroll_requires_foreground_candidate() {
         ..ScrollOptions::default()
       },
     )
-    .expect_err("foreground fallback must be explicitly allowed since Windows has no other scroll path");
+    .expect_err("the fake test window handle fails the background wheel post, not a missing-ForegroundHid validation error");
 
-  assert!(error.to_string().contains("ForegroundHid"));
+  // Fails from the actual background wheel attempt (Win32 call against a fake
+  // handle), not from an upfront "needs ForegroundHid" validation error.
+  assert!(error.to_string().contains("background_scroll is not supported"));
 }
 
 // Live smoke tests: poll a real enumerated top-level window for text that can

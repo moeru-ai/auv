@@ -64,7 +64,7 @@ pub fn current_position() -> DriverResult<Point> {
   native::current_position()
 }
 
-fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
+pub(crate) fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
   let count = click.count();
   if count == 0 {
     return Err(invalid_input("repeated click count must be greater than zero"));

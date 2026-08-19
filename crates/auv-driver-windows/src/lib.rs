@@ -6,6 +6,7 @@
 
 pub mod accessibility;
 mod application;
+mod background_input;
 pub mod capture;
 pub mod clipboard;
 mod descriptor;
@@ -24,6 +25,7 @@ pub use accessibility::{AxNode, AxTreeSnapshot, focus_node, select_node, snapsho
 pub use application::ApplicationControl;
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 pub use auv_driver_common::{ProcessActivationResult, ProcessActivationVerification};
+pub use clipboard::ClipboardSnapshot;
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
 pub use driver::{WindowsDriver, WindowsDriverSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
