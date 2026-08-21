@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::app::DEFAULT_SETTLE_MS;
 #[cfg(target_os = "linux")]
 use crate::tracing::NodeAction;
 #[cfg(target_os = "linux")]
@@ -20,7 +21,9 @@ pub struct OpenInputs {
 
 impl Default for OpenInputs {
   fn default() -> Self {
-    Self { settle_ms: 8_000 }
+    Self {
+      settle_ms: DEFAULT_SETTLE_MS,
+    }
   }
 }
 
@@ -64,17 +67,6 @@ pub(crate) fn select_visible_labeled_node(
     std::thread::sleep(Duration::from_millis(250));
   }
   Err(format!("could not bring one of [{}] into view; visible labels: {}", labels.display(), last_visible_labels.join(" | ")))
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn click_visible_labeled_node(
-  session: &auv_driver_linux::LinuxDriverSession,
-  window: &auv_driver::Window,
-  labels: crate::app::LabelSet,
-  action: NodeAction,
-) -> Result<MatchedNode, String> {
-  let (matched, _) = click_visible_labeled_node_with_delivery(session, window, labels, action)?;
-  Ok(matched)
 }
 
 #[cfg(target_os = "linux")]

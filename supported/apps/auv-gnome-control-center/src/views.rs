@@ -120,3 +120,62 @@ impl From<&auv_driver_linux::AxNode> for SettingsNode {
     }
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use auv_driver::Rect;
+
+  use super::{SettingsNode, find_labeled_node, find_slider_near_label, find_switch_near_label, visible_labels};
+  use crate::app::LabelSet;
+
+  fn node(path: &str, role: &str, name: &str, value: Option<&str>, bounds: Rect) -> SettingsNode {
+    SettingsNode {
+      path: path.to_string(),
+      role: role.to_string(),
+      name: name.to_string(),
+      value: value.map(ToOwned::to_owned),
+      bounds,
+    }
+  }
+
+  #[test]
+  fn label_uses_value_when_accessible_name_is_empty() {
+    let node = node("/switch", "switch", "", Some(" Enabled "), Rect::new(0.0, 0.0, 10.0, 10.0));
+
+    assert_eq!(node.label(), Some(" Enabled "));
+    assert!(node.is_switch());
+  }
+
+  #[test]
+  fn find_labeled_node_prefers_actionable_nodes() {
+    let nodes = vec![
+      node("/text", "text", "System", None, Rect::new(0.0, 0.0, 10.0, 10.0)),
+      node("/button", "button", "System", None, Rect::new(0.0, 20.0, 10.0, 10.0)),
+    ];
+
+    let matched = find_labeled_node(&nodes, LabelSet::new(&["System"])).expect("system node should match");
+
+    assert_eq!(matched.path, "/button");
+    assert_eq!(matched.matched_label, "System");
+  }
+
+  #[test]
+  fn nearby_controls_and_visible_labels_are_derived_from_snapshot() {
+    let nodes = vec![
+      node("/label", "label", "Pointer Speed", None, Rect::new(0.0, 100.0, 20.0, 20.0)),
+      node("/slider-far", "slider", "", None, Rect::new(0.0, 180.0, 100.0, 20.0)),
+      node("/slider-near", "slider", "", None, Rect::new(0.0, 110.0, 100.0, 20.0)),
+      node("/switch", "switch", "Natural", None, Rect::new(0.0, 140.0, 20.0, 20.0)),
+      node("/value", "label", "", Some(" Enabled "), Rect::new(0.0, 160.0, 20.0, 20.0)),
+    ];
+
+    let pointer_speed = LabelSet::new(&["Pointer Speed"]);
+    let natural = LabelSet::new(&["Natural"]);
+    let slider = find_slider_near_label(&nodes, pointer_speed).expect("pointer speed slider should match");
+    let switch = find_switch_near_label(&nodes, natural).expect("natural switch should match");
+
+    assert_eq!(slider.path, "/slider-near");
+    assert_eq!(switch.path, "/switch");
+    assert_eq!(visible_labels(&nodes), vec!["Pointer Speed", "Natural", "Enabled"]);
+  }
+}

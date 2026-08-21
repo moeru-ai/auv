@@ -136,7 +136,7 @@ mod tracing {
     #[cfg(feature = "tracing")]
     auv_tracing::emit_event!(event);
     #[cfg(not(feature = "tracing"))]
-    drop(event);
+    let _ = event;
   }
 
   #[cfg(target_os = "linux")]
@@ -166,7 +166,7 @@ mod tracing {
     #[cfg(feature = "tracing")]
     auv_tracing::emit_event!(event);
     #[cfg(not(feature = "tracing"))]
-    drop(event);
+    let _ = event;
   }
 
   #[cfg(target_os = "linux")]
@@ -175,7 +175,7 @@ mod tracing {
     #[cfg(feature = "tracing")]
     auv_tracing::emit_event!(event);
     #[cfg(not(feature = "tracing"))]
-    drop(event);
+    let _ = event;
   }
 }
 

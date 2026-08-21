@@ -3,6 +3,7 @@ use std::borrow::Cow;
 pub const APP_ID: &str = "org.gnome.Settings";
 pub const PROCESS_NAME: &str = "gnome-control-center";
 pub const DISPLAY_NAME: &str = "GNOME Control Center";
+pub const DEFAULT_SETTLE_MS: u64 = 8_000;
 
 pub const SETTINGS_WINDOW: LabelSet = LabelSet::new(&["设置", "Settings", "GNOME Control Center"]);
 pub const SYSTEM_PAGE: LabelSet = LabelSet::new(&["系统", "System"]);
@@ -28,7 +29,7 @@ impl LabelSet {
     self.labels
   }
 
-  pub fn best_match<'a>(self, value: &'a str) -> Option<&'static str> {
+  pub fn best_match(self, value: &str) -> Option<&'static str> {
     let normalized = normalize(value);
     self.labels.iter().copied().find(|label| normalize(label) == normalized).or_else(|| {
       self.labels.iter().copied().find(|label| {
@@ -47,4 +48,30 @@ pub fn normalize(value: &str) -> Cow<'_, str> {
   let normalized =
     value.chars().filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation()).flat_map(char::to_lowercase).collect::<String>();
   Cow::Owned(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{LabelSet, normalize};
+
+  #[test]
+  fn normalize_removes_spacing_and_ascii_punctuation() {
+    assert_eq!(normalize("  Pointer-Speed! ").as_ref(), "pointerspeed");
+    assert_eq!(normalize("系统 详情").as_ref(), "系统详情");
+  }
+
+  #[test]
+  fn best_match_prefers_exact_match_before_contains_match() {
+    let labels = LabelSet::new(&["System", "System Details"]);
+
+    assert_eq!(labels.best_match("System Details"), Some("System Details"));
+    assert_eq!(labels.best_match("System Details page"), Some("System"));
+  }
+
+  #[test]
+  fn best_match_returns_none_when_no_label_matches() {
+    let labels = LabelSet::new(&["Settings", "设置"]);
+
+    assert_eq!(labels.best_match("About"), None);
+  }
 }
