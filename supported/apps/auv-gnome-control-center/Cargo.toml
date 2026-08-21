@@ -2,7 +2,7 @@
 name = "auv-gnome-control-center"
 version.workspace = true
 edition.workspace = true
-publish = true
+publish.workspace = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -16,11 +16,11 @@ default = []
 tracing = ["dep:auv-tracing"]
 
 [dependencies]
-auv-driver = { path = "../auv-driver" }
-auv-tracing = { path = "../auv-tracing", optional = true }
+auv-driver = { path = "../../../crates/auv-driver" }
+auv-tracing = { path = "../../../crates/auv-tracing", optional = true }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-auv-driver-linux = { path = "../auv-driver-linux" }
+auv-driver-linux = { path = "../../../crates/auv-driver-linux" }

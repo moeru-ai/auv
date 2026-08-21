@@ -30,7 +30,7 @@ members = [
   "supported/games/auv-game-balatro",
   "supported/games/auv-game-minecraft",
   "supported/games/auv-game-osu",
-  "crates/auv-gnome-control-center",
+  "supported/apps/auv-gnome-control-center",
   "crates/auv-inference-common",
   "crates/auv-inference-ort",
   "crates/auv-inference-ultralytics",

@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::app::DEFAULT_SETTLE_MS;
 use crate::commands::mouse::{NaturalScrollingToggleInputs, PointerSpeedRoundtripInputs, PointerSpeedSetInputs};
 use crate::commands::system_details::CopySystemDetailsInputs;
 use crate::commands::{OpenInputs, run_open};
@@ -43,7 +44,7 @@ enum MouseCommand {
 struct CommonArgs {
   #[arg(long)]
   json: bool,
-  #[arg(long, default_value_t = 8_000)]
+  #[arg(long, default_value_t = DEFAULT_SETTLE_MS)]
   settle_ms: u64,
 }
 
@@ -51,7 +52,7 @@ struct CommonArgs {
 struct SetPointerSpeedArgs {
   #[arg(long)]
   json: bool,
-  #[arg(long, default_value_t = 8_000)]
+  #[arg(long, default_value_t = DEFAULT_SETTLE_MS)]
   settle_ms: u64,
   #[arg(long, default_value_t = 0.5)]
   position: f64,
@@ -61,7 +62,7 @@ struct SetPointerSpeedArgs {
 struct RoundtripPointerSpeedArgs {
   #[arg(long)]
   json: bool,
-  #[arg(long, default_value_t = 8_000)]
+  #[arg(long, default_value_t = DEFAULT_SETTLE_MS)]
   settle_ms: u64,
   #[arg(long, default_value_t = 0.75)]
   first_position: f64,
@@ -141,5 +142,50 @@ fn run_inner(cli: Cli) -> Result<(), String> {
         }
       }
     },
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn open_uses_the_shared_settle_default() {
+    let cli = Cli::try_parse_from(["auv-gnome-control-center", "open"]).expect("open command should parse");
+
+    match cli.command {
+      Command::Open(args) => {
+        assert!(!args.json);
+        assert_eq!(args.settle_ms, DEFAULT_SETTLE_MS);
+      }
+      _ => panic!("expected open command"),
+    }
+  }
+
+  #[test]
+  fn roundtrip_pointer_speed_parses_nested_arguments() {
+    let cli = Cli::try_parse_from([
+      "auv-gnome-control-center",
+      "mouse",
+      "roundtrip-pointer-speed",
+      "--first-position",
+      "0.9",
+      "--restore-position",
+      "0.4",
+      "--json",
+    ])
+    .expect("roundtrip command should parse");
+
+    match cli.command {
+      Command::Mouse {
+        command: MouseCommand::RoundtripPointerSpeed(args),
+      } => {
+        assert!(args.json);
+        assert_eq!(args.settle_ms, DEFAULT_SETTLE_MS);
+        assert_eq!(args.first_position, 0.9);
+        assert_eq!(args.restore_position, 0.4);
+      }
+      _ => panic!("expected roundtrip pointer speed command"),
+    }
   }
 }

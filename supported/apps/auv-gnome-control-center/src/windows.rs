@@ -3,6 +3,7 @@ use std::time::Duration;
 use auv_driver::{Rect, Window};
 use serde::{Deserialize, Serialize};
 
+use crate::app::DEFAULT_SETTLE_MS;
 #[cfg(target_os = "linux")]
 use crate::app::{APP_ID, DISPLAY_NAME, PROCESS_NAME, SETTINGS_WINDOW};
 #[cfg(target_os = "linux")]
@@ -19,7 +20,7 @@ pub struct ResolveOptions {
 impl Default for ResolveOptions {
   fn default() -> Self {
     Self {
-      settle: Duration::from_secs(8),
+      settle: Duration::from_millis(DEFAULT_SETTLE_MS),
     }
   }
 }

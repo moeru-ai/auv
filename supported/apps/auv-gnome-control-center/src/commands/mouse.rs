@@ -4,6 +4,7 @@ use std::time::Duration;
 use auv_driver::{InputActionResult, WindowInput as _, WindowPoint};
 use serde::{Deserialize, Serialize};
 
+use crate::app::DEFAULT_SETTLE_MS;
 use crate::views::MatchedNode;
 use crate::windows::OpenWindowReport;
 
@@ -17,7 +18,7 @@ impl Default for PointerSpeedSetInputs {
   fn default() -> Self {
     Self {
       position: 0.5,
-      settle_ms: 8_000,
+      settle_ms: DEFAULT_SETTLE_MS,
     }
   }
 }
@@ -34,7 +35,7 @@ impl Default for PointerSpeedRoundtripInputs {
     Self {
       first_position: 0.75,
       restore_position: 0.5,
-      settle_ms: 8_000,
+      settle_ms: DEFAULT_SETTLE_MS,
     }
   }
 }
@@ -46,7 +47,9 @@ pub struct NaturalScrollingToggleInputs {
 
 impl Default for NaturalScrollingToggleInputs {
   fn default() -> Self {
-    Self { settle_ms: 8_000 }
+    Self {
+      settle_ms: DEFAULT_SETTLE_MS,
+    }
   }
 }
 

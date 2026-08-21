@@ -4,6 +4,7 @@ use std::time::Duration;
 use auv_driver::InputActionResult;
 use serde::{Deserialize, Serialize};
 
+use crate::app::DEFAULT_SETTLE_MS;
 use crate::views::MatchedNode;
 use crate::windows::OpenWindowReport;
 
@@ -14,7 +15,9 @@ pub struct CopySystemDetailsInputs {
 
 impl Default for CopySystemDetailsInputs {
   fn default() -> Self {
-    Self { settle_ms: 8_000 }
+    Self {
+      settle_ms: DEFAULT_SETTLE_MS,
+    }
   }
 }
 
