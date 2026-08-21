@@ -26,6 +26,9 @@ words:
   - iden
   - insel
   - kwaa
+  - libgbm
+  - libglvnd
+  - libxcb
   - locomo
   - Logg
   - mediaremote
@@ -34,8 +37,10 @@ words:
   - nemori
   - netease
   - nixpkgs
+  - nolyfill
   - ollama
   - oper
+  - oxlint
   - paradedb
   - pgvector
   - picospinner
@@ -45,6 +50,10 @@ words:
   - plastmem
   - pname
   - prefs
+  - prost
+  - protoc
+  - qodana
+  - qqmusic
   - qwen
   - retrievability
   - rustc
@@ -54,9 +63,14 @@ words:
   - serde
   - sonarjs
   - sqlx
+  - stdenv
+  - taze
+  - tesseract
   - tinyexec
   - tutils
   - ultralytics
+  - unocss
+  - unrun
   - utoipa
   - uuidv
   - vchord
@@ -65,6 +79,7 @@ words:
   - vitest
   - waifu
   - xiaowu
+  - xorg
   - xsai
 ignoreWords: []
 import: []
