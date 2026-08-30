@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **28**
+Count: **29**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -34,6 +34,7 @@ Count: **28**
 - [`2026-08-06-open-source-mouse-motion-implementation-research.md`](2026-08-06-open-source-mouse-motion-implementation-research.md)
 - [`2026-08-06-input-performance-evidence.md`](2026-08-06-input-performance-evidence.md)
 - [`2026-08-09-orca-computer-use-comparison-note.md`](2026-08-09-orca-computer-use-comparison-note.md)
+- [`2026-08-30-linux-wayland-pipewire-capture-runtime-design.md`](2026-08-30-linux-wayland-pipewire-capture-runtime-design.md)
 
 ## Related
 
