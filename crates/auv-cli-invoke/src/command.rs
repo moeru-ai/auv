@@ -18,7 +18,7 @@ type InvokeCommandParser = fn(&'static str, &'static str, &[String]) -> Result<I
 pub enum InvokeCommandCliParse {
   Help,
   Invoke {
-    target_application_id: Option<String>,
+    target: Option<crate::ExecutionTarget>,
     inputs: BTreeMap<String, String>,
     typed_args: TypedInvokeArgs,
     store_root: Option<PathBuf>,
@@ -112,7 +112,7 @@ pub struct InvokeCancelled;
 #[derive(Clone, Debug)]
 pub struct InvokeCommandInput {
   pub command_id: String,
-  pub target_application_id: Option<String>,
+  pub target: Option<crate::ExecutionTarget>,
   pub inputs: BTreeMap<String, String>,
   pub typed_args: Option<TypedInvokeArgs>,
   pub dry_run: bool,
@@ -129,8 +129,13 @@ impl InvokeCommandInput {
       .ok_or_else(|| format!("{} requires --{name}", self.command_id))
   }
 
-  pub fn target_or_input_target(&self) -> Option<&str> {
-    self.target_application_id.as_deref().or_else(|| self.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
+  pub fn application_target(&self) -> Result<Option<&str>, String> {
+    match self.target.as_ref() {
+      Some(crate::ExecutionTarget::Application { id }) => Ok(Some(id)),
+      Some(crate::ExecutionTarget::Window { .. }) => Err(format!("{} requires an app: target, not window:", self.command_id)),
+      Some(crate::ExecutionTarget::Display { .. }) => Err(format!("{} requires an app: target, not display:", self.command_id)),
+      None => Ok(self.inputs.get("target").map(String::as_str).filter(|value| !value.trim().is_empty())),
+    }
   }
 
   /// Resolves the shared invoke presentation policy. Overlay presentation is
@@ -449,7 +454,7 @@ where
   let args = T::from_arg_matches(&matches).map_err(|error| error.to_string())?;
   let inputs = encode_args(&args).map_err(|error| format!("failed to encode parsed {id} arguments: {error}"))?;
   Ok(InvokeCommandCliParse::Invoke {
-    target_application_id: matches.get_one::<String>("auv_target").cloned(),
+    target: matches.get_one::<String>("auv_target").map(|value| crate::ExecutionTarget::parse(value)).transpose()?,
     inputs,
     typed_args: TypedInvokeArgs::new(args),
     store_root: matches.get_one::<PathBuf>("auv_store_root").cloned(),
@@ -463,7 +468,12 @@ where
 
 pub(crate) fn with_invoke_context(command: Command) -> Command {
   command
-    .arg(Arg::new("auv_target").long("target").value_name("APP").help("Application used to select the operation target."))
+    .arg(
+      Arg::new("auv_target")
+        .long("target")
+        .value_name("TARGET")
+        .help("Typed target: app:<bundle-id>, window:<window-id>, or display:<display-id>. Bare values select an application."),
+    )
     .arg(Arg::new("auv_dry_run").long("dry-run").action(ArgAction::SetTrue).help("Validate the operation without performing it."))
     .arg(Arg::new("auv_no_overlay").long("no-overlay").action(ArgAction::SetTrue).help("Disable live visual overlay presentation."))
     .arg(

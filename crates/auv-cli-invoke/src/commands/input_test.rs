@@ -2,9 +2,7 @@ use super::*;
 use crate::{InvokeOutputOptions, InvokeResult};
 use auv_driver::{InputActionResult, InputDeliveryPath};
 use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, dispatcher};
-use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn window_click_options_parse_policy_and_repeated_clicks() {
@@ -19,184 +17,17 @@ fn window_click_options_parse_policy_and_repeated_clicks() {
   );
 }
 
-#[derive(Clone)]
-struct ControlledWindowCapability {
-  window: auv_driver::Window,
-  action: InputActionResult,
-  resolve_calls: Arc<AtomicUsize>,
-  click_calls: Arc<AtomicUsize>,
-}
-
-impl ControlledWindowCapability {
-  fn new() -> Self {
-    Self {
-      window: test_window(),
-      action: InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse),
-      resolve_calls: Arc::new(AtomicUsize::new(0)),
-      click_calls: Arc::new(AtomicUsize::new(0)),
-    }
-  }
-
-  fn resolve_count(&self) -> usize {
-    self.resolve_calls.load(Ordering::SeqCst)
-  }
-
-  fn click_count(&self) -> usize {
-    self.click_calls.load(Ordering::SeqCst)
-  }
-
-  fn with_action(mut self, action: InputActionResult) -> Self {
-    self.action = action;
-    self
-  }
-}
-
-impl WindowPointCapability for ControlledWindowCapability {
-  fn resolve(&self, _selector: auv_driver::WindowSelector) -> auv_driver::DriverResult<auv_driver::Window> {
-    self.resolve_calls.fetch_add(1, Ordering::SeqCst);
-    Ok(self.window.clone())
-  }
-
-  fn click(
-    &self,
-    _window: &auv_driver::Window,
-    _point: auv_driver::geometry::WindowPoint,
-    _options: auv_driver::ClickOptions,
-  ) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
-    self.click_calls.fetch_add(1, Ordering::SeqCst);
-    Ok(self.action.clone())
-  }
-}
-
-#[test]
-fn click_window_point_missing_point_args_returns_error() {
-  let inputs = BTreeMap::new();
-  let input = InvokeCommandInput {
-    command_id: "input.clickWindowPoint".to_string(),
-    target_application_id: Some("com.example.App".to_string()),
-    inputs,
-    typed_args: None,
-    dry_run: false,
-    cancellation: crate::InvokeCancellation::new(),
-  };
-  let error = futures_executor::block_on(click_window_point_invoke_command().invoke(input)).expect_err("missing point args should fail");
-  assert!(error.contains("requires --offset-x/--offset-y or --relative-x/--relative-y"));
-}
-
-#[test]
-fn click_window_point_valid_dry_run_resolves_window_without_clicking() {
-  let capability = ControlledWindowCapability::new();
-  let mut inputs = BTreeMap::new();
-  inputs.insert("offset-x".to_string(), "640".to_string());
-  inputs.insert("offset-y".to_string(), "360".to_string());
-  let input = InvokeCommandInput {
-    command_id: "input.clickWindowPoint".to_string(),
-    target_application_id: Some("com.example.App".to_string()),
-    inputs,
-    typed_args: None,
-    dry_run: true,
-    cancellation: crate::InvokeCancellation::new(),
-  };
-  let outcome = futures_executor::block_on(click_resolved_point_with_capability(
-    input,
-    None,
-    offset_point(640.0, 360.0),
-    auv_driver::ClickOptions::default(),
-    &capability,
-  ))
-  .expect("dry run should succeed");
-
-  assert!(matches!(outcome, WindowPointClickOutcome::Validated { .. }));
-  assert_eq!(capability.resolve_count(), 1);
-  assert_eq!(capability.click_count(), 0);
-}
-
-#[test]
-fn click_window_point_out_of_bounds_dry_run_fails_without_clicking() {
-  let capability = ControlledWindowCapability::new();
-  let input = InvokeCommandInput {
-    command_id: "input.clickWindowPoint".to_string(),
-    target_application_id: Some("com.example.App".to_string()),
-    inputs: BTreeMap::from([
-      ("offset-x".to_string(), "1280.01".to_string()),
-      ("offset-y".to_string(), "360".to_string()),
-    ]),
-    typed_args: None,
-    dry_run: true,
-    cancellation: crate::InvokeCancellation::new(),
-  };
-
-  // ROOT CAUSE:
-  //
-  // If a syntactically valid positive offset exceeded the resolved window,
-  // dry-run completed because the handler returned before window resolution.
-  //
-  // Before the fix, this input completed without consulting window geometry.
-  // The fix resolves containment before dry-run returns and never clicks.
-  let error = futures_executor::block_on(click_resolved_point_with_capability(
-    input,
-    None,
-    offset_point(1280.01, 360.0),
-    auv_driver::ClickOptions::default(),
-    &capability,
-  ))
-  .expect_err("out-of-bounds dry-run offset must fail");
-
-  assert!(error.contains("outside target window bounds"), "{error}");
-  assert_eq!(capability.resolve_count(), 1);
-  assert_eq!(capability.click_count(), 0);
-}
-
-#[test]
-fn click_window_point_live_resolves_once_before_clicking() {
-  let capability = ControlledWindowCapability::new();
-  let input = InvokeCommandInput {
-    command_id: "input.clickWindowPoint".to_string(),
-    target_application_id: Some("com.example.App".to_string()),
-    inputs: BTreeMap::from([
-      ("offset-x".to_string(), "640".to_string()),
-      ("offset-y".to_string(), "360".to_string()),
-    ]),
-    typed_args: None,
-    dry_run: false,
-    cancellation: crate::InvokeCancellation::new(),
-  };
-
-  let outcome = futures_executor::block_on(click_resolved_point_with_capability(
-    input,
-    None,
-    offset_point(640.0, 360.0),
-    auv_driver::ClickOptions::default(),
-    &capability,
-  ))
-  .expect("valid live point");
-
-  assert!(matches!(outcome, WindowPointClickOutcome::Delivered { .. }));
-  assert_eq!(capability.resolve_count(), 1);
-  assert_eq!(capability.click_count(), 1);
-}
-
 #[tokio::test]
-async fn resolved_window_click_returns_direct_action_and_publishes_through_typed_driver_contract() {
-  let capability = ControlledWindowCapability::new();
+async fn input_action_publishes_through_typed_driver_contract() {
   let store = Arc::new(MemoryTracingStore::new());
   let dispatch = configure().tracing_store(store.clone()).build().expect("memory dispatch");
   let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
   let expected = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
-  let future = root.in_scope(|| {
-    click_resolved_window_point(
-      &capability,
-      test_window(),
-      auv_driver::geometry::WindowPoint::new(640.0, 360.0),
-      auv_driver::ClickOptions::default(),
-    )
-  });
-
-  let delivered = root.instrument(future).await.expect("direct window click result");
+  let future = root.in_scope(|| async { emit_input_action_result(&expected) });
+  root.instrument(future).await;
   dispatch.flush().await.expect("flush input action telemetry");
   let records = store.records();
 
-  assert_eq!(delivered.action, expected);
   let metadata = records
     .iter()
     .find_map(|record| match record {
@@ -224,24 +55,13 @@ async fn invalid_input_artifact_does_not_change_the_typed_call_or_reexecute_driv
     focus_disturbance: auv_driver::DisturbanceLevel::None,
     clipboard_disturbance: auv_driver::DisturbanceLevel::None,
   };
-  let capability = ControlledWindowCapability::new().with_action(invalid.clone());
   let store = Arc::new(MemoryTracingStore::new());
   let dispatch = configure().tracing_store(store.clone()).build().expect("memory dispatch");
   let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
-  let future = root.in_scope(|| {
-    click_resolved_window_point(
-      &capability,
-      test_window(),
-      auv_driver::geometry::WindowPoint::new(640.0, 360.0),
-      auv_driver::ClickOptions::default(),
-    )
-  });
-
-  let delivered = root.instrument(future).await.expect("artifact preparation must not replace the direct input result");
+  let future = root.in_scope(|| async { emit_input_action_result(&invalid) });
+  root.instrument(future).await;
   dispatch.flush().await.expect("typed preparation diagnostic should flush");
 
-  assert_eq!(delivered.action, invalid);
-  assert_eq!(capability.click_count(), 1, "artifact preparation must not reexecute direct input");
   assert!(
     store.records().iter().all(|record| !matches!(record, TraceRecord::Artifact { .. })),
     "invalid evidence must not commit an artifact"
@@ -295,68 +115,25 @@ fn input_action_artifact_enforces_domain_and_four_mibibyte_bounds() {
 }
 
 #[test]
-fn click_window_point_negative_offset_dry_run_fails_without_driver() {
-  let input = InvokeCommandInput {
-    command_id: "input.clickWindowPoint".to_string(),
-    target_application_id: Some("com.example.App".to_string()),
-    inputs: BTreeMap::from([
-      ("offset-x".to_string(), "-0.01".to_string()),
-      ("offset-y".to_string(), "20".to_string()),
-    ]),
-    typed_args: None,
-    dry_run: true,
-    cancellation: crate::InvokeCancellation::new(),
+fn click_point_projects_normalized_local_coordinates() {
+  let point = resolve_local_point(0.5, 0.5, true, auv_driver::Size::new(1280.0, 720.0), "window").expect("normalized point");
+  assert_eq!(point, auv_driver::Point::new(640.0, 360.0));
+}
+
+#[test]
+fn click_point_rejects_local_coordinates_outside_target_bounds() {
+  let error =
+    resolve_local_point(1280.01, 20.0, false, auv_driver::Size::new(1280.0, 720.0), "window").expect_err("out-of-window point must fail");
+  assert!(error.contains("outside target window bounds"), "{error}");
+}
+
+#[test]
+fn click_point_rejects_incompatible_target_and_coordinate_basis() {
+  let target = crate::ExecutionTarget::Display {
+    id: "primary".to_string(),
   };
-
-  let error = futures_executor::block_on(click_window_point_invoke_command().invoke(input))
-    .expect_err("negative dry-run offset must fail before driver work");
-
-  assert!(error.contains("non-negative"), "{error}");
-}
-
-#[test]
-fn resolve_click_window_point_accepts_inclusive_offset_boundaries() {
-  let window = test_window();
-  for (x, y) in [(0.0, 0.0), (1280.0, 720.0)] {
-    let point = offset_point(x, y).resolve(&window, "input.clickWindowPoint").expect("inclusive window boundary");
-    assert_eq!(point, auv_driver::geometry::WindowPoint::new(x, y));
-  }
-}
-
-#[test]
-fn resolve_click_window_point_rejects_offsets_outside_window_bounds() {
-  let window = test_window();
-  for (name, x, y) in [
-    ("oversized x", 1280.01, 20.0),
-    ("oversized y", 10.0, 720.01),
-  ] {
-    let error = offset_point(x, y).resolve(&window, "input.clickWindowPoint").expect_err("out-of-window offset must fail");
-    assert!(error.contains("outside target window"), "{name}: {error}");
-  }
-}
-
-#[test]
-fn resolve_click_window_point_converts_relative_pair() {
-  let window = test_window();
-  let point = relative_point(0.5, 0.5).resolve(&window, "input.clickWindowPoint").expect("relative pair");
-  assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
-}
-
-#[test]
-fn resolve_click_window_point_accepts_inclusive_relative_boundaries() {
-  let window = test_window();
-  for (relative_x, relative_y, expected_x, expected_y) in [(0.0, 0.0, 0.0, 0.0), (1.0, 1.0, 1280.0, 720.0)] {
-    let point = relative_point(relative_x, relative_y).resolve(&window, "input.clickWindowPoint").expect("inclusive relative boundary");
-    assert_eq!(point, auv_driver::geometry::WindowPoint::new(expected_x, expected_y));
-  }
-}
-
-fn offset_point(x: f64, y: f64) -> WindowPointInput {
-  WindowPointInput(WindowPointKind::Offset(auv_driver::geometry::WindowPoint::new(x, y)))
-}
-
-fn relative_point(x: f64, y: f64) -> WindowPointInput {
-  WindowPointInput(WindowPointKind::Relative(RelativeWindowPoint { x, y }))
+  let error = click_point_basis(Some(&target), Some("window"), false, false, false).expect_err("display target cannot use window basis");
+  assert!(error.contains("incompatible"), "{error}");
 }
 
 fn test_window() -> auv_driver::Window {
@@ -446,21 +223,22 @@ fn focus_text_human_output_exposes_target_selection_delivery_and_verification_bo
 }
 
 #[test]
-fn window_point_click_result_keeps_resolved_target_and_delivery_together() {
-  let click = WindowPointClick {
-    window: test_window(),
-    point: auv_driver::geometry::WindowPoint::new(640.0, 360.0),
-    action: InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse),
-  };
-
-  let output =
-    window_point_click_output(WindowPointClickOutcome::Delivered { click }.into_result(), crate::commands::overlay::OverlayStatus::Disabled)
-      .expect("click result should serialize");
+fn click_point_result_keeps_resolved_target_and_delivery_together() {
+  let output = click_point_output(ClickPointResult {
+    relative_to: "window".to_string(),
+    requested_point: auv_driver::Point::new(640.0, 360.0),
+    normalized: false,
+    screen_point: auv_driver::ScreenPoint::new(640.0, 360.0),
+    window: Some(test_window()),
+    display: None,
+    action: Some(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse)),
+  })
+  .expect("click result should serialize");
   let result = output.result().expect("click should have a result");
 
   assert_eq!(result["window"]["reference"]["id"], "window-1");
-  assert_eq!(result["point"]["x"], 640.0);
-  assert_eq!(result["point"]["y"], 360.0);
+  assert_eq!(result["screen_point"]["x"], 640.0);
+  assert_eq!(result["screen_point"]["y"], 360.0);
   assert_eq!(result["action"]["selected_path"], "window_targeted_mouse");
   let report = output.report.as_ref().expect("window point click report");
   assert_eq!(field_value(report, "Delivery"), "delivered");
@@ -468,15 +246,16 @@ fn window_point_click_result_keeps_resolved_target_and_delivery_together() {
 }
 
 #[test]
-fn window_point_dry_run_reports_validation_without_delivery() {
-  let output = window_point_click_output(
-    WindowPointClickOutcome::Validated {
-      window: test_window(),
-      point: auv_driver::geometry::WindowPoint::new(640.0, 360.0),
-    }
-    .into_result(),
-    crate::commands::overlay::OverlayStatus::Disabled,
-  )
+fn click_point_dry_run_reports_validation_without_delivery() {
+  let output = click_point_output(ClickPointResult {
+    relative_to: "window".to_string(),
+    requested_point: auv_driver::Point::new(640.0, 360.0),
+    normalized: false,
+    screen_point: auv_driver::ScreenPoint::new(640.0, 360.0),
+    window: Some(test_window()),
+    display: None,
+    action: None,
+  })
   .expect("validated point should serialize");
 
   let report = output.report.as_ref().expect("window point validation report");

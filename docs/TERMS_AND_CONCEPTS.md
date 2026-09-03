@@ -726,6 +726,29 @@ and which candidate objects are eligible for selection.
 
 The current scope terms are `screen`, `display`, `window`, and `region`.
 
+## Execution Target
+
+An execution target identifies the resource an invoke operation acts on. The
+shared invoke model distinguishes `Application`, `Window`, and `Display`
+targets instead of carrying an untyped string. The CLI spells these as
+`app:<bundle-id>`, `window:<window-id>`, and `display:<display-id>`. A bare
+`--target` value retains its historical meaning as an application id.
+
+Target identity and coordinate interpretation are separate decisions. For
+`input.clickPoint`, `--relative-to screen|window|display` names the coordinate
+basis. If omitted, the basis follows the target deterministically: no target is
+screen-relative, an application or window target is window-relative, and a
+display target is display-relative. `--normalized` changes window- or
+display-relative values from local logical points to ratios in `0..=1`; it is
+not valid for the logical screen.
+
+`input.clickPoint` is the invoke-level point-click operation. Screen and display
+coordinates use the existing global pointer capability after projection to the
+logical screen. Window coordinates use the existing window-targeted input
+capability and retain its `InputActionResult`, input policy, attempts, fallback
+reason, and disturbance metadata. The driver capabilities remain distinct;
+the unified operation is a frontend and typed-command contract.
+
 ## Screen
 
 A screen is the logical desktop observation surface. It is the user-facing
@@ -778,7 +801,7 @@ A window resolver turns a target application and optional window selector into
 one selected window candidate.
 
 All window-scoped commands should share the same resolver so that
-`captureWindow`, `clickWindowPoint`, OCR window commands, and row window
+`captureWindow`, window-relative `clickPoint`, OCR window commands, and row window
 commands agree about which window they are using. When the resolver cannot make
 a clear choice, it should return an ambiguity error that points users to the
 window-listing API instead of silently selecting an arbitrary candidate.

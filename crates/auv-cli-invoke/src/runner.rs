@@ -32,25 +32,25 @@ where
 
 pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeCommandResult {
   let command_id = input.command_id.as_str();
-  if command_id == "app.probePermissions" && input.target_application_id.is_some() {
+  if command_id == "app.probePermissions" && input.target.is_some() {
     return Err("app.probePermissions cannot use --target".to_string());
   }
-  if command_id == "app.activate" && input.target_application_id.as_ref().is_none_or(|target| target.trim().is_empty()) {
-    return Err("app.activate requires --target".to_string());
+  if command_id == "app.activate" && input.application_target()?.is_none_or(|target| target.trim().is_empty()) {
+    return Err("app.activate requires --target app:".to_string());
   }
   if matches!(command_id, "input.focusText" | "input.axFocusText")
-    && input.target_application_id.as_ref().is_none_or(|target| target.trim().is_empty())
+    && input.application_target()?.is_none_or(|target| target.trim().is_empty())
   {
     return Err(format!("{command_id} requires --target"));
   }
-  if command_id.starts_with("mediaControl.") && input.target_application_id.is_some() {
+  if command_id.starts_with("mediaControl.") && input.target.is_some() {
     return Err(if command_id == "mediaControl.nowPlaying" {
       "mediaControl.nowPlaying cannot use --target; the macOS now-playing state is system-wide".to_string()
     } else {
       format!("{command_id} cannot use --target; macOS media controls are system-wide")
     });
   }
-  if command_id.starts_with("overlay.") && input.target_application_id.is_some() {
+  if command_id.starts_with("overlay.") && input.target.is_some() {
     return Err(format!("{command_id} cannot use --target; overlays use global screen coordinates"));
   }
   if command_id.starts_with("overlay.") {
@@ -59,12 +59,10 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       return crate::commands::overlay::selected_overlay_output(&plan, false);
     }
   }
-  if matches!(command_id, "input.typeText" | "input.pasteText" | "input.key") && input.target_application_id.is_some() {
+  if matches!(command_id, "input.typeText" | "input.pasteText" | "input.key") && input.target.is_some() {
     return Err(format!("{command_id} cannot use --target until typed input target activation is available"));
   }
-  if matches!(command_id, "screen.findText" | "screen.waitForText" | "screen.clickText" | "screen.captureRegion")
-    && input.target_application_id.is_some()
-  {
+  if matches!(command_id, "screen.findText" | "screen.waitForText" | "screen.clickText" | "screen.captureRegion") && input.target.is_some() {
     return Err(format!("{command_id} cannot use --target until typed target activation is available"));
   }
   let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
@@ -74,9 +72,9 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     .await
     .map_err(|error| format!("route core Runner for {command_id} failed: {error}"))?;
 
-  let invoked = match command_id {
+  match command_id {
     "app.activate" => {
-      let target = input.target_application_id.as_deref().expect("validated target").trim();
+      let target = input.application_target()?.expect("validated target").trim();
       runner
         .macos()
         .applications()
@@ -108,7 +106,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         .macos()
         .accessibility()
         .focus_text(auv_driver::FocusTextOptions {
-          app: input.target_application_id.clone().expect("validated target"),
+          app: input.application_target()?.expect("validated target").to_string(),
           selector,
           expected_role: None,
         })
@@ -421,46 +419,121 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       }
       .await
     }
-    "input.clickScreenPoint" => {
-      async {
-        let point = selected_screen_point(&input, "input.clickScreenPoint")?;
-        let click = selected_click_options(&input)?.click;
-        let response = runner
-          .input()
-          .click_screen_point(point.point(), click)
-          .await
-          .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
-        crate::emit_input_action_result(&response.action);
-        crate::commands::input::screen_point_click_output(crate::commands::input::ScreenPointClickResult {
-          point: auv_driver::ScreenPoint::new(response.point.x, response.point.y),
-          action: Some(response.action),
-        })
-      }
-      .await
-    }
-    "input.clickWindowPoint" => match runner.windows().resolve(selected_window_selector(&input)).await {
-      Err(status) => Err(format!("WindowService/ResolveWindow failed: {status}")),
-      Ok(resolved) => {
-        let window = resolved.resource().clone();
-        match (selected_window_point(&input, &window), selected_click_options(&input)) {
-          (Err(error), _) | (_, Err(error)) => Err(error),
-          (Ok(point), Ok(options)) => match resolved.click(point, options).await {
-            Err(status) => Err(format!("InputService/ClickWindowPoint failed: {status}")),
-            Ok(response) => {
-              crate::emit_input_action_result(&response.action);
-              crate::commands::input::window_point_click_output_without_overlay(crate::commands::input::WindowPointClickResult {
-                window: response.window,
-                point: response.point,
-                action: Some(response.action),
-              })
-            }
-          },
-        }
-      }
-    },
+    "input.clickPoint" => selected_click_point(&input, &runner).await,
     _ => unreachable!("typed Runner adapter was selected above"),
-  };
-  invoked
+  }
+}
+
+async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::client::runner::RunnerClient) -> crate::InvokeCommandResult {
+  let requested = selected_screen_point(input, "input.clickPoint")?;
+  let normalized = input
+    .inputs
+    .get("normalized")
+    .map(|value| value.parse::<bool>().map_err(|error| format!("input.clickPoint has invalid --normalized value: {error}")))
+    .transpose()?
+    .unwrap_or(false);
+  if normalized && (!(0.0..=1.0).contains(&requested.point().x) || !(0.0..=1.0).contains(&requested.point().y)) {
+    return Err("input.clickPoint --normalized coordinates must be within 0..=1".to_string());
+  }
+  let basis = crate::commands::input::click_point_basis(
+    input.target.as_ref(),
+    input.inputs.get("relative-to").map(String::as_str),
+    normalized,
+    input.inputs.contains_key("input-policy"),
+    input.inputs.contains_key("title"),
+  )?;
+  let requested_point = requested.point();
+  match basis {
+    crate::commands::input::RelativeToArg::Screen => {
+      let response = runner
+        .input()
+        .click_screen_point(requested_point, selected_click_options(input)?.click)
+        .await
+        .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
+      crate::emit_input_action_result(&response.action);
+      crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
+        relative_to: basis.as_str().to_string(),
+        requested_point,
+        normalized,
+        screen_point: auv_driver::ScreenPoint::new(response.point.x, response.point.y),
+        window: None,
+        display: None,
+        action: Some(response.action),
+      })
+    }
+    crate::commands::input::RelativeToArg::Window => {
+      let windows = runner.windows();
+      let resolved = match input.target.as_ref().expect("window-relative target validated") {
+        crate::ExecutionTarget::Application { .. } => {
+          windows.resolve(selected_window_selector(input)).await.map_err(|status| format!("WindowService/ResolveWindow failed: {status}"))?
+        }
+        crate::ExecutionTarget::Window { id } => {
+          let window = windows
+            .list()
+            .await
+            .map_err(|status| format!("WindowService/ListWindows failed: {status}"))?
+            .into_iter()
+            .find(|window| window.reference.id == *id)
+            .ok_or_else(|| format!("input.clickPoint could not find window target {id:?}"))?;
+          windows.bind(window).map_err(|error| format!("WindowService/BindWindow failed: {error}"))?
+        }
+        crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
+      };
+      let window = resolved.resource();
+      let point =
+        crate::commands::input::resolve_local_point(requested_point.x, requested_point.y, normalized, window.frame.size, "window")?;
+      let response = resolved
+        .click(auv_driver::WindowPoint::new(point.x, point.y), selected_click_options(input)?)
+        .await
+        .map_err(|status| format!("InputService/ClickWindowPoint failed: {status}"))?;
+      crate::emit_input_action_result(&response.action);
+      let screen_point = auv_driver::ScreenPoint::new(
+        response.window.frame.origin.x + response.point.point().x,
+        response.window.frame.origin.y + response.point.point().y,
+      );
+      crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
+        relative_to: basis.as_str().to_string(),
+        requested_point,
+        normalized,
+        screen_point,
+        window: Some(response.window),
+        display: None,
+        action: Some(response.action),
+      })
+    }
+    crate::commands::input::RelativeToArg::Display => {
+      let crate::ExecutionTarget::Display { id } = input.target.as_ref().expect("display-relative target validated") else {
+        unreachable!("target/basis validated")
+      };
+      let display = runner
+        .displays()
+        .list()
+        .await
+        .map_err(|status| format!("DisplayService/ListDisplays failed: {status}"))?
+        .displays
+        .into_iter()
+        .find(|display| display.id == *id)
+        .ok_or_else(|| format!("input.clickPoint could not find display target {id:?}"))?;
+      let point =
+        crate::commands::input::resolve_local_point(requested_point.x, requested_point.y, normalized, display.frame.size, "display")?;
+      let screen_point = auv_driver::ScreenPoint::new(display.frame.origin.x + point.x, display.frame.origin.y + point.y);
+      let response = runner
+        .input()
+        .click_screen_point(screen_point.point(), selected_click_options(input)?.click)
+        .await
+        .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
+      crate::emit_input_action_result(&response.action);
+      crate::commands::input::click_point_output(crate::commands::input::ClickPointResult {
+        relative_to: basis.as_str().to_string(),
+        requested_point,
+        normalized,
+        screen_point: auv_driver::ScreenPoint::new(response.point.x, response.point.y),
+        window: None,
+        display: Some(display),
+        action: Some(response.action),
+      })
+    }
+  }
 }
 
 fn selected_screen_point(input: &crate::InvokeCommandInput, command_id: &str) -> Result<auv_driver::ScreenPoint, String> {
@@ -500,37 +573,6 @@ fn selected_screen_region(input: &crate::InvokeCommandInput) -> Result<auv_drive
     return Err("screen.captureRegion requires --width and --height greater than zero".to_string());
   }
   Ok(auv_driver::Rect::new(x, y, width, height))
-}
-
-fn selected_window_point(input: &crate::InvokeCommandInput, window: &auv_driver::Window) -> Result<auv_driver::WindowPoint, String> {
-  let number = |name: &str| {
-    input
-      .inputs
-      .get(name)
-      .map(|value| value.parse::<f64>().map_err(|error| format!("input.clickWindowPoint has invalid --{name}: {error}")))
-      .transpose()
-  };
-  let offset_x = number("offset-x")?;
-  let offset_y = number("offset-y")?;
-  let relative_x = number("relative-x")?;
-  let relative_y = number("relative-y")?;
-  let point = match (offset_x, offset_y, relative_x, relative_y) {
-    (Some(x), Some(y), None, None) if x.is_finite() && y.is_finite() && x >= 0.0 && y >= 0.0 => auv_driver::WindowPoint::new(x, y),
-    (None, None, Some(x), Some(y)) if x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) => {
-      auv_driver::WindowPoint::new(window.frame.size.width * x, window.frame.size.height * y)
-    }
-    (Some(_), Some(_), None, None) => return Err("input.clickWindowPoint requires finite non-negative window offsets".to_string()),
-    (None, None, Some(_), Some(_)) => return Err("input.clickWindowPoint requires relative coordinates within 0..=1".to_string()),
-    _ => return Err("input.clickWindowPoint requires --offset-x/--offset-y or --relative-x/--relative-y".to_string()),
-  };
-  let point_value = point.point();
-  if !(0.0..=window.frame.size.width).contains(&point_value.x) || !(0.0..=window.frame.size.height).contains(&point_value.y) {
-    return Err(format!(
-      "input.clickWindowPoint point {},{} is outside target window bounds 0..={},0..={}",
-      point_value.x, point_value.y, window.frame.size.width, window.frame.size.height
-    ));
-  }
-  Ok(point)
 }
 
 fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_driver::ClickOptions, String> {
@@ -589,13 +631,13 @@ fn matched_window_point(window: &auv_driver::Window, matched: &auv_driver::OcrMa
 
 fn selected_window_selector(input: &crate::InvokeCommandInput) -> auv_driver::WindowSelector {
   let app = input
-    .target_application_id
+    .target
     .as_ref()
-    // TODO(cross-platform-application-selector): `--target` currently carries
-    // an application id and therefore maps to bundle/accessibility id. Add an
-    // explicit application-name selector when the CLI contract can distinguish
-    // ids from names; do not guess from punctuation or silently retry.
-    .map(|bundle_id| auv_driver::App::bundle_id(bundle_id.clone()))
+    .and_then(crate::ExecutionTarget::application_id)
+    // TODO(cross-platform-application-selector): Application targets currently
+    // carry bundle/accessibility ids. Add an explicit application-name target
+    // only through an owner-approved target-contract extension.
+    .map(|bundle_id| auv_driver::App::bundle_id(bundle_id.to_string()))
     .unwrap_or_else(auv_driver::App::frontmost);
   let title =
     input.inputs.get("title").filter(|title| !title.trim().is_empty()).map(|title| auv_driver::TextMatcher::Contains(title.clone()));

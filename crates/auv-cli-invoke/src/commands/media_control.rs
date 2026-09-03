@@ -24,7 +24,7 @@ pub fn group() -> CommandGroup {
   input = NowPlayingArgs,
 )]
 async fn media_control_now_playing(input: InvokeCommandInput, _args: NowPlayingArgs) -> InvokeCommandResult {
-  if input.target_application_id.is_some() {
+  if input.target.is_some() {
     return Err("mediaControl.nowPlaying cannot use --target; the macOS now-playing state is system-wide".to_string());
   }
   let result = read_now_playing().await?;
@@ -133,7 +133,7 @@ pub fn media_control_output(result: &MediaControlOutcome) -> InvokeCommandResult
 }
 
 fn reject_media_target(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
-  if input.target_application_id.is_some() {
+  if input.target.is_some() {
     return Err(format!("{command_id} cannot use --target; macOS media controls are system-wide"));
   }
   Ok(())

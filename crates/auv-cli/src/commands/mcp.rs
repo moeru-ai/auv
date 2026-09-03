@@ -41,7 +41,7 @@ mod frontend {
   use serde::Serialize;
   use serde_json::Value;
 
-  use auv_cli_invoke::{InvokeCancellation, InvokeCommand, InvokeCommandInput, InvokeRegistry, default_registry};
+  use auv_cli_invoke::{ExecutionTarget, InvokeCancellation, InvokeCommand, InvokeCommandInput, InvokeRegistry, default_registry};
 
   tokio::task_local! {
     static MCP_REQUEST_CANCELLATION: InvokeCancellation;
@@ -52,7 +52,7 @@ mod frontend {
 
   #[derive(Clone, Debug)]
   pub struct McpInvokeInput {
-    pub target_application_id: Option<String>,
+    pub target: Option<ExecutionTarget>,
     pub inputs: BTreeMap<String, String>,
     pub dry_run: bool,
     pub cancellation: InvokeCancellation,
@@ -242,7 +242,7 @@ mod frontend {
         let output = command
           .invoke(InvokeCommandInput {
             command_id: command_id.to_string(),
-            target_application_id: input.target_application_id,
+            target: input.target,
             inputs,
             typed_args: None,
             dry_run: input.dry_run,
@@ -288,7 +288,7 @@ mod frontend {
       let authority = (self.invoke_dispatch)(req.store_root).map_err(invalid_params)?;
       let cancellation = MCP_REQUEST_CANCELLATION.try_with(Clone::clone).unwrap_or_default();
       let input = McpInvokeInput {
-        target_application_id: req.target.application_id,
+        target: req.target.into_execution_target().map_err(invalid_params)?,
         inputs: req.inputs,
         dry_run: req.dry_run,
         cancellation: cancellation.clone(),
@@ -436,6 +436,33 @@ mod frontend {
   #[serde(deny_unknown_fields)]
   struct McpInvokeTarget {
     application_id: Option<String>,
+    window_id: Option<String>,
+    display_id: Option<String>,
+  }
+
+  impl McpInvokeTarget {
+    fn into_execution_target(self) -> Result<Option<ExecutionTarget>, String> {
+      let targets = [
+        self.application_id.map(|id| ("application_id", ExecutionTarget::Application { id })),
+        self.window_id.map(|id| ("window_id", ExecutionTarget::Window { id })),
+        self.display_id.map(|id| ("display_id", ExecutionTarget::Display { id })),
+      ];
+      let mut targets = targets.into_iter().flatten();
+      let target = targets.next();
+      if targets.next().is_some() {
+        return Err("target must set at most one of application_id, window_id, or display_id".to_string());
+      }
+      let Some((field, target)) = target else {
+        return Ok(None);
+      };
+      let id = match &target {
+        ExecutionTarget::Application { id } | ExecutionTarget::Window { id } | ExecutionTarget::Display { id } => id,
+      };
+      if id.trim().is_empty() {
+        return Err(format!("target.{field} cannot be empty"));
+      }
+      Ok(Some(target))
+    }
   }
 
   #[derive(Debug, Deserialize, Serialize, JsonSchema)]

@@ -50,7 +50,7 @@ fn screen_find_text_accepts_a_typed_positional_query() {
   .expect("typed invoke command should parse");
   let InvokeCliParse::Invoke {
     inputs,
-    target_application_id,
+    target,
     dry_run,
     ..
   } = command
@@ -59,7 +59,12 @@ fn screen_find_text_accepts_a_typed_positional_query() {
   };
 
   assert_eq!(inputs.get("query").map(String::as_str), Some("Settings"));
-  assert_eq!(target_application_id.as_deref(), Some("com.apple.TextEdit"));
+  assert_eq!(
+    target,
+    Some(auv_cli_invoke::ExecutionTarget::Application {
+      id: "com.apple.TextEdit".to_string(),
+    })
+  );
   assert!(dry_run);
 }
 
@@ -74,14 +79,17 @@ fn invoke_context_uses_clap_equals_and_end_of_options_semantics() {
   ]))
   .expect("equals syntax should parse");
   let InvokeCliParse::Invoke {
-    target_application_id,
-    dry_run,
-    ..
+    target, dry_run, ..
   } = command
   else {
     panic!("expected invoke command");
   };
-  assert_eq!(target_application_id.as_deref(), Some("com.apple.TextEdit"));
+  assert_eq!(
+    target,
+    Some(auv_cli_invoke::ExecutionTarget::Application {
+      id: "com.apple.TextEdit".to_string(),
+    })
+  );
   assert!(dry_run);
 
   let command =

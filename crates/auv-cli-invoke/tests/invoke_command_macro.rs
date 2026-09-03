@@ -37,7 +37,7 @@ fn invoke_command_macro_expands_for_downstream_crates() {
 
   futures_executor::block_on(command.invoke(auv_cli_invoke::InvokeCommandInput {
     command_id: command.id.to_string(),
-    target_application_id: None,
+    target: None,
     inputs,
     typed_args: None,
     dry_run: false,

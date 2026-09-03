@@ -5,7 +5,9 @@ async fn selected_now_playing_rejects_application_target_before_daemon_resolutio
   let error = invoke(
     crate::InvokeCommandInput {
       command_id: "mediaControl.nowPlaying".to_string(),
-      target_application_id: Some("com.example.Player".to_string()),
+      target: Some(crate::ExecutionTarget::Application {
+        id: "com.example.Player".to_string(),
+      }),
       inputs: Default::default(),
       typed_args: None,
       dry_run: false,
@@ -30,7 +32,9 @@ async fn selected_media_commands_reject_application_target_before_daemon_resolut
     let error = invoke(
       crate::InvokeCommandInput {
         command_id: command_id.to_string(),
-        target_application_id: Some("com.example.Player".to_string()),
+        target: Some(crate::ExecutionTarget::Application {
+          id: "com.example.Player".to_string(),
+        }),
         inputs: Default::default(),
         typed_args: None,
         dry_run: false,
@@ -63,7 +67,7 @@ async fn selected_disabled_overlay_validates_without_resolving_a_daemon() {
   .collect::<Vec<_>>();
   let crate::InvokeCliParse::Invoke {
     command_id,
-    target_application_id,
+    target,
     inputs,
     typed_args,
     dry_run,
@@ -75,7 +79,7 @@ async fn selected_disabled_overlay_validates_without_resolving_a_daemon() {
   let output = invoke(
     crate::InvokeCommandInput {
       command_id,
-      target_application_id,
+      target,
       inputs,
       typed_args: Some(typed_args),
       dry_run,
@@ -144,7 +148,9 @@ fn selected_window_selector_keeps_hierarchical_parent_context() {
   inputs.insert("title".to_string(), "Preferences".to_string());
   let selector = selected_window_selector(&crate::InvokeCommandInput {
     command_id: "window.capture".to_string(),
-    target_application_id: Some("com.example.app".to_string()),
+    target: Some(crate::ExecutionTarget::Application {
+      id: "com.example.app".to_string(),
+    }),
     inputs,
     typed_args: None,
     dry_run: false,
@@ -156,36 +162,19 @@ fn selected_window_selector_keeps_hierarchical_parent_context() {
 }
 
 #[test]
-fn selected_window_point_projects_relative_coordinates_and_click_policy() {
+fn selected_click_options_preserve_policy_and_repeated_clicks() {
   let mut inputs = std::collections::BTreeMap::new();
-  inputs.insert("relative-x".to_string(), "0.25".to_string());
-  inputs.insert("relative-y".to_string(), "0.5".to_string());
   inputs.insert("input-policy".to_string(), "background-only".to_string());
   inputs.insert("click-count".to_string(), "2".to_string());
   inputs.insert("click-interval-ms".to_string(), "80".to_string());
   let input = crate::InvokeCommandInput {
-    command_id: "input.clickWindowPoint".to_string(),
-    target_application_id: None,
+    command_id: "input.clickPoint".to_string(),
+    target: None,
     inputs,
     typed_args: None,
     dry_run: false,
     cancellation: Default::default(),
   };
-  let window = auv_driver::Window {
-    reference: auv_driver::WindowRef {
-      id: "window_fixture".to_string(),
-    },
-    title: None,
-    app_name: None,
-    app_bundle_id: None,
-    process_id: None,
-    frame: auv_driver::Rect::new(10.0, 20.0, 400.0, 200.0),
-    coordinate_space: auv_driver::CoordinateSpace::Screen,
-    is_main: true,
-    is_visible: true,
-  };
-
-  assert_eq!(selected_window_point(&input, &window).unwrap(), auv_driver::WindowPoint::new(100.0, 100.0));
   let options = selected_click_options(&input).unwrap();
   assert_eq!(options.policy, auv_driver::InputPolicy::BackgroundOnly);
   assert_eq!(options.click.count(), 2);
@@ -195,8 +184,8 @@ fn selected_window_point_projects_relative_coordinates_and_click_policy() {
 #[test]
 fn selected_screen_point_preserves_logical_coordinates() {
   let input = crate::InvokeCommandInput {
-    command_id: "input.clickScreenPoint".to_string(),
-    target_application_id: None,
+    command_id: "input.clickPoint".to_string(),
+    target: None,
     inputs: std::collections::BTreeMap::from([
       ("x".to_string(), "768".to_string()),
       ("y".to_string(), "1139.5".to_string()),
@@ -206,14 +195,14 @@ fn selected_screen_point_preserves_logical_coordinates() {
     cancellation: Default::default(),
   };
 
-  assert_eq!(selected_screen_point(&input, "input.clickScreenPoint").unwrap(), auv_driver::ScreenPoint::new(768.0, 1139.5));
+  assert_eq!(selected_screen_point(&input, "input.clickPoint").unwrap(), auv_driver::ScreenPoint::new(768.0, 1139.5));
 }
 
 #[test]
 fn selected_screen_text_click_defaults_to_foreground_input() {
   let input = crate::InvokeCommandInput {
     command_id: "screen.clickText".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: std::collections::BTreeMap::new(),
     typed_args: None,
     dry_run: false,
@@ -254,7 +243,7 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
   inputs.insert("index".to_string(), "1".to_string());
   let input = crate::InvokeCommandInput {
     command_id: "window.clickText".to_string(),
-    target_application_id: None,
+    target: None,
     inputs,
     typed_args: None,
     dry_run: false,

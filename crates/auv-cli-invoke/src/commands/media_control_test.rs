@@ -45,7 +45,9 @@ fn now_playing_human_output_exposes_the_current_media_state() {
 fn now_playing_rejects_target_before_platform_access() {
   let input = crate::InvokeCommandInput {
     command_id: "mediaControl.nowPlaying".to_string(),
-    target_application_id: Some("com.example.Player".to_string()),
+    target: Some(crate::ExecutionTarget::Application {
+      id: "com.example.Player".to_string(),
+    }),
     inputs: Default::default(),
     typed_args: None,
     dry_run: false,
@@ -67,7 +69,9 @@ fn media_commands_reject_target_before_platform_access() {
   ] {
     let input = crate::InvokeCommandInput {
       command_id: command_id.to_string(),
-      target_application_id: Some("com.example.Player".to_string()),
+      target: Some(crate::ExecutionTarget::Application {
+        id: "com.example.Player".to_string(),
+      }),
       inputs: Default::default(),
       typed_args: None,
       dry_run: false,

@@ -462,7 +462,7 @@ fn plan_click_target(command_id: &str, args: ClickTargetArgs) -> Result<OverlayP
 }
 
 fn debug_output(input: &InvokeCommandInput, component: &str, overlay: Overlay, options: ShowOptions) -> InvokeCommandResult {
-  if input.target_application_id.is_some() {
+  if input.target.is_some() {
     return Err(format!("{} cannot use --target; overlays use global screen coordinates", input.command_id));
   }
   let layers = overlay.layers().len();

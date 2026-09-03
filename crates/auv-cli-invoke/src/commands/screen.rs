@@ -307,7 +307,7 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
 }
 
 fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
-  if input.target_application_id.is_some() {
+  if input.target.is_some() {
     // TODO(invoke-screen-activation): target activation for screen capture/OCR
     // needs a typed app activation lease before these handlers can honor
     // --target without returning to the root driver adapter.

@@ -578,6 +578,21 @@ impl WindowsClient {
       window_ref,
     })
   }
+
+  /// Binds a listed window resource to its stable WindowRef for subsequent
+  /// window-scoped capability calls.
+  pub fn bind(&self, window: auv_driver::Window) -> Result<WindowClient, CapabilityError> {
+    if window.reference.id.trim().is_empty() {
+      return Err(CapabilityError::InvalidResponse("listed Window omitted WindowRef id".to_string()));
+    }
+    Ok(WindowClient {
+      runner: self.runner.clone(),
+      window_ref: proto::WindowRef {
+        window_id: window.reference.id.clone(),
+      },
+      window,
+    })
+  }
 }
 
 /// Capability client bound to one resolved WindowRef.

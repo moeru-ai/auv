@@ -17,7 +17,7 @@ fn every_overlay_primitive_and_component_is_registered_and_dry_run_visualizable(
     let command = registry.resolve(command_id).unwrap_or_else(|| panic!("{command_id} should be registered"));
     let output = futures_executor::block_on(command.invoke(InvokeCommandInput {
       command_id: command_id.to_string(),
-      target_application_id: None,
+      target: None,
       inputs,
       typed_args: None,
       dry_run: true,
@@ -54,7 +54,9 @@ fn overlay_commands_reject_target_before_native_rendering() {
     let command = registry.resolve(command_id).expect("registered overlay command");
     let error = futures_executor::block_on(command.invoke(InvokeCommandInput {
       command_id: command_id.to_string(),
-      target_application_id: Some("com.example.App".to_string()),
+      target: Some(crate::ExecutionTarget::Application {
+        id: "com.example.App".to_string(),
+      }),
       inputs,
       typed_args: None,
       dry_run: false,
