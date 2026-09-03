@@ -31,7 +31,7 @@ async fn overlay_mcp_adapters_execute_the_shared_dry_run_commands() {
     let adapter = adapters.iter().find(|adapter| adapter.command_id == command_id).unwrap_or_else(|| panic!("missing {command_id} adapter"));
     adapter
       .invoke(McpInvokeInput {
-        target_application_id: None,
+        target: None,
         inputs,
         dry_run: true,
         cancellation: Default::default(),
@@ -53,11 +53,13 @@ async fn mcp_uses_the_same_typed_range_validation_as_cli() {
   // Before the fix, Linux CI observed a platform error instead of the shared
   // validation error. The fix validates command inputs before platform dispatch.
   let adapters = core_invoke_adapters();
-  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.clickWindowPoint").expect("click-window-point adapter");
+  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.clickPoint").expect("click-point adapter");
   let error = adapter
     .invoke(McpInvokeInput {
-      target_application_id: None,
-      inputs: pairs(&[("relative-x", "2"), ("relative-y", "0.5")]),
+      target: Some(auv_cli_invoke::ExecutionTarget::Window {
+        id: "window-1".to_string(),
+      }),
+      inputs: pairs(&[("x", "2"), ("y", "0.5"), ("relative-to", "window"), ("normalized", "true")]),
       dry_run: true,
       cancellation: Default::default(),
     })
@@ -65,6 +67,25 @@ async fn mcp_uses_the_same_typed_range_validation_as_cli() {
     .expect_err("out-of-range MCP input must fail typed decoding");
 
   assert!(error.contains("within 0..=1"), "unexpected typed validation error: {error}");
+}
+
+#[tokio::test]
+async fn click_point_mcp_defaults_to_screen_coordinates_without_optional_inputs() {
+  let adapters = core_invoke_adapters();
+  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.clickPoint").expect("click-point adapter");
+  let success = adapter
+    .invoke(McpInvokeInput {
+      target: None,
+      inputs: pairs(&[("x", "120"), ("y", "80")]),
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .expect("screen-relative dry run should use typed defaults");
+
+  assert_eq!(success.result["relative_to"], "screen");
+  assert_eq!(success.result["screen_point"]["x"], 120.0);
+  assert!(success.result["action"].is_null());
 }
 
 fn pairs(values: &[(&str, &str)]) -> BTreeMap<String, String> {

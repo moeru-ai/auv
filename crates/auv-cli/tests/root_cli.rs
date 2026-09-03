@@ -126,6 +126,10 @@ fn invoke_index_presents_registered_operations_as_commands() {
   assert!(help.contains("Usage:\n  auv invoke <COMMAND> [OPTIONS]"), "unexpected invoke help:\n{help}");
   assert!(help.contains("Commands:"), "unexpected invoke help:\n{help}");
   assert!(help.lines().any(|line| line.trim_start().starts_with("display.list ")), "unexpected invoke help:\n{help}");
+  assert!(help.lines().any(|line| line.trim_start().starts_with("input.clickPoint ")), "unexpected invoke help:\n{help}");
+  assert!(!help.contains("input.clickScreenPoint"), "retired command leaked into invoke help:\n{help}");
+  assert!(!help.contains("input.clickWindowPoint"), "retired command leaked into invoke help:\n{help}");
+  assert!(help.contains("--target <TARGET>"), "typed target contract missing from invoke help:\n{help}");
   assert!(help.lines().any(|line| line.trim_start().starts_with("help ")), "unexpected invoke help:\n{help}");
   assert!(help.contains("Options:"), "unexpected invoke help:\n{help}");
   assert!(!help.contains("\nDISPLAY\n"), "invoke operations should not look like internal capability sections:\n{help}");
@@ -863,11 +867,14 @@ fn typed_invoke_values_are_rejected_before_execution() {
 fn typed_invoke_ranges_are_rejected_by_the_handler() {
   let output = run(&[
     "invoke",
-    "input.clickWindowPoint",
-    "--relative-x",
+    "input.clickPoint",
     "2",
-    "--relative-y",
     "0.5",
+    "--target",
+    "window:fixture",
+    "--relative-to",
+    "window",
+    "--normalized",
     "--dry-run",
   ]);
 
@@ -876,10 +883,10 @@ fn typed_invoke_ranges_are_rejected_by_the_handler() {
 }
 
 #[test]
-fn screen_point_click_dry_run_reports_the_validated_coordinate() {
+fn click_point_dry_run_reports_the_validated_coordinate() {
   let output = run(&[
     "invoke",
-    "input.clickScreenPoint",
+    "input.clickPoint",
     "1032.5",
     "1212",
     "--dry-run",
@@ -888,8 +895,8 @@ fn screen_point_click_dry_run_reports_the_validated_coordinate() {
 
   assert!(output.status.success(), "unexpected diagnostic:\n{}", stderr(&output));
   let value: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("JSON output");
-  assert_eq!(value["result"]["point"]["x"], 1032.5);
-  assert_eq!(value["result"]["point"]["y"], 1212.0);
+  assert_eq!(value["result"]["screen_point"]["x"], 1032.5);
+  assert_eq!(value["result"]["screen_point"]["y"], 1212.0);
   assert!(value["result"]["action"].is_null());
 }
 

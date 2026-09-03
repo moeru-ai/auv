@@ -17,7 +17,7 @@ pub fn group() -> CommandGroup {
   input = ProbePermissionsArgs,
 )]
 async fn probe_permissions(input: InvokeCommandInput, _args: ProbePermissionsArgs) -> InvokeCommandResult {
-  if input.target_application_id.is_some() {
+  if input.target.is_some() {
     return Err("app.probePermissions cannot use --target".to_string());
   }
   if input.dry_run {
@@ -54,7 +54,7 @@ struct ActivateAppArgs {}
   input = ActivateAppArgs,
 )]
 async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> InvokeCommandResult {
-  let result = activate_application(input.target_application_id).await?;
+  let result = activate_application(input.application_target()?.map(str::to_string)).await?;
   activation_output(&result)
 }
 

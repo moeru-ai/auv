@@ -13,7 +13,7 @@ fn inputs(values: [(&str, &str); 4]) -> BTreeMap<String, String> {
 fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
   let valid_dry_run = InvokeCommandInput {
     command_id: "screen.captureRegion".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: inputs([("x", "1"), ("y", "2"), ("width", "3"), ("height", "4")]),
     typed_args: None,
     dry_run: true,
@@ -23,7 +23,7 @@ fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
 
   let invalid_live = InvokeCommandInput {
     command_id: "screen.captureRegion".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: inputs([("x", "1"), ("y", "2"), ("width", "0"), ("height", "4")]),
     typed_args: None,
     dry_run: false,

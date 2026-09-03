@@ -4,7 +4,6 @@ use auv_tracing::{Attributes, ByteLength, NewArtifact};
 use clap::{Args, ValueEnum};
 use futures_util::io::Cursor as AsyncCursor;
 
-use auv_driver::overlay::{Overlay, components::ClickTarget};
 use auv_driver::{INPUT_ACTION_RESULT_PURPOSE, ScreenPoint, WindowInput as _};
 const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 
@@ -18,8 +17,7 @@ pub fn group() -> CommandGroup {
     .command(paste_text_preserve_clipboard_invoke_command())
     .command(press_key_invoke_command())
     .command(move_mouse_invoke_command())
-    .command(click_screen_point_invoke_command())
-    .command(click_window_point_invoke_command())
+    .command(click_point_invoke_command())
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -101,7 +99,7 @@ async fn focus_text_input(input: InvokeCommandInput, _args: FocusTextArgs) -> In
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
-  let app = input.target_or_input_target().ok_or_else(|| "input.focusText requires --target".to_string())?.to_string();
+  let app = input.application_target()?.ok_or_else(|| "input.focusText requires --target app:".to_string())?.to_string();
   let query = input.inputs.get("query").cloned().unwrap_or_default();
   let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
   let result = focus_text(app, query, candidate.clone()).await?;
@@ -155,7 +153,7 @@ async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) 
   if input.dry_run {
     return Ok(InvokeCommandOutput::completed());
   }
-  let app = input.target_or_input_target().ok_or_else(|| "input.axFocusText requires --target".to_string())?.to_string();
+  let app = input.application_target()?.ok_or_else(|| "input.axFocusText requires --target app:".to_string())?.to_string();
   let query = input.inputs.get("query").cloned().unwrap_or_default();
   let candidate = input.inputs.get("candidate").cloned().unwrap_or_default();
   let result = focus_text(app, query, candidate.clone()).await?;
@@ -319,98 +317,26 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke input.clickScreenPoint 1032.5 1212")]
-struct ClickScreenPointArgs {
-  /// Logical screen X coordinate.
-  x: f64,
-  /// Logical screen Y coordinate.
-  y: f64,
-  /// Number of consecutive clicks.
-  #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
-  #[serde(rename = "click-count", default)]
-  click_count: Option<u8>,
-  /// Delay between clicks in milliseconds.
-  #[arg(long)]
-  #[serde(rename = "click-interval-ms", default)]
-  click_interval_ms: Option<u64>,
-}
-
-#[invoke_command(
-  id = "input.clickScreenPoint",
-  group = "input",
-  description = "Click a logical screen coordinate through the platform input driver.",
-  input = ClickScreenPointArgs,
+#[command(
+  after_long_help = "Examples:\n  auv invoke input.clickPoint 1032.5 1212\n  auv invoke input.clickPoint 0.5 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.clickPoint 100 80 --target display:1 --relative-to display"
 )]
-async fn click_screen_point(input: InvokeCommandInput, args: ClickScreenPointArgs) -> InvokeCommandResult {
-  if !args.x.is_finite() || !args.y.is_finite() {
-    return Err("input.clickScreenPoint requires finite coordinates".to_string());
-  }
-  let point = ScreenPoint::new(args.x, args.y);
-  let click = click_options(None, args.click_count, args.click_interval_ms).click;
-  if input.dry_run {
-    return screen_point_click_output(ScreenPointClickResult {
-      point,
-      action: None,
-    });
-  }
-  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-  {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let action = session.input().click_at(point.point(), click).map_err(|error| error.to_string())?;
-    emit_input_action_result(&action);
-    screen_point_click_output(ScreenPointClickResult {
-      point,
-      action: Some(action),
-    })
-  }
-  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-  {
-    let _ = (input, click);
-    Err("input.clickScreenPoint is unavailable on this platform".to_string())
-  }
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct ScreenPointClickResult {
-  pub point: ScreenPoint,
-  pub action: Option<auv_driver::InputActionResult>,
-}
-
-pub fn screen_point_click_output(result: ScreenPointClickResult) -> InvokeCommandResult {
-  let mut fields = match result.action.as_ref() {
-    Some(action) => input_action_report_fields(action),
-    None => vec![
-      InvokeReportField::new("Delivery", "not_performed"),
-      InvokeReportField::new("Verification", "validation_only"),
-    ],
-  };
-  fields.push(InvokeReportField::new("Screen point", format!("{:.1},{:.1}", result.point.point().x, result.point.point().y)));
-  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
-}
-
-#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke input.clickWindowPoint --target com.apple.TextEdit --relative-x 0.5 --relative-y 0.5")]
-struct ClickWindowPointArgs {
-  /// Window title text used to select the target.
+struct ClickPointArgs {
+  /// X coordinate in the selected coordinate basis.
+  x: f64,
+  /// Y coordinate in the selected coordinate basis.
+  y: f64,
+  /// Coordinate basis. Defaults from --target: screen, window, or display.
+  #[arg(long, value_enum)]
+  #[serde(rename = "relative-to", default)]
+  relative_to: Option<RelativeToArg>,
+  /// Interpret X and Y as normalized values in 0..=1.
+  #[arg(long)]
+  #[serde(default)]
+  normalized: bool,
+  /// Window title text used with an app target.
   #[arg(long, value_name = "TEXT")]
   title: Option<String>,
-  /// Absolute window-pixel X coordinate.
-  #[arg(long, requires = "offset_y", conflicts_with = "relative_x")]
-  #[serde(rename = "offset-x", default)]
-  offset_x: Option<f64>,
-  /// Absolute window-pixel Y coordinate.
-  #[arg(long, requires = "offset_x", conflicts_with = "relative_y")]
-  #[serde(rename = "offset-y", default)]
-  offset_y: Option<f64>,
-  /// Relative window X coordinate in 0..1.
-  #[arg(long, requires = "relative_y")]
-  #[serde(rename = "relative-x", default)]
-  relative_x: Option<f64>,
-  /// Relative window Y coordinate in 0..1.
-  #[arg(long, requires = "relative_x")]
-  #[serde(rename = "relative-y", default)]
-  relative_y: Option<f64>,
-  /// Window input delivery policy.
+  /// Window input delivery policy. Valid only with --relative-to window.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
   input_policy: Option<InputPolicyArg>,
@@ -424,8 +350,255 @@ struct ClickWindowPointArgs {
   click_count: Option<u8>,
   /// Delay between clicks in milliseconds.
   #[arg(long)]
-  #[serde(rename = "click-interval-ms")]
+  #[serde(rename = "click-interval-ms", default)]
   click_interval_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum RelativeToArg {
+  Screen,
+  Window,
+  Display,
+}
+
+impl RelativeToArg {
+  pub(crate) fn as_str(self) -> &'static str {
+    match self {
+      Self::Screen => "screen",
+      Self::Window => "window",
+      Self::Display => "display",
+    }
+  }
+}
+
+impl ClickPointArgs {
+  fn basis(&self, target: Option<&crate::ExecutionTarget>) -> Result<RelativeToArg, String> {
+    let basis = click_point_basis(
+      target,
+      self.relative_to.map(RelativeToArg::as_str),
+      self.normalized,
+      self.input_policy.is_some(),
+      self.title.is_some(),
+    )?;
+    if !self.x.is_finite() || !self.y.is_finite() {
+      return Err("input.clickPoint requires finite coordinates".to_string());
+    }
+    if self.normalized && (!(0.0..=1.0).contains(&self.x) || !(0.0..=1.0).contains(&self.y)) {
+      return Err("input.clickPoint --normalized coordinates must be within 0..=1".to_string());
+    }
+    if self.click_count.unwrap_or(1) > 1 && self.click_interval_ms == Some(0) {
+      return Err("input.clickPoint requires a positive --click-interval-ms for repeated clicks".to_string());
+    }
+    Ok(basis)
+  }
+
+  fn click_options(&self) -> auv_driver::ClickOptions {
+    click_options(self.input_policy.map(InputPolicyArg::driver_policy), self.click_count, self.click_interval_ms)
+  }
+}
+
+pub(crate) fn click_point_basis(
+  target: Option<&crate::ExecutionTarget>,
+  relative_to: Option<&str>,
+  normalized: bool,
+  has_input_policy: bool,
+  has_title: bool,
+) -> Result<RelativeToArg, String> {
+  let basis = match relative_to {
+    Some("screen") => RelativeToArg::Screen,
+    Some("window") => RelativeToArg::Window,
+    Some("display") => RelativeToArg::Display,
+    Some(value) => return Err(format!("input.clickPoint has unknown --relative-to {value:?}")),
+    None => match target {
+      None => RelativeToArg::Screen,
+      Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. }) => RelativeToArg::Window,
+      Some(crate::ExecutionTarget::Display { .. }) => RelativeToArg::Display,
+    },
+  };
+  match (target, basis) {
+    (None, RelativeToArg::Screen)
+    | (Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. }), RelativeToArg::Window)
+    | (Some(crate::ExecutionTarget::Display { .. }), RelativeToArg::Display) => {}
+    (None, RelativeToArg::Window) => return Err("input.clickPoint --relative-to window requires --target app: or window:".to_string()),
+    (None, RelativeToArg::Display) => return Err("input.clickPoint --relative-to display requires --target display:".to_string()),
+    (Some(_), _) => return Err(format!("input.clickPoint --target kind is incompatible with --relative-to {}", basis.as_str())),
+  }
+  if normalized && basis == RelativeToArg::Screen {
+    return Err("input.clickPoint --normalized is valid only relative to a window or display".to_string());
+  }
+  if has_input_policy && basis != RelativeToArg::Window {
+    return Err("input.clickPoint --input-policy is valid only with --relative-to window".to_string());
+  }
+  if has_title && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
+    return Err("input.clickPoint --title requires --target app:".to_string());
+  }
+  Ok(basis)
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ClickPointResult {
+  pub relative_to: String,
+  pub requested_point: auv_driver::Point,
+  pub normalized: bool,
+  pub screen_point: ScreenPoint,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub window: Option<auv_driver::Window>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub display: Option<auv_driver::Display>,
+  pub action: Option<auv_driver::InputActionResult>,
+}
+
+#[invoke_command(
+  id = "input.clickPoint",
+  group = "input",
+  description = "Click a point relative to the screen, a target window, or a target display.",
+  input = ClickPointArgs,
+)]
+async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeCommandResult {
+  let basis = args.basis(input.target.as_ref())?;
+  let click = args.click_options();
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  {
+    match basis {
+      RelativeToArg::Screen => {
+        let screen_point = ScreenPoint::new(args.x, args.y);
+        let action = if input.dry_run {
+          None
+        } else {
+          input.cancellation.check().map_err(|error| error.to_string())?;
+          let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+          let action = session.input().click_at(screen_point.point(), click.click).map_err(|error| error.to_string())?;
+          emit_input_action_result(&action);
+          Some(action)
+        };
+        click_point_output(ClickPointResult {
+          relative_to: basis.as_str().to_string(),
+          requested_point: auv_driver::Point::new(args.x, args.y),
+          normalized: args.normalized,
+          screen_point,
+          window: None,
+          display: None,
+          action,
+        })
+      }
+      RelativeToArg::Window => {
+        let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+        let target = input.target.as_ref().expect("window-relative target validated");
+        let window = match target {
+          crate::ExecutionTarget::Application { id } => {
+            session.window().resolve(click_window_selector(id, args.title.as_deref())).map_err(|error| error.to_string())?
+          }
+          crate::ExecutionTarget::Window { id } => session
+            .window()
+            .list()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|window| window.reference.id == *id)
+            .ok_or_else(|| format!("input.clickPoint could not find window target {id:?}"))?,
+          crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
+        };
+        let point = resolve_local_point(args.x, args.y, args.normalized, window.frame.size, "window")?;
+        let window_point = auv_driver::WindowPoint::new(point.x, point.y);
+        let screen_point = ScreenPoint::new(window.frame.origin.x + point.x, window.frame.origin.y + point.y);
+        let action = if input.dry_run {
+          None
+        } else {
+          input.cancellation.check().map_err(|error| error.to_string())?;
+          let action = session.window().click(&window, window_point, click).map_err(|error| error.to_string())?;
+          emit_input_action_result(&action);
+          Some(action)
+        };
+        click_point_output(ClickPointResult {
+          relative_to: basis.as_str().to_string(),
+          requested_point: auv_driver::Point::new(args.x, args.y),
+          normalized: args.normalized,
+          screen_point,
+          window: Some(window),
+          display: None,
+          action,
+        })
+      }
+      RelativeToArg::Display => {
+        let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+        let crate::ExecutionTarget::Display { id } = input.target.as_ref().expect("display-relative target validated") else {
+          unreachable!("target/basis validated")
+        };
+        let display = session
+          .display()
+          .list()
+          .map_err(|error| error.to_string())?
+          .displays
+          .into_iter()
+          .find(|display| display.id == *id)
+          .ok_or_else(|| format!("input.clickPoint could not find display target {id:?}"))?;
+        let point = resolve_local_point(args.x, args.y, args.normalized, display.frame.size, "display")?;
+        let screen_point = ScreenPoint::new(display.frame.origin.x + point.x, display.frame.origin.y + point.y);
+        let action = if input.dry_run {
+          None
+        } else {
+          input.cancellation.check().map_err(|error| error.to_string())?;
+          let action = session.input().click_at(screen_point.point(), click.click).map_err(|error| error.to_string())?;
+          emit_input_action_result(&action);
+          Some(action)
+        };
+        click_point_output(ClickPointResult {
+          relative_to: basis.as_str().to_string(),
+          requested_point: auv_driver::Point::new(args.x, args.y),
+          normalized: args.normalized,
+          screen_point,
+          window: None,
+          display: Some(display),
+          action,
+        })
+      }
+    }
+  }
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  {
+    let _ = (input, args, basis, click);
+    Err("input.clickPoint is unavailable on this platform".to_string())
+  }
+}
+
+pub(crate) fn resolve_local_point(
+  x: f64,
+  y: f64,
+  normalized: bool,
+  size: auv_driver::Size,
+  basis: &str,
+) -> Result<auv_driver::Point, String> {
+  let point = if normalized {
+    auv_driver::Point::new(size.width * x, size.height * y)
+  } else {
+    auv_driver::Point::new(x, y)
+  };
+  if !(0.0..=size.width).contains(&point.x) || !(0.0..=size.height).contains(&point.y) {
+    return Err(format!(
+      "input.clickPoint point {},{} is outside target {basis} bounds 0..={},0..={}",
+      point.x, point.y, size.width, size.height
+    ));
+  }
+  Ok(point)
+}
+
+pub fn click_point_output(result: ClickPointResult) -> InvokeCommandResult {
+  let mut fields = match result.action.as_ref() {
+    Some(action) => input_action_report_fields(action),
+    None => vec![
+      InvokeReportField::new("Delivery", "not_performed"),
+      InvokeReportField::new("Verification", "validation_only"),
+    ],
+  };
+  fields.push(InvokeReportField::new("Relative to", result.relative_to.clone()));
+  fields.push(InvokeReportField::new("Screen point", format!("{:.1},{:.1}", result.screen_point.point().x, result.screen_point.point().y)));
+  if let Some(window) = &result.window {
+    fields.push(InvokeReportField::new("Window ID", window.reference.id.clone()));
+  }
+  if let Some(display) = &result.display {
+    fields.push(InvokeReportField::new("Display ID", display.id.clone()));
+  }
+  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -436,26 +609,6 @@ enum InputPolicyArg {
   ForegroundPreferred,
 }
 
-impl ClickWindowPointArgs {
-  fn point(&self, command_id: &str) -> Result<WindowPointInput, String> {
-    match (self.offset_x, self.offset_y, self.relative_x, self.relative_y) {
-      (Some(x), Some(y), None, None) if x.is_finite() && y.is_finite() && x >= 0.0 && y >= 0.0 => {
-        Ok(WindowPointInput(WindowPointKind::Offset(auv_driver::geometry::WindowPoint::new(x, y))))
-      }
-      (None, None, Some(x), Some(y)) if x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) => {
-        Ok(WindowPointInput(WindowPointKind::Relative(RelativeWindowPoint { x, y })))
-      }
-      (Some(_), Some(_), None, None) => Err(format!("{command_id} requires finite non-negative window offsets")),
-      (None, None, Some(_), Some(_)) => Err(format!("{command_id} requires relative coordinates within 0..=1")),
-      _ => Err(format!("{command_id} requires --offset-x/--offset-y or --relative-x/--relative-y")),
-    }
-  }
-
-  fn click_options(&self) -> auv_driver::ClickOptions {
-    click_options(self.input_policy.map(InputPolicyArg::driver_policy), self.click_count, self.click_interval_ms)
-  }
-}
-
 impl InputPolicyArg {
   fn driver_policy(self) -> auv_driver::InputPolicy {
     match self {
@@ -464,240 +617,6 @@ impl InputPolicyArg {
       Self::ForegroundPreferred => auv_driver::InputPolicy::ForegroundPreferred,
     }
   }
-}
-
-#[invoke_command(
-  id = "input.clickWindowPoint",
-  group = "input",
-  description = "Click a point relative to a target macOS window using either --offset-x/--offset-y or --relative-x/--relative-y coordinates.",
-  input = ClickWindowPointArgs,
-)]
-async fn click_window_point(input: InvokeCommandInput, args: ClickWindowPointArgs) -> InvokeCommandResult {
-  let point = args.point(&input.command_id)?;
-  let options = args.click_options();
-  #[cfg(target_os = "macos")]
-  {
-    let presentation_input = input.clone();
-    let capability = LocalWindowPointCapability::open()?;
-    let outcome = click_resolved_point_with_capability(input, args.title.as_deref(), point, options, &capability).await?;
-    let result = outcome.into_result();
-    let point = result.point.point();
-    let screen_point = ScreenPoint::new(result.window.frame.origin.x + point.x, result.window.frame.origin.y + point.y);
-    let click_overlay =
-      Overlay::new().with_layer(ClickTarget::new(screen_point).with_cursor_label("auv · click").with_status("click delivered"));
-    let overlay = super::overlay::show_overlay(
-      &presentation_input,
-      &capability.session,
-      click_overlay,
-      auv_driver::overlay::ShowOptions::new()
-        .with_motion_ease(std::time::Duration::from_millis(420), auv_driver::overlay::Easing::EaseInOutExpo)
-        .with_auto_removal_after(std::time::Duration::from_millis(140)),
-    )?;
-    window_point_click_output(result, overlay)
-  }
-  #[cfg(not(target_os = "macos"))]
-  {
-    let _ = (input, point, options);
-    Err("input.clickWindowPoint is only available on macOS".to_string())
-  }
-}
-
-// Resolves target-window geometry and optionally delivers its validated click.
-trait WindowPointCapability {
-  fn resolve(&self, selector: auv_driver::WindowSelector) -> auv_driver::DriverResult<auv_driver::Window>;
-
-  fn click(
-    &self,
-    window: &auv_driver::Window,
-    point: auv_driver::geometry::WindowPoint,
-    options: auv_driver::ClickOptions,
-  ) -> auv_driver::DriverResult<auv_driver::InputActionResult>;
-}
-
-#[cfg(target_os = "macos")]
-struct LocalWindowPointCapability {
-  session: auv_driver::LocalDriverSession,
-}
-
-#[cfg(target_os = "macos")]
-impl LocalWindowPointCapability {
-  fn open() -> Result<Self, String> {
-    auv_driver::open_local().map(|session| Self { session }).map_err(|error| error.to_string())
-  }
-}
-
-#[cfg(target_os = "macos")]
-impl WindowPointCapability for LocalWindowPointCapability {
-  fn resolve(&self, selector: auv_driver::WindowSelector) -> auv_driver::DriverResult<auv_driver::Window> {
-    self.session.window().resolve(selector)
-  }
-
-  fn click(
-    &self,
-    window: &auv_driver::Window,
-    point: auv_driver::geometry::WindowPoint,
-    options: auv_driver::ClickOptions,
-  ) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
-    self.session.window().click(window, point, options)
-  }
-}
-
-async fn click_resolved_point_with_capability<C>(
-  input: InvokeCommandInput,
-  title: Option<&str>,
-  point: WindowPointInput,
-  options: auv_driver::ClickOptions,
-  capability: &C,
-) -> Result<WindowPointClickOutcome, String>
-where
-  C: WindowPointCapability + Sync + ?Sized,
-{
-  // TODO(invoke-input-click-window-point-candidate): candidate promotion is
-  // intentionally deferred until an owner-approved typed candidate input exists.
-  let window = capability.resolve(click_window_selector(&input, title)).map_err(|error| error.to_string())?;
-  let point = point.resolve(&window, &input.command_id)?;
-  input.cancellation.check().map_err(|error| error.to_string())?;
-  if input.dry_run {
-    return Ok(WindowPointClickOutcome::Validated { window, point });
-  }
-
-  let click = click_resolved_window_point(capability, window, point, options).await?;
-  Ok(WindowPointClickOutcome::Delivered { click })
-}
-
-#[derive(Clone, Debug)]
-struct WindowPointInput(WindowPointKind);
-
-#[derive(Clone, Debug)]
-enum WindowPointKind {
-  Offset(auv_driver::geometry::WindowPoint),
-  Relative(RelativeWindowPoint),
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RelativeWindowPoint {
-  x: f64,
-  y: f64,
-}
-
-impl WindowPointInput {
-  fn resolve(&self, window: &auv_driver::Window, command_id: &str) -> Result<auv_driver::geometry::WindowPoint, String> {
-    let point = match self.0 {
-      WindowPointKind::Offset(point) => point,
-      WindowPointKind::Relative(relative) => {
-        auv_driver::geometry::WindowPoint::new(window.frame.size.width * relative.x, window.frame.size.height * relative.y)
-      }
-    };
-    let coordinates = point.point();
-    if !(0.0..=window.frame.size.width).contains(&coordinates.x) || !(0.0..=window.frame.size.height).contains(&coordinates.y) {
-      return Err(format!(
-        "{command_id} point {},{} is outside target window bounds 0..={},0..={}",
-        coordinates.x, coordinates.y, window.frame.size.width, window.frame.size.height
-      ));
-    }
-    Ok(point)
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct WindowPointClick {
-  pub window: auv_driver::Window,
-  pub point: auv_driver::geometry::WindowPoint,
-  pub action: auv_driver::InputActionResult,
-}
-
-#[derive(Clone, Debug)]
-pub enum WindowPointClickOutcome {
-  Validated {
-    window: auv_driver::Window,
-    point: auv_driver::geometry::WindowPoint,
-  },
-  Delivered {
-    click: WindowPointClick,
-  },
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct WindowPointClickResult {
-  pub window: auv_driver::Window,
-  pub point: auv_driver::geometry::WindowPoint,
-  pub action: Option<auv_driver::InputActionResult>,
-}
-
-impl WindowPointClickOutcome {
-  pub fn into_result(self) -> WindowPointClickResult {
-    match self {
-      Self::Validated { window, point } => WindowPointClickResult {
-        window,
-        point,
-        action: None,
-      },
-      Self::Delivered { click } => WindowPointClickResult {
-        window: click.window,
-        point: click.point,
-        action: Some(click.action),
-      },
-    }
-  }
-}
-
-fn window_point_click_output(result: WindowPointClickResult, overlay: super::overlay::OverlayStatus) -> InvokeCommandResult {
-  let mut output = window_point_click_output_without_overlay(result)?;
-  output.report.as_mut().expect("window point output always has a report").fields.push(overlay.report_field());
-  Ok(output)
-}
-
-/// Builds the transport-independent `input.clickWindowPoint` result. Visual
-/// overlay presentation remains a local frontend concern.
-pub fn window_point_click_output_without_overlay(result: WindowPointClickResult) -> InvokeCommandResult {
-  match &result.action {
-    None => {
-      let mut output = InvokeCommandOutput::from_result(&result)?;
-      output.report = Some(InvokeReport::new(
-        vec![
-          InvokeReportField::new("Delivery", "not_performed"),
-          InvokeReportField::new("Verification", "validation_only"),
-          InvokeReportField::new("Window ID", result.window.reference.id.clone()),
-          InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)),
-        ],
-        Vec::new(),
-      ));
-      Ok(output)
-    }
-    Some(action) => {
-      let mut fields = input_action_report_fields(action);
-      fields.push(InvokeReportField::new("Window ID", result.window.reference.id.clone()));
-      if let Some(title) = &result.window.title {
-        fields.push(InvokeReportField::new("Window title", title.clone()));
-      }
-      if let Some(app_name) = &result.window.app_name {
-        fields.push(InvokeReportField::new("Application", app_name.clone()));
-      }
-      if let Some(bundle_id) = &result.window.app_bundle_id {
-        fields.push(InvokeReportField::new("Bundle ID", bundle_id.clone()));
-      }
-      fields.push(InvokeReportField::new("Window point", format!("{:.0},{:.0}", result.point.point().x, result.point.point().y)));
-      Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
-    }
-  }
-}
-
-async fn click_resolved_window_point<C>(
-  capability: &C,
-  window: auv_driver::Window,
-  point: auv_driver::geometry::WindowPoint,
-  options: auv_driver::ClickOptions,
-) -> Result<WindowPointClick, String>
-where
-  C: WindowPointCapability + Sync + ?Sized,
-{
-  let action = capability.click(&window, point, options).map_err(|error| error.to_string())?;
-  emit_input_action_result(&action);
-  Ok(WindowPointClick {
-    window,
-    point,
-    action,
-  })
 }
 
 pub(crate) fn click_options(
@@ -723,24 +642,19 @@ pub(crate) fn click_options(
   }
 }
 
-fn click_window_selector(input: &InvokeCommandInput, title: Option<&str>) -> auv_driver::WindowSelector {
+fn click_window_selector(application_id: &str, title: Option<&str>) -> auv_driver::WindowSelector {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
-  let mut selector = WindowSelector {
-    main_visible: true,
-    ..WindowSelector::default()
-  };
-  if let Some(target) = input.target_or_input_target() {
-    selector.app = Some(App::bundle_id(target));
+  let title = title.filter(|value| !value.trim().is_empty()).map(|title| TextMatcher::Contains(title.to_string()));
+  WindowSelector {
+    app: Some(App::bundle_id(application_id)),
+    main_visible: title.is_none(),
+    title,
   }
-  if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
-    selector.title = Some(TextMatcher::Contains(title.to_string()));
-  }
-  selector
 }
 
 fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
-  if input.target_application_id.is_some() {
+  if input.target.is_some() {
     // TODO(invoke-input-target-activation): foreground input APIs currently
     // act on the active control; add a typed app/window input lease before
     // honoring --target here.

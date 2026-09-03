@@ -2,7 +2,7 @@ use clap::Args;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use auv_cli_invoke::{ExecutionTarget, InvokeCliParse, InvokeRequest};
+use auv_cli_invoke::{InvokeCliParse, InvokeRequest};
 
 /// Invoke one core computer-use capability and record its run.
 #[derive(Clone, Debug, Args)]
@@ -38,7 +38,7 @@ pub async fn run(args: InvokeArgs, selection: &auv::selection::RootSelection, pr
     }
     InvokeCliParse::Invoke {
       command_id,
-      target_application_id,
+      target,
       inputs,
       typed_args,
       store_root,
@@ -48,9 +48,7 @@ pub async fn run(args: InvokeArgs, selection: &auv::selection::RootSelection, pr
       execute(
         InvokeRequest {
           command_id,
-          target: ExecutionTarget {
-            application_id: target_application_id,
-          },
+          target,
           inputs,
           dry_run,
         },
@@ -87,7 +85,7 @@ async fn execute(
   let remote_context = selected_context.as_ref().map(|resolved| resolved.context.clone());
   let input = auv_cli_invoke::InvokeCommandInput {
     command_id: request.command_id.clone(),
-    target_application_id: request.target.application_id,
+    target: request.target,
     inputs: request.inputs,
     typed_args: Some(typed_args),
     dry_run: request.dry_run,

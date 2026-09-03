@@ -96,7 +96,8 @@ async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> I
     }
 
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let (result, artifact) = capture_selected_window_recorded_with_session(&session, window_selector(&input, args.title.as_deref())).await?;
+    let (result, artifact) =
+      capture_selected_window_recorded_with_session(&session, window_selector(&input, args.title.as_deref())?).await?;
     let capture_overlay = Overlay::new().with_layer(
       CaptureFrame::new(result.window.frame).with_label(result.window.title.clone().unwrap_or_else(|| "selected window".to_string())),
     );
@@ -205,7 +206,7 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
 
     let query = args.query;
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref()), query, false).await?;
+    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, false).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     window_text_matches_output(&input.command_id, &result, overlay)
   }
@@ -242,7 +243,7 @@ async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowText
 
     let query = args.query;
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref()), query, true).await?;
+    let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, true).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     window_text_matches_output(&input.command_id, &result, overlay)
   }
@@ -321,7 +322,7 @@ async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs)
 
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result =
-      click_recognized_window_text_with_session(&session, window_selector(&input, args.title.as_deref()), args.query, args.index, options)
+      click_recognized_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, args.query, args.index, options)
         .await?;
     let overlay = super::overlay::show_overlay(
       &input,
@@ -554,20 +555,20 @@ fn show_options(motion_ms: u64, auto_removal_ms: u64) -> auv_driver::overlay::Sh
 }
 
 #[cfg(target_os = "macos")]
-fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> auv_driver::WindowSelector {
+fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<auv_driver::WindowSelector, String> {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
   let mut selector = WindowSelector {
     main_visible: true,
     ..WindowSelector::default()
   };
-  if let Some(target) = input.target_or_input_target() {
+  if let Some(target) = input.application_target()? {
     selector.app = Some(App::bundle_id(target));
   }
   if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
     selector.title = Some(TextMatcher::Contains(title.to_string()));
   }
-  selector
+  Ok(selector)
 }
 
 fn window_report_fields(window: &auv_driver::Window) -> Vec<InvokeReportField> {
