@@ -46,7 +46,7 @@ default-members = [ "crates/auv-cli" ]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.13"
+version = "0.0.14"
 authors = [ "Moeru AI" ]
 edition = "2024"
 rust-version = "1.91"

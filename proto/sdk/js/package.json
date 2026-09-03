@@ -1,7 +1,7 @@
 {
   "name": "@auv-js/api-client",
   "type": "module",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Generated TypeScript client for the AUV daemon REST API",
   "license": "Apache-2.0",
   "repository": {
