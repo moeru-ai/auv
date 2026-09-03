@@ -1,0 +1,4 @@
+interface:
+  display_name: "AUV Wayland Rendering"
+  short_description: "Run and validate AUV capture on GPU Wayland hosts"
+  default_prompt: "Use $auv-wayland-rendering to prepare and validate AUV rendering and capture in this Linux Wayland environment."
