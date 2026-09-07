@@ -55,6 +55,10 @@ cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
 auv --help
 ```
 
+Third-party Protobuf sources are included in the repository; Cargo installs do
+not require Buf or a separate Protobuf dependency-generation step. See the
+[macOS Git-install verification](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md#regression-and-evidence).
+
 After installation, use the `auv` CLI directly:
 
 ```sh
@@ -298,6 +302,9 @@ cargo fmt --check
 cargo check
 cargo test
 ```
+
+To update vendored Protobuf dependencies, see the
+[Protobuf source distribution reference](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md).
 
 ### `@auv-js/sdk`
 

@@ -66,6 +66,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | Invoke / CLI design | [`invoke-cli/2026-06-11-cli-invoke-driver-console-design.md`](invoke-cli/2026-06-11-cli-invoke-driver-console-design.md) |
 | Current AUV tracing / run storage / Inspect contract | [`inspect/INDEX.md`](inspect/INDEX.md) |
 | Temporal scan | [`scan/INDEX.md`](scan/INDEX.md) |
+| Protobuf source distribution and Cargo Git installs | [`session-api/2026-09-08-protobuf-source-distribution-reference.md`](session-api/2026-09-08-protobuf-source-distribution-reference.md) |
 | Device / Run / Runner API and MCP | [`session-api/INDEX.md`](session-api/INDEX.md) |
 | Design system / viewer UI | [`../../design/README.md`](../../design/README.md) |
 | Agent writing rules | [`../../../AGENTS.md`](../../../AGENTS.md) |
