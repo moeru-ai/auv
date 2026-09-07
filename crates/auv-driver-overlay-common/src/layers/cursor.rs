@@ -99,6 +99,17 @@ pub enum BuiltInCursor {
 }
 
 impl BuiltInCursor {
+  /// Returns canonical vector artwork for the compact AUV cursor variants.
+  /// Native adapters can render this at the configured sprite size. The user
+  /// cursor retains its existing platform artwork and returns no SVG source.
+  pub fn svg_source(self) -> Option<&'static str> {
+    match self {
+      Self::Auv => Some(include_str!("../../assets/cursor-auv.svg")),
+      Self::AuvClick => Some(include_str!("../../assets/cursor-auv-click.svg")),
+      Self::You => None,
+    }
+  }
+
   pub fn as_str(self) -> &'static str {
     match self {
       Self::Auv => "auv",

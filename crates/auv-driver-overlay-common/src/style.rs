@@ -33,6 +33,20 @@ impl Color {
   }
 }
 
+/// Parses CLI and host theme colors without slicing unvalidated UTF-8.
+impl std::str::FromStr for Color {
+  type Err = String;
+
+  fn from_str(raw: &str) -> Result<Self, Self::Err> {
+    let hex = raw.strip_prefix('#').unwrap_or(raw);
+    if !matches!(hex.len(), 6 | 8) || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+      return Err("expected #RRGGBB or #RRGGBBAA".to_string());
+    }
+    let channel = |offset| u8::from_str_radix(&hex[offset..offset + 2], 16).expect("validated hex") as f64 / 255.0;
+    Ok(Self::rgba(channel(0), channel(2), channel(4), if hex.len() == 8 { channel(6) } else { 1.0 }))
+  }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Insets {
   pub top: f64,
@@ -126,6 +140,52 @@ impl Default for OutlineStyle {
   }
 }
 
+/// Native shadow applied to the composited cursor silhouette, excluding its label.
+/// All dimensions are logical display points, independent of SVG viewBox scaling.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Shadow {
+  /// Normalized RGBA shadow color, including opacity.
+  pub color: Color,
+  /// Finite non-negative native blur radius in logical points.
+  pub blur_radius: f64,
+  /// Horizontal displacement; positive moves the shadow right.
+  pub offset_x: f64,
+  /// Vertical displacement; positive moves the shadow down.
+  pub offset_y: f64,
+}
+
+impl Shadow {
+  /// Pale-green native glow used by the macOS built-in AUV cursors.
+  pub fn auv() -> Self {
+    Self {
+      color: Color::rgba(0.72, 0.94, 0.52, 0.8),
+      blur_radius: 8.0,
+      offset_x: 0.0,
+      offset_y: 2.0,
+    }
+  }
+
+  /// Rejects invalid native drawing dimensions and color channels before FFI.
+  pub fn validate(self) -> Result<(), String> {
+    if !self.blur_radius.is_finite() || self.blur_radius < 0.0 || !self.offset_x.is_finite() || !self.offset_y.is_finite() {
+      return Err("shadow requires finite offsets and a finite non-negative blur radius".to_string());
+    }
+    if ![
+      self.color.red,
+      self.color.green,
+      self.color.blue,
+      self.color.alpha,
+    ]
+    .into_iter()
+    .all(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+    {
+      return Err("shadow color channels must be finite and between 0 and 1".to_string());
+    }
+    Ok(())
+  }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CursorStyle {
   pub label_foreground: Color,
@@ -134,6 +194,11 @@ pub struct CursorStyle {
   pub label_corner_radius: f64,
   pub sprite_size: f64,
   pub label_gap: f64,
+  /// Optional native silhouette shadow override, currently supported on macOS.
+  /// None uses renderer defaults: built-in AUV cursors glow; custom SVGs do not.
+  /// An explicit transparent shadow disables a built-in's default glow.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub shadow: Option<Shadow>,
 }
 
 impl CursorStyle {
@@ -184,6 +249,13 @@ impl CursorStyle {
     self
   }
 
+  /// Sets or clears an explicit shadow override without changing sprite size.
+  /// Use a transparent shadow to suppress a built-in renderer's default glow.
+  pub fn with_shadow(mut self, shadow: Option<Shadow>) -> Self {
+    self.shadow = shadow;
+    self
+  }
+
   pub fn with_label_gap(mut self, gap: f64) -> Self {
     self.label_gap = gap;
     self
@@ -199,6 +271,7 @@ impl Default for CursorStyle {
       label_corner_radius: 999.0,
       sprite_size: 24.0,
       label_gap: 6.0,
+      shadow: None,
     }
   }
 }

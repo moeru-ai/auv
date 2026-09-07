@@ -639,18 +639,7 @@ fn optional_non_negative(command_id: &str, name: &str, value: Option<f64>) -> Re
 }
 
 fn parse_color(command_id: &str, name: &str, raw: &str) -> Result<Color, String> {
-  let hex = raw.strip_prefix('#').unwrap_or(raw);
-  if hex.len() != 6 && hex.len() != 8 {
-    return Err(format!("{command_id} requires --{name} as #RRGGBB or #RRGGBBAA"));
-  }
-  let byte = |range: std::ops::Range<usize>| {
-    u8::from_str_radix(&hex[range], 16).map_err(|_| format!("{command_id} received invalid --{name} color {raw:?}"))
-  };
-  let red = byte(0..2)?;
-  let green = byte(2..4)?;
-  let blue = byte(4..6)?;
-  let alpha = if hex.len() == 8 { byte(6..8)? } else { 255 };
-  Ok(Color::rgba(f64::from(red) / 255.0, f64::from(green) / 255.0, f64::from(blue) / 255.0, f64::from(alpha) / 255.0))
+  raw.parse().map_err(|error| format!("{command_id} received invalid --{name} color {raw:?}: {error}"))
 }
 
 #[cfg(test)]
