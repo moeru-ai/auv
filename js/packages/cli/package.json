@@ -1,7 +1,7 @@
 {
   "name": "@auv-js/cli",
   "type": "module",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "NAPI bindings and the platform-matched AUV command-line executable",
   "license": "Apache-2.0",
   "repository": {
