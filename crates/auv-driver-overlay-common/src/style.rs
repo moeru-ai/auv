@@ -156,10 +156,10 @@ pub struct Shadow {
 }
 
 impl Shadow {
-  /// Pale-green native glow used by the macOS built-in AUV cursors.
+  /// Pale-mint native glow used by the macOS built-in AUV cursors.
   pub fn auv() -> Self {
     Self {
-      color: Color::rgba(0.72, 0.94, 0.52, 0.8),
+      color: Color::rgba(206.0 / 255.0, 1.0, 253.0 / 255.0, 0.55),
       blur_radius: 8.0,
       offset_x: 0.0,
       offset_y: 2.0,

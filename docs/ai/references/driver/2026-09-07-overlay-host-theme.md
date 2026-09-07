@@ -2,7 +2,7 @@
 
 Hosts can override overlay appearance without rebuilding a native adapter.
 The macOS built-in AUV cursor also uses compact, rounded vector artwork and a
-pale-green native shadow by default. This slice changes presentation, not input
+pale-mint native shadow by default. This slice changes presentation, not input
 delivery, targeting, geometry, animation, or which commands produce overlays.
 
 ## Default macOS cursor
@@ -12,7 +12,7 @@ The AUV and AUV-click built-ins use the shared assets in
 1.5-point border. The normal cursor has cyan fill (`#49e3e4`) and near-white mint
 stroke (`#cefffd`); the click variant brightens its fill to `#92eeef`.
 
-`Shadow::auv()` supplies pale green RGBA `(0.72, 0.94, 0.52, 0.8)`, an 8-point
+`Shadow::auv()` supplies pale mint `#CEFFFD` at 55% opacity, an 8-point
 blur radius, and a 2-point downward offset. The user cursor retains its previous
 artwork. Windows retains its existing built-in renderer; the new vector artwork
 and native shadow are currently a macOS capability.
