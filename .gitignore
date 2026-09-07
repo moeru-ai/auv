@@ -121,8 +121,7 @@ CONTRIBUTING.local.md
 # Local Codex review brain (never hook-injected)
 codex.md
 
-# Protobuf
-proto/vendor/
+# Protobuf (proto/vendor is checked in for Cargo Git installs)
 gen/
 !proto/sdk/js/src/gen/
 !proto/sdk/js/src/gen/**

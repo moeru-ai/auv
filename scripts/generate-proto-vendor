@@ -36,7 +36,8 @@ trap cleanup EXIT HUP INT TERM
 
 printf '%s\n' "$DEPENDENCY_REFS" | while IFS= read -r dependency_ref; do
   if [ -n "$dependency_ref" ]; then
-    buf export "$dependency_ref" --output "$STAGING_DIR"
+    # Keep upstream license and documentation files with the checked-in schemas.
+    buf export "$dependency_ref" --all --output "$STAGING_DIR"
   fi
 done
 

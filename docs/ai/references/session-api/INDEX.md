@@ -18,8 +18,9 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 `auv-api-client` and `auv-api-server` become protocol boundaries. MCP remains in
 `auv-cli`.
 
-Count: **25**
+Count: **26**
 
+- [`2026-09-08-protobuf-source-distribution-reference.md`](2026-09-08-protobuf-source-distribution-reference.md) — checked-in BSR exports, dependency updates, and clean-checkout Cargo installation checks.
 - [`2026-08-17-protobuf-json-schema-library-research.md`](2026-08-17-protobuf-json-schema-library-research.md) — primary-source evaluation of runtime and build-time Protobuf-to-JSON-Schema libraries; no browser-compatible `DescMessage` drop-in exists, with two viable future paths documented.
 - [`2026-08-16-windows-local-runner-ipc-handoff.md`](2026-08-16-windows-local-runner-ipc-handoff.md) - Windows local API and daemon-to-Runner named-pipe transports, paired use, tests, and current limits.
 - [`2026-08-14-airi-bundled-auv-daemon-research.md`](2026-08-14-airi-bundled-auv-daemon-research.md) — AIRI Electron sidecar packaging, app-owned `auv serve` lifecycle, signing/notarization/TCC risks, platform artifact matrix, and native computer-operation capability gap.

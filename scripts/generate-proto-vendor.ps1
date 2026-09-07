@@ -36,7 +36,8 @@ try {
   New-Item -ItemType Directory -Path $StagingDir | Out-Null
 
   foreach ($DependencyRef in $DependencyRefs) {
-    & buf export $DependencyRef --output $StagingDir
+    # Keep upstream license and documentation files with the checked-in schemas.
+    & buf export $DependencyRef --all --output $StagingDir
     if ($LASTEXITCODE -ne 0) {
       throw "failed to export Protobuf dependency $DependencyRef"
     }
