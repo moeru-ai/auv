@@ -125,15 +125,15 @@ import { startAuv } from '@auv-js/sdk/node'
 const daemon = await startAuv({
   overlay: {
     theme: {
-      outlineColor: '#336699',
       cursorLabelBackground: '#336699',
       cursorLabelForeground: '#ffffff',
       cursorShadow: {
-        color: { red: 206 / 255, green: 1, blue: 253 / 255, alpha: 0.55 },
         blurRadius: 8,
+        color: { alpha: 0.55, blue: 253 / 255, green: 1, red: 206 / 255 },
         offsetX: 0,
         offsetY: 2,
       },
+      outlineColor: '#336699',
     },
   },
 })
