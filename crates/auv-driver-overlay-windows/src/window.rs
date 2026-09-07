@@ -353,6 +353,11 @@ mod native {
   }
 
   fn draw_cursor(canvas: &Canvas, cursor: &Cursor) -> AuvResult<()> {
+    if cursor.style().shadow.is_some() {
+      // TODO: Native silhouette blur is a macOS-only slice; add Windows rendering
+      // when an owner requests it, rather than silently dropping a supplied shadow.
+      return Err("windows overlay does not support native cursor shadows".to_string());
+    }
     let CursorImage::BuiltIn { variant } = cursor.image() else {
       // TODO(driver-overlay-windows-svg): SVG cursor rasterization is
       // deferred; this crate has no vector-graphics dependency yet. Revisit

@@ -672,6 +672,7 @@ dependencies = [
  "auv-driver-overlay-common",
  "auv-driver-overlay-macos",
  "auv-driver-overlay-windows",
+ "serde_json",
 ]
 
 [[package]]
@@ -680,12 +681,14 @@ version = "0.0.14"
 dependencies = [
  "auv-driver-common",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "auv-driver-overlay-macos"
 version = "0.0.14"
 dependencies = [
+ "auv-driver-common",
  "auv-driver-overlay-common",
  "serde_json",
  "swift-bridge",

@@ -407,6 +407,12 @@ fn cursor_style_to_proto(value: auv_driver_overlay_common::style::CursorStyle) -
     label_corner_radius: value.label_corner_radius,
     sprite_size: value.sprite_size,
     label_gap: value.label_gap,
+    shadow: value.shadow.map(|shadow| proto::Shadow {
+      color: Some(color_to_proto(shadow.color)),
+      blur_radius: shadow.blur_radius,
+      offset_x: shadow.offset_x,
+      offset_y: shadow.offset_y,
+    }),
   }
 }
 

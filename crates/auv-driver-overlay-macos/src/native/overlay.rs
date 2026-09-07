@@ -15,10 +15,36 @@ thread_local! {
   static OVERLAY_CONTROLLER: RefCell<Option<NativeOverlayController>> = const { RefCell::new(None) };
 }
 
+/// Validates typed appearance before passing plain values across the Swift bridge.
+#[cfg(target_os = "macos")]
+fn native_shadow(shadow: Option<auv_driver_overlay_common::style::Shadow>) -> AuvResult<super::binding::ffi::NativeCursorShadow> {
+  if let Some(shadow) = shadow {
+    shadow.validate()?;
+  }
+  let enabled = shadow.is_some();
+  let shadow = shadow.unwrap_or(auv_driver_overlay_common::style::Shadow {
+    color: auv_driver_overlay_common::style::Color::CLEAR,
+    blur_radius: 0.0,
+    offset_x: 0.0,
+    offset_y: 0.0,
+  });
+  Ok(super::binding::ffi::NativeCursorShadow {
+    enabled,
+    red: shadow.color.red,
+    green: shadow.color.green,
+    blue: shadow.color.blue,
+    alpha: shadow.color.alpha,
+    blur_radius: shadow.blur_radius,
+    offset_x: shadow.offset_x,
+    offset_y: shadow.offset_y,
+  })
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn move_cursor(id: &str, cursor: &Cursor, variant: &str, duration_ms: u64) -> AuvResult<()> {
   let point = cursor.point().point();
   let style = cursor.style();
+  let shadow = native_shadow(style.shadow)?;
   with_controller("move_overlay_cursor", |controller| {
     controller.move_overlay_cursor(
       id.to_string(),
@@ -42,6 +68,7 @@ pub(crate) fn move_cursor(id: &str, cursor: &Cursor, variant: &str, duration_ms:
       style.label_corner_radius,
       style.sprite_size,
       style.label_gap,
+      shadow,
     )
   })
 }
@@ -55,6 +82,7 @@ pub(crate) fn move_cursor(_id: &str, _cursor: &Cursor, _variant: &str, _duration
 pub(crate) fn move_svg_cursor(id: &str, cursor: &Cursor, svg: &str, duration_ms: u64) -> AuvResult<()> {
   let point = cursor.point().point();
   let style = cursor.style();
+  let shadow = native_shadow(style.shadow)?;
   with_controller("move_overlay_cursor_svg", |controller| {
     controller.move_overlay_cursor_svg(
       id.to_string(),
@@ -78,6 +106,7 @@ pub(crate) fn move_svg_cursor(id: &str, cursor: &Cursor, svg: &str, duration_ms:
       style.label_corner_radius,
       style.sprite_size,
       style.label_gap,
+      shadow,
     )
   })
 }

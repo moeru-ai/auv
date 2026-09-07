@@ -481,3 +481,40 @@ fn driver_errors_keep_their_grpc_semantics() {
     tonic::Code::PermissionDenied
   );
 }
+
+#[test]
+fn overlay_shadow_mapper_preserves_native_dimensions_and_rejects_invalid_blur() {
+  let make_style = |blur_radius| proto::CursorStyle {
+    label_foreground: Some(proto::Color {
+      red: 1.0,
+      green: 1.0,
+      blue: 1.0,
+      alpha: 1.0,
+    }),
+    label_background: Some(proto::Color {
+      red: 0.0,
+      green: 0.0,
+      blue: 0.0,
+      alpha: 1.0,
+    }),
+    label_padding: Some(proto::Insets::default()),
+    sprite_size: 24.0,
+    shadow: Some(proto::Shadow {
+      color: Some(proto::Color {
+        red: 1.0,
+        green: 0.6,
+        blue: 0.15,
+        alpha: 0.65,
+      }),
+      blur_radius,
+      offset_x: -1.0,
+      offset_y: 2.0,
+    }),
+    ..Default::default()
+  };
+  let style = cursor_style_from_proto(make_style(8.0)).unwrap();
+  assert_eq!(style.sprite_size, 24.0);
+  assert_eq!(style.shadow.unwrap().offset_x, -1.0);
+  assert_eq!(style.shadow.unwrap().blur_radius, 8.0);
+  assert_eq!(cursor_style_from_proto(make_style(-1.0)).unwrap_err().code(), tonic::Code::InvalidArgument);
+}

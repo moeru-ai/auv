@@ -60,6 +60,7 @@ catalog:
   date-fns: 4.4.0
   doctoc: ^2.5.0
   emnapi: ^1.11.3
+  es-toolkit: ^1.50.0
   eslint: ^10.8.1
   eslint-plugin-oxlint: ^1.78.0
   nano-staged: ^1.0.2

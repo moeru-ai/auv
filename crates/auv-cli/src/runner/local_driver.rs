@@ -228,6 +228,19 @@ fn cursor_style_from_proto(value: proto::CursorStyle) -> Result<auv_driver::over
     label_corner_radius: finite_non_negative(value.label_corner_radius, "cursor.style.label_corner_radius")?,
     sprite_size: finite_non_negative(value.sprite_size, "cursor.style.sprite_size")?,
     label_gap: finite_non_negative(value.label_gap, "cursor.style.label_gap")?,
+    shadow: value
+      .shadow
+      .map(|value| {
+        let shadow = auv_driver::overlay::style::Shadow {
+          color: overlay_color(value.color, "cursor.style.shadow.color")?,
+          blur_radius: value.blur_radius,
+          offset_x: value.offset_x,
+          offset_y: value.offset_y,
+        };
+        shadow.validate().map_err(Status::invalid_argument)?;
+        Ok::<_, Status>(shadow)
+      })
+      .transpose()?,
   })
 }
 

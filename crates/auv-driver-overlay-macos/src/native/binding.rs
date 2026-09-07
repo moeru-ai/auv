@@ -7,6 +7,21 @@ pub(crate) mod ffi {
     recovery_hint: Option<String>,
   }
 
+  // FFI value for an optional native cursor silhouette shadow.
+  // NOTICE: swift-bridge-ir 0.1.59 rejects doc attributes on shared structs
+  // (src/parse/parse_struct.rs:143). Use a plain comment until it supports them.
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeCursorShadow {
+    enabled: bool,
+    red: f64,
+    green: f64,
+    blue: f64,
+    alpha: f64,
+    blur_radius: f64,
+    offset_x: f64,
+    offset_y: f64,
+  }
+
   extern "Swift" {
     type NativeOverlayController;
 
@@ -34,6 +49,7 @@ pub(crate) mod ffi {
       corner_radius: f64,
       sprite_size: f64,
       label_gap: f64,
+      shadow: NativeCursorShadow,
     ) -> NativeActionResponse;
     fn move_overlay_cursor_svg(
       self: &NativeOverlayController,
@@ -58,6 +74,7 @@ pub(crate) mod ffi {
       corner_radius: f64,
       sprite_size: f64,
       label_gap: f64,
+      shadow: NativeCursorShadow,
     ) -> NativeActionResponse;
     fn show_overlay_outline(
       self: &NativeOverlayController,

@@ -117,6 +117,35 @@ renderer remains a browser caller: give it a paired HTTP endpoint and Device
 credential rather than exposing the child process handle or treating loopback
 as browser owner authority.
 
+Configure overlay presentation with typed launch options:
+
+```ts
+import { startAuv } from '@auv-js/sdk/node'
+
+const daemon = await startAuv({
+  overlay: {
+    theme: {
+      outlineColor: '#336699',
+      cursorLabelBackground: '#336699',
+      cursorLabelForeground: '#ffffff',
+      cursorShadow: {
+        color: { red: 206 / 255, green: 1, blue: 253 / 255, alpha: 0.55 },
+        blurRadius: 8,
+        offsetX: 0,
+        offsetY: 2,
+      },
+    },
+  },
+})
+```
+
+`overlay.theme` uses camelCase fields and overrides any `AUV_OVERLAY_THEME`
+from the inherited or supplied environment. Unset fields retain native styles;
+`theme: {}` clears inherited theme overrides. Restart the owned daemon to change
+its theme. Native SVG and shadow support currently requires macOS; use an AUV
+binary with overlay host theme support. See the [theme reference](../../../docs/ai/references/driver/2026-09-07-overlay-host-theme.md)
+for SVG artwork, status colors, and the raw environment format for other hosts.
+
 ### Connect as a plugin/runner through `AUV_CONTEXT`
 
 `auv` cli has similar plugin capability like `kubectl` or `git`. You can build a `auv` plugin in Node.js, and when you have `auv-some-plugin` in your `PATH`, you can invoke it as:

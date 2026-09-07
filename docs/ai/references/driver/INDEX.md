@@ -36,6 +36,8 @@ Count: **29**
 - [`2026-08-09-orca-computer-use-comparison-note.md`](2026-08-09-orca-computer-use-comparison-note.md)
 - [`2026-08-30-linux-wayland-pipewire-capture-runtime-design.md`](2026-08-30-linux-wayland-pipewire-capture-runtime-design.md)
 
+- [`2026-09-07-overlay-host-theme.md`](2026-09-07-overlay-host-theme.md)
+
 ## Related
 
 - Parent index: [`../INDEX.md`](../INDEX.md)

@@ -438,3 +438,20 @@ async fn runner_exposes_hierarchical_macos_media_client() {
   drop(media.next_track());
   drop(media.previous_track());
 }
+
+#[test]
+fn overlay_cursor_shadow_serializes_without_scaling_native_dimensions() {
+  let shadow = auv_driver_overlay_common::style::Shadow {
+    color: auv_driver_overlay_common::style::Color::rgba(1.0, 0.6, 0.15, 0.65),
+    blur_radius: 8.0,
+    offset_x: 0.0,
+    offset_y: 2.0,
+  };
+  let encoded = super::cursor_style_to_proto(auv_driver_overlay_common::style::CursorStyle {
+    shadow: Some(shadow),
+    ..Default::default()
+  });
+  assert_eq!(encoded.sprite_size, 24.0);
+  assert_eq!(encoded.shadow.as_ref().unwrap().blur_radius, 8.0);
+  assert_eq!(encoded.shadow.unwrap().color.unwrap().alpha, 0.65);
+}

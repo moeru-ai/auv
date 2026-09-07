@@ -93,6 +93,13 @@ message OutlineStyle {
   Insets padding = 2;
   double corner_radius = 3;
 }
+// Native silhouette shadow in logical display points, independent of SVG scaling.
+message Shadow {
+  Color color = 1;
+  double blur_radius = 2;
+  double offset_x = 3;
+  double offset_y = 4;
+}
 message CursorStyle {
   Color label_foreground = 1;
   Color label_background = 2;
@@ -100,6 +107,7 @@ message CursorStyle {
   double label_corner_radius = 4;
   double sprite_size = 5;
   double label_gap = 6;
+  Shadow shadow = 7;
 }
 message StatusStyle {
   Color foreground = 1;
