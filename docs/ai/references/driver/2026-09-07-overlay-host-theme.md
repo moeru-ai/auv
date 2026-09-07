@@ -45,39 +45,50 @@ Calling a native adapter directly bypasses facade environment configuration.
 
 ## Host configuration
 
-The Node SDK already forwards `startAuv({ environment })` to its daemon process;
-first-party Runner children inherit that environment. Launch an updated AUV
-binary containing this feature.
+The Node SDK exposes typed `startAuv({ overlay: { theme } })` launch options.
+Theme fields use camelCase, including nested shadow fields. The SDK converts keys
+with `es-toolkit/object`'s `toSnakeCaseKeys` and serializes the result into
+`AUV_OVERLAY_THEME`; first-party Runner children inherit that environment.
+Launch an updated AUV binary containing this feature.
 
 ```ts
 import { startAuv } from '@auv-js/sdk/node';
 
 const daemon = await startAuv({
-  environment: {
-    AUV_OVERLAY_THEME: JSON.stringify({
-      outline_color: '#336699',
-      cursor_label_background: '#336699',
-      cursor_label_foreground: '#ffffff',
-      status_background: '#202020ee',
-      status_foreground: '#ffffff',
-      cursor_image: {
+  overlay: {
+    theme: {
+      outlineColor: '#336699',
+      cursorLabelBackground: '#336699',
+      cursorLabelForeground: '#ffffff',
+      statusBackground: '#202020ee',
+      statusForeground: '#ffffff',
+      cursorImage: {
         kind: 'svg',
         source: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="#c9c9c9" stroke="#eeeeee" stroke-width="1.5" stroke-linejoin="round" d="M3 3v18l7-7h8Z"/></svg>',
       },
-      cursor_shadow: {
+      cursorShadow: {
         color: { red: 1, green: 0.6, blue: 0.15, alpha: 0.85 },
-        blur_radius: 8,
-        offset_x: 0,
-        offset_y: 2,
+        blurRadius: 8,
+        offsetX: 0,
+        offsetY: 2,
       },
-    }),
+    },
   },
 });
 ```
 
 Pass resolved colors, not CSS variables or palette names. Top-level theme colors
 accept `#RRGGBB`, `#RRGGBBAA` (also without `#`), or the existing normalized RGBA
-object. Serialization uses RGBA. Nested `cursor_shadow.color` uses RGBA objects.
+object. Nested `cursorShadow.color` uses RGBA objects. Built-in image selection
+uses `{ kind: 'builtIn', variant: 'auv' | 'auvClick' | 'you' }` in the SDK;
+native enum spellings are mapped separately and SVG source stays unchanged.
+
+Explicit `overlay.theme` replaces the entire environment theme rather than
+merging it: precedence is `overlay.theme` > `environment.AUV_OVERLAY_THEME` >
+`process.env.AUV_OVERLAY_THEME`. An empty typed theme (`{}`) clears inherited
+overrides. Omitting the typed theme preserves existing environment behavior.
+The SDK does not mutate the caller's options or the parent process environment.
+CLI and non-JavaScript hosts can still set the raw snake_case JSON variable.
 
 Unknown fields, malformed JSON, invalid color channels, non-finite shadow offsets,
 negative/non-finite blur radii, and empty/oversized SVG are rejected. SVG retains
@@ -149,3 +160,12 @@ Buf lint reports an existing response-type naming issue in unchanged `input.prot
 
 Evidence levels: unit tests and local macOS drawing/live-invoke probes. No Windows
 runtime verification or cross-platform native-shadow support is claimed.
+
+### Typed Node launch options validation
+
+- `pnpm --filter @auv-js/sdk test:run --project node src/node/daemon-overlay.test.ts src/node/daemon.test.ts`: 10 passed, 1 Windows-only case skipped on macOS.
+- Boundary tests cover nested key conversion, SVG preservation, built-in enum values,
+  explicit and inherited environment precedence, empty themes, and caller immutability.
+- SDK build and ESLint for the changed TypeScript files passed.
+- SDK type checking retains the three previously recorded `AbortSignal.any` errors;
+  no additional diagnostics were reported.

@@ -78,6 +78,9 @@ catalogs:
     emnapi:
       specifier: ^1.11.3
       version: 1.11.3
+    es-toolkit:
+      specifier: ^1.50.0
+      version: 1.50.0
     eslint:
       specifier: ^10.8.1
       version: 10.8.1
@@ -284,6 +287,9 @@ importers:
       date-fns:
         specifier: 'catalog:'
         version: 4.4.0
+      es-toolkit:
+        specifier: 'catalog:'
+        version: 1.50.0
       std-env:
         specifier: 'catalog:'
         version: 4.2.0

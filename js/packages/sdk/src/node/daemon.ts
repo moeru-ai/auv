@@ -2,6 +2,7 @@ import type { Result } from 'tinyexec'
 
 import type { AuvConnection, DeviceCredential } from '../transport/connection'
 import type { OperationOptions } from '../transport/types'
+import type { AuvOverlayOptions, OverlayTheme } from './overlay'
 
 import process from 'node:process'
 
@@ -10,6 +11,7 @@ import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { merge } from '@moeru/std/merge'
+import { toSnakeCaseKeys } from 'es-toolkit/object'
 import { isWindows } from 'std-env'
 import { x } from 'tinyexec'
 
@@ -79,6 +81,8 @@ export interface StartAuvOptions extends OperationOptions {
    * @default false
    */
   noDiscovery?: boolean
+  /** Overlay presentation defaults for this daemon and its Runner children. */
+  overlay?: AuvOverlayOptions
   /** Durable short-token and Device-bearer authentication store. */
   pairingStore?: string
   /**
@@ -133,7 +137,24 @@ export class AuvDaemonStartError extends Error {
   }
 }
 
-/** Starts an app-owned foreground daemon and waits for every listener to become healthy. */
+/**
+ * Starts an app-owned foreground daemon and waits for every listener to become healthy.
+ *
+ * Use when:
+ * - A Node.js host owns the daemon's lifetime and launch configuration.
+ *
+ * Expects:
+ * - A compatible AUV binary; explicit overlay themes replace environment themes.
+ *
+ * Returns:
+ * - A healthy daemon handle with connection and shutdown methods.
+ *
+ * Call stack:
+ *
+ * startAuv
+ *   -> {@link serializeOverlayTheme} -> tinyexec.x (auv serve)
+ *   -> {@link waitForHealth}
+ */
 export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon> {
   const {
     binaryPath,
@@ -142,6 +163,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     environment,
     listeners,
     noDiscovery,
+    overlay,
     pairingStore,
     runnerProviders,
     shutdownTimeoutMs,
@@ -198,7 +220,13 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   }), {
     nodeOptions: {
       cwd: workingDirectory,
-      env: { ...process.env, ...environment },
+      // Presentation is serialized at the process boundary so Runner children
+      // inherit it without exposing the native environment format to SDK callers.
+      env: {
+        ...process.env,
+        ...environment,
+        ...(overlay?.theme === undefined ? {} : { AUV_OVERLAY_THEME: serializeOverlayTheme(overlay.theme) }),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     },
@@ -306,6 +334,28 @@ function preferredConnection(endpoints: readonly string[], pairedHttp: boolean):
     local: !pairedHttp,
     transport: 'http',
   }
+}
+
+/**
+ * Serializes the SDK theme into the native daemon's environment contract.
+ * SVG source and color values are preserved; object keys and native enum names change.
+ *
+ * Before:
+ * - { cursorShadow: { blurRadius: 8, offsetX: 0, offsetY: 2, color: rgba } }
+ *
+ * After:
+ * - '{"cursor_shadow":{"color":rgba,"blur_radius":8,"offset_x":0,"offset_y":2}}'
+ */
+function serializeOverlayTheme(theme: OverlayTheme): string {
+  const image = theme.cursorImage
+  return JSON.stringify(toSnakeCaseKeys({
+    ...theme,
+    // Object key conversion preserves string values, including SVG artwork.
+    // Native enum spellings are mapped separately at this process boundary.
+    cursorImage: image?.kind === 'builtIn'
+      ? { kind: 'built_in', variant: image.variant === 'auvClick' ? 'auv_click' : image.variant }
+      : image,
+  }))
 }
 
 function serveArguments(options: StartAuvOptions): string[] {
