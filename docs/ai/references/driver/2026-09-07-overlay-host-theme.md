@@ -9,15 +9,15 @@ delivery, targeting, geometry, animation, or which commands produce overlays.
 
 The AUV and AUV-click built-ins use the shared assets in
 `crates/auv-driver-overlay-common/assets/`. Both retain a 24-point canvas and a
-1.5-point border. The normal cursor has pale-blue fill (`#a8d8f0`) and near-white yellow-green
-stroke (`#f0f6d2`); the click variant brightens its fill to `#c9e9f7`.
+1.5-point border. The normal cursor has cyan fill (`#49e3e4`) and near-white mint
+stroke (`#cefffd`); the click variant brightens its fill to `#92eeef`.
 
 `Shadow::auv()` supplies pale green RGBA `(0.72, 0.94, 0.52, 0.8)`, an 8-point
 blur radius, and a 2-point downward offset. The user cursor retains its previous
 artwork. Windows retains its existing built-in renderer; the new vector artwork
 and native shadow are currently a macOS capability.
 
-The preview below shows the implemented pastel palette using real AppKit shadow
+The preview below shows the implemented cyan palette using real AppKit shadow
 rendering at 1:1 on dark and light backgrounds.
 
 ![Native default cursor preview](assets/overlay-cursor-default.png)
