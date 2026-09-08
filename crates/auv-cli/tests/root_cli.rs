@@ -932,3 +932,36 @@ fn invoke_store_root_cannot_consume_the_next_flag() {
   assert!(!output.status.success());
   assert!(stderr(&output).contains("--store-root <PATH>"), "unexpected diagnostic:\n{}", stderr(&output));
 }
+
+// https://github.com/moeru-ai/auv/pull/177
+// ROOT CAUSE:
+// A CLI-only list of three command IDs let new keyboard dry-runs succeed
+// locally even when a Runner was explicitly selected. Driver validation must
+// use the selected Runner for every registered keyboard command.
+#[test]
+#[cfg(target_os = "macos")]
+fn selected_keyboard_dry_runs_never_fall_back_to_local_validation() {
+  let root = tempfile::tempdir().unwrap();
+  let endpoint = format!("unix://{}", root.path().join("missing-daemon.sock").display());
+  for arguments in [
+    vec!["input.key", "escape"],
+    vec!["input.keys", "escape"],
+    vec![
+      "input.keyboard",
+      "--actions",
+      r#"[{"kind":"press","keys":["escape"]}]"#,
+    ],
+  ] {
+    let output = Command::new(env!("CARGO_BIN_EXE_auv"))
+      .current_dir(root.path())
+      .env_remove("AUV_CONTEXT")
+      .env("AUV_ENDPOINT", &endpoint)
+      .args(["--device-id", &"0".repeat(64), "invoke"])
+      .args(&arguments)
+      .args(["--dry-run", "--json"])
+      .output()
+      .unwrap();
+    assert!(!output.status.success(), "{} bypassed selected Runner validation: {}", arguments[0], stdout(&output));
+    assert!(stderr(&output).contains("connect"), "{}", stderr(&output));
+  }
+}

@@ -685,19 +685,19 @@ fn targeted_keyboard_rejects_invalid_key_before_window_activation() {
   .unwrap();
   let error = session
     .input()
-    .send_keyboard_input(
+    .input_keyboard(
       &auv_driver_common::InputTarget::Window(window),
-      auv_driver_common::KeyboardInput::Key {
+      vec![auv_driver_common::KeyboardInput::PressKeys {
         policy: InputPolicy::ForegroundPreferred,
-        options: KeyPressOptions {
-          key: "cmd+invalid".into(),
+        options: PressKeysOptions {
+          keys: vec!["cmd".into(), "invalid".into()],
           ..Default::default()
         },
-      },
+      }],
       false,
     )
     .unwrap_err();
-  assert!(matches!(error, DriverError::InvalidInput { .. }), "{error}");
+  assert!(matches!(error.cause, DriverError::InvalidInput { .. }), "{error}");
 }
 
 // ROOT CAUSE:
@@ -727,21 +727,22 @@ fn background_keyboard_delivery_does_not_activate() {
   ] {
     let action = session
       .input()
-      .send_keyboard_input(
+      .input_keyboard(
         &auv_driver_common::InputTarget::Application {
           bundle_id: "com.netease.163music".into(),
         },
-        auv_driver_common::KeyboardInput::Key {
+        vec![auv_driver_common::KeyboardInput::PressKeys {
           policy,
-          options: KeyPressOptions {
-            key: "Escape".into(),
+          options: PressKeysOptions {
+            keys: vec!["Escape".into()],
             ..Default::default()
           },
-        },
+        }],
         false,
       )
       .unwrap()
-      .unwrap();
+      .unwrap()
+      .remove(0);
     assert_eq!(action.focus_disturbance, DisturbanceLevel::None);
     assert!(!action.verified);
   }
@@ -808,4 +809,202 @@ fn zero_window_id_cannot_become_application_scope() {
     .prepare_for_input(&auv_driver_common::InputTarget::Window(window), foreground_prepare_options(Duration::ZERO))
     .unwrap_err();
   assert!(matches!(error, DriverError::InvalidInput { .. }), "{error}");
+}
+
+// ROOT CAUSE:
+// A multi-action request must validate its tail before activation or delivery.
+// Otherwise a bad later key can leave a partially executed workflow.
+#[test]
+fn keyboard_sequence_validates_later_keys_before_resolving_target() {
+  let session = MacosDriverSession { _private: () };
+  let error = session
+    .input()
+    .input_keyboard(
+      &auv_driver_common::InputTarget::Application {
+        bundle_id: "ai.moeru.auv.nonexistent-keyboard-test".into(),
+      },
+      vec![
+        auv_driver_common::KeyboardInput::PressKeys {
+          options: auv_driver_common::PressKeysOptions {
+            keys: vec!["a".into()],
+            ..Default::default()
+          },
+          policy: InputPolicy::ForegroundPreferred,
+        },
+        auv_driver_common::KeyboardInput::PressKeys {
+          options: auv_driver_common::PressKeysOptions {
+            keys: vec!["not-a-key".into()],
+            ..Default::default()
+          },
+          policy: InputPolicy::ForegroundPreferred,
+        },
+      ],
+      false,
+    )
+    .unwrap_err();
+  assert!(matches!(error.cause, DriverError::InvalidInput { .. }));
+  assert_eq!(error.progress.action_index, 1);
+  assert_eq!(error.progress.completed_presses, 0);
+  assert!(error.progress.completed.is_empty());
+}
+
+#[test]
+fn keyboard_chords_repeat_in_order_and_keep_special_keys_with_modifiers() {
+  use crate::native::input::tests::with_chord_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_chord_recorder(None, || {
+    session.input().input_keyboard(
+      &InputTarget::Foreground,
+      vec![
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["cmd".into(), "return".into()],
+            count: 2,
+            interval: Duration::from_millis(1),
+            ..Default::default()
+          },
+        },
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["a".into(), "s".into(), "d".into()],
+            count: 3,
+            interval: Duration::from_millis(1),
+            ..Default::default()
+          },
+        },
+      ],
+      false,
+    )
+  });
+  let actions = result.unwrap().unwrap();
+  assert_eq!(
+    recorder.calls,
+    vec![
+      (None, vec![55, 36]),
+      (None, vec![55, 36]),
+      (None, vec![0, 1, 2]),
+      (None, vec![0, 1, 2]),
+      (None, vec![0, 1, 2]),
+    ]
+  );
+  assert_eq!(actions.len(), 2);
+  assert_eq!(actions[0].attempts.len(), 2);
+  assert_eq!(actions[1].attempts.len(), 3);
+  assert!(actions.iter().all(|action| action.attempts.iter().all(|attempt| attempt.succeeded) && !action.verified));
+}
+
+// ROOT CAUSE:
+// Restarting the whole request after a later failed repetition duplicates input.
+// The result must retain completed actions, completed repetitions, and the cause.
+#[test]
+fn keyboard_sequence_stops_at_native_failure_and_keeps_partial_progress() {
+  use crate::native::input::tests::with_chord_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_chord_recorder(Some(2), || {
+    session.input().input_keyboard(
+      &InputTarget::Foreground,
+      vec![
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["a".into()],
+            ..Default::default()
+          },
+        },
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["b".into()],
+            count: 3,
+            interval: Duration::from_millis(1),
+            ..Default::default()
+          },
+        },
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["c".into()],
+            ..Default::default()
+          },
+        },
+      ],
+      false,
+    )
+  });
+  let error = result.unwrap_err();
+  assert!(matches!(error.cause, DriverError::Backend { .. }));
+  assert_eq!(error.progress.action_index, 1);
+  assert_eq!(error.progress.completed.len(), 1);
+  assert_eq!(error.progress.completed_presses, 1);
+  assert!(error.progress.completed[0].attempts[0].succeeded);
+  assert_eq!(recorder.calls, vec![(None, vec![0]), (None, vec![11]), (None, vec![11])]);
+}
+
+#[test]
+fn keyboard_dry_run_does_not_post_or_wait_for_repetitions() {
+  use crate::native::input::tests::with_chord_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_chord_recorder(None, || {
+    session.input().press_keys(
+      &InputTarget::Foreground,
+      PressKeysOptions {
+        keys: vec!["cmd".into(), "shift".into(), "p".into()],
+        count: 3,
+        interval: Duration::from_secs(3600),
+        settle: Duration::from_secs(3600),
+      },
+      InputPolicy::ForegroundPreferred,
+      true,
+    )
+  });
+  assert!(result.unwrap().is_none());
+  assert!(recorder.calls.is_empty());
+}
+
+#[test]
+fn keyboard_chord_rejects_duplicate_aliases_and_invalid_repeat_counts() {
+  let session = MacosDriverSession { _private: () };
+  for options in [
+    PressKeysOptions {
+      keys: vec!["cmd".into(), "command".into(), "a".into()],
+      ..Default::default()
+    },
+    PressKeysOptions {
+      keys: vec!["a".into()],
+      count: 0,
+      ..Default::default()
+    },
+    PressKeysOptions {
+      keys: vec!["a".into()],
+      count: 256,
+      interval: Duration::from_millis(1),
+      ..Default::default()
+    },
+    PressKeysOptions::default(),
+  ] {
+    let error = session.input().press_keys(&InputTarget::Foreground, options, InputPolicy::ForegroundPreferred, true).unwrap_err();
+    assert!(matches!(error.cause, DriverError::InvalidInput { .. }));
+    assert!(error.progress.completed.is_empty());
+  }
+}
+
+#[test]
+fn keyboard_chord_accepts_navigation_and_function_keys_with_modifiers() {
+  use crate::native::input::tests::with_chord_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_chord_recorder(None, || {
+    session.input().press_keys(
+      &InputTarget::Foreground,
+      PressKeysOptions {
+        keys: vec!["ctrl".into(), "arrowleft".into(), "f12".into()],
+        ..Default::default()
+      },
+      InputPolicy::ForegroundPreferred,
+      false,
+    )
+  });
+  result.unwrap();
+  assert_eq!(recorder.calls, vec![(None, vec![59, 123, 111])]);
 }

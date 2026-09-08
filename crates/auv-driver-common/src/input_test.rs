@@ -211,3 +211,21 @@ fn input_preparation_lease_tracks_restoration() {
 
   assert!(lease.is_restored());
 }
+
+#[test]
+fn legacy_key_options_convert_to_explicit_chord_without_losing_plus_key() {
+  let chord: super::PressKeysOptions = super::KeyPressOptions {
+    key: "cmd+shift+p".into(),
+    settle: Duration::from_millis(4),
+  }
+  .into();
+  assert_eq!(chord.keys, ["cmd", "shift", "p"]);
+  assert_eq!(chord.count, 1);
+  assert_eq!(chord.settle, Duration::from_millis(4));
+  let plus: super::PressKeysOptions = super::KeyPressOptions {
+    key: "+".into(),
+    ..Default::default()
+  }
+  .into();
+  assert_eq!(plus.keys, ["+"]);
+}

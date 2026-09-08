@@ -365,14 +365,14 @@ fn keyboard_target_payload_reuses_driver_options_and_preserves_text() {
     cancellation: Default::default(),
   };
   assert_eq!(
-    keyboard_input(&input).unwrap(),
-    auv_driver::KeyboardInput::TypeText {
+    decode_keyboard_input(&input).unwrap(),
+    vec![auv_driver::KeyboardInput::TypeText {
       text: "Arielle's Wish".into(),
       options: auv_driver::TypeTextOptions {
         policy: auv_driver::InputPolicy::ForegroundPreferred,
         ..Default::default()
       }
-    }
+    }]
   );
 }
 
@@ -439,4 +439,54 @@ async fn background_keyboard_without_target_fails_before_local_or_runner_io() {
     assert_eq!(local, remote);
     assert!(local.message.contains("requires --target"));
   }
+}
+
+#[tokio::test]
+async fn repeated_key_requires_interval_in_local_dry_run() {
+  let command = press_key_invoke_command();
+  let error = command
+    .invoke(crate::InvokeCommandInput {
+      command_id: command.id.into(),
+      target: None,
+      inputs: [("key".into(), "a".into()), ("count".into(), "2".into())].into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .unwrap_err();
+  assert_eq!(error.code, crate::FailureCode::InvalidInput, "{}", error.message);
+  assert!(error.message.contains("interval"));
+}
+
+#[tokio::test]
+async fn chord_protocol_arguments_preserve_keys_and_repeat_options() {
+  let command = press_keys_invoke_command();
+  let input = crate::InvokeCommandInput {
+    command_id: command.id.into(),
+    target: None,
+    inputs: [
+      ("keys".into(), r#"["cmd","return"]"#.into()),
+      ("count".into(), "3".into()),
+      ("interval-ms".into(), "15".into()),
+    ]
+    .into(),
+    typed_args: None,
+    dry_run: true,
+    cancellation: Default::default(),
+  };
+  let decoded = decode_keyboard_input(&input).unwrap();
+  assert_eq!(
+    decoded,
+    vec![auv_driver::KeyboardInput::PressKeys {
+      policy: auv_driver::InputPolicy::ForegroundPreferred,
+      options: auv_driver::PressKeysOptions {
+        keys: vec!["cmd".into(), "return".into()],
+        count: 3,
+        interval: std::time::Duration::from_millis(15),
+        ..Default::default()
+      },
+    }]
+  );
+  command.invoke(input).await.unwrap();
 }

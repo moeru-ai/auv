@@ -23,6 +23,12 @@ pub enum CapabilityError {
   /// The routed daemon client request failed.
   #[error(transparent)]
   Client(#[from] ClientError),
+  /// Keyboard delivery stopped; completed input cannot safely be replayed blindly.
+  #[error("{source}")]
+  KeyboardInput {
+    source: ClientError,
+    progress: auv_driver::KeyboardInputProgress,
+  },
   /// A domain input cannot be represented by the capability request.
   #[error("Runner request is invalid: {0}")]
   InvalidArgument(String),
@@ -41,6 +47,7 @@ impl CapabilityError {
   pub fn client_kind(&self) -> Option<crate::error::ClientErrorKind> {
     match self {
       Self::Client(error) => Some(error.kind()),
+      Self::KeyboardInput { source, .. } => Some(source.kind()),
       Self::InvalidArgument(_) | Self::InvalidResponse(_) => None,
     }
   }
@@ -1150,58 +1157,49 @@ impl InputClient {
     })
   }
 
-  /// Resolve an application or observed window, then apply the input policy.
-  /// Old Runners fail with UNIMPLEMENTED; there is no global-input fallback.
-  pub async fn send_targeted_keyboard_input(
+  /// Execute ordered keyboard actions on an explicit recipient. Older Runners
+  /// return UNIMPLEMENTED; never retry through a global foreground RPC.
+  pub async fn input_keyboard(
     &self,
     target: &auv_driver::InputTarget,
-    input: auv_driver::KeyboardInput,
+    inputs: Vec<auv_driver::KeyboardInput>,
     dry_run: bool,
-  ) -> Result<Option<auv_driver::InputActionResult>, CapabilityError> {
-    use proto::send_targeted_keyboard_input_request::{Input, Target};
-    let policy = input.policy();
-    let input = match input {
-      auv_driver::KeyboardInput::Key { options, .. } => Input::PressKey(proto::PressKeyRequest {
-        key: options.key,
-        settle: Some(duration_to_proto(options.settle)?),
-      }),
-      auv_driver::KeyboardInput::TypeText { text, options } => Input::TypeText(proto::TypeTextRequest {
-        text,
-        options: Some(type_text_options_to_proto(options)?),
-      }),
-      auv_driver::KeyboardInput::PasteText { options, .. } => Input::PasteText(proto::PasteTextRequest {
-        text: options.text.clone(),
-        options: Some(paste_text_options_to_proto(options)?),
-      }),
-    };
-    let (target, expected_process_id) = match target {
-      auv_driver::InputTarget::Application { bundle_id } => (Target::ApplicationBundleId(bundle_id.clone()), 0),
-      auv_driver::InputTarget::Window(window) => (
-        Target::Window(proto::WindowRef {
-          window_id: window.reference.id.clone(),
-        }),
-        window.process_id.map(i64::from).unwrap_or_default(),
-      ),
+  ) -> Result<Option<Vec<auv_driver::InputActionResult>>, CapabilityError> {
+    let expected_count = inputs.len();
+    let request = proto::InputKeyboardRequest {
+      target: Some(input_target_to_proto(target)),
+      inputs: inputs.into_iter().map(keyboard_input_to_proto).collect::<Result<_, _>>()?,
+      dry_run,
     };
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .send_targeted_keyboard_input(proto::SendTargetedKeyboardInputRequest {
-        target: Some(target),
-        expected_process_id,
-        input: Some(input),
-        dry_run,
-        policy: match policy {
-          auv_driver::InputPolicy::BackgroundOnly => proto::InputPolicy::BackgroundOnly as i32,
-          auv_driver::InputPolicy::BackgroundPreferred => proto::InputPolicy::BackgroundPreferred as i32,
-          auv_driver::InputPolicy::ForegroundPreferred => proto::InputPolicy::ForegroundPreferred as i32,
-        },
-      })
+      .input_keyboard(request)
       .await
-      .map_err(capability_status)?
+      .map_err(keyboard_capability_status)?
       .into_inner();
     if dry_run {
+      if !response.actions.is_empty() {
+        return Err(CapabilityError::InvalidResponse("InputKeyboard dry-run returned delivery evidence".into()));
+      }
       return Ok(None);
     }
-    input_action_result_from_proto(required(response.action, "SendTargetedKeyboardInput omitted InputActionResult")?).map(Some)
+    if response.actions.len() != expected_count {
+      return Err(CapabilityError::InvalidResponse("InputKeyboard omitted action results".into()));
+    }
+    response.actions.into_iter().map(input_action_result_from_proto).collect::<Result<_, _>>().map(Some)
+  }
+
+  /// Submit one chord, with repetition and target semantics from InputKeyboard.
+  pub async fn press_keys(
+    &self,
+    target: &auv_driver::InputTarget,
+    options: auv_driver::PressKeysOptions,
+    policy: auv_driver::InputPolicy,
+    dry_run: bool,
+  ) -> Result<Option<auv_driver::InputActionResult>, CapabilityError> {
+    self
+      .input_keyboard(target, vec![auv_driver::KeyboardInput::PressKeys { options, policy }], dry_run)
+      .await
+      .map(|actions| actions.map(|mut actions| actions.remove(0)))
   }
 
   /// Types text using the supplied delivery policy.
@@ -1389,6 +1387,75 @@ fn click_to_proto(value: auv_driver::Click) -> Result<proto::Click, CapabilityEr
     return Err(CapabilityError::InvalidArgument("repeated click interval must be positive".to_string()));
   }
   Ok(proto::Click { count, interval })
+}
+
+fn input_target_to_proto(target: &auv_driver::InputTarget) -> proto::InputTarget {
+  use proto::input_target::Recipient;
+  proto::InputTarget {
+    recipient: Some(match target {
+      auv_driver::InputTarget::Foreground => Recipient::Foreground(true),
+      auv_driver::InputTarget::Application { bundle_id } => Recipient::ApplicationBundleId(bundle_id.clone()),
+      auv_driver::InputTarget::Window(window) => Recipient::Window(proto::Window {
+        r#ref: Some(proto::WindowRef {
+          window_id: window.reference.id.clone(),
+        }),
+        process_id: window.process_id,
+        ..Default::default()
+      }),
+    }),
+  }
+}
+
+fn keyboard_input_to_proto(input: auv_driver::KeyboardInput) -> Result<proto::KeyboardInput, CapabilityError> {
+  use proto::keyboard_input::Action;
+  Ok(proto::KeyboardInput {
+    action: Some(match input {
+      auv_driver::KeyboardInput::PressKeys { options, policy } => Action::Press(proto::KeyboardPress {
+        policy: input_policy_to_proto(policy) as i32,
+        options: Some(proto::PressKeysOptions {
+          keys: options.keys,
+          count: Some(options.count),
+          interval: Some(duration_to_proto(options.interval)?),
+          settle: Some(duration_to_proto(options.settle)?),
+        }),
+      }),
+      auv_driver::KeyboardInput::TypeText { text, options } => Action::TypeText(proto::TypeTextRequest {
+        text,
+        options: Some(type_text_options_to_proto(options)?),
+      }),
+      auv_driver::KeyboardInput::PasteText { options, policy } => Action::PasteText(proto::KeyboardPaste {
+        text: options.text.clone(),
+        options: Some(paste_text_options_to_proto(options)?),
+        policy: input_policy_to_proto(policy) as i32,
+      }),
+    }),
+  })
+}
+
+fn keyboard_capability_status(status: tonic::Status) -> CapabilityError {
+  use prost::Message;
+  if status.details().is_empty() {
+    return capability_status(status);
+  }
+  let progress = match proto::KeyboardInputProgress::decode(status.details()) {
+    Ok(progress) => progress,
+    Err(error) => return CapabilityError::InvalidResponse(format!("invalid KeyboardInputProgress: {error}")),
+  };
+  let Some(index) = progress.action_index else {
+    return CapabilityError::InvalidResponse("KeyboardInputProgress omitted action_index".into());
+  };
+  let completed = match progress.completed.into_iter().map(input_action_result_from_proto).collect::<Result<_, _>>() {
+    Ok(completed) => completed,
+    Err(error) => return error,
+  };
+  CapabilityError::KeyboardInput {
+    source: ClientError::from_status("InputKeyboard", status),
+    progress: auv_driver::KeyboardInputProgress {
+      action_index: index as usize,
+      completed,
+      completed_presses: progress.completed_presses,
+    },
+  }
 }
 
 fn input_policy_to_proto(value: auv_driver::InputPolicy) -> proto::InputPolicy {

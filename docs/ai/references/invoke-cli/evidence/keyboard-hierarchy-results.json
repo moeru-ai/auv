@@ -1,0 +1,327 @@
+{
+  "fixture_observation": {
+    "initial_text": "0123456789",
+    "local_delete_count": 3,
+    "runner_delete_count": 2,
+    "runner_type_text": "XY",
+    "runner_submit_count": 1,
+    "observed": {
+      "event": "submit",
+      "submissions": 1,
+      "text": "01234XY"
+    }
+  },
+  "background_observation": [
+    {
+      "runner": false,
+      "foreground_unchanged": true
+    },
+    {
+      "runner": true,
+      "foreground_unchanged": true
+    }
+  ],
+  "records": [
+    {
+      "name": "fixture-local-triple",
+      "exit_code": 0,
+      "stdout": {
+        "run_id": "01a07fe5-8c06-76e3-b6ff-bddb530b29a9",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=5384, application scope; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            },
+            {
+              "message": "events posted to pid=5384, application scope; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            },
+            {
+              "message": "events posted to pid=5384, application scope; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    },
+    {
+      "name": "fixture-runner-sequence",
+      "exit_code": 0,
+      "stdout": {
+        "run_id": "7e99ea4d-84d0-142e-bb7a-467e77e0d8a8",
+        "status": "completed",
+        "command_id": "input.keyboard",
+        "result": {
+          "actions": [
+            {
+              "attempts": [
+                {
+                  "message": "events posted to pid=5384, application scope; control effect not verified",
+                  "path": "window_targeted_keyboard",
+                  "succeeded": true
+                },
+                {
+                  "message": "events posted to pid=5384, application scope; control effect not verified",
+                  "path": "window_targeted_keyboard",
+                  "succeeded": true
+                }
+              ],
+              "clipboard_disturbance": "none",
+              "focus_disturbance": "foreground",
+              "mouse_disturbance": "none",
+              "selected_path": "window_targeted_keyboard",
+              "verified": false
+            },
+            {
+              "attempts": [
+                {
+                  "message": "events posted to pid=5384, application scope; control effect not verified",
+                  "path": "window_targeted_keyboard",
+                  "succeeded": true
+                }
+              ],
+              "clipboard_disturbance": "none",
+              "focus_disturbance": "foreground",
+              "mouse_disturbance": "none",
+              "selected_path": "window_targeted_keyboard",
+              "verified": false
+            },
+            {
+              "attempts": [
+                {
+                  "message": "events posted to pid=5384, application scope; control effect not verified",
+                  "path": "window_targeted_keyboard",
+                  "succeeded": true
+                }
+              ],
+              "clipboard_disturbance": "none",
+              "focus_disturbance": "foreground",
+              "mouse_disturbance": "none",
+              "selected_path": "window_targeted_keyboard",
+              "verified": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "negative-False-tail",
+      "exit_code": 1,
+      "stdout": {
+        "run_id": "01a07fe7-60ff-7eb3-b1a7-2b95ef8deac6",
+        "status": "failed",
+        "command_id": "input.keyboard",
+        "result": null,
+        "failure": "keyboard action 1 failed after 0 complete actions and 0 presses: invalid key \"not-a-key\"; expected one key name or ANSI character",
+        "failure_details": {
+          "code": "invalid_input",
+          "message": "keyboard action 1 failed after 0 complete actions and 0 presses: invalid key \"not-a-key\"; expected one key name or ANSI character",
+          "keyboard_progress": {
+            "action_index": 1,
+            "completed": [],
+            "completed_presses": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "negative-True-tail",
+      "exit_code": 1,
+      "stdout": {
+        "run_id": "47d084f0-532c-75f9-befe-188d2cebaf7c",
+        "status": "failed",
+        "command_id": "input.keyboard",
+        "result": null,
+        "failure": "InputKeyboard failed: code: 'Client specified an invalid argument', message: \"keyboard action 1 failed after 0 complete actions and 0 presses: invalid key \\\"not-a-key\\\"; expected one key name or ANSI character\"",
+        "failure_details": {
+          "code": "invalid_input",
+          "message": "InputKeyboard failed: code: 'Client specified an invalid argument', message: \"keyboard action 1 failed after 0 complete actions and 0 presses: invalid key \\\"not-a-key\\\"; expected one key name or ANSI character\"",
+          "keyboard_progress": {
+            "action_index": 1,
+            "completed": [],
+            "completed_presses": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "negative-False-missing-app",
+      "exit_code": 1,
+      "stdout": {
+        "run_id": "01a07fe7-60c9-7000-8df3-1f79336bb4e4",
+        "status": "failed",
+        "command_id": "input.keys",
+        "result": null,
+        "failure": "keyboard action 0 failed after 0 complete actions and 0 presses: running application \"ai.moeru.auv.nonexistent-keyboard-test\" was not found",
+        "failure_details": {
+          "code": "not_found",
+          "message": "keyboard action 0 failed after 0 complete actions and 0 presses: running application \"ai.moeru.auv.nonexistent-keyboard-test\" was not found",
+          "keyboard_progress": {
+            "action_index": 0,
+            "completed": [],
+            "completed_presses": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "negative-True-missing-app",
+      "exit_code": 1,
+      "stdout": {
+        "run_id": "d1404994-548b-3400-f2cd-83f54f45fefc",
+        "status": "failed",
+        "command_id": "input.keys",
+        "result": null,
+        "failure": "InputKeyboard failed: code: 'Some requested entity was not found', message: \"keyboard action 0 failed after 0 complete actions and 0 presses: running application \\\"ai.moeru.auv.nonexistent-keyboard-test\\\" was not found\"",
+        "failure_details": {
+          "code": "not_found",
+          "message": "InputKeyboard failed: code: 'Some requested entity was not found', message: \"keyboard action 0 failed after 0 complete actions and 0 presses: running application \\\"ai.moeru.auv.nonexistent-keyboard-test\\\" was not found\"",
+          "keyboard_progress": {
+            "action_index": 0,
+            "completed": [],
+            "completed_presses": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "negative-True-unsupported-target",
+      "exit_code": 1,
+      "stdout": {
+        "run_id": "38cfdb44-422d-1762-4205-8f9047a62831",
+        "status": "failed",
+        "command_id": "input.keys",
+        "result": null,
+        "failure": "input.keys does not support display: targets; accepted target types: application, window",
+        "failure_details": {
+          "code": "invalid_target",
+          "message": "input.keys does not support display: targets; accepted target types: application, window"
+        }
+      }
+    },
+    {
+      "name": "background-confirmed-False",
+      "exit_code": 0,
+      "stdout": {
+        "run_id": "01a07fe8-146a-7743-8c0b-dbff495cdd9b",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=30200, application scope; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "none",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    },
+    {
+      "name": "background-confirmed-True",
+      "exit_code": 0,
+      "stdout": {
+        "run_id": "fb3a4009-ace2-fc02-0820-a294510465a0",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=30200, application scope; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "none",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    },
+    {
+      "name": "music-query",
+      "exit_code": 0,
+      "stdout": {
+        "run_id": "6f032b32-5581-0f68-6a82-0213f818fb93",
+        "status": "completed",
+        "command_id": "input.keyboard",
+        "result": {
+          "actions": [
+            {
+              "attempts": [
+                {
+                  "message": "events posted to pid=30200, window=5063; control effect not verified",
+                  "path": "window_targeted_keyboard",
+                  "succeeded": true
+                }
+              ],
+              "clipboard_disturbance": "none",
+              "focus_disturbance": "foreground",
+              "mouse_disturbance": "none",
+              "selected_path": "window_targeted_keyboard",
+              "verified": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "clear-search",
+      "exit_code": 1,
+      "stdout": {
+        "run_id": "01a07fdb-b86e-7562-8bb2-f129fe7c9fc4",
+        "status": "failed",
+        "command_id": "input.clickPoint",
+        "result": null,
+        "failure": "macos native confirm_input_focus failed: target is not a running application; recovery=resolve the target again",
+        "failure_details": {
+          "code": "command_failed",
+          "message": "macos native confirm_input_focus failed: target is not a running application; recovery=resolve the target again"
+        }
+      }
+    },
+    {
+      "name": "old-runner-dry-run-before-fix",
+      "exit_code": 0,
+      "stdout": {
+        "run_id": "01a07ffe-15a5-7860-905e-b9d7bcd0895d",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": null
+      }
+    },
+    {
+      "name": "old-runner-rejection",
+      "exit_code": 1,
+      "stdout": {
+        "run_id": "17dcb6cc-0b50-af28-9399-3572caf9f636",
+        "status": "failed",
+        "command_id": "input.keys",
+        "result": null,
+        "failure": "Runner capability RPC failed: code: 'Operation is not implemented or not supported'",
+        "failure_details": {
+          "code": "unsupported",
+          "message": "Runner capability RPC failed: code: 'Operation is not implemented or not supported'"
+        }
+      }
+    }
+  ]
+}

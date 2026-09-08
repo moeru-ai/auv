@@ -114,3 +114,16 @@ fn mcp_target_metadata_comes_from_the_executable_definition() {
   let focus = super::invoke_command_metadata(registry.resolve("input.focusText").unwrap());
   assert_eq!(focus["target"]["required"], true);
 }
+
+#[test]
+fn keyboard_sequence_metadata_exposes_repeat_arguments_and_target_contract() {
+  let registry = auv_cli_invoke::default_registry();
+  let keys = super::invoke_command_metadata(registry.resolve("input.keys").unwrap());
+  assert_eq!(keys["target"]["accepted_types"], serde_json::json!(["application", "window"]));
+  let arguments = keys["arguments"].as_array().unwrap();
+  assert_eq!(arguments.iter().find(|arg| arg["input_key"] == "keys").unwrap()["repeated"], true);
+  assert!(arguments.iter().any(|arg| arg["input_key"] == "count"));
+  assert!(arguments.iter().any(|arg| arg["input_key"] == "interval-ms"));
+  let sequence = super::invoke_command_metadata(registry.resolve("input.keyboard").unwrap());
+  assert_eq!(sequence["target"], keys["target"]);
+}

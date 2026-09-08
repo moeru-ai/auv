@@ -201,6 +201,8 @@ pub type InvokeCommandResult = Result<InvokeCommandOutput, String>;
 pub struct InvokeFailure {
   pub code: FailureCode,
   pub message: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub keyboard_progress: Option<auv_driver::KeyboardInputProgress>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -222,6 +224,7 @@ impl InvokeFailure {
     Self {
       code,
       message: message.into(),
+      keyboard_progress: None,
     }
   }
 }
@@ -250,6 +253,16 @@ impl From<auv_driver::DriverError> for InvokeFailure {
   }
 }
 
+impl From<auv_driver::KeyboardInputError> for InvokeFailure {
+  fn from(error: auv_driver::KeyboardInputError) -> Self {
+    let message = error.to_string();
+    let mut failure = Self::from(error.cause);
+    failure.message = message;
+    failure.keyboard_progress = Some(error.progress);
+    failure
+  }
+}
+
 impl From<auv::client::runner::CapabilityError> for InvokeFailure {
   fn from(error: auv::client::runner::CapabilityError) -> Self {
     use auv::error::ClientErrorKind;
@@ -261,7 +274,11 @@ impl From<auv::client::runner::CapabilityError> for InvokeFailure {
       Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleObservation,
       _ => FailureCode::Backend,
     };
-    Self::new(code, error.to_string())
+    let mut failure = Self::new(code, error.to_string());
+    if let auv::client::runner::CapabilityError::KeyboardInput { progress, .. } = error {
+      failure.keyboard_progress = Some(progress);
+    }
+    failure
   }
 }
 
@@ -585,8 +602,18 @@ impl<'de> serde::Deserializer<'de> for ProtocolValue<'de> {
     self.0.into_deserializer().deserialize_enum(name, variants, visitor)
   }
 
+  // Repeated CLI arguments are JSON arrays in the string-valued invoke wire
+  // format. Only sequence fields decode JSON; numeric-looking text stays text.
+  fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+  where
+    V: Visitor<'de>,
+  {
+    let value: serde_json::Value = serde_json::from_str(self.0).map_err(serde::de::Error::custom)?;
+    value.deserialize_seq(visitor).map_err(serde::de::Error::custom)
+  }
+
   serde::forward_to_deserialize_any! {
-    char str string bytes byte_buf unit unit_struct newtype_struct seq tuple
+    char str string bytes byte_buf unit unit_struct newtype_struct tuple
     tuple_struct map struct identifier ignored_any
   }
 }

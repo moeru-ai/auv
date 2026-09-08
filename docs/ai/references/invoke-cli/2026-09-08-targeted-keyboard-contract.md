@@ -94,23 +94,108 @@ No parallel action-result schema was introduced.
   success must verify text, search state, or playback using an independent
   observation. Media `verified` is scoped to its before/after media-state test.
 
+## Keyboard operation hierarchy
+
+The approved keyboard model separates a key, a chord, and an ordered request:
+
+- `PressKey`: single-key convenience. The released string shortcut syntax
+  (`cmd+a`) remains accepted at the legacy entry point; new callers use PressKeys.
+- `PressKeys`: one chord represented by `PressKeysOptions.keys`. Modifiers
+  precede ordinary keys; ordinary keys retain their order. All keys are pressed
+  and released in reverse order. Multiple ordinary keys are allowed.
+- `InputKeyboard`: an ordered list of `KeyboardInput` actions: PressKeys,
+  TypeText, or PasteText. Unicode typing and clipboard transactions retain their
+  driver semantics; they are not converted to physical key names.
+
+`input.key` retains legacy shortcut spelling and adds `--count`/`--interval-ms`.
+`input.keys` accepts explicit positional keys. `input.keyboard --actions JSON`
+accepts an array of tagged actions. MCP uses the same registered commands and
+metadata. Its string-valued `inputs.keys` must contain an encoded JSON array.
+
+```sh
+auv invoke input.keys cmd shift p --target app:com.example.editor
+auv invoke input.key return --count 2 --interval-ms 100 --target window:123
+auv invoke input.keyboard --target app:com.netease.163music \
+  --actions '[{"kind":"press","keys":["escape"],"count":3,"interval_ms":100},{"kind":"type_text","text":"hello"}]'
+```
+
+Supported physical names currently include command/cmd, shift, option/alt,
+control/ctrl, return, enter, tab, delete/backspace, forwarddelete, escape/esc,
+space, arrows, home/end, pageup/pagedown, F1..F20, and ANSI letters/digits/punctuation.
+Uppercase/shifted punctuation adds Shift to the whole chord. Modified special keys such as `cmd+return` are now
+representable, as are literal `+` keys. Unknown keys and duplicate aliases
+are rejected. Physical character names use the existing ANSI key map; callers
+that require Unicode or keyboard-layout-independent text must use TypeText.
+
+A count in 1..=255 repeats the complete press/release action. Counts above one
+require a positive interval; a single press requires zero interval. Interval
+is a minimum wait between complete repetitions, followed by recipient/focus
+checks, not an exact event timestamp. Settle applies once after the final press.
+This is not a hold, OS auto-repeat, or a repeat of the whole action list.
+Independent key-down/up, holds, and cancellation/release coordination remain
+intentionally deferred. A started synchronous request is not cancelled merely
+because the caller disconnects; callers must not treat disconnect as rollback.
+
+The driver validates the whole list before resolving/activating the recipient.
+It binds a target process once, then checks identity and applies the action's
+focus policy before every action and repetition. Swift creates all down/up
+events for a chord before posting any of them. Posting itself has no OS receipt
+that proves control consumption. Completion is not atomic or semantic success.
+
+On success, InputKeyboard returns one InputActionResult per action; a repeated
+press includes its individual submission attempts. On failure, execution stops.
+`KeyboardInputError` retains the driver cause plus `KeyboardInputProgress`:
+completed action results, zero-based failed action index, and the number of
+fully submitted repetitions within the failed press. A failed text/paste action
+can still have partial effects that this counter cannot measure. No automatic
+replay of the list occurs.
+
+Runner errors retain their gRPC status category/message and encode
+KeyboardInputProgress in Status.details. The Rust client preserves this typed
+progress, and CLI/MCP include it as `failure_details.keyboard_progress`.
+Completed action results still produce their normal tracing artifacts.
+Callers must retain gRPC details or CLI stdout on nonzero exit. Progress is
+submission evidence and does not change `verified: false`.
+
+Evidence level: automated driver, invoke, and Runner handler regressions cover
+full-list validation, chords, repetition, dry-run, stopping on native failure,
+and structured progress. The macOS checks recorded below remain independent
+semantic evidence for the observed workflows, not a general app support claim.
+
 ## Runner and compatibility
 
-Local invoke and the selected Runner call the same
-`InputApi::send_keyboard_input` and existing native keyboard/clipboard abilities.
+Targeted invoke and ordered keyboard requests on local and selected Runner paths call the same
+`InputApi::input_keyboard` and existing native keyboard/clipboard abilities.
 The driver-owned `InputTarget` distinguishes a running application bundle from
 an observed Window. Window RPC requests retain the observed pid, so a recycled
 window id cannot silently change the recipient. Application RPC requests resolve
 the running instance on the Runner, without client-local window enumeration.
 
-`InputService/SendTargetedKeyboardInput` is a new RPC, not an optional target
-field on global keyboard RPCs. An old Runner returns UNIMPLEMENTED instead of
-ignoring a safety target and typing globally. The initial branch-only
-`SendWindowKeyboardInput` was replaced before release. Both consumer and Runner
-must support the new RPC. Existing global RPCs and InputActionResult wire shape
-are unchanged. The request policy must agree with nested text options; malformed
-requests fail before delivery. Selected keyboard dry-runs inspect the selected
-Runner and may create/finish a recorded Run; they do not deliver input.
+`InputService/InputKeyboard` executes an ordered list of typed input actions.
+`PressKeys` submits one chord through that interpreter. Existing `PressKey`
+remains a foreground convenience and also uses the interpreter on macOS.
+The branch-only `SendTargetedKeyboardInput` was replaced before release.
+Updated consumers and Runners are required for InputKeyboard/PressKeys; an old
+Runner returns UNIMPLEMENTED instead of ignoring a safety target. Existing
+global RPC request/response shapes and InputActionResult wire shapes are unchanged.
+There is a deliberate character-key behavior change: legacy single-character
+PressKey/input.key previously used Unicode injection, while the unified press
+path now sends physical keys. These follow the active keyboard layout/IME;
+non-ANSI literal characters require TypeText. Shortcut strings remain accepted.
+
+Each action owns its input policy. Text has exactly one policy source,
+`TypeTextOptions.policy`; there is no duplicated request-level policy. Window
+identity uses the existing observed `Window.ref` and `Window.process_id`,
+inside the target variant. Application targets carry no window-only pid field.
+The new RPC requires an explicit target, including `foreground: true` when
+global foreground input is intended. Absence is an error. Unspecified action
+policy retains the existing driver `BackgroundPreferred` default; an explicit
+foreground recipient requires `ForegroundPreferred`. CLI defaults to foreground
+and applies its `--input-policy` option to every action.
+
+Selected keyboard dry-runs, with or without a target, inspect the selected Runner and may create/finish a
+recorded Run. They validate every action and recipient without activation,
+clipboard changes, repetition waits, or delivery.
 
 The historical `window_targeted_keyboard` delivery-path name is retained for
 PID-bound events. Application scope stamps only the pid, with no window-routing
@@ -123,8 +208,9 @@ error response. Target validation and target-bound driver failures preserve
 categories such as `invalid_target`, `not_found`, `unsupported`, `invalid_input`
 and `backend`. Legacy non-keyboard string helpers retain `command_failed`;
 this migration does not infer categories by parsing human error strings.
-CLI syntax errors before a registered invocation is constructed retain the
-existing parser/stderr boundary.
+CLI parser and frontend setup errors (selection/tracing) before execution
+retain the existing stderr boundary. Structured operation failures begin at
+the registered execution boundary.
 
 Rust handler futures now return `InvokeExecutionResult` with `InvokeFailure`;
 legacy command-output helpers keep their string errors and map them at the
@@ -245,3 +331,65 @@ The host's stdout-loss issue is outside AUV. This task changes no LobeHub code
 and publishes no release. A candidate next slice is preserving typed failure
 categories through the remaining non-keyboard helpers; that work requires its
 own owner-approved producer/consumer scope.
+
+## Keyboard hierarchy validation (2026-09-08)
+
+[Selected execution records](evidence/keyboard-hierarchy-results.json) retain
+command IDs, run IDs, typed results, and failure progress. The small
+[AppKit fixture](evidence/keyboard-fixture.swift) exposes application-owned text
+and submit-count readback through a JSON file; it is a validation tool, not a
+new AUV app workflow. It was compiled into a temporary .app with bundle ID
+`ai.moeru.auv.keyboard-validation-fixture` and received the output JSON path as
+its first process argument.
+
+- Controlled live macOS result: initial `0123456789`, three local Delete presses,
+  then a Runner sequence with two Deletes, Unicode `XY`, and Return produced
+  `01234XY` and exactly one submission. Application observation was independent
+  of the driver results; all delivery results remained unverified.
+- Ten local/Runner invalid-request probes (missing app/window, display target,
+  invalid later key, zero repetition) retained the expected failure codes and
+  left the fixture text/submit count unchanged. Later-action failure retained
+  index 1 and no completed actions, proving that the prefix was not delivered.
+- Background-only Escape to NetEaseMusic preserved the independently observed
+  foreground app on both local and Runner routes.
+- NetEaseMusic independently showed local triple Delete changing `0123456789`
+  to `0123456`. After clearing and explicitly refocusing the search box, Runner
+  Unicode input showed the complete `Arielle's Wish`.
+- NetEaseMusic also showed physical letters entering IME composition and some
+  mixed-action submissions with no matching text effect. A subsequent search
+  submission did not establish the expected results page in this probe; page
+  and playback changes were observed and concurrent interaction was not ruled
+  out. These observations do not establish an event-timing, modifier, or
+  activation root cause. The earlier playback workflow above is historical
+  evidence, not a new end-to-end pass for this hierarchy revision.
+- One clear-button click failed during activation confirmation with "target is
+  not a running application", although a fresh process/window observation
+  still found the target. No click was delivered on that failure; a separately
+  re-resolved attempt succeeded. This false-negative observation is retained,
+  not hidden behind a retry or fixed-delay patch.
+
+Automated coverage additionally injects failure at the native event boundary
+to prove that later actions stop and completed repetition/action counts survive.
+Hold/down-up cancellation, IME/control-effect guarantees, and the originally
+reported ineffective first Cmd+A remain follow-ups.
+
+The CLI root also derives selected keyboard dry-run routing from the registered
+OptionalKeyboard contract. A former three-command allowlist omitted new commands
+and let their dry-runs succeed locally against an old Runner. A subprocess
+regression using an unavailable selected endpoint reproduces that error and
+requires all key/chord/sequence dry-runs to use the selected Runner. This bug
+affected dry-run routing; non-dry invocations already used the selected Runner.
+
+After the dry-run routing fix, a live unmodified main Runner returned
+`unsupported`/UNIMPLEMENTED for the new InputKeyboard request, with command ID
+and failure JSON preserved. It did not fall back to a local or global action.
+
+Final checks: Rust formatting/check/default suite and the focused driver, invoke,
+Runner, and Rust SDK suites passed (287 focused tests; platform probes separate).
+The CLI subprocess routing regression, live stale-window preparation rejection,
+and live changed-owner Runner rejection passed. Bridge generation and the native
+SwiftPM build passed. SDK typecheck and tests passed (53 passed, 1 skipped).
+Clippy completed with existing repository warnings. Buf generation and breaking
+checks against main passed; the changed input schema formats cleanly. Repository
+Buf lint still reports the existing MoveMouseStreamResponse name, and repository
+format diff still reports unchanged reflection-option ordering.

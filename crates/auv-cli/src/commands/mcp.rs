@@ -447,6 +447,7 @@ mod frontend {
           "input_key": argument.get_long().unwrap_or_else(|| argument.get_id().as_str()),
           "value_name": argument.get_value_names().and_then(|names| names.first()).map(|name| name.as_str()),
           "required": argument.is_required_set(),
+          "repeated": matches!(argument.get_action(), clap::ArgAction::Append),
           "help": argument.get_help().map(ToString::to_string),
         }))
         .collect::<Vec<_>>(),

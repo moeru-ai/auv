@@ -34,9 +34,10 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
   if let Some(command) = crate::default_registry().resolve(&input.command_id) {
     command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
   }
-  if matches!(input.command_id.as_str(), "input.key" | "input.typeText" | "input.pasteText") {
-    crate::commands::input::keyboard_input(&input)?;
-    if input.target.is_some() {
+  if matches!(input.command_id.as_str(), "input.key" | "input.keys" | "input.keyboard" | "input.typeText" | "input.pasteText") {
+    crate::commands::input::decode_keyboard_input(&input)
+      .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+    if input.target.is_some() || matches!(input.command_id.as_str(), "input.key" | "input.keys" | "input.keyboard") {
       return targeted_keyboard(input, context).await;
     }
   }
@@ -642,21 +643,23 @@ async fn targeted_keyboard(input: crate::InvokeCommandInput, context: auv::AuvCo
   let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
 
-  let keyboard = crate::commands::input::keyboard_input(&input)?;
-  let target = match input.target.as_ref().expect("targeted input") {
-    crate::ExecutionTarget::Application { id } => auv_driver::InputTarget::Application {
+  let keyboard = crate::commands::input::decode_keyboard_input(&input)
+    .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+  let target = match input.target.as_ref() {
+    None => auv_driver::InputTarget::Foreground,
+    Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
       bundle_id: id.clone(),
     },
-    crate::ExecutionTarget::Window { id } => {
+    Some(crate::ExecutionTarget::Window { id }) => {
       auv_driver::InputTarget::Window(runner.windows().list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(
         || auv_driver::DriverError::NotFound {
           target: format!("window:{id}"),
         },
       )?)
     }
-    crate::ExecutionTarget::Display { .. } => unreachable!("target policy validated"),
+    Some(crate::ExecutionTarget::Display { .. }) => unreachable!("target policy validated"),
   };
   input.cancellation.check().map_err(|error| error.to_string())?;
-  let action = runner.input().send_targeted_keyboard_input(&target, keyboard, input.dry_run).await?;
-  crate::commands::input::targeted_keyboard_output(action.as_ref()).map_err(Into::into)
+  let result = runner.input().input_keyboard(&target, keyboard, input.dry_run).await.map_err(Into::into);
+  crate::commands::input::keyboard_output(&input, result)
 }
