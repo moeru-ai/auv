@@ -1,5 +1,9 @@
 {
-  "editor.quickSuggestions": false,
+  "editor.quickSuggestions": {
+    "comments": "off",
+    "strings": "off",
+    "other": "off"
+  },
 
   // Disable the default formatter
   "prettier.enable": false,
