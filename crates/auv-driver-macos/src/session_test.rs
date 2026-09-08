@@ -849,10 +849,10 @@ fn keyboard_sequence_validates_later_keys_before_resolving_target() {
 }
 
 #[test]
-fn keyboard_chords_repeat_in_order_and_keep_special_keys_with_modifiers() {
-  use crate::native::input::tests::with_chord_recorder;
+fn keyboard_combinations_repeat_in_order_and_keep_special_keys_with_modifiers() {
+  use crate::native::input::tests::with_combination_recorder;
   let session = MacosDriverSession { _private: () };
-  let (result, recorder) = with_chord_recorder(None, || {
+  let (result, recorder) = with_combination_recorder(None, || {
     session.input().input_keyboard(
       &InputTarget::Foreground,
       vec![
@@ -900,9 +900,9 @@ fn keyboard_chords_repeat_in_order_and_keep_special_keys_with_modifiers() {
 // The result must retain completed actions, completed repetitions, and the cause.
 #[test]
 fn keyboard_sequence_stops_at_native_failure_and_keeps_partial_progress() {
-  use crate::native::input::tests::with_chord_recorder;
+  use crate::native::input::tests::with_combination_recorder;
   let session = MacosDriverSession { _private: () };
-  let (result, recorder) = with_chord_recorder(Some(2), || {
+  let (result, recorder) = with_combination_recorder(Some(2), || {
     session.input().input_keyboard(
       &InputTarget::Foreground,
       vec![
@@ -944,9 +944,9 @@ fn keyboard_sequence_stops_at_native_failure_and_keeps_partial_progress() {
 
 #[test]
 fn keyboard_dry_run_does_not_post_or_wait_for_repetitions() {
-  use crate::native::input::tests::with_chord_recorder;
+  use crate::native::input::tests::with_combination_recorder;
   let session = MacosDriverSession { _private: () };
-  let (result, recorder) = with_chord_recorder(None, || {
+  let (result, recorder) = with_combination_recorder(None, || {
     session.input().press_keys(
       &InputTarget::Foreground,
       PressKeysOptions {
@@ -964,7 +964,7 @@ fn keyboard_dry_run_does_not_post_or_wait_for_repetitions() {
 }
 
 #[test]
-fn keyboard_chord_rejects_duplicate_aliases_and_invalid_repeat_counts() {
+fn keyboard_combination_rejects_duplicate_aliases_and_invalid_repeat_counts() {
   let session = MacosDriverSession { _private: () };
   for options in [
     PressKeysOptions {
@@ -991,10 +991,10 @@ fn keyboard_chord_rejects_duplicate_aliases_and_invalid_repeat_counts() {
 }
 
 #[test]
-fn keyboard_chord_accepts_navigation_and_function_keys_with_modifiers() {
-  use crate::native::input::tests::with_chord_recorder;
+fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
+  use crate::native::input::tests::with_combination_recorder;
   let session = MacosDriverSession { _private: () };
-  let (result, recorder) = with_chord_recorder(None, || {
+  let (result, recorder) = with_combination_recorder(None, || {
     session.input().press_keys(
       &InputTarget::Foreground,
       PressKeysOptions {

@@ -104,11 +104,11 @@ pub fn scroll_window_point(
   Err("macOS native window-targeted scroll is unsupported on this target".to_string())
 }
 
-/// Submit a complete chord. The Swift backend creates every down/up event
+/// Submit a complete key combination. The Swift backend creates every down/up event
 /// before posting and releases keys in reverse order.
 pub fn press_keys(target: Option<(i64, i64)>, key_codes: Vec<i32>) -> AuvResult<()> {
   #[cfg(test)]
-  if let Some(result) = tests::record_chord(target, &key_codes) {
+  if let Some(result) = tests::record_combination(target, &key_codes) {
     return result;
   }
   #[cfg(target_os = "macos")]
@@ -122,7 +122,7 @@ pub fn press_keys(target: Option<(i64, i64)>, key_codes: Vec<i32>) -> AuvResult<
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (target, key_codes);
-    Err("macOS native key chords are unsupported on this target".into())
+    Err("macOS native key combinations are unsupported on this target".into())
   }
 }
 

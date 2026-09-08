@@ -23,15 +23,15 @@ fn action_result_includes_operation_name() {
 // Test replacement at the native event-delivery boundary. Thread-local state
 // prevents parallel tests from capturing another test's real input.
 #[derive(Default)]
-pub(crate) struct ChordRecorder {
+pub(crate) struct KeyCombinationRecorder {
   pub calls: Vec<(Option<(i64, i64)>, Vec<i32>)>,
   pub fail_on: Option<usize>,
 }
 thread_local! {
-  pub(crate) static CHORDS: std::cell::RefCell<Option<ChordRecorder>> = const { std::cell::RefCell::new(None) };
+  pub(crate) static KEY_COMBINATIONS: std::cell::RefCell<Option<KeyCombinationRecorder>> = const { std::cell::RefCell::new(None) };
 }
-pub(crate) fn record_chord(target: Option<(i64, i64)>, keys: &[i32]) -> Option<super::AuvResult<()>> {
-  CHORDS.with_borrow_mut(|recorder| {
+pub(crate) fn record_combination(target: Option<(i64, i64)>, keys: &[i32]) -> Option<super::AuvResult<()>> {
+  KEY_COMBINATIONS.with_borrow_mut(|recorder| {
     let recorder = recorder.as_mut()?;
     let index = recorder.calls.len();
     recorder.calls.push((target, keys.to_vec()));
@@ -43,24 +43,24 @@ pub(crate) fn record_chord(target: Option<(i64, i64)>, keys: &[i32]) -> Option<s
   })
 }
 
-pub(crate) fn with_chord_recorder<T>(fail_on: Option<usize>, run: impl FnOnce() -> T) -> (T, ChordRecorder) {
+pub(crate) fn with_combination_recorder<T>(fail_on: Option<usize>, run: impl FnOnce() -> T) -> (T, KeyCombinationRecorder) {
   struct Reset;
   impl Drop for Reset {
     fn drop(&mut self) {
-      CHORDS.with_borrow_mut(|state| {
+      KEY_COMBINATIONS.with_borrow_mut(|state| {
         *state = None;
       });
     }
   }
-  CHORDS.with_borrow_mut(|state| {
+  KEY_COMBINATIONS.with_borrow_mut(|state| {
     assert!(state.is_none());
-    *state = Some(ChordRecorder {
+    *state = Some(KeyCombinationRecorder {
       fail_on,
       ..Default::default()
     });
   });
   let _reset = Reset;
   let result = run();
-  let recorder = CHORDS.with_borrow_mut(|state| state.take().unwrap());
+  let recorder = KEY_COMBINATIONS.with_borrow_mut(|state| state.take().unwrap());
   (result, recorder)
 }

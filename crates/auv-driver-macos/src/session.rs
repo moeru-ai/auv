@@ -573,16 +573,16 @@ impl InputApi<'_> {
     if inputs.is_empty() {
       return Err(fail(invalid_input("keyboard input requires at least one action"), 0, vec![], 0));
     }
-    // Compile every chord before even resolving the recipient. A malformed tail
+    // Compile every key combination before even resolving the recipient. A malformed tail
     // cannot activate an app or deliver the prefix of a request.
-    let mut chords = Vec::with_capacity(inputs.len());
+    let mut combinations = Vec::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
       let validation = match input {
-        KeyboardInput::PressKeys { options, .. } => keyboard_chord(options).map(Some),
+        KeyboardInput::PressKeys { options, .. } => parse_key_combination(options).map(Some),
         KeyboardInput::TypeText { options, .. } => type_text_parts(*options).map(|_| None),
         KeyboardInput::PasteText { options, .. } => text_submit_key_code(options.submit).map(|_| None),
       };
-      chords.push(validation.map_err(|cause| fail(cause, index, vec![], 0))?);
+      combinations.push(validation.map_err(|cause| fail(cause, index, vec![], 0))?);
       if matches!(target, InputTarget::Foreground) && input.policy() != InputPolicy::ForegroundPreferred {
         return Err(fail(invalid_input("background keyboard input requires an application or window target"), index, vec![], 0));
       }
@@ -592,7 +592,7 @@ impl InputApi<'_> {
       _ => Some(resolve_input_target(target).map_err(|cause| fail(cause, 0, vec![], 0))?),
     };
     let mut completed = Vec::new();
-    for (index, (input, chord)) in inputs.into_iter().zip(chords).enumerate() {
+    for (index, (input, combination)) in inputs.into_iter().zip(combinations).enumerate() {
       let foreground = input.policy() == InputPolicy::ForegroundPreferred;
       let (count, interval, settle) = match &input {
         KeyboardInput::PressKeys { options, .. } => (options.count, options.interval, options.settle),
@@ -618,7 +618,7 @@ impl InputApi<'_> {
           // BackgroundPreferred cannot retry after a potentially partial delivery.
           let mut action = match &input {
             KeyboardInput::PressKeys { .. } => {
-              crate::native::input::press_keys(recipient, chord.as_ref().expect("validated chord").clone()).map_err(backend)?;
+              crate::native::input::press_keys(recipient, combination.as_ref().expect("validated combination").clone()).map_err(backend)?;
               match recipient {
                 Some(_) => InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard),
                 None => foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None),
@@ -686,7 +686,7 @@ impl InputApi<'_> {
     Ok((!dry_run).then_some(completed))
   }
 
-  /// Deliver one chord using the same interpreter as a multi-action request.
+  /// Deliver one key combination using the same interpreter as a multi-action request.
   pub fn press_keys(
     &self,
     target: &InputTarget,
@@ -759,9 +759,9 @@ impl InputApi<'_> {
   /// Legacy single-key API. Shortcut strings remain accepted for released callers;
   /// new callers use `press_keys` with explicit keys. Both use `input_keyboard`.
   pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
-    let chord = options.into();
+    let combination = options.into();
     self
-      .press_keys(&InputTarget::Foreground, chord, InputPolicy::ForegroundPreferred, false)
+      .press_keys(&InputTarget::Foreground, combination, InputPolicy::ForegroundPreferred, false)
       .map_err(|error| error.cause)?
       .ok_or_else(|| backend("keyboard delivery omitted its result"))
   }
@@ -1073,7 +1073,7 @@ fn type_text_foreground(text: &str, options: TypeTextOptions) -> DriverResult<()
 
 /// Compile names to native virtual keys before any activation or event creation.
 /// Modifiers precede ordinary keys; aliases cannot produce duplicate key-downs.
-fn keyboard_chord(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
+fn parse_key_combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
   if options.keys.is_empty() {
     return Err(invalid_input("keys must not be empty"));
   }

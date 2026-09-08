@@ -96,11 +96,11 @@ No parallel action-result schema was introduced.
 
 ## Keyboard operation hierarchy
 
-The approved keyboard model separates a key, a chord, and an ordered request:
+The approved keyboard model separates a key, a key combination, and an ordered request:
 
 - `PressKey`: single-key convenience. The released string shortcut syntax
   (`cmd+a`) remains accepted at the legacy entry point; new callers use PressKeys.
-- `PressKeys`: one chord represented by `PressKeysOptions.keys`. Modifiers
+- `PressKeys`: one key combination represented by `PressKeysOptions.keys`. Modifiers
   precede ordinary keys; ordinary keys retain their order. All keys are pressed
   and released in reverse order. Multiple ordinary keys are allowed.
 - `InputKeyboard`: an ordered list of `KeyboardInput` actions: PressKeys,
@@ -122,7 +122,7 @@ auv invoke input.keyboard --target app:com.netease.163music \
 Supported physical names currently include command/cmd, shift, option/alt,
 control/ctrl, return, enter, tab, delete/backspace, forwarddelete, escape/esc,
 space, arrows, home/end, pageup/pagedown, F1..F20, and ANSI letters/digits/punctuation.
-Uppercase/shifted punctuation adds Shift to the whole chord. Modified special keys such as `cmd+return` are now
+Uppercase/shifted punctuation adds Shift to the whole key combination. Modified special keys such as `cmd+return` are now
 representable, as are literal `+` keys. Unknown keys and duplicate aliases
 are rejected. Physical character names use the existing ANSI key map; callers
 that require Unicode or keyboard-layout-independent text must use TypeText.
@@ -139,7 +139,7 @@ because the caller disconnects; callers must not treat disconnect as rollback.
 The driver validates the whole list before resolving/activating the recipient.
 It binds a target process once, then checks identity and applies the action's
 focus policy before every action and repetition. Swift creates all down/up
-events for a chord before posting any of them. Posting itself has no OS receipt
+events for a key combination before posting any of them. Posting itself has no OS receipt
 that proves control consumption. Completion is not atomic or semantic success.
 
 On success, InputKeyboard returns one InputActionResult per action; a repeated
@@ -158,7 +158,7 @@ Callers must retain gRPC details or CLI stdout on nonzero exit. Progress is
 submission evidence and does not change `verified: false`.
 
 Evidence level: automated driver, invoke, and Runner handler regressions cover
-full-list validation, chords, repetition, dry-run, stopping on native failure,
+full-list validation, key combinations, repetition, dry-run, stopping on native failure,
 and structured progress. The macOS checks recorded below remain independent
 semantic evidence for the observed workflows, not a general app support claim.
 
@@ -172,7 +172,7 @@ window id cannot silently change the recipient. Application RPC requests resolve
 the running instance on the Runner, without client-local window enumeration.
 
 `InputService/InputKeyboard` executes an ordered list of typed input actions.
-`PressKeys` submits one chord through that interpreter. Existing `PressKey`
+`PressKeys` submits one key combination through that interpreter. Existing `PressKey`
 remains a foreground convenience and also uses the interpreter on macOS.
 The branch-only `SendTargetedKeyboardInput` was replaced before release.
 Updated consumers and Runners are required for InputKeyboard/PressKeys; an old
@@ -377,7 +377,7 @@ The CLI root also derives selected keyboard dry-run routing from the registered
 OptionalKeyboard contract. A former three-command allowlist omitted new commands
 and let their dry-runs succeed locally against an old Runner. A subprocess
 regression using an unavailable selected endpoint reproduces that error and
-requires all key/chord/sequence dry-runs to use the selected Runner. This bug
+requires all key/combination/sequence dry-runs to use the selected Runner. This bug
 affected dry-run routing; non-dry invocations already used the selected Runner.
 
 After the dry-run routing fix, a live unmodified main Runner returned

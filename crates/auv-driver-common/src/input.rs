@@ -244,7 +244,7 @@ pub enum InputTarget {
   Window(Window),
 }
 
-/// A chord: keys go down in order and come up in reverse order. Modifiers
+/// A key combination: keys go down in order and come up in reverse order. Modifiers
 /// precede ordinary keys. Each repetition releases every key before the next.
 /// TODO(key-hold): independent down/up and hold duration are deferred until an
 /// approved cancellation/release contract exists; counts are discrete presses.
@@ -252,7 +252,7 @@ pub enum InputTarget {
 #[serde(default)]
 pub struct PressKeysOptions {
   pub keys: Vec<String>,
-  /// Complete chord repetitions, in 1..=255.
+  /// Complete key combination repetitions, in 1..=255.
   pub count: u32,
   /// Required and positive for repeated presses; zero for a single press.
   pub interval: Duration,
@@ -290,7 +290,7 @@ impl From<KeyPressOptions> for PressKeysOptions {
 
 /// Failure of an ordered input request. Completed actions are submission
 /// evidence, not semantic verification. The failed action may have partial
-/// effects; `completed_presses` counts only fully submitted chord repetitions.
+/// effects; `completed_presses` counts only fully submitted key combination repetitions.
 #[derive(Debug)]
 pub struct KeyboardInputError {
   pub cause: crate::DriverError,

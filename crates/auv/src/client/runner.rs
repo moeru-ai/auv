@@ -1188,7 +1188,7 @@ impl InputClient {
     response.actions.into_iter().map(input_action_result_from_proto).collect::<Result<_, _>>().map(Some)
   }
 
-  /// Submit one chord, with repetition and target semantics from InputKeyboard.
+  /// Submit one key combination, with repetition and target semantics from InputKeyboard.
   pub async fn press_keys(
     &self,
     target: &auv_driver::InputTarget,

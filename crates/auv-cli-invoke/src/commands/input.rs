@@ -304,7 +304,7 @@ struct PressKeyArgs {
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(after_long_help = "Examples:\n  auv invoke input.keys cmd shift p\n  auv invoke input.keys return --count 2 --interval-ms 100")]
 struct PressKeysArgs {
-  /// One chord: key names or ANSI characters. Modifiers precede ordinary keys. MCP inputs encode this list as a JSON array string.
+  /// One key combination: key names or ANSI characters. Modifiers precede ordinary keys. MCP inputs encode this list as a JSON array string.
   #[arg(value_name = "KEY", num_args = 1..)]
   keys: Vec<String>,
   /// Foreground prepares focus; background modes do not activate or automatically fall back.
@@ -321,7 +321,7 @@ struct PressKeysArgs {
 }
 
 #[invoke_command(id = "input.keys", target = OptionalKeyboard, group = "input",
-  description = "Press and release a macOS key chord, optionally repeated. Keys are released in reverse order; effects remain unverified.", input = PressKeysArgs)]
+  description = "Press and release a macOS key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.", input = PressKeysArgs)]
 async fn press_keys(input: InvokeCommandInput, _args: PressKeysArgs) -> crate::InvokeExecutionResult {
   execute_keyboard(&input)
 }
@@ -756,7 +756,7 @@ pub(crate) fn decode_keyboard_input(input: &InvokeCommandInput) -> Result<Vec<au
     "input.key" => {
       let args = crate::command::decode_args::<PressKeyArgs>(input)?;
       // NOTICE: Keep the released shortcut spelling at this frontend. New
-      // structured callers express chords with input.keys/InputKeyboard.
+      // structured callers express key combinations with input.keys/InputKeyboard.
       let options: PressKeysOptions = auv_driver::KeyPressOptions {
         key: args.key,
         ..Default::default()

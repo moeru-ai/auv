@@ -764,7 +764,7 @@ the unified operation is a frontend and typed-command contract.
 
 ## Keyboard Input
 
-A **key press** is one complete down/up action. A **chord** presses multiple
+A **key press** is one complete down/up action. A **key combination** presses multiple
 keys before releasing them in reverse order. Repetition repeats a complete
 press/release, with an explicit interval; it is distinct from holding a key
 or operating-system auto-repeat.

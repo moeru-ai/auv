@@ -460,7 +460,7 @@ async fn repeated_key_requires_interval_in_local_dry_run() {
 }
 
 #[tokio::test]
-async fn chord_protocol_arguments_preserve_keys_and_repeat_options() {
+async fn key_combination_protocol_arguments_preserve_keys_and_repeat_options() {
   let command = press_keys_invoke_command();
   let input = crate::InvokeCommandInput {
     command_id: command.id.into(),

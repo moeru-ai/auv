@@ -4,7 +4,7 @@ Invoke routing, CLI handlers, catalog, output contracts
 
 Count: **22**
 
-- [`2026-09-08-targeted-keyboard-contract.md`](2026-09-08-targeted-keyboard-contract.md) — target preparation, key/chord/sequence hierarchy, failure progress, and macOS evidence
+- [`2026-09-08-targeted-keyboard-contract.md`](2026-09-08-targeted-keyboard-contract.md) — target preparation, key/combination/sequence hierarchy, failure progress, and macOS evidence
 - [`2026-09-03-click-point-target-contract-handoff.md`](2026-09-03-click-point-target-contract-handoff.md)
 - [`2026-08-04-remote-extension-runner-guide.md`](2026-08-04-remote-extension-runner-guide.md)
 - [`2026-08-04-core-cli-command-ownership-design.md`](2026-08-04-core-cli-command-ownership-design.md)

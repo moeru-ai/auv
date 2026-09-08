@@ -16,7 +16,7 @@ service InputService {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
-  // One chord, optionally repeated. Uses the InputKeyboard execution contract.
+  // One key combination, optionally repeated. Uses the InputKeyboard execution contract.
   rpc PressKeys(PressKeysRequest) returns (PressKeysResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
@@ -52,7 +52,7 @@ service InputService {
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
   // Legacy foreground convenience. Also accepts shortcut strings for released
-  // callers; new chords use PressKeys. Implemented through InputKeyboard.
+  // callers; new key combinations use PressKeys. Implemented through InputKeyboard.
   rpc PressKey(PressKeyRequest) returns (PressKeyResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
@@ -377,7 +377,7 @@ message KeyboardPaste {
 }
 
 // Policy belongs to the action. TypeTextOptions.policy is the sole text policy.
-// A list is ordered actions, not a chord or a transaction. No whole-list repeat.
+// A list is ordered actions, not a key combination or a transaction. No whole-list repeat.
 message KeyboardInput {
   oneof action {
     KeyboardPress press = 1;

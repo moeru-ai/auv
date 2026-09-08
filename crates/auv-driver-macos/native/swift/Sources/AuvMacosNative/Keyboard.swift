@@ -139,7 +139,7 @@ private func typeText(
 }
 
 // Existing shortcut callers (including clipboard transactions) use the same
-// chord event builder as explicit multi-key input. Preserve modifier order.
+// key combination event builder as explicit multi-key input. Preserve modifier order.
 private func hotkey(
   delivery: KeyboardDelivery,
   keyCode: Int32,
@@ -153,9 +153,9 @@ private func hotkey(
   return pressKeys(delivery: delivery, keyCodes: codes)
 }
 
-// A chord prepares the complete event list before delivery. Failure to create
+// A key combination prepares the complete event list before delivery. Failure to create
 // any event therefore cannot leave a modifier down. Posting itself has no OS
-// acknowledgement; a completed chord is still unverified input submission.
+// acknowledgement; a completed key combination is still unverified input submission.
 private func pressKeys(delivery: KeyboardDelivery, keyCodes: [Int32]) -> NativeActionResponse {
   guard !keyCodes.isEmpty else { return nativeActionError("keys must not be empty", "provide at least one key") }
   let source = delivery.eventSource
@@ -170,7 +170,7 @@ private func pressKeys(delivery: KeyboardDelivery, keyCodes: [Int32]) -> NativeA
       if down { flags.formUnion(modifier(code)) } else { flags.subtract(modifier(code)) }
       guard let key = validatedKeyCode(code),
         let event = makeKeyboardEvent(source: source, keyCode: key, keyDown: down, flags: flags) else {
-        return nativeActionError("failed to create keyboard chord event", "check key codes and Accessibility permission")
+        return nativeActionError("failed to create key combination event", "check key codes and Accessibility permission")
       }
       events.append(event)
     }
