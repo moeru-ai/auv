@@ -49,6 +49,7 @@ struct ActivateAppArgs {}
 
 #[invoke_command(
   id = "app.activate",
+  target = RequiredApplication,
   group = "app",
   description = "Bring a target macOS app to the foreground before a foreground-dependent step.",
   input = ActivateAppArgs,

@@ -45,5 +45,5 @@ fn permission_probe_rejects_target_before_platform_access() {
     cancellation: crate::InvokeCancellation::new(),
   };
   let error = futures_executor::block_on(probe_permissions_invoke_command().invoke(input)).expect_err("target must fail before probing");
-  assert_eq!(error, "app.probePermissions cannot use --target");
+  assert_eq!(error.code, crate::FailureCode::InvalidTarget);
 }

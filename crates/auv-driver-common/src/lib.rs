@@ -26,8 +26,9 @@ pub use geometry::{
 };
 pub use input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputAttempt, InputDeliveryPath,
-  InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate,
-  ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
+  InputPolicy, InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError, KeyboardInputProgress,
+  PasteTextOptions, PrepareForInputOptions, PressKeysOptions, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions,
+  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
 };
 pub use mouse::{
   MOUSE_MOTION_MAX_SEGMENTS, MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionPlan, MouseMotionSample,

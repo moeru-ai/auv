@@ -31,7 +31,7 @@ fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
   };
   let error = futures_executor::block_on(capture_region_invoke_command().invoke(invalid_live))
     .expect_err("invalid live region must fail before capture");
-  assert!(error.contains("greater than zero"));
+  assert!(error.message.contains("greater than zero"));
 }
 
 #[cfg(target_os = "macos")]

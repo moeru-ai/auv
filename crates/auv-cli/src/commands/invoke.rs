@@ -2,7 +2,7 @@ use clap::Args;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use auv_cli_invoke::{InvokeCliParse, InvokeRequest};
+use auv_cli_invoke::{InvokeCliParse, InvokeRequest, command::TargetPolicy};
 
 /// Invoke one core computer-use capability and record its run.
 #[derive(Clone, Debug, Args)]
@@ -74,10 +74,12 @@ async fn execute(
   let authority = build_tracing(project_root, store_root.as_ref())?;
   let registry = auv_cli_invoke::default_registry();
   let command = registry.resolve(&request.command_id).cloned().ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
-  // TODO(selected-invoke-dry-run): validate Device/Run selection without
-  // creating a Run once the control plane has a side-effect-free resolve
-  // operation. The current dry-run remains local to preserve its no-I/O contract.
-  let selected_context = if !selection.is_empty() && !request.dry_run {
+  // TODO(selected-invoke-dry-run): other legacy dry-runs remain local until
+  // the control plane can resolve selection without creating a Run. Keyboard
+  // validation depends on the selected driver, even for explicit global input.
+  // Use the command's shared keyboard contract so new commands cannot fall
+  // through a second, frontend-only command-ID list.
+  let selected_context = if !selection.is_empty() && (!request.dry_run || command.target == TargetPolicy::OptionalKeyboard) {
     Some(crate::commands::plugin::resolve_invoke_context(selection).await?)
   } else {
     None
@@ -108,7 +110,7 @@ async fn execute(
     && let Err(error) = context.finish(direct_result.is_ok()).await
   {
     if direct_result.is_ok() {
-      direct_result = Err(error);
+      direct_result = Err(error.into());
     } else {
       eprintln!("warning: failed to finalize the selected invoke Run: {error}");
     }

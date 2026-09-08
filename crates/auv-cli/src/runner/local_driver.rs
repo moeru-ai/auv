@@ -532,6 +532,63 @@ fn permission_status_to_proto(status: auv_driver::PermissionStatus) -> macos_pro
 
 #[tonic::async_trait]
 impl InputService for LocalInputService {
+  /// InputService::InputKeyboard -> typed action validation -> InputApi::input_keyboard.
+  /// Missing targets fail before delivery; driver failures retain partial progress.
+  async fn input_keyboard(&self, request: Request<proto::InputKeyboardRequest>) -> Result<Response<proto::InputKeyboardResponse>, Status> {
+    let request = request.into_inner();
+    let inputs = request
+      .inputs
+      .into_iter()
+      .enumerate()
+      .map(|(index, input)| {
+        keyboard_input_from_proto(input).map_err(|status| {
+          keyboard_status_with_progress(
+            status,
+            auv_driver::KeyboardInputProgress {
+              action_index: index,
+              completed: vec![],
+              completed_presses: 0,
+            },
+          )
+        })
+      })
+      .collect::<Result<Vec<_>, _>>()?;
+    let target = input_target_from_proto(&self.session, request.target)?;
+    #[cfg(target_os = "macos")]
+    {
+      let actions = self.session.input().input_keyboard(&target, inputs, request.dry_run).map_err(keyboard_input_status)?;
+      Ok(Response::new(proto::InputKeyboardResponse {
+        actions: actions.unwrap_or_default().into_iter().map(input_action_to_proto).collect::<Result<_, _>>()?,
+      }))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+      let _ = (target, inputs);
+      Err(Status::unimplemented("keyboard sequences are only available on macOS"))
+    }
+  }
+
+  /// InputService::PressKeys -> one press action -> InputService::InputKeyboard.
+  async fn press_keys(&self, request: Request<proto::PressKeysRequest>) -> Result<Response<proto::PressKeysResponse>, Status> {
+    let request = request.into_inner();
+    let mut response = self
+      .input_keyboard(Request::new(proto::InputKeyboardRequest {
+        target: request.target,
+        dry_run: request.dry_run,
+        inputs: vec![proto::KeyboardInput {
+          action: Some(proto::keyboard_input::Action::Press(proto::KeyboardPress {
+            options: request.options,
+            policy: request.policy,
+          })),
+        }],
+      }))
+      .await?
+      .into_inner();
+    Ok(Response::new(proto::PressKeysResponse {
+      action: response.actions.pop(),
+    }))
+  }
+
   type MoveMouseStream = Pin<Box<dyn Stream<Item = Result<proto::MoveMouseStreamResponse, Status>> + Send>>;
   type StreamMouseMotionStream = Pin<Box<dyn Stream<Item = Result<proto::StreamMouseMotionResponse, Status>> + Send>>;
 
@@ -655,6 +712,80 @@ impl InputService for LocalInputService {
       action: Some(input_action_to_proto(action)?),
     }))
   }
+}
+
+/// Convert the explicit recipient and bind a window to its observed owner.
+fn input_target_from_proto(
+  session: &auv_driver::LocalDriverSession,
+  target: Option<proto::InputTarget>,
+) -> Result<auv_driver::InputTarget, Status> {
+  use proto::input_target::Recipient;
+  match target.and_then(|target| target.recipient).ok_or_else(|| Status::invalid_argument("target is required"))? {
+    Recipient::Foreground(true) => Ok(auv_driver::InputTarget::Foreground),
+    Recipient::Foreground(false) => Err(Status::invalid_argument("foreground target must be true")),
+    Recipient::ApplicationBundleId(bundle_id) => Ok(auv_driver::InputTarget::Application { bundle_id }),
+    Recipient::Window(observed) => {
+      let reference = observed.r#ref.ok_or_else(|| Status::invalid_argument("window.ref is required"))?;
+      let expected = observed.process_id.filter(|pid| *pid > 0).ok_or_else(|| Status::invalid_argument("window.process_id is required"))?;
+      let window = resolve_window_ref(session, reference)?;
+      if window.process_id != Some(expected) {
+        return Err(Status::failed_precondition("target window owner changed; resolve the target again"));
+      }
+      Ok(auv_driver::InputTarget::Window(window))
+    }
+  }
+}
+
+fn keyboard_input_from_proto(input: proto::KeyboardInput) -> Result<auv_driver::KeyboardInput, Status> {
+  use proto::keyboard_input::Action;
+  Ok(match input.action.ok_or_else(|| Status::invalid_argument("keyboard action is required"))? {
+    Action::Press(press) => {
+      let options = press.options.ok_or_else(|| Status::invalid_argument("press options are required"))?;
+      auv_driver::KeyboardInput::PressKeys {
+        policy: input_policy_from_proto(press.policy)?,
+        options: auv_driver::PressKeysOptions {
+          keys: options.keys,
+          count: options.count.unwrap_or(1),
+          interval: duration_from_proto(options.interval, std::time::Duration::ZERO, "interval")?,
+          settle: duration_from_proto(options.settle, std::time::Duration::ZERO, "settle")?,
+        },
+      }
+    }
+    Action::TypeText(input) => auv_driver::KeyboardInput::TypeText {
+      text: input.text,
+      options: type_text_options_from_proto(input.options)?,
+    },
+    Action::PasteText(input) => auv_driver::KeyboardInput::PasteText {
+      policy: input_policy_from_proto(input.policy)?,
+      options: paste_text_options_from_proto(input.text, input.options)?,
+    },
+  })
+}
+
+/// Preserve the underlying gRPC category and attach typed delivery progress.
+#[cfg(target_os = "macos")]
+fn keyboard_input_status(error: auv_driver::KeyboardInputError) -> Status {
+  let message = error.to_string();
+  let status = driver_status(error.cause);
+  keyboard_status_with_progress(Status::new(status.code(), message), error.progress)
+}
+
+fn keyboard_status_with_progress(status: Status, progress: auv_driver::KeyboardInputProgress) -> Status {
+  use prost::Message;
+  let completed = match progress.completed.into_iter().map(input_action_to_proto).collect::<Result<Vec<_>, _>>() {
+    Ok(completed) => completed,
+    Err(error) => return error,
+  };
+  let action_index = match u32::try_from(progress.action_index) {
+    Ok(index) => index,
+    Err(_) => return Status::internal("keyboard action index exceeds the wire range"),
+  };
+  let details = proto::KeyboardInputProgress {
+    completed,
+    action_index: Some(action_index),
+    completed_presses: progress.completed_presses,
+  };
+  Status::with_details(status.code(), status.message(), details.encode_to_vec().into())
 }
 
 fn resolve_window_ref(session: &auv_driver::LocalDriverSession, window_ref: proto::WindowRef) -> Result<auv_driver::Window, Status> {

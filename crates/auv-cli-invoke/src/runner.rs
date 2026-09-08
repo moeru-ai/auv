@@ -30,41 +30,25 @@ where
   }
 }
 
-pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeCommandResult {
+pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+  if let Some(command) = crate::default_registry().resolve(&input.command_id) {
+    command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
+  }
+  if matches!(input.command_id.as_str(), "input.key" | "input.keys" | "input.keyboard" | "input.typeText" | "input.pasteText") {
+    let keyboard = crate::commands::input::decode_keyboard_input(&input)
+      .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+    crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
+    return execute_keyboard(input, keyboard, context).await;
+  }
+
   let command_id = input.command_id.as_str();
-  if command_id == "app.probePermissions" && input.target.is_some() {
-    return Err("app.probePermissions cannot use --target".to_string());
-  }
-  if command_id == "app.activate" && input.application_target()?.is_none_or(|target| target.trim().is_empty()) {
-    return Err("app.activate requires --target app:".to_string());
-  }
-  if matches!(command_id, "input.focusText" | "input.axFocusText")
-    && input.application_target()?.is_none_or(|target| target.trim().is_empty())
-  {
-    return Err(format!("{command_id} requires --target"));
-  }
-  if command_id.starts_with("mediaControl.") && input.target.is_some() {
-    return Err(if command_id == "mediaControl.nowPlaying" {
-      "mediaControl.nowPlaying cannot use --target; the macOS now-playing state is system-wide".to_string()
-    } else {
-      format!("{command_id} cannot use --target; macOS media controls are system-wide")
-    });
-  }
-  if command_id.starts_with("overlay.") && input.target.is_some() {
-    return Err(format!("{command_id} cannot use --target; overlays use global screen coordinates"));
-  }
   if command_id.starts_with("overlay.") {
     let plan = crate::commands::overlay::plan_overlay(&input)?;
     if input.dry_run || !input.overlay_enabled()? {
-      return crate::commands::overlay::selected_overlay_output(&plan, false);
+      return crate::commands::overlay::selected_overlay_output(&plan, false).map_err(Into::into);
     }
   }
-  if matches!(command_id, "input.typeText" | "input.pasteText" | "input.key") && input.target.is_some() {
-    return Err(format!("{command_id} cannot use --target until typed input target activation is available"));
-  }
-  if matches!(command_id, "screen.findText" | "screen.waitForText" | "screen.clickText" | "screen.captureRegion") && input.target.is_some() {
-    return Err(format!("{command_id} cannot use --target until typed target activation is available"));
-  }
+
   let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
   let run = auv.run(Default::default()).await.map_err(|error| format!("resolve selected Run failed: {error}"))?;
   let runner = run
@@ -72,7 +56,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     .await
     .map_err(|error| format!("route core Runner for {command_id} failed: {error}"))?;
 
-  match command_id {
+  let result = match command_id {
     "app.activate" => {
       let target = input.application_target()?.expect("validated target").trim();
       runner
@@ -356,48 +340,6 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       }
       .await
     }
-    "input.typeText" => match input.inputs.get("text").cloned() {
-      None => Err("input.typeText omitted its typed text argument".to_string()),
-      Some(text) => runner
-        .input()
-        .type_text(text, auv_driver::TypeTextOptions::default())
-        .await
-        .map_err(|status| format!("InputService/TypeText failed: {status}"))
-        .and_then(|action| {
-          crate::emit_input_action_result(&action);
-          crate::commands::input::input_action_output(&action)
-        }),
-    },
-    "input.pasteText" => match input.inputs.get("text").cloned() {
-      None => Err("input.pasteText omitted its typed text argument".to_string()),
-      Some(text) => runner
-        .input()
-        .paste_text(auv_driver::PasteTextOptions {
-          text,
-          ..Default::default()
-        })
-        .await
-        .map_err(|status| format!("InputService/PasteText failed: {status}"))
-        .and_then(|action| {
-          crate::emit_input_action_result(&action);
-          crate::commands::input::input_action_output(&action)
-        }),
-    },
-    "input.key" => match input.inputs.get("key").cloned() {
-      None => Err("input.key omitted its typed key argument".to_string()),
-      Some(key) => runner
-        .input()
-        .press_key(auv_driver::KeyPressOptions {
-          key: key.clone(),
-          settle: std::time::Duration::ZERO,
-        })
-        .await
-        .map_err(|status| format!("InputService/PressKey failed: {status}"))
-        .and_then(|action| {
-          crate::emit_input_action_result(&action);
-          crate::commands::input::press_key_output(&action, &key)
-        }),
-    },
     "input.moveMouse" => {
       async {
         let point = selected_screen_point(&input, "input.moveMouse")?;
@@ -421,7 +363,8 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     }
     "input.clickPoint" => selected_click_point(&input, &runner).await,
     _ => unreachable!("typed Runner adapter was selected above"),
-  }
+  };
+  result.map_err(Into::into)
 }
 
 async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::client::runner::RunnerClient) -> crate::InvokeCommandResult {
@@ -577,7 +520,6 @@ fn selected_screen_region(input: &crate::InvokeCommandInput) -> Result<auv_drive
 
 fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_driver::ClickOptions, String> {
   let command_id = input.command_id.as_str();
-
   let policy = match input.inputs.get("input-policy").map(String::as_str) {
     None if command_id == "screen.clickText" => auv_driver::InputPolicy::ForegroundPreferred,
     None | Some("background-preferred") => auv_driver::InputPolicy::BackgroundPreferred,
@@ -651,3 +593,33 @@ fn selected_window_selector(input: &crate::InvokeCommandInput) -> auv_driver::Wi
 #[cfg(test)]
 #[path = "runner_test.rs"]
 mod tests;
+
+// Selection happens on the chosen Runner; a target-bound RPC never falls back
+// to a local driver or an unqualified global keyboard RPC.
+async fn execute_keyboard(
+  input: crate::InvokeCommandInput,
+  keyboard: Vec<auv_driver::KeyboardInput>,
+  context: auv::AuvContext,
+) -> crate::InvokeExecutionResult {
+  let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
+  let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
+
+  let target = match input.target.as_ref() {
+    None => auv_driver::InputTarget::Foreground,
+    Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
+      bundle_id: id.clone(),
+    },
+    Some(crate::ExecutionTarget::Window { id }) => {
+      auv_driver::InputTarget::Window(runner.windows().list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(
+        || auv_driver::DriverError::NotFound {
+          target: format!("window:{id}"),
+        },
+      )?)
+    }
+    Some(crate::ExecutionTarget::Display { .. }) => unreachable!("target policy validated"),
+  };
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let result = runner.input().input_keyboard(&target, keyboard, input.dry_run).await.map_err(Into::into);
+  crate::commands::input::keyboard_output(&input, result)
+}

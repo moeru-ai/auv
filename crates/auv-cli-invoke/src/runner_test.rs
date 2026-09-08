@@ -17,7 +17,7 @@ async fn selected_now_playing_rejects_application_target_before_daemon_resolutio
   )
   .await
   .expect_err("now-playing target must fail before daemon resolution");
-  assert_eq!(error, "mediaControl.nowPlaying cannot use --target; the macOS now-playing state is system-wide");
+  assert_eq!(error.code, crate::FailureCode::InvalidTarget);
 }
 
 #[tokio::test]
@@ -44,7 +44,7 @@ async fn selected_media_commands_reject_application_target_before_daemon_resolut
     )
     .await
     .expect_err("target must fail before daemon resolution");
-    assert_eq!(error, format!("{command_id} cannot use --target; macOS media controls are system-wide"));
+    assert_eq!(error.code, crate::FailureCode::InvalidTarget);
   }
 }
 

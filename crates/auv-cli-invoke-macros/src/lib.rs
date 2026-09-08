@@ -15,6 +15,7 @@ struct InvokeCommandAttributes {
   group: LitStr,
   description: LitStr,
   input: Type,
+  target: Option<Ident>,
 }
 
 impl Parse for InvokeCommandAttributes {
@@ -23,6 +24,7 @@ impl Parse for InvokeCommandAttributes {
     let mut group = None;
     let mut description = None;
     let mut input_type = None;
+    let mut target = None;
 
     while !input.is_empty() {
       let key = input.parse::<Ident>()?;
@@ -31,9 +33,10 @@ impl Parse for InvokeCommandAttributes {
         "id" => set_once(&mut id, input.parse::<LitStr>()?, &key)?,
         "group" => set_once(&mut group, input.parse::<LitStr>()?, &key)?,
         "description" => set_once(&mut description, input.parse::<LitStr>()?, &key)?,
+        "target" => set_once(&mut target, input.parse::<Ident>()?, &key)?,
         "input" => set_once(&mut input_type, input.parse::<Type>()?, &key)?,
         _ => {
-          return Err(syn::Error::new(key.span(), "invoke_command unknown attribute; expected only: id, group, description, input"));
+          return Err(syn::Error::new(key.span(), "invoke_command unknown attribute; expected only: id, group, description, input, target"));
         }
       }
       if !input.is_empty() {
@@ -46,6 +49,7 @@ impl Parse for InvokeCommandAttributes {
       group: required(group, "group", input)?,
       description: required(description, "description", input)?,
       input: required(input_type, "input", input)?,
+      target,
     })
   }
 }
@@ -67,7 +71,9 @@ fn expand(attributes: InvokeCommandAttributes, function: ItemFn) -> Result<proc_
     group,
     description,
     input,
+    target,
   } = attributes;
+  let target = target.unwrap_or_else(|| Ident::new("Forbidden", group.span()));
   let namespace = namespace(&group)?;
   let function_name = &function.sig.ident;
   let export_name = format_ident!("{function_name}_invoke_command");
@@ -82,7 +88,7 @@ fn expand(attributes: InvokeCommandAttributes, function: ItemFn) -> Result<proc_
         if input.typed_args.is_none() {
           input.inputs.extend(::auv_cli_invoke::command::encode_args(&args)?);
         }
-        #function_name(input, args).await
+        #function_name(input, args).await.map_err(::auv_cli_invoke::InvokeFailure::from)
       })
     }
 
@@ -92,7 +98,7 @@ fn expand(attributes: InvokeCommandAttributes, function: ItemFn) -> Result<proc_
         ::auv_cli_invoke::InvokeNamespace::#namespace,
         #description,
         #handler_name,
-      )
+      ).with_target(::auv_cli_invoke::command::TargetPolicy::#target)
     }
   })
 }

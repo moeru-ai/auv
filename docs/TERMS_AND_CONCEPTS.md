@@ -734,6 +734,19 @@ targets instead of carrying an untyped string. The CLI spells these as
 `app:<bundle-id>`, `window:<window-id>`, and `display:<display-id>`. A bare
 `--target` value retains its historical meaning as an application id.
 
+Each command definition declares whether a target is forbidden, optional, or
+required and which resource types it accepts. CLI help and MCP metadata derive
+from that same declaration. `input.key`, `input.keys`, `input.keyboard`,
+`input.typeText`, and `input.pasteText`
+accept application/window targets on macOS. The target selects a running
+application or exact observed window; input policy separately controls foreground
+preparation. Foreground policy confirms application focus and, for window
+targets, exact window focus. Background policy does not activate. Events remain
+PID-bound with no global fallback. Neither policy selects or verifies a text control.
+Application activation, window focus, control focus, input submission, and
+semantic verification are distinct facts; see the
+[targeted keyboard contract](ai/references/invoke-cli/2026-09-08-targeted-keyboard-contract.md).
+
 Target identity and coordinate interpretation are separate decisions. For
 `input.clickPoint`, `--relative-to screen|window|display` names the coordinate
 basis. If omitted, the basis follows the target deterministically: no target is
@@ -748,6 +761,27 @@ logical screen. Window coordinates use the existing window-targeted input
 capability and retain its `InputActionResult`, input policy, attempts, fallback
 reason, and disturbance metadata. The driver capabilities remain distinct;
 the unified operation is a frontend and typed-command contract.
+
+## Keyboard Input
+
+A **key press** is one complete down/up action. A **key combination** presses multiple
+keys before releasing them in reverse order. Repetition repeats a complete
+press/release, with an explicit interval; it is distinct from holding a key
+or operating-system auto-repeat.
+
+`InputKeyboard` executes an ordered list of typed keyboard actions (press,
+Unicode text, or clipboard paste). `PressKey` and `PressKeys` are conveniences
+that use this interpreter. The released PressKey shortcut spelling remains a
+compatibility input. Target identity and per-action input policy remain separate
+from control selection and semantic verification.
+
+The entire list is validated before driver activation or delivery. A delivery
+failure stops the list and preserves the completed InputActionResults and
+failed position as KeyboardInputProgress. This progress measures submitted
+input, not completed application operations; a failed action may itself have
+partial effects. A list is not a transaction or an automatic retry unit. See
+the [keyboard contract](ai/references/invoke-cli/2026-09-08-targeted-keyboard-contract.md#keyboard-operation-hierarchy)
+for current capability limits and evidence.
 
 ## Screen
 

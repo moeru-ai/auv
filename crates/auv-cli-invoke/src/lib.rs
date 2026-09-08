@@ -19,8 +19,9 @@ pub mod runner;
 
 pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{
-  CommandGroup, CommandNode, InvokeCancellation, InvokeCancelled, InvokeCommand, InvokeCommandCliParse, InvokeCommandFuture,
-  InvokeCommandHandler, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace, TypedInvokeArgs,
+  CommandGroup, CommandNode, FailureCode, InvokeCancellation, InvokeCancelled, InvokeCommand, InvokeCommandCliParse, InvokeCommandFuture,
+  InvokeCommandHandler, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeExecutionResult, InvokeFailure, InvokeNamespace,
+  TypedInvokeArgs,
 };
 pub use commands::input::emit_input_action_result;
 pub use help::{render_command_help, render_help_index};

@@ -518,3 +518,149 @@ fn overlay_shadow_mapper_preserves_native_dimensions_and_rejects_invalid_blur() 
   assert_eq!(style.shadow.unwrap().blur_radius, 8.0);
   assert_eq!(cursor_style_from_proto(make_style(-1.0)).unwrap_err().code(), tonic::Code::InvalidArgument);
 }
+
+#[tokio::test]
+async fn keyboard_rpc_requires_explicit_recipient_before_delivery() {
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    mouse_motion: Default::default(),
+  };
+  let error = service
+    .input_keyboard(Request::new(proto::InputKeyboardRequest {
+      inputs: vec![keyboard_press_request("a", 1)],
+      ..Default::default()
+    }))
+    .await
+    .expect_err("missing target must not become global input");
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  assert_eq!(error.message(), "target is required");
+}
+
+fn keyboard_press_request(key: &str, count: u32) -> proto::KeyboardInput {
+  proto::KeyboardInput {
+    action: Some(proto::keyboard_input::Action::Press(proto::KeyboardPress {
+      policy: proto::InputPolicy::ForegroundPreferred as i32,
+      options: Some(proto::PressKeysOptions {
+        keys: vec![key.into()],
+        count: Some(count),
+        ..Default::default()
+      }),
+    })),
+  }
+}
+
+// An observed Window must retain its owner. A changed pid fails before native
+// activation, including during dry-runs.
+#[tokio::test]
+#[ignore = "requires a live macOS WindowServer"]
+#[cfg(target_os = "macos")]
+async fn targeted_keyboard_rpc_rejects_changed_window_owner() {
+  let session = auv_driver::open_local().unwrap();
+  let window = session.window().list().unwrap().into_iter().find(|window| window.process_id.is_some()).unwrap();
+  let service = LocalInputService {
+    session,
+    mouse_motion: Default::default(),
+  };
+  for dry_run in [false, true] {
+    let error = service
+      .input_keyboard(Request::new(proto::InputKeyboardRequest {
+        target: Some(proto::InputTarget {
+          recipient: Some(proto::input_target::Recipient::Window(proto::Window {
+            r#ref: Some(proto::WindowRef {
+              window_id: window.reference.id.clone(),
+            }),
+            process_id: Some(window.process_id.unwrap() + 1),
+            ..Default::default()
+          })),
+        }),
+        dry_run,
+        inputs: vec![keyboard_press_request("a", 1)],
+      }))
+      .await
+      .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.message(), "target window owner changed; resolve the target again");
+  }
+}
+
+#[tokio::test]
+#[cfg(target_os = "macos")]
+async fn keyboard_rpc_retains_failed_action_index_before_any_delivery() {
+  use prost::Message;
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    mouse_motion: Default::default(),
+  };
+  let error = service
+    .input_keyboard(Request::new(proto::InputKeyboardRequest {
+      target: Some(proto::InputTarget {
+        recipient: Some(proto::input_target::Recipient::Foreground(true)),
+      }),
+      inputs: vec![
+        keyboard_press_request("a", 1),
+        keyboard_press_request("not-a-key", 1),
+      ],
+      dry_run: false,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  let progress = proto::KeyboardInputProgress::decode(error.details()).unwrap();
+  assert_eq!(progress.action_index, Some(1));
+  assert_eq!(progress.completed_presses, 0);
+  assert!(progress.completed.is_empty());
+}
+
+#[tokio::test]
+#[cfg(target_os = "macos")]
+async fn press_keys_rpc_uses_the_keyboard_repeat_validation_contract() {
+  use prost::Message;
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    mouse_motion: Default::default(),
+  };
+  let error = service
+    .press_keys(Request::new(proto::PressKeysRequest {
+      target: Some(proto::InputTarget {
+        recipient: Some(proto::input_target::Recipient::Foreground(true)),
+      }),
+      options: Some(proto::PressKeysOptions {
+        keys: vec!["a".into()],
+        count: Some(2),
+        ..Default::default()
+      }),
+      policy: proto::InputPolicy::ForegroundPreferred as i32,
+      dry_run: true,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  assert!(error.message().contains("interval"));
+  assert_eq!(proto::KeyboardInputProgress::decode(error.details()).unwrap().action_index, Some(0));
+}
+
+#[tokio::test]
+async fn keyboard_rpc_reports_wire_validation_position_without_delivering_prefix() {
+  use prost::Message;
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    mouse_motion: Default::default(),
+  };
+  let error = service
+    .input_keyboard(Request::new(proto::InputKeyboardRequest {
+      target: Some(proto::InputTarget {
+        recipient: Some(proto::input_target::Recipient::Foreground(true)),
+      }),
+      inputs: vec![
+        keyboard_press_request("a", 1),
+        proto::KeyboardInput { action: None },
+      ],
+      dry_run: false,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  let progress = proto::KeyboardInputProgress::decode(error.details()).unwrap();
+  assert_eq!(progress.action_index, Some(1));
+  assert!(progress.completed.is_empty());
+}

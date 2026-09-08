@@ -4,6 +4,8 @@ import Foundation
 
 private func stampKeyboardTarget(_ event: CGEvent, pid: Int64, windowNumber: Int64) {
   event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
+  // Application-scoped delivery addresses only the process, not a fabricated window.
+  if windowNumber == 0 { return }
   event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowNumber)
   event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: windowNumber)
   if let eventWindowNumber = CGEventField(rawValue: 51) {
@@ -49,28 +51,6 @@ private enum KeyboardDelivery {
       event.postToPid(pid_t(pid))
     }
   }
-}
-
-private func modifierFlags(
-  command: Bool,
-  shift: Bool,
-  option: Bool,
-  control: Bool
-) -> CGEventFlags {
-  var flags = CGEventFlags()
-  if command {
-    flags.insert(.maskCommand)
-  }
-  if shift {
-    flags.insert(.maskShift)
-  }
-  if option {
-    flags.insert(.maskAlternate)
-  }
-  if control {
-    flags.insert(.maskControl)
-  }
-  return flags
 }
 
 private struct ModifierKey {
@@ -158,29 +138,8 @@ private func typeText(
   return nativeActionOk()
 }
 
-private func pressKey(delivery: KeyboardDelivery, keyCode: Int32) -> NativeActionResponse {
-  let source = delivery.eventSource
-  guard let virtualKey = validatedKeyCode(keyCode) else {
-    return nativeActionError(
-      "invalid key_code \(keyCode)",
-      "pass a key_code between 0 and \(UInt16.max)"
-    )
-  }
-  guard
-    let down = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: true),
-    let up = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: false)
-  else {
-    return nativeActionError(
-      "failed to create \(delivery.label) key press event",
-      "grant Accessibility permission and retry"
-    )
-  }
-
-  delivery.post(down)
-  delivery.post(up)
-  return nativeActionOk()
-}
-
+// Existing shortcut callers (including clipboard transactions) use the same
+// key combination event builder as explicit multi-key input. Preserve modifier order.
 private func hotkey(
   delivery: KeyboardDelivery,
   keyCode: Int32,
@@ -189,71 +148,43 @@ private func hotkey(
   option: Bool,
   control: Bool
 ) -> NativeActionResponse {
+  let codes = modifierKeys(command: command, shift: shift, option: option, control: control)
+    .map { Int32($0.keyCode) } + [keyCode]
+  return pressKeys(delivery: delivery, keyCodes: codes)
+}
+
+// A key combination prepares the complete event list before delivery. Failure to create
+// any event therefore cannot leave a modifier down. Posting itself has no OS
+// acknowledgement; a completed key combination is still unverified input submission.
+private func pressKeys(delivery: KeyboardDelivery, keyCodes: [Int32]) -> NativeActionResponse {
+  guard !keyCodes.isEmpty else { return nativeActionError("keys must not be empty", "provide at least one key") }
   let source = delivery.eventSource
-  guard let virtualKey = validatedKeyCode(keyCode) else {
-    return nativeActionError(
-      "invalid key_code \(keyCode)",
-      "pass a key_code between 0 and \(UInt16.max)"
-    )
-  }
-  let fullFlags = modifierFlags(command: command, shift: shift, option: option, control: control)
-  let modifiers = modifierKeys(command: command, shift: shift, option: option, control: control)
   var events: [CGEvent] = []
-  var currentFlags = CGEventFlags()
-
-  for modifier in modifiers {
-    currentFlags.insert(modifier.flag)
-    guard
-      let event = makeKeyboardEvent(
-        source: source,
-        keyCode: modifier.keyCode,
-        keyDown: true,
-        flags: currentFlags
-      )
-    else {
-      return nativeActionError(
-        "failed to create \(delivery.label) modifier key event",
-        "grant Accessibility permission and retry"
-      )
+  var flags = CGEventFlags()
+  let modifiers = modifierKeys(command: true, shift: true, option: true, control: true)
+  func modifier(_ code: Int32) -> CGEventFlags {
+    modifiers.first { Int32($0.keyCode) == code }?.flag ?? []
+  }
+  for (codes, down) in [(keyCodes, true), (Array(keyCodes.reversed()), false)] {
+    for code in codes {
+      if down { flags.formUnion(modifier(code)) } else { flags.subtract(modifier(code)) }
+      guard let key = validatedKeyCode(code),
+        let event = makeKeyboardEvent(source: source, keyCode: key, keyDown: down, flags: flags) else {
+        return nativeActionError("failed to create key combination event", "check key codes and Accessibility permission")
+      }
+      events.append(event)
     }
-    events.append(event)
   }
-
-  guard
-    let down = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: true, flags: fullFlags),
-    let up = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: false, flags: fullFlags)
-  else {
-    return nativeActionError(
-      "failed to create \(delivery.label) hotkey event",
-      "grant Accessibility permission and retry"
-    )
-  }
-  events.append(down)
-  events.append(up)
-
-  for modifier in modifiers.reversed() {
-    currentFlags.remove(modifier.flag)
-    guard
-      let event = makeKeyboardEvent(
-        source: source,
-        keyCode: modifier.keyCode,
-        keyDown: false,
-        flags: currentFlags
-      )
-    else {
-      return nativeActionError(
-        "failed to create \(delivery.label) modifier key event",
-        "grant Accessibility permission and retry"
-      )
-    }
-    events.append(event)
-  }
-
-  for event in events {
-    delivery.post(event)
-  }
-
+  for event in events { delivery.post(event) }
   return nativeActionOk()
+}
+
+func press_keys_foreground(key_codes: RustVec<Int32>) -> NativeActionResponse {
+  pressKeys(delivery: .foreground, keyCodes: Array(key_codes))
+}
+
+func press_keys_in_window(pid: Int64, window_number: Int64, key_codes: RustVec<Int32>) -> NativeActionResponse {
+  pressKeys(delivery: .process(pid: pid, windowNumber: window_number), keyCodes: Array(key_codes))
 }
 
 func type_text_foreground(text: RustString, inter_char_delay_ms: UInt64) -> NativeActionResponse {
@@ -261,7 +192,7 @@ func type_text_foreground(text: RustString, inter_char_delay_ms: UInt64) -> Nati
 }
 
 func press_key_foreground(key_code: Int32) -> NativeActionResponse {
-  pressKey(delivery: .foreground, keyCode: key_code)
+  pressKeys(delivery: .foreground, keyCodes: [key_code])
 }
 
 func hotkey_foreground(
@@ -295,9 +226,9 @@ func type_text_in_window(
 }
 
 func press_key_in_window(pid: Int64, window_number: Int64, key_code: Int32) -> NativeActionResponse {
-  pressKey(
+  pressKeys(
     delivery: .process(pid: pid, windowNumber: window_number),
-    keyCode: key_code
+    keyCodes: [key_code]
   )
 }
 

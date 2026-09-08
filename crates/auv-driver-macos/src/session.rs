@@ -10,8 +10,9 @@ use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
-  InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
-  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
+  InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError, PasteTextOptions, PrepareForInputOptions,
+  PressKeysOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  WindowInput,
 };
 use auv_driver_common::permission::{PermissionProbe, PermissionStatus};
 use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
@@ -229,7 +230,8 @@ impl WindowApi<'_> {
           // an app-filtered query returns. Retry with the explicit app selector
           // before reporting target_window_not_found.
           let filtered_snapshot = crate::native::window::list_windows(ListWindowsOptions::app(256, &app_selector)).map_err(backend)?;
-          let resolved_app = resolve_app_ref(&filtered_snapshot, &parsed_app_selector).map_err(backend)?;
+          let resolved_app = resolve_app_ref(&filtered_snapshot, &parsed_app_selector)
+            .map_err(|_| not_found(format!("visible application {app_selector:?}")))?;
           snapshot = filtered_snapshot;
           resolved_app
         }
@@ -372,43 +374,19 @@ impl WindowApi<'_> {
   }
 
   pub fn type_text(&self, window: &Window, text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
-    let pid = window_pid(window)?;
-    let number = window_number(window)?;
-    let background_result = type_text_in_window(pid, number, text, options);
-
-    match background_result {
-      Ok(()) => Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard)),
-      Err(background_error @ DriverError::InvalidInput { .. }) => Err(background_error),
-      Err(background_error) => match options.policy {
-        // Task 4 intentionally keeps BackgroundPreferred background-only during no-steal rollout.
-        InputPolicy::BackgroundOnly | InputPolicy::BackgroundPreferred => Err(background_error),
-        InputPolicy::ForegroundPreferred if options.allow_clipboard_fallback => {
-          let fallback_reason = background_error.to_string();
-          let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::ZERO))?;
-          let action_result = self.session.input().paste_text(PasteTextOptions {
-            text: text.to_string(),
-            replace_existing: options.replace_existing,
-            submit: options.submit,
-            settle: options.settle,
-          });
-          let restore_result = self.restore_input(lease);
-          action_result?;
-          restore_result?;
-          Ok(InputActionResult {
-            selected_path: InputDeliveryPath::ClipboardPaste,
-            attempts: vec![
-              InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboard, fallback_reason.clone()),
-              InputAttempt::success(InputDeliveryPath::ClipboardPaste),
-            ],
-            verified: false,
-            mouse_disturbance: DisturbanceLevel::None,
-            focus_disturbance: DisturbanceLevel::Foreground,
-            clipboard_disturbance: DisturbanceLevel::Temporary,
-          })
-        }
-        InputPolicy::ForegroundPreferred => Err(background_error),
-      },
-    }
+    self
+      .session
+      .input()
+      .input_keyboard(
+        &auv_driver_common::InputTarget::Window(window.clone()),
+        vec![auv_driver_common::KeyboardInput::TypeText {
+          text: text.into(),
+          options,
+        }],
+        false,
+      )
+      .map_err(|error| error.cause)
+      .map(|actions| actions.expect("non-dry input actions").remove(0))
   }
 
   fn scroll_impl(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
@@ -518,33 +496,9 @@ impl WindowApi<'_> {
     Err(window_mutation_failure(attempts))
   }
 
+  /// Prepare the exact observed window through the shared input lifecycle.
   pub fn prepare_for_input(&self, window: &Window, options: PrepareForInputOptions) -> DriverResult<InputPreparationLease> {
-    let _ = self.session;
-    if options.install_focus_guard {
-      return Err(DriverError::unsupported("focus_guard"));
-    }
-    match options.activation {
-      ActivationPolicy::NoChange | ActivationPolicy::Background => {
-        if !options.settle.is_zero() {
-          thread::sleep(options.settle);
-        }
-        Ok(InputPreparationLease::noop())
-      }
-      ActivationPolicy::FocusWithoutRaise => Err(DriverError::unsupported("focus_without_raise")),
-      ActivationPolicy::Foreground { settle } => {
-        if options.preserve_frontmost {
-          return Err(DriverError::unsupported("foreground_restore"));
-        }
-        activate_app_for_window(window)?;
-        if !settle.is_zero() {
-          thread::sleep(settle);
-        }
-        if !options.settle.is_zero() {
-          thread::sleep(options.settle);
-        }
-        Ok(InputPreparationLease::noop())
-      }
-    }
+    self.session.input().prepare_for_input(&auv_driver_common::InputTarget::Window(window.clone()), options)
   }
 
   pub fn restore_input(&self, mut lease: InputPreparationLease) -> DriverResult<()> {
@@ -588,6 +542,163 @@ impl WindowInput for WindowApi<'_> {
 }
 
 impl InputApi<'_> {
+  /// Prepare application or exact-window focus. This selects no text control
+  /// and installs no focus lease; subsequent delivery must remain PID-bound.
+  pub fn prepare_for_input(
+    &self,
+    target: &auv_driver_common::InputTarget,
+    options: PrepareForInputOptions,
+  ) -> DriverResult<InputPreparationLease> {
+    let recipient = resolve_input_target(target)?;
+    prepare_input_recipient(recipient, options)
+  }
+
+  /// Execute ordered keyboard actions. Validate the whole request before IO,
+  /// bind the recipient once, and recheck it before each action/repetition.
+  /// Returns delivery evidence only; errors retain partial progress.
+  pub fn input_keyboard(
+    &self,
+    target: &InputTarget,
+    inputs: Vec<KeyboardInput>,
+    dry_run: bool,
+  ) -> Result<Option<Vec<InputActionResult>>, KeyboardInputError> {
+    let fail = |cause, action_index, completed, completed_presses| KeyboardInputError {
+      cause,
+      progress: auv_driver_common::KeyboardInputProgress {
+        action_index,
+        completed,
+        completed_presses,
+      },
+    };
+    if inputs.is_empty() {
+      return Err(fail(invalid_input("keyboard input requires at least one action"), 0, vec![], 0));
+    }
+    // Compile every key combination before even resolving the recipient. A malformed tail
+    // cannot activate an app or deliver the prefix of a request.
+    let mut combinations = Vec::with_capacity(inputs.len());
+    for (index, input) in inputs.iter().enumerate() {
+      let validation = match input {
+        KeyboardInput::PressKeys { options, .. } => parse_key_combination(options).map(Some),
+        KeyboardInput::TypeText { options, .. } => type_text_parts(*options).map(|_| None),
+        KeyboardInput::PasteText { options, .. } => text_submit_key_code(options.submit).map(|_| None),
+      };
+      combinations.push(validation.map_err(|cause| fail(cause, index, vec![], 0))?);
+      if matches!(target, InputTarget::Foreground) && input.policy() != InputPolicy::ForegroundPreferred {
+        return Err(fail(invalid_input("background keyboard input requires an application or window target"), index, vec![], 0));
+      }
+    }
+    let recipient = match target {
+      InputTarget::Foreground => None,
+      _ => Some(resolve_input_target(target).map_err(|cause| fail(cause, 0, vec![], 0))?),
+    };
+    let mut completed = Vec::new();
+    for (index, (input, combination)) in inputs.into_iter().zip(combinations).enumerate() {
+      let foreground = input.policy() == InputPolicy::ForegroundPreferred;
+      let (count, interval, settle) = match &input {
+        KeyboardInput::PressKeys { options, .. } => (options.count, options.interval, options.settle),
+        _ => (1, Duration::ZERO, Duration::ZERO),
+      };
+      let mut combined: Option<InputActionResult> = None;
+      for repetition in 0..if dry_run { 1 } else { count } {
+        if repetition > 0 {
+          thread::sleep(interval);
+        }
+        let outcome = (|| {
+          if let Some(recipient) = recipient {
+            if dry_run || !foreground {
+              crate::native::window::validate_input_target(recipient.0, recipient.1, foreground).map_err(backend)?;
+            } else {
+              prepare_input_recipient(recipient, foreground_prepare_options(Duration::ZERO))?;
+            }
+          }
+          if dry_run {
+            return Ok(None);
+          }
+          // TODO(background-keyboard-fallback): preserve the no-steal rollout.
+          // BackgroundPreferred cannot retry after a potentially partial delivery.
+          let mut action = match &input {
+            KeyboardInput::PressKeys { .. } => {
+              crate::native::input::press_keys(recipient, combination.as_ref().expect("validated combination").clone()).map_err(backend)?;
+              match recipient {
+                Some(_) => InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard),
+                None => foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None),
+              }
+            }
+            KeyboardInput::TypeText { text, options } => match recipient {
+              Some((pid, number)) => match type_text_in_window(pid, number, text, *options) {
+                Ok(()) => InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard),
+                // Preserve opt-in clipboard fallback after text delivery failure,
+                // never after recipient preparation failure.
+                Err(error) if foreground && options.allow_clipboard_fallback => {
+                  let mut action = paste_text_impl(
+                    PasteTextOptions {
+                      text: text.clone(),
+                      replace_existing: options.replace_existing,
+                      submit: options.submit,
+                      settle: options.settle,
+                    },
+                    recipient,
+                  )?;
+                  action.attempts.insert(0, InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboard, error.to_string()));
+                  action
+                }
+                Err(error) => return Err(error),
+              },
+              None => {
+                type_text_foreground(text, *options)?;
+                foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None)
+              }
+            },
+            KeyboardInput::PasteText { options, .. } => paste_text_impl(options.clone(), recipient)?,
+          };
+          if let Some((pid, number)) = recipient {
+            action.focus_disturbance = if foreground {
+              DisturbanceLevel::Foreground
+            } else {
+              DisturbanceLevel::None
+            };
+            let scope = if number == 0 {
+              "application scope".to_string()
+            } else {
+              format!("window={number}")
+            };
+            action.attempts.last_mut().expect("successful delivery").message =
+              Some(format!("events posted to pid={pid}, {scope}; control effect not verified"));
+          }
+          Ok(Some(action))
+        })();
+        match outcome {
+          Ok(Some(action)) => match &mut combined {
+            Some(combined) => combined.attempts.extend(action.attempts),
+            None => combined = Some(action),
+          },
+          Ok(None) => {}
+          Err(cause) => return Err(fail(cause, index, completed, repetition)),
+        }
+      }
+      if !dry_run && !settle.is_zero() {
+        thread::sleep(settle);
+      }
+      if let Some(action) = combined {
+        completed.push(action);
+      }
+    }
+    Ok((!dry_run).then_some(completed))
+  }
+
+  /// Deliver one key combination using the same interpreter as a multi-action request.
+  pub fn press_keys(
+    &self,
+    target: &InputTarget,
+    options: PressKeysOptions,
+    policy: InputPolicy,
+    dry_run: bool,
+  ) -> Result<Option<InputActionResult>, KeyboardInputError> {
+    self
+      .input_keyboard(target, vec![KeyboardInput::PressKeys { options, policy }], dry_run)
+      .map(|actions| actions.map(|mut actions| actions.remove(0)))
+  }
+
   pub fn current_position(&self) -> DriverResult<Point> {
     let _ = self.session;
     let (x, y) = crate::native::pointer::current_mouse_logical_point().map_err(backend)?;
@@ -645,55 +756,19 @@ impl InputApi<'_> {
     Ok(foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
   }
 
+  /// Legacy single-key API. Shortcut strings remain accepted for released callers;
+  /// new callers use `press_keys` with explicit keys. Both use `input_keyboard`.
   pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
-    let _ = self.session;
-    // TODO(foreground-input-target-lease): see `type_text`; key presses share
-    // the same active-control foreground boundary in this slice.
-    press_key_foreground(&options)?;
-    Ok(foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+    let combination = options.into();
+    self
+      .press_keys(&InputTarget::Foreground, combination, InputPolicy::ForegroundPreferred, false)
+      .map_err(|error| error.cause)?
+      .ok_or_else(|| backend("keyboard delivery omitted its result"))
   }
 
   pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<InputActionResult> {
     let _ = self.session;
-    let _lock = acquire_clipboard_lock(Duration::from_millis(5_000))?;
-    let snapshot = crate::native::clipboard::capture_clipboard_snapshot().map_err(backend)?;
-    let result = (|| {
-      let submit_key_code = text_submit_key_code(options.submit)?;
-      crate::native::clipboard::set_clipboard_text(&options.text).map_err(backend)?;
-
-      if options.replace_existing {
-        crate::native::input::hotkey_foreground(0, true, false, false, false).map_err(backend)?;
-        thread::sleep(Duration::from_millis(50));
-        crate::native::input::press_key_foreground(51).map_err(backend)?;
-        thread::sleep(Duration::from_millis(50));
-      }
-      crate::native::input::hotkey_foreground(9, true, false, false, false).map_err(backend)?;
-      thread::sleep(Duration::from_millis(150));
-      if let Some(key_code) = submit_key_code {
-        thread::sleep(Duration::from_millis(50));
-        crate::native::input::press_key_foreground(key_code).map_err(backend)?;
-      }
-      if !options.settle.is_zero() {
-        thread::sleep(options.settle);
-      }
-      Ok(())
-    })();
-    let restore_result = crate::native::clipboard::restore_clipboard_snapshot(&snapshot).map_err(backend);
-    match (result, restore_result) {
-      (Ok(()), Ok(())) => Ok(InputActionResult {
-        selected_path: InputDeliveryPath::ClipboardPaste,
-        attempts: vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)],
-        verified: false,
-        mouse_disturbance: DisturbanceLevel::None,
-        focus_disturbance: DisturbanceLevel::Unknown,
-        clipboard_disturbance: DisturbanceLevel::Temporary,
-      }),
-      (Err(action_error), Ok(())) => Err(action_error),
-      (Ok(()), Err(restore_error)) => Err(backend(format!("pasted text but failed to restore clipboard: {restore_error}"))),
-      (Err(action_error), Err(restore_error)) => {
-        Err(backend(format!("{action_error}; additionally failed to restore clipboard: {restore_error}")))
-      }
-    }
+    paste_text_impl(options, None)
   }
 }
 
@@ -996,77 +1071,61 @@ fn type_text_foreground(text: &str, options: TypeTextOptions) -> DriverResult<()
   Ok(())
 }
 
-fn press_key_foreground(options: &KeyPressOptions) -> DriverResult<()> {
-  let key = options.key.trim();
-  if key.is_empty() {
-    return Err(invalid_input("key must not be empty"));
+/// Compile names to native virtual keys before any activation or event creation.
+/// Modifiers precede ordinary keys; aliases cannot produce duplicate key-downs.
+fn parse_key_combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
+  if options.keys.is_empty() {
+    return Err(invalid_input("keys must not be empty"));
   }
-
-  if key.contains('+') {
-    let shortcut = parse_shortcut(key)?;
-    crate::native::input::hotkey_foreground(shortcut.key_code, shortcut.command, shortcut.shift, shortcut.option, shortcut.control)
-      .map_err(backend)?;
-  } else if let Ok(key_code) = special_key_code(key) {
-    crate::native::input::press_key_foreground(key_code).map_err(backend)?;
-  } else if key.chars().count() == 1 {
-    crate::native::input::type_text_foreground(key.to_string(), 0).map_err(backend)?;
-  } else {
-    return Err(invalid_input(format!(
-      "invalid key {key}; use a special key like Return, a shortcut like cmd+f, or type_text for multi-character text"
-    )));
+  if !(1..=255).contains(&options.count) {
+    return Err(invalid_input("press count must be in 1..=255"));
   }
-
-  if !options.settle.is_zero() {
-    thread::sleep(options.settle);
+  if (options.count > 1) == options.interval.is_zero() {
+    return Err(invalid_input("repeated presses require a positive interval; a single press requires zero interval"));
   }
-  Ok(())
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct ParsedShortcut {
-  key_code: i32,
-  command: bool,
-  shift: bool,
-  option: bool,
-  control: bool,
-}
-
-fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
-  let raw_parts = shortcut.split('+').map(str::trim).filter(|part| !part.is_empty()).collect::<Vec<_>>();
-  if raw_parts.len() < 2 {
-    return Err(invalid_input(format!("invalid shortcut {shortcut}; expected a form like cmd+f or cmd+shift+p")));
-  }
-
-  let key = raw_parts.last().ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; missing key")))?;
-  let mut key_chars = key.chars();
-  let key_character = key_chars
-    .next()
-    .filter(|_| key_chars.next().is_none())
-    .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; only single-character keys are currently supported")))?;
-  let mut parsed = ParsedShortcut {
-    key_code: macos_virtual_key_code(key_character)?,
-    command: false,
-    shift: key_character.is_ascii_uppercase()
-      || matches!(
-        key_character,
-        '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '_' | '+' | '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?'
-      ),
-    option: false,
-    control: false,
-  };
-  for raw_modifier in &raw_parts[..raw_parts.len() - 1] {
-    match raw_modifier.to_ascii_lowercase().as_str() {
-      "cmd" | "command" => parsed.command = true,
-      "shift" => parsed.shift = true,
-      "alt" | "option" => parsed.option = true,
-      "ctrl" | "control" => parsed.control = true,
-      other => {
-        return Err(invalid_input(format!("invalid shortcut {shortcut}; unsupported modifier {other}")));
-      }
+  let mut modifiers = Vec::new();
+  let mut ordinary = Vec::new();
+  let mut implicit_shift = false;
+  for key in &options.keys {
+    let name = key.trim();
+    let modifier = match name.to_ascii_lowercase().as_str() {
+      "cmd" | "command" => Some(55),
+      "shift" => Some(56),
+      "alt" | "option" => Some(58),
+      "ctrl" | "control" => Some(59),
+      _ => None,
+    };
+    let code = if let Some(code) = modifier {
+      code
+    } else if let Ok(code) = special_key_code(name) {
+      code
+    } else {
+      let mut chars = name.chars();
+      let character = chars
+        .next()
+        .filter(|_| chars.next().is_none())
+        .ok_or_else(|| invalid_input(format!("invalid key {key:?}; expected one key name or ANSI character")))?;
+      implicit_shift |= character.is_ascii_uppercase()
+        || matches!(
+          character,
+          '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '_' | '+' | '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?'
+        );
+      macos_virtual_key_code(character)?
+    };
+    if modifiers.contains(&code) || ordinary.contains(&code) {
+      return Err(invalid_input(format!("duplicate key {key:?}")));
+    }
+    if modifier.is_some() {
+      modifiers.push(code);
+    } else {
+      ordinary.push(code);
     }
   }
-
-  Ok(parsed)
+  if implicit_shift && !modifiers.contains(&56) {
+    modifiers.push(56);
+  }
+  modifiers.extend(ordinary);
+  Ok(modifiers)
 }
 
 /// Maps an ANSI shortcut character to the physical key used by macOS CGEvent.
@@ -1126,6 +1185,8 @@ fn macos_virtual_key_code(character: char) -> DriverResult<i32> {
   Ok(code)
 }
 
+// Native key constants follow the macOS SDK `HIToolbox/Events.h` kVK_* values.
+// NOTICE: These are physical keys; Unicode text uses a separate native payload.
 fn special_key_code(raw: &str) -> DriverResult<i32> {
   match raw.trim().to_ascii_lowercase().as_str() {
     "return" => Ok(36),
@@ -1134,9 +1195,36 @@ fn special_key_code(raw: &str) -> DriverResult<i32> {
     "delete" | "backspace" => Ok(51),
     "escape" | "esc" => Ok(53),
     "space" => Ok(49),
-    other => Err(invalid_input(format!(
-      "invalid submit key {other}; supported values are return, enter, tab, delete, backspace, escape, and space"
-    ))),
+    "home" => Ok(115),
+    "end" => Ok(119),
+    "pageup" | "page_up" => Ok(116),
+    "pagedown" | "page_down" => Ok(121),
+    "forwarddelete" | "forward_delete" => Ok(117),
+    "left" | "arrowleft" => Ok(123),
+    "right" | "arrowright" => Ok(124),
+    "down" | "arrowdown" => Ok(125),
+    "up" | "arrowup" => Ok(126),
+    "f1" => Ok(122),
+    "f2" => Ok(120),
+    "f3" => Ok(99),
+    "f4" => Ok(118),
+    "f5" => Ok(96),
+    "f6" => Ok(97),
+    "f7" => Ok(98),
+    "f8" => Ok(100),
+    "f9" => Ok(101),
+    "f10" => Ok(109),
+    "f11" => Ok(103),
+    "f12" => Ok(111),
+    "f13" => Ok(105),
+    "f14" => Ok(107),
+    "f15" => Ok(113),
+    "f16" => Ok(106),
+    "f17" => Ok(64),
+    "f18" => Ok(79),
+    "f19" => Ok(80),
+    "f20" => Ok(90),
+    other => Err(invalid_input(format!("unknown key name {other}"))),
   }
 }
 
@@ -1445,7 +1533,71 @@ fn foreground_prepare_options(settle: Duration) -> PrepareForInputOptions {
   }
 }
 
+/// Zero denotes application scope only at the native event boundary. Do not
+/// stamp a window id for application-scoped events.
+fn resolve_input_target(target: &auv_driver_common::InputTarget) -> DriverResult<(i64, i64)> {
+  match target {
+    InputTarget::Foreground => Err(invalid_input("foreground input has no resolved recipient")),
+    auv_driver_common::InputTarget::Window(window) => {
+      let pid = window_pid(window)?;
+      let number = window_number(window)?;
+      if pid <= 0 || pid > i64::from(i32::MAX) || number <= 0 || number > i64::from(u32::MAX) {
+        return Err(invalid_input("window input requires a positive native window id and process id"));
+      }
+      Ok((pid, number))
+    }
+    auv_driver_common::InputTarget::Application { bundle_id } => {
+      if bundle_id.trim().is_empty() {
+        return Err(invalid_input("application bundle id must not be empty"));
+      }
+      let pid = crate::native::window::running_application_pid(bundle_id).map_err(backend)?;
+      match pid {
+        0 => Err(not_found(format!("running application {bundle_id:?}"))),
+        -1 => Err(invalid_input(format!("application {bundle_id:?} has multiple running instances; select a window"))),
+        pid if pid > 0 => Ok((pid, 0)),
+        _ => Err(backend("invalid running application pid")),
+      }
+    }
+  }
+}
+
+fn prepare_input_recipient((pid, number): (i64, i64), options: PrepareForInputOptions) -> DriverResult<InputPreparationLease> {
+  if options.install_focus_guard {
+    return Err(DriverError::unsupported("focus_guard"));
+  }
+  match options.activation {
+    ActivationPolicy::FocusWithoutRaise => return Err(DriverError::unsupported("focus_without_raise")),
+    ActivationPolicy::Foreground { settle } => {
+      if options.preserve_frontmost {
+        return Err(DriverError::unsupported("foreground_restore"));
+      }
+      crate::native::window::validate_input_target(pid, number, true).map_err(backend)?;
+      activate_process(pid)?;
+      crate::native::window::confirm_input_focus(pid, number).map_err(backend)?;
+      if !settle.is_zero() {
+        thread::sleep(settle);
+      }
+    }
+    ActivationPolicy::NoChange | ActivationPolicy::Background => {
+      crate::native::window::validate_input_target(pid, number, false).map_err(backend)?;
+    }
+  }
+  if !options.settle.is_zero() {
+    thread::sleep(options.settle);
+  }
+  Ok(InputPreparationLease::noop())
+}
+
+fn activate_process(pid: i64) -> DriverResult<()> {
+  run_osascript(&[&format!(
+    "tell application \"System Events\" to set frontmost of first application process whose unix id is {pid} to true"
+  )])
+}
+
 fn activate_app_for_window(window: &Window) -> DriverResult<()> {
+  if let Some(pid) = window.process_id {
+    return activate_process(i64::from(pid));
+  }
   run_osascript(&[&foreground_activation_script(window)?])
 }
 
@@ -1902,6 +2054,50 @@ fn invalid_input(message: impl std::fmt::Display) -> DriverError {
 fn not_found(target: impl std::fmt::Display) -> DriverError {
   DriverError::NotFound {
     target: target.to_string(),
+  }
+}
+
+fn paste_text_impl(options: PasteTextOptions, target: Option<(i64, i64)>) -> DriverResult<InputActionResult> {
+  let _lock = acquire_clipboard_lock(Duration::from_millis(5_000))?;
+  let snapshot = crate::native::clipboard::capture_clipboard_snapshot().map_err(backend)?;
+  let result = (|| {
+    let submit_key_code = text_submit_key_code(options.submit)?;
+    crate::native::clipboard::set_clipboard_text(&options.text).map_err(backend)?;
+
+    if options.replace_existing {
+      crate::native::input::press_keys(target, vec![55, 0]).map_err(backend)?;
+      thread::sleep(Duration::from_millis(50));
+      crate::native::input::press_keys(target, vec![51]).map_err(backend)?;
+      thread::sleep(Duration::from_millis(50));
+    }
+    // Built-in clipboard shortcuts already have known virtual keys; use the
+    // same combination event builder without reparsing shortcut strings.
+    crate::native::input::press_keys(target, vec![55, 9]).map_err(backend)?;
+    thread::sleep(Duration::from_millis(150));
+    if let Some(key_code) = submit_key_code {
+      thread::sleep(Duration::from_millis(50));
+      crate::native::input::press_keys(target, vec![key_code]).map_err(backend)?;
+    }
+    if !options.settle.is_zero() {
+      thread::sleep(options.settle);
+    }
+    Ok(())
+  })();
+  let restore_result = crate::native::clipboard::restore_clipboard_snapshot(&snapshot).map_err(backend);
+  match (result, restore_result) {
+    (Ok(()), Ok(())) => Ok(InputActionResult {
+      selected_path: InputDeliveryPath::ClipboardPaste,
+      attempts: vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)],
+      verified: false,
+      mouse_disturbance: DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::Unknown,
+      clipboard_disturbance: DisturbanceLevel::Temporary,
+    }),
+    (Err(action_error), Ok(())) => Err(action_error),
+    (Ok(()), Err(restore_error)) => Err(backend(format!("pasted text but failed to restore clipboard: {restore_error}"))),
+    (Err(action_error), Err(restore_error)) => {
+      Err(backend(format!("{action_error}; additionally failed to restore clipboard: {restore_error}")))
+    }
   }
 }
 

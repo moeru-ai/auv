@@ -104,6 +104,28 @@ pub fn scroll_window_point(
   Err("macOS native window-targeted scroll is unsupported on this target".to_string())
 }
 
+/// Submit a complete key combination. The Swift backend creates every down/up event
+/// before posting and releases keys in reverse order.
+pub fn press_keys(target: Option<(i64, i64)>, key_codes: Vec<i32>) -> AuvResult<()> {
+  #[cfg(test)]
+  if let Some(result) = tests::record_combination(target, &key_codes) {
+    return result;
+  }
+  #[cfg(target_os = "macos")]
+  {
+    let response = match target {
+      Some((pid, number)) => super::binding::ffi::press_keys_in_window(pid, number, key_codes),
+      None => super::binding::ffi::press_keys_foreground(key_codes),
+    };
+    action_result("press_keys", response)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (target, key_codes);
+    Err("macOS native key combinations are unsupported on this target".into())
+  }
+}
+
 #[cfg(target_os = "macos")]
 pub fn press_key_in_window(pid: i64, window_number: i64, key_code: i32) -> AuvResult<()> {
   action_result("press_key_in_window", native_press_key_in_window(pid, window_number, key_code))
@@ -161,10 +183,10 @@ pub fn hotkey_foreground(_key_code: i32, _command: bool, _shift: bool, _option: 
 }
 
 #[cfg(target_os = "macos")]
-fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<()> {
+pub(super) fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<()> {
   super::error::native_result(operation, response.ok.then_some(()), response.error_message, response.recovery_hint)
 }
 
 #[cfg(test)]
 #[path = "input_test.rs"]
-mod tests;
+pub(crate) mod tests;

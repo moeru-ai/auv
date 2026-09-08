@@ -33,7 +33,7 @@ fn scan_frame_requires_fixture_dir() {
   }))
   .expect_err("missing fixture-dir should fail");
 
-  assert!(err.contains("fixture-dir"));
+  assert!(err.message.contains("fixture-dir"));
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn scan_coverage_requires_fixture_dir() {
   }))
   .expect_err("missing fixture-dir should fail");
 
-  assert!(err.contains("fixture-dir"));
+  assert!(err.message.contains("fixture-dir"));
 }
 
 #[test]

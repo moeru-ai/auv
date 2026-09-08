@@ -315,27 +315,6 @@ mod no_steal_tests {
   }
 
   #[test]
-  fn parse_shortcut_normalizes_supported_modifiers() {
-    let parsed = parse_shortcut("cmd+shift+p").expect("shortcut");
-
-    assert_eq!(
-      parsed,
-      ParsedShortcut {
-        key_code: 35,
-        command: true,
-        shift: true,
-        option: false,
-        control: false,
-      }
-    );
-  }
-
-  #[test]
-  fn parse_shortcut_rejects_multi_character_key() {
-    assert!(matches!(parse_shortcut("cmd+return"), Err(DriverError::InvalidInput { .. })));
-  }
-
-  #[test]
   fn input_api_exposes_explicit_global_hid_scroll_method() {
     // NOTICE(compile-only-api-check): nested fn is type-checked but never called (no HID side effects).
     fn assert_api_compiles(session: MacosDriverSession) {
@@ -664,5 +643,434 @@ mod no_steal_tests {
     let message = error.to_string();
     assert!(message.contains("stale window"));
     assert!(message.contains("foreground fallback deferred"));
+  }
+}
+
+#[test]
+fn targeted_keyboard_rejects_invalid_key_before_window_activation() {
+  let session = MacosDriverSession { _private: () };
+  let window = resolve_from_observed_windows(
+    &observed_windows(vec![observed_window(
+      999999,
+      999999,
+      "com.invalid",
+      "Invalid",
+      "",
+      100,
+      100,
+    )]),
+    &SelectWindow::main_visible(),
+  )
+  .unwrap();
+  let error = session
+    .input()
+    .input_keyboard(
+      &auv_driver_common::InputTarget::Window(window),
+      vec![auv_driver_common::KeyboardInput::PressKeys {
+        policy: InputPolicy::ForegroundPreferred,
+        options: PressKeysOptions {
+          keys: vec!["cmd".into(), "invalid".into()],
+          ..Default::default()
+        },
+      }],
+      false,
+    )
+    .unwrap_err();
+  assert!(matches!(error.cause, DriverError::InvalidInput { .. }), "{error}");
+}
+
+// ROOT CAUSE:
+//
+// A missing application survived the app-filtered retry as a String error,
+// which WindowApi mapped to Backend. Callers need NotFound to distinguish a
+// stale target from a failed platform service.
+#[test]
+#[ignore = "requires a live macOS WindowServer"]
+fn missing_application_keyboard_target_is_not_found() {
+  let session = MacosDriverSession { _private: () };
+  let error =
+    session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("ai.moeru.auv.nonexistent-input-test"))).unwrap_err();
+  assert!(matches!(error, DriverError::NotFound { .. }), "{error}");
+}
+
+// Application targets need no AX window. Background delivery must leave
+// foreground ownership unchanged and must not be rejected as foreground-only.
+#[test]
+#[ignore = "requires a running NetEaseMusic application and macOS Accessibility"]
+fn background_keyboard_delivery_does_not_activate() {
+  let session = MacosDriverSession { _private: () };
+  let before = crate::native::window::list_windows(ListWindowsOptions::all_visible(1)).unwrap().frontmost_app_bundle_id;
+  for policy in [
+    InputPolicy::BackgroundOnly,
+    InputPolicy::BackgroundPreferred,
+  ] {
+    let action = session
+      .input()
+      .input_keyboard(
+        &auv_driver_common::InputTarget::Application {
+          bundle_id: "com.netease.163music".into(),
+        },
+        vec![auv_driver_common::KeyboardInput::PressKeys {
+          policy,
+          options: PressKeysOptions {
+            keys: vec!["Escape".into()],
+            ..Default::default()
+          },
+        }],
+        false,
+      )
+      .unwrap()
+      .unwrap()
+      .remove(0);
+    assert_eq!(action.focus_disturbance, DisturbanceLevel::None);
+    assert!(!action.verified);
+  }
+  let after = crate::native::window::list_windows(ListWindowsOptions::all_visible(1)).unwrap().frontmost_app_bundle_id;
+  assert_eq!(before, after);
+}
+
+// ROOT CAUSE: foreground preparation only activated the owner, so a stale
+// window id could pass preparation and leave a different window receiving input.
+#[test]
+#[ignore = "requires a live macOS WindowServer"]
+fn foreground_preparation_rejects_stale_window() {
+  let session = MacosDriverSession { _private: () };
+  let mut window = session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("com.netease.163music"))).unwrap();
+  window.reference.id = "999999999".into();
+  session
+    .window()
+    .prepare_for_input(&window, foreground_prepare_options(Duration::ZERO))
+    .expect_err("a stale window must fail before foreground preparation succeeds");
+  session
+    .window()
+    .type_text(
+      &window,
+      "must not reach clipboard",
+      TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        allow_clipboard_fallback: true,
+        ..Default::default()
+      },
+    )
+    .expect_err("preparation failure must also stop explicitly enabled clipboard fallback");
+}
+
+#[test]
+fn zero_window_id_cannot_become_application_scope() {
+  let session = MacosDriverSession { _private: () };
+  let window = resolve_from_observed_windows(
+    &observed_windows(vec![observed_window(
+      0,
+      999999,
+      "com.invalid",
+      "Invalid",
+      "",
+      100,
+      100,
+    )]),
+    &SelectWindow::main_visible(),
+  )
+  .unwrap();
+  let error = session
+    .window()
+    .type_text(
+      &window,
+      "",
+      TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+    )
+    .unwrap_err();
+  assert!(matches!(error, DriverError::InvalidInput { .. }), "{error}");
+  let error = session
+    .input()
+    .prepare_for_input(&auv_driver_common::InputTarget::Window(window), foreground_prepare_options(Duration::ZERO))
+    .unwrap_err();
+  assert!(matches!(error, DriverError::InvalidInput { .. }), "{error}");
+}
+
+// ROOT CAUSE:
+// A multi-action request must validate its tail before activation or delivery.
+// Otherwise a bad later key can leave a partially executed workflow.
+#[test]
+fn keyboard_sequence_validates_later_keys_before_resolving_target() {
+  let session = MacosDriverSession { _private: () };
+  let error = session
+    .input()
+    .input_keyboard(
+      &auv_driver_common::InputTarget::Application {
+        bundle_id: "ai.moeru.auv.nonexistent-keyboard-test".into(),
+      },
+      vec![
+        auv_driver_common::KeyboardInput::PressKeys {
+          options: auv_driver_common::PressKeysOptions {
+            keys: vec!["a".into()],
+            ..Default::default()
+          },
+          policy: InputPolicy::ForegroundPreferred,
+        },
+        auv_driver_common::KeyboardInput::PressKeys {
+          options: auv_driver_common::PressKeysOptions {
+            keys: vec!["not-a-key".into()],
+            ..Default::default()
+          },
+          policy: InputPolicy::ForegroundPreferred,
+        },
+      ],
+      false,
+    )
+    .unwrap_err();
+  assert!(matches!(error.cause, DriverError::InvalidInput { .. }));
+  assert_eq!(error.progress.action_index, 1);
+  assert_eq!(error.progress.completed_presses, 0);
+  assert!(error.progress.completed.is_empty());
+}
+
+#[test]
+fn keyboard_combinations_repeat_in_order_and_keep_special_keys_with_modifiers() {
+  use crate::native::input::tests::with_combination_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_combination_recorder(None, || {
+    session.input().input_keyboard(
+      &InputTarget::Foreground,
+      vec![
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["cmd".into(), "return".into()],
+            count: 2,
+            interval: Duration::from_millis(1),
+            ..Default::default()
+          },
+        },
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["a".into(), "s".into(), "d".into()],
+            count: 3,
+            interval: Duration::from_millis(1),
+            ..Default::default()
+          },
+        },
+      ],
+      false,
+    )
+  });
+  let actions = result.unwrap().unwrap();
+  assert_eq!(
+    recorder.calls,
+    vec![
+      (None, vec![55, 36]),
+      (None, vec![55, 36]),
+      (None, vec![0, 1, 2]),
+      (None, vec![0, 1, 2]),
+      (None, vec![0, 1, 2]),
+    ]
+  );
+  assert_eq!(actions.len(), 2);
+  assert_eq!(actions[0].attempts.len(), 2);
+  assert_eq!(actions[1].attempts.len(), 3);
+  assert!(actions.iter().all(|action| action.attempts.iter().all(|attempt| attempt.succeeded) && !action.verified));
+}
+
+// ROOT CAUSE:
+// Restarting the whole request after a later failed repetition duplicates input.
+// The result must retain completed actions, completed repetitions, and the cause.
+#[test]
+fn keyboard_sequence_stops_at_native_failure_and_keeps_partial_progress() {
+  use crate::native::input::tests::with_combination_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_combination_recorder(Some(2), || {
+    session.input().input_keyboard(
+      &InputTarget::Foreground,
+      vec![
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["a".into()],
+            ..Default::default()
+          },
+        },
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["b".into()],
+            count: 3,
+            interval: Duration::from_millis(1),
+            ..Default::default()
+          },
+        },
+        KeyboardInput::PressKeys {
+          policy: InputPolicy::ForegroundPreferred,
+          options: PressKeysOptions {
+            keys: vec!["c".into()],
+            ..Default::default()
+          },
+        },
+      ],
+      false,
+    )
+  });
+  let error = result.unwrap_err();
+  assert!(matches!(error.cause, DriverError::Backend { .. }));
+  assert_eq!(error.progress.action_index, 1);
+  assert_eq!(error.progress.completed.len(), 1);
+  assert_eq!(error.progress.completed_presses, 1);
+  assert!(error.progress.completed[0].attempts[0].succeeded);
+  assert_eq!(recorder.calls, vec![(None, vec![0]), (None, vec![11]), (None, vec![11])]);
+}
+
+#[test]
+fn keyboard_dry_run_does_not_post_or_wait_for_repetitions() {
+  use crate::native::input::tests::with_combination_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_combination_recorder(None, || {
+    session.input().press_keys(
+      &InputTarget::Foreground,
+      PressKeysOptions {
+        keys: vec!["cmd".into(), "shift".into(), "p".into()],
+        count: 3,
+        interval: Duration::from_secs(3600),
+        settle: Duration::from_secs(3600),
+      },
+      InputPolicy::ForegroundPreferred,
+      true,
+    )
+  });
+  assert!(result.unwrap().is_none());
+  assert!(recorder.calls.is_empty());
+}
+
+#[test]
+fn keyboard_combination_rejects_duplicate_aliases_and_invalid_repeat_counts() {
+  let session = MacosDriverSession { _private: () };
+  for options in [
+    PressKeysOptions {
+      keys: vec!["cmd".into(), "command".into(), "a".into()],
+      ..Default::default()
+    },
+    PressKeysOptions {
+      keys: vec!["a".into()],
+      count: 0,
+      ..Default::default()
+    },
+    PressKeysOptions {
+      keys: vec!["a".into()],
+      count: 256,
+      interval: Duration::from_millis(1),
+      ..Default::default()
+    },
+    PressKeysOptions::default(),
+  ] {
+    let error = session.input().press_keys(&InputTarget::Foreground, options, InputPolicy::ForegroundPreferred, true).unwrap_err();
+    assert!(matches!(error.cause, DriverError::InvalidInput { .. }));
+    assert!(error.progress.completed.is_empty());
+  }
+}
+
+#[test]
+fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
+  use crate::native::input::tests::with_combination_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_combination_recorder(None, || {
+    session.input().press_keys(
+      &InputTarget::Foreground,
+      PressKeysOptions {
+        keys: vec!["ctrl".into(), "arrowleft".into(), "f12".into()],
+        ..Default::default()
+      },
+      InputPolicy::ForegroundPreferred,
+      false,
+    )
+  });
+  result.unwrap();
+  assert_eq!(recorder.calls, vec![(None, vec![59, 123, 111])]);
+}
+
+// https://github.com/moeru-ai/auv/pull/177
+// Exercise the real validate -> System Events activation -> focus confirmation
+// chain against the running AppKit fixture, without posting input events.
+#[test]
+#[ignore = "requires the keyboard AppKit fixture and Accessibility permission"]
+fn repeated_preparation_keeps_running_fixture_identity() {
+  let session = MacosDriverSession { _private: () };
+  let target = InputTarget::Application {
+    bundle_id: "ai.moeru.auv.keyboard-validation-fixture".into(),
+  };
+  let (pid, _) = resolve_input_target(&target).unwrap();
+  for iteration in 0..30 {
+    let result = session.input().prepare_for_input(&target, foreground_prepare_options(Duration::ZERO));
+    assert!(
+      result.is_ok(),
+      "preparation {iteration}: {result:?}; original process alive: {}; fresh recipient: {:?}",
+      process_is_alive(pid as u32),
+      resolve_input_target(&target)
+    );
+  }
+}
+
+// https://github.com/moeru-ai/auv/pull/177
+#[test]
+fn legacy_key_entry_preserves_modifier_order_and_supports_named_keys() {
+  use crate::native::input::tests::with_combination_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorded) = with_combination_recorder(None, || {
+    session.input().press_key(KeyPressOptions {
+      key: "cmd+shift+p".into(),
+      ..Default::default()
+    })?;
+    session.input().press_key(KeyPressOptions {
+      key: "cmd+return".into(),
+      ..Default::default()
+    })
+  });
+  assert!(result.is_ok(), "{result:?}");
+  assert_eq!(recorded.calls, vec![(None, vec![55, 56, 35]), (None, vec![55, 36])]);
+}
+
+// https://github.com/moeru-ai/auv/pull/177
+// ROOT CAUSE:
+// Workspace entries can outlive a process until AppKit updates its snapshot.
+// Warming the lookup before terminating our child checks kernel liveness too.
+#[test]
+#[ignore = "requires AUV_KEYBOARD_FIXTURE_EXECUTABLE and no other fixture instance"]
+fn preparation_rejects_exited_application_and_resolves_restarted_instance() {
+  struct Fixture(std::process::Child, std::path::PathBuf);
+  impl Drop for Fixture {
+    fn drop(&mut self) {
+      let _ = self.0.kill();
+      let _ = self.0.wait();
+      let _ = std::fs::remove_file(&self.1);
+    }
+  }
+  let executable = std::env::var_os("AUV_KEYBOARD_FIXTURE_EXECUTABLE").expect("fixture executable");
+  let output = std::env::temp_dir().join(format!("auv-keyboard-exit-{}.json", std::process::id()));
+  let _ = std::fs::remove_file(&output);
+  let mut fixture = Fixture(Command::new(&executable).arg(&output).spawn().unwrap(), output);
+  let session = MacosDriverSession { _private: () };
+  let target = InputTarget::Application {
+    bundle_id: "ai.moeru.auv.keyboard-validation-fixture".into(),
+  };
+  for generation in 0..2 {
+    if generation > 0 {
+      std::fs::remove_file(&fixture.1).unwrap();
+      fixture.0 = Command::new(&executable).arg(&fixture.1).spawn().unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !fixture.1.exists() {
+      assert!(std::time::Instant::now() < deadline, "fixture did not publish ready state");
+      assert!(fixture.0.try_wait().unwrap().is_none(), "fixture exited before ready");
+      thread::sleep(Duration::from_millis(10));
+    }
+    let recipient = resolve_input_target(&target).unwrap();
+    assert_eq!(recipient.0, i64::from(fixture.0.id()), "must resolve the new instance, not a cached PID");
+    for _ in 0..10 {
+      session.input().prepare_for_input(&target, foreground_prepare_options(Duration::ZERO)).unwrap();
+    }
+    fixture.0.kill().unwrap();
+    fixture.0.wait().unwrap();
+    let error = session.input().prepare_for_input(&target, foreground_prepare_options(Duration::ZERO)).unwrap_err();
+    assert!(matches!(error, DriverError::NotFound { .. }), "{error}");
   }
 }
