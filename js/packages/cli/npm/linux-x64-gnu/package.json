@@ -1,6 +1,6 @@
 {
   "name": "@auv-js/cli-linux-x64-gnu",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "cpu": [
     "x64"
   ],

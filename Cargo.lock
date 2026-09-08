@@ -357,7 +357,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "auv"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-api-client",
  "auv-api-proto",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "auv-api-client"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-api-proto",
  "http",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "auv-api-proto"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "prost",
  "prost-reflect",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "auv-api-server"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv",
  "auv-api-proto",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "auv-apple-music"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "auv-apple-notes"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "auv-apple-textedit"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-cli-invoke",
  "auv-driver",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv",
  "auv-api-client",
@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-common"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-cli-common-macros",
  "comfy-table",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-common-macros"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-invoke"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anstream",
  "anstyle",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "auv-cli-invoke-macros"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -580,7 +580,7 @@ dependencies = [
 
 [[package]]
 name = "auv-daemon"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv",
  "auv-api-client",
@@ -615,7 +615,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver-common",
  "auv-driver-linux",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-common"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "image",
  "serde",
@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-linux"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "async-io",
  "auv-driver-common",
@@ -653,7 +653,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-macos"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver-common",
  "auv-driver-overlay",
@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver-overlay-common",
  "auv-driver-overlay-macos",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay-common"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver-common",
  "serde",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay-macos"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver-common",
  "auv-driver-overlay-common",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-overlay-windows"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver-common",
  "auv-driver-overlay-common",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "auv-driver-windows"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver-common",
  "auv-driver-overlay",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "auv-file"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "serde",
  "serde_json",
@@ -728,7 +728,7 @@ dependencies = [
 
 [[package]]
 name = "auv-game-balatro"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv",
  "auv-api-client",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "auv-game-minecraft"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-file",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "auv-game-osu"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -801,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "auv-gnome-control-center"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-driver-linux",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "auv-godot"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-driver-windows",
@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "auv-inference-common"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "image",
  "serde",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "auv-inference-ort"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-inference-common",
  "ndarray",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "auv-inference-ultralytics"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-inference-common",
  "image",
@@ -856,7 +856,7 @@ dependencies = [
 
 [[package]]
 name = "auv-media-macos"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-tracing",
  "clap",
@@ -866,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "auv-netease-music"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv",
  "auv-api-client",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "auv-qqmusic"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
@@ -912,11 +912,11 @@ dependencies = [
 
 [[package]]
 name = "auv-query-readiness"
-version = "0.0.15"
+version = "0.0.16"
 
 [[package]]
 name = "auv-scan"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-driver",
  "image",
@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "auv-steam"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-cli-common",
  "clap",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "auv-task-object-detection"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-inference-common",
  "auv-inference-ultralytics",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "auv-tracing"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "futures-channel",
  "futures-executor",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "auv-tracing-otel"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-tracing",
  "futures-executor",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "auv-view"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "auv-tracing",
  "image",
@@ -1278,18 +1278,18 @@ dependencies = [
 
 [[package]]
 name = "bon"
-version = "3.10.0"
+version = "3.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e3fac94a66da67200398458a25412bcc3f9b6443b5119a6cad9cf3ccfcd8cc6"
+checksum = "60eafe0d77c3a2fc292c1d1346c3041b33c0a108085a2afabf672b70f69dbbc9"
 dependencies = [
  "bon-macros",
 ]
 
 [[package]]
 name = "bon-macros"
-version = "3.10.0"
+version = "3.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4654961ad0494e4774c5c60b4cb4cd0ae9b9d92d039d901638b1dba97ebebf5"
+checksum = "bd0f9631d8aaaee112c41985d675ef269e02acbd4f33122836af4f0c5f699ff6"
 dependencies = [
  "darling 0.24.1",
  "ident_case",
