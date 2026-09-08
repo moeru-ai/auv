@@ -43,3 +43,27 @@ fn primary_artifact_is_directly_openable_in_human_and_json_output() {
   assert_eq!(value["artifacts"][0]["file_extension"], "png");
   assert_eq!(value["artifacts"][0]["file_path"], file_path.to_str().expect("UTF-8 fixture path"));
 }
+
+#[test]
+fn typed_failure_keeps_legacy_message_and_machine_readable_reason() {
+  let registry = default_registry();
+  let command = registry.resolve("input.key").unwrap();
+  let failure = crate::InvokeFailure::from(auv_driver::DriverError::NotFound {
+    target: "window:missing".into(),
+  });
+  let output = InvokeResult::from_command_result(RunId::new(), command, Err(failure));
+  let json: serde_json::Value = serde_json::from_str(
+    &output
+      .render_to_string(InvokeOutputOptions {
+        json: true,
+        ..Default::default()
+      })
+      .unwrap(),
+  )
+  .unwrap();
+  assert_eq!(json["status"], "failed");
+  assert_eq!(json["command_id"], "input.key");
+  assert_eq!(json["failure"], "window:missing was not found");
+  assert_eq!(json["failure_details"]["code"], "not_found");
+  assert_eq!(json["failure_details"]["message"], json["failure"]);
+}

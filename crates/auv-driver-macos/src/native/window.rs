@@ -436,3 +436,40 @@ impl From<NativeWindowMutationResponse> for DecodedWindowMutationResponse {
 #[cfg(test)]
 #[path = "window_test.rs"]
 mod tests;
+
+/// Resolve a running bundle without launching it or requiring a WindowServer window.
+pub fn running_application_pid(bundle_id: &str) -> AuvResult<i64> {
+  #[cfg(target_os = "macos")]
+  {
+    Ok(super::binding::ffi::running_application_pid(bundle_id.into()))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = bundle_id;
+    Err("application resolution is unavailable".into())
+  }
+}
+
+pub fn validate_input_target(pid: i64, number: i64, require_window_focus: bool) -> AuvResult<()> {
+  #[cfg(target_os = "macos")]
+  {
+    super::input::action_result("validate_input_target", super::binding::ffi::validate_input_target(pid, number, require_window_focus))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (pid, number, require_window_focus);
+    Err("input target validation is unavailable".into())
+  }
+}
+
+pub fn confirm_input_focus(pid: i64, number: i64) -> AuvResult<()> {
+  #[cfg(target_os = "macos")]
+  {
+    super::input::action_result("confirm_input_focus", super::binding::ffi::confirm_input_focus(pid, number))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (pid, number);
+    Err("input focus confirmation is unavailable".into())
+  }
+}

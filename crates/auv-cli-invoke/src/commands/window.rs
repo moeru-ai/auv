@@ -84,6 +84,7 @@ struct CaptureWindowArgs {
 
 #[invoke_command(
   id = "window.capture",
+  target = OptionalApplication,
   group = "window",
   description = "Capture one single-display window and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
   input = CaptureWindowArgs,
@@ -193,6 +194,7 @@ struct FindWindowTextArgs {
 
 #[invoke_command(
   id = "window.findText",
+  target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window and locate OCR text anchors in window pixel space.",
   input = FindWindowTextArgs,
@@ -230,6 +232,7 @@ struct WaitForWindowTextArgs {
 
 #[invoke_command(
   id = "window.waitForText",
+  target = OptionalApplication,
   group = "window",
   description = "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
   input = WaitForWindowTextArgs,
@@ -307,6 +310,7 @@ impl WindowClickPolicyArg {
 
 #[invoke_command(
   id = "window.clickText",
+  target = OptionalApplication,
   group = "window",
   description = "Capture a resolved window, resolve an OCR text anchor, and click its projected logical point.",
   input = ClickWindowTextArgs,

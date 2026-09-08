@@ -4,6 +4,8 @@ import Foundation
 
 private func stampKeyboardTarget(_ event: CGEvent, pid: Int64, windowNumber: Int64) {
   event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
+  // Application-scoped delivery addresses only the process, not a fabricated window.
+  if windowNumber == 0 { return }
   event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowNumber)
   event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: windowNumber)
   if let eventWindowNumber = CGEventField(rawValue: 51) {

@@ -289,3 +289,154 @@ fn test_focus_result(query: &str) -> auv_driver::AxFocusResult {
 fn field_value<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("field should exist")
 }
+
+// ROOT CAUSE:
+//
+// Generic help advertised --target while the input handler rejected every
+// target, including validation-only requests. Both frontends must accept the
+// same application target without delivering events during dry-run.
+#[tokio::test]
+#[ignore = "requires a running NetEaseMusic window and macOS Accessibility permission"]
+async fn keyboard_application_target_dry_run_is_supported() {
+  for (command, name, value) in [
+    (press_key_invoke_command(), "key", "cmd+a"),
+    (type_text_invoke_command(), "text", "Arielle's Wish"),
+    (paste_text_preserve_clipboard_invoke_command(), "text", "Arielle's Wish"),
+  ] {
+    let output = command
+      .invoke(crate::InvokeCommandInput {
+        command_id: command.id.to_string(),
+        target: Some(crate::ExecutionTarget::Application {
+          id: "com.netease.163music".to_string(),
+        }),
+        inputs: [(name.to_string(), value.to_string())].into(),
+        typed_args: None,
+        dry_run: true,
+        cancellation: Default::default(),
+      })
+      .await
+      .expect("application targets must support validation without input");
+    assert_eq!(field_value(output.report.as_ref().expect("validation report"), "Delivery"), "not_performed");
+  }
+}
+
+#[test]
+fn keyboard_help_distinguishes_application_activation_from_control_focus() {
+  let help = crate::render_command_help(&press_key_invoke_command());
+  assert!(help.contains("text-control focus"), "{help}");
+  assert!(!help.contains("display:<display-id>"), "{help}");
+}
+
+#[tokio::test]
+async fn keyboard_display_target_fails_consistently_before_local_or_runner_io() {
+  for command in [
+    press_key_invoke_command(),
+    type_text_invoke_command(),
+    paste_text_preserve_clipboard_invoke_command(),
+  ] {
+    let input = crate::InvokeCommandInput {
+      command_id: command.id.into(),
+      target: Some(crate::ExecutionTarget::Display {
+        id: "primary".into(),
+      }),
+      inputs: Default::default(),
+      typed_args: None,
+      dry_run: false,
+      cancellation: Default::default(),
+    };
+    let local = command.invoke(input.clone()).await.unwrap_err();
+    let remote = crate::runner::invoke(input, Default::default()).await.unwrap_err();
+    assert_eq!(local.code, crate::FailureCode::InvalidTarget);
+    assert_eq!(local, remote);
+    assert!(local.message.contains(command.id));
+  }
+}
+
+#[test]
+fn keyboard_target_payload_reuses_driver_options_and_preserves_text() {
+  let input = crate::InvokeCommandInput {
+    command_id: "input.typeText".into(),
+    target: Some(crate::ExecutionTarget::Application {
+      id: "com.example".into(),
+    }),
+    inputs: [("text".into(), "Arielle's Wish".into())].into(),
+    typed_args: None,
+    dry_run: false,
+    cancellation: Default::default(),
+  };
+  assert_eq!(
+    keyboard_input(&input).unwrap(),
+    auv_driver::KeyboardInput::TypeText {
+      text: "Arielle's Wish".into(),
+      options: auv_driver::TypeTextOptions {
+        policy: auv_driver::InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      }
+    }
+  );
+}
+
+#[tokio::test]
+async fn focus_text_requires_application_even_in_dry_run() {
+  let command = focus_text_input_invoke_command();
+  let error = command
+    .invoke(crate::InvokeCommandInput {
+      command_id: command.id.into(),
+      target: None,
+      inputs: [("query".into(), "Search".into())].into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .unwrap_err();
+  assert_eq!(error.code, crate::FailureCode::InvalidTarget);
+}
+
+// A target selects the recipient; an explicit delivery policy must survive parsing.
+#[test]
+fn keyboard_commands_accept_explicit_delivery_policy() {
+  for command in [
+    press_key_invoke_command(),
+    type_text_invoke_command(),
+    paste_text_preserve_clipboard_invoke_command(),
+  ] {
+    command
+      .parse_cli_args(&[
+        "a".into(),
+        "--target".into(),
+        "app:com.example".into(),
+        "--input-policy".into(),
+        "background-only".into(),
+      ])
+      .expect("keyboard commands must expose their activation policy");
+  }
+}
+
+// ROOT CAUSE: without the serde input-policy rename, protocol/MCP arguments
+// silently lost the explicit background policy and used the foreground default.
+#[tokio::test]
+async fn background_keyboard_without_target_fails_before_local_or_runner_io() {
+  for (command, name, value) in [
+    (press_key_invoke_command(), "key", "Escape"),
+    (type_text_invoke_command(), "text", "must not type"),
+    (paste_text_preserve_clipboard_invoke_command(), "text", "must not paste"),
+  ] {
+    let input = crate::InvokeCommandInput {
+      command_id: command.id.into(),
+      target: None,
+      inputs: [
+        (name.into(), value.into()),
+        ("input-policy".into(), "background-only".into()),
+      ]
+      .into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    };
+    let local = command.invoke(input.clone()).await.unwrap_err();
+    let remote = crate::runner::invoke(input, Default::default()).await.unwrap_err();
+    assert_eq!(local, remote);
+    assert!(local.message.contains("requires --target"));
+  }
+}

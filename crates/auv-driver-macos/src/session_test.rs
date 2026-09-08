@@ -666,3 +666,146 @@ mod no_steal_tests {
     assert!(message.contains("foreground fallback deferred"));
   }
 }
+
+#[test]
+fn targeted_keyboard_rejects_invalid_key_before_window_activation() {
+  let session = MacosDriverSession { _private: () };
+  let window = resolve_from_observed_windows(
+    &observed_windows(vec![observed_window(
+      999999,
+      999999,
+      "com.invalid",
+      "Invalid",
+      "",
+      100,
+      100,
+    )]),
+    &SelectWindow::main_visible(),
+  )
+  .unwrap();
+  let error = session
+    .input()
+    .send_keyboard_input(
+      &auv_driver_common::InputTarget::Window(window),
+      auv_driver_common::KeyboardInput::Key {
+        policy: InputPolicy::ForegroundPreferred,
+        options: KeyPressOptions {
+          key: "cmd+invalid".into(),
+          ..Default::default()
+        },
+      },
+      false,
+    )
+    .unwrap_err();
+  assert!(matches!(error, DriverError::InvalidInput { .. }), "{error}");
+}
+
+// ROOT CAUSE:
+//
+// A missing application survived the app-filtered retry as a String error,
+// which WindowApi mapped to Backend. Callers need NotFound to distinguish a
+// stale target from a failed platform service.
+#[test]
+#[ignore = "requires a live macOS WindowServer"]
+fn missing_application_keyboard_target_is_not_found() {
+  let session = MacosDriverSession { _private: () };
+  let error =
+    session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("ai.moeru.auv.nonexistent-input-test"))).unwrap_err();
+  assert!(matches!(error, DriverError::NotFound { .. }), "{error}");
+}
+
+// Application targets need no AX window. Background delivery must leave
+// foreground ownership unchanged and must not be rejected as foreground-only.
+#[test]
+#[ignore = "requires a running NetEaseMusic application and macOS Accessibility"]
+fn background_keyboard_delivery_does_not_activate() {
+  let session = MacosDriverSession { _private: () };
+  let before = crate::native::window::list_windows(ListWindowsOptions::all_visible(1)).unwrap().frontmost_app_bundle_id;
+  for policy in [
+    InputPolicy::BackgroundOnly,
+    InputPolicy::BackgroundPreferred,
+  ] {
+    let action = session
+      .input()
+      .send_keyboard_input(
+        &auv_driver_common::InputTarget::Application {
+          bundle_id: "com.netease.163music".into(),
+        },
+        auv_driver_common::KeyboardInput::Key {
+          policy,
+          options: KeyPressOptions {
+            key: "Escape".into(),
+            ..Default::default()
+          },
+        },
+        false,
+      )
+      .unwrap()
+      .unwrap();
+    assert_eq!(action.focus_disturbance, DisturbanceLevel::None);
+    assert!(!action.verified);
+  }
+  let after = crate::native::window::list_windows(ListWindowsOptions::all_visible(1)).unwrap().frontmost_app_bundle_id;
+  assert_eq!(before, after);
+}
+
+// ROOT CAUSE: foreground preparation only activated the owner, so a stale
+// window id could pass preparation and leave a different window receiving input.
+#[test]
+#[ignore = "requires a live macOS WindowServer"]
+fn foreground_preparation_rejects_stale_window() {
+  let session = MacosDriverSession { _private: () };
+  let mut window = session.window().resolve(SelectWindow::main_visible().owned_by(App::bundle("com.netease.163music"))).unwrap();
+  window.reference.id = "999999999".into();
+  session
+    .window()
+    .prepare_for_input(&window, foreground_prepare_options(Duration::ZERO))
+    .expect_err("a stale window must fail before foreground preparation succeeds");
+  session
+    .window()
+    .type_text(
+      &window,
+      "must not reach clipboard",
+      TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        allow_clipboard_fallback: true,
+        ..Default::default()
+      },
+    )
+    .expect_err("preparation failure must also stop explicitly enabled clipboard fallback");
+}
+
+#[test]
+fn zero_window_id_cannot_become_application_scope() {
+  let session = MacosDriverSession { _private: () };
+  let window = resolve_from_observed_windows(
+    &observed_windows(vec![observed_window(
+      0,
+      999999,
+      "com.invalid",
+      "Invalid",
+      "",
+      100,
+      100,
+    )]),
+    &SelectWindow::main_visible(),
+  )
+  .unwrap();
+  let error = session
+    .window()
+    .type_text(
+      &window,
+      "",
+      TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+    )
+    .unwrap_err();
+  assert!(matches!(error, DriverError::InvalidInput { .. }), "{error}");
+  let error = session
+    .input()
+    .prepare_for_input(&auv_driver_common::InputTarget::Window(window), foreground_prepare_options(Duration::ZERO))
+    .unwrap_err();
+  assert!(matches!(error, DriverError::InvalidInput { .. }), "{error}");
+}

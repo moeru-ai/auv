@@ -419,6 +419,9 @@ pub(crate) mod ffi {
       delta_x: f64,
       delta_y: f64,
     ) -> NativeActionResponse;
+    fn running_application_pid(bundle_id: String) -> i64;
+    fn validate_input_target(pid: i64, window_number: i64, require_window_focus: bool) -> NativeActionResponse;
+    fn confirm_input_focus(pid: i64, window_number: i64) -> NativeActionResponse;
     fn type_text_foreground(text: String, inter_char_delay_ms: u64) -> NativeActionResponse;
     fn press_key_foreground(key_code: i32) -> NativeActionResponse;
     fn hotkey_foreground(key_code: i32, command: bool, shift: bool, option: bool, control: bool) -> NativeActionResponse;

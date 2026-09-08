@@ -63,7 +63,7 @@ fn overlay_commands_reject_target_before_native_rendering() {
       cancellation: crate::InvokeCancellation::new(),
     }))
     .expect_err("target must fail before native rendering");
-    assert_eq!(error, format!("{command_id} cannot use --target; overlays use global screen coordinates"));
+    assert_eq!(error.code, crate::FailureCode::InvalidTarget);
   }
 }
 

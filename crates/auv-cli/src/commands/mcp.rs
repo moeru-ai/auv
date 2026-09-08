@@ -47,7 +47,7 @@ mod frontend {
     static MCP_REQUEST_CANCELLATION: InvokeCancellation;
   }
 
-  type McpInvokeFuture = Pin<Box<dyn Future<Output = Result<McpInvokeSuccess, String>> + Send + 'static>>;
+  type McpInvokeFuture = Pin<Box<dyn Future<Output = Result<McpInvokeSuccess, auv_cli_invoke::InvokeFailure>> + Send + 'static>>;
   type InvokeDispatch = Arc<dyn Fn(Option<String>) -> Result<McpFrontendAuthority, String> + Send + Sync>;
 
   #[derive(Clone, Debug)]
@@ -72,13 +72,27 @@ mod frontend {
     {
       Self {
         command_id,
+        handler: Arc::new(move |input| {
+          let future = handler(input);
+          Box::pin(async move { future.await.map_err(Into::into) })
+        }),
+      }
+    }
+
+    fn typed<F, Fut>(command_id: &'static str, handler: F) -> Self
+    where
+      F: Fn(McpInvokeInput) -> Fut + Send + Sync + 'static,
+      Fut: Future<Output = Result<McpInvokeSuccess, auv_cli_invoke::InvokeFailure>> + Send + 'static,
+    {
+      Self {
+        command_id,
         handler: Arc::new(move |input| Box::pin(handler(input))),
       }
     }
 
     fn invoke(&self, input: McpInvokeInput) -> McpInvokeFuture {
       if let Err(error) = input.cancellation.check() {
-        return Box::pin(async move { Err(error.to_string()) });
+        return Box::pin(async move { Err(error.to_string().into()) });
       }
       (self.handler)(input)
     }
@@ -167,6 +181,8 @@ mod frontend {
     Failed {
       run_id: auv_tracing::RunId,
       failure: String,
+      failure_details: auv_cli_invoke::InvokeFailure,
+      command_id: String,
       #[serde(skip_serializing_if = "Option::is_none")]
       recording_failure: Option<String>,
     },
@@ -235,7 +251,7 @@ mod frontend {
 
   fn command_adapter(command: InvokeCommand) -> McpInvokeAdapter {
     let command_id = command.id;
-    McpInvokeAdapter::new(command_id, move |input| {
+    McpInvokeAdapter::typed(command_id, move |input| {
       let command = command.clone();
       async move {
         let inputs = mcp_command_inputs(command.namespace, input.inputs);
@@ -312,7 +328,7 @@ mod frontend {
               frontend: "mcp",
               reason: "request_cancelled",
             });
-            Err("invoke cancelled".to_string())
+            Err("invoke cancelled".to_string().into())
           }
           result = &mut command_future => result,
         }
@@ -332,7 +348,9 @@ mod frontend {
           true,
           McpInvokePresentation::Failed {
             run_id,
-            failure,
+            command_id: req.command_id,
+            failure: failure.to_string(),
+            failure_details: failure,
             recording_failure,
           },
         ),
@@ -418,6 +436,9 @@ mod frontend {
       "id": command.id,
       "namespace": command.namespace.as_str(),
       "description": command.description,
+      "target_policy": command.target,
+      "target_help": command.target.help(),
+      "target": { "required": command.target.required(), "accepted_types": command.target.accepted_types() },
       "arguments": clap_command
         .get_arguments()
         .filter(|argument| argument.get_id() != "help")

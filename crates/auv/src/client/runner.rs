@@ -1150,6 +1150,60 @@ impl InputClient {
     })
   }
 
+  /// Resolve an application or observed window, then apply the input policy.
+  /// Old Runners fail with UNIMPLEMENTED; there is no global-input fallback.
+  pub async fn send_targeted_keyboard_input(
+    &self,
+    target: &auv_driver::InputTarget,
+    input: auv_driver::KeyboardInput,
+    dry_run: bool,
+  ) -> Result<Option<auv_driver::InputActionResult>, CapabilityError> {
+    use proto::send_targeted_keyboard_input_request::{Input, Target};
+    let policy = input.policy();
+    let input = match input {
+      auv_driver::KeyboardInput::Key { options, .. } => Input::PressKey(proto::PressKeyRequest {
+        key: options.key,
+        settle: Some(duration_to_proto(options.settle)?),
+      }),
+      auv_driver::KeyboardInput::TypeText { text, options } => Input::TypeText(proto::TypeTextRequest {
+        text,
+        options: Some(type_text_options_to_proto(options)?),
+      }),
+      auv_driver::KeyboardInput::PasteText { options, .. } => Input::PasteText(proto::PasteTextRequest {
+        text: options.text.clone(),
+        options: Some(paste_text_options_to_proto(options)?),
+      }),
+    };
+    let (target, expected_process_id) = match target {
+      auv_driver::InputTarget::Application { bundle_id } => (Target::ApplicationBundleId(bundle_id.clone()), 0),
+      auv_driver::InputTarget::Window(window) => (
+        Target::Window(proto::WindowRef {
+          window_id: window.reference.id.clone(),
+        }),
+        window.process_id.map(i64::from).unwrap_or_default(),
+      ),
+    };
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .send_targeted_keyboard_input(proto::SendTargetedKeyboardInputRequest {
+        target: Some(target),
+        expected_process_id,
+        input: Some(input),
+        dry_run,
+        policy: match policy {
+          auv_driver::InputPolicy::BackgroundOnly => proto::InputPolicy::BackgroundOnly as i32,
+          auv_driver::InputPolicy::BackgroundPreferred => proto::InputPolicy::BackgroundPreferred as i32,
+          auv_driver::InputPolicy::ForegroundPreferred => proto::InputPolicy::ForegroundPreferred as i32,
+        },
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    if dry_run {
+      return Ok(None);
+    }
+    input_action_result_from_proto(required(response.action, "SendTargetedKeyboardInput omitted InputActionResult")?).map(Some)
+  }
+
   /// Types text using the supplied delivery policy.
   pub async fn type_text(
     &self,

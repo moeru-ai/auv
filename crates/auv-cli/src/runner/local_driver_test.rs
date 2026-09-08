@@ -518,3 +518,81 @@ fn overlay_shadow_mapper_preserves_native_dimensions_and_rejects_invalid_blur() 
   assert_eq!(style.shadow.unwrap().blur_radius, 8.0);
   assert_eq!(cursor_style_from_proto(make_style(-1.0)).unwrap_err().code(), tonic::Code::InvalidArgument);
 }
+
+#[tokio::test]
+async fn targeted_keyboard_rpc_requires_a_window_before_delivery() {
+  let service = LocalInputService {
+    session: auv_driver::open_local().expect("local driver"),
+    mouse_motion: Default::default(),
+  };
+  let error = service
+    .send_targeted_keyboard_input(Request::new(proto::SendTargetedKeyboardInputRequest {
+      input: Some(proto::send_targeted_keyboard_input_request::Input::PressKey(proto::PressKeyRequest {
+        key: "cmd+a".into(),
+        ..Default::default()
+      })),
+      ..Default::default()
+    }))
+    .await
+    .expect_err("missing target must not become global input");
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  assert_eq!(error.message(), "target is required");
+}
+
+// An observed WindowRef must retain its owner when the Runner receives input.
+// Reject a changed pid before native activation, including during dry-runs.
+#[tokio::test]
+#[ignore = "requires a live macOS WindowServer"]
+#[cfg(target_os = "macos")]
+async fn targeted_keyboard_rpc_rejects_changed_window_owner() {
+  let session = auv_driver::open_local().expect("local driver");
+  let window = session.window().list().expect("windows").into_iter().find(|window| window.process_id.is_some()).expect("observed window");
+  let service = LocalInputService {
+    session,
+    mouse_motion: Default::default(),
+  };
+  for dry_run in [false, true] {
+    let error = service
+      .send_targeted_keyboard_input(Request::new(proto::SendTargetedKeyboardInputRequest {
+        target: Some(proto::send_targeted_keyboard_input_request::Target::Window(proto::WindowRef {
+          window_id: window.reference.id.clone(),
+        })),
+        policy: proto::InputPolicy::ForegroundPreferred as i32,
+        expected_process_id: i64::from(window.process_id.unwrap()) + 1,
+        dry_run,
+        input: Some(proto::send_targeted_keyboard_input_request::Input::PressKey(proto::PressKeyRequest {
+          key: "cmd+a".into(),
+          ..Default::default()
+        })),
+      }))
+      .await
+      .expect_err("changed owner must fail before input");
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.message(), "target window owner changed; resolve the target again");
+  }
+}
+
+#[tokio::test]
+async fn targeted_keyboard_rpc_rejects_conflicting_policy_before_delivery() {
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+    mouse_motion: Default::default(),
+  };
+  let error = service
+    .send_targeted_keyboard_input(Request::new(proto::SendTargetedKeyboardInputRequest {
+      target: Some(proto::send_targeted_keyboard_input_request::Target::ApplicationBundleId("ai.moeru.auv.nonexistent-input-test".into())),
+      policy: proto::InputPolicy::ForegroundPreferred as i32,
+      input: Some(proto::send_targeted_keyboard_input_request::Input::TypeText(proto::TypeTextRequest {
+        text: "must not be delivered".into(),
+        options: Some(proto::TypeTextOptions {
+          policy: proto::InputPolicy::BackgroundOnly as i32,
+          ..Default::default()
+        }),
+      })),
+      ..Default::default()
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  assert_eq!(error.message(), "request policy must match text policy");
+}

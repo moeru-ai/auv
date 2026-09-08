@@ -161,7 +161,7 @@ pub fn hotkey_foreground(_key_code: i32, _command: bool, _shift: bool, _option: 
 }
 
 #[cfg(target_os = "macos")]
-fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<()> {
+pub(super) fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<()> {
   super::error::native_result(operation, response.ok.then_some(()), response.error_message, response.recovery_hint)
 }
 

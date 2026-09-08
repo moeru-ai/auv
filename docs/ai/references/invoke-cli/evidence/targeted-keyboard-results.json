@@ -1,0 +1,168 @@
+{
+  "evidence_level": "machine-local live probe; not a universal support claim",
+  "scope": "Selected invoke results from the target/input-preparation validation. Desktop screenshots and full local logs remain in the ignored evidence pack.",
+  "cases": [
+    {
+      "case": "background-False-background-only",
+      "execution": "local",
+      "invoke_arguments": [
+        "input.key",
+        "Escape",
+        "--target",
+        "app:com.netease.163music",
+        "--input-policy",
+        "background-only",
+        "--json"
+      ],
+      "exit_code": 0,
+      "output": {
+        "run_id": "01a07f92-2966-78c1-9492-05a7a42de778",
+        "status": "completed",
+        "command_id": "input.key",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=30200, window=0; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "none",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    },
+    {
+      "case": "workflow-replace",
+      "execution": "runner",
+      "invoke_arguments": [
+        "input.typeText",
+        "Arielle's Wish",
+        "--target",
+        "window:5063",
+        "--json"
+      ],
+      "exit_code": 0,
+      "output": {
+        "run_id": "d5b7856b-bbe5-b8fb-8fda-7fce87498aba",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=30200, window=5063; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    },
+    {
+      "case": "negative-True-key-missing-app",
+      "execution": "runner",
+      "invoke_arguments": [
+        "input.key",
+        "Escape",
+        "--target",
+        "app:ai.moeru.auv.nonexistent-input-test",
+        "--json"
+      ],
+      "exit_code": 1,
+      "output": {
+        "run_id": "872ae01e-c549-d238-3404-eb594f32a332",
+        "status": "failed",
+        "command_id": "input.key",
+        "result": null,
+        "failure": "Runner capability RPC failed: code: 'Some requested entity was not found', message: \"running application \\\"ai.moeru.auv.nonexistent-input-test\\\" was not found\"",
+        "failure_details": {
+          "code": "not_found",
+          "message": "Runner capability RPC failed: code: 'Some requested entity was not found', message: \"running application \\\"ai.moeru.auv.nonexistent-input-test\\\" was not found\""
+        }
+      }
+    },
+    {
+      "case": "ax-unavailable-False",
+      "execution": "local",
+      "invoke_arguments": [
+        "input.key",
+        "Escape",
+        "--target",
+        "window:30",
+        "--json"
+      ],
+      "exit_code": 1,
+      "output": {
+        "run_id": "01a07f92-2b17-7371-8603-7e0c7958431a",
+        "status": "failed",
+        "command_id": "input.key",
+        "result": null,
+        "failure": "macos native validate_input_target failed: target window could not be resolved through AX; recovery=resolve a current window with accessible focus support",
+        "failure_details": {
+          "code": "backend",
+          "message": "macos native validate_input_target failed: target window could not be resolved through AX; recovery=resolve a current window with accessible focus support"
+        }
+      }
+    },
+    {
+      "case": "old-runner-rejection",
+      "execution": "baseline-runner-0.0.15",
+      "invoke_arguments": [
+        "input.key",
+        "Escape",
+        "--target",
+        "app:com.netease.163music",
+        "--json"
+      ],
+      "exit_code": 1,
+      "output": {
+        "run_id": "0e3e0c4f-eccf-841f-45aa-b6781c05dbc0",
+        "status": "failed",
+        "command_id": "input.key",
+        "result": null,
+        "failure": "Runner capability RPC failed: code: 'Operation is not implemented or not supported'",
+        "failure_details": {
+          "code": "unsupported",
+          "message": "Runner capability RPC failed: code: 'Operation is not implemented or not supported'"
+        }
+      }
+    },
+    {
+      "case": "workflow-playing-confirmed",
+      "execution": "local",
+      "invoke_arguments": [
+        "mediaControl.nowPlaying",
+        "--json"
+      ],
+      "exit_code": 0,
+      "output": {
+        "run_id": "01a07f99-e6da-7033-8d1e-2fb2493eaf49",
+        "status": "completed",
+        "command_id": "mediaControl.nowPlaying",
+        "result": {
+          "album": "Spiritdance",
+          "artist": "aethoro",
+          "content_item_id": "47F56A0A-DA73-4FEC-B6F7-ADF492A15B78",
+          "duration_seconds": 707.1405,
+          "elapsed_seconds": 185.9453968253968,
+          "is_liked": null,
+          "is_playing": true,
+          "playback_rate": 1.0,
+          "present": true,
+          "schema_version": "now-playing-v0",
+          "source_bundle_id": "com.netease.163music",
+          "supports_like": null,
+          "title": "Arielle's Wish"
+        }
+      }
+    }
+  ]
+}

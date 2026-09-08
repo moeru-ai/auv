@@ -532,6 +532,66 @@ fn permission_status_to_proto(status: auv_driver::PermissionStatus) -> macos_pro
 
 #[tonic::async_trait]
 impl InputService for LocalInputService {
+  /// InputService request -> observed window owner check -> shared driver delivery.
+  async fn send_targeted_keyboard_input(
+    &self,
+    request: Request<proto::SendTargetedKeyboardInputRequest>,
+  ) -> Result<Response<proto::SendTargetedKeyboardInputResponse>, Status> {
+    let request = request.into_inner();
+    use proto::send_targeted_keyboard_input_request::{Input, Target};
+    let target = match request.target.ok_or_else(|| Status::invalid_argument("target is required"))? {
+      Target::ApplicationBundleId(bundle_id) => {
+        if request.expected_process_id != 0 {
+          return Err(Status::invalid_argument("expected_process_id applies only to window targets"));
+        }
+        auv_driver::InputTarget::Application { bundle_id }
+      }
+      Target::Window(reference) => {
+        let window = resolve_window_ref(&self.session, reference)?;
+        if request.expected_process_id <= 0 || window.process_id.map(i64::from) != Some(request.expected_process_id) {
+          return Err(Status::failed_precondition("target window owner changed; resolve the target again"));
+        }
+        auv_driver::InputTarget::Window(window)
+      }
+    };
+    let policy = input_policy_from_proto(request.policy)?;
+    let input = match request.input.ok_or_else(|| Status::invalid_argument("keyboard input is required"))? {
+      Input::TypeText(input) => {
+        let options = type_text_options_from_proto(input.options)?;
+        if options.policy != policy {
+          return Err(Status::invalid_argument("request policy must match text policy"));
+        }
+        auv_driver::KeyboardInput::TypeText {
+          text: input.text,
+          options,
+        }
+      }
+      Input::PasteText(input) => auv_driver::KeyboardInput::PasteText {
+        policy,
+        options: paste_text_options_from_proto(input.text, input.options)?,
+      },
+      Input::PressKey(input) => auv_driver::KeyboardInput::Key {
+        policy,
+        options: auv_driver::KeyPressOptions {
+          key: input.key,
+          settle: duration_from_proto(input.settle, std::time::Duration::ZERO, "settle")?,
+        },
+      },
+    };
+    #[cfg(target_os = "macos")]
+    {
+      let action = self.session.input().send_keyboard_input(&target, input, request.dry_run).map_err(driver_status)?;
+      Ok(Response::new(proto::SendTargetedKeyboardInputResponse {
+        action: action.map(input_action_to_proto).transpose()?,
+      }))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+      let _ = (target, input);
+      Err(Status::unimplemented("targeted keyboard input is only available on macOS"))
+    }
+  }
+
   type MoveMouseStream = Pin<Box<dyn Stream<Item = Result<proto::MoveMouseStreamResponse, Status>> + Send>>;
   type StreamMouseMotionStream = Pin<Box<dyn Stream<Item = Result<proto::StreamMouseMotionResponse, Status>> + Send>>;
 

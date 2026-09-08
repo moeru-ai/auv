@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use super::{InvokeOutputOptions, InvokeReport, InvokeReportField};
 use crate::models::invoke_report::{label, write_error, write_field_rows};
-use crate::{InvokeCommand, InvokeCommandResult};
+use crate::{InvokeCommand, InvokeExecutionResult, InvokeFailure};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,13 +41,13 @@ enum InvokeTerminal {
     artifacts: Vec<InvokeArtifactResult>,
   },
   Failed {
-    failure: String,
+    failure: InvokeFailure,
   },
 }
 
 impl InvokeResult {
   /// Maps the direct command value into CLI-only presentation state.
-  pub fn from_command_result(run_id: RunId, command: &InvokeCommand, result: InvokeCommandResult) -> Self {
+  pub fn from_command_result(run_id: RunId, command: &InvokeCommand, result: InvokeExecutionResult) -> Self {
     match result {
       Ok(output) => Self {
         run_id,
@@ -103,7 +103,7 @@ impl InvokeResult {
   pub fn failure(&self) -> Option<&str> {
     match &self.terminal {
       InvokeTerminal::Completed { .. } => None,
-      InvokeTerminal::Failed { failure } => Some(failure),
+      InvokeTerminal::Failed { failure } => Some(&failure.message),
     }
   }
 
@@ -115,6 +115,10 @@ impl InvokeResult {
       result: self.result(),
       artifacts: self.artifacts(),
       failure: self.failure(),
+      failure_details: match &self.terminal {
+        InvokeTerminal::Failed { failure } => Some(failure),
+        _ => None,
+      },
     };
     serde_json::to_writer_pretty(&mut *writer, &output).map_err(|error| format!("failed to serialize invoke output: {error}"))?;
     writeln!(writer).map_err(|error| format!("failed to write invoke output: {error}"))
@@ -202,6 +206,8 @@ struct InvokeResultJsonOutput<'a> {
   artifacts: &'a [InvokeArtifactResult],
   #[serde(skip_serializing_if = "Option::is_none")]
   failure: Option<&'a str>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  failure_details: Option<&'a InvokeFailure>,
 }
 
 #[cfg(test)]

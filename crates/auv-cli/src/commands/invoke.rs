@@ -76,8 +76,12 @@ async fn execute(
   let command = registry.resolve(&request.command_id).cloned().ok_or_else(|| format!("unknown invoke command: {}", request.command_id))?;
   // TODO(selected-invoke-dry-run): validate Device/Run selection without
   // creating a Run once the control plane has a side-effect-free resolve
-  // operation. The current dry-run remains local to preserve its no-I/O contract.
-  let selected_context = if !selection.is_empty() && !request.dry_run {
+  // operation. Legacy dry-runs remain local; target-bound keyboard dry-runs
+  // must inspect the selected Runner but never activate or deliver input.
+  let selected_context = if !selection.is_empty()
+    && (!request.dry_run
+      || (request.target.is_some() && matches!(request.command_id.as_str(), "input.key" | "input.typeText" | "input.pasteText")))
+  {
     Some(crate::commands::plugin::resolve_invoke_context(selection).await?)
   } else {
     None
@@ -108,7 +112,7 @@ async fn execute(
     && let Err(error) = context.finish(direct_result.is_ok()).await
   {
     if direct_result.is_ok() {
-      direct_result = Err(error);
+      direct_result = Err(error.into());
     } else {
       eprintln!("warning: failed to finalize the selected invoke Run: {error}");
     }

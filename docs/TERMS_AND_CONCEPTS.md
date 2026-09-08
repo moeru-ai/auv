@@ -734,6 +734,18 @@ targets instead of carrying an untyped string. The CLI spells these as
 `app:<bundle-id>`, `window:<window-id>`, and `display:<display-id>`. A bare
 `--target` value retains its historical meaning as an application id.
 
+Each command definition declares whether a target is forbidden, optional, or
+required and which resource types it accepts. CLI help and MCP metadata derive
+from that same declaration. `input.key`, `input.typeText`, and `input.pasteText`
+accept application/window targets on macOS. The target selects a running
+application or exact observed window; input policy separately controls foreground
+preparation. Foreground policy confirms application focus and, for window
+targets, exact window focus. Background policy does not activate. Events remain
+PID-bound with no global fallback. Neither policy selects or verifies a text control.
+Application activation, window focus, control focus, input submission, and
+semantic verification are distinct facts; see the
+[targeted keyboard contract](ai/references/invoke-cli/2026-09-08-targeted-keyboard-contract.md).
+
 Target identity and coordinate interpretation are separate decisions. For
 `input.clickPoint`, `--relative-to screen|window|display` names the coordinate
 basis. If omitted, the basis follows the target deterministically: no target is

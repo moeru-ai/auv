@@ -10,9 +10,9 @@ use serde::de::{DeserializeOwned, IntoDeserializer, Visitor, value::MapDeseriali
 
 use crate::InvokeReport;
 
-pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<InvokeCommandOutput, String>> + Send + 'static>>;
+pub type InvokeCommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = InvokeExecutionResult> + Send + 'static>>;
 pub type InvokeCommandHandler = fn(InvokeCommandInput) -> InvokeCommandFuture;
-type InvokeCommandParser = fn(&'static str, &'static str, &[String]) -> Result<InvokeCommandCliParse, String>;
+type InvokeCommandParser = fn(&'static str, &'static str, TargetPolicy, &[String]) -> Result<InvokeCommandCliParse, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InvokeCommandCliParse {
@@ -194,6 +194,79 @@ impl InvokeCommandOutput {
 
 pub type InvokeCommandResult = Result<InvokeCommandOutput, String>;
 
+/// Frontend execution failure. Existing handler helpers may still return text;
+/// target and driver boundaries retain machine-readable categories here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, thiserror::Error)]
+#[error("{message}")]
+pub struct InvokeFailure {
+  pub code: FailureCode,
+  pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureCode {
+  CommandFailed,
+  InvalidTarget,
+  NotFound,
+  Unsupported,
+  PermissionDenied,
+  InvalidInput,
+  StaleObservation,
+  RoleMismatch,
+  Backend,
+}
+
+impl InvokeFailure {
+  pub fn new(code: FailureCode, message: impl Into<String>) -> Self {
+    Self {
+      code,
+      message: message.into(),
+    }
+  }
+}
+
+// TODO(invoke-driver-failure-migration): legacy non-keyboard helpers retain
+// command_failed until their owner approves preserving typed errors end to end.
+impl From<String> for InvokeFailure {
+  fn from(message: String) -> Self {
+    Self::new(FailureCode::CommandFailed, message)
+  }
+}
+
+impl From<auv_driver::DriverError> for InvokeFailure {
+  fn from(error: auv_driver::DriverError) -> Self {
+    use auv_driver::DriverError;
+    let code = match &error {
+      DriverError::Unsupported { .. } => FailureCode::Unsupported,
+      DriverError::NotFound { .. } => FailureCode::NotFound,
+      DriverError::PermissionDenied { .. } => FailureCode::PermissionDenied,
+      DriverError::InvalidInput { .. } => FailureCode::InvalidInput,
+      DriverError::StaleObservation { .. } => FailureCode::StaleObservation,
+      DriverError::RoleMismatch { .. } => FailureCode::RoleMismatch,
+      DriverError::Backend { .. } => FailureCode::Backend,
+    };
+    Self::new(code, error.to_string())
+  }
+}
+
+impl From<auv::client::runner::CapabilityError> for InvokeFailure {
+  fn from(error: auv::client::runner::CapabilityError) -> Self {
+    use auv::error::ClientErrorKind;
+    let code = match error.client_kind() {
+      Some(ClientErrorKind::NotFound) => FailureCode::NotFound,
+      Some(ClientErrorKind::Unsupported) => FailureCode::Unsupported,
+      Some(ClientErrorKind::Unauthorized) => FailureCode::PermissionDenied,
+      Some(ClientErrorKind::InvalidRequest) => FailureCode::InvalidInput,
+      Some(ClientErrorKind::Conflict | ClientErrorKind::Ambiguous) => FailureCode::StaleObservation,
+      _ => FailureCode::Backend,
+    };
+    Self::new(code, error.to_string())
+  }
+}
+
+pub type InvokeExecutionResult = Result<InvokeCommandOutput, InvokeFailure>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InvokeNamespace {
   Display,
@@ -230,15 +303,101 @@ pub struct InvokeCommand {
   pub id: &'static str,
   pub namespace: InvokeNamespace,
   pub description: &'static str,
+  pub target: TargetPolicy,
   typed_command: fn(&'static str, &'static str) -> Command,
   typed_parse: InvokeCommandParser,
   handler: InvokeCommandHandler,
 }
 
+/// Target constraints shared by handler validation, CLI help, and MCP metadata.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetPolicy {
+  #[default]
+  Forbidden,
+  OptionalApplication,
+  RequiredApplication,
+  OptionalKeyboard,
+  OptionalPoint,
+}
+
+impl TargetPolicy {
+  pub fn accepted_types(self) -> &'static [&'static str] {
+    match self {
+      Self::Forbidden => &[],
+      Self::OptionalApplication | Self::RequiredApplication => &["application"],
+      Self::OptionalKeyboard => &["application", "window"],
+      Self::OptionalPoint => &["application", "window", "display"],
+    }
+  }
+  pub fn required(self) -> bool {
+    self == Self::RequiredApplication
+  }
+
+  pub fn help(self) -> &'static str {
+    match self {
+      Self::Forbidden => "Target forbidden; this command operates without target selection.",
+      Self::OptionalApplication => "Optional app:<bundle-id> (bare ids accepted); window and display targets are unsupported.",
+      Self::RequiredApplication => "Required app:<bundle-id> (bare ids accepted); window and display targets are unsupported.",
+      Self::OptionalKeyboard => {
+        "Optional app:<bundle-id> (bare ids accepted) or window:<window-id>. Default foreground-preferred activates the app; a window target also requires exact window focus. Background policies do not activate or fall back to foreground. Does not establish text-control focus. Without target, uses current foreground focus. Display targets are unsupported."
+      }
+      Self::OptionalPoint => {
+        "Optional app:<bundle-id>, window:<window-id>, or display:<display-id>; coordinate basis defaults from target. Bare values select an application."
+      }
+    }
+  }
+
+  pub fn validate(self, input: &InvokeCommandInput) -> Result<(), String> {
+    use crate::ExecutionTarget;
+    let target = input.target.as_ref();
+    let valid = match (self, target) {
+      (Self::RequiredApplication, None) => false,
+      (_, None) => true,
+      (Self::OptionalPoint, Some(_)) => true,
+      (Self::OptionalKeyboard, Some(ExecutionTarget::Application { .. } | ExecutionTarget::Window { .. })) => true,
+      (Self::OptionalApplication | Self::RequiredApplication, Some(ExecutionTarget::Application { .. })) => true,
+      _ => false,
+    };
+    if !valid {
+      return Err(match (self, target) {
+        (Self::RequiredApplication, None) => format!("{} requires --target app:", input.command_id),
+        (Self::Forbidden, _) => format!("{} forbids --target", input.command_id),
+        (_, Some(target)) => {
+          let kind = match target {
+            ExecutionTarget::Application { .. } => "app",
+            ExecutionTarget::Window { .. } => "window",
+            ExecutionTarget::Display { .. } => "display",
+          };
+          format!("{} does not support {kind}: targets; accepted target types: {}", input.command_id, self.accepted_types().join(", "))
+        }
+        _ => unreachable!("only invalid combinations are reported"),
+      });
+    }
+    if let Some(target) = target {
+      let id = match target {
+        ExecutionTarget::Application { id } | ExecutionTarget::Window { id } | ExecutionTarget::Display { id } => id,
+      };
+      if id.trim().is_empty() {
+        return Err(format!("{}: target id cannot be empty", input.command_id));
+      }
+    }
+    Ok(())
+  }
+}
+
 impl InvokeCommand {
+  pub fn with_target(mut self, target: TargetPolicy) -> Self {
+    self.target = target;
+    self
+  }
+
   pub fn invoke(&self, input: InvokeCommandInput) -> InvokeCommandFuture {
     if let Err(error) = input.cancellation.check() {
-      return Box::pin(async move { Err(error.to_string()) });
+      return Box::pin(async move { Err(error.to_string().into()) });
+    }
+    if let Err(error) = self.target.validate(&input) {
+      return Box::pin(async move { Err(InvokeFailure::new(FailureCode::InvalidTarget, error)) });
     }
     (self.handler)(input)
   }
@@ -248,7 +407,7 @@ impl InvokeCommand {
   }
 
   pub fn parse_cli_args(&self, arguments: &[String]) -> Result<InvokeCommandCliParse, String> {
-    (self.typed_parse)(self.id, self.description, arguments)
+    (self.typed_parse)(self.id, self.description, self.target, arguments)
   }
 }
 
@@ -295,6 +454,7 @@ where
     id,
     namespace,
     description,
+    target: TargetPolicy::default(),
     typed_command: typed_command::<T>,
     typed_parse: parse_cli_args::<T>,
     handler,
@@ -438,11 +598,16 @@ where
   T::augment_args(Command::new(id).bin_name(format!("auv invoke {id}")).about(description))
 }
 
-fn parse_cli_args<T>(id: &'static str, description: &'static str, arguments: &[String]) -> Result<InvokeCommandCliParse, String>
+fn parse_cli_args<T>(
+  id: &'static str,
+  description: &'static str,
+  target: TargetPolicy,
+  arguments: &[String],
+) -> Result<InvokeCommandCliParse, String>
 where
   T: clap::Args + FromArgMatches + Clone + Serialize + Send + Sync + 'static,
 {
-  let mut command = with_invoke_context(typed_command::<T>(id, description));
+  let mut command = with_invoke_context(typed_command::<T>(id, description), target);
   let mut argv = Vec::with_capacity(arguments.len() + 1);
   argv.push(id.to_string());
   argv.extend(arguments.iter().cloned());
@@ -466,14 +631,15 @@ where
   })
 }
 
-pub(crate) fn with_invoke_context(command: Command) -> Command {
+pub(crate) fn with_invoke_context(command: Command, target: TargetPolicy) -> Command {
+  let command = if target == TargetPolicy::Forbidden {
+    let about = command.get_long_about().or_else(|| command.get_about()).map(ToString::to_string).unwrap_or_default();
+    command.long_about(format!("{about}\n\n{}", target.help()))
+  } else {
+    command
+  };
   command
-    .arg(
-      Arg::new("auv_target")
-        .long("target")
-        .value_name("TARGET")
-        .help("Typed target: app:<bundle-id>, window:<window-id>, or display:<display-id>. Bare values select an application."),
-    )
+    .arg(Arg::new("auv_target").long("target").value_name("TARGET").help(target.help()).hide(target == TargetPolicy::Forbidden))
     .arg(Arg::new("auv_dry_run").long("dry-run").action(ArgAction::SetTrue).help("Validate the operation without performing it."))
     .arg(Arg::new("auv_no_overlay").long("no-overlay").action(ArgAction::SetTrue).help("Disable live visual overlay presentation."))
     .arg(

@@ -91,6 +91,7 @@ struct FocusTextArgs {
 
 #[invoke_command(
   id = "input.focusText",
+  target = RequiredApplication,
   group = "input",
   description = "Focus a target macOS text input through AX using its visible text.",
   input = FocusTextArgs,
@@ -145,6 +146,7 @@ struct AxFocusTextArgs {
 // Remove the alias only after an owner-approved CLI compatibility boundary.
 #[invoke_command(
   id = "input.axFocusText",
+  target = RequiredApplication,
   group = "input",
   description = "Compatibility alias for input.focusText; focuses a text input through the same macOS AX focus operation.",
   input = AxFocusTextArgs,
@@ -163,6 +165,10 @@ async fn ax_focus_text_input(input: InvokeCommandInput, _args: AxFocusTextArgs) 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(after_long_help = "Examples:\n  auv invoke input.typeText \"hello from AUV\"")]
 struct TypeTextArgs {
+  /// Target delivery policy. Foreground prepares focus; background modes do not activate or automatically fall back.
+  #[arg(long, value_enum)]
+  #[serde(rename = "input-policy")]
+  input_policy: Option<InputPolicyArg>,
   /// Text to type into the active control.
   #[arg(value_name = "TEXT")]
   text: String,
@@ -170,26 +176,30 @@ struct TypeTextArgs {
 
 #[invoke_command(
   id = "input.typeText",
+  target = OptionalKeyboard,
   group = "input",
   description = "Type text into the active macOS control through native CoreGraphics events.",
   input = TypeTextArgs,
 )]
-async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> InvokeCommandResult {
+async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> crate::InvokeExecutionResult {
   #[cfg(target_os = "macos")]
   {
-    reject_target_activation(&input, "input.typeText")?;
+    keyboard_input(&input)?;
+    if input.target.is_some() {
+      return targeted_keyboard(&input);
+    }
     let text = args.text;
     if input.dry_run {
       return Ok(validation_only_output());
     }
 
     let result = type_text_into_active_control(text).await?;
-    input_action_output(&result)
+    input_action_output(&result).map_err(Into::into)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (input, args);
-    Err("input.typeText is only available on macOS".to_string())
+    Err("input.typeText is only available on macOS".to_string().into())
   }
 }
 
@@ -211,6 +221,10 @@ pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::I
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(after_long_help = "Examples:\n  auv invoke input.pasteText \"hello from AUV\"")]
 struct PasteTextArgs {
+  /// Target delivery policy. Foreground prepares focus; background modes do not activate or automatically fall back.
+  #[arg(long, value_enum)]
+  #[serde(rename = "input-policy")]
+  input_policy: Option<InputPolicyArg>,
   /// Text to paste into the active control.
   #[arg(value_name = "TEXT")]
   text: String,
@@ -218,26 +232,30 @@ struct PasteTextArgs {
 
 #[invoke_command(
   id = "input.pasteText",
+  target = OptionalKeyboard,
   group = "input",
   description = "Paste text into the active macOS control through the clipboard, then restore the prior clipboard snapshot.",
   input = PasteTextArgs,
 )]
-async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTextArgs) -> InvokeCommandResult {
+async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTextArgs) -> crate::InvokeExecutionResult {
   #[cfg(target_os = "macos")]
   {
-    reject_target_activation(&input, "input.pasteText")?;
+    keyboard_input(&input)?;
+    if input.target.is_some() {
+      return targeted_keyboard(&input);
+    }
     let text = args.text;
     if input.dry_run {
       return Ok(validation_only_output());
     }
 
     let result = paste_text_into_active_control(text).await?;
-    input_action_output(&result)
+    input_action_output(&result).map_err(Into::into)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (input, args);
-    Err("input.pasteText is only available on macOS".to_string())
+    Err("input.pasteText is only available on macOS".to_string().into())
   }
 }
 
@@ -265,6 +283,10 @@ pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(after_long_help = "Examples:\n  auv invoke input.key cmd+f")]
 struct PressKeyArgs {
+  /// Target delivery policy. Foreground prepares focus; background modes do not activate or automatically fall back.
+  #[arg(long, value_enum)]
+  #[serde(rename = "input-policy")]
+  input_policy: Option<InputPolicyArg>,
   /// Keyboard key or shortcut to press.
   #[arg(value_name = "KEY")]
   key: String,
@@ -272,26 +294,30 @@ struct PressKeyArgs {
 
 #[invoke_command(
   id = "input.key",
+  target = OptionalKeyboard,
   group = "input",
   description = "Press a keyboard key or shortcut in the active macOS app through native CoreGraphics events.",
   input = PressKeyArgs,
 )]
-async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> InvokeCommandResult {
+async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::InvokeExecutionResult {
   #[cfg(target_os = "macos")]
   {
-    reject_target_activation(&input, "input.key")?;
+    keyboard_input(&input)?;
+    if input.target.is_some() {
+      return targeted_keyboard(&input);
+    }
     let key = args.key;
     if input.dry_run {
       return Ok(validation_only_output());
     }
 
     let result = press_key_in_active_app(key.clone()).await?;
-    press_key_output(&result, &key)
+    press_key_output(&result, &key).map_err(Into::into)
   }
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (input, args);
-    Err("input.key is only available on macOS".to_string())
+    Err("input.key is only available on macOS".to_string().into())
   }
 }
 
@@ -451,6 +477,7 @@ pub struct ClickPointResult {
 
 #[invoke_command(
   id = "input.clickPoint",
+  target = OptionalPoint,
   group = "input",
   description = "Click a point relative to the screen, a target window, or a target display.",
   input = ClickPointArgs,
@@ -653,14 +680,92 @@ fn click_window_selector(application_id: &str, title: Option<&str>) -> auv_drive
   }
 }
 
-fn reject_target_activation(input: &InvokeCommandInput, command_id: &str) -> Result<(), String> {
-  if input.target.is_some() {
-    // TODO(invoke-input-target-activation): foreground input APIs currently
-    // act on the active control; add a typed app/window input lease before
-    // honoring --target here.
-    return Err(format!("{command_id} cannot use --target until typed input target activation is available"));
+/// Decode the registered input arguments once for both target-bound frontends.
+pub(crate) fn keyboard_input(input: &InvokeCommandInput) -> Result<auv_driver::KeyboardInput, String> {
+  // CLI targets default to explicit foreground preparation. Untargeted calls
+  // retain their existing foreground semantics; a background policy needs a recipient.
+  let policy = |value: Option<InputPolicyArg>| -> Result<auv_driver::InputPolicy, String> {
+    let policy = value.map(InputPolicyArg::driver_policy).unwrap_or(auv_driver::InputPolicy::ForegroundPreferred);
+    if input.target.is_none() && policy != auv_driver::InputPolicy::ForegroundPreferred {
+      return Err("background keyboard input requires --target".into());
+    }
+    Ok(policy)
+  };
+  match input.command_id.as_str() {
+    "input.key" => {
+      let args = crate::command::decode_args::<PressKeyArgs>(input)?;
+      Ok(auv_driver::KeyboardInput::Key {
+        policy: policy(args.input_policy)?,
+        options: auv_driver::KeyPressOptions {
+          key: args.key,
+          ..Default::default()
+        },
+      })
+    }
+    "input.typeText" => {
+      let args = crate::command::decode_args::<TypeTextArgs>(input)?;
+      Ok(auv_driver::KeyboardInput::TypeText {
+        text: args.text,
+        options: auv_driver::TypeTextOptions {
+          policy: policy(args.input_policy)?,
+          ..Default::default()
+        },
+      })
+    }
+    "input.pasteText" => {
+      let args = crate::command::decode_args::<PasteTextArgs>(input)?;
+      Ok(auv_driver::KeyboardInput::PasteText {
+        policy: policy(args.input_policy)?,
+        options: auv_driver::PasteTextOptions {
+          text: args.text,
+          ..Default::default()
+        },
+      })
+    }
+    _ => Err(format!("{} is not a keyboard input command", input.command_id)),
   }
-  Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn targeted_keyboard(input: &InvokeCommandInput) -> crate::InvokeExecutionResult {
+  let keyboard = keyboard_input(input)?;
+  let session = auv_driver::open_local()?;
+  let target = match input.target.as_ref().expect("targeted input requires a target") {
+    crate::ExecutionTarget::Application { id } => auv_driver::InputTarget::Application {
+      bundle_id: id.clone(),
+    },
+    crate::ExecutionTarget::Window { id } => {
+      auv_driver::InputTarget::Window(session.window().list()?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
+        auv_driver::DriverError::NotFound {
+          target: format!("window:{id}"),
+        }
+      })?)
+    }
+    crate::ExecutionTarget::Display { .. } => {
+      return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, "display target is unsupported for keyboard input"));
+    }
+  };
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let action = session.input().send_keyboard_input(&target, keyboard, input.dry_run)?;
+  targeted_keyboard_output(action.as_ref()).map_err(Into::into)
+}
+
+/// Keep the driver action as the direct result and tracing artifact.
+pub(crate) fn targeted_keyboard_output(action: Option<&auv_driver::InputActionResult>) -> InvokeCommandResult {
+  let mut output = match action {
+    Some(action) => {
+      emit_input_action_result(action);
+      input_action_output(action)?
+    }
+    None => validation_only_output(),
+  };
+  output
+    .report
+    .as_mut()
+    .expect("input report")
+    .fields
+    .push(InvokeReportField::new("Control focus", "application-owned; no control selection or semantic verification"));
+  Ok(output)
 }
 
 /// Builds the transport-independent delivery result used by local and

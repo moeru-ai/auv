@@ -528,3 +528,71 @@ func bundle_ids_by_pid(request: NativeBundleIdsByPidRequest) -> NativeBundleIdsB
     recovery_hint: nil
   )
 }
+
+// Native process lookup does not launch an application or require a visible window.
+// 0 means not running; -1 means ambiguous. Rust maps these to typed errors.
+func running_application_pid(bundle_id: RustString) -> Int64 {
+  let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundle_id.toString())
+    .filter { !$0.isTerminated }
+  if apps.count > 1 { return -1 }
+  return apps.first.map { Int64($0.processIdentifier) } ?? 0
+}
+
+// Shared preparation validates before activation. Application scope uses 0 and
+// requires no AX window; exact-window foreground input additionally needs AX.
+func validate_input_target(pid: Int64, window_number: Int64, require_window_focus: Bool) -> NativeActionResponse {
+  guard AXIsProcessTrusted() else {
+    return nativeActionError("accessibility permission denied", "grant Accessibility permission")
+  }
+  guard let app = NSRunningApplication(processIdentifier: pid_t(pid)), !app.isTerminated else {
+    return nativeActionError("target is not a running application", "resolve the target again")
+  }
+  if window_number == 0 { return nativeActionOk() }
+  guard window_number > 0, window_number <= Int64(UInt32.max),
+        let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(window_number)) as? [[String: Any]],
+        windows.contains(where: {
+          ($0[kCGWindowNumber as String] as? NSNumber)?.int64Value == window_number &&
+          ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int64Value == pid
+        }) else {
+    return nativeActionError("target window or owner is stale", "resolve the target again")
+  }
+  if require_window_focus {
+    let appElement = AXUIElementCreateApplication(pid_t(pid))
+    guard windowAxElementArrayAttribute(appElement, kAXWindowsAttribute as String)
+      .contains(where: { windowAxCgWindowId($0) == window_number }) else {
+      return nativeActionError("target window could not be resolved through AX", "resolve a current window with accessible focus support")
+    }
+  }
+  return nativeActionOk()
+}
+
+// Activation is owned by the existing Rust input preparation lifecycle. Raise
+// an exact window only when requested, then observe the required focus predicate.
+func confirm_input_focus(pid: Int64, window_number: Int64) -> NativeActionResponse {
+  guard let app = NSRunningApplication(processIdentifier: pid_t(pid)), !app.isTerminated else {
+    return nativeActionError("target is not a running application", "resolve the target again")
+  }
+  let appElement = AXUIElementCreateApplication(pid_t(pid))
+  if window_number != 0 {
+    guard let window = windowAxElementArrayAttribute(appElement, kAXWindowsAttribute as String)
+      .first(where: { windowAxCgWindowId($0) == window_number }) else {
+      return nativeActionError("target window could not be resolved through AX", "resolve the target again")
+    }
+    let raise = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    if raise != .success {
+      return nativeActionError("target window raise failed: \(raise.rawValue)", "focus the target window and retry")
+    }
+  }
+  let deadline = ProcessInfo.processInfo.systemUptime + 1.0
+  repeat {
+    if app.isTerminated { break }
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid_t(pid) {
+      if window_number == 0 { return nativeActionOk() }
+      if let focused = windowAxElementAttribute(appElement, kAXFocusedWindowAttribute as String),
+         windowAxCgWindowId(focused) == window_number { return nativeActionOk() }
+    }
+    // Observe until ready; never repeatedly activate or assume a fixed sleep proves focus.
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+  } while ProcessInfo.processInfo.systemUptime < deadline
+  return nativeActionError("target activation or window focus was not confirmed", "resolve and focus the target again")
+}

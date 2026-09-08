@@ -55,7 +55,7 @@ fn now_playing_rejects_target_before_platform_access() {
   };
   let error = futures_executor::block_on(media_control_now_playing_invoke_command().invoke(input))
     .expect_err("target must fail before reading MediaRemote");
-  assert_eq!(error, "mediaControl.nowPlaying cannot use --target; the macOS now-playing state is system-wide");
+  assert_eq!(error.code, crate::FailureCode::InvalidTarget);
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn media_commands_reject_target_before_platform_access() {
       cancellation: crate::InvokeCancellation::new(),
     };
     let error = futures_executor::block_on(command.invoke(input)).expect_err("target must fail before MediaRemote");
-    assert_eq!(error, format!("{command_id} cannot use --target; macOS media controls are system-wide"));
+    assert_eq!(error.code, crate::FailureCode::InvalidTarget);
   }
 }
 
@@ -135,4 +135,13 @@ fn now_playing_report_still_has_a_meaningful_field_when_nothing_is_playing() {
   };
 
   assert_eq!(now_playing_report(&result).fields, [InvokeReportField::new("State", "nothing playing")]);
+}
+
+#[test]
+fn media_help_explicitly_describes_forbidden_target() {
+  let registry = crate::default_registry();
+  let command = registry.resolve("mediaControl.play").unwrap();
+  let help = crate::help::render_command_help(command);
+  assert!(help.contains("Target forbidden"), "{help}");
+  assert!(!help.contains("--target <TARGET>"), "{help}");
 }

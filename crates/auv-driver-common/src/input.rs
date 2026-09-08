@@ -200,6 +200,45 @@ impl Default for TypeTextOptions {
   }
 }
 
+/// One keyboard delivery, with application/window selection supplied separately.
+/// This is also the payload of the Runner's target-bound keyboard RPC.
+/// TODO(control-target): control selectors are intentionally separate; see
+/// `2026-09-08-targeted-keyboard-contract.md`. Reopen only with an approved
+/// driver contract for selecting and verifying an application-owned control.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyboardInput {
+  Key {
+    options: KeyPressOptions,
+    policy: InputPolicy,
+  },
+  TypeText {
+    text: String,
+    options: TypeTextOptions,
+  },
+  PasteText {
+    options: PasteTextOptions,
+    policy: InputPolicy,
+  },
+}
+
+impl KeyboardInput {
+  pub fn policy(&self) -> InputPolicy {
+    match self {
+      Self::Key { policy, .. } | Self::PasteText { policy, .. } => *policy,
+      Self::TypeText { options, .. } => options.policy,
+    }
+  }
+}
+
+/// Recipient scope for input preparation and delivery. Application selection
+/// does not imply a window or text-control selection. A Window retains its
+/// observed owner and id for exact-window validation.
+#[derive(Clone, Debug)]
+pub enum InputTarget {
+  Application { bundle_id: String },
+  Window(Window),
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyPressOptions {
   pub key: String,

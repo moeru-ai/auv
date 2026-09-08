@@ -46,8 +46,9 @@ No `auv-driver*` contract or implementation changed. The unified command maps
 to the existing global and window-targeted input capabilities and keeps the
 driver-owned `InputActionResult` unchanged.
 
-## Deferred
+## Keyboard follow-up
 
-Target-aware `input.key`, `input.typeText`, and `input.pasteText` remain a
-separate slice. Their current call sites retain the typed input-target activation
-TODO because this click-point contract does not define a keyboard focus lease.
+The target-aware keyboard follow-up is now implemented; see
+[`2026-09-08-targeted-keyboard-contract.md`](2026-09-08-targeted-keyboard-contract.md)
+for supported resources, foreground effects, Runner behavior, and the separate
+control-focus and semantic-verification boundaries.
