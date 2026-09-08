@@ -9,6 +9,15 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
   var submissions = 0
   let output = URL(fileURLWithPath: CommandLine.arguments[1])
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // A bare AppKit app has no standard Edit menu. Install the real responder
+    // action so Cmd+V probes test clipboard delivery, not a missing shortcut.
+    let menu = NSMenu()
+    let edit = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+    let actions = NSMenu(title: "Edit")
+    actions.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    edit.submenu = actions
+    menu.addItem(edit)
+    NSApp.mainMenu = menu
     window = NSWindow(contentRect: NSRect(x: 100, y: 150, width: 620, height: 160), styleMask: [.titled, .closable], backing: .buffered, defer: false)
     window.title = "AUV keyboard validation"
     field = NSTextField(frame: NSRect(x: 25, y: 60, width: 570, height: 35))

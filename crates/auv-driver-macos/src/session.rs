@@ -1128,106 +1128,6 @@ fn parse_key_combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
   Ok(modifiers)
 }
 
-fn validate_key(key: &str) -> DriverResult<()> {
-  let key = key.trim();
-  if key.contains('+') {
-    parse_shortcut(key)?;
-  } else if special_key_code(key).is_err() && key.chars().count() != 1 {
-    return Err(invalid_input(format!("invalid key {key:?}; use a special key, a shortcut like cmd+a, or one character")));
-  }
-  Ok(())
-}
-
-fn post_key(target: Option<(i64, i64)>, key_code: i32) -> DriverResult<()> {
-  match target {
-    Some((pid, number)) => crate::native::input::press_key_in_window(pid, number, key_code),
-    None => crate::native::input::press_key_foreground(key_code),
-  }
-  .map_err(backend)
-}
-
-fn press_key_targeted(options: &KeyPressOptions, target: Option<(i64, i64)>) -> DriverResult<()> {
-  let key = options.key.trim();
-  validate_key(key)?;
-  if key.contains('+') {
-    let shortcut = parse_shortcut(key)?;
-    match target {
-      Some((pid, number)) => crate::native::input::hotkey_in_window(
-        pid,
-        number,
-        shortcut.key_code,
-        shortcut.command,
-        shortcut.shift,
-        shortcut.option,
-        shortcut.control,
-      ),
-      None => {
-        crate::native::input::hotkey_foreground(shortcut.key_code, shortcut.command, shortcut.shift, shortcut.option, shortcut.control)
-      }
-    }
-    .map_err(backend)?;
-  } else if let Ok(code) = special_key_code(key) {
-    post_key(target, code)?;
-  } else {
-    match target {
-      Some((pid, number)) => crate::native::input::type_text_in_window(pid, number, key.to_string(), 0),
-      None => crate::native::input::type_text_foreground(key.to_string(), 0),
-    }
-    .map_err(backend)?;
-  }
-  if !options.settle.is_zero() {
-    thread::sleep(options.settle);
-  }
-  Ok(())
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct ParsedShortcut {
-  key_code: i32,
-  command: bool,
-  shift: bool,
-  option: bool,
-  control: bool,
-}
-
-fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
-  let raw_parts = shortcut.split('+').map(str::trim).filter(|part| !part.is_empty()).collect::<Vec<_>>();
-  if raw_parts.len() < 2 {
-    return Err(invalid_input(format!("invalid shortcut {shortcut}; expected a form like cmd+f or cmd+shift+p")));
-  }
-
-  let key = raw_parts.last().ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; missing key")))?;
-  let mut key_chars = key.chars();
-  let key_character = key_chars
-    .next()
-    .filter(|_| key_chars.next().is_none())
-    .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; only single-character keys are currently supported")))?;
-  let mut parsed = ParsedShortcut {
-    key_code: macos_virtual_key_code(key_character)?,
-    command: false,
-    shift: key_character.is_ascii_uppercase()
-      || matches!(
-        key_character,
-        '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '_' | '+' | '{' | '}' | '|' | ':' | '"' | '<' | '>' | '?'
-      ),
-    option: false,
-    control: false,
-  };
-  for raw_modifier in &raw_parts[..raw_parts.len() - 1] {
-    match raw_modifier.to_ascii_lowercase().as_str() {
-      "cmd" | "command" => parsed.command = true,
-      "shift" => parsed.shift = true,
-      "alt" | "option" => parsed.option = true,
-      "ctrl" | "control" => parsed.control = true,
-      other => {
-        return Err(invalid_input(format!("invalid shortcut {shortcut}; unsupported modifier {other}")));
-      }
-    }
-  }
-
-  Ok(parsed)
-}
-
 /// Maps an ANSI shortcut character to the physical key used by macOS CGEvent.
 /// Text input does not use this table; Unicode payloads preserve layout and
 /// non-ASCII characters without pretending they are physical shortcut keys.
@@ -2165,28 +2065,18 @@ fn paste_text_impl(options: PasteTextOptions, target: Option<(i64, i64)>) -> Dri
     crate::native::clipboard::set_clipboard_text(&options.text).map_err(backend)?;
 
     if options.replace_existing {
-      press_key_targeted(
-        &KeyPressOptions {
-          key: "cmd+a".into(),
-          ..Default::default()
-        },
-        target,
-      )?;
+      crate::native::input::press_keys(target, vec![55, 0]).map_err(backend)?;
       thread::sleep(Duration::from_millis(50));
-      post_key(target, 51)?;
+      crate::native::input::press_keys(target, vec![51]).map_err(backend)?;
       thread::sleep(Duration::from_millis(50));
     }
-    press_key_targeted(
-      &KeyPressOptions {
-        key: "cmd+v".into(),
-        ..Default::default()
-      },
-      target,
-    )?;
+    // Built-in clipboard shortcuts already have known virtual keys; use the
+    // same combination event builder without reparsing shortcut strings.
+    crate::native::input::press_keys(target, vec![55, 9]).map_err(backend)?;
     thread::sleep(Duration::from_millis(150));
     if let Some(key_code) = submit_key_code {
       thread::sleep(Duration::from_millis(50));
-      post_key(target, key_code)?;
+      crate::native::input::press_keys(target, vec![key_code]).map_err(backend)?;
     }
     if !options.settle.is_zero() {
       thread::sleep(options.settle);

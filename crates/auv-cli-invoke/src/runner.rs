@@ -35,12 +35,12 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
   }
   if matches!(input.command_id.as_str(), "input.key" | "input.keys" | "input.keyboard" | "input.typeText" | "input.pasteText") {
-    crate::commands::input::decode_keyboard_input(&input)
+    let keyboard = crate::commands::input::decode_keyboard_input(&input)
       .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
-    if input.target.is_some() || matches!(input.command_id.as_str(), "input.key" | "input.keys" | "input.keyboard") {
-      return targeted_keyboard(input, context).await;
-    }
+    crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
+    return execute_keyboard(input, keyboard, context).await;
   }
+
   let command_id = input.command_id.as_str();
   if command_id.starts_with("overlay.") {
     let plan = crate::commands::overlay::plan_overlay(&input)?;
@@ -340,48 +340,6 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       }
       .await
     }
-    "input.typeText" => match input.inputs.get("text").cloned() {
-      None => Err("input.typeText omitted its typed text argument".to_string()),
-      Some(text) => runner
-        .input()
-        .type_text(text, auv_driver::TypeTextOptions::default())
-        .await
-        .map_err(|status| format!("InputService/TypeText failed: {status}"))
-        .and_then(|action| {
-          crate::emit_input_action_result(&action);
-          crate::commands::input::input_action_output(&action)
-        }),
-    },
-    "input.pasteText" => match input.inputs.get("text").cloned() {
-      None => Err("input.pasteText omitted its typed text argument".to_string()),
-      Some(text) => runner
-        .input()
-        .paste_text(auv_driver::PasteTextOptions {
-          text,
-          ..Default::default()
-        })
-        .await
-        .map_err(|status| format!("InputService/PasteText failed: {status}"))
-        .and_then(|action| {
-          crate::emit_input_action_result(&action);
-          crate::commands::input::input_action_output(&action)
-        }),
-    },
-    "input.key" => match input.inputs.get("key").cloned() {
-      None => Err("input.key omitted its typed key argument".to_string()),
-      Some(key) => runner
-        .input()
-        .press_key(auv_driver::KeyPressOptions {
-          key: key.clone(),
-          settle: std::time::Duration::ZERO,
-        })
-        .await
-        .map_err(|status| format!("InputService/PressKey failed: {status}"))
-        .and_then(|action| {
-          crate::emit_input_action_result(&action);
-          crate::commands::input::press_key_output(&action, &key)
-        }),
-    },
     "input.moveMouse" => {
       async {
         let point = selected_screen_point(&input, "input.moveMouse")?;
@@ -638,13 +596,15 @@ mod tests;
 
 // Selection happens on the chosen Runner; a target-bound RPC never falls back
 // to a local driver or an unqualified global keyboard RPC.
-async fn targeted_keyboard(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+async fn execute_keyboard(
+  input: crate::InvokeCommandInput,
+  keyboard: Vec<auv_driver::KeyboardInput>,
+  context: auv::AuvContext,
+) -> crate::InvokeExecutionResult {
   let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
   let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
 
-  let keyboard = crate::commands::input::decode_keyboard_input(&input)
-    .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
     Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {

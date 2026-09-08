@@ -315,27 +315,6 @@ mod no_steal_tests {
   }
 
   #[test]
-  fn parse_shortcut_normalizes_supported_modifiers() {
-    let parsed = parse_shortcut("cmd+shift+p").expect("shortcut");
-
-    assert_eq!(
-      parsed,
-      ParsedShortcut {
-        key_code: 35,
-        command: true,
-        shift: true,
-        option: false,
-        control: false,
-      }
-    );
-  }
-
-  #[test]
-  fn parse_shortcut_rejects_multi_character_key() {
-    assert!(matches!(parse_shortcut("cmd+return"), Err(DriverError::InvalidInput { .. })));
-  }
-
-  #[test]
   fn input_api_exposes_explicit_global_hid_scroll_method() {
     // NOTICE(compile-only-api-check): nested fn is type-checked but never called (no HID side effects).
     fn assert_api_compiles(session: MacosDriverSession) {
@@ -1007,4 +986,91 @@ fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
   });
   result.unwrap();
   assert_eq!(recorder.calls, vec![(None, vec![59, 123, 111])]);
+}
+
+// https://github.com/moeru-ai/auv/pull/177
+// Exercise the real validate -> System Events activation -> focus confirmation
+// chain against the running AppKit fixture, without posting input events.
+#[test]
+#[ignore = "requires the keyboard AppKit fixture and Accessibility permission"]
+fn repeated_preparation_keeps_running_fixture_identity() {
+  let session = MacosDriverSession { _private: () };
+  let target = InputTarget::Application {
+    bundle_id: "ai.moeru.auv.keyboard-validation-fixture".into(),
+  };
+  let (pid, _) = resolve_input_target(&target).unwrap();
+  for iteration in 0..30 {
+    let result = session.input().prepare_for_input(&target, foreground_prepare_options(Duration::ZERO));
+    assert!(
+      result.is_ok(),
+      "preparation {iteration}: {result:?}; original process alive: {}; fresh recipient: {:?}",
+      process_is_alive(pid as u32),
+      resolve_input_target(&target)
+    );
+  }
+}
+
+// https://github.com/moeru-ai/auv/pull/177
+#[test]
+fn legacy_key_entry_preserves_modifier_order_and_supports_named_keys() {
+  use crate::native::input::tests::with_combination_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorded) = with_combination_recorder(None, || {
+    session.input().press_key(KeyPressOptions {
+      key: "cmd+shift+p".into(),
+      ..Default::default()
+    })?;
+    session.input().press_key(KeyPressOptions {
+      key: "cmd+return".into(),
+      ..Default::default()
+    })
+  });
+  assert!(result.is_ok(), "{result:?}");
+  assert_eq!(recorded.calls, vec![(None, vec![55, 56, 35]), (None, vec![55, 36])]);
+}
+
+// https://github.com/moeru-ai/auv/pull/177
+// ROOT CAUSE:
+// Workspace entries can outlive a process until AppKit updates its snapshot.
+// Warming the lookup before terminating our child checks kernel liveness too.
+#[test]
+#[ignore = "requires AUV_KEYBOARD_FIXTURE_EXECUTABLE and no other fixture instance"]
+fn preparation_rejects_exited_application_and_resolves_restarted_instance() {
+  struct Fixture(std::process::Child, std::path::PathBuf);
+  impl Drop for Fixture {
+    fn drop(&mut self) {
+      let _ = self.0.kill();
+      let _ = self.0.wait();
+      let _ = std::fs::remove_file(&self.1);
+    }
+  }
+  let executable = std::env::var_os("AUV_KEYBOARD_FIXTURE_EXECUTABLE").expect("fixture executable");
+  let output = std::env::temp_dir().join(format!("auv-keyboard-exit-{}.json", std::process::id()));
+  let _ = std::fs::remove_file(&output);
+  let mut fixture = Fixture(Command::new(&executable).arg(&output).spawn().unwrap(), output);
+  let session = MacosDriverSession { _private: () };
+  let target = InputTarget::Application {
+    bundle_id: "ai.moeru.auv.keyboard-validation-fixture".into(),
+  };
+  for generation in 0..2 {
+    if generation > 0 {
+      std::fs::remove_file(&fixture.1).unwrap();
+      fixture.0 = Command::new(&executable).arg(&fixture.1).spawn().unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !fixture.1.exists() {
+      assert!(std::time::Instant::now() < deadline, "fixture did not publish ready state");
+      assert!(fixture.0.try_wait().unwrap().is_none(), "fixture exited before ready");
+      thread::sleep(Duration::from_millis(10));
+    }
+    let recipient = resolve_input_target(&target).unwrap();
+    assert_eq!(recipient.0, i64::from(fixture.0.id()), "must resolve the new instance, not a cached PID");
+    for _ in 0..10 {
+      session.input().prepare_for_input(&target, foreground_prepare_options(Duration::ZERO)).unwrap();
+    }
+    fixture.0.kill().unwrap();
+    fixture.0.wait().unwrap();
+    let error = session.input().prepare_for_input(&target, foreground_prepare_options(Duration::ZERO)).unwrap_err();
+    assert!(matches!(error, DriverError::NotFound { .. }), "{error}");
+  }
 }

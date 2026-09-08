@@ -323,5 +323,111 @@
         }
       }
     }
-  ]
+  ],
+  "execution_consolidation": {
+    "evidence_level": "live AppKit fixture readback; input results remain unverified",
+    "activation_preparation": {
+      "consecutive_passes": 30,
+      "passes_per_instance_across_restart": [
+        10,
+        10
+      ],
+      "keyboard_events_posted": false
+    },
+    "dry_run": {
+      "commands": [
+        "input.typeText",
+        "input.pasteText"
+      ],
+      "routes": [
+        "local",
+        "runner"
+      ],
+      "control_and_clipboard_unchanged": true,
+      "results": [
+        {
+          "runner": false,
+          "run_id": "01a08062-bde4-7322-b17a-4143ed8afa00",
+          "status": "completed",
+          "command_id": "input.typeText",
+          "result": null
+        },
+        {
+          "runner": false,
+          "run_id": "01a08062-be00-75f1-bf6b-8dde0cbcaecf",
+          "status": "completed",
+          "command_id": "input.pasteText",
+          "result": null
+        },
+        {
+          "runner": true,
+          "run_id": "279d796d-1bbc-b591-af26-7a227d53cda0",
+          "status": "completed",
+          "command_id": "input.typeText",
+          "result": null
+        },
+        {
+          "runner": true,
+          "run_id": "dfff687d-f011-9910-66ef-c358be532db5",
+          "status": "completed",
+          "command_id": "input.pasteText",
+          "result": null
+        }
+      ]
+    },
+    "paste": {
+      "observed": {
+        "event": "change",
+        "submissions": 0,
+        "text": "0123456789 local runner"
+      },
+      "clipboard_restored": true,
+      "run_ids": [
+        "01a08062-bf3c-7791-9757-453712cb4318",
+        "24efab7f-df25-9920-5926-9eaeffb08e5e"
+      ]
+    },
+    "same_runner_application_restart": {
+      "exit_failure": {
+        "run_id": "12f88efb-fe77-91ac-197e-bb60fb380a0b",
+        "status": "failed",
+        "command_id": "input.typeText",
+        "result": null,
+        "failure": "InputKeyboard failed: code: 'Some requested entity was not found', message: \"keyboard action 0 failed after 0 complete actions and 0 presses: running application \\\"ai.moeru.auv.keyboard-validation-fixture\\\" was not found\"",
+        "failure_details": {
+          "code": "not_found",
+          "message": "InputKeyboard failed: code: 'Some requested entity was not found', message: \"keyboard action 0 failed after 0 complete actions and 0 presses: running application \\\"ai.moeru.auv.keyboard-validation-fixture\\\" was not found\"",
+          "keyboard_progress": {
+            "action_index": 0,
+            "completed": [],
+            "completed_presses": 0
+          }
+        }
+      },
+      "restarted_response": {
+        "run_id": "5b5a27b8-e8f9-2d44-b820-1ba30f1c51a7",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=11235, application scope; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      },
+      "restarted_observation": {
+        "event": "change",
+        "submissions": 0,
+        "text": "0123456789 restarted"
+      }
+    }
+  }
 }

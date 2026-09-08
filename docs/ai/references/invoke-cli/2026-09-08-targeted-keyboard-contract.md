@@ -12,7 +12,7 @@ is not evidence that every command accepts every resource type.
 
 | Commands | Accepted target | Effect |
 | --- | --- | --- |
-| `input.key`, `input.typeText`, `input.pasteText` | optional application or window | Resolve the running application or exact observed window; apply the explicit input policy; post events to the owning pid. |
+| `input.key`, `input.keys`, `input.keyboard`, `input.typeText`, `input.pasteText` | optional application or window | Resolve the running application or exact observed window; apply the explicit input policy; post events to the owning pid. |
 | `input.focusText`, `input.axFocusText` | required application | Select an AX text control and request focus. This remains separate from application/window activation. |
 | `input.clickPoint` | optional application, window, display | Existing logical screen/window/display coordinate contract; `--normalized` uses target-local ratios. |
 | `window.capture/findText/waitForText/clickText` | optional application | Existing window selector, including command-local title options. |
@@ -26,12 +26,12 @@ An application target requires an already running application, but no visible
 WindowServer window or exact AX window. Missing applications are never launched;
 multiple running instances require an explicit window selection.
 
-Target and policy are independent. The three CLI commands expose
+Target and policy are independent. Keyboard CLI commands expose
 `--input-policy`, also present in their generated MCP argument metadata:
 
 | Policy | Preparation and delivery |
 | --- | --- |
-| `foreground-preferred` (CLI default) | Activate once, confirm the foreground pid, then deliver to that pid. Window targets additionally require exact AX window resolution, raise, and focused-window confirmation. |
+| `foreground-preferred` (CLI default) | Activate and confirm the foreground pid before each action/repetition, then deliver to that pid. Window targets additionally require exact AX window resolution, raise, and focused-window confirmation. |
 | `background-only` | Validate the process/window owner and deliver to the pid without activation. No foreground fallback. |
 | `background-preferred` | Currently the same no-steal behavior on this keyboard path. The existing foreground-fallback deferral is preserved explicitly. |
 
@@ -204,7 +204,7 @@ fields. The attempt message names the pid and whether a window was selected.
 CLI JSON keeps the existing `failure` string and adds `failure_details` with
 `code` and `message`. Runtime failure still exits nonzero and retains `run_id`
 and `command_id`. MCP retains the same details and command id in its structured
-error response. Target validation and target-bound driver failures preserve
+error response. Target validation and keyboard driver failures preserve
 categories such as `invalid_target`, `not_found`, `unsupported`, `invalid_input`
 and `backend`. Legacy non-keyboard string helpers retain `command_failed`;
 this migration does not infer categories by parsing human error strings.
@@ -272,15 +272,6 @@ also available in the committed [execution evidence](evidence/targeted-keyboard-
 - `old-runner-rejection` records nonzero exit and `unsupported` against the
   unmodified baseline Runner, with no fallback invocation.
 
-Validation: `cargo test`; targeted invoke/CLI/macOS driver unit suites; live
-NetEase dry-run and missing-application regressions; Swift bridge generation and
-SwiftPM build; Buf generation and breaking check; SDK typecheck and tests
-(53 passed, 1 skipped). Buf lint reports the pre-existing MoveMouse response
-naming rule violation on main; this slice does not rename that RPC's response.
-Clippy completed with existing repository warnings.
-Final format/check/diff results and negative-case captures are in the local
-validation index.
-
 ## Preparation consolidation evidence
 
 The current implementation was checked after the owner requested activation
@@ -308,11 +299,9 @@ remains an app-control consumption uncertainty, not proof of a modifier-event
 bug or a completed fix for all focus races. The owner explicitly deferred the
 first Cmd+A investigation to a separate follow-up; it is outside this PR. No fixed-delay workaround was added.
 
-Current evidence and validation logs are indexed in the machine-local
-`.auv/target-input-evidence/refinement/INDEX.md`. Default Cargo tests, focused
-CLI/invoke/driver suites, live preparation/owner tests, Swift bridge generation,
-SwiftPM build, SDK typecheck/tests, Buf generation/breaking, format/check and
-Clippy completed; Buf lint retains the existing main MoveMouse response rule.
+Historical preparation evidence is indexed in the machine-local
+`.auv/target-input-evidence/refinement/INDEX.md`. Current validation is recorded
+below.
 
 ## Host integration boundary
 
@@ -359,14 +348,12 @@ its first process argument.
   mixed-action submissions with no matching text effect. A subsequent search
   submission did not establish the expected results page in this probe; page
   and playback changes were observed and concurrent interaction was not ruled
-  out. These observations do not establish an event-timing, modifier, or
-  activation root cause. The earlier playback workflow above is historical
+  out. These observations do not establish an event-timing or modifier root cause. The earlier playback workflow above is historical
   evidence, not a new end-to-end pass for this hierarchy revision.
 - One clear-button click failed during activation confirmation with "target is
   not a running application", although a fresh process/window observation
   still found the target. No click was delivered on that failure; a separately
-  re-resolved attempt succeeded. This false-negative observation is retained,
-  not hidden behind a retry or fixed-delay patch.
+  re-resolved attempt succeeded. This false negative was subsequently reproduced and fixed as described below.
 
 Automated coverage additionally injects failure at the native event boundary
 to prove that later actions stop and completed repetition/action counts survive.
@@ -384,8 +371,9 @@ After the dry-run routing fix, a live unmodified main Runner returned
 `unsupported`/UNIMPLEMENTED for the new InputKeyboard request, with command ID
 and failure JSON preserved. It did not fall back to a local or global action.
 
-Final checks: Rust formatting/check/default suite and the focused driver, invoke,
-Runner, and Rust SDK suites passed (287 focused tests; platform probes separate).
+Before the consolidation below, Rust formatting/check/default suite and the
+focused driver, invoke, Runner, and Rust SDK suites passed (287 focused tests;
+platform probes separate).
 The CLI subprocess routing regression, live stale-window preparation rejection,
 and live changed-owner Runner rejection passed. Bridge generation and the native
 SwiftPM build passed. SDK typecheck and tests passed (53 passed, 1 skipped).
@@ -393,3 +381,61 @@ Clippy completed with existing repository warnings. Buf generation and breaking
 checks against main passed; the changed input schema formats cleanly. Repository
 Buf lint still reports the existing MoveMouseStreamResponse name, and repository
 format diff still reports unchanged reflection-option ordering.
+
+## Execution consolidation and activation regression
+
+All five keyboard invoke commands now use InputKeyboard, with and without a
+target. Local handlers consume their typed arguments directly; Runner dispatch
+decodes once and reuses the same conversions. The legacy global RPCs remain for
+existing SDK consumers. Selected global text dry-runs previously fell through to
+those RPCs, which have no dry-run field. An empty-text subprocess regression
+safely reproduced the wrong route (legacy TypeText rejected it, while local
+validation accepted it); it now returns completed validation without delivery.
+
+Only `parse_key_combination` parses user key combinations. Clipboard's fixed
+Cmd+A/Cmd+V shortcuts use known virtual keys and the shared native event builder.
+The old shortcut parser and delivery dispatcher were removed. Clipboard snapshot,
+restore, and existing timing behavior are unchanged; Cmd+A remains deferred.
+
+The activation false negative reproduced on a disposable AppKit application:
+`repeated_preparation_keeps_running_fixture_identity` failed at iteration 9 with
+`confirm_input_focus: target is not a running application`, while the process
+remained alive. A paired Swift probe found 9 PID-constructor misses in 50
+activation cycles; workspace enumeration identified the live app on every miss.
+Pumping the main RunLoop did not eliminate the failure. This establishes a
+transient AppKit lookup failure, not process termination; it does not establish
+Apple's internal cause.
+
+Preparation now checks process liveness through the kernel and observes the
+target application's `AXFrontmost` state before input. It retains exact
+window-owner and AX focused-window checks, with no retry or extra input delay.
+Application resolution combines fresh bundle queries with observed application
+identities. Neither AppKit source is sufficient alone: a workspace-list probe
+retained the old PID for 13 observations after restart, while bundle lookup
+also transiently returned empty for a live process. Observed identities are
+retained under a lock, dead PIDs are evicted, and every candidate must match
+the kernel-reported executable path before it can resolve the target. A cached
+AppKit entry alone cannot authorize delivery. Lookup still fails closed when
+there is no validated candidate or more than one application instance.
+[Apple documents the main-RunLoop update behavior of AppKit application properties](https://developer.apple.com/documentation/appkit/nsrunningapplication).
+
+The two ignored live regressions exercise 30 consecutive preparations, then
+cached-entry rejection after terminating a child fixture and fresh resolution
+after restarting it (10 preparations per instance). Use the committed AppKit
+fixture source above; the exit test requires `AUV_KEYBOARD_FIXTURE_EXECUTABLE` pointing
+to its executable and no other fixture instance running. Both tests operate on
+that disposable app; neither posts keyboard input.
+
+Both live preparation regressions passed. A persistent Runner also rejected the
+terminated fixture with structured `not_found` and zero keyboard progress, then
+targeted its new instance and independently read back `0123456789 restarted`.
+Local and Runner text/paste dry-runs left both the control and clipboard unchanged;
+actual clipboard paste read back `0123456789 local runner` and restored clipboard
+contents. The fixture now supplies a standard Edit/Paste responder action. These
+observations are recorded under `execution_consolidation` in the
+[keyboard evidence](evidence/keyboard-hierarchy-results.json); driver results
+remain unverified because readback is a separate test observation.
+
+For this consolidation, 286 focused Rust tests passed, as did the default suite,
+formatting, check, native bridge generation, and SwiftPM build. The live stale
+window and changed-owner Runner regressions passed after the native fix.

@@ -184,25 +184,7 @@ struct TypeTextArgs {
   input = TypeTextArgs,
 )]
 async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> crate::InvokeExecutionResult {
-  #[cfg(target_os = "macos")]
-  {
-    decode_keyboard_input(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
-    if input.target.is_some() {
-      return execute_keyboard(&input);
-    }
-    let text = args.text;
-    if input.dry_run {
-      return Ok(validation_only_output());
-    }
-
-    let result = type_text_into_active_control(text).await?;
-    input_action_output(&result).map_err(Into::into)
-  }
-  #[cfg(not(target_os = "macos"))]
-  {
-    let _ = (input, args);
-    Err("input.typeText is only available on macOS".to_string().into())
-  }
+  execute_keyboard(&input, vec![args.into()])
 }
 
 pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
@@ -240,25 +222,7 @@ struct PasteTextArgs {
   input = PasteTextArgs,
 )]
 async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTextArgs) -> crate::InvokeExecutionResult {
-  #[cfg(target_os = "macos")]
-  {
-    decode_keyboard_input(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
-    if input.target.is_some() {
-      return execute_keyboard(&input);
-    }
-    let text = args.text;
-    if input.dry_run {
-      return Ok(validation_only_output());
-    }
-
-    let result = paste_text_into_active_control(text).await?;
-    input_action_output(&result).map_err(Into::into)
-  }
-  #[cfg(not(target_os = "macos"))]
-  {
-    let _ = (input, args);
-    Err("input.pasteText is only available on macOS".to_string().into())
-  }
+  execute_keyboard(&input, vec![args.into()])
 }
 
 pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
@@ -322,8 +286,8 @@ struct PressKeysArgs {
 
 #[invoke_command(id = "input.keys", target = OptionalKeyboard, group = "input",
   description = "Press and release a macOS key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.", input = PressKeysArgs)]
-async fn press_keys(input: InvokeCommandInput, _args: PressKeysArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input)
+async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
+  execute_keyboard(&input, vec![args.into()])
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -359,8 +323,9 @@ enum KeyboardActionArg {
 
 #[invoke_command(id = "input.keyboard", target = OptionalKeyboard, group = "input",
   description = "Execute ordered macOS keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.", input = InputKeyboardArgs)]
-async fn input_keyboard(input: InvokeCommandInput, _args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input)
+async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
+  let actions = args.into_keyboard_inputs().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+  execute_keyboard(&input, actions)
 }
 
 #[invoke_command(
@@ -370,8 +335,8 @@ async fn input_keyboard(input: InvokeCommandInput, _args: InputKeyboardArgs) -> 
   description = "Press a keyboard key or shortcut in the active macOS app through native CoreGraphics events.",
   input = PressKeyArgs,
 )]
-async fn press_key(input: InvokeCommandInput, _args: PressKeyArgs) -> crate::InvokeExecutionResult {
-  execute_keyboard(&input)
+async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::InvokeExecutionResult {
+  execute_keyboard(&input, vec![args.into()])
 }
 
 pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
@@ -733,56 +698,67 @@ fn click_window_selector(application_id: &str, title: Option<&str>) -> auv_drive
   }
 }
 
-/// Decode the registered input arguments once for both target-bound frontends.
-pub(crate) fn decode_keyboard_input(input: &InvokeCommandInput) -> Result<Vec<auv_driver::KeyboardInput>, String> {
-  use auv_driver::{KeyboardInput, PressKeysOptions};
-  let policy = |value: Option<InputPolicyArg>| -> Result<auv_driver::InputPolicy, String> {
-    let policy = value.map(InputPolicyArg::driver_policy).unwrap_or(auv_driver::InputPolicy::ForegroundPreferred);
-    if input.target.is_none() && policy != auv_driver::InputPolicy::ForegroundPreferred {
-      return Err("background keyboard input requires --target".into());
-    }
-    Ok(policy)
-  };
-  let press = |keys, count: Option<u32>, interval_ms: Option<u64>, policy| KeyboardInput::PressKeys {
-    policy,
-    options: PressKeysOptions {
-      keys,
-      count: count.unwrap_or(1),
-      interval: std::time::Duration::from_millis(interval_ms.unwrap_or(0)),
-      ..Default::default()
-    },
-  };
-  Ok(match input.command_id.as_str() {
-    "input.key" => {
-      let args = crate::command::decode_args::<PressKeyArgs>(input)?;
-      // NOTICE: Keep the released shortcut spelling at this frontend. New
-      // structured callers express key combinations with input.keys/InputKeyboard.
-      let options: PressKeysOptions = auv_driver::KeyPressOptions {
-        key: args.key,
+impl From<PressKeysArgs> for auv_driver::KeyboardInput {
+  fn from(args: PressKeysArgs) -> Self {
+    Self::PressKeys {
+      policy: keyboard_policy(args.input_policy),
+      options: auv_driver::PressKeysOptions {
+        keys: args.keys,
+        count: args.count.unwrap_or(1),
+        interval: std::time::Duration::from_millis(args.interval_ms.unwrap_or(0)),
         ..Default::default()
-      }
-      .into();
-      vec![press(
-        options.keys,
-        args.count,
-        args.interval_ms,
-        policy(args.input_policy)?,
-      )]
+      },
     }
-    "input.keys" => {
-      let args = crate::command::decode_args::<PressKeysArgs>(input)?;
-      vec![press(
-        args.keys,
-        args.count,
-        args.interval_ms,
-        policy(args.input_policy)?,
-      )]
+  }
+}
+
+impl From<PressKeyArgs> for auv_driver::KeyboardInput {
+  fn from(args: PressKeyArgs) -> Self {
+    // Preserve the released shortcut spelling through the shared conversion.
+    let options: auv_driver::PressKeysOptions = auv_driver::KeyPressOptions {
+      key: args.key,
+      ..Default::default()
     }
-    "input.keyboard" => {
-      let args = crate::command::decode_args::<InputKeyboardArgs>(input)?;
-      let policy = policy(args.input_policy)?;
-      let actions: Vec<KeyboardActionArg> =
-        serde_json::from_str(&args.actions).map_err(|error| format!("invalid keyboard actions: {error}"))?;
+    .into();
+    PressKeysArgs {
+      keys: options.keys,
+      count: args.count,
+      interval_ms: args.interval_ms,
+      input_policy: args.input_policy,
+    }
+    .into()
+  }
+}
+
+impl From<TypeTextArgs> for auv_driver::KeyboardInput {
+  fn from(args: TypeTextArgs) -> Self {
+    Self::TypeText {
+      text: args.text,
+      options: auv_driver::TypeTextOptions {
+        policy: keyboard_policy(args.input_policy),
+        ..Default::default()
+      },
+    }
+  }
+}
+
+impl From<PasteTextArgs> for auv_driver::KeyboardInput {
+  fn from(args: PasteTextArgs) -> Self {
+    Self::PasteText {
+      policy: keyboard_policy(args.input_policy),
+      options: auv_driver::PasteTextOptions {
+        text: args.text,
+        ..Default::default()
+      },
+    }
+  }
+}
+
+impl InputKeyboardArgs {
+  fn into_keyboard_inputs(self) -> Result<Vec<auv_driver::KeyboardInput>, String> {
+    let actions: Vec<KeyboardActionArg> =
+      serde_json::from_str(&self.actions).map_err(|error| format!("invalid keyboard actions: {error}"))?;
+    Ok(
       actions
         .into_iter()
         .map(|action| match action {
@@ -790,51 +766,61 @@ pub(crate) fn decode_keyboard_input(input: &InvokeCommandInput) -> Result<Vec<au
             keys,
             count,
             interval_ms,
-          } => press(keys, count, interval_ms, policy),
-          KeyboardActionArg::TypeText { text } => KeyboardInput::TypeText {
+          } => PressKeysArgs {
+            keys,
+            count,
+            interval_ms,
+            input_policy: self.input_policy,
+          }
+          .into(),
+          KeyboardActionArg::TypeText { text } => TypeTextArgs {
             text,
-            options: auv_driver::TypeTextOptions {
-              policy,
-              ..Default::default()
-            },
-          },
-          KeyboardActionArg::PasteText { text } => KeyboardInput::PasteText {
-            policy,
-            options: auv_driver::PasteTextOptions {
-              text,
-              ..Default::default()
-            },
-          },
+            input_policy: self.input_policy,
+          }
+          .into(),
+          KeyboardActionArg::PasteText { text } => PasteTextArgs {
+            text,
+            input_policy: self.input_policy,
+          }
+          .into(),
         })
-        .collect()
-    }
-    "input.typeText" => {
-      let args = crate::command::decode_args::<TypeTextArgs>(input)?;
-      vec![KeyboardInput::TypeText {
-        text: args.text,
-        options: auv_driver::TypeTextOptions {
-          policy: policy(args.input_policy)?,
-          ..Default::default()
-        },
-      }]
-    }
-    "input.pasteText" => {
-      let args = crate::command::decode_args::<PasteTextArgs>(input)?;
-      vec![KeyboardInput::PasteText {
-        policy: policy(args.input_policy)?,
-        options: auv_driver::PasteTextOptions {
-          text: args.text,
-          ..Default::default()
-        },
-      }]
-    }
-    _ => return Err(format!("{} is not a keyboard input command", input.command_id)),
-  })
+        .collect(),
+    )
+  }
+}
+
+fn keyboard_policy(policy: Option<InputPolicyArg>) -> auv_driver::InputPolicy {
+  policy.map(InputPolicyArg::driver_policy).unwrap_or(auv_driver::InputPolicy::ForegroundPreferred)
+}
+
+/// Runner dispatch decodes transport arguments once. Local handlers already
+/// receive typed arguments; both use the same argument-to-driver conversions.
+pub(crate) fn decode_keyboard_input(input: &InvokeCommandInput) -> Result<Vec<auv_driver::KeyboardInput>, String> {
+  use crate::command::decode_args;
+  match input.command_id.as_str() {
+    "input.key" => decode_args::<PressKeyArgs>(input).map(|args| vec![args.into()]),
+    "input.keys" => decode_args::<PressKeysArgs>(input).map(|args| vec![args.into()]),
+    "input.typeText" => decode_args::<TypeTextArgs>(input).map(|args| vec![args.into()]),
+    "input.pasteText" => decode_args::<PasteTextArgs>(input).map(|args| vec![args.into()]),
+    "input.keyboard" => decode_args::<InputKeyboardArgs>(input)?.into_keyboard_inputs(),
+    _ => Err(format!("{} is not a keyboard input command", input.command_id)),
+  }
+}
+
+/// Reject an impossible foreground policy before opening either driver route.
+pub(crate) fn validate_keyboard_policy(
+  input: &InvokeCommandInput,
+  actions: &[auv_driver::KeyboardInput],
+) -> Result<(), crate::InvokeFailure> {
+  if input.target.is_none() && actions.iter().any(|action| action.policy() != auv_driver::InputPolicy::ForegroundPreferred) {
+    return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "background keyboard input requires --target"));
+  }
+  Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn execute_keyboard(input: &InvokeCommandInput) -> crate::InvokeExecutionResult {
-  let keyboard = decode_keyboard_input(input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
+  validate_keyboard_policy(input, &keyboard)?;
   let session = auv_driver::open_local()?;
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
@@ -858,7 +844,7 @@ fn execute_keyboard(input: &InvokeCommandInput) -> crate::InvokeExecutionResult 
 }
 
 #[cfg(not(target_os = "macos"))]
-fn execute_keyboard(_input: &InvokeCommandInput) -> crate::InvokeExecutionResult {
+fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is only available on macOS"))
 }
 
