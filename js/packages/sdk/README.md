@@ -241,14 +241,14 @@ Create a Run for each workflow that needs its own correlation identity:
 
 ```ts
 const run = await auv.runs.create()
-const runner = auv.runner({ runnerClass: 'auv.core.local', runId: run.id })
+const runner = auv.runner({ runId: run.id, runnerClass: 'auv.core.local' })
 try {
   await runner.displays.list()
   // Further steps in this workflow use this same route and Run ID.
-  await auv.runs.stop({ runId: run.id, outcome: 'succeeded' })
+  await auv.runs.stop({ outcome: 'succeeded', runId: run.id })
 }
 catch (error) {
-  await auv.runs.stop({ runId: run.id, outcome: 'failed' })
+  await auv.runs.stop({ outcome: 'failed', runId: run.id })
   throw error
 }
 ```
