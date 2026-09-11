@@ -35,10 +35,10 @@ struct RestState {
   authenticator: Authenticator,
 }
 
-pub(crate) fn router(daemon: Arc<dyn Control>, authenticator: Authenticator) -> Router {
+pub(crate) fn router(daemon: Arc<dyn Control>, authenticator: Authenticator, id: String) -> Router {
   let pairing = Arc::new(PairingServiceGrpc::new(authenticator.pairing()));
   let discovery = Arc::new(DiscoveryServiceGrpc::new(Arc::clone(&daemon)));
-  let health = Arc::new(HealthServiceGrpc);
+  let health = Arc::new(HealthServiceGrpc { id });
   let devices = Arc::new(DeviceServiceGrpc::new(Arc::clone(&daemon)));
   let runs = Arc::new(RunServiceGrpc::new(Arc::clone(&daemon)));
   let runners = Arc::new(RunnerServiceGrpc::new(Arc::clone(&daemon)));

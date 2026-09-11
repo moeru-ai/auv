@@ -122,7 +122,13 @@ fn probe_interface(connection: &zbus::blocking::Connection, interface: &'static 
     Err(error) => {
       // GLib reports a missing interface as InvalidArgs for this fixed, valid
       // Properties.Get request; retain its details instead of hiding the error.
-      let missing = matches!(&error, zbus::Error::MethodError(name, _, _) if matches!(name.as_str(), "org.freedesktop.DBus.Error.InvalidArgs" | "org.freedesktop.DBus.Error.UnknownInterface" | "org.freedesktop.DBus.Error.UnknownMethod" | "org.freedesktop.DBus.Error.UnknownProperty"));
+      let missing = matches!(
+        zbus::fdo::Error::from(error.clone()),
+        zbus::fdo::Error::InvalidArgs(_)
+          | zbus::fdo::Error::UnknownInterface(_)
+          | zbus::fdo::Error::UnknownMethod(_)
+          | zbus::fdo::Error::UnknownProperty(_)
+      );
       PortalInterfaceProbe {
         available: if missing {
           PermissionStatus::Missing

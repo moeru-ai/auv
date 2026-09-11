@@ -10,6 +10,7 @@ use super::*;
 
 fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
   Config {
+    id: None,
     listeners,
     store_root: root.join("store"),
     pairing_store: None,
@@ -522,4 +523,58 @@ async fn local_owner_and_paired_bearer_share_live_pairing_administration() {
   assert_eq!(paired_a.devices().list_devices().await.unwrap_err().code(), tonic::Code::Unauthenticated);
   shutdown.cancel();
   task.await.unwrap().unwrap();
+}
+
+// ROOT CAUSE:
+// A healthy pre-existing listener could satisfy a new launch's readiness probe.
+// Each bound daemon now has its own identity, independent of process-global
+// state, and every HTTP/gRPC listener reports that same identity.
+#[tokio::test]
+async fn health_identifies_each_daemon_instance_across_protocols_and_listeners() {
+  let explicit = uuid::Uuid::now_v7();
+  let mut ids = Vec::new();
+  for supplied in [None, None, Some(explicit)] {
+    let root = tempfile::tempdir().unwrap();
+    let mut options = config(
+      vec![
+        ListenEndpoint::Tcp {
+          host: "127.0.0.1".into(),
+          port: 0,
+        },
+        ListenEndpoint::Tcp {
+          host: "127.0.0.1".into(),
+          port: 0,
+        },
+      ],
+      root.path(),
+    );
+    options.id = supplied;
+    let server = Server::bind(options).await.unwrap();
+    let endpoints = server.endpoints().to_vec();
+    let shutdown = CancellationToken::new();
+    let task = tokio::spawn(server.serve(shutdown.clone()));
+    let mut id = None;
+    for endpoint in endpoints {
+      let BoundEndpoint::Tcp(address) = endpoint else {
+        panic!("TCP listener")
+      };
+      let http: serde_json::Value =
+        serde_json::from_slice(&reqwest::get(format!("http://{address}/health")).await.unwrap().bytes().await.unwrap()).unwrap();
+      let mut grpc = proto::health_service_client::HealthServiceClient::connect(format!("http://{address}")).await.unwrap();
+      let response = grpc.check(proto::CheckRequest {}).await.unwrap().into_inner();
+      assert_eq!(response.status, proto::HealthStatus::Serving as i32);
+      assert_eq!(http["id"], response.id);
+      assert_eq!(http["status"], response.status);
+      let actual = uuid::Uuid::parse_str(&response.id).unwrap();
+      if let Some(expected) = supplied.or(id) {
+        assert_eq!(actual, expected);
+      }
+      id = Some(actual);
+    }
+    ids.push(id.unwrap());
+    shutdown.cancel();
+    task.await.unwrap().unwrap();
+  }
+  assert_ne!(ids[0], ids[1]);
+  assert_eq!(ids[2], explicit);
 }

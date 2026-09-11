@@ -86,8 +86,11 @@ Active Run attachments retain the child; after their release, it can still serve
 other Runs or calls during the idle period.
 
 `startAuv()` starts an app-owned daemon. Call it once per Node/Electron host,
-then reuse `daemon.connect()` and `createAuv(connection)`. It first waits for that
-child's post-bind readiness announcement, then checks every listener. An occupied
+then reuse `daemon.connect()` and `createAuv(connection)`. It supplies a fresh `--id` UUID per launch and checks that every listener's
+health response returns that same `id` with a serving status. Health is
+available through HTTP `GET /health` and gRPC `HealthService.Check`; logging
+and stdout formatting are independent. Without an explicit ID, the daemon
+generates one for each bound instance. An occupied
 endpoint now fails. `connect()` attaches to an existing endpoint without spawning
 or taking process ownership. Automatic shared connect-or-start remains deferred
 until an explicit shared ownership contract is requested.
@@ -107,8 +110,9 @@ and the [SDK usage](../../../../js/packages/sdk/README.md).
 - **Behavior, macOS:** the real SDK daemon test covers concurrent cold calls,
   multiple connections, stable local Runner PID across repeated calls, two
   distinct Run IDs, independent Run termination, and rejection of an occupied
-  endpoint while the original daemon remains healthy. Seven tests pass; the
-  Windows-only case is skipped on macOS.
+  endpoint while the original daemon remains healthy. Eight tests pass; the
+  Windows-only case is skipped on macOS. A quiet-launcher regression confirms
+  that suppressing all daemon stdout does not affect startup.
 - **Behavior, isolated Linux D-Bus:** 70 driver tests pass, including a private-bus
   fixture that starts two client processes, checks Registry attribution on the
   exact Portal caller connection, and verifies KDE allow/revoke preserves another
@@ -146,8 +150,37 @@ cargo test
 cargo test -p auv-daemon -p auv-driver-linux -p auv-driver -p auv -p auv-cli-invoke
 # Linux host, with dbus-daemon available:
 cargo test -p auv-driver-linux -- --include-ignored
-cargo test -p auv local::tests
 pnpm --filter @auv-js/sdk exec vitest run src/node/daemon.test.ts
 pnpm exec eslint js/packages/sdk/src/node/daemon.ts js/packages/sdk/src/node/daemon.test.ts
 git diff --check
 ```
+
+## Review follow-up: test quality and Portal libraries
+
+The desktop-entry unit test was removed: checking the formatter's own output
+strings did not demonstrate that GLib would load the entry. The six tests
+originally added by this PR were reviewed; the other five cover validation,
+durable token IO/private modes, D-Bus peer attribution/rule isolation, and actual
+SDK/daemon behavior. The live GLib/Registry probe above remains the evidence for
+the executable-path fix. No repository-wide test-quality count is claimed.
+
+Portal error classification now uses `zbus::fdo::Error` variants instead of
+repeating D-Bus error-name strings. For a broader Portal adapter replacement,
+[ashpd](https://docs.rs/ashpd/0.13.13/ashpd/desktop/remote_desktop/struct.RemoteDesktop.html)
+provides typed portal operations, version queries, and errors such as
+`PortalNotFound` and `RequiresVersion`. A full session-layer migration is a
+separate candidate, not required to use zbus's existing typed standard errors.
+
+RustDesk at `e82dd12350479b848630d1e500c2f6870609a884` uses
+[`dbus-codegen-rust` generated RemoteDesktop bindings](https://github.com/rustdesk/rustdesk/blob/e82dd12350479b848630d1e500c2f6870609a884/libs/scrap/src/wayland/remote_desktop_portal.rs)
+and a [custom PipeWire/Portal session owner](https://github.com/rustdesk/rustdesk/blob/e82dd12350479b848630d1e500c2f6870609a884/libs/scrap/src/wayland/pipewire.rs),
+not ashpd for this path. It reads ScreenCast's version to select persistence
+support and retains its connection/session state in `RDP_SESSION_INFO`.
+
+Health-ID follow-up validation: 22 daemon tests and eight SDK daemon tests pass
+on macOS, including HTTP/gRPC and multiple-listener identity agreement, distinct
+default IDs, explicit launcher IDs, silent stdout, and occupied endpoints. Full
+repository ESLint passes. Health Protobuf generation, targeted lint and breaking
+check against main pass. Whole-workspace Buf lint still reports the existing
+`MoveMouseStreamResponse` naming issue; Buf format reports existing reflection
+option ordering. Neither unrelated schema was changed.

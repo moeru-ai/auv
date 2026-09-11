@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from 'node:fs/promises'
+import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -131,7 +131,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
       })).rejects.toBeInstanceOf(AuvDaemonStartError)
       const connection = await first.connect()
       try {
-        await expect(checkHealth(connection)).resolves.toBe('serving')
+        await expect(checkHealth(connection)).resolves.toMatchObject({ status: 'serving' })
       }
       finally {
         await connection.close()
@@ -140,6 +140,38 @@ describe('startAuv', { timeout: 30_000 }, () => {
     finally {
       await second?.stop()
       await first.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // ROOT CAUSE:
+  // Startup parsed a human stdout announcement. Silencing or reformatting
+  // logs made a healthy owned daemon appear unready.
+  it.skipIf(isWindows)('starts through health when daemon stdout is silent', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-silent-'))
+    const launcher = join(workingDirectory, 'quiet-auv')
+    await writeFile(launcher, '#!/bin/sh\nexec "$AUV_TEST_BINARY" "$@" >/dev/null\n')
+    await chmod(launcher, 0o700)
+    let daemon: Awaited<ReturnType<typeof startAuv>> | undefined
+    try {
+      daemon = await startAuv({
+        binaryPath: launcher,
+        environment: { AUV_TEST_BINARY: join(workspace, 'target', 'debug', 'auv') },
+        noDiscovery: true,
+        startupTimeoutMs: 3000,
+        workingDirectory,
+      })
+      const connection = await daemon.connect()
+      try {
+        await expect(checkHealth(connection)).resolves.toMatchObject({ status: 'serving' })
+      }
+      finally {
+        await connection.close()
+      }
+    }
+    finally {
+      await daemon?.stop()
       await rm(workingDirectory, { force: true, recursive: true })
     }
   })
@@ -164,7 +196,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
       })
       const connections = await Promise.all([daemon.connect(), daemon.connect()])
       try {
-        await Promise.all(connections.map(connection => expect(checkHealth(connection)).resolves.toBe('serving')))
+        await Promise.all(connections.map(connection => expect(checkHealth(connection)).resolves.toMatchObject({ status: 'serving' })))
       }
       finally {
         await Promise.all(connections.map(connection => connection.close()))
@@ -227,7 +259,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
       ]) {
         const connection = await connect(options)
         try {
-          await expect(checkHealth(connection)).resolves.toBe('serving')
+          await expect(checkHealth(connection)).resolves.toEqual({ id: daemon.id, status: 'serving' })
         }
         finally {
           await connection.close()

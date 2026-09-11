@@ -84,6 +84,12 @@ starts a new app-owned process; it does not discover or attach to another daemon
 Starting on an occupied endpoint fails. To use a daemon owned by another host,
 call `connect({ endpoint, transport, local })` and close only that connection.
 
+`await checkHealth(connection)` and `await auv.health.check()` return
+`{ id, status: 'serving' }`. The same daemon reports the same `id` on every
+listener. `daemon.id` is the fresh UUID assigned by `startAuv()` for that launch;
+startup checks it through health and does not parse stdout. The ID is public
+correlation data, independent of Device, Runner, and Run IDs, and grants no access.
+
 The lazily started `auv.core.local` Runner stays available for five minutes after
 its last request and Run attachment finish. Concurrent first calls share its
 creation. Reusing this child preserves its desktop/Portal sessions between calls;

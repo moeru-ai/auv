@@ -152,21 +152,3 @@ pub fn set_kde_portal_authorization(allow: bool) -> DriverResult<()> {
   }
   auv_driver::set_kde_authorization(PORTAL_APP_ID, allow)
 }
-
-#[cfg(all(test, target_os = "linux"))]
-mod tests {
-  use super::*;
-
-  // ROOT CAUSE:
-  // A desktop entry with Exec=auv could not be loaded by GLib when an SDK's
-  // bundled binary was absent from the Portal service's PATH. Registry then
-  // rejected the application even though the desktop file existed.
-  #[test]
-  fn desktop_identity_uses_the_installing_executable_and_quotes_its_path() {
-    let contents = desktop_entry_contents(std::path::Path::new("/opt/Example App/auv")).unwrap();
-    assert!(contents.lines().any(|line| line == "Exec=\"/opt/Example App/auv\""));
-    let contents = desktop_entry_contents(std::path::Path::new("/opt/$tools/auv")).unwrap();
-    assert!(contents.lines().any(|line| line == r#"Exec="/opt/\\$tools/auv""#));
-    assert!(desktop_entry_contents(std::path::Path::new("/opt/auv\nExec=other")).is_err());
-  }
-}

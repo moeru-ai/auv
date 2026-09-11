@@ -1,5 +1,3 @@
-import type { Buffer } from 'node:buffer'
-
 import type { Result } from 'tinyexec'
 
 import type { AuvConnection, DeviceCredential } from '../transport/connection'
@@ -32,6 +30,8 @@ export interface AuvDaemon {
   readonly endpoints: readonly string[]
   /** Resolves whenever the daemon exits, including exits it initiates itself. */
   readonly exited: Promise<AuvDaemonExit>
+  /** Identity of this launch, also returned by health on every listener. */
+  readonly id: string
   readonly pid: number
   /** Gracefully stops the child, escalating to a forced stop after its deadline. */
   stop: () => Promise<AuvDaemonExit>
@@ -158,7 +158,7 @@ export class AuvDaemonStartError extends Error {
  *
  * startAuv
  *   -> {@link serializeOverlayTheme} -> tinyexec.x (auv serve)
- *   -> {@link waitForReadiness} -> {@link waitForHealth}
+ *   -> {@link waitForHealth} (matches this launch id on every endpoint)
  */
 export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon> {
   const {
@@ -214,9 +214,11 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     }
   }
 
+  const id = randomUUID()
   const child = x(binaryPath, serveArguments({
     daemonIdleTimeoutSeconds,
     discoveryFile,
+    id,
     listeners: endpoints,
     noDiscovery,
     pairingStore,
@@ -261,7 +263,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 
   try {
     await Promise.race([
-      waitForReadiness(child, startupSignal).then(() => waitForHealth(endpoints, pairingStore !== undefined, startupSignal)),
+      waitForHealth(endpoints, pairingStore !== undefined, id, startupSignal),
       completion.then((result) => {
         throw new AuvDaemonStartError(
           `AUV daemon exited before becoming healthy (code ${String(result.code)}, signal ${String(result.signal)})`,
@@ -288,6 +290,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
       connectionOptions,
       endpoints,
       exited,
+      id,
       pid: child.pid!,
       stop() {
         stopping ??= stopChild(child, exited, shutdownTimeoutMs)
@@ -363,8 +366,8 @@ function serializeOverlayTheme(theme: OverlayTheme): string {
   }))
 }
 
-function serveArguments(options: StartAuvOptions): string[] {
-  const args = ['serve']
+function serveArguments(options: StartAuvOptions & { id: string }): string[] {
+  const args = ['serve', '--id', options.id]
   for (const listener of options.listeners ?? [])
     args.push('--listen', listener)
 
@@ -415,7 +418,11 @@ async function stopChild(
   return exited
 }
 
-async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, signal: AbortSignal): Promise<void> {
+/**
+ * Verifies readiness and launch identity through every configured listener.
+ * startAuv -> waitForHealth -> checkHealth; stdout is diagnostic output only.
+ */
+async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, id: string, signal: AbortSignal): Promise<void> {
   await Promise.all(endpoints.map(async (endpoint) => {
     while (true) {
       let connection: AuvConnection | undefined
@@ -428,8 +435,10 @@ async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, 
           signal,
           transport: unix ? 'unix' : namedPipe ? 'npipe' : 'http',
         })
-        await checkHealth(connection, { signal })
-        return
+        const health = await checkHealth(connection, { signal })
+        if (health.id === id)
+          return
+        throw new Error(`AUV endpoint belongs to daemon ${health.id}, expected ${id}`)
       }
       catch (error) {
         if (signal.aborted)
@@ -441,50 +450,4 @@ async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, 
       }
     }
   }))
-}
-
-/**
- * Waits for the owned child's post-bind announcement before probing listeners.
- *
- * Use when: startAuv has spawned a child whose endpoints may already be occupied.
- * Expects: `auv serve` prints its readiness line only after all listeners bind.
- * Returns: readiness for this child; unrelated healthy listeners cannot satisfy it.
- * Call stack: startAuv -> waitForReadiness -> waitForHealth.
- */
-function waitForReadiness(child: AuvChildProcess, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const stdout = child.process?.stdout
-    if (!stdout) {
-      reject(new Error('AUV daemon stdout is unavailable'))
-      return
-    }
-    let pending = ''
-    const cleanup = () => {
-      stdout.off('data', onData)
-      stdout.off('end', onEnd)
-      signal.removeEventListener('abort', onAbort)
-    }
-    function onData(chunk: Buffer) {
-      pending += chunk.toString('utf8')
-      const lines = pending.split('\n')
-      pending = lines.pop()!.slice(-64 * 1024)
-      if (lines.some(line => line.startsWith('auv serve: '))) {
-        cleanup()
-        resolve()
-      }
-    }
-    function onEnd() {
-      cleanup()
-      reject(new Error('AUV daemon exited without a readiness announcement'))
-    }
-    function onAbort() {
-      cleanup()
-      reject(abortError(signal))
-    }
-    stdout.on('data', onData)
-    stdout.once('end', onEnd)
-    signal.addEventListener('abort', onAbort, { once: true })
-    if (signal.aborted)
-      onAbort()
-  })
 }

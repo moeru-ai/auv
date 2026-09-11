@@ -83,6 +83,8 @@ impl Default for ListenEndpoint {
 /// Protocol-listener configuration consumed by a server-side SDK backend.
 #[derive(Clone, Default)]
 pub struct BindConfig {
+  /// Instance identity supplied by the daemon lifecycle owner.
+  pub id: String,
   /// Primary listener exposed by the server.
   pub listen: ListenEndpoint,
   /// Extra listeners that share the same daemon control plane.
@@ -145,6 +147,7 @@ enum BoundListener {
 // cancellation; add it when an owner-approved runtime status, reload, or
 // pause/resume operation needs that interface.
 pub struct Server {
+  id: String,
   endpoints: Vec<BoundEndpoint>,
   listeners: Vec<BoundListenerState>,
   daemon: Arc<dyn Control>,
@@ -163,6 +166,9 @@ impl Server {
   where
     F: FnOnce(Option<String>) -> Result<Arc<dyn Control>, String>,
   {
+    if config.id.is_empty() {
+      return Err("daemon instance id is required".into());
+    }
     let pairing = config.pairing;
     let mut configured = Vec::with_capacity(1 + config.additional_listeners.len());
     configured.push(config.listen);
@@ -224,6 +230,7 @@ impl Server {
     }
     let daemon = factory(parent_endpoint)?;
     Ok(Self {
+      id: config.id,
       endpoints,
       listeners,
       daemon,
@@ -264,8 +271,9 @@ impl Server {
     let mut servers = tokio::task::JoinSet::new();
     for listener in self.listeners {
       let daemon = Arc::clone(&daemon);
+      let id = self.id.clone();
       let listener_shutdown = shutdown.clone();
-      servers.spawn(async move { serve_listener(listener, daemon, listener_shutdown).await });
+      servers.spawn(async move { serve_listener(listener, daemon, id, listener_shutdown).await });
     }
 
     let mut errors = Vec::new();
@@ -301,11 +309,16 @@ impl Server {
   }
 }
 
-async fn serve_listener(listener: BoundListenerState, daemon: Arc<dyn Control>, shutdown: CancellationToken) -> Result<(), String> {
+async fn serve_listener(
+  listener: BoundListenerState,
+  daemon: Arc<dyn Control>,
+  id: String,
+  shutdown: CancellationToken,
+) -> Result<(), String> {
   let authenticator = listener.authenticator;
   let pairing_service = PairingServiceGrpc::new(authenticator.pairing());
   let discovery_service = DiscoveryServiceGrpc::new(Arc::clone(&daemon));
-  let health_service = HealthServiceGrpc;
+  let health_service = HealthServiceGrpc { id: id.clone() };
   let device_service = DeviceServiceGrpc::new(Arc::clone(&daemon));
   let runner_service = RunnerServiceGrpc::new(Arc::clone(&daemon));
   let runner_class_service = RunnerClassServiceGrpc::new(Arc::clone(&daemon));
@@ -332,7 +345,7 @@ async fn serve_listener(listener: BoundListenerState, daemon: Arc<dyn Control>, 
   authentication.public_grpc::<HealthServiceServer<HealthServiceGrpc>>("Check");
   let authentication = authentication.build(authenticator.clone());
 
-  let routes = crate::rest::router(Arc::clone(&daemon), authenticator)
+  let routes = crate::rest::router(Arc::clone(&daemon), authenticator, id)
     .fallback_service(grpc_routes)
     .layer(axum::middleware::from_fn_with_state(authentication, crate::middleware::authentication::authenticate))
     .layer(tower_http::cors::CorsLayer::permissive());

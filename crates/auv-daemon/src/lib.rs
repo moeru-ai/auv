@@ -13,6 +13,8 @@ pub use daemon::runner_provider;
 
 /// Configuration for binding a daemon server and its owned state.
 pub struct Config {
+  /// Fresh identity for this daemon instance; generated when omitted.
+  pub id: Option<uuid::Uuid>,
   /// Protocol listeners served by this daemon.
   pub listeners: Vec<ListenEndpoint>,
   /// Root for daemon state and durable Run records.
@@ -113,6 +115,7 @@ impl Server {
     let first_party_runners = config.first_party_runners;
     let bound = auv_api_server::server::Server::bind_with(
       auv_api_server::server::BindConfig {
+        id: config.id.unwrap_or_else(uuid::Uuid::now_v7).to_string(),
         listen,
         additional_listeners: listeners.collect(),
         pairing,

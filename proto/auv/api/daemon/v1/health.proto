@@ -17,6 +17,10 @@ message CheckRequest {}
 
 message CheckResponse {
   HealthStatus status = 1;
+  // Identity of this daemon instance, shared by all its listeners.
+  // A launcher supplies a fresh UUID per start; otherwise the daemon generates
+  // one. This public correlation value is not an authentication credential.
+  string id = 2;
 }
 
 // HealthStatus describes the daemon's ability to serve API calls.
