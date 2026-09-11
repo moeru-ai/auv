@@ -20,8 +20,26 @@ macOS converts the shared type to Quartz flags behind `native::pointer`.
 The foreground route and both existing window routes stamp flags on mouse
 down/up events. Window compatibility move/primer events carry the same state.
 No keyboard-down event is synthesized, and no keyboard hold survives the call.
-Windows and Linux reject nonempty modifiers before window activation or input;
-their existing empty-modifier behavior is retained.
+Windows foreground clicks use one `SendInput` batch per click: modifier downs,
+mouse down/up, and modifier ups in reverse order. Already-held modifiers are
+not injected or released. If only a prefix is delivered, cleanup releases the
+remaining injected keys and mouse button and reports delivery/release failure.
+Windows background messages carry Shift/Control in `wParam` on down and up;
+Alt/Meta are rejected for both background policies before target activation.
+Use `ForegroundPreferred` for those modifiers; no implicit focus fallback is
+introduced. Meta maps to the Windows key.
+
+Linux RemoteDesktop Portal clicks scope modifier key transitions around the
+click sequence, then attempt every release in reverse order even after a failed
+press reply or click. Release failures are reported and the owning API drops
+the failed portal session. Meta maps to Super. Background-only window delivery
+remains unsupported. Portal input cannot query the user's existing key state;
+this is not an isolation guarantee from concurrently held physical modifiers.
+
+These platform mappings follow the native contracts:
+[Windows mouse message flags](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-lbuttondown),
+[SendInput ordering and existing key state](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput),
+and [RemoteDesktop keyboard/pointer events](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html).
 
 `input.clickPoint --modifiers cmd,shift` and
 `input.clickPoint --modifiers cmd --modifiers shift` are equivalent. Repeated
@@ -71,8 +89,9 @@ modifier support is made.
 Unit tests cover modifier preservation in serialized input, legacy absence,
 unknown fields, CLI aliases and rejections, Runner mappings, and Quartz flag
 mapping. The SDK test decodes the actual outgoing Protobuf request for both
-window and screen clicks. Non-macOS driver tests require explicit rejection
-before native effects.
+window and screen clicks. Windows tests check event ordering, partial-delivery cleanup, and background
+flag mapping. Linux tests check platform keys and modifier cleanup after press,
+click, or release failure. Both retain background-policy rejection tests.
 
 The opt-in `auv-driver-macos/tests/click_modifiers.rs` test compiles an independent
 AppKit receiver from `tests/fixtures/click_modifiers.swift`. It observes target
@@ -108,7 +127,7 @@ Other checks on the same host:
 - `cargo check --workspace`: passed.
 - `cargo test -p auv-driver-common -p auv-driver-macos -p auv-cli-invoke -p auv-cli -p auv --lib --bins --quiet`: 293 passed, 7 ignored.
 - `cargo test --quiet` (default CLI member, including integration tests): 79 passed, 1 ignored; overlaps the CLI unit tests above.
-- `cargo test -p auv-driver-windows -p auv-driver-linux click_modifiers --quiet`: 2 passed on the macOS host. These exercise rejection policy before native calls, not Windows/Linux input behavior.
+- `cargo test -p auv-driver-windows -p auv-driver-linux click_modifiers --quiet`: platform key mapping tests passed on the macOS host; native receipt is separate.
 - `pnpm --filter @auv-js/sdk test:run src/apis/auv/driver.test.ts`: 3 passed.
 - `scripts/generate-swift-bridge` and SwiftPM `swift build`: passed.
 - `cargo fmt --check`, `git diff --check`, and ESLint on both touched SDK files: passed.
@@ -121,14 +140,56 @@ Existing validation failures outside this slice:
 - Workspace-wide `buf format --diff` reports ordering of Java options in `grpc/reflection/v1/reflection.proto`; the changed input schema is formatted.
 - SDK `typecheck`: existing `AbortSignal.any` declarations fail in `client.ts:118`, `driver.ts:243`, and `node/daemon.ts:238`. The click schema and helper changes introduce no reported TypeScript errors.
 
+## Linux and Windows follow-up validation
+
+The Linux/Windows implementation extends the original macOS slice in the same
+PR. Evidence levels remain separate:
+
+- **Linux native tests:** `ssh neko-gpu-1` connected to Debian x86_64
+  (`steam-deck-55d`, kernel `7.1.3+deb13-amd64`). In the isolated source directory
+  `/tmp/auv-click-modifiers.6uouEh`, `cargo +1.95.0 test -p auv-driver-linux --lib`
+  passed all 67 tests, including modifier release failure cases. The existing
+  remote checkout and its uncommitted changes were not modified.
+- **Linux live input blocked:** the existing Sway session has a live
+  `wayland-1` socket, session D-Bus, PipeWire, and ScreenCast. The Portal's
+  `Properties.Get(org.freedesktop.portal.RemoteDesktop, version)` returns
+  `No such interface`. Its active `xdg-desktop-portal-wlr` backend does not
+  expose RemoteDesktop in this session, so no modifier-click receipt is claimed.
+  The driver probe `cargo +1.95.0 run -p auv-driver-linux --example validate
+  -- click 100 100` independently failed at `RemoteDesktop.CreateSession`
+  before pointer delivery with the same missing-interface error.
+  Test with an existing desktop session whose Portal implements RemoteDesktop;
+  no system packages, services, or Portal selection were changed here.
+- **Windows compilation:** `cargo check -p auv-driver-windows --all-targets
+  --target x86_64-pc-windows-msvc` passed, including native event-batch tests
+  and the independent Win32 receiver. Compilation does not execute these tests.
+- **Windows remote blocked:** three BatchMode SSH attempts to
+  `luoling-windows-11` (`10.0.0.132:22`) timed out. No Windows receipt is claimed.
+- Running the entire Windows test library on macOS also encounters two existing
+  host-specific failures: `rejects_buffer_with_mismatched_length` expects the
+  Windows OCR validator instead of the non-Windows stub, and
+  `window_click_background_only_fails_for_invalid_window_handle` expects
+  `ScreenToClient` instead of the non-Windows unsupported error.
+
+On Windows, run the ordinary native tests and then the opt-in receiver test:
+
+```sh
+cargo test -p auv-driver-windows --lib
+cargo test -p auv-driver-windows window_receives_modified_click_messages -- --ignored --nocapture
+```
+
+The receiver owns a hidden Win32 window, independently logs dispatched mouse
+messages, and checks Shift/Control on both down/up followed by a plain click.
+It does not claim foreground Alt/Meta receipt. Foreground input tests need the
+logged-in interactive desktop; an SSH service session may not have that access.
 
 ## Intentional deferrals
 
 - Arbitrary native keycodes, right/left modifiers, and keyboard layout semantics
   remain a separate keyboard identity contract, reopened with a concrete consumer.
 - Physical modifier transitions for remote-desktop/input-forwarding consumers
-  need their own delivery and release evidence. Mouse flags alone do not claim
-  that support.
+  still need application-specific receipt evidence, including on Windows/Linux
+  paths that use key transitions. Mouse flags alone do not claim that support.
 - Hold/drag across calls requires ownership, cancellation, release and partial
   progress semantics; it is not added as a click option.
 - Button selection remains the separate BG-1 parameter slice.

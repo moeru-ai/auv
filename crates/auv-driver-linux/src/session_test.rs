@@ -138,18 +138,14 @@ fn window_scroll_requires_foreground_candidate_for_background_preferred_policy()
 }
 
 #[test]
-fn click_modifiers_are_rejected_before_target_activation_or_global_input() {
+fn modified_background_click_is_rejected_before_portal_input() {
   let modifiers = auv_driver_common::ClickModifiers {
     meta: true,
     ..Default::default()
   };
   let driver = session();
   let window = sample_window();
-  for policy in [
-    InputPolicy::BackgroundOnly,
-    InputPolicy::BackgroundPreferred,
-    InputPolicy::ForegroundPreferred,
-  ] {
+  for policy in [InputPolicy::BackgroundOnly] {
     let error = driver
       .window()
       .click(
@@ -162,8 +158,6 @@ fn click_modifiers_are_rejected_before_target_activation_or_global_input() {
         },
       )
       .unwrap_err();
-    assert!(error.to_string().contains("linux click modifiers are not supported"));
+    assert!(error.to_string().contains("linux window.click cannot use background_only"));
   }
-  let error = driver.input().click_at(auv_driver_common::Point::new(1.0, 1.0), auv_driver_common::Click::Single, modifiers).unwrap_err();
-  assert!(error.to_string().contains("linux click modifiers are not supported"));
 }

@@ -102,3 +102,60 @@ fn text_submit_virtual_key_supports_return_only() {
   assert_eq!(text_submit_virtual_key(TextSubmit::Return).unwrap(), Some(vk::RETURN));
   assert!(text_submit_virtual_key(TextSubmit::Search).is_err());
 }
+
+#[test]
+fn click_modifiers_map_to_standard_platform_keys() {
+  assert_eq!(
+    click_modifier_keys(auv_driver_common::ClickModifiers {
+      shift: true,
+      control: true,
+      alt: true,
+      meta: true
+    }),
+    [0x10, 0x11, 0x12, 0x5b]
+  );
+  assert!(click_modifier_keys(Default::default()).is_empty());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn click_batch_and_partial_delivery_cleanup_preserve_release_order() {
+  use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT_KEYBOARD, INPUT_MOUSE, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+  };
+  let keys = [0x10, 0x11];
+  let batch = native::click_inputs(&keys);
+  assert_eq!(batch.len(), 6);
+  // SAFETY: Read each union only after checking its INPUT tag.
+  for (index, key) in [(0, 0x10), (1, 0x11), (4, 0x11), (5, 0x10)] {
+    assert_eq!(batch[index].r#type, INPUT_KEYBOARD);
+    assert_eq!(unsafe { batch[index].Anonymous.ki.wVk.0 }, key);
+    assert_eq!(unsafe { batch[index].Anonymous.ki.dwFlags.contains(KEYEVENTF_KEYUP) }, index >= 4);
+  }
+  for (index, flags) in [(2, MOUSEEVENTF_LEFTDOWN), (3, MOUSEEVENTF_LEFTUP)] {
+    assert_eq!(batch[index].r#type, INPUT_MOUSE);
+    assert_eq!(unsafe { batch[index].Anonymous.mi.dwFlags }, flags);
+  }
+  for sent in 0..=batch.len() {
+    let cleanup = native::click_cleanup(&keys, sent);
+    let expected_keys: &[u16] = match sent {
+      0 | 6 => &[],
+      1 | 5 => &[0x10],
+      _ => &[0x11, 0x10],
+    };
+    let mut released = Vec::new();
+    let mut mouse_releases = 0;
+    for event in cleanup {
+      if event.r#type == INPUT_KEYBOARD {
+        assert!(unsafe { event.Anonymous.ki.dwFlags.contains(KEYEVENTF_KEYUP) });
+        released.push(unsafe { event.Anonymous.ki.wVk.0 });
+      } else {
+        assert_eq!(event.r#type, INPUT_MOUSE);
+        assert_eq!(unsafe { event.Anonymous.mi.dwFlags }, MOUSEEVENTF_LEFTUP);
+        mouse_releases += 1;
+      }
+    }
+    assert_eq!(released, expected_keys, "prefix {sent}");
+    assert_eq!(mouse_releases, usize::from(sent == 3));
+  }
+}

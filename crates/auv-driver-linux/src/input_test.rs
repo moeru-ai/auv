@@ -54,3 +54,17 @@ fn parses_modifier_only_keys_for_desktop_shell_commands() {
     }
   );
 }
+
+#[test]
+fn click_modifiers_map_to_standard_platform_keys() {
+  assert_eq!(
+    click_modifier_keysyms(auv_driver_common::ClickModifiers {
+      shift: true,
+      control: true,
+      alt: true,
+      meta: true
+    }),
+    [0xffe1, 0xffe3, 0xffe9, 0xffeb]
+  );
+  assert!(click_modifier_keysyms(Default::default()).is_empty());
+}

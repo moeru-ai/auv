@@ -176,7 +176,7 @@ fn wait_text_fails_with_not_found_for_unmatchable_query_on_a_live_window() {
 }
 
 #[test]
-fn click_modifiers_are_rejected_before_target_activation_or_global_input() {
+fn background_click_rejects_alt_meta_before_target_activation() {
   let modifiers = auv_driver_common::ClickModifiers {
     meta: true,
     ..Default::default()
@@ -186,7 +186,6 @@ fn click_modifiers_are_rejected_before_target_activation_or_global_input() {
   for policy in [
     InputPolicy::BackgroundOnly,
     InputPolicy::BackgroundPreferred,
-    InputPolicy::ForegroundPreferred,
   ] {
     let error = driver
       .window()
@@ -200,8 +199,6 @@ fn click_modifiers_are_rejected_before_target_activation_or_global_input() {
         },
       )
       .unwrap_err();
-    assert!(error.to_string().contains("windows click modifiers are not supported"));
+    assert!(error.to_string().contains("windows background click supports only shift/control"));
   }
-  let error = driver.input().click_at(auv_driver_common::Point::new(1.0, 1.0), auv_driver_common::Click::Single, modifiers).unwrap_err();
-  assert!(error.to_string().contains("windows click modifiers are not supported"));
 }

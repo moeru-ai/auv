@@ -115,7 +115,9 @@ message ClickOptions {
 
 // Standard mouse-event modifier state, not physical keys or a persistent hold.
 // Alt/Meta map to Option/Command on macOS. Missing fields are false.
-// Currently implemented by macOS; other drivers reject nonempty modifiers.
+// Foreground Windows/Linux delivery scopes key transitions to the click.
+// Windows background messages support Shift/Control only; Linux has no
+// window-targeted background input. Unsupported combinations are rejected.
 // TODO(click-modifier-capabilities): old peers ignore this message. Mixed-version
 // use awaits an approved Runner capability negotiation contract.
 message ClickModifiers {

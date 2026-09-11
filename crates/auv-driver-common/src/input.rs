@@ -150,6 +150,8 @@ impl InputPreparationLease {
 /// Option/Command on macOS. This does not identify physical keyboard keys.
 /// macOS stamps mouse-event flags without synthesizing keyboard transitions;
 /// input-forwarding applications may need a different delivery contract.
+/// Windows foreground and Linux portal input use scoped key transitions;
+/// Meta means Windows/Super. Windows background supports Shift/Control only.
 /// TODO(click-held-keys): arbitrary keys, sided modifiers and persistent holds
 /// need an owner-approved keyboard identity and cancellation/release contract.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

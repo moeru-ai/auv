@@ -396,7 +396,7 @@ struct ClickPointArgs {
   #[arg(long)]
   #[serde(rename = "click-interval-ms", default)]
   click_interval_ms: Option<u64>,
-  /// Mouse modifiers: shift, control, alt/option, meta/cmd (macOS). Repeat this option or separate names with commas.
+  /// Mouse modifiers: shift, control, alt/option, meta/cmd. Repeat this option or separate names with commas.
   #[arg(long, value_name = "KEYS", value_delimiter = ',')]
   #[serde(
     default,

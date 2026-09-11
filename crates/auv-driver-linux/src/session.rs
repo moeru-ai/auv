@@ -188,11 +188,6 @@ impl WindowApi<'_> {
   }
 
   fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
-    // TODO(click-modifiers): linux delivery awaits an approved native event
-    // and release contract; reject before focus or input side effects.
-    if !options.modifiers.is_empty() {
-      return Err(invalid_input("linux click modifiers are not supported"));
-    }
     if matches!(options.policy, InputPolicy::BackgroundOnly) {
       return Err(invalid_input("linux window.click cannot use background_only input policy"));
     }
@@ -316,10 +311,7 @@ impl InputApi<'_> {
   }
 
   pub fn click_at(&self, point: Point, click: Click, modifiers: auv_driver_common::ClickModifiers) -> DriverResult<InputActionResult> {
-    if !modifiers.is_empty() {
-      return Err(invalid_input("linux click modifiers are not supported"));
-    }
-    click_at(&self.session.state, point, click)
+    click_at(&self.session.state, point, click, modifiers)
   }
 
   pub fn scroll_at(&self, point: Point, scroll: Scroll, settle: std::time::Duration) -> DriverResult<InputActionResult> {

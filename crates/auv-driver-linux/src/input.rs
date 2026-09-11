@@ -7,15 +7,33 @@ use crate::native::portal::{InputSession, PortalInput};
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::Point;
 use auv_driver_common::input::{
-  Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
-  TextSubmit, TypeTextOptions,
+  Click, ClickModifiers, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions,
+  PasteTextOptions, Scroll, TextSubmit, TypeTextOptions,
 };
 
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot as snapshot_clipboard};
 
-pub(crate) fn click_at(state: &Arc<Mutex<LinuxDriverSessionState>>, point: Point, click: Click) -> DriverResult<InputActionResult> {
-  with_input_session(state, |session| session.click_at(point, click))?;
+pub(crate) fn click_at(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  point: Point,
+  click: Click,
+  modifiers: ClickModifiers,
+) -> DriverResult<InputActionResult> {
+  let keys = click_modifier_keysyms(modifiers);
+  with_input_session(state, |session| session.click_at(point, click, &keys))?;
   Ok(pointer_result())
+}
+
+fn click_modifier_keysyms(modifiers: ClickModifiers) -> Vec<i32> {
+  [
+    (modifiers.shift, keysym::SHIFT_L),
+    (modifiers.control, keysym::CONTROL_L),
+    (modifiers.alt, keysym::ALT_L),
+    (modifiers.meta, keysym::SUPER_L),
+  ]
+  .into_iter()
+  .filter_map(|(enabled, key)| enabled.then_some(key))
+  .collect()
 }
 
 pub(crate) fn move_to(state: &Arc<Mutex<LinuxDriverSessionState>>, point: Point) -> DriverResult<InputActionResult> {
