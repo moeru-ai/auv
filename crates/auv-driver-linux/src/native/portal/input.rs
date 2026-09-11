@@ -1,29 +1,21 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
+use ashpd::desktop::remote_desktop::{DeviceType, KeyState, NotifyPointerAxisOptions, RemoteDesktop, SelectDevicesOptions};
+use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
+use ashpd::desktop::{PersistMode, Session};
+use ashpd::enumflags2::BitFlags;
 use auv_driver_common::display::Display;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, Rect};
 use auv_driver_common::input::{Click, MouseButton, Scroll};
-use zbus::blocking::{Connection, Proxy};
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use crate::capture::list_displays;
 use crate::error::{backend, invalid_input};
 
+use super::ScreenCastStream;
 use super::persistence::{RestoreTokenKind, RestoreTokenStore};
-use super::request::{
-  close_session, create_remote_desktop_session, interface_version, portal_proxy, restore_token, session_connection, session_request,
-};
-use super::{ScreenCastStream, decode_streams, select_monitor_sources};
+use super::request::{run, session_connection};
 
-const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
-const DEVICE_KEYBOARD: u32 = 1;
-const DEVICE_POINTER: u32 = 2;
-const PERSIST_UNTIL_REVOKED: u32 = 2;
-const PERSISTENCE_INTERFACE_VERSION: u32 = 2;
-const STATE_RELEASED: u32 = 0;
-const STATE_PRESSED: u32 = 1;
 const BUTTON_LEFT: i32 = 0x110;
 const BUTTON_RIGHT: i32 = 0x111;
 const BUTTON_MIDDLE: i32 = 0x112;
@@ -45,9 +37,9 @@ impl PortalInput {
 }
 
 pub struct InputSession {
-  connection: Connection,
-  session_handle: OwnedObjectPath,
-  devices: u32,
+  remote_desktop: RemoteDesktop,
+  session: Session<RemoteDesktop>,
+  devices: BitFlags<DeviceType>,
   streams: Vec<ScreenCastStream>,
   output_mappings: Vec<OutputMapping>,
 }
@@ -56,7 +48,7 @@ impl std::fmt::Debug for InputSession {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     formatter
       .debug_struct("InputSession")
-      .field("session_handle", &self.session_handle)
+      .field("session", &self.session)
       .field("devices", &self.devices)
       .field("streams", &self.streams)
       .field("output_mappings", &self.output_mappings)
@@ -67,66 +59,72 @@ impl std::fmt::Debug for InputSession {
 impl InputSession {
   fn open(restore_tokens: Option<&RestoreTokenStore>, app_id: Option<&str>) -> DriverResult<Self> {
     let connection = session_connection(app_id)?;
-    let session_handle = create_remote_desktop_session(&connection)?;
-    let result = (|| {
-      let persistent =
-        restore_tokens.is_some() && interface_version(&connection, REMOTE_DESKTOP_INTERFACE)? >= PERSISTENCE_INTERFACE_VERSION;
-      let results = if let Some(restore_tokens) = restore_tokens.filter(|_| persistent) {
-        restore_tokens.rotate(RestoreTokenKind::RemoteDesktopInput, |current| {
-          select_input_devices(&connection, &session_handle, current, true)?;
-          select_monitor_sources(&connection, &session_handle)?;
-          let results = start_remote_desktop(&connection, &session_handle)?;
-          let replacement = restore_token(&results, REMOTE_DESKTOP_INTERFACE)?;
-          Ok((results, replacement))
-        })?
-      } else {
-        select_input_devices(&connection, &session_handle, None, false)?;
-        select_monitor_sources(&connection, &session_handle)?;
-        start_remote_desktop(&connection, &session_handle)?
-      };
-      let streams = decode_streams(&results)?;
-      if streams.is_empty() {
-        return Err(backend("remote desktop portal started without screencast streams"));
-      }
-      let devices = results.get("devices").and_then(|value| u32::try_from(value).ok()).unwrap_or(0);
-      if devices & DEVICE_KEYBOARD == 0 && devices & DEVICE_POINTER == 0 {
-        return Err(backend("remote desktop portal started without keyboard or pointer access"));
-      }
-      let output_mappings = remote_desktop_output_mappings(&streams).unwrap_or_default();
-      Ok((devices, streams, output_mappings))
-    })();
-    match result {
-      Ok((devices, streams, output_mappings)) => Ok(Self {
-        connection,
-        session_handle,
-        devices,
-        streams,
-        output_mappings,
-      }),
-      Err(error) => {
-        let close_result = close_session(&connection, &session_handle);
-        match close_result {
-          Ok(()) => Err(error),
-          Err(close_error) => Err(backend(format!("{error}; also failed to close remote desktop portal session: {close_error}"))),
+    let remote_desktop = run("open RemoteDesktop", RemoteDesktop::with_connection(connection.clone()))?;
+    let screencast = run("open ScreenCast", Screencast::with_connection(connection))?;
+    let session = run("create input session", remote_desktop.create_session(Default::default()))?;
+    let mut input = Self {
+      remote_desktop,
+      session,
+      devices: BitFlags::empty(),
+      streams: Vec::new(),
+      output_mappings: Vec::new(),
+    };
+    let persistent = restore_tokens.is_some() && input.remote_desktop.version() >= 2;
+    let start = |restore: Option<&str>| {
+      run("start input session", async {
+        let mut options = SelectDevicesOptions::default().set_devices(DeviceType::Keyboard | DeviceType::Pointer);
+        if persistent {
+          options = options.set_persist_mode(PersistMode::ExplicitlyRevoked).set_restore_token(restore);
         }
-      }
+        input.remote_desktop.select_devices(&input.session, options).await?.response()?;
+        screencast
+          .select_sources(
+            &input.session,
+            SelectSourcesOptions::default()
+              .set_sources(BitFlags::from(SourceType::Monitor))
+              .set_multiple(true)
+              .set_cursor_mode(CursorMode::Hidden),
+          )
+          .await?
+          .response()?;
+        input.remote_desktop.start(&input.session, None, Default::default()).await?.response()
+      })
+    };
+    let selected = if let Some(store) = restore_tokens.filter(|_| persistent) {
+      store.rotate(RestoreTokenKind::RemoteDesktopInput, |current| {
+        let selected = start(current)?;
+        let replacement = selected.restore_token().map(str::to_owned);
+        Ok((selected, replacement))
+      })?
+    } else {
+      start(None)?
+    };
+    input.streams = selected.streams().iter().map(ScreenCastStream::from).collect();
+    if input.streams.is_empty() {
+      return Err(backend("remote desktop portal started without screencast streams"));
     }
+    input.devices = selected.devices();
+    if !input.devices.intersects(DeviceType::Keyboard | DeviceType::Pointer) {
+      return Err(backend("remote desktop portal started without keyboard or pointer access"));
+    }
+    input.output_mappings = remote_desktop_output_mappings(&input.streams).unwrap_or_default();
+    Ok(input)
   }
 
   pub fn key_press(&mut self, keysym: i32) -> DriverResult<()> {
     self.require_keyboard()?;
-    self.notify_keyboard_keysym(keysym, STATE_PRESSED)?;
-    self.notify_keyboard_keysym(keysym, STATE_RELEASED)
+    self.notify_keyboard_keysym(keysym, KeyState::Pressed)?;
+    self.notify_keyboard_keysym(keysym, KeyState::Released)
   }
 
   pub fn key_chord(&mut self, modifiers: &[i32], key: i32) -> DriverResult<()> {
     self.require_keyboard()?;
     for modifier in modifiers {
-      self.notify_keyboard_keysym(*modifier, STATE_PRESSED)?;
+      self.notify_keyboard_keysym(*modifier, KeyState::Pressed)?;
     }
     let key_result = self.key_press(key);
     for modifier in modifiers.iter().rev() {
-      let _ = self.notify_keyboard_keysym(*modifier, STATE_RELEASED);
+      let _ = self.notify_keyboard_keysym(*modifier, KeyState::Released);
     }
     key_result
   }
@@ -145,9 +143,9 @@ impl InputSession {
         self.notify_keyboard_keysym(
           key,
           if pressed {
-            STATE_PRESSED
+            KeyState::Pressed
           } else {
-            STATE_RELEASED
+            KeyState::Released
           },
         )
       },
@@ -155,11 +153,11 @@ impl InputSession {
         for index in 0..count {
           // A failed D-Bus reply may follow delivery: attempt release even when
           // the press reports an error, before unwinding modifier state.
-          let press = self.notify_pointer_button(MouseButton::Left, STATE_PRESSED);
+          let press = self.notify_pointer_button(MouseButton::Left, KeyState::Pressed);
           if press.is_ok() {
             std::thread::sleep(CLICK_PRESS_DURATION);
           }
-          let release = self.notify_pointer_button(MouseButton::Left, STATE_RELEASED);
+          let release = self.notify_pointer_button(MouseButton::Left, KeyState::Released);
           combine_release(press, release)?;
           if index + 1 < count && !interval.is_zero() {
             std::thread::sleep(interval);
@@ -186,12 +184,7 @@ impl InputSession {
   }
 
   fn notify_pointer_motion(&self, delta: Point) -> DriverResult<()> {
-    let options: HashMap<&str, Value<'_>> = HashMap::new();
-    self
-      .remote_desktop()?
-      .call_method("NotifyPointerMotion", &(&self.session_handle, options, delta.x, delta.y))
-      .map_err(|error| backend(format!("failed to notify relative pointer motion by ({}, {}): {error}", delta.x, delta.y)))?;
-    Ok(())
+    run("notify relative pointer motion", self.remote_desktop.notify_pointer_motion(&self.session, delta.x, delta.y, Default::default()))
   }
 
   pub fn scroll_at(&mut self, point: Point, scroll: Scroll) -> DriverResult<()> {
@@ -201,58 +194,34 @@ impl InputSession {
   }
 
   fn scroll(&self, scroll: Scroll) -> DriverResult<()> {
-    let options: HashMap<&str, Value<'_>> = HashMap::new();
-    self
-      .remote_desktop()?
-      .call_method("NotifyPointerAxis", &(&self.session_handle, options, scroll.delta_x, scroll.delta_y))
-      .map_err(|error| backend(format!("failed to notify pointer axis: {error}")))?;
-    let mut finish_options = HashMap::new();
-    finish_options.insert("finish", Value::from(true));
-    self
-      .remote_desktop()?
-      .call_method("NotifyPointerAxis", &(&self.session_handle, finish_options, 0.0_f64, 0.0_f64))
-      .map_err(|error| backend(format!("failed to finish pointer axis: {error}")))?;
-    Ok(())
+    run("notify pointer axis", async {
+      self.remote_desktop.notify_pointer_axis(&self.session, scroll.delta_x, scroll.delta_y, Default::default()).await?;
+      self.remote_desktop.notify_pointer_axis(&self.session, 0.0, 0.0, NotifyPointerAxisOptions::default().set_finish(true)).await
+    })
   }
 
-  fn notify_keyboard_keysym(&self, keysym: i32, state: u32) -> DriverResult<()> {
-    let options: HashMap<&str, Value<'_>> = HashMap::new();
-    self
-      .remote_desktop()?
-      .call_method("NotifyKeyboardKeysym", &(&self.session_handle, options, keysym, state))
-      .map_err(|error| backend(format!("failed to notify keyboard keysym {keysym}: {error}")))?;
-    Ok(())
+  fn notify_keyboard_keysym(&self, keysym: i32, state: KeyState) -> DriverResult<()> {
+    run("notify keyboard keysym", self.remote_desktop.notify_keyboard_keysym(&self.session, keysym, state, Default::default()))
   }
 
   fn notify_pointer_motion_absolute(&self, stream: u32, point: Point) -> DriverResult<()> {
-    let options: HashMap<&str, Value<'_>> = HashMap::new();
-    self
-      .remote_desktop()?
-      .call_method("NotifyPointerMotionAbsolute", &(&self.session_handle, options, stream, point.x, point.y))
-      .map_err(|error| backend(format!("failed to notify absolute pointer motion to ({}, {}): {error}", point.x, point.y)))?;
-    Ok(())
+    run(
+      "notify absolute pointer motion",
+      self.remote_desktop.notify_pointer_motion_absolute(&self.session, stream, point.x, point.y, Default::default()),
+    )
   }
 
-  fn notify_pointer_button(&self, button: MouseButton, state: u32) -> DriverResult<()> {
+  fn notify_pointer_button(&self, button: MouseButton, state: KeyState) -> DriverResult<()> {
     let button = match button {
       MouseButton::Left => BUTTON_LEFT,
       MouseButton::Right => BUTTON_RIGHT,
       MouseButton::Middle => BUTTON_MIDDLE,
     };
-    let options: HashMap<&str, Value<'_>> = HashMap::new();
-    self
-      .remote_desktop()?
-      .call_method("NotifyPointerButton", &(&self.session_handle, options, button, state))
-      .map_err(|error| backend(format!("failed to notify pointer button {button}: {error}")))?;
-    Ok(())
-  }
-
-  fn remote_desktop(&self) -> DriverResult<Proxy<'_>> {
-    portal_proxy(&self.connection, REMOTE_DESKTOP_INTERFACE)
+    run("notify pointer button", self.remote_desktop.notify_pointer_button(&self.session, button, state, Default::default()))
   }
 
   fn require_keyboard(&self) -> DriverResult<()> {
-    if self.devices & DEVICE_KEYBOARD == 0 {
+    if !self.devices.contains(DeviceType::Keyboard) {
       Err(backend("remote desktop portal session has no keyboard access"))
     } else {
       Ok(())
@@ -260,7 +229,7 @@ impl InputSession {
   }
 
   fn require_pointer(&self) -> DriverResult<()> {
-    if self.devices & DEVICE_POINTER == 0 {
+    if !self.devices.contains(DeviceType::Pointer) {
       Err(backend("remote desktop portal session has no pointer access"))
     } else {
       Ok(())
@@ -286,27 +255,9 @@ impl InputSession {
   }
 }
 
-fn select_input_devices(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-  restore: Option<&str>,
-  persistent: bool,
-) -> DriverResult<()> {
-  let mut options = HashMap::new();
-  options.insert("types", Value::from(DEVICE_KEYBOARD | DEVICE_POINTER));
-  if persistent {
-    options.insert("persist_mode", Value::from(PERSIST_UNTIL_REVOKED));
-    if let Some(restore) = restore {
-      options.insert("restore_token", Value::from(restore));
-    }
-  }
-  session_request(connection, REMOTE_DESKTOP_INTERFACE, "SelectDevices", session_handle, options)?;
-  Ok(())
-}
-
 impl Drop for InputSession {
   fn drop(&mut self) {
-    let _ = close_session(&self.connection, &self.session_handle);
+    let _ = run("close input session", self.session.close());
   }
 }
 
@@ -316,17 +267,6 @@ fn click_parts(click: &Click) -> DriverResult<(u8, Duration)> {
     return Err(invalid_input("repeated click count must be greater than zero"));
   }
   Ok((count, click.interval().unwrap_or(Duration::ZERO)))
-}
-
-fn start_remote_desktop(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<HashMap<String, OwnedValue>> {
-  let handle_token = super::request::portal_token("start");
-  let request = super::request::portal_request_proxy(connection, &handle_token)?;
-  let mut responses = super::request::response_signal(&request, REMOTE_DESKTOP_INTERFACE, "Start")?;
-  let proxy = portal_proxy(connection, REMOTE_DESKTOP_INTERFACE)?;
-  let mut options = HashMap::new();
-  options.insert("handle_token", Value::from(handle_token.as_str()));
-  super::request::call_method(&proxy, REMOTE_DESKTOP_INTERFACE, "Start", &(session_handle, "", options))?;
-  super::request::wait_response(&mut responses, REMOTE_DESKTOP_INTERFACE, "Start")
 }
 
 #[derive(Clone, Debug, PartialEq)]

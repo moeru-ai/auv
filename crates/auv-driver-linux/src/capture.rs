@@ -262,100 +262,23 @@ fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> Driv
 
 #[cfg(target_os = "linux")]
 fn portal_screenshot() -> DriverResult<image::RgbaImage> {
-  use serde::Deserialize;
-  use std::collections::HashMap;
-  use zbus::blocking::Proxy;
-  use zbus::zvariant::{OwnedValue, Type, Value};
+  use crate::native::portal::run;
+  use ashpd::desktop::screenshot::Screenshot;
 
-  #[derive(Deserialize, Type)]
-  #[zvariant(signature = "dict")]
-  struct ScreenshotResponse {
-    uri: OwnedValue,
-  }
-
-  let connection = zbus::blocking::Connection::session().map_err(|error| backend(format!("failed to connect to session bus: {error}")))?;
-  let handle_token = format!(
-    "auv_{}_{}",
-    std::process::id(),
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_millis()).unwrap_or_default()
-  );
-  let request = portal_request_proxy(&connection, &handle_token)?;
-  let proxy =
-    Proxy::new(&connection, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Screenshot")
-      .map_err(|error| backend(format!("failed to create screenshot portal proxy: {error}")))?;
-  let mut options = HashMap::new();
-  options.insert("handle_token", Value::from(handle_token.as_str()));
   // NOTICE: this legacy Screenshot fallback still requests interactive consent;
   // it does not consume the persistent ScreenCast grant. See
   // `docs/ai/references/driver/2026-09-12-linux-portal-authorization-and-runner-reuse.md`.
   // NOTICE(linux-portal-screenshot): GNOME Wayland does not expose a stable
-  // non-portal screenshot API for ordinary clients. Keep this interactive so
-  // the compositor/user owns screenshot consent; replace with ScreenCast or
-  // PipeWire when the owner approves the capture stream slice.
-  options.insert("interactive", Value::from(true));
-  options.insert("modal", Value::from(true));
-  proxy.call_method("Screenshot", &("", options)).map_err(|error| backend(format!("failed to request portal screenshot: {error}")))?;
-
-  let mut responses =
-    request.receive_signal("Response").map_err(|error| backend(format!("failed to subscribe to portal response: {error}")))?;
-  let response = responses.next().ok_or_else(|| backend("portal screenshot did not return a response"))?;
-  let (code, body): (u32, ScreenshotResponse) =
-    response.body().deserialize().map_err(|error| backend(format!("failed to decode portal screenshot response: {error}")))?;
-  if code != 0 {
-    return Err(backend(format!("portal screenshot response code {code}")));
-  }
-  let uri = match Value::from(body.uri) {
-    Value::Str(uri) => uri.to_string(),
-    other => {
-      return Err(backend(format!("portal screenshot returned non-string uri: {other:?}")));
-    }
-  };
-  let path = file_uri_to_path(&uri)?;
+  // non-portal screenshot API for ordinary clients. The compositor/user owns
+  // screenshot consent; persistent capture uses ScreenCast/PipeWire above.
+  let response = run("take portal screenshot", async { Screenshot::request().interactive(true).modal(true).send().await?.response() })?;
+  let path = url::Url::parse(response.uri().as_str())
+    .map_err(|error| backend(format!("invalid screenshot URI: {error}")))?
+    .to_file_path()
+    .map_err(|_| backend("portal screenshot URI is not a local file"))?;
   let image = image::open(&path).map_err(|error| backend(format!("failed to open portal screenshot {path:?}: {error}")))?.to_rgba8();
   let _ = std::fs::remove_file(path);
   Ok(image)
-}
-
-#[cfg(target_os = "linux")]
-fn portal_request_proxy<'a>(connection: &'a zbus::blocking::Connection, handle_token: &str) -> DriverResult<zbus::blocking::Proxy<'a>> {
-  let unique_name =
-    connection.unique_name().ok_or_else(|| backend("session bus connection has no unique name"))?.trim_start_matches(':').replace('.', "_");
-  let path = format!("/org/freedesktop/portal/desktop/request/{unique_name}/{handle_token}");
-  zbus::blocking::Proxy::new(connection, "org.freedesktop.portal.Desktop", path, "org.freedesktop.portal.Request")
-    .map_err(|error| backend(format!("failed to create portal request proxy: {error}")))
-}
-
-#[cfg(target_os = "linux")]
-fn file_uri_to_path(uri: &str) -> DriverResult<std::path::PathBuf> {
-  let raw_path = uri.strip_prefix("file://").ok_or_else(|| backend(format!("portal screenshot uri is not a file uri: {uri}")))?;
-  Ok(std::path::PathBuf::from(percent_decode(raw_path)?))
-}
-
-#[cfg(target_os = "linux")]
-fn percent_decode(raw: &str) -> DriverResult<String> {
-  let mut bytes = Vec::with_capacity(raw.len());
-  let mut chars = raw.as_bytes().iter().copied();
-  while let Some(byte) = chars.next() {
-    if byte == b'%' {
-      let high = chars.next().ok_or_else(|| backend(format!("invalid percent escape in {raw:?}")))?;
-      let low = chars.next().ok_or_else(|| backend(format!("invalid percent escape in {raw:?}")))?;
-      let decoded = hex_value(high)? * 16 + hex_value(low)?;
-      bytes.push(decoded);
-    } else {
-      bytes.push(byte);
-    }
-  }
-  String::from_utf8(bytes).map_err(|error| backend(format!("invalid UTF-8 file uri: {error}")))
-}
-
-#[cfg(target_os = "linux")]
-fn hex_value(byte: u8) -> DriverResult<u8> {
-  match byte {
-    b'0'..=b'9' => Ok(byte - b'0'),
-    b'a'..=b'f' => Ok(byte - b'a' + 10),
-    b'A'..=b'F' => Ok(byte - b'A' + 10),
-    _ => Err(backend(format!("invalid percent escape hex digit {:?}", byte as char))),
-  }
 }
 
 #[cfg(test)]

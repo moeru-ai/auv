@@ -82,19 +82,32 @@ pub fn probe_portals() -> LinuxPortalProbe {
 
 #[cfg(target_os = "linux")]
 fn probe_portal_bus() -> (PermissionStatus, PortalInterfaceProbe, PortalInterfaceProbe, PortalInterfaceProbe) {
-  match zbus::blocking::connection::Builder::session().and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
-  {
+  use ashpd::desktop::{remote_desktop::RemoteDesktop, screencast::Screencast, screenshot::ScreenshotProxy};
+  match crate::native::portal::session_connection(None) {
     Ok(connection) => {
-      let screencast = probe_interface(&connection, "org.freedesktop.portal.ScreenCast");
-      let remote_desktop = probe_interface(&connection, "org.freedesktop.portal.RemoteDesktop");
-      let screenshot = probe_interface(&connection, "org.freedesktop.portal.Screenshot");
+      // NOTICE: ashpd 0.13 defaults version() to 1 for some Properties.Get
+      // failures. Read the property through its typed proxy so a timeout cannot
+      // become an availability claim (ashpd 0.13.13 `src/proxy.rs`). Remove
+      // when ashpd preserves that error.
+      let screencast = probe_interface(async {
+        let proxy = Screencast::with_connection(connection.clone()).await?;
+        Ok(proxy.get_property::<u32>("version").await?)
+      });
+      let remote_desktop = probe_interface(async {
+        let proxy = RemoteDesktop::with_connection(connection.clone()).await?;
+        Ok(proxy.get_property::<u32>("version").await?)
+      });
+      let screenshot = probe_interface(async {
+        let proxy = ScreenshotProxy::with_connection(connection).await?;
+        Ok(proxy.get_property::<u32>("version").await?)
+      });
       (PermissionStatus::Granted, screencast, remote_desktop, screenshot)
     }
     Err(error) => {
       let missing = PortalInterfaceProbe {
         available: PermissionStatus::Unknown,
         version: None,
-        details: Some(format!("failed to connect to session bus: {error}")),
+        details: Some(error.to_string()),
       };
       (PermissionStatus::Unknown, missing.clone(), missing.clone(), missing)
     }
@@ -102,43 +115,29 @@ fn probe_portal_bus() -> (PermissionStatus, PortalInterfaceProbe, PortalInterfac
 }
 
 #[cfg(target_os = "linux")]
-fn probe_interface(connection: &zbus::blocking::Connection, interface: &'static str) -> PortalInterfaceProbe {
-  let proxy = match zbus::blocking::Proxy::new(connection, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", interface) {
-    Ok(proxy) => proxy,
-    Err(error) => {
-      return PortalInterfaceProbe {
-        available: PermissionStatus::Missing,
-        version: None,
-        details: Some(format!("failed to create {interface} proxy: {error}")),
-      };
-    }
-  };
-  match proxy.get_property::<u32>("version") {
-    Ok(version) => PortalInterfaceProbe {
+fn probe_interface(probe: impl std::future::Future<Output = ashpd::Result<u32>>) -> PortalInterfaceProbe {
+  // Keep ashpd's typed error until availability is classified; a Portal request
+  // timeout or bus failure does not establish that an interface is absent.
+  match crate::native::portal::run("probe Portal interface", async { Ok(probe.await) }) {
+    Ok(Ok(version)) => PortalInterfaceProbe {
       available: PermissionStatus::Granted,
       version: Some(version),
       details: Some("interface available; user authorization has not been tested".into()),
     },
-    Err(error) => {
-      // GLib reports a missing interface as InvalidArgs for this fixed, valid
-      // Properties.Get request; retain its details instead of hiding the error.
-      let missing = matches!(
-        zbus::fdo::Error::from(error.clone()),
-        zbus::fdo::Error::InvalidArgs(_)
-          | zbus::fdo::Error::UnknownInterface(_)
-          | zbus::fdo::Error::UnknownMethod(_)
-          | zbus::fdo::Error::UnknownProperty(_)
-      );
-      PortalInterfaceProbe {
-        available: if missing {
-          PermissionStatus::Missing
-        } else {
-          PermissionStatus::Unknown
-        },
-        version: None,
-        details: Some(error.to_string()),
-      }
-    }
+    Ok(Err(error)) => PortalInterfaceProbe {
+      available: if matches!(error, ashpd::Error::PortalNotFound(_)) {
+        PermissionStatus::Missing
+      } else {
+        PermissionStatus::Unknown
+      },
+      version: None,
+      details: Some(error.to_string()),
+    },
+    Err(error) => PortalInterfaceProbe {
+      available: PermissionStatus::Unknown,
+      version: None,
+      details: Some(error.to_string()),
+    },
   }
 }
 
@@ -156,6 +155,20 @@ pub(crate) fn validate_app_id(app_id: &str) -> auv_driver_common::DriverResult<(
   Ok(())
 }
 
+// NOTICE: ashpd 0.13 has no PermissionStore client. This KDE-specific table
+// remains behind a typed zbus proxy until ashpd exposes that client interface.
+#[cfg(target_os = "linux")]
+#[zbus::proxy(
+  interface = "org.freedesktop.impl.portal.PermissionStore",
+  default_service = "org.freedesktop.impl.portal.PermissionStore",
+  default_path = "/org/freedesktop/impl/portal/PermissionStore",
+  gen_async = false
+)]
+trait PermissionStore {
+  fn lookup(&self, table: &str, id: &str) -> zbus::Result<(std::collections::HashMap<String, Vec<String>>, zbus::zvariant::OwnedValue)>;
+  fn set_permission(&self, table: &str, create: bool, id: &str, app: &str, permissions: &[&str]) -> zbus::Result<()>;
+}
+
 /// Verifies the configured identity using the same connection setup as input.
 #[cfg(target_os = "linux")]
 pub fn verify_portal_identity(app_id: &str) -> auv_driver_common::DriverResult<()> {
@@ -170,17 +183,8 @@ pub fn kde_authorization(app_id: &str) -> auv_driver_common::DriverResult<Permis
   let connection = zbus::blocking::connection::Builder::session()
     .and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
     .map_err(|error| crate::error::backend(error.to_string()))?;
-  let proxy = zbus::blocking::Proxy::new(
-    &connection,
-    "org.freedesktop.impl.portal.PermissionStore",
-    "/org/freedesktop/impl/portal/PermissionStore",
-    "org.freedesktop.impl.portal.PermissionStore",
-  )
-  .map_err(|error| crate::error::backend(error.to_string()))?;
-  let result = proxy.call::<_, _, (std::collections::HashMap<String, Vec<String>>, zbus::zvariant::OwnedValue)>(
-    "Lookup",
-    &("kde-authorized", "remote-desktop"),
-  );
+  let proxy = PermissionStoreProxy::new(&connection).map_err(|error| crate::error::backend(error.to_string()))?;
+  let result = proxy.lookup("kde-authorized", "remote-desktop");
   match result {
     Ok((permissions, _)) => Ok(if permissions.get(app_id).is_some_and(|values| values.iter().any(|value| value == "yes")) {
       PermissionStatus::Granted
@@ -200,15 +204,9 @@ pub fn set_kde_authorization(app_id: &str, allow: bool) -> auv_driver_common::Dr
   let connection = zbus::blocking::connection::Builder::session()
     .and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
     .map_err(|error| crate::error::backend(error.to_string()))?;
-  let proxy = zbus::blocking::Proxy::new(
-    &connection,
-    "org.freedesktop.impl.portal.PermissionStore",
-    "/org/freedesktop/impl/portal/PermissionStore",
-    "org.freedesktop.impl.portal.PermissionStore",
-  )
-  .map_err(|error| crate::error::backend(error.to_string()))?;
+  let proxy = PermissionStoreProxy::new(&connection).map_err(|error| crate::error::backend(error.to_string()))?;
   let permissions: Vec<&str> = if allow { vec!["yes"] } else { vec![] };
   proxy
-    .call::<_, _, ()>("SetPermission", &("kde-authorized", true, "remote-desktop", app_id, permissions))
+    .set_permission("kde-authorized", true, "remote-desktop", app_id, &permissions)
     .map_err(|error| crate::error::backend(format!("failed to update KDE application authorization: {error}")))
 }

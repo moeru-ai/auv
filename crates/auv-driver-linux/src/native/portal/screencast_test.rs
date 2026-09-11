@@ -6,9 +6,8 @@ fn stream_maps_global_point_to_local_point() {
     id: 7,
     position: Some((100, 50)),
     size: Some((800, 600)),
-    source_type: Some(SOURCE_MONITOR),
+    source_type: Some(SourceType::Monitor as u32),
     mapping_id: None,
-    pipewire_serial: None,
   };
 
   let point = stream.local_point(Point::new(120.0, 80.0)).expect("point maps into stream");
@@ -22,9 +21,8 @@ fn stream_rejects_outside_point() {
     id: 7,
     position: Some((100, 50)),
     size: Some((800, 600)),
-    source_type: Some(SOURCE_MONITOR),
+    source_type: Some(SourceType::Monitor as u32),
     mapping_id: None,
-    pipewire_serial: None,
   };
 
   assert!(stream.local_point(Point::new(50.0, 80.0)).is_err());

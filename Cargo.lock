@@ -174,6 +174,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ashpd"
+version = "0.13.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb8421aaa9644a5faf26735f258b669b15f063313ef8f8e2bdb28912a1a6f111"
+dependencies = [
+ "enumflags2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_repr",
+ "zbus",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,6 +651,7 @@ dependencies = [
 name = "auv-driver-linux"
 version = "0.0.16"
 dependencies = [
+ "ashpd",
  "async-io",
  "auv-driver-common",
  "fs2",
@@ -646,6 +661,7 @@ dependencies = [
  "pipewire",
  "serde",
  "tempfile",
+ "url",
  "wayland-client 0.31.15",
  "wayland-protocols 0.32.13",
  "zbus",

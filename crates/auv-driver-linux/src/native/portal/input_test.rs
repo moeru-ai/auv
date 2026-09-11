@@ -29,18 +29,6 @@ fn ci_90978006386_click_parts_support_repeated_clicks() {
 }
 
 #[test]
-fn device_mask_requests_keyboard_and_pointer() {
-  assert_eq!(DEVICE_KEYBOARD | DEVICE_POINTER, 3);
-}
-
-#[test]
-fn evdev_button_codes_match_primary_buttons() {
-  assert_eq!(BUTTON_LEFT, 0x110);
-  assert_eq!(BUTTON_RIGHT, 0x111);
-  assert_eq!(BUTTON_MIDDLE, 0x112);
-}
-
-#[test]
 fn output_mapping_scales_logical_screen_point_for_remote_desktop_motion() {
   let display = display(Rect::new(0.0, 0.0, 2752.0, 1152.0), 1.25);
   let stream = stream(7, Rect::new(0.0, 0.0, 2752.0, 1152.0));
@@ -107,7 +95,6 @@ fn stream(id: u32, rect: Rect) -> ScreenCastStream {
     size: Some((rect.size.width as i32, rect.size.height as i32)),
     source_type: None,
     mapping_id: None,
-    pipewire_serial: None,
   }
 }
 

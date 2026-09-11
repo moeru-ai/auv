@@ -113,11 +113,14 @@ and the [SDK usage](../../../../js/packages/sdk/README.md).
   endpoint while the original daemon remains healthy. Eight tests pass; the
   Windows-only case is skipped on macOS. A quiet-launcher regression confirms
   that suppressing all daemon stdout does not affect startup.
-- **Behavior, isolated Linux D-Bus:** 70 driver tests pass, including a private-bus
+- **Behavior, isolated Linux D-Bus:** 68 driver tests pass, including a private-bus
   fixture that starts two client processes, checks Registry attribution on the
   exact Portal caller connection, and verifies KDE allow/revoke preserves another
   application's rule. It requires `dbus-daemon` and runs with `--include-ignored`.
   Token tests verify a new store restores and rotates a durable private token.
+  A Portal delivery fixture checks actual SelectDevices/SelectSources options,
+  restore-token replacement, modifier/button delivery order, immediate response
+  signals, and cancellation closing the session without continuing to Start.
 - **Behavior, Linux host `neko-gpu-1`:** built in an isolated `/tmp` checkout,
   installed the user desktop entry, and observed `identity_registered: true`.
   ScreenCast version 5 and Screenshot version 2 are present. RemoteDesktop is
@@ -164,12 +167,27 @@ durable token IO/private modes, D-Bus peer attribution/rule isolation, and actua
 SDK/daemon behavior. The live GLib/Registry probe above remains the evidence for
 the executable-path fix. No repository-wide test-quality count is claimed.
 
-Portal error classification now uses `zbus::fdo::Error` variants instead of
-repeating D-Bus error-name strings. For a broader Portal adapter replacement,
-[ashpd](https://docs.rs/ashpd/0.13.13/ashpd/desktop/remote_desktop/struct.RemoteDesktop.html)
-provides typed portal operations, version queries, and errors such as
-`PortalNotFound` and `RequiresVersion`. A full session-layer migration is a
-separate candidate, not required to use zbus's existing typed standard errors.
+The Portal layer now uses
+[ashpd 0.13.13](https://docs.rs/ashpd/0.13.13/ashpd/desktop/remote_desktop/struct.RemoteDesktop.html)
+with its async-io backend. It owns Registry registration, ScreenCast,
+RemoteDesktop, Clipboard, Screenshot, typed sessions/options, request tokens,
+response decoding, and signal subscriptions. AUV retains its synchronous bounded
+call boundary, token storage/rotation, logical geometry, PipeWire frames, and
+permission reporting. Failed startup closes created sessions; clipboard
+listeners now exit and join when their owner closes instead of being detached.
+Screenshot remains interactive and uses `url` for file-URI conversion.
+
+Two narrow boundaries still use zbus:
+
+- ashpd has no PermissionStore client, so KDE's per-application table uses a
+  generated typed zbus proxy. This is not an alternative Portal session layer.
+- ashpd 0.13 defaults `version()` to 1 for some property errors. Doctor reads the
+  actual version property through ashpd's typed proxy to preserve failures as
+  unknown rather than claiming availability. `PortalNotFound` maps to missing.
+
+The request-token format test and two device/button constant tests were removed.
+The private-bus delivery fixture checks observable calls instead. No new test
+asserts ashpd's private representation or duplicates its protocol parser.
 
 RustDesk at `e82dd12350479b848630d1e500c2f6870609a884` uses
 [`dbus-codegen-rust` generated RemoteDesktop bindings](https://github.com/rustdesk/rustdesk/blob/e82dd12350479b848630d1e500c2f6870609a884/libs/scrap/src/wayland/remote_desktop_portal.rs)
@@ -184,3 +202,13 @@ repository ESLint passes. Health Protobuf generation, targeted lint and breaking
 check against main pass. Whole-workspace Buf lint still reports the existing
 `MoveMouseStreamResponse` naming issue; Buf format reports existing reflection
 option ordering. Neither unrelated schema was changed.
+
+ashpd migration validation: Linux driver tests pass (68 including two isolated
+D-Bus fixtures). Linux `cargo clippy -p auv-driver-linux --all-targets
+--all-features` completes with existing warnings in `atspi.rs`,
+`session_test.rs`, and `window_test.rs`; adding `-D warnings` fails on those
+unchanged warnings. No new warning originates in the migrated Portal code.
+Linux CLI build and a fresh `doctor --json` using ashpd confirm
+`identity_registered: true`, ScreenCast v5, Screenshot v2, and RemoteDesktop
+missing on `neko-gpu-1`. macOS `cargo fmt --check`, `cargo check`, default
+`cargo test`, invoke help, full `pnpm lint`, and `git diff --check` pass.
