@@ -5,7 +5,7 @@
 
 use crate::support::{find_best_ax_node, score_ax_node_match};
 use crate::types::{ObservedAxNode, ObservedAxTreeSnapshot};
-use auv_driver_common::accessibility::{AxFocusResult, AxTextRead};
+use auv_driver_common::accessibility::{AxFocusResult, AxTextRead, AxTextSelector, FocusTextOptions};
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
 
@@ -14,7 +14,9 @@ pub const DEFAULT_AX_MAX_DEPTH: i64 = 16;
 pub const DEFAULT_AX_MAX_CHILDREN: i64 = 64;
 
 pub fn capture_app_tree(app: &str, max_depth: i64, max_children: i64) -> DriverResult<ObservedAxTreeSnapshot> {
-  let capture = crate::native::tree::capture_ax_tree_snapshot(app, max_depth, max_children).map_err(backend)?;
+  let capture = crate::native::tree::capture_ax_tree_snapshot(app, max_depth, max_children).map_err(|message| DriverError::Backend {
+    message: message.to_string(),
+  })?;
   Ok(capture.snapshot)
 }
 
@@ -30,15 +32,23 @@ pub fn focus_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResul
       succeeded: true,
       message: Some(format!("focused AX path {path} role {expected_role}")),
     }],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Temporary,
     clipboard_disturbance: DisturbanceLevel::None,
   })
 }
 
-pub fn focus_text_by_query(app: &str, query: &str, expected_role: Option<&str>, candidate: &str) -> DriverResult<AxFocusResult> {
+pub fn focus_text(options: FocusTextOptions) -> DriverResult<AxFocusResult> {
+  options.validate()?;
+  let app = options.app.trim();
+  let expected_role = options.expected_role.as_deref();
+  let (query, path) = match &options.selector {
+    AxTextSelector::Query(query) => (query.trim(), ""),
+    AxTextSelector::Path(path) => ("", path.trim()),
+  };
   let snapshot = capture_app_tree(app, DEFAULT_AX_MAX_DEPTH, DEFAULT_AX_MAX_CHILDREN)?;
-  let node = select_focus_node(&snapshot, query, expected_role, candidate)?;
+  let node = select_focus_node(&snapshot, query, expected_role, path)?;
   let role = if node.role.trim().is_empty() {
     expected_role.unwrap_or("").to_string()
   } else {
@@ -121,7 +131,7 @@ fn select_focus_node<'a>(
   let query = query.trim();
   if query.is_empty() {
     return Err(DriverError::InvalidInput {
-      message: "accessibility.focus_text_by_query requires --query or a path candidate".to_string(),
+      message: "accessibility.focus_text requires a non-empty query or AX path".to_string(),
     });
   }
 
@@ -143,12 +153,6 @@ fn select_focus_node<'a>(
   find_best_ax_node(snapshot, query).ok_or_else(|| DriverError::NotFound {
     target: format!("AX text node matching query {query}"),
   })
-}
-
-fn backend(message: impl std::fmt::Display) -> DriverError {
-  DriverError::Backend {
-    message: message.to_string(),
-  }
 }
 
 #[cfg(test)]

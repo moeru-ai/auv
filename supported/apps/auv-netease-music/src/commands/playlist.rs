@@ -422,6 +422,16 @@ pub fn run_playlist_select(_inputs: &Inputs, _query: &str) -> Result<PlaylistSel
 }
 
 #[cfg(not(target_os = "macos"))]
+pub fn run_playlist_select_ref(_inputs: &Inputs, _reference: &crate::PlaylistRef) -> Result<PlaylistSelectResult, String> {
+  Err("live NetEase playlist select is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn scan_playlist_songs(_inputs: &Inputs, _reference: &crate::PlaylistRef) -> Result<crate::SongListScanResult, String> {
+  Err("live NetEase playlist song scan is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn run_playlist_play(_inputs: &Inputs, _query: &str) -> Result<PlaylistPlayResult, String> {
   Err("live NetEase playlist play is only supported on macOS".to_string())
 }
@@ -431,6 +441,36 @@ pub fn run_playlist_select(inputs: &Inputs, query: &str) -> Result<PlaylistSelec
   let scan = run_live_scan_until_query(inputs, query)?;
   let target = scan.select_target(query)?;
   run_playlist_select_resolved(inputs, query, scan, target)
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_playlist_select_ref(inputs: &Inputs, reference: &crate::PlaylistRef) -> Result<PlaylistSelectResult, String> {
+  let scan = run_live_scan_until_query(inputs, reference.label())?;
+  let target = scan.select_target_ref(reference)?;
+  run_playlist_select_resolved(inputs, reference.label(), scan, target)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn scan_playlist_songs(inputs: &Inputs, reference: &crate::PlaylistRef) -> Result<crate::SongListScanResult, String> {
+  use auv_driver::selector::{App, Window};
+
+  let select = run_playlist_select_ref(inputs, reference)?;
+  if !select.verification.passed() {
+    return Err(format!("playlist select verification failed before song scan: observed_title={:?}", select.verification.observed_title()));
+  }
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let app = App::bundle(inputs.app_id.clone());
+  let window =
+    session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
+  crate::commands::song::scan_open_song_list(
+    session,
+    window,
+    inputs,
+    reference.label(),
+    "playlist_song_list",
+    select.diagnostics,
+    select.known_limits,
+  )
 }
 
 #[cfg(target_os = "macos")]
@@ -882,6 +922,18 @@ pub fn run_playlist_play(inputs: &Inputs, query: &str) -> Result<PlaylistPlayRes
   let scan = run_live_scan_until_query(inputs, query)?;
   let target = scan.select_target(query)?;
   run_playlist_play_resolved(inputs, query, scan, target)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_playlist_play_ref(_inputs: &Inputs, _reference: &crate::PlaylistRef) -> Result<PlaylistPlayResult, String> {
+  Err("live NetEase playlist play is only supported on macOS".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_playlist_play_ref(inputs: &Inputs, reference: &crate::PlaylistRef) -> Result<PlaylistPlayResult, String> {
+  let scan = run_live_scan_until_query(inputs, reference.label())?;
+  let target = scan.select_target_ref(reference)?;
+  run_playlist_play_resolved(inputs, reference.label(), scan, target)
 }
 
 #[cfg(target_os = "macos")]

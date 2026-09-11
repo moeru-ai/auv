@@ -151,6 +151,12 @@
       "skillPath": "skills/rust-trait-explorer/SKILL.md",
       "computedHash": "2feac2b9bb17689a7227fcae62c8a20351bb5afb271a47d49c27ba87ba9e7e26"
     },
+    "simple-english": {
+      "source": "AminBlg/SimpleEnglish",
+      "sourceType": "github",
+      "skillPath": "skills/simple-english/SKILL.md",
+      "computedHash": "8e1b7d3d2c20a34318c2971256f74fc6480bc317f07168d51ffad6b21469ec49"
+    },
     "unsafe-checker": {
       "source": "actionbook/rust-skills",
       "sourceType": "github",

@@ -18,7 +18,7 @@ use crate::capture::{capture_display, capture_region, list_displays};
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::LinuxDriverSession;
 use crate::error::{invalid_input, not_found};
-use crate::input::{click_at, copy, paste, paste_text, press_key, scroll_at, type_text};
+use crate::input::{click_at, copy, move_to, paste, paste_text, press_key, scroll_at, type_text};
 use crate::permission::{LinuxPortalProbe, probe_portals};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
 use crate::window::{capture_window, list_windows, resolve_window};
@@ -196,8 +196,16 @@ impl WindowApi<'_> {
     // RemoteDesktop portal delivery; revisit if a compositor or portal exposes
     // verified window-targeted pointer delivery.
     let _ = options.window_strategy;
+    let focus_attempts = match focus_node(window, "0") {
+      Ok(result) => result.attempts,
+      Err(error) => vec![InputAttempt::failure(
+        InputDeliveryPath::AxFocus,
+        format!("AT-SPI could not foreground the target window before pointer delivery: {error}"),
+      )],
+    };
     let screen_point = self.to_screen_point(window, point)?.point();
     let mut result = self.session.input().click_at(screen_point, options.click)?;
+    result.attempts.splice(0..0, focus_attempts);
     add_foreground_window_fallback_reason(
       &mut result,
       InputDeliveryPath::WindowTargetedMouse,
@@ -293,6 +301,15 @@ impl AccessibilityApi<'_> {
 }
 
 impl InputApi<'_> {
+  pub fn current_position(&self) -> DriverResult<Point> {
+    let _ = self.session;
+    crate::input::current_position()
+  }
+
+  pub fn move_to(&self, point: Point) -> DriverResult<InputActionResult> {
+    move_to(&self.session.state, point)
+  }
+
   pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
     click_at(&self.session.state, point, click)
   }

@@ -121,19 +121,5 @@ fn map_rect_to_capture(bounds: Rect, capture: &Capture, crop: CropPixels) -> Rec
 }
 
 #[cfg(test)]
-fn ocr_matches_from_recognition(recognition: &TextRecognition, query: &str) -> OcrMatches {
-  let matches = recognition
-    .find_contains(query)
-    .into_iter()
-    .map(|recognized| OcrMatch {
-      text: recognized.text.clone(),
-      confidence: recognized.confidence.unwrap_or_default() as f64,
-      bounds: recognized.bounds,
-    })
-    .collect();
-  OcrMatches { matches }
-}
-
-#[cfg(test)]
 #[path = "vision_test.rs"]
 mod tests;

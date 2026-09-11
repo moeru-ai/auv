@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::PlaylistRef;
+
 /// A semantic reference to the singleton Daily Recommended entry.
 ///
 /// The reference deliberately carries no coordinates or parser candidate id.
@@ -12,15 +14,18 @@ pub struct DailyRecommendedRef;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SongSource {
   DailyRecommended(DailyRecommendedRef),
-  // TODO(netease-playlist-song-source): ordinary playlist sources are deferred
-  // until playlist select is moved behind `NeteaseCloudMusic`; adding the
-  // variant earlier would expose a selector contract the current app model
-  // does not yet own.
+  Playlist(PlaylistRef),
 }
 
 impl From<DailyRecommendedRef> for SongSource {
   fn from(reference: DailyRecommendedRef) -> Self {
     Self::DailyRecommended(reference)
+  }
+}
+
+impl From<PlaylistRef> for SongSource {
+  fn from(reference: PlaylistRef) -> Self {
+    Self::Playlist(reference)
   }
 }
 

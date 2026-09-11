@@ -1,14 +1,16 @@
 export const vacantControlBoundaryInstructions = `
 You are reviewing one Rust source file.
 
-Use the report_finding tool for each warning. Do not report anything when the file has no qualifying issue.
-`.trim();
+Call report_findings exactly once. Use an empty findings array when the file has no qualifying issue.
+
+Every finding message must stand alone in a terse terminal formatter. Name the function, identify the shallow decision and delegated call, explain what responsibility is missing, and end with a concrete remediation. Never emit only a function name or a category label. Put the remediation in suggestion too.
+`.trim()
 
 export const vacantControlBoundaryPrompt = `
 Task:
 Warn about vacant control boundaries.
 
-A vacant control boundary is a function whose body performs only shallow local control flow, such as a single guard, mode check, or early return, and then delegates the real behavior to another same-file function. The outer function does not own meaningful policy, resource lifecycle, error semantics, validation, retries, observability, concurrency, dependency selection, or reusable API shape.
+A vacant control boundary is a function whose body performs a shallow local decision, such as a single guard, mode check, or early return, and then delegates the real behavior to another same-file function. Both parts are required: a local control-flow decision and delegation of the main behavior. The outer function does not own meaningful policy, resource lifecycle, error semantics, validation, retries, observability, concurrency, dependency selection, or reusable API shape.
 
 This is a warning-level design smell, not a correctness error.
 
@@ -41,7 +43,11 @@ Do not report functions that add a real boundary, including:
 - tracing, metrics, retry, cache, permission, transaction, or lifecycle ownership
 - test helpers or fixture builders whose value is local readability
 
+Rule ownership:
+- Do not report a function whose entire body is an unconditional call to another function. With no local control-flow decision, it is not a vacant control boundary; the sibling no-unearned-function-boundary rule owns that possible smell.
+- Do not report a thin typed client, protocol, generated-code, or cross-module adapter merely because it delegates. Its type/signature and representation boundary may be the earned responsibility.
+
 Treat the file path as context. If the path indicates an example, test, benchmark, build.rs, binary wrapper, platform adapter, or public API facade module, require stronger evidence before reporting. Do not report merely because such a boundary is thin.
 
-When suggesting a fix, prefer either merging the delegated body into the caller-facing function or moving the delegated behavior behind a boundary that carries real policy. If uncertain, return no finding.
-`.trim();
+For every finding, make the message follow this semantic shape: \`<function> makes only <specific shallow decision> before delegating <specific behavior>, so it owns no <missing responsibility>; <concrete remediation>.\` Do not copy this wording mechanically, but include all four facts. When suggesting a fix, prefer either merging the delegated body into the caller-facing function or moving the delegated behavior behind a boundary that carries real policy. If uncertain, return no finding.
+`.trim()

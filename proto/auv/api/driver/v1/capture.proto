@@ -1,0 +1,72 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/display.proto";
+import "auv/api/driver/v1/geometry.proto";
+import "auv/api/driver/v1/window.proto";
+import "auv/api/image/v1/image.proto";
+
+service CaptureService {
+  rpc CaptureWindow(CaptureWindowRequest) returns (CaptureWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+  rpc CaptureDisplay(CaptureDisplayRequest) returns (CaptureDisplayResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+  rpc CaptureRegion(CaptureRegionRequest) returns (CaptureRegionResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+message CapturedFrame {
+  auv.api.image.v1.RgbaFrame image = 1;
+  // Logical screen-space bounds represented by the captured pixels.
+  ScreenRect bounds = 2;
+  double scale_factor = 3;
+  string backend = 4;
+  optional string fallback_reason = 5;
+}
+
+message CaptureWindowRequest {
+  reserved 1;
+  reserved "lease";
+  // A resolved child-resource reference. Selector convenience belongs in the
+  // hierarchical client, which resolves once before entering this child API.
+  WindowRef window = 2;
+}
+
+message CaptureWindowResponse {
+  Window window = 1;
+  CapturedFrame capture = 2;
+}
+
+message CaptureDisplayRequest {
+  reserved 1;
+  reserved "lease";
+  // Absence selects the primary display.
+  DisplaySelector selector = 2;
+}
+
+message CaptureDisplayResponse {
+  Display display = 1;
+  CapturedFrame capture = 2;
+}
+
+message CaptureRegionRequest {
+  reserved 1;
+  reserved "lease";
+  ScreenRect region = 2;
+  // Absence resolves the Display containing the requested screen region.
+  DisplaySelector selector = 3;
+}
+
+message CaptureRegionResponse {
+  Display display = 1;
+  CapturedFrame capture = 2;
+}

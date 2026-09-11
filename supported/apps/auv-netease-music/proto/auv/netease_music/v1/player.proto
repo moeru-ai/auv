@@ -1,0 +1,142 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.netease_music.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/netease_music/v1/scan.proto";
+
+// Reads and controls NetEase playback.
+service PlayerService {
+  rpc GetNowPlaying(GetNowPlayingRequest) returns (GetNowPlayingResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+
+  rpc Play(PlayRequest) returns (PlayResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  rpc Pause(PauseRequest) returns (PauseResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  rpc TogglePlayer(TogglePlayerRequest) returns (TogglePlayerResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  rpc Next(NextRequest) returns (NextResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  rpc Previous(PreviousRequest) returns (PreviousResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  rpc Seek(SeekRequest) returns (SeekResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  // The macOS probe may click the playback bar to inspect song details.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+enum PlaybackControlState {
+  PLAYBACK_CONTROL_STATE_UNSPECIFIED = 0;
+  PLAYBACK_CONTROL_STATE_PLAY_VISIBLE = 1;
+  PLAYBACK_CONTROL_STATE_PAUSE_VISIBLE = 2;
+  PLAYBACK_CONTROL_STATE_UNKNOWN = 3;
+}
+
+message GetNowPlayingRequest {
+  // Absence uses com.netease.163music.
+  optional string application_bundle_id = 1;
+}
+
+message GetNowPlayingResponse {
+  bool present = 1;
+  bool is_playing = 2;
+  optional string source_bundle_id = 3;
+  optional string title = 4;
+  optional string artist = 5;
+  optional string album = 6;
+  optional double duration_seconds = 7;
+  optional double elapsed_seconds = 8;
+  optional double playback_rate = 9;
+  optional string content_item_id = 10;
+  optional bool supports_like = 11;
+  optional bool is_liked = 12;
+}
+
+message PlayRequest {
+  optional string application_bundle_id = 1;
+}
+
+message PlayResponse {
+  string delivery = 1;
+}
+
+message PauseRequest {
+  optional string application_bundle_id = 1;
+}
+
+message PauseResponse {
+  string delivery = 1;
+}
+
+message TogglePlayerRequest {
+  optional string application_bundle_id = 1;
+}
+
+message TogglePlayerResponse {
+  string delivery = 1;
+}
+
+message NextRequest {
+  optional string application_bundle_id = 1;
+}
+
+message NextResponse {
+  string delivery = 1;
+}
+
+message PreviousRequest {
+  optional string application_bundle_id = 1;
+}
+
+message PreviousResponse {
+  string delivery = 1;
+}
+
+message SeekRequest {
+  double position_seconds = 1;
+  optional string application_bundle_id = 2;
+}
+
+message SeekResponse {
+  double position_seconds = 1;
+}
+
+message GetStatusRequest {
+  optional string application_bundle_id = 1;
+  optional uint64 settle_milliseconds = 2;
+}
+
+message GetStatusResponse {
+  bool playback_exists = 1;
+  bool was_playing = 2;
+  PlaybackControlState control_state = 3;
+  bool detail_screen_detected = 4;
+  optional string source = 5;
+  repeated Diagnostic diagnostics = 6;
+  repeated string known_limits = 7;
+}

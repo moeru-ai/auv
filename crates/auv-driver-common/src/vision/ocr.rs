@@ -65,17 +65,13 @@ impl TextRecognitionOptions {
 
 impl TextRecognition {
   pub fn find_contains(&self, query: &str) -> Vec<&RecognizedText> {
-    let normalized_query = normalize_text(query);
-    self.regions.iter().filter(|region| normalize_text(&region.text).contains(&normalized_query)).collect()
+    let normalized_query = query.to_lowercase();
+    self.regions.iter().filter(|region| region.text.to_lowercase().contains(&normalized_query)).collect()
   }
 
   pub fn best_contains(&self, query: &str) -> Option<&RecognizedText> {
     self.find_contains(query).into_iter().next()
   }
-}
-
-fn normalize_text(text: &str) -> String {
-  text.to_lowercase()
 }
 
 #[cfg(test)]

@@ -3,6 +3,19 @@ use image::RgbaImage;
 
 use super::*;
 
+fn ocr_matches_from_recognition(recognition: &TextRecognition, query: &str) -> OcrMatches {
+  let matches = recognition
+    .find_contains(query)
+    .into_iter()
+    .map(|recognized| OcrMatch {
+      text: recognized.text.clone(),
+      confidence: recognized.confidence.unwrap_or_default() as f64,
+      bounds: recognized.bounds,
+    })
+    .collect();
+  OcrMatches { matches }
+}
+
 fn capture(width: u32, height: u32, bounds: Rect) -> Capture {
   Capture {
     image: RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255])),

@@ -134,27 +134,46 @@ feature/dependency surface:
 [features]
 default = []
 memory-store = []
-file-store = ["dep:fs2"]
-rust-tracing = ["dep:tracing"]
+file-store = [ "dep:fs2" ]
+rust-tracing = [ "dep:tracing" ]
 
 [dependencies]
 bytes.workspace = true
+
 futures-core.workspace = true
+
 futures-io.workspace = true
-futures-util = { workspace = true, features = ["io", "sink"] }
+
+futures-util = { workspace = true, features = [
+  "io",
+  "sink"
+] }
 futures-channel = "0.3"
-futures-executor = { version = "0.3", features = ["thread-pool"] }
+futures-executor = { version = "0.3", features = [ "thread-pool" ] }
 fs2 = { workspace = true, optional = true }
+
 hex.workspace = true
+
 mime.workspace = true
+
 pin-project = "1"
+
 serde.workspace = true
-serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
+
+serde_json = { workspace = true, features = [
+  "arbitrary_precision",
+  "raw_value"
+] }
+
 sha2.workspace = true
+
 thiserror.workspace = true
+
 time.workspace = true
+
 tracing = { version = "0.1", optional = true }
-url = { version = "2", features = ["serde"] }
+url = { version = "2", features = [ "serde" ] }
+
 uuid.workspace = true
 ```
 
@@ -2127,11 +2146,17 @@ Use these transport dependencies in `auv-tracing-inspect`:
 ```toml
 auv-tracing = { path = "../auv-tracing" }
 base64 = "0.22"
-futures-util = { workspace = true, features = ["io"] }
-reqwest = { workspace = true, features = ["stream"] }
+futures-util = { workspace = true, features = [ "io" ] }
+reqwest = { workspace = true, features = [ "stream" ] }
+
 tokio.workspace = true
-tokio-util = { workspace = true, features = ["io", "compat"] }
-url = { version = "2", features = ["serde"] }
+
+tokio-util = { workspace = true, features = [
+  "io",
+  "compat"
+] }
+url = { version = "2", features = [ "serde" ] }
+
 uuid.workspace = true
 ```
 
@@ -2398,7 +2423,7 @@ Add to both manifests:
 ```toml
 [features]
 default = []
-tracing = ["dep:auv-tracing"]
+tracing = [ "dep:auv-tracing" ]
 
 [dependencies.auv-tracing]
 path = "../auv-tracing"

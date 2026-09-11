@@ -14,6 +14,9 @@ Update (2026-07-31): the root `auv-runtime` package and `src/` tree were
 retired. This file remains a historical dependency snapshot and must not be
 used as the current workspace map. See
 [`2026-07-31-auv-runtime-package-retirement-handoff.md`](2026-07-31-auv-runtime-package-retirement-handoff.md).
+The same date's Device/Run/Runner migration also retired the public gRPC
+`SessionService`; the table's `auv-api-proto` row records the former root
+dependency and is not a current API claim.
 
 ## Purpose
 

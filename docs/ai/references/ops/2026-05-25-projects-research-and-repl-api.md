@@ -190,20 +190,20 @@ It has two API shapes:
 
 ```ts
 // Library API: explicit handles.
-import { chromium } from "playwright";
+import { chromium } from 'playwright'
 
-const browser = await chromium.launch();
-const context = await browser.newContext();
-const page = await context.newPage();
+const browser = await chromium.launch()
+const context = await browser.newContext()
+const page = await context.newPage()
 ```
 
 ```ts
 // Test runner API: fixture-managed context.
-import { test, expect } from "@playwright/test";
+import { expect, test } from '@playwright/test'
 
-test("example", async ({ page, context }) => {
-  await page.goto("https://example.com");
-});
+test('example', async ({ context, page }) => {
+  await page.goto('https://example.com')
+})
 ```
 
 The important pattern is:
@@ -321,23 +321,23 @@ puts too much infrastructure in every script.
 Prefer:
 
 ```ts
-import { auv } from "@auv/sdk";
+import { auv } from '@auv/sdk'
 
-const device = await auv.device();
-const session = await device.sessions.create({ name: "music" });
-const app = await session.app("com.netease.163music");
-const rows = await app.region("main").list().rows();
+const device = await auv.device()
+const session = await device.sessions.create({ name: 'music' })
+const app = await session.app('com.netease.163music')
+const rows = await app.region('main').list().rows()
 
-await rows[0].click();
+await rows[0].click()
 ```
 
 Or in REPL:
 
 ```ts
-await useDevice("local");
-await useSession("music");
+await useDevice('local')
+await useSession('music')
 
-const rows = await app("com.netease.163music").region("main").list().rows();
+const rows = await app('com.netease.163music').region('main').list().rows()
 ```
 
 The internal context still exists:
@@ -417,16 +417,16 @@ default target, list configured targets, and switch the active target.
 Recommended JS shape:
 
 ```ts
-const device = await auv.device();          // current/default device
-const local = await auv.device("local");    // named device shortcut
+const device = await auv.device() // current/default device
+const local = await auv.device('local') // named device shortcut
 
-const devices = await auv.devices.list();
-await auv.devices.use("local");
+const devices = await auv.devices.list()
+await auv.devices.use('local')
 await auv.devices.register({
-  id: "remote-mac",
-  kind: "macos",
-  endpoint: "tcp://192.0.2.10:7654"
-});
+  endpoint: 'tcp://192.0.2.10:7654',
+  id: 'remote-mac',
+  kind: 'macos'
+})
 ```
 
 Recommended CLI shape:
@@ -572,18 +572,18 @@ evidence for a common UI observation shape.
 Candidate shape:
 
 ```ts
-type ObservedUiNode = {
-  id: string;
-  role?: "window" | "region" | "list" | "listitem" | "row" | "cell" |
-    "button" | "text" | "image" | "unknown";
-  name?: string;
-  value?: string;
-  bounds: Rect;
-  source: "ax" | "ocr" | "vision" | "merged";
-  evidence: ArtifactRef[];
-  children?: ObservedUiNode[];
-  attributes?: Record<string, unknown>;
-};
+interface ObservedUiNode {
+  attributes?: Record<string, unknown>
+  bounds: Rect
+  children?: ObservedUiNode[]
+  evidence: ArtifactRef[]
+  id: string
+  name?: string
+  role?: 'button' | 'cell' | 'image' | 'list' | 'listitem' | 'region'
+    | 'row' | 'text' | 'unknown' | 'window'
+  source: 'ax' | 'merged' | 'ocr' | 'vision'
+  value?: string
+}
 ```
 
 This gives a place to put structure without forcing OCR fragments to become
@@ -659,9 +659,9 @@ and method. Start with local macOS only.
 Implement handle-based JS APIs and optional REPL globals:
 
 ```ts
-const device = await auv.device();
-const session = await device.sessions.create({ name: "scan" });
-const rows = await session.app("com.netease.163music").region("main").list().rows();
+const device = await auv.device()
+const session = await device.sessions.create({ name: 'scan' })
+const rows = await session.app('com.netease.163music').region('main').list().rows()
 ```
 
 The REPL can expose globals such as `app`, `screen`, `device`, `session`,

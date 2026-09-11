@@ -95,21 +95,33 @@ Create `crates/auv-inspect-server/Cargo.toml`:
 ```toml
 [package]
 name = "auv-inspect-server"
+
 version.workspace = true
+
 edition.workspace = true
+
 publish.workspace = true
+
 readme.workspace = true
+
 license.workspace = true
+
 authors.workspace = true
+
 description.workspace = true
+
 documentation.workspace = true
+
 homepage.workspace = true
+
 repository.workspace = true
 
 [dependencies]
 auv-tracing-driver = { path = "../auv-tracing-driver" }
 auv-view = { path = "../auv-view" }
+
 serde.workspace = true
+
 serde_json.workspace = true
 ```
 
@@ -346,13 +358,26 @@ git commit -m "refactor(auv-inspect-server): move inspect session descriptor"
 In `crates/auv-inspect-server/Cargo.toml`, add the server dependencies:
 
 ```toml
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
+axum = { version = "0.8", features = [ "ws" ] }
+tokio = { version = "1", features = [
+  "fs",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "sync"
+] }
 tracing = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
-tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1", features = [
+  "fs",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "sync",
+  "time"
+] }
+tower = { version = "0.5", features = [ "util" ] }
 ```
 
 - [ ] **Step 2: Copy the existing server module**
@@ -1108,14 +1133,14 @@ rm -r src/inspect_server
 In the root `Cargo.toml`, remove these lines from `[dependencies]` if `rg` confirms only the moved server used them in the root crate:
 
 ```toml
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = [ "ws" ] }
 libc = "0.2"
 ```
 
 In root `[dev-dependencies]`, remove this line if `rg "tower::ServiceExt" src tests` only finds tests moved to `auv-inspect-server`:
 
 ```toml
-tower = { version = "0.5", features = ["util"] }
+tower = { version = "0.5", features = [ "util" ] }
 ```
 
 Keep `tokio`, `tokio-util`, and `tokio-stream` in the root crate if `cargo check -p auv-cli` still needs them for CLI, API, or runtime code.
@@ -1209,32 +1234,33 @@ Create `crates/auv-inspect-server/viewer/tsconfig.json`:
 Create `crates/auv-inspect-server/viewer/vite.config.ts`:
 
 ```ts
-import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
+import vue from '@vitejs/plugin-vue'
+
+import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [vue()],
-  base: "/viewer-assets/",
+  base: '/viewer-assets/',
   build: {
-    outDir: "dist",
+    assetsDir: 'assets',
     emptyOutDir: true,
-    assetsDir: "assets",
+    outDir: 'dist',
     rollupOptions: {
       output: {
-        entryFileNames: "assets/viewer.js",
-        chunkFileNames: "assets/[name].js",
-        assetFileNames: "assets/[name][extname]"
+        assetFileNames: 'assets/[name][extname]',
+        chunkFileNames: 'assets/[name].js',
+        entryFileNames: 'assets/viewer.js'
       }
     }
   },
+  plugins: [vue()],
   server: {
     proxy: {
-      "/runs": "http://127.0.0.1:8765",
-      "/write": "http://127.0.0.1:8765",
-      "/assets": "http://127.0.0.1:8765"
+      '/assets': 'http://127.0.0.1:8765',
+      '/runs': 'http://127.0.0.1:8765',
+      '/write': 'http://127.0.0.1:8765'
     }
   }
-});
+})
 ```
 
 - [ ] **Step 4: Add Vite HTML entry**
@@ -1261,11 +1287,13 @@ Create `crates/auv-inspect-server/viewer/index.html`:
 Create `crates/auv-inspect-server/viewer/src/main.ts`:
 
 ```ts
-import { createApp } from "vue";
-import App from "./App.vue";
-import "./styles/viewer.css";
+import { createApp } from 'vue'
 
-createApp(App).mount("#app");
+import App from './App.vue'
+
+import './styles/viewer.css'
+
+createApp(App).mount('#app')
 ```
 
 - [ ] **Step 6: Create the initial Vue component**
@@ -1299,7 +1327,7 @@ Create `crates/auv-inspect-server/viewer/src/viewer.ts`:
 
 ```ts
 export function mountInspectViewer(root: HTMLElement): void {
-  root.innerHTML = '<section class="empty">Inspect viewer is loading.</section>';
+  root.innerHTML = '<section class="empty">Inspect viewer is loading.</section>'
 }
 ```
 
@@ -1398,15 +1426,15 @@ Wrap the copied script with this function:
 // module is split into typed Vue components; the module boundary remains typed.
 
 export function mountInspectViewer(document: Document): void {
-  const window = document.defaultView;
+  const window = document.defaultView
   if (window === null) {
-    throw new Error("viewer document has no default window");
+    throw new Error('viewer document has no default window')
   }
 
-  const originalAddEventListener = window.addEventListener.bind(window);
-  void originalAddEventListener;
+  const originalAddEventListener = window.addEventListener.bind(window)
+  void originalAddEventListener
 
-  runInspectViewer(document, window);
+  runInspectViewer(document, window)
 }
 
 function runInspectViewer(document: Document, window: Window): void {

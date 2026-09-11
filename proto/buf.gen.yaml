@@ -1,9 +1,48 @@
 version: v2
+inputs:
+  - directory: .
+    paths:
+      - auv/api/daemon/v1
+      - auv/api/driver
+      - auv/api/transport/websocket/v1
+      - grpc/reflection/v1
 plugins:
-  # Rust generation is currently owned by crates/auv-api-proto/build.rs so
-  # Cargo can compile without requiring buf or protoc to be installed globally.
-  # Keep this file as the Buf entrypoint for future SDK generation.
-  - local: protoc-gen-prost
-    out: gen/rust
-  - local: protoc-gen-tonic
-    out: gen/rust
+  # NOTICE(protoc-plugin-stdout): Buf decodes plugin stdout as a binary
+  # CodeGeneratorResponse, so pnpm must not emit workspace platform warnings.
+  - local: [pnpm, --silent, --filter, '@auv-js/sdk', exec, protoc-gen-es]
+    out: ../js/packages/sdk/src/gen
+    # Service descriptors retain google.api.http extensions at runtime, so the
+    # generated browser module graph must include their transitive definitions.
+    include_imports: true
+    opt:
+      - target=ts
+      - import_extension=none
+  # NOTICE(openapi-generator): openapiv2 is the stable grpc-gateway generator.
+  # Revisit OpenAPI v3 after protoc-gen-openapiv3 leaves alpha.
+  # TODO(openapi-auth-contract): bearer security and RFC 9457 error schemas are
+  # intentionally deferred until the protobuf annotations can express the
+  # listener-wide default and PairDevice exception without a second route list.
+  - remote: buf.build/grpc-ecosystem/openapiv2:v2.30.0
+    out: openapi
+    # The shared input also feeds Protobuf-ES. Restrict OpenAPI generation to
+    # daemon services so driver protocols do not become REST SDK surface.
+    types:
+      - auv.api.daemon.v1.DeviceService
+      - auv.api.daemon.v1.DiscoveryService
+      - auv.api.daemon.v1.HealthService
+      - auv.api.daemon.v1.PairingService
+      - auv.api.daemon.v1.RunService
+      - auv.api.daemon.v1.RunnerService
+      - auv.api.daemon.v1.RunnerClassService
+    opt:
+      - allow_merge=true
+      - merge_file_name=auv-daemon
+      - json_names_for_fields=true
+      - disable_default_errors=true
+      - Mauv/api/daemon/v1/device.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
+      - Mauv/api/daemon/v1/discovery.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
+      - Mauv/api/daemon/v1/health.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
+      - Mauv/api/daemon/v1/pairing.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
+      - Mauv/api/daemon/v1/resource.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
+      - Mauv/api/daemon/v1/run.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1
+      - Mauv/api/daemon/v1/runner.proto=github.com/moeru-ai/auv/proto/auv/api/daemon/v1

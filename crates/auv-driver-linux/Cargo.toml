@@ -3,7 +3,7 @@ name = "auv-driver-linux"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 autoexamples = false
 
 [features]
@@ -19,16 +19,18 @@ path = "examples/validate.rs"
 
 [dependencies]
 auv-driver-common = { path = "../auv-driver-common" }
-image.workspace = true
-serde.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-fs2.workspace = true
-leptess.workspace = true
+async-io = "2"
+fs2 = "0.4"
+futures-lite = "2"
+leptess = "0.14"
 pipewire = "0.8"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
-zbus.workspace = true
+zbus = "5.15"
 
 [dev-dependencies]
-tempfile.workspace = true
+tempfile = "3"

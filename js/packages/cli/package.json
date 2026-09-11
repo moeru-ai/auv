@@ -1,0 +1,82 @@
+{
+  "name": "@auv-js/cli",
+  "type": "module",
+  "version": "0.0.16",
+  "description": "NAPI bindings and the platform-matched AUV command-line executable",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moeru-ai/auv.git",
+    "directory": "js/packages/cli"
+  },
+  "keywords": [
+    "auv",
+    "automation",
+    "cli",
+    "electron",
+    "napi-rs"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./binary": {
+      "types": "./dist/binary.d.ts",
+      "import": "./dist/binary.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "preferUnplugged": true,
+  "bin": {
+    "auv": "./bin/auv.js"
+  },
+  "files": [
+    "README.md",
+    "bin",
+    "binding.d.ts",
+    "binding.js",
+    "dist"
+  ],
+  "napi": {
+    "binaryName": "auv-binding",
+    "packageName": "@auv-js/cli",
+    "rootPublisher": "pnpm",
+    "targets": [
+      "aarch64-apple-darwin",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "x86_64-unknown-linux-gnu"
+    ]
+  },
+  "scripts": {
+    "artifacts": "napi artifacts && tsx ./scripts/stage-platform-packages.ts ./artifacts",
+    "build": "pnpm run build:js && napi build --platform --release --esm --js binding.js --dts binding.d.ts",
+    "build:debug": "pnpm run build:js && napi build --platform --esm --js binding.js --dts binding.d.ts",
+    "build:js": "tsdown",
+    "create:npm-dirs": "napi create-npm-dirs",
+    "prepublishOnly": "pnpm run build:js && napi prepublish -t npm --no-gh-release",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "optionalDependencies": {
+    "@auv-js/cli-darwin-arm64": "workspace:*",
+    "@auv-js/cli-darwin-x64": "workspace:*",
+    "@auv-js/cli-linux-arm64-gnu": "workspace:*",
+    "@auv-js/cli-linux-x64-gnu": "workspace:*",
+    "@auv-js/cli-win32-x64-msvc": "workspace:*"
+  },
+  "devDependencies": {
+    "@emnapi/core": "catalog:",
+    "@emnapi/runtime": "catalog:",
+    "@napi-rs/cli": "catalog:",
+    "@pnpm/find-workspace-dir": "catalog:",
+    "emnapi": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

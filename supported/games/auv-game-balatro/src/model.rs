@@ -1,15 +1,39 @@
 use std::fmt;
 
+use auv_driver::{CoordinateSpace, Point, ScreenPoint, WindowPoint};
 use auv_inference_common::ImageSize;
 use auv_task_object_detection::{BoundingBox, Detection};
 use serde::{Deserialize, Serialize};
 
 pub const BALATRO_STATE_SCHEMA_VERSION: &str = "auv.game.balatro.state.v0";
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ActionPoint {
+  pub coordinate_space: CoordinateSpace,
+  pub point: Point,
+}
+
+impl ActionPoint {
+  pub fn screen(point: ScreenPoint) -> Self {
+    Self {
+      coordinate_space: CoordinateSpace::Screen,
+      point: point.point(),
+    }
+  }
+
+  pub fn window(window_id: impl Into<String>, point: WindowPoint) -> Self {
+    Self {
+      coordinate_space: CoordinateSpace::Window(window_id.into()),
+      point: point.point(),
+    }
+  }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BalatroPhase {
   Playing,
+  CashOut,
   Store,
   BlindSelect,
   GameOver,
@@ -103,6 +127,19 @@ impl Reading {
   }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CardAttribute {
+  pub label: String,
+  pub confidence: f32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct CardAttributes {
+  pub enhancement: Option<CardAttribute>,
+  pub edition: Option<CardAttribute>,
+  pub seal: Option<CardAttribute>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CacheHint {
   pub needs_reading: bool,
@@ -117,6 +154,8 @@ pub struct CardSlot {
   pub bbox: BoundingBox,
   pub confidence: f32,
   pub reading: Reading,
+  #[serde(default)]
+  pub attributes: CardAttributes,
   pub cache: CacheHint,
 }
 

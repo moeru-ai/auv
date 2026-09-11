@@ -129,9 +129,8 @@ fn window_text_result_keeps_resolved_window_and_ocr_matches_together() {
   assert_eq!(outline.rect(), Rect::new(40.0, 50.0, 70.0, 20.0));
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn window_text_click_result_keeps_resolution_and_delivery_together() {
+fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
   let click = WindowTextClick {
     window: Window {
       reference: WindowRef {
@@ -147,12 +146,20 @@ fn window_text_click_result_keeps_resolution_and_delivery_together() {
       is_visible: true,
     },
     matches: auv_driver::OcrMatches {
-      matches: vec![auv_driver::OcrMatch {
-        text: "Pause".to_string(),
-        confidence: 0.98,
-        bounds: Rect::new(40.0, 50.0, 70.0, 20.0),
-      }],
+      matches: vec![
+        auv_driver::OcrMatch {
+          text: "Pause".to_string(),
+          confidence: 0.98,
+          bounds: Rect::new(40.0, 50.0, 70.0, 20.0),
+        },
+        auv_driver::OcrMatch {
+          text: "Pause".to_string(),
+          confidence: 0.96,
+          bounds: Rect::new(140.0, 150.0, 70.0, 20.0),
+        },
+      ],
     },
+    selected_index: 1,
     point: auv_driver::geometry::WindowPoint::new(75.0, 60.0),
     options: auv_driver::ClickOptions {
       policy: auv_driver::InputPolicy::ForegroundPreferred,
@@ -165,12 +172,19 @@ fn window_text_click_result_keeps_resolution_and_delivery_together() {
     action: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
   };
 
-  let output =
-    window_text_click_output(&click, crate::commands::overlay::OverlayStatus::Disabled).expect("window click result should serialize");
+  let capture = auv_driver::Capture {
+    image: image::RgbaImage::new(1, 1),
+    bounds: Rect::new(10.0, 20.0, 1.0, 1.0),
+    scale_factor: 1.0,
+    backend: "fixture".to_string(),
+    fallback_reason: None,
+  };
+  let output = recorded_window_text_click_output(&click, &capture).expect("window click result should serialize");
   let result = output.result().expect("click should have a result");
 
   assert_eq!(result["window"]["reference"]["id"], "window_click");
   assert_eq!(result["matches"]["matches"][0]["text"], "Pause");
+  assert_eq!(result["selected_index"], 1);
   assert_eq!(result["point"]["x"], 75.0);
   assert_eq!(result["options"]["policy"], "foreground_preferred");
   assert_eq!(result["options"]["click"]["repeated"]["count"], 3);
@@ -182,10 +196,42 @@ fn window_text_click_result_keeps_resolution_and_delivery_together() {
   assert_eq!(report_field(report, "Input policy"), "foreground_preferred");
   assert_eq!(report_field(report, "Click count"), "3");
   assert_eq!(report_field(report, "Click interval"), "60 ms");
-  assert_eq!(report_field(report, "Overlay"), "disabled");
+  assert_eq!(report.tables[0].rows[0].cells[0], "");
+  assert_eq!(report.tables[0].rows[1].cells[0], "*");
 }
 
-#[cfg(target_os = "macos")]
+#[test]
+fn window_text_click_selects_the_requested_candidate_and_rejects_out_of_range_indexes() {
+  let matches = auv_driver::OcrMatches {
+    matches: vec![
+      auv_driver::OcrMatch {
+        text: "AGENTS.md".to_string(),
+        confidence: 0.98,
+        bounds: auv_driver::Rect::new(468.0, 108.0, 71.0, 10.0),
+      },
+      auv_driver::OcrMatch {
+        text: "AGENTS.md".to_string(),
+        confidence: 0.96,
+        bounds: auv_driver::Rect::new(100.0, 720.0, 71.0, 10.0),
+      },
+    ],
+  };
+
+  // ROOT CAUSE:
+  //
+  // If OCR returned multiple matching anchors, window.clickText always used
+  // the first candidate because it called OcrMatches::best_match directly.
+  //
+  // Before the fix, the IDX column was informational only. The fix lets the
+  // caller select that zero-based index and rejects invalid indexes before
+  // input delivery.
+  let selected = selected_window_text_match(&matches, "AGENTS.md", 1).expect("second candidate should be selectable");
+  assert_eq!(selected.bounds, auv_driver::Rect::new(100.0, 720.0, 71.0, 10.0));
+
+  let error = selected_window_text_match(&matches, "AGENTS.md", 2).expect_err("out-of-range index should fail");
+  assert_eq!(error, "window.clickText --index 2 is out of range for 2 text match(es)");
+}
+
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }

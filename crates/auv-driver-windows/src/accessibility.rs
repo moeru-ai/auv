@@ -69,6 +69,7 @@ pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionR
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
     attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -101,6 +102,7 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputAction
         message: Some(selected_pattern.to_string()),
       }]
     },
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,

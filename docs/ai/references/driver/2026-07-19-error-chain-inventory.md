@@ -150,7 +150,7 @@ by [#124](https://github.com/moeru-ai/auv/pull/124) (2026-07-21):
   `runStarted` update would have silently reconstructed a fresh empty
   snapshot over the corrupted run directory.
 
-  #124 checks for `run.json` explicitly before deciding a run hasn't
+  # 124 checks for `run.json` explicitly before deciding a run hasn't
   started — the only case a missing snapshot is legitimate — and propagates
   `read_run` failures as real errors (`500`, via `InspectHttpError::from_store`)
   once `run.json` exists. **0 violations remain** for this pattern as of

@@ -1,2 +1,4 @@
+buf = "1.71.0"
+
 [plugins.tools]
 buf = "https://raw.githubusercontent.com/stk0vrfl0w/proto-toml-plugins/main/plugins/buf.toml"

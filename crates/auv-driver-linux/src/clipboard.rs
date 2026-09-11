@@ -19,15 +19,11 @@ pub fn snapshot(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<Str
 
 /// Writes `snapshot` back to the clipboard as UTF-8 text.
 pub fn restore(state: &Arc<Mutex<LinuxDriverSessionState>>, snapshot: &str) -> DriverResult<()> {
-  write_text(state, snapshot)
+  with_clipboard_session(state, |session| session.set_text(snapshot))
 }
 
 /// Installs `text` as the clipboard's UTF-8 text payload.
 pub fn set_text(state: &Arc<Mutex<LinuxDriverSessionState>>, text: &str) -> DriverResult<()> {
-  write_text(state, text)
-}
-
-fn write_text(state: &Arc<Mutex<LinuxDriverSessionState>>, text: &str) -> DriverResult<()> {
   with_clipboard_session(state, |session| session.set_text(text))
 }
 

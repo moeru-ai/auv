@@ -20,4 +20,4 @@ auv-driver = { path = "../../../crates/auv-driver" }
 auv-driver-macos = { path = "../../../crates/auv-driver-macos" }
 auv-tracing = { path = "../../../crates/auv-tracing", optional = true }
 clap = { version = "4", features = ["derive"] }
-serde.workspace = true
+serde = { version = "1", features = ["derive"] }

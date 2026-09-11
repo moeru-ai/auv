@@ -1,2 +1,2 @@
-export { noSourceFilesCompareInTestsInstructions, noSourceFilesCompareInTestsPrompt } from "./prompt";
-export { noSourceFilesCompareInTestsRule } from "./rule";
+export { noSourceFilesCompareInTestsInstructions, noSourceFilesCompareInTestsPrompt } from './prompt'
+export { noSourceFilesCompareInTestsRule } from './rule'

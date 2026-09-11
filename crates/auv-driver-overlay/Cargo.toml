@@ -3,11 +3,11 @@ name = "auv-driver-overlay"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description.workspace = true
+description = "Overlay driver for AUV"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -15,9 +15,15 @@ repository.workspace = true
 [dependencies]
 auv-driver-overlay-common = { path = "../auv-driver-overlay-common" }
 
+serde_json = "1"
+
 [features]
 default = []
 macos = ["dep:auv-driver-overlay-macos"]
+windows = ["dep:auv-driver-overlay-windows"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-overlay-macos = { path = "../auv-driver-overlay-macos", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+auv-driver-overlay-windows = { path = "../auv-driver-overlay-windows", optional = true }

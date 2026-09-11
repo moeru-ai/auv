@@ -6,14 +6,32 @@ terms, not stable public API names.
 
 ## Run
 
-A run is an explicitly created correlation scope carried by trace records. It
-is not a storage transaction, session, revision stream, or OpenTelemetry trace.
+A Run is one explicitly created correlation and control scope from creation
+through a terminal phase. Pending, running, succeeded, failed, and canceled are
+phases of the same Run, not separate Workflow or Execution resources.
+
+A Run may select several Devices, retain affinity to several Runners, and
+contain several typed operations. Frontend or application operation roots own
+its lifecycle: one-shot frontends may create an implicit Run, and callers may
+append later calls to an existing Run. `auv::Client` propagates an optional Run
+association but does not create a Run when constructed or manufacture one per
+capability RPC. Daemon-managed children inherit the operation root's Run through
+`AuvContext`. A low-level call without a Run may execute without cross-call
+Runner affinity or a complete run-recording claim. Trace records and future
+Inspect projections can carry the Run identity, but a Run is not a storage
+transaction, revision stream, OpenTelemetry trace, or public Session.
+
+The canonical Run ID is an unversioned 128-bit random identity, rendered as
+compact hexadecimal by the control API and as canonical UUID text by existing
+tracing/run records. CLI tables display its first 12
+characters and selectors accept an unambiguous prefix; structured records keep
+the full value.
 
 ## Operation Scope
 
 An operation scope is an ordinary caller-named AUV span around app or driver
-work. It is not a persisted operation entity and does not require an AUV-owned
-operation trait, runner, execution id, or session object.
+work. It may execute through a Runner and belong to a Run, but it is not yet an
+independently persisted operation entity.
 
 ## Direct Result
 
@@ -86,11 +104,25 @@ inspector API yet.
 The core command frontend package (`auv-cli`, located at `crates/auv-cli`):
 
 - Owns the root `auv` binary, core CLI frontend, core invoke entrypoint,
-  built-in MCP server, session serving, and development xtasks.
+  built-in MCP server, foreground serving frontend, and development xtasks.
+- Acts as the CLI and standard-I/O adapter: it parses operating-system
+  arguments, routes typed commands, renders human or machine output, and maps
+  operation failures to process exit behavior. Reusable Device, Run, Runner,
+  pairing, context, and capability semantics do not belong to this adapter.
+- Calls the `auv` operation interface for ordinary core operations. Core command and MCP
+  frontends do not construct protobuf requests, interpret `tonic::Status`, or
+  call `auv-api-client` directly to bypass that interface.
 - Depends directly on the command, driver, protocol, and tracing crates needed
   by those frontends. There is no `auv-runtime` package or root Cargo package.
 - Supported app/game packages own their command frontends and integration
   wiring; they must not depend on `auv-cli` to reach command or tracing types.
+
+## Root Selection
+
+Root Selection is the unresolved Device and optional Run selection expressed
+by global root CLI options. It records caller intent and is resolved by the
+owning operation or command through the AUV operation interface; it is not an `AuvContext`,
+a connected client, or proof that the selected resources exist.
 
 ## Runtime responsibility
 
@@ -100,7 +132,91 @@ create tracing contexts and flush recording. `auv-tracing` persists emitted
 events and artifacts without executing operations. AUV does not have or require
 an `auv-runtime` package that aggregates these responsibilities.
 
+## AUV operation interface / auv
+
+The `auv` library crate owns the canonical operation interface used by
+application and extension business code, exposed as `auv::Client`. A caller
+uses the same typed capability operations regardless of whether their
+implementation is local or reached through a daemon. Backend selection is
+composition and context: explicit or injected daemon context selects the API
+client transport, while a locally composed context uses in-process Driver,
+inference, media, and other capability providers.
+
+The operation interface also owns reusable typed Device, Run, and Runner control operations
+used by CLI, library, MCP, and future UI callers. Resource-specific selection,
+ambiguity handling, association validation, and operation errors remain behind
+those interfaces; frontends do not reconstruct them from lists of protobuf
+resources.
+
+The same rule applies to pairing and other daemon-facing core operations. The
+operation interface exposes domain-facing request, result, and error signatures while
+`auv-api-client` implements their gRPC/protobuf transport. A core frontend does
+not treat the wire client as an alternative public operation interface.
+
+The operation interface's canonical request, result, and capability types are Rust domain
+contracts owned by the relevant Driver, inference, media, or operation crate.
+Protobuf messages are wire projections used by API adapters; they are not the
+operation interface's public domain model. A local backend passes domain values
+directly, while the `auv` remote operation adapter converts the wire values
+returned by `auv-api-client` into domain values before exposing them. Daemon built-in service
+adapters perform the inverse conversion before calling the same domain
+providers. Provider-specific types stay behind their provider unless they
+represent an accepted provider-independent domain concept.
+
+The same ownership rule applies to errors. Capability-semantic failures use
+domain errors consistently for local and remote backends. A remote adapter maps
+domain errors to gRPC status/details at the server boundary and maps them back
+at the operation interface; `tonic::Status` is not a business-facing SDK error.
+Transport, protocol, and context/configuration failures remain distinct outer
+operation-interface error layers rather than being misreported as capability failures. The
+concrete gRPC error-details schema is deferred to an implementation slice.
+
+The operation interface owns this local/remote selection and consistent developer
+experience; it does not own the underlying capability implementations or
+daemon lifecycle. `auv-api-client` remains the remote wire client and
+`auv-driver` remains the local Driver contract. Application code must not branch
+between separate local and remote operation APIs merely because an executable
+is running directly or as a daemon-managed Runner. The `auv` crate is a thin
+SDK/interface, not an aggregate runtime crate; it does not own daemon lifecycle,
+run persistence, tracing persistence, or platform implementations.
+
+The operation interface statically exposes AUV-owned typed capabilities and provides a gRPC
+transport bound to its endpoint, Device, optional Run, and RunnerClass routing
+context. An extension owns its generated clients and any extension-specific
+local/remote operation interface; community service types are not aggregated into
+`auv::Client`. Rust extensions normally use their generated client over this
+routed transport. `@auv-js/sdk` additionally supports Reflection-based dynamic
+invocation for scripting, developer tools, and generic clients. That projection
+uses standard gRPC Reflection plus ProtoJSON and does not replace an extension's
+typed Rust API or make the daemon a capability catalog.
+
+An extension-owned generated client may use an operation-interface-provided transport handle
+that has already resolved context, routing, and authentication. This is an
+extension protocol escape hatch, not a path for core Device, Run, Runner,
+pairing, or capability frontends to bypass canonical operations.
+
+Backend selection is sticky once resolved. With no daemon context or remote
+Device selection, a locally composed client uses its local backend. An explicit
+endpoint, inherited daemon context, or remote Device selects the remote backend;
+connection and capability failures are returned to the caller and never cause
+implicit local fallback. A higher-level operation may implement an explicit,
+domain-visible fallback policy, but the operation interface does not silently change the
+Device on which an operation executes.
+
+The `auv` crate also owns process/client context resolution: `AuvContext`,
+profile selection, environment parsing, local daemon endpoint discovery, and
+their precedence rules. These concerns are shared by CLI plugins, executable
+Runners, and library callers, so they are not owned by `auv-cli-common`.
+`auv-api-client` accepts an explicit resolved endpoint and routing parameters;
+it does not read environment variables, profiles, discovery files, or decide
+between local and remote execution. The daemon publishes its local discovery
+record, while the operation interface owns client-side discovery policy.
+
 ## CLI plugin
+
+An AUV extension is a distributable project or package that may provide a CLI
+plugin, one or more RunnerClasses, or both. Extension is the umbrella packaging
+term; it is not itself a process, wire protocol, or daemon registration.
 
 A CLI plugin is an independently installed executable named `auv-<name>` that
 extends the root command at one top-level name. For example,
@@ -110,34 +226,439 @@ operating-system arguments unchanged, and exposes its executable through
 `AUV_PATH`. Plugins own their nested command trees and help; they are not loaded
 into the core invoke or MCP registry.
 
+CLI plugin discovery grants no daemon or Runner role. Finding `auv-<name>` on
+the CLI's `PATH` only makes `<name>` available as a local command frontend; the
+executable may remain a pure CLI that never exposes a machine API. A package
+that also provides remotely callable capabilities must be admitted separately
+as a RunnerClass/RunnerRuntime with an explicit protobuf/gRPC service contract.
+The CLI frontend and Runner implementation may share a package or executable,
+but neither role implies the other.
+
+The same rule applies to MCP exposure. A future MCP interface may expose typed
+extension operations that the extension deliberately makes available through
+the AUV operation interface. It does not convert an arbitrary `auv-<name>` PATH
+executable, argv sequence, or stdout stream into an MCP tool automatically.
+
+`Plugin` refers specifically to this CLI role. A remotely callable service
+bundle is an extension-provided RunnerClass, not a plugin, even when the same
+package provides both. `@auv-js/sdk` is an approved JavaScript projection of the AUV
+operation interface: it routes typed capability calls through Device, optional
+Run, and RunnerClass context, and does not turn CLI plugins into remote APIs.
+Names such as `connectPlugin` or `extension` remain provisional until extension
+discovery contracts are accepted.
+
+Root Device and Run flags written before the plugin name are parent context.
+The root resolves them and supplies `AuvContext` as inline JSON in `AUV_CONTEXT`.
+When that context contains a Run, the root also supplies the frontend-owned
+tracing store root in `AUV_TRACING_STORE_ROOT`. A recording-capable plugin may
+open that store, create a tracing context for the inherited Run ID, and flush
+its own events and artifacts before exit. The path does not select a Device or
+create a second Run; `AUV_CONTEXT` remains the authority for execution routing.
+Flags written after the plugin name remain plugin-owned; a plugin may use AUV
+CLI utilities to expose equivalent overrides. `auv invoke` remains restricted
+to atomic operations registered by `auv-cli-invoke` and does not invoke plugin
+commands.
+
+## AuvContext
+
+`AuvContext` is the process/client context supplied to a CLI plugin or a
+daemon-managed executable Runner as inline JSON in `AUV_CONTEXT`. It carries
+resolved references such as Device ID, optional Run ID, daemon discovery, and
+configuration profile. It must not contain private keys, bearer tokens, or
+other reusable credentials. Parsers ignore unknown fields and apply normal
+configuration/default resolution when optional fields are absent; the contract
+does not use a separate context version variable.
+
+`AUV_PATH` independently identifies the root `auv` executable that launched the
+plugin. It lets a plugin invoke the same AUV installation and does not carry or
+select Device, Run, configuration, credential, or transport context.
+
+A plugin can construct an AUV client from this context without reproducing
+Device-name ambiguity rules or daemon discovery. A plugin's explicit flags may
+override inherited values only when that plugin deliberately supports them.
+
+The same extension implementation may use local Driver or inference components
+when executed directly as a CLI, then use an AUV client constructed from its
+injected context when hosted as an executable Runner. In hosted mode that
+client connects back to the parent daemon's local endpoint and can use the same
+ordinary AUV APIs available to another client with that context; there is no
+separate Runner callback API or Runner-specific method allowlist. The inbound
+private connection on which the Runner serves gRPC and the outbound client
+connection to the parent daemon are distinct transport roles even when both use
+local Unix IPC.
+
 ## Device
 
-A device is the controllable/observable computer target a run executes
-against. Examples include the local macOS host, a remote macOS host, a macOS
-or Windows VM, a container desktop, and future browser-like sandboxes.
+A Device is an addressable execution node and trust boundary. Examples include
+the local macOS host, a remote host, a VM, a container desktop, and a future
+browser-like sandbox. It has a stable unique ID, an optional non-unique display
+name, connection/trust profiles, labels, registered Runner classes, and live
+Runners.
 
-Device identity is not a required field in the V1 run contract. Callers may
-record it as domain metadata when a workflow needs to distinguish targets.
+The current machine is represented by an implicit local Device. Omitting a
+Device selection uses this local Device rather than bypassing the Device model.
+Device names may be ambiguous; a Device ID is canonical.
 
-The current AUV release only executes on the local macOS host. Remote, VM,
-and container devices are a planned protocol direction; they are not
-implemented yet.
+Device availability is observed, not inferred from configuration. Device LIST
+actively probes configured paired profiles: authenticated canonical discovery
+is `online`, transport failure is `offline`, rejected credentials are
+`unauthorized`, and profile/identity mismatch is `invalid`.
+
+New Device and Runner IDs are unversioned 256-bit random hexadecimal values.
+CLI tables display their first 12 characters and selectors accept an
+unambiguous prefix; structured records keep the full canonical value. Resource
+IDs identify resources but are not credentials.
+
+Device-, Run-, and Runner-producing clients select local or remote execution
+automatically by default from explicit options, inherited `AuvContext`, Run
+placement, RunnerClass routing, and configured Device availability. With no stronger
+selection, they use the implicit local Device. A `local` shortcut constrains
+placement to that Device and forbids remote fallback or offload; it does not
+bypass Device, Run, Runner, capability, or authorization semantics.
+Combining the shortcut with a conflicting remote Device selection is an error.
+
+Pairing is the process that enrolls or establishes trust with a Device. Device
+is the resource exposed through `auv devices`; pairing is not a top-level
+resource name. Pairing starts with a cryptographically random bootstrap token
+that is displayed once and consumed once. A token has no deadline unless its
+creator explicitly supplies a TTL. Successful consumption assigns a stable
+paired Device identity and returns an opaque long-lived Device credential; the
+daemon persists only token and credential digests. Disabling/unpairing a Device
+or revoking its credential affects the next authorization lookup.
+
+Pairing administration is a live daemon operation. The daemon is the sole
+owner of pairing persistence; CLI, MCP, and other client interfaces administer
+trust through typed `auv` operations and never open or mutate the pairing store
+directly while the daemon is stopped.
+
+The local owner and every active paired Device bearer are equal pairing
+administrators. Any of them may create bootstrap tokens, enable or disable a
+paired Device, unpair a Device, or revoke credentials. Pairing has no separate
+administrator role; `PairDevice` is the only unauthenticated operation and
+requires a valid one-time bootstrap token.
+
+## Daemon
+
+The AUV daemon is the long-lived process role that owns API listeners,
+Device authority, Runner creation, private Runner IPC, routing, health,
+draining, and reusable resources. It is not a catch-all Rust runtime crate.
+
+The `auv-daemon` library crate owns this role's persistent state and control
+semantics: Device and Run management, RunnerClass registration, Runner provider
+and supervisor lifecycle, capability route resolution, and first-party
+capability composition. It starts its protocol listeners through
+`auv-api-server` but does not make the protocol crate the owner of this state.
+
+`auv-api-server` owns gRPC/transport serving, interceptors, wire/domain error
+mapping, control-service adapters, scoped Health/Reflection forwarding, and
+opaque capability proxying. It may define narrow handler and router interfaces that
+`auv-daemon` implements; it does not own stores, scheduling, Runner
+supervision, or concrete Driver/inference/media behavior. `auv-cli` owns only
+the command frontend and invokes the reusable daemon library for `auv serve`.
+
+Daemon control APIs and capability data APIs have different serving paths.
+Device, Run, RunnerClass, and Runner control services use
+typed transport adapters backed by `auv-daemon`. Every capability service uses
+the generic opaque router, including first-party Driver, inference, and media
+services as well as extension-owned services. Adding a capability RPC must not
+require a corresponding typed forwarding method in `auv-daemon` or
+`auv-api-server`; the selected RunnerClass, routing context, and complete gRPC
+method path are sufficient.
+
+The accepted foreground role is `auv serve` with one or more listeners. A
+future `auv daemon start|status|stop` frontend may integrate with launchd,
+systemd, or brew services while executing the same serving implementation.
+Listener type is transport configuration rather than a separate server role.
+
+The default local listener does not bind TCP. Linux and macOS use an owner-only
+Unix socket. Windows uses an owner-scoped named pipe and rejects remote pipe
+clients. A caller must use `--listen http://...` to bind TCP. A non-loopback
+TCP listener requires the paired-bearer trust boundary.
+
+The daemon control protobuf package is `auv.api.daemon.v1`. It owns Device,
+pairing, discovery, Run, RunnerClass, and Runner services and messages. It
+replaced the experimental `auv.api.core.v1` package before stabilization so the
+wire identity names its actual owner. Capability packages do not import daemon resource
+references for routing; routing context belongs to transport metadata. A
+generic `meta.v1` package is intentionally deferred until a genuinely shared
+wire concept exists that is not owned by the daemon or a capability domain.
 
 ## Session
 
-A session is the automation context on a device. It groups target app/window
-defaults, observation cache, run recording state, and per-session
-permission/capability profile.
+Session is not a public AUV control-plane resource. It may name an internal
+Driver session, ONNX session, SDK connection pool, or Runner-owned cache. An
+internal session is not canonical Run identity, Device identity, or an
+authentication credential.
 
-The V1 run contract does not require a `session_id` or an AUV session object.
-Application runtimes may use session concepts for caches, namespaces, and
-action locks without making them canonical run identity.
+The retired experimental daemon once exposed a public `SessionService`. That
+prototype, its session-scoped `Connection`, and legacy `VisionService` were
+removed on 2026-07-31. Public control now uses Device, Run, Runner, and typed
+capability services.
 
-Today the session service has only a lightweight handle registry used to
-validate frontend requests. It does not own command execution, run recording,
-observation providers, or a generic in-process session runtime. Daemon
-transport, JS/REPL handles, session-scoped artifact namespaces, and
-device-level action locks remain separate future decisions.
+## RunnerClass
+
+A RunnerClass is the discoverable description of a kind of Runner a Device can
+create. It identifies one approved gRPC endpoint implementation and the lifecycle or
+configuration contract for that process. One RunnerClass may implement many
+protobuf services and support many application/plugin subcommands.
+
+RunnerClass is the deployment, configuration, isolation, and shared-resource
+lifecycle unit for a cohesive service bundle; it is not one class per protobuf
+service. Services in one class may share Driver handles, model caches, app
+connections, permission state, or other expensive resources. Split a class
+when services need independent deployment, configuration, isolation, or
+lifecycle, not merely because they are declared in separate proto files.
+
+Each protobuf service owns its RPC behavior and domain/error mapping. The
+Runner instance owns resources shared by the service bundle, while the daemon
+supervisor owns creation, reuse, routing, drain, and destruction of the whole
+instance. Individual services do not acquire separate control planes.
+
+Each admitted RunnerClass registration has a stable Device-local key used for
+capability routing. The same implementation and service protocol may be registered
+under several keys when operator-approved arguments, profiles, or lifecycle
+configuration differ. Ordinary capability callers select this registration
+key, explicitly or through operation-interface defaults; they do not select a live Runner
+ID. The daemon may start, reuse, or replace the backing Runner without changing
+the capability address.
+
+First-party and third-party capabilities use the same RunnerClass discovery,
+routing, health, reflection, and lifecycle model. First-party classes such as a
+platform Driver or bundled inference engine are admitted by the daemon's build
+or installation and require no user registration. Third-party classes require
+explicit local operator configuration. This trust-source distinction does not
+create a second capability protocol.
+
+First-party and third-party classes share the same runtime model. The current
+first-party local Driver is hosted as an `Executable` child Runner so frontend
+process concerns remain outside the daemon SDK while the daemon still owns
+admission, IPC, supervision, routing, and shutdown. Third-party classes use
+`Executable` or `RemoteGrpc`.
+
+There is no dedicated inference Runner crate. Ultralytics behavior remains in
+its inference provider, while the first-party gRPC adapter is currently hosted
+by the `auv-cli` child-Runner runtime until daemon built-in composition owns it.
+
+The daemon-side factory that realizes a RunnerClass is a RunnerProvider.
+Provider is an implementation boundary; RunnerClass is the public control
+resource. A custom RunnerProvider is admitted from operator-owned daemon
+configuration that pins its RunnerRuntime, configuration, and lifecycle
+policies. Standard gRPC Health and, for an owned executable, observed process
+state establish readiness; they never grant the runtime authority to
+self-register or change its daemon configuration.
+
+RunnerClass admission is local operator configuration, not a remotely mutable
+API. Remote callers may list registered RunnerClasses and inspect their
+admitted capability metadata, but they cannot register, update, or remove a
+RunnerClass. Local discovery tools may find candidate executables and help an
+operator produce configuration; discovery alone never changes daemon state or
+approves an endpoint.
+
+## RunnerRuntime
+
+RunnerRuntime is the daemon-side Rust/configuration transport used by a
+RunnerProvider. It is not a protobuf resource or a client-visible placement
+choice. The accepted model reserves three runtime forms:
+
+- `InProcess` would assemble a trusted first-party service implementation into
+  the daemon process;
+- `Executable` starts an approved binary with arguments over daemon-owned
+  private IPC;
+- `RemoteGrpc` attaches an existing compatible gRPC endpoint without taking
+  ownership of its process.
+
+All forms present their business services with standard gRPC Health and
+Reflection at the routing boundary. AUV defines no custom Runner runtime
+control protobuf: registration configuration supplies identity, the daemon
+observes owned process state and proxied active requests, and daemon-side
+routing gates implement drain. Stopping a RemoteGrpc-backed Runner detaches the
+daemon and does not terminate the remote endpoint. The current implementation
+supports `Executable` and `RemoteGrpc`; `InProcess` is an accepted but not yet
+implemented runtime form.
+
+There is no shared Runner protocol crate. The inherited local gRPC transport is
+owned by `auv-api-server::runner_transport`, while each executable host assembles its
+own standard Health and Reflection services, injected `AuvContext`, and process
+shutdown behavior. No AUV-specific runtime service or business capability API
+is implied by this transport helper.
+
+An `Executable` Runner does not bind or advertise its own listener. The daemon
+creates private local IPC before spawning and keeps the client-facing end. The
+child adopts the supplied endpoint and serves HTTP/2 gRPC directly; standard
+output and error remain normal log streams. Unix passes one connected stream as
+an inherited file descriptor. Windows creates one local-only named-pipe
+instance and passes its unadvertised name to the owned child. This platform
+detail does not enter business APIs. The outbound client connection described
+by injected `AuvContext` is separate from this inbound serving transport.
+
+## Runner
+
+A Runner is one daemon-owned process/runtime on exactly one Device. Its endpoint
+exposes versioned gRPC services over daemon-private IPC. A Runner
+does not span several Devices; a Run composes work across several Runners and
+Devices.
+
+A Runner's ID is an operational identity used for listing, health inspection,
+draining, stopping, and debugging. It is not an ordinary capability-routing
+selector. Business calls bind to a RunnerClass registration and the daemon
+resolves the current live instance.
+
+Remote control clients may list and inspect registered RunnerClasses and live
+Runners, and may create, drain, or stop instances of an already admitted
+RunnerClass. Creating a Runner does not register code or widen service
+authority; it is an optional prewarm and operations action because ordinary
+capability calls may start an admitted class on demand. Registering, updating,
+or removing a RunnerClass remains local operator configuration.
+
+A Runner uses one lifecycle policy:
+
+- `ephemeral`: stop after the last Run releases it;
+- `unless-idle`: stop after it has no Run attachments and no active proxied
+  requests for the configured idle timeout;
+- `unless-shutdown`: do not stop automatically when idle; remain ready until
+  explicit stop or Device/daemon shutdown.
+
+For lifecycle decisions, a Runner is idle only when both
+`active_run_attachments == 0` and `active_requests == 0`. An `unless-idle` Runner
+starts its idle timeout after both conditions become true; becoming idle does
+not stop it immediately. A Runner owns runtime resources such as Driver handles,
+app state, OCR engines, or inference model sessions. The daemon owns its
+creation, readiness, health, draining, routing, and termination.
+
+Application/game implementations such as NetEase Music or Balatro may provide
+RunnerClasses. Their CLI plugins remain separate frontend processes even when
+both roles reuse the same Rust package and typed service implementation.
+Merely discovering an `auv-<name>` executable on `PATH` never registers it as a
+RunnerClass; Runner admission requires explicit local operator configuration.
+
+## Runner attachment
+
+A Runner attachment is daemon-internal lifecycle state that associates a Run
+with a Runner and participates in retention. It is not a public lease, caller
+identity, an authentication credential, or a field in capability request
+messages. Stopping a Run releases its attachments; `unless-idle` and
+`unless-shutdown` policy decides whether the Runner remains ready.
+
+For a capability call carrying a Run association, the daemon keeps stable
+affinity for the tuple of Run, Device, and RunnerClass registration: later
+calls for that tuple resolve to the same healthy live Runner until the Run
+ends, the Runner is stopped, or it fails. This affinity is not exclusive; a
+RunnerClass may allow several Runs to share one Runner. A call without a Run
+association has no affinity beyond its active operation and may use any
+compatible ready Runner.
+
+Runner claim and public lease resources are not part of the accepted model.
+Ordinary capability routing selects a RunnerClass registration and lets the
+daemon resolve or create a live instance. Explicit `CreateRunner` exists only
+for prewarming an admitted class; required-capability scheduling, caller-owned
+reuse policy, lease deadlines, and release RPCs are not public API concepts.
+
+## Runner service surface
+
+Registering a RunnerClass approves its whole gRPC endpoint, not a daemon-owned
+service or method allowlist. The daemon does not need configuration changes
+when that endpoint adds RPCs. After resolving the RunnerClass from routing
+context, it forwards the complete gRPC method path without deciding whether the
+method belongs to a parsed capability manifest. Daemon control services and the
+daemon's own reserved namespaces are not shadowed by an extension endpoint.
+
+Protobuf reflection is scoped to a selected RunnerClass registration and
+forwarded to its Runner like any other admitted gRPC traffic. The daemon does
+not merge reflection schemas, parse descriptor payloads, compare descriptor
+digests, or decide protobuf version compatibility. A client that needs dynamic
+schema information obtains exactly what the selected Runner serves.
+
+AUV does not define a separate capability-catalog service. Remote discovery is
+the composition of `ListRunnerClasses` with standard gRPC Health and Reflection
+scoped to the selected registration. The daemon does not maintain a duplicate
+database of a Runner's services or methods.
+
+For a selected RunnerClass, the daemon routes the original fully qualified gRPC
+method and forwards its message frames without decoding or translating the
+protobuf body into an AUV-owned envelope. An extension owns its protobuf
+packages and service semantics, so adding one does not add typed forwarding
+methods to `auv-api-server`. The daemon may terminate the public transport and
+apply authentication, authorization, deadlines, routing metadata, and
+transport-safe metadata filtering at the boundary; those controls do not make
+it the implementation of the extension's business protocol.
+
+AUV method annotations do not grant capabilities or authority. An optional
+`discoverable` marker includes a concrete typed RPC in DevTools, Inspector,
+capability panels, and future JavaScript REPL discovery. Its required effect
+classification distinguishes read-only, mutation, and input-delivery calls for
+tool presentation and confirmation. A generic client may project an annotated
+unary or server-streaming RPC into a JSON-schema-described tool while retaining
+the selected Device, optional Run, and RunnerClass route. Unannotated RPCs
+remain callable through their generated typed clients. Device authentication
+and authorization remain independent of these developer-tool annotations. The
+optional Run association is also independent.
+
+## Driver API
+
+The Driver API is the typed protobuf projection of `auv-driver` capabilities.
+Portable services use the `auv.api.driver.v1` package. Platform-specific
+services use `auv.api.driver.<platform>.v1`, such as
+`auv.api.driver.macos.v1`; they extend the available service set rather than
+inherit from or reinterpret a portable service. Device, Run, and Runner
+control-plane resources remain in `auv.api.daemon.v1`.
+
+A Runner advertises the exact portable and platform Driver services/methods it
+implements. Calling a method that the selected Runner or platform does not
+implement returns gRPC `UNIMPLEMENTED`. Missing OS permission, temporary
+unavailability, missing target resources, and invalid requests are distinct
+failures and do not use `UNIMPLEMENTED`.
+
+Reusable image values such as image frames, sizes, pixel formats, pixel regions,
+and normalized regions belong to `auv.api.image.v1`; that package does not own
+capture, recognition, or inference service behavior. Screen/window coordinate
+types belong to `auv.api.driver.v1`. AUV does not define a global `geometry`
+package or a coordinate-free `Rect`: screen, window, image-pixel, normalized,
+and inference-specific geometry remain distinct types unless their semantics
+and compatibility requirements are the same.
+
+## Capability routing context
+
+Capability routing context is transport metadata applied consistently to
+first-party and extension gRPC calls. It carries the selected Device, optional
+Run association, and the RunnerClass registration required for
+the daemon to resolve a Runner. It is separate from authentication metadata and
+from the extension-owned protobuf message body.
+
+AUV clients derive and inject this context from their bound `AuvContext` or
+equivalent builder state. Capability request messages do not embed
+`RunnerLeaseRef`; the daemon owns Runner selection, creation, reuse, and
+retention behind the routing boundary. This keeps extension messages opaque to
+the daemon and lets the same routing machinery serve first-party and custom
+protobuf services.
+
+## Caller
+
+A caller is the authenticated identity established from transport evidence
+before an API handler executes. It is not a caller-provided protobuf field,
+Device ID, Run ID, Runner attachment, or internal session.
+
+Public transport middleware authenticates once, parses AUV routing metadata,
+and injects a request context containing the Caller before dispatch to a
+typed daemon control adapter or the opaque capability router. Handlers do not
+re-parse credentials or call an authenticator to establish the Caller again. A
+daemon domain operation may use the established Caller for a
+resource-specific decision that depends on its decoded control request, but
+that is authorization over an existing identity rather than authentication.
+
+Local owner-checked transport is the authority for pairing administration. The
+accepted paired-Device credential is an opaque bearer obtained by consuming a
+one-time bootstrap token; bearer lookup uses the current pairing-store snapshot
+so revocation applies to the next request without a certificate revocation
+list. The owner creates tokens through same-UID Unix IPC or a Windows pipe ACL.
+`auv devices pair connect` consumes a token remotely, saves the returned bearer
+in a local Device profile, and does not print it. Tokens and bearers are
+unversioned CSPRNG-generated hexadecimal secrets; their format carries no
+protocol metadata. Client certificates are not Device identity and the current
+pairing protocol has no client PKI, CRL, or certificate refresh lifecycle. The
+target authorization decision includes Caller, target Device, optional Run,
+selected RunnerClass, and gRPC service/method path. The daemon performs this
+check before forwarding to private Runner IPC. Runner processes do not repeat
+external authentication.
 
 ## Span
 
@@ -205,6 +726,63 @@ and which candidate objects are eligible for selection.
 
 The current scope terms are `screen`, `display`, `window`, and `region`.
 
+## Execution Target
+
+An execution target identifies the resource an invoke operation acts on. The
+shared invoke model distinguishes `Application`, `Window`, and `Display`
+targets instead of carrying an untyped string. The CLI spells these as
+`app:<bundle-id>`, `window:<window-id>`, and `display:<display-id>`. A bare
+`--target` value retains its historical meaning as an application id.
+
+Each command definition declares whether a target is forbidden, optional, or
+required and which resource types it accepts. CLI help and MCP metadata derive
+from that same declaration. `input.key`, `input.keys`, `input.keyboard`,
+`input.typeText`, and `input.pasteText`
+accept application/window targets on macOS. The target selects a running
+application or exact observed window; input policy separately controls foreground
+preparation. Foreground policy confirms application focus and, for window
+targets, exact window focus. Background policy does not activate. Events remain
+PID-bound with no global fallback. Neither policy selects or verifies a text control.
+Application activation, window focus, control focus, input submission, and
+semantic verification are distinct facts; see the
+[targeted keyboard contract](ai/references/invoke-cli/2026-09-08-targeted-keyboard-contract.md).
+
+Target identity and coordinate interpretation are separate decisions. For
+`input.clickPoint`, `--relative-to screen|window|display` names the coordinate
+basis. If omitted, the basis follows the target deterministically: no target is
+screen-relative, an application or window target is window-relative, and a
+display target is display-relative. `--normalized` changes window- or
+display-relative values from local logical points to ratios in `0..=1`; it is
+not valid for the logical screen.
+
+`input.clickPoint` is the invoke-level point-click operation. Screen and display
+coordinates use the existing global pointer capability after projection to the
+logical screen. Window coordinates use the existing window-targeted input
+capability and retain its `InputActionResult`, input policy, attempts, fallback
+reason, and disturbance metadata. The driver capabilities remain distinct;
+the unified operation is a frontend and typed-command contract.
+
+## Keyboard Input
+
+A **key press** is one complete down/up action. A **key combination** presses multiple
+keys before releasing them in reverse order. Repetition repeats a complete
+press/release, with an explicit interval; it is distinct from holding a key
+or operating-system auto-repeat.
+
+`InputKeyboard` executes an ordered list of typed keyboard actions (press,
+Unicode text, or clipboard paste). `PressKey` and `PressKeys` are conveniences
+that use this interpreter. The released PressKey shortcut spelling remains a
+compatibility input. Target identity and per-action input policy remain separate
+from control selection and semantic verification.
+
+The entire list is validated before driver activation or delivery. A delivery
+failure stops the list and preserves the completed InputActionResults and
+failed position as KeyboardInputProgress. This progress measures submitted
+input, not completed application operations; a failed action may itself have
+partial effects. A list is not a transaction or an automatic retry unit. See
+the [keyboard contract](ai/references/invoke-cli/2026-09-08-targeted-keyboard-contract.md#keyboard-operation-hierarchy)
+for current capability limits and evidence.
+
 ## Screen
 
 A screen is the logical desktop observation surface. It is the user-facing
@@ -257,7 +835,7 @@ A window resolver turns a target application and optional window selector into
 one selected window candidate.
 
 All window-scoped commands should share the same resolver so that
-`captureWindow`, `clickWindowPoint`, OCR window commands, and row window
+`captureWindow`, window-relative `clickPoint`, OCR window commands, and row window
 commands agree about which window they are using. When the resolver cannot make
 a clear choice, it should return an ambiguity error that points users to the
 window-listing API instead of silently selecting an arbitrary candidate.
@@ -647,9 +1225,11 @@ into operation failure.
 
 Delivery and semantic verification remain separate domain facts. A typed
 `InputActionResult` can prove which input path was delivered without proving
-the expected UI state; an app-owned typed result can state what was checked and
-what the app observed without redefining the operation's Rust return type. V1
-intentionally has no shared `VerificationResult`, `VerificationMethod`,
+the expected UI state. Its `verified` field is `false` for dispatch-only
+results and may be `true` only when a post-action observation proved the
+requested semantic effect. An app-owned typed result can state what was checked
+and what the app observed without redefining the operation's Rust return type.
+V1 intentionally has no shared `VerificationResult`, `VerificationMethod`,
 `OperationStatus`, `ControlFailure`, or persisted operation-result record in
 `auv-tracing`.
 
@@ -822,3 +1402,22 @@ A tombstone is a short file or module-level comment left after a path is removed
 or archived. It contains no execution logic, names the removed path, points to
 the replacement owner, and states the exact condition for deleting the
 tombstone.
+
+### Mouse motion plan
+
+A **mouse motion plan** is typed input intent containing a start policy, a
+local vector curve, a mapping into logical screen displacement, and timing
+options. Its local curve is independent of display or editor dimensions. A
+completed motion produces `InputActionResult` delivery evidence; application
+meaning still requires separate verification.
+
+A **mouse motion timing** value is a provisional extension to a mouse motion
+plan. It will map elapsed time to distance along the path and determine planned
+speed and tangential acceleration. The V1 contract has only a fixed duration
+and linear arc-length timing. The path owns direction and curvature; a future
+timing value will not steer the pointer away from the path.
+
+A **resolved motion profile** is the sampled result of a path and its current
+fixed-duration timing. This internal value contains scheduled positions and
+times. It is not caller input. The name also applies when the provisional
+mouse motion timing extension lands.

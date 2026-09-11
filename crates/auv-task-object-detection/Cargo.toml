@@ -3,11 +3,11 @@ name = "auv-task-object-detection"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description.workspace = true
+description = "Optional object detection task implementation for AUV"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -19,5 +19,5 @@ ultralytics = ["dep:auv-inference-ultralytics"]
 [dependencies]
 auv-inference-common = { path = "../auv-inference-common" }
 auv-inference-ultralytics = { path = "../auv-inference-ultralytics", optional = true }
-image.workspace = true
-serde.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }

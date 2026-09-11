@@ -297,8 +297,20 @@ impl SongSourceProvider for LiveViewProvider {
   fn songs_from(&mut self, source: SongSource) -> Result<SongListScanResult, String> {
     match source {
       SongSource::DailyRecommended(_) => crate::commands::daily_recommended::scan_daily_recommended_songs(&self.inputs),
+      SongSource::Playlist(reference) => crate::commands::playlist::scan_playlist_songs(&self.inputs, &reference),
     }
   }
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_songs_scan(inputs: &crate::Inputs, source: impl Into<SongSource>) -> Result<SongListScanResult, String> {
+  let mut app = NeteaseCloudMusic::with_inputs(inputs.clone());
+  app.songs_from(source)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_songs_scan(_inputs: &crate::Inputs, _source: impl Into<SongSource>) -> Result<SongListScanResult, String> {
+  Err("live NetEase song scan is only supported on macOS".to_string())
 }
 
 #[cfg(target_os = "macos")]

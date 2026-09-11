@@ -15,11 +15,13 @@ pub mod help;
 pub mod models;
 pub mod registry;
 pub mod render;
+pub mod runner;
 
 pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{
-  CommandGroup, CommandNode, InvokeCancellation, InvokeCancelled, InvokeCommand, InvokeCommandCliParse, InvokeCommandFuture,
-  InvokeCommandHandler, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace, TypedInvokeArgs,
+  CommandGroup, CommandNode, FailureCode, InvokeCancellation, InvokeCancelled, InvokeCommand, InvokeCommandCliParse, InvokeCommandFuture,
+  InvokeCommandHandler, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeExecutionResult, InvokeFailure, InvokeNamespace,
+  TypedInvokeArgs,
 };
 pub use commands::input::emit_input_action_result;
 pub use help::{render_command_help, render_help_index};
@@ -38,7 +40,7 @@ pub enum InvokeCliParse {
   },
   Invoke {
     command_id: String,
-    target_application_id: Option<String>,
+    target: Option<ExecutionTarget>,
     inputs: BTreeMap<String, String>,
     typed_args: TypedInvokeArgs,
     store_root: Option<PathBuf>,
@@ -64,7 +66,7 @@ pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String>
       command_id: Some(command.id.to_string()),
     }),
     InvokeCommandCliParse::Invoke {
-      target_application_id,
+      target,
       mut inputs,
       typed_args,
       store_root,
@@ -79,7 +81,7 @@ pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String>
       }
       Ok(InvokeCliParse::Invoke {
         command_id: command.id.to_string(),
-        target_application_id,
+        target,
         inputs,
         typed_args,
         store_root,

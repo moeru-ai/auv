@@ -1,0 +1,110 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.macos.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+
+// Reads the system-wide macOS MediaRemote state. The owning application is
+// reported by source_bundle_id; this service does not filter by application.
+service MediaControlService {
+  rpc GetNowPlaying(GetNowPlayingRequest) returns (GetNowPlayingResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+  rpc Play(PlayRequest) returns (PlayResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc Pause(PauseRequest) returns (PauseResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc TogglePlayPause(TogglePlayPauseRequest) returns (TogglePlayPauseResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc NextTrack(NextTrackRequest) returns (NextTrackResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc PreviousTrack(PreviousTrackRequest) returns (PreviousTrackResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+message GetNowPlayingRequest {
+  reserved 1;
+  reserved "lease";
+}
+
+message GetNowPlayingResponse {
+  NowPlayingState state = 1;
+}
+
+message PlayRequest {
+  reserved 1;
+  reserved "lease";
+}
+message PlayResponse {
+  MediaControlOutcome outcome = 1;
+}
+message PauseRequest {
+  reserved 1;
+  reserved "lease";
+}
+message PauseResponse {
+  MediaControlOutcome outcome = 1;
+}
+message TogglePlayPauseRequest {
+  reserved 1;
+  reserved "lease";
+}
+message TogglePlayPauseResponse {
+  MediaControlOutcome outcome = 1;
+}
+message NextTrackRequest {
+  reserved 1;
+  reserved "lease";
+}
+message NextTrackResponse {
+  MediaControlOutcome outcome = 1;
+}
+message PreviousTrackRequest {
+  reserved 1;
+  reserved "lease";
+}
+message PreviousTrackResponse {
+  MediaControlOutcome outcome = 1;
+}
+
+// The observable evidence around one transport command. The RPC method is the
+// command identity, so the outcome does not repeat it as a generic enum.
+message MediaControlOutcome {
+  NowPlayingState before = 1;
+  NowPlayingState after = 2;
+  // False means the fixed observation window did not prove the command's
+  // postcondition. It does not mean command delivery failed.
+  bool verified = 3;
+}
+
+// Exact wire projection of auv_media_macos::NowPlayingState. Time values remain
+// optional floating-point seconds because that is the owning backend contract.
+message NowPlayingState {
+  bool present = 1;
+  bool is_playing = 2;
+  optional string source_bundle_id = 3;
+  optional string title = 4;
+  optional string artist = 5;
+  optional string album = 6;
+  optional double duration_seconds = 7;
+  optional double elapsed_seconds = 8;
+  optional double playback_rate = 9;
+  optional string content_item_id = 10;
+  // Presence is significant: absent means the backend did not report whether
+  // the current item exposes a like/favorite affordance.
+  optional bool supports_like = 11;
+  // Presence is significant: absent means like/favorite state is unreported.
+  optional bool is_liked = 12;
+}

@@ -25,7 +25,7 @@ fn scan_coverage_artifact_enforces_four_mibibyte_bound() {
 fn scan_frame_requires_fixture_dir() {
   let err = futures_executor::block_on(frame_invoke_command().invoke(crate::InvokeCommandInput {
     command_id: "scan.frame".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: BTreeMap::new(),
     typed_args: None,
     dry_run: false,
@@ -33,14 +33,14 @@ fn scan_frame_requires_fixture_dir() {
   }))
   .expect_err("missing fixture-dir should fail");
 
-  assert!(err.contains("fixture-dir"));
+  assert!(err.message.contains("fixture-dir"));
 }
 
 #[test]
 fn scan_coverage_requires_fixture_dir() {
   let err = futures_executor::block_on(coverage_invoke_command().invoke(crate::InvokeCommandInput {
     command_id: "scan.coverage".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: BTreeMap::new(),
     typed_args: None,
     dry_run: false,
@@ -48,14 +48,14 @@ fn scan_coverage_requires_fixture_dir() {
   }))
   .expect_err("missing fixture-dir should fail");
 
-  assert!(err.contains("fixture-dir"));
+  assert!(err.message.contains("fixture-dir"));
 }
 
 #[test]
 fn scan_frame_dry_run_produces_no_artifacts() {
   let output = futures_executor::block_on(frame_invoke_command().invoke(crate::InvokeCommandInput {
     command_id: "scan.frame".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: BTreeMap::from([("fixture-dir".to_string(), "unused".to_string())]),
     typed_args: None,
     dry_run: true,
@@ -70,7 +70,7 @@ fn scan_frame_dry_run_produces_no_artifacts() {
 fn scan_coverage_dry_run_produces_no_artifacts() {
   let output = futures_executor::block_on(coverage_invoke_command().invoke(crate::InvokeCommandInput {
     command_id: "scan.coverage".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: BTreeMap::from([("fixture-dir".to_string(), "unused".to_string())]),
     typed_args: None,
     dry_run: true,
@@ -88,7 +88,7 @@ async fn scan_frame_returns_both_primary_artifact_receipts() {
   let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
   let input = crate::InvokeCommandInput {
     command_id: "scan.frame".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: BTreeMap::from([("fixture-dir".to_string(), scan_fixture("temporal/single_frame_v0").display().to_string())]),
     typed_args: None,
     dry_run: false,
@@ -109,7 +109,7 @@ async fn scan_coverage_returns_its_primary_artifact_receipt() {
   let root = dispatcher::with_default(&dispatch, || Context::root(RunId::new()));
   let input = crate::InvokeCommandInput {
     command_id: "scan.coverage".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: BTreeMap::from([("fixture-dir".to_string(), scan_fixture("coverage/coverage_stable_v0").display().to_string())]),
     typed_args: None,
     dry_run: false,

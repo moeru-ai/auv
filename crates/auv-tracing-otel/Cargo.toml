@@ -4,11 +4,11 @@ autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description.workspace = true
+description = "Optional OpenTelemetry adapter for tracing & logging in AUV"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -21,7 +21,7 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["l
 [dev-dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
-futures-util = { workspace = true, features = ["io"] }
+futures-util = { version = "0.3", features = ["io"] }
 
 [[test]]
 name = "exporter_contract"

@@ -8,27 +8,39 @@ words:
   - antfu
   - apalis
   - apeira
+  - Balatro
+  - bbox
+  - bufbuild
+  - bumpp
   - clippy
   - conv
   - cust
+  - decimalturn
   - direnv
   - dotenv
   - fsrs
   - graphiti
+  - guiiai
   - haru
   - hnsw
   - iden
   - insel
   - kwaa
+  - libgbm
+  - libglvnd
+  - libxcb
   - locomo
+  - Logg
   - mediaremote
   - moeru
   - msvc
   - nemori
   - netease
   - nixpkgs
+  - nolyfill
   - ollama
   - oper
+  - oxlint
   - paradedb
   - pgvector
   - picospinner
@@ -38,6 +50,10 @@ words:
   - plastmem
   - pname
   - prefs
+  - prost
+  - protoc
+  - qodana
+  - qqmusic
   - qwen
   - retrievability
   - rustc
@@ -47,6 +63,14 @@ words:
   - serde
   - sonarjs
   - sqlx
+  - stdenv
+  - taze
+  - tesseract
+  - tinyexec
+  - tutils
+  - ultralytics
+  - unocss
+  - unrun
   - utoipa
   - uuidv
   - vchord
@@ -55,6 +79,7 @@ words:
   - vitest
   - waifu
   - xiaowu
+  - xorg
   - xsai
 ignoreWords: []
 import: []

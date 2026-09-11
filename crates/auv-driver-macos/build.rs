@@ -13,6 +13,53 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+fn emit_swift_link_search_paths() {
+  use std::env;
+  use std::path::PathBuf;
+  use std::process::Command;
+
+  // NOTICE(swift-runtime-link-search): Nix's clang wrapper does not add the
+  // Swift runtime or SDK Swift module directory to the final link search path.
+  // Derive both from the selected swiftc toolchain; remove this workaround
+  // when the toolchain wrapper propagates them automatically.
+  let output = Command::new("swiftc").arg("-print-target-info").output().expect("query swiftc target info");
+  if !output.status.success() {
+    panic!("swiftc -print-target-info failed with status {}", output.status);
+  }
+  let target_info: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse swiftc target info");
+  let mut search_paths = Vec::<PathBuf>::new();
+  if let Some(paths) = target_info["paths"]["runtimeLibraryPaths"].as_array() {
+    for path in paths.iter().filter_map(serde_json::Value::as_str).map(PathBuf::from) {
+      if path.is_dir() && !search_paths.contains(&path) {
+        search_paths.push(path);
+      }
+    }
+  }
+  if let Some(sdk_root) = env::var_os("SDKROOT") {
+    let path = PathBuf::from(sdk_root).join("usr/lib/swift");
+    if path.is_dir() && !search_paths.contains(&path) {
+      search_paths.push(path);
+    }
+  }
+  for path in search_paths {
+    println!("cargo:rustc-link-search=native={}", path.display());
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn configure_swift_target(command: &mut std::process::Command) {
+  let architecture = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+    Ok("aarch64") => "arm64",
+    Ok("x86_64") => "x86_64",
+    _ => return,
+  };
+  let Ok(deployment_target) = std::env::var("MACOSX_DEPLOYMENT_TARGET") else {
+    return;
+  };
+  command.arg("-target").arg(format!("{architecture}-apple-macosx{deployment_target}"));
+}
+
+#[cfg(target_os = "macos")]
 fn build_macos_native() {
   use std::env;
   use std::fs;
@@ -22,6 +69,8 @@ fn build_macos_native() {
   println!("cargo:rerun-if-changed={MACOS_NATIVE_FFI_RS}");
   println!("cargo:rerun-if-changed={MACOS_NATIVE_SWIFT_PACKAGE}");
   println!("cargo:rerun-if-changed={MACOS_NATIVE_SWIFT_TARGET_DIR}");
+  println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+  println!("cargo:rerun-if-env-changed=SDKROOT");
 
   let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
   let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
@@ -53,6 +102,7 @@ fn build_macos_native() {
   .expect("write Swift bridge header");
 
   let mut command = Command::new("swiftc");
+  configure_swift_target(&mut command);
   command
     .arg("-emit-library")
     .arg("-static")
@@ -72,6 +122,7 @@ fn build_macos_native() {
   }
 
   println!("cargo:rustc-link-search=native={}", out_dir.display());
+  emit_swift_link_search_paths();
   println!("cargo:rustc-link-lib=static={MACOS_NATIVE_SWIFT_MODULE}");
   println!("cargo:rustc-link-lib=dylib=swiftCore");
 }

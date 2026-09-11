@@ -1,12 +1,8 @@
 // File: src/xtask.rs
 use std::path::Path;
 
-pub(crate) fn generate_swift_bridge_for_ide(project_root: &Path) -> Result<Vec<String>, String> {
-  generate_swift_bridge_for_ide_impl(project_root)
-}
-
 #[cfg(target_os = "macos")]
-fn generate_swift_bridge_for_ide_impl(project_root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn generate_swift_bridge_for_ide(project_root: &Path) -> Result<Vec<String>, String> {
   let driver_generated_dir = generate_one_swift_bridge_for_ide(
     project_root,
     "crates/auv-driver-macos/src/native/binding.rs",
@@ -43,6 +39,6 @@ fn generate_one_swift_bridge_for_ide(project_root: &Path, ffi_rs: &str, generate
 }
 
 #[cfg(not(target_os = "macos"))]
-fn generate_swift_bridge_for_ide_impl(_project_root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn generate_swift_bridge_for_ide(_project_root: &Path) -> Result<Vec<String>, String> {
   Err("generating the macOS Swift bridge for IDE indexing requires macOS".to_string())
 }

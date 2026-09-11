@@ -1,0 +1,20 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.netease_music.v1;
+
+// Evidence emitted while NetEase UI content is scanned or verified.
+message Diagnostic {
+  string code = 1;
+  string message = 2;
+  optional string node_id = 3;
+}
+
+// Shared controls for app-owned operations that scroll and inspect a list.
+message ScanOptions {
+  // Absence uses the platform-specific NetEase application identity.
+  optional string application_bundle_id = 1;
+  optional uint32 max_scrolls = 2;
+  optional double scroll_amount = 3;
+  optional uint64 scroll_settle_milliseconds = 4;
+}

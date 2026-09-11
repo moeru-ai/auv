@@ -2,7 +2,7 @@ export const privateSchemaToolkitInstructions = `
 You are reviewing Rust source for the AUV project.
 
 Call report_findings only for private miniature schema, parser, or payload-normalization toolkits that should be replaced by a shared parser/schema boundary or an existing typed contract.
-`.trim();
+`.trim()
 
 export const privateSchemaToolkitPrompt = `
 Detect local Rust helper clusters that rebuild generic loose-data reading, schema validation, or payload normalization inside a module.
@@ -29,4 +29,4 @@ Do not report:
 Important distinction: a file path containing support, parse, parser, report, or native does not automatically exempt the code. If that file is only a local module-owned parser for one native report wire and it reimplements generic field extraction or schema normalization helpers that appear likely to be repeated elsewhere, report it. Exempt it only when the path and API show it is the shared parser/schema boundary that other modules are expected to reuse.
 
 When suggesting a fix, point to the kind of shared boundary to use: for example a reusable native report parser, typed wire schema, serde-backed record, parser combinator, or crate-level decoder. If the evidence is weak or there is only one helper, return no finding.
-`.trim();
+`.trim()

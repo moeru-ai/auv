@@ -1,11 +1,13 @@
 //! NetEase Music product CLI library: sidebar playlist scan + agent-callable output.
 
+pub mod api;
 pub mod app;
 #[cfg(feature = "tracing")]
 pub mod cli;
 pub mod commands;
 pub mod models;
 pub mod output;
+pub mod runner;
 pub mod scroll;
 mod telemetry;
 pub mod view_parsers;
@@ -15,7 +17,7 @@ pub mod windows;
 #[cfg(test)]
 mod recognition_test_data;
 
-pub use app::{AppViews, NeteaseCloudMusic, ViewRead, ViewReuse, ViewScope};
+pub use app::{AppViews, NeteaseCloudMusic, ViewRead, ViewReuse, ViewScope, run_songs_scan};
 pub use commands::daily_recommended::{run_daily_recommended_play, run_daily_recommended_songs_scan};
 pub use commands::launch::{LaunchResult, OpenWindowInputs, run_open_window};
 pub use commands::playback::{
@@ -23,10 +25,10 @@ pub use commands::playback::{
 };
 pub use commands::playlist::{
   PlaylistPlayResult, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectTitleOcrTier, PlaylistSelectVerification,
-  PlaylistSelectVerificationEvidence, run_playlist_play, run_playlist_select,
+  PlaylistSelectVerificationEvidence, run_playlist_play, run_playlist_play_ref, run_playlist_select, run_playlist_select_ref,
 };
 pub use commands::transport::{TransportAction, TransportInputs, TransportResult, run_transport_action};
-pub use models::{DailyRecommendedRef, FeaturedEntry, FeaturedEntryKind, SongSource};
+pub use models::{DailyRecommendedRef, FeaturedEntry, FeaturedEntryKind, PlaylistRef, PlaylistSection, SongSource};
 pub use view_parsers::sidebar::live::{run_live_scan, run_live_scan_until_query};
 pub use views::daily_recommended::DailyRecommendedView;
 pub use views::main::MainView;
@@ -427,24 +429,28 @@ impl PlaylistSidebarScan {
         count => Err(format!("playlist query {query:?} matched {count} items; refine the query")),
       };
     };
-    let (observation_index, bounds) = playlist
-      .item
-      .candidate_id
-      .as_deref()
-      .and_then(|candidate_id| self.candidate_bounds(candidate_id))
-      .map(|(index, bounds)| (Some(index), Some(bounds)))
-      .unwrap_or((None, None));
+    Ok(self.select_target_from_parts(playlist.section, playlist.item))
+  }
 
-    Ok(PlaylistSelectTarget {
-      label: playlist.item.label.clone(),
-      section_id: playlist.section.id.clone(),
-      section_kind: playlist.section.kind,
-      item_id: playlist.item.id.clone(),
-      anchor_id: playlist.item.anchor_id.clone(),
-      candidate_id: playlist.item.candidate_id.clone(),
-      observation_index,
-      bounds,
-    })
+  /// Resolve an exact semantic playlist reference in the canonical scan.
+  pub fn select_target_ref(&self, reference: &PlaylistRef) -> Result<PlaylistSelectTarget, String> {
+    let normalized_label = normalize_identity(reference.label());
+    let matches = self
+      .projection
+      .sections
+      .iter()
+      .filter(|section| playlist_section_matches_ref(section.kind, reference.section()))
+      .flat_map(|section| {
+        section.items.iter().filter(|item| normalize_identity(&item.label) == normalized_label).map(move |item| (section, item))
+      })
+      .collect::<Vec<_>>();
+    let [(section, item)] = matches.as_slice() else {
+      return match matches.len() {
+        0 => Err(format!("no playlist matched reference section={:?} label={:?}", reference.section(), reference.label())),
+        count => Err(format!("playlist reference section={:?} label={:?} matched {count} items", reference.section(), reference.label())),
+      };
+    };
+    Ok(self.select_target_from_parts(section, item))
   }
 
   pub fn select_target_by_candidate_id(&self, candidate_id: &str) -> Result<PlaylistSelectTarget, String> {
@@ -461,18 +467,7 @@ impl PlaylistSidebarScan {
         if item.candidate_id.as_deref() != Some(candidate_id) {
           continue;
         }
-        let (observation_index, bounds) =
-          self.candidate_bounds(candidate_id).map(|(index, bounds)| (Some(index), Some(bounds))).unwrap_or((None, None));
-        return Ok(PlaylistSelectTarget {
-          label: item.label.clone(),
-          section_id: section.id.clone(),
-          section_kind: section.kind,
-          item_id: item.id.clone(),
-          anchor_id: item.anchor_id.clone(),
-          candidate_id: item.candidate_id.clone(),
-          observation_index,
-          bounds,
-        });
+        return Ok(self.select_target_from_parts(section, item));
       }
     }
 
@@ -493,6 +488,32 @@ impl PlaylistSidebarScan {
         .map(|bounds| (observation.observation_index, bounds))
     })
   }
+
+  fn select_target_from_parts(&self, section: &SidebarSection, item: &PlaylistSidebarItem) -> PlaylistSelectTarget {
+    let (observation_index, bounds) = item
+      .candidate_id
+      .as_deref()
+      .and_then(|candidate_id| self.candidate_bounds(candidate_id))
+      .map(|(index, bounds)| (Some(index), Some(bounds)))
+      .unwrap_or((None, None));
+    PlaylistSelectTarget {
+      label: item.label.clone(),
+      section_id: section.id.clone(),
+      section_kind: section.kind,
+      item_id: item.id.clone(),
+      anchor_id: item.anchor_id.clone(),
+      candidate_id: item.candidate_id.clone(),
+      observation_index,
+      bounds,
+    }
+  }
+}
+
+fn playlist_section_matches_ref(kind: SidebarSectionKind, reference: PlaylistSection) -> bool {
+  matches!(
+    (kind, reference),
+    (SidebarSectionKind::MyPlaylists, PlaylistSection::Created) | (SidebarSectionKind::FavoritePlaylists, PlaylistSection::Favorite)
+  )
 }
 
 pub struct PlaylistSidebarHumanSummary<'a> {

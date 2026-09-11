@@ -1,0 +1,43 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/geometry.proto";
+
+service DisplayService {
+  rpc ListDisplays(ListDisplaysRequest) returns (ListDisplaysResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+message Display {
+  string display_id = 1;
+  optional string name = 2;
+  ScreenRect frame = 3;
+  double scale_factor = 4;
+  bool primary = 5;
+  optional bool builtin = 6;
+}
+
+message DisplayRef {
+  string display_id = 1;
+}
+
+message DisplaySelector {
+  oneof selector {
+    DisplayRef display = 1;
+    string name = 2;
+  }
+}
+
+message ListDisplaysRequest {
+  reserved 1;
+  reserved "lease";
+}
+
+message ListDisplaysResponse {
+  repeated Display displays = 1;
+}

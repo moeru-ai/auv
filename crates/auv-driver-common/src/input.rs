@@ -200,8 +200,133 @@ impl Default for TypeTextOptions {
   }
 }
 
+/// One action in an ordered keyboard input request. Policy is owned by each action,
+/// so text options and the enclosing request cannot disagree.
+/// This is also the payload of the Runner's target-bound keyboard RPC.
+/// TODO(control-target): control selectors are intentionally separate; see
+/// `2026-09-08-targeted-keyboard-contract.md`. Reopen only with an approved
+/// driver contract for selecting and verifying an application-owned control.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyboardInput {
+  PressKeys {
+    options: PressKeysOptions,
+    policy: InputPolicy,
+  },
+  TypeText {
+    text: String,
+    options: TypeTextOptions,
+  },
+  PasteText {
+    options: PasteTextOptions,
+    policy: InputPolicy,
+  },
+}
+
+impl KeyboardInput {
+  pub fn policy(&self) -> InputPolicy {
+    match self {
+      Self::PressKeys { policy, .. } | Self::PasteText { policy, .. } => *policy,
+      Self::TypeText { options, .. } => options.policy,
+    }
+  }
+}
+
+/// Recipient scope for input preparation and delivery. Application selection
+/// does not imply a window or text-control selection. A Window retains its
+/// observed owner and id for exact-window validation.
+#[derive(Clone, Debug)]
+pub enum InputTarget {
+  /// Explicit global input. No activation or recipient guarantee.
+  Foreground,
+  Application {
+    bundle_id: String,
+  },
+  Window(Window),
+}
+
+/// A key combination: keys go down in order and come up in reverse order. Modifiers
+/// precede ordinary keys. Each repetition releases every key before the next.
+/// TODO(key-hold): independent down/up and hold duration are deferred until an
+/// approved cancellation/release contract exists; counts are discrete presses.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PressKeysOptions {
+  pub keys: Vec<String>,
+  /// Complete key combination repetitions, in 1..=255.
+  pub count: u32,
+  /// Required and positive for repeated presses; zero for a single press.
+  pub interval: Duration,
+  pub settle: Duration,
+}
+
+impl Default for PressKeysOptions {
+  fn default() -> Self {
+    Self {
+      keys: Vec::new(),
+      count: 1,
+      interval: Duration::ZERO,
+      settle: Duration::ZERO,
+    }
+  }
+}
+
+impl From<KeyPressOptions> for PressKeysOptions {
+  /// NOTICE: Released PressKey callers can supply shortcut strings. Retain this
+  /// conversion until a versioned migration makes PressKey strictly single-key.
+  /// Validation remains in the keyboard driver before any input or activation.
+  fn from(options: KeyPressOptions) -> Self {
+    let keys = if options.key.trim() == "+" {
+      vec!["+".into()]
+    } else {
+      options.key.split('+').map(|key| key.trim().to_string()).collect()
+    };
+    Self {
+      keys,
+      settle: options.settle,
+      ..Default::default()
+    }
+  }
+}
+
+/// Failure of an ordered input request. Completed actions are submission
+/// evidence, not semantic verification. The failed action may have partial
+/// effects; `completed_presses` counts only fully submitted key combination repetitions.
+#[derive(Debug)]
+pub struct KeyboardInputError {
+  pub cause: crate::DriverError,
+  pub progress: KeyboardInputProgress,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyboardInputProgress {
+  pub action_index: usize,
+  pub completed: Vec<InputActionResult>,
+  pub completed_presses: u32,
+}
+
+impl std::fmt::Display for KeyboardInputError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "keyboard action {} failed after {} complete actions and {} presses: {}",
+      self.progress.action_index,
+      self.progress.completed.len(),
+      self.progress.completed_presses,
+      self.cause
+    )
+  }
+}
+
+impl std::error::Error for KeyboardInputError {
+  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    Some(&self.cause)
+  }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyPressOptions {
+  /// Physical key name/ANSI character, or a released shortcut spelling.
+  /// Use TypeText for Unicode or layout-independent literal text.
   pub key: String,
   pub settle: Duration,
 }
@@ -403,6 +528,13 @@ pub const INPUT_ACTION_RESULT_PURPOSE: &str = "auv.driver.input_action_result";
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,
   pub attempts: Vec<InputAttempt>,
+  /// Whether a post-action observation proved the requested semantic effect.
+  ///
+  /// NOTICE(input-delivery-verification): A successful OS/driver dispatch is
+  /// not consumption evidence. Raw CGEvent, SendInput, XTest, and AX action
+  /// APIs can report success while the target ignores the event, so producers
+  /// must leave this false unless they performed an explicit read-back.
+  pub verified: bool,
   pub mouse_disturbance: DisturbanceLevel,
   pub focus_disturbance: DisturbanceLevel,
   pub clipboard_disturbance: DisturbanceLevel,
@@ -413,6 +545,7 @@ impl InputActionResult {
     Self {
       selected_path: path,
       attempts: vec![InputAttempt::success(path)],
+      verified: false,
       mouse_disturbance: DisturbanceLevel::None,
       focus_disturbance: DisturbanceLevel::None,
       clipboard_disturbance: DisturbanceLevel::None,

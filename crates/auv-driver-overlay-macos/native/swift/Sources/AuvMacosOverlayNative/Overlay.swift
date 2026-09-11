@@ -62,6 +62,9 @@ final class NativeOverlayCursorView: NSView {
   var labelCornerRadius: CGFloat = 999
   var spriteSize: CGFloat = 24
   var labelGap: CGFloat = 6
+  var cursorShadow: CursorShadow?
+
+  var shadowInset: CGFloat { cursorShadow?.inset ?? 0 }
 
   /// Set by `NativeOverlayController.flashCursor` to start the click
   /// ripple animation: an expanding lime ring emanating from the
@@ -82,6 +85,10 @@ final class NativeOverlayCursorView: NSView {
 
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    // Expand only the drawing space; sprite dimensions remain in logical points.
+    NSGraphicsContext.current?.cgContext.translateBy(x: shadowInset, y: shadowInset)
 
     // Click ripple — draw FIRST so the cursor sprite paints on top
     // of the ring (the ring should look like it's emerging from
@@ -92,18 +99,10 @@ final class NativeOverlayCursorView: NSView {
     // 8pt gap + pill that auto-sizes to the label width. The view's
     // frame is laid out to fit; everything draws against (0, 0) in
     // flipped (top-left origin) coordinates.
-    let spriteOrigin = NSPoint(x: 0, y: 0)
-    if let customImage {
-      customImage.draw(
-        in: NSRect(origin: spriteOrigin, size: NSSize(width: spriteSize, height: spriteSize)),
-        from: .zero,
-        operation: .sourceOver,
-        fraction: 1.0,
-        respectFlipped: true,
-        hints: [.interpolation: NSImageInterpolation.high]
-      )
+    if let cursorShadow {
+      cursorShadow.draw { self.drawSprite() }
     } else {
-      drawPixelSprite(variant.sprite, origin: spriteOrigin, outputSize: spriteSize)
+      drawSprite()
     }
 
     guard !label.isEmpty else { return }
@@ -135,12 +134,30 @@ final class NativeOverlayCursorView: NSView {
     (label as NSString).draw(in: textRect, withAttributes: pillAttributes)
   }
 
+  /// Draws the original sprite at exactly the configured logical size.
+  private func drawSprite() {
+    let spriteOrigin = NSPoint(x: 0, y: 0)
+    if let customImage {
+      customImage.draw(
+        in: NSRect(origin: spriteOrigin, size: NSSize(width: spriteSize, height: spriteSize)),
+        from: .zero,
+        operation: .sourceOver,
+        fraction: 1.0,
+        respectFlipped: true,
+        hints: [.interpolation: NSImageInterpolation.high]
+      )
+    } else {
+      drawPixelSprite(variant.sprite, origin: spriteOrigin, outputSize: spriteSize)
+    }
+
+  }
+
   /// Compute the smallest frame that fits a sprite + label pill.
   /// Used by the controller to resize the host window so the pill
   /// never gets clipped by a fixed-width frame.
   func intrinsicLayoutSize() -> NSSize {
     guard !label.isEmpty else {
-      return NSSize(width: spriteSize, height: spriteSize)
+      return NSSize(width: spriteSize + shadowInset * 2, height: spriteSize + shadowInset * 2)
     }
     let pillFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
     let textSize = (label as NSString).size(withAttributes: [.font: pillFont])
@@ -148,7 +165,7 @@ final class NativeOverlayCursorView: NSView {
     let pillHeight = ceil(textSize.height) + labelPadding.top + labelPadding.bottom
     let width = spriteSize + labelGap + pillWidth
     let height = max(spriteSize, pillHeight)
-    return NSSize(width: width, height: height)
+    return NSSize(width: width + shadowInset * 2, height: height + shadowInset * 2)
   }
 
   private func drawPixelSprite(
@@ -415,7 +432,8 @@ final class NativeOverlayController {
     padding_left: Double,
     corner_radius: Double,
     sprite_size: Double,
-    label_gap: Double
+    label_gap: Double,
+    shadow: NativeCursorShadow
   ) -> NativeActionResponse {
     runOnMain {
       let resolvedId = self.normalizeCursorId(cursor_id.toString(), fallback: "auv")
@@ -434,7 +452,8 @@ final class NativeOverlayController {
         paddingLeft: padding_left,
         cornerRadius: corner_radius,
         spriteSize: sprite_size,
-        labelGap: label_gap
+        labelGap: label_gap,
+        shadow: shadow
       )
       let startPoint = self.cursorStartPoint(state)
       self.moveCursor(
@@ -470,7 +489,8 @@ final class NativeOverlayController {
     padding_left: Double,
     corner_radius: Double,
     sprite_size: Double,
-    label_gap: Double
+    label_gap: Double,
+    shadow: NativeCursorShadow
   ) -> NativeActionResponse {
     let source = svg.toString()
     guard
@@ -500,7 +520,8 @@ final class NativeOverlayController {
         paddingLeft: padding_left,
         cornerRadius: corner_radius,
         spriteSize: sprite_size,
-        labelGap: label_gap
+        labelGap: label_gap,
+        shadow: shadow
       )
       self.moveCursor(
         state: state,
@@ -809,7 +830,8 @@ final class NativeOverlayController {
     // target point — matches the hover offset in the design preview.
     let offsetX = 4.0
     let offsetY = 4.0
-    let auvTopLeft = CGPoint(x: x + offsetX, y: y + offsetY)
+    // Cancel the extra drawing inset so enabling a shadow never moves the tip.
+    let auvTopLeft = CGPoint(x: x + offsetX - Double(view.shadowInset), y: y + offsetY - Double(view.shadowInset))
     let appKitTopLeft = appKitPoint(fromAuvScreenPoint: auvTopLeft)
     let frame = NSRect(
       x: appKitTopLeft.x,
@@ -980,7 +1002,8 @@ final class NativeOverlayController {
     paddingLeft: Double,
     cornerRadius: Double,
     spriteSize: Double,
-    labelGap: Double
+    labelGap: Double,
+    shadow: NativeCursorShadow
   ) {
     view.labelForeground = foreground
     view.labelBackground = background
@@ -993,6 +1016,11 @@ final class NativeOverlayController {
     view.labelCornerRadius = max(0, cornerRadius)
     view.spriteSize = max(1, spriteSize)
     view.labelGap = max(0, labelGap)
+    view.cursorShadow = shadow.enabled ? CursorShadow(
+      color: color(shadow.red, shadow.green, shadow.blue, shadow.alpha),
+      blurRadius: CGFloat(shadow.blur_radius),
+      offset: NSSize(width: shadow.offset_x, height: shadow.offset_y)
+    ) : nil
   }
 
   private func color(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double) -> NSColor {

@@ -1,7 +1,7 @@
-import { defineRule } from "@alint-js/plugin";
+import { defineRule } from '@alint-js/plugin'
 
-import { judgeSource } from "../../agents/judge";
-import { establishedFoundationInstructions, establishedFoundationPrompt } from "./prompt";
+import { judgeSource } from '../../agents/judge'
+import { establishedFoundationInstructions, establishedFoundationPrompt } from './prompt'
 
 export const establishedFoundationRule = defineRule({
   create: ctx => ({
@@ -24,10 +24,10 @@ export const establishedFoundationRule = defineRule({
       const findings = await judgeSource({
         context: ctx,
         instructions: establishedFoundationInstructions,
-        operation: "established-foundation-review",
+        operation: 'established-foundation-review',
         prompt: `${establishedFoundationPrompt}\n\nFile path:\n${target.file.path}`,
         source: ctx.src.getText(await ctx.src.readFile(target.file)),
-      });
+      })
 
       for (const finding of findings) {
         ctx.report({
@@ -43,8 +43,8 @@ export const establishedFoundationRule = defineRule({
             },
           },
           message: finding.message,
-        });
+        })
       }
     },
   }),
-});
+})

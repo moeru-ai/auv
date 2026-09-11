@@ -3,7 +3,14 @@ name = "auv-driver-macos"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "macOS driver for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [features]
 default = []
@@ -12,15 +19,16 @@ overlay = ["dep:auv-driver-overlay"]
 [dependencies]
 auv-driver-common = { path = "../auv-driver-common" }
 auv-driver-overlay = { path = "../auv-driver-overlay", features = ["macos"], optional = true }
-image.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation.workspace = true
-objc2-core-graphics.workspace = true
-swift-bridge.workspace = true
-xcap.workspace = true
+objc2-core-foundation = "0.3"
+objc2-core-graphics = { version = "0.3", features = ["CGWindow", "CGImage", "CGDataProvider", "CGGeometry"] }
+swift-bridge = "0.1.59"
+xcap = "0.6"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-swift-bridge-build.workspace = true
+serde_json = "1"
+swift-bridge-build = "0.1.59"

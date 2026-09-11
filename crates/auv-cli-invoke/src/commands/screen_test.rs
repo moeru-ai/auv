@@ -13,7 +13,7 @@ fn inputs(values: [(&str, &str); 4]) -> BTreeMap<String, String> {
 fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
   let valid_dry_run = InvokeCommandInput {
     command_id: "screen.captureRegion".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: inputs([("x", "1"), ("y", "2"), ("width", "3"), ("height", "4")]),
     typed_args: None,
     dry_run: true,
@@ -23,7 +23,7 @@ fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
 
   let invalid_live = InvokeCommandInput {
     command_id: "screen.captureRegion".to_string(),
-    target_application_id: None,
+    target: None,
     inputs: inputs([("x", "1"), ("y", "2"), ("width", "0"), ("height", "4")]),
     typed_args: None,
     dry_run: false,
@@ -31,7 +31,7 @@ fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
   };
   let error = futures_executor::block_on(capture_region_invoke_command().invoke(invalid_live))
     .expect_err("invalid live region must fail before capture");
-  assert!(error.contains("greater than zero"));
+  assert!(error.message.contains("greater than zero"));
 }
 
 #[cfg(target_os = "macos")]
@@ -82,7 +82,6 @@ fn region_capture_result_keeps_pixels_out_of_json() {
   assert!(result.get("image").is_none());
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn screen_text_click_result_keeps_resolution_and_delivery_together() {
   let click = ScreenTextClick {
@@ -109,7 +108,6 @@ fn screen_text_click_result_keeps_resolution_and_delivery_together() {
   assert_eq!(report_field(report, "Path"), "foreground_system_events");
 }
 
-#[cfg(target_os = "macos")]
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
   report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("report field")
 }

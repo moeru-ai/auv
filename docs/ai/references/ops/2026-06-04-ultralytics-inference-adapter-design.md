@@ -165,34 +165,26 @@ third-party dependency paths.
 
 ```toml
 [features]
-default = ["cpu"]
-
+default = [ "cpu" ]
 cpu = []
-xnnpack = ["ultralytics-inference/xnnpack"]
-
-coreml = ["ultralytics-inference/coreml"]
-
-cuda = ["ultralytics-inference/cuda"]
-tensorrt = ["ultralytics-inference/tensorrt"]
-nvidia = ["ultralytics-inference/nvidia"]
-cuda-preprocess = ["ultralytics-inference/cuda-preprocess"]
-
-directml = ["ultralytics-inference/directml"]
-
-openvino = ["ultralytics-inference/openvino"]
-onednn = ["ultralytics-inference/onednn"]
-intel = ["ultralytics-inference/intel"]
-
-rocm = ["ultralytics-inference/rocm"]
-migraphx = ["ultralytics-inference/migraphx"]
-amd = ["ultralytics-inference/amd"]
-
-webgpu = ["ultralytics-inference/webgpu"]
-mobile = ["ultralytics-inference/mobile"]
-
-annotate = ["ultralytics-inference/annotate"]
-visualize = ["ultralytics-inference/visualize"]
-video = ["ultralytics-inference/video"]
+xnnpack = [ "ultralytics-inference/xnnpack" ]
+coreml = [ "ultralytics-inference/coreml" ]
+cuda = [ "ultralytics-inference/cuda" ]
+tensorrt = [ "ultralytics-inference/tensorrt" ]
+nvidia = [ "ultralytics-inference/nvidia" ]
+cuda-preprocess = [ "ultralytics-inference/cuda-preprocess" ]
+directml = [ "ultralytics-inference/directml" ]
+openvino = [ "ultralytics-inference/openvino" ]
+onednn = [ "ultralytics-inference/onednn" ]
+intel = [ "ultralytics-inference/intel" ]
+rocm = [ "ultralytics-inference/rocm" ]
+migraphx = [ "ultralytics-inference/migraphx" ]
+amd = [ "ultralytics-inference/amd" ]
+webgpu = [ "ultralytics-inference/webgpu" ]
+mobile = [ "ultralytics-inference/mobile" ]
+annotate = [ "ultralytics-inference/annotate" ]
+visualize = [ "ultralytics-inference/visualize" ]
+video = [ "ultralytics-inference/video" ]
 ```
 
 `auv-game-balatro` should not directly expose upstream feature names. It should
@@ -200,21 +192,48 @@ use AUV/Balatro semantic features and map them to the adapter:
 
 ```toml
 [features]
-default = ["vision-yolo", "vision-artifacts"]
-
-vision-yolo = ["dep:auv-inference-ultralytics"]
-vision-artifacts = ["auv-inference-common/render"]
-
-vision-coreml = ["vision-yolo", "auv-inference-ultralytics/coreml"]
-vision-cuda = ["vision-yolo", "auv-inference-ultralytics/cuda"]
-vision-tensorrt = ["vision-yolo", "auv-inference-ultralytics/tensorrt"]
-vision-nvidia = ["vision-yolo", "auv-inference-ultralytics/nvidia"]
-vision-directml = ["vision-yolo", "auv-inference-ultralytics/directml"]
-vision-openvino = ["vision-yolo", "auv-inference-ultralytics/openvino"]
-vision-xnnpack = ["vision-yolo", "auv-inference-ultralytics/xnnpack"]
-
-vision-debug-window = ["vision-yolo", "auv-inference-ultralytics/visualize"]
-vision-video = ["vision-yolo", "auv-inference-ultralytics/video"]
+default = [
+  "vision-yolo",
+  "vision-artifacts"
+]
+vision-yolo = [ "dep:auv-inference-ultralytics" ]
+vision-artifacts = [ "auv-inference-common/render" ]
+vision-coreml = [
+  "vision-yolo",
+  "auv-inference-ultralytics/coreml"
+]
+vision-cuda = [
+  "vision-yolo",
+  "auv-inference-ultralytics/cuda"
+]
+vision-tensorrt = [
+  "vision-yolo",
+  "auv-inference-ultralytics/tensorrt"
+]
+vision-nvidia = [
+  "vision-yolo",
+  "auv-inference-ultralytics/nvidia"
+]
+vision-directml = [
+  "vision-yolo",
+  "auv-inference-ultralytics/directml"
+]
+vision-openvino = [
+  "vision-yolo",
+  "auv-inference-ultralytics/openvino"
+]
+vision-xnnpack = [
+  "vision-yolo",
+  "auv-inference-ultralytics/xnnpack"
+]
+vision-debug-window = [
+  "vision-yolo",
+  "auv-inference-ultralytics/visualize"
+]
+vision-video = [
+  "vision-yolo",
+  "auv-inference-ultralytics/video"
+]
 ```
 
 Feature flags should control what execution providers are compiled in. Runtime

@@ -42,6 +42,47 @@ fn now_playing_human_output_exposes_the_current_media_state() {
 }
 
 #[test]
+fn now_playing_rejects_target_before_platform_access() {
+  let input = crate::InvokeCommandInput {
+    command_id: "mediaControl.nowPlaying".to_string(),
+    target: Some(crate::ExecutionTarget::Application {
+      id: "com.example.Player".to_string(),
+    }),
+    inputs: Default::default(),
+    typed_args: None,
+    dry_run: false,
+    cancellation: crate::InvokeCancellation::new(),
+  };
+  let error = futures_executor::block_on(media_control_now_playing_invoke_command().invoke(input))
+    .expect_err("target must fail before reading MediaRemote");
+  assert_eq!(error.code, crate::FailureCode::InvalidTarget);
+}
+
+#[test]
+fn media_commands_reject_target_before_platform_access() {
+  for (command_id, command) in [
+    ("mediaControl.play", media_control_play_invoke_command()),
+    ("mediaControl.pause", media_control_pause_invoke_command()),
+    ("mediaControl.togglePlayPause", media_control_toggle_play_pause_invoke_command()),
+    ("mediaControl.next", media_control_next_invoke_command()),
+    ("mediaControl.previous", media_control_previous_invoke_command()),
+  ] {
+    let input = crate::InvokeCommandInput {
+      command_id: command_id.to_string(),
+      target: Some(crate::ExecutionTarget::Application {
+        id: "com.example.Player".to_string(),
+      }),
+      inputs: Default::default(),
+      typed_args: None,
+      dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
+    };
+    let error = futures_executor::block_on(command.invoke(input)).expect_err("target must fail before MediaRemote");
+    assert_eq!(error.code, crate::FailureCode::InvalidTarget);
+  }
+}
+
+#[test]
 fn media_control_human_output_exposes_command_verification_and_before_after_state() {
   for (command, invoke_command) in [
     ("play", media_control_play_invoke_command()),
@@ -94,4 +135,13 @@ fn now_playing_report_still_has_a_meaningful_field_when_nothing_is_playing() {
   };
 
   assert_eq!(now_playing_report(&result).fields, [InvokeReportField::new("State", "nothing playing")]);
+}
+
+#[test]
+fn media_help_explicitly_describes_forbidden_target() {
+  let registry = crate::default_registry();
+  let command = registry.resolve("mediaControl.play").unwrap();
+  let help = crate::help::render_command_help(command);
+  assert!(help.contains("Target forbidden"), "{help}");
+  assert!(!help.contains("--target <TARGET>"), "{help}");
 }

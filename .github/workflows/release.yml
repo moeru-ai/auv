@@ -19,13 +19,12 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.release.tag_name || github.ref }}
-  cancel-in-progress: false
-
 env:
   BINARY_NAME: auv
   CARGO_TERM_COLOR: always
+  # NOTICE: Big Sur aligns both architectures on the system Swift runtime;
+  # Rust's older x86_64 default otherwise produces an unresolved @rpath load.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
   PACKAGE_NAME: auv-cli
 
 jobs:
@@ -39,15 +38,28 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             archive: auv-x86_64-unknown-linux-gnu.tar.gz
+            binding: auv-binding.linux-x64-gnu.node
+            executable: auv
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive: auv-aarch64-unknown-linux-gnu.tar.gz
+            binding: auv-binding.linux-arm64-gnu.node
+            executable: auv
           - os: macos-15-intel
             target: x86_64-apple-darwin
             archive: auv-x86_64-apple-darwin.tar.gz
+            binding: auv-binding.darwin-x64.node
+            executable: auv
           - os: macos-14
             target: aarch64-apple-darwin
             archive: auv-aarch64-apple-darwin.tar.gz
+            binding: auv-binding.darwin-arm64.node
+            executable: auv
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive: auv-x86_64-pc-windows-msvc.zip
+            binding: auv-binding.win32-x64-msvc.node
+            executable: auv.exe
 
     steps:
       - uses: actions/checkout@v6
@@ -66,6 +78,7 @@ jobs:
             libdbus-1-dev \
             libpipewire-0.3-dev \
             libwayland-dev \
+            libxkbcommon-dev \
             libegl-dev \
             libleptonica-dev \
             libtesseract-dev
@@ -74,8 +87,24 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build NAPI binding
+        working-directory: js/packages/cli
+        run: pnpm build --target ${{ matrix.target }}
+
       - name: Build release binary
-        run: cargo build --release --package "$PACKAGE_NAME" --bin "$BINARY_NAME" --target "${{ matrix.target }}"
+        run: cargo build --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
 
       - name: Import macOS signing certificate
         if: runner.os == 'macOS'
@@ -93,17 +122,29 @@ jobs:
           test -n "$identity"
           codesign --force --timestamp --options runtime \
             --sign "$identity" \
-            "target/${{ matrix.target }}/release/${BINARY_NAME}"
-          codesign --verify --strict --verbose=2 "target/${{ matrix.target }}/release/${BINARY_NAME}"
+            "target/${{ matrix.target }}/release/${{ matrix.executable }}"
+          codesign --verify --strict --verbose=2 "target/${{ matrix.target }}/release/${{ matrix.executable }}"
 
       - name: Verify binary starts
-        run: target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} --help
+        run: target/${{ matrix.target }}/release/${{ matrix.executable }} --help
 
       - name: Create archive
-        run: tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release ${{ env.BINARY_NAME }}
+        if: runner.os != 'Windows'
+        run: tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release ${{ matrix.executable }}
+
+      - name: Create archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.executable }}" -DestinationPath "${{ matrix.archive }}"
 
       - name: Calculate hash
+        if: runner.os != 'Windows'
         run: shasum -a 256 ${{ matrix.archive }} | awk '{ print $1 }' > ${{ matrix.archive }}.sha256
+
+      - name: Calculate hash
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-Content -Path "${{ matrix.archive }}.sha256" -Value (Get-FileHash -Algorithm SHA256 "${{ matrix.archive }}").Hash.ToLower()
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
@@ -112,6 +153,7 @@ jobs:
           path: |
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
+            js/packages/cli/${{ matrix.binding }}
 
   publish:
     name: Publish release artifacts
@@ -131,7 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          find artifacts -type f \( -name 'auv-*' -o -name '*.sha256' \) -print0 | while IFS= read -r -d '' file; do
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) -print0 | while IFS= read -r -d '' file; do
             case "$file" in
               artifacts/notarized-*/*)
                 cp "$file" release/
@@ -204,3 +246,56 @@ jobs:
           path: |
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
+
+  publish-npm-cli:
+    name: Publish NAPI and CLI npm packages
+    needs: publish
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'release'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: js/packages/cli/artifacts
+
+      - name: Assemble platform npm packages
+        working-directory: js/packages/cli
+        env:
+          AUV_RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: pnpm artifacts
+
+      - name: Verify npm package contents
+        working-directory: js/packages/cli
+        run: |
+          pnpm run build:js
+          pnpm exec napi prepublish -t npm --no-gh-release --dry-run
+          mkdir -p npm-package
+          pnpm pack --pack-destination npm-package
+          npm publish ./npm-package/*.tgz --access public --dry-run
+
+      - name: Publish npm packages
+        working-directory: js/packages/cli
+        # NOTICE(release-asset-owner): The publish job owns GitHub Release
+        # assets; NAPI prepublish only prepares and publishes npm packages.
+        run: |
+          pnpm prepublishOnly
+          pnpm pack --pack-destination npm-package
+          npm publish ./npm-package/*.tgz --access public

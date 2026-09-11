@@ -1,7 +1,7 @@
-import { defineRule } from "@alint-js/plugin";
+import { defineRule } from '@alint-js/plugin'
 
-import { judgeSource } from "../../agents/judge";
-import { unearnedFunctionBoundaryInstructions, unearnedFunctionBoundaryPrompt } from "./prompt";
+import { judgeSource } from '../../agents/judge'
+import { unearnedFunctionBoundaryInstructions, unearnedFunctionBoundaryPrompt } from './prompt'
 
 export const unearnedFunctionBoundaryRule = defineRule({
   cacheKey: `${unearnedFunctionBoundaryInstructions}\n${unearnedFunctionBoundaryPrompt}`,
@@ -25,10 +25,10 @@ export const unearnedFunctionBoundaryRule = defineRule({
       const findings = await judgeSource({
         context,
         instructions: unearnedFunctionBoundaryInstructions,
-        operation: "unearned-function-boundary-review",
+        operation: 'unearned-function-boundary-review',
         prompt: `${unearnedFunctionBoundaryPrompt}\n\nFile path:\n${target.file.path}`,
         source: context.src.getText(await context.src.readFile(target.file)),
-      });
+      })
 
       for (const finding of findings) {
         context.report({
@@ -44,8 +44,8 @@ export const unearnedFunctionBoundaryRule = defineRule({
             },
           },
           message: finding.message,
-        });
+        })
       }
     },
   }),
-});
+})

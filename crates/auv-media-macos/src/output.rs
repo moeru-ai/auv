@@ -87,21 +87,17 @@ pub fn render_human_summary(state: &NowPlayingState) -> String {
   let marker = if state.is_playing { "▶" } else { "⏸" };
   let title = state.title.as_deref().unwrap_or("(unknown title)");
   let mut line = format!("{marker} {title}");
-  if let Some(artist) = non_empty(state.artist.as_deref()) {
+  if let Some(artist) = state.artist.as_deref().filter(|text| !text.is_empty()) {
     line.push_str(&format!(" — {artist}"));
   }
-  if let Some(album) = non_empty(state.album.as_deref()) {
+  if let Some(album) = state.album.as_deref().filter(|text| !text.is_empty()) {
     line.push_str(&format!(" [{album}]"));
   }
-  if let Some(bundle) = non_empty(state.source_bundle_id.as_deref()) {
+  if let Some(bundle) = state.source_bundle_id.as_deref().filter(|text| !text.is_empty()) {
     line.push_str(&format!("  ({bundle})"));
   }
   if state.is_liked == Some(true) {
     line.push_str("  ♥");
   }
   line
-}
-
-fn non_empty(value: Option<&str>) -> Option<&str> {
-  value.filter(|text| !text.is_empty())
 }

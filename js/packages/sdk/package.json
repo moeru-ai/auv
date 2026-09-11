@@ -1,0 +1,60 @@
+{
+  "name": "@auv-js/sdk",
+  "type": "module",
+  "version": "0.0.16",
+  "description": "JavaScript and TypeScript SDK for AUV",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moeru-ai/auv.git",
+    "directory": "js/packages/sdk"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "node": {
+        "types": "./dist/node.d.ts",
+        "import": "./dist/node.js"
+      },
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "pnpm run build",
+    "test:run": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@auv-js/api-client": "workspace:*",
+    "@bufbuild/protobuf": "catalog:",
+    "@grpc/grpc-js": "catalog:",
+    "@moeru/std": "catalog:",
+    "date-fns": "catalog:",
+    "es-toolkit": "catalog:",
+    "std-env": "catalog:",
+    "tinyexec": "catalog:"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "catalog:",
+    "@bufbuild/protoc-gen-es": "catalog:",
+    "@guiiai/logg": "catalog:",
+    "@vitest/browser-playwright": "catalog:"
+  }
+}

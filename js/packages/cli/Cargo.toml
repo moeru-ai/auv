@@ -1,0 +1,24 @@
+[package]
+edition = "2024"
+name = "auv-js-cli-native"
+version = "0.0.6"
+publish = false
+
+[lib]
+crate-type = [ "cdylib" ]
+
+[dependencies]
+napi = "3.0.0"
+napi-derive = "3.0.0"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
+
+# Keep this NAPI build independent from AUV's Rust workspace. It packages a
+# Node addon and follows the npm release lifecycle instead of Cargo publishing.
+[workspace]

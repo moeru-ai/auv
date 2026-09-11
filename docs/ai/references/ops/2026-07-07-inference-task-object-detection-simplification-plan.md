@@ -86,21 +86,34 @@ Create `crates/auv-task-object-detection/Cargo.toml`:
 ```toml
 [package]
 name = "auv-task-object-detection"
+
 version.workspace = true
+
 edition.workspace = true
+
 rust-version.workspace = true
+
 publish.workspace = true
+
 readme.workspace = true
+
 license.workspace = true
+
 authors.workspace = true
+
 description.workspace = true
+
 documentation.workspace = true
+
 homepage.workspace = true
+
 repository.workspace = true
 
 [dependencies]
 auv-inference-common = { path = "../auv-inference-common" }
+
 image.workspace = true
+
 serde.workspace = true
 
 [dev-dependencies]
@@ -412,9 +425,12 @@ In `crates/auv-inference-ultralytics/Cargo.toml`, remove:
 ```toml
 auv-cli = { path = "../.." }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
+axum = { version = "0.8", features = [ "ws" ] }
+tokio = { version = "1", features = [
+  "macros",
+  "rt-multi-thread"
+] }
+tower = { version = "0.5", features = [ "util" ] }
 ```
 
 Keep:
@@ -422,6 +438,7 @@ Keep:
 ```toml
 [dev-dependencies]
 serde_json.workspace = true
+
 ndarray.workspace = true
 ```
 
@@ -637,7 +654,7 @@ In `crates/auv-task-object-detection/Cargo.toml`, add:
 ```toml
 [features]
 default = []
-ultralytics = ["dep:auv-inference-ultralytics"]
+ultralytics = [ "dep:auv-inference-ultralytics" ]
 ```
 
 Add the optional backend dependency:
@@ -650,6 +667,7 @@ Add test dependencies needed by the adapter conversion tests:
 
 ```toml
 ndarray.workspace = true
+
 ultralytics-inference.workspace = true
 ```
 
@@ -830,7 +848,7 @@ git commit -m "feat(auv-task-object-detection): add ultralytics adapter"
 In `crates/auv-game-balatro/Cargo.toml`, add:
 
 ```toml
-auv-task-object-detection = { path = "../auv-task-object-detection", features = ["ultralytics"] }
+auv-task-object-detection = { path = "../auv-task-object-detection", features = [ "ultralytics" ] }
 ```
 
 Keep `auv-inference-common` for `ImageSize`, `BoundingBox`, and `InferenceError`.

@@ -17,6 +17,8 @@ default = ["overlay"]
 overlay = ["auv-driver/overlay"]
 
 [dependencies]
+auv = { path = "../auv" }
+auv-api-proto = { path = "../auv-api-proto" }
 auv-cli-common = { path = "../auv-cli-common" }
 auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }
 auv-driver = { path = "../auv-driver" }
@@ -28,12 +30,14 @@ anstyle = "1"
 clap = { version = "4.5", features = ["derive"] }
 comfy-table = { version = "7", default-features = false }
 futures-executor = "0.3"
-futures-util = { workspace = true, features = ["io"] }
-image.workspace = true
+futures-util = { version = "0.3", features = ["io"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+prost-types = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["macros", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-thiserror.workspace = true
+thiserror = "2"
 
 [dev-dependencies]
 auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }

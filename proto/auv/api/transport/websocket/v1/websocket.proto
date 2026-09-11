@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package auv.api.transport.websocket.v1;
+
+// Every WebSocket binary message contains exactly one serialized
+// ClientMessage or ServerMessage. One WebSocket connection carries exactly one
+// routed Runner operation.
+
+// Opens the routed Runner operation carried by this WebSocket connection.
+message Open {
+  // Opaque paired-Device credential. Browser WebSocket APIs cannot attach an
+  // Authorization header to the opening handshake.
+  string credential = 1;
+  // Fully qualified Protobuf service name routed to the Runner.
+  string service = 2;
+  // Protobuf method name within service.
+  string method = 3;
+  // RunnerClass selected to serve the operation.
+  string runner_class = 4;
+  // Explicit target Device. Absence selects the daemon's implicit Device.
+  optional string device_id = 5;
+  // Existing Run to associate with the operation. Absence lets the daemon own
+  // the operation's Run context.
+  optional string run_id = 6;
+}
+
+// A browser-to-daemon application message for one routed Runner operation.
+message ClientMessage {
+  oneof message {
+    // Must be the first application message and may appear exactly once.
+    Open open = 1;
+    // May appear zero or more times after Ready and before HalfClose.
+    Input input = 2;
+    // Closes the client-to-Runner input stream and may appear at most once.
+    HalfClose half_close = 3;
+    // Cancels the operation before its terminal End.
+    Cancel cancel = 4;
+  }
+}
+
+// One method-specific Protobuf request encoded without a gRPC message prefix.
+message Input {
+  bytes payload = 1;
+}
+
+message HalfClose {}
+
+message Cancel {
+  // Caller-provided diagnostic text. The daemon does not interpret it as a
+  // structured error or rollback request.
+  string reason = 1;
+}
+
+// Terminal status for the routed operation.
+message End {
+  // Canonical gRPC status code. Zero means success.
+  int32 grpc_status = 1;
+  string message = 2;
+}
+
+// A daemon-to-browser application message for one routed Runner operation.
+message ServerMessage {
+  oneof message {
+    // Sent exactly once after authentication and route admission succeed.
+    Ready ready = 1;
+    // May appear zero or more times after Ready.
+    Output output = 2;
+    // Terminal message, sent exactly once when the connection remains usable.
+    End end = 3;
+  }
+}
+
+message Ready {}
+
+// One method-specific Protobuf response encoded without a gRPC message prefix.
+message Output {
+  bytes payload = 1;
+}

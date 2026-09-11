@@ -1,21 +1,21 @@
 {
-  "name": "@auv/alint-config",
-  "private": true,
+  "name": "@auv-js/alint-config",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "private": true,
   "exports": {
     ".": {
       "import": "./src/index.ts"
     },
     "./package.json": "./package.json"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsdown",
-    "test": "vitest run",
+    "test:run": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -23,8 +23,5 @@
     "@alint-js/core": "catalog:",
     "@alint-js/plugin": "catalog:",
     "@alint-js/tools-fs": "catalog:"
-  },
-  "devDependencies": {
-    "vitest": "catalog:vitest"
   }
 }

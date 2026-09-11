@@ -1,0 +1,29 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.daemon.v1 is not a long-term public compatibility promise.
+syntax = "proto3";
+
+package auv.api.daemon.v1;
+
+import "google/api/annotations.proto";
+
+// HealthService reports whether this daemon listener can serve API calls.
+service HealthService {
+  rpc Check(CheckRequest) returns (CheckResponse) {
+    option (google.api.http) = {get: "/health"};
+  }
+}
+
+message CheckRequest {}
+
+message CheckResponse {
+  HealthStatus status = 1;
+}
+
+// HealthStatus describes the daemon's ability to serve API calls.
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_SERVING = 1;
+  // TODO(health-detail-v1): degraded/component states are deferred because the
+  // daemon has no runtime-owned component status producer yet; add them when
+  // that state has an owner and a concrete caller.
+}

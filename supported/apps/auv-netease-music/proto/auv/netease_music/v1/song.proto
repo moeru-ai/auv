@@ -1,0 +1,58 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.netease_music.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/netease_music/v1/playlist.proto";
+import "auv/netease_music/v1/recommendation.proto";
+import "auv/netease_music/v1/scan.proto";
+
+// Lists songs from an explicit app-owned source.
+service SongService {
+  // On success, the stream emits zero or more item/diagnostic events followed
+  // by exactly one completed event. RPC failures terminate the stream without
+  // a completed event.
+  rpc ListSongs(ListSongsRequest) returns (stream ListSongsStreamResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+message ListSongsRequest {
+  oneof source {
+    DailyRecommendedRef daily_recommended = 1;
+    PlaylistRef playlist = 2;
+  }
+
+  // Source field numbers 3-9 are reserved for future SongSource variants.
+  optional ScanOptions scan = 10;
+}
+
+message Song {
+  string id = 1;
+  optional uint32 index = 2;
+  string title = 3;
+  string row_text = 4;
+}
+
+message ListSongsStreamResponse {
+  oneof event {
+    ListSongsItem item = 1;
+    ListSongsDiagnostic diagnostic = 2;
+    ListSongsCompleted completed = 3;
+  }
+}
+
+message ListSongsItem {
+  Song song = 1;
+}
+
+message ListSongsDiagnostic {
+  Diagnostic diagnostic = 1;
+}
+
+message ListSongsCompleted {
+  uint32 items_emitted = 1;
+  repeated string known_limits = 2;
+}

@@ -34,7 +34,9 @@ impl ApplicationControl for MacosDriverSession {
     }
 
     let requested_bundle_id = bundle_id.trim().to_string();
-    let observation = observe_frontmost_bundle_id();
+    let observation = crate::native::window::list_windows(ListWindowsOptions::all_visible(1))
+      .map(|snapshot| snapshot.frontmost_app_bundle_id)
+      .map_err(|error| format!("frontmost application observation failed: {error}"));
     Ok(ApplicationActivationResult {
       verification: activation_verification(&requested_bundle_id, observation),
       requested_bundle_id,
@@ -53,12 +55,6 @@ fn activation_verification(requested_bundle_id: &str, observation: Result<String
     Ok(observed_bundle_id) => ApplicationActivationVerification::ForegroundMismatch { observed_bundle_id },
     Err(reason) => ApplicationActivationVerification::Unavailable { reason },
   }
-}
-
-fn observe_frontmost_bundle_id() -> Result<String, String> {
-  crate::native::window::list_windows(ListWindowsOptions::all_visible(1))
-    .map(|snapshot| snapshot.frontmost_app_bundle_id)
-    .map_err(|error| format!("frontmost application observation failed: {error}"))
 }
 
 fn activation_script(bundle_id: &str) -> DriverResult<String> {

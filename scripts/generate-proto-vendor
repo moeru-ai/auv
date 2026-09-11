@@ -1,0 +1,55 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
+PROTO_DIR="$PROJECT_ROOT/proto"
+PROTO_LOCK_FILE="$PROTO_DIR/buf.lock"
+PROTO_VENDOR_DIR="$PROTO_DIR/vendor"
+
+if ! command -v buf >/dev/null 2>&1; then
+  echo "error: buf is required to generate vendored Protobuf dependencies" >&2
+  exit 1
+fi
+if ! command -v yq >/dev/null 2>&1; then
+  echo "error: yq is required to read $PROTO_LOCK_FILE" >&2
+  exit 1
+fi
+
+# Validate that the checked-in lock file resolves the dependencies declared by
+# the Buf workspace before exporting its commit-qualified module references.
+cd "$PROTO_DIR"
+buf dep graph --format json >/dev/null
+DEPENDENCY_REFS=$(yq -r '.deps[] | .name + ":" + .commit' "$PROTO_LOCK_FILE")
+if [ -z "$DEPENDENCY_REFS" ]; then
+  echo "error: no dependencies found in $PROTO_LOCK_FILE" >&2
+  exit 1
+fi
+
+STAGING_DIR=$(mktemp -d "$PROTO_DIR/.vendor.XXXXXX")
+cleanup() {
+  if [ -d "$STAGING_DIR" ]; then
+    rm -rf "$STAGING_DIR"
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
+printf '%s\n' "$DEPENDENCY_REFS" | while IFS= read -r dependency_ref; do
+  if [ -n "$dependency_ref" ]; then
+    # Keep upstream license and documentation files with the checked-in schemas.
+    buf export "$dependency_ref" --all --output "$STAGING_DIR"
+  fi
+done
+
+for required_file in google/api/annotations.proto google/api/http.proto; do
+  if [ ! -f "$STAGING_DIR/$required_file" ]; then
+    echo "error: dependency export did not produce $required_file" >&2
+    exit 1
+  fi
+done
+
+rm -rf "$PROTO_VENDOR_DIR"
+mv "$STAGING_DIR" "$PROTO_VENDOR_DIR"
+trap - EXIT HUP INT TERM
+
+echo "generated vendored Protobuf dependencies in $PROTO_VENDOR_DIR"

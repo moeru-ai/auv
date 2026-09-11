@@ -1,7 +1,7 @@
-import { defineRule } from "@alint-js/plugin";
+import { defineRule } from '@alint-js/plugin'
 
-import { judgeSource } from "../../agents/judge";
-import { vacantControlBoundaryInstructions, vacantControlBoundaryPrompt } from "./prompt";
+import { judgeSource } from '../../agents/judge'
+import { vacantControlBoundaryInstructions, vacantControlBoundaryPrompt } from './prompt'
 
 export const vacantControlBoundaryRule = defineRule({
   create: ctx => ({
@@ -24,10 +24,10 @@ export const vacantControlBoundaryRule = defineRule({
       const findings = await judgeSource({
         context: ctx,
         instructions: vacantControlBoundaryInstructions,
-        operation: "vacant-control-boundary-review",
+        operation: 'vacant-control-boundary-review',
         prompt: `${vacantControlBoundaryPrompt}\n\nFile path:\n${target.file.path}`,
         source: ctx.src.getText(await ctx.src.readFile(target.file)),
-      });
+      })
 
       for (const finding of findings) {
         ctx.report({
@@ -43,8 +43,8 @@ export const vacantControlBoundaryRule = defineRule({
             },
           },
           message: finding.message,
-        });
+        })
       }
     },
   }),
-});
+})

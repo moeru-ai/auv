@@ -41,16 +41,27 @@ Create `crates/auv-cli-invoke-macros/Cargo.toml` with:
 ```toml
 [package]
 name = "auv-cli-invoke-macros"
+
 version.workspace = true
+
 edition.workspace = true
+
 rust-version.workspace = true
+
 publish.workspace = true
+
 readme.workspace = true
+
 license.workspace = true
+
 authors.workspace = true
+
 description.workspace = true
+
 documentation.workspace = true
+
 homepage.workspace = true
+
 repository.workspace = true
 
 [lib]

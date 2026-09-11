@@ -1,2 +1,2 @@
-export { establishedFoundationPrompt } from "./prompt";
-export { establishedFoundationRule } from "./rule";
+export { establishedFoundationPrompt } from './prompt'
+export { establishedFoundationRule } from './rule'

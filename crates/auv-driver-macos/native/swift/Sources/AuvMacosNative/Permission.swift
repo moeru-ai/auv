@@ -1,52 +1,54 @@
-// NOTICE: Swift 6 sees ApplicationServices' legacy global prompt key as
-// mutable shared state. Keep this import pre-concurrency until the SDK
-// annotates that C API; the call itself remains the platform permission gate.
-@preconcurrency import ApplicationServices
+import ApplicationServices
 import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
 func probe_permissions() -> NativePermissionProbeResponse {
-  NativePermissionProbeResponse(
+  let screenCaptureKit = probeScreenCaptureKitAccess()
+  return NativePermissionProbeResponse(
     screen_recording: CGPreflightScreenCaptureAccess()
       ? NativePermissionStatus.Granted
       : NativePermissionStatus.Missing,
-    screen_capture_kit: probeScreenCaptureKitAccess()
-      ? NativePermissionStatus.Granted
-      : NativePermissionStatus.Missing,
+    screen_capture_kit: screenCaptureKit.status,
+    screen_capture_kit_error: screenCaptureKit.errorMessage?.intoRustString(),
     accessibility: AXIsProcessTrusted()
       ? NativePermissionStatus.Granted
       : NativePermissionStatus.Missing
   )
 }
 
-func request_permissions() {
-  if !AXIsProcessTrusted() {
-    _ = AXIsProcessTrustedWithOptions([
-      kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
-    ] as CFDictionary)
-  }
-
-  if !CGPreflightScreenCaptureAccess() {
-    _ = CGRequestScreenCaptureAccess()
-  }
+private struct ScreenCaptureKitProbe {
+  let status: NativePermissionStatus
+  let errorMessage: String?
 }
 
-private func probeScreenCaptureKitAccess() -> Bool {
+private func probeScreenCaptureKitAccess() -> ScreenCaptureKitProbe {
   guard #available(macOS 12.3, *) else {
-    return false
+    return ScreenCaptureKitProbe(
+      status: .Failed,
+      errorMessage: "ScreenCaptureKit permission probing requires macOS 12.3 or newer"
+    )
   }
 
   let semaphore = DispatchSemaphore(value: 0)
-  var granted = false
+  var result = ScreenCaptureKitProbe(status: .Failed, errorMessage: "ScreenCaptureKit returned no result")
 
   SCShareableContent.getWithCompletionHandler { content, error in
-    granted = error == nil && content != nil
+    if let error {
+      result = ScreenCaptureKitProbe(status: .Failed, errorMessage: error.localizedDescription)
+    } else if content != nil {
+      result = ScreenCaptureKitProbe(status: .Granted, errorMessage: nil)
+    } else {
+      result = ScreenCaptureKitProbe(status: .Failed, errorMessage: "ScreenCaptureKit returned no shareable content")
+    }
     semaphore.signal()
   }
 
   if semaphore.wait(timeout: .now() + .seconds(3)) == .timedOut {
-    return false
+    return ScreenCaptureKitProbe(
+      status: .TimedOut,
+      errorMessage: "ScreenCaptureKit permission probe timed out after 3 seconds"
+    )
   }
-  return granted
+  return result
 }

@@ -55,7 +55,16 @@ pub fn click_at(point: Point, click: Click) -> DriverResult<InputActionResult> {
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
-fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
+pub fn move_to(point: Point) -> DriverResult<InputActionResult> {
+  native::move_to(point)?;
+  Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::None, DisturbanceLevel::None))
+}
+
+pub fn current_position() -> DriverResult<Point> {
+  native::current_position()
+}
+
+pub(crate) fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
   let count = click.count();
   if count == 0 {
     return Err(invalid_input("repeated click count must be greater than zero"));
@@ -116,6 +125,7 @@ fn foreground_result(
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
+    verified: false,
     mouse_disturbance,
     focus_disturbance,
     clipboard_disturbance,
@@ -317,7 +327,14 @@ mod native {
     }
   }
 
-  fn move_cursor(point: Point) -> DriverResult<()> {
+  pub(super) fn current_position() -> DriverResult<Point> {
+    let mut point = windows::Win32::Foundation::POINT::default();
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut point) }
+      .map_err(|error| crate::error::backend(format!("GetCursorPos failed: {error}")))?;
+    Ok(Point::new(f64::from(point.x), f64::from(point.y)))
+  }
+
+  pub(super) fn move_to(point: Point) -> DriverResult<()> {
     let origin_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
     let origin_y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
     let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
@@ -333,7 +350,7 @@ mod native {
   }
 
   pub(super) fn click(point: Point, count: u32, interval: Duration) -> DriverResult<()> {
-    move_cursor(point)?;
+    move_to(point)?;
     for index in 0..count {
       send_inputs(&[
         mouse_input(0, 0, 0, MOUSEEVENTF_LEFTDOWN),
@@ -347,7 +364,7 @@ mod native {
   }
 
   pub(super) fn scroll(point: Point, scroll: Scroll) -> DriverResult<()> {
-    move_cursor(point)?;
+    move_to(point)?;
     let mut inputs = Vec::new();
     // Windows wheel deltas are signed multiples of WHEEL_DELTA (120). Positive
     // vertical scrolls up and positive horizontal scrolls right, per the Win32
@@ -428,6 +445,14 @@ mod native {
   use auv_driver_common::input::{Scroll, TypeTextOptions};
 
   use super::KeyChord;
+
+  pub(super) fn current_position() -> DriverResult<Point> {
+    Err(DriverError::unsupported("input.current_position"))
+  }
+
+  pub(super) fn move_to(_point: Point) -> DriverResult<()> {
+    Err(DriverError::unsupported("input.move_to"))
+  }
 
   pub(super) fn click(_point: Point, _count: u32, _interval: Duration) -> DriverResult<()> {
     Err(DriverError::unsupported("input.click"))

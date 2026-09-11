@@ -1,0 +1,13 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.image.v1;
+
+message NormalizedRect {
+  // Values are relative to the source image and must describe a rectangle
+  // inside [0, 1] on both axes.
+  double x = 1;
+  double y = 2;
+  double width = 3;
+  double height = 4;
+}

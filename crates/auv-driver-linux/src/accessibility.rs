@@ -62,6 +62,7 @@ pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionR
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
     attempts,
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -77,6 +78,7 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputAction
       succeeded: true,
       message: Some(result.action_name),
     }],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,

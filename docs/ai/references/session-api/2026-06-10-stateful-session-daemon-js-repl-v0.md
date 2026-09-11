@@ -142,17 +142,17 @@ domain-neutral:
 Handles are opaque to clients. A JS user should usually write:
 
 ```javascript
-const client = new Client();
-await client.connect();
+const client = new Client()
+await client.connect()
 
 const session = await client.sessions.open({
-  target: { app: "com.netease.163music" },
-});
+  target: { app: 'com.netease.163music' },
+})
 
-const window = await session.mainWindow();
-const observation = await window.observe();
-const node = await observation.find({ text: /Trance vol.2/ });
-await node.click();
+const window = await session.mainWindow()
+const observation = await window.observe()
+const node = await observation.find({ text: /Trance vol.2/ })
+await node.click()
 ```
 
 The transport may internally send:
@@ -172,19 +172,19 @@ That resource id is a wire detail, not the ordinary JS authoring model.
 The preferred style is class-based and typed:
 
 ```javascript
-import { Client } from "@auvjs/core";
+import { Client } from '@auvjs/core'
 
-const client = new Client();
-await client.connect();
+const client = new Client()
+await client.connect()
 
 const session = await client.sessions.open({
-  target: { app: "com.apple.Music" },
-});
+  target: { app: 'com.apple.Music' },
+})
 
-const window = await session.mainWindow();
-const observation = await window.observe();
-const rows = await observation.findAll({ role: "row" });
-await rows[0].click();
+const window = await session.mainWindow()
+const observation = await window.observe()
+const rows = await observation.findAll({ role: 'row' })
+await rows[0].click()
 ```
 
 `new Client()` is appropriate because it owns the daemon/RPC connection. Users
@@ -204,19 +204,19 @@ Domain-specific behavior belongs in packages that compose core handles.
 Example:
 
 ```javascript
-import { Client } from "@auvjs/core";
-import { NeteaseCloudMusic } from "@auvjs-community/netease-cloud-music";
+import { NeteaseCloudMusic } from '@auvjs-community/netease-cloud-music'
+import { Client } from '@auvjs/core'
 
-const client = new Client();
-await client.connect();
+const client = new Client()
+await client.connect()
 
 const session = await client.sessions.open({
-  target: { app: "com.netease.163music" },
-});
+  target: { app: 'com.netease.163music' },
+})
 
-const music = new NeteaseCloudMusic(session);
-const playlist = await music.playlists.findByName("Trance vol.2");
-await playlist.play();
+const music = new NeteaseCloudMusic(session)
+const playlist = await music.playlists.findByName('Trance vol.2')
+await playlist.play()
 ```
 
 `@auvjs-community/netease-cloud-music` may define its own `Playlist`, `Song`,
@@ -268,13 +268,13 @@ resources for real actions.
 Example authoring shape:
 
 ```javascript
-const window = await session.mainWindow();
-const observation = await window.observe();
+const window = await session.mainWindow()
+const observation = await window.observe()
 
-const rows = await observation.findAll({ role: "row" });
-preview(rows);
+const rows = await observation.findAll({ role: 'row' })
+preview(rows)
 
-await rows[3].click();
+await rows[3].click()
 ```
 
 The preview should be reactive. A browser REPL may render rows as HTML, a TUI
@@ -323,13 +323,13 @@ run_linked
 Clients can derive presentation:
 
 ```javascript
-const playlists = createMemo(() => projectPlaylists(observation.nodes()));
+const playlists = createMemo(() => projectPlaylists(observation.nodes()))
 
 effect(() => {
   renderHtmlList(playlists(), {
     onClick: item => item.node.click(),
-  });
-});
+  })
+})
 ```
 
 The same IR should support browser DOM, TUI lists, SwiftUI views, Kotlin

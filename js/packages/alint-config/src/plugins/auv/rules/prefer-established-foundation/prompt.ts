@@ -2,7 +2,7 @@ export const establishedFoundationInstructions = `
 You are reviewing one Rust source file.
 
 Use the report_finding tool for each warning. Do not report anything when the file has no qualifying issue.
-`.trim();
+`.trim()
 
 export const establishedFoundationPrompt = `
 Task:
@@ -49,4 +49,4 @@ Do not report:
 When the file path indicates tests, examples, benches, a benchmark file, or a fixture-only module, do not report unless the helper is clearly production infrastructure accidentally placed there.
 
 When suggesting a fix, name the kind of boundary to use, such as a standard library facility, dependency, shared formatter, shared serializer, shared parser, or reusable utility module. If uncertain, return no finding.
-`.trim();
+`.trim()

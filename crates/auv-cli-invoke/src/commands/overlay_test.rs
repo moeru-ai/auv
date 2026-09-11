@@ -17,7 +17,7 @@ fn every_overlay_primitive_and_component_is_registered_and_dry_run_visualizable(
     let command = registry.resolve(command_id).unwrap_or_else(|| panic!("{command_id} should be registered"));
     let output = futures_executor::block_on(command.invoke(InvokeCommandInput {
       command_id: command_id.to_string(),
-      target_application_id: None,
+      target: None,
       inputs,
       typed_args: None,
       dry_run: true,
@@ -39,6 +39,32 @@ fn style_arguments_refine_presets_deterministically() {
   assert_eq!(style.stroke.width, 5.0);
   assert_eq!(style.stroke.color, Color::rgba(127.0 / 255.0, 208.0 / 255.0, 48.0 / 255.0, 204.0 / 255.0));
   assert_eq!(style.corner_radius, 12.0);
+}
+
+#[test]
+fn overlay_commands_reject_target_before_native_rendering() {
+  let registry = crate::default_registry();
+  for (command_id, inputs) in [
+    ("overlay.outline", rect_inputs()),
+    ("overlay.cursor", point_inputs()),
+    ("overlay.status", status_inputs()),
+    ("overlay.captureFrame", rect_inputs()),
+    ("overlay.clickTarget", click_target_inputs()),
+  ] {
+    let command = registry.resolve(command_id).expect("registered overlay command");
+    let error = futures_executor::block_on(command.invoke(InvokeCommandInput {
+      command_id: command_id.to_string(),
+      target: Some(crate::ExecutionTarget::Application {
+        id: "com.example.App".to_string(),
+      }),
+      inputs,
+      typed_args: None,
+      dry_run: false,
+      cancellation: crate::InvokeCancellation::new(),
+    }))
+    .expect_err("target must fail before native rendering");
+    assert_eq!(error.code, crate::FailureCode::InvalidTarget);
+  }
 }
 
 fn rect_inputs() -> BTreeMap<String, String> {

@@ -73,8 +73,70 @@ the matching `proj-airi/games-balatro-2024-entities-detection` and
 card-corner ONNX classifier resolves from
 `proj-airi/games-balatro-2024-card-corner-classifier` when the
 `card-corner-onnx` feature loads that classifier. Explicit `--entities-model`,
-`--entities-classes`, `--ui-model`, `--ui-classes`, and `--card-corner-model`
-arguments remain the highest-priority override.
+`--entities-classes`, `--cards-model`, `--card-identity-model`,
+`--card-enhancement-model`, `--card-edition-model`, `--card-seal-model`,
+`--ui-model`, `--ui-classes`, and `--card-corner-model` arguments remain the
+highest-priority override.
+
+Rank/suit, enhancement, edition, and seal detection default to the four
+published `proj-airi/games-balatro-2024-yolo-card-*-detection-mod-ground-truth`
+ONNX repositories. The models run on the full frame: identity keeps its trained
+960 input size, while the other three use 640. AUV associates their boxes with
+the hand detector's boxes by overlap. Rank/suit is returned in each hand slot's
+`reading`; enhancement, edition, and seal are returned in its `attributes`.
+All four raw detector outputs remain in `raw_entities` for inspection.
+
+Remote observation sends the full frame once through a batch RPC; the Runner
+runs its independent detectors concurrently against that shared frame. The
+Balatro Runner caches one ONNX session per complete detector configuration, so
+repeated observations reuse sessions while changes to model path, input size,
+thresholds, class names, or device produce a distinct session. Select the
+execution provider explicitly; CUDA is never assumed:
+
+```bash
+cargo build -p auv-game-balatro --features cuda \
+  --bin auv-game-balatro --bin auv-runner-balatro
+auv-game-balatro game state --device cuda:0 --json
+```
+
+A Runner built without the `cuda` feature rejects `--device cuda:N` instead of
+silently falling back to CPU.
+
+The host must also expose the CUDA 12 runtime libraries required by ONNX
+Runtime (`cudart`, `cublas`, `curand`, `cufft`, and cuDNN) in the Runner's
+dynamic-library search path. Verify the loaded Runner with `nvidia-smi` and
+`nvtop -s`; compiling the feature alone cannot make missing host libraries
+available.
+
+`--cards-model` is an opt-in hand detector, not a replacement for the global
+entities detector. AUV resolves the game viewport when Linux falls back to a
+full-display capture, crops the normalized hand band relative to that viewport,
+runs the specialized model there, maps its boxes back into source-frame
+coordinates, and uses those boxes as the hand-slot source. Global entities
+still supply jokers, consumables, store items, and phase evidence. The current
+prototype model is in the private
+`proj-airi/games-balatro-2024-yolo-card-detection-mod-ground-truth` repository
+pending a redistribution-rights review, so callers must provide a downloaded
+local ONNX path:
+
+```bash
+auv-game-balatro game state \
+  --image frame.png \
+  --cards-model model.onnx \
+  --json
+```
+
+Remote mutating operations accept the same hand-detector and inference-device
+policy. Pass them again on each operation so state resolution and the slot
+indices acted on come from the same detector configuration:
+
+```bash
+auv-game-balatro cards play \
+  --slots hand:0,hand:2 \
+  --cards-model model.onnx \
+  --device cuda:0 \
+  --verify
+```
 
 `cards read` can optionally use the local Balatro deck atlas as a visual
 template fallback for rank glyphs. AUV does not redistribute this game asset.

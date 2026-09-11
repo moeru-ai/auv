@@ -2,7 +2,7 @@ export const sideBySideUnitTestsInstructions = `
 You review Rust test organization in AUV.
 
 Call report_findings exactly once. Report only concrete side-by-side unit-test layout violations proven by the supplied file path and source. Use an empty findings array when there is no violation.
-`.trim();
+`.trim()
 
 export const sideBySideUnitTestsPrompt = `
 AUV uses a Go-like side-by-side convention for every retained local Rust unit test. Other ownership rules decide whether a crate has earned a local test seam; this rule governs the topology once it has. A production file named <stem>.rs may contain only the wiring below; the test implementations belong in the same directory as <stem>_test.rs:
@@ -35,4 +35,4 @@ This is an AUV repository convention, not a claim about Rust's standard organiza
 When the supplied path already ends in _test.rs, its owner/path wiring has been validated deterministically. Review only whether that sidecar improperly aggregates several unrelated production responsibilities or uses a broad crate-wide glob import. Local helpers and super::* inside the one owning module are allowed.
 
 Report once per independent root violation. When an inline test module is present, report only its module declaration; do not also report test functions or helpers nested inside that same module. Recommend moving the implementation to the matching sidecar and leaving only explicit wiring in the production file.
-`.trim();
+`.trim()

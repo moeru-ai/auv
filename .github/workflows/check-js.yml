@@ -1,0 +1,93 @@
+name: Check JS
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  js:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+          - windows-2025
+    runs-on: ${{ matrix.os }}
+    name: js checks ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Buf
+        uses: bufbuild/buf-action@v1
+        with:
+          version: "1.71.0"
+          setup_only: true
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libegl-dev \
+            libleptonica-dev \
+            libtesseract-dev \
+            tesseract-ocr-eng
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build AUV CLI
+        run: cargo build --package auv-cli --bin auv
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: Inspect Node.js
+        run: node --version
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Generate Protobuf bindings
+        run: pnpm generate:proto
+
+      - name: Install Playwright browser and Linux dependencies
+        if: runner.os == 'Linux'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Playwright browser
+        if: runner.os != 'Linux'
+        run: pnpm exec playwright install chromium
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test:run

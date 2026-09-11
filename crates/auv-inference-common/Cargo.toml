@@ -3,17 +3,17 @@ name = "auv-inference-common"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description.workspace = true
+description = "Common inference utilities for AUV"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-image.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

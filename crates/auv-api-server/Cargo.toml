@@ -1,0 +1,65 @@
+[package]
+name = "auv-api-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Protocol adapters for AUV daemon control and capability APIs"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv = { path = "../auv" }
+auv-api-proto = { path = "../auv-api-proto" }
+axum = { version = "0.8", features = ["http2", "ws"] }
+bytes = "1"
+futures-util = "0.3"
+prost = "0.14"
+prost-reflect = "0.16"
+prost-types = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tonic = { version = "0.14", features = ["transport"] }
+tonic-reflection = "0.14"
+http-body = "1"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
+libc = "0.2"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Foundation",
+  "Foundation_Collections",
+  "Media_Ocr",
+  "Graphics_Imaging",
+  "Security_Cryptography",
+  "Globalization",
+  "Storage_Streams",
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_UI_Accessibility",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Storage_Xps",
+  "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Threading"
+] }
+
+[build-dependencies]
+auv-api-proto = { path = "../auv-api-proto" }
+tonic-rest-build = "=0.1.5"

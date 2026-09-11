@@ -1,20 +1,20 @@
 {
   "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "declaration": true,
-    "isolatedModules": true,
+    "target": "ESNext",
     "lib": [
       "ESNext"
     ],
+    "rootDir": "src",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "noEmit": true,
-    "rootDir": "src",
-    "strict": true,
-    "target": "ESNext",
     "types": [
       "node"
     ],
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "declaration": true,
+    "noEmit": true,
+    "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
   "include": [

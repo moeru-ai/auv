@@ -1,0 +1,46 @@
+[package]
+name = "auv-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Server-side SDK for hosting an AUV daemon"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv = { path = "../auv" }
+auv-api-client = { path = "../auv-api-client" }
+auv-api-proto = { path = "../auv-api-proto" }
+auv-api-server = { path = "../auv-api-server" }
+fs2 = "0.4"
+getrandom = "0.3"
+hex = "0.4"
+http = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+libc = "0.2"
+prost-types = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["net", "process", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tonic = { version = "0.14", features = ["transport"] }
+tonic-health = "0.14"
+tower = { version = "0.5", features = ["util"] }
+uuid = { version = "1", features = ["serde", "v7"] }
+
+[dev-dependencies]
+futures-util = "0.3"
+prost = "0.14"
+reqwest = { version = "0.13", default-features = false, features = ["http2", "rustls"] }
+tempfile = "3"
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic-reflection = "0.14"
+tokio-tungstenite = "0.29"

@@ -1,2 +1,2 @@
-export { platformScopedAppIntegrationPrompt } from "./prompt";
-export { platformScopedAppIntegrationRule } from "./rule";
+export { platformScopedAppIntegrationPrompt } from './prompt'
+export { platformScopedAppIntegrationRule } from './rule'

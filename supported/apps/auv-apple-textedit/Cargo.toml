@@ -21,7 +21,7 @@ auv-cli-invoke = { path = "../../../crates/auv-cli-invoke", optional = true }
 auv-driver = { path = "../../../crates/auv-driver" }
 auv-tracing = { path = "../../../crates/auv-tracing", optional = true }
 clap = { version = "4", features = ["derive"] }
-serde.workspace = true
+serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../../../crates/auv-driver-macos" }

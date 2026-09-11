@@ -1,7 +1,7 @@
-use auv_driver::{InputActionResult, WindowPoint};
+use auv_driver::InputActionResult;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BalatroPhase, BalatroState, ButtonTarget};
+use crate::model::{ActionPoint, BalatroPhase, BalatroState, ButtonTarget};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CashOutConfirmationRequest {
@@ -49,11 +49,16 @@ pub enum CashOutConfirmation {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CashOutAttempt {
+  pub selected_button: ButtonTarget,
+  pub point: ActionPoint,
+  pub delivery: InputActionResult,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CashOutResult {
   pub target: String,
-  pub selected_button: ButtonTarget,
-  pub window_point: WindowPoint,
-  pub delivery: InputActionResult,
+  pub attempts: Vec<CashOutAttempt>,
   pub confirmation: CashOutConfirmation,
 }
 
@@ -61,23 +66,21 @@ pub struct CashOutResult {
 #[derive(Serialize)]
 struct CashOutCompleted<'a> {
   target: &'a str,
-  selected_button: &'a ButtonTarget,
-  window_point: WindowPoint,
+  attempts: &'a [CashOutAttempt],
   confirmation: &'a CashOutConfirmation,
 }
 
 #[cfg(feature = "tracing")]
 impl auv_tracing::EventPayload for CashOutCompleted<'_> {
   const NAME: &'static str = "auv.balatro.cash_out.completed";
-  const VERSION: u32 = 1;
+  const VERSION: u32 = 3;
 }
 
 #[cfg(feature = "tracing")]
 pub(crate) fn emit_cash_out_completed(result: &CashOutResult) {
   auv_tracing::emit_event!(CashOutCompleted {
     target: &result.target,
-    selected_button: &result.selected_button,
-    window_point: result.window_point,
+    attempts: &result.attempts,
     confirmation: &result.confirmation,
   });
 }

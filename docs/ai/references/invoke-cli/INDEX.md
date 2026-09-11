@@ -2,8 +2,13 @@
 
 Invoke routing, CLI handlers, catalog, output contracts
 
-Count: **17**
+Count: **22**
 
+- [`2026-09-08-targeted-keyboard-contract.md`](2026-09-08-targeted-keyboard-contract.md) — target preparation, key/combination/sequence hierarchy, failure progress, and macOS evidence
+- [`2026-09-03-click-point-target-contract-handoff.md`](2026-09-03-click-point-target-contract-handoff.md)
+- [`2026-08-04-remote-extension-runner-guide.md`](2026-08-04-remote-extension-runner-guide.md)
+- [`2026-08-04-core-cli-command-ownership-design.md`](2026-08-04-core-cli-command-ownership-design.md)
+- [`2026-07-31-kubectl-plugin-context-research.md`](2026-07-31-kubectl-plugin-context-research.md)
 - [`2026-06-10-cli-invoke-catalog-removal.md`](2026-06-10-cli-invoke-catalog-removal.md)
 - [`2026-06-11-cli-invoke-driver-console-design.md`](2026-06-11-cli-invoke-driver-console-design.md)
 - [`2026-06-11-cli-invoke-driver-console-implementation-plan.md`](2026-06-11-cli-invoke-driver-console-implementation-plan.md)

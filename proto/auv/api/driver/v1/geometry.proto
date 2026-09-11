@@ -1,0 +1,25 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.v1;
+
+// A point in the Device screen's logical coordinate space.
+message ScreenPoint {
+  double x = 1;
+  double y = 2;
+}
+
+// A point in the logical coordinate space of one Window. The WindowRef or
+// WindowSelector that establishes the coordinate space travels in the owning
+// operation request.
+message WindowPoint {
+  double x = 1;
+  double y = 2;
+}
+
+message ScreenRect {
+  double x = 1;
+  double y = 2;
+  double width = 3;
+  double height = 4;
+}

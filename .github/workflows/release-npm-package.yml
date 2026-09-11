@@ -1,0 +1,54 @@
+name: Release npm packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release:
+    name: Release npm packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Buf
+        uses: bufbuild/buf-action@v1
+        with:
+          version: "1.71.0"
+          setup_only: true
+
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Protobuf bindings
+        run: pnpm generate:proto
+
+      - name: Build packages
+        run: >-
+          pnpm -r --filter @auv-js/api-client --filter @auv-js/sdk build
+
+      - name: Lint packages
+        run: pnpm --filter @auv-js/api-client --filter @auv-js/sdk exec publint
+
+      - name: Verify package contents
+        run: >-
+          pnpm -r --filter @auv-js/api-client --filter @auv-js/sdk publish --access public --no-git-checks --dry-run
+
+      - name: Publish packages
+        run: >-
+          pnpm -r --filter @auv-js/api-client --filter @auv-js/sdk publish --access public --no-git-checks

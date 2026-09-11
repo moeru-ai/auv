@@ -153,3 +153,77 @@ fn playlist_select_target_reports_ambiguous_contains_numeric_query() {
   let error = scan.select_target("3").expect_err("ambiguous contains");
   assert!(error.contains("matched 2 items"));
 }
+
+#[test]
+fn playlist_ref_resolves_duplicate_labels_by_collection() {
+  let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
+    sections: vec![
+      SidebarSection {
+        id: "section-created".to_string(),
+        kind: SidebarSectionKind::MyPlaylists,
+        label: Some("创建的歌单".to_string()),
+        items: vec![PlaylistSidebarItem {
+          id: "created-focus".to_string(),
+          label: "Focus".to_string(),
+          section_hint: Some(SidebarSectionKind::MyPlaylists),
+          confidence: Confidence::High,
+          candidate_id: None,
+          anchor_id: None,
+        }],
+      },
+      SidebarSection {
+        id: "section-favorite".to_string(),
+        kind: SidebarSectionKind::FavoritePlaylists,
+        label: Some("收藏的歌单".to_string()),
+        items: vec![PlaylistSidebarItem {
+          id: "favorite-focus".to_string(),
+          label: "Focus".to_string(),
+          section_hint: Some(SidebarSectionKind::FavoritePlaylists),
+          confidence: Confidence::High,
+          candidate_id: None,
+          anchor_id: None,
+        }],
+      },
+    ],
+  });
+  let reference = PlaylistRef::new(PlaylistSection::Favorite, "Focus").expect("valid reference");
+
+  let target = scan.select_target_ref(&reference).expect("section should disambiguate the label");
+
+  assert_eq!(target.item_id, "favorite-focus");
+  assert_eq!(target.section_kind, SidebarSectionKind::FavoritePlaylists);
+}
+
+#[test]
+fn playlist_ref_rejects_duplicates_inside_one_collection() {
+  let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
+    sections: vec![SidebarSection {
+      id: "section-created".to_string(),
+      kind: SidebarSectionKind::MyPlaylists,
+      label: Some("创建的歌单".to_string()),
+      items: vec![
+        PlaylistSidebarItem {
+          id: "created-focus-a".to_string(),
+          label: "Focus".to_string(),
+          section_hint: Some(SidebarSectionKind::MyPlaylists),
+          confidence: Confidence::High,
+          candidate_id: None,
+          anchor_id: None,
+        },
+        PlaylistSidebarItem {
+          id: "created-focus-b".to_string(),
+          label: "Focus".to_string(),
+          section_hint: Some(SidebarSectionKind::MyPlaylists),
+          confidence: Confidence::High,
+          candidate_id: None,
+          anchor_id: None,
+        },
+      ],
+    }],
+  });
+  let reference = PlaylistRef::new(PlaylistSection::Created, "Focus").expect("valid reference");
+
+  let error = scan.select_target_ref(&reference).expect_err("same-section duplicates must remain ambiguous");
+
+  assert!(error.contains("matched 2 items"));
+}

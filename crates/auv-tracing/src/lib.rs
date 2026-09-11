@@ -32,3 +32,7 @@ pub use value::{
   ArtifactId, ArtifactPurpose, AttributeValue, Attributes, ByteLength, ContentType, ErrorCode, EventId, EventName, FiniteF64, RunId,
   Sha256Digest, SpanId, SpanName, Timestamp, ValidationError,
 };
+
+/// Absolute or caller-resolved root used by child frontends to join the
+/// frontend-owned tracing store for an inherited Run.
+pub const STORE_ROOT_ENV: &str = "AUV_TRACING_STORE_ROOT";

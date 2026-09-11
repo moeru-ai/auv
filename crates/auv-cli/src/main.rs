@@ -1,6 +1,12 @@
-//! Root `auv` core command frontend.
+//! Root `auv` core command frontend and first-party Runner process host.
 
-#[tokio::main]
-async fn main() {
-  std::process::exit(auv_cli::cli_frontend::exit_status(auv_cli::cli_frontend::run_root().await));
+fn main() {
+  let arguments = std::env::args().collect::<Vec<_>>();
+  if let Some(exit) = auv_cli::runner::run_if_internal(&arguments) {
+    std::process::exit(exit);
+  }
+
+  let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build AUV CLI runtime");
+  let exit = runtime.block_on(auv_cli::cli::run_root());
+  std::process::exit(auv_cli::cli::exit_status(exit));
 }

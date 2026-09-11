@@ -1,0 +1,26 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.netease_music.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+
+// Manages the NetEase application process and top-level window.
+service ApplicationService {
+  rpc OpenWindow(OpenWindowRequest) returns (OpenWindowResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+message OpenWindowRequest {
+  optional uint64 settle_milliseconds = 1;
+  optional string executable = 2;
+}
+
+message OpenWindowResponse {
+  bool window_found = 1;
+  optional string window_title = 2;
+  string process_name = 3;
+  optional string executable = 4;
+}

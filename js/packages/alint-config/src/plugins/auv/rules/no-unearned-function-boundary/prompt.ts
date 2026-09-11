@@ -2,7 +2,9 @@ export const unearnedFunctionBoundaryInstructions = `
 You are reviewing one Rust source file in the AUV project.
 
 Call report_findings exactly once. Report only function boundaries that can be removed without losing a meaningful decision or reusable contract. Use an empty findings array when there is no violation.
-`.trim();
+
+Every finding message must stand alone in a terse terminal formatter. Name the function, cite the concrete mechanics in its body, explain why no meaningful contract would be lost, and end with a concrete inlining or consolidation recommendation. Never emit only a function name or a category label. Put the remediation in suggestion too.
+`.trim()
 
 export const unearnedFunctionBoundaryPrompt = `
 Review the target for functions that give a name and call boundary to mechanics that are clearer at their use site.
@@ -23,6 +25,8 @@ Consider local call sites when they are present. One use is strong evidence for 
 A helper does not become a protocol or driver boundary merely because the value it constructs will later be passed to an external API. In particular, report a caller-local helper that assembles options/config by cloning a base value's fields, appending caller-supplied values, and filling an absent field with a fixed default. It owns no validation or external translation; it only stages construction for that caller. Do not apply this example to inherent constructor or fluent builder methods: those methods intentionally provide a composable caller-facing construction API, so their small bodies are the contract rather than evidence of an unearned boundary.
 
 Report each independently removable declaration. For a chain, report the shallow wrappers that should be collapsed, not the deepest function when it owns the actual behavior. A macro attribute, visibility modifier, comment, long name, or stated intention to grow later does not by itself make the current runtime boundary meaningful.
+
+Rule ownership: an unconditional forwarding wrapper may qualify here. A function that first makes a shallow local control-flow decision and then delegates is owned by the sibling no-vacant-control-boundary rule; do not report it here merely for that shape.
 
 Few-shot bad case A — the names merely narrate conditions and construction mechanics:
 
@@ -197,10 +201,44 @@ impl RequestOptions {
 
 Expected review: no findings. The named constructor and chainable setters form one coherent public construction API. Their point is to let callers build the value incrementally without depending on its representation; inlining them would remove that API rather than simplify a local implementation.
 
+Few-shot good case F — typed protocol clients adapt generated transport APIs:
+
+\`\`\`rust
+impl Client {
+  pub async fn list_namespaces(&mut self) -> Result<Vec<Namespace>, tonic::Status> {
+    Ok(self.inner.list_namespaces(ListNamespacesRequest {}).await?.into_inner().namespaces)
+  }
+}
+\`\`\`
+
+Expected review: no finding. The method is the typed client capability exposed to callers: it owns request construction, transport error type, response-envelope removal, and the client-facing result shape. Requiring callers to use the generated transport client directly would destroy that adapter boundary.
+
+Few-shot good case G — a schema accessor centralizes presence and fallback semantics:
+
+\`\`\`rust
+fn run_id(run: &proto::Run) -> &str {
+  run.r#ref.as_ref().map(|reference| reference.run_id.as_str()).unwrap_or_default()
+}
+\`\`\`
+
+Expected review: no finding when orchestration calls this accessor in multiple places. It gives one meaning to an absent protobuf reference and keeps generated-schema navigation out of the owning workflow. Repeating the chain at each use would duplicate protocol-presence policy, not clarify mechanics.
+
+Few-shot good case H — singular and plural public entrypoints are intentional API vocabulary:
+
+\`\`\`rust
+pub fn descriptor_set_for_service(service_name: &str) -> Result<Vec<u8>, String> {
+  descriptor_set_for_services(&[service_name])
+}
+\`\`\`
+
+Expected review: no finding. The singular public operation is an ergonomic facade over the plural operation and preserves caller-facing vocabulary without exposing slice packaging at every call site.
+
 Do not report:
 - CLI parsers or value parsers that define accepted syntax, ranges, validation, and user-facing errors
 - private helpers in a CLI input parsing pipeline when they centralize trimming, empty-value rejection, deduplication, file loading, or user-facing IO errors for several accepted input spellings
 - serde decoders, protocol/native adapters, or representation conversions that explicitly own a cross-module or external contract
+- typed service-client methods that construct generated requests, invoke transport methods, remove response envelopes, or expose an app-owned result shape
+- small repeated accessors that centralize optional protobuf-reference traversal and its absent-value semantics for an owning workflow
 - functions that centralize a domain invariant or non-obvious policy used by independent callers
 - trait implementations, callbacks, macro/framework entrypoints, FFI shims, or public facades when the required signature or compatibility seam is itself the API and there is no redundant same-file layer
 - process entrypoints, required trait methods, named constructors, and public accessors that preserve encapsulation or caller-facing vocabulary
@@ -210,5 +248,5 @@ Do not report:
 - cohesive orchestration merely because some individual expressions are simple
 - loops that coordinate state mutation, deduplication, side effects, early exit, or collection-wide transformation
 
-Do not infer a violation only from a short body, a single return expression, or a low call count. Explain concretely what would be inlined or collapsed and why no meaningful contract is lost. If that proof is uncertain, return no finding.
-`.trim();
+Do not infer a violation only from a short body, a single return expression, or a low call count. For every finding, make the message follow this semantic shape: \`<function> only <specific mechanics>, which carries no <policy/contract>; <specific expression to inline or boundaries to consolidate>.\` Do not copy this wording mechanically, but include the evidence, reason, and remediation. If the proof that no meaningful contract is lost is uncertain, return no finding.
+`.trim()

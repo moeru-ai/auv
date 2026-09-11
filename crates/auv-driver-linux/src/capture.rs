@@ -14,7 +14,7 @@ use auv_driver_common::geometry::Rect;
 
 #[cfg(target_os = "linux")]
 use crate::driver::LinuxDriverSessionState;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use crate::error::backend;
 #[cfg(any(target_os = "linux", test))]
 use crate::error::invalid_input;
@@ -60,10 +60,10 @@ pub fn capture_display(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Op
       Ok(DisplayCapture { display, capture })
     }
     Err(error) => {
-      let captured = match target.as_ref() {
-        Some(target) => capture_area(target.display.frame, target.display.frame)?,
-        None => capture_full()?,
-      };
+      let captured = capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || match target.as_ref() {
+        Some(target) => capture_area(target.display.frame, target.display.frame),
+        None => capture_full(),
+      })?;
       capture_display_from_captured(target, with_primary_capture_failure(captured, PORTAL_SCREENCAST_BACKEND, &error.to_string()))
     }
   }
@@ -101,7 +101,11 @@ pub fn capture_region(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Opt
       backend: format!("{PORTAL_SCREENCAST_BACKEND}.crop"),
       fallback_reason: Some("region pixels were cropped from PipeWire screencast using Wayland xdg-output logical bounds".to_string()),
     },
-    Err(error) => with_primary_capture_failure(capture_area(region, target.display.frame)?, PORTAL_SCREENCAST_BACKEND, &error.to_string()),
+    Err(error) => with_primary_capture_failure(
+      capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || capture_area(region, target.display.frame))?,
+      PORTAL_SCREENCAST_BACKEND,
+      &error.to_string(),
+    ),
   };
   let scale_factor = capture_scale_factor(&captured.image, region, target.display.scale_factor);
   let capture = Capture {
@@ -132,11 +136,26 @@ struct CapturedImage {
   fallback_reason: Option<String>,
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn capture_fallback<T>(
+  primary_backend: &str,
+  primary_error: &auv_driver_common::error::DriverError,
+  fallback: impl FnOnce() -> DriverResult<T>,
+) -> DriverResult<T> {
+  fallback()
+    .map_err(|fallback_error| backend(format!("{primary_backend} failed: {primary_error}; fallback capture also failed: {fallback_error}")))
+}
+
 #[cfg(target_os = "linux")]
 fn capture_monitor_frame_for_session(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
   target_bounds: Option<Rect>,
 ) -> DriverResult<ScreenCastFrame> {
+  // TODO(linux-capture-session-lock): the outer session mutex remains held
+  // during the bounded frame wait because ScreenCastSession is currently
+  // stored directly in this shared state. Move capture ownership behind its
+  // own synchronization only when a concurrent driver-session slice defines
+  // how capture, input, and session invalidation coordinate.
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.screencast_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();

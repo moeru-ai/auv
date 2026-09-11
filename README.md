@@ -10,7 +10,7 @@
       srcset="./docs/assets/logo-short-height-light.svg"
       media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)"
     />
-    <img width="30%" src="./docs/assets/logo-short-height-light.svg" />
+    <img width="30%" src="./docs/assets/logo-short-height-light.svg" alt="logo of auv" />
   </picture>
 </p>
 
@@ -27,17 +27,37 @@ AUV means **Application Use Via ...**.
 
 > Think of it as a programmable computer use, without agents.
 
-## Install
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+## Table of Contents
 
-Install Rust first. This workspace uses Rust 2024 and currently requires the
-toolchain declared in `Cargo.toml`.
+- [Getting Started](#getting-started)
+- [Understand AUV](#understand-auv)
+- [Why even build AUV?](#why-even-build-auv)
+- [Capability Matrix](#capability-matrix)
+- [Development](#development)
+- [Related](#related)
+- [Acknowledgements](#acknowledgements)
+- [Special Thanks](#special-thanks)
+- [Star History](#star-history)
+- [License](#license)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Getting Started
+
+### Install
 
 Install directly from GitHub:
 
 ```sh
-cargo install --git https://github.com/moeru-ai/auv --package auv-cli --bin auv
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
 auv --help
 ```
+
+Third-party Protobuf sources are included in the repository; Cargo installs do
+not require Buf or a separate Protobuf dependency-generation step. See the
+[macOS Git-install verification](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md#regression-and-evidence).
 
 After installation, use the `auv` CLI directly:
 
@@ -46,11 +66,11 @@ auv --help
 auv invoke --help
 ```
 
-## Setup
+### Setup
 
-### macOS Permissions
+#### macOS
 
-macOS automation needs OS permissions granted to the process that launches AUV,
+OS permissions are required to be granted to the process that launches AUV,
 usually your terminal app.
 
 Open **System Settings -> Privacy & Security** and enable:
@@ -59,13 +79,13 @@ Open **System Settings -> Privacy & Security** and enable:
 | --- | --- |
 | Accessibility | AX tree reads, focused element control, keyboard/pointer automation. |
 | Screen Recording | Screenshots, OCR, visual inspection, and evidence capture. |
-| Automation | AppleScript/System Events activation flows used by app probes and some drivers. |
+| Automation | AppleScript/System Events app activation and foreground fallback paths. |
 
 After changing permissions, restart the terminal process and rerun:
 
 ```sh
 auv doctor
-auv app probe com.apple.TextEdit
+auv invoke app.probePermissions
 ```
 
 ## Understand AUV
@@ -213,10 +233,10 @@ AUV is meant to work with coding agents and agent products such as:
 That means:
 
 - If your agent can call a CLI, AUV can be used as computer use.
-- If your agent can write code, AUV can save tokens by moving repeated GUI work
-  into Rust commands today, with JavaScript/TypeScript and Python bindings
-  planned after the contracts settle. Once a GUI flow is finalized as a command,
-  repeated execution can approach zero reasoning-token cost.
+- If your agent can write code, AUV can move repeated GUI work into reusable
+  Rust or JavaScript/TypeScript operations. Python bindings remain planned.
+  Once a GUI flow is finalized as an operation, repeated execution can approach
+  zero reasoning-token cost.
 
 ## Why even build AUV?
 
@@ -237,28 +257,30 @@ Since Vercel published the [`agent-browser`](https://github.com/vercel/agent-bro
 
 > What AUV can do, compared to other computer-use projects.
 
-| Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) / [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) | Playwright |
+- ✅: implemented and exposed by a current public repository surface.
+- ⚠️: implemented with the limit shown in the table or notes.
+- ⏳: planned, but not implemented.
+
+| Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) ([KWWK](https://github.com/EYHN/kwwk-computer-use-core) core) | Playwright |
 | --- | --- | --- | --- | --- |
-| Agent model | 💡 BYOA | 💡 BYOA + Built-in Agent | 💡 BYOA + Built-in Agent | ❌ |
-| Scriptable | ✅ Rust ⏳ JS/TS/Python | ⚠️ Tools only | ⚠️ Swift Only | ✅ JS/TS/Python/... |
-| Multi-driver | ✅ macOS/Windows ⏳ Linux/Android/iOS | ✅ | ❌ | ❌ |
-| CLI | ✅ | ✅ | ❌ | ⚠️ via user scripts |
-| MCP | ✅ | ✅ | ❌ | ❌ |
-| RL Trajectory | ✅ runs + o11y (OTEL compatible) + artifacts | ⚠️ recordings | ❌ | ✅ |
-| Screenshot | ✅ | ✅ | ✅ | ✅ browser only |
-| OCR | ✅ BYOK / OS OCR | ⚠️ BYOK | ❌ | ❌ |
-| Image Match | ✅ | ✅ | ❌ | ❌ user code only |
-| AX (Accessibility Tree) | ✅ macOS/Windows | ✅ macOS | ✅ macOS | ⚠️ Browser only |
-| AX Actions | ✅ | ✅ | ✅ | ⚠️ browser only |
-| Mouse / Click | ✅ | ✅ | ✅ | ⚠️ Browser only |
-| Virtual Mouse / Background | ✅ macOS/Windows | ✅ macOS focused | ✅ macOS focused | ⚠️ Browser only |
-| Virtual Mouse / Foreground HID | ✅ | ✅ | ❌ | ⚠️ Browser only |
-| Keyboard | ✅ | ✅ | ✅ | ⚠️ Browser Only |
-| Scroll | ✅ | ✅ | ✅ | ⚠️ Browser Only |
-| Scroll to List | ✅ | ❌ | ❌ | ✅ |
-| Bundled for Apps | ✅ | ❌ | ❌ | ❌ |
-| Feedback | ✅ Agent understand whether clicked or typed | ⚠️ tool outputs | ⚠️ structured metadata | ⚠️ assertions/traces |
-| SLM friendly | ✅ Bundled for Apps | ⚠️ Agent orchestrated | ⚠️ Agent ochestrated | ✅ |
+| Agent model | 💡 BYOA | 💡 BYOA + built-in agent | 💡 OpenBridge built-in agent<br>KWWK is agent-free | 💡 BYOA + built-in Test Agents |
+| Scriptable | ✅ Rust + JS/TS<br>⏳ Python | ✅ Python/TypeScript/Rust SDKs | ✅ Swift package | ✅ JS/TS/Python/Java/.NET |
+| Native desktop drivers | ✅ macOS/Linux/Windows<br>⏳ Android/iOS | ✅ macOS/Linux/Windows | ⚠️ macOS only | ❌ browser only |
+| CLI | ✅ | ✅ | ❌ | ✅ |
+| MCP | ✅ | ✅ | ❌ | ✅ browser MCP |
+| Run / trace recording | ✅ runs + tracing + artifacts + OTEL export | ✅ per-action trajectories | ❌ | ⚠️ test traces + artifacts |
+| Display / window capture | ✅ macOS/Linux/Windows | ✅ macOS/Linux/Windows | ✅ macOS | ✅ browser only |
+| OCR | ✅ macOS Vision/Linux Tesseract/Windows OCR | ⚠️ BYOK | ❌ | ❌ |
+| Template image localization | ⚠️ typed result contract only | ⚠️ no dedicated tool | ❌ | ⚠️ visual snapshot comparison only |
+| Accessibility tree | ✅ macOS AX/Linux AT-SPI/Windows UIA | ✅ macOS AX/Linux AT-SPI/Windows UIA | ✅ macOS AX | ⚠️ browser only |
+| Accessibility actions | ⚠️ platform-specific focus/select paths | ✅ | ✅ | ⚠️ browser only |
+| Mouse / click | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
+| Background pointer input | ✅ macOS<br>❌ Linux/Windows | ✅ macOS/Linux/Windows, best effort | ✅ macOS background | ⚠️ browser only |
+| Foreground pointer input | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
+| Keyboard | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
+| Scroll | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
+| Scroll native lists | ⚠️ reusable library and app integrations<br>Generic CLI deferred | ⚠️ no dedicated tool | ❌ | ⚠️ browser only |
+| Action evidence | ✅ attempts + fallback + disturbance + separate verification | ✅ structured tool outputs + trajectories | ⚠️ structured metadata | ⚠️ assertions + traces |
 | YOLO / Custom Models | ✅ | ✅ | ❌ | ❌ |
 
 - **Scroll scan** is a major reason AUV exists. Most desktop automation stacks can
@@ -273,22 +295,63 @@ whether verification passed, and why an operation should retry, stop, or fail.
 
 ## Development
 
+### `auv`
+
 ```sh
 cargo fmt --check
 cargo check
 cargo test
-git diff --check
-cargo run -- --help
-cargo run -- invoke --help
 ```
+
+To update vendored Protobuf dependencies, see the
+[Protobuf source distribution reference](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md).
+
+### `@auv-js/sdk`
+
+#### Prerequisites
+
+- [Node.js (LTS)](https://nodejs.org/)
+- [pnpm](https://pnpm.io/installation)
+- [Buf](https://buf.build/)
+
+> [!NOTE]
+>
+> If you use proto, then
+>
+> ```sh
+> proto install buf
+> proto install node
+> proto install pnpm
+> ```
+>
+> , this should help you install necessary tools.
+
+```sh
+pnpm install
+pnpm generate:proto
+pnpm exec playwright install chromium
+pnpm build
+pnpm test:run
+pnpm lint
+pnpm typecheck
+```
+
+### Documentation
+
+After you change headings in the root or package READMEs, run `pnpm docs:update`.
+This command updates all three tables of contents.
 
 Useful entrypoints:
 
 ```sh
-auv app probe <bundle-id>
-auv app analyze .auv/app-probes/<probe>/probe.json
+auv doctor
 auv invoke <command-id> --help
-auv inspect <run-id>
+auv serve --help
+auv devices list
+auv runner --help
+auv run --help
+auv mcp serve
+auv plugin list
 ```
 
 Use `docs/TERMS_AND_CONCEPTS.md` for shared vocabulary. Durable design and
@@ -315,7 +378,7 @@ evidence notes live under `docs/ai/references/`.
 Special thanks to all contributors for their contributions to auv ❤️
 
 <a href="https://github.com/moeru-ai/auv/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=moeru-ai/auv" />
+  <img src="https://contrib.rocks/image?repo=moeru-ai/auv" alt="AUV contributors" />
 </a>
 
 ## Star History

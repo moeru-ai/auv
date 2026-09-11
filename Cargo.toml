@@ -1,9 +1,13 @@
 [workspace]
 members = [
+  "crates/auv",
   "supported/apps/auv-apple-music",
   "supported/apps/auv-apple-notes",
   "supported/apps/auv-apple-textedit",
   "crates/auv-api-proto",
+  "crates/auv-api-server",
+  "crates/auv-api-client",
+  "crates/auv-daemon",
   "crates/auv-cli-invoke-macros",
   "crates/auv-cli-invoke",
   "crates/auv-file",
@@ -26,7 +30,7 @@ members = [
   "supported/games/auv-game-balatro",
   "supported/games/auv-game-minecraft",
   "supported/games/auv-game-osu",
-  "crates/auv-gnome-control-center",
+  "supported/apps/auv-gnome-control-center",
   "crates/auv-inference-common",
   "crates/auv-inference-ort",
   "crates/auv-inference-ultralytics",
@@ -34,51 +38,22 @@ members = [
   "crates/auv-media-macos",
   "supported/apps/auv-netease-music",
   "crates/auv-driver-overlay-macos",
+  "crates/auv-driver-overlay-windows",
   "supported/apps/auv-steam",
   "crates/auv-view",
 ]
-default-members = ["crates/auv-cli"]
+default-members = [ "crates/auv-cli" ]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.16"
 authors = [ "Moeru AI" ]
 edition = "2024"
 rust-version = "1.91"
-description = ""
+description = "Application Use Via... script-able OS automation library"
 documentation = "https://github.com/moeru-ai/auv"
 readme = "README.md"
 homepage = "https://github.com/moeru-ai/auv"
 repository = "https://github.com/moeru-ai/auv"
-license = ""
+license = "Apache-2.0"
 publish = false
-
-[workspace.dependencies]
-bytes = "1"
-fs2 = "0.4"
-futures-core = "0.3"
-futures-io = "0.3"
-futures-util = "0.3"
-hex = "0.4"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
-sha2 = "0.10"
-thiserror = "2"
-tempfile = "3"
-time = { version = "0.3", features = ["formatting", "parsing"] }
-tungstenite = "0.29"
-uuid = { version = "1", features = ["serde", "v7"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
-leptess = "0.14"
-ndarray = "0.17"
-ort = { version = "2.0.0-rc.12", default-features = false }
-ultralytics-inference = { version = "0.0.18", default-features = false }
-xcap = "0.6"
-swift-bridge = "0.1.59"
-swift-bridge-build = "0.1.59"
-windows = { version = "0.58", features = ["Foundation", "Foundation_Collections", "Media_Ocr", "Graphics_Imaging", "Security_Cryptography", "Globalization", "Storage_Streams", "Win32_Foundation", "Win32_Security", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Storage_Xps", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_RemoteDesktop", "Win32_System_Threading"] }
-zbus = "5.15"
-objc2-core-graphics = { version = "0.3", features = ["CGWindow", "CGImage", "CGDataProvider", "CGGeometry"] }
-objc2-core-foundation = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

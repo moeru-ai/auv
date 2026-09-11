@@ -1,21 +1,21 @@
-packages:
-  - "crates/auv-inspect-server/viewer"
-  - "js/packages/*"
-
 allowBuilds:
+  '@bufbuild/buf': true
   esbuild: true
+  protobufjs: true
+  simple-git-hooks: true
 
 minimumReleaseAgeExclude:
-  - '@alint-js/agent-apeira@0.1.5'
-  - '@alint-js/cli@0.1.5'
-  - '@alint-js/config@0.1.5'
-  - '@alint-js/core@0.1.5'
+  - '@alint-js/agent-apeira@0.3.0'
+  - '@alint-js/cli@0.3.0'
+  - '@alint-js/config@0.3.0'
+  - '@alint-js/core@0.3.0'
+  - '@alint-js/plugin@0.3.0'
+  - '@alint-js/tools-fs@0.3.0'
   - '@xsai/generate-text@0.5.0-beta.7'
   - '@xsai/shared-chat@0.5.0-beta.7'
   - '@xsai/shared@0.5.0-beta.7'
   - '@xsai/tool@0.5.0-beta.7'
   - xsschema@0.5.0-beta.7
-  - '@alint-js/tools-fs@0.1.5'
   - '@apeira/core@0.0.7'
   - '@apeira/session@0.0.7'
   - '@apeira/storage@0.0.7'
@@ -23,21 +23,60 @@ minimumReleaseAgeExclude:
   - '@xsai/shared-stream@0.5.0-beta.7'
   - '@xsai/stream-text@0.5.0-beta.7'
   - apeira@0.0.7
-  - '@alint-js/plugin@0.1.5'
   - '@moeru/std@0.1.0-beta.20'
 
-catalog:
-  '@alint-js/agent-apeira': '^0.1.5'
-  '@alint-js/plugin': '^0.1.5'
-  '@alint-js/tools-fs': '^0.1.5'
-  '@alint-js/cli': ^0.1.5
-  '@alint-js/core': ^0.1.5
-  '@types/node': ^26.0.1
-  taze: ^19.14.1
-  tsdown: ^0.22.3
-  typescript: ^6.0.3
-  vite: ^8.1.0
+shellEmulator: true
 
+trustPolicy: no-downgrade
+
+packages:
+  - 'crates/auv-inspect-server/viewer'
+  - 'js/packages/*'
+  - 'js/packages/cli/npm/*'
+  - 'proto/sdk/js'
+
+catalog:
+  '@alint-js/agent-apeira': '^0.3.0'
+  '@alint-js/cli': ^0.3.0
+  '@alint-js/core': ^0.3.0
+  '@alint-js/plugin': '^0.3.0'
+  '@alint-js/tools-fs': '^0.3.0'
+  '@bufbuild/buf': 1.72.0
+  '@bufbuild/protobuf': 2.13.0
+  '@bufbuild/protoc-gen-es': 2.13.0
+  '@decimalturn/toml-patch': ^3.0.2
+  '@emnapi/core': ^1.11.2
+  '@emnapi/runtime': ^1.11.2
+  '@grpc/grpc-js': 1.14.4
+  '@guiiai/logg': ^1.2.11
+  '@hey-api/openapi-ts': ^0.99.0
+  '@moeru/eslint-config': ^0.1.0-beta.20
+  '@moeru/std': 0.1.0-beta.20
+  '@napi-rs/cli': ^3.8.6
+  '@pnpm/find-workspace-dir': 1000.1.5
+  '@types/node': ^26.0.1
+  '@vitest/browser-playwright': 4.1.10
+  bumpp: ^12.2.0
+  date-fns: 4.4.0
+  doctoc: ^2.5.0
+  emnapi: ^1.11.3
+  es-toolkit: ^1.50.0
+  eslint: ^10.8.1
+  eslint-plugin-oxlint: ^1.78.0
+  nano-staged: ^1.0.2
+  oxlint: ^1.78.0
+  playwright: 1.62.1
+  publint: ^0.3.23
+  simple-git-hooks: ^2.13.1
+
+  std-env: 4.2.0
+  taze: ^19.14.1
+  tinyexec: ^1.3.0
+  tsdown: ^0.22.3
+  tsx: ^4.23.12
+  typescript: ^6.0.3
+  unrun: ^0.3.1
+  vite: ^8.1.0
 catalogs:
   vitest:
     '@vitest/coverage-v8': ^4.1.9

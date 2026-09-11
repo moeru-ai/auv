@@ -1,8 +1,8 @@
+use auv_driver::InputActionResult;
 use auv_driver::geometry::Point;
-use auv_driver::{InputActionResult, WindowPoint};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BalatroPhase, BalatroState, ButtonTarget};
+use crate::model::{ActionPoint, BalatroPhase, BalatroState, ButtonTarget};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoreNextRoundConfirmationRequest {
@@ -70,11 +70,16 @@ pub enum StoreNextRoundConfirmation {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct StoreNextRoundAttempt {
+  pub selected_target: StoreNextRoundTarget,
+  pub point: ActionPoint,
+  pub delivery: InputActionResult,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StoreNextRoundResult {
   pub target: String,
-  pub selected_target: StoreNextRoundTarget,
-  pub window_point: WindowPoint,
-  pub delivery: InputActionResult,
+  pub attempts: Vec<StoreNextRoundAttempt>,
   pub confirmation: StoreNextRoundConfirmation,
 }
 
@@ -82,23 +87,21 @@ pub struct StoreNextRoundResult {
 #[derive(Serialize)]
 struct StoreNextRoundCompleted<'a> {
   target: &'a str,
-  selected_target: &'a StoreNextRoundTarget,
-  window_point: WindowPoint,
+  attempts: &'a [StoreNextRoundAttempt],
   confirmation: &'a StoreNextRoundConfirmation,
 }
 
 #[cfg(feature = "tracing")]
 impl auv_tracing::EventPayload for StoreNextRoundCompleted<'_> {
   const NAME: &'static str = "auv.balatro.store_next_round.completed";
-  const VERSION: u32 = 1;
+  const VERSION: u32 = 3;
 }
 
 #[cfg(feature = "tracing")]
 pub(crate) fn emit_store_next_round_completed(result: &StoreNextRoundResult) {
   auv_tracing::emit_event!(StoreNextRoundCompleted {
     target: &result.target,
-    selected_target: &result.selected_target,
-    window_point: result.window_point,
+    attempts: &result.attempts,
     confirmation: &result.confirmation,
   });
 }

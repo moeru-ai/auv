@@ -104,7 +104,8 @@ impl ReadinessReport {
     target_window_frame: Option<Rect>,
     selected_blocker: Option<String>,
   ) -> Self {
-    let selected_blocker = selected_blocker.or_else(|| first_blocker(&checks));
+    let selected_blocker = selected_blocker
+      .or_else(|| checks.iter().find(|check| check.status == ReadinessCheckStatus::Fail).and_then(|check| check.reason.clone()));
     Self {
       status: if selected_blocker.is_some() {
         ReadinessStatus::NotReady
@@ -130,10 +131,6 @@ impl ReadinessReport {
   pub fn is_ready(&self) -> bool {
     self.status == ReadinessStatus::Ready
   }
-}
-
-fn first_blocker(checks: &[ReadinessCheck]) -> Option<String> {
-  checks.iter().find(|check| check.status == ReadinessCheckStatus::Fail).and_then(|check| check.reason.clone())
 }
 
 #[cfg(test)]

@@ -27,6 +27,14 @@ const STATE_PRESSED: u32 = 1;
 const BUTTON_LEFT: i32 = 0x110;
 const BUTTON_RIGHT: i32 = 0x111;
 const BUTTON_MIDDLE: i32 = 0x112;
+// NOTICE(portal-pointer-settle): games may update hover hit-testing only once
+// per rendered frame. Let an absolute portal motion survive one 60 Hz frame
+// before pressing so the click is dispatched to the newly hovered control.
+const POINTER_SETTLE_DURATION: Duration = Duration::from_millis(20);
+// NOTICE(portal-game-click-pulse): some games sample mouse state once per
+// rendered frame. Hold the portal button across two 60 Hz frames so a delivered
+// click is observable even when press begins just after a frame boundary.
+const CLICK_PRESS_DURATION: Duration = Duration::from_millis(34);
 
 pub struct PortalInput;
 
@@ -127,14 +135,21 @@ impl InputSession {
     let (count, interval) = click_parts(&click)?;
     self.require_pointer()?;
     self.move_pointer_to(point)?;
+    std::thread::sleep(POINTER_SETTLE_DURATION);
     for index in 0..count {
       self.notify_pointer_button(MouseButton::Left, STATE_PRESSED)?;
+      std::thread::sleep(CLICK_PRESS_DURATION);
       self.notify_pointer_button(MouseButton::Left, STATE_RELEASED)?;
       if index + 1 < count && !interval.is_zero() {
         std::thread::sleep(interval);
       }
     }
     Ok(())
+  }
+
+  pub fn move_to(&mut self, point: Point) -> DriverResult<()> {
+    self.require_pointer()?;
+    self.move_pointer_to(point)
   }
 
   fn move_pointer_to(&self, point: Point) -> DriverResult<()> {
@@ -287,9 +302,7 @@ fn start_remote_desktop(connection: &Connection, session_handle: &OwnedObjectPat
   let proxy = portal_proxy(connection, REMOTE_DESKTOP_INTERFACE)?;
   let mut options = HashMap::new();
   options.insert("handle_token", Value::from(handle_token.as_str()));
-  proxy
-    .call_method("Start", &(session_handle, "", options))
-    .map_err(|error| backend(format!("failed to start remote desktop portal session: {error}")))?;
+  super::request::call_method(&proxy, REMOTE_DESKTOP_INTERFACE, "Start", &(session_handle, "", options))?;
   super::request::wait_response(&mut responses, REMOTE_DESKTOP_INTERFACE, "Start")
 }
 

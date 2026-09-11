@@ -13,13 +13,18 @@ homepage.workspace = true
 repository.workspace = true
 
 [features]
-default = []
-tracing = ["dep:auv-tracing"]
+default = ["tracing"]
+tracing = ["dep:auv-tracing", "dep:futures-executor"]
 card-corner-onnx = ["dep:auv-inference-ort"]
+cuda = ["auv-inference-ultralytics/cuda"]
 
 [dependencies]
+auv = { path = "../../../crates/auv" }
+auv-api-client = { path = "../../../crates/auv-api-client" }
+auv-api-proto = { path = "../../../crates/auv-api-proto" }
+auv-api-server = { path = "../../../crates/auv-api-server" }
 auv-file = { path = "../../../crates/auv-file" }
-auv-tracing = { path = "../../../crates/auv-tracing", optional = true }
+auv-tracing = { path = "../../../crates/auv-tracing", features = ["file-store"], optional = true }
 auv-driver = { path = "../../../crates/auv-driver" }
 auv-inference-common = { path = "../../../crates/auv-inference-common" }
 auv-inference-ort = { path = "../../../crates/auv-inference-ort", optional = true }
@@ -27,19 +32,33 @@ auv-inference-ultralytics = { path = "../../../crates/auv-inference-ultralytics"
 auv-task-object-detection = { path = "../../../crates/auv-task-object-detection", features = ["ultralytics"] }
 clap = { version = "4.5", features = ["derive"] }
 hf-hub = { version = "1.0.0-rc.1", features = ["blocking", "rustls-tls"] }
-image.workspace = true
-futures-util = { workspace = true, features = ["io"] }
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
-thiserror.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+futures-util = { version = "0.3", features = ["io"] }
+futures-executor = { version = "0.3", optional = true }
+prost = "0.14"
+prost-types = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.14", features = ["transport"] }
+tonic-health = "0.14"
+tonic-prost = "0.14"
+uuid = { version = "1", features = ["serde", "v7"] }
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-prost-build = "0.14"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../../../crates/auv-driver-macos" }
 
 [dev-dependencies]
+auv-daemon = { path = "../../../crates/auv-daemon" }
 auv-tracing = { path = "../../../crates/auv-tracing", features = ["memory-store"] }
-futures-executor = "0.3"
+tempfile = "3"
+tokio-util = "0.7"
 
 [[test]]
 name = "integrated"

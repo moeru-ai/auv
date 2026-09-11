@@ -683,7 +683,18 @@ pub fn run() -> ExitCode {
     }
   };
 
-  futures_executor::block_on(async move {
+  let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    Ok(runtime) => runtime,
+    Err(error) => {
+      eprintln!("error: failed to initialize the NetEase command runtime: {error}");
+      return ExitCode::from(1);
+    }
+  };
+
+  // The same command frontend serves daemon-free local operations and tonic
+  // clients over Unix sockets. A Tokio reactor is therefore part of the
+  // frontend boundary even when the selected command happens to stay local.
+  runtime.block_on(async move {
     let Some(store_root) = store_root else {
       return execute_command(command).await;
     };
@@ -719,7 +730,7 @@ async fn execute_command(command: Command) -> ExitCode {
     Command::PlaylistPlay(cmd) => run_playlist_play_command(cmd),
     Command::PlaylistPlayDailyRecommended(cmd) => run_daily_recommended(cmd),
     Command::PlaylistSongsLs(cmd) => run_songs_ls(cmd),
-    Command::NowPlaying(cmd) => run_now_playing(cmd),
+    Command::NowPlaying(cmd) => run_now_playing(cmd).await,
     Command::Control(cmd) => run_control(cmd),
     Command::Seek(cmd) => run_seek(cmd),
     Command::PlaybackStatus(cmd) => run_playback_status(cmd),
@@ -809,8 +820,12 @@ fn run_playlist_play_command(cmd: PlaylistPlayCommand) -> ExitCode {
 }
 
 #[cfg(target_os = "macos")]
-fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
-  let state = match auv_media_macos::now_playing() {
+async fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
+  let state = match inherited_remote_context() {
+    Some(context) => remote_now_playing(context, &cmd.app_id).await,
+    None => auv_media_macos::now_playing().map_err(|error| error.to_string()),
+  };
+  let state = match state {
     Ok(state) => state,
     Err(error) => {
       eprintln!("now-playing read failed: {error}");
@@ -823,9 +838,55 @@ fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_now_playing(_cmd: NowPlayingCommand) -> ExitCode {
+async fn run_now_playing(_cmd: NowPlayingCommand) -> ExitCode {
   eprintln!("now-playing is only available on macOS");
   ExitCode::from(1)
+}
+
+#[cfg(target_os = "macos")]
+fn inherited_remote_context() -> Option<auv::AuvContext> {
+  let context = auv::AuvContext::from_env().ok()?;
+  // A root invocation without Device/Run selection remains the ordinary local
+  // plugin path. Selecting a Device creates or attaches a Run before exec.
+  context.run_id.as_ref()?;
+  Some(context)
+}
+
+#[cfg(target_os = "macos")]
+async fn remote_now_playing(context: auv::AuvContext, app_id: &str) -> Result<auv_media_macos::NowPlayingState, String> {
+  let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let run = auv.run(Default::default()).await.map_err(|error| format!("resolve inherited NetEase Run failed: {error}"))?;
+  let runner = run
+    .runner(auv::client::RunnerOptions {
+      runner_class: "auv.app.netease_music".parse().expect("the NetEase RunnerClass ID is valid"),
+      ..Default::default()
+    })
+    .await
+    .map_err(|error| format!("construct NetEase Runner route failed: {error}"))?;
+  let transport = runner.extension_transport().map_err(|error| error.to_string())?;
+  let mut service = crate::api::v1::player_service_client::PlayerServiceClient::new(transport);
+  let result = service
+    .get_now_playing(crate::api::v1::GetNowPlayingRequest {
+      application_bundle_id: Some(app_id.to_string()),
+    })
+    .await
+    .map(tonic::Response::into_inner)
+    .map_err(|status| format!("NetEase Runner GetNowPlaying failed: {status}"));
+  let response = result?;
+  Ok(auv_media_macos::NowPlayingState {
+    present: response.present,
+    source_bundle_id: response.source_bundle_id,
+    title: response.title,
+    artist: response.artist,
+    album: response.album,
+    duration_seconds: response.duration_seconds,
+    elapsed_seconds: response.elapsed_seconds,
+    playback_rate: response.playback_rate,
+    is_playing: response.is_playing,
+    content_item_id: response.content_item_id,
+    supports_like: response.supports_like,
+    is_liked: response.is_liked,
+  })
 }
 
 #[cfg(target_os = "macos")]

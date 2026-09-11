@@ -17,7 +17,7 @@ impl ClientHandler for TestClient {
 #[tokio::test]
 async fn mcp_invoke_returns_the_direct_result_and_writes_trace_records() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   let store = tempfile::tempdir()?;
-  let server = auv_cli::mcp::McpServer::new(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).map_err(std::io::Error::other)?;
+  let server = auv_cli::commands::mcp::McpServer::new(PathBuf::from(env!("CARGO_MANIFEST_DIR"))).map_err(std::io::Error::other)?;
   let (server_transport, client_transport) = tokio::io::duplex(16_384);
   let server_handle = tokio::spawn(async move {
     let service = server.serve(server_transport).await?;

@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package auv.game.balatro.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/image/v1/image.proto";
+
+// BalatroDetectionService executes the object detectors owned by the Balatro
+// application Runner. Models are loaded lazily and cached by their complete
+// normalized specification for that Runner's lifetime.
+service BalatroDetectionService {
+  rpc DetectObjects(DetectObjectsRequest) returns (DetectObjectsResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+  // Sends one source frame once and runs independent cached detectors in
+  // parallel inside the Runner.
+  rpc DetectObjectsBatch(DetectObjectsBatchRequest) returns (DetectObjectsBatchResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+enum InferenceDeviceKind {
+  INFERENCE_DEVICE_KIND_UNSPECIFIED = 0;
+  INFERENCE_DEVICE_KIND_CPU = 1;
+  INFERENCE_DEVICE_KIND_CUDA = 2;
+  INFERENCE_DEVICE_KIND_CORE_ML = 3;
+  INFERENCE_DEVICE_KIND_DIRECT_ML = 4;
+  INFERENCE_DEVICE_KIND_OPEN_VINO = 5;
+  INFERENCE_DEVICE_KIND_XNNPACK = 6;
+  INFERENCE_DEVICE_KIND_TENSOR_RT = 7;
+  INFERENCE_DEVICE_KIND_ROCM = 8;
+}
+
+message InferenceDevice {
+  InferenceDeviceKind kind = 1;
+  // Required for CUDA, DirectML, TensorRT, and ROCm. It must be absent for
+  // devices that do not select an indexed provider.
+  optional uint32 index = 2;
+}
+
+message ObjectDetectorSpec {
+  // Caller-defined diagnostic identity; it is part of the cache key.
+  string detector_id = 1;
+  oneof source {
+    // Explicit path on the Runner host. A caller-local path is never implied.
+    string runner_path = 2;
+    HuggingFaceAsset hugging_face = 9;
+  }
+  optional uint32 input_size = 3;
+  optional float confidence_threshold = 4;
+  optional float iou_threshold = 5;
+  optional uint32 max_detections = 6;
+  InferenceDevice device = 7;
+  // Empty selects class labels embedded in the model.
+  repeated string class_names = 8;
+}
+
+message HuggingFaceAsset {
+  enum RepositoryKind {
+    REPOSITORY_KIND_UNSPECIFIED = 0;
+    REPOSITORY_KIND_MODEL = 1;
+    REPOSITORY_KIND_DATASET = 2;
+  }
+
+  RepositoryKind repository_kind = 1;
+  string owner = 2;
+  string repository = 3;
+  string filename = 4;
+}
+
+message DetectObjectsRequest {
+  ObjectDetectorSpec detector = 1;
+  auv.api.image.v1.RgbFrame frame = 2;
+}
+
+message DetectObjectsResponse {
+  ImageSize image_size = 1;
+  repeated Detection detections = 2;
+}
+
+message DetectObjectsBatchRequest {
+  repeated ObjectDetectorSpec detectors = 1;
+  auv.api.image.v1.RgbFrame frame = 2;
+}
+
+message DetectObjectsBatchResponse {
+  repeated DetectObjectsBatchResult results = 1;
+}
+
+message DetectObjectsBatchResult {
+  string detector_id = 1;
+  DetectObjectsResponse result = 2;
+}
+
+message ImageSize {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+message Detection {
+  uint32 class_id = 1;
+  string label = 2;
+  float confidence = 3;
+  BoundingBox bounding_box = 4;
+}
+
+message BoundingBox {
+  // Source-image pixel coordinates.
+  float x1 = 1;
+  float y1 = 2;
+  float x2 = 3;
+  float y2 = 4;
+}

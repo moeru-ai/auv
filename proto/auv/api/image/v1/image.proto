@@ -1,0 +1,20 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.image.v1;
+
+message RgbFrame {
+  uint32 width = 1;
+  uint32 height = 2;
+  // Tightly packed RGB8 pixels in row-major order. The exact byte length is
+  // width * height * 3.
+  bytes data = 3;
+}
+
+message RgbaFrame {
+  uint32 width = 1;
+  uint32 height = 2;
+  // Tightly packed RGBA8 pixels in row-major order. The exact byte length is
+  // width * height * 4.
+  bytes data = 3;
+}

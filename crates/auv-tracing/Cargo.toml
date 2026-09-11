@@ -4,11 +4,11 @@ autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
-description.workspace = true
+description = "Optional tracing & logging for AUV"
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -19,21 +19,21 @@ memory-store = []
 file-store = []
 
 [dependencies]
-futures-io.workspace = true
-futures-util = { workspace = true, features = ["io", "sink"] }
+futures-io = "0.3"
+futures-util = { version = "0.3", features = ["io", "sink"] }
 futures-channel = "0.3"
 futures-executor = { version = "0.3", features = ["thread-pool"] }
-hex.workspace = true
+hex = "0.4"
 pin-project = "1"
-serde.workspace = true
-serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
-sha2.workspace = true
-thiserror.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
+sha2 = "0.10"
+thiserror = "2"
 url = { version = "2", features = ["serde"] }
-uuid.workspace = true
+uuid = { version = "1", features = ["serde", "v7"] }
 
 [dev-dependencies]
-tempfile.workspace = true
+tempfile = "3"
 
 [[test]]
 name = "emission_pipeline_contract"

@@ -41,15 +41,25 @@ Create `crates/auv-netease-music/Cargo.toml`:
 ```toml
 [package]
 name = "auv-netease-music"
+
 version.workspace = true
+
 edition.workspace = true
+
 publish.workspace = true
+
 readme.workspace = true
+
 license.workspace = true
+
 authors.workspace = true
+
 description.workspace = true
+
 documentation.workspace = true
+
 homepage.workspace = true
+
 repository.workspace = true
 
 [[bin]]
@@ -62,8 +72,11 @@ path = "src/bin/auv-wyy.rs"
 
 [dependencies]
 auv-driver = { path = "../auv-driver" }
+
 serde.workspace = true
+
 serde_json.workspace = true
+
 image.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

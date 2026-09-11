@@ -1,0 +1,31 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.netease_music.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/netease_music/v1/scan.proto";
+
+// Opens and controls NetEase recommendation experiences.
+service RecommendationService {
+  rpc PlayDailyRecommended(PlayDailyRecommendedRequest) returns (PlayDailyRecommendedResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+// Semantic reference to NetEase's singleton Daily Recommended source.
+message DailyRecommendedRef {}
+
+message PlayDailyRecommendedRequest {
+  optional string application_bundle_id = 1;
+  optional uint32 max_top_scrolls = 2;
+  optional double top_scroll_amount = 3;
+  optional uint64 settle_milliseconds = 4;
+}
+
+message PlayDailyRecommendedResponse {
+  bool verified = 1;
+  repeated Diagnostic diagnostics = 2;
+  repeated string known_limits = 3;
+}

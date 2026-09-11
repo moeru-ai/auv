@@ -19,31 +19,47 @@ name = "auv"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+auv = { path = "../auv" }
 auv-driver = { path = "../auv-driver" }
 auv-driver-macos = { path = "../auv-driver-macos" }
+auv-cli-common = { path = "../auv-cli-common" }
 auv-cli-invoke = { path = "../auv-cli-invoke" }
+auv-media-macos = { path = "../auv-media-macos" }
+auv-api-server = { path = "../auv-api-server" }
+auv-daemon = { path = "../auv-daemon" }
 auv-api-proto = { path = "../auv-api-proto" }
 auv-tracing = { path = "../auv-tracing", features = ["file-store"] }
-serde.workspace = true
-serde_json.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+prost = "0.14"
+prost-types = "0.14"
+image = { version = "0.25", default-features = false, features = ["png"] }
+uuid = { version = "1", features = ["serde", "v7"] }
 schemars = "1.2.1"
-tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
-tokio-stream = "0.1"
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = "0.1"
+futures-core = "0.3"
 tonic = { version = "0.14", features = ["transport"] }
+tonic-health = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-graphics.workspace = true
-objc2-core-foundation.workspace = true
-swift-bridge-build.workspace = true
+objc2-core-graphics = { version = "0.3", features = ["CGWindow", "CGImage", "CGDataProvider", "CGGeometry"] }
+objc2-core-foundation = "0.3"
+swift-bridge-build = "0.1.59"
 
 [dev-dependencies]
+auv-api-client = { path = "../auv-api-client" }
 auv-api-proto = { path = "../auv-api-proto" }
 auv-tracing = { path = "../auv-tracing", features = ["file-store", "memory-store"] }
 axum = { version = "0.8", default-features = false }
-tempfile.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+rcgen = "0.14"
+tempfile = "3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }
 tonic = { version = "0.14", features = ["transport"] }
 tower = { version = "0.5", features = ["util"] }

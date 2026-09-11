@@ -1,14 +1,19 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use auv_driver_common::error::DriverResult;
+use futures_lite::{StreamExt, future};
+use serde::Serialize;
 use zbus::blocking::{Connection, Proxy};
 use zbus::message::Message;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::proxy::SignalStream;
+use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue, Value};
 
 use crate::error::backend;
 
 pub(super) const PORTAL_DESTINATION: &str = "org.freedesktop.portal.Desktop";
 pub(super) const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+const PORTAL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) fn session_connection() -> DriverResult<Connection> {
   Connection::session().map_err(|error| backend(format!("failed to connect to session bus: {error}")))
@@ -20,9 +25,29 @@ pub(super) fn portal_proxy<'a>(connection: &'a Connection, interface: &'static s
 }
 
 pub(super) fn interface_version(connection: &Connection, interface: &'static str) -> DriverResult<u32> {
-  portal_proxy(connection, interface)?
-    .get_property("version")
-    .map_err(|error| backend(format!("failed to read {interface}.version: {error}")))
+  let proxy = portal_proxy(connection, interface)?;
+  future::block_on(future::race(
+    async { proxy.inner().get_property("version").await.map_err(|error| backend(format!("failed to read {interface}.version: {error}"))) },
+    async {
+      async_io::Timer::after(PORTAL_RESPONSE_TIMEOUT).await;
+      Err(backend(format!("timed out after {}s reading {interface}.version", PORTAL_RESPONSE_TIMEOUT.as_secs())))
+    },
+  ))
+}
+
+pub(super) fn call_method<B>(proxy: &Proxy<'_>, interface: &'static str, method: &'static str, body: &B) -> DriverResult<Message>
+where
+  B: Serialize + DynamicType,
+{
+  future::block_on(future::race(
+    async {
+      proxy.inner().call_method(method, body).await.map_err(|error| backend(format!("failed to call {interface}.{method}: {error}")))
+    },
+    async {
+      async_io::Timer::after(PORTAL_RESPONSE_TIMEOUT).await;
+      Err(backend(format!("timed out after {}s calling {interface}.{method}", PORTAL_RESPONSE_TIMEOUT.as_secs())))
+    },
+  ))
 }
 
 pub(super) fn restore_token(results: &HashMap<String, OwnedValue>, interface: &'static str) -> DriverResult<Option<String>> {
@@ -46,7 +71,7 @@ pub(super) fn call_request(
   let proxy = portal_proxy(connection, interface)?;
   let mut options = options;
   options.insert("handle_token", Value::from(handle_token.as_str()));
-  proxy.call_method(method, &(options)).map_err(|error| backend(format!("failed to call {interface}.{method}: {error}")))?;
+  call_method(&proxy, interface, method, &(options))?;
   wait_response(&mut responses, interface, method)
 }
 
@@ -63,7 +88,7 @@ pub(super) fn session_request(
   let proxy = portal_proxy(connection, interface)?;
   let mut options = options;
   options.insert("handle_token", Value::from(handle_token.as_str()));
-  proxy.call_method(method, &(session_handle, options)).map_err(|error| backend(format!("failed to call {interface}.{method}: {error}")))?;
+  call_method(&proxy, interface, method, &(session_handle, options))?;
   wait_response(&mut responses, interface, method)
 }
 
@@ -76,19 +101,20 @@ pub(super) fn create_session(connection: &Connection, interface: &'static str) -
   let mut options = HashMap::new();
   options.insert("session_handle_token", Value::from(session_handle_token.as_str()));
   let results = call_request(connection, interface, "CreateSession", options)?;
-  if let Some(value) = results.get("session_handle") {
-    if let Ok(handle) = <&str>::try_from(value) {
-      return OwnedObjectPath::try_from(handle.to_string())
-        .map_err(|error| backend(format!("portal returned invalid session handle: {error}")));
-    }
+  if let Some(value) = results.get("session_handle")
+    && let Ok(handle) = <&str>::try_from(value)
+  {
+    return OwnedObjectPath::try_from(handle.to_string())
+      .map_err(|error| backend(format!("portal returned invalid session handle: {error}")));
   }
   expected_session_path(connection, &session_handle_token)
 }
 
 pub(super) fn close_session(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<()> {
-  let session = Proxy::new(connection, PORTAL_DESTINATION, session_handle.clone(), "org.freedesktop.portal.Session")
+  const SESSION_INTERFACE: &str = "org.freedesktop.portal.Session";
+  let session = Proxy::new(connection, PORTAL_DESTINATION, session_handle.clone(), SESSION_INTERFACE)
     .map_err(|error| backend(format!("failed to create portal session proxy: {error}")))?;
-  session.call_method("Close", &()).map_err(|error| backend(format!("failed to close portal session: {error}")))?;
+  call_method(&session, SESSION_INTERFACE, "Close", &())?;
   Ok(())
 }
 
@@ -100,20 +126,38 @@ pub(super) fn portal_token(prefix: &str) -> String {
   )
 }
 
-pub(super) fn response_signal<'a>(
-  request: &'a Proxy<'_>,
-  interface: &'static str,
-  method: &'static str,
-) -> DriverResult<impl Iterator<Item = Message> + 'a> {
-  request.receive_signal("Response").map_err(|error| backend(format!("failed to subscribe to {interface}.{method} response: {error}")))
+pub(super) fn response_signal<'a>(request: &'a Proxy<'_>, interface: &'static str, method: &'static str) -> DriverResult<SignalStream<'a>> {
+  future::block_on(future::race(
+    async {
+      request
+        .inner()
+        .receive_signal("Response")
+        .await
+        .map_err(|error| backend(format!("failed to subscribe to {interface}.{method} response: {error}")))
+    },
+    async {
+      async_io::Timer::after(PORTAL_RESPONSE_TIMEOUT).await;
+      Err(backend(format!("timed out after {}s subscribing to {interface}.{method} portal response", PORTAL_RESPONSE_TIMEOUT.as_secs())))
+    },
+  ))
 }
 
 pub(super) fn wait_response(
-  responses: &mut impl Iterator<Item = Message>,
+  responses: &mut SignalStream<'_>,
   interface: &'static str,
   method: &'static str,
 ) -> DriverResult<HashMap<String, OwnedValue>> {
-  let response = responses.next().ok_or_else(|| backend(format!("{interface}.{method} did not return a response")))?;
+  let response: Message = future::block_on(future::race(
+    async { responses.next().await.ok_or_else(|| backend(format!("{interface}.{method} did not return a response"))) },
+    async {
+      async_io::Timer::after(PORTAL_RESPONSE_TIMEOUT).await;
+      // TODO(portal-request-cancellation): do not synchronously call
+      // Request.Close here because a stalled portal can also stall that method
+      // reply. Add no-reply cancellation only when the D-Bus lifecycle owner
+      // can guarantee cleanup without weakening this deadline.
+      Err(backend(format!("timed out after {}s waiting for {interface}.{method} portal response", PORTAL_RESPONSE_TIMEOUT.as_secs())))
+    },
+  ))?;
   let (code, results): (u32, HashMap<String, OwnedValue>) =
     response.body().deserialize().map_err(|error| backend(format!("failed to decode {interface}.{method} response: {error}")))?;
   if code == 0 {

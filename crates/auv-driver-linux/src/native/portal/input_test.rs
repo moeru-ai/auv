@@ -78,6 +78,16 @@ fn output_mapping_rejects_ambiguous_logical_stream_rects() {
   assert_eq!(output_mapping(&display, &streams), None);
 }
 
+#[test]
+fn capture_pixel_scale_does_not_change_portal_logical_motion_coordinates() {
+  let display = display(Rect::new(0.0, 0.0, 2560.0, 1440.0), 1.0);
+  let stream = stream(86, Rect::new(0.0, 0.0, 2560.0, 1440.0));
+
+  let mapping = output_mapping(&display, &[stream]).expect("display maps to stream");
+
+  assert_eq!(mapping.to_motion_target(Point::new(1332.0, 913.0)), MotionTarget::absolute(86, Point::new(1332.0, 913.0)));
+}
+
 fn display(frame: Rect, scale_factor: f64) -> Display {
   Display {
     id: "display".to_string(),

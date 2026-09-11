@@ -2,7 +2,7 @@ export const noModNamesChecksInTestsInstructions = `
 You are reviewing Rust tests in the AUV project.
 
 Call report_findings exactly once. Report only tests that inspect Rust source text to assert the presence or absence of module, export, or type names. Use an empty findings array when there is no violation.
-`.trim();
+`.trim()
 
 export const noModNamesChecksInTestsPrompt = `
 Rust tests must not enforce implementation structure by searching source text for Rust module, export, function, constant, trait, or type names.
@@ -28,4 +28,4 @@ Do not report:
 Every finding suggestion must explain that Rust's compiler and public behavioral tests are the meaningful authorities for modules and types. Source-string checks of declaration or export names do not prove behavior, break on harmless refactors, and should be removed entirely. If a real public contract exists, recommend a typed test that imports and exercises that API; do not recommend another source-text or file-layout check.
 
 Report the test function declaration line once per independent offending test. Return no finding when identifiers are asserted as runtime data rather than searched in Rust source text.
-`.trim();
+`.trim()

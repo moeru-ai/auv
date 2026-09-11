@@ -1,4 +1,18 @@
-use super::*;
+use std::time::Duration;
+
+use super::{
+  Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, InputPreparationLease, Scroll,
+  ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, WindowClickStrategy,
+};
+
+#[test]
+fn dispatched_input_is_explicitly_unverified_on_the_wire() {
+  let result = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
+  let encoded = serde_json::to_value(&result).expect("serialize input action result");
+
+  assert!(!result.verified);
+  assert_eq!(encoded["verified"], false);
+}
 
 #[test]
 fn fallback_reason_is_derived_from_attempts_and_not_duplicated_on_the_wire() {
@@ -8,6 +22,7 @@ fn fallback_reason_is_derived_from_attempts_and_not_duplicated_on_the_wire() {
       InputAttempt::failure(InputDeliveryPath::WindowTargetedMouse, "background delivery failed"),
       InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
     ],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::Temporary,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -22,6 +37,7 @@ fn input_action_result_rejects_success_on_a_path_other_than_the_selected_path() 
   let result = InputActionResult {
     selected_path: InputDeliveryPath::WindowTargetedMouse,
     attempts: vec![InputAttempt::success(InputDeliveryPath::AxPress)],
+    verified: false,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::None,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -194,4 +210,22 @@ fn input_preparation_lease_tracks_restoration() {
   lease.mark_restored();
 
   assert!(lease.is_restored());
+}
+
+#[test]
+fn legacy_key_options_convert_to_explicit_combination_without_losing_plus_key() {
+  let combination: super::PressKeysOptions = super::KeyPressOptions {
+    key: "cmd+shift+p".into(),
+    settle: Duration::from_millis(4),
+  }
+  .into();
+  assert_eq!(combination.keys, ["cmd", "shift", "p"]);
+  assert_eq!(combination.count, 1);
+  assert_eq!(combination.settle, Duration::from_millis(4));
+  let plus: super::PressKeysOptions = super::KeyPressOptions {
+    key: "+".into(),
+    ..Default::default()
+  }
+  .into();
+  assert_eq!(plus.keys, ["+"]);
 }

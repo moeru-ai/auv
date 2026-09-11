@@ -2080,9 +2080,16 @@ git commit -m "feat: aggregate app workflow runs"
 Modify `Cargo.toml`:
 
 ```toml
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
-axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tokio = { version = "1", features = [
+  "macros",
+  "rt-multi-thread",
+  "sync"
+] }
+axum = { version = "0.8", features = [ "ws" ] }
+tower-http = { version = "0.6", features = [
+  "cors",
+  "fs"
+] }
 ```
 
 Add a broadcast-backed sink in `src/recording.rs`. It should implement the same `RunEventSink` trait as `MemoryRunEventSink`, so runtime code publishes to a sink and the inspect server decides whether that sink is memory-only or WebSocket-capable.

@@ -1,0 +1,39 @@
+{
+  "name": "@auv-js/cli-linux-x64-gnu",
+  "version": "0.0.16",
+  "cpu": [
+    "x64"
+  ],
+  "description": "NAPI bindings and the platform-matched AUV command-line executable",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moeru-ai/auv.git",
+    "directory": "js/packages/cli"
+  },
+  "keywords": [
+    "auv",
+    "automation",
+    "cli",
+    "electron",
+    "napi-rs"
+  ],
+  "main": "auv-binding.linux-x64-gnu.node",
+  "files": [
+    "auv-binding.linux-x64-gnu.node",
+    "bin/auv"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

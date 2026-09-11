@@ -1,14 +1,13 @@
 version: v2
 modules:
   - path: .
+    excludes:
+      - vendor
+deps:
+  - buf.build/googleapis/googleapis
 lint:
   use:
     - STANDARD
-  except:
-    # AUV keeps proto files under versioned directories while using
-    # `<domain>.v1` package suffixes.
-    - PACKAGE_DIRECTORY_MATCH
-    - PACKAGE_VERSION_SUFFIX
 breaking:
   use:
     - FILE

@@ -18,4 +18,4 @@ Report only concrete violations demonstrated by files in the inspected crate. Us
 - view-parser-platform: platform-specific view parser acquisition, adaptation, or UI interpretation is mixed into a platform-neutral parser module.
 
 Do not report naming taste, file size by itself, test code, generated code, platform-neutral domain logic, or a cohesive private helper that supports its owning platform workflow. When evidence is incomplete, submit no finding.
-`.trim();
+`.trim()

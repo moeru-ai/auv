@@ -1,7 +1,7 @@
-import { defineRule } from "@alint-js/plugin";
+import { defineRule } from '@alint-js/plugin'
 
-import { judgeSource } from "../../agents/judge";
-import { privateSchemaToolkitInstructions, privateSchemaToolkitPrompt } from "./prompt";
+import { judgeSource } from '../../agents/judge'
+import { privateSchemaToolkitInstructions, privateSchemaToolkitPrompt } from './prompt'
 
 export const privateSchemaToolkitRule = defineRule({
   create: ctx => ({
@@ -24,10 +24,10 @@ export const privateSchemaToolkitRule = defineRule({
       const findings = await judgeSource({
         context: ctx,
         instructions: privateSchemaToolkitInstructions,
-        operation: "private-schema-toolkit-review",
+        operation: 'private-schema-toolkit-review',
         prompt: `${privateSchemaToolkitPrompt}\n\nFile path:\n${target.file.path}`,
         source: ctx.src.getText(await ctx.src.readFile(target.file)),
-      });
+      })
 
       for (const finding of findings) {
         ctx.report({
@@ -43,8 +43,8 @@ export const privateSchemaToolkitRule = defineRule({
             },
           },
           message: finding.message,
-        });
+        })
       }
     },
   }),
-});
+})

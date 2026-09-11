@@ -1,0 +1,1205 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "auv/api/daemon/v1/resource.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "DeviceService"
+    },
+    {
+      "name": "DiscoveryService",
+      "description": "DiscoveryService describes the AUV-owned REST and gRPC API namespace."
+    },
+    {
+      "name": "HealthService",
+      "description": "HealthService reports whether this daemon listener can serve API calls."
+    },
+    {
+      "name": "PairingService",
+      "description": "PairingService manages bootstrap tokens and paired Device credentials."
+    },
+    {
+      "name": "RunService"
+    },
+    {
+      "name": "RunnerService"
+    },
+    {
+      "name": "RunnerClassService"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/apis": {
+      "get": {
+        "operationId": "DiscoveryService_ListApiNamespaces",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListApiNamespacesResponse"
+            }
+          }
+        },
+        "tags": [
+          "DiscoveryService"
+        ]
+      }
+    },
+    "/apis/auv/daemon/v1/devices": {
+      "get": {
+        "operationId": "DeviceService_ListDevices",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListDevicesResponse"
+            }
+          }
+        },
+        "tags": [
+          "DeviceService"
+        ]
+      }
+    },
+    "/apis/auv/daemon/v1/devices:get": {
+      "post": {
+        "summary": "NOTICE(tonic-rest-path): the generator only supports one configured\nnested-message wrapper type, while AUV has distinct typed resource refs.\nKeep the typed request and use an action body until arbitrary nested path\nparameters are supported.",
+        "operationId": "DeviceService_GetDevice",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetDeviceResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1GetDeviceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "DeviceService"
+        ]
+      }
+    },
+    "/apis/auv/daemon/v1/pairing/credentials/revoke": {
+      "post": {
+        "operationId": "PairingService_RevokeDeviceCredential",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RevokeDeviceCredentialResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1RevokeDeviceCredentialRequest"
+            }
+          }
+        ],
+        "tags": [
+          "PairingService"
+        ]
+      }
+    },
+    "/apis/auv/daemon/v1/pairing/devices": {
+      "post": {
+        "operationId": "PairingService_PairDevice",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PairDeviceResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1PairDeviceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "PairingService"
+        ]
+      }
+    },
+    "/apis/auv/daemon/v1/pairing/devices/enabled": {
+      "post": {
+        "operationId": "PairingService_SetPairedDeviceEnabled",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetPairedDeviceEnabledResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SetPairedDeviceEnabledRequest"
+            }
+          }
+        ],
+        "tags": [
+          "PairingService"
+        ]
+      }
+    },
+    "/apis/auv/daemon/v1/pairing/devices/unpair": {
+      "post": {
+        "operationId": "PairingService_UnpairDevice",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UnpairDeviceResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1UnpairDeviceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "PairingService"
+        ]
+      }
+    },
+    "/apis/auv/daemon/v1/pairing/tokens": {
+      "post": {
+        "operationId": "PairingService_CreatePairingToken",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreatePairingTokenResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreatePairingTokenRequest"
+            }
+          }
+        ],
+        "tags": [
+          "PairingService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runnerclasses:get": {
+      "post": {
+        "operationId": "RunnerClassService_GetRunnerClass",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRunnerClassResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1GetRunnerClassRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunnerClassService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runnerclasses:list": {
+      "post": {
+        "summary": "The optional DeviceRef cannot be represented by Axum's flat query\nextractor without losing the typed request boundary.",
+        "operationId": "RunnerClassService_ListRunnerClasses",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListRunnerClassesResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1ListRunnerClassesRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunnerClassService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runners": {
+      "get": {
+        "operationId": "RunnerService_ListRunners",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListRunnersResponse"
+            }
+          }
+        },
+        "tags": [
+          "RunnerService"
+        ]
+      },
+      "post": {
+        "operationId": "RunnerService_CreateRunner",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateRunnerResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateRunnerRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunnerService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runners:delete": {
+      "post": {
+        "operationId": "RunnerService_DeleteRunner",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteRunnerResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1DeleteRunnerRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunnerService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runners:get": {
+      "post": {
+        "summary": "NOTICE(tonic-rest-path): typed RunnerRef path projection is deferred until\nthe generator supports arbitrary nested resource-reference messages.",
+        "operationId": "RunnerService_GetRunner",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRunnerResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1GetRunnerRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunnerService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runs": {
+      "get": {
+        "operationId": "RunService_ListRuns",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListRunsResponse"
+            }
+          }
+        },
+        "tags": [
+          "RunService"
+        ]
+      },
+      "post": {
+        "operationId": "RunService_CreateRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateRunResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateRunRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runs:get": {
+      "post": {
+        "summary": "NOTICE(tonic-rest-path): typed RunRef path projection is deferred until\nthe generator supports arbitrary nested resource-reference messages.",
+        "operationId": "RunService_GetRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRunResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1GetRunRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunService"
+        ]
+      }
+    },
+    "/apis/auv/runtime/v1/runs:stop": {
+      "post": {
+        "operationId": "RunService_StopRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StopRunResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1StopRunRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RunService"
+        ]
+      }
+    },
+    "/apis/{namespace}": {
+      "get": {
+        "operationId": "DiscoveryService_GetApiNamespace",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetApiNamespaceResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DiscoveryService"
+        ]
+      }
+    },
+    "/apis/{namespace}/{group}/{version}": {
+      "get": {
+        "operationId": "DiscoveryService_GetApiGroupVersion",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetApiGroupVersionResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "group",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DiscoveryService"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "HealthService_Check",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CheckResponse"
+            }
+          }
+        },
+        "tags": [
+          "HealthService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "v1ApiGroup": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "v1ApiNamespace": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Stable first path segment below /apis."
+        }
+      }
+    },
+    "v1ApiResource": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1ApiResourceOperation"
+          }
+        }
+      }
+    },
+    "v1ApiResourceOperation": {
+      "type": "string",
+      "enum": [
+        "API_RESOURCE_OPERATION_UNSPECIFIED",
+        "API_RESOURCE_OPERATION_LIST",
+        "API_RESOURCE_OPERATION_GET",
+        "API_RESOURCE_OPERATION_CREATE",
+        "API_RESOURCE_OPERATION_DELETE"
+      ],
+      "default": "API_RESOURCE_OPERATION_UNSPECIFIED",
+      "description": " - API_RESOURCE_OPERATION_DELETE: TODO(watch-v1): add WATCH only after collection resource versions,\n retention, reconnect, and stale-version behavior have an approved owner."
+    },
+    "v1CheckResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/definitions/v1HealthStatus"
+        }
+      }
+    },
+    "v1CreatePairingTokenRequest": {
+      "type": "object",
+      "properties": {
+        "ttl": {
+          "type": "string",
+          "description": "Omit ttl to create a token with no expiry. A token remains one-time even\nwhen it has no deadline."
+        }
+      }
+    },
+    "v1CreatePairingTokenResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "Returned once. The daemon persists only a digest."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Absent when the caller did not request a TTL."
+        }
+      }
+    },
+    "v1CreateRunRequest": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1DeviceRef"
+          },
+          "description": "Empty selects the implicit local Device."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "v1CreateRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1Run"
+        }
+      }
+    },
+    "v1CreateRunnerRequest": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/definitions/v1DeviceRef",
+          "description": "Absence selects the implicit local Device."
+        },
+        "runnerClass": {
+          "$ref": "#/definitions/v1RunnerClassRef"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "lifecycle": {
+          "$ref": "#/definitions/v1RunnerLifecycle"
+        },
+        "idleTimeout": {
+          "type": "string",
+          "description": "Required only for RUNNER_LIFECYCLE_UNLESS_IDLE."
+        }
+      }
+    },
+    "v1CreateRunnerResponse": {
+      "type": "object",
+      "properties": {
+        "runner": {
+          "$ref": "#/definitions/v1Runner"
+        }
+      }
+    },
+    "v1DeleteRunnerRequest": {
+      "type": "object",
+      "properties": {
+        "runner": {
+          "$ref": "#/definitions/v1RunnerRef"
+        },
+        "gracePeriod": {
+          "type": "string",
+          "description": "When absent, graceful draining waits without a deadline. A present zero\nduration performs an immediate deadline check."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Immediately terminates a daemon-owned executable. Remote gRPC endpoints\nare never terminated by deleting their local Runner resource."
+        }
+      }
+    },
+    "v1DeleteRunnerResponse": {
+      "type": "object",
+      "properties": {
+        "runner": {
+          "$ref": "#/definitions/v1Runner"
+        }
+      }
+    },
+    "v1Device": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/v1DeviceRef"
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional, non-unique display name."
+        },
+        "platform": {
+          "$ref": "#/definitions/v1DevicePlatform"
+        },
+        "local": {
+          "type": "boolean"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "v1DevicePlatform": {
+      "type": "string",
+      "enum": [
+        "DEVICE_PLATFORM_UNSPECIFIED",
+        "DEVICE_PLATFORM_LINUX",
+        "DEVICE_PLATFORM_MACOS",
+        "DEVICE_PLATFORM_WINDOWS"
+      ],
+      "default": "DEVICE_PLATFORM_UNSPECIFIED"
+    },
+    "v1DeviceRef": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1GetApiGroupVersionResponse": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ApiResource"
+          }
+        }
+      }
+    },
+    "v1GetApiNamespaceResponse": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ApiGroup"
+          }
+        }
+      }
+    },
+    "v1GetDeviceRequest": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/definitions/v1DeviceRef"
+        }
+      }
+    },
+    "v1GetDeviceResponse": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/definitions/v1Device"
+        }
+      }
+    },
+    "v1GetRunRequest": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1RunRef"
+        }
+      }
+    },
+    "v1GetRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1Run"
+        }
+      }
+    },
+    "v1GetRunnerClassRequest": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/definitions/v1DeviceRef",
+          "description": "Absence selects the implicit local Device."
+        },
+        "runnerClass": {
+          "$ref": "#/definitions/v1RunnerClassRef"
+        }
+      }
+    },
+    "v1GetRunnerClassResponse": {
+      "type": "object",
+      "properties": {
+        "runnerClass": {
+          "$ref": "#/definitions/v1RunnerClass"
+        }
+      }
+    },
+    "v1GetRunnerRequest": {
+      "type": "object",
+      "properties": {
+        "runner": {
+          "$ref": "#/definitions/v1RunnerRef"
+        }
+      }
+    },
+    "v1GetRunnerResponse": {
+      "type": "object",
+      "properties": {
+        "runner": {
+          "$ref": "#/definitions/v1Runner"
+        }
+      }
+    },
+    "v1HealthStatus": {
+      "type": "string",
+      "enum": [
+        "HEALTH_STATUS_UNSPECIFIED",
+        "HEALTH_STATUS_SERVING"
+      ],
+      "default": "HEALTH_STATUS_UNSPECIFIED",
+      "description": "HealthStatus describes the daemon's ability to serve API calls.\n\n - HEALTH_STATUS_SERVING: TODO(health-detail-v1): degraded/component states are deferred because the\n daemon has no runtime-owned component status producer yet; add them when\n that state has an owner and a concrete caller."
+    },
+    "v1ListApiNamespacesResponse": {
+      "type": "object",
+      "properties": {
+        "namespaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ApiNamespace"
+          }
+        }
+      }
+    },
+    "v1ListDevicesResponse": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Device"
+          }
+        }
+      }
+    },
+    "v1ListRunnerClassesRequest": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/definitions/v1DeviceRef",
+          "description": "Absence selects the implicit local Device."
+        }
+      }
+    },
+    "v1ListRunnerClassesResponse": {
+      "type": "object",
+      "properties": {
+        "runnerClasses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1RunnerClass"
+          }
+        }
+      }
+    },
+    "v1ListRunnersResponse": {
+      "type": "object",
+      "properties": {
+        "runners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Runner"
+          }
+        }
+      }
+    },
+    "v1ListRunsResponse": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Run"
+          }
+        }
+      }
+    },
+    "v1PairDeviceRequest": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "v1PairDeviceResponse": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "type": "string"
+        },
+        "deviceCredential": {
+          "type": "string",
+          "description": "Opaque long-lived bearer returned once. The daemon persists only a digest."
+        }
+      }
+    },
+    "v1RevokeDeviceCredentialRequest": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1RevokeDeviceCredentialResponse": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1Run": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/v1RunRef"
+        },
+        "phase": {
+          "$ref": "#/definitions/v1RunPhase"
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1DeviceRef"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "v1RunOutcome": {
+      "type": "string",
+      "enum": [
+        "RUN_OUTCOME_UNSPECIFIED",
+        "RUN_OUTCOME_SUCCEEDED",
+        "RUN_OUTCOME_FAILED",
+        "RUN_OUTCOME_CANCELED"
+      ],
+      "default": "RUN_OUTCOME_UNSPECIFIED"
+    },
+    "v1RunPhase": {
+      "type": "string",
+      "enum": [
+        "RUN_PHASE_UNSPECIFIED",
+        "RUN_PHASE_PENDING",
+        "RUN_PHASE_RUNNING",
+        "RUN_PHASE_SUCCEEDED",
+        "RUN_PHASE_FAILED",
+        "RUN_PHASE_CANCELED"
+      ],
+      "default": "RUN_PHASE_UNSPECIFIED"
+    },
+    "v1RunRef": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1Runner": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/v1RunnerRef"
+        },
+        "device": {
+          "$ref": "#/definitions/v1DeviceRef"
+        },
+        "runnerClass": {
+          "$ref": "#/definitions/v1RunnerClassRef"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "lifecycle": {
+          "$ref": "#/definitions/v1RunnerLifecycle"
+        },
+        "idleTimeout": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/definitions/v1RunnerPhase"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "processId": {
+          "type": "integer",
+          "format": "int64",
+          "description": "OS process identifier for daemon-owned process Runners. This is\ndiagnostic evidence, not a stable resource identity."
+        },
+        "activeOperations": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "idleDeadline": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "v1RunnerClass": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/v1RunnerClassRef"
+        },
+        "device": {
+          "$ref": "#/definitions/v1DeviceRef"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "supportedLifecycles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1RunnerLifecycle"
+          }
+        },
+        "available": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1RunnerClassRef": {
+      "type": "object",
+      "properties": {
+        "runnerClass": {
+          "type": "string"
+        }
+      }
+    },
+    "v1RunnerLifecycle": {
+      "type": "string",
+      "enum": [
+        "RUNNER_LIFECYCLE_UNSPECIFIED",
+        "RUNNER_LIFECYCLE_EPHEMERAL",
+        "RUNNER_LIFECYCLE_UNLESS_IDLE",
+        "RUNNER_LIFECYCLE_UNLESS_SHUTDOWN"
+      ],
+      "default": "RUNNER_LIFECYCLE_UNSPECIFIED"
+    },
+    "v1RunnerPhase": {
+      "type": "string",
+      "enum": [
+        "RUNNER_PHASE_UNSPECIFIED",
+        "RUNNER_PHASE_STARTING",
+        "RUNNER_PHASE_READY",
+        "RUNNER_PHASE_DRAINING",
+        "RUNNER_PHASE_STOPPED",
+        "RUNNER_PHASE_FAILED"
+      ],
+      "default": "RUNNER_PHASE_UNSPECIFIED"
+    },
+    "v1RunnerRef": {
+      "type": "object",
+      "properties": {
+        "runnerId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1SetPairedDeviceEnabledRequest": {
+      "type": "object",
+      "properties": {
+        "deviceSelector": {
+          "type": "string",
+          "description": "Stable paired Device ID or an unambiguous label."
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1SetPairedDeviceEnabledResponse": {
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1StopRunRequest": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1RunRef"
+        },
+        "outcome": {
+          "$ref": "#/definitions/v1RunOutcome"
+        }
+      }
+    },
+    "v1StopRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1Run"
+        }
+      }
+    },
+    "v1UnpairDeviceRequest": {
+      "type": "object",
+      "properties": {
+        "deviceSelector": {
+          "type": "string",
+          "description": "Stable paired Device ID or an unambiguous label."
+        }
+      }
+    },
+    "v1UnpairDeviceResponse": {
+      "type": "object",
+      "properties": {
+        "removed": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

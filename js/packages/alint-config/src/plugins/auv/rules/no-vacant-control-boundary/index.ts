@@ -1,2 +1,2 @@
-export { vacantControlBoundaryPrompt } from "./prompt";
-export { vacantControlBoundaryRule } from "./rule";
+export { vacantControlBoundaryPrompt } from './prompt'
+export { vacantControlBoundaryRule } from './rule'

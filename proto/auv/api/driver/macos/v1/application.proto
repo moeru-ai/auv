@@ -1,0 +1,50 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.macos.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "google/protobuf/duration.proto";
+
+// Controls application-level macOS state that is not scoped to one Window.
+service ApplicationService {
+  rpc ActivateBundleId(ActivateBundleIdRequest) returns (ActivateBundleIdResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    // Foreground activation changes the focus context used by later input.
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+message ActivateBundleIdRequest {
+  reserved 1;
+  reserved "lease";
+  string bundle_id = 2;
+  // Absence uses the owning app.activate default of 150 ms.
+  google.protobuf.Duration settle = 3;
+}
+
+message ActivateBundleIdResponse {
+  string requested_bundle_id = 1;
+  ApplicationActivationVerification verification = 2;
+}
+
+// Exact wire projection of auv_driver::ApplicationActivationVerification.
+message ApplicationActivationVerification {
+  oneof verification {
+    VerifiedForeground verified_foreground = 1;
+    ForegroundMismatch foreground_mismatch = 2;
+    VerificationUnavailable unavailable = 3;
+  }
+}
+
+message VerifiedForeground {
+  string observed_bundle_id = 1;
+}
+
+message ForegroundMismatch {
+  string observed_bundle_id = 1;
+}
+
+message VerificationUnavailable {
+  string reason = 1;
+}

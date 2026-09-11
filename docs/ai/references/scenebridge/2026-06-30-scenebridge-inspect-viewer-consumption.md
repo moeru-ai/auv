@@ -111,7 +111,7 @@ builder wrapper.
 
 ```javascript
 if (!merged.view_parser_summary && previous && previous.view_parser_summary) {
-  merged.view_parser_summary = previous.view_parser_summary;
+  merged.view_parser_summary = previous.view_parser_summary
 }
 ```
 

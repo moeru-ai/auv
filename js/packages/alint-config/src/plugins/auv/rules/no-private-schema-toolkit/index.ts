@@ -1,2 +1,2 @@
-export { privateSchemaToolkitPrompt } from "./prompt";
-export { privateSchemaToolkitRule } from "./rule";
+export { privateSchemaToolkitPrompt } from './prompt'
+export { privateSchemaToolkitRule } from './rule'

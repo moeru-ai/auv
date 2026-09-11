@@ -1,0 +1,105 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.netease_music.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+import "auv/netease_music/v1/player.proto";
+import "auv/netease_music/v1/scan.proto";
+
+// Discovers and opens playlists from the NetEase sidebar.
+service PlaylistService {
+  // Scanning may scroll the playlist sidebar. On success, the stream emits
+  // zero or more item/diagnostic events followed by exactly one completed
+  // event. RPC failures terminate the stream without a completed event.
+  rpc ListPlaylists(ListPlaylistsRequest) returns (stream ListPlaylistsStreamResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  rpc SelectPlaylist(SelectPlaylistRequest) returns (SelectPlaylistResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
+  rpc PlayPlaylist(PlayPlaylistRequest) returns (PlayPlaylistResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+}
+
+enum PlaylistSection {
+  PLAYLIST_SECTION_UNSPECIFIED = 0;
+  PLAYLIST_SECTION_CREATED = 1;
+  PLAYLIST_SECTION_FAVORITE = 2;
+}
+
+message ListPlaylistsRequest {
+  optional ScanOptions scan = 1;
+  optional string query = 2;
+}
+
+// Identifies a playlist semantically across scans. Consumers must resolve the
+// label again inside the named section instead of reusing parse-scoped ids.
+message PlaylistRef {
+  string label = 1;
+  PlaylistSection section = 2;
+}
+
+message Playlist {
+  PlaylistRef reference = 1;
+  // These ids describe evidence from this scan only. They are not valid
+  // PlaylistRef replacements and must not be replayed across scans.
+  string id = 2;
+  optional string candidate_id = 3;
+  optional string anchor_id = 4;
+}
+
+message ListPlaylistsStreamResponse {
+  oneof event {
+    ListPlaylistsItem item = 1;
+    ListPlaylistsDiagnostic diagnostic = 2;
+    ListPlaylistsCompleted completed = 3;
+  }
+}
+
+message ListPlaylistsItem {
+  Playlist playlist = 1;
+}
+
+message ListPlaylistsDiagnostic {
+  Diagnostic diagnostic = 1;
+}
+
+message ListPlaylistsCompleted {
+  uint32 items_emitted = 1;
+  repeated string known_limits = 2;
+  uint32 observations = 3;
+}
+
+message SelectPlaylistRequest {
+  PlaylistRef playlist = 1;
+  optional ScanOptions scan = 2;
+}
+
+message SelectPlaylistResponse {
+  Playlist playlist = 1;
+  bool verified = 2;
+  optional string observed_title = 3;
+  repeated Diagnostic diagnostics = 4;
+  repeated string known_limits = 5;
+}
+
+message PlayPlaylistRequest {
+  PlaylistRef playlist = 1;
+  optional ScanOptions scan = 2;
+}
+
+message PlayPlaylistResponse {
+  Playlist playlist = 1;
+  bool verified = 2;
+  PlaybackControlState control_state = 3;
+  optional string observed_bottom_text = 4;
+  repeated Diagnostic diagnostics = 5;
+  repeated string known_limits = 6;
+}

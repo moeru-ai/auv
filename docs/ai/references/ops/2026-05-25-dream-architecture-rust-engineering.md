@@ -769,7 +769,7 @@ Scope:
 
 It should be an adapter over `auv-runtime`, not a replacement runtime.
 
-### `auv-js`
+### `@auv-js/sdk`
 
 Purpose:
 
@@ -821,7 +821,7 @@ auv-core
        <- auv-driver-fixture
        <- auv-driver-macos
        <- auv-webdriver
-       <- auv-js
+       <- @auv-js/sdk
        <- auv-cli
 ```
 
@@ -1150,19 +1150,19 @@ stringly CLI wrapper.
 Dream shape:
 
 ```javascript
-const auv = await Auv.connect({ projectRoot: "." });
+const auv = await Auv.connect({ projectRoot: '.' })
 const session = await auv.openSession({
-  target: { app: "com.apple.Music" },
-  capabilities: ["screen.capture", "ocr.text", "input.pointer"]
-});
+  capabilities: ['screen.capture', 'ocr.text', 'input.pointer'],
+  target: { app: 'com.apple.Music' }
+})
 
-const obs = await session.observe({ scope: "window" });
-const tree = await obs.virtualTree();
-const row = await tree.find({ role: "row", text: /song name/i });
-await row.click();
+const obs = await session.observe({ scope: 'window' })
+const tree = await obs.virtualTree()
+const row = await tree.find({ role: 'row', text: /song name/i })
+await row.click()
 
-const run = await session.lastRun();
-console.log(await run.summary());
+const run = await session.lastRun()
+console.log(await run.summary())
 ```
 
 Binding rules:

@@ -1,14 +1,13 @@
-import config from '@auv/alint-config'
+import config from '@auv-js/alint-config'
 
 export default [
   {
-    name: 'auv/gitignore',
     ignore: {
       gitignore: true,
     },
+    name: 'auv/gitignore',
   },
   {
-    name: 'auv/global-ignores',
     ignores: [
       '**/.git/**',
       '**/.hg/**',
@@ -28,8 +27,10 @@ export default [
       '**/Cargo.lock',
       '**/node_modules/**',
       '**/pnpm-lock.yaml',
+      '**/src/gen/**',
       '**/target/**',
     ],
+    name: 'auv/global-ignores',
   },
   config,
 ]

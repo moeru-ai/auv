@@ -2,7 +2,7 @@ export const noSourceFilesCompareInTestsInstructions = `
 You are reviewing Rust tests in the AUV project.
 
 Call report_findings exactly once. Report only tests that inspect implementation source files or source-tree layout instead of exercising public behavior. Use an empty findings array when there is no violation.
-`.trim();
+`.trim()
 
 export const noSourceFilesCompareInTestsPrompt = `
 Rust tests must not treat implementation source files or the source tree as runtime data. This includes Rust tests that inspect Rust, TypeScript, JavaScript, Swift, Java, or other production source text.
@@ -28,4 +28,4 @@ Do not report:
 Every finding suggestion must explain that Rust tests should validate public, typed, observable behavior. Source-file existence, enumeration, and list comparisons are meaningless as behavioral evidence and make refactors fail for layout-only reasons. Recommend deleting the test when it has no behavioral contract, or replacing it with a test through a stable public API when such behavior exists.
 
 Report the test function declaration line, not every individual path literal. If a file contains several independent offending test functions, report each function once. Return no finding when the source-file access is not part of a test assertion.
-`.trim();
+`.trim()

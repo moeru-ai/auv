@@ -1,0 +1,34 @@
+// EXPERIMENTAL / UNSTABLE
+syntax = "proto3";
+
+package auv.api.driver.macos.v1;
+
+import "auv/api/annotations/v1/annotations.proto";
+
+// Reports permission state observed by the macOS Driver backend. Although this
+// RPC does not mutate AUV state, an OS probe may trigger platform consent UI.
+service PermissionService {
+  rpc ProbePermissions(ProbePermissionsRequest) returns (ProbePermissionsResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_READ_ONLY;
+  }
+}
+
+enum PermissionStatus {
+  PERMISSION_STATUS_UNSPECIFIED = 0;
+  PERMISSION_STATUS_GRANTED = 1;
+  PERMISSION_STATUS_MISSING = 2;
+  PERMISSION_STATUS_UNKNOWN = 3;
+}
+
+message ProbePermissionsRequest {
+  reserved 1;
+  reserved "lease";
+}
+
+message ProbePermissionsResponse {
+  PermissionStatus screen_recording = 1;
+  PermissionStatus screen_capture_kit = 2;
+  PermissionStatus accessibility = 3;
+  PermissionStatus automation_to_system_events = 4;
+}

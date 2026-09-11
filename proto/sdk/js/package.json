@@ -1,0 +1,44 @@
+{
+  "name": "@auv-js/api-client",
+  "type": "module",
+  "version": "0.0.16",
+  "description": "Generated TypeScript client for the AUV daemon REST API",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moeru-ai/auv.git",
+    "directory": "proto/sdk/js"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "scripts": {
+    "build": "pnpm run generate && tsdown",
+    "generate": "tsx scripts/generate.ts",
+    "prepack": "pnpm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "catalog:",
+    "@pnpm/find-workspace-dir": "catalog:",
+    "tinyexec": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

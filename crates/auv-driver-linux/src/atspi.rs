@@ -102,7 +102,11 @@ struct Accessible {
 
 pub fn list_windows() -> DriverResult<Vec<Window>> {
   let connection = connect()?;
-  let applications = root_children(&connection)?
+  let root = ObjectRef {
+    dest: REGISTRY_DEST.to_string(),
+    path: ROOT_PATH.to_string(),
+  };
+  let applications = children(&connection, &root)?
     .into_iter()
     .filter_map(|reference| application(&connection, reference).transpose())
     .collect::<DriverResult<Vec<_>>>()?;
@@ -231,14 +235,6 @@ fn connect() -> DriverResult<Connection> {
     .map_err(|error| backend(format!("failed to configure AT-SPI bus connection: {error}")))?
     .build()
     .map_err(|error| backend(format!("failed to connect to AT-SPI bus: {error}")))
-}
-
-fn root_children(connection: &Connection) -> DriverResult<Vec<ObjectRef>> {
-  let root = ObjectRef {
-    dest: REGISTRY_DEST.to_string(),
-    path: ROOT_PATH.to_string(),
-  };
-  children(connection, &root)
 }
 
 fn application(connection: &Connection, reference: ObjectRef) -> DriverResult<Option<Application>> {

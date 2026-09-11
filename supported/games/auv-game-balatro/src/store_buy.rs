@@ -1,7 +1,7 @@
-use auv_driver::{InputActionResult, WindowPoint};
+use auv_driver::InputActionResult;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{BalatroState, ButtonTarget, SlotId, StoreItem};
+use crate::model::{ActionPoint, BalatroState, ButtonTarget, SlotId, StoreItem};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoreBuyRequest {
@@ -13,7 +13,7 @@ pub struct StoreBuyRequest {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StoreBuyClick {
-  pub window_point: WindowPoint,
+  pub point: ActionPoint,
   pub delivery: InputActionResult,
 }
 
@@ -75,13 +75,13 @@ pub struct StoreBuyResult {
 #[serde(rename_all = "snake_case")]
 enum StoreBuyOutcomeFact<'a> {
   SelectionOnly {
-    selection_window_point: WindowPoint,
+    selection_point: &'a ActionPoint,
     reason: &'a StoreBuyIncompleteReason,
   },
   Submitted {
-    selection_window_point: WindowPoint,
+    selection_point: &'a ActionPoint,
     confirmation_button: &'a ButtonTarget,
-    submission_window_point: WindowPoint,
+    submission_point: &'a ActionPoint,
     confirmation: &'a StoreBuyConfirmation,
   },
 }
@@ -105,7 +105,7 @@ impl auv_tracing::EventPayload for StoreBuyCompleted<'_> {
 pub(crate) fn emit_store_buy_completed(result: &StoreBuyResult) {
   let outcome = match &result.outcome {
     StoreBuyOutcome::SelectionOnly { selection, reason } => StoreBuyOutcomeFact::SelectionOnly {
-      selection_window_point: selection.window_point,
+      selection_point: &selection.point,
       reason,
     },
     StoreBuyOutcome::Submitted {
@@ -114,9 +114,9 @@ pub(crate) fn emit_store_buy_completed(result: &StoreBuyResult) {
       submission,
       confirmation,
     } => StoreBuyOutcomeFact::Submitted {
-      selection_window_point: selection.window_point,
+      selection_point: &selection.point,
       confirmation_button,
-      submission_window_point: submission.window_point,
+      submission_point: &submission.point,
       confirmation,
     },
   };

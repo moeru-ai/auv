@@ -7,10 +7,6 @@ on:
       - main
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
 
@@ -41,6 +37,7 @@ jobs:
             libdbus-1-dev \
             libpipewire-0.3-dev \
             libwayland-dev \
+            libxkbcommon-dev \
             libegl-dev \
             libleptonica-dev \
             libtesseract-dev
@@ -48,6 +45,8 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --check
+      # Regression: compile the Git checkout before any proto dependency export.
+      # Generating vendor here previously hid missing files from cargo install --git.
       - run: cargo check
       - run: cargo test
       - run: cargo run --quiet -- invoke --help
@@ -65,3 +64,41 @@ jobs:
         working-directory: crates/auv-driver-macos/native/swift
         run: swift test
       - run: git diff --check
+
+  proto-vendor:
+    name: verify vendored Protobuf ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Buf
+        uses: bufbuild/buf-action@v1
+        with:
+          version: "1.71.0"
+          setup_only: true
+      - name: Install yq
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install yq --version 4.53.3 --yes --no-progress
+      - name: Regenerate vendored Protobuf dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/generate-proto-vendor.ps1
+      - name: Regenerate vendored Protobuf dependencies
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./scripts/generate-proto-vendor
+      - name: Verify checked-in dependencies match buf.lock
+        shell: bash
+        run: |
+          # Include untracked files: a new export must be committed too.
+          changes=$(git status --porcelain --untracked-files=all -- proto/vendor)
+          if [ -n "$changes" ]; then
+            printf '%s\n' "$changes"
+            echo "Run scripts/generate-proto-vendor and commit proto/vendor."
+            exit 1
+          fi
