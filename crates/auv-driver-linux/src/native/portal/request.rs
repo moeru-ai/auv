@@ -15,8 +15,28 @@ pub(super) const PORTAL_DESTINATION: &str = "org.freedesktop.portal.Desktop";
 pub(super) const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const PORTAL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub(super) fn session_connection() -> DriverResult<Connection> {
-  Connection::session().map_err(|error| backend(format!("failed to connect to session bus: {error}")))
+/// Register on this exact connection before creating any Portal object. A new
+/// connection after a Portal restart registers again; a token is not identity.
+/// TODO: proactive Portal-restart recovery across capture and clipboard is
+/// deferred until their session invalidation lifecycle is defined. New
+/// connections register again; existing sessions are not migrated here.
+/// https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.host.portal.Registry.html
+pub(crate) fn session_connection(app_id: Option<&str>) -> DriverResult<Connection> {
+  if let Some(app_id) = app_id {
+    crate::permission::validate_app_id(app_id)?;
+  }
+  let connection = Connection::session().map_err(|error| backend(format!("failed to connect to session bus: {error}")))?;
+  if let Some(app_id) = app_id {
+    let registry = Proxy::new(&connection, PORTAL_DESTINATION, PORTAL_PATH, "org.freedesktop.host.portal.Registry")
+      .map_err(|error| backend(format!("failed to access Portal identity registry: {error}")))?;
+    let options: HashMap<&str, Value<'_>> = HashMap::new();
+    call_method(&registry, "org.freedesktop.host.portal.Registry", "Register", &(app_id, options)).map_err(|error| {
+      backend(format!(
+        "Portal could not register application {app_id}: {error}; install its matching desktop entry (AUV: auv doctor --portal-setup)"
+      ))
+    })?;
+  }
+  Ok(connection)
 }
 
 pub(super) fn portal_proxy<'a>(connection: &'a Connection, interface: &'static str) -> DriverResult<Proxy<'a>> {
@@ -190,3 +210,7 @@ fn expected_session_path(connection: &Connection, session_handle_token: &str) ->
 #[cfg(test)]
 #[path = "request_test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "identity_test.rs"]
+mod identity_tests;

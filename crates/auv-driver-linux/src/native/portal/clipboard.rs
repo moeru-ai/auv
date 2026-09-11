@@ -25,8 +25,8 @@ const FD_TRANSFER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 pub struct PortalClipboard;
 
 impl PortalClipboard {
-  pub fn open() -> DriverResult<ClipboardSession> {
-    ClipboardSession::open()
+  pub fn open(app_id: Option<&str>) -> DriverResult<ClipboardSession> {
+    ClipboardSession::open(app_id)
   }
 }
 
@@ -46,8 +46,8 @@ impl std::fmt::Debug for ClipboardSession {
 }
 
 impl ClipboardSession {
-  fn open() -> DriverResult<Self> {
-    let connection = session_connection()?;
+  fn open(app_id: Option<&str>) -> DriverResult<Self> {
+    let connection = session_connection(app_id)?;
     let session_handle = create_remote_desktop_session(&connection)?;
     {
       let clipboard = portal_proxy(&connection, CLIPBOARD_INTERFACE)?;

@@ -9,6 +9,7 @@ use crate::native::portal::{ClipboardSession, InputSession, RestoreTokenStore, S
 #[derive(Clone, Debug, Default)]
 pub struct LinuxDriver {
   portal_state_root: Option<PathBuf>,
+  portal_app_id: Option<String>,
 }
 
 impl LinuxDriver {
@@ -20,6 +21,14 @@ impl LinuxDriver {
   pub fn with_portal_state_root(mut self, root: PathBuf) -> Self {
     self.portal_state_root = Some(root);
     self
+  }
+
+  /// Associates every Portal D-Bus connection with the caller's desktop ID.
+  /// The caller must install a matching desktop entry before opening a Portal.
+  pub fn with_portal_app_id(mut self, app_id: String) -> auv_driver_common::DriverResult<Self> {
+    crate::permission::validate_app_id(&app_id)?;
+    self.portal_app_id = Some(app_id);
+    Ok(self)
   }
 
   pub fn linux_descriptor(&self) -> LinuxDriverDescriptor {
@@ -46,6 +55,7 @@ pub(crate) struct LinuxDriverSessionState {
   pub(crate) input_session: Option<InputSession>,
   pub(crate) screencast_session: Option<ScreenCastSession>,
   pub(crate) restore_tokens: Option<RestoreTokenStore>,
+  pub(crate) portal_app_id: Option<String>,
 }
 
 impl LinuxDriverSession {
@@ -65,6 +75,7 @@ impl Driver for LinuxDriver {
     Ok(LinuxDriverSession {
       state: Arc::new(Mutex::new(LinuxDriverSessionState {
         restore_tokens: self.portal_state_root.clone().map(RestoreTokenStore::new),
+        portal_app_id: self.portal_app_id.clone(),
         ..Default::default()
       })),
     })

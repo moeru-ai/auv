@@ -1647,12 +1647,8 @@ impl DisplayService for LocalDisplayService {
 pub(super) async fn serve_inherited() -> Result<(), String> {
   let (incoming, parent_disconnected) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
 
-  let driver = auv_driver::LocalDriver::new();
-  #[cfg(target_os = "linux")]
-  let driver = match std::env::var_os(super::STATE_ROOT_ENV) {
-    Some(root) => driver.with_linux_portal_state_root(std::path::PathBuf::from(root).join("portal")),
-    None => driver,
-  };
+  let portal_state_root = std::env::var_os(super::STATE_ROOT_ENV).map(|root| std::path::PathBuf::from(root).join("portal"));
+  let driver = auv::local::driver(portal_state_root).map_err(|error| error.to_string())?;
   let session = driver.open_local().map_err(|error| format!("failed to open local driver: {error}"))?;
   let display = DisplayServiceServer::new(LocalDisplayService {
     session: session.clone(),

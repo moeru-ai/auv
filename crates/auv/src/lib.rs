@@ -5,6 +5,7 @@ mod context;
 pub mod devices;
 pub mod discovery;
 pub mod error;
+pub mod local;
 pub mod pairing;
 pub mod profile;
 pub mod resource;

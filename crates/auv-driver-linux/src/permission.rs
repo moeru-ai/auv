@@ -21,10 +21,18 @@ pub struct LinuxPortalProbe {
 impl LinuxPortalProbe {
   pub fn as_permission_probe(&self) -> PermissionProbe {
     PermissionProbe {
-      screen_recording: self.screencast.available,
+      screen_recording: if self.screencast.available == PermissionStatus::Missing {
+        PermissionStatus::Missing
+      } else {
+        PermissionStatus::Unknown
+      },
       screen_capture_kit: PermissionStatus::Unknown,
       accessibility: PermissionStatus::Unknown,
-      automation_to_system_events: self.remote_desktop.available,
+      automation_to_system_events: if self.remote_desktop.available == PermissionStatus::Missing {
+        PermissionStatus::Missing
+      } else {
+        PermissionStatus::Unknown
+      },
     }
   }
 }
@@ -74,7 +82,8 @@ pub fn probe_portals() -> LinuxPortalProbe {
 
 #[cfg(target_os = "linux")]
 fn probe_portal_bus() -> (PermissionStatus, PortalInterfaceProbe, PortalInterfaceProbe, PortalInterfaceProbe) {
-  match zbus::blocking::Connection::session() {
+  match zbus::blocking::connection::Builder::session().and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
+  {
     Ok(connection) => {
       let screencast = probe_interface(&connection, "org.freedesktop.portal.ScreenCast");
       let remote_desktop = probe_interface(&connection, "org.freedesktop.portal.RemoteDesktop");
@@ -104,19 +113,96 @@ fn probe_interface(connection: &zbus::blocking::Connection, interface: &'static 
       };
     }
   };
-  let version = proxy.get_property::<u32>("version").ok();
-  let available = if version.is_some() {
-    PermissionStatus::Granted
-  } else {
-    PermissionStatus::Unknown
-  };
-  PortalInterfaceProbe {
-    available,
-    version,
-    details: None,
+  match proxy.get_property::<u32>("version") {
+    Ok(version) => PortalInterfaceProbe {
+      available: PermissionStatus::Granted,
+      version: Some(version),
+      details: Some("interface available; user authorization has not been tested".into()),
+    },
+    Err(error) => {
+      // GLib reports a missing interface as InvalidArgs for this fixed, valid
+      // Properties.Get request; retain its details instead of hiding the error.
+      let missing = matches!(&error, zbus::Error::MethodError(name, _, _) if matches!(name.as_str(), "org.freedesktop.DBus.Error.InvalidArgs" | "org.freedesktop.DBus.Error.UnknownInterface" | "org.freedesktop.DBus.Error.UnknownMethod" | "org.freedesktop.DBus.Error.UnknownProperty"));
+      PortalInterfaceProbe {
+        available: if missing {
+          PermissionStatus::Missing
+        } else {
+          PermissionStatus::Unknown
+        },
+        version: None,
+        details: Some(error.to_string()),
+      }
+    }
   }
 }
 
 #[cfg(test)]
 #[path = "permission_test.rs"]
 mod tests;
+
+/// Portal IDs are desktop-entry basenames, never paths or shell expressions.
+pub(crate) fn validate_app_id(app_id: &str) -> auv_driver_common::DriverResult<()> {
+  if app_id.split('.').count() < 3
+    || app_id.split('.').any(|part| part.is_empty() || !part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-'))
+  {
+    return Err(crate::error::invalid_input("Portal app ID must be a reverse-domain desktop ID with at least three nonempty components"));
+  }
+  Ok(())
+}
+
+/// Verifies the configured identity using the same connection setup as input.
+#[cfg(target_os = "linux")]
+pub fn verify_portal_identity(app_id: &str) -> auv_driver_common::DriverResult<()> {
+  let _connection = crate::native::portal::session_connection(Some(app_id))?;
+  Ok(())
+}
+
+/// Reads the KDE-specific per-application allow rule, not a restore token.
+#[cfg(target_os = "linux")]
+pub fn kde_authorization(app_id: &str) -> auv_driver_common::DriverResult<PermissionStatus> {
+  validate_app_id(app_id)?;
+  let connection = zbus::blocking::connection::Builder::session()
+    .and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
+    .map_err(|error| crate::error::backend(error.to_string()))?;
+  let proxy = zbus::blocking::Proxy::new(
+    &connection,
+    "org.freedesktop.impl.portal.PermissionStore",
+    "/org/freedesktop/impl/portal/PermissionStore",
+    "org.freedesktop.impl.portal.PermissionStore",
+  )
+  .map_err(|error| crate::error::backend(error.to_string()))?;
+  let result = proxy.call::<_, _, (std::collections::HashMap<String, Vec<String>>, zbus::zvariant::OwnedValue)>(
+    "Lookup",
+    &("kde-authorized", "remote-desktop"),
+  );
+  match result {
+    Ok((permissions, _)) => Ok(if permissions.get(app_id).is_some_and(|values| values.iter().any(|value| value == "yes")) {
+      PermissionStatus::Granted
+    } else {
+      PermissionStatus::Missing
+    }),
+    Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == "org.freedesktop.portal.Error.NotFound" => Ok(PermissionStatus::Missing),
+    Err(error) => Err(crate::error::backend(format!("failed to read KDE application authorization: {error}"))),
+  }
+}
+
+/// Updates only this application's KDE rule. Call only from explicit setup or
+/// revocation; ordinary driver operations never change permission-store rules.
+#[cfg(target_os = "linux")]
+pub fn set_kde_authorization(app_id: &str, allow: bool) -> auv_driver_common::DriverResult<()> {
+  validate_app_id(app_id)?;
+  let connection = zbus::blocking::connection::Builder::session()
+    .and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
+    .map_err(|error| crate::error::backend(error.to_string()))?;
+  let proxy = zbus::blocking::Proxy::new(
+    &connection,
+    "org.freedesktop.impl.portal.PermissionStore",
+    "/org/freedesktop/impl/portal/PermissionStore",
+    "org.freedesktop.impl.portal.PermissionStore",
+  )
+  .map_err(|error| crate::error::backend(error.to_string()))?;
+  let permissions: Vec<&str> = if allow { vec!["yes"] } else { vec![] };
+  proxy
+    .call::<_, _, ()>("SetPermission", &("kde-authorized", true, "remote-desktop", app_id, permissions))
+    .map_err(|error| crate::error::backend(format!("failed to update KDE application authorization: {error}")))
+}

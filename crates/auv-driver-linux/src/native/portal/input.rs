@@ -39,8 +39,8 @@ const CLICK_PRESS_DURATION: Duration = Duration::from_millis(34);
 pub struct PortalInput;
 
 impl PortalInput {
-  pub fn open(restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<InputSession> {
-    InputSession::open(restore_tokens)
+  pub fn open(restore_tokens: Option<&RestoreTokenStore>, app_id: Option<&str>) -> DriverResult<InputSession> {
+    InputSession::open(restore_tokens, app_id)
   }
 }
 
@@ -65,8 +65,8 @@ impl std::fmt::Debug for InputSession {
 }
 
 impl InputSession {
-  fn open(restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<Self> {
-    let connection = session_connection()?;
+  fn open(restore_tokens: Option<&RestoreTokenStore>, app_id: Option<&str>) -> DriverResult<Self> {
+    let connection = session_connection(app_id)?;
     let session_handle = create_remote_desktop_session(&connection)?;
     let result = (|| {
       let persistent =

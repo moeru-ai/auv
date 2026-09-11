@@ -525,6 +525,13 @@ not stop it immediately. A Runner owns runtime resources such as Driver handles,
 app state, OCR engines, or inference model sessions. The daemon owns its
 creation, readiness, health, draining, routing, and termination.
 
+The daemon lazily creates the first-party `auv.core.local` Runner with
+`unless-idle` and a five-minute idle timeout, including calls without a Run.
+Concurrent lazy creation for this class resolves to one child. Reusing the
+process preserves desktop sessions; it does not create, merge, or identify Runs.
+Explicitly created Runners retain their requested lifecycle policy. Custom
+providers retain their existing route-created lifecycle policy.
+
 Application/game implementations such as NetEase Music or Balatro may provide
 RunnerClasses. Their CLI plugins remain separate frontend processes even when
 both roles reuse the same Rust package and typed service implementation.

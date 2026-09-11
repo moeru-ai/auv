@@ -89,6 +89,20 @@ impl LinuxDriverSession {
 }
 
 impl PermissionApi<'_> {
+  /// Establishes and retains input/capture Portal sessions without injecting
+  /// keys or pointer events. Each Portal can request its own initial consent.
+  pub fn authorize_portals(&self) -> DriverResult<()> {
+    let mut state = self.session.state.lock().expect("linux driver session state poisoned");
+    if state.input_session.is_none() {
+      state.input_session = Some(crate::native::portal::PortalInput::open(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
+    }
+    if state.screencast_session.is_none() {
+      state.screencast_session =
+        Some(crate::native::portal::ScreenCastSession::open_monitor(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
+    }
+    Ok(())
+  }
+
   pub fn probe_linux(&self) -> LinuxPortalProbe {
     let _ = self.session;
     probe_portals()

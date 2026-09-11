@@ -9,8 +9,24 @@ pub struct DoctorArgs {
   /// Render the permission report as JSON.
   #[arg(long)]
   pub json: bool,
+  /// Install AUV's user desktop identity (Linux only; grants no permissions).
+  #[arg(long)]
+  pub portal_setup: bool,
+  /// Request and persist Portal capture/input authorization (Linux only).
+  #[arg(long)]
+  pub portal_authorize: bool,
+  /// Explicitly allow AUV through KDE's permanent application rule.
+  #[arg(long, conflicts_with = "portal_kde_revoke")]
+  pub portal_kde_allow: bool,
+  /// Remove AUV's KDE application rule; existing sessions/grants remain separate.
+  #[arg(long)]
+  pub portal_kde_revoke: bool,
+  /// Portal state directory; for a daemon use <store-root>/runner-state/auv.core.local/portal.
+  #[arg(long)]
+  pub portal_state_root: Option<std::path::PathBuf>,
 }
 
+#[cfg(not(target_os = "linux"))]
 #[derive(serde::Serialize)]
 struct PermissionCheckReport {
   platform: &'static str,
@@ -26,12 +42,45 @@ struct PermissionCheckReport {
 }
 
 pub async fn run(args: DoctorArgs) -> Result<i32, String> {
-  let report = collect_permission_check()?;
-  if args.json {
-    println!("{}", serde_json::to_string_pretty(&report).map_err(|error| format!("failed to encode permission report: {error}"))?);
-  } else {
-    print_report(&report);
+  #[cfg(target_os = "linux")]
+  {
+    return run_linux(args);
   }
+  #[cfg(not(target_os = "linux"))]
+  if args.portal_setup || args.portal_authorize || args.portal_kde_allow || args.portal_kde_revoke || args.portal_state_root.is_some() {
+    return Err("Portal setup is available only on Linux".into());
+  }
+  #[cfg(not(target_os = "linux"))]
+  {
+    let report = collect_permission_check()?;
+    if args.json {
+      println!("{}", serde_json::to_string_pretty(&report).map_err(|error| format!("failed to encode permission report: {error}"))?);
+    } else {
+      print_report(&report);
+    }
+    Ok(0)
+  }
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux(args: DoctorArgs) -> Result<i32, String> {
+  if args.portal_setup {
+    auv::local::setup_portal().map_err(|error| error.to_string())?;
+  }
+  if args.portal_kde_allow || args.portal_kde_revoke {
+    auv::local::set_kde_portal_authorization(args.portal_kde_allow).map_err(|error| error.to_string())?;
+  }
+  if args.portal_authorize {
+    auv::local::authorize_portal(args.portal_state_root.clone()).map_err(|error| error.to_string())?;
+  }
+  let status = auv::local::portal_status(args.portal_state_root).map_err(|error| error.to_string())?;
+  // Keep the full distinction between interface readiness, identity and token
+  // presence in both human and machine output; none proves restored consent.
+  let json = serde_json::to_string_pretty(&status).map_err(|error| error.to_string())?;
+  if !args.json {
+    println!("AUV Linux Portal readiness (token presence does not prove authorization)");
+  }
+  println!("{json}");
   Ok(0)
 }
 
@@ -63,11 +112,12 @@ fn collect_permission_check() -> Result<PermissionCheckReport, String> {
   })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn collect_permission_check() -> Result<PermissionCheckReport, String> {
   Err("permission check is currently implemented only for macOS".to_string())
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn recommendation(accessibility: &str, screen_capture_kit: &str) -> String {
   match (accessibility, screen_capture_kit) {
     ("granted", "granted") => "AUV has the macOS permissions needed for capture and AX-backed automation.".to_string(),
@@ -86,6 +136,7 @@ fn recommendation(accessibility: &str, screen_capture_kit: &str) -> String {
   }
 }
 
+#[cfg(not(target_os = "linux"))]
 fn print_report(report: &PermissionCheckReport) {
   println!("AUV permission check");
   println!("platform: {}", report.platform);
@@ -106,6 +157,7 @@ fn print_report(report: &PermissionCheckReport) {
   println!("recommendation: {}", report.recommendation);
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn status_line(status: &str) -> String {
   match status {
     "granted" => "[ok] granted".to_string(),

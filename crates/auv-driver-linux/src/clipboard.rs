@@ -33,7 +33,7 @@ fn with_clipboard_session<T>(
 ) -> DriverResult<T> {
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.clipboard_session.is_none() {
-    state.clipboard_session = Some(PortalClipboard::open()?);
+    state.clipboard_session = Some(PortalClipboard::open(state.portal_app_id.as_deref())?);
   }
   operation(state.clipboard_session.as_mut().expect("clipboard session was just initialized"))
 }

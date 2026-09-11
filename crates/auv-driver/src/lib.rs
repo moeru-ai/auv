@@ -31,6 +31,12 @@ impl LocalDriver {
   }
 
   #[cfg(target_os = "linux")]
+  pub fn with_linux_portal_app_id(mut self, app_id: String) -> DriverResult<Self> {
+    self.inner = self.inner.with_portal_app_id(app_id)?;
+    Ok(self)
+  }
+
+  #[cfg(target_os = "linux")]
   pub fn with_linux_portal_state_root(mut self, root: std::path::PathBuf) -> Self {
     self.inner = self.inner.with_portal_state_root(root);
     self
@@ -174,3 +180,6 @@ fn unsupported_local_descriptor() -> DriverDescriptor {
 #[cfg(test)]
 #[path = "lib_test.rs"]
 mod tests;
+
+#[cfg(target_os = "linux")]
+pub use auv_driver_linux::{LinuxPortalProbe, kde_authorization, probe_portals, set_kde_authorization, verify_portal_identity};

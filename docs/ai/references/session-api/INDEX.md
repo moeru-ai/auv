@@ -53,3 +53,7 @@ Count: **26**
 - Parent index: [`../INDEX.md`](../INDEX.md)
 - Docs overview: [`../../../README.md`](../../../README.md)
 - Shared vocabulary: [`../../../TERMS_AND_CONCEPTS.md`](../../../TERMS_AND_CONCEPTS.md)
+
+## Related lifecycle evidence
+
+- [Linux Portal authorization and local Runner reuse](../driver/2026-09-12-linux-portal-authorization-and-runner-reuse.md): SDK startup ownership, concurrent lazy Runner reuse, and independent Run IDs.

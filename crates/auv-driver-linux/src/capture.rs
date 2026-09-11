@@ -159,7 +159,7 @@ fn capture_monitor_frame_for_session(
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.screencast_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();
-    state.screencast_session = Some(ScreenCastSession::open_monitor(restore_tokens.as_ref())?);
+    state.screencast_session = Some(ScreenCastSession::open_monitor(restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
   }
   state.screencast_session.as_mut().expect("screencast session was just initialized").capture_monitor_frame(target_bounds)
 }
@@ -285,6 +285,9 @@ fn portal_screenshot() -> DriverResult<image::RgbaImage> {
       .map_err(|error| backend(format!("failed to create screenshot portal proxy: {error}")))?;
   let mut options = HashMap::new();
   options.insert("handle_token", Value::from(handle_token.as_str()));
+  // NOTICE: this legacy Screenshot fallback still requests interactive consent;
+  // it does not consume the persistent ScreenCast grant. See
+  // `docs/ai/references/driver/2026-09-12-linux-portal-authorization-and-runner-reuse.md`.
   // NOTICE(linux-portal-screenshot): GNOME Wayland does not expose a stable
   // non-portal screenshot API for ordinary clients. Keep this interactive so
   // the compositor/user owns screenshot consent; replace with ScreenCast or

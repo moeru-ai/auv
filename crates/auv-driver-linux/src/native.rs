@@ -16,7 +16,7 @@ pub mod portal {
   pub struct PortalClipboard;
 
   impl PortalClipboard {
-    pub fn open() -> DriverResult<ClipboardSession> {
+    pub fn open(_app_id: Option<&str>) -> DriverResult<ClipboardSession> {
       Err(DriverError::unsupported("linux.portal.clipboard"))
     }
   }
@@ -38,7 +38,7 @@ pub mod portal {
   pub struct PortalInput;
 
   impl PortalInput {
-    pub fn open(_restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<InputSession> {
+    pub fn open(_restore_tokens: Option<&RestoreTokenStore>, _app_id: Option<&str>) -> DriverResult<InputSession> {
       Err(DriverError::unsupported("linux.portal.input"))
     }
   }
@@ -85,7 +85,7 @@ pub mod portal {
   pub struct ScreenCastSession;
 
   impl ScreenCastSession {
-    pub fn open_monitor(_restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<Self> {
+    pub fn open_monitor(_restore_tokens: Option<&RestoreTokenStore>, _app_id: Option<&str>) -> DriverResult<Self> {
       Err(DriverError::unsupported("linux.portal.screencast"))
     }
   }
