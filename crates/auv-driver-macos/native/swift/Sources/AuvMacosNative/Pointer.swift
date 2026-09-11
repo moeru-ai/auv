@@ -234,8 +234,10 @@ private func stampCompatibilityMouseEvent(
   clickState: Int64,
   phase: Int64,
   buttonNumber: Int64,
-  setWindowLocation: CGEventSetWindowLocationFn
+  setWindowLocation: CGEventSetWindowLocationFn,
+  flags: CGEventFlags
 ) {
+  event.flags = flags
   setRawIntegerField(event, 0, phase)
   setRawIntegerField(event, 1, clickState)
   setRawIntegerField(event, 3, buttonNumber)
@@ -260,8 +262,10 @@ private func stampPidTargetedMouseEvent(
   windowLocation: CGPoint,
   clickState: Int64,
   buttonNumber: Int64,
-  setWindowLocation: CGEventSetWindowLocationFn
+  setWindowLocation: CGEventSetWindowLocationFn,
+  flags: CGEventFlags
 ) {
+  event.flags = flags
   event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
   event.setIntegerValueField(.mouseEventClickState, value: clickState)
   event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowNumber)
@@ -283,7 +287,8 @@ private func runPidTargetedWindowClick(
   windowLocation: CGPoint,
   clickCount: Int64,
   clickIntervalMicros: useconds_t,
-  setWindowLocation: CGEventSetWindowLocationFn
+  setWindowLocation: CGEventSetWindowLocationFn,
+  flags: CGEventFlags
 ) -> NativeActionResponse {
   let buttonNumber: Int64 = switch button {
   case .right: 1
@@ -318,7 +323,8 @@ private func runPidTargetedWindowClick(
       windowLocation: windowLocation,
       clickState: clickNumber,
       buttonNumber: buttonNumber,
-      setWindowLocation: setWindowLocation
+      setWindowLocation: setWindowLocation,
+      flags: flags
     )
     stampPidTargetedMouseEvent(
       up,
@@ -327,7 +333,8 @@ private func runPidTargetedWindowClick(
       windowLocation: windowLocation,
       clickState: clickNumber,
       buttonNumber: buttonNumber,
-      setWindowLocation: setWindowLocation
+      setWindowLocation: setWindowLocation,
+      flags: flags
     )
     down.postToPid(pid_t(pid))
     up.postToPid(pid_t(pid))
@@ -348,7 +355,8 @@ private func runCompatibilityWindowClick(
   windowLocation: CGPoint,
   clickCount: Int,
   clickIntervalMicros: useconds_t,
-  setWindowLocation: CGEventSetWindowLocationFn
+  setWindowLocation: CGEventSetWindowLocationFn,
+  flags: CGEventFlags
 ) -> NativeActionResponse {
   let clickGroupId = Int64(Date().timeIntervalSince1970 * 1_000_000) & 0x7fff_ffff
   let offscreen = CGPoint(x: -1, y: -1)
@@ -382,7 +390,8 @@ private func runCompatibilityWindowClick(
     clickState: 0,
     phase: 2,
     buttonNumber: buttonNumber,
-    setWindowLocation: setWindowLocation
+    setWindowLocation: setWindowLocation,
+    flags: flags
   )
   postCompatibilityMouseEvent(move, pid: pid)
   usleep(15_000)
@@ -415,7 +424,8 @@ private func runCompatibilityWindowClick(
     clickState: 1,
     phase: 1,
     buttonNumber: buttonNumber,
-    setWindowLocation: setWindowLocation
+    setWindowLocation: setWindowLocation,
+    flags: flags
   )
   stampCompatibilityMouseEvent(
     primerUp,
@@ -426,7 +436,8 @@ private func runCompatibilityWindowClick(
     clickState: 1,
     phase: 2,
     buttonNumber: buttonNumber,
-    setWindowLocation: setWindowLocation
+    setWindowLocation: setWindowLocation,
+    flags: flags
   )
   postCompatibilityMouseEvent(primerDown, pid: pid)
   usleep(1_000)
@@ -463,7 +474,8 @@ private func runCompatibilityWindowClick(
       clickState: clickState,
       phase: 3,
       buttonNumber: buttonNumber,
-      setWindowLocation: setWindowLocation
+      setWindowLocation: setWindowLocation,
+      flags: flags
     )
     stampCompatibilityMouseEvent(
       up,
@@ -474,7 +486,8 @@ private func runCompatibilityWindowClick(
       clickState: clickState,
       phase: 3,
       buttonNumber: buttonNumber,
-      setWindowLocation: setWindowLocation
+      setWindowLocation: setWindowLocation,
+      flags: flags
     )
     postCompatibilityMouseEvent(down, pid: pid)
     usleep(1_000)
@@ -492,8 +505,13 @@ func click_point(
   y: Double,
   button_code: Int32,
   click_count: Int64,
-  click_interval_ms: UInt64
+  click_interval_ms: UInt64,
+  modifier_flags: UInt64
 ) -> NativeActionResponse {
+  // TODO(click-key-transitions): This operation stamps mouse-event state only.
+  // Physical modifier transitions for input forwarders need a separately
+  // approved delivery/release contract; no keyboard key is held by this call.
+  let flags = CGEventFlags(rawValue: modifier_flags)
   let button = mouseButton(button_code)
   let clickCount = max(click_count, 1)
   let clickIntervalSeconds = Double(click_interval_ms) / 1000.0
@@ -516,6 +534,7 @@ func click_point(
     mouseCursorPosition: location,
     mouseButton: button
   ) {
+    move.flags = flags
     move.post(tap: .cghidEventTap)
     usleep(15_000)
   }
@@ -540,6 +559,8 @@ func click_point(
         "grant Accessibility permission and retry"
       )
     }
+    down.flags = flags
+    up.flags = flags
     down.setIntegerValueField(.mouseEventClickState, value: clickNumber)
     up.setIntegerValueField(.mouseEventClickState, value: clickNumber)
     down.post(tap: .cghidEventTap)
@@ -584,8 +605,10 @@ func click_window_point(
   button_code: Int32,
   click_count: Int64,
   click_interval_ms: UInt64,
-  window_strategy_code: Int32
+  window_strategy_code: Int32,
+  modifier_flags: UInt64
 ) -> NativeActionResponse {
+  let flags = CGEventFlags(rawValue: modifier_flags)
   let button = mouseButton(button_code)
   let clickCount = max(click_count, 1)
   guard let strategy = WindowClickStrategyCode(rawValue: window_strategy_code) else {
@@ -639,7 +662,8 @@ func click_window_point(
       windowLocation: windowLocation,
       clickCount: Int(clickCount),
       clickIntervalMicros: clickIntervalMicros,
-      setWindowLocation: setWindowLocation
+      setWindowLocation: setWindowLocation,
+      flags: flags
     )
   }
 
@@ -658,7 +682,8 @@ func click_window_point(
     windowLocation: windowLocation,
     clickCount: clickCount,
     clickIntervalMicros: clickIntervalMicros,
-    setWindowLocation: setWindowLocation
+    setWindowLocation: setWindowLocation,
+    flags: flags
   )
 }
 

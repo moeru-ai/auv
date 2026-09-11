@@ -15,10 +15,10 @@ import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1
 import type { ScreenPointSchema, ScreenRectSchema, WindowPointSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type {
   ClickOptionsSchema,
-  ClickSchema,
   MouseMotionPlanSchema,
   MoveMouseStreamResponse,
   PasteTextOptionsSchema,
+  ScreenClickOptionsSchema,
   TypeTextOptionsSchema,
 } from '../../gen/auv/api/driver/v1/input_pb'
 import type { ShowOverlayRequestSchema } from '../../gen/auv/api/driver/v1/overlay_pb'
@@ -60,7 +60,7 @@ export interface RunnerClient {
     list: (options?: OperationOptions) => Promise<readonly Display[]>
   }
   readonly input: {
-    clickScreenPoint: (point: Init<typeof ScreenPointSchema>, click: Init<typeof ClickSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickScreenPoint.output>>
+    clickScreenPoint: (point: Init<typeof ScreenPointSchema>, clickOptions: Init<typeof ScreenClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickScreenPoint.output>>
     moveMouse: (plan: Init<typeof MouseMotionPlanSchema>, options?: OperationOptions) => Promise<AsyncIterable<MoveMouseStreamResponse>>
     pasteText: (text: string, inputOptions?: Init<typeof PasteTextOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.pasteText.output>>
     pressKey: (key: string, options?: PressKeyOptions) => Promise<Shape<typeof InputService.method.pressKey.output>>
@@ -184,7 +184,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       list: async options => (await unary(DisplayService.method.listDisplays, {}, options)).displays,
     },
     input: {
-      clickScreenPoint: (point, click, options) => unary(InputService.method.clickScreenPoint, { options: { click }, point }, options),
+      clickScreenPoint: (point, clickOptions, options) => unary(InputService.method.clickScreenPoint, { options: clickOptions, point }, options),
       moveMouse: (plan, options) => serverStream(InputService.method.moveMouse, { plan }, options),
       pasteText: (text, options, operation) => unary(InputService.method.pasteText, { options, text }, operation),
       pressKey: (key, options = {}) => unary(InputService.method.pressKey, { key, settle: options.settle }, options),

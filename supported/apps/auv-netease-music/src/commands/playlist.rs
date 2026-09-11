@@ -237,6 +237,7 @@ fn playlist_click_options() -> auv_driver::ClickOptions {
     policy: auv_driver::InputPolicy::BackgroundPreferred,
     click: auv_driver::Click::Single,
     window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,
+    modifiers: Default::default(),
   }
 }
 
@@ -773,7 +774,7 @@ fn run_playlist_select_resolved(
         },
       )
       .map_err(|error| format!("playlist select foreground preparation failed: {error}"))?;
-    let click_result = session.input().click_at(screen_point.point(), Click::Single);
+    let click_result = session.input().click_at(screen_point.point(), Click::Single, Default::default());
     let restore_result = session.window().restore_input(lease);
     click_result.map_err(|error| format!("playlist select foreground click failed: {error}"))?;
     restore_result.map_err(|error| format!("playlist select foreground restore failed: {error}"))?;
@@ -1010,7 +1011,7 @@ fn run_playlist_play_resolved(
         },
       )
       .map_err(|error| format!("playlist play-all foreground preparation failed: {error}"))?;
-    let click_result = session.input().click_at(screen_point.point(), Click::Single);
+    let click_result = session.input().click_at(screen_point.point(), Click::Single, Default::default());
     let restore_result = session.window().restore_input(lease);
     click_result.map_err(|error| format!("playlist play-all foreground click failed: {error}"))?;
     restore_result.map_err(|error| format!("playlist play-all foreground restore failed: {error}"))?;

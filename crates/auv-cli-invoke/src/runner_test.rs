@@ -167,6 +167,7 @@ fn selected_click_options_preserve_policy_and_repeated_clicks() {
   inputs.insert("input-policy".to_string(), "background-only".to_string());
   inputs.insert("click-count".to_string(), "2".to_string());
   inputs.insert("click-interval-ms".to_string(), "80".to_string());
+  inputs.insert("modifiers".to_string(), "meta,shift".to_string());
   let input = crate::InvokeCommandInput {
     command_id: "input.clickPoint".to_string(),
     target: None,
@@ -179,6 +180,8 @@ fn selected_click_options_preserve_policy_and_repeated_clicks() {
   assert_eq!(options.policy, auv_driver::InputPolicy::BackgroundOnly);
   assert_eq!(options.click.count(), 2);
   assert_eq!(options.click.interval(), Some(std::time::Duration::from_millis(80)));
+  assert!(options.modifiers.meta && options.modifiers.shift);
+  assert!(!options.modifiers.control && !options.modifiers.alt);
 }
 
 #[test]
@@ -258,6 +261,7 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
         interval: std::time::Duration::from_millis(60),
       },
       window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,
+      modifiers: Default::default(),
     }
   );
 }

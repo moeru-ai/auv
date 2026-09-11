@@ -548,6 +548,7 @@ fn run_typed_dispatch(
           policy: InputPolicy::ForegroundPreferred,
           click: Click::Single,
           window_strategy: WindowClickStrategy::PidTargeted,
+          modifiers: Default::default(),
         },
       )
       .map_err(|error| format!("typed dispatch failed at object {}: {error}", action.object_index))?;
@@ -605,6 +606,7 @@ fn warm_up_typed_dispatch_path(
         policy: InputPolicy::ForegroundPreferred,
         click: Click::Single,
         window_strategy: WindowClickStrategy::PidTargeted,
+        modifiers: Default::default(),
       },
     )
     .map(|_| ())

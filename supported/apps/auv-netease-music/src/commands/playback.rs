@@ -400,6 +400,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
         policy: InputPolicy::BackgroundPreferred,
         click: Click::Single,
         window_strategy: WindowClickStrategy::ChromiumCompatible,
+        modifiers: Default::default(),
       },
     )
     .map_err(|error| format!("playback bar click failed: {error}"))?;
@@ -435,8 +436,14 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
         },
       )
       .map_err(|error| format!("playback bar foreground preparation failed: {error}"))?;
-    let click_result =
-      auv_driver_macos::native::pointer::click_point(window.frame.origin.x + click_point.x, window.frame.origin.y + click_point.y, 0, 1, 80);
+    let click_result = auv_driver_macos::native::pointer::click_point(
+      window.frame.origin.x + click_point.x,
+      window.frame.origin.y + click_point.y,
+      0,
+      1,
+      80,
+      Default::default(),
+    );
     let restore_result = session.window().restore_input(lease);
     click_result.map_err(|error| format!("playback bar foreground click failed: {error}"))?;
     restore_result.map_err(|error| format!("playback bar foreground restore failed: {error}"))?;

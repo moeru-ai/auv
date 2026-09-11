@@ -258,10 +258,15 @@ impl WindowApi<'_> {
   /// background-routing selector; Windows has only one posted-message route
   /// today, so both variants resolve to it.
   fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    // TODO(click-modifiers): windows delivery awaits an approved native event
+    // and release contract; reject before focus or input side effects.
+    if !options.modifiers.is_empty() {
+      return Err(invalid_input("windows click modifiers are not supported"));
+    }
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
       let activation_attempt = foreground_window_attempt(window, "pointer delivery");
-      let mut result = self.session.input().click_at(screen_point, options.click)?;
+      let mut result = self.session.input().click_at(screen_point, options.click, options.modifiers)?;
       result.attempts.insert(0, activation_attempt);
       return Ok(result);
     }
@@ -407,7 +412,10 @@ impl InputApi<'_> {
   }
 
   /// Moves the pointer to `point` (screen coordinates) and issues a click.
-  pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
+  pub fn click_at(&self, point: Point, click: Click, modifiers: auv_driver_common::ClickModifiers) -> DriverResult<InputActionResult> {
+    if !modifiers.is_empty() {
+      return Err(invalid_input("windows click modifiers are not supported"));
+    }
     let _ = self.session;
     click_at(point, click)
   }

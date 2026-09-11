@@ -130,7 +130,7 @@ pub(crate) fn click_default_screen_restore(session: &LocalDriverSession, window:
   // app-rendered affordances do not reliably react to typed/window-targeted
   // clicks; `click_point` carries the mouse-move + settle behavior that makes
   // this class of click observable to those controls.
-  let click_result = auv_driver_macos::native::pointer::click_point(global_x, global_y, 0, 1, 80);
+  let click_result = auv_driver_macos::native::pointer::click_point(global_x, global_y, 0, 1, 80, Default::default());
   let restore_result = session.window().restore_input(lease);
   click_result.map_err(|error| format!("foreground restore click failed: {error}"))?;
   restore_result.map_err(|error| format!("foreground restore cleanup failed: {error}"))?;

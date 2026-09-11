@@ -263,7 +263,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         let click = selected_click_options(&input)?.click;
         let response = runner
           .input()
-          .click_screen_point(point, click)
+          .click_screen_point(point, click, Default::default())
           .await
           .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
         let result = crate::commands::screen::ScreenTextClick {
@@ -386,11 +386,12 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
     input.inputs.contains_key("title"),
   )?;
   let requested_point = requested.point();
+  let click_options = selected_click_options(input)?;
   match basis {
     crate::commands::input::RelativeToArg::Screen => {
       let response = runner
         .input()
-        .click_screen_point(requested_point, selected_click_options(input)?.click)
+        .click_screen_point(requested_point, click_options.click, click_options.modifiers)
         .await
         .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
       crate::emit_input_action_result(&response.action);
@@ -426,7 +427,7 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
       let point =
         crate::commands::input::resolve_local_point(requested_point.x, requested_point.y, normalized, window.frame.size, "window")?;
       let response = resolved
-        .click(auv_driver::WindowPoint::new(point.x, point.y), selected_click_options(input)?)
+        .click(auv_driver::WindowPoint::new(point.x, point.y), click_options)
         .await
         .map_err(|status| format!("InputService/ClickWindowPoint failed: {status}"))?;
       crate::emit_input_action_result(&response.action);
@@ -462,7 +463,7 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
       let screen_point = auv_driver::ScreenPoint::new(display.frame.origin.x + point.x, display.frame.origin.y + point.y);
       let response = runner
         .input()
-        .click_screen_point(screen_point.point(), selected_click_options(input)?.click)
+        .click_screen_point(screen_point.point(), click_options.click, click_options.modifiers)
         .await
         .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
       crate::emit_input_action_result(&response.action);
@@ -558,6 +559,7 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
     policy,
     click,
     window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,
+    modifiers: crate::commands::input::click_modifiers(input.inputs.get("modifiers").map(String::as_str))?,
   })
 }
 

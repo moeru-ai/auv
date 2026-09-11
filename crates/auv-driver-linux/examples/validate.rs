@@ -422,7 +422,7 @@ fn scroll(session: &LinuxDriverSession, x: f64, y: f64, delta_y: f64) -> Run {
 }
 
 fn click(session: &LinuxDriverSession, x: f64, y: f64) -> Run {
-  let result = session.input().click_at(Point::new(x, y), Click::Single)?;
+  let result = session.input().click_at(Point::new(x, y), Click::Single, Default::default())?;
   println!("click result: {result:?}");
   Ok(())
 }

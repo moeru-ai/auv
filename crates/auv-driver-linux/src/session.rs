@@ -188,6 +188,11 @@ impl WindowApi<'_> {
   }
 
   fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    // TODO(click-modifiers): linux delivery awaits an approved native event
+    // and release contract; reject before focus or input side effects.
+    if !options.modifiers.is_empty() {
+      return Err(invalid_input("linux click modifiers are not supported"));
+    }
     if matches!(options.policy, InputPolicy::BackgroundOnly) {
       return Err(invalid_input("linux window.click cannot use background_only input policy"));
     }
@@ -204,7 +209,7 @@ impl WindowApi<'_> {
       )],
     };
     let screen_point = self.to_screen_point(window, point)?.point();
-    let mut result = self.session.input().click_at(screen_point, options.click)?;
+    let mut result = self.session.input().click_at(screen_point, options.click, options.modifiers)?;
     result.attempts.splice(0..0, focus_attempts);
     add_foreground_window_fallback_reason(
       &mut result,
@@ -310,7 +315,10 @@ impl InputApi<'_> {
     move_to(&self.session.state, point)
   }
 
-  pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
+  pub fn click_at(&self, point: Point, click: Click, modifiers: auv_driver_common::ClickModifiers) -> DriverResult<InputActionResult> {
+    if !modifiers.is_empty() {
+      return Err(invalid_input("linux click modifiers are not supported"));
+    }
     click_at(&self.session.state, point, click)
   }
 

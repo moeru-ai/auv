@@ -1,3 +1,4 @@
+use auv_driver_common::ClickModifiers;
 // File: src/driver/macos/native/pointer.rs
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
@@ -16,12 +17,19 @@ pub struct TaughtClick {
 }
 
 #[cfg(target_os = "macos")]
-pub fn click_point(x: f64, y: f64, button_code: i32, click_count: i64, click_interval_ms: u64) -> AuvResult<()> {
-  action_result("click_point", native_click_point(x, y, button_code, click_count, click_interval_ms))
+pub fn click_point(x: f64, y: f64, button_code: i32, click_count: i64, click_interval_ms: u64, modifiers: ClickModifiers) -> AuvResult<()> {
+  action_result("click_point", native_click_point(x, y, button_code, click_count, click_interval_ms, click_flags(modifiers)))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn click_point(_x: f64, _y: f64, _button_code: i32, _click_count: i64, _click_interval_ms: u64) -> AuvResult<()> {
+pub fn click_point(
+  _x: f64,
+  _y: f64,
+  _button_code: i32,
+  _click_count: i64,
+  _click_interval_ms: u64,
+  _modifiers: ClickModifiers,
+) -> AuvResult<()> {
   Err("macOS native pointer click is unsupported on this target".to_string())
 }
 
@@ -93,6 +101,26 @@ fn teach_click_result(operation: &str, response: NativeTeachClickResponse) -> Au
     response.error_message,
     response.recovery_hint,
   )
+}
+
+/// Translate portable click state only at the macOS native boundary.
+#[cfg(target_os = "macos")]
+pub(super) fn click_flags(modifiers: ClickModifiers) -> u64 {
+  use objc2_core_graphics::CGEventFlags;
+  let mut flags = CGEventFlags::empty();
+  if modifiers.shift {
+    flags |= CGEventFlags::MaskShift;
+  }
+  if modifiers.control {
+    flags |= CGEventFlags::MaskControl;
+  }
+  if modifiers.alt {
+    flags |= CGEventFlags::MaskAlternate;
+  }
+  if modifiers.meta {
+    flags |= CGEventFlags::MaskCommand;
+  }
+  flags.bits()
 }
 
 #[cfg(test)]

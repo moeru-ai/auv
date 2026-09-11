@@ -219,7 +219,7 @@ mod no_steal_tests {
 
   #[test]
   fn global_click_returns_typed_input_action_result() {
-    let _: fn(&InputApi<'static>, Point, Click) -> DriverResult<InputActionResult> = InputApi::click_at;
+    let _: fn(&InputApi<'static>, Point, Click, auv_driver_common::ClickModifiers) -> DriverResult<InputActionResult> = InputApi::click_at;
   }
 
   #[test]

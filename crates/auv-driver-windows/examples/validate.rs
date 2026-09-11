@@ -223,7 +223,7 @@ fn press(session: &WindowsDriverSession, key: &str) -> Run {
 }
 
 fn click(session: &WindowsDriverSession, x: f64, y: f64) -> Run {
-  session.input().click_at(Point::new(x, y), Click::Single)?;
+  session.input().click_at(Point::new(x, y), Click::Single, Default::default())?;
   println!("clicked at ({x}, {y})");
   Ok(())
 }

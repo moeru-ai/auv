@@ -136,3 +136,34 @@ fn window_scroll_requires_foreground_candidate_for_background_preferred_policy()
 
   assert!(error.to_string().contains("ForegroundHid"));
 }
+
+#[test]
+fn click_modifiers_are_rejected_before_target_activation_or_global_input() {
+  let modifiers = auv_driver_common::ClickModifiers {
+    meta: true,
+    ..Default::default()
+  };
+  let driver = session();
+  let window = sample_window();
+  for policy in [
+    InputPolicy::BackgroundOnly,
+    InputPolicy::BackgroundPreferred,
+    InputPolicy::ForegroundPreferred,
+  ] {
+    let error = driver
+      .window()
+      .click(
+        &window,
+        WindowPoint::new(1.0, 1.0),
+        ClickOptions {
+          policy,
+          modifiers,
+          ..Default::default()
+        },
+      )
+      .unwrap_err();
+    assert!(error.to_string().contains("linux click modifiers are not supported"));
+  }
+  let error = driver.input().click_at(auv_driver_common::Point::new(1.0, 1.0), auv_driver_common::Click::Single, modifiers).unwrap_err();
+  assert!(error.to_string().contains("linux click modifiers are not supported"));
+}

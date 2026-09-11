@@ -1136,7 +1136,12 @@ impl InputClient {
   }
 
   /// Delivers a click in screen coordinates.
-  pub async fn click_screen_point(&self, point: auv_driver::Point, click: auv_driver::Click) -> Result<ScreenPointClick, CapabilityError> {
+  pub async fn click_screen_point(
+    &self,
+    point: auv_driver::Point,
+    click: auv_driver::Click,
+    modifiers: auv_driver::ClickModifiers,
+  ) -> Result<ScreenPointClick, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
       .click_screen_point(proto::ClickScreenPointRequest {
         point: Some(proto::ScreenPoint {
@@ -1145,6 +1150,7 @@ impl InputClient {
         }),
         options: Some(proto::ScreenClickOptions {
           click: Some(click_to_proto(click)?),
+          modifiers: Some(click_modifiers_to_proto(modifiers)),
         }),
       })
       .await
@@ -1476,10 +1482,23 @@ fn text_submit_to_proto(value: auv_driver::TextSubmit) -> proto::TextSubmit {
   }
 }
 
+fn click_modifiers_to_proto(value: auv_driver::ClickModifiers) -> proto::ClickModifiers {
+  // TODO(click-modifier-capabilities): mixed-version Runner negotiation awaits
+  // an approved capability slice. Nonempty modifiers require both endpoints
+  // to implement `2026-09-11-click-modifiers-contract.md`; old peers ignore them.
+  proto::ClickModifiers {
+    shift: value.shift,
+    control: value.control,
+    alt: value.alt,
+    meta: value.meta,
+  }
+}
+
 fn click_options_to_proto(value: auv_driver::ClickOptions) -> Result<proto::ClickOptions, CapabilityError> {
   Ok(proto::ClickOptions {
     policy: input_policy_to_proto(value.policy) as i32,
     click: Some(click_to_proto(value.click)?),
+    modifiers: Some(click_modifiers_to_proto(value.modifiers)),
     window_strategy: match value.window_strategy {
       auv_driver::WindowClickStrategy::ChromiumCompatible => proto::WindowClickStrategy::ChromiumCompatible,
       auv_driver::WindowClickStrategy::PidTargeted => proto::WindowClickStrategy::PidTargeted,
