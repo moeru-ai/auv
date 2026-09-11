@@ -25,6 +25,7 @@ serde = { version = "1", features = ["derive"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "remote_desktop", "screencast", "clipboard", "screenshot"] }
 async-io = "2"
+evdev = "0.13.2"
 fs2 = "0.4"
 futures-lite = "2"
 leptess = "0.14"
@@ -32,6 +33,7 @@ pipewire = "0.8"
 url = "2"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+xkbcommon = { version = "0.9", default-features = false }
 zbus = "5.15"
 
 [dev-dependencies]

@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::driver::InputBackend;
 use crate::driver::LinuxDriverSessionState;
-use crate::error::invalid_input;
-use crate::native::portal::{InputSession, PortalInput};
+use crate::error::{backend, invalid_input};
+use crate::native::portal::{InputSession as PortalSession, PortalInput};
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::Point;
 use auv_driver_common::input::{
@@ -12,6 +13,51 @@ use auv_driver_common::input::{
 };
 
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot as snapshot_clipboard};
+
+#[derive(Debug)]
+pub(crate) enum InputSession {
+  Portal(PortalSession),
+  #[cfg(target_os = "linux")]
+  Uinput(crate::native::uinput::InputSession),
+}
+
+impl InputSession {
+  fn move_to(&mut self, point: Point) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.move_to(point),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.move_to(point),
+    }
+  }
+  fn click_at(&mut self, point: Point, click: Click, modifiers: &[i32]) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.click_at(point, click, modifiers),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.click_at(point, click, modifiers),
+    }
+  }
+  fn scroll_at(&mut self, point: Point, scroll: Scroll) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.scroll_at(point, scroll),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.scroll_at(point, scroll),
+    }
+  }
+  fn key_press(&mut self, key: i32) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.key_press(key),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.key_press(key),
+    }
+  }
+  fn key_chord(&mut self, modifiers: &[i32], key: i32) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.key_chord(modifiers, key),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.key_chord(modifiers, key),
+    }
+  }
+}
 
 pub(crate) fn click_at(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
@@ -163,11 +209,18 @@ fn with_input_session<T>(
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.input_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();
-    state.input_session = Some(PortalInput::open(restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
+    state.input_session = Some(match state.input_backend {
+      InputBackend::Portal => InputSession::Portal(PortalInput::open(restore_tokens.as_ref(), state.portal_app_id.as_deref())?),
+      #[cfg(target_os = "linux")]
+      InputBackend::Uinput => InputSession::Uinput(crate::native::uinput::InputSession::open()?),
+      #[cfg(not(target_os = "linux"))]
+      InputBackend::Uinput => return Err(DriverError::unsupported("Linux uinput")),
+    });
   }
   let result = operation(state.input_session.as_mut().expect("input session was just initialized"));
   if result.is_err() {
-    // A successful RemoteDesktop D-Bus call does not prove that a restored
+    // A successful input call does not prove semantic delivery. An error drops
+    // either backend and never retries the same operation. For Portal, a restored
     // stream still delivers events. Drop a failed session so the next action
     // reopens it through the durable restore-token rotation instead of reusing
     // a stale stream indefinitely.
@@ -245,7 +298,7 @@ fn parse_key_chord(input: &str) -> DriverResult<KeyChord> {
   }
 }
 
-mod keysym {
+pub(crate) mod keysym {
   use auv_driver_common::error::DriverResult;
 
   use crate::error::invalid_input;
@@ -300,7 +353,7 @@ mod keysym {
     match ch {
       '\n' | '\r' => Ok(RETURN),
       '\t' => Ok(TAB),
-      _ => Err(invalid_input(format!("linux portal keyboard input only supports ASCII text in this slice; unsupported character {ch:?}"))),
+      _ => Err(invalid_input(format!("linux keyboard input only supports ASCII text in this slice; unsupported character {ch:?}"))),
     }
   }
 
@@ -340,3 +393,36 @@ mod keysym {
 #[cfg(test)]
 #[path = "input_test.rs"]
 mod tests;
+
+/// Scope keyboard transitions to
+/// this click and attempt every release, including a press with an uncertain
+/// D-Bus reply. Session failure also closes the portal in the owning input API.
+pub(crate) fn with_click_modifiers<K: Copy>(
+  modifiers: &[K],
+  mut key_event: impl FnMut(K, bool) -> DriverResult<()>,
+  click: impl FnOnce() -> DriverResult<()>,
+) -> DriverResult<()> {
+  let mut attempted = 0;
+  let mut result = Ok(());
+  for key in modifiers {
+    attempted += 1;
+    result = key_event(*key, true);
+    if result.is_err() {
+      break;
+    }
+  }
+  if result.is_ok() {
+    result = click();
+  }
+  for key in modifiers[..attempted].iter().rev() {
+    result = combine_release(result, key_event(*key, false));
+  }
+  result
+}
+
+pub(crate) fn combine_release(action: DriverResult<()>, release: DriverResult<()>) -> DriverResult<()> {
+  match (action, release) {
+    (Ok(()), result) | (result, Ok(())) => result,
+    (Err(action), Err(release)) => Err(backend(format!("{action}; additionally failed to release input: {release}"))),
+  }
+}

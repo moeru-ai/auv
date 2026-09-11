@@ -4,10 +4,19 @@ use std::sync::{Arc, Mutex};
 use auv_driver_common::{Driver, DriverDescriptor, DriverResult, DriverSession};
 
 use crate::descriptor::{LinuxDriverDescriptor, linux_driver_descriptor};
-use crate::native::portal::{ClipboardSession, InputSession, RestoreTokenStore, ScreenCastSession};
+use crate::native::portal::{ClipboardSession, RestoreTokenStore, ScreenCastSession};
+
+/// Select the input mechanism explicitly; delivery failures never switch backends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputBackend {
+  #[default]
+  Portal,
+  Uinput,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct LinuxDriver {
+  input_backend: InputBackend,
   portal_state_root: Option<PathBuf>,
   portal_app_id: Option<String>,
 }
@@ -15,6 +24,12 @@ pub struct LinuxDriver {
 impl LinuxDriver {
   pub fn new() -> Self {
     Self::default()
+  }
+
+  /// Selects the foreground input mechanism for newly opened sessions.
+  pub fn with_input_backend(mut self, backend: InputBackend) -> Self {
+    self.input_backend = backend;
+    self
   }
 
   /// Persists opaque portal restore tokens below a daemon-owned state root.
@@ -52,7 +67,8 @@ pub(crate) struct LinuxDriverSessionState {
   // is deferred with that shared-session slice because GNOME currently hangs
   // when the standalone clipboard session calls SelectDevices with no devices.
   pub(crate) clipboard_session: Option<ClipboardSession>,
-  pub(crate) input_session: Option<InputSession>,
+  pub(crate) input_session: Option<crate::input::InputSession>,
+  pub(crate) input_backend: InputBackend,
   pub(crate) screencast_session: Option<ScreenCastSession>,
   pub(crate) restore_tokens: Option<RestoreTokenStore>,
   pub(crate) portal_app_id: Option<String>,
@@ -74,6 +90,7 @@ impl Driver for LinuxDriver {
   fn open_local(&self) -> DriverResult<Self::Session> {
     Ok(LinuxDriverSession {
       state: Arc::new(Mutex::new(LinuxDriverSessionState {
+        input_backend: self.input_backend,
         restore_tokens: self.portal_state_root.clone().map(RestoreTokenStore::new),
         portal_app_id: self.portal_app_id.clone(),
         ..Default::default()

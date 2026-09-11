@@ -1,4 +1,9 @@
 #[cfg(target_os = "linux")]
+mod keymap;
+#[cfg(target_os = "linux")]
+pub(crate) mod uinput;
+
+#[cfg(target_os = "linux")]
 pub mod portal;
 
 #[cfg(not(target_os = "linux"))]

@@ -15,10 +15,17 @@ pub fn driver(portal_state_root: Option<PathBuf>) -> DriverResult<LocalDriver> {
   let driver = LocalDriver::new();
   #[cfg(target_os = "linux")]
   {
-    Ok(driver.with_linux_portal_app_id(PORTAL_APP_ID.to_string())?.with_linux_portal_state_root(match portal_state_root {
-      Some(root) => root,
-      None => default_portal_state_root()?,
-    }))
+    let backend = match std::env::var("AUV_LINUX_INPUT_BACKEND").as_deref() {
+      Ok("portal") | Err(std::env::VarError::NotPresent) => auv_driver::LinuxInputBackend::Portal,
+      Ok("uinput") => auv_driver::LinuxInputBackend::Uinput,
+      _ => return Err(config_error("AUV_LINUX_INPUT_BACKEND must be portal or uinput")),
+    };
+    Ok(driver.with_linux_input_backend(backend).with_linux_portal_app_id(PORTAL_APP_ID.to_string())?.with_linux_portal_state_root(
+      match portal_state_root {
+        Some(root) => root,
+        None => default_portal_state_root()?,
+      },
+    ))
   }
   #[cfg(not(target_os = "linux"))]
   {

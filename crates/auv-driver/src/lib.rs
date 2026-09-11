@@ -30,6 +30,13 @@ impl LocalDriver {
     }
   }
 
+  /// Selects the Linux foreground input backend without affecting other platforms.
+  #[cfg(target_os = "linux")]
+  pub fn with_linux_input_backend(mut self, backend: LinuxInputBackend) -> Self {
+    self.inner = self.inner.with_input_backend(backend);
+    self
+  }
+
   #[cfg(target_os = "linux")]
   pub fn with_linux_portal_app_id(mut self, app_id: String) -> DriverResult<Self> {
     self.inner = self.inner.with_portal_app_id(app_id)?;
@@ -183,3 +190,6 @@ mod tests;
 
 #[cfg(target_os = "linux")]
 pub use auv_driver_linux::{LinuxPortalProbe, kde_authorization, probe_portals, set_kde_authorization, verify_portal_identity};
+
+#[cfg(target_os = "linux")]
+pub use auv_driver_linux::InputBackend as LinuxInputBackend;

@@ -11,6 +11,7 @@ use auv_driver_common::input::{Click, MouseButton, Scroll};
 
 use crate::capture::list_displays;
 use crate::error::{backend, invalid_input};
+use crate::input::{combine_release, with_click_modifiers};
 
 use super::ScreenCastStream;
 use super::persistence::{RestoreTokenKind, RestoreTokenStore};
@@ -371,39 +372,6 @@ fn clamp(value: f64, min: f64, max: f64) -> f64 {
 fn debug_input_mapping(message: impl FnOnce() -> String) {
   if std::env::var_os("AUV_LINUX_INPUT_DEBUG").is_some() {
     eprintln!("auv-driver-linux input: {}", message());
-  }
-}
-
-/// Portal pointer events have no modifier field. Scope keyboard transitions to
-/// this click and attempt every release, including a press with an uncertain
-/// D-Bus reply. Session failure also closes the portal in the owning input API.
-fn with_click_modifiers(
-  modifiers: &[i32],
-  mut key_event: impl FnMut(i32, bool) -> DriverResult<()>,
-  click: impl FnOnce() -> DriverResult<()>,
-) -> DriverResult<()> {
-  let mut attempted = 0;
-  let mut result = Ok(());
-  for key in modifiers {
-    attempted += 1;
-    result = key_event(*key, true);
-    if result.is_err() {
-      break;
-    }
-  }
-  if result.is_ok() {
-    result = click();
-  }
-  for key in modifiers[..attempted].iter().rev() {
-    result = combine_release(result, key_event(*key, false));
-  }
-  result
-}
-
-fn combine_release(action: DriverResult<()>, release: DriverResult<()>) -> DriverResult<()> {
-  match (action, release) {
-    (Ok(()), result) | (result, Ok(())) => result,
-    (Err(action), Err(release)) => Err(backend(format!("{action}; additionally failed to release input: {release}"))),
   }
 }
 

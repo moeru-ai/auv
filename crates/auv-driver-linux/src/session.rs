@@ -93,13 +93,25 @@ impl PermissionApi<'_> {
   /// keys or pointer events. Each Portal can request its own initial consent.
   pub fn authorize_portals(&self) -> DriverResult<()> {
     let mut state = self.session.state.lock().expect("linux driver session state poisoned");
-    if state.input_session.is_none() {
-      state.input_session = Some(crate::native::portal::PortalInput::open(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
-    }
+    let authorization = if state.input_session.is_none() || state.input_backend == crate::InputBackend::Uinput {
+      Some(crate::native::portal::PortalInput::open(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?)
+    } else {
+      None
+    };
+    // Explicit Portal setup must not replace a selected uinput session.
+    let temporary_authorization = if state.input_backend == crate::InputBackend::Portal {
+      if let Some(session) = authorization {
+        state.input_session = Some(crate::input::InputSession::Portal(session));
+      }
+      None
+    } else {
+      authorization
+    };
     if state.screencast_session.is_none() {
       state.screencast_session =
         Some(crate::native::portal::ScreenCastSession::open_monitor(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
     }
+    drop(temporary_authorization);
     Ok(())
   }
 
