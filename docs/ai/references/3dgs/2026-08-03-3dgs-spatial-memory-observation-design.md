@@ -350,10 +350,49 @@ failure 会形成明确的 rejected report。
 
 本 slice **没有**选择或调用 LLM provider，也没有把“JSON 合法”当成语义正确。
 仓库当前不存在可复用的 LLM/VLM transport，直接添加 OpenAI/Anthropic HTTP client
-会凭空冻结新的 secret、provider 和 retry 接口。真实模型 transport、原始响应
-artifact 持久化，以及 withheld Minecraft truth scorer 仍是后续 slice。这里的 core
-graduation 结论是 **保持 app-specific**；至少需要真实 M1 消费证据和第二个应用消费者，
-才考虑抽 shared helper。
+会凭空冻结新的 secret、provider 和 retry 接口。真实模型 transport 和原始响应
+artifact 持久化仍是后续 slice。
+
+**当前状态（2026-09-12）：M1 scorer 验证循环已落地，仍不是真实 baseline，也不是 M2。**
+
+`m1_black_box_observation.rs` 把 `BoundSpatialFrame` 拆成黑盒 `SpatialObservationPacket`
+和 `M1WithheldMinecraftTruth`：截图 URI、capture clock、viewport 进入 observation；
+pose、raycast、`nearby_blocks`、相机矩阵、库存和资源包只留在 withheld 一侧。
+AUV input history 仍是调用方传入的；sidecar 不会从 pose 差分捏造输入。
+
+`prepare_m1_black_box_from_telemetry_tail` 是这条链的 live 入口：读 sidecar JSONL
+最新一帧，拒绝 `menu` / `loading_or_overlay`（以及缺失 `screen_state`），再 bind
+调用方提供的 canonical screenshot URI 并 `prepare_m1_black_box_request`。Windows
+上 live 截图 producer 已固定为 `auv invoke window.capture`（`auv-driver-windows`
+PrintWindow/xcap，canonical artifact URI）。2026-09-12 live：`window.capture --title Minecraft`
+得到 `backend=printwindow.windows`、无 fallback、非黑 in-game PNG；invoke JSON 仍无
+capture monotonic clock。这不等于 M1 baseline 完成，也没有真实模型输出或校准曲线。
+GLFW/MC 窗口仍可能黑帧；本 slice 不加 WGC。
+
+`m1_black_box_scoring.rs` 只对 *已经通过* contract gate 的 patch 打分，并把
+`M1WithheldMinecraftTruth` 留在 request 类型之外。当前 claim schema 没有结构化
+世界坐标，所以这一刀评的是诚实性和校准，不是像素/方块命中率：
+
+- 序列化后的 request 不得泄漏 withheld eye pose 或 block id；
+- RGB-only patch 必须声明 `world_coordinate`（以及有 raycast 真值时的
+  `hidden_geometry`）unknown；
+- `world_registration` / `metric_scale` 有 RGB-only 上限；
+- geometry 仍不确定时，follow-up 必须请求能产生视差的平移，而不能只 yaw/pitch。
+
+`m1_black_box_verification.rs` 把上述三步收成一条库 API：
+`verify_m1_black_box_from_telemetry_tail`（telemetry JSONL + screenshot artifact
+URI + 可选 capture clock + 外部 model response JSON）执行
+`prepare_m1_black_box_from_telemetry_tail` → `inspect_m1_black_box_response` →
+`score_accepted_m1_black_box_response`，返回可序列化的
+`M1BlackBoxVerificationReport`（`write_m1_black_box_verification_report` 可落盘）。
+`capture_monotonic_timestamp_ms=None` 时默认使用 sidecar 最新 in-game 帧时间戳；
+invoke JSON 仍无 capture monotonic clock。fixture 测试覆盖 honest（usable）、
+leak/overconfident/yaw-only（not usable）；live 验证测试仍 env-gated 且 `#[ignore]`。
+
+这仍然 **没有**真实模型输出/VLM transport，也没有 live capture 上的校准曲线。
+没有这两者，不能把 scorer 通过说成 M1 baseline 完成；这也不是 M2 多视角工作。
+这里的 core graduation 结论是 **保持 app-specific**；至少需要真实 M1 消费证据和
+第二个应用消费者，才考虑抽 shared helper。
 
 本 slice 暂时保留 serde 对未知 response 字段的 forward-compatible 忽略策略，因为
 真实 provider/version migration 证据尚不存在。若真实 M1 运行表明原始响应审计需要

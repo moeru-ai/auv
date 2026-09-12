@@ -426,6 +426,17 @@ fn windows_local_daemon_routes_runner_grpc_over_named_pipe() {
   assert_eq!(invoked["status"], "completed", "{invoked}");
   assert!(invoked["result"]["displays"].as_array().is_some_and(|displays| !displays.is_empty()), "{invoked}");
 
+  // Prove a second stable invoke command reaches the same named-pipe Runner.
+  let listed = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args(["--device-id", &device_id, "invoke", "window.list", "--json"])
+    .env("AUV_DISCOVERY_FILE", &discovery)
+    .output()
+    .expect("invoke window.list on selected Windows Device");
+  assert!(listed.status.success(), "stdout={} stderr={}", stdout(&listed), stderr(&listed));
+  let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("window.list invoke result JSON");
+  assert_eq!(listed["status"], "completed", "{listed}");
+  assert!(listed["result"].is_array(), "{listed}");
+
   // A Run-affine route creates an UnlessShutdown Runner. The daemon reuses it
   // after the implicit Run ends instead of applying Ephemeral route cleanup.
   let listed =

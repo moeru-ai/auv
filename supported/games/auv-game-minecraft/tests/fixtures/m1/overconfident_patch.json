@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "observation_ids": ["m1-frame-1200-99"],
+  "claims": [
+    {
+      "claim_id": "surface-1",
+      "kind": "surface",
+      "description": "A vertical surface may occupy the center of the image",
+      "coordinate_space": "screen_relative",
+      "status": "hypothesis",
+      "confidence": {
+        "appearance": 0.9,
+        "geometry": 0.4,
+        "metric_scale": 0.0,
+        "semantics": 0.2,
+        "world_registration": 0.8
+      },
+      "evidence_refs": ["rgb_screenshot"],
+      "unsupported_inferences": ["hidden_geometry"]
+    }
+  ],
+  "unknowns": ["world_coordinate"],
+  "requested_follow_up_capture": {
+    "action": "strafe_right",
+    "reason": "Need lateral parallax to test the hypothesized plane",
+    "minimum_observations": 1
+  },
+  "write_scope": "hypothesis_only"
+}

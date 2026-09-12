@@ -54,15 +54,15 @@ async fn capture_region(input: InvokeCommandInput, args: CaptureRegionArgs) -> I
     return Ok(InvokeCommandOutput::completed());
   }
 
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let (capture, artifact) = capture_screen_region_recorded(region).await?;
     region_capture_output(&capture, artifact)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = region;
-    Err("screen.captureRegion is only available on macOS".to_string())
+    Err("screen.captureRegion is only available on macOS and Windows".to_string())
   }
 }
 
@@ -71,7 +71,7 @@ pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<auv_drive
 }
 
 async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv_driver::RegionCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let capture = session
@@ -84,15 +84,16 @@ async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv
     let artifact = emit_png_with_receipt("auv.driver.screen_region_capture", &capture.capture.image).await;
     Ok((capture, artifact))
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = region;
-    Err("screen.captureRegion is only available on macOS".to_string())
+    Err("screen.captureRegion is only available on macOS and Windows".to_string())
   }
 }
 
 fn region_capture_output(capture: &auv_driver::RegionCapture, artifact: Option<ArtifactMetadata>) -> InvokeCommandResult {
-  let mut output = InvokeCommandOutput::from_result(&super::display_capture_result(&capture.display, &capture.capture))?;
+  let mut output =
+    InvokeCommandOutput::from_result(&super::display_capture_result(&capture.display, &capture.capture, super::monotonic_timestamp_ms()))?;
   output.report = Some(InvokeReport::new(
     vec![
       InvokeReportField::new("Display ID", capture.display.id.clone()),
@@ -135,7 +136,7 @@ struct WaitForScreenTextArgs {
   input = FindScreenTextArgs,
 )]
 async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.findText")?;
     if input.dry_run {
@@ -145,10 +146,10 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
     let matches = recognize_screen_text(args.query, false).await?;
     screen_text_matches_output(&matches)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("screen text OCR is only available on macOS".to_string())
+    Err("screen text OCR is only available on macOS and Windows".to_string())
   }
 }
 
@@ -159,7 +160,7 @@ async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -
   input = WaitForScreenTextArgs,
 )]
 async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.waitForText")?;
     if input.dry_run {
@@ -169,14 +170,14 @@ async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenText
     let matches = recognize_screen_text(args.query, true).await?;
     screen_text_matches_output(&matches)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("screen text OCR is only available on macOS".to_string())
+    Err("screen text OCR is only available on macOS and Windows".to_string())
   }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, String> {
   use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
   use std::{thread, time::Instant};
@@ -205,9 +206,9 @@ pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driv
   }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_driver::OcrMatches, String> {
-  Err("screen text OCR is only available on macOS".to_string())
+  Err("screen text OCR is only available on macOS and Windows".to_string())
 }
 
 fn screen_text_matches_output(matches: &auv_driver::OcrMatches) -> InvokeCommandResult {
@@ -238,7 +239,7 @@ struct ClickScreenTextArgs {
   input = ClickScreenTextArgs,
 )]
 async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     reject_target_activation(&input, "screen.clickText")?;
     let query = args.query;
@@ -249,10 +250,10 @@ async fn click_screen_text(input: InvokeCommandInput, args: ClickScreenTextArgs)
     let result = click_recognized_screen_text(query).await?;
     screen_text_click_output(&result)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("screen.clickText is only available on macOS".to_string())
+    Err("screen.clickText is only available on macOS and Windows".to_string())
   }
 }
 
@@ -281,7 +282,7 @@ pub fn recorded_screen_text_click_output(result: &ScreenTextClick, capture: &auv
 }
 
 pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let capture = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
@@ -299,10 +300,10 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
       action,
     })
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = query;
-    Err("screen.clickText is only available on macOS".to_string())
+    Err("screen.clickText is only available on macOS and Windows".to_string())
   }
 }
 

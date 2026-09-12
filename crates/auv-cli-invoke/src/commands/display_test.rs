@@ -95,7 +95,7 @@ fn display_capture_result_keeps_pixels_out_of_json() {
     },
   };
 
-  let output = InvokeCommandOutput::from_result(&super::super::display_capture_result(&capture.display, &capture.capture))
+  let output = InvokeCommandOutput::from_result(&super::super::display_capture_result(&capture.display, &capture.capture, 12_345))
     .expect("capture result should serialize")
     .with_report(display_capture_report(&capture));
   let result = output.result().expect("capture should have a result");
@@ -104,5 +104,6 @@ fn display_capture_result_keeps_pixels_out_of_json() {
   assert_eq!(result["capture"]["pixel_dimensions"]["width"], 2880);
   assert_eq!(result["capture"]["pixel_dimensions"]["height"], 1800);
   assert_eq!(result["capture"]["backend"], "fixture-capture");
+  assert_eq!(result["capture"]["capture_monotonic_timestamp_ms"], 12_345);
   assert!(result.get("image").is_none());
 }

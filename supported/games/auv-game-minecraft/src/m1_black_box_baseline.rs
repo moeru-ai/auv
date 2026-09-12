@@ -96,8 +96,8 @@ pub fn prepare_m1_black_box_request(observation: SpatialObservationPacket) -> Re
 /// Parse and validate externally produced structured output.
 ///
 /// A rejected report keeps parse or contract errors separate from semantic
-/// scoring. Minecraft answer-key scoring is intentionally deferred to a later
-/// M1 slice so engine truth never enters the model request by accident.
+/// scoring. Withheld Minecraft answer-key scoring lives in `m1_black_box_scoring`
+/// so engine truth never enters the model request by accident.
 pub fn inspect_m1_black_box_response(request: &M1BlackBoxRequest, response_json: &[u8]) -> M1BlackBoxResponseReport {
   let mut request_errors = Vec::new();
   if request.schema_version != M1_BLACK_BOX_REQUEST_SCHEMA_VERSION {
@@ -175,9 +175,11 @@ fn validate_m1_observation(observation: &SpatialObservationPacket) -> Result<(),
         tier: signal.tier,
       });
     }
-    // TODO(m1-live-capture-vocabulary): Replace these provisional literals
-    // with producer-owned enums after a real capture producer consumes M1.
-    // Until then, fail closed instead of accepting arbitrary metadata strings.
+    // TODO(m1-live-capture-vocabulary): `prepare_m1_black_box_from_telemetry_tail`
+    // now consumes these literals as the live producer. A 2026-09-12 Windows
+    // `window.capture` run proved PrintWindow bytes bind through this vocabulary;
+    // replace the strings with producer-owned enums only after that owner-approved
+    // slice. Do not expand the string allowlist in the meantime.
     if !is_m1_signal_provenance(signal.kind, &signal.provenance) {
       return Err(M1BlackBoxRequestError::InvalidBlackBoxMetadata {
         field: "signal provenance",
@@ -208,7 +210,7 @@ fn validate_m1_observation(observation: &SpatialObservationPacket) -> Result<(),
   Ok(())
 }
 
-fn is_m1_signal_provenance(kind: SpatialSignalKind, provenance: &str) -> bool {
+pub(crate) fn is_m1_signal_provenance(kind: SpatialSignalKind, provenance: &str) -> bool {
   matches!(
     (kind, provenance),
     (SpatialSignalKind::RgbScreenshot, "external_window_capture")
@@ -218,7 +220,7 @@ fn is_m1_signal_provenance(kind: SpatialSignalKind, provenance: &str) -> bool {
   )
 }
 
-fn is_m1_input_action(action: &str) -> bool {
+pub(crate) fn is_m1_input_action(action: &str) -> bool {
   matches!(action, "strafe_left" | "strafe_right" | "step_forward" | "step_backward" | "yaw_left" | "yaw_right" | "pitch_up" | "pitch_down")
 }
 

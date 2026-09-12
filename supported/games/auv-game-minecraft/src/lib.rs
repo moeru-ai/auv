@@ -12,6 +12,9 @@ pub mod evidence;
 pub mod ingest;
 pub mod input_target;
 pub mod m1_black_box_baseline;
+pub mod m1_black_box_observation;
+pub mod m1_black_box_scoring;
+pub mod m1_black_box_verification;
 pub mod measurement;
 pub mod overlay;
 pub mod prep;
@@ -49,6 +52,18 @@ pub use input_target::projected_window_point;
 pub use m1_black_box_baseline::{
   M1_BLACK_BOX_REQUEST_SCHEMA_VERSION, M1_BLACK_BOX_RESPONSE_REPORT_SCHEMA_VERSION, M1BlackBoxRequest, M1BlackBoxRequestError,
   M1BlackBoxResponseReport, M1BlackBoxResponseStatus, inspect_m1_black_box_response, prepare_m1_black_box_request,
+};
+pub use m1_black_box_observation::{
+  M1_IN_GAME_SCREEN_STATE, M1BlackBoxLivePreparation, M1BlackBoxObservationError, M1BlackBoxObservationSplit,
+  prepare_m1_black_box_from_telemetry_tail, split_bound_frame_for_m1,
+};
+pub use m1_black_box_scoring::{
+  M1_BLACK_BOX_SCORE_REPORT_SCHEMA_VERSION, M1BlackBoxScoreError, M1BlackBoxScoreReport, M1FollowUpScore, M1OverconfidentClaim,
+  M1WithheldMinecraftTruth, score_accepted_m1_black_box_response,
+};
+pub use m1_black_box_verification::{
+  M1_BLACK_BOX_VERIFICATION_REPORT_SCHEMA_VERSION, M1BlackBoxVerificationError, M1BlackBoxVerificationReport,
+  verify_m1_black_box_from_telemetry_tail, write_m1_black_box_verification_report,
 };
 pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,

@@ -26,7 +26,6 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import org.joml.Matrix4f;
 import org.lwjgl.BufferUtils;
-import org.lwjgl.opengl.GL11;
 
 public final class TelemetryRecorder {
   // NOTICE: nearby-block sampling is bounded by a radius and a per-frame entry

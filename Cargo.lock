@@ -553,6 +553,7 @@ dependencies = [
  "auv-cli-invoke-macros",
  "auv-driver",
  "auv-driver-macos",
+ "auv-driver-windows",
  "auv-media-macos",
  "auv-scan",
  "auv-tracing",
@@ -778,6 +779,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 

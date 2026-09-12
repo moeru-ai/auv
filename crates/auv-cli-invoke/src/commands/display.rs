@@ -36,7 +36,7 @@ async fn capture_display(input: InvokeCommandInput, _args: CaptureDisplayArgs) -
   #[cfg(target_os = "macos")]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let (result, artifact) = capture_primary_display_recorded_with_session(&session).await?;
+    let (result, artifact, capture_monotonic_timestamp_ms) = capture_primary_display_recorded_with_session(&session).await?;
     let capture_overlay = Overlay::new().with_layer(
       CaptureFrame::new(result.display.frame)
         .with_label(result.display.name.clone().unwrap_or_else(|| format!("display {}", result.display.id))),
@@ -49,59 +49,67 @@ async fn capture_display(input: InvokeCommandInput, _args: CaptureDisplayArgs) -
         .with_motion_ease(Duration::from_millis(120), auv_driver::overlay::Easing::EaseInOutExpo)
         .with_auto_removal_after(Duration::from_millis(180)),
     )?;
-    let mut output = display_capture_output(&result, artifact)?;
+    let mut output = display_capture_output(&result, artifact, capture_monotonic_timestamp_ms)?;
     output.report.as_mut().expect("display capture output always has a report").fields.push(overlay.report_field());
     Ok(output)
   }
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "linux", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    let (result, artifact) = capture_primary_display_recorded_with_session(&session).await?;
-    display_capture_output(&result, artifact)
+    let (result, artifact, capture_monotonic_timestamp_ms) = capture_primary_display_recorded_with_session(&session).await?;
+    display_capture_output(&result, artifact, capture_monotonic_timestamp_ms)
   }
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     Err("display.capture is not available on this platform".to_string())
   }
 }
 
 /// Records and projects a capture returned by either a local or remote Driver.
-pub async fn recorded_display_capture_output(result: &auv_driver::DisplayCapture) -> InvokeCommandResult {
+pub async fn recorded_display_capture_output(
+  result: &auv_driver::DisplayCapture,
+  capture_monotonic_timestamp_ms: u64,
+) -> InvokeCommandResult {
   let artifact = emit_png_with_receipt("auv.driver.display_capture", &result.capture.image).await;
-  display_capture_output(result, artifact)
+  display_capture_output(result, artifact, capture_monotonic_timestamp_ms)
 }
 
-fn display_capture_output(result: &auv_driver::DisplayCapture, artifact: Option<ArtifactMetadata>) -> InvokeCommandResult {
+fn display_capture_output(
+  result: &auv_driver::DisplayCapture,
+  artifact: Option<ArtifactMetadata>,
+  capture_monotonic_timestamp_ms: u64,
+) -> InvokeCommandResult {
   Ok(
-    InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture))?
+    InvokeCommandOutput::from_result(&super::display_capture_result(&result.display, &result.capture, capture_monotonic_timestamp_ms))?
       .with_report(display_capture_report(result))
       .with_artifacts(artifact),
   )
 }
 
 pub async fn capture_primary_display() -> Result<auv_driver::DisplayCapture, String> {
-  capture_primary_display_recorded().await.map(|(capture, _)| capture)
+  capture_primary_display_recorded().await.map(|(capture, _, _)| capture)
 }
 
-async fn capture_primary_display_recorded() -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn capture_primary_display_recorded() -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>, u64), String> {
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     capture_primary_display_recorded_with_session(&session).await
   }
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     Err("display.capture is not available on this platform".to_string())
   }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn capture_primary_display_recorded_with_session(
   session: &auv_driver::LocalDriverSession,
-) -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>), String> {
+) -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>, u64), String> {
+  let capture_monotonic_timestamp_ms = super::monotonic_timestamp_ms();
   let result = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
   let artifact = emit_png_with_receipt("auv.driver.display_capture", &result.capture.image).await;
-  Ok((result, artifact))
+  Ok((result, artifact, capture_monotonic_timestamp_ms))
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -131,12 +139,12 @@ pub fn list_displays_output(displays: &auv_driver::ObservedDisplays) -> InvokeCo
 }
 
 pub async fn observe_displays() -> Result<auv_driver::ObservedDisplays, String> {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     session.display().list().map_err(|error| error.to_string())
   }
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     Err("display.list is not available on this platform".to_string())
   }

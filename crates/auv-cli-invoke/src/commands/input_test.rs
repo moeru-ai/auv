@@ -490,3 +490,64 @@ async fn key_combination_protocol_arguments_preserve_keys_and_repeat_options() {
   );
   command.invoke(input).await.unwrap();
 }
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_keyboard_dry_run_validates_without_delivery() {
+  let output = type_text_invoke_command()
+    .invoke(crate::InvokeCommandInput {
+      command_id: "input.typeText".into(),
+      target: None,
+      inputs: [("text".into(), "hello".into())].into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .expect("windows keyboard dry-run should validate");
+  assert_eq!(field_value(output.report.as_ref().expect("validation report"), "Delivery"), "not_performed");
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_background_keyboard_without_target_fails_before_io() {
+  let error = type_text_invoke_command()
+    .invoke(crate::InvokeCommandInput {
+      command_id: "input.typeText".into(),
+      target: None,
+      inputs: [
+        ("text".into(), "must not type".into()),
+        ("input-policy".into(), "background-only".into()),
+      ]
+      .into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .unwrap_err();
+  assert_eq!(error.code, crate::FailureCode::InvalidInput);
+  assert!(error.message.contains("requires --target"));
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_background_keyboard_with_target_is_unsupported() {
+  let error = type_text_invoke_command()
+    .invoke(crate::InvokeCommandInput {
+      command_id: "input.typeText".into(),
+      target: Some(crate::ExecutionTarget::Application { id: "javaw".into() }),
+      inputs: [
+        ("text".into(), "must not type".into()),
+        ("input-policy".into(), "background-only".into()),
+      ]
+      .into(),
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .unwrap_err();
+  assert_eq!(error.code, crate::FailureCode::InvalidInput);
+  assert!(error.message.contains("foreground-preferred"));
+}

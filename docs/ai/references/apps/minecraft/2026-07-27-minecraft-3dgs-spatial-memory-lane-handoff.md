@@ -162,6 +162,63 @@ build a frame through serde and round-trip Rust's own output.
 
 ## Capture protocol for slice 3 (no new code required)
 
+NOTICE (2026-09-12): the root `auv-minecraft` CLI was retired after this
+handoff. The bash sketch below is a historical operating note, not a current
+command surface. Do not recreate that binary. The `auv-cli` integration paths
+in the table were retired with it; `projection_workflow.rs` now lives in
+`supported/games/auv-game-minecraft/src/cli/` behind the `tracing` feature.
+The library path that replaced the retired bridge for M1 is
+`verify_m1_black_box_from_telemetry_tail` in `auv-game-minecraft`
+(`read_latest_spatial_frame_from_tail` → `bind_capture_to_frame` →
+`split_bound_frame_for_m1` → `prepare_m1_black_box_request` →
+`inspect_m1_black_box_response` → `score_accepted_m1_black_box_response`).
+Lower-level entry points remain public: `prepare_m1_black_box_from_telemetry_tail`
+for request-only preparation, and the inspect/score helpers for fixture replay.
+The live producer refuses `menu` and `loading_or_overlay` frames so a pause or
+chunk overlay cannot be bound as an in-world RGB observation. Screenshot bytes on
+Windows come from `auv invoke window.capture` (PrintWindow via `auv-driver-windows`,
+canonical `auv://runs/...` artifact URI); pass that URI and the invoke capture
+clock into `verify_m1_black_box_from_telemetry_tail` together with externally
+produced model response JSON. When the capture clock is omitted, the newest in-game
+sidecar timestamp is used. Live evidence on 2026-09-12: `window.list` resolved
+`Minecraft* 1.21.1 - 单人游戏`, `window.capture --title Minecraft` returned
+`backend=printwindow.windows` with no fallback and a non-black in-game PNG (not
+WGC). Invoke JSON now exposes `result.capture.capture_monotonic_timestamp_ms`
+(stamped immediately before PrintWindow / display capture). The scorer verification
+loop and hermetic fixtures landed in 2026-09-12; this is **not** M1 baseline
+completion (no real model / no calibration curve) and **not** M2. Withheld truth
+never enters the serialized request. Multi-pose scene-packet export still needs a
+live operator session; that gap is capture, not a missing trainer.
+
+### Windows M1 PowerShell workflow (Phase 0 invoke producer)
+
+NOTICE (clock domain): MC telemetry `monotonic_timestamp_ms` comes from the JVM
+(`System.nanoTime()` scaled to ms). Invoke `capture_monotonic_timestamp_ms` comes
+from the AUV process monotonic clock. The two clocks do **not** share a base —
+`bind_capture_to_frame` records skew as `frame_ts - capture_ts` and
+`verify_m1_black_box_from_telemetry_tail` falls back to the sidecar frame timestamp
+when the capture clock is omitted. Treat invoke clock as the capture-instant witness;
+do not assume it is directly comparable to JVM nanoTime without calibration.
+
+```powershell
+$env:CARGO_TARGET_DIR = 'F:\auv\target'
+
+# 1. List windows and confirm the Minecraft title
+auv invoke window.list --json
+
+# 2. Capture the in-game window (process name + title on Windows)
+$captureJson = auv invoke window.capture --target javaw --title Minecraft --json | ConvertFrom-Json
+$uri = $captureJson.artifacts[0].metadata.uri
+$captureClockMs = $captureJson.result.capture.capture_monotonic_timestamp_ms
+
+# 3. Run M1 verification (library) or hand uri + clock to an external VLM script
+# verify_m1_black_box_from_telemetry_tail(telemetry_path, $uri, $captureClockMs, input_history)
+# Example external script: .tmp/m1-vlm/invoke_m1_vlm.py (reads the same JSON fields)
+```
+
+`--target javaw` matches the Windows process executable name (`App::name`); on macOS
+use `--target com.mojang.minecraftlauncher` (bundle id) instead.
+
 Traced on 2026-07-27. Every link in the chain already exists; slice 3 is an
 operating procedure, not an implementation.
 

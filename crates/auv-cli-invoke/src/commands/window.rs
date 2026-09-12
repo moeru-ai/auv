@@ -3,15 +3,19 @@ use crate::{
   InvokeReportValue, OptionalReportText, invoke_command,
 };
 use auv_cli_common::{TableRow, outputs::formats::table::TableOptions};
+#[cfg(target_os = "macos")]
+use auv_driver::ScreenPoint;
+use auv_driver::WindowInput as _;
+#[cfg(target_os = "macos")]
 use auv_driver::overlay::{
   Overlay,
   components::{CaptureFrame, ClickTarget},
   layers::Outline,
   style::{Insets, OutlineStyle},
 };
-use auv_driver::{ScreenPoint, WindowInput as _};
 use auv_tracing::ArtifactMetadata;
 use clap::{Args, ValueEnum};
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 use crate::artifact::{emit_png, emit_png_with_receipt};
@@ -34,11 +38,11 @@ struct ListWindowsArgs {}
 #[invoke_command(
   id = "window.list",
   group = "window",
-  description = "List visible macOS window candidates using the normalized AUV window selector model.",
+  description = "List visible window candidates using the normalized AUV window selector model.",
   input = ListWindowsArgs,
 )]
 async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -47,10 +51,10 @@ async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> Invo
     let windows = observe_windows().await?;
     list_windows_output(&windows)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = input;
-    Err("window.list is only available on macOS".to_string())
+    Err("window.list is only available on macOS and Windows".to_string())
   }
 }
 
@@ -63,19 +67,21 @@ pub fn list_windows_output(windows: &[auv_driver::Window]) -> InvokeCommandResul
 }
 
 pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     session.window().list().map_err(|error| error.to_string())
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
-    Err("window.list is only available on macOS".to_string())
+    Err("window.list is only available on macOS and Windows".to_string())
   }
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled")]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled\n  auv invoke window.capture --target javaw --title Minecraft"
+)]
 struct CaptureWindowArgs {
   /// Window title text used to select the capture target.
   #[arg(long, value_name = "TEXT")]
@@ -90,7 +96,7 @@ struct CaptureWindowArgs {
   input = CaptureWindowArgs,
 )]
 async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -99,22 +105,29 @@ async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> I
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let (result, artifact) =
       capture_selected_window_recorded_with_session(&session, window_selector(&input, args.title.as_deref())?).await?;
-    let capture_overlay = Overlay::new().with_layer(
-      CaptureFrame::new(result.window.frame).with_label(result.window.title.clone().unwrap_or_else(|| "selected window".to_string())),
-    );
-    let overlay = super::overlay::show_overlay(&input, &session, capture_overlay, show_options(120, 180))?;
-    let mut output = window_capture_output_with_artifact(&result, artifact)?;
-    output.report.as_mut().expect("window capture output always has a report").fields.push(overlay.report_field());
-    // TODO(invoke-window-capture-backend): live testing on 2026-06-18 showed
-    // ScreenCaptureKit single-window capture can time out and xcap fallback can
-    // fail for Chrome/NetEase windows. Stabilize the typed window capture backend
-    // before treating window.* evidence as reliably available.
-    Ok(output)
+    #[cfg(target_os = "macos")]
+    {
+      let capture_overlay = Overlay::new().with_layer(
+        CaptureFrame::new(result.window.frame).with_label(result.window.title.clone().unwrap_or_else(|| "selected window".to_string())),
+      );
+      let overlay = super::overlay::show_overlay(&input, &session, capture_overlay, show_options(120, 180))?;
+      let mut output = window_capture_output_with_artifact(&result, artifact)?;
+      output.report.as_mut().expect("window capture output always has a report").fields.push(overlay.report_field());
+      // TODO(invoke-window-capture-backend): live testing on 2026-06-18 showed
+      // ScreenCaptureKit single-window capture can time out and xcap fallback can
+      // fail for Chrome/NetEase windows. Stabilize the typed window capture backend
+      // before treating window.* evidence as reliably available.
+      Ok(output)
+    }
+    #[cfg(target_os = "windows")]
+    {
+      window_capture_output_with_artifact(&result, artifact)
+    }
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = input;
-    Err("window.capture is only available on macOS".to_string())
+    Err("window.capture is only available on macOS and Windows".to_string())
   }
 }
 
@@ -122,6 +135,7 @@ async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> I
 pub struct WindowCapture {
   pub window: auv_driver::Window,
   pub capture: auv_driver::Capture,
+  pub capture_monotonic_timestamp_ms: u64,
 }
 
 #[derive(serde::Serialize)]
@@ -133,7 +147,7 @@ pub struct WindowCaptureResult<'a> {
 pub fn window_capture_result(result: &WindowCapture) -> WindowCaptureResult<'_> {
   WindowCaptureResult {
     window: &result.window,
-    capture: super::capture_result(&result.capture),
+    capture: super::capture_result(&result.capture, result.capture_monotonic_timestamp_ms),
   }
 }
 
@@ -158,27 +172,35 @@ pub async fn capture_selected_window(selector: auv_driver::WindowSelector) -> Re
 async fn capture_selected_window_recorded(
   selector: auv_driver::WindowSelector,
 ) -> Result<(WindowCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     capture_selected_window_recorded_with_session(&session, selector).await
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = selector;
-    Err("window.capture is only available on macOS".to_string())
+    Err("window.capture is only available on macOS and Windows".to_string())
   }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn capture_selected_window_recorded_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
 ) -> Result<(WindowCapture, Option<ArtifactMetadata>), String> {
   let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
+  let capture_monotonic_timestamp_ms = super::monotonic_timestamp_ms();
   let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
   let artifact = emit_png_with_receipt("auv.driver.window_capture", &capture.image).await;
-  Ok((WindowCapture { window, capture }, artifact))
+  Ok((
+    WindowCapture {
+      window,
+      capture,
+      capture_monotonic_timestamp_ms,
+    },
+    artifact,
+  ))
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -200,7 +222,7 @@ struct FindWindowTextArgs {
   input = FindWindowTextArgs,
 )]
 async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -209,13 +231,20 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
     let query = args.query;
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, false).await?;
-    let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
-    window_text_matches_output(&input.command_id, &result, overlay)
+    #[cfg(target_os = "macos")]
+    {
+      let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
+      window_text_matches_output(&input.command_id, &result, overlay)
+    }
+    #[cfg(target_os = "windows")]
+    {
+      window_text_matches_output_base(&result)
+    }
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window text OCR is only available on macOS".to_string())
+    Err("window text OCR is only available on macOS and Windows".to_string())
   }
 }
 
@@ -238,7 +267,7 @@ struct WaitForWindowTextArgs {
   input = WaitForWindowTextArgs,
 )]
 async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -247,13 +276,20 @@ async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowText
     let query = args.query;
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, true).await?;
-    let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
-    window_text_matches_output(&input.command_id, &result, overlay)
+    #[cfg(target_os = "macos")]
+    {
+      let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
+      window_text_matches_output(&input.command_id, &result, overlay)
+    }
+    #[cfg(target_os = "windows")]
+    {
+      window_text_matches_output_base(&result)
+    }
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window text OCR is only available on macOS".to_string())
+    Err("window text OCR is only available on macOS and Windows".to_string())
   }
 }
 
@@ -316,7 +352,7 @@ impl WindowClickPolicyArg {
   input = ClickWindowTextArgs,
 )]
 async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let options =
       super::input::click_options(args.input_policy.map(WindowClickPolicyArg::driver_policy), args.click_count, args.click_interval_ms);
@@ -328,21 +364,28 @@ async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs)
     let result =
       click_recognized_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, args.query, args.index, options)
         .await?;
-    let overlay = super::overlay::show_overlay(
-      &input,
-      &session,
-      window_text_overlay(&result.matches, Some(result.selected_index)),
-      show_options(120, 240),
-    )?;
+    #[cfg(target_os = "macos")]
+    {
+      let overlay = super::overlay::show_overlay(
+        &input,
+        &session,
+        window_text_overlay(&result.matches, Some(result.selected_index)),
+        show_options(120, 240),
+      )?;
 
-    let mut output = window_text_click_output_base(&result)?;
-    output.report.as_mut().expect("window text click output always has a report").fields.push(overlay.report_field());
-    Ok(output)
+      let mut output = window_text_click_output_base(&result)?;
+      output.report.as_mut().expect("window text click output always has a report").fields.push(overlay.report_field());
+      Ok(output)
+    }
+    #[cfg(target_os = "windows")]
+    {
+      window_text_click_output_base(&result)
+    }
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (input, args);
-    Err("window.clickText is only available on macOS".to_string())
+    Err("window.clickText is only available on macOS and Windows".to_string())
   }
 }
 
@@ -395,15 +438,15 @@ pub async fn click_recognized_window_text_with_index_and_options(
   index: usize,
   options: auv_driver::ClickOptions,
 ) -> Result<WindowTextClick, String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     click_recognized_window_text_with_session(&session, selector, query, index, options).await
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = (selector, query, index, options);
-    Err("window.clickText is only available on macOS".to_string())
+    Err("window.clickText is only available on macOS and Windows".to_string())
   }
 }
 
@@ -421,7 +464,7 @@ pub fn selected_window_text_match<'a>(
     .ok_or_else(|| format!("window.clickText --index {index} is out of range for {} text match(es)", matches.matches.len()))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn click_recognized_window_text_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
@@ -456,7 +499,7 @@ pub struct WindowTextRecognition {
   pub matches: auv_driver::OcrMatches,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub async fn recognize_window_text(
   selector: auv_driver::WindowSelector,
   query: String,
@@ -466,7 +509,7 @@ pub async fn recognize_window_text(
   recognize_window_text_with_session(&session, selector, query, wait).await
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 async fn recognize_window_text_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
@@ -474,40 +517,72 @@ async fn recognize_window_text_with_session(
   wait: bool,
 ) -> Result<WindowTextRecognition, String> {
   use auv_driver::{RatioRect, WaitOptions};
-  use std::{thread, time::Instant};
 
   let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
-  let wait_options = WaitOptions::default();
-  let started = Instant::now();
-  loop {
-    let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
-    let matches =
-      session.vision().find_text_in_capture(&capture, &query, RatioRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
-    if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
-      if wait && matches.matches.is_empty() {
-        return Err(format!("window.waitForText did not find text {query:?} before timeout"));
-      }
+  let region = RatioRect::new(0.0, 0.0, 1.0, 1.0);
 
-      // TODO(invoke-recognition-result-artifacts): this records the window OCR
-      // source screenshot and typed OCR matches, but not a structured
-      // recognition-result artifact with query/bounds/confidence. Add it after
-      // the artifact shape is accepted in the direct-command handoff.
-      emit_png("auv.driver.window_ocr_source", &capture.image);
-      return Ok(WindowTextRecognition { window, matches });
+  #[cfg(target_os = "windows")]
+  {
+    use std::time::Duration;
+
+    let wait_options = if wait {
+      WaitOptions::default()
+    } else {
+      WaitOptions {
+        timeout: Duration::ZERO,
+        poll_interval: WaitOptions::default().poll_interval,
+      }
+    };
+    let matches = if wait {
+      session.window().wait_text(&window, &query, region, wait_options).map_err(|error| error.to_string())?
+    } else {
+      session.window().find_text(&window, &query, region, wait_options).map_err(|error| error.to_string())?
+    };
+    let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
+    // TODO(invoke-recognition-result-artifacts): this records the window OCR
+    // source screenshot and typed OCR matches, but not a structured
+    // recognition-result artifact with query/bounds/confidence. Add it after
+    // the artifact shape is accepted in the direct-command handoff.
+    emit_png("auv.driver.window_ocr_source", &capture.image);
+    return Ok(WindowTextRecognition { window, matches });
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    use std::{thread, time::Instant};
+
+    let wait_options = WaitOptions::default();
+    let started = Instant::now();
+    loop {
+      let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
+      let matches = session.vision().find_text_in_capture(&capture, &query, region).map_err(|error| error.to_string())?;
+      if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
+        if wait && matches.matches.is_empty() {
+          return Err(format!("window.waitForText did not find text {query:?} before timeout"));
+        }
+
+        // TODO(invoke-recognition-result-artifacts): this records the window OCR
+        // source screenshot and typed OCR matches, but not a structured
+        // recognition-result artifact with query/bounds/confidence. Add it after
+        // the artifact shape is accepted in the direct-command handoff.
+        emit_png("auv.driver.window_ocr_source", &capture.image);
+        return Ok(WindowTextRecognition { window, matches });
+      }
+      thread::sleep(wait_options.poll_interval);
     }
-    thread::sleep(wait_options.poll_interval);
   }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub async fn recognize_window_text(
   _selector: auv_driver::WindowSelector,
   _query: String,
   _wait: bool,
 ) -> Result<WindowTextRecognition, String> {
-  Err("window text OCR is only available on macOS".to_string())
+  Err("window text OCR is only available on macOS and Windows".to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn window_text_matches_output(
   _command_id: &str,
   result: &WindowTextRecognition,
@@ -531,6 +606,8 @@ fn window_text_matches_output_base(result: &WindowTextRecognition) -> InvokeComm
   Ok(InvokeCommandOutput::from_result(result)?.with_report(report))
 }
 
+#[cfg(target_os = "macos")]
+#[cfg(target_os = "macos")]
 fn window_text_overlay(matches: &auv_driver::OcrMatches, selected_index: Option<usize>) -> Overlay {
   let mut overlay = Overlay::new();
   for (index, matched) in matches.matches.iter().enumerate() {
@@ -552,13 +629,14 @@ fn window_text_overlay(matches: &auv_driver::OcrMatches, selected_index: Option<
   overlay
 }
 
+#[cfg(target_os = "macos")]
 fn show_options(motion_ms: u64, auto_removal_ms: u64) -> auv_driver::overlay::ShowOptions {
   auv_driver::overlay::ShowOptions::new()
     .with_motion_ease(Duration::from_millis(motion_ms), auv_driver::overlay::Easing::EaseInOutExpo)
     .with_auto_removal_after(Duration::from_millis(auto_removal_ms))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<auv_driver::WindowSelector, String> {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
@@ -567,7 +645,14 @@ fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<au
     ..WindowSelector::default()
   };
   if let Some(target) = input.application_target()? {
-    selector.app = Some(App::bundle_id(target));
+    #[cfg(target_os = "windows")]
+    {
+      selector.app = Some(App::name(target));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+      selector.app = Some(App::bundle_id(target));
+    }
   }
   if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
     selector.title = Some(TextMatcher::Contains(title.to_string()));

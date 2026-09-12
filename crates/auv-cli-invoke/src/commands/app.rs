@@ -44,19 +44,33 @@ pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, String> {
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke app.activate --target com.apple.TextEdit")]
+#[command(after_long_help = "Examples:\n  auv invoke app.activate --target com.apple.TextEdit\n  auv invoke app.activate --target javaw")]
 struct ActivateAppArgs {}
 
 #[invoke_command(
   id = "app.activate",
   target = RequiredApplication,
   group = "app",
-  description = "Bring a target macOS app to the foreground before a foreground-dependent step.",
+  description = "Bring a target application to the foreground before a foreground-dependent step.",
   input = ActivateAppArgs,
 )]
 async fn activate_app(input: InvokeCommandInput, _args: ActivateAppArgs) -> InvokeCommandResult {
-  let result = activate_application(input.application_target()?.map(str::to_string)).await?;
-  activation_output(&result)
+  let target = input.application_target()?.map(str::to_string);
+  #[cfg(target_os = "macos")]
+  {
+    let result = activate_application(target).await?;
+    activation_output(&result)
+  }
+  #[cfg(target_os = "windows")]
+  {
+    let result = activate_process_application(target).await?;
+    process_activation_output(&result)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    let _ = target;
+    Err("app.activate is not available on this platform".to_string())
+  }
 }
 
 pub fn activation_output(result: &auv_driver::ApplicationActivationResult) -> InvokeCommandResult {
@@ -74,29 +88,41 @@ pub fn activation_output(result: &auv_driver::ApplicationActivationResult) -> In
   Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
-pub async fn activate_application(_target_application_id: Option<String>) -> Result<auv_driver::ApplicationActivationResult, String> {
-  let target_application_id = _target_application_id
-    .as_deref()
-    .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| "app.activate requires --target".to_string())?;
-  #[cfg(target_os = "macos")]
-  {
-    use auv_driver_macos::ApplicationControl;
+pub fn process_activation_output(result: &auv_driver::ProcessActivationResult) -> InvokeCommandResult {
+  let mut fields = vec![
+    InvokeReportField::new("Requested target", &result.requested_process),
+    InvokeReportField::new("Result", "activation request completed"),
+    InvokeReportField::new("Verification", result.verification.status()),
+  ];
+  if let Some(observed_process) = result.verification.observed_process() {
+    fields.push(InvokeReportField::new("Observed foreground", observed_process));
+  }
+  if let auv_driver::ProcessActivationVerification::Unavailable { reason } = &result.verification {
+    fields.push(InvokeReportField::new("Verification detail", reason));
+  }
+  Ok(InvokeCommandOutput::from_result(result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
 
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-    session.activate_bundle_id(target_application_id, std::time::Duration::from_millis(150)).map_err(|error| error.to_string())
-  }
-  #[cfg(not(target_os = "macos"))]
-  {
-    let _ = target_application_id;
-    // TODO(app-activate-windows-cli): auv-driver-windows now implements
-    // process-name activation (`auv_driver_windows::ApplicationControl::
-    // activate_process_name`, returning `ProcessActivationResult`), but this
-    // command's output type is the macOS-specific `ApplicationActivationResult`
-    // (bundle-id shaped). Wiring Windows here needs an owner-approved decision
-    // on the shared CLI output contract before this branch changes.
-    Err("app.activate is only available on macOS".to_string())
-  }
+pub fn require_activation_target(target: Option<String>) -> Result<String, String> {
+  target.as_deref().filter(|value| !value.trim().is_empty()).map(str::to_string).ok_or_else(|| "app.activate requires --target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub async fn activate_application(target_application_id: Option<String>) -> Result<auv_driver::ApplicationActivationResult, String> {
+  let target_application_id = require_activation_target(target_application_id)?;
+  use auv_driver_macos::ApplicationControl;
+
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+  session.activate_bundle_id(&target_application_id, std::time::Duration::from_millis(150)).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub async fn activate_process_application(process_name: Option<String>) -> Result<auv_driver::ProcessActivationResult, String> {
+  let process_name = require_activation_target(process_name)?;
+  use auv_driver_windows::ApplicationControl;
+
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+  session.activate_process_name(&process_name, std::time::Duration::from_millis(150)).map_err(|error| error.to_string())
 }
 
 fn permission_report(permissions: &auv_driver::PermissionProbe) -> InvokeReport {

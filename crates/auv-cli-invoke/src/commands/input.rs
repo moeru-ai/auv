@@ -815,12 +815,60 @@ pub(crate) fn validate_keyboard_policy(
   if input.target.is_none() && actions.iter().any(|action| action.policy() != auv_driver::InputPolicy::ForegroundPreferred) {
     return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "background keyboard input requires --target"));
   }
+  #[cfg(target_os = "windows")]
+  if actions.iter().any(|action| action.policy() != auv_driver::InputPolicy::ForegroundPreferred) {
+    return Err(crate::InvokeFailure::new(
+      crate::FailureCode::InvalidInput,
+      "windows keyboard input only supports --input-policy foreground-preferred",
+    ));
+  }
   Ok(())
 }
 
-#[cfg(target_os = "macos")]
+/// Validate keyboard actions before session IO so local and runner paths fail consistently.
+pub(crate) fn validate_keyboard_inputs(actions: &[auv_driver::KeyboardInput]) -> Result<(), crate::InvokeFailure> {
+  if actions.is_empty() {
+    return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "keyboard input requires at least one action"));
+  }
+  for action in actions {
+    if let auv_driver::KeyboardInput::PressKeys { options, .. } = action {
+      if options.keys.is_empty() {
+        return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "keys must not be empty"));
+      }
+      if !(1..=255).contains(&options.count) {
+        return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "press count must be in 1..=255"));
+      }
+      if (options.count > 1) == options.interval.is_zero() {
+        return Err(crate::InvokeFailure::new(
+          crate::FailureCode::InvalidInput,
+          "repeated presses require a positive interval; a single press requires zero interval",
+        ));
+      }
+    }
+  }
+  Ok(())
+}
+
 fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   validate_keyboard_policy(input, &keyboard)?;
+  validate_keyboard_inputs(&keyboard)?;
+  #[cfg(target_os = "macos")]
+  {
+    return execute_keyboard_macos(input, keyboard);
+  }
+  #[cfg(target_os = "windows")]
+  {
+    return execute_keyboard_windows(input, keyboard);
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    let _ = (input, keyboard);
+    Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is unavailable on this platform"))
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn execute_keyboard_macos(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   let session = auv_driver::open_local()?;
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
@@ -843,9 +891,181 @@ fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::Keyboa
   keyboard_output(input, result)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is only available on macOS"))
+#[cfg(target_os = "windows")]
+fn execute_keyboard_windows(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
+  use auv_driver::{InputActionResult, KeyPressOptions, KeyboardInput, KeyboardInputError, KeyboardInputProgress};
+
+  let fail = |cause, action_index, completed, completed_presses| KeyboardInputError {
+    cause,
+    progress: KeyboardInputProgress {
+      action_index,
+      completed,
+      completed_presses,
+    },
+  };
+
+  if matches!(input.target, Some(crate::ExecutionTarget::Display { .. })) {
+    return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, "display target is unsupported for keyboard input"));
+  }
+
+  let session = auv_driver::open_local()?;
+  let target_window = resolve_keyboard_target_window(input, &session)?;
+  input.cancellation.check().map_err(|error| error.to_string())?;
+
+  let mut completed = Vec::new();
+  for (index, action) in keyboard.into_iter().enumerate() {
+    if !input.dry_run {
+      if let Some(window) = &target_window {
+        session.window().activate(window).map_err(|cause| fail(cause, index, completed.clone(), 0))?;
+      }
+    }
+
+    let repetitions = match &action {
+      KeyboardInput::PressKeys { options, .. } => {
+        if input.dry_run {
+          1
+        } else {
+          options.count
+        }
+      }
+      _ => 1,
+    };
+    let interval = match &action {
+      KeyboardInput::PressKeys { options, .. } => options.interval,
+      _ => std::time::Duration::ZERO,
+    };
+    let settle = match &action {
+      KeyboardInput::PressKeys { options, .. } => options.settle,
+      KeyboardInput::TypeText { options, .. } => options.settle,
+      KeyboardInput::PasteText { options, .. } => options.settle,
+    };
+
+    let mut combined: Option<InputActionResult> = None;
+    for repetition in 0..repetitions {
+      if repetition > 0 {
+        std::thread::sleep(interval);
+      }
+      let outcome = (|| {
+        if input.dry_run {
+          return Ok(None);
+        }
+        let action_result = match &action {
+          KeyboardInput::PressKeys { options, .. } => session.input().press_key(KeyPressOptions {
+            key: press_keys_shortcut(&options.keys),
+            settle: std::time::Duration::ZERO,
+            ..Default::default()
+          })?,
+          KeyboardInput::TypeText { text, options } => session.input().type_text(text, *options)?,
+          KeyboardInput::PasteText { options, .. } => deliver_paste_text_preserve_clipboard(&session, options.clone())?,
+        };
+        Ok(Some(action_result))
+      })();
+      match outcome {
+        Ok(Some(action)) => match &mut combined {
+          Some(combined) => combined.attempts.extend(action.attempts),
+          None => combined = Some(action),
+        },
+        Ok(None) => {}
+        Err(cause) => return Err(fail(cause, index, completed, repetition).into()),
+      }
+    }
+    if !input.dry_run && !settle.is_zero() {
+      std::thread::sleep(settle);
+    }
+    if let Some(action) = combined {
+      completed.push(action);
+    }
+  }
+
+  keyboard_output(input, Ok((!input.dry_run).then_some(completed)))
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_keyboard_target_window(
+  input: &InvokeCommandInput,
+  session: &auv_driver_windows::WindowsDriverSession,
+) -> Result<Option<auv_driver::Window>, auv_driver::DriverError> {
+  use auv_driver::{App, DriverError, WindowSelector};
+
+  match input.target.as_ref() {
+    None => Ok(None),
+    Some(crate::ExecutionTarget::Application { id }) => {
+      let selector = WindowSelector {
+        app: Some(App::name(id)),
+        main_visible: true,
+        title: None,
+      };
+      session.window().resolve(selector).map(Some)
+    }
+    Some(crate::ExecutionTarget::Window { id }) => session
+      .window()
+      .list()?
+      .into_iter()
+      .find(|window| window.reference.id == *id)
+      .ok_or_else(|| DriverError::NotFound {
+        target: format!("window:{id}"),
+      })
+      .map(Some),
+    Some(crate::ExecutionTarget::Display { .. }) => unreachable!("display target validated"),
+  }
+}
+
+#[cfg(target_os = "windows")]
+fn press_keys_shortcut(keys: &[String]) -> String {
+  keys.iter().map(|key| key.trim()).filter(|key| !key.is_empty()).collect::<Vec<_>>().join("+")
+}
+
+#[cfg(target_os = "windows")]
+fn deliver_paste_text_preserve_clipboard(
+  session: &auv_driver_windows::WindowsDriverSession,
+  options: auv_driver::PasteTextOptions,
+) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
+  use auv_driver::{DisturbanceLevel, DriverError, InputActionResult, InputAttempt, InputDeliveryPath, KeyPressOptions, TextSubmit};
+
+  let snapshot = session.clipboard().snapshot()?;
+  let delivery = (|| {
+    session.clipboard().set_text(&options.text)?;
+    if options.replace_existing {
+      session.input().press_key(KeyPressOptions {
+        key: "ctrl+a".into(),
+        ..Default::default()
+      })?;
+    }
+    session.input().paste()?;
+    match options.submit {
+      TextSubmit::No => {}
+      TextSubmit::Return => {
+        session.input().press_key(KeyPressOptions {
+          key: "return".into(),
+          ..Default::default()
+        })?;
+      }
+      TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => {
+        return Err(DriverError::InvalidInput {
+          message: format!("text submit {:?} is not supported by the windows desktop driver yet", options.submit),
+        });
+      }
+    }
+    Ok(())
+  })();
+  let restore_result = session.clipboard().restore(&snapshot);
+  match (delivery, restore_result) {
+    (Ok(()), Ok(())) => Ok(InputActionResult {
+      selected_path: InputDeliveryPath::ClipboardPaste,
+      attempts: vec![InputAttempt::success(InputDeliveryPath::ClipboardPaste)],
+      verified: false,
+      mouse_disturbance: DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::Unknown,
+      clipboard_disturbance: DisturbanceLevel::Temporary,
+    }),
+    (Err(action_error), Ok(())) => Err(action_error),
+    (Ok(()), Err(restore_error)) => Err(DriverError::Backend {
+      message: format!("pasted text but failed to restore clipboard: {restore_error}"),
+    }),
+    (Err(action_error), Err(restore_error)) => Err(DriverError::Backend {
+      message: format!("{action_error}; additionally failed to restore clipboard: {restore_error}"),
+    }),
+  }
 }
 
 /// Both frontends preserve completed action artifacts even when delivery stops.

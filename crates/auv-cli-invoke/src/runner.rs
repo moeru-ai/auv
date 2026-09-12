@@ -155,10 +155,13 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       .await
       .map_err(|status| format!("DisplayService/ListDisplays failed: {status}"))
       .and_then(|displays| crate::commands::display::list_displays_output(&displays)),
-    "display.capture" => match runner.displays().capture(None).await {
-      Err(status) => Err(format!("CaptureService/CaptureDisplay failed: {status}")),
-      Ok(capture) => crate::commands::display::recorded_display_capture_output(&capture).await,
-    },
+    "display.capture" => {
+      let capture_monotonic_timestamp_ms = crate::commands::monotonic_timestamp_ms();
+      match runner.displays().capture(None).await {
+        Err(status) => Err(format!("CaptureService/CaptureDisplay failed: {status}")),
+        Ok(capture) => crate::commands::display::recorded_display_capture_output(&capture, capture_monotonic_timestamp_ms).await,
+      }
+    }
     "screen.captureRegion" => match selected_screen_region(&input) {
       Err(error) => Err(error),
       Ok(region) => match runner.displays().capture_region(region, None).await {
@@ -174,6 +177,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       .and_then(|windows| crate::commands::window::list_windows_output(&windows)),
     "window.capture" => {
       let selector = selected_window_selector(&input);
+      let capture_monotonic_timestamp_ms = crate::commands::monotonic_timestamp_ms();
       let response = match runner.windows().resolve(selector).await {
         Err(status) => Err(status),
         Ok(window) => window.capture().await,
@@ -184,6 +188,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
           crate::commands::window::recorded_window_capture_output(&crate::commands::window::WindowCapture {
             window: response.window,
             capture: response.capture,
+            capture_monotonic_timestamp_ms,
           })
           .await
         }

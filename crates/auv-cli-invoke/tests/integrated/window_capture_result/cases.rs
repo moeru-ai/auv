@@ -26,6 +26,7 @@ fn pixels_are_excluded_from_the_public_window_capture_result() {
       backend: "fixture-window".to_string(),
       fallback_reason: None,
     },
+    capture_monotonic_timestamp_ms: 12_345,
   };
 
   let output = InvokeCommandOutput::from_result(&window_capture_result(&capture)).expect("window capture result should serialize");
@@ -34,5 +35,6 @@ fn pixels_are_excluded_from_the_public_window_capture_result() {
   assert_eq!(result["window"]["reference"]["id"], "window_capture");
   assert_eq!(result["capture"]["pixel_dimensions"]["width"], 1280);
   assert_eq!(result["capture"]["backend"], "fixture-window");
+  assert_eq!(result["capture"]["capture_monotonic_timestamp_ms"], 12_345);
   assert!(result["capture"].get("image").is_none());
 }

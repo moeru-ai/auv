@@ -78,39 +78,25 @@ fn window_list_report_preserves_full_cell_values_for_human_rendering() {
   assert_eq!(report.wide_tables[0].rows[0].cells[4], long_bundle_id);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn window_text_result_keeps_resolved_window_and_ocr_matches_together() {
-  let recognition = WindowTextRecognition {
-    window: Window {
-      reference: WindowRef {
-        id: "window_ocr".to_string(),
-      },
-      title: Some("Fixture".to_string()),
-      app_name: Some("Fixture App".to_string()),
-      app_bundle_id: Some("com.example.Fixture".to_string()),
-      process_id: Some(42),
-      frame: Rect::new(10.0, 20.0, 640.0, 480.0),
-      coordinate_space: CoordinateSpace::Screen,
-      is_main: true,
-      is_visible: true,
-    },
-    matches: auv_driver::OcrMatches {
-      matches: vec![auv_driver::OcrMatch {
-        text: "Pause".to_string(),
-        confidence: 0.98,
-        bounds: Rect::new(40.0, 50.0, 70.0, 20.0),
-      }],
-    },
-  };
+  let recognition = window_text_recognition_fixture();
 
-  let output = window_text_matches_output("window.findText", &recognition, crate::commands::overlay::OverlayStatus::Disabled)
-    .expect("window OCR result should serialize");
+  let output = window_text_matches_output_base(&recognition).expect("window OCR result should serialize");
   let result = output.result().expect("recognition should have a result");
 
   assert_eq!(result["window"]["reference"]["id"], "window_ocr");
   assert_eq!(result["matches"]["matches"][0]["text"], "Pause");
   assert_eq!(result["matches"]["matches"][0]["confidence"], 0.98);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn window_text_result_overlay_scene_matches_recognized_bounds() {
+  let recognition = window_text_recognition_fixture();
+
+  let output = window_text_matches_output("window.findText", &recognition, crate::commands::overlay::OverlayStatus::Disabled)
+    .expect("window OCR result should serialize");
   let report = output.report.as_ref().expect("window text report");
 
   // ROOT CAUSE:
@@ -230,6 +216,49 @@ fn window_text_click_selects_the_requested_candidate_and_rejects_out_of_range_in
 
   let error = selected_window_text_match(&matches, "AGENTS.md", 2).expect_err("out-of-range index should fail");
   assert_eq!(error, "window.clickText --index 2 is out of range for 2 text match(es)");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn window_selector_uses_process_name_on_windows() {
+  let input = InvokeCommandInput {
+    command_id: "window.capture".to_string(),
+    target: Some(crate::ExecutionTarget::Application {
+      id: "javaw".to_string(),
+    }),
+    inputs: std::collections::BTreeMap::new(),
+    typed_args: None,
+    dry_run: false,
+    cancellation: Default::default(),
+  };
+
+  let selector = window_selector(&input, None).expect("selector should build");
+  assert_eq!(selector.app, Some(auv_driver::App::name("javaw")));
+}
+
+fn window_text_recognition_fixture() -> WindowTextRecognition {
+  WindowTextRecognition {
+    window: Window {
+      reference: WindowRef {
+        id: "window_ocr".to_string(),
+      },
+      title: Some("Fixture".to_string()),
+      app_name: Some("Fixture App".to_string()),
+      app_bundle_id: Some("com.example.Fixture".to_string()),
+      process_id: Some(42),
+      frame: Rect::new(10.0, 20.0, 640.0, 480.0),
+      coordinate_space: CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    },
+    matches: auv_driver::OcrMatches {
+      matches: vec![auv_driver::OcrMatch {
+        text: "Pause".to_string(),
+        confidence: 0.98,
+        bounds: Rect::new(40.0, 50.0, 70.0, 20.0),
+      }],
+    },
+  }
 }
 
 fn report_field<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
