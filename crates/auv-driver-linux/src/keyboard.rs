@@ -2,7 +2,7 @@
 use crate::{
   InputApi,
   error::invalid_input,
-  input::{keysym, with_input_session},
+  input::{KeyboardPlan, keysym, with_input_session},
 };
 use auv_driver_common::{
   DriverError, DriverResult, InputActionResult, InputPolicy, InputTarget, KeyboardInput, KeyboardInputError, KeyboardInputProgress,
@@ -61,55 +61,42 @@ impl InputApi<'_> {
     if !matches!(target, InputTarget::Foreground) {
       return Err(failure(DriverError::unsupported("Linux targeted keyboard input"), 0, vec![], 0));
     }
-    let mut combinations = Vec::with_capacity(inputs.len());
-    let mut symbols = Vec::new();
-    for (index, input) in inputs.iter().enumerate() {
-      if input.policy() != InputPolicy::ForegroundPreferred {
-        return Err(failure(invalid_input("background keyboard input requires supported targeted delivery"), index, vec![], 0));
-      }
-      let keys = match input {
-        KeyboardInput::PressKeys { options, .. } => combination(options),
-        KeyboardInput::TypeText { text, .. } => text.chars().map(keysym::for_char).collect(),
-        KeyboardInput::PasteText { .. } => Ok(vec![]),
-      }
-      .map_err(|cause| failure(cause, index, vec![], 0))?;
-      let mut required = keys.clone();
-      match input {
-        KeyboardInput::TypeText { options, .. } => {
-          if options.replace_existing {
-            required.extend([keysym::CONTROL_L, 'a' as i32, keysym::BACKSPACE]);
-          }
-          if options.submit != auv_driver_common::TextSubmit::No {
-            required.push(keysym::RETURN);
-          }
+    let plans = inputs
+      .iter()
+      .enumerate()
+      .map(|(index, input)| {
+        if input.policy() != InputPolicy::ForegroundPreferred {
+          return Err(failure(invalid_input("background keyboard input requires supported targeted delivery"), index, vec![], 0));
         }
-        KeyboardInput::PasteText { options, .. } => {
-          required.extend([keysym::CONTROL_L, 'v' as i32]);
-          if options.replace_existing {
-            required.push('a' as i32);
-          }
-          if options.submit != auv_driver_common::TextSubmit::No {
-            required.push(keysym::RETURN);
-          }
+        match input {
+          KeyboardInput::PressKeys { options, .. } => combination(options).map(KeyboardPlan::chord),
+          KeyboardInput::TypeText { text, options } => KeyboardPlan::type_text(text, *options),
+          KeyboardInput::PasteText { options, .. } => Ok(KeyboardPlan::paste_text(options)),
         }
-        _ => {}
-      }
-      symbols.push(required);
-      combinations.push(keys);
-    }
+        .map_err(|cause| failure(cause, index, vec![], 0))
+      })
+      .collect::<Result<Vec<_>, _>>()?;
     if dry_run {
       return Ok(None);
     }
-    // Backend-specific layout validation also covers the complete batch before
-    // the first event. Creating a session may request permission but sends no input.
-    for (index, keys) in symbols.iter().enumerate() {
-      with_input_session(&self.session.state, |session| session.validate_keys(keys)).map_err(|cause| failure(cause, index, vec![], 0))?;
-    }
+    // Load one layout for the complete batch. Keep this snapshot through
+    // clipboard operations too, even though those release the session lock.
+    let mut invalid_index = 0;
+    let layout = with_input_session(&self.session.state, |session| {
+      let layout = session.keyboard_layout()?;
+      for (index, plan) in plans.iter().enumerate() {
+        invalid_index = index;
+        session.validate_keyboard(&layout, plan)?;
+      }
+      Ok(layout)
+    })
+    .map_err(|cause| failure(cause, invalid_index, vec![], 0))?;
     let mut completed = Vec::new();
-    for (index, (input, keys)) in inputs.into_iter().zip(combinations).enumerate() {
+    for (index, (input, plan)) in inputs.into_iter().zip(plans).enumerate() {
       let (count, interval, settle) = match &input {
         KeyboardInput::PressKeys { options, .. } => (options.count, options.interval, options.settle),
-        _ => (1, Duration::ZERO, Duration::ZERO),
+        KeyboardInput::TypeText { options, .. } => (1, Duration::ZERO, options.settle),
+        KeyboardInput::PasteText { .. } => (1, Duration::ZERO, Duration::ZERO),
       };
       let mut combined: Option<InputActionResult> = None;
       for repetition in 0..count {
@@ -117,12 +104,11 @@ impl InputApi<'_> {
           std::thread::sleep(interval);
         }
         let outcome = match &input {
-          KeyboardInput::PressKeys { .. } => {
-            let (key, held) = keys.split_last().expect("validated nonempty combination");
-            with_input_session(&self.session.state, |session| session.key_chord(held, *key)).map(|()| crate::input::keyboard_result())
+          KeyboardInput::PressKeys { .. } | KeyboardInput::TypeText { .. } => {
+            with_input_session(&self.session.state, |session| session.deliver_keyboard(&layout, &plan))
+              .map(|()| crate::input::keyboard_result())
           }
-          KeyboardInput::TypeText { text, options } => self.type_text(text, *options),
-          KeyboardInput::PasteText { options, .. } => self.paste_text(options.clone()),
+          KeyboardInput::PasteText { options, .. } => crate::input::paste_prepared(&self.session.state, options.clone(), &layout, &plan),
         };
         let action = outcome.map_err(|cause| failure(cause, index, completed.clone(), repetition))?;
         if let Some(combined) = &mut combined {

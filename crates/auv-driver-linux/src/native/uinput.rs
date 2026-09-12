@@ -16,13 +16,13 @@ use super::keymap::Keymap;
 use crate::{
   capture::list_displays,
   error::{backend, invalid_input},
-  input::{combine_release, keysym, with_click_modifiers},
+  input::{combine_release, keysym, with_held_keys},
 };
 
 #[derive(Debug)]
 pub(crate) struct InputSession {
   device: VirtualDevice,
-  keymap: Keymap,
+  keys: AttributeSet<KeyCode>,
   wheel_remainder: (f64, f64),
 }
 
@@ -51,7 +51,7 @@ impl InputSession {
     thread::sleep(Duration::from_millis(250));
     Ok(Self {
       device,
-      keymap,
+      keys,
       wheel_remainder: (0.0, 0.0),
     })
   }
@@ -71,12 +71,18 @@ impl InputSession {
     if click.count() == 0 {
       return Err(invalid_input("repeated click count must be greater than zero"));
     }
-    let modifiers = self.modifier_codes(modifiers)?;
+    let modifiers = if modifiers.is_empty() {
+      Vec::new()
+    } else {
+      let layout = Keymap::load()?;
+      self.validate_keys(&layout, modifiers)?;
+      modifiers.iter().map(|symbol| layout.stroke(*symbol).map(|stroke| stroke.key)).collect::<DriverResult<Vec<_>>>()?
+    };
     self.move_to(point)?;
     thread::sleep(Duration::from_millis(20));
     // Keep keyboard and pointer events on the same kernel device stream.
     let device = RefCell::new(&mut self.device);
-    with_click_modifiers(
+    with_held_keys(
       &modifiers,
       |key, pressed| {
         let result = emit_key(&mut device.borrow_mut(), key, pressed);
@@ -104,29 +110,19 @@ impl InputSession {
     )
   }
 
-  pub fn validate_keys(&self, keys: &[i32]) -> DriverResult<()> {
-    let map = Keymap::load()?;
-    for key in keys {
-      map.stroke(*key)?;
-    }
-    Ok(())
+  pub fn validate_keys(&self, layout: &Keymap, keys: &[i32]) -> DriverResult<()> {
+    layout.validate_keys(keys, &self.keys)
   }
 
-  pub fn key_press(&mut self, key: i32) -> DriverResult<()> {
-    self.key_chord(&[], key)
-  }
-
-  pub fn key_chord(&mut self, modifiers: &[i32], key: i32) -> DriverResult<()> {
-    // Refresh the map between chords so a changed layout is not silently stale.
-    // NOTICE: lock states (Caps/Num Lock), compose and IME text are not modeled;
-    // this backend delivers key events, with semantic verification kept separate.
-    self.keymap = Keymap::load()?;
-    let stroke = self.keymap.stroke(key)?;
-    let held = modifiers.iter().map(|key| self.keymap.stroke(*key)).collect::<DriverResult<Vec<_>>>()?;
+  pub fn key_chord(&mut self, layout: &Keymap, modifiers: &[i32], key: i32) -> DriverResult<()> {
+    // A prepared operation owns the layout snapshot: no Wayland IO occurs
+    // between characters. Lock states, compose and IME remain unmodeled.
+    let stroke = layout.stroke(key)?;
+    let held = modifiers.iter().map(|key| layout.stroke(*key)).collect::<DriverResult<Vec<_>>>()?;
     let needs_shift = stroke.shift || held.iter().any(|stroke| stroke.shift);
     let mut modifiers = held.iter().map(|stroke| stroke.key).collect::<Vec<_>>();
     if needs_shift {
-      let shift = self.keymap.stroke(keysym::SHIFT_L)?.key;
+      let shift = layout.stroke(keysym::SHIFT_L)?.key;
       if !modifiers.contains(&shift) {
         modifiers.insert(0, shift);
       }
@@ -156,10 +152,6 @@ impl InputSession {
     self.device.emit(&events).map_err(|error| backend(format!("scroll uinput pointer: {error}")))?;
     self.wheel_remainder = (x.fract(), y.fract());
     Ok(())
-  }
-
-  fn modifier_codes(&self, symbols: &[i32]) -> DriverResult<Vec<KeyCode>> {
-    symbols.iter().map(|symbol| self.keymap.stroke(*symbol).map(|stroke| stroke.key)).collect()
   }
 }
 

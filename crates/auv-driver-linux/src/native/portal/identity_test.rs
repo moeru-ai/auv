@@ -144,7 +144,7 @@ fn identity_is_registered_before_portal_calls_after_process_restart() {
 }
 
 #[derive(Clone, Default)]
-struct DeliveryFixture(Arc<Mutex<Vec<String>>>);
+struct DeliveryFixture(Arc<Mutex<Vec<String>>>, Arc<Mutex<Option<(i32, u32)>>>);
 
 // Reply before returning the method call: consumers must already be subscribed
 // and must inspect the response code, including an empty cancellation response.
@@ -227,8 +227,18 @@ impl DeliveryFixture {
     .await
   }
 
-  fn notify_keyboard_keysym(&self, _session: OwnedObjectPath, _options: HashMap<String, OwnedValue>, key: i32, state: u32) {
+  fn notify_keyboard_keysym(
+    &self,
+    _session: OwnedObjectPath,
+    _options: HashMap<String, OwnedValue>,
+    key: i32,
+    state: u32,
+  ) -> zbus::fdo::Result<()> {
     self.0.lock().unwrap().push(format!("key:{key}:{state}"));
+    if *self.1.lock().unwrap() == Some((key, state)) {
+      return Err(zbus::fdo::Error::Failed("injected key reply failure".into()));
+    }
+    Ok(())
   }
 
   fn notify_pointer_motion_absolute(&self, _session: OwnedObjectPath, _options: HashMap<String, OwnedValue>, stream: u32, x: f64, y: f64) {
@@ -282,9 +292,25 @@ fn modified_click_reaches_portal_and_cancelled_selection_closes_session() {
     let token_path = directory.path().join("remote-desktop-input-token");
     std::fs::write(&token_path, "initial").unwrap();
     let store = crate::native::portal::RestoreTokenStore::new(directory.path().to_path_buf());
-    let mut session = PortalInput::open(Some(&store), None).unwrap();
+    use auv_driver_common::{ClickModifiers, Driver, DriverError};
+    let session = crate::LinuxDriver::new().with_portal_state_root(directory.path().to_path_buf()).open_local().unwrap();
+    session.input().move_to(Point::new(20.0, 30.0)).unwrap();
     assert_eq!(std::fs::read_to_string(&token_path).unwrap(), "replacement");
-    session.click_at(Point::new(20.0, 30.0), Click::Single, &[65505, 65507]).unwrap();
+    // ROOT CAUSE: every input error dropped the session. A rejected coordinate
+    // must preserve authorization: the next valid click uses the same session.
+    assert!(matches!(session.input().move_to(Point::new(900.0, 30.0)), Err(DriverError::InvalidInput { .. })));
+    session
+      .input()
+      .click_at(
+        Point::new(20.0, 30.0),
+        Click::Single,
+        ClickModifiers {
+          shift: true,
+          control: true,
+          ..Default::default()
+        },
+      )
+      .unwrap();
     drop(session);
     assert!(PortalInput::open(Some(&store), None).is_err(), "a cancelled selection must not continue to Start");
     return;
@@ -322,6 +348,7 @@ fn modified_click_reaches_portal_and_cancelled_selection_closes_session() {
       "select_sources",
       "start",
       "motion",
+      "motion",
       "key:65505:1",
       "key:65507:1",
       "button:272:1",
@@ -333,4 +360,71 @@ fn modified_click_reaches_portal_and_cancelled_selection_closes_session() {
       "close",
     ]
   );
+}
+
+// ROOT CAUSE:
+// A modifier press error returned before cleanup, and release errors were ignored.
+// The receiver records even failed replies: delivery may precede a bus failure.
+#[test]
+#[ignore = "requires dbus-daemon; run with --include-ignored"]
+fn keyboard_failure_releases_all_attempted_keys_and_reports_release_error() {
+  if let Ok(case) = std::env::var("AUV_PORTAL_KEYBOARD_TEST_CHILD") {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("remote-desktop-input-token"), "initial").unwrap();
+    let store = crate::native::portal::RestoreTokenStore::new(directory.path().to_path_buf());
+    let mut session = crate::native::portal::PortalInput::open(Some(&store), None).unwrap();
+    let result = if case == "ordinary" {
+      session.key_press(97)
+    } else {
+      session.key_chord(&[65505, 65507], 97)
+    };
+    assert!(result.unwrap_err().to_string().contains("injected key reply failure"));
+    return;
+  }
+  for (case, failed, expected) in [
+    ("modifier", (65507, 1), vec!["key:65505:1", "key:65507:1", "key:65507:0", "key:65505:0"]),
+    (
+      "release",
+      (65507, 0),
+      vec![
+        "key:65505:1",
+        "key:65507:1",
+        "key:97:1",
+        "key:97:0",
+        "key:65507:0",
+        "key:65505:0",
+      ],
+    ),
+    ("ordinary", (97, 1), vec!["key:97:1", "key:97:0"]),
+  ] {
+    let mut bus =
+      PrivateBus(Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).spawn().unwrap());
+    let mut address = String::new();
+    std::io::BufReader::new(bus.0.stdout.take().unwrap()).read_line(&mut address).unwrap();
+    let fixture = DeliveryFixture::default();
+    *fixture.1.lock().unwrap() = Some(failed);
+    let _service = zbus::blocking::connection::Builder::address(address.trim())
+      .unwrap()
+      .name(PORTAL_DESTINATION)
+      .unwrap()
+      .serve_at(PORTAL_PATH, fixture.clone())
+      .unwrap()
+      .serve_at(PORTAL_PATH, DeliveryScreenCast(fixture.clone()))
+      .unwrap()
+      .build()
+      .unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+      .args([
+        "--ignored",
+        "keyboard_failure_releases_all_attempted_keys_and_reports_release_error",
+      ])
+      .env("AUV_PORTAL_KEYBOARD_TEST_CHILD", case)
+      .env("DBUS_SESSION_BUS_ADDRESS", address.trim())
+      .env_remove("WAYLAND_DISPLAY")
+      .output()
+      .unwrap();
+    assert!(output.status.success(), "{case}: {} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let events = fixture.0.lock().unwrap();
+    assert_eq!(events.iter().filter(|event| event.starts_with("key:")).map(String::as_str).collect::<Vec<_>>(), expected, "{case}");
+  }
 }

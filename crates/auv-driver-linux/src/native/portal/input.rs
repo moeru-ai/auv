@@ -11,7 +11,7 @@ use auv_driver_common::input::{Click, MouseButton, Scroll};
 
 use crate::capture::list_displays;
 use crate::error::{backend, invalid_input};
-use crate::input::{combine_release, with_click_modifiers};
+use crate::input::{combine_release, with_held_keys};
 
 use super::ScreenCastStream;
 use super::persistence::{RestoreTokenKind, RestoreTokenStore};
@@ -112,22 +112,29 @@ impl InputSession {
     Ok(input)
   }
 
-  pub fn key_press(&mut self, keysym: i32) -> DriverResult<()> {
+  pub fn key_press(&self, keysym: i32) -> DriverResult<()> {
     self.require_keyboard()?;
-    self.notify_keyboard_keysym(keysym, KeyState::Pressed)?;
-    self.notify_keyboard_keysym(keysym, KeyState::Released)
+    let press = self.notify_keyboard_keysym(keysym, KeyState::Pressed);
+    // A failed reply may follow delivery. Attempt release before returning it.
+    combine_release(press, self.notify_keyboard_keysym(keysym, KeyState::Released))
   }
 
   pub fn key_chord(&mut self, modifiers: &[i32], key: i32) -> DriverResult<()> {
     self.require_keyboard()?;
-    for modifier in modifiers {
-      self.notify_keyboard_keysym(*modifier, KeyState::Pressed)?;
-    }
-    let key_result = self.key_press(key);
-    for modifier in modifiers.iter().rev() {
-      let _ = self.notify_keyboard_keysym(*modifier, KeyState::Released);
-    }
-    key_result
+    with_held_keys(
+      modifiers,
+      |key, pressed| {
+        self.notify_keyboard_keysym(
+          key,
+          if pressed {
+            KeyState::Pressed
+          } else {
+            KeyState::Released
+          },
+        )
+      },
+      || self.key_press(key),
+    )
   }
 
   pub fn click_at(&mut self, point: Point, click: Click, modifiers: &[i32]) -> DriverResult<()> {
@@ -138,7 +145,7 @@ impl InputSession {
     }
     self.move_pointer_to(point)?;
     std::thread::sleep(POINTER_SETTLE_DURATION);
-    with_click_modifiers(
+    with_held_keys(
       modifiers,
       |key, pressed| {
         self.notify_keyboard_keysym(
@@ -242,7 +249,7 @@ impl InputSession {
       return Ok(motion);
     }
     let Some(stream) = self.streams.iter().find(|stream| stream.contains(point)) else {
-      return Err(backend(format!("no screencast stream contains point {:?}; streams={:?}", point, self.streams)));
+      return Err(invalid_input(format!("no screencast stream contains point {:?}; streams={:?}", point, self.streams)));
     };
     Ok(MotionTarget::absolute(stream.id, stream.local_point(point)?))
   }

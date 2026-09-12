@@ -4,7 +4,7 @@ use std::fs::File;
 use std::os::unix::fs::FileExt;
 
 use auv_driver_common::error::DriverResult;
-use evdev::KeyCode;
+use evdev::{AttributeSet, KeyCode};
 use wayland_client::{
   Connection, Dispatch, Proxy, QueueHandle, WEnum,
   globals::{GlobalListContents, registry_queue_init},
@@ -15,13 +15,13 @@ use xkbcommon::xkb;
 use crate::error::{backend, invalid_input};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Stroke {
+pub(crate) struct Stroke {
   pub key: KeyCode,
   pub shift: bool,
 }
 
 #[derive(Debug)]
-pub(super) struct Keymap(HashMap<i32, Stroke>);
+pub(crate) struct Keymap(HashMap<i32, Stroke>);
 
 impl Keymap {
   pub fn load() -> DriverResult<Self> {
@@ -100,6 +100,25 @@ impl Keymap {
       .ok_or_else(|| invalid_input(format!("keysym {symbol:#x} has no unshifted/Shift mapping in the current XKB layout")))
   }
 
+  /// A uinput device's capabilities are fixed at creation, even when the
+  /// compositor later supplies a different map. Reject unadvertised strokes
+  /// before emitting any part of the operation (including synthesized Shift).
+  pub fn validate_keys(&self, symbols: &[i32], supported: &AttributeSet<KeyCode>) -> DriverResult<()> {
+    for symbol in symbols {
+      let stroke = self.stroke(*symbol)?;
+      if !supported.contains(stroke.key) {
+        return Err(invalid_input(format!(
+          "keysym {symbol:#x} requires key {} absent from this uinput device; reopen the driver session",
+          stroke.key.0
+        )));
+      }
+      if stroke.shift && !supported.contains(self.stroke(crate::input::keysym::SHIFT_L)?.key) {
+        return Err(invalid_input("the current Shift mapping is absent from this uinput device; reopen the driver session"));
+      }
+    }
+    Ok(())
+  }
+
   pub fn keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
     self.0.values().map(|stroke| stroke.key)
   }
@@ -152,6 +171,40 @@ mod tests {
     assert_eq!(read_keymap(&file, 7).unwrap(), "keymap");
     assert_eq!(read_keymap(&duplicate, 7).unwrap(), "keymap");
     assert_eq!(file.stream_position().unwrap(), 7);
+  }
+
+  // ROOT CAUSE: refreshing an XKB map does not update a uinput device's
+  // advertised keys. Such events can be silently ignored by the kernel.
+  #[test]
+  fn changed_mapping_rejects_keys_absent_from_existing_device() {
+    let map = Keymap(HashMap::from([
+      (
+        'a' as i32,
+        Stroke {
+          key: KeyCode::KEY_B,
+          shift: false,
+        },
+      ),
+      (
+        'A' as i32,
+        Stroke {
+          key: KeyCode::KEY_A,
+          shift: true,
+        },
+      ),
+      (
+        crate::input::keysym::SHIFT_L,
+        Stroke {
+          key: KeyCode::KEY_LEFTSHIFT,
+          shift: false,
+        },
+      ),
+    ]));
+    let supported: AttributeSet<KeyCode> = [KeyCode::KEY_A].into_iter().collect();
+    assert!(map.validate_keys(&['a' as i32], &supported).is_err());
+    assert!(map.validate_keys(&['A' as i32], &supported).is_err());
+    let supported = [KeyCode::KEY_A, KeyCode::KEY_B, KeyCode::KEY_LEFTSHIFT].into_iter().collect();
+    assert!(map.validate_keys(&['a' as i32, 'A' as i32], &supported).is_ok());
   }
 
   #[test]

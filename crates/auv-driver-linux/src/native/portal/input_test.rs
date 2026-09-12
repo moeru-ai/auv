@@ -102,7 +102,7 @@ fn stream(id: u32, rect: Rect) -> ScreenCastStream {
 fn click_modifiers_release_after_success_and_delivery_failure() {
   for fail_click in [false, true] {
     let events = std::cell::RefCell::new(Vec::new());
-    let result = with_click_modifiers(
+    let result = with_held_keys(
       &[0xffe1, 0xffe3],
       |key, pressed| {
         events.borrow_mut().push((key, pressed));
@@ -134,7 +134,7 @@ fn click_modifiers_release_after_success_and_delivery_failure() {
 #[test]
 fn click_modifiers_release_uncertain_press_and_continue_after_release_failure() {
   let mut events = Vec::new();
-  let result = with_click_modifiers(
+  let result = with_held_keys(
     &[0xffe1, 0xffe3, 0xffe9],
     |key, pressed| {
       events.push((key, pressed));
@@ -166,7 +166,7 @@ fn click_modifiers_release_uncertain_press_and_continue_after_release_failure() 
 
 #[test]
 fn click_modifiers_report_release_failure_after_successful_click() {
-  let result = with_click_modifiers(
+  let result = with_held_keys(
     &[0xffe1],
     |_, pressed| {
       if pressed {

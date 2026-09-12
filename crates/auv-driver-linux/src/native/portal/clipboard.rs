@@ -1,16 +1,16 @@
 use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
 use std::os::fd::OwnedFd as StdOwnedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ashpd::desktop::Session;
 use ashpd::desktop::clipboard::{Clipboard, SetSelectionOptions};
 use ashpd::desktop::remote_desktop::RemoteDesktop;
 use auv_driver_common::error::DriverResult;
+use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 use futures_lite::{StreamExt, future};
 
 use crate::error::backend;
@@ -19,7 +19,6 @@ use super::request::{run, session_connection};
 
 const TEXT_MIME: &str = "text/plain;charset=utf-8";
 const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
-const FD_TRANSFER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct PortalClipboard;
 
@@ -89,8 +88,8 @@ impl ClipboardSession {
       }
     };
     let std_fd = StdOwnedFd::from(fd);
-    let mut file = File::from(std_fd);
-    let bytes = read_fd_to_end(&mut file)?;
+    let file = File::from(std_fd);
+    let bytes = read_fd_to_end(file)?;
     String::from_utf8(bytes).map_err(|error| backend(format!("portal clipboard returned non-UTF-8 text: {error}")))
   }
 
@@ -146,7 +145,7 @@ fn spawn_transfer_thread(clipboard: Arc<Clipboard>, text: Arc<Mutex<String>>, ru
       let result = if mime_type == TEXT_MIME {
         let payload = text.lock().expect("clipboard owner text lock poisoned").clone();
         run("open clipboard write fd", clipboard.selection_write(&session, serial))
-          .and_then(|fd| write_fd_all(&mut File::from(StdOwnedFd::from(fd)), payload.as_bytes()))
+          .and_then(|fd| write_fd_all(File::from(StdOwnedFd::from(fd)), payload.as_bytes()))
       } else {
         Err(backend("unsupported clipboard MIME type"))
       };
@@ -165,46 +164,34 @@ fn spawn_transfer_thread(clipboard: Arc<Clipboard>, text: Arc<Mutex<String>>, ru
   Ok(handle)
 }
 
-fn read_fd_to_end(file: &mut File) -> DriverResult<Vec<u8>> {
-  let started = Instant::now();
-  let mut bytes = Vec::new();
-  let mut buffer = [0_u8; 8192];
-  loop {
-    match file.read(&mut buffer) {
-      Ok(0) => return Ok(bytes),
-      Ok(read) => bytes.extend_from_slice(&buffer[..read]),
-      Err(error) if error.kind() == ErrorKind::WouldBlock => {
-        if started.elapsed() >= FD_TRANSFER_TIMEOUT {
-          return Err(backend("timed out reading portal clipboard fd"));
-        }
-        thread::sleep(FD_TRANSFER_POLL_INTERVAL);
-      }
-      Err(error) => {
-        return Err(backend(format!("failed to read portal clipboard fd: {error}")));
-      }
-    }
-  }
+// NOTICE: Portal FDs are not necessarily nonblocking. Mutter's
+// `src/backends/meta-clipboard-session.c` returns a blocking SelectionWrite pipe.
+// Async registers nonblocking IO; racing the complete transfer also bounds
+// continuously partial progress so joining the clipboard worker can finish.
+fn read_fd_to_end(file: File) -> DriverResult<Vec<u8>> {
+  let mut file = async_io::Async::new(file).map_err(|error| backend(format!("failed to register portal clipboard fd: {error}")))?;
+  future::block_on(future::race(
+    async {
+      let mut bytes = Vec::new();
+      file.read_to_end(&mut bytes).await.map_err(|error| backend(format!("failed to read portal clipboard fd: {error}")))?;
+      Ok(bytes)
+    },
+    async {
+      async_io::Timer::after(FD_TRANSFER_TIMEOUT).await;
+      Err(backend("timed out reading portal clipboard fd"))
+    },
+  ))
 }
 
-fn write_fd_all(file: &mut File, payload: &[u8]) -> DriverResult<()> {
-  let started = Instant::now();
-  let mut written = 0;
-  while written < payload.len() {
-    match file.write(&payload[written..]) {
-      Ok(0) => return Err(backend("portal clipboard write fd closed early")),
-      Ok(count) => written += count,
-      Err(error) if error.kind() == ErrorKind::WouldBlock => {
-        if started.elapsed() >= FD_TRANSFER_TIMEOUT {
-          return Err(backend("timed out writing portal clipboard fd"));
-        }
-        thread::sleep(FD_TRANSFER_POLL_INTERVAL);
-      }
-      Err(error) => {
-        return Err(backend(format!("failed to write portal clipboard payload: {error}")));
-      }
-    }
-  }
-  Ok(())
+fn write_fd_all(file: File, payload: &[u8]) -> DriverResult<()> {
+  let mut file = async_io::Async::new(file).map_err(|error| backend(format!("failed to register portal clipboard fd: {error}")))?;
+  future::block_on(future::race(
+    async { file.write_all(payload).await.map_err(|error| backend(format!("failed to write portal clipboard payload: {error}"))) },
+    async {
+      async_io::Timer::after(FD_TRANSFER_TIMEOUT).await;
+      Err(backend("timed out writing portal clipboard payload"))
+    },
+  ))
 }
 
 #[cfg(test)]

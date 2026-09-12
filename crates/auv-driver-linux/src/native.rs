@@ -1,5 +1,5 @@
 #[cfg(target_os = "linux")]
-mod keymap;
+pub(crate) mod keymap;
 #[cfg(target_os = "linux")]
 pub(crate) mod uinput;
 
