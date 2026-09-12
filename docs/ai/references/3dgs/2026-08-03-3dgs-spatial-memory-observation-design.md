@@ -475,8 +475,7 @@ NOTICE（clock domain）：JVM telemetry `monotonic_timestamp_ms` 与 AUV
 slice 有意跳过；**不是** M3 query 评分，**不是** M4 trainer，**不是** 几何
 命中率或 scene-packet export 证据。
 
-Hermetic：`cargo test -p auv-game-minecraft --lib m2_` 通过。M4 仍 deferred
-（见下文 M4 节 TODO）。
+Hermetic：`cargo test -p auv-game-minecraft --lib m2_` 通过。
 
 ### M3：memory/query 评分
 
@@ -540,21 +539,62 @@ Throwaway runners：`prepare-tool/`、`invoke_m3_vlm.py`、`score-vlm-tool/`（�
 wall-clock 对齐。M4、crate 内 VLM transport、occlusion holdout 仍 deferred。
 
 Hermetic：`cargo test -p auv-game-minecraft --lib m3_` — **7 passed**, 1 ignored
-（`AUV_M3_LIVE=1` env-gated live test）。M4 仍 deferred（见下文 M4 节）。
+（`AUV_M3_LIVE=1` env-gated live test）。
 
 ### M4：真实 Brush/OpenSplat training
 
 只有 M2、M3 产生可用的 capture/evaluation packet 后，才运行真实 trainer。必须
 记录：
 
-- 精确的多视角输入 packet；
-- trainer/backend/version 和 command；
-- seed point-cloud provenance（如果使用）；
+- 精确的多视角 input packet（来自 gated M2 session；≥3 views、≥0.5 m 平移）；
+- trainer/backend/version 和 command line；
+- seed point-cloud provenance（若使用）；
 - 输出 artifact 是否存在及其 lineage；
-- holdout render metrics；
-- 在同一批 holdout view 上的 spatial-query 性能。
+- holdout render metrics（photometric：`l1_mean` / `mse` / `psnr` / `ssim`，沿用
+  MC-17 `HoldoutRenderQualityMetrics`）；
+- 在同一批 holdout view 上的 spatial-query 性能（沿用 M3 scorer 字段，**不是**
+  VLM 像素/方块命中率）。
 
 Brush/OpenSplat 成功只是一个 backend 结果，不是 memory feature 的定义。
+
+**当前状态（2026-09-12）：M4 库侧 trainer packet + result 记录已落地。**
+`m4_trainer.rs` 提供 `build_m4_trainer_packet_from_session` →
+`record_m4_trainer_result` → `meets_m4_trainer_gate` →
+`write_m4_trainer_result_report` 链。输入必须是 `meets_m2_capture_gate=true` 的
+`M2Session`；yaw-only / 未过 M2 gate 的 session 会在 packet 构建时被拒绝
+（`M4TrainerError::UngatedM2Session`）。
+
+Public API：`M4TrainerInputPacket`、`M4TrainerViewRecord`（**可含** engine pose /
+view matrix / projection matrix，仅供 reconstruction）、`M4TrainerCommandRecord`、
+`M4SeedPointCloudProvenance`、`M4OutputArtifactLineage`、
+`M4HoldoutRenderMetricRecord`、`M4HoldoutSpatialQueryMetricRecord`、
+`M4TrainerResultReport`。Engine pose **不得**复制到 M1/M3 黑盒 VLM request JSON；
+`detect_m4_session_black_box_boundary_violations` 检测 M1 observation/request 是否
+被污染。
+
+`meets_m4_trainer_gate` 表示本 slice 的 trainer 样本门：M2 gate 通过、trainer
+command/backend 非空、输出 artifact lineage 存在、每个 holdout view 同时记录
+photometric render metrics 与 spatial-query metrics、黑盒边界无 leak——**不是**
+几何 reconstruction 命中率声明，crate 内仍无 VLM transport，**不**在 crate 内执行
+Brush/OpenSplat。
+
+Hermetic：`cargo test -p auv-game-minecraft --lib m4_` — **8 passed**（fake command +
+fake artifact dir；无 GPU、无网络、无真实 Brush）。
+
+**Live M4 trainer 证据（2026-09-12 晚，`F:\auv\.tmp\m4-session/`）：** 自
+`.tmp/m2-session/` 三视角 capture 经 throwaway `prepare-tool/` 导出 MC-7 scene packet +
+training package（3× `transforms.json` frame）。主机安装 **Brush v0.3.0**
+`brush_app.exe`（`F:\auv\.tmp\m4-session\brush/`；RTX 4070 Ti；PATH 无 OpenSplat /
+nvcc）。实跑 smoke：
+
+`brush …/compat/nerfstudio --total-steps 200 --export-every 200 --export-path …/trainer-output/brush --export-name splat_{iter}.ply`
+
+**诚实记录：** `trainer_exit_status=0`；产出 `splat_200.ply`（46 388 B）。MC-7 默认
+单点 raycast seed 导致 Brush panic；throwaway 将 seed 增密至 190 个 `nearby_blocks`
+中心后训练成功。`record-tool/` 经 `write_m4_trainer_result_report` 写入
+`m4-report.json`：`meets_m4_trainer_gate=false`（缺 holdout render metrics 与 holdout
+spatial-query metrics；本 smoke 未跑 MC-17 / M3 holdout scorer）。**不是**几何重建
+准确率声明。M3 live VLM（`~91px` projection error）仍是 memory/query 诚实记录。
 
 ## 9. 当前 Minecraft 代码和已知边界
 

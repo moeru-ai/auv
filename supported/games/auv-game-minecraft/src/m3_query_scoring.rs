@@ -4,7 +4,7 @@
 //! from a second view → externally supplied structured response → score against
 //! withheld engine geometry at the query view only.
 //!
-//! TODO(m4-trainer): real Brush/OpenSplat training packets stay in M4.
+//! M4 trainer packets live in `m4_trainer.rs`.
 //! TODO(m3-vlm-transport): provider-neutral query transport stays outside this
 //! crate until an owner-approved boundary exists.
 //! TODO(m3-occlusion-holdout): holdout visibility is frustum/containment only;

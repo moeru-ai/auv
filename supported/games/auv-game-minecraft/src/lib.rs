@@ -18,6 +18,7 @@ pub mod m1_black_box_scoring;
 pub mod m1_black_box_verification;
 pub mod m2_multi_view;
 pub mod m3_query_scoring;
+pub mod m4_trainer;
 pub mod measurement;
 pub mod overlay;
 pub mod prep;
@@ -87,6 +88,13 @@ pub use m3_query_scoring::{
   M3ScreenProjectionClaim, M3SpatialQueryResponse, MULTI_VIEW_SPATIAL_QUERY_PROMPT, inspect_m3_query_response, m3_query_withheld_context,
   meets_m3_query_gate, prepare_m3_query_from_session, score_accepted_m3_query_response, verify_m3_query_from_session,
   write_m3_query_verification_report,
+};
+pub use m4_trainer::{
+  M4_LIVE_SESSION_ROOT, M4_TRAINER_PACKET_SCHEMA_VERSION, M4_TRAINER_RESULT_REPORT_SCHEMA_VERSION, M4HoldoutRenderMetricRecord,
+  M4HoldoutSpatialQueryMetricRecord, M4OutputArtifactLineage, M4SeedPointCloudProvenance, M4SeedPointCloudSource, M4TrainerCommandRecord,
+  M4TrainerError, M4TrainerInputPacket, M4TrainerPacketBuildInput, M4TrainerPersistenceError, M4TrainerResultRecordInput,
+  M4TrainerResultReport, M4TrainerViewRecord, build_m4_trainer_packet_from_session, detect_m4_session_black_box_boundary_violations,
+  m4_holdout_spatial_query_metric_from_m3, meets_m4_trainer_gate, record_m4_trainer_result, write_m4_trainer_result_report,
 };
 pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,

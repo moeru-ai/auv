@@ -4,7 +4,7 @@
 //! from `M1WithheldMinecraftTruth` and serialized as relative deltas only.
 //!
 //! M3 viewpoint-conditioned memory/query scoring lives in `m3_query_scoring.rs`.
-//! TODO(m4-trainer): real Brush/OpenSplat training packets stay in M4.
+//! M4 trainer packets live in `m4_trainer.rs`.
 //! TODO(m2-vlm-transport): provider-neutral multi-view request emission stays
 //! outside this crate until an owner-approved transport boundary exists.
 //!

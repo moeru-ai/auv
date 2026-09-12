@@ -289,9 +289,53 @@ regression only.
 
 Throwaway runners: `prepare-tool/`, `invoke_m3_vlm.py`, `score-vlm-tool/`. NOTICE
 (clock domain): inherits M2 skew semantics; not cross-domain wall-clock calibration.
-M4, in-crate VLM transport, and occlusion holdout remain deferred. This **is** M3
+In-crate VLM transport and occlusion holdout remain deferred. This **is** M3
 memory/query scoring for the spatial-memory lane. It is **not** M4 Brush/OpenSplat
 training and **not** pixel/block hit-rate claims.
+
+### M4 Brush/OpenSplat trainer packet gate (2026-09-12)
+
+Library path in `auv-game-minecraft` (`m4_trainer.rs`):
+
+```text
+M4TrainerPacketBuildInput (gated M2Session + trainer command + seed provenance + holdout roles + local screenshot paths)
+  -> build_m4_trainer_packet_from_session
+  -> (external Brush/OpenSplat run — not in crate)
+  -> record_m4_trainer_result (lineage + holdout render metrics + holdout spatial-query metrics)
+  -> meets_m4_trainer_gate
+  -> write_m4_trainer_result_report
+```
+
+Public types: `M4TrainerInputPacket`, `M4TrainerViewRecord`, `M4TrainerCommandRecord`,
+`M4SeedPointCloudProvenance`, `M4OutputArtifactLineage`, `M4HoldoutRenderMetricRecord`,
+`M4HoldoutSpatialQueryMetricRecord`, `M4TrainerResultReport`. Gate requires prior
+`meets_m2_capture_gate=true`; rotation-only sessions fail at `M4TrainerError::UngatedM2Session`.
+Trainer views **may** include engine pose and camera matrices for reconstruction; M1/M3
+black-box request JSON must stay leak-free (`detect_m4_session_black_box_boundary_violations`).
+
+Holdout render metrics reuse MC-17 photometric fields (`l1_mean`, `mse`, `psnr`, `ssim`).
+Holdout spatial-query metrics reuse M3 scorer fields (`visibility_class_correct`,
+`projection_pixel_error_px`, `meets_m3_query_gate`) — **not** pixel/block hit-rate.
+
+Hermetic tests: `cargo test -p auv-game-minecraft --lib m4_` — **8 passed** (fixture
+command + artifact dir; no GPU/network/real Brush).
+
+**Live M4 trainer evidence (2026-09-12, `F:\auv\.tmp\m4-session/`):** rebuilt gated
+`M2Session` from `.tmp/m2-session/v01|v02|v03` → MC-7 scene packet → training package
+→ Nerfstudio `transforms.json` (3 frames, 870×519) via throwaway `prepare-tool/`.
+Installed **Brush v0.3.0** prebuilt `brush_app.exe` to `F:\auv\.tmp\m4-session\brush/`
+(RTX 4070 Ti; no OpenSplat/nvcc on host). Smoke command:
+
+`brush …/compat/nerfstudio --total-steps 200 --export-every 200 --export-path …/trainer-output/brush --export-name splat_{iter}.ply`
+
+**Honest live result:** trainer **did run** (`exit 0`); output
+`trainer-output/brush/splat_200.ply` (46 388 B). MC-7 default 1-vertex raycast seed
+panicked Brush; throwaway densification to **190** `nearby_blocks` centers unblocked
+training. `record-tool/` rebound `packet.json` + `m4-report.json` through
+`build_m4_trainer_packet_from_session` / `write_m4_trainer_result_report`.
+`meets_m4_trainer_gate=false` — holdout render (MC-17) and holdout spatial-query
+(M3) metrics **not** computed in this smoke; **not** geometric reconstruction accuracy.
+M3 live VLM (`projection_pixel_error_px≈91.3`) remains memory/query honesty only.
 
 ### Windows M1 PowerShell workflow (Phase 0 invoke producer)
 
@@ -407,8 +451,9 @@ rest are not owner-approved.
 5. **Occlusion signal decision.** Choose among depth buffer, target-directed
    ray, or per-block visibility, then define reacquisition's visibility
    semantics. Depends on 2 or a mod change.
-6. **First real trainer run (M4).** Depends on 3 and 4, since a single-pose capture cannot
-   train.
+6. ~~**First real trainer run (M4).**~~ — **library closed 2026-09-12**
+   (`m4_trainer.rs`); **live Brush smoke closed 2026-09-12** (`.tmp/m4-session/`,
+   `splat_200.ply`, `meets_m4_trainer_gate=false` until holdout metrics).
 7. **Replace `checkpoint_native` with real inference.** Depends on 6. Only
    meaningful once slice 4 provides a geometric baseline to compare against.
 
