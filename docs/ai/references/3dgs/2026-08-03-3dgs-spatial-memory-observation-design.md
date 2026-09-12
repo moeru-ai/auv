@@ -239,7 +239,9 @@ available 的 depth、normal、motion、raycast、world pose 或 telemetry。
 
 每个空间假设必须包含：证据引用、坐标空间、几何/尺度/语义/配准置信度，
 以及明确的 hypothesis 状态。单张普通 RGB 截图不能确认隐藏表面、精确深度、
-碰撞边界、世界坐标或可交互性。
+碰撞边界、世界坐标或可交互性。RGB-only 时，`unknowns` 或
+`unsupported_inferences` 必须包含精确 token `world_coordinate` 和
+`hidden_geometry`。
 
 如果证据不足，请提出最小的后续采集动作。优先请求小幅横向或前后移动来制造
 视差；原地转头只能补充外观，不能替代平移基线。
@@ -353,7 +355,7 @@ failure 会形成明确的 rejected report。
 会凭空冻结新的 secret、provider 和 retry 接口。真实模型 transport 和原始响应
 artifact 持久化仍是后续 slice。
 
-**当前状态（2026-09-12）：M1 scorer 验证循环已落地，仍不是真实 baseline，也不是 M2。**
+**当前状态（2026-09-12）：** scorer / 校准聚合器先落地；同日晚间 live 5 样本将 honesty-calibration baseline 收口（见本节末）。不是 M2。
 
 `m1_black_box_observation.rs` 把 `BoundSpatialFrame` 拆成黑盒 `SpatialObservationPacket`
 和 `M1WithheldMinecraftTruth`：截图 URI、capture clock、viewport 进入 observation；
@@ -365,9 +367,9 @@ AUV input history 仍是调用方传入的；sidecar 不会从 pose 差分捏造
 调用方提供的 canonical screenshot URI 并 `prepare_m1_black_box_request`。Windows
 上 live 截图 producer 已固定为 `auv invoke window.capture`（`auv-driver-windows`
 PrintWindow/xcap，canonical artifact URI）。2026-09-12 live：`window.capture --title Minecraft`
-得到 `backend=printwindow.windows`、无 fallback、非黑 in-game PNG；invoke JSON 仍无
-capture monotonic clock。这不等于 M1 baseline 完成，也没有真实模型输出或校准曲线。
-GLFW/MC 窗口仍可能黑帧；本 slice 不加 WGC。
+得到 `backend=printwindow.windows`、无 fallback、非黑 in-game PNG。短生命周期
+`auv invoke` 曾把 process-local `Instant` 打成 `capture_monotonic_timestamp_ms: 0`；
+Windows 现改为 `GetTickCount64`。GLFW/MC 窗口仍可能黑帧；本 slice 不加 WGC。
 
 `m1_black_box_scoring.rs` 只对 *已经通过* contract gate 的 patch 打分，并把
 `M1WithheldMinecraftTruth` 留在 request 类型之外。当前 claim schema 没有结构化
@@ -386,13 +388,32 @@ URI + 可选 capture clock + 外部 model response JSON）执行
 `score_accepted_m1_black_box_response`，返回可序列化的
 `M1BlackBoxVerificationReport`（`write_m1_black_box_verification_report` 可落盘）。
 `capture_monotonic_timestamp_ms=None` 时默认使用 sidecar 最新 in-game 帧时间戳；
-invoke JSON 仍无 capture monotonic clock。fixture 测试覆盖 honest（usable）、
+invoke JSON 已暴露 `capture_monotonic_timestamp_ms`，但 JVM telemetry 与 AUV
+capture clock 仍属不同域，调用方需自行记录对齐证据。fixture 测试覆盖 honest（usable）、
 leak/overconfident/yaw-only（not usable）；live 验证测试仍 env-gated 且 `#[ignore]`。
 
-这仍然 **没有**真实模型输出/VLM transport，也没有 live capture 上的校准曲线。
-没有这两者，不能把 scorer 通过说成 M1 baseline 完成；这也不是 M2 多视角工作。
-这里的 core graduation 结论是 **保持 app-specific**；至少需要真实 M1 消费证据和
-第二个应用消费者，才考虑抽 shared helper。
+`m1_black_box_calibration.rs` 把 N 份 `M1BlackBoxVerificationReport` 聚合成
+`M1BlackBoxCalibrationReport`（`aggregate_m1_black_box_calibration_reports` /
+`write_m1_black_box_calibration_report`）：样本计数、leak / missing_unknowns /
+overconfident 计数、follow-up 直方图、accepted 样本的 `usable_rate`、以及
+appearance/geometry/metric_scale/world_registration 置信度分箱（含 overconfident
+claim 计数）。`meets_m1_baseline_sample_gate` 仅表示 honesty-calibration 样本门
+（≥5 样本、无 request leak、≥1 accepted），**不是**几何命中率或像素/block 命中。
+NOTICE：VLM transport 仍在 crate 外；结构化世界坐标出现前，几何 claim 评分仍
+deferred；M2 库侧 multi-view capture gate 已于 2026-09-12 落地（见 3dgs 设计文档 M2 节）。
+
+**当前状态（2026-09-12 晚）：M1 honesty-calibration baseline 的 live 证据已齐。**
+5 组 Windows `window.capture`（`printwindow.windows`、canonical `auv://runs/...` URI、
+`in_game` telemetry）+ crate 外 Claude CLI VLM + `verify_m1_black_box_from_telemetry_tail`
++ `aggregate_m1_black_box_calibration_reports` 写在 `.tmp/m1-baseline/`：
+`sample_count=5`，`accepted_count=5`，`usable_count=5`，`usable_rate=1.0`，
+`leak_count=0`，follow-up 全为 parallax，`meets_m1_baseline_sample_gate=true`。
+第一轮 VLM 因未知 token（`world_pose` 而非 `world_coordinate`，缺 `hidden_geometry`）
+usable=0；prompt 点名 token 并接受有限 alias 后重跑。这 **不是** 像素/方块命中率，
+**不是** M2，crate 内仍无 VLM transport。这 5 次 capture 时钟当时为 0，验证回退到
+sidecar 帧时间戳。
+
+这仍然没有第二个应用消费者；core graduation 结论是 **保持 app-specific**。
 
 本 slice 暂时保留 serde 对未知 response 字段的 forward-compatible 忽略策略，因为
 真实 provider/version migration 证据尚不存在。若真实 M1 运行表明原始响应审计需要
@@ -414,9 +435,48 @@ Minecraft 答案键只进入事后 scorer。
 - 记录真实相对运动和 capture skew，不要靠操作员口头估计；
 - 如使用现有 `nearby_blocks`/scene-packet，保留完整 lineage。
 
-当前 Minecraft lane 已有 capture binding 和 scene-packet export 路径，但历史
-capture 实际上接近单视角，也没有真实 trainer run。新的多 pose session 是
-必须补的证据。
+**当前状态（2026-09-12）：M2 库侧 capture gate 已落地。** `m2_multi_view.rs`
+提供 `M2ViewRole`（`anchor` / `translate` / `revisit`）、
+`M2ViewSample`、`M2RelativeMotion`、`M2Session`，以及
+`build_m2_session_from_captures` / `ingest_m2_view_capture` /
+`write_m2_session_report`。每条 view 复用 M1 的 `bind_capture_to_frame` →
+`split_bound_frame_for_m1` 链：observation 只含截图 URI、capture clock、viewport；
+pose、`nearby_blocks`、矩阵留在 withheld 侧用于 pairwise 运动计算。
+
+`meets_m2_capture_gate` 为 true 当且仅当：
+
+- view 数 ≥ 3；
+- 每条 view 有 canonical `auv://runs/...` screenshot URI 且 `screen_state=in_game`；
+- 至少一对 view 的 withheld eye-position 欧氏平移 ≥ `M2_SIGNIFICANT_TRANSLATION_METERS`
+  （0.5 m，半格方块）；
+- 每条 view 记录 `capture_skew_ms`（sidecar 帧时间戳回退时可为 0，见
+  `capture_skew_used_sidecar_fallback` NOTICE）。
+
+序列化 report 不含 `nearby_blocks`、`view_matrix` 或绝对 eye xyz；运动只写
+相对 delta（`translation_m`、`yaw_delta_deg`）与布尔门。crate 内仍无 VLM
+transport；M2 本 slice 不要求 VLM。
+
+**当前状态（2026-09-12 晚）：M2 capture/binding 已收口。** Windows live
+三视角 session 写在 `.tmp/m2-session/`（`session-report.json`、`views.json`、
+`v01`/`v02`/`v03` per-view captures、`collect_m2_session.py` throwaway binder）：
+
+- `meets_m2_capture_gate=true`，`gate_failures=[]`；
+- 角色：`anchor`（v01）→ `translate`（v02）→ `revisit`（v03）；
+- withheld eye 平移：anchor→translate **1.92 m**，anchor→revisit **2.64 m**，
+  translate→revisit **4.47 m**（均 ≥ 0.5 m 门）；
+- `capture_monotonic_timestamp_ms`（`GetTickCount64`）非零：**9193984** /
+  **9332234** / **9340390**；`capture_skew_ms`：**270** / **271** / **264**；
+- capture backend：`printwindow.windows`；canonical `auv://runs/...` screenshot URI；
+- 序列化 `session-report.json` 无 `nearby_blocks`、`view_matrix` 或绝对 eye xyz。
+
+NOTICE（clock domain）：JVM telemetry `monotonic_timestamp_ms` 与 AUV
+`capture_monotonic_timestamp_ms` 仍属不同域；`capture_skew_ms` 记录
+`frame_ts - capture_ts`，**不是** 跨域已校准的 wall-clock 对齐。VLM 在本
+slice 有意跳过；**不是** M3 query 评分，**不是** M4 trainer，**不是** 几何
+命中率或 scene-packet export 证据。
+
+Hermetic：`cargo test -p auv-game-minecraft --lib m2_` 通过。M3/M4 仍 deferred
+（见下文 M3/M4 节 TODO）。
 
 ### M3：memory/query 评分
 

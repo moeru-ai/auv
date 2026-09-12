@@ -24,7 +24,7 @@ pub const SINGLE_VIEW_SPATIAL_MEMORY_PROMPT: &str = r#"你是单视角空间记�
 2. 基于观测提出的空间假设；
 3. 当前无法确认或互相矛盾的内容。
 
-每个空间假设必须包含证据引用、坐标空间、几何/尺度/语义/配准置信度，以及明确的 hypothesis 状态。单张普通 RGB 截图不能确认隐藏表面、精确深度、碰撞边界、世界坐标或可交互性。
+每个空间假设必须包含证据引用、坐标空间、几何/尺度/语义/配准置信度，以及明确的 hypothesis 状态。单张普通 RGB 截图不能确认隐藏表面、精确深度、碰撞边界、世界坐标或可交互性。RGB-only 时，`unknowns` 或 `unsupported_inferences` 必须包含精确 token `world_coordinate` 和 `hidden_geometry`。
 
 如果证据不足，请提出最小的后续采集动作。优先请求小幅横向或前后移动来制造视差；原地转头只能补充外观，不能替代平移基线。
 

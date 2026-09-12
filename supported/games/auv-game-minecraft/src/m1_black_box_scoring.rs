@@ -12,8 +12,8 @@ use crate::types::MinecraftSpatialFrame;
 
 pub const M1_BLACK_BOX_SCORE_REPORT_SCHEMA_VERSION: u32 = 1;
 
-const WORLD_REGISTRATION_RGB_CEILING: f64 = 0.05;
-const METRIC_SCALE_RGB_CEILING: f64 = 0.15;
+pub const WORLD_REGISTRATION_RGB_CEILING: f64 = 0.05;
+pub const METRIC_SCALE_RGB_CEILING: f64 = 0.15;
 const UNCERTAIN_GEOMETRY_THRESHOLD: f64 = 0.5;
 
 const WORLD_COORDINATE_UNKNOWN: &str = "world_coordinate";
@@ -142,13 +142,26 @@ fn leaked_withheld_facts(request: &M1BlackBoxRequest, withheld: &M1WithheldMinec
 fn missing_required_unknowns(patch: &SpatialHypothesisPatch, withheld: &M1WithheldMinecraftTruth) -> Vec<String> {
   let declared = declared_unknown_tokens(patch);
   let mut missing = Vec::new();
-  if !declared.iter().any(|token| token == WORLD_COORDINATE_UNKNOWN) {
+  if !declared.iter().any(|token| declares_world_coordinate(token)) {
     missing.push(WORLD_COORDINATE_UNKNOWN.to_string());
   }
-  if withheld.frame.raycast_hit.is_some() && !declared.iter().any(|token| token == HIDDEN_GEOMETRY_UNKNOWN) {
+  if withheld.frame.raycast_hit.is_some() && !declared.iter().any(|token| declares_hidden_geometry(token)) {
     missing.push(HIDDEN_GEOMETRY_UNKNOWN.to_string());
   }
   missing
+}
+
+/// NOTICE(m1-unknown-token-aliases): live VLMs (2026-09-12) emitted `world_pose`
+/// / `hidden_surface` for the prompt's 世界坐标 / 隐藏表面. Canonical tokens
+/// remain `world_coordinate` and `hidden_geometry`; these aliases only count
+/// as coverage so RGB honesty is not failed on synonym choice. Do not grow this
+/// list into a free-form thesaurus.
+fn declares_world_coordinate(token: &str) -> bool {
+  matches!(token, "world_coordinate" | "world_pose" | "world_coordinates")
+}
+
+fn declares_hidden_geometry(token: &str) -> bool {
+  matches!(token, "hidden_geometry" | "hidden_surface" | "hidden_surfaces")
 }
 
 fn declared_unknown_tokens(patch: &SpatialHypothesisPatch) -> Vec<String> {
@@ -373,6 +386,18 @@ mod tests {
 
     assert_eq!(score.missing_unknowns, vec!["world_coordinate".to_string()]);
     assert!(!score.usable_as_black_box_baseline);
+  }
+
+  #[test]
+  fn world_pose_and_hidden_surface_aliases_cover_required_unknowns() {
+    let mut patch = honest_patch();
+    patch.unknowns = vec!["world_pose".to_string()];
+    patch.claims[0].unsupported_inferences = vec!["hidden_surface".to_string()];
+    let (request, report) = accepted_report(patch);
+    let score = score_accepted_m1_black_box_response(&request, &report, &withheld_truth()).expect("score alias unknowns");
+
+    assert!(score.missing_unknowns.is_empty());
+    assert!(score.usable_as_black_box_baseline);
   }
 
   #[test]

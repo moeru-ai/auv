@@ -46,8 +46,8 @@ impl std::fmt::Display for M1BlackBoxVerificationError {
 /// Run the M1 consumption/scoring loop for one telemetry tail frame and model response.
 ///
 /// When `capture_monotonic_timestamp_ms` is `None`, the newest in-game sidecar frame
-/// timestamp is used as the capture clock. Invoke JSON still has no monotonic clock;
-/// callers with an externally aligned capture clock should pass `Some(...)`.
+/// timestamp is used as the capture clock. Invoke JSON exposes a Windows
+/// `GetTickCount64` stamp; pass `None` when a short-lived CLI still reported 0.
 ///
 /// TODO(m1-vlm-transport): provider-neutral request artifact emission and raw response
 /// capture stay outside this crate until an owner-approved transport boundary exists.

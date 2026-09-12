@@ -12,9 +12,11 @@ pub mod evidence;
 pub mod ingest;
 pub mod input_target;
 pub mod m1_black_box_baseline;
+pub mod m1_black_box_calibration;
 pub mod m1_black_box_observation;
 pub mod m1_black_box_scoring;
 pub mod m1_black_box_verification;
+pub mod m2_multi_view;
 pub mod measurement;
 pub mod overlay;
 pub mod prep;
@@ -53,17 +55,28 @@ pub use m1_black_box_baseline::{
   M1_BLACK_BOX_REQUEST_SCHEMA_VERSION, M1_BLACK_BOX_RESPONSE_REPORT_SCHEMA_VERSION, M1BlackBoxRequest, M1BlackBoxRequestError,
   M1BlackBoxResponseReport, M1BlackBoxResponseStatus, inspect_m1_black_box_response, prepare_m1_black_box_request,
 };
+pub use m1_black_box_calibration::{
+  M1_BLACK_BOX_CALIBRATION_REPORT_SCHEMA_VERSION, M1AppearanceGeometryConfidenceBins, M1BlackBoxCalibrationError,
+  M1BlackBoxCalibrationReport, M1CeilingConfidenceBins, M1ConfidenceBinCount, M1ConfidenceBinReport, M1FollowUpHistogram,
+  aggregate_m1_black_box_calibration_reports, write_m1_black_box_calibration_report,
+};
 pub use m1_black_box_observation::{
   M1_IN_GAME_SCREEN_STATE, M1BlackBoxLivePreparation, M1BlackBoxObservationError, M1BlackBoxObservationSplit,
   prepare_m1_black_box_from_telemetry_tail, split_bound_frame_for_m1,
 };
 pub use m1_black_box_scoring::{
   M1_BLACK_BOX_SCORE_REPORT_SCHEMA_VERSION, M1BlackBoxScoreError, M1BlackBoxScoreReport, M1FollowUpScore, M1OverconfidentClaim,
-  M1WithheldMinecraftTruth, score_accepted_m1_black_box_response,
+  M1WithheldMinecraftTruth, METRIC_SCALE_RGB_CEILING, WORLD_REGISTRATION_RGB_CEILING, score_accepted_m1_black_box_response,
 };
 pub use m1_black_box_verification::{
   M1_BLACK_BOX_VERIFICATION_REPORT_SCHEMA_VERSION, M1BlackBoxVerificationError, M1BlackBoxVerificationReport,
   verify_m1_black_box_from_telemetry_tail, write_m1_black_box_verification_report,
+};
+pub use m2_multi_view::{
+  M2_MIN_VIEW_COUNT, M2_MULTI_VIEW_SESSION_REPORT_SCHEMA_VERSION, M2_SIGNIFICANT_TRANSLATION_METERS, M2IngestedView, M2MultiViewError,
+  M2MultiViewPersistenceError, M2MultiViewSessionReport, M2RelativeMotion, M2Session, M2TranslationDeltaMeters, M2ViewCaptureInput,
+  M2ViewRole, M2ViewSample, build_m2_session_from_captures, build_m2_session_from_ingested_views, ingest_m2_view_capture, m2_session_report,
+  m2_session_withheld_truth, write_m2_session_report,
 };
 pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,

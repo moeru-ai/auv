@@ -184,17 +184,71 @@ sidecar timestamp is used. Live evidence on 2026-09-12: `window.list` resolved
 `Minecraft* 1.21.1 - 单人游戏`, `window.capture --title Minecraft` returned
 `backend=printwindow.windows` with no fallback and a non-black in-game PNG (not
 WGC). Invoke JSON now exposes `result.capture.capture_monotonic_timestamp_ms`
-(stamped immediately before PrintWindow / display capture). The scorer verification
-loop and hermetic fixtures landed in 2026-09-12; this is **not** M1 baseline
-completion (no real model / no calibration curve) and **not** M2. Withheld truth
-never enters the serialized request. Multi-pose scene-packet export still needs a
-live operator session; that gap is capture, not a missing trainer.
+(stamped immediately before PrintWindow / display capture). The scorer verification loop, calibration-curve aggregator
+(`aggregate_m1_black_box_calibration_reports` → `M1BlackBoxCalibrationReport`),
+and hermetic fixtures landed in 2026-09-12. Invoke JSON exposes
+`result.capture.capture_monotonic_timestamp_ms`. A short-lived `auv invoke`
+process originally stamped `0` via process-local `Instant`; Windows now uses
+`GetTickCount64`.
+
+Live M1 honesty-calibration evidence (2026-09-12, `.tmp/m1-baseline/`): five
+`printwindow.windows` captures bound to `in_game` telemetry tails, scored against
+external Claude CLI `SpatialHypothesisPatch` JSON. After the prompt named the
+required unknown tokens, calibration reported `usable_count=5`, `usable_rate=1.0`,
+`leak_count=0`, parallax follow-up on all five, `meets_m1_baseline_sample_gate=true`.
+This **is** the M1 black-box honesty/calibration baseline. It is **not** pixel or
+block hit-rate, **not** an in-crate VLM transport, and **not** M2.
+Those five captures still used sidecar frame timestamps because the invoke stamp
+was `0` at collection time.
+
+### M2 multi-view capture gate (2026-09-12)
+
+Library path in `auv-game-minecraft` (`m2_multi_view.rs`):
+
+```text
+M2ViewCaptureInput (frame or telemetry tail + screenshot URI + optional capture clock + role)
+  -> bind_capture_to_frame
+  -> split_bound_frame_for_m1
+  -> prepare_m1_black_box_request (per view)
+  -> pairwise withheld pose deltas
+  -> meets_m2_capture_gate
+  -> write_m2_session_report
+```
+
+Public types: `M2ViewRole` (`Anchor` / `Translate` / `Revisit`), `M2ViewSample`,
+`M2RelativeMotion`, `M2Session`, `M2MultiViewSessionReport`. Gate threshold:
+`M2_SIGNIFICANT_TRANSLATION_METERS = 0.5` (half-block eye translation). Rotation-only
+sessions (yaw/pitch without ≥0.5 m translation) fail the gate. Serialized reports
+exclude `nearby_blocks`, `view_matrix`, and absolute eye coordinates; motion is
+relative deltas only. Withheld truth is available via `m2_session_withheld_truth`
+for operator inspect, not for model requests.
+
+Hermetic tests cover strafe pass, yaw-only fail, under-three fail, and JSON leakage
+checks (`cargo test -p auv-game-minecraft --lib m2_`).
+
+**Live M2 capture/binding evidence (2026-09-12, `.tmp/m2-session/`):** three
+`printwindow.windows` captures bound to `in_game` telemetry tails via
+`build_m2_session_from_captures` → `write_m2_session_report`. Roles:
+`anchor` (v01) → `translate` (v02) → `revisit` (v03). Withheld eye translation:
+anchor→translate **1.92 m**, anchor→revisit **2.64 m**, translate→revisit
+**4.47 m**. `capture_monotonic_timestamp_ms` non-zero (`GetTickCount64`):
+**9193984** / **9332234** / **9340390**; `capture_skew_ms`: **270** / **271** /
+**264**. `session-report.json` reports `meets_m2_capture_gate=true` with no
+`nearby_blocks`, `view_matrix`, or absolute eye coordinates in the serialized
+report. VLM was intentionally skipped for this slice. NOTICE (clock domain): JVM
+telemetry and AUV capture clocks are not calibrated — `capture_skew_ms` is
+`frame_ts - capture_ts`, not a cross-domain wall-clock alignment proof. This
+**is** the M2 multi-view capture/binding gate. It is **not** M3 memory/query
+scoring, **not** M4 Brush/OpenSplat training, and **not** geometric accuracy
+claims.
 
 ### Windows M1 PowerShell workflow (Phase 0 invoke producer)
 
 NOTICE (clock domain): MC telemetry `monotonic_timestamp_ms` comes from the JVM
 (`System.nanoTime()` scaled to ms). Invoke `capture_monotonic_timestamp_ms` comes
-from the AUV process monotonic clock. The two clocks do **not** share a base —
+from the AUV capture-instant witness. On Windows that witness is `GetTickCount64`
+(ms since boot) because a process-local `Instant` in short-lived `auv invoke`
+stamped `0`. The two clocks do **not** share a base —
 `bind_capture_to_frame` records skew as `frame_ts - capture_ts` and
 `verify_m1_black_box_from_telemetry_tail` falls back to the sidecar frame timestamp
 when the capture clock is omitted. Treat invoke clock as the capture-instant witness;
@@ -289,11 +343,11 @@ rest are not owner-approved.
    it a consumer of slice 3 rather than something the mod change alone unlocks.
    The mod now also carries `TODO(nearby-blocks-frustum-culling)`, which points
    at slice 5.
-3. **Capture protocol: multi-pose plus screenshot binding.** Requires the owner
-   to operate the client. Precondition for slices 4 and 6. **Needs no new Rust
-   code** — see the protocol section below. Corrected on 2026-07-27: this slice
-   was framed as a capability gap, but the whole capture→bind→pair→packet chain
-   already exists and is reachable from the CLI.
+3. ~~**Capture protocol: multi-pose plus screenshot binding (M2 gate).**~~ —
+   **closed 2026-09-12.** Library gate in `m2_multi_view.rs` plus live Windows
+   three-view evidence in `.tmp/m2-session/` (`meets_m2_capture_gate=true`). Still
+   a precondition for slices 4 and 6. Scene-packet export across N runs and
+   trainer launch remain unproven; M2 only closes capture/motion/binding honesty.
 4. **Reacquisition scoring harness.** Anchor a target from viewpoint A, query
    from viewpoint B, score against B's own raycast and projection truth. Depends
    on 3. This is what turns the geometry backend from a candidate into a
