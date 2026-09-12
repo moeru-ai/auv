@@ -17,6 +17,7 @@ pub mod m1_black_box_observation;
 pub mod m1_black_box_scoring;
 pub mod m1_black_box_verification;
 pub mod m2_multi_view;
+pub mod m3_query_scoring;
 pub mod measurement;
 pub mod overlay;
 pub mod prep;
@@ -77,6 +78,15 @@ pub use m2_multi_view::{
   M2MultiViewPersistenceError, M2MultiViewSessionReport, M2RelativeMotion, M2Session, M2TranslationDeltaMeters, M2ViewCaptureInput,
   M2ViewRole, M2ViewSample, build_m2_session_from_captures, build_m2_session_from_ingested_views, ingest_m2_view_capture, m2_session_report,
   m2_session_withheld_truth, write_m2_session_report,
+};
+pub use m3_query_scoring::{
+  M3_PROJECTION_TOLERANCE_PX, M3_QUERY_REQUEST_SCHEMA_VERSION, M3_QUERY_SCORE_REPORT_SCHEMA_VERSION,
+  M3_QUERY_VERIFICATION_REPORT_SCHEMA_VERSION, M3_SPATIAL_QUERY_RESPONSE_SCHEMA_VERSION, M3HoldoutVisibility, M3QueryError,
+  M3QueryPersistenceError, M3QueryPrepared, M3QueryRequest, M3QueryResponseReport, M3QueryResponseStatus, M3QueryScoreError,
+  M3QueryScoreReport, M3QuerySessionInput, M3QueryVerificationReport, M3QueryVisibilityAnswer, M3RelativeDepthOrderAnswer, M3ScoringTarget,
+  M3ScreenProjectionClaim, M3SpatialQueryResponse, MULTI_VIEW_SPATIAL_QUERY_PROMPT, inspect_m3_query_response, m3_query_withheld_context,
+  meets_m3_query_gate, prepare_m3_query_from_session, score_accepted_m3_query_response, verify_m3_query_from_session,
+  write_m3_query_verification_report,
 };
 pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,

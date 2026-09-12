@@ -238,9 +238,60 @@ anchor→translate **1.92 m**, anchor→revisit **2.64 m**, translate→revisit
 report. VLM was intentionally skipped for this slice. NOTICE (clock domain): JVM
 telemetry and AUV capture clocks are not calibrated — `capture_skew_ms` is
 `frame_ts - capture_ts`, not a cross-domain wall-clock alignment proof. This
-**is** the M2 multi-view capture/binding gate. It is **not** M3 memory/query
-scoring, **not** M4 Brush/OpenSplat training, and **not** geometric accuracy
+**is** the M2 multi-view capture/binding gate. It is **not** M4 Brush/OpenSplat training, and **not** geometric accuracy
 claims.
+
+### M3 memory/query scoring gate (2026-09-12)
+
+Library path in `auv-game-minecraft` (`m3_query_scoring.rs`):
+
+```text
+M3QuerySessionInput (gated M2Session + anchor SpatialHypothesisPatch + query role + M3ScoringTarget)
+  -> prepare_m3_query_from_session
+  -> inspect_m3_query_response (external JSON)
+  -> score_accepted_m3_query_response (withheld holdout at query view)
+  -> meets_m3_query_gate
+  -> write_m3_query_verification_report
+```
+
+Public types: `M3QueryRequest`, `M3SpatialQueryResponse`, `M3QueryScoreReport`,
+`M3QueryVerificationReport`, `M3ScoringTarget`, `M3HoldoutVisibility`. Gate requires
+prior `meets_m2_capture_gate=true`; rotation-only sessions fail at
+`M3QueryError::UngatedM2Session`. Serialized request/report exclude `nearby_blocks`,
+`view_matrix`, absolute eye xyz, and scoring `block_pos`; withheld truth via
+`m3_query_withheld_context` is operator inspect only.
+
+Scoring measures: target/anchor recall (`anchor_claim_id`), visibility class vs holdout
+(`M3HoldoutVisibility` from `reacquire_from_geometry`), projection pixel error within
+`M3_PROJECTION_TOLERANCE_PX`, optional relative depth order, unknown/refusal honesty,
+and request leak detection. Holdout is frustum/containment geometry — **not** occlusion.
+
+Hermetic tests: `cargo test -p auv-game-minecraft --lib m3_` — **7 passed**, 1 ignored.
+
+**Live M3 VLM evidence (2026-09-12, `.tmp/m3-session/vlm/`):** rebuild gated session from
+`.tmp/m2-session/v01|v02|v03` per-view `telemetry.jsonl` + capture URIs; query view
+`translate` (v02); leak-free request from `prepare_m3_query_from_session` →
+`black-box-request.json` / `black-box-prompt.txt`; external Claude CLI (`sonnet`,
+out-of-crate `invoke_m3_vlm.py`, OAuth) reads the query-view PNG named in the
+request plus memory patch text; parsed answer in `vlm-query-response.json`; scored by
+`score-vlm-tool` → `m3-query-report.json`.
+
+**Honest live gate result:** `meets_m3_query_gate=true`; `request_leaks=[]`;
+`visibility_class_correct=true` (VLM `visible` vs holdout `visible`);
+`projection_pixel_error_px≈91.3` with `projection_within_tolerance=true` (holdout
+`match_radius_px`, not a geometric hit-rate claim); `relative_depth_order_correct=false`
+(VLM answered `unknown`); `unknown_refusal_correct=true`; `overconfident_when_wrong=false`.
+Raw model output: `vlm/raw-response.txt`. **Not** geometric reconstruction accuracy.
+
+**Fixture-only control (not live VLM):** `.tmp/m3-session/fixture/` keeps
+`fixture-query-response.json` (holdout-derived) and `m3-query-report.json` for scorer
+regression only.
+
+Throwaway runners: `prepare-tool/`, `invoke_m3_vlm.py`, `score-vlm-tool/`. NOTICE
+(clock domain): inherits M2 skew semantics; not cross-domain wall-clock calibration.
+M4, in-crate VLM transport, and occlusion holdout remain deferred. This **is** M3
+memory/query scoring for the spatial-memory lane. It is **not** M4 Brush/OpenSplat
+training and **not** pixel/block hit-rate claims.
 
 ### Windows M1 PowerShell workflow (Phase 0 invoke producer)
 
@@ -346,16 +397,17 @@ rest are not owner-approved.
 3. ~~**Capture protocol: multi-pose plus screenshot binding (M2 gate).**~~ —
    **closed 2026-09-12.** Library gate in `m2_multi_view.rs` plus live Windows
    three-view evidence in `.tmp/m2-session/` (`meets_m2_capture_gate=true`). Still
-   a precondition for slices 4 and 6. Scene-packet export across N runs and
+   a precondition for M4 trainer launch. Scene-packet export across N runs and
    trainer launch remain unproven; M2 only closes capture/motion/binding honesty.
-4. **Reacquisition scoring harness.** Anchor a target from viewpoint A, query
-   from viewpoint B, score against B's own raycast and projection truth. Depends
-   on 3. This is what turns the geometry backend from a candidate into a
-   measured baseline.
+4. ~~**Reacquisition scoring harness (M3 query scoring).**~~ — **closed
+   2026-09-12.** Library path in `m3_query_scoring.rs` plus live VLM evidence in
+   `.tmp/m3-session/vlm/` (`meets_m3_query_gate=true` on external Claude answer;
+   fixture-only holdout copy under `.tmp/m3-session/fixture/`). Depends on 3. In-crate
+   VLM transport and occlusion holdout remain deferred.
 5. **Occlusion signal decision.** Choose among depth buffer, target-directed
    ray, or per-block visibility, then define reacquisition's visibility
    semantics. Depends on 2 or a mod change.
-6. **First real trainer run.** Depends on 3, since a single-pose capture cannot
+6. **First real trainer run (M4).** Depends on 3 and 4, since a single-pose capture cannot
    train.
 7. **Replace `checkpoint_native` with real inference.** Depends on 6. Only
    meaningful once slice 4 provides a geometric baseline to compare against.

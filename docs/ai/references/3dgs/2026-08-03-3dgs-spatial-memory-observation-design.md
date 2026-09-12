@@ -475,8 +475,8 @@ NOTICE（clock domain）：JVM telemetry `monotonic_timestamp_ms` 与 AUV
 slice 有意跳过；**不是** M3 query 评分，**不是** M4 trainer，**不是** 几何
 命中率或 scene-packet export 证据。
 
-Hermetic：`cargo test -p auv-game-minecraft --lib m2_` 通过。M3/M4 仍 deferred
-（见下文 M3/M4 节 TODO）。
+Hermetic：`cargo test -p auv-game-minecraft --lib m2_` 通过。M4 仍 deferred
+（见下文 M4 节 TODO）。
 
 ### M3：memory/query 评分
 
@@ -492,6 +492,55 @@ spatial query，并与 B 的 holdout answer key 比较。至少记录：
 
 这才是第一个有产品意义的验证。漂亮渲染但没有这个 score，不算 spatial memory
 证据。
+
+**当前状态（2026-09-12）：M3 库侧 query scoring 已落地。** `m3_query_scoring.rs`
+提供 `prepare_m3_query_from_session` → `inspect_m3_query_response` →
+`score_accepted_m3_query_response` → `verify_m3_query_from_session` 链。输入必须是
+`meets_m2_capture_gate=true` 的 `M2Session`；yaw-only / 未过 M2 gate 的 session 会在
+`prepare_m3_query_from_session` 被拒绝（`M3QueryError::UngatedM2Session`）。
+
+Public API：`M3QuerySessionInput`、`M3ScoringTarget`、`M3QueryRequest`、
+`M3SpatialQueryResponse`、`M3QueryScoreReport`、`M3QueryVerificationReport`、
+`meets_m3_query_gate`。Black-box query request 只含 query observation +
+`SpatialHypothesisMemory` + 内置 `MULTI_VIEW_SPATIAL_QUERY_PROMPT`；withheld
+`M1WithheldMinecraftTruth` 与 `M3ScoringTarget.block_pos` 仅用于 holdout 几何
+（`reacquire_from_geometry`）和 leak 检测，经 `m3_query_withheld_context` 供
+operator inspect，**不得**进入序列化 request/report 的 model path。
+
+Holdout answer key（query view B）当前为 frustum/containment 几何，**不是** occlusion
+真值；`M3HoldoutVisibility` 与 `M3_PROJECTION_TOLERANCE_PX`（48 px，或 holdout
+`match_radius_px`）记录 visibility class 与 projection pixel error。Relative depth
+order 在 response 声明时与 anchor/query eye 距离比较；occlusion-specific refusal
+仍 deferred（见 `TODO(m3-occlusion-holdout)`）。`meets_m3_query_gate` 表示本 slice
+的 memory/query 样本门：M2 gate 通过、request 无 leak、anchor recall、visibility class
+正确、unknown/refusal 诚实、projection 在容差内（若声称 visible）——**不是** M4
+trainer 证据，**不是** 几何 reconstruction 命中率，crate 内仍无 VLM transport。
+
+**当前状态（2026-09-12 晚）：M3 live VLM query 证据已写入 `.tmp/m3-session/vlm/`。**
+以 `.tmp/m2-session/` 三视角 capture 重建 gated `M2Session`，query view 为
+`translate`（v02），anchor memory 为 hypothesis patch；外部 Claude CLI（`sonnet`，
+out-of-crate `invoke_m3_vlm.py`）读取 leak-free `black-box-request.json` +
+query-view PNG（`v02/screenshot.png`），输出 `vlm-query-response.json` →
+`verify_m3_query_from_session` → `m3-query-report.json`。
+
+**2026-09-12 live VLM 结果（诚实记录，非几何 reconstruction 声明）：**
+`meets_m3_query_gate=true`；`request_leaks=[]`；`visibility_class_correct=true`
+（VLM `visible` vs holdout `visible`）；`projection_pixel_error_px≈91.3`（在 holdout
+`match_radius_px` 容差内，`projection_within_tolerance=true`）；`relative_depth_order_correct=false`
+（VLM 答 `unknown`，未与 holdout 深度序对齐）；`unknown_refusal_correct=true`；
+`overconfident_when_wrong=false`。原始输出见 `vlm/raw-response.txt`。
+
+**Fixture-only 对照（非 live VLM）：** `.tmp/m3-session/fixture/` 保留
+`fixture-query-response.json`（holdout 几何导出）与 `m3-query-report.json`；仅用于
+scorer 回归，**不得**当作外部 VLM 证据。
+
+Throwaway runners：`prepare-tool/`、`invoke_m3_vlm.py`、`score-vlm-tool/`（均在
+`.tmp/m3-session/`，不在 workspace Cargo graph）。NOTICE（clock domain）：JVM telemetry
+与 AUV capture clock 仍未跨域校准；M3 继承 M2 `capture_skew_ms` 记录，不声称
+wall-clock 对齐。M4、crate 内 VLM transport、occlusion holdout 仍 deferred。
+
+Hermetic：`cargo test -p auv-game-minecraft --lib m3_` — **7 passed**, 1 ignored
+（`AUV_M3_LIVE=1` env-gated live test）。M4 仍 deferred（见下文 M4 节）。
 
 ### M4：真实 Brush/OpenSplat training
 
