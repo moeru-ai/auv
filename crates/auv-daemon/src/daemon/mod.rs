@@ -284,9 +284,10 @@ impl Daemon {
 
     // Custom providers serialize only the same Run/Device/RunnerClass while
     // a Runner starts. An unhealthy provider must not block unrelated routing or Run
-    // shutdown across the daemon.
+    // shutdown across the daemon. Local resolution already holds its class lock;
+    // it needs the Run affinity record below, but no second resolution lock.
     let affinity_lock = match &affinity {
-      Some(key) => Some(
+      Some(key) if !persistent_local => Some(
         self
           .runner_affinity_locks
           .lock()
@@ -295,7 +296,7 @@ impl Daemon {
           .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
           .clone(),
       ),
-      None => None,
+      _ => None,
     };
     let _affinity_resolution = match &affinity_lock {
       Some(lock) => Some(lock.lock().await),
