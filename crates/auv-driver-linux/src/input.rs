@@ -22,6 +22,17 @@ pub(crate) enum InputSession {
 }
 
 impl InputSession {
+  pub(crate) fn validate_keys(&self, keys: &[i32]) -> DriverResult<()> {
+    match self {
+      Self::Portal(_) => {
+        let _ = keys;
+        Ok(())
+      }
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.validate_keys(keys),
+    }
+  }
+
   fn move_to(&mut self, point: Point) -> DriverResult<()> {
     match self {
       Self::Portal(session) => session.move_to(point),
@@ -50,7 +61,7 @@ impl InputSession {
       Self::Uinput(session) => session.key_press(key),
     }
   }
-  fn key_chord(&mut self, modifiers: &[i32], key: i32) -> DriverResult<()> {
+  pub(crate) fn key_chord(&mut self, modifiers: &[i32], key: i32) -> DriverResult<()> {
     match self {
       Self::Portal(session) => session.key_chord(modifiers, key),
       #[cfg(target_os = "linux")]
@@ -202,7 +213,7 @@ pub fn reserved_input_result(reason: impl Into<String>) -> InputActionResult {
   }
 }
 
-fn with_input_session<T>(
+pub(crate) fn with_input_session<T>(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
   operation: impl FnOnce(&mut InputSession) -> DriverResult<T>,
 ) -> DriverResult<T> {
@@ -229,7 +240,7 @@ fn with_input_session<T>(
   result
 }
 
-fn keyboard_result() -> InputActionResult {
+pub(crate) fn keyboard_result() -> InputActionResult {
   InputActionResult {
     selected_path: InputDeliveryPath::ForegroundSystemEvents,
     attempts: vec![InputAttempt::success(
@@ -268,34 +279,16 @@ struct KeyChord {
 }
 
 fn parse_key_chord(input: &str) -> DriverResult<KeyChord> {
-  let trimmed = input.trim();
-  if trimmed.is_empty() {
-    return Err(invalid_input("key must not be empty"));
-  }
-  if trimmed.contains('+') {
-    let parts = trimmed.split('+').map(str::trim).filter(|part| !part.is_empty()).collect::<Vec<_>>();
-    if parts.len() < 2 {
-      return Err(invalid_input(format!("invalid shortcut {trimmed}; expected a form like ctrl+f")));
-    }
-    let (key_part, modifier_parts) = parts.split_last().expect("len checked");
-    let mut modifiers = Vec::new();
-    for raw in modifier_parts {
-      let modifier =
-        keysym::modifier(raw).ok_or_else(|| invalid_input(format!("invalid shortcut {trimmed}; unsupported modifier {raw}")))?;
-      if !modifiers.contains(&modifier) {
-        modifiers.push(modifier);
-      }
-    }
-    Ok(KeyChord {
-      modifiers,
-      key: keysym::named_or_char(key_part)?,
-    })
-  } else {
-    Ok(KeyChord {
-      modifiers: Vec::new(),
-      key: keysym::named_or_char(trimmed)?,
-    })
-  }
+  let options = auv_driver_common::PressKeysOptions::from(KeyPressOptions {
+    key: input.into(),
+    ..Default::default()
+  });
+  let keys = crate::keyboard::combination(&options)?;
+  let (key, held) = keys.split_last().expect("validated nonempty keys");
+  Ok(KeyChord {
+    modifiers: held.to_vec(),
+    key: *key,
+  })
 }
 
 pub(crate) mod keysym {

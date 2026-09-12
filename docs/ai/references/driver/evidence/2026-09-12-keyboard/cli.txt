@@ -1,0 +1,125 @@
+{
+  "run_id": "01a09434-7b9c-7273-a035-70cdef33a4e8",
+  "status": "completed",
+  "command_id": "input.key",
+  "result": {
+    "attempts": [
+      {
+        "message": null,
+        "path": "foreground_system_events",
+        "succeeded": true
+      }
+    ],
+    "clipboard_disturbance": "none",
+    "focus_disturbance": "unknown",
+    "mouse_disturbance": "none",
+    "selected_path": "foreground_system_events",
+    "verified": false
+  }
+}
+
+{
+  "run_id": "01a09434-7ded-7393-a92a-fe6912be7c13",
+  "status": "completed",
+  "command_id": "input.keys",
+  "result": {
+    "attempts": [
+      {
+        "message": null,
+        "path": "foreground_system_events",
+        "succeeded": true
+      },
+      {
+        "message": null,
+        "path": "foreground_system_events",
+        "succeeded": true
+      }
+    ],
+    "clipboard_disturbance": "none",
+    "focus_disturbance": "unknown",
+    "mouse_disturbance": "none",
+    "selected_path": "foreground_system_events",
+    "verified": false
+  }
+}
+
+{
+  "run_id": "01a09434-80b0-77b2-b98e-da8a305b1446",
+  "status": "completed",
+  "command_id": "input.keyboard",
+  "result": {
+    "actions": [
+      {
+        "attempts": [
+          {
+            "message": null,
+            "path": "foreground_system_events",
+            "succeeded": true
+          }
+        ],
+        "clipboard_disturbance": "none",
+        "focus_disturbance": "unknown",
+        "mouse_disturbance": "none",
+        "selected_path": "foreground_system_events",
+        "verified": false
+      },
+      {
+        "attempts": [
+          {
+            "message": null,
+            "path": "foreground_system_events",
+            "succeeded": true
+          }
+        ],
+        "clipboard_disturbance": "none",
+        "focus_disturbance": "unknown",
+        "mouse_disturbance": "none",
+        "selected_path": "foreground_system_events",
+        "verified": false
+      }
+    ]
+  }
+}
+
+{
+  "run_id": "01a09434-8362-71a2-a62a-248df9f971d5",
+  "status": "failed",
+  "command_id": "input.keyboard",
+  "result": null,
+  "failure": "keyboard action 1 failed after 0 complete actions and 0 presses: invalid key invalid-key; use a special key, shortcut, or type_text for multi-character text",
+  "failure_details": {
+    "code": "invalid_input",
+    "message": "keyboard action 1 failed after 0 complete actions and 0 presses: invalid key invalid-key; use a special key, shortcut, or type_text for multi-character text",
+    "keyboard_progress": {
+      "action_index": 1,
+      "completed": [],
+      "completed_presses": 0
+    }
+  }
+}
+
+{"time": 1789192799.591785, "kind": "ready"}
+{"time": 1789192862.887416, "kind": "key", "key": "a", "state": 16, "pressed": true}
+{"time": 1789192862.8876004, "kind": "text", "text": "a"}
+{"time": 1789192862.8876753, "kind": "key", "key": "a", "state": 16, "pressed": false}
+{"time": 1789192863.480188, "kind": "key", "key": "Shift_L", "state": 16, "pressed": true}
+{"time": 1789192863.4802792, "kind": "key", "key": "B", "state": 17, "pressed": true}
+{"time": 1789192863.4804215, "kind": "text", "text": "aB"}
+{"time": 1789192863.4804783, "kind": "key", "key": "B", "state": 17, "pressed": false}
+{"time": 1789192863.4805148, "kind": "key", "key": "Shift_L", "state": 17, "pressed": false}
+{"time": 1789192863.5873873, "kind": "key", "key": "Shift_L", "state": 16, "pressed": true}
+{"time": 1789192863.5874605, "kind": "key", "key": "B", "state": 17, "pressed": true}
+{"time": 1789192863.5875385, "kind": "text", "text": "aBB"}
+{"time": 1789192863.587582, "kind": "key", "key": "B", "state": 17, "pressed": false}
+{"time": 1789192863.5876193, "kind": "key", "key": "Shift_L", "state": 17, "pressed": false}
+{"time": 1789192864.1801205, "kind": "key", "key": "c", "state": 16, "pressed": true}
+{"time": 1789192864.1803274, "kind": "text", "text": "aBBc"}
+{"time": 1789192864.1804485, "kind": "key", "key": "c", "state": 16, "pressed": false}
+{"time": 1789192864.1829455, "kind": "key", "key": "d", "state": 16, "pressed": true}
+{"time": 1789192864.1831045, "kind": "text", "text": "aBBcd"}
+{"time": 1789192864.1832058, "kind": "key", "key": "d", "state": 16, "pressed": false}
+{"time": 1789192864.1968915, "kind": "key", "key": "Shift_L", "state": 16, "pressed": true}
+{"time": 1789192864.196973, "kind": "key", "key": "exclam", "state": 17, "pressed": true}
+{"time": 1789192864.1971076, "kind": "text", "text": "aBBcd!"}
+{"time": 1789192864.1972125, "kind": "key", "key": "exclam", "state": 17, "pressed": false}
+{"time": 1789192864.1972575, "kind": "key", "key": "Shift_L", "state": 17, "pressed": false}

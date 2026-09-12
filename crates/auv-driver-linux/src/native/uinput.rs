@@ -104,6 +104,14 @@ impl InputSession {
     )
   }
 
+  pub fn validate_keys(&self, keys: &[i32]) -> DriverResult<()> {
+    let map = Keymap::load()?;
+    for key in keys {
+      map.stroke(*key)?;
+    }
+    Ok(())
+  }
+
   pub fn key_press(&mut self, key: i32) -> DriverResult<()> {
     self.key_chord(&[], key)
   }
@@ -114,11 +122,13 @@ impl InputSession {
     // this backend delivers key events, with semantic verification kept separate.
     self.keymap = Keymap::load()?;
     let stroke = self.keymap.stroke(key)?;
-    let mut modifiers = self.modifier_codes(modifiers)?;
-    if stroke.shift {
+    let held = modifiers.iter().map(|key| self.keymap.stroke(*key)).collect::<DriverResult<Vec<_>>>()?;
+    let needs_shift = stroke.shift || held.iter().any(|stroke| stroke.shift);
+    let mut modifiers = held.iter().map(|stroke| stroke.key).collect::<Vec<_>>();
+    if needs_shift {
       let shift = self.keymap.stroke(keysym::SHIFT_L)?.key;
       if !modifiers.contains(&shift) {
-        modifiers.push(shift);
+        modifiers.insert(0, shift);
       }
     }
     let (presses, releases) = chord_events(&modifiers, stroke.key);

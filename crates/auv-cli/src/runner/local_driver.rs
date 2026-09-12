@@ -554,17 +554,17 @@ impl InputService for LocalInputService {
       })
       .collect::<Result<Vec<_>, _>>()?;
     let target = input_target_from_proto(&self.session, request.target)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       let actions = self.session.input().input_keyboard(&target, inputs, request.dry_run).map_err(keyboard_input_status)?;
       Ok(Response::new(proto::InputKeyboardResponse {
         actions: actions.unwrap_or_default().into_iter().map(input_action_to_proto).collect::<Result<_, _>>()?,
       }))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
       let _ = (target, inputs);
-      Err(Status::unimplemented("keyboard sequences are only available on macOS"))
+      Err(Status::unimplemented("keyboard sequences are available only on macOS and Linux"))
     }
   }
 
@@ -763,7 +763,7 @@ fn keyboard_input_from_proto(input: proto::KeyboardInput) -> Result<auv_driver::
 }
 
 /// Preserve the underlying gRPC category and attach typed delivery progress.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn keyboard_input_status(error: auv_driver::KeyboardInputError) -> Status {
   let message = error.to_string();
   let status = driver_status(error.cause);

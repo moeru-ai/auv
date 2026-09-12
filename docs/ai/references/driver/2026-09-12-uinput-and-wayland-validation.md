@@ -103,11 +103,40 @@ Local macOS `cargo check` and the default `cargo test` suite pass. Linux Clippy
 reports only the existing AT-SPI/session/window-test warnings. Live delivery
 evidence is specific to the GNOME session above.
 
-## Existing keyboard frontend boundary
+## Keyboard frontend integration
 
-Linux driver keyboard delivery is live-validated through its typed `InputApi`.
-The higher-level `input.key`, `input.keys`, and `input.keyboard` invoke commands
-still use the existing macOS-only batch keyboard contract. Selecting uinput does
-not enable those commands. Connecting that batch contract on Linux remains a
-separate slice; pointer CLI and existing local Runner input routes use the new
-backend through the shared driver factory.
+The Linux foreground batch contract now connects `input.key`, `input.keys`,
+`input.typeText`, `input.pasteText`, and `input.keyboard` to
+`InputApi::input_keyboard`. Direct invoke and local Runner RPCs share validation,
+ordered delivery, repetitions, and `KeyboardInputProgress` errors. Existing
+Runner clients and Proto messages already carry this contract; no schema or SDK
+payload changes are needed. Legacy shortcut parsing reuses list-key validation.
+
+Validation rejects empty/invalid combinations, misplaced or duplicate modifiers,
+invalid repetition counts/intervals, unsupported text, and unsupported targets
+before delivering the batch prefix. uinput also checks all required key mappings
+before delivery. Dry-run performs structural and policy validation without
+creating a backend session; it does not establish live layout or permission
+readiness. Delivery failures retain completed actions and completed repetitions.
+
+Live GNOME verification through the actual CLI produced `aBBcd!` from a single
+key, a repeated Shift+B combination, and a press-plus-text batch. An invalid
+second action rejected its `x` prefix without sending it. A selected Device
+invocation then traversed daemon -> Runner -> InputKeyboard RPC and appended `R`
+with Shift+R, Run `a97589da-8173-bb6d-a4bc-169d69b1e2b1`.
+[CLI receipt](evidence/2026-09-12-keyboard/cli.txt),
+[Runner receipt](evidence/2026-09-12-keyboard/runner.txt), and
+[CLI reproduction](evidence/2026-09-12-keyboard/probe.py) preserve this evidence.
+The test uses the dedicated GTK scene linked above.
+
+Linux application/window-targeted batches remain unsupported until recipient
+preparation and identity validation exist; they never silently become global
+input. Text retains the existing ASCII limit. Clipboard paste uses its existing
+Portal authorization path and was not live-tested in this validation. Windows
+batch input remains an explicit unsupported capability; this slice connects
+Linux and preserves the existing macOS implementation.
+
+Regression coverage includes Linux driver preflight and dry-run tests, invoke
+command dispatch, and Runner RPC error-progress decoding. Linux's 75 driver tests
+(including Portal fixtures), both new frontend tests, macOS frontend suites,
+`cargo check -p auv-cli`, formatting, and full `pnpm lint` pass.

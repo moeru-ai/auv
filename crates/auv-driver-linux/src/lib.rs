@@ -18,6 +18,7 @@ mod descriptor;
 mod driver;
 mod error;
 pub mod input;
+mod keyboard;
 mod native;
 pub mod ocr;
 mod permission;
@@ -37,3 +38,6 @@ pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, Permissi
 
 #[cfg(target_os = "linux")]
 pub use permission::{kde_authorization, set_kde_authorization, verify_portal_identity};
+
+#[cfg(test)]
+mod keyboard_test;

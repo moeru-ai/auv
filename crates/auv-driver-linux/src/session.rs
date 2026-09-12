@@ -35,7 +35,7 @@ pub struct WindowApi<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct InputApi<'a> {
-  session: &'a LinuxDriverSession,
+  pub(crate) session: &'a LinuxDriverSession,
 }
 
 #[derive(Clone, Copy, Debug)]

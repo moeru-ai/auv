@@ -564,3 +564,27 @@ async fn key_combination_protocol_arguments_preserve_keys_and_repeat_options() {
   );
   command.invoke(input).await.unwrap();
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn linux_keyboard_commands_reach_driver_validation() {
+  // ROOT CAUSE: invoke returned Unsupported before calling the Linux driver.
+  // Exercise command dispatch, not just argument conversion.
+  for (command, inputs) in [
+    (press_key_invoke_command(), [("key".into(), "a".into())].into()),
+    (press_keys_invoke_command(), [("keys".into(), "[\"ctrl\",\"a\"]".into())].into()),
+    (input_keyboard_invoke_command(), [("actions".into(), "[{\"kind\":\"press\",\"keys\":[\"a\"]}]".into())].into()),
+  ] {
+    command
+      .invoke(InvokeCommandInput {
+        command_id: command.id.into(),
+        target: None,
+        inputs,
+        typed_args: None,
+        dry_run: true,
+        cancellation: Default::default(),
+      })
+      .await
+      .unwrap();
+  }
+}
