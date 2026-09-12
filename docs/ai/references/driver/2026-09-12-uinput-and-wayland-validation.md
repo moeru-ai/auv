@@ -140,3 +140,50 @@ Regression coverage includes Linux driver preflight and dry-run tests, invoke
 command dispatch, and Runner RPC error-progress decoding. Linux's 75 driver tests
 (including Portal fixtures), both new frontend tests, macOS frontend suites,
 `cargo check -p auv-cli`, formatting, and full `pnpm lint` pass.
+
+
+## September 13 review follow-up
+
+The review keeps the existing public contracts and backend selection. Private
+keyboard plans now define the chords and delays used by both preflight and
+execution, including replace/submit. A batch retains one XKB snapshot through
+all actions and repetitions, including clipboard operations. Direct operations
+prepare their own snapshot; plain clicks do not read XKB. A layout change during
+an operation is observed by the next operation, not tracked live. This does not
+provide focus isolation or semantic verification.
+
+The virtual device's advertised key capabilities remain fixed at creation.
+Updated layouts are checked against them, including synthesized Shift; a missing
+code is rejected before delivery and requires reopening the driver session.
+InvalidInput failures preserve healthy input sessions. Backend/permission failures
+still discard the session, and failed input is never automatically replayed.
+
+Portal keyboard chords now share held-key cleanup with modifier clicks. All
+attempted keys are released in reverse order after failed replies, and release
+errors remain visible. A private D-Bus receiver reproduced the old missing
+release and discarded-session behavior before the fix, then verified cleanup
+and a valid click after a rejected coordinate on the same session.
+
+Clipboard pipe transfers now use the existing async-io dependency to make the
+received descriptors nonblocking and enforce the existing two-second deadline
+across the complete read/write. Tests with stalled blocking pipes reproduced the
+previous unbounded waits; a UTF-8 payload larger than pipe capacity also completes.
+This bounds FD transfer waits during worker teardown, not every possible Portal
+service shutdown delay.
+
+Local Runner routing uses its class-level creation lock without acquiring a
+second per-Run creation lock. Affinity records and admission synchronization
+against StopRun remain intact; custom providers retain their per-affinity locks.
+
+Live GNOME CLI verification repeated `a`, Shift+B twice, and a press/text batch.
+The dedicated GTK receiver observed `aBBcd!`; an invalid tail did not emit `x`.
+[Receiver events](evidence/2026-09-13-input-review/gtk.jsonl) preserve this check.
+This does not add a live clipboard or mid-operation layout-switch claim.
+
+Follow-up validation: Linux driver suite passed 82 tests including ignored
+private-bus fixtures; Linux Clippy completed with only the existing AT-SPI and
+session/window-test warnings. macOS driver stub suite passed 38 tests, daemon
+suite passed 22, and both CLI frontend library suites passed. SDK daemon tests
+passed eight with the Windows-specific test skipped on macOS. Changed-crate
+formatting and `git diff --check` passed. Three sub-agents reviewed Linux input,
+daemon/SDK lifecycle, and Portal teardown; no unresolved blocker remained.
