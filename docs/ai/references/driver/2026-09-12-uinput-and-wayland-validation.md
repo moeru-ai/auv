@@ -26,6 +26,9 @@ and obtain evidence that an ihome rc Workspace can render a Wayland application.
 
 ## Evidence
 
+This note records test results and limits. Raw logs, screenshots, and temporary
+probe scripts are not included in this PR.
+
 - Linux driver compilation and 73 tests pass on Debian `neko-gpu-1`.
   Tests cover US/German XKB mapping, shared-layout agreement, and repeated keymap descriptor reads.
   Other tests cover key release order, pointer coordinates, and Portal D-Bus fixtures.
@@ -36,10 +39,7 @@ and obtain evidence that an ihome rc Workspace can render a Wayland application.
   Four of these clicks used real CLI invocations with repeated `--modifiers`.
   CLI run `01a09205-674b-7912-a3d3-019948c36365` completed and recorded
   `foreground_system_events`, `verified: false` as expected.
-- [GTK event receipt](evidence/2026-09-12-uinput/events.jsonl),
-  [test window](evidence/2026-09-12-uinput/scene.py), and
-  [driver probe](evidence/2026-09-12-uinput/probe.rs) preserve reproduction inputs.
-  The receipt also includes failed intermediate ordering attempts. GTK Wayland
+- GTK Wayland
   coordinates are surface-relative (the requested screen y=400 appeared as
   y=367 below the desktop's top region). They are not a global-coordinate oracle.
 - Live testing found two defects fixed before publication: shared keymap FD
@@ -60,8 +60,6 @@ and obtain evidence that an ihome rc Workspace can render a Wayland application.
   interactive consent. This evidence applies to the rc image. It does not establish the behavior of the new input code.
 - Captures `01a091f1-d969-79d0-981a-209f990ee422` and
   `01a091f2-cd21-7341-a85e-1360b630068c` show different clock text and hashes. A third immediate capture `01a091f2-cd70-7d13-9d65-4f659e10fff9` also completed.
-  [First frame](evidence/2026-09-12-wayland/first.png) and
-  [later frame](evidence/2026-09-12-wayland/later.png) preserve the visible output.
 - The experiment created no VNC, ingress, or public endpoint. The Workspace and its
   supervised test app remain available for continued validation.
 
@@ -129,10 +127,7 @@ key, a repeated Shift+B combination, and a press-plus-text batch. An invalid
 second action rejected its `x` prefix without sending it. A selected Device
 invocation then traversed daemon -> Runner -> InputKeyboard RPC and appended `R`
 with Shift+R, Run `a97589da-8173-bb6d-a4bc-169d69b1e2b1`.
-[CLI receipt](evidence/2026-09-12-keyboard/cli.txt),
-[Runner receipt](evidence/2026-09-12-keyboard/runner.txt), and
-[CLI reproduction](evidence/2026-09-12-keyboard/probe.py) preserve this evidence.
-The test uses the dedicated GTK scene linked above.
+The test used the dedicated GTK window described above.
 
 Linux application/window-targeted batches remain unsupported until recipient
 preparation and identity validation exist. They never silently become global
@@ -181,7 +176,6 @@ against StopRun remain intact. Custom providers retain their per-affinity locks.
 
 Live GNOME CLI verification repeated `a`, Shift+B twice, and a press/text batch.
 The dedicated GTK receiver observed `aBBcd!`. An invalid tail did not emit `x`.
-[Receiver events](evidence/2026-09-13-input-review/gtk.jsonl) preserve this check.
 This does not add a live clipboard or mid-operation layout-switch claim.
 
 Follow-up validation: Linux driver suite passed 82 tests including ignored
