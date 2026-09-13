@@ -25,13 +25,12 @@ and BG-8's Linux keyboard frontend gap have subsequent implementation work:
 
 | Change | Reviewable implementation | Evidence level and boundary |
 | --- | --- | --- |
-| ClickModifiers across driver, Rust API, invoke, Runner, Proto, and JS SDK; repeated `--modifiers cmd --modifiers shift` | [PR #178](https://github.com/moeru-ai/auv/pull/178), head `5052c7b42c1e22f23866c5d028dcff7391dbeb11` | Contract tests and macOS receiver evidence; [contract and platform limits][click-evidence]. Mouse button selection and arbitrary physical keyboard keycodes are separate contracts. |
-| ashpd Portal clients, stable app identity, restore-token rotation, explicit uinput, daemon health `id`, worker reuse, Linux keyboard batches through CLI/Runner | [PR #179](https://github.com/moeru-ai/auv/pull/179), head `e39f9f141f5de72ae3b39d65f71f21b9501da08c` | Source/tests plus logged-in GNOME GTK receipts and separate headless capture evidence; [authorization/lifecycle][portal-evidence] and [reproduction/evidence][linux-evidence]. Stacked on #178. |
+| ClickModifiers across driver, Rust API, invoke, Runner, Proto, and JS SDK. Repeated `--modifiers cmd --modifiers shift` | [PR #178](https://github.com/moeru-ai/auv/pull/178), head `5052c7b42c1e22f23866c5d028dcff7391dbeb11` | Contract tests and macOS receiver evidence. [contract and platform limits][click-evidence]. Mouse button selection and arbitrary physical keyboard keycodes are separate contracts. |
+| ashpd Portal clients, stable app identity, restore-token rotation, explicit uinput, daemon health `id`, worker reuse, Linux keyboard batches through CLI/Runner | [PR #179](https://github.com/moeru-ai/auv/pull/179), head `e39f9f141f5de72ae3b39d65f71f21b9501da08c` | Source/tests plus logged-in GNOME GTK receipts and separate headless capture evidence. [authorization/lifecycle][portal-evidence] and [reproduction/evidence][linux-evidence]. Stacked on #178. |
 | Wayland background alternatives in this note | Pinned upstream source and protocol documentation | No AUV live validation of CUA's compositor, its Hyprland plugin, wprs, or transient seats. Upstream test reports remain upstream evidence. |
 
 At the recorded heads, both implementation PRs' GitHub Rust/JS checks on Linux,
-macOS, and Windows and vendored-Protobuf checks passed. This is CI evidence;
-it does not substitute for native interactive receiver tests.
+macOS, and Windows and vendored-Protobuf checks passed. This is CI evidence. It does not substitute for native interactive receiver tests.
 
 ## Three different requirements
 
@@ -42,12 +41,14 @@ it does not substitute for native interactive receiver tests.
 | Run unattended without interfering with the person's desktop | Separate headless/nested compositor and applications launched into it | Delivery to arbitrary applications already running on the host compositor |
 
 A token is not a window address. RemoteDesktop requests devices and authorizes
-input for a session; its persistence mode can request permission until revoked.
-Restore tokens are single-use and must be replaced with the token returned by
-a successful restoration. The backend may reject restoration and require user
-interaction. Stable `ai.moeru.auv` identity and durable storage make rebuilding
-or restarting AUV compatible with reuse; they do not promise perpetual consent
-or compositor-reboot behavior that has not been tested. See the official
+input for a session. Its persistence mode can request permission until revoked.
+Restore tokens are single-use. After successful restoration, the client must store the replacement token. The backend can reject restoration and require user
+interaction.
+
+Stable `ai.moeru.auv` identity and durable storage make rebuilding
+or restarting AUV compatible with reuse. They do not promise perpetual consent
+or compositor-reboot behavior without test evidence.
+Sources: the official
 [RemoteDesktop contract][remote-desktop] and [AUV authorization evidence][portal-evidence].
 
 Starting a daemon in a logged-in graphical session supplies access to that
@@ -58,27 +59,29 @@ session or authorize a desktop input device.
 
 Sunshine's Linux [input implementation][sunshine-input], inspected at
 `dd7a1f796e69283a42663630ecd49b174b070778`, uses a libvirtualhid runtime.
-That source has evolved from the earlier libevdev/uinput discussion; ongoing
-remote input is not proof of a more durable Portal token. AUV's explicit uinput
+That source differs from the earlier libevdev/uinput discussion. Ongoing
+remote input is not proof of a more durable Portal token.
+
+AUV's explicit uinput
 route requires device access and delivers foreground input. The Linux dependency is
-target-scoped; this choice does not add evdev to the Windows build. No antivirus
+target-scoped. This choice does not add evdev to the Windows build. No antivirus
 compatibility claim follows from that build boundary.
 
 ## Existing-desktop Wayland options
 
 Wayland compositors own input routing and seat focus. A compositor can implement
-targeted delivery; the missing piece is a portable, commonly deployed client
+targeted delivery. The missing piece is a portable, commonly deployed client
 interface with the required behavior and application coverage. The source review
 found several approaches, rather than a single universal solution:
 
 | Approach | Target/focus behavior | Shipping and evidence boundary |
 | --- | --- | --- |
-| AT-SPI actions and value operations | Address an accessible object semantically; an app may still change focus as a side effect | Depends on exposed actions and app behavior. CUA uses guarded semantic routes; AUV's existing focus/select calls do not establish a general no-disturbance guarantee. |
-| Portal/libei or uinput | Input follows compositor routing and current seat focus | Useful for foreground automation and unattended dedicated sessions; no general background window address. |
+| AT-SPI actions and value operations | Address an accessible object semantically. An app can still change focus as a side effect | Depends on exposed actions and app behavior. CUA uses guarded semantic routes. AUV's existing focus/select calls do not establish a general no-disturbance guarantee. |
+| Portal/libei or uinput | Input follows compositor routing and current seat focus | Useful for foreground automation and unattended dedicated sessions. No general background window address. |
 | Hyprland target keyboard dispatcher | Resolves a target, temporarily changes keyboard focus, sends input, restores focus | Compositor-specific. Restoring focus does not mean the client observed no enter/leave events. [Pinned implementation][hypr-actions]. |
-| Gabriel-Kahen's Hyprland pointer plugin | Temporarily assigns pointer focus to a target surface, sends click/scroll/drag events, then restores it | Avoids moving the physical cursor in this route, but transient pointer focus and hover events remain observable. Exact Hyprland ABI required; source-reviewed only. [Implementation][target-pointer]. |
-| CUA experimental Hyprland seats | Independent compositor seats and exact-target grants with conflict checks | Optional, unreleased experiment with narrow app/keymap qualification; details below. |
-| `ext-transient-seat-v1` | Creates a temporary independent seat; virtual keyboard/pointer protocols supply input devices | No target-window operation. Availability and application handling require separate checks. |
+| Gabriel-Kahen's Hyprland pointer plugin | Temporarily assigns pointer focus to a target surface, sends click/scroll/drag events, then restores it | Avoids moving the physical cursor in this route, but transient pointer focus and hover events remain observable. Exact Hyprland ABI required. Source-reviewed only. [Implementation][target-pointer]. |
+| CUA experimental Hyprland seats | Independent compositor seats and exact-target grants with conflict checks | Optional, unreleased experiment with narrow app/keymap qualification. The next section describes these limits. |
+| `ext-transient-seat-v1` | Creates a temporary independent seat. Virtual keyboard/pointer protocols supply input devices | No target-window operation. Availability and application handling require separate checks. |
 
 Hyprland is one Wayland compositor, alongside Mutter, KWin, Sway, Jay, and
 others. A Hyprland plugin is not a cross-Wayland plugin. The dispatcher inspected
@@ -95,14 +98,16 @@ compositor refusal. It does not define application discovery, toplevel selection
 or a way to focus an arbitrary target. A client still needs compatible virtual
 input protocols and a routing policy.
 
-Implementation evidence was found in [Sway][sway-seat] and [Jay][jay-seat]; Sway
+The review found implementation evidence in [Sway][sway-seat] and [Jay][jay-seat]. Sway
 also lists the protocol in its [1.10 release notes][sway-release]. The
 [Wayland Explorer matrix][seat-matrix] is a useful discovery aid, not a desktop
 market-share figure or a guarantee for the user's installed version. The review's
 GitHub searches found no corresponding implementation in Mutter, KWin, or
-Hyprland; absence from search results is not conclusive proof of non-support.
+Hyprland.
+
+Absence from search results is not conclusive proof of non-support.
 A deployment needs a live registry probe and target-app tests before claiming
-this route. No such AUV probe or delivery test was performed in this research.
+this route. This research performed no such AUV probe or delivery test.
 
 ### What CUA actually does
 
@@ -111,10 +116,10 @@ This follow-up inspected CUA at
 CUA revisions only for the Linux routes discussed here.
 
 CUA's [support record][cua-support] distinguishes deliveries from exact refusals.
-For example, its X11 116-outcome report includes 75 deliveries and 41 refusals;
-those numbers must not be presented as 116 successful background deliveries.
+For example, its X11 116-outcome report includes 75 deliveries and 41 refusals. Those numbers do not represent 116 successful background deliveries.
+
 Stock Wayland raw input remains focus-bound. Its GNOME helper provides window
-identity, geometry, activation, capture, and cursor information; guarded AT-SPI
+identity, geometry, activation, capture, and cursor information. Guarded AT-SPI
 handles applicable semantic background actions. That helper is not a generic
 raw background input endpoint. KWin-specific support also does not establish
 portable target-addressed raw input.
@@ -123,20 +128,24 @@ The optional [nested compositor patch][cua-compositor] owns a wlroots/tinywl
 session and exposes a private injection socket. It resolves application identity
 and addresses client keyboard resources directly. Pointer behavior has a relevant
 exception: one route updates seat pointer focus to satisfy client/toolkit event
-handling; other routes send to client resources directly. Its source therefore
-does not justify calling every action focus-free. It also confines hit testing
+handling. Other routes send to client resources directly. Its source therefore
+does not establish uninterrupted focus for every action.
+
+It also confines hit testing
 to the target subtree for occluded targets. Upstream records GTK3 31/31 and
 capture/scope 5/5, while the accepted full Electron run still has 10 failures
 (26/36). Focused repairs are not a replacement for full qualification.
 
 The separate [Hyprland plugin][cua-hyprland] is disabled by default and its normal
 build provides discovery/status only. An opt-in candidate uses two independent
-seats, target/lifetime checks, bounded grants, and cancellation/cleanup when
-user focus conflicts with the target client. Its recorded qualification is
+seats, target/lifetime checks, and bounded grants.
+When user focus conflicts with the target client, CUA cancels input and releases held keys. Its recorded qualification is
 limited to native Calc `libreoffice-fresh 26.2.5-3`, Inkscape `1.4.4-6`, and the
 plain `evdev`/`pc105`/`us` keymap. Chromium, Electron, and XWayland raw background
-input remain unqualified. It requires the exact compositor ABI and compatible
-C++ runtime; plugin replacement requires a desktop restart. Source version
+input remain unqualified.
+
+It requires the exact compositor ABI and compatible
+C++ runtime. Plugin replacement requires a desktop restart. Source version
 `0.23.2` does not mean this candidate shipped in that released driver.
 
 ## Controlled compositor and application wrapper
@@ -146,12 +155,11 @@ compositor. Its Rust/Smithay server serializes Wayland objects to a client that
 creates corresponding local windows and forwards events back to their owners.
 It supports reconnecting to the remote session. That establishes remote window
 presentation and input forwarding, not an existing automation API for injecting
-into any host background window. Applications must connect to its compositor
-when launched; it does not adopt arbitrary running Mutter/KWin clients.
+into any host background window. When an application starts, it must connect to the wprs compositor. It does not adopt arbitrary running Mutter/KWin clients.
 
 [waymux][waymux] similarly describes a Rust headless Wayland runtime for isolated
 automation sessions. [agent-sh][agent-sh] combines accessibility and desktop-specific
-control; [Roadmvn][roadmvn] documents Xephyr isolation. These are distinct scopes,
+control. [Roadmvn][roadmvn] documents Xephyr isolation. These are distinct scopes,
 and none of their README claims counts as AUV runtime validation. Peekaboo and
 KWWK's native component are macOS references in the earlier research, not Linux
 input backends.
@@ -159,15 +167,15 @@ input backends.
 For applications that AUV is allowed to launch, owning a compositor makes target
 identity, input routing, and rendering controllable in one environment. This is
 a plausible packaging direction, not a finding that wprs or a custom compositor
-is already an out-of-the-box AUV solution. Toolkit behavior, GPU/buffer handling,
+is already a ready-to-use AUV solution. Toolkit behavior, GPU/buffer handling,
 clipboard, popups, accessibility, process lifecycle, and packaging remain work.
-Foreground input inside that environment must still be described as foreground
-there, even when it does not disturb the host desktop.
+Foreground input inside that environment remains foreground input there.
+Lack of disturbance to the host desktop does not change this classification.
 
 ## AUV's accepted boundary and future validation trigger
 
 At the #179 head, Linux raw input uses Portal or explicitly selected uinput.
-Window click/scroll paths reject `BackgroundOnly`; permitted paths use foreground
+Window click/scroll paths reject `BackgroundOnly`. Permitted paths use foreground
 input. Ordered keyboard batches accept a foreground target and reject
 application/window targets. AT-SPI observation/focus/select exists, but the
 current result reports foreground disturbance and has no general background
@@ -177,24 +185,26 @@ behavior proof. These source boundaries are recorded in [session.rs][auv-session
 The logged-in GNOME test demonstrated modifier clicks and CLI/Runner keyboard
 receipt in a dedicated GTK application. The separate ihome container demonstrated
 Electron rendering and repeated unattended Portal/PipeWire capture under headless
-Sway/pixman, using the image's AUV 0.0.13. It did not validate GPU rendering,
+Sway/pixman, using the image's AUV 0.0.13. It provided no evidence for GPU rendering,
 the new uinput route, or same-desktop background input. Windows desktop testing,
 KDE unattended behavior, and reboot restoration remain outside that evidence.
 Receipts and environment details stay with [the implementation PR][linux-evidence].
 
 NOTICE: A custom compositor, transient-seat integration, and compositor-specific
 background plugins are deferred. This round selected existing foreground and
-authorization work; a new owner-approved slice must name whether it targets
+authorization work. A new owner-approved slice must name whether it targets
 existing host applications or AUV-launched applications before implementing one.
 X11 remains separate research and is not implemented or qualified by this PR.
 
-A future background slice should validate an exact app/toolkit and compositor
-version with an independent receiver: target identity, down/up/modifier state,
-focus and pointer observations before/during/after, user-input conflicts,
-minimized/occluded states, and release after cancellation or disconnect. Restored
-focus must not be reported as uninterrupted focus. Protocol acceptance and
+A future background slice needs an independent receiver for an exact app/toolkit and compositor version.
+Its evidence must cover target identity and down/up/modifier state.
+Other required evidence includes focus, pointer position, user-input conflicts, minimized/occluded states, and release after cancellation or disconnect.
+Focus and pointer observations must cover the periods before, during, and after input.
+Restored focus does not establish uninterrupted focus.
+
+Protocol acceptance and
 `InputActionResult` delivery success remain separate from app-owned semantic
-verification. No new shared vocabulary is introduced here.
+verification. This note introduces no new shared vocabulary.
 
 [click-evidence]: https://github.com/moeru-ai/auv/blob/5052c7b42c1e22f23866c5d028dcff7391dbeb11/docs/ai/references/driver/2026-09-11-click-modifiers-contract.md
 [portal-evidence]: https://github.com/moeru-ai/auv/blob/e39f9f141f5de72ae3b39d65f71f21b9501da08c/docs/ai/references/driver/2026-09-12-linux-portal-authorization-and-runner-reuse.md

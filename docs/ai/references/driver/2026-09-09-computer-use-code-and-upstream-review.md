@@ -1,105 +1,113 @@
-# AUV 与 computer-use 组件：源码差异、近期上游与路线判断
+# AUV and computer-use components: source differences, upstream changes, and direction
 
-> NOTICE: Historical source review at the revisions recorded below. For the 2026-09-13 decision, subsequent implementation PRs, and Wayland evidence boundaries, read [Wayland background input research](2026-09-13-wayland-background-input-research.md). Candidate rows are not implementation approval.
+> NOTICE: This historical review describes the recorded revisions. The [Wayland background input research](2026-09-13-wayland-background-input-research.md) records the 2026-09-13 decision, later implementation PRs, and evidence limits. Candidate rows do not authorize implementation.
 
-Research date: 2026-09-09. Classification: docs-only research. This is a source-level review and a set of candidate follow-ups, not an approved implementation plan.
+Research date: 2026-09-09. Classification: docs-only research. This document records a source review and candidate follow-ups. It is not an approved implementation plan.
 
-Follow-up: [改进点清单](2026-09-09-computer-use-improvement-candidates.md) maps reference implementations to individual AUV gaps, trigger flows, exact source lines, and acceptance criteria, with additional scripting, Windows UIA, and multi-device research.
+The [improvement candidates](2026-09-09-computer-use-improvement-candidates.md) connect reference implementations to individual AUV gaps, trigger flows, exact source lines, and acceptance criteria. That document also covers scripting, Windows UIA, and multiple devices.
 
-## 结论与证据边界
+## Conclusions and evidence limits
 
-AUV 的 typed operations → driver → InputActionResult → run/artifact，以及将输入投递与语义验证分开的方向有价值。此次没有发现足以要求推翻 Rust/Swift、gRPC 或 driver/tracing 分层的证据。但在通用 OS automation 上，“非常 frontier”目前不能等同于实现领先：Peekaboo 和 CUA 在目标身份、部分投递、并发资源生命周期和独立接收端验证上，已经有比 AUV 更完整的实现。[AUV 结果契约][a-input]、[Peekaboo outcome][p-outcome]、[CUA 行为证据][c-tests]。
+The AUV typed operations → driver → InputActionResult → run/artifact path has value. Its separation of input delivery from semantic verification also has value. This review found no evidence that requires replacement of Rust/Swift, gRPC, or the driver/tracing boundaries.
 
-最确定的发现是：**一处点击次数契约不一致、一处 CI 测试选择缺口，以及同一操作在不同入口的能力差异**。另外发现三组应优先复现的正确性风险：投递与重试、目标身份、截图几何。这些不等于已复现的生产事故，也不能换算为“走歪了几条路线”或完成百分比。
+For general OS automation, an advanced design does not establish implementation leadership. Peekaboo and CUA have more complete implementations for target identity, partial delivery, concurrent resource lifecycles, and independent receiver evidence. Sources: [AUV result contract][a-input], [Peekaboo outcome][p-outcome], and [CUA behavior evidence][c-tests].
 
-证据标签：
+The strongest findings are **one click-count contract mismatch, one CI test-selection gap, and capability differences between entry points for the same operation**. Three other correctness risks need reproduction first: delivery and retry, target identity, and capture geometry. These risks are not reproduced production incidents. They do not establish a count of incorrect architectural decisions or a completion percentage.
 
-- **源码确认**：当前代码的分支、数据流或测试配置直接成立；不等于已运行 GUI 复现。
-- **风险推断**：从源码推导出可发生的竞态或失败条件，需要独立接收端/故障注入验证。
-- **能力缺口/主动延后**：缺公共契约或生产消费者，不自动视作 bug。
-- **上游测试证据**：审阅了上游测试/记录；本次没有重跑，不是 AUV 的行为证明。
+Evidence labels have these meanings:
 
-三名研究 agent 分别审阅 Peekaboo、CUA、KWWK；主审阅 AUV 与补充项目，并让另一 agent 复核 CI 和入口差异的反证。未修改生产代码、运行构建或操作桌面应用；未做跨框架成功率、延迟或吞吐基准。
+- **Source fact:** code branches, data flow, or test configuration directly establish the finding. This label does not mean GUI reproduction.
+- **Inferred risk:** source code indicates a possible race or failure condition. Independent receiver evidence or fault injection remains necessary.
+- **Capability gap or intentional deferral:** a public contract or production consumer is absent. This label does not automatically mean a bug.
+- **Upstream test evidence:** the review examined upstream tests or records. This review did not repeat those tests. They do not prove AUV behavior.
 
-## 修订与研究范围
+Three research agents reviewed Peekaboo, CUA, and KWWK separately. The lead reviewed AUV and supplementary projects. Another agent examined counterevidence for the CI and entry-point findings.
 
-| 项目 | 固定版本 | 范围 |
+This review changed no production code, ran no builds, and operated no desktop applications. It included no comparison benchmark for success rates, latency, or throughput.
+
+## Revisions and research scope
+
+| Project | Fixed revision | Scope |
 | --- | --- | --- |
-| AUV | `bae42bf9905614b19347566d5d41b3a9998e8a35` | 当前本地代码；driver、invoke、Runner、MCP、tracing、CI 与已接受契约 |
-| Peekaboo | `6cd38c0d319ab8db52b05d22409072efc4a20021` | macOS 原生 services、CLI/MCP、测试、近期提交 |
-| CUA | `467c103be28384502cdd77b9edd5ea46da0b8ded` | 最新 native cua-driver；9 月 9 日新提交补审；云和 agent 层单列 |
-| KWWK main | `acc65213baa725b31153609e651f166fdaf79272` | Coding-agent host/SDK；不能代表整个 KWWK desktop 生态 |
-| KWWKComputerUseCore | `5201e300ceb58f2aaf501b20477aff5a912efb9a` | 真正的独立 macOS automation core；AUV 已引用其代码 |
+| AUV | `bae42bf9905614b19347566d5d41b3a9998e8a35` | Local code at review time. Driver, invoke, Runner, MCP, tracing, CI, and accepted contracts. |
+| Peekaboo | `6cd38c0d319ab8db52b05d22409072efc4a20021` | Native macOS services, CLI/MCP, tests, and recent commits. |
+| CUA | `467c103be28384502cdd77b9edd5ea46da0b8ded` | Latest native cua-driver. Follow-up review includes the September 9 commit. Cloud and agent layers remain separate. |
+| KWWK main | `acc65213baa725b31153609e651f166fdaf79272` | Coding-agent host/SDK. This scope does not represent the entire KWWK desktop ecosystem. |
+| KWWKComputerUseCore | `5201e300ceb58f2aaf501b20477aff5a912efb9a` | The independent macOS automation core. AUV already cites its code. |
 
-“最近”主窗口为 **2026-08-10 至 2026-09-09**；7 月、8 月初的相关实现明确标为前置进展。CUA 用户原有 checkout 保持 `02fdd98`，最新审阅在临时研究 checkout；没有切换用户分支。
+The main recent-change period is **2026-08-10 through 2026-09-09**. Related work from July and early August has a separate earlier-work label. The user checkout of CUA remained at `02fdd98`. The latest review used a temporary research checkout and did not change the user branch.
 
-本报告补充并修正[先前能力表](2026-09-09-computer-use-framework-comparison-note.md)的两处边界：KWWK main 与独立 native core 必须分开；AUV 默认本地 invoke/MCP 与 selected Runner 的平台可用性必须分开。
+This report adds to the [earlier capability table](2026-09-09-computer-use-framework-comparison-note.md) and corrects two scope distinctions. KWWK main and its independent native core are different comparison subjects. Platform availability for default local invoke/MCP and a selected Runner also differs.
 
-## 代码层横向比较
+## Comparison of code boundaries
 
-| 技术边界 | AUV 当前实现 | Peekaboo 优点 | CUA 优点 | KWWK native core 优点与限制 |
+| Technical boundary | AUV implementation at review time | Peekaboo strengths | CUA strengths | KWWK native core strengths and limits |
 | --- | --- | --- | --- | --- |
-| 原生输入路径 | typed path/attempts/disturbance；macOS 默认 compatibility click；keyboard 已有目标预校验和部分进度 | 单事件选择一个 transport，区分拒绝、部分投递、效果未知 | 新点击路径避免双投递；typed effect/evidence；后台按目标可证明性拒绝 | Swift 定向事件与 AX 动作较紧凑；部分机制来自 CUA，不能视为独立验证 |
-| 观察后再操作 | AX 路径含 child index 与 expected role；尚缺一致的公开 snapshot/action 契约 | snapshot + process generation + window receipt；操作时重验证 | runtime/PID/window scoped token、fresh AX ancestry 与失效拒绝 | action 消费 session 最近快照，再取树匹配；打分匹配没有完整歧义拒绝 |
-| 坐标与截图 | 已有 ScreenPoint/WindowPoint；macOS 截图结果可能带调用方旧 frame | 检查 raster extent、密度和目标；拒绝无法证明的几何 | capture 后复核 owner/layer/frame，变化后重建一次 | 坐标动作检查窗口 frame 改变；不是通用跨平台几何层 |
-| 操作生命周期 | 有 mouse-motion mutex、移动断流停止、剪贴板锁；同步 native call 取消与 hold 尚有限制 | held input 的 owner/watchdog/释放，原子组合操作与 capture ownership | 每 PID mutation lease；SDK shutdown 等待调用、清理 token、停止 recording | session.finish/deinit 恢复 monitor；drag 显式 release，不是完整取消模板 |
-| 语义效果 | 默认 verified=false，允许 app-owned 独立验证；缺通用 predicate service | 对有限非安全文本控件做精确 readback，其余保持 unverified | confirmed/partial/refused/unknown 有约束，独立 verifier 不把不完整 AX 树当缺失证明 | action 后返回 settled snapshot；稳定画面不等于完成用户意图 |
-| 入口复用 | registry、typed inputs、记录已共享；直接 invoke/MCP 与 selected Runner 仍有行为分叉 | Swift service 接 CLI/MCP/Bridge | 多语言 SDK、daemon 共用 typed native runtime | 简洁 Swift client 与 session facade |
-| 平台与验收 | 三平台代码已在；平台/入口不等价；CI 未选中许多 owning unit suites | 深耕 macOS 原生窗口、菜单、对话框与输入边界 | toolkit fixture + 外部 oracle + 明确 refusal；Wayland 按 compositor 逐项适配 | macOS 专项；不提供 CUA 式跨平台行为矩阵 |
+| Native input | Typed paths, attempts, and disturbance. macOS uses compatibility click by default. Keyboard input includes target preconditions and partial progress. | Each event uses one transport. Outcomes distinguish refusal, partial delivery, and unknown effects. | New click paths avoid duplicate delivery. Typed effects and evidence constrain outcomes. Background routes refuse targets without sufficient proof. | Compact Swift targeted events and AX actions. Some mechanisms come from CUA, so they are not independent evidence. |
+| Observation before action | AX paths include child indexes and an expected role. A consistent public snapshot/action contract remains absent. | Snapshot, process generation, and window receipt. Actions require fresh identity evidence. | Tokens have runtime/PID/window scope. Fresh AX ancestry and stale-reference refusal constrain actions. | Actions consume the latest session snapshot and match against a new tree. Score-based matches lack complete ambiguity refusal. |
+| Coordinates and captures | ScreenPoint/WindowPoint exist. macOS capture results can contain the caller frame from an earlier observation. | Raster extent, density, and target evidence constrain capture. Unproven geometry causes refusal. | Capture requires fresh owner/layer/frame evidence afterward. One rebuild follows a change. | Coordinate actions detect window-frame changes. This is not a general cross-platform geometry layer. |
+| Operation lifecycle | Mouse-motion mutex, stream-disconnect stop, and clipboard locks exist. Synchronous native-call cancellation and held input remain limited. | Held input has an owner, watchdog, and release logic. Composite operations are atomic. Capture has ownership rules. | Each PID has a mutation lease. SDK shutdown waits for calls, clears tokens, and stops recording. | session.finish/deinit restores the monitor. Drag requires explicit release. This is not a complete cancellation pattern. |
+| Semantic effects | verified=false by default. App-owned independent verification is available. No general predicate service exists. | Exact readback covers limited nonsecure text controls. Other actions remain unverified. | confirmed/partial/refused/unknown have constraints. The independent verifier does not treat an incomplete AX tree as proof of absence. | Actions return a settled snapshot. A stable image does not prove completion of user intent. |
+| Entry-point reuse | Registry, typed inputs, and recording are shared. Direct invoke/MCP and selected Runner behavior still differs. | Swift services serve CLI/MCP/Bridge. | Multiple language SDKs and the daemon share a typed native runtime. | Compact Swift client and session facade. |
+| Platforms and acceptance | Code exists for three platforms. Platforms and entry points are not equivalent. CI omits many owning unit suites. | Detailed macOS behavior for native windows, menus, dialogs, and input boundaries. | Toolkit fixtures, external oracles, and explicit refusal. Wayland adaptation differs by compositor. | macOS-specific. No CUA-style behavior matrix across platforms. |
 
-依据：[AUV input][a-input]、[AUV keyboard][a-keyboard-session]、[AUV geometry][a-geometry]、[Peekaboo pointer][p-pointer]、[Peekaboo actions][p-actions]、[CUA token][c-token]、[CUA output][c-output]、[CUA testkit][c-tests]、[KWWK client][k-client]、[KWWK core][k-core]。各项的具体限制见以下审查。
+Sources: [AUV input][a-input], [AUV keyboard][a-keyboard-session], [AUV geometry][a-geometry], [Peekaboo pointer][p-pointer], [Peekaboo actions][p-actions], and [CUA token][c-token]. Other sources: [CUA output][c-output], [CUA testkit][c-tests], [KWWK client][k-client], and [KWWK core][k-core]. The detailed reviews describe the limits of these comparisons.
 
-## 应优先处理的具体差异
+## Specific differences that need attention first
 
-### 1. 默认 compatibility click：旧 workaround 需要重新验证
+### 1. Default compatibility click needs new evidence for its old workaround
 
-**源码确认：** AUV `postCompatibilityMouseEvent` 对同一事件先调用 SkyLight，再调用 public `postToPid`；默认路由采用 ChromiumCompatible。兼容函数把请求的 click count 限制到最多 2 对目标点击，而 invoke 接受 1–255。三击请求在这一 native 分支无法保持所声明的次数。[投递][a-pointer]、[次数限制][a-count]、[入口验证与路由][a-runner-click]。
+**Source fact:** AUV `postCompatibilityMouseEvent` sends the same event through SkyLight and then public `postToPid`. The default route uses ChromiumCompatible. The compatibility function limits the request to at most two target clicks, but invoke accepts 1–255. A triple-click request cannot retain its declared count in this native branch. Sources: [delivery][a-pointer], [count limit][a-count], and [entry-point rules and routing][a-runner-click].
 
-**上游差异：** Peekaboo 8 月 9 日 [f2edb8be](https://github.com/openclaw/Peekaboo/commit/f2edb8be4fa8fc6d1cc66f6ce1fbbcda506b5c53) 已选择单 transport；CUA 9 月 9 日 [467c103](https://github.com/trycua/cua/commit/467c103be28384502cdd77b9edd5ea46da0b8ded) 修复相关双投递，以独立 AppKit 接收端核对事件次数。当前 CUA foreground 用 public，特定 background route 用 SkyLight，仅在 symbol 不存在时回退 public。[当前 CUA pointer][c-pointer]。
+**Upstream difference:** Peekaboo selected one transport in its August 9 commit [f2edb8be](https://github.com/openclaw/Peekaboo/commit/f2edb8be4fa8fc6d1cc66f6ce1fbbcda506b5c53). CUA corrected related duplicate delivery in its September 9 commit [467c103](https://github.com/trycua/cua/commit/467c103be28384502cdd77b9edd5ea46da0b8ded). CUA used an independent AppKit receiver to make sure that event counts matched requests. Current CUA foreground input uses public transport. A specific background route uses SkyLight and falls back to public transport only for an absent symbol. Source: [current CUA pointer][c-pointer].
 
-**风险推断：** AUV 在某些 toolkit 中可能重复投递；本次没有现场复现。CUA 仍有其他使用 Both 的 helper，不能说全仓所有路径都已解决。AUV 的 offscreen primer 又有特定应用的既有需求，不能根据这个发现直接删除全部兼容逻辑。
+**Inferred risk:** AUV can deliver duplicate events to some toolkits. This review did not reproduce that behavior live. Other CUA helpers still use Both, so the correction does not cover every repository path. Some applications also depend on the existing AUV offscreen primer. This finding does not justify removal of all compatibility logic.
 
-**路线判断：** 把 toolkit-specific workaround 当通用默认值值得纠正；不是 CGEvent 或原生 API 方向错误。先用 AppKit/Electron 独立计数器验证 count=1/2/3、实际收件窗口与 transport，再决定条件化策略。
+**Direction:** a toolkit-specific workaround is unsuitable as a universal default without supporting evidence. This is an implementation choice, not evidence against CGEvent or native APIs. An independent AppKit/Electron counter is the proposed first experiment. Its evidence covers count=1/2/3, the actual recipient window, and transport. That evidence determines the conditional policy.
 
-### 2. 部分文字已发送后，fallback 可能重放全文
+### 2. Fallback can replay all text after partial delivery
 
-**源码确认：** Swift TypeText 逐字符创建并发送事件；后续分配失败返回普通错误，没有携带已投递字符数。Rust 在 foreground 且显式允许 clipboard fallback 时，仍可能粘贴整段原文。[逐字符发送][a-keyboard]、[fallback][a-fallback]。
+**Source fact:** Swift TypeText creates and sends events one character at a time. A later allocation failure returns an ordinary error without the delivered character count. Foreground Rust code can then paste the entire original text with explicit clipboard-fallback permission. Sources: [character delivery][a-keyboard] and [fallback][a-fallback].
 
-**风险推断：** 如果错误发生在已有前缀投递之后，特别是 `replace_existing=false`，可能重复文本。是否发生、概率多高需要故障注入；不能从代码推导常态失败。
+**Inferred risk:** If an error follows delivery of a prefix, fallback can duplicate text, especially with `replace_existing=false`. Fault injection is necessary to establish occurrence and frequency. Source code alone does not establish a routine failure.
 
-Peekaboo 8 月 18 日 [86b7d102](https://github.com/openclaw/Peekaboo/commit/86b7d10298d4f903b9122e252ec4a4c88b0b3de3) 显式处理 input prefix，部分投递后阻止普通 fallback replay，并区分 retry safety。[pointer 错误分类][p-pointer]、[outcome][p-outcome]。
+Peekaboo explicitly handles input prefixes in its August 18 commit [86b7d102](https://github.com/openclaw/Peekaboo/commit/86b7d10298d4f903b9122e252ec4a4c88b0b3de3). It blocks ordinary fallback replay after partial delivery and distinguishes retry safety. Sources: [pointer error classification][p-pointer] and [outcome][p-outcome].
 
-AUV 的[已接受 keyboard 契约][a-keyboard-contract]本来就允许 foreground opt-in clipboard fallback，并记录 TypeText 内部进度不可测；它已经报告完整 action/repetition 的进度，background 也拒绝这种 fallback。应补足“未开始 / 已部分发送 / 无法确定”的失败边界，而不是否定全部 fallback 或声称完全没有部分进度。
+The [accepted AUV keyboard contract][a-keyboard-contract] already permits explicit foreground clipboard fallback. It also records that internal TypeText progress is not measurable. AUV reports completed actions and repetitions, and background input refuses this fallback.
 
-### 3. “PID/窗口存在”与“仍然是观察到的接收目标”有差距
+The missing failure distinction is no delivery, partial delivery, or unknown delivery. This finding does not reject all fallback or mean that partial progress is entirely absent.
 
-AUV keyboard 会固定 recipient、重复前复核 PID/window owner，不能称为盲目全局输入。但 PID 投递键盘事件仍是进程范围，后台 `require_window_focus=false`；缺少同进程多窗口竞争检查与贯穿 proof→dispatch 的每 PID 协调。[keyboard][a-keyboard-session]、[native 检查][a-window-check]。
+### 3. An existing PID/window does not prove the original recipient
 
-AUV AX path 的另一具体边界是：从 `axFirstWindow` 开始按 child index 遍历，末端主要检查 expected role。同 role 节点替换或首窗口变化可能绕过这个检查。[AX resolution][a-ax]。这些是风险推断，不是已复现误点。
+AUV keyboard input fixes a recipient and requires fresh PID/window ownership evidence before each repetition. This is not blind global input. However, PID-directed keyboard events still have process scope, and background input uses `require_window_focus=false`. AUV lacks same-process window-conflict detection and per-PID coordination across proof and dispatch. Sources: [keyboard][a-keyboard-session] and [native checks][a-window-check].
 
-CUA 8 月 5 日 [1b2cb5a7](https://github.com/trycua/cua/commit/1b2cb5a706c3e5d636b683ab15336dbf35e579e0) 对 GenericKey/InsertText 拒绝竞争的同 PID 窗口，并使用[每 PID mutation lease][c-lease]；它的[token registry][c-token]让新快照使同窗口旧引用失效。Peekaboo 在 8 月强化 process generation 和 mutation receipt。KWWK core 会重新捕获并匹配签名，但其“最高分匹配”本身不保证无歧义。[CUA 检查][c-background]、[KWWK 重解析][k-core]。
+The AUV AX path has another specific limit. It starts from `axFirstWindow`, follows child indexes, and primarily requires the expected role at the final node. A replacement node with the same role or a different first window can satisfy this condition. Source: [AX resolution][a-ax]. These are inferred risks, not reproduced incorrect clicks.
 
-应借鉴目标身份、过期拒绝和投递期间的有效性边界；**不要恢复已退休的 candidate_promotion/stability，也不要先造无消费者的通用 token 系统。**
+CUA refuses competing same-PID windows for GenericKey/InsertText in its August 5 commit [1b2cb5a7](https://github.com/trycua/cua/commit/1b2cb5a706c3e5d636b683ab15336dbf35e579e0). It also uses a [per-PID mutation lease][c-lease]. Its [token registry][c-token] invalidates old references for a window after a new snapshot. Peekaboo strengthened process generation and mutation receipts in August. KWWK core captures again and matches signatures, but its highest-score match does not guarantee an unambiguous target. Sources: [CUA conditions][c-background] and [KWWK resolution][k-core].
 
-### 4. 新截图像素可能搭配旧窗口 frame
+Target identity, stale-reference refusal, and validity throughout delivery are useful reference concepts. **The retired candidate_promotion/stability remains retired. A general token system without a consumer is outside this candidate scope.**
 
-AUV Swift 重新找到 SCWindow、用它的尺寸截图；Rust 返回值却采用调用者旧 `window.frame`，并用旧宽度推导 scale。窗口在 resolve 与 capture 之间移动/缩放时，像素和坐标元数据可能来自不同观察。[Swift capture][a-capture]、[Rust result][a-capture-result]。
+### 4. New capture pixels can contain an old window frame
 
-CUA 的[post-capture validation][c-capture]检查 owner/layer/frame，变化后重建一次，再变则拒绝。Peekaboo 9 月 5 日 [620563ac](https://github.com/openclaw/Peekaboo/commit/620563ac2f98a391405af681bc6db085c8b2f2d3) 加强 popup/sheet 的 raster extent 与密度验证。[几何代码][p-capture]。
+AUV Swift finds SCWindow again and uses its dimensions for capture. The Rust result uses the earlier caller `window.frame` and derives scale from its old width. If the window moves or changes size between resolution and capture, pixels and coordinate metadata can describe different observations. Sources: [Swift capture][a-capture] and [Rust result][a-capture-result].
 
-这不是相同 backend 的同一个 bug：Peekaboo 该修复针对 classic capture，AUV 此处用 ScreenCaptureKit。共同要学习的是“图像、坐标、窗口身份来自一致观察”的契约。
+CUA [post-capture validation][c-capture] requires consistent owner/layer/frame evidence. It rebuilds once after a change, then refuses another change. Peekaboo strengthened raster extent and density rules for popups/sheets in its September 5 commit [620563ac](https://github.com/openclaw/Peekaboo/commit/620563ac2f98a391405af681bc6db085c8b2f2d3). Source: [geometry code][p-capture].
 
-### 5. 多客户端、按住输入、取消：缺的是生命周期契约
+These are not identical bugs in the same backend. That Peekaboo correction applies to classic capture. This AUV path uses ScreenCaptureKit. The shared lesson is a contract that ties images, coordinates, and window identity to one consistent observation.
 
-AUV 已有移动序列锁、断流停止后续样本、跨进程剪贴板锁；不能说没有并发治理。[移动生命周期][a-motion]。但 MCP 取消 future 不能中断同步 native call；独立 key/button down/up 明确延后到可靠释放语义存在。[取消边界][a-cancel]、[hold 延后][a-hold]。
+### 5. Multiple clients, held input, and cancellation need lifecycle contracts
 
-截图也有具体边界：Swift semaphore 等待超时不等于底层 callback 已结束；上层随后选择另一 capture backend，存在操作重叠风险。[capture][a-capture]。这不是测得的卡死或吞吐问题。
+AUV already has a motion-sequence lock, stops later samples after stream disconnect, and uses a clipboard lock across processes. Source: [motion lifecycle][a-motion]. It therefore has concurrency controls. However, cancellation of an MCP future cannot interrupt a synchronous native call. Independent key/button down/up remains explicitly deferred until reliable release semantics exist. Sources: [cancellation boundary][a-cancel] and [hold deferral][a-hold].
 
-Peekaboo 8 月新增/加强 held-input watchdog、原子 focus+typing/modifier click，以及 SCK owner 协调；CUA 9 月 4 日加强 shutdown drain/worker join/recording cleanup。[CUA runtime][c-runtime]。借鉴时要按资源作用域协调，而非加一把全局锁。KWWK 的 session finish 值得看，但它的 drag handle 是显式 release，不能拿来证明取消安全。[KWWK session][k-session]、[drag][k-drag]。
+Capture has a specific related limit. A Swift semaphore timeout does not establish that the underlying callback completed. A later capture-backend fallback therefore introduces a risk of overlapping operations. Source: [capture][a-capture]. This is not a measured hang or throughput failure.
 
-### 6. 已有驱动能力尚未一致接到各入口
+Peekaboo added or strengthened held-input watchdogs, atomic focus+typing/modifier clicks, and SCK ownership coordination in August. CUA strengthened shutdown drain, worker join, and recording cleanup on September 4. Source: [CUA runtime][c-runtime]. Resource-scoped coordination is the useful pattern, rather than one global lock.
 
-源码调用关系：
+KWWK session finish is also relevant, but its drag handle requires explicit release. It does not prove cancellation safety. Sources: [KWWK session][k-session] and [drag][k-drag].
+
+### 6. Existing driver capabilities do not consistently reach every entry point
+
+Source call relationships:
 
 ```text
 invoke（未选择 runner） → InvokeCommand.invoke
@@ -107,104 +115,114 @@ MCP command_adapter   → InvokeCommand.invoke
 invoke（选择 runner）   → auv_cli_invoke::runner::invoke → selected services
 ```
 
-dry-run 有额外例外，以上概括正常执行路径。[invoke dispatch][a-invoke]、[MCP adapter][a-mcp]。
+These paths describe normal execution. dry-run has additional exceptions. Sources: [invoke dispatch][a-invoke] and [MCP adapter][a-mcp].
 
-具体例子：直接 `screen.captureRegion` 在非 macOS 返回平台限制；selected Runner 分支调用所选平台 CaptureService。[direct][a-screen]、[selected][a-runner-screen]。不能笼统说“invoke 全部 macOS-only”，也不能因底层有 Windows/Linux capture 就称默认 MCP 同样可用。
+For example, direct `screen.captureRegion` returns a platform restriction outside macOS. The selected Runner branch calls CaptureService for the selected platform. Sources: [direct][a-screen] and [selected][a-runner-screen]. This does not mean that all invoke commands are macOS-only. Windows/Linux capture in a driver also does not establish equivalent availability through default MCP.
 
-这是已确认的能力暴露差异。当前[ownership exception][a-ownership]允许保留 invoke crate，并未证明每个行为分叉都被明确接受。应该选定真实命令接通共享执行路径；没有理由删除 gRPC、强迫所有本地调用经过 daemon，或重建 auv-runtime。
+This is a source fact about capability exposure. The current [ownership exception][a-ownership] permits retention of the invoke crate. It does not establish explicit acceptance of every behavior difference. The proposed work connects a real command to a shared execution path. This finding does not justify deletion of gRPC, mandatory daemon routing for local calls, or a new auv-runtime crate.
 
-### 7. CI 编译依赖不等于运行依赖 crate 自己的单元测试
+### 7. CI dependency compilation does not run unit tests owned by each dependency
 
-`cargo metadata --no-deps --format-version 1` 显示 41 个 workspace members，default member 仅 auv-cli；CI 三平台执行裸 `cargo test`。[Cargo.toml][a-cargo]、[workflow][a-ci]。按 [Cargo package selection](https://doc.rust-lang.org/cargo/commands/cargo-test.html#package-selection)，它不会自动选中 driver、tracing、invoke 各自的单元测试集。
+`cargo metadata --no-deps --format-version 1` reports 41 workspace members, with only auv-cli as a default member. CI runs bare `cargo test` on three platforms. Sources: [Cargo.toml][a-cargo] and [workflow][a-ci]. [Cargo package selection](https://doc.rust-lang.org/cargo/commands/cargo-test.html#package-selection) does not automatically select the unit suites owned by driver, tracing, and invoke.
 
-限定：依赖仍编译；[CLI integration suite][a-integrated]会间接覆盖 invoke/recording/MCP，不能说其余 40 个 crate 完全没测。default-members 作为本地 CLI 使用便利本身也合理；缺口在 CI 未显式选择应测的 owning packages。
+Dependencies still compile. The [CLI integration suite][a-integrated] indirectly exercises invoke, recording, and MCP. It is incorrect to describe the other 40 crates as entirely untested. default-members is also reasonable for convenient local CLI use. The CI gap is the absence of explicit selection for the owning packages that need tests.
 
-CUA 的优势是[外部接收端 oracle 和证据约束][c-tests]：记录 SHA、fixture、focus/cursor/occlusion、允许的 refusal、截图/视频。其“122/122”之类矩阵可能同时计入按预期拒绝的案例，不等于 122 个功能全部可执行，更不等于本次重跑全部通过。AUV 的下一步应建立可以证明“真的投到谁、几次、何种状态”的少量关键行为测试。
+CUA has [external receiver oracles and evidence requirements][c-tests]. Its records include SHA, fixture, focus, cursor, occlusion, permitted refusals, screenshots, and video. A matrix such as “122/122” can include cases that correctly refuse operations. It does not mean that all 122 features execute. This review did not repeat that matrix. AUV needs a small set of key behavior tests that establish the actual recipient, event count, and state.
 
-## 上游最近更新，AUV 该追哪些
+## Recent upstream changes relevant to AUV
 
-以下按技术主题合并，避免把每个 commit 当一项缺失能力。优先级是研究建议，不构成实施授权。
+The table groups commits by technical subject. Each commit does not represent a separate missing capability. Priorities are research recommendations, not implementation authorization.
 
-| 上游时间 | 变化与提交 | 对 AUV 的具体意义 | 判断 |
+| Upstream date | Change and commit | Specific relevance to AUV | Assessment |
 | --- | --- | --- | --- |
-| CUA 09-09 | [467c103](https://github.com/trycua/cua/commit/467c103be28384502cdd77b9edd5ea46da0b8ded)：修复特定 mouse route 双投递，独立接收端核验 | AUV 还保留双 post；同时查明 count clamp | 最高优先复现 |
-| Peekaboo 08-18 | [86b7d102](https://github.com/openclaw/Peekaboo/commit/86b7d10298d4f903b9122e252ec4a4c88b0b3de3)：partial dispatch 后禁止普通重放 | AUV TypeText 内部 progress 与全文 paste fallback 的边界 | 高优先故障注入 |
-| Peekaboo 08-20、08-26 | [a146c035](https://github.com/openclaw/Peekaboo/commit/a146c035)、[cc4c714c](https://github.com/openclaw/Peekaboo/commit/cc4c714c)：generation-bound observation/mutation | process/window/snapshot 失效与动态目标复核 | 高优先正确性边界 |
-| Peekaboo 08-16、08-22 | [aef709fe](https://github.com/openclaw/Peekaboo/commit/aef709fea3d18f7ca989c3ab6c1a60428f2f3e51)、[7a1d13aa](https://github.com/openclaw/Peekaboo/commit/7a1d13aab2bfa05a99c0896632aeb6fa08023c1d)：held input、原子组合操作 | AUV drag/hold 需要 owner、取消、保证释放后再开放 | 有真实消费者后做 |
-| Peekaboo 08-11、08-27 | [f2773c36](https://github.com/openclaw/Peekaboo/commit/f2773c3628feffadc559eeb3667dbb04f0ff98d4)、[715caa24](https://github.com/openclaw/Peekaboo/commit/715caa24bbe1d9accaeff283d3e8b1a96a7338b4)：SCK ownership，同时保留 classic capture 并发 | timeout 不能误当 native 工作结束；按 backend 协调 | 生命周期补强 |
-| Peekaboo 09-05；CUA 09-02 | [620563ac](https://github.com/openclaw/Peekaboo/commit/620563ac2f98a391405af681bc6db085c8b2f2d3)、[808c014](https://github.com/trycua/cua/commit/808c0142dc7c8c84cde3a0d1fc5118194898a7a3)：捕获几何/metadata 与 capture-only | AUV fresh pixels + old frame 风险；不必照抄新增工具 | 高优先契约验证 |
-| Peekaboo 08-26 | [1d2b6614](https://github.com/openclaw/Peekaboo/commit/1d2b6614bfeeef9c3a38d3b80448db664f06a144)：有限后台文字 readback 确认 | AUV 保留投递/语义分离，在具体 app result 接 verification | 逐个语义操作接通 |
-| CUA 08-30 | [99f27ee](https://github.com/trycua/cua/commit/99f27eeb96481a155fe10f6dee6a131cc0de8b9e)：跨平台行为证据强化 | 补 CI owning suites 与独立接收端；拒绝也必须可核验 | 基础优先 |
-| CUA 08-27、09-07 | [9596fb3](https://github.com/trycua/cua/commit/9596fb334f3eeec541979ccf5f0ef9ef360da0c6)、[c5a15f3](https://github.com/trycua/cua/commit/c5a15f3df3b29ffbe774de9f33d632fe75afec75)：KWin identity、受条件限制的 Hyprland input | AUV portal/GNOME 路线更窄；compositor 身份桥接需要单独维护与测试 | 平台扩展，非错误路线 |
-| CUA 09-04 | [aabb208](https://github.com/trycua/cua/commit/aabb2082c170289256f0c8d9db4cce094c778578)：SDK shutdown 清理 | 对齐 frontend-owned lifecycle 与 native termination | 可借鉴，不照搬 runtime crate |
-| CUA 08-17、08-25 | [3f791b2c](https://github.com/trycua/cua/commit/3f791b2cfec23d690cd34e6d275b6cbe1a8acc05)、[85d77792](https://github.com/trycua/cua/commit/85d77792e2f400a88f4b77c1218e388945c4b01c)：浏览器 profile 接入与调试清理 | native window ↔ CDP page 的精确绑定可补 browser/app operations | 相邻能力，非 OS 必须项 |
-| KWWK main 08-19、08-22 | [9bfed81](https://github.com/EYHN/kwwk/commit/9bfed818295a0203b79d3ae5a80f0ec424d82d21)、[562f1e0](https://github.com/EYHN/kwwk/commit/562f1e0f46567f41e76ba36c6279ead083c1758e)：caller wait 与任务生命周期分开；截断预览保留完整输出 | 长任务和 artifact producer/consumer 的参考；AUV 已有持久 artifact | host 层借鉴，不是 native 落后 |
-| KWWK main 09-08 | [052cd0c](https://github.com/EYHN/kwwk/commit/052cd0cc5f30a23784451f280b0e1475f0c2d726)：beforeRunEnd 与取消复核 | embedding host 生命周期设计 | 不需要为追平添加 agent loop |
-| KWWK native core | 最近 30 天 0 commits；AUV 引用版本之后 0 runtime 实现变更 | 没有待追的“近期 native 更新” | 不制造缺口 |
+| CUA 09-09 | [467c103](https://github.com/trycua/cua/commit/467c103be28384502cdd77b9edd5ea46da0b8ded) corrects duplicate delivery in a specific mouse route. An independent receiver supplies evidence. | AUV retains two posts. The count clamp also needs investigation. | Highest priority for reproduction. |
+| Peekaboo 08-18 | [86b7d102](https://github.com/openclaw/Peekaboo/commit/86b7d10298d4f903b9122e252ec4a4c88b0b3de3) prohibits ordinary replay after partial dispatch. | Boundary between internal TypeText progress and fallback that pastes the entire text. | High priority for fault injection. |
+| Peekaboo 08-20, 08-26 | [a146c035](https://github.com/openclaw/Peekaboo/commit/a146c035), [cc4c714c](https://github.com/openclaw/Peekaboo/commit/cc4c714c): generation-bound observation/mutation. | Process/window/snapshot invalidation and fresh evidence for dynamic targets. | High-priority correctness boundary. |
+| Peekaboo 08-16, 08-22 | [aef709fe](https://github.com/openclaw/Peekaboo/commit/aef709fea3d18f7ca989c3ab6c1a60428f2f3e51), [7a1d13aa](https://github.com/openclaw/Peekaboo/commit/7a1d13aab2bfa05a99c0896632aeb6fa08023c1d): held input and atomic composite operations. | AUV drag/hold needs ownership, cancellation, and guaranteed release before public availability. | Requires a real consumer first. |
+| Peekaboo 08-11, 08-27 | [f2773c36](https://github.com/openclaw/Peekaboo/commit/f2773c3628feffadc559eeb3667dbb04f0ff98d4), [715caa24](https://github.com/openclaw/Peekaboo/commit/715caa24bbe1d9accaeff283d3e8b1a96a7338b4): SCK ownership with continued concurrency for classic capture. | Timeout does not mean native work completed. Coordination differs by backend. | Stronger lifecycle rules. |
+| Peekaboo 09-05, CUA 09-02 | [620563ac](https://github.com/openclaw/Peekaboo/commit/620563ac2f98a391405af681bc6db085c8b2f2d3), [808c014](https://github.com/trycua/cua/commit/808c0142dc7c8c84cde3a0d1fc5118194898a7a3): capture geometry/metadata and capture-only. | AUV risks new pixels with an old frame. Copying new tools is unnecessary. | High priority for contract evidence. |
+| Peekaboo 08-26 | [1d2b6614](https://github.com/openclaw/Peekaboo/commit/1d2b6614bfeeef9c3a38d3b80448db664f06a144): readback for limited background text. | AUV retains delivery/semantic separation. Specific app results can consume verification. | Connect individual semantic operations. |
+| CUA 08-30 | [99f27ee](https://github.com/trycua/cua/commit/99f27eeb96481a155fe10f6dee6a131cc0de8b9e): stronger cross-platform behavior evidence. | CI needs owning suites and independent receivers. Refusal also needs observable evidence. | Foundational priority. |
+| CUA 08-27, 09-07 | [9596fb3](https://github.com/trycua/cua/commit/9596fb334f3eeec541979ccf5f0ef9ef360da0c6), [c5a15f3](https://github.com/trycua/cua/commit/c5a15f3df3b29ffbe774de9f33d632fe75afec75): KWin identity and conditional Hyprland input. | The AUV portal/GNOME scope is narrower. Compositor identity adapters need separate maintenance and tests. | Platform extension, not an incorrect direction. |
+| CUA 09-04 | [aabb208](https://github.com/trycua/cua/commit/aabb2082c170289256f0c8d9db4cce094c778578): SDK shutdown cleanup. | Alignment of frontend-owned lifecycle with native termination. | Useful reference without a copied runtime crate. |
+| CUA 08-17, 08-25 | [3f791b2c](https://github.com/trycua/cua/commit/3f791b2cfec23d690cd34e6d275b6cbe1a8acc05), [85d77792](https://github.com/trycua/cua/commit/85d77792e2f400a88f4b77c1218e388945c4b01c): browser profile integration and debugging cleanup. | Exact native window ↔ CDP page identity can extend browser/app operations. | Adjacent capability, not an OS requirement. |
+| KWWK main 08-19, 08-22 | [9bfed81](https://github.com/EYHN/kwwk/commit/9bfed818295a0203b79d3ae5a80f0ec424d82d21), [562f1e0](https://github.com/EYHN/kwwk/commit/562f1e0f46567f41e76ba36c6279ead083c1758e): caller wait and task lifecycle separation. Truncated previews retain complete output. | Reference for long tasks and artifact producers/consumers. AUV already has durable artifacts. | Host-layer reference, not a native deficit. |
+| KWWK main 09-08 | [052cd0c](https://github.com/EYHN/kwwk/commit/052cd0cc5f30a23784451f280b0e1475f0c2d726): beforeRunEnd and renewed cancellation evidence. | Lifecycle design for an embedding host. | No agent loop is necessary for parity. |
+| KWWK native core | Zero commits in the last 30 days. Zero runtime implementation changes after the revision that AUV cites. | No recent native update awaits adoption. | No invented gap. |
 
-前置实现（**不属于最近 30 天**）：CUA [07-31 typed effects](https://github.com/trycua/cua/commit/8e0a92e3dbf20134be9922f9e0dc847addcc92fa)、[08-02 snapshot refs](https://github.com/trycua/cua/commit/d8ae6df643df5049505a327b88abc2644a25b209)、[08-05 exact target](https://github.com/trycua/cua/commit/1b2cb5a706c3e5d636b683ab15336dbf35e579e0)、[08-05 capture validation](https://github.com/trycua/cua/commit/bc90373362cb7c521b1ff03f94457d5de618095c)；Peekaboo [08-09 single transport](https://github.com/openclaw/Peekaboo/commit/f2edb8be4fa8fc6d1cc66f6ce1fbbcda506b5c53)。
+Earlier implementations fall **outside the recent 30-day period**:
 
-## KWWK 的比较对象与技术来源需要纠正
+- CUA [07-31 typed effects](https://github.com/trycua/cua/commit/8e0a92e3dbf20134be9922f9e0dc847addcc92fa).
+- CUA [08-02 snapshot refs](https://github.com/trycua/cua/commit/d8ae6df643df5049505a327b88abc2644a25b209).
+- CUA [08-05 exact target](https://github.com/trycua/cua/commit/1b2cb5a706c3e5d636b683ab15336dbf35e579e0).
+- CUA [08-05 capture validation](https://github.com/trycua/cua/commit/bc90373362cb7c521b1ff03f94457d5de618095c).
+- Peekaboo [08-09 single transport](https://github.com/openclaw/Peekaboo/commit/f2edb8be4fa8fc6d1cc66f6ce1fbbcda506b5c53).
 
-KWWK main 是 coding-agent。computer-use 的 [87e87e7](https://github.com/EYHN/kwwk/commit/87e87e7e627bc07385b6e14ba6b10b7c80c134ba) 在 `origin/eyhn/feat/background-computer-use`，不是 main 的 ancestor，不能说从 main 删除了。
+## Correct comparison subjects and technical origins for KWWK
 
-独立的 [kwwk-computer-use-core](https://github.com/EYHN/kwwk-computer-use-core) 才是桌面核心。AUV 已在 native source 引用其 5 月 22 日 `eddd9e5`。[来源注释][a-source]。从该版本到最新，只有 [2b8da82](https://github.com/EYHN/kwwk-computer-use-core/commit/2b8da82e1232e15191b1d3d838378e0806cdf22a) MIT attribution 和随后 merge，没有运行时代码更新。
+KWWK main is a coding agent. Its computer-use commit [87e87e7](https://github.com/EYHN/kwwk/commit/87e87e7e627bc07385b6e14ba6b10b7c80c134ba) belongs to `origin/eyhn/feat/background-computer-use`. It is not an ancestor of main. The evidence therefore does not establish removal from main.
 
-因此，它优秀的地方是已有的 client/session 组合、观察后动作、drag 与前台恢复边界；不是过去一个月出现了 AUV 没跟上的新底层机制。该 core 部分机制也来自 CUA，[attribution][k-license]明确记录了来源。AUV、KWWK core、旧 CUA 不是三个互不相关的可靠性实验。
+The independent [kwwk-computer-use-core](https://github.com/EYHN/kwwk-computer-use-core) is the desktop core. AUV native source already cites its May 22 revision `eddd9e5`. Source: [origin comment][a-source]. Subsequent history contains only MIT attribution in [2b8da82](https://github.com/EYHN/kwwk-computer-use-core/commit/2b8da82e1232e15191b1d3d838378e0806cdf22a) and its later merge. No runtime code changed.
 
-KWWK 主仓库的 skills index、LLM image provider、agent loop 改进不构成 AUV OS API 缺口，也不应成为恢复 SkillBundle 的理由。其 8 月 22 日输出相关后续提交还删除了 task_read search 和 artifact GC，不能把中间提交出现过的能力当成当前能力。
+Its strengths are the existing client/session composition, actions after observations, drag, and foreground restoration boundaries. These are not new mechanisms from the last month that AUV missed. Some core mechanisms also come from CUA, as its [attribution][k-license] records. AUV, KWWK core, and old CUA are not three unrelated reliability experiments.
 
-## 还有哪些组件值得看
+Improvements to skills indexes, LLM image providers, and agent loops in KWWK main do not establish AUV OS API gaps. They also do not justify restoration of SkillBundle. Later output-related commits on August 22 removed task_read search and artifact GC. A capability in an intermediate commit is not necessarily a current capability.
 
-这些项目按“可学习的模块”选取，不按 stars、宣传成功率或工具数量排名。补充项目仅检查下列源文件/官方文档，深度小于三份主要审查。
+## Other relevant components
 
-| 项目 / 固定版本 | 与 AUV 最相关的组件 | 优秀之处 | 适用边界 |
+These projects contain relevant modules. Stars, advertised success rates, and tool counts do not determine their order. The supplementary review covers only the listed source files and official documents. Its depth is less than the three main reviews.
+
+| Project / fixed revision | Component most relevant to AUV | Strength | Applicability limits |
 | --- | --- | --- | --- |
-| [oh-my-pi][omp-doc] / `a33cc268`，09-08 | Rust pi-natives desktop + JS computer worker | [frame-bound 坐标][omp-frame]拒绝无截图/越界/窗口尺寸变化；[AX registry][omp-ax]有 generation；[worker supervisor][omp-worker]负责重启和状态失效 | 值得看可脚本调用的 native API；当前文档明确预编译 Wayland 不启用 PipeWire capture，不能把四后端声明当完全等价 |
-| [terminator][terminator-readme] / `73a381c0`，06-02 | Rust Windows UIA Locator/selector | [Locator][terminator]将作用域、查找、Exists/Visible/Enabled/Focused 等等待条件组合起来 | 当前 README 是 Windows-only；不要沿用旧文件的 macOS 宣称。默认 locator timeout 为 0，不能说所有调用自动等待 |
-| [computer-use-mcp][zavora] / `8a140ecb`，09-08 | Rust N-API + TS tool registry / doctor | [单 registry][zavora]约束声明、schema 与执行器；[doctor][zavora-doctor]提供环境能力检查，适合借鉴入口一致性 | 64 工具不等于 64 项跨平台已验证；其缓存目标也不等于 process-generation identity |
-| [Microsoft UFO][ufo] / `364eb796`，09-02 | Automator 的 receiver/command 分发 | 同一工作流可结合 GUI 与应用原生 API，支持 AUV app-owned typed operation 的方向 | 主要参考 Windows app automation；完整 agent/多设备系统不应成为 AUV 基础 driver 的范围 |
-| [KWWKComputerUseCore][k-client] / `5201e300`，08-05 | 原生 Swift client/session/AX action | 最直接的独立 macOS 组件参考，AUV 已有代码来源关系 | 非近期追更目标；settled snapshot 和打分匹配仍需更强的效果/歧义边界 |
-| [libei](https://libinput.pages.freedesktop.org/libei/) | Wayland input 的底层组件 | 研究 portal/compositor/native input 权限与生命周期的标准接口 | 基础设施，不是完整 automation framework；不能由此推导任意后台窗口输入 |
+| [oh-my-pi][omp-doc] / `a33cc268`, 09-08 | Rust pi-natives desktop and JS computer worker. | [Frame-bound coordinates][omp-frame] reject absent captures, out-of-bounds points, and changed window dimensions. The [AX registry][omp-ax] has generation. The [worker supervisor][omp-worker] owns restart and state invalidation. | A useful native API for scripts. Current documents state that prebuilt Wayland lacks PipeWire capture. Four declared backends do not establish equivalent behavior. |
+| [terminator][terminator-readme] / `73a381c0`, 06-02 | Rust Windows UIA Locator/selector. | [Locator][terminator] combines scope, search, and wait predicates such as Exists/Visible/Enabled/Focused. | The current README states Windows-only, despite old macOS claims elsewhere. Default locator timeout is 0. Automatic waits do not apply to every call. |
+| [computer-use-mcp][zavora] / `8a140ecb`, 09-08 | Rust N-API and TS tool registry / doctor. | A [single registry][zavora] constrains declarations, schemas, and executors. [doctor][zavora-doctor] provides environment capability checks. These support entry-point consistency. | Sixty-four tools do not establish 64 capabilities with cross-platform evidence. A cached target is not process-generation identity. |
+| [Microsoft UFO][ufo] / `364eb796`, 09-02 | Automator receiver/command dispatch. | One workflow combines GUI actions and native application APIs. This supports the direction of AUV app-owned typed operations. | Primarily a Windows app-automation reference. The complete agent and multi-device system is outside the base AUV driver scope. |
+| [KWWKComputerUseCore][k-client] / `5201e300`, 08-05 | Native Swift client/session/AX action. | The most direct independent macOS component reference. AUV already shares a source lineage. | Not a recent-update target. Settled snapshots and score-based matches still need stronger effect and ambiguity boundaries. |
+| [libei](https://libinput.pages.freedesktop.org/libei/) | Low-level component for Wayland input. | Standard interface for research into portal/compositor/native-input permissions and lifecycles. | Infrastructure, not a complete automation framework. It does not establish arbitrary background-window input. |
 
-CUA 的 [native-window ↔ CDP binding][c-browser] 也值得作为独立模块研究：unique bounds/cardinality 的证明、歧义拒绝、仅只读的标题启发式，比“连接 Chrome 调试端口”本身更有价值。
+CUA [native-window ↔ CDP binding][c-browser] also merits separate module research. It establishes unique bounds/cardinality, refuses ambiguity, and limits title heuristics to read-only use. These properties have more value than a connection to the Chrome debugging port alone.
 
-## 哪些路线要保留，哪些要纠正
+## Directions to retain or correct
 
-| 判断 | 具体内容 | 证据所支持的结论 |
+| Decision | Specific subject | Conclusion supported by evidence |
 | --- | --- | --- |
-| 保留 | typed InputActionResult、投递/验证分开、disturbance 与 run artifacts | 问题抽象合理；可逐步丰富 effect/refusal/unknown，不能用动画或已发送冒充成功 |
-| 保留 | Rust + Swift 原生调用、capability-oriented driver、frontend-owned run lifecycle | 没有配对性能/可靠性基准支持换语言、删 gRPC 或合成 runtime crate |
-| 保留 | Wayland portal、声明不支持未知窗口来源、Linux 暂不做 X11 | 是明确范围与平台限制；[当前捕获边界][a-linux]诚实，不是路线失误 |
-| 保留 | 暂不开放无释放保证的 held input，退休 candidate-action/SkillBundle | 延后契约合理；需要真实消费者与批准的 slice 才扩展 |
-| 纠正 | 默认使用历史 Chromium compatibility recipe，却缺少与上游修复对应的接收端回归 | 这是具体实现选择需要复核；已发现 count clamp 不一致 |
-| 补强 | target/process/window/snapshot identity、partial retry、capture metadata | 已有 primitives 需要更严格的不变量与可执行证据 |
-| 接通 | 同一 typed operation 在 CLI/MCP/selected Runner 的一致可用性与结果 | 是当前 core convergence 的工作，优先级高于再加一套外围系统 |
-| 补证据 | CI package selection，少量关键 native fixture，失败/拒绝也可核验 | 先建立可靠基线，才有条件声称支持或比较领先 |
+| Retain | Typed InputActionResult, delivery/verification separation, disturbance, and run artifacts. | The abstraction fits the problem. Effect/refusal/unknown can grow incrementally. Animation or submitted input does not prove success. |
+| Retain | Rust + Swift native calls, capability-oriented drivers, and frontend-owned Run lifecycle. | No matched performance/reliability benchmark supports a language change, gRPC removal, or an aggregate runtime crate. |
+| Retain | Wayland portal, refusal for unknown window origins, and the historical Linux X11 deferral. | These are explicit scope and platform limits. The [capture boundary at review time][a-linux] reports them honestly. They do not establish an incorrect direction. |
+| Retain | Deferred held input without guaranteed release. Retired candidate-action/SkillBundle. | The contract deferrals are reasonable. Expansion requires a real consumer and an approved slice. |
+| Correct | Default historical Chromium compatibility recipe without receiver regressions for upstream corrections. | This specific implementation choice needs new evidence. The count-clamp mismatch is a source fact. |
+| Strengthen | Target/process/window/snapshot identity, partial retry, and capture metadata. | Existing primitives need stricter invariants and executable evidence. |
+| Connect | Consistent availability and results for one typed operation through CLI/MCP/selected Runner. | This is current core-convergence work. It takes priority over another peripheral system. |
+| Add evidence | CI package selection and a few key native fixtures. Observable failures and refusals. | A reliable baseline comes before support or leadership claims. |
 
-AUV 在“可记录、可检查、可复用的应用操作”上有清晰产品空间；这与“通用 OS primitives 最完整”是两个可分别验证的判断。现有证据支持继续深耕这个空间，**不支持宣称已经全面领先**。也没有依据把 gap 数量折算为开发周数或落后百分比。
+AUV has a clear product scope for application operations that support recording, inspection, and reuse. That scope differs from the most complete collection of general OS primitives. Each claim needs separate evidence.
 
-## 候选下一步与验收方式
+Current evidence supports continued work within the AUV product scope. It **does not support a claim of overall leadership**. It also does not support conversion of gap counts into development weeks or a percentage of lag.
 
-仅记录候选，未实施、未扩展路线图。优先采用 test-only reproduction，确认后再做窄修复。
+## Candidate next steps and acceptance evidence
 
-| 顺序 | 候选 slice | 最小有效验收 |
+These are candidates only. This review implemented none of them and did not expand the roadmap. The preferred sequence starts with test-only reproduction. A narrow correction follows evidence that establishes the behavior.
+
+| Order | Candidate slice | Smallest meaningful acceptance evidence |
 | --- | --- | --- |
-| 1 | CI 显式选择 owning test packages | 按平台列出并执行预期 driver/common/invoke/tracing tests；保留 CLI integration，避免盲开所有 features |
-| 2 | macOS click count 与单 transport 路由 | AppKit/Electron 独立接收端记录 down/up/count/target；1、2、3 次请求和实际消费一致；验证需要 primer 的应用不退化 |
-| 3 | TypeText 部分投递后的 retry classification | 在第 N 个字符失败时，验证不会重放整个已部分投递请求；区分未投递、部分、未知 |
-| 4 | 一个现有 observe→action 消费者的目标身份 | 同 PID 双窗口、窗口关闭重建、同 role 节点替换；无法证明目标时明确拒绝，记录原始证据 |
-| 5 | window capture 的几何一致性 | resolve→capture 间移动/resize、scale 改变；返回同次观察的 metadata 或有限重试/拒绝 |
-| 6 | 一个已存在 driver capability 的入口接通 | 例如 captureRegion 或 general scroll；对 CLI/MCP/selected Runner 核验同 typed contract 与 recording |
-| 7 | 再补 drag/hold、通用语义动作与 predicate | 先确定真实消费者、取消/释放/验证边界，再逐平台开放 |
+| 1 | Explicit CI selection of owning test packages. | The platform-specific list selects and runs expected driver/common/invoke/tracing tests. CLI integration remains. Feature selection avoids indiscriminate activation of all features. |
+| 2 | macOS click count and single-transport routing. | An independent AppKit/Electron receiver records down/up/count/target. Actual consumption matches requests for 1, 2, and 3 clicks. Applications that require the primer retain behavior. |
+| 3 | Retry classification after partial TypeText delivery. | Fault injection at character N establishes no replay of the entire partially delivered request. Results distinguish no delivery, partial delivery, and unknown delivery. |
+| 4 | Target identity for one existing observe→action consumer. | Cases cover two same-PID windows, window closure/recreation, and same-role node replacement. Unproven targets produce explicit refusal with original evidence. |
+| 5 | Consistent geometry for window capture. | Cases cover movement/resize between resolution and capture, and scale changes. Results contain metadata from one observation or bounded retry/refusal. |
+| 6 | One existing driver capability across entry points. | Examples include captureRegion or general scroll. CLI/MCP/selected Runner evidence establishes the same typed contract and recording. |
+| 7 | Later drag/hold, general semantic actions, and predicates. | A real consumer and cancellation/release/verification boundaries come first. Platform availability follows that contract. |
 
-现有 AUV 无 GUI event recorder 注入点主要覆盖 key combinations，不能验证 Swift pointer posts 或逐字符 TypeText。此次没有添加只重复 `min/max` 表达式的伪回归测试，也没有把上游 fixture 通过当作 AUV 通过。
+The existing AUV event-recorder injection point works without a GUI and primarily covers key combinations. It does not establish Swift pointer-post or per-character TypeText behavior. This review added no false regression tests that merely repeat `min/max` expressions. Upstream fixture success did not count as AUV success.
 
-## 研究可复现性
+## Research reproducibility
 
-检查了各仓库 revision、近期 git log、关键 git show/blame、对应源文件与测试；KWWK feature branch 使用 branch containment/merge-base 验证。AUV 使用 cargo metadata 验证 workspace/default-members，并与 CI shell 命令和 Cargo 官方规则交叉核对。补充项目固定 GitHub revision 后读取官方 source/README；没有安装或运行外部代码。
+The review examined repository revisions, recent git logs, relevant git show/blame output, source files, and tests. Branch containment and merge-base established the KWWK feature-branch relationship. cargo metadata established the AUV workspace and default-members. CI shell commands and official Cargo rules supplied the package-selection interpretation.
 
-本地三个目标路径为 `~/Git/github.com/openclaw/peekaboo`、`~/Git/github.com/trycua/cua`、`~/Git/github.com/EYHN/kwwk`。额外 core 与 CUA 更新在临时研究目录，不改变用户已有分支。文档校验仅涉及 Markdown 路径、格式与 diff，不代表运行时验证。
+The supplementary review read official source/README files at fixed GitHub revisions. It did not install or run external code.
+
+The three local target paths were `~/Git/github.com/openclaw/peekaboo`, `~/Git/github.com/trycua/cua`, and `~/Git/github.com/EYHN/kwwk`. The additional core and updated CUA sources used temporary research directories. Existing user branches did not change. Document checks cover only Markdown paths, format, and diff. They do not establish runtime behavior.
 
 [a-pointer]: https://github.com/moeru-ai/auv/blob/bae42bf9905614b19347566d5d41b3a9998e8a35/crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Pointer.swift#L251
 [a-count]: https://github.com/moeru-ai/auv/blob/bae42bf9905614b19347566d5d41b3a9998e8a35/crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Pointer.swift#L356
@@ -264,4 +282,4 @@ AUV 在“可记录、可检查、可复用的应用操作”上有清晰产品�
 [zavora-doctor]: https://github.com/zavora-ai/computer-use-mcp/blob/8a140ecbf6437e1e2f5c033abdd5b8c1789d2878/src/session/doctor.ts
 [ufo]: https://github.com/microsoft/UFO/blob/364eb7969d392e857299ceaf14bd6057e5b00078/ufo/automator/puppeteer.py
 
-专题补审：[后台输入、AX tree 与音视频采集](2026-09-09-background-ax-and-media-gap-review.md)进一步拆解既有风险，另列 MEDIA-1～3 新能力候选；多数 BG/AX 分组与原候选重叠，不能累加为 bug 数。
+The [background input, AX tree, and media review](2026-09-09-background-ax-and-media-gap-review.md) further separates existing risks. It also records new capability candidates MEDIA-1～3. Most BG/AX groups overlap with earlier candidates, so their counts do not add to a bug total.
