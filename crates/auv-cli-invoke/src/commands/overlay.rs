@@ -471,7 +471,7 @@ fn debug_output(input: &InvokeCommandInput, component: &str, overlay: Overlay, o
   } else {
     #[cfg(all(target_os = "macos", feature = "overlay"))]
     {
-      match auv_driver::open_local() {
+      match auv::local::open() {
         Ok(session) => show_overlay(input, &session, overlay, options)?,
         Err(error) => OverlayStatus::Unavailable {
           reason: error.to_string(),
