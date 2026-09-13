@@ -38,7 +38,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | [`invoke-cli/`](invoke-cli/INDEX.md) | Active | Invoke routing, CLI handlers, catalog | |
 | [`session-api/`](session-api/INDEX.md) | Active | AUV operation interface, daemon control API, opaque capability routing, Device, Run, and Runner; folder name retained from the session prototype | |
 | [`inspect/`](inspect/INDEX.md) | Active | Run recording, inspect viewer, trace | |
-| [`driver/`](driver/INDEX.md) | Active | Platform drivers, input, window, permissions | |
+| [`driver/`](driver/INDEX.md) | Active | Platform drivers, input, window, permissions | [Computer-use and Wayland research](driver/2026-09-13-wayland-background-input-research.md) |
 | [`view-memory/`](view-memory/INDEX.md) | Active | View-parser IR and view memory | |
 | [`scan/`](scan/INDEX.md) | Active | Temporal scan / surface observation | |
 | [`scenebridge/`](scenebridge/INDEX.md) | Active | Cross-app scene identity / grounding | |

@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **30**
+Count: **36**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -39,6 +39,11 @@ Count: **30**
 - [`2026-09-07-overlay-host-theme.md`](2026-09-07-overlay-host-theme.md)
 
 - [`2026-09-11-click-modifiers-contract.md`](2026-09-11-click-modifiers-contract.md)
+- [`2026-09-09-background-ax-and-media-gap-review.md`](2026-09-09-background-ax-and-media-gap-review.md)
+- [`2026-09-09-computer-use-code-and-upstream-review.md`](2026-09-09-computer-use-code-and-upstream-review.md)
+- [`2026-09-09-computer-use-framework-comparison-note.md`](2026-09-09-computer-use-framework-comparison-note.md)
+- [`2026-09-09-computer-use-improvement-candidates.md`](2026-09-09-computer-use-improvement-candidates.md)
+- [`2026-09-13-wayland-background-input-research.md`](2026-09-13-wayland-background-input-research.md): Accepted scope, implementation PRs, Portal persistence, compositor alternatives, and evidence boundaries.
 
 ## Related
 
