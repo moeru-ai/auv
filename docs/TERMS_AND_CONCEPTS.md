@@ -343,6 +343,11 @@ The AUV daemon is the long-lived process role that owns API listeners,
 Device authority, Runner creation, private Runner IPC, routing, health,
 draining, and reusable resources. It is not a catch-all Rust runtime crate.
 
+The daemon health response's `id` identifies one bound daemon instance across
+all of its listeners. Launchers may supply a fresh UUID to verify startup;
+otherwise the daemon generates one. It is public correlation data, separate
+from Device, Runner, and Run IDs, and is not an authentication credential.
+
 The `auv-daemon` library crate owns this role's persistent state and control
 semantics: Device and Run management, RunnerClass registration, Runner provider
 and supervisor lifecycle, capability route resolution, and first-party
@@ -524,6 +529,13 @@ starts its idle timeout after both conditions become true; becoming idle does
 not stop it immediately. A Runner owns runtime resources such as Driver handles,
 app state, OCR engines, or inference model sessions. The daemon owns its
 creation, readiness, health, draining, routing, and termination.
+
+The daemon lazily creates the first-party `auv.core.local` Runner with
+`unless-idle` and a five-minute idle timeout, including calls without a Run.
+Concurrent lazy creation for this class resolves to one child. Reusing the
+process preserves desktop sessions; it does not create, merge, or identify Runs.
+Explicitly created Runners retain their requested lifecycle policy. Custom
+providers retain their existing route-created lifecycle policy.
 
 Application/game implementations such as NetEase Music or Balatro may provide
 RunnerClasses. Their CLI plugins remain separate frontend processes even when

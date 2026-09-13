@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::driver::InputBackend;
 use crate::driver::LinuxDriverSessionState;
-use crate::error::invalid_input;
-use crate::native::portal::{InputSession, PortalInput};
+use crate::error::{backend, invalid_input};
+use crate::native::portal::{InputSession as PortalSession, PortalInput};
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::Point;
 use auv_driver_common::input::{
@@ -12,6 +13,76 @@ use auv_driver_common::input::{
 };
 
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot as snapshot_clipboard};
+
+#[derive(Debug)]
+pub(crate) enum InputSession {
+  Portal(PortalSession),
+  #[cfg(target_os = "linux")]
+  Uinput(crate::native::uinput::InputSession),
+}
+
+impl InputSession {
+  pub(crate) fn keyboard_layout(&self) -> DriverResult<KeyboardLayout> {
+    match self {
+      Self::Portal(_) => Ok(KeyboardLayout::Portal),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(_) => crate::native::keymap::Keymap::load().map(KeyboardLayout::Uinput),
+    }
+  }
+
+  pub(crate) fn validate_keyboard(&self, layout: &KeyboardLayout, plan: &KeyboardPlan) -> DriverResult<()> {
+    match (self, layout) {
+      (Self::Portal(_), KeyboardLayout::Portal) => {
+        let _ = plan;
+        Ok(())
+      }
+      #[cfg(target_os = "linux")]
+      (Self::Uinput(session), KeyboardLayout::Uinput(layout)) => {
+        let keys = plan.steps.iter().flat_map(|(chord, _)| chord.modifiers.iter().copied().chain([chord.key])).collect::<Vec<_>>();
+        session.validate_keys(layout, &keys)
+      }
+      #[cfg(target_os = "linux")]
+      _ => Err(backend("keyboard backend changed after preparation")),
+    }
+  }
+
+  pub(crate) fn deliver_keyboard(&mut self, layout: &KeyboardLayout, plan: &KeyboardPlan) -> DriverResult<()> {
+    self.validate_keyboard(layout, plan)?;
+    for (chord, delay) in &plan.steps {
+      match (&mut *self, layout) {
+        (Self::Portal(session), KeyboardLayout::Portal) => session.key_chord(&chord.modifiers, chord.key)?,
+        #[cfg(target_os = "linux")]
+        (Self::Uinput(session), KeyboardLayout::Uinput(layout)) => session.key_chord(layout, &chord.modifiers, chord.key)?,
+        #[cfg(target_os = "linux")]
+        _ => return Err(backend("keyboard backend changed after preparation")),
+      }
+      sleep_if_nonzero(*delay);
+    }
+    Ok(())
+  }
+
+  fn move_to(&mut self, point: Point) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.move_to(point),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.move_to(point),
+    }
+  }
+  fn click_at(&mut self, point: Point, click: Click, modifiers: &[i32]) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.click_at(point, click, modifiers),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.click_at(point, click, modifiers),
+    }
+  }
+  fn scroll_at(&mut self, point: Point, scroll: Scroll) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.scroll_at(point, scroll),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.scroll_at(point, scroll),
+    }
+  }
+}
 
 pub(crate) fn click_at(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
@@ -67,22 +138,10 @@ pub(crate) fn type_text(
   if matches!(options.policy, InputPolicy::BackgroundOnly) {
     return Err(invalid_input("linux type_text cannot use background_only input policy"));
   }
+  let plan = KeyboardPlan::type_text(text, options)?;
   with_input_session(state, |session| {
-    if options.replace_existing {
-      session.key_chord(&[keysym::CONTROL_L], keysym::for_char('a')?)?;
-      session.key_press(keysym::BACKSPACE)?;
-    }
-    for ch in text.chars() {
-      session.key_press(keysym::for_char(ch)?)?;
-      sleep_if_nonzero(options.inter_char_delay);
-    }
-    match options.submit {
-      TextSubmit::No => {}
-      TextSubmit::Return | TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => {
-        session.key_press(keysym::RETURN)?;
-      }
-    }
-    Ok(())
+    let layout = session.keyboard_layout()?;
+    session.deliver_keyboard(&layout, &plan)
   })?;
   sleep_if_nonzero(options.settle);
   Ok(keyboard_result())
@@ -90,36 +149,51 @@ pub(crate) fn type_text(
 
 pub(crate) fn press_key(state: &Arc<Mutex<LinuxDriverSessionState>>, options: KeyPressOptions) -> DriverResult<InputActionResult> {
   let chord = parse_key_chord(&options.key)?;
-  with_input_session(state, |session| session.key_chord(&chord.modifiers, chord.key))?;
+  let plan = KeyboardPlan {
+    steps: vec![(chord, Duration::ZERO)],
+  };
+  with_input_session(state, |session| {
+    let layout = session.keyboard_layout()?;
+    session.deliver_keyboard(&layout, &plan)
+  })?;
   sleep_if_nonzero(options.settle);
   Ok(keyboard_result())
 }
 
 pub(crate) fn copy(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<()> {
-  with_input_session(state, |session| session.key_chord(&[keysym::CONTROL_L], keysym::for_char('c')?))
+  with_input_session(state, |session| {
+    let layout = session.keyboard_layout()?;
+    session.deliver_keyboard(&layout, &KeyboardPlan::chord(vec![keysym::CONTROL_L, 'c' as i32]))
+  })
 }
 
 pub(crate) fn paste(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<()> {
-  with_input_session(state, |session| session.key_chord(&[keysym::CONTROL_L], keysym::for_char('v')?))
+  with_input_session(state, |session| {
+    let layout = session.keyboard_layout()?;
+    session.deliver_keyboard(&layout, &KeyboardPlan::chord(vec![keysym::CONTROL_L, 'v' as i32]))
+  })
 }
 
 pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: PasteTextOptions) -> DriverResult<InputActionResult> {
+  let plan = KeyboardPlan::paste_text(&options);
+  let layout = with_input_session(state, |session| {
+    let layout = session.keyboard_layout()?;
+    session.validate_keyboard(&layout, &plan)?;
+    Ok(layout)
+  })?;
+  paste_prepared(state, options, &layout, &plan)
+}
+
+pub(crate) fn paste_prepared(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  options: PasteTextOptions,
+  layout: &KeyboardLayout,
+  plan: &KeyboardPlan,
+) -> DriverResult<InputActionResult> {
   let snapshot = snapshot_clipboard(state)?;
   let result = (|| {
     set_clipboard_text(state, &options.text)?;
-    with_input_session(state, |session| {
-      if options.replace_existing {
-        session.key_chord(&[keysym::CONTROL_L], keysym::for_char('a')?)?;
-      }
-      session.key_chord(&[keysym::CONTROL_L], keysym::for_char('v')?)?;
-      match options.submit {
-        TextSubmit::No => {}
-        TextSubmit::Return | TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => {
-          session.key_press(keysym::RETURN)?;
-        }
-      }
-      Ok(())
-    })?;
+    with_input_session(state, |session| session.deliver_keyboard(layout, plan))?;
     sleep_if_nonzero(options.settle);
     Ok(())
   })();
@@ -156,18 +230,26 @@ pub fn reserved_input_result(reason: impl Into<String>) -> InputActionResult {
   }
 }
 
-fn with_input_session<T>(
+pub(crate) fn with_input_session<T>(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
   operation: impl FnOnce(&mut InputSession) -> DriverResult<T>,
 ) -> DriverResult<T> {
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.input_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();
-    state.input_session = Some(PortalInput::open(restore_tokens.as_ref())?);
+    state.input_session = Some(match state.input_backend {
+      InputBackend::Portal => InputSession::Portal(PortalInput::open(restore_tokens.as_ref(), state.portal_app_id.as_deref())?),
+      #[cfg(target_os = "linux")]
+      InputBackend::Uinput => InputSession::Uinput(crate::native::uinput::InputSession::open()?),
+      #[cfg(not(target_os = "linux"))]
+      InputBackend::Uinput => return Err(DriverError::unsupported("Linux uinput")),
+    });
   }
   let result = operation(state.input_session.as_mut().expect("input session was just initialized"));
-  if result.is_err() {
-    // A successful RemoteDesktop D-Bus call does not prove that a restored
+  if matches!(&result, Err(DriverError::Backend { .. } | DriverError::PermissionDenied { .. })) {
+    // A successful input call does not prove semantic delivery. An error drops
+    // either backend on transport/permission failures, never on invalid input,
+    // and never retries the same operation. For Portal, a restored
     // stream still delivers events. Drop a failed session so the next action
     // reopens it through the durable restore-token rotation instead of reusing
     // a stale stream indefinitely.
@@ -176,7 +258,7 @@ fn with_input_session<T>(
   result
 }
 
-fn keyboard_result() -> InputActionResult {
+pub(crate) fn keyboard_result() -> InputActionResult {
   InputActionResult {
     selected_path: InputDeliveryPath::ForegroundSystemEvents,
     attempts: vec![InputAttempt::success(
@@ -208,6 +290,69 @@ fn sleep_if_nonzero(duration: Duration) {
   }
 }
 
+/// One operation (or batch) owns its XKB snapshot across validation and delivery.
+/// A layout change during delivery is observed by the next operation; semantic
+/// verification remains separate from submitted key events.
+pub(crate) enum KeyboardLayout {
+  Portal,
+  #[cfg(target_os = "linux")]
+  Uinput(crate::native::keymap::Keymap),
+}
+
+/// Prepared chords are both the validation input and the delivered event plan.
+/// The delay belongs to its preceding chord, including text inter-character delay.
+pub(crate) struct KeyboardPlan {
+  steps: Vec<(KeyChord, Duration)>,
+}
+
+impl KeyboardPlan {
+  pub(crate) fn chord(keys: Vec<i32>) -> Self {
+    let (key, modifiers) = keys.split_last().expect("validated nonempty combination");
+    Self {
+      steps: vec![(
+        KeyChord {
+          key: *key,
+          modifiers: modifiers.to_vec(),
+        },
+        Duration::ZERO,
+      )],
+    }
+  }
+
+  pub(crate) fn type_text(text: &str, options: TypeTextOptions) -> DriverResult<Self> {
+    let mut steps = Vec::new();
+    if options.replace_existing {
+      steps.extend(Self::chord(vec![keysym::CONTROL_L, 'a' as i32]).steps);
+      steps.extend(Self::chord(vec![keysym::BACKSPACE]).steps);
+    }
+    for character in text.chars() {
+      steps.push((
+        KeyChord {
+          modifiers: vec![],
+          key: keysym::for_char(character)?,
+        },
+        options.inter_char_delay,
+      ));
+    }
+    if options.submit != TextSubmit::No {
+      steps.extend(Self::chord(vec![keysym::RETURN]).steps);
+    }
+    Ok(Self { steps })
+  }
+
+  pub(crate) fn paste_text(options: &PasteTextOptions) -> Self {
+    let mut steps = Vec::new();
+    if options.replace_existing {
+      steps.extend(Self::chord(vec![keysym::CONTROL_L, 'a' as i32]).steps);
+    }
+    steps.extend(Self::chord(vec![keysym::CONTROL_L, 'v' as i32]).steps);
+    if options.submit != TextSubmit::No {
+      steps.extend(Self::chord(vec![keysym::RETURN]).steps);
+    }
+    Self { steps }
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct KeyChord {
   modifiers: Vec<i32>,
@@ -215,37 +360,19 @@ struct KeyChord {
 }
 
 fn parse_key_chord(input: &str) -> DriverResult<KeyChord> {
-  let trimmed = input.trim();
-  if trimmed.is_empty() {
-    return Err(invalid_input("key must not be empty"));
-  }
-  if trimmed.contains('+') {
-    let parts = trimmed.split('+').map(str::trim).filter(|part| !part.is_empty()).collect::<Vec<_>>();
-    if parts.len() < 2 {
-      return Err(invalid_input(format!("invalid shortcut {trimmed}; expected a form like ctrl+f")));
-    }
-    let (key_part, modifier_parts) = parts.split_last().expect("len checked");
-    let mut modifiers = Vec::new();
-    for raw in modifier_parts {
-      let modifier =
-        keysym::modifier(raw).ok_or_else(|| invalid_input(format!("invalid shortcut {trimmed}; unsupported modifier {raw}")))?;
-      if !modifiers.contains(&modifier) {
-        modifiers.push(modifier);
-      }
-    }
-    Ok(KeyChord {
-      modifiers,
-      key: keysym::named_or_char(key_part)?,
-    })
-  } else {
-    Ok(KeyChord {
-      modifiers: Vec::new(),
-      key: keysym::named_or_char(trimmed)?,
-    })
-  }
+  let options = auv_driver_common::PressKeysOptions::from(KeyPressOptions {
+    key: input.into(),
+    ..Default::default()
+  });
+  let keys = crate::keyboard::combination(&options)?;
+  let (key, held) = keys.split_last().expect("validated nonempty keys");
+  Ok(KeyChord {
+    modifiers: held.to_vec(),
+    key: *key,
+  })
 }
 
-mod keysym {
+pub(crate) mod keysym {
   use auv_driver_common::error::DriverResult;
 
   use crate::error::invalid_input;
@@ -300,7 +427,7 @@ mod keysym {
     match ch {
       '\n' | '\r' => Ok(RETURN),
       '\t' => Ok(TAB),
-      _ => Err(invalid_input(format!("linux portal keyboard input only supports ASCII text in this slice; unsupported character {ch:?}"))),
+      _ => Err(invalid_input(format!("linux keyboard input only supports ASCII text in this slice; unsupported character {ch:?}"))),
     }
   }
 
@@ -340,3 +467,35 @@ mod keysym {
 #[cfg(test)]
 #[path = "input_test.rs"]
 mod tests;
+
+/// Hold keys around one input action and attempt every release, including a
+/// press with an uncertain D-Bus reply. The owning API invalidates failed sessions.
+pub(crate) fn with_held_keys<K: Copy>(
+  modifiers: &[K],
+  mut key_event: impl FnMut(K, bool) -> DriverResult<()>,
+  action: impl FnOnce() -> DriverResult<()>,
+) -> DriverResult<()> {
+  let mut attempted = 0;
+  let mut result = Ok(());
+  for key in modifiers {
+    attempted += 1;
+    result = key_event(*key, true);
+    if result.is_err() {
+      break;
+    }
+  }
+  if result.is_ok() {
+    result = action();
+  }
+  for key in modifiers[..attempted].iter().rev() {
+    result = combine_release(result, key_event(*key, false));
+  }
+  result
+}
+
+pub(crate) fn combine_release(action: DriverResult<()>, release: DriverResult<()>) -> DriverResult<()> {
+  match (action, release) {
+    (Ok(()), result) | (result, Ok(())) => result,
+    (Err(action), Err(release)) => Err(backend(format!("{action}; additionally failed to release input: {release}"))),
+  }
+}

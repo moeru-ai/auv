@@ -53,3 +53,20 @@ fn successful_start_without_a_replacement_removes_a_consumed_token() {
 
   assert!(!temporary.path().join("screencast-token").exists());
 }
+
+#[test]
+fn a_new_store_instance_restores_the_durable_token_and_keeps_it_private() {
+  use std::os::unix::fs::PermissionsExt;
+  let temporary = tempfile::tempdir().unwrap();
+  let root = temporary.path().join("portal");
+  RestoreTokenStore::new(root.clone()).rotate(RestoreTokenKind::RemoteDesktopInput, |_| Ok(((), Some("first-grant".into())))).unwrap();
+  RestoreTokenStore::new(root.clone())
+    .rotate(RestoreTokenKind::RemoteDesktopInput, |token| {
+      assert_eq!(token, Some("first-grant"));
+      Ok(((), Some("rotated-grant".into())))
+    })
+    .unwrap();
+  assert_eq!(fs::read_to_string(root.join("remote-desktop-input-token")).unwrap(), "rotated-grant");
+  assert_eq!(fs::metadata(&root).unwrap().permissions().mode() & 0o777, 0o700);
+  assert_eq!(fs::metadata(root.join("remote-desktop-input-token")).unwrap().permissions().mode() & 0o777, 0o600);
+}

@@ -345,18 +345,15 @@ fn local_daemon_routes_runner_grpc_without_claims_or_leases() {
     assert_eq!(health.status, tonic_health::pb::health_check_response::ServingStatus::Serving as i32);
   });
 
-  let deadline = Instant::now() + Duration::from_secs(2);
-  loop {
-    let listed =
-      Command::new(env!("CARGO_BIN_EXE_auv")).args(["runner", "list", "--endpoint", &endpoint, "--json"]).output().expect("list Runners");
-    assert!(listed.status.success(), "stderr={}", stderr(&listed));
-    let runners: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("Runner list JSON");
-    if runners.as_array().is_some_and(Vec::is_empty) {
-      break;
-    }
-    assert!(Instant::now() < deadline, "ephemeral route-created Runner did not stop after the RPC body completed: {runners}");
-    std::thread::sleep(Duration::from_millis(25));
-  }
+  // A first-party local Runner retains desktop authorization between calls.
+  let listed =
+    Command::new(env!("CARGO_BIN_EXE_auv")).args(["runner", "list", "--endpoint", &endpoint, "--json"]).output().expect("list Runners");
+  assert!(listed.status.success(), "stderr={}", stderr(&listed));
+  let runners: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("Runner list JSON");
+  let runners = runners.as_array().expect("Runner list");
+  assert_eq!(runners.len(), 1);
+  assert_eq!(runners[0]["runner_class"], "auv.core.local");
+  assert_eq!(runners[0]["phase"], "RUNNER_PHASE_READY");
 
   interrupt(&daemon.0);
   daemon.0.wait().expect("wait for local daemon");

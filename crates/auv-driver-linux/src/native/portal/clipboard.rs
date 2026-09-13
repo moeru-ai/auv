@@ -1,38 +1,36 @@
-use std::collections::HashMap;
 use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
 use std::os::fd::OwnedFd as StdOwnedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use ashpd::desktop::Session;
+use ashpd::desktop::clipboard::{Clipboard, SetSelectionOptions};
+use ashpd::desktop::remote_desktop::RemoteDesktop;
 use auv_driver_common::error::DriverResult;
-use zbus::blocking::{Connection, Proxy};
-use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue, Value};
+use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
+use futures_lite::{StreamExt, future};
 
 use crate::error::backend;
 
-use super::request::{PORTAL_DESTINATION, create_remote_desktop_session, portal_proxy, portal_request_proxy, session_connection};
+use super::request::{run, session_connection};
 
-const CLIPBOARD_INTERFACE: &str = "org.freedesktop.portal.Clipboard";
-const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
 const TEXT_MIME: &str = "text/plain;charset=utf-8";
 const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
-const FD_TRANSFER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct PortalClipboard;
 
 impl PortalClipboard {
-  pub fn open() -> DriverResult<ClipboardSession> {
-    ClipboardSession::open()
+  pub fn open(app_id: Option<&str>) -> DriverResult<ClipboardSession> {
+    ClipboardSession::open(app_id)
   }
 }
 
 pub struct ClipboardSession {
-  connection: Connection,
-  session_handle: OwnedObjectPath,
+  clipboard: Arc<Clipboard>,
+  session: Arc<Session<RemoteDesktop>>,
   text: Arc<Mutex<String>>,
   owns_selection: bool,
   running: Arc<AtomicBool>,
@@ -41,49 +39,41 @@ pub struct ClipboardSession {
 
 impl std::fmt::Debug for ClipboardSession {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    formatter.debug_struct("ClipboardSession").field("session_handle", &self.session_handle).finish_non_exhaustive()
+    formatter.debug_struct("ClipboardSession").field("session", &self.session).finish_non_exhaustive()
   }
 }
 
 impl ClipboardSession {
-  fn open() -> DriverResult<Self> {
-    let connection = session_connection()?;
-    let session_handle = create_remote_desktop_session(&connection)?;
-    {
-      let clipboard = portal_proxy(&connection, CLIPBOARD_INTERFACE)?;
-      let options: HashMap<&str, Value<'_>> = HashMap::new();
-      clipboard
-        .call_method("RequestClipboard", &(&session_handle, options))
-        .map_err(|error| backend(format!("failed to request portal clipboard access: {error}")))?;
-    }
+  fn open(app_id: Option<&str>) -> DriverResult<Self> {
+    let connection = session_connection(app_id)?;
+    let remote_desktop = run("open clipboard RemoteDesktop", RemoteDesktop::with_connection(connection.clone()))?;
+    let clipboard = Arc::new(run("open Clipboard", Clipboard::with_connection(connection))?);
+    let session = Arc::new(run("create clipboard session", remote_desktop.create_session(Default::default()))?);
+    let mut owner = Self {
+      clipboard,
+      session,
+      text: Arc::new(Mutex::new(String::new())),
+      owns_selection: false,
+      running: Arc::new(AtomicBool::new(true)),
+      transfer_thread: None,
+    };
+    run("request clipboard access", owner.clipboard.request(&owner.session, Default::default()))?;
     // TODO(linux-portal-clipboard-devices): explicit
     // `RemoteDesktop.SelectDevices(types=0)` was tested on GNOME Wayland but
     // did not return a portal response. Keep clipboard-only startup on
     // RequestClipboard+Start until an owner-approved input/libei slice defines
     // device selection policy.
-
-    let results = start_remote_desktop(&connection, &session_handle)?;
-    let clipboard_enabled = results.get("clipboard_enabled").and_then(|value| bool::try_from(value).ok()).unwrap_or(true);
-    if !clipboard_enabled {
+    let selected =
+      run("start clipboard session", async { remote_desktop.start(&owner.session, None, Default::default()).await?.response() })?;
+    if !selected.is_clipboard_enabled() {
       return Err(backend("remote desktop portal started without clipboard access"));
     }
-
-    let text = Arc::new(Mutex::new(String::new()));
-    let running = Arc::new(AtomicBool::new(true));
-    let transfer_thread = Some(spawn_transfer_thread(connection.clone(), session_handle.clone(), Arc::clone(&text), Arc::clone(&running))?);
-    Ok(Self {
-      connection,
-      session_handle,
-      text,
-      owns_selection: false,
-      running,
-      transfer_thread,
-    })
+    owner.transfer_thread = Some(spawn_transfer_thread(Arc::clone(&owner.clipboard), Arc::clone(&owner.text), Arc::clone(&owner.running))?);
+    Ok(owner)
   }
 
   pub fn snapshot(&mut self) -> DriverResult<String> {
-    let clipboard = portal_proxy(&self.connection, CLIPBOARD_INTERFACE)?;
-    let fd: OwnedFd = match clipboard.call("SelectionRead", &(&self.session_handle, TEXT_MIME)) {
+    let fd = match run("read portal clipboard", self.clipboard.selection_read(&self.session, TEXT_MIME)) {
       Ok(fd) => fd,
       Err(error) => {
         if self.owns_selection {
@@ -98,19 +88,17 @@ impl ClipboardSession {
       }
     };
     let std_fd = StdOwnedFd::from(fd);
-    let mut file = File::from(std_fd);
-    let bytes = read_fd_to_end(&mut file)?;
+    let file = File::from(std_fd);
+    let bytes = read_fd_to_end(file)?;
     String::from_utf8(bytes).map_err(|error| backend(format!("portal clipboard returned non-UTF-8 text: {error}")))
   }
 
   pub fn set_text(&mut self, text: &str) -> DriverResult<()> {
     *self.text.lock().expect("clipboard owner text lock poisoned") = text.to_string();
-    let clipboard = portal_proxy(&self.connection, CLIPBOARD_INTERFACE)?;
-    let mut options = HashMap::new();
-    options.insert("mime_types", Value::from(vec![TEXT_MIME]));
-    clipboard
-      .call_method("SetSelection", &(&self.session_handle, options))
-      .map_err(|error| backend(format!("failed to set portal clipboard selection: {error}")))?;
+    run(
+      "set clipboard selection",
+      self.clipboard.set_selection(&self.session, SetSelectionOptions::default().set_mime_types(&[TEXT_MIME])),
+    )?;
     self.owns_selection = true;
     Ok(())
   }
@@ -119,134 +107,91 @@ impl ClipboardSession {
 impl Drop for ClipboardSession {
   fn drop(&mut self) {
     self.running.store(false, Ordering::SeqCst);
-    let _ = close_session(&self.connection, &self.session_handle);
-    // NOTICE(linux-portal-clipboard-thread): zbus blocking signal iteration has
-    // no cheap cancellation hook. Closing the portal session causes future
-    // transfer requests to stop; the thread is intentionally detached.
-    let _ = self.transfer_thread.take();
+    let _ = run("close clipboard session", self.session.close());
+    if let Some(thread) = self.transfer_thread.take() {
+      let _ = thread.join();
+    }
   }
 }
 
-fn start_remote_desktop(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<HashMap<String, OwnedValue>> {
-  let handle_token = super::request::portal_token("start");
-  let request = portal_request_proxy(connection, &handle_token)?;
-  let mut responses = super::request::response_signal(&request, REMOTE_DESKTOP_INTERFACE, "Start")?;
-  let proxy = portal_proxy(connection, REMOTE_DESKTOP_INTERFACE)?;
-  let mut options = HashMap::new();
-  options.insert("handle_token", Value::from(handle_token.as_str()));
-  super::request::call_method(&proxy, REMOTE_DESKTOP_INTERFACE, "Start", &(session_handle, "", options))?;
-  super::request::wait_response(&mut responses, REMOTE_DESKTOP_INTERFACE, "Start")
-}
-
-fn spawn_transfer_thread(
-  connection: Connection,
-  session_handle: OwnedObjectPath,
-  text: Arc<Mutex<String>>,
-  running: Arc<AtomicBool>,
-) -> DriverResult<JoinHandle<()>> {
+/// Each clipboard owner has a dedicated Portal connection with one session.
+/// Poll the typed signal stream so shutdown does not leave a detached listener.
+fn spawn_transfer_thread(clipboard: Arc<Clipboard>, text: Arc<Mutex<String>>, running: Arc<AtomicBool>) -> DriverResult<JoinHandle<()>> {
   let (ready_tx, ready_rx) = mpsc::channel();
+  let thread_running = Arc::clone(&running);
   let handle = thread::spawn(move || {
-    let Ok(clipboard) = portal_proxy(&connection, CLIPBOARD_INTERFACE) else {
-      let _ = ready_tx.send(Err("failed to create clipboard signal proxy".to_string()));
-      return;
+    let transfers = match run("subscribe to clipboard transfers", clipboard.receive_selection_transfer::<RemoteDesktop>()) {
+      Ok(transfers) => transfers,
+      Err(error) => {
+        let _ = ready_tx.send(Err(error));
+        return;
+      }
     };
-    let Ok(mut transfers) = clipboard.receive_signal("SelectionTransfer") else {
-      let _ = ready_tx.send(Err("failed to subscribe to clipboard transfers".to_string()));
+    let mut transfers = std::pin::pin!(transfers);
+    if ready_tx.send(Ok(())).is_err() {
       return;
-    };
-    let _ = ready_tx.send(Ok(()));
-    while running.load(Ordering::SeqCst) {
-      let Some(message) = transfers.next() else {
+    }
+    while thread_running.load(Ordering::SeqCst) {
+      let transfer = future::block_on(future::race(async { Some(transfers.next().await) }, async {
+        async_io::Timer::after(Duration::from_millis(100)).await;
+        None
+      }));
+      let Some(transfer) = transfer else {
+        continue;
+      };
+      let Some((session, mime_type, serial)) = transfer else {
         break;
       };
-      let Ok((transfer_session, mime_type, serial)) = message.body().deserialize::<(OwnedObjectPath, String, u32)>() else {
-        continue;
+      let result = if mime_type == TEXT_MIME {
+        let payload = text.lock().expect("clipboard owner text lock poisoned").clone();
+        run("open clipboard write fd", clipboard.selection_write(&session, serial))
+          .and_then(|fd| write_fd_all(File::from(StdOwnedFd::from(fd)), payload.as_bytes()))
+      } else {
+        Err(backend("unsupported clipboard MIME type"))
       };
-      if transfer_session != session_handle || mime_type != TEXT_MIME {
-        let _ = selection_write_done(&connection, &session_handle, serial, false);
-        continue;
-      }
-      let payload = text.lock().expect("clipboard owner text lock poisoned").clone();
-      let result = write_selection_payload(&connection, &session_handle, serial, payload.as_bytes());
-      let _ = selection_write_done(&connection, &session_handle, serial, result.is_ok());
+      let _ = run("finish clipboard write", clipboard.selection_write_done(&session, serial, result.is_ok()));
     }
   });
-  match ready_rx.recv_timeout(FD_TRANSFER_TIMEOUT) {
-    Ok(Ok(())) => {}
-    Ok(Err(error)) => return Err(backend(error)),
-    Err(error) => {
-      return Err(backend(format!("timed out waiting for clipboard transfer listener: {error}")));
-    }
+  let ready = ready_rx
+    .recv_timeout(FD_TRANSFER_TIMEOUT)
+    .map_err(|error| backend(format!("clipboard transfer listener did not start: {error}")))
+    .and_then(|result| result);
+  if let Err(error) = ready {
+    running.store(false, Ordering::SeqCst);
+    let _ = handle.join();
+    return Err(error);
   }
   Ok(handle)
 }
 
-fn write_selection_payload(connection: &Connection, session_handle: &OwnedObjectPath, serial: u32, payload: &[u8]) -> DriverResult<()> {
-  let clipboard = portal_proxy(connection, CLIPBOARD_INTERFACE)?;
-  let fd: OwnedFd = clipboard
-    .call("SelectionWrite", &(session_handle, serial))
-    .map_err(|error| backend(format!("failed to open portal clipboard write fd: {error}")))?;
-  let std_fd = StdOwnedFd::from(fd);
-  let mut file = File::from(std_fd);
-  write_fd_all(&mut file, payload)?;
-  Ok(())
+// NOTICE: Portal FDs are not necessarily nonblocking. Mutter's
+// `src/backends/meta-clipboard-session.c` returns a blocking SelectionWrite pipe.
+// Async registers nonblocking IO; racing the complete transfer also bounds
+// continuously partial progress so joining the clipboard worker can finish.
+fn read_fd_to_end(file: File) -> DriverResult<Vec<u8>> {
+  let mut file = async_io::Async::new(file).map_err(|error| backend(format!("failed to register portal clipboard fd: {error}")))?;
+  future::block_on(future::race(
+    async {
+      let mut bytes = Vec::new();
+      file.read_to_end(&mut bytes).await.map_err(|error| backend(format!("failed to read portal clipboard fd: {error}")))?;
+      Ok(bytes)
+    },
+    async {
+      async_io::Timer::after(FD_TRANSFER_TIMEOUT).await;
+      Err(backend("timed out reading portal clipboard fd"))
+    },
+  ))
 }
 
-fn read_fd_to_end(file: &mut File) -> DriverResult<Vec<u8>> {
-  let started = Instant::now();
-  let mut bytes = Vec::new();
-  let mut buffer = [0_u8; 8192];
-  loop {
-    match file.read(&mut buffer) {
-      Ok(0) => return Ok(bytes),
-      Ok(read) => bytes.extend_from_slice(&buffer[..read]),
-      Err(error) if error.kind() == ErrorKind::WouldBlock => {
-        if started.elapsed() >= FD_TRANSFER_TIMEOUT {
-          return Err(backend("timed out reading portal clipboard fd"));
-        }
-        thread::sleep(FD_TRANSFER_POLL_INTERVAL);
-      }
-      Err(error) => {
-        return Err(backend(format!("failed to read portal clipboard fd: {error}")));
-      }
-    }
-  }
-}
-
-fn write_fd_all(file: &mut File, payload: &[u8]) -> DriverResult<()> {
-  let started = Instant::now();
-  let mut written = 0;
-  while written < payload.len() {
-    match file.write(&payload[written..]) {
-      Ok(0) => return Err(backend("portal clipboard write fd closed early")),
-      Ok(count) => written += count,
-      Err(error) if error.kind() == ErrorKind::WouldBlock => {
-        if started.elapsed() >= FD_TRANSFER_TIMEOUT {
-          return Err(backend("timed out writing portal clipboard fd"));
-        }
-        thread::sleep(FD_TRANSFER_POLL_INTERVAL);
-      }
-      Err(error) => {
-        return Err(backend(format!("failed to write portal clipboard payload: {error}")));
-      }
-    }
-  }
-  Ok(())
-}
-
-fn selection_write_done(connection: &Connection, session_handle: &OwnedObjectPath, serial: u32, success: bool) -> DriverResult<()> {
-  let clipboard = portal_proxy(connection, CLIPBOARD_INTERFACE)?;
-  clipboard
-    .call_method("SelectionWriteDone", &(session_handle, serial, success))
-    .map_err(|error| backend(format!("failed to finish portal clipboard write: {error}")))?;
-  Ok(())
-}
-
-fn close_session(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<()> {
-  let session = Proxy::new(connection, PORTAL_DESTINATION, session_handle.clone(), "org.freedesktop.portal.Session")
-    .map_err(|error| backend(format!("failed to create portal session proxy: {error}")))?;
-  session.call_method("Close", &()).map_err(|error| backend(format!("failed to close portal session: {error}")))?;
-  Ok(())
+fn write_fd_all(file: File, payload: &[u8]) -> DriverResult<()> {
+  let mut file = async_io::Async::new(file).map_err(|error| backend(format!("failed to register portal clipboard fd: {error}")))?;
+  future::block_on(future::race(
+    async { file.write_all(payload).await.map_err(|error| backend(format!("failed to write portal clipboard payload: {error}"))) },
+    async {
+      async_io::Timer::after(FD_TRANSFER_TIMEOUT).await;
+      Err(backend("timed out writing portal clipboard payload"))
+    },
+  ))
 }
 
 #[cfg(test)]

@@ -27,6 +27,7 @@ pub(crate) struct Daemon {
   runner_affinities: Mutex<HashMap<RunnerAffinityKey, String>>,
   runner_affinity_locks: tokio::sync::Mutex<HashMap<RunnerAffinityKey, std::sync::Arc<tokio::sync::Mutex<()>>>>,
   runners: RunnerSupervisor,
+  local_runner_resolution: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -82,6 +83,7 @@ impl Daemon {
       runner_affinities: Mutex::new(HashMap::new()),
       runner_affinity_locks: tokio::sync::Mutex::new(HashMap::new()),
       runners,
+      local_runner_resolution: tokio::sync::Mutex::new(()),
     })
   }
 
@@ -251,6 +253,16 @@ impl Daemon {
       .to_string();
     self.validate_local_device(Some(&device_id))?;
 
+    // The first-party driver owns long-lived desktop/Portal sessions. Serialize
+    // its lazy creation across connections and Runs, without blocking custom
+    // providers or serializing the actual admitted operations.
+    let persistent_local = route.runner_class == runner_provider::LOCAL_RUNNER_CLASS;
+    let _local_resolution = if persistent_local {
+      Some(self.local_runner_resolution.lock().await)
+    } else {
+      None
+    };
+
     let affinity = match route.run_id.as_deref() {
       Some(run_id) => {
         let run = self.get_run(caller, run_id)?.run.expect("GetRun always returns a Run");
@@ -270,11 +282,12 @@ impl Daemon {
       None => None,
     };
 
-    // Only calls for the same Run/Device/RunnerClass serialize while a Runner
-    // starts. An unhealthy provider must not block unrelated routing or Run
-    // shutdown across the daemon.
+    // Custom providers serialize only the same Run/Device/RunnerClass while
+    // a Runner starts. An unhealthy provider must not block unrelated routing or Run
+    // shutdown across the daemon. Local resolution already holds its class lock;
+    // it needs the Run affinity record below, but no second resolution lock.
     let affinity_lock = match &affinity {
-      Some(key) => Some(
+      Some(key) if !persistent_local => Some(
         self
           .runner_affinity_locks
           .lock()
@@ -283,7 +296,7 @@ impl Daemon {
           .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
           .clone(),
       ),
-      None => None,
+      _ => None,
     };
     let _affinity_resolution = match &affinity_lock {
       Some(lock) => Some(lock.lock().await),
@@ -323,12 +336,19 @@ impl Daemon {
                 runner_class: route.runner_class.clone(),
               }),
               labels: HashMap::new(),
-              lifecycle: if affinity.is_some() {
+              lifecycle: if persistent_local {
+                proto::RunnerLifecycle::UnlessIdle as i32
+              } else if affinity.is_some() {
                 proto::RunnerLifecycle::UnlessShutdown as i32
               } else {
                 proto::RunnerLifecycle::Ephemeral as i32
               },
-              idle_timeout: None,
+              // Keep authorization sessions warm between operations, while
+              // allowing unattended daemons to become idle and shut down.
+              idle_timeout: persistent_local.then_some(prost_types::Duration {
+                seconds: 300,
+                nanos: 0,
+              }),
             },
             0,
           )

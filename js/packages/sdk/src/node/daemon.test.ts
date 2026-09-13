@@ -1,17 +1,17 @@
-import { access, mkdtemp, rm } from 'node:fs/promises'
+import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { isWindows } from 'std-env'
 import { describe, expect, it } from 'vitest'
 
-import { checkHealth, listDevices } from '../apis'
+import { checkHealth, createAuv, listDevices } from '../apis'
 import { repositoryRoot } from '../tutils/dir'
 import { unusedLoopbackPort } from '../tutils/port'
 import { connect } from './connect'
 import { AuvDaemonStartError, startAuv } from './daemon'
 
-describe('startAuv', () => {
+describe('startAuv', { timeout: 30_000 }, () => {
   // https://github.com/moeru-ai/auv/actions/runs/31747696257/job/94606069166
   // ROOT CAUSE:
   //
@@ -65,6 +65,117 @@ describe('startAuv', () => {
     }
   })
 
+  it('reuses the daemon and local Runner while keeping explicit Runs distinct', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-reuse-'))
+    const daemon = await startAuv({
+      binaryPath: join(workspace, 'target', 'debug', 'auv'),
+      noDiscovery: true,
+      workingDirectory,
+    })
+    const connections = await Promise.all([daemon.connect(), daemon.connect()])
+    try {
+      const clients = connections.map(connection => createAuv(connection))
+      const request = {
+        backend: 'auv-js-reuse',
+        bounds: { height: 16, width: 64, x: 0, y: 0 },
+        image: { data: new Uint8Array(64 * 16 * 4).fill(255), height: 16, width: 64 },
+        scaleFactor: 1,
+      }
+      // Cold, concurrent first use must resolve to one local child.
+      await Promise.all(clients.map(client => client.runner({ runnerClass: 'auv.core.local' }).recognizeText(request)))
+      const initialRunners = await clients[0]!.runners.list()
+      expect(initialRunners.filter(runner => runner.phase === 'ready')).toHaveLength(1)
+      await Promise.all(clients.map(client => client.runner({ runnerClass: 'auv.core.local' }).recognizeText(request)))
+      const finalRunners = await clients[1]!.runners.list()
+      expect(finalRunners.filter(runner => runner.phase === 'ready').map(runner => runner.processId))
+        .toEqual(initialRunners.filter(runner => runner.phase === 'ready').map(runner => runner.processId))
+      // Capability RPCs do not manufacture Runs; operation roots create them.
+      expect(await clients[0]!.runs.list()).toHaveLength(0)
+      const runs = await Promise.all(clients.map(client => client.runs.create()))
+      expect(new Set(runs.map(run => run.id)).size).toBe(2)
+      await Promise.all(clients.map((client, index) => client.runner({ runId: runs[index]!.id, runnerClass: 'auv.core.local' }).recognizeText(request)))
+      await clients[0]!.runs.stop({ outcome: 'succeeded', runId: runs[0]!.id })
+      expect((await clients[1]!.runs.get({ runId: runs[1]!.id })).phase).toBe('running')
+      await clients[1]!.runs.stop({ outcome: 'succeeded', runId: runs[1]!.id })
+      expect((await clients[0]!.runs.list()).map(run => run.id).sort()).toEqual(runs.map(run => run.id).sort())
+      expect((await clients[0]!.runners.list()).filter(runner => runner.phase === 'ready').map(runner => runner.processId))
+        .toEqual(initialRunners.filter(runner => runner.phase === 'ready').map(runner => runner.processId))
+    }
+    finally {
+      await Promise.all(connections.map(connection => connection.close()))
+      await daemon.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  }, 60_000)
+
+  // ROOT CAUSE:
+  // An existing listener can answer health before a newly spawned child fails
+  // to bind it. Startup must never return ownership of that existing daemon.
+  it('rejects a second start on an occupied endpoint and preserves the first daemon', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-occupied-'))
+    const port = await unusedLoopbackPort()
+    const options = {
+      binaryPath: join(workspace, 'target', 'debug', 'auv'),
+      listeners: [`http://127.0.0.1:${port}`],
+      noDiscovery: true,
+      workingDirectory,
+    }
+    const first = await startAuv(options)
+    let second: Awaited<ReturnType<typeof startAuv>> | undefined
+    try {
+      await expect(startAuv(options).then((value) => {
+        second = value
+        return value
+      })).rejects.toBeInstanceOf(AuvDaemonStartError)
+      const connection = await first.connect()
+      try {
+        await expect(checkHealth(connection)).resolves.toMatchObject({ status: 'serving' })
+      }
+      finally {
+        await connection.close()
+      }
+    }
+    finally {
+      await second?.stop()
+      await first.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
+  // ROOT CAUSE:
+  // Startup parsed a human stdout announcement. Silencing or reformatting
+  // logs made a healthy owned daemon appear unready.
+  it.skipIf(isWindows)('starts through health when daemon stdout is silent', async () => {
+    const workspace = await repositoryRoot()
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-silent-'))
+    const launcher = join(workingDirectory, 'quiet-auv')
+    await writeFile(launcher, '#!/bin/sh\nexec "$AUV_TEST_BINARY" "$@" >/dev/null\n')
+    await chmod(launcher, 0o700)
+    let daemon: Awaited<ReturnType<typeof startAuv>> | undefined
+    try {
+      daemon = await startAuv({
+        binaryPath: launcher,
+        environment: { AUV_TEST_BINARY: join(workspace, 'target', 'debug', 'auv') },
+        noDiscovery: true,
+        startupTimeoutMs: 3000,
+        workingDirectory,
+      })
+      const connection = await daemon.connect()
+      try {
+        await expect(checkHealth(connection)).resolves.toMatchObject({ status: 'serving' })
+      }
+      finally {
+        await connection.close()
+      }
+    }
+    finally {
+      await daemon?.stop()
+      await rm(workingDirectory, { force: true, recursive: true })
+    }
+  })
+
   it.runIf(isWindows)('uses a named pipe for the default app-owned daemon', async () => {
     const workspace = await repositoryRoot()
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-npipe-'))
@@ -85,7 +196,7 @@ describe('startAuv', () => {
       })
       const connections = await Promise.all([daemon.connect(), daemon.connect()])
       try {
-        await Promise.all(connections.map(connection => expect(checkHealth(connection)).resolves.toBe('serving')))
+        await Promise.all(connections.map(connection => expect(checkHealth(connection)).resolves.toMatchObject({ status: 'serving' })))
       }
       finally {
         await Promise.all(connections.map(connection => connection.close()))
@@ -148,7 +259,7 @@ describe('startAuv', () => {
       ]) {
         const connection = await connect(options)
         try {
-          await expect(checkHealth(connection)).resolves.toBe('serving')
+          await expect(checkHealth(connection)).resolves.toEqual({ id: daemon.id, status: 'serving' })
         }
         finally {
           await connection.close()

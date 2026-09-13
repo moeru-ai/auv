@@ -35,7 +35,7 @@ pub struct WindowApi<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct InputApi<'a> {
-  session: &'a LinuxDriverSession,
+  pub(crate) session: &'a LinuxDriverSession,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +89,32 @@ impl LinuxDriverSession {
 }
 
 impl PermissionApi<'_> {
+  /// Establishes and retains input/capture Portal sessions without injecting
+  /// keys or pointer events. Each Portal can request its own initial consent.
+  pub fn authorize_portals(&self) -> DriverResult<()> {
+    let mut state = self.session.state.lock().expect("linux driver session state poisoned");
+    let authorization = if state.input_session.is_none() || state.input_backend == crate::InputBackend::Uinput {
+      Some(crate::native::portal::PortalInput::open(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?)
+    } else {
+      None
+    };
+    // Explicit Portal setup must not replace a selected uinput session.
+    let temporary_authorization = if state.input_backend == crate::InputBackend::Portal {
+      if let Some(session) = authorization {
+        state.input_session = Some(crate::input::InputSession::Portal(session));
+      }
+      None
+    } else {
+      authorization
+    };
+    if state.screencast_session.is_none() {
+      state.screencast_session =
+        Some(crate::native::portal::ScreenCastSession::open_monitor(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
+    }
+    drop(temporary_authorization);
+    Ok(())
+  }
+
   pub fn probe_linux(&self) -> LinuxPortalProbe {
     let _ = self.session;
     probe_portals()

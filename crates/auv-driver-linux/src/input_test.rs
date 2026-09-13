@@ -68,3 +68,63 @@ fn click_modifiers_map_to_standard_platform_keys() {
   );
   assert!(click_modifier_keysyms(Default::default()).is_empty());
 }
+
+// ROOT CAUSE: direct type_text used to resolve characters after emitting the
+// replace shortcut and preceding characters. Reject the whole request before
+// contacting a backend, using the same prepared plan as batch delivery.
+#[test]
+fn direct_type_text_rejects_invalid_tail_before_opening_backend() {
+  use auv_driver_common::Driver;
+  let session = crate::LinuxDriver::new().open_local().unwrap();
+  let error = session
+    .input()
+    .type_text(
+      "prefix漢",
+      TypeTextOptions {
+        replace_existing: true,
+        ..Default::default()
+      },
+    )
+    .unwrap_err();
+  assert!(matches!(error, DriverError::InvalidInput { .. }));
+  assert!(session.state.lock().unwrap().input_session.is_none());
+}
+
+#[test]
+fn prepared_text_retains_replace_submit_and_per_character_timing() {
+  let delay = Duration::from_millis(7);
+  let plan = KeyboardPlan::type_text(
+    "a!",
+    TypeTextOptions {
+      replace_existing: true,
+      submit: TextSubmit::Return,
+      inter_char_delay: delay,
+      ..Default::default()
+    },
+  )
+  .unwrap();
+  let events = plan.steps.iter().map(|(chord, delay)| (chord.modifiers.as_slice(), chord.key, *delay)).collect::<Vec<_>>();
+  assert_eq!(
+    events,
+    vec![
+      (&[keysym::CONTROL_L][..], 'a' as i32, Duration::ZERO),
+      (&[][..], keysym::BACKSPACE, Duration::ZERO),
+      (&[][..], 'a' as i32, delay),
+      (&[][..], '!' as i32, delay),
+      (&[][..], keysym::RETURN, Duration::ZERO),
+    ]
+  );
+  let paste = KeyboardPlan::paste_text(&PasteTextOptions {
+    replace_existing: true,
+    submit: TextSubmit::Return,
+    ..Default::default()
+  });
+  assert_eq!(
+    paste.steps.iter().map(|(chord, _)| (chord.modifiers.as_slice(), chord.key)).collect::<Vec<_>>(),
+    vec![
+      (&[keysym::CONTROL_L][..], 'a' as i32),
+      (&[keysym::CONTROL_L][..], 'v' as i32),
+      (&[][..], keysym::RETURN),
+    ]
+  );
+}

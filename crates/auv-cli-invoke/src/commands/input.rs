@@ -50,7 +50,7 @@ async fn move_mouse(input: InvokeCommandInput, args: MoveMouseArgs) -> InvokeCom
   }
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let action = session.input().move_to(point.point()).map_err(|error| error.to_string())?;
     emit_input_action_result(&action);
     mouse_move_output(MouseMoveResult {
@@ -112,7 +112,7 @@ async fn focus_text_input(input: InvokeCommandInput, _args: FocusTextArgs) -> In
 pub async fn focus_text(app: String, query: String, candidate: String) -> Result<auv_driver::AxFocusResult, String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let selector = if candidate.trim().is_empty() {
       auv_driver::AxTextSelector::Query(query)
     } else {
@@ -180,7 +180,7 @@ struct TypeTextArgs {
   id = "input.typeText",
   target = OptionalKeyboard,
   group = "input",
-  description = "Type text into the active macOS control through native CoreGraphics events.",
+  description = "Type text into the active control through the platform input driver.",
   input = TypeTextArgs,
 )]
 async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> crate::InvokeExecutionResult {
@@ -188,17 +188,17 @@ async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> crate::Invo
 }
 
 pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = session.input().type_text(&text, auv_driver::TypeTextOptions::default()).map_err(|error| error.to_string())?;
     emit_input_action_result(&result);
     Ok(result)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     let _ = text;
-    Err("input.typeText is only available on macOS".to_string())
+    Err("input.typeText is available only on macOS and Linux".to_string())
   }
 }
 
@@ -218,7 +218,7 @@ struct PasteTextArgs {
   id = "input.pasteText",
   target = OptionalKeyboard,
   group = "input",
-  description = "Paste text into the active macOS control through the clipboard, then restore the prior clipboard snapshot.",
+  description = "Paste text into the active control through the clipboard, then restore the prior clipboard snapshot.",
   input = PasteTextArgs,
 )]
 async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTextArgs) -> crate::InvokeExecutionResult {
@@ -226,9 +226,9 @@ async fn paste_text_preserve_clipboard(input: InvokeCommandInput, args: PasteTex
 }
 
 pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = session
       .input()
       .paste_text(auv_driver::PasteTextOptions {
@@ -239,10 +239,10 @@ pub async fn paste_text_into_active_control(text: String) -> Result<auv_driver::
     emit_input_action_result(&result);
     Ok(result)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     let _ = text;
-    Err("input.pasteText is only available on macOS".to_string())
+    Err("input.pasteText is available only on macOS and Linux".to_string())
   }
 }
 
@@ -285,7 +285,7 @@ struct PressKeysArgs {
 }
 
 #[invoke_command(id = "input.keys", target = OptionalKeyboard, group = "input",
-  description = "Press and release a macOS key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.", input = PressKeysArgs)]
+  description = "Press and release a key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.", input = PressKeysArgs)]
 async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
   execute_keyboard(&input, vec![args.into()])
 }
@@ -322,7 +322,7 @@ enum KeyboardActionArg {
 }
 
 #[invoke_command(id = "input.keyboard", target = OptionalKeyboard, group = "input",
-  description = "Execute ordered macOS keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.", input = InputKeyboardArgs)]
+  description = "Execute ordered keyboard actions. Stops on failure with partial progress; delivery does not verify control effects.", input = InputKeyboardArgs)]
 async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> crate::InvokeExecutionResult {
   let actions = args.into_keyboard_inputs().map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
   execute_keyboard(&input, actions)
@@ -332,7 +332,7 @@ async fn input_keyboard(input: InvokeCommandInput, args: InputKeyboardArgs) -> c
   id = "input.key",
   target = OptionalKeyboard,
   group = "input",
-  description = "Press a keyboard key or shortcut in the active macOS app through native CoreGraphics events.",
+  description = "Press a keyboard key or shortcut through the platform input driver.",
   input = PressKeyArgs,
 )]
 async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::InvokeExecutionResult {
@@ -340,9 +340,9 @@ async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::Invo
 }
 
 pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = session
       .input()
       .press_key(auv_driver::KeyPressOptions {
@@ -353,10 +353,10 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
     emit_input_action_result(&result);
     Ok(result)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     let _ = key;
-    Err("input.key is only available on macOS".to_string())
+    Err("input.key is available only on macOS and Linux".to_string())
   }
 }
 
@@ -538,7 +538,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           None
         } else {
           input.cancellation.check().map_err(|error| error.to_string())?;
-          let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+          let session = auv::local::open().map_err(|error| error.to_string())?;
           let action = session.input().click_at(screen_point.point(), click.click, click.modifiers).map_err(|error| error.to_string())?;
           emit_input_action_result(&action);
           Some(action)
@@ -554,7 +554,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
         })
       }
       RelativeToArg::Window => {
-        let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+        let session = auv::local::open().map_err(|error| error.to_string())?;
         let target = input.target.as_ref().expect("window-relative target validated");
         let window = match target {
           crate::ExecutionTarget::Application { id } => {
@@ -591,7 +591,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
         })
       }
       RelativeToArg::Display => {
-        let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+        let session = auv::local::open().map_err(|error| error.to_string())?;
         let crate::ExecutionTarget::Display { id } = input.target.as_ref().expect("display-relative target validated") else {
           unreachable!("target/basis validated")
         };
@@ -866,10 +866,10 @@ pub(crate) fn validate_keyboard_policy(
   Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   validate_keyboard_policy(input, &keyboard)?;
-  let session = auv_driver::open_local()?;
+  let session = auv::local::open()?;
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
     Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
@@ -891,9 +891,9 @@ fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::Keyboa
   keyboard_output(input, result)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is only available on macOS"))
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is available only on macOS and Linux"))
 }
 
 /// Both frontends preserve completed action artifacts even when delivery stops.

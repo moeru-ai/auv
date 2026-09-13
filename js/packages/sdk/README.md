@@ -78,6 +78,23 @@ Yet if needed, gRPC can be connected too through `createGrpcTransport`.
 
 ### Connect and start the daemon
 
+Call `startAuv()` once for the lifetime of your Node.js or Electron host, then
+reuse its connection and `createAuv(connection)` client. Each `startAuv()` call
+starts a new app-owned process; it does not discover or attach to another daemon.
+Starting on an occupied endpoint fails. To use a daemon owned by another host,
+call `connect({ endpoint, transport, local })` and close only that connection.
+
+`await checkHealth(connection)` and `await auv.health.check()` return
+`{ id, status: 'serving' }`. The same daemon reports the same `id` on every
+listener. `daemon.id` is the fresh UUID assigned by `startAuv()` for that launch;
+startup checks it through health and does not parse stdout. The ID is public
+correlation data, independent of Device, Runner, and Run IDs, and grants no access.
+
+The lazily started `auv.core.local` Runner stays available for five minutes after
+its last request and Run attachment finish. Concurrent first calls share its
+creation. Reusing this child preserves its desktop/Portal sessions between calls;
+its PID and Runner ID are separate from Run IDs.
+
 For Electron, if you wished to embed the AUV daemon and offer computer use capabilities without requiring the user to install it separately, you can start the daemon from your main process and connect to it:
 
 ```ts
@@ -225,6 +242,27 @@ const window = await runner.windows.resolve({
 const capture = await window.capture({ signal })
 const matches = await window.findText('Continue', { signal })
 ```
+
+Create a Run for each workflow that needs its own correlation identity:
+
+```ts
+const run = await auv.runs.create()
+const runner = auv.runner({ runId: run.id, runnerClass: 'auv.core.local' })
+try {
+  await runner.displays.list()
+  // Further steps in this workflow use this same route and Run ID.
+  await auv.runs.stop({ outcome: 'succeeded', runId: run.id })
+}
+catch (error) {
+  await auv.runs.stop({ outcome: 'failed', runId: run.id })
+  throw error
+}
+```
+
+Different Runs can share one Runner; stopping one Run does not stop another.
+A route without `runId` does not create an implicit Run. A Run ID groups a
+workflow, not each RPC within it. The control Run and its routing metadata do
+not by themselves promise complete persisted tracing for every low-level call.
 
 ## Typed capability invocation
 

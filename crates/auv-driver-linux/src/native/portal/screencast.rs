@@ -7,28 +7,21 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType, Stream};
+use ashpd::desktop::{PersistMode, Session};
+use ashpd::enumflags2::BitFlags;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::{Point, Rect};
 use pipewire as pw;
 use pw::properties::properties;
 use pw::spa;
 use spa::pod::Pod;
-use zbus::blocking::Connection;
-use zbus::zvariant::{DeserializeDict, OwnedFd as ZbusOwnedFd, OwnedObjectPath, OwnedValue, Type, Value};
 
 use crate::error::{backend, invalid_input};
 
 use super::persistence::{RestoreTokenKind, RestoreTokenStore};
-use super::request::{
-  close_session, create_session, interface_version, portal_proxy, response_signal, restore_token, session_connection, session_request,
-  wait_response,
-};
+use super::request::{run, session_connection};
 
-const SCREENCAST_INTERFACE: &str = "org.freedesktop.portal.ScreenCast";
-const SOURCE_MONITOR: u32 = 1;
-const CURSOR_HIDDEN: u32 = 1;
-const PERSIST_UNTIL_REVOKED: u32 = 2;
-const PERSISTENCE_INTERFACE_VERSION: u32 = 4;
 const PIPEWIRE_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const PIPEWIRE_REFRESH_WAIT: Duration = Duration::from_millis(100);
 
@@ -45,7 +38,6 @@ pub struct ScreenCastStream {
   pub size: Option<(i32, i32)>,
   pub source_type: Option<u32>,
   pub mapping_id: Option<String>,
-  pub pipewire_serial: Option<u64>,
 }
 
 impl ScreenCastStream {
@@ -76,88 +68,74 @@ impl ScreenCastStream {
   }
 }
 
-#[derive(DeserializeDict, Type, Debug, Value, OwnedValue)]
-#[zvariant(signature = "dict")]
-struct StartStreamProperties {
-  pub id: Option<String>,
-  pub position: Option<(i32, i32)>,
-  pub size: Option<(i32, i32)>,
-  pub source_type: Option<u32>,
-  pub mapping_id: Option<String>,
-  #[zvariant(rename = "pipewire-serial")]
-  pub pipewire_serial: Option<u64>,
-}
-
-pub fn select_monitor_sources(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<()> {
-  select_sources(connection, session_handle, SOURCE_MONITOR, true, None, false)?;
-  Ok(())
-}
-
-fn select_sources(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-  source_type: u32,
-  multiple: bool,
-  restore: Option<&str>,
-  persistent: bool,
-) -> DriverResult<()> {
-  let mut options = HashMap::new();
-  options.insert("types", Value::from(source_type));
-  options.insert("multiple", Value::from(multiple));
-  options.insert("cursor_mode", Value::from(CURSOR_HIDDEN));
-  if persistent {
-    options.insert("persist_mode", Value::from(PERSIST_UNTIL_REVOKED));
-    if let Some(restore) = restore {
-      options.insert("restore_token", Value::from(restore));
+// Map Portal stream metadata to AUV's logical desktop geometry. PipeWire serial
+// metadata has no AUV consumer; connection routing uses the advertised node ID.
+impl From<&Stream> for ScreenCastStream {
+  fn from(stream: &Stream) -> Self {
+    Self {
+      id: stream.pipe_wire_node_id(),
+      position: stream.position(),
+      size: stream.size(),
+      source_type: stream.source_type().map(|source| source as u32),
+      mapping_id: stream.mapping_id().or(stream.id()).map(str::to_owned),
     }
   }
-  session_request(connection, SCREENCAST_INTERFACE, "SelectSources", session_handle, options)?;
-  Ok(())
-}
-
-pub fn decode_streams(results: &HashMap<String, OwnedValue>) -> DriverResult<Vec<ScreenCastStream>> {
-  let Some(value) = results.get("streams") else {
-    return Err(backend("screencast start response missing streams"));
-  };
-  let streams = <Vec<(u32, StartStreamProperties)>>::try_from(
-    value.try_clone().map_err(|error| backend(format!("failed to clone screencast stream metadata: {error}")))?,
-  )
-  .map_err(|error| backend(format!("failed to decode screencast stream metadata: {error}")))?;
-  Ok(
-    streams
-      .into_iter()
-      .map(|(id, properties)| ScreenCastStream {
-        id,
-        position: properties.position,
-        size: properties.size,
-        source_type: properties.source_type,
-        mapping_id: properties.mapping_id.or(properties.id),
-        pipewire_serial: properties.pipewire_serial,
-      })
-      .collect(),
-  )
 }
 
 #[derive(Debug)]
 pub struct ScreenCastSession {
-  connection: Connection,
-  session_handle: OwnedObjectPath,
+  screencast: Screencast,
+  session: Session<Screencast>,
   streams: Vec<ScreenCastStream>,
   receivers: FrameReceiverPool,
 }
 
 impl ScreenCastSession {
-  pub fn open_monitor(restore_tokens: Option<&RestoreTokenStore>) -> DriverResult<Self> {
-    let connection = session_connection()?;
-    let session_handle = create_session(&connection, SCREENCAST_INTERFACE)?;
-    start_session(connection, session_handle, restore_tokens)
+  pub fn open_monitor(restore_tokens: Option<&RestoreTokenStore>, app_id: Option<&str>) -> DriverResult<Self> {
+    let connection = session_connection(app_id)?;
+    let screencast = run("open ScreenCast", Screencast::with_connection(connection))?;
+    let session = run("create screencast session", screencast.create_session(Default::default()))?;
+    let mut capture = Self {
+      screencast,
+      session,
+      streams: Vec::new(),
+      receivers: FrameReceiverPool::default(),
+    };
+    let persistent = restore_tokens.is_some() && capture.screencast.version() >= 4;
+    let start = |restore: Option<&str>| {
+      run("start screencast session", async {
+        let mut options = SelectSourcesOptions::default()
+          .set_sources(BitFlags::from(SourceType::Monitor))
+          .set_multiple(true)
+          .set_cursor_mode(CursorMode::Hidden);
+        if persistent {
+          options = options.set_persist_mode(PersistMode::ExplicitlyRevoked).set_restore_token(restore);
+        }
+        capture.screencast.select_sources(&capture.session, options).await?.response()?;
+        capture.screencast.start(&capture.session, None, Default::default()).await?.response()
+      })
+    };
+    let selected = if let Some(store) = restore_tokens.filter(|_| persistent) {
+      store.rotate(RestoreTokenKind::ScreenCast, |current| {
+        let selected = start(current)?;
+        let replacement = selected.restore_token().map(str::to_owned);
+        Ok((selected, replacement))
+      })?
+    } else {
+      start(None)?
+    };
+    capture.streams = selected.streams().iter().map(ScreenCastStream::from).collect();
+    if capture.streams.is_empty() {
+      return Err(backend("screencast portal started without streams"));
+    }
+    Ok(capture)
   }
 
   pub fn capture_monitor_frame(&mut self, target_bounds: Option<Rect>) -> DriverResult<ScreenCastFrame> {
     let stream = select_stream(&self.streams, target_bounds)?.clone();
     let image = self.receivers.capture(stream.id, || {
-      let fd = open_pipewire_remote(&self.connection, &self.session_handle)?;
-      Ok(Box::new(PipeWireFrameReceiver::open(fd.into(), stream.id)?))
+      let fd = run("open PipeWire remote", self.screencast.open_pipe_wire_remote(&self.session, Default::default()))?;
+      Ok(Box::new(PipeWireFrameReceiver::open(fd, stream.id)?))
     })?;
     Ok(ScreenCastFrame { stream, image })
   }
@@ -166,68 +144,8 @@ impl ScreenCastSession {
 impl Drop for ScreenCastSession {
   fn drop(&mut self) {
     self.receivers.clear();
-    let _ = close_session(&self.connection, &self.session_handle);
+    let _ = run("close screencast session", self.session.close());
   }
-}
-
-fn start_session(
-  connection: Connection,
-  session_handle: OwnedObjectPath,
-  restore_tokens: Option<&RestoreTokenStore>,
-) -> DriverResult<ScreenCastSession> {
-  let result = (|| {
-    let persistent = restore_tokens.is_some() && interface_version(&connection, SCREENCAST_INTERFACE)? >= PERSISTENCE_INTERFACE_VERSION;
-    let results = if let Some(restore_tokens) = restore_tokens.filter(|_| persistent) {
-      restore_tokens.rotate(RestoreTokenKind::ScreenCast, |current| {
-        select_sources(&connection, &session_handle, SOURCE_MONITOR, true, current, true)?;
-        let results = start_screencast(&connection, &session_handle)?;
-        let replacement = restore_token(&results, SCREENCAST_INTERFACE)?;
-        Ok((results, replacement))
-      })?
-    } else {
-      select_monitor_sources(&connection, &session_handle)?;
-      start_screencast(&connection, &session_handle)?
-    };
-    decode_streams(&results)
-  })();
-  let streams = match result {
-    Ok(streams) => streams,
-    Err(error) => {
-      let close_result = close_session(&connection, &session_handle);
-      return match close_result {
-        Ok(()) => Err(error),
-        Err(close_error) => Err(backend(format!("{error}; also failed to close screencast portal session: {close_error}"))),
-      };
-    }
-  };
-  if streams.is_empty() {
-    close_session(&connection, &session_handle)?;
-    return Err(backend("screencast portal started without streams"));
-  }
-  Ok(ScreenCastSession {
-    connection,
-    session_handle,
-    streams,
-    receivers: FrameReceiverPool::default(),
-  })
-}
-
-fn start_screencast(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<HashMap<String, OwnedValue>> {
-  let handle_token = super::request::portal_token("start");
-  let request = super::request::portal_request_proxy(connection, &handle_token)?;
-  let mut responses = response_signal(&request, SCREENCAST_INTERFACE, "Start")?;
-  let proxy = portal_proxy(connection, SCREENCAST_INTERFACE)?;
-  let mut options = HashMap::new();
-  options.insert("handle_token", Value::from(handle_token.as_str()));
-  super::request::call_method(&proxy, SCREENCAST_INTERFACE, "Start", &(session_handle, "", options))?;
-  wait_response(&mut responses, SCREENCAST_INTERFACE, "Start")
-}
-
-fn open_pipewire_remote(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<ZbusOwnedFd> {
-  let proxy = portal_proxy(connection, SCREENCAST_INTERFACE)?;
-  let options: HashMap<&str, Value<'_>> = HashMap::new();
-  let response = super::request::call_method(&proxy, SCREENCAST_INTERFACE, "OpenPipeWireRemote", &(session_handle, options))?;
-  response.body().deserialize().map_err(|error| backend(format!("failed to decode portal PipeWire remote: {error}")))
 }
 
 fn select_stream(streams: &[ScreenCastStream], target_bounds: Option<Rect>) -> DriverResult<&ScreenCastStream> {

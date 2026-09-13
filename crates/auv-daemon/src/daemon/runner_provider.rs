@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const LOCAL_RUNNER_CLASS: &str = "auv.core.local";
+pub(super) const LOCAL_RUNNER_CLASS: &str = "auv.core.local";
 
 /// Experimental daemon-side selection of one RunnerClass provider.
 ///
