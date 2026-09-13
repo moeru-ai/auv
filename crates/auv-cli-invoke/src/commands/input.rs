@@ -463,7 +463,7 @@ impl ClickPointArgs {
   fn click_options(&self) -> Result<auv_driver::ClickOptions, String> {
     let mut options = click_options(self.input_policy.map(InputPolicyArg::driver_policy), self.click_count, self.click_interval_ms);
     let modifiers = self.modifiers.join(",");
-    options.modifiers = click_modifiers((!self.modifiers.is_empty()).then_some(modifiers.as_str()))?;
+    options.modifiers = parse_click_modifiers((!self.modifiers.is_empty()).then_some(modifiers.as_str()))?;
     Ok(options)
   }
 }
@@ -691,18 +691,24 @@ impl InputPolicyArg {
 }
 
 /// Parse click state for both local invoke and Runner dispatch before delivery.
-pub(crate) fn click_modifiers(value: Option<&str>) -> Result<auv_driver::ClickModifiers, String> {
+pub(crate) fn parse_click_modifiers(value: Option<&str>) -> Result<auv_driver::ClickModifiers, String> {
   let mut modifiers = auv_driver::ClickModifiers::default();
   let Some(value) = value else {
     return Ok(modifiers);
   };
   for name in value.split(',') {
-    let slot = match name.trim().to_ascii_lowercase().as_str() {
-      "shift" => &mut modifiers.shift,
-      "control" | "ctrl" => &mut modifiers.control,
-      "alt" | "option" => &mut modifiers.alt,
-      "meta" | "cmd" | "command" => &mut modifiers.meta,
-      _ => return Err(format!("unknown click modifier {name:?}; expected shift, control, alt/option or meta/cmd")),
+    let normalized = name.trim().to_ascii_lowercase();
+    // NOTICE: Keyboard aliases win/super are not part of the existing click CLI contract.
+    let modifier = normalized
+      .parse::<auv_driver::Modifier>()
+      .ok()
+      .filter(|_| !matches!(normalized.as_str(), "win" | "super"))
+      .ok_or_else(|| format!("unknown click modifier {name:?}; expected shift, control, alt/option or meta/cmd"))?;
+    let slot = match modifier {
+      auv_driver::Modifier::Shift => &mut modifiers.shift,
+      auv_driver::Modifier::Control => &mut modifiers.control,
+      auv_driver::Modifier::Alt => &mut modifiers.alt,
+      auv_driver::Modifier::Meta => &mut modifiers.meta,
     };
     if *slot {
       return Err(format!("duplicate click modifier {name:?}"));

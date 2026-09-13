@@ -218,27 +218,37 @@ fn parse_shortcut(shortcut: &str) -> DriverResult<KeyChord> {
 }
 
 fn modifier_virtual_key(raw: &str) -> Option<u16> {
-  match raw.to_ascii_lowercase().as_str() {
-    "ctrl" | "control" => Some(vk::CONTROL),
-    "shift" => Some(vk::SHIFT),
-    "alt" | "option" => Some(vk::MENU),
-    "win" | "cmd" | "command" | "meta" => Some(vk::LWIN),
-    _ => None,
+  use auv_driver_common::{Key, Modifier};
+  // Keep the existing Windows shortcut aliases; super is Linux-only here.
+  if raw.eq_ignore_ascii_case("super") {
+    return None;
+  }
+  match raw.parse::<Key>().ok()? {
+    Key::Modifier(Modifier::Control) => Some(vk::CONTROL),
+    Key::Modifier(Modifier::Shift) => Some(vk::SHIFT),
+    Key::Modifier(Modifier::Alt) => Some(vk::MENU),
+    Key::Modifier(Modifier::Meta) => Some(vk::LWIN),
+    Key::Symbol(_) => None,
   }
 }
 
 fn special_virtual_key(raw: &str) -> Option<u16> {
-  match raw.to_ascii_lowercase().as_str() {
-    "return" | "enter" => Some(vk::RETURN),
-    "tab" => Some(vk::TAB),
-    "escape" | "esc" => Some(vk::ESCAPE),
-    "space" => Some(vk::SPACE),
-    "delete" => Some(vk::DELETE),
-    "backspace" | "back" => Some(vk::BACK),
-    "media_play_pause" | "play_pause" => Some(vk::MEDIA_PLAY_PAUSE),
-    "media_next" | "next_track" => Some(vk::MEDIA_NEXT_TRACK),
-    "media_prev" | "prev_track" => Some(vk::MEDIA_PREV_TRACK),
-    "media_stop" | "stop" => Some(vk::MEDIA_STOP),
+  use auv_driver_common::{Key, Keysym};
+  // forward_delete is a macOS alias, not an existing Windows input spelling.
+  if matches!(raw.to_ascii_lowercase().as_str(), "forwarddelete" | "forward_delete") {
+    return None;
+  }
+  match raw.parse::<Key>().ok()? {
+    Key::Symbol(Keysym::Return | Keysym::KP_Enter) => Some(vk::RETURN),
+    Key::Symbol(Keysym::Tab) => Some(vk::TAB),
+    Key::Symbol(Keysym::Escape) => Some(vk::ESCAPE),
+    Key::Symbol(Keysym::space) => Some(vk::SPACE),
+    Key::Symbol(Keysym::Delete) => Some(vk::DELETE),
+    Key::Symbol(Keysym::BackSpace) => Some(vk::BACK),
+    Key::Symbol(Keysym::XF86_AudioPlay) => Some(vk::MEDIA_PLAY_PAUSE),
+    Key::Symbol(Keysym::XF86_AudioNext) => Some(vk::MEDIA_NEXT_TRACK),
+    Key::Symbol(Keysym::XF86_AudioPrev) => Some(vk::MEDIA_PREV_TRACK),
+    Key::Symbol(Keysym::XF86_AudioStop) => Some(vk::MEDIA_STOP),
     _ => None,
   }
 }

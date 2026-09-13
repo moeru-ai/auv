@@ -559,7 +559,7 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
     policy,
     click,
     window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,
-    modifiers: crate::commands::input::click_modifiers(input.inputs.get("modifiers").map(String::as_str))?,
+    modifiers: crate::commands::input::parse_click_modifiers(input.inputs.get("modifiers").map(String::as_str))?,
   })
 }
 

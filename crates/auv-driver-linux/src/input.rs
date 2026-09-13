@@ -377,32 +377,22 @@ pub(crate) mod keysym {
 
   use crate::error::invalid_input;
 
-  pub const BACKSPACE: i32 = 0xff08;
-  pub const TAB: i32 = 0xff09;
-  pub const RETURN: i32 = 0xff0d;
-  pub const ESCAPE: i32 = 0xff1b;
-  pub const HOME: i32 = 0xff50;
-  pub const LEFT: i32 = 0xff51;
-  pub const UP: i32 = 0xff52;
-  pub const RIGHT: i32 = 0xff53;
-  pub const DOWN: i32 = 0xff54;
-  pub const PAGE_UP: i32 = 0xff55;
-  pub const PAGE_DOWN: i32 = 0xff56;
-  pub const END: i32 = 0xff57;
-  pub const INSERT: i32 = 0xff63;
-  pub const DELETE: i32 = 0xffff;
-  pub const SHIFT_L: i32 = 0xffe1;
-  pub const CONTROL_L: i32 = 0xffe3;
-  pub const ALT_L: i32 = 0xffe9;
-  pub const SUPER_L: i32 = 0xffeb;
+  pub const BACKSPACE: i32 = auv_driver_common::Keysym::BackSpace.raw() as i32;
+  pub const TAB: i32 = auv_driver_common::Keysym::Tab.raw() as i32;
+  pub const RETURN: i32 = auv_driver_common::Keysym::Return.raw() as i32;
+  pub const SHIFT_L: i32 = auv_driver_common::Keysym::Shift_L.raw() as i32;
+  pub const CONTROL_L: i32 = auv_driver_common::Keysym::Control_L.raw() as i32;
+  pub const ALT_L: i32 = auv_driver_common::Keysym::Alt_L.raw() as i32;
+  pub const SUPER_L: i32 = auv_driver_common::Keysym::Super_L.raw() as i32;
 
   pub fn modifier(raw: &str) -> Option<i32> {
-    match raw.to_ascii_lowercase().as_str() {
-      "ctrl" | "control" => Some(CONTROL_L),
-      "shift" => Some(SHIFT_L),
-      "alt" | "option" => Some(ALT_L),
-      "super" | "win" | "cmd" | "command" | "meta" => Some(SUPER_L),
-      _ => None,
+    use auv_driver_common::{Key, Modifier};
+    match raw.parse::<Key>().ok()? {
+      Key::Modifier(Modifier::Control) => Some(CONTROL_L),
+      Key::Modifier(Modifier::Shift) => Some(SHIFT_L),
+      Key::Modifier(Modifier::Alt) => Some(ALT_L),
+      Key::Modifier(Modifier::Meta) => Some(SUPER_L),
+      Key::Symbol(_) => None,
     }
   }
 
@@ -432,33 +422,38 @@ pub(crate) mod keysym {
   }
 
   fn named(raw: &str) -> Option<i32> {
-    let normalized = raw.to_ascii_lowercase();
-    if let Some(number) =
-      normalized.strip_prefix('f').and_then(|number| number.parse::<i32>().ok()).filter(|number| (1..=12).contains(number))
-    {
-      // Portal keysym values assign F1 through F12 consecutively from 0xffbe.
-      return Some(0xffbd + number);
+    use auv_driver_common::{Key, Keysym};
+    if let Some(modifier) = modifier(raw) {
+      return Some(modifier);
     }
-    match normalized.as_str() {
-      "return" | "enter" => Some(RETURN),
-      "tab" => Some(TAB),
-      "escape" | "esc" => Some(ESCAPE),
-      "home" => Some(HOME),
-      "left" | "arrowleft" => Some(LEFT),
-      "up" | "arrowup" => Some(UP),
-      "right" | "arrowright" => Some(RIGHT),
-      "down" | "arrowdown" => Some(DOWN),
-      "pageup" | "page_up" => Some(PAGE_UP),
-      "pagedown" | "page_down" => Some(PAGE_DOWN),
-      "end" => Some(END),
-      "insert" => Some(INSERT),
-      "space" => Some(' ' as i32),
-      "delete" => Some(DELETE),
-      "backspace" | "back" => Some(BACKSPACE),
-      "ctrl" | "control" => Some(CONTROL_L),
-      "shift" => Some(SHIFT_L),
-      "alt" | "option" => Some(ALT_L),
-      "super" | "win" | "cmd" | "command" | "meta" => Some(SUPER_L),
+    // Keep this backend's existing named-key set and F1..F12 support.
+    if matches!(raw.to_ascii_lowercase().as_str(), "forwarddelete" | "forward_delete") {
+      return None;
+    }
+    match raw.parse::<Key>().ok()? {
+      Key::Symbol(Keysym::KP_Enter) => Some(RETURN),
+      Key::Symbol(symbol)
+        if matches!(
+          symbol,
+          Keysym::Return
+            | Keysym::Tab
+            | Keysym::Escape
+            | Keysym::Home
+            | Keysym::Left
+            | Keysym::Up
+            | Keysym::Right
+            | Keysym::Down
+            | Keysym::Page_Up
+            | Keysym::Page_Down
+            | Keysym::End
+            | Keysym::Insert
+            | Keysym::space
+            | Keysym::Delete
+            | Keysym::BackSpace
+        ) || (Keysym::F1.raw()..=Keysym::F12.raw()).contains(&symbol.raw()) =>
+      {
+        Some(symbol.raw() as i32)
+      }
       _ => None,
     }
   }

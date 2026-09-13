@@ -1089,11 +1089,17 @@ fn parse_key_combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
   let mut implicit_shift = false;
   for key in &options.keys {
     let name = key.trim();
-    let modifier = match name.to_ascii_lowercase().as_str() {
-      "cmd" | "command" => Some(55),
-      "shift" => Some(56),
-      "alt" | "option" => Some(58),
-      "ctrl" | "control" => Some(59),
+    let modifier = match name.parse::<auv_driver_common::Key>() {
+      Ok(auv_driver_common::Key::Modifier(modifier)) => {
+        use auv_driver_common::Modifier;
+        match modifier {
+          Modifier::Meta if matches!(name.to_ascii_lowercase().as_str(), "cmd" | "command") => Some(55),
+          Modifier::Shift => Some(56),
+          Modifier::Alt => Some(58),
+          Modifier::Control => Some(59),
+          _ => None,
+        }
+      }
       _ => None,
     };
     let code = if let Some(code) = modifier {
@@ -1189,43 +1195,57 @@ fn macos_virtual_key_code(character: char) -> DriverResult<i32> {
 // Native key constants follow the macOS SDK `HIToolbox/Events.h` kVK_* values.
 // NOTICE: These are physical keys; Unicode text uses a separate native payload.
 fn special_key_code(raw: &str) -> DriverResult<i32> {
-  match raw.trim().to_ascii_lowercase().as_str() {
-    "return" => Ok(36),
-    "enter" => Ok(76),
-    "tab" => Ok(48),
-    "delete" | "backspace" => Ok(51),
-    "escape" | "esc" => Ok(53),
-    "space" => Ok(49),
-    "home" => Ok(115),
-    "end" => Ok(119),
-    "pageup" | "page_up" => Ok(116),
-    "pagedown" | "page_down" => Ok(121),
-    "forwarddelete" | "forward_delete" => Ok(117),
-    "left" | "arrowleft" => Ok(123),
-    "right" | "arrowright" => Ok(124),
-    "down" | "arrowdown" => Ok(125),
-    "up" | "arrowup" => Ok(126),
-    "f1" => Ok(122),
-    "f2" => Ok(120),
-    "f3" => Ok(99),
-    "f4" => Ok(118),
-    "f5" => Ok(96),
-    "f6" => Ok(97),
-    "f7" => Ok(98),
-    "f8" => Ok(100),
-    "f9" => Ok(101),
-    "f10" => Ok(109),
-    "f11" => Ok(103),
-    "f12" => Ok(111),
-    "f13" => Ok(105),
-    "f14" => Ok(107),
-    "f15" => Ok(113),
-    "f16" => Ok(106),
-    "f17" => Ok(64),
-    "f18" => Ok(79),
-    "f19" => Ok(80),
-    "f20" => Ok(90),
-    other => Err(invalid_input(format!("unknown key name {other}"))),
+  use auv_driver_common::{Key, Keysym};
+  let normalized = raw.trim().to_ascii_lowercase();
+  // Preserve macOS Delete as backspace and Enter as keypad Enter.
+  if normalized.starts_with('f') && normalized[1..].parse::<u32>().is_ok_and(|number| normalized != format!("f{number}")) {
+    return Err(invalid_input(format!("unknown key name {normalized}")));
+  }
+  let name = if normalized == "delete" {
+    "backspace"
+  } else {
+    &normalized
+  };
+  if normalized == "back" {
+    return Err(invalid_input(format!("unknown key name {normalized}")));
+  }
+  match name.parse::<Key>() {
+    Ok(Key::Symbol(Keysym::Return)) => Ok(36),
+    Ok(Key::Symbol(Keysym::KP_Enter)) => Ok(76),
+    Ok(Key::Symbol(Keysym::Tab)) => Ok(48),
+    Ok(Key::Symbol(Keysym::BackSpace)) => Ok(51),
+    Ok(Key::Symbol(Keysym::Escape)) => Ok(53),
+    Ok(Key::Symbol(Keysym::space)) => Ok(49),
+    Ok(Key::Symbol(Keysym::Home)) => Ok(115),
+    Ok(Key::Symbol(Keysym::End)) => Ok(119),
+    Ok(Key::Symbol(Keysym::Page_Up)) => Ok(116),
+    Ok(Key::Symbol(Keysym::Page_Down)) => Ok(121),
+    Ok(Key::Symbol(Keysym::Delete)) => Ok(117),
+    Ok(Key::Symbol(Keysym::Left)) => Ok(123),
+    Ok(Key::Symbol(Keysym::Right)) => Ok(124),
+    Ok(Key::Symbol(Keysym::Down)) => Ok(125),
+    Ok(Key::Symbol(Keysym::Up)) => Ok(126),
+    Ok(Key::Symbol(Keysym::F1)) => Ok(122),
+    Ok(Key::Symbol(Keysym::F2)) => Ok(120),
+    Ok(Key::Symbol(Keysym::F3)) => Ok(99),
+    Ok(Key::Symbol(Keysym::F4)) => Ok(118),
+    Ok(Key::Symbol(Keysym::F5)) => Ok(96),
+    Ok(Key::Symbol(Keysym::F6)) => Ok(97),
+    Ok(Key::Symbol(Keysym::F7)) => Ok(98),
+    Ok(Key::Symbol(Keysym::F8)) => Ok(100),
+    Ok(Key::Symbol(Keysym::F9)) => Ok(101),
+    Ok(Key::Symbol(Keysym::F10)) => Ok(109),
+    Ok(Key::Symbol(Keysym::F11)) => Ok(103),
+    Ok(Key::Symbol(Keysym::F12)) => Ok(111),
+    Ok(Key::Symbol(Keysym::F13)) => Ok(105),
+    Ok(Key::Symbol(Keysym::F14)) => Ok(107),
+    Ok(Key::Symbol(Keysym::F15)) => Ok(113),
+    Ok(Key::Symbol(Keysym::F16)) => Ok(106),
+    Ok(Key::Symbol(Keysym::F17)) => Ok(64),
+    Ok(Key::Symbol(Keysym::F18)) => Ok(79),
+    Ok(Key::Symbol(Keysym::F19)) => Ok(80),
+    Ok(Key::Symbol(Keysym::F20)) => Ok(90),
+    _ => Err(invalid_input(format!("unknown key name {normalized}"))),
   }
 }
 

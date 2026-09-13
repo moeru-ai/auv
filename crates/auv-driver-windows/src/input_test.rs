@@ -159,3 +159,15 @@ fn click_batch_and_partial_delivery_cleanup_preserve_release_order() {
     assert_eq!(mouse_releases, usize::from(sent == 3));
   }
 }
+
+#[test]
+fn shared_key_symbols_preserve_windows_named_key_behavior() {
+  assert_eq!(special_virtual_key("enter"), Some(vk::RETURN));
+  assert_eq!(special_virtual_key("delete"), Some(vk::DELETE));
+  assert_eq!(special_virtual_key("backspace"), Some(vk::BACK));
+  assert_eq!(special_virtual_key("play_pause"), Some(vk::MEDIA_PLAY_PAUSE));
+  assert_eq!(special_virtual_key("forward_delete"), None);
+  assert_eq!(special_virtual_key("f1"), None);
+  assert_eq!(modifier_virtual_key("win"), Some(vk::LWIN));
+  assert_eq!(modifier_virtual_key("super"), None);
+}

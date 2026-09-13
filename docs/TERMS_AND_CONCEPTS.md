@@ -776,6 +776,14 @@ the unified operation is a frontend and typed-command contract.
 
 ## Keyboard Input
 
+`Key` represents a logical key as `Modifier` or `Symbol(Keysym)`. `Keysym` comes
+from `xkeysym`; it does not identify a native physical keycode. `Modifier`
+represents Shift, Control, Alt, or Meta. Meta means Command on macOS and
+Windows/Super on Windows/Linux. `ClickModifiers` stores the combined modifier
+state for a click. Parsing a key does not prove that a platform or layout can
+deliver it. Drivers own native mappings and retain their existing input aliases.
+
+
 A **key press** is one complete down/up action. A **key combination** presses multiple
 keys before releasing them in reverse order. Repetition repeats a complete
 press/release, with an explicit interval; it is distinct from holding a key

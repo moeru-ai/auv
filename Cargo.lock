@@ -645,6 +645,7 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "xkeysym",
 ]
 
 [[package]]
