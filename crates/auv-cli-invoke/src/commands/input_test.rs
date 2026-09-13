@@ -71,11 +71,11 @@ fn click_point_preserves_modifiers_in_typed_replay_input() {
 
 #[test]
 fn click_modifier_parser_rejects_unknown_keys_and_duplicate_aliases() {
-  assert!(click_modifiers(Some("cmd,meta")).unwrap_err().contains("duplicate"));
-  assert!(click_modifiers(Some("space")).unwrap_err().contains("unknown"));
-  assert!(click_modifiers(Some("61")).unwrap_err().contains("unknown"));
-  assert!(click_modifiers(Some("")).is_err());
-  assert!(click_modifiers(None).unwrap().is_empty());
+  assert!(parse_click_modifiers(Some("cmd,meta")).unwrap_err().contains("duplicate"));
+  assert!(parse_click_modifiers(Some("space")).unwrap_err().contains("unknown"));
+  assert!(parse_click_modifiers(Some("61")).unwrap_err().contains("unknown"));
+  assert!(parse_click_modifiers(Some("")).is_err());
+  assert!(parse_click_modifiers(None).unwrap().is_empty());
 }
 
 #[test]

@@ -15,10 +15,10 @@ fn paste_text_returns_typed_input_action_result() {
 
 #[test]
 fn navigation_keys_use_xkb_keysyms() {
-  assert_eq!(keysym::named_or_char("left").unwrap(), keysym::LEFT);
-  assert_eq!(keysym::named_or_char("ArrowDown").unwrap(), keysym::DOWN);
-  assert_eq!(keysym::named_or_char("page_up").unwrap(), keysym::PAGE_UP);
-  assert_eq!(keysym::named_or_char("end").unwrap(), keysym::END);
+  assert_eq!(keysym::named_or_char("left").unwrap(), auv_driver_common::Keysym::Left.raw() as i32);
+  assert_eq!(keysym::named_or_char("ArrowDown").unwrap(), auv_driver_common::Keysym::Down.raw() as i32);
+  assert_eq!(keysym::named_or_char("page_up").unwrap(), auv_driver_common::Keysym::Page_Up.raw() as i32);
+  assert_eq!(keysym::named_or_char("end").unwrap(), auv_driver_common::Keysym::End.raw() as i32);
 }
 
 #[test]
@@ -67,4 +67,14 @@ fn click_modifiers_map_to_standard_platform_keys() {
     [0xffe1, 0xffe3, 0xffe9, 0xffeb]
   );
   assert!(click_modifier_keysyms(Default::default()).is_empty());
+}
+
+#[test]
+fn shared_key_symbols_preserve_linux_named_key_behavior() {
+  assert_eq!(keysym::named_or_char("enter").unwrap(), auv_driver_common::Keysym::Return.raw() as i32);
+  assert_eq!(keysym::named_or_char("delete").unwrap(), auv_driver_common::Keysym::Delete.raw() as i32);
+  assert_eq!(keysym::named_or_char("F12").unwrap(), auv_driver_common::Keysym::F12.raw() as i32);
+  assert!(keysym::named_or_char("F13").is_err());
+  assert!(keysym::named_or_char("forward_delete").is_err());
+  assert!(keysym::named_or_char("play_pause").is_err());
 }
