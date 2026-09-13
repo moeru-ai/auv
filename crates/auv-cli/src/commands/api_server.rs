@@ -105,6 +105,7 @@ async fn serve(args: ApiServerServeArgs, project_root: &std::path::Path) -> Resu
   };
   super::serve::run_listeners(
     super::serve::HostOptions {
+      id: None,
       listeners: vec![listener],
       pairing_store: args.pairing_store,
       store_root: args.store_root,

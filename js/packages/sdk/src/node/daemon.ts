@@ -30,6 +30,8 @@ export interface AuvDaemon {
   readonly endpoints: readonly string[]
   /** Resolves whenever the daemon exits, including exits it initiates itself. */
   readonly exited: Promise<AuvDaemonExit>
+  /** Identity of this launch, also returned by health on every listener. */
+  readonly id: string
   readonly pid: number
   /** Gracefully stops the child, escalating to a forced stop after its deadline. */
   stop: () => Promise<AuvDaemonExit>
@@ -139,6 +141,9 @@ export class AuvDaemonStartError extends Error {
 
 /**
  * Starts an app-owned foreground daemon and waits for every listener to become healthy.
+ * Call once per host lifetime; use connect to attach to an existing daemon.
+ * NOTICE: shared connect-or-start discovery needs a separate ownership contract;
+ * it is deferred until a host explicitly requests shared lifecycle management.
  *
  * Use when:
  * - A Node.js host owns the daemon's lifetime and launch configuration.
@@ -153,7 +158,7 @@ export class AuvDaemonStartError extends Error {
  *
  * startAuv
  *   -> {@link serializeOverlayTheme} -> tinyexec.x (auv serve)
- *   -> {@link waitForHealth}
+ *   -> {@link waitForHealth} (matches this launch id on every endpoint)
  */
 export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon> {
   const {
@@ -209,9 +214,11 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     }
   }
 
+  const id = randomUUID()
   const child = x(binaryPath, serveArguments({
     daemonIdleTimeoutSeconds,
     discoveryFile,
+    id,
     listeners: endpoints,
     noDiscovery,
     pairingStore,
@@ -256,7 +263,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 
   try {
     await Promise.race([
-      waitForHealth(endpoints, pairingStore !== undefined, startupSignal),
+      waitForHealth(endpoints, pairingStore !== undefined, id, startupSignal),
       completion.then((result) => {
         throw new AuvDaemonStartError(
           `AUV daemon exited before becoming healthy (code ${String(result.code)}, signal ${String(result.signal)})`,
@@ -283,6 +290,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
       connectionOptions,
       endpoints,
       exited,
+      id,
       pid: child.pid!,
       stop() {
         stopping ??= stopChild(child, exited, shutdownTimeoutMs)
@@ -358,8 +366,8 @@ function serializeOverlayTheme(theme: OverlayTheme): string {
   }))
 }
 
-function serveArguments(options: StartAuvOptions): string[] {
-  const args = ['serve']
+function serveArguments(options: StartAuvOptions & { id: string }): string[] {
+  const args = ['serve', '--id', options.id]
   for (const listener of options.listeners ?? [])
     args.push('--listen', listener)
 
@@ -410,7 +418,11 @@ async function stopChild(
   return exited
 }
 
-async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, signal: AbortSignal): Promise<void> {
+/**
+ * Verifies readiness and launch identity through every configured listener.
+ * startAuv -> waitForHealth -> checkHealth; stdout is diagnostic output only.
+ */
+async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, id: string, signal: AbortSignal): Promise<void> {
   await Promise.all(endpoints.map(async (endpoint) => {
     while (true) {
       let connection: AuvConnection | undefined
@@ -423,8 +435,10 @@ async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, 
           signal,
           transport: unix ? 'unix' : namedPipe ? 'npipe' : 'http',
         })
-        await checkHealth(connection, { signal })
-        return
+        const health = await checkHealth(connection, { signal })
+        if (health.id === id)
+          return
+        throw new Error(`AUV endpoint belongs to daemon ${health.id}, expected ${id}`)
       }
       catch (error) {
         if (signal.aborted)

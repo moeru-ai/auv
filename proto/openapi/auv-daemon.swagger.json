@@ -600,6 +600,10 @@
       "properties": {
         "status": {
           "$ref": "#/definitions/v1HealthStatus"
+        },
+        "id": {
+          "type": "string",
+          "description": "Identity of this daemon instance, shared by all its listeners.\nA launcher supplies a fresh UUID per start; otherwise the daemon generates\none. This public correlation value is not an authentication credential."
         }
       }
     },

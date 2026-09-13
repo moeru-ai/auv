@@ -30,6 +30,12 @@ export type V1ApiResourceOperation = 'API_RESOURCE_OPERATION_UNSPECIFIED' | 'API
 
 export type V1CheckResponse = {
     status?: V1HealthStatus;
+    /**
+     * Identity of this daemon instance, shared by all its listeners.
+     * A launcher supplies a fresh UUID per start; otherwise the daemon generates
+     * one. This public correlation value is not an authentication credential.
+     */
+    id?: string;
 };
 
 export type V1CreatePairingTokenRequest = {

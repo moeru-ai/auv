@@ -2,7 +2,7 @@ export { getDevice, listDevices } from './devices'
 export type { Device, DevicePlatform, GetDeviceOptions } from './devices'
 
 export { checkHealth } from './health'
-export type { HealthStatus } from './health'
+export type { Health, HealthStatus } from './health'
 
 export { createPairingToken, pairDevice, revokeDeviceCredential, setPairedDeviceEnabled, unpairDevice } from './pairing'
 export type { CreatePairingTokenOptions, PairDeviceOptions, PairedDeviceOptions, PairingEnrollment, PairingToken, SetPairedDeviceEnabledOptions } from './pairing'

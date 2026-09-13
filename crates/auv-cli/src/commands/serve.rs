@@ -6,6 +6,9 @@ use clap::Args;
 /// Run the AUV daemon API in the foreground.
 #[derive(Clone, Debug, Args)]
 pub struct ServeArgs {
+  /// Fresh daemon instance UUID for launcher health verification.
+  #[arg(long)]
+  pub id: Option<uuid::Uuid>,
   /// Listener URI. May be repeated with unix://, npipe://, or http://IP:PORT.
   #[arg(long = "listen", value_name = "URI")]
   pub listeners: Vec<String>,
@@ -47,6 +50,7 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
     listeners.iter().map(|listener| auv_daemon::parse_listener(listener, args.pairing_store.is_some())).collect::<Result<Vec<_>, _>>()?;
   run_listeners(
     HostOptions {
+      id: args.id,
       listeners,
       pairing_store: args.pairing_store,
       store_root: args.store_root,
@@ -61,6 +65,7 @@ pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32,
 }
 
 pub(super) struct HostOptions {
+  pub id: Option<uuid::Uuid>,
   pub listeners: Vec<auv_daemon::ListenEndpoint>,
   pub pairing_store: Option<PathBuf>,
   pub store_root: Option<PathBuf>,
@@ -82,6 +87,7 @@ pub(super) async fn run_listeners(options: HostOptions, project_root: &std::path
     })
     .collect::<Result<Vec<_>, _>>()?;
   let server = auv_daemon::Server::bind(auv_daemon::Config {
+    id: options.id,
     listeners: options.listeners,
     first_party_runners: first_party_runner_runtimes(&store_root)?,
     store_root,
@@ -95,7 +101,7 @@ pub(super) async fn run_listeners(options: HostOptions, project_root: &std::path
   for endpoint in server.endpoints() {
     println!("auv serve: {endpoint}");
   }
-  std::io::stdout().flush().map_err(|error| format!("failed to flush daemon readiness line: {error}"))?;
+  std::io::stdout().flush().map_err(|error| format!("failed to flush daemon listener log: {error}"))?;
   let shutdown = tokio_util::sync::CancellationToken::new();
   let signal = shutdown.clone();
   tokio::spawn(async move {

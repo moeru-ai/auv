@@ -3,7 +3,7 @@ import type { DescMessage, MessageShape } from '@bufbuild/protobuf'
 import type { AuvConnection } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
 import type { Device, GetDeviceOptions } from '../auv-daemon/devices'
-import type { HealthStatus } from '../auv-daemon/health'
+import type { Health } from '../auv-daemon/health'
 import type { CreatePairingTokenOptions, PairDeviceOptions, PairedDeviceOptions, PairingEnrollment, PairingToken, SetPairedDeviceEnabledOptions } from '../auv-daemon/pairing'
 import type { CreateRunnerOptions, DeleteRunnerOptions, GetRunnerClassOptions, GetRunnerOptions, ListRunnerClassesOptions, Runner, RunnerClass } from '../auv-daemon/runners'
 import type { CreateRunOptions, GetRunOptions, Run, StopRunOptions } from '../auv-daemon/runs'
@@ -27,7 +27,7 @@ export interface AuvClient {
     list: (options?: OperationOptions) => Promise<readonly Device[]>
   }
   readonly health: {
-    check: (options?: OperationOptions) => Promise<HealthStatus>
+    check: (options?: OperationOptions) => Promise<Health>
   }
   readonly invoke: {
     duplex: <I extends DescMessage, O extends DescMessage>(options: InvokeDuplexOptions<I, O>) => ReturnType<typeof invokeDuplex<I, O>>

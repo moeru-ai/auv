@@ -554,17 +554,17 @@ impl InputService for LocalInputService {
       })
       .collect::<Result<Vec<_>, _>>()?;
     let target = input_target_from_proto(&self.session, request.target)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       let actions = self.session.input().input_keyboard(&target, inputs, request.dry_run).map_err(keyboard_input_status)?;
       Ok(Response::new(proto::InputKeyboardResponse {
         actions: actions.unwrap_or_default().into_iter().map(input_action_to_proto).collect::<Result<_, _>>()?,
       }))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
       let _ = (target, inputs);
-      Err(Status::unimplemented("keyboard sequences are only available on macOS"))
+      Err(Status::unimplemented("keyboard sequences are available only on macOS and Linux"))
     }
   }
 
@@ -763,7 +763,7 @@ fn keyboard_input_from_proto(input: proto::KeyboardInput) -> Result<auv_driver::
 }
 
 /// Preserve the underlying gRPC category and attach typed delivery progress.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn keyboard_input_status(error: auv_driver::KeyboardInputError) -> Status {
   let message = error.to_string();
   let status = driver_status(error.cause);
@@ -1647,12 +1647,8 @@ impl DisplayService for LocalDisplayService {
 pub(super) async fn serve_inherited() -> Result<(), String> {
   let (incoming, parent_disconnected) = auv_api_server::runner_transport::inherited_transport()?.into_parts();
 
-  let driver = auv_driver::LocalDriver::new();
-  #[cfg(target_os = "linux")]
-  let driver = match std::env::var_os(super::STATE_ROOT_ENV) {
-    Some(root) => driver.with_linux_portal_state_root(std::path::PathBuf::from(root).join("portal")),
-    None => driver,
-  };
+  let portal_state_root = std::env::var_os(super::STATE_ROOT_ENV).map(|root| std::path::PathBuf::from(root).join("portal"));
+  let driver = auv::local::driver(portal_state_root).map_err(|error| error.to_string())?;
   let session = driver.open_local().map_err(|error| format!("failed to open local driver: {error}"))?;
   let display = DisplayServiceServer::new(LocalDisplayService {
     session: session.clone(),

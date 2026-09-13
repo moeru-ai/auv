@@ -18,6 +18,7 @@ fn portal_probe_maps_to_shared_permission_probe() {
 
   let shared = probe.as_permission_probe();
 
-  assert_eq!(shared.screen_recording, PermissionStatus::Granted);
+  // Interface presence never proves that a consent request was granted.
+  assert_eq!(shared.screen_recording, PermissionStatus::Unknown);
   assert_eq!(shared.automation_to_system_events, PermissionStatus::Missing);
 }
