@@ -159,7 +159,7 @@ fn capture_monitor_frame_for_session(
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.screencast_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();
-    state.screencast_session = Some(ScreenCastSession::open_monitor(restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
+    state.screencast_session = Some(ScreenCastSession::open_monitor(restore_tokens.as_ref(), state.portal_app_id.as_ref())?);
   }
   state.screencast_session.as_mut().expect("screencast session was just initialized").capture_monitor_frame(target_bounds)
 }

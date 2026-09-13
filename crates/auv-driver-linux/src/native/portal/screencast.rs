@@ -91,7 +91,7 @@ pub struct ScreenCastSession {
 }
 
 impl ScreenCastSession {
-  pub fn open_monitor(restore_tokens: Option<&RestoreTokenStore>, app_id: Option<&str>) -> DriverResult<Self> {
+  pub fn open_monitor(restore_tokens: Option<&RestoreTokenStore>, app_id: Option<&ashpd::AppID>) -> DriverResult<Self> {
     let connection = session_connection(app_id)?;
     let screencast = run("open ScreenCast", Screencast::with_connection(connection))?;
     let session = run("create screencast session", screencast.create_session(Default::default()))?;

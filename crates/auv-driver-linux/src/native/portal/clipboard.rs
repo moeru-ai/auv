@@ -23,7 +23,7 @@ const FD_TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct PortalClipboard;
 
 impl PortalClipboard {
-  pub fn open(app_id: Option<&str>) -> DriverResult<ClipboardSession> {
+  pub fn open(app_id: Option<&ashpd::AppID>) -> DriverResult<ClipboardSession> {
     ClipboardSession::open(app_id)
   }
 }
@@ -44,7 +44,7 @@ impl std::fmt::Debug for ClipboardSession {
 }
 
 impl ClipboardSession {
-  fn open(app_id: Option<&str>) -> DriverResult<Self> {
+  fn open(app_id: Option<&ashpd::AppID>) -> DriverResult<Self> {
     let connection = session_connection(app_id)?;
     let remote_desktop = run("open clipboard RemoteDesktop", RemoteDesktop::with_connection(connection.clone()))?;
     let clipboard = Arc::new(run("open Clipboard", Clipboard::with_connection(connection))?);

@@ -21,11 +21,11 @@ pub(crate) fn run<T>(operation: &str, request: impl Future<Output = ashpd::Resul
 /// deferred until their session invalidation lifecycle is defined. New
 /// connections register again; existing sessions are not migrated here.
 /// https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.host.portal.Registry.html
-pub(crate) fn session_connection(app_id: Option<&str>) -> DriverResult<zbus::Connection> {
+pub(crate) fn session_connection(app_id: Option<&ashpd::AppID>) -> DriverResult<zbus::Connection> {
   run("connect and register Portal application (install its desktop entry with auv doctor --portal-setup)", async {
     let connection = zbus::connection::Builder::session()?.method_timeout(Duration::from_secs(3)).build().await?;
     if let Some(app_id) = app_id {
-      ashpd::register_host_app_with_connection(connection.clone(), app_id.parse()?).await?;
+      ashpd::register_host_app_with_connection(connection.clone(), app_id.clone()).await?;
     }
     Ok(connection)
   })

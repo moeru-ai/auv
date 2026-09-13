@@ -94,7 +94,7 @@ impl PermissionApi<'_> {
   pub fn authorize_portals(&self) -> DriverResult<()> {
     let mut state = self.session.state.lock().expect("linux driver session state poisoned");
     let authorization = if state.input_session.is_none() || state.input_backend == crate::InputBackend::Uinput {
-      Some(crate::native::portal::PortalInput::open(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?)
+      Some(crate::native::portal::PortalInput::open(state.restore_tokens.as_ref(), state.portal_app_id.as_ref())?)
     } else {
       None
     };
@@ -109,7 +109,7 @@ impl PermissionApi<'_> {
     };
     if state.screencast_session.is_none() {
       state.screencast_session =
-        Some(crate::native::portal::ScreenCastSession::open_monitor(state.restore_tokens.as_ref(), state.portal_app_id.as_deref())?);
+        Some(crate::native::portal::ScreenCastSession::open_monitor(state.restore_tokens.as_ref(), state.portal_app_id.as_ref())?);
     }
     drop(temporary_authorization);
     Ok(())

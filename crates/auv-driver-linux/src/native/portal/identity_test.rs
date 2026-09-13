@@ -90,7 +90,8 @@ impl Drop for PrivateBus {
 #[ignore = "requires dbus-daemon; run with --ignored identity_is_registered_before_portal_calls_after_process_restart"]
 fn identity_is_registered_before_portal_calls_after_process_restart() {
   if std::env::var_os("AUV_PORTAL_IDENTITY_TEST_CHILD").is_some() {
-    let connection = session_connection(Some("ai.moeru.auv")).unwrap();
+    let app_id = "ai.moeru.auv".parse().unwrap();
+    let connection = session_connection(Some(&app_id)).unwrap();
     let error = run("create session", async {
       let proxy = ashpd::desktop::remote_desktop::RemoteDesktop::with_connection(connection).await?;
       proxy.create_session(Default::default()).await

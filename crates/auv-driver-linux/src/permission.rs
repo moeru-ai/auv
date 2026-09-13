@@ -145,16 +145,6 @@ fn probe_interface(probe: impl std::future::Future<Output = ashpd::Result<u32>>)
 #[path = "permission_test.rs"]
 mod tests;
 
-/// Portal IDs are desktop-entry basenames, never paths or shell expressions.
-pub(crate) fn validate_app_id(app_id: &str) -> auv_driver_common::DriverResult<()> {
-  if app_id.split('.').count() < 3
-    || app_id.split('.').any(|part| part.is_empty() || !part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-'))
-  {
-    return Err(crate::error::invalid_input("Portal app ID must be a reverse-domain desktop ID with at least three nonempty components"));
-  }
-  Ok(())
-}
-
 // NOTICE: ashpd 0.13 has no PermissionStore client. This KDE-specific table
 // remains behind a typed zbus proxy until ashpd exposes that client interface.
 #[cfg(target_os = "linux")]
@@ -172,21 +162,22 @@ trait PermissionStore {
 /// Verifies the configured identity using the same connection setup as input.
 #[cfg(target_os = "linux")]
 pub fn verify_portal_identity(app_id: &str) -> auv_driver_common::DriverResult<()> {
-  let _connection = crate::native::portal::session_connection(Some(app_id))?;
+  let app_id = app_id.parse::<ashpd::AppID>().map_err(|error| crate::error::invalid_input(error.to_string()))?;
+  let _connection = crate::native::portal::session_connection(Some(&app_id))?;
   Ok(())
 }
 
 /// Reads the KDE-specific per-application allow rule, not a restore token.
 #[cfg(target_os = "linux")]
 pub fn kde_authorization(app_id: &str) -> auv_driver_common::DriverResult<PermissionStatus> {
-  validate_app_id(app_id)?;
+  let app_id = app_id.parse::<ashpd::AppID>().map_err(|error| crate::error::invalid_input(error.to_string()))?;
   let connection = zbus::blocking::connection::Builder::session()
     .and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
     .map_err(|error| crate::error::backend(error.to_string()))?;
   let proxy = PermissionStoreProxy::new(&connection).map_err(|error| crate::error::backend(error.to_string()))?;
   let result = proxy.lookup("kde-authorized", "remote-desktop");
   match result {
-    Ok((permissions, _)) => Ok(if permissions.get(app_id).is_some_and(|values| values.iter().any(|value| value == "yes")) {
+    Ok((permissions, _)) => Ok(if permissions.get::<str>(app_id.as_ref()).is_some_and(|values| values.iter().any(|value| value == "yes")) {
       PermissionStatus::Granted
     } else {
       PermissionStatus::Missing
@@ -200,13 +191,13 @@ pub fn kde_authorization(app_id: &str) -> auv_driver_common::DriverResult<Permis
 /// revocation; ordinary driver operations never change permission-store rules.
 #[cfg(target_os = "linux")]
 pub fn set_kde_authorization(app_id: &str, allow: bool) -> auv_driver_common::DriverResult<()> {
-  validate_app_id(app_id)?;
+  let app_id = app_id.parse::<ashpd::AppID>().map_err(|error| crate::error::invalid_input(error.to_string()))?;
   let connection = zbus::blocking::connection::Builder::session()
     .and_then(|builder| builder.method_timeout(std::time::Duration::from_secs(3)).build())
     .map_err(|error| crate::error::backend(error.to_string()))?;
   let proxy = PermissionStoreProxy::new(&connection).map_err(|error| crate::error::backend(error.to_string()))?;
   let permissions: Vec<&str> = if allow { vec!["yes"] } else { vec![] };
   proxy
-    .set_permission("kde-authorized", true, "remote-desktop", app_id, &permissions)
+    .set_permission("kde-authorized", true, "remote-desktop", app_id.as_ref(), &permissions)
     .map_err(|error| crate::error::backend(format!("failed to update KDE application authorization: {error}")))
 }

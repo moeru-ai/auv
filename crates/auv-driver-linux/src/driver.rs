@@ -18,6 +18,9 @@ pub enum InputBackend {
 pub struct LinuxDriver {
   input_backend: InputBackend,
   portal_state_root: Option<PathBuf>,
+  #[cfg(target_os = "linux")]
+  portal_app_id: Option<ashpd::AppID>,
+  #[cfg(not(target_os = "linux"))]
   portal_app_id: Option<String>,
 }
 
@@ -41,7 +44,8 @@ impl LinuxDriver {
   /// Associates every Portal D-Bus connection with the caller's desktop ID.
   /// The caller must install a matching desktop entry before opening a Portal.
   pub fn with_portal_app_id(mut self, app_id: String) -> auv_driver_common::DriverResult<Self> {
-    crate::permission::validate_app_id(&app_id)?;
+    #[cfg(target_os = "linux")]
+    let app_id = app_id.parse::<ashpd::AppID>().map_err(|error| crate::error::invalid_input(error.to_string()))?;
     self.portal_app_id = Some(app_id);
     Ok(self)
   }
@@ -71,6 +75,9 @@ pub(crate) struct LinuxDriverSessionState {
   pub(crate) input_backend: InputBackend,
   pub(crate) screencast_session: Option<ScreenCastSession>,
   pub(crate) restore_tokens: Option<RestoreTokenStore>,
+  #[cfg(target_os = "linux")]
+  pub(crate) portal_app_id: Option<ashpd::AppID>,
+  #[cfg(not(target_os = "linux"))]
   pub(crate) portal_app_id: Option<String>,
 }
 

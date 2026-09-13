@@ -238,7 +238,7 @@ pub(crate) fn with_input_session<T>(
   if state.input_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();
     state.input_session = Some(match state.input_backend {
-      InputBackend::Portal => InputSession::Portal(PortalInput::open(restore_tokens.as_ref(), state.portal_app_id.as_deref())?),
+      InputBackend::Portal => InputSession::Portal(PortalInput::open(restore_tokens.as_ref(), state.portal_app_id.as_ref())?),
       #[cfg(target_os = "linux")]
       InputBackend::Uinput => InputSession::Uinput(crate::native::uinput::InputSession::open()?),
       #[cfg(not(target_os = "linux"))]
