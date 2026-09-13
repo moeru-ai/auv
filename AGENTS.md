@@ -509,11 +509,16 @@ Use this root-cause block format in regression tests when relevant:
 ## PR / Workflow Tips
 
 - Run formatting and tests before submitting changes that touch Rust code.
-- Use concise Conventional Commit-style subjects, such as `chore: init` and
-  `chore(README.md): added`.
-- Prefer `type(scope): summary` when a scope is useful.
-- When a commit primarily changes one crate, use the exact crate name as the
-  Conventional Commit scope, for example `feat(auv-netease-music): ...`.
+- Use `<type>(<crate-name>): <message>` for code commit subjects and PR titles.
+  Use the exact crate name, for example
+  `feat(auv-driver-linux): add uinput support` or
+  `refactor(auv-driver-common): share key parsing`.
+- For changes across multiple crates, use the crate that primarily owns the
+  changed behavior. Do not replace its name with a generic layer such as `input`.
+- For primarily documentation changes, including contributor instructions and
+  skills, use `chore(docs): <message>`.
+- For repository tooling changes with no owning crate, use the relevant tooling
+  scope instead of inventing a crate name.
 - Pull requests should include:
   - A short description.
   - Relevant design or issue links.
