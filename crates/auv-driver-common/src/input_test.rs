@@ -6,6 +6,28 @@ use super::{
 };
 
 #[test]
+fn click_options_preserve_requested_modifiers_in_recorded_input() {
+  let mut request = serde_json::to_value(ClickOptions::default()).unwrap();
+  request["modifiers"] = serde_json::json!({"meta": true, "shift": true, "alt": false, "control": false});
+  let decoded: ClickOptions = serde_json::from_value(request.clone()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap()["modifiers"], request["modifiers"]);
+}
+
+#[test]
+fn existing_click_record_without_modifiers_remains_an_ordinary_click() {
+  let mut request = serde_json::to_value(ClickOptions::default()).unwrap();
+  request.as_object_mut().unwrap().remove("modifiers");
+  let decoded: ClickOptions = serde_json::from_value(request).unwrap();
+  assert!(decoded.modifiers.is_empty());
+}
+
+#[test]
+fn click_modifiers_reject_physical_key_fields() {
+  let error = serde_json::from_value::<super::ClickModifiers>(serde_json::json!({"keycode": 61})).unwrap_err();
+  assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
 fn dispatched_input_is_explicitly_unverified_on_the_wire() {
   let result = InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse);
   let encoded = serde_json::to_value(&result).expect("serialize input action result");
@@ -71,6 +93,7 @@ fn click_and_click_options_serde_roundtrip() {
       interval: Duration::from_millis(100),
     },
     window_strategy: WindowClickStrategy::PidTargeted,
+    modifiers: Default::default(),
   };
 
   let encoded = serde_json::to_string(&options).expect("serialize click options");

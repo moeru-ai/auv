@@ -258,15 +258,18 @@ impl WindowApi<'_> {
   /// background-routing selector; Windows has only one posted-message route
   /// today, so both variants resolve to it.
   fn click_impl(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    if !matches!(options.policy, InputPolicy::ForegroundPreferred) {
+      background_input::validate_modifiers(options.modifiers)?;
+    }
     let screen_point = self.to_screen_point(window, point)?.point();
     if matches!(options.policy, InputPolicy::ForegroundPreferred) {
       let activation_attempt = foreground_window_attempt(window, "pointer delivery");
-      let mut result = self.session.input().click_at(screen_point, options.click)?;
+      let mut result = self.session.input().click_at(screen_point, options.click, options.modifiers)?;
       result.attempts.insert(0, activation_attempt);
       return Ok(result);
     }
     let _ = options.window_strategy;
-    background_input::click_at_window(window, screen_point, options.click)?;
+    background_input::click_at_window(window, screen_point, options.click, options.modifiers)?;
     Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
   }
 
@@ -407,9 +410,9 @@ impl InputApi<'_> {
   }
 
   /// Moves the pointer to `point` (screen coordinates) and issues a click.
-  pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
+  pub fn click_at(&self, point: Point, click: Click, modifiers: auv_driver_common::ClickModifiers) -> DriverResult<InputActionResult> {
     let _ = self.session;
-    click_at(point, click)
+    click_at(point, click, modifiers)
   }
 
   /// Moves the pointer to `point` and emits a mouse-wheel scroll.

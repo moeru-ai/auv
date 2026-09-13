@@ -110,6 +110,21 @@ message ClickOptions {
   InputPolicy policy = 1;
   Click click = 2;
   WindowClickStrategy window_strategy = 3;
+  ClickModifiers modifiers = 4;
+}
+
+// Standard mouse-event modifier state, not physical keys or a persistent hold.
+// Alt/Meta map to Option/Command on macOS. Missing fields are false.
+// Foreground Windows/Linux delivery scopes key transitions to the click.
+// Windows background messages support Shift/Control only; Linux has no
+// window-targeted background input. Unsupported combinations are rejected.
+// TODO(click-modifier-capabilities): old peers ignore this message. Mixed-version
+// use awaits an approved Runner capability negotiation contract.
+message ClickModifiers {
+  bool shift = 1;
+  bool control = 2;
+  bool alt = 3;
+  bool meta = 4;
 }
 
 // Screen-point delivery has no target Window policy or strategy. Keeping its
@@ -117,6 +132,7 @@ message ClickOptions {
 // have to ignore.
 message ScreenClickOptions {
   Click click = 1;
+  ClickModifiers modifiers = 2;
 }
 
 message Click {

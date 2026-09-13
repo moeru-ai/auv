@@ -297,7 +297,7 @@ impl DailyRecommendedRun<'_> {
         },
       )
       .map_err(|error| format!("{action_id}: foreground preparation failed: {error}"))?;
-    let click_result = self.session.input().click_at(screen_point.point(), Click::Single);
+    let click_result = self.session.input().click_at(screen_point.point(), Click::Single, Default::default());
     let restore_result = self.session.window().restore_input(lease);
     click_result.map_err(|error| format!("{action_id}: foreground click failed: {error}"))?;
     restore_result.map_err(|error| format!("{action_id}: foreground restore failed: {error}"))?;
@@ -504,6 +504,7 @@ fn daily_recommended_window_click_options() -> auv_driver::ClickOptions {
     policy: auv_driver::InputPolicy::BackgroundPreferred,
     click: auv_driver::Click::Single,
     window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,
+    modifiers: Default::default(),
   }
 }
 

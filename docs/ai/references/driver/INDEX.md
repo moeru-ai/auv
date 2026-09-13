@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **29**
+Count: **30**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -37,6 +37,8 @@ Count: **29**
 - [`2026-08-30-linux-wayland-pipewire-capture-runtime-design.md`](2026-08-30-linux-wayland-pipewire-capture-runtime-design.md)
 
 - [`2026-09-07-overlay-host-theme.md`](2026-09-07-overlay-host-theme.md)
+
+- [`2026-09-11-click-modifiers-contract.md`](2026-09-11-click-modifiers-contract.md)
 
 ## Related
 

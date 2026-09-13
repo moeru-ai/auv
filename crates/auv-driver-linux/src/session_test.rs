@@ -136,3 +136,28 @@ fn window_scroll_requires_foreground_candidate_for_background_preferred_policy()
 
   assert!(error.to_string().contains("ForegroundHid"));
 }
+
+#[test]
+fn modified_background_click_is_rejected_before_portal_input() {
+  let modifiers = auv_driver_common::ClickModifiers {
+    meta: true,
+    ..Default::default()
+  };
+  let driver = session();
+  let window = sample_window();
+  for policy in [InputPolicy::BackgroundOnly] {
+    let error = driver
+      .window()
+      .click(
+        &window,
+        WindowPoint::new(1.0, 1.0),
+        ClickOptions {
+          policy,
+          modifiers,
+          ..Default::default()
+        },
+      )
+      .unwrap_err();
+    assert!(error.to_string().contains("linux window.click cannot use background_only"));
+  }
+}

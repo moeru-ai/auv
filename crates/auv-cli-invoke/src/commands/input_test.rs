@@ -5,6 +5,80 @@ use auv_tracing::{Context, MemoryTracingStore, RunId, TraceRecord, configure, di
 use std::sync::Arc;
 
 #[test]
+fn click_point_accepts_repeated_and_comma_separated_modifiers() {
+  for values in [
+    vec!["cmd", "shift"],
+    vec!["cmd,shift"],
+    vec!["cmd", "shift,option"],
+  ] {
+    let mut arguments = vec!["10".into(), "20".into()];
+    for value in &values {
+      arguments.extend(["--modifiers".into(), (*value).into()]);
+    }
+    let crate::InvokeCommandCliParse::Invoke {
+      inputs, typed_args, ..
+    } = click_point_invoke_command().parse_cli_args(&arguments).unwrap()
+    else {
+      panic!("expected parsed invocation");
+    };
+    assert_eq!(inputs["modifiers"], values.join(","));
+    let protocol_args: ClickPointArgs = crate::command::decode_args(&InvokeCommandInput {
+      command_id: "input.clickPoint".into(),
+      target: None,
+      inputs,
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .unwrap();
+    let replayed: ClickPointArgs = serde_json::from_value(serde_json::json!({
+      "x": 10.0, "y": 20.0, "modifiers": values.join(",")
+    }))
+    .unwrap();
+    assert_eq!(protocol_args.click_options().unwrap().modifiers, replayed.click_options().unwrap().modifiers);
+    assert_eq!(typed_args.get::<ClickPointArgs>().unwrap().click_options().unwrap().modifiers, replayed.click_options().unwrap().modifiers);
+    assert_eq!(
+      replayed.click_options().unwrap().modifiers,
+      auv_driver::ClickModifiers {
+        meta: true,
+        shift: true,
+        alt: values.contains(&"shift,option"),
+        ..Default::default()
+      }
+    );
+  }
+}
+
+#[test]
+fn click_point_preserves_modifiers_in_typed_replay_input() {
+  let args: ClickPointArgs = serde_json::from_value(serde_json::json!({
+    "x": 10.0, "y": 20.0, "modifiers": "cmd,shift,option,control"
+  }))
+  .unwrap();
+  let recorded = serde_json::to_value(&args).unwrap();
+  assert_eq!(recorded["modifiers"], "cmd,shift,option,control");
+  let replayed: ClickPointArgs = serde_json::from_value(recorded).unwrap();
+  assert_eq!(
+    replayed.click_options().unwrap().modifiers,
+    auv_driver::ClickModifiers {
+      shift: true,
+      control: true,
+      alt: true,
+      meta: true,
+    }
+  );
+}
+
+#[test]
+fn click_modifier_parser_rejects_unknown_keys_and_duplicate_aliases() {
+  assert!(click_modifiers(Some("cmd,meta")).unwrap_err().contains("duplicate"));
+  assert!(click_modifiers(Some("space")).unwrap_err().contains("unknown"));
+  assert!(click_modifiers(Some("61")).unwrap_err().contains("unknown"));
+  assert!(click_modifiers(Some("")).is_err());
+  assert!(click_modifiers(None).unwrap().is_empty());
+}
+
+#[test]
 fn window_click_options_parse_policy_and_repeated_clicks() {
   let options = click_options(Some(auv_driver::InputPolicy::ForegroundPreferred), Some(3), Some(60));
   assert_eq!(options.policy, auv_driver::InputPolicy::ForegroundPreferred);

@@ -137,7 +137,7 @@ async fn resolved_window_child_retains_the_exact_resource_reference() {
 async fn runner_input_exposes_typed_screen_point_click() {
   let runner = RunnerClient::new(disconnected_client(), route()).expect("runner client");
   let input = runner.input();
-  let call = input.click_screen_point(auv_driver::Point::new(10.0, 20.0), auv_driver::Click::Single);
+  let call = input.click_screen_point(auv_driver::Point::new(10.0, 20.0), auv_driver::Click::Single, Default::default());
   drop(call);
 }
 

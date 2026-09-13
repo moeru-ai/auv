@@ -1035,6 +1035,20 @@ not a promise that the selected path name will contain “background” or
 path actually used. Click cardinality is a separate option and may request a
 single, double, or explicitly counted repeated click with an interval.
 
+`ClickModifiers` describes the standard modifier state on a click's mouse
+events: `shift`, `control`, `alt`, and `meta`. On macOS, Alt/Meta map to
+Option/Command. It does not describe physical key identity, keyboard layout,
+left/right keys, arbitrary native keycodes, or keys held across calls. The
+macOS implementation stamps the requested flags on both down and up events;
+it does not synthesize keyboard transitions. Windows foreground and Linux
+Portal delivery use scoped keyboard transitions (Meta maps to Windows/Super),
+with release attempts on failure. Windows background messages carry only
+Shift/Control and reject Alt/Meta before activation. Linux continues to reject
+background-only window input. Delivery remains unverified until a
+separate consumer verifies the intended application result. See the
+[click modifier contract](ai/references/driver/2026-09-11-click-modifiers-contract.md)
+for evidence, protocol migration, and intentional deferrals.
+
 ## Scroll Delivery Strategy
 
 Scroll delivery strategy is a provisional driver contract for the ordered

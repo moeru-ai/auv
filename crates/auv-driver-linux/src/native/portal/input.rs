@@ -131,20 +131,43 @@ impl InputSession {
     key_result
   }
 
-  pub fn click_at(&mut self, point: Point, click: Click) -> DriverResult<()> {
+  pub fn click_at(&mut self, point: Point, click: Click, modifiers: &[i32]) -> DriverResult<()> {
     let (count, interval) = click_parts(&click)?;
     self.require_pointer()?;
+    if !modifiers.is_empty() {
+      self.require_keyboard()?;
+    }
     self.move_pointer_to(point)?;
     std::thread::sleep(POINTER_SETTLE_DURATION);
-    for index in 0..count {
-      self.notify_pointer_button(MouseButton::Left, STATE_PRESSED)?;
-      std::thread::sleep(CLICK_PRESS_DURATION);
-      self.notify_pointer_button(MouseButton::Left, STATE_RELEASED)?;
-      if index + 1 < count && !interval.is_zero() {
-        std::thread::sleep(interval);
-      }
-    }
-    Ok(())
+    with_click_modifiers(
+      modifiers,
+      |key, pressed| {
+        self.notify_keyboard_keysym(
+          key,
+          if pressed {
+            STATE_PRESSED
+          } else {
+            STATE_RELEASED
+          },
+        )
+      },
+      || {
+        for index in 0..count {
+          // A failed D-Bus reply may follow delivery: attempt release even when
+          // the press reports an error, before unwinding modifier state.
+          let press = self.notify_pointer_button(MouseButton::Left, STATE_PRESSED);
+          if press.is_ok() {
+            std::thread::sleep(CLICK_PRESS_DURATION);
+          }
+          let release = self.notify_pointer_button(MouseButton::Left, STATE_RELEASED);
+          combine_release(press, release)?;
+          if index + 1 < count && !interval.is_zero() {
+            std::thread::sleep(interval);
+          }
+        }
+        Ok(())
+      },
+    )
   }
 
   pub fn move_to(&mut self, point: Point) -> DriverResult<()> {
@@ -408,6 +431,39 @@ fn clamp(value: f64, min: f64, max: f64) -> f64 {
 fn debug_input_mapping(message: impl FnOnce() -> String) {
   if std::env::var_os("AUV_LINUX_INPUT_DEBUG").is_some() {
     eprintln!("auv-driver-linux input: {}", message());
+  }
+}
+
+/// Portal pointer events have no modifier field. Scope keyboard transitions to
+/// this click and attempt every release, including a press with an uncertain
+/// D-Bus reply. Session failure also closes the portal in the owning input API.
+fn with_click_modifiers(
+  modifiers: &[i32],
+  mut key_event: impl FnMut(i32, bool) -> DriverResult<()>,
+  click: impl FnOnce() -> DriverResult<()>,
+) -> DriverResult<()> {
+  let mut attempted = 0;
+  let mut result = Ok(());
+  for key in modifiers {
+    attempted += 1;
+    result = key_event(*key, true);
+    if result.is_err() {
+      break;
+    }
+  }
+  if result.is_ok() {
+    result = click();
+  }
+  for key in modifiers[..attempted].iter().rev() {
+    result = combine_release(result, key_event(*key, false));
+  }
+  result
+}
+
+fn combine_release(action: DriverResult<()>, release: DriverResult<()>) -> DriverResult<()> {
+  match (action, release) {
+    (Ok(()), result) | (result, Ok(())) => result,
+    (Err(action), Err(release)) => Err(backend(format!("{action}; additionally failed to release input: {release}"))),
   }
 }
 

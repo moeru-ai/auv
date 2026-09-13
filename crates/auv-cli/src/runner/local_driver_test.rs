@@ -447,6 +447,38 @@ fn input_options_reject_malformed_values_before_delivery() {
 }
 
 #[test]
+fn click_rpc_preserves_modifiers_for_window_and_screen_delivery() {
+  let modifiers = proto::ClickModifiers {
+    shift: true,
+    control: true,
+    alt: true,
+    meta: true,
+  };
+  let window = click_options_from_proto(Some(proto::ClickOptions {
+    modifiers: Some(modifiers),
+    ..Default::default()
+  }))
+  .unwrap();
+  let (_, screen) = screen_click_options_from_proto(Some(proto::ScreenClickOptions {
+    modifiers: Some(modifiers),
+    ..Default::default()
+  }))
+  .unwrap();
+  assert_eq!(
+    window.modifiers,
+    auv_driver::ClickModifiers {
+      shift: true,
+      control: true,
+      alt: true,
+      meta: true
+    }
+  );
+  assert_eq!(screen, window.modifiers);
+  assert!(click_options_from_proto(None).unwrap().modifiers.is_empty());
+  assert!(screen_click_options_from_proto(Some(Default::default())).unwrap().1.is_empty());
+}
+
+#[test]
 fn input_action_mapper_preserves_attempts_and_disturbance() {
   let action = input_action_to_proto(auv_driver::InputActionResult {
     selected_path: auv_driver::InputDeliveryPath::ClipboardPaste,

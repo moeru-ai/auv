@@ -131,7 +131,8 @@ pub async fn click_display_frame_point_via_api(
       .or_else(|| displays.displays.first())
       .ok_or_else(|| ObservationError::Api("Driver Runner returned no displays".to_string()))?;
     let screen_point = project_display_frame_point(frame, display.frame, point);
-    let response = driver.input().click_screen_point(screen_point.point(), auv_driver::Click::Single).await.map_err(api_error)?;
+    let response =
+      driver.input().click_screen_point(screen_point.point(), auv_driver::Click::Single, Default::default()).await.map_err(api_error)?;
     #[cfg(feature = "tracing")]
     crate::run_read::emit_json_artifact(auv_driver::INPUT_ACTION_RESULT_PURPOSE, &response.action);
     Ok((screen_point, response.action))

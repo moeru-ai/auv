@@ -16,8 +16,8 @@ use std::time::Duration;
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::Point;
 use auv_driver_common::input::{
-  Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, TextSubmit,
-  TypeTextOptions,
+  Click, ClickModifiers, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll,
+  TextSubmit, TypeTextOptions,
 };
 
 use crate::error::invalid_input;
@@ -49,10 +49,22 @@ struct KeyChord {
   key: u16,
 }
 
-pub fn click_at(point: Point, click: Click) -> DriverResult<InputActionResult> {
+pub fn click_at(point: Point, click: Click, modifiers: ClickModifiers) -> DriverResult<InputActionResult> {
   let (count, interval) = click_parts(&click)?;
-  native::click(point, count, interval)?;
+  native::click(point, count, interval, &click_modifier_keys(modifiers))?;
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+}
+
+fn click_modifier_keys(modifiers: ClickModifiers) -> Vec<u16> {
+  [
+    (modifiers.shift, vk::SHIFT),
+    (modifiers.control, vk::CONTROL),
+    (modifiers.alt, vk::MENU),
+    (modifiers.meta, vk::LWIN),
+  ]
+  .into_iter()
+  .filter_map(|(enabled, key)| enabled.then_some(key))
+  .collect()
 }
 
 pub fn move_to(point: Point) -> DriverResult<InputActionResult> {
@@ -257,9 +269,9 @@ mod native {
   use auv_driver_common::geometry::Point;
   use auv_driver_common::input::{Scroll, TypeTextOptions};
   use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS,
-    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK,
-    MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY,
+    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+    MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
+    MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WHEEL_DELTA,
@@ -349,18 +361,55 @@ mod native {
     )])
   }
 
-  pub(super) fn click(point: Point, count: u32, interval: Duration) -> DriverResult<()> {
+  pub(super) fn click(point: Point, count: u32, interval: Duration, modifiers: &[u16]) -> DriverResult<()> {
     move_to(point)?;
     for index in 0..count {
-      send_inputs(&[
-        mouse_input(0, 0, 0, MOUSEEVENTF_LEFTDOWN),
-        mouse_input(0, 0, 0, MOUSEEVENTF_LEFTUP),
-      ])?;
+      // Preserve already-held user keys: this operation only releases keys it
+      // injects. SendInput does not reset existing keyboard state.
+      let keys: Vec<_> = modifiers
+        .iter()
+        .copied()
+        .filter(|key| {
+          // SAFETY: GetAsyncKeyState accepts any virtual-key integer; no pointers.
+          unsafe { GetAsyncKeyState(i32::from(*key)) >= 0 }
+        })
+        .collect();
+      let inputs = click_inputs(&keys);
+      // SAFETY: inputs contains initialized INPUT unions matching their tags,
+      // and its slice remains live throughout SendInput.
+      let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } as usize;
+      if sent != inputs.len() {
+        // SendInput inserts in order. Release only the injected prefix that
+        // remains down, including the mouse button if its up was not inserted.
+        let cleanup = click_cleanup(&keys, sent);
+        let release = send_inputs(&cleanup);
+        let detail = release.err().map(|error| format!("; input release also failed: {error}")).unwrap_or_default();
+        return Err(backend(format!("SendInput injected {sent} of {} click events{detail}", inputs.len())));
+      }
       if index + 1 < count && !interval.is_zero() {
         thread::sleep(interval);
       }
     }
     Ok(())
+  }
+
+  pub(super) fn click_inputs(keys: &[u16]) -> Vec<INPUT> {
+    let mut inputs: Vec<_> = keys.iter().map(|key| virtual_key_input(*key, KEYBD_EVENT_FLAGS(0))).collect();
+    inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTDOWN));
+    inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTUP));
+    inputs.extend(keys.iter().rev().map(|key| virtual_key_input(*key, KEYEVENTF_KEYUP)));
+    inputs
+  }
+
+  pub(super) fn click_cleanup(keys: &[u16], sent: usize) -> Vec<INPUT> {
+    let mut inputs = Vec::new();
+    if sent == keys.len() + 1 {
+      inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTUP));
+    }
+    let pressed = sent.min(keys.len());
+    let released = sent.saturating_sub(keys.len() + 2).min(keys.len());
+    inputs.extend(keys[..pressed.saturating_sub(released)].iter().rev().map(|key| virtual_key_input(*key, KEYEVENTF_KEYUP)));
+    inputs
   }
 
   pub(super) fn scroll(point: Point, scroll: Scroll) -> DriverResult<()> {
@@ -454,7 +503,7 @@ mod native {
     Err(DriverError::unsupported("input.move_to"))
   }
 
-  pub(super) fn click(_point: Point, _count: u32, _interval: Duration) -> DriverResult<()> {
+  pub(super) fn click(_point: Point, _count: u32, _interval: Duration, _modifiers: &[u16]) -> DriverResult<()> {
     Err(DriverError::unsupported("input.click"))
   }
 

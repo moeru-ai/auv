@@ -18,16 +18,31 @@
 
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::Point;
-use auv_driver_common::input::{Click, Scroll};
+use auv_driver_common::input::{Click, ClickModifiers, Scroll};
 use auv_driver_common::window::Window;
 
+/// Posted mouse messages encode only Shift/Control. Alt/Meta require a
+/// foreground input policy; do not mutate another thread's keyboard state.
+/// See https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-lbuttondown.
+/// TODO: Background Alt/Meta needs an approved target-thread key-state contract;
+/// posted mouse messages cannot represent it without global input side effects.
+pub(crate) fn validate_modifiers(modifiers: ClickModifiers) -> DriverResult<()> {
+  if modifiers.alt || modifiers.meta {
+    return Err(crate::error::invalid_input(
+      "windows background click supports only shift/control modifiers; use foreground-preferred for alt/meta",
+    ));
+  }
+  Ok(())
+}
+
 #[cfg(target_os = "windows")]
-pub(crate) fn click_at_window(window: &Window, screen_point: Point, click: Click) -> DriverResult<()> {
-  native::click(window, screen_point, click)
+pub(crate) fn click_at_window(window: &Window, screen_point: Point, click: Click, modifiers: ClickModifiers) -> DriverResult<()> {
+  validate_modifiers(modifiers)?;
+  native::click(window, screen_point, click, modifiers)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn click_at_window(_window: &Window, _screen_point: Point, _click: Click) -> DriverResult<()> {
+pub(crate) fn click_at_window(_window: &Window, _screen_point: Point, _click: Click, _modifiers: ClickModifiers) -> DriverResult<()> {
   Err(auv_driver_common::error::DriverError::unsupported("window.click background delivery"))
 }
 
@@ -45,11 +60,11 @@ pub(crate) fn scroll_at_window(_window: &Window, _screen_point: Point, _scroll: 
 mod native {
   use auv_driver_common::error::DriverResult;
   use auv_driver_common::geometry::Point;
-  use auv_driver_common::input::{Click, Scroll};
+  use auv_driver_common::input::{Click, ClickModifiers, Scroll};
   use auv_driver_common::window::Window;
   use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
   use windows::Win32::Graphics::Gdi::ScreenToClient;
-  use windows::Win32::System::SystemServices::MK_LBUTTON;
+  use windows::Win32::System::SystemServices::{MK_CONTROL, MK_LBUTTON, MK_SHIFT};
   use windows::Win32::UI::WindowsAndMessaging::{
     CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, ChildWindowFromPointEx, PostMessageW, WHEEL_DELTA, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
@@ -63,7 +78,7 @@ mod native {
   // hierarchy so resolution cannot loop forever.
   const MAX_HIT_TEST_DEPTH: usize = 32;
 
-  pub(super) fn click(window: &Window, screen_point: Point, click: Click) -> DriverResult<()> {
+  pub(super) fn click(window: &Window, screen_point: Point, click: Click, modifiers: ClickModifiers) -> DriverResult<()> {
     let target = resolve_target_hwnd(window, screen_point)?;
     let client = screen_to_client(target, screen_point)?;
     let lparam = make_lparam(client.x, client.y);
@@ -74,19 +89,32 @@ mod native {
     // controls (list/tree/edit) that key off WM_LBUTTONDBLCLK, so the second
     // press of a `Click::Double` is posted as WM_LBUTTONDBLCLK instead.
     let is_double = matches!(click, Click::Double { .. });
+    let modifier_flags = mouse_modifier_flags(modifiers);
     for index in 0..count {
       let down_message = if is_double && index == 1 {
         WM_LBUTTONDBLCLK
       } else {
         WM_LBUTTONDOWN
       };
-      post(target, down_message, WPARAM(MK_LBUTTON.0 as usize), lparam)?;
-      post(target, WM_LBUTTONUP, WPARAM(0), lparam)?;
+      post(target, down_message, WPARAM(modifier_flags | MK_LBUTTON.0 as usize), lparam)?;
+      post(target, WM_LBUTTONUP, WPARAM(modifier_flags), lparam)?;
       if index + 1 < count && !interval.is_zero() {
         std::thread::sleep(interval);
       }
     }
     Ok(())
+  }
+
+  pub(super) fn mouse_modifier_flags(modifiers: ClickModifiers) -> usize {
+    (if modifiers.shift {
+      MK_SHIFT.0 as usize
+    } else {
+      0
+    }) | (if modifiers.control {
+      MK_CONTROL.0 as usize
+    } else {
+      0
+    })
   }
 
   pub(super) fn scroll(window: &Window, screen_point: Point, scroll: Scroll) -> DriverResult<()> {

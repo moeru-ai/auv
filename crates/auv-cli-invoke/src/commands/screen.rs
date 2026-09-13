@@ -290,7 +290,7 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
       .find_text_in_capture(&capture.capture, &query, auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
     let point = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?.action_point();
-    let action = session.input().click_at(point, auv_driver::Click::Single).map_err(|error| error.to_string())?;
+    let action = session.input().click_at(point, auv_driver::Click::Single, Default::default()).map_err(|error| error.to_string())?;
     super::input::emit_input_action_result(&action);
     emit_png("auv.driver.screen_ocr_source", &capture.capture.image);
     Ok(ScreenTextClick {

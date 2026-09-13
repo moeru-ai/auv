@@ -204,7 +204,7 @@ impl WindowApi<'_> {
       )],
     };
     let screen_point = self.to_screen_point(window, point)?.point();
-    let mut result = self.session.input().click_at(screen_point, options.click)?;
+    let mut result = self.session.input().click_at(screen_point, options.click, options.modifiers)?;
     result.attempts.splice(0..0, focus_attempts);
     add_foreground_window_fallback_reason(
       &mut result,
@@ -310,8 +310,8 @@ impl InputApi<'_> {
     move_to(&self.session.state, point)
   }
 
-  pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
-    click_at(&self.session.state, point, click)
+  pub fn click_at(&self, point: Point, click: Click, modifiers: auv_driver_common::ClickModifiers) -> DriverResult<InputActionResult> {
+    click_at(&self.session.state, point, click, modifiers)
   }
 
   pub fn scroll_at(&self, point: Point, scroll: Scroll, settle: std::time::Duration) -> DriverResult<InputActionResult> {

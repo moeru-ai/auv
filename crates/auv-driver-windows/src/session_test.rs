@@ -174,3 +174,31 @@ fn wait_text_fails_with_not_found_for_unmatchable_query_on_a_live_window() {
 
   assert!(error.to_string().contains("before timeout"));
 }
+
+#[test]
+fn background_click_rejects_alt_meta_before_target_activation() {
+  let modifiers = auv_driver_common::ClickModifiers {
+    meta: true,
+    ..Default::default()
+  };
+  let driver = session();
+  let window = sample_window();
+  for policy in [
+    InputPolicy::BackgroundOnly,
+    InputPolicy::BackgroundPreferred,
+  ] {
+    let error = driver
+      .window()
+      .click(
+        &window,
+        WindowPoint::new(1.0, 1.0),
+        ClickOptions {
+          policy,
+          modifiers,
+          ..Default::default()
+        },
+      )
+      .unwrap_err();
+    assert!(error.to_string().contains("windows background click supports only shift/control"));
+  }
+}

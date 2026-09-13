@@ -146,11 +146,39 @@ impl InputPreparationLease {
   }
 }
 
+/// Standard modifier state attached to a complete mouse click. Alt/Meta mean
+/// Option/Command on macOS. This does not identify physical keyboard keys.
+/// macOS stamps mouse-event flags without synthesizing keyboard transitions;
+/// input-forwarding applications may need a different delivery contract.
+/// Windows foreground and Linux portal input use scoped key transitions;
+/// Meta means Windows/Super. Windows background supports Shift/Control only.
+/// TODO(click-held-keys): arbitrary keys, sided modifiers and persistent holds
+/// need an owner-approved keyboard identity and cancellation/release contract.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClickModifiers {
+  pub shift: bool,
+  pub control: bool,
+  pub alt: bool,
+  pub meta: bool,
+}
+
+impl ClickModifiers {
+  pub const fn is_empty(self) -> bool {
+    !(self.shift || self.control || self.alt || self.meta)
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClickOptions {
+  // TODO(click-button): button routing remains a separate BG-1 slice; see
+  // `docs/ai/references/driver/2026-09-11-click-modifiers-contract.md`.
   pub policy: InputPolicy,
   pub click: Click,
   pub window_strategy: WindowClickStrategy,
+  /// Missing modifiers in existing recorded requests retain ordinary clicks.
+  #[serde(default)]
+  pub modifiers: ClickModifiers,
 }
 
 impl Default for ClickOptions {
@@ -159,6 +187,7 @@ impl Default for ClickOptions {
       policy: InputPolicy::BackgroundPreferred,
       click: Click::Single,
       window_strategy: WindowClickStrategy::default(),
+      modifiers: ClickModifiers::default(),
     }
   }
 }
