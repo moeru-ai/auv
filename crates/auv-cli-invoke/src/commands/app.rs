@@ -34,7 +34,7 @@ pub fn permission_probe_output(permissions: &auv_driver::PermissionProbe) -> Inv
 pub async fn read_permissions() -> Result<auv_driver::PermissionProbe, String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     session.permission().probe().map_err(|error| error.to_string())
   }
   #[cfg(not(target_os = "macos"))]
@@ -83,7 +83,7 @@ pub async fn activate_application(_target_application_id: Option<String>) -> Res
   {
     use auv_driver_macos::ApplicationControl;
 
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     session.activate_bundle_id(target_application_id, std::time::Duration::from_millis(150)).map_err(|error| error.to_string())
   }
   #[cfg(not(target_os = "macos"))]
