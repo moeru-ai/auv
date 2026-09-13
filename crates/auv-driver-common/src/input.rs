@@ -275,8 +275,8 @@ pub enum InputTarget {
 
 /// A key combination: keys go down in order and come up in reverse order. Modifiers
 /// precede ordinary keys. Each repetition releases every key before the next.
-/// TODO(key-hold): independent down/up and hold duration are deferred until an
-/// approved cancellation/release contract exists; counts are discrete presses.
+/// TODO(key-state): independent down/up remains deferred until an approved
+/// cancellation/release contract exists.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PressKeysOptions {
@@ -285,6 +285,8 @@ pub struct PressKeysOptions {
   pub count: u32,
   /// Required and positive for repeated presses; zero for a single press.
   pub interval: Duration,
+  /// Bounded time between the final key-down and the first key-up.
+  pub hold: Duration,
   pub settle: Duration,
 }
 
@@ -294,6 +296,7 @@ impl Default for PressKeysOptions {
       keys: Vec::new(),
       count: 1,
       interval: Duration::ZERO,
+      hold: Duration::ZERO,
       settle: Duration::ZERO,
     }
   }
@@ -311,6 +314,7 @@ impl From<KeyPressOptions> for PressKeysOptions {
     };
     Self {
       keys,
+      hold: Duration::ZERO,
       settle: options.settle,
       ..Default::default()
     }

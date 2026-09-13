@@ -748,6 +748,7 @@ fn keyboard_input_from_proto(input: proto::KeyboardInput) -> Result<auv_driver::
           keys: options.keys,
           count: options.count.unwrap_or(1),
           interval: duration_from_proto(options.interval, std::time::Duration::ZERO, "interval")?,
+          hold: duration_from_proto(options.hold, std::time::Duration::ZERO, "hold")?,
           settle: duration_from_proto(options.settle, std::time::Duration::ZERO, "settle")?,
         },
       }

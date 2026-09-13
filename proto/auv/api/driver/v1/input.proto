@@ -379,6 +379,8 @@ message PressKeysOptions {
   // Positive for repeated presses; zero/absent for a single press.
   google.protobuf.Duration interval = 3;
   google.protobuf.Duration settle = 4;
+  // Bounded time between the final key-down and the first key-up.
+  google.protobuf.Duration hold = 5;
 }
 
 message KeyboardPress {

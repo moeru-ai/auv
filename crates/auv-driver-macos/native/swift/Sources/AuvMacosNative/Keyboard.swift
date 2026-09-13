@@ -156,7 +156,7 @@ private func hotkey(
 // A key combination prepares the complete event list before delivery. Failure to create
 // any event therefore cannot leave a modifier down. Posting itself has no OS
 // acknowledgement; a completed key combination is still unverified input submission.
-private func pressKeys(delivery: KeyboardDelivery, keyCodes: [Int32]) -> NativeActionResponse {
+private func pressKeys(delivery: KeyboardDelivery, keyCodes: [Int32], holdNs: UInt64 = 0) -> NativeActionResponse {
   guard !keyCodes.isEmpty else { return nativeActionError("keys must not be empty", "provide at least one key") }
   let source = delivery.eventSource
   var events: [CGEvent] = []
@@ -175,16 +175,19 @@ private func pressKeys(delivery: KeyboardDelivery, keyCodes: [Int32]) -> NativeA
       events.append(event)
     }
   }
-  for event in events { delivery.post(event) }
+  let downCount = keyCodes.count
+  for event in events.prefix(downCount) { delivery.post(event) }
+  if holdNs > 0 { Thread.sleep(forTimeInterval: Double(holdNs) / 1_000_000_000.0) }
+  for event in events.suffix(from: downCount) { delivery.post(event) }
   return nativeActionOk()
 }
 
-func press_keys_foreground(key_codes: RustVec<Int32>) -> NativeActionResponse {
-  pressKeys(delivery: .foreground, keyCodes: Array(key_codes))
+func press_keys_foreground(key_codes: RustVec<Int32>, hold_ns: UInt64) -> NativeActionResponse {
+  pressKeys(delivery: .foreground, keyCodes: Array(key_codes), holdNs: hold_ns)
 }
 
-func press_keys_in_window(pid: Int64, window_number: Int64, key_codes: RustVec<Int32>) -> NativeActionResponse {
-  pressKeys(delivery: .process(pid: pid, windowNumber: window_number), keyCodes: Array(key_codes))
+func press_keys_in_window(pid: Int64, window_number: Int64, key_codes: RustVec<Int32>, hold_ns: UInt64) -> NativeActionResponse {
+  pressKeys(delivery: .process(pid: pid, windowNumber: window_number), keyCodes: Array(key_codes), holdNs: hold_ns)
 }
 
 func type_text_foreground(text: RustString, inter_char_delay_ms: UInt64) -> NativeActionResponse {

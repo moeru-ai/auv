@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn keyboard_press_serializes_bounded_hold() {
+  let encoded = keyboard_input_to_proto(auv_driver::KeyboardInput::PressKeys {
+    policy: auv_driver::InputPolicy::ForegroundPreferred,
+    options: auv_driver::PressKeysOptions {
+      keys: vec!["s".into()],
+      hold: std::time::Duration::from_millis(125),
+      ..Default::default()
+    },
+  })
+  .unwrap();
+
+  let proto::keyboard_input::Action::Press(press) = encoded.action.unwrap() else {
+    panic!("expected press action");
+  };
+  assert_eq!(
+    press.options.unwrap().hold.unwrap(),
+    prost_types::Duration {
+      seconds: 0,
+      nanos: 125_000_000
+    }
+  );
+}
+
 #[derive(Debug)]
 struct LargeCaptureService;
 

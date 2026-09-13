@@ -109,22 +109,22 @@ pub fn scroll_window_point(
 
 /// Submit a complete key combination. The Swift backend creates every down/up event
 /// before posting and releases keys in reverse order.
-pub fn press_keys(target: Option<(i64, i64)>, key_codes: Vec<i32>) -> AuvResult<()> {
+pub fn press_keys(target: Option<(i64, i64)>, key_codes: Vec<i32>, hold: std::time::Duration) -> AuvResult<()> {
   #[cfg(test)]
-  if let Some(result) = tests::record_combination(target, &key_codes) {
+  if let Some(result) = tests::record_combination(target, &key_codes, hold) {
     return result;
   }
   #[cfg(target_os = "macos")]
   {
     let response = match target {
-      Some((pid, number)) => super::binding::ffi::press_keys_in_window(pid, number, key_codes),
-      None => super::binding::ffi::press_keys_foreground(key_codes),
+      Some((pid, number)) => super::binding::ffi::press_keys_in_window(pid, number, key_codes, hold.as_nanos() as u64),
+      None => super::binding::ffi::press_keys_foreground(key_codes, hold.as_nanos() as u64),
     };
     action_result("press_keys", response)
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = (target, key_codes);
+    let _ = (target, key_codes, hold);
     Err("macOS native key combinations are unsupported on this target".into())
   }
 }

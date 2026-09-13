@@ -543,6 +543,7 @@ async fn key_combination_protocol_arguments_preserve_keys_and_repeat_options() {
       ("keys".into(), r#"["cmd","return"]"#.into()),
       ("count".into(), "3".into()),
       ("interval-ms".into(), "15".into()),
+      ("hold-ms".into(), "25".into()),
     ]
     .into(),
     typed_args: None,
@@ -558,6 +559,7 @@ async fn key_combination_protocol_arguments_preserve_keys_and_repeat_options() {
         keys: vec!["cmd".into(), "return".into()],
         count: 3,
         interval: std::time::Duration::from_millis(15),
+        hold: std::time::Duration::from_millis(25),
         ..Default::default()
       },
     }]

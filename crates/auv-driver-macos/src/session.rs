@@ -595,9 +595,9 @@ impl InputApi<'_> {
     let mut completed = Vec::new();
     for (index, (input, combination)) in inputs.into_iter().zip(combinations).enumerate() {
       let foreground = input.policy() == InputPolicy::ForegroundPreferred;
-      let (count, interval, settle) = match &input {
-        KeyboardInput::PressKeys { options, .. } => (options.count, options.interval, options.settle),
-        _ => (1, Duration::ZERO, Duration::ZERO),
+      let (count, interval, hold, settle) = match &input {
+        KeyboardInput::PressKeys { options, .. } => (options.count, options.interval, options.hold, options.settle),
+        _ => (1, Duration::ZERO, Duration::ZERO, Duration::ZERO),
       };
       let mut combined: Option<InputActionResult> = None;
       for repetition in 0..if dry_run { 1 } else { count } {
@@ -619,7 +619,8 @@ impl InputApi<'_> {
           // BackgroundPreferred cannot retry after a potentially partial delivery.
           let mut action = match &input {
             KeyboardInput::PressKeys { .. } => {
-              crate::native::input::press_keys(recipient, combination.as_ref().expect("validated combination").clone()).map_err(backend)?;
+              crate::native::input::press_keys(recipient, combination.as_ref().expect("validated combination").clone(), hold)
+                .map_err(backend)?;
               match recipient {
                 Some(_) => InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard),
                 None => foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None),
@@ -1083,6 +1084,9 @@ fn parse_key_combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
   }
   if (options.count > 1) == options.interval.is_zero() {
     return Err(invalid_input("repeated presses require a positive interval; a single press requires zero interval"));
+  }
+  if options.hold > Duration::from_secs(5) {
+    return Err(invalid_input("key hold must not exceed five seconds"));
   }
   let mut modifiers = Vec::new();
   let mut ordinary = Vec::new();
@@ -2086,18 +2090,18 @@ fn paste_text_impl(options: PasteTextOptions, target: Option<(i64, i64)>) -> Dri
     crate::native::clipboard::set_clipboard_text(&options.text).map_err(backend)?;
 
     if options.replace_existing {
-      crate::native::input::press_keys(target, vec![55, 0]).map_err(backend)?;
+      crate::native::input::press_keys(target, vec![55, 0], Duration::ZERO).map_err(backend)?;
       thread::sleep(Duration::from_millis(50));
-      crate::native::input::press_keys(target, vec![51]).map_err(backend)?;
+      crate::native::input::press_keys(target, vec![51], Duration::ZERO).map_err(backend)?;
       thread::sleep(Duration::from_millis(50));
     }
     // Built-in clipboard shortcuts already have known virtual keys; use the
     // same combination event builder without reparsing shortcut strings.
-    crate::native::input::press_keys(target, vec![55, 9]).map_err(backend)?;
+    crate::native::input::press_keys(target, vec![55, 9], Duration::ZERO).map_err(backend)?;
     thread::sleep(Duration::from_millis(150));
     if let Some(key_code) = submit_key_code {
       thread::sleep(Duration::from_millis(50));
-      crate::native::input::press_keys(target, vec![key_code]).map_err(backend)?;
+      crate::native::input::press_keys(target, vec![key_code], Duration::ZERO).map_err(backend)?;
     }
     if !options.settle.is_zero() {
       thread::sleep(options.settle);

@@ -841,6 +841,7 @@ fn keyboard_combinations_repeat_in_order_and_keep_special_keys_with_modifiers() 
             keys: vec!["cmd".into(), "return".into()],
             count: 2,
             interval: Duration::from_millis(1),
+            hold: Duration::from_millis(25),
             ..Default::default()
           },
         },
@@ -861,11 +862,11 @@ fn keyboard_combinations_repeat_in_order_and_keep_special_keys_with_modifiers() 
   assert_eq!(
     recorder.calls,
     vec![
-      (None, vec![55, 36]),
-      (None, vec![55, 36]),
-      (None, vec![0, 1, 2]),
-      (None, vec![0, 1, 2]),
-      (None, vec![0, 1, 2]),
+      (None, vec![55, 36], Duration::from_millis(25)),
+      (None, vec![55, 36], Duration::from_millis(25)),
+      (None, vec![0, 1, 2], Duration::ZERO),
+      (None, vec![0, 1, 2], Duration::ZERO),
+      (None, vec![0, 1, 2], Duration::ZERO),
     ]
   );
   assert_eq!(actions.len(), 2);
@@ -918,7 +919,14 @@ fn keyboard_sequence_stops_at_native_failure_and_keeps_partial_progress() {
   assert_eq!(error.progress.completed.len(), 1);
   assert_eq!(error.progress.completed_presses, 1);
   assert!(error.progress.completed[0].attempts[0].succeeded);
-  assert_eq!(recorder.calls, vec![(None, vec![0]), (None, vec![11]), (None, vec![11])]);
+  assert_eq!(
+    recorder.calls,
+    vec![
+      (None, vec![0], Duration::ZERO),
+      (None, vec![11], Duration::ZERO),
+      (None, vec![11], Duration::ZERO),
+    ]
+  );
 }
 
 #[test]
@@ -932,6 +940,7 @@ fn keyboard_dry_run_does_not_post_or_wait_for_repetitions() {
         keys: vec!["cmd".into(), "shift".into(), "p".into()],
         count: 3,
         interval: Duration::from_secs(3600),
+        hold: Duration::from_secs(5),
         settle: Duration::from_secs(3600),
       },
       InputPolicy::ForegroundPreferred,
@@ -961,6 +970,11 @@ fn keyboard_combination_rejects_duplicate_aliases_and_invalid_repeat_counts() {
       interval: Duration::from_millis(1),
       ..Default::default()
     },
+    PressKeysOptions {
+      keys: vec!["a".into()],
+      hold: Duration::from_secs(5) + Duration::from_nanos(1),
+      ..Default::default()
+    },
     PressKeysOptions::default(),
   ] {
     let error = session.input().press_keys(&InputTarget::Foreground, options, InputPolicy::ForegroundPreferred, true).unwrap_err();
@@ -978,6 +992,7 @@ fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
       &InputTarget::Foreground,
       PressKeysOptions {
         keys: vec!["ctrl".into(), "arrowleft".into(), "f12".into()],
+        hold: Duration::from_millis(25),
         ..Default::default()
       },
       InputPolicy::ForegroundPreferred,
@@ -985,7 +1000,7 @@ fn keyboard_combination_accepts_navigation_and_function_keys_with_modifiers() {
     )
   });
   result.unwrap();
-  assert_eq!(recorder.calls, vec![(None, vec![59, 123, 111])]);
+  assert_eq!(recorder.calls, vec![(None, vec![59, 123, 111], Duration::from_millis(25))]);
 }
 
 // https://github.com/moeru-ai/auv/pull/177
@@ -1026,7 +1041,13 @@ fn legacy_key_entry_preserves_modifier_order_and_supports_named_keys() {
     })
   });
   assert!(result.is_ok(), "{result:?}");
-  assert_eq!(recorded.calls, vec![(None, vec![55, 56, 35]), (None, vec![55, 36])]);
+  assert_eq!(
+    recorded.calls,
+    vec![
+      (None, vec![55, 56, 35], Duration::ZERO),
+      (None, vec![55, 36], Duration::ZERO),
+    ]
+  );
 }
 
 // https://github.com/moeru-ai/auv/pull/177

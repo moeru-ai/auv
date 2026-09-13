@@ -22,19 +22,21 @@ fn action_result_includes_operation_name() {
 
 // Test replacement at the native event-delivery boundary. Thread-local state
 // prevents parallel tests from capturing another test's real input.
+pub(crate) type RecordedKeyCombination = (Option<(i64, i64)>, Vec<i32>, std::time::Duration);
+
 #[derive(Default)]
 pub(crate) struct KeyCombinationRecorder {
-  pub calls: Vec<(Option<(i64, i64)>, Vec<i32>)>,
+  pub calls: Vec<RecordedKeyCombination>,
   pub fail_on: Option<usize>,
 }
 thread_local! {
   pub(crate) static KEY_COMBINATIONS: std::cell::RefCell<Option<KeyCombinationRecorder>> = const { std::cell::RefCell::new(None) };
 }
-pub(crate) fn record_combination(target: Option<(i64, i64)>, keys: &[i32]) -> Option<super::AuvResult<()>> {
+pub(crate) fn record_combination(target: Option<(i64, i64)>, keys: &[i32], hold: std::time::Duration) -> Option<super::AuvResult<()>> {
   KEY_COMBINATIONS.with_borrow_mut(|recorder| {
     let recorder = recorder.as_mut()?;
     let index = recorder.calls.len();
-    recorder.calls.push((target, keys.to_vec()));
+    recorder.calls.push((target, keys.to_vec(), hold));
     Some(if recorder.fail_on == Some(index) {
       Err("injected native event creation failure".into())
     } else {

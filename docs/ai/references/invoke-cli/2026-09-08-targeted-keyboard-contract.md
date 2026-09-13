@@ -102,7 +102,8 @@ The approved keyboard model separates a key, a key combination, and an ordered r
   (`cmd+a`) remains accepted at the legacy entry point; new callers use PressKeys.
 - `PressKeys`: one key combination represented by `PressKeysOptions.keys`. Modifiers
   precede ordinary keys; ordinary keys retain their order. All keys are pressed
-  and released in reverse order. Multiple ordinary keys are allowed.
+  and released in reverse order. Multiple ordinary keys are allowed. An optional
+  hold duration delays the first release for at most five seconds.
 - `InputKeyboard`: an ordered list of `KeyboardInput` actions: PressKeys,
   TypeText, or PasteText. Unicode typing and clipboard transactions retain their
   driver semantics; they are not converted to physical key names.
@@ -113,7 +114,7 @@ accepts an array of tagged actions. MCP uses the same registered commands and
 metadata. Its string-valued `inputs.keys` must contain an encoded JSON array.
 
 ```sh
-auv invoke input.keys cmd shift p --target app:com.example.editor
+auv invoke input.keys cmd shift p --hold-ms 100 --target app:com.example.editor
 auv invoke input.key return --count 2 --interval-ms 100 --target window:123
 auv invoke input.keyboard --target app:com.netease.163music \
   --actions '[{"kind":"press","keys":["escape"],"count":3,"interval_ms":100},{"kind":"type_text","text":"hello"}]'
@@ -131,10 +132,12 @@ A count in 1..=255 repeats the complete press/release action. Counts above one
 require a positive interval; a single press requires zero interval. Interval
 is a minimum wait between complete repetitions, followed by recipient/focus
 checks, not an exact event timestamp. Settle applies once after the final press.
-This is not a hold, OS auto-repeat, or a repeat of the whole action list.
-Independent key-down/up, holds, and cancellation/release coordination remain
-intentionally deferred. A started synchronous request is not cancelled merely
-because the caller disconnects; callers must not treat disconnect as rollback.
+`hold_ms` is a bounded wait between the last key-down and first key-up; it is
+not OS auto-repeat or a repeat of the whole action list. Independent key-down/up
+and cancellation/release coordination remain intentionally deferred. A started
+synchronous request is not cancelled merely because the caller disconnects;
+callers must not treat disconnect as rollback. A hard process termination during
+the wait can prevent the prepared key-up events from being posted.
 
 The driver validates the whole list before resolving/activating the recipient.
 It binds a target process once, then checks identity and applies the action's

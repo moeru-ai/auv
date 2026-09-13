@@ -263,6 +263,10 @@ struct PressKeyArgs {
   #[arg(long)]
   #[serde(rename = "interval-ms")]
   interval_ms: Option<u64>,
+  /// Time between key-down and key-up in milliseconds, up to 5000.
+  #[arg(long)]
+  #[serde(rename = "hold-ms")]
+  hold_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -282,6 +286,10 @@ struct PressKeysArgs {
   #[arg(long)]
   #[serde(rename = "interval-ms")]
   interval_ms: Option<u64>,
+  /// Time between key-down and key-up in milliseconds, up to 5000.
+  #[arg(long)]
+  #[serde(rename = "hold-ms")]
+  hold_ms: Option<u64>,
 }
 
 #[invoke_command(id = "input.keys", target = OptionalKeyboard, group = "input",
@@ -292,10 +300,10 @@ async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::In
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.keyboard --actions '[{\"kind\":\"press\",\"keys\":[\"cmd\",\"a\"]},{\"kind\":\"type_text\",\"text\":\"hello\"}]' --target app:com.netease.163music\nActions: press (keys, optional count and interval_ms), type_text (text), paste_text (text). Entire list is validated first; a delivery failure stops execution and retains progress."
+  after_long_help = "Examples:\n  auv invoke input.keyboard --actions '[{\"kind\":\"press\",\"keys\":[\"cmd\",\"a\"]},{\"kind\":\"type_text\",\"text\":\"hello\"}]' --target app:com.netease.163music\nActions: press (keys, optional count, interval_ms, and hold_ms), type_text (text), paste_text (text). Entire list is validated first; a delivery failure stops execution and retains progress."
 )]
 struct InputKeyboardArgs {
-  /// JSON array: press {keys, count?, interval_ms?}, type_text {text}, or paste_text {text}; each object requires kind.
+  /// JSON array: press {keys, count?, interval_ms?, hold_ms?}, type_text {text}, or paste_text {text}; each object requires kind.
   #[arg(long, value_name = "JSON")]
   actions: String,
   /// Apply this policy to every action; foreground preparation is the default.
@@ -312,6 +320,7 @@ enum KeyboardActionArg {
     keys: Vec<String>,
     count: Option<u32>,
     interval_ms: Option<u64>,
+    hold_ms: Option<u64>,
   },
   TypeText {
     text: String,
@@ -760,6 +769,7 @@ impl From<PressKeysArgs> for auv_driver::KeyboardInput {
         keys: args.keys,
         count: args.count.unwrap_or(1),
         interval: std::time::Duration::from_millis(args.interval_ms.unwrap_or(0)),
+        hold: std::time::Duration::from_millis(args.hold_ms.unwrap_or(0)),
         ..Default::default()
       },
     }
@@ -778,6 +788,7 @@ impl From<PressKeyArgs> for auv_driver::KeyboardInput {
       keys: options.keys,
       count: args.count,
       interval_ms: args.interval_ms,
+      hold_ms: args.hold_ms,
       input_policy: args.input_policy,
     }
     .into()
@@ -820,10 +831,12 @@ impl InputKeyboardArgs {
             keys,
             count,
             interval_ms,
+            hold_ms,
           } => PressKeysArgs {
             keys,
             count,
             interval_ms,
+            hold_ms,
             input_policy: self.input_policy,
           }
           .into(),

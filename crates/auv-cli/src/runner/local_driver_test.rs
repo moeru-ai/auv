@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn keyboard_press_proto_preserves_bounded_hold() {
+  let decoded = keyboard_input_from_proto(proto::KeyboardInput {
+    action: Some(proto::keyboard_input::Action::Press(proto::KeyboardPress {
+      policy: proto::InputPolicy::ForegroundPreferred as i32,
+      options: Some(proto::PressKeysOptions {
+        keys: vec!["s".into()],
+        hold: Some(prost_types::Duration {
+          seconds: 0,
+          nanos: 125_000_000,
+        }),
+        ..Default::default()
+      }),
+    })),
+  })
+  .unwrap();
+
+  let auv_driver::KeyboardInput::PressKeys { options, .. } = decoded else {
+    panic!("expected press action");
+  };
+  assert_eq!(options.hold, std::time::Duration::from_millis(125));
+}
+
+#[test]
 fn overdue_mouse_samples_coalesce_but_keep_the_final_sample() {
   let samples = [
     auv_driver::MouseMotionSample {

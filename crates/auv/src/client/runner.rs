@@ -1423,6 +1423,7 @@ fn keyboard_input_to_proto(input: auv_driver::KeyboardInput) -> Result<proto::Ke
           count: Some(options.count),
           interval: Some(duration_to_proto(options.interval)?),
           settle: Some(duration_to_proto(options.settle)?),
+          hold: Some(duration_to_proto(options.hold)?),
         }),
       }),
       auv_driver::KeyboardInput::TypeText { text, options } => Action::TypeText(proto::TypeTextRequest {

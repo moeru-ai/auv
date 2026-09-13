@@ -802,8 +802,9 @@ deliver it. Drivers own native mappings and retain their existing input aliases.
 
 A **key press** is one complete down/up action. A **key combination** presses multiple
 keys before releasing them in reverse order. Repetition repeats a complete
-press/release, with an explicit interval; it is distinct from holding a key
-or operating-system auto-repeat.
+press/release, with an explicit interval. A bounded hold delays the releases
+inside that same action; it is distinct from independent key state or
+operating-system auto-repeat.
 
 `InputKeyboard` executes an ordered list of typed keyboard actions (press,
 Unicode text, or clipboard paste). `PressKey` and `PressKeys` are conveniences
