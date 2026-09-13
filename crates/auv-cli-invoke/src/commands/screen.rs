@@ -73,7 +73,7 @@ pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<auv_drive
 async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv_driver::RegionCapture, Option<ArtifactMetadata>), String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let capture = session
       .display()
       .capture_region(auv_driver::CaptureOptions {
@@ -181,7 +181,7 @@ pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driv
   use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
   use std::{thread, time::Instant};
 
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+  let session = auv::local::open().map_err(|error| error.to_string())?;
   let wait_options = WaitOptions::default();
   let started = Instant::now();
   loop {
@@ -283,7 +283,7 @@ pub fn recorded_screen_text_click_output(result: &ScreenTextClick, capture: &auv
 pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextClick, String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let capture = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
     let matches = session
       .vision()

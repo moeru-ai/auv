@@ -65,7 +65,7 @@ pub fn list_windows_output(windows: &[auv_driver::Window]) -> InvokeCommandResul
 pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     session.window().list().map_err(|error| error.to_string())
   }
   #[cfg(not(target_os = "macos"))]
@@ -96,7 +96,7 @@ async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> I
       return Ok(InvokeCommandOutput::completed());
     }
 
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let (result, artifact) =
       capture_selected_window_recorded_with_session(&session, window_selector(&input, args.title.as_deref())?).await?;
     let capture_overlay = Overlay::new().with_layer(
@@ -160,7 +160,7 @@ async fn capture_selected_window_recorded(
 ) -> Result<(WindowCapture, Option<ArtifactMetadata>), String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     capture_selected_window_recorded_with_session(&session, selector).await
   }
   #[cfg(not(target_os = "macos"))]
@@ -207,7 +207,7 @@ async fn find_window_text(input: InvokeCommandInput, args: FindWindowTextArgs) -
     }
 
     let query = args.query;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, false).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     window_text_matches_output(&input.command_id, &result, overlay)
@@ -245,7 +245,7 @@ async fn wait_for_window_text(input: InvokeCommandInput, args: WaitForWindowText
     }
 
     let query = args.query;
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = recognize_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, query, true).await?;
     let overlay = super::overlay::show_overlay(&input, &session, window_text_overlay(&result.matches, None), show_options(120, 420))?;
     window_text_matches_output(&input.command_id, &result, overlay)
@@ -324,7 +324,7 @@ async fn click_window_text(input: InvokeCommandInput, args: ClickWindowTextArgs)
       return Ok(super::input::validation_only_output());
     }
 
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     let result =
       click_recognized_window_text_with_session(&session, window_selector(&input, args.title.as_deref())?, args.query, args.index, options)
         .await?;
@@ -397,7 +397,7 @@ pub async fn click_recognized_window_text_with_index_and_options(
 ) -> Result<WindowTextClick, String> {
   #[cfg(target_os = "macos")]
   {
-    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let session = auv::local::open().map_err(|error| error.to_string())?;
     click_recognized_window_text_with_session(&session, selector, query, index, options).await
   }
   #[cfg(not(target_os = "macos"))]
@@ -462,7 +462,7 @@ pub async fn recognize_window_text(
   query: String,
   wait: bool,
 ) -> Result<WindowTextRecognition, String> {
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+  let session = auv::local::open().map_err(|error| error.to_string())?;
   recognize_window_text_with_session(&session, selector, query, wait).await
 }
 
