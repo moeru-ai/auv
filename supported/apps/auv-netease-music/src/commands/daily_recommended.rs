@@ -297,7 +297,7 @@ impl DailyRecommendedRun<'_> {
         },
       )
       .map_err(|error| format!("{action_id}: foreground preparation failed: {error}"))?;
-    let click_result = self.session.input().click_at(screen_point.point(), Click::Single, Default::default());
+    let click_result = self.session.input().click_at(screen_point.point(), auv_driver::MouseButton::Left, Click::Single, Default::default());
     let restore_result = self.session.window().restore_input(lease);
     click_result.map_err(|error| format!("{action_id}: foreground click failed: {error}"))?;
     restore_result.map_err(|error| format!("{action_id}: foreground restore failed: {error}"))?;
@@ -501,6 +501,7 @@ fn daily_recommended_card_click_point(title_bounds: ViewBounds) -> auv_driver::P
 
 fn daily_recommended_window_click_options() -> auv_driver::ClickOptions {
   auv_driver::ClickOptions {
+    button: auv_driver::MouseButton::Left,
     policy: auv_driver::InputPolicy::BackgroundPreferred,
     click: auv_driver::Click::Single,
     window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,

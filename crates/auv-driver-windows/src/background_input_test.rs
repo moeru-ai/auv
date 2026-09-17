@@ -60,14 +60,26 @@ fn window_receives_modified_click_messages_without_modifier_carryover() {
   use windows::Win32::Graphics::Gdi::ClientToScreen;
   use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, UnregisterClassW,
-    WINDOW_EX_STYLE, WM_LBUTTONDOWN, WM_LBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    WINDOW_EX_STYLE, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_RBUTTONDBLCLK,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
   };
   use windows::core::w;
   thread_local! {
     static RECEIPTS: RefCell<Vec<(u32, usize)>> = const { RefCell::new(Vec::new()) };
   }
   unsafe extern "system" fn receive(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if matches!(message, WM_LBUTTONDOWN | WM_LBUTTONUP) {
+    if matches!(
+      message,
+      WM_LBUTTONDOWN
+        | WM_LBUTTONUP
+        | WM_LBUTTONDBLCLK
+        | WM_RBUTTONDOWN
+        | WM_RBUTTONUP
+        | WM_RBUTTONDBLCLK
+        | WM_MBUTTONDOWN
+        | WM_MBUTTONUP
+        | WM_MBUTTONDBLCLK
+    ) {
       RECEIPTS.with(|receipts| receipts.borrow_mut().push((message, wp.0)));
       return LRESULT(0);
     }
@@ -127,33 +139,52 @@ fn window_receives_modified_click_messages_without_modifier_carryover() {
     is_main: false,
     is_visible: false,
   };
-  RECEIPTS.with(|receipts| receipts.borrow_mut().clear());
-  for modifiers in [
-    ClickModifiers {
-      shift: true,
-      control: true,
-      ..Default::default()
-    },
-    ClickModifiers::default(),
+  for (button, down, up, double, held) in [
+    (auv_driver_common::MouseButton::Left, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, 1),
+    (auv_driver_common::MouseButton::Right, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK, 2),
+    (auv_driver_common::MouseButton::Middle, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MBUTTONDBLCLK, 16),
   ] {
-    super::click_at_window(&window, Point::new(f64::from(point.x), f64::from(point.y)), Click::Single, modifiers).unwrap();
-    let mut message = MSG::default();
-    // SAFETY: Dispatch only messages for the live test window on its owner thread.
-    unsafe {
-      while PeekMessageW(&mut message, receiver.0, 0, 0, PM_REMOVE).as_bool() {
-        DispatchMessageW(&message);
+    for (click, presses) in [
+      (Click::Single, vec![down]),
+      (
+        Click::Double {
+          interval: std::time::Duration::from_millis(10),
+        },
+        vec![down, double],
+      ),
+      (
+        Click::Repeated {
+          count: 3,
+          interval: std::time::Duration::from_millis(10),
+        },
+        vec![down, down, down],
+      ),
+    ] {
+      RECEIPTS.with(|receipts| receipts.borrow_mut().clear());
+      for modifiers in [
+        ClickModifiers {
+          shift: true,
+          control: true,
+          ..Default::default()
+        },
+        ClickModifiers::default(),
+      ] {
+        super::click_at_window(&window, Point::new(f64::from(point.x), f64::from(point.y)), button, click.clone(), modifiers).unwrap();
+        let mut message = MSG::default();
+        // SAFETY: Dispatch only messages for the live test window on its owner thread.
+        unsafe {
+          while PeekMessageW(&mut message, receiver.0, 0, 0, PM_REMOVE).as_bool() {
+            DispatchMessageW(&message);
+          }
+        }
       }
+      // Posted double clicks must reach the receiver as DBLCLK, while repeated
+      // clicks stay independent down/up pairs. The next call clears modifiers.
+      let expected: Vec<_> = [0x000c, 0]
+        .into_iter()
+        .flat_map(|modifiers| presses.iter().flat_map(move |press| [(*press, held | modifiers), (up, modifiers)]))
+        .collect();
+      RECEIPTS.with(|receipts| assert_eq!(*receipts.borrow(), expected, "{button:?} {click:?}"));
     }
   }
-  RECEIPTS.with(|receipts| {
-    assert_eq!(
-      *receipts.borrow(),
-      [
-        (WM_LBUTTONDOWN, 0x000d),
-        (WM_LBUTTONUP, 0x000c),
-        (WM_LBUTTONDOWN, 0x0001),
-        (WM_LBUTTONUP, 0x0000),
-      ]
-    )
-  });
 }

@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **40**
+Count: **41**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -58,3 +58,5 @@ Count: **40**
 - Parent index: [`../INDEX.md`](../INDEX.md)
 - Docs overview: [`../../../README.md`](../../../README.md)
 - Shared vocabulary: [`../../../TERMS_AND_CONCEPTS.md`](../../../TERMS_AND_CONCEPTS.md)
+
+- [`2026-09-17-click-buttons-contract.md`](2026-09-17-click-buttons-contract.md): BG-1 left/right/middle integration, API changes, and receiver validation.

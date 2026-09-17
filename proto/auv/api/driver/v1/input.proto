@@ -106,11 +106,20 @@ enum DisturbanceLevel {
   DISTURBANCE_LEVEL_UNKNOWN = 4;
 }
 
+// Physical mouse button; omission selects the left button.
+enum MouseButton {
+  MOUSE_BUTTON_UNSPECIFIED = 0;
+  MOUSE_BUTTON_LEFT = 1;
+  MOUSE_BUTTON_RIGHT = 2;
+  MOUSE_BUTTON_MIDDLE = 3;
+}
+
 message ClickOptions {
   InputPolicy policy = 1;
   Click click = 2;
   WindowClickStrategy window_strategy = 3;
   ClickModifiers modifiers = 4;
+  MouseButton button = 5;
 }
 
 // Standard mouse-event modifier state, not physical keys or a persistent hold.
@@ -133,6 +142,7 @@ message ClickModifiers {
 message ScreenClickOptions {
   Click click = 1;
   ClickModifiers modifiers = 2;
+  MouseButton button = 3;
 }
 
 message Click {

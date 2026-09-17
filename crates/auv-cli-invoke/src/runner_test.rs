@@ -255,6 +255,7 @@ fn selected_window_text_click_projects_screen_match_and_reuses_click_options() {
   assert_eq!(
     selected_click_options(&input).unwrap(),
     auv_driver::ClickOptions {
+      button: auv_driver::MouseButton::Left,
       policy: auv_driver::InputPolicy::ForegroundPreferred,
       click: auv_driver::Click::Repeated {
         count: 3,

@@ -88,6 +88,7 @@ fn click_and_click_options_serde_roundtrip() {
   }
 
   let options = ClickOptions {
+    button: crate::MouseButton::Right,
     policy: InputPolicy::ForegroundPreferred,
     click: Click::Double {
       interval: Duration::from_millis(100),
@@ -251,4 +252,13 @@ fn legacy_key_options_convert_to_explicit_combination_without_losing_plus_key() 
   }
   .into();
   assert_eq!(plus.keys, ["+"]);
+}
+
+#[test]
+fn omitted_click_button_defaults_to_left_and_unknown_button_is_rejected() {
+  let mut request = serde_json::to_value(ClickOptions::default()).unwrap();
+  request.as_object_mut().unwrap().remove("button");
+  assert_eq!(serde_json::from_value::<ClickOptions>(request.clone()).unwrap().button, crate::MouseButton::Left);
+  request["button"] = serde_json::json!("back");
+  assert!(serde_json::from_value::<ClickOptions>(request).is_err());
 }

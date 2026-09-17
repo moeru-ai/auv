@@ -588,3 +588,38 @@ async fn linux_keyboard_commands_reach_driver_validation() {
       .unwrap();
   }
 }
+
+#[test]
+fn click_button_survives_cli_protocol_and_recorded_replay() {
+  for (name, button) in [
+    ("left", auv_driver::MouseButton::Left),
+    ("right", auv_driver::MouseButton::Right),
+    ("middle", auv_driver::MouseButton::Middle),
+  ] {
+    let crate::InvokeCommandCliParse::Invoke {
+      inputs, typed_args, ..
+    } = click_point_invoke_command().parse_cli_args(&["10".into(), "20".into(), "--button".into(), name.into()]).unwrap()
+    else {
+      panic!("expected invocation")
+    };
+    assert_eq!(inputs["button"], name);
+    assert_eq!(typed_args.get::<ClickPointArgs>().unwrap().click_options().unwrap().button, button);
+    let input = InvokeCommandInput {
+      command_id: "input.clickPoint".into(),
+      target: None,
+      inputs,
+      typed_args: None,
+      dry_run: true,
+      cancellation: Default::default(),
+    };
+    let args: ClickPointArgs = crate::command::decode_args(&input).unwrap();
+    let recorded = serde_json::to_value(args).unwrap();
+    assert_eq!(recorded["button"], name);
+    let replay: ClickPointArgs = serde_json::from_value(recorded).unwrap();
+    assert_eq!(replay.click_options().unwrap().button, button);
+  }
+  let ordinary: ClickPointArgs = serde_json::from_value(serde_json::json!({"x": 10, "y": 20})).unwrap();
+  assert_eq!(ordinary.click_options().unwrap().button, auv_driver::MouseButton::Left);
+  assert!(click_point_invoke_command().parse_cli_args(&["10".into(), "20".into(), "--button".into(), "back".into()]).is_err());
+  assert!(parse_click_button(Some("back")).is_err());
+}

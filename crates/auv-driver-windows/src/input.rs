@@ -49,9 +49,14 @@ struct KeyChord {
   key: u16,
 }
 
-pub fn click_at(point: Point, click: Click, modifiers: ClickModifiers) -> DriverResult<InputActionResult> {
+pub fn click_at(
+  point: Point,
+  button: auv_driver_common::MouseButton,
+  click: Click,
+  modifiers: ClickModifiers,
+) -> DriverResult<InputActionResult> {
   let (count, interval) = click_parts(&click)?;
-  native::click(point, count, interval, &click_modifier_keys(modifiers))?;
+  native::click(point, button, count, interval, &click_modifier_keys(modifiers))?;
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
@@ -371,7 +376,13 @@ mod native {
     )])
   }
 
-  pub(super) fn click(point: Point, count: u32, interval: Duration, modifiers: &[u16]) -> DriverResult<()> {
+  pub(super) fn click(
+    point: Point,
+    button: auv_driver_common::MouseButton,
+    count: u32,
+    interval: Duration,
+    modifiers: &[u16],
+  ) -> DriverResult<()> {
     move_to(point)?;
     for index in 0..count {
       // Preserve already-held user keys: this operation only releases keys it
@@ -384,14 +395,14 @@ mod native {
           unsafe { GetAsyncKeyState(i32::from(*key)) >= 0 }
         })
         .collect();
-      let inputs = click_inputs(&keys);
+      let inputs = click_inputs(button, &keys);
       // SAFETY: inputs contains initialized INPUT unions matching their tags,
       // and its slice remains live throughout SendInput.
       let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } as usize;
       if sent != inputs.len() {
         // SendInput inserts in order. Release only the injected prefix that
         // remains down, including the mouse button if its up was not inserted.
-        let cleanup = click_cleanup(&keys, sent);
+        let cleanup = click_cleanup(button, &keys, sent);
         let release = send_inputs(&cleanup);
         let detail = release.err().map(|error| format!("; input release also failed: {error}")).unwrap_or_default();
         return Err(backend(format!("SendInput injected {sent} of {} click events{detail}", inputs.len())));
@@ -403,18 +414,29 @@ mod native {
     Ok(())
   }
 
-  pub(super) fn click_inputs(keys: &[u16]) -> Vec<INPUT> {
+  fn button_flags(button: auv_driver_common::MouseButton) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+      MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+    };
+    match button {
+      auv_driver_common::MouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+      auv_driver_common::MouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+      auv_driver_common::MouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+    }
+  }
+
+  pub(super) fn click_inputs(button: auv_driver_common::MouseButton, keys: &[u16]) -> Vec<INPUT> {
     let mut inputs: Vec<_> = keys.iter().map(|key| virtual_key_input(*key, KEYBD_EVENT_FLAGS(0))).collect();
-    inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTDOWN));
-    inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTUP));
+    inputs.push(mouse_input(0, 0, 0, button_flags(button).0));
+    inputs.push(mouse_input(0, 0, 0, button_flags(button).1));
     inputs.extend(keys.iter().rev().map(|key| virtual_key_input(*key, KEYEVENTF_KEYUP)));
     inputs
   }
 
-  pub(super) fn click_cleanup(keys: &[u16], sent: usize) -> Vec<INPUT> {
+  pub(super) fn click_cleanup(button: auv_driver_common::MouseButton, keys: &[u16], sent: usize) -> Vec<INPUT> {
     let mut inputs = Vec::new();
     if sent == keys.len() + 1 {
-      inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTUP));
+      inputs.push(mouse_input(0, 0, 0, button_flags(button).1));
     }
     let pressed = sent.min(keys.len());
     let released = sent.saturating_sub(keys.len() + 2).min(keys.len());
@@ -513,7 +535,13 @@ mod native {
     Err(DriverError::unsupported("input.move_to"))
   }
 
-  pub(super) fn click(_point: Point, _count: u32, _interval: Duration, _modifiers: &[u16]) -> DriverResult<()> {
+  pub(super) fn click(
+    _point: Point,
+    _button: auv_driver_common::MouseButton,
+    _count: u32,
+    _interval: Duration,
+    _modifiers: &[u16],
+  ) -> DriverResult<()> {
     Err(DriverError::unsupported("input.click"))
   }
 

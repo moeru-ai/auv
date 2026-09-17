@@ -196,6 +196,6 @@ logged-in interactive desktop. An SSH service session can lack that access.
   paths that use key transitions. Mouse flags alone do not claim that support.
 - Hold/drag across calls requires ownership, cancellation, release and partial
   progress semantics. It is not added as a click option.
-- Button selection remains the separate BG-1 parameter slice.
+- Button selection landed in the [2026-09-17 button slice](2026-09-17-click-buttons-contract.md).
 - BG-2 compatibility dual posting and count capping are unchanged. The receiver
   here records modifier state, not exact click cardinality or semantic activation.

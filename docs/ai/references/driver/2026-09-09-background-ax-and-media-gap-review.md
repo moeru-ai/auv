@@ -2,6 +2,8 @@
 
 > NOTICE: This source review records historical revisions. The [Wayland background input research](2026-09-13-wayland-background-input-research.md) records the 2026-09-13 decision, later implementation PRs, and evidence boundaries. Candidate rows do not authorize implementation.
 
+> Update 2026-09-17: BG-1 modifier and button integration have landed; see the [button contract and evidence](2026-09-17-click-buttons-contract.md). Hold/drag remains intentionally deferred. The fixed-revision tables below describe the original review. BG-2 dual posting and count capping are unchanged; the modifier receiver has since recorded duplicate AppKit events.
+
 Date: 2026-09-09. Classification: docs-only research.
 
 Two independent reviewers examined background input and AX. The lead reviewer examined native audio and video implementations. The review used source code only. It included no GUI receiver, audio, or screen recording tests. Source implementations do not establish behavior across OS versions.

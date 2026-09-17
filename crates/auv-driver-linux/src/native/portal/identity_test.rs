@@ -304,6 +304,7 @@ fn modified_click_reaches_portal_and_cancelled_selection_closes_session() {
       .input()
       .click_at(
         Point::new(20.0, 30.0),
+        auv_driver_common::MouseButton::Left,
         Click::Single,
         ClickModifiers {
           shift: true,
@@ -312,6 +313,12 @@ fn modified_click_reaches_portal_and_cancelled_selection_closes_session() {
         },
       )
       .unwrap();
+    for button in [
+      auv_driver_common::MouseButton::Right,
+      auv_driver_common::MouseButton::Middle,
+    ] {
+      session.input().click_at(Point::new(20.0, 30.0), button, Click::Single, Default::default()).unwrap();
+    }
     drop(session);
     assert!(PortalInput::open(Some(&store), None).is_err(), "a cancelled selection must not continue to Start");
     return;
@@ -356,6 +363,12 @@ fn modified_click_reaches_portal_and_cancelled_selection_closes_session() {
       "button:272:0",
       "key:65507:0",
       "key:65505:0",
+      "motion",
+      "button:273:1",
+      "button:273:0",
+      "motion",
+      "button:274:1",
+      "button:274:0",
       "close",
       "select_devices",
       "close",

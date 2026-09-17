@@ -65,7 +65,13 @@ pub mod portal {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 
-    pub fn click_at(&mut self, _point: Point, _click: Click, _modifiers: &[i32]) -> DriverResult<()> {
+    pub fn click_at(
+      &mut self,
+      _point: Point,
+      _button: auv_driver_common::MouseButton,
+      _click: Click,
+      _modifiers: &[i32],
+    ) -> DriverResult<()> {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 

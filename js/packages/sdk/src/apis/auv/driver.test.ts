@@ -5,13 +5,13 @@ import { describe, expect, it } from 'vitest'
 
 import { CaptureWindowRequestSchema, CaptureWindowResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, MouseButton } from '../../gen/auv/api/driver/v1/input_pb'
 import { ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
 
 describe('runner Driver control surface', () => {
-  it('preserves click modifiers in both screen and window protobuf requests', async () => {
+  it('preserves click buttons and modifiers in both screen and window protobuf requests', async () => {
     const calls: UnaryCall[] = []
     const connection = await connect({
       local: true,
@@ -38,11 +38,13 @@ describe('runner Driver control surface', () => {
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
     const modifiers = { alt: true, control: true, meta: true, shift: true }
-    await runner.input.clickScreenPoint({ x: 10, y: 20 }, { click: { count: 1 }, modifiers })
+    await runner.input.clickScreenPoint({ x: 10, y: 20 }, { button: MouseButton.RIGHT, click: { count: 1 }, modifiers })
     const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
-    await window.click({ x: 10, y: 20 }, { modifiers })
+    await window.click({ x: 10, y: 20 }, { button: MouseButton.MIDDLE, modifiers })
     const screen = fromBinary(ClickScreenPointRequestSchema, calls[0]!.body)
     const targeted = fromBinary(ClickWindowPointRequestSchema, calls[2]!.body)
+    expect(screen.options?.button).toBe(MouseButton.RIGHT)
+    expect(targeted.options?.button).toBe(MouseButton.MIDDLE)
     expect(screen.options?.modifiers).toMatchObject(modifiers)
     expect(targeted.options?.modifiers).toMatchObject(modifiers)
     expect(targeted.window?.windowId).toBe('modifier-target')

@@ -1071,6 +1071,12 @@ not a promise that the selected path name will contain “background” or
 path actually used. Click cardinality is a separate option and may request a
 single, double, or explicitly counted repeated click with an interval.
 
+`MouseButton` selects left, right, or middle for a complete click. Window
+`ClickOptions` and wire options default to left when omitted; Rust screen-click
+APIs take the button explicitly. Every pair in a repeated click uses that button.
+Hold and drag require a separate ownership and release contract. See the
+[button integration contract](ai/references/driver/2026-09-17-click-buttons-contract.md).
+
 `ClickModifiers` describes the standard modifier state on a click's mouse
 events: `shift`, `control`, `alt`, and `meta`. On macOS, Alt/Meta map to
 Option/Command. It does not describe physical key identity, keyboard layout,

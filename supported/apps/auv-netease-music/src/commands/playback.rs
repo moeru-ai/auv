@@ -397,6 +397,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       &window,
       WindowPoint::new(click_point.x, click_point.y),
       ClickOptions {
+        button: auv_driver::MouseButton::Left,
         policy: InputPolicy::BackgroundPreferred,
         click: Click::Single,
         window_strategy: WindowClickStrategy::ChromiumCompatible,

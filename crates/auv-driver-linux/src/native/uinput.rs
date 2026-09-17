@@ -67,7 +67,7 @@ impl InputSession {
     self.device.emit(&events).map_err(|error| backend(format!("move uinput pointer: {error}")))
   }
 
-  pub fn click_at(&mut self, point: Point, click: Click, modifiers: &[i32]) -> DriverResult<()> {
+  pub fn click_at(&mut self, point: Point, button: auv_driver_common::MouseButton, click: Click, modifiers: &[i32]) -> DriverResult<()> {
     if click.count() == 0 {
       return Err(invalid_input("repeated click count must be greater than zero"));
     }
@@ -77,6 +77,11 @@ impl InputSession {
       let layout = Keymap::load()?;
       self.validate_keys(&layout, modifiers)?;
       modifiers.iter().map(|symbol| layout.stroke(*symbol).map(|stroke| stroke.key)).collect::<DriverResult<Vec<_>>>()?
+    };
+    let button = match button {
+      auv_driver_common::MouseButton::Left => KeyCode::BTN_LEFT,
+      auv_driver_common::MouseButton::Right => KeyCode::BTN_RIGHT,
+      auv_driver_common::MouseButton::Middle => KeyCode::BTN_MIDDLE,
     };
     self.move_to(point)?;
     thread::sleep(Duration::from_millis(20));
@@ -95,11 +100,11 @@ impl InputSession {
       },
       || {
         for index in 0..click.count() {
-          let press = emit_key(&mut device.borrow_mut(), KeyCode::BTN_LEFT, true);
+          let press = emit_key(&mut device.borrow_mut(), button, true);
           if press.is_ok() {
             thread::sleep(Duration::from_millis(34));
           }
-          let release = emit_key(&mut device.borrow_mut(), KeyCode::BTN_LEFT, false);
+          let release = emit_key(&mut device.borrow_mut(), button, false);
           combine_release(press, release)?;
           if index + 1 < click.count() {
             thread::sleep(click.interval().unwrap_or_default());

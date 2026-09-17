@@ -1139,6 +1139,7 @@ impl InputClient {
   pub async fn click_screen_point(
     &self,
     point: auv_driver::Point,
+    button: auv_driver::MouseButton,
     click: auv_driver::Click,
     modifiers: auv_driver::ClickModifiers,
   ) -> Result<ScreenPointClick, CapabilityError> {
@@ -1149,6 +1150,7 @@ impl InputClient {
           y: point.y,
         }),
         options: Some(proto::ScreenClickOptions {
+          button: mouse_button_to_proto(button) as i32,
           click: Some(click_to_proto(click)?),
           modifiers: Some(click_modifiers_to_proto(modifiers)),
         }),
@@ -1494,8 +1496,17 @@ fn click_modifiers_to_proto(value: auv_driver::ClickModifiers) -> proto::ClickMo
   }
 }
 
+fn mouse_button_to_proto(button: auv_driver::MouseButton) -> proto::MouseButton {
+  match button {
+    auv_driver::MouseButton::Left => proto::MouseButton::Left,
+    auv_driver::MouseButton::Right => proto::MouseButton::Right,
+    auv_driver::MouseButton::Middle => proto::MouseButton::Middle,
+  }
+}
+
 fn click_options_to_proto(value: auv_driver::ClickOptions) -> Result<proto::ClickOptions, CapabilityError> {
   Ok(proto::ClickOptions {
+    button: mouse_button_to_proto(value.button) as i32,
     policy: input_policy_to_proto(value.policy) as i32,
     click: Some(click_to_proto(value.click)?),
     modifiers: Some(click_modifiers_to_proto(value.modifiers)),

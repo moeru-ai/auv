@@ -263,7 +263,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         let click = selected_click_options(&input)?.click;
         let response = runner
           .input()
-          .click_screen_point(point, click, Default::default())
+          .click_screen_point(point, auv_driver::MouseButton::Left, click, Default::default())
           .await
           .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
         let result = crate::commands::screen::ScreenTextClick {
@@ -391,7 +391,7 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
     crate::commands::input::RelativeToArg::Screen => {
       let response = runner
         .input()
-        .click_screen_point(requested_point, click_options.click, click_options.modifiers)
+        .click_screen_point(requested_point, click_options.button, click_options.click, click_options.modifiers)
         .await
         .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
       crate::emit_input_action_result(&response.action);
@@ -463,7 +463,7 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
       let screen_point = auv_driver::ScreenPoint::new(display.frame.origin.x + point.x, display.frame.origin.y + point.y);
       let response = runner
         .input()
-        .click_screen_point(screen_point.point(), click_options.click, click_options.modifiers)
+        .click_screen_point(screen_point.point(), click_options.button, click_options.click, click_options.modifiers)
         .await
         .map_err(|status| format!("InputService/ClickScreenPoint failed: {status}"))?;
       crate::emit_input_action_result(&response.action);
@@ -556,6 +556,7 @@ fn selected_click_options(input: &crate::InvokeCommandInput) -> Result<auv_drive
     },
   };
   Ok(auv_driver::ClickOptions {
+    button: crate::commands::input::parse_click_button(input.inputs.get("button").map(String::as_str))?,
     policy,
     click,
     window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,

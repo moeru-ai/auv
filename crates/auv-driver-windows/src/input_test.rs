@@ -124,7 +124,7 @@ fn click_batch_and_partial_delivery_cleanup_preserve_release_order() {
     INPUT_KEYBOARD, INPUT_MOUSE, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
   };
   let keys = [0x10, 0x11];
-  let batch = native::click_inputs(&keys);
+  let batch = native::click_inputs(auv_driver_common::MouseButton::Left, &keys);
   assert_eq!(batch.len(), 6);
   // SAFETY: Read each union only after checking its INPUT tag.
   for (index, key) in [(0, 0x10), (1, 0x11), (4, 0x11), (5, 0x10)] {
@@ -137,7 +137,7 @@ fn click_batch_and_partial_delivery_cleanup_preserve_release_order() {
     assert_eq!(unsafe { batch[index].Anonymous.mi.dwFlags }, flags);
   }
   for sent in 0..=batch.len() {
-    let cleanup = native::click_cleanup(&keys, sent);
+    let cleanup = native::click_cleanup(auv_driver_common::MouseButton::Left, &keys, sent);
     let expected_keys: &[u16] = match sent {
       0 | 6 => &[],
       1 | 5 => &[0x10],
@@ -170,4 +170,31 @@ fn shared_key_symbols_preserve_windows_named_key_behavior() {
   assert_eq!(special_virtual_key("f1"), None);
   assert_eq!(modifier_virtual_key("win"), Some(vk::LWIN));
   assert_eq!(modifier_virtual_key("super"), None);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn right_and_middle_partial_clicks_release_the_selected_button() {
+  use auv_driver_common::MouseButton;
+  use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT_MOUSE, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+  };
+  for (button, down, up) in [
+    (MouseButton::Right, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+    (MouseButton::Middle, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+  ] {
+    let batch = native::click_inputs(button, &[]);
+    assert_eq!(batch.len(), 2);
+    for (event, expected) in batch.iter().zip([down, up]) {
+      assert_eq!(event.r#type, INPUT_MOUSE);
+      // SAFETY: The checked INPUT_MOUSE tag identifies the initialized mi field.
+      assert_eq!(unsafe { event.Anonymous.mi.dwFlags }, expected);
+    }
+    let cleanup = native::click_cleanup(button, &[], 1);
+    assert_eq!(cleanup.len(), 1);
+    assert_eq!(cleanup[0].r#type, INPUT_MOUSE);
+    // SAFETY: The checked INPUT_MOUSE tag identifies the initialized mi field.
+    assert_eq!(unsafe { cleanup[0].Anonymous.mi.dwFlags }, up);
+    assert!(native::click_cleanup(button, &[], 2).is_empty());
+  }
 }

@@ -545,6 +545,7 @@ fn run_typed_dispatch(
         &window,
         window_point,
         ClickOptions {
+          button: auv_driver::MouseButton::Left,
           policy: InputPolicy::ForegroundPreferred,
           click: Click::Single,
           window_strategy: WindowClickStrategy::PidTargeted,
@@ -603,6 +604,7 @@ fn warm_up_typed_dispatch_path(
       window,
       window_point,
       ClickOptions {
+        button: auv_driver::MouseButton::Left,
         policy: InputPolicy::ForegroundPreferred,
         click: Click::Single,
         window_strategy: WindowClickStrategy::PidTargeted,

@@ -3,7 +3,7 @@
 //!
 //! `crate::input` delivers input through `SendInput`, which requires the
 //! target window to be foreground and moves the real system cursor. This
-//! module instead posts `WM_LBUTTONDOWN`/`WM_LBUTTONUP`/`WM_LBUTTONDBLCLK`/
+//! module instead posts the selected button's down/up/double-click messages and
 //! `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL` directly to the control hit-tested under
 //! the target point via `PostMessageW`, so it never raises, focuses, or
 //! activates the window.
@@ -36,13 +36,25 @@ pub(crate) fn validate_modifiers(modifiers: ClickModifiers) -> DriverResult<()> 
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn click_at_window(window: &Window, screen_point: Point, click: Click, modifiers: ClickModifiers) -> DriverResult<()> {
+pub(crate) fn click_at_window(
+  window: &Window,
+  screen_point: Point,
+  button: auv_driver_common::MouseButton,
+  click: Click,
+  modifiers: ClickModifiers,
+) -> DriverResult<()> {
   validate_modifiers(modifiers)?;
-  native::click(window, screen_point, click, modifiers)
+  native::click(window, screen_point, button, click, modifiers)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn click_at_window(_window: &Window, _screen_point: Point, _click: Click, _modifiers: ClickModifiers) -> DriverResult<()> {
+pub(crate) fn click_at_window(
+  _window: &Window,
+  _screen_point: Point,
+  _button: auv_driver_common::MouseButton,
+  _click: Click,
+  _modifiers: ClickModifiers,
+) -> DriverResult<()> {
   Err(auv_driver_common::error::DriverError::unsupported("window.click background delivery"))
 }
 
@@ -78,26 +90,41 @@ mod native {
   // hierarchy so resolution cannot loop forever.
   const MAX_HIT_TEST_DEPTH: usize = 32;
 
-  pub(super) fn click(window: &Window, screen_point: Point, click: Click, modifiers: ClickModifiers) -> DriverResult<()> {
+  pub(super) fn click(
+    window: &Window,
+    screen_point: Point,
+    button: auv_driver_common::MouseButton,
+    click: Click,
+    modifiers: ClickModifiers,
+  ) -> DriverResult<()> {
     let target = resolve_target_hwnd(window, screen_point)?;
     let client = screen_to_client(target, screen_point)?;
     let lparam = make_lparam(client.x, client.y);
     let (count, interval) = click_parts(&click)?;
     // Windows' own double-click detection runs on hardware input translation,
-    // which posting messages directly bypasses. Posting a second
-    // WM_LBUTTONDOWN/UP pair looks like two independent single clicks to
-    // controls (list/tree/edit) that key off WM_LBUTTONDBLCLK, so the second
-    // press of a `Click::Double` is posted as WM_LBUTTONDBLCLK instead.
+    // which posting messages directly bypasses. Posting a second down/up pair
+    // looks like two independent single clicks to controls (list/tree/edit)
+    // that key off double-click messages, so the second press of a
+    // `Click::Double` uses the selected button's double-click message.
     let is_double = matches!(click, Click::Double { .. });
+    use windows::Win32::System::SystemServices::{MK_MBUTTON, MK_RBUTTON};
+    use windows::Win32::UI::WindowsAndMessaging::{
+      WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    };
+    let (down, up, double, held) = match button {
+      auv_driver_common::MouseButton::Left => (WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, MK_LBUTTON),
+      auv_driver_common::MouseButton::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK, MK_RBUTTON),
+      auv_driver_common::MouseButton::Middle => (WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MBUTTONDBLCLK, MK_MBUTTON),
+    };
     let modifier_flags = mouse_modifier_flags(modifiers);
     for index in 0..count {
       let down_message = if is_double && index == 1 {
-        WM_LBUTTONDBLCLK
+        double
       } else {
-        WM_LBUTTONDOWN
+        down
       };
-      post(target, down_message, WPARAM(modifier_flags | MK_LBUTTON.0 as usize), lparam)?;
-      post(target, WM_LBUTTONUP, WPARAM(modifier_flags), lparam)?;
+      post(target, down_message, WPARAM(modifier_flags | held.0 as usize), lparam)?;
+      post(target, up, WPARAM(modifier_flags), lparam)?;
       if index + 1 < count && !interval.is_zero() {
         std::thread::sleep(interval);
       }

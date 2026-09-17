@@ -622,8 +622,8 @@ impl InputService for LocalInputService {
     let _motion = self.mouse_motion.lock().await;
     let request = request.into_inner();
     let point = screen_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
-    let (click, modifiers) = screen_click_options_from_proto(request.options)?;
-    let action = self.session.input().click_at(point.point(), click, modifiers).map_err(driver_status)?;
+    let (button, click, modifiers) = screen_click_options_from_proto(request.options)?;
+    let action = self.session.input().click_at(point.point(), button, click, modifiers).map_err(driver_status)?;
     Ok(Response::new(proto::ClickScreenPointResponse {
       point: Some(screen_point_to_proto(point)),
       action: Some(input_action_to_proto(action)?),
@@ -1125,6 +1125,7 @@ fn click_options_from_proto(options: Option<proto::ClickOptions>) -> Result<auv_
   };
   let click = click_from_proto(options.click)?;
   Ok(auv_driver::ClickOptions {
+    button: mouse_button_from_proto(options.button)?,
     policy: input_policy_from_proto(options.policy)?,
     click,
     modifiers: click_modifiers_from_proto(options.modifiers),
@@ -1140,9 +1141,18 @@ fn click_options_from_proto(options: Option<proto::ClickOptions>) -> Result<auv_
 
 fn screen_click_options_from_proto(
   options: Option<proto::ScreenClickOptions>,
-) -> Result<(auv_driver::Click, auv_driver::ClickModifiers), Status> {
+) -> Result<(auv_driver::MouseButton, auv_driver::Click, auv_driver::ClickModifiers), Status> {
   let options = options.ok_or_else(|| Status::invalid_argument("options are required"))?;
-  Ok((click_from_proto(options.click)?, click_modifiers_from_proto(options.modifiers)))
+  Ok((mouse_button_from_proto(options.button)?, click_from_proto(options.click)?, click_modifiers_from_proto(options.modifiers)))
+}
+
+fn mouse_button_from_proto(value: i32) -> Result<auv_driver::MouseButton, Status> {
+  match proto::MouseButton::try_from(value) {
+    Ok(proto::MouseButton::Unspecified | proto::MouseButton::Left) => Ok(auv_driver::MouseButton::Left),
+    Ok(proto::MouseButton::Right) => Ok(auv_driver::MouseButton::Right),
+    Ok(proto::MouseButton::Middle) => Ok(auv_driver::MouseButton::Middle),
+    Err(_) => Err(Status::invalid_argument("options.button is unknown")),
+  }
 }
 
 fn click_modifiers_from_proto(value: Option<proto::ClickModifiers>) -> auv_driver::ClickModifiers {

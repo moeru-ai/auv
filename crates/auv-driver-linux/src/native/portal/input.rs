@@ -137,7 +137,7 @@ impl InputSession {
     )
   }
 
-  pub fn click_at(&mut self, point: Point, click: Click, modifiers: &[i32]) -> DriverResult<()> {
+  pub fn click_at(&mut self, point: Point, button: auv_driver_common::MouseButton, click: Click, modifiers: &[i32]) -> DriverResult<()> {
     let (count, interval) = click_parts(&click)?;
     self.require_pointer()?;
     if !modifiers.is_empty() {
@@ -161,11 +161,11 @@ impl InputSession {
         for index in 0..count {
           // A failed D-Bus reply may follow delivery: attempt release even when
           // the press reports an error, before unwinding modifier state.
-          let press = self.notify_pointer_button(MouseButton::Left, KeyState::Pressed);
+          let press = self.notify_pointer_button(button, KeyState::Pressed);
           if press.is_ok() {
             std::thread::sleep(CLICK_PRESS_DURATION);
           }
-          let release = self.notify_pointer_button(MouseButton::Left, KeyState::Released);
+          let release = self.notify_pointer_button(button, KeyState::Released);
           combine_release(press, release)?;
           if index + 1 < count && !interval.is_zero() {
             std::thread::sleep(interval);

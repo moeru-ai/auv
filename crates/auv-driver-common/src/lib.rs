@@ -28,7 +28,7 @@ pub use geometry::{
 pub use input::{
   ActivationPolicy, Click, ClickModifiers, ClickOptions, DisturbanceLevel, INPUT_ACTION_RESULT_PURPOSE, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError,
-  KeyboardInputProgress, PasteTextOptions, PrepareForInputOptions, PressKeysOptions, Scroll, ScrollDeliveryCandidate,
+  KeyboardInputProgress, MouseButton, PasteTextOptions, PrepareForInputOptions, PressKeysOptions, Scroll, ScrollDeliveryCandidate,
   ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
 };
 pub use keyboard::{Key, Keysym, Modifier};

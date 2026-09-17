@@ -68,11 +68,11 @@ impl InputSession {
       Self::Uinput(session) => session.move_to(point),
     }
   }
-  fn click_at(&mut self, point: Point, click: Click, modifiers: &[i32]) -> DriverResult<()> {
+  fn click_at(&mut self, point: Point, button: auv_driver_common::MouseButton, click: Click, modifiers: &[i32]) -> DriverResult<()> {
     match self {
-      Self::Portal(session) => session.click_at(point, click, modifiers),
+      Self::Portal(session) => session.click_at(point, button, click, modifiers),
       #[cfg(target_os = "linux")]
-      Self::Uinput(session) => session.click_at(point, click, modifiers),
+      Self::Uinput(session) => session.click_at(point, button, click, modifiers),
     }
   }
   fn scroll_at(&mut self, point: Point, scroll: Scroll) -> DriverResult<()> {
@@ -87,11 +87,12 @@ impl InputSession {
 pub(crate) fn click_at(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
   point: Point,
+  button: auv_driver_common::MouseButton,
   click: Click,
   modifiers: ClickModifiers,
 ) -> DriverResult<InputActionResult> {
   let keys = click_modifier_keysyms(modifiers);
-  with_input_session(state, |session| session.click_at(point, click, &keys))?;
+  with_input_session(state, |session| session.click_at(point, button, click, &keys))?;
   Ok(pointer_result())
 }
 

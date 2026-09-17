@@ -332,7 +332,7 @@ impl WindowApi<'_> {
       // the global HID route first; remove this note only if the native route
       // gains consumption evidence rather than dispatch-only success.
       let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::from_millis(50)))?;
-      let action_result = self.session.input().click_at(screen_point.point(), options.click, options.modifiers);
+      let action_result = self.session.input().click_at(screen_point.point(), options.button, options.click, options.modifiers);
       let restore_result = self.restore_input(lease);
       action_result?;
       restore_result?;
@@ -364,7 +364,11 @@ impl WindowApi<'_> {
       screen.y,
       window_point.x,
       window_point.y,
-      0,
+      match options.button {
+        auv_driver_common::MouseButton::Left => 0,
+        auv_driver_common::MouseButton::Right => 1,
+        auv_driver_common::MouseButton::Middle => 2,
+      },
       click_count,
       click_interval_ms,
       window_strategy_code,
@@ -712,10 +716,28 @@ impl InputApi<'_> {
     Ok(foreground_system_events_result(DisturbanceLevel::Temporary, DisturbanceLevel::None, DisturbanceLevel::None))
   }
 
-  pub fn click_at(&self, point: Point, click: Click, modifiers: auv_driver_common::ClickModifiers) -> DriverResult<InputActionResult> {
+  pub fn click_at(
+    &self,
+    point: Point,
+    button: auv_driver_common::MouseButton,
+    click: Click,
+    modifiers: auv_driver_common::ClickModifiers,
+  ) -> DriverResult<InputActionResult> {
     let _ = self.session;
     let (count, interval) = click_parts(&click)?;
-    crate::native::pointer::click_point(point.x, point.y, 0, count, interval, modifiers).map_err(backend)?;
+    crate::native::pointer::click_point(
+      point.x,
+      point.y,
+      match button {
+        auv_driver_common::MouseButton::Left => 0,
+        auv_driver_common::MouseButton::Right => 1,
+        auv_driver_common::MouseButton::Middle => 2,
+      },
+      count,
+      interval,
+      modifiers,
+    )
+    .map_err(backend)?;
     Ok(foreground_system_events_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
   }
 

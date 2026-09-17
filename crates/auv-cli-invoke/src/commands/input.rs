@@ -365,6 +365,10 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
   after_long_help = "Examples:\n  auv invoke input.clickPoint 1032.5 1212\n  auv invoke input.clickPoint 0.5 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.clickPoint 100 80 --target display:1 --relative-to display"
 )]
 struct ClickPointArgs {
+  /// Mouse button: left, right, or middle. Defaults to left.
+  #[arg(long, default_value = "left", value_parser = ["left", "right", "middle"])]
+  #[serde(default = "default_click_button")]
+  button: String,
   /// X coordinate in the selected coordinate basis.
   x: f64,
   /// Y coordinate in the selected coordinate basis.
@@ -404,6 +408,19 @@ struct ClickPointArgs {
     deserialize_with = "deserialize_click_modifiers"
   )]
   modifiers: Vec<String>,
+}
+
+fn default_click_button() -> String {
+  "left".to_string()
+}
+
+pub(crate) fn parse_click_button(value: Option<&str>) -> Result<auv_driver::MouseButton, String> {
+  match value.unwrap_or("left") {
+    "left" => Ok(auv_driver::MouseButton::Left),
+    "right" => Ok(auv_driver::MouseButton::Right),
+    "middle" => Ok(auv_driver::MouseButton::Middle),
+    value => Err(format!("unknown mouse button {value:?}; expected left, right, or middle")),
+  }
 }
 
 // Keep invoke protocol and recorded arguments as one comma-separated scalar,
@@ -462,6 +479,7 @@ impl ClickPointArgs {
 
   fn click_options(&self) -> Result<auv_driver::ClickOptions, String> {
     let mut options = click_options(self.input_policy.map(InputPolicyArg::driver_policy), self.click_count, self.click_interval_ms);
+    options.button = parse_click_button(Some(&self.button))?;
     let modifiers = self.modifiers.join(",");
     options.modifiers = parse_click_modifiers((!self.modifiers.is_empty()).then_some(modifiers.as_str()))?;
     Ok(options)
@@ -539,7 +557,8 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
         } else {
           input.cancellation.check().map_err(|error| error.to_string())?;
           let session = auv::local::open().map_err(|error| error.to_string())?;
-          let action = session.input().click_at(screen_point.point(), click.click, click.modifiers).map_err(|error| error.to_string())?;
+          let action =
+            session.input().click_at(screen_point.point(), click.button, click.click, click.modifiers).map_err(|error| error.to_string())?;
           emit_input_action_result(&action);
           Some(action)
         };
@@ -609,7 +628,8 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           None
         } else {
           input.cancellation.check().map_err(|error| error.to_string())?;
-          let action = session.input().click_at(screen_point.point(), click.click, click.modifiers).map_err(|error| error.to_string())?;
+          let action =
+            session.input().click_at(screen_point.point(), click.button, click.click, click.modifiers).map_err(|error| error.to_string())?;
           emit_input_action_result(&action);
           Some(action)
         };

@@ -61,56 +61,64 @@ fn appkit_receives_click_modifiers_on_background_and_foreground_routes() {
     (InputPolicy::BackgroundOnly, WindowClickStrategy::ChromiumCompatible),
     (InputPolicy::ForegroundPreferred, WindowClickStrategy::PidTargeted),
   ] {
-    for modifiers in [
-      ClickModifiers {
-        shift: true,
-        control: true,
-        alt: true,
-        meta: true,
-      },
-      ClickModifiers::default(),
+    for (button, down, up, number) in [
+      (auv_driver_common::MouseButton::Left, 1, 2, 0),
+      (auv_driver_common::MouseButton::Right, 3, 4, 1),
+      (auv_driver_common::MouseButton::Middle, 25, 26, 2),
     ] {
-      fs::write(&event_path, "").unwrap();
-      let result = session
-        .window()
-        .click(
-          &window,
-          WindowPoint::new(100.0, 100.0),
-          ClickOptions {
-            policy,
-            window_strategy: strategy,
-            modifiers,
-            ..Default::default()
-          },
-        )
-        .unwrap();
-      assert!(!result.verified);
-      // Allow asynchronous AppKit dispatch to settle; the oracle is its log.
-      let deadline = Instant::now() + Duration::from_secs(3);
-      let events = loop {
-        std::thread::sleep(Duration::from_millis(100));
-        let events: Vec<serde_json::Value> = fs::read_to_string(&event_path)
-          .unwrap()
-          .split_inclusive('\n')
-          .filter(|line| line.ends_with('\n'))
-          .map(|line| serde_json::from_str(line).unwrap())
-          .collect();
-        if events.len() >= 2 {
-          break events;
+      for modifiers in [
+        ClickModifiers {
+          shift: true,
+          control: true,
+          alt: true,
+          meta: true,
+        },
+        ClickModifiers::default(),
+      ] {
+        fs::write(&event_path, "").unwrap();
+        let result = session
+          .window()
+          .click(
+            &window,
+            WindowPoint::new(100.0, 100.0),
+            ClickOptions {
+              button,
+              policy,
+              window_strategy: strategy,
+              modifiers,
+              ..Default::default()
+            },
+          )
+          .unwrap();
+        assert!(!result.verified);
+        // Allow asynchronous AppKit dispatch to settle; the oracle is its log.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let events = loop {
+          std::thread::sleep(Duration::from_millis(100));
+          let events: Vec<serde_json::Value> = fs::read_to_string(&event_path)
+            .unwrap()
+            .split_inclusive('\n')
+            .filter(|line| line.ends_with('\n'))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+          if events.len() >= 2 {
+            break events;
+          }
+          assert!(Instant::now() < deadline, "no click pair received: {policy:?}/{strategy:?}; {events:?}");
+        };
+        eprintln!("{policy:?}/{strategy:?} button={button:?} modifiers={modifiers:?}: {events:?}");
+        let expected_flags = if modifiers.is_empty() {
+          0
+        } else {
+          modifier_mask
+        };
+        assert!(events.iter().any(|event| event["type"].as_u64() == Some(down)), "missing down: {events:?}");
+        assert!(events.iter().any(|event| event["type"].as_u64() == Some(up)), "missing up: {events:?}");
+        for event in &events {
+          assert_eq!(event["button"].as_u64(), Some(number));
+          assert_eq!(event["flags"].as_u64().unwrap() & modifier_mask, expected_flags, "{policy:?}/{strategy:?}: {event}");
+          assert_eq!(event["window"].as_u64().unwrap().to_string(), window.reference.id);
         }
-        assert!(Instant::now() < deadline, "no click pair received: {policy:?}/{strategy:?}; {events:?}");
-      };
-      eprintln!("{policy:?}/{strategy:?} modifiers={modifiers:?}: {events:?}");
-      let expected_flags = if modifiers.is_empty() {
-        0
-      } else {
-        modifier_mask
-      };
-      assert!(events.iter().any(|event| matches!(event["type"].as_u64(), Some(1 | 3))), "missing down: {events:?}");
-      assert!(events.iter().any(|event| matches!(event["type"].as_u64(), Some(2 | 4))), "missing up: {events:?}");
-      for event in &events {
-        assert_eq!(event["flags"].as_u64().unwrap() & modifier_mask, expected_flags, "{policy:?}/{strategy:?}: {event}");
-        assert_eq!(event["window"].as_u64().unwrap().to_string(), window.reference.id);
       }
     }
   }

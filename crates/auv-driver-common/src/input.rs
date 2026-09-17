@@ -171,8 +171,9 @@ impl ClickModifiers {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClickOptions {
-  // TODO(click-button): button routing remains a separate BG-1 slice; see
-  // `docs/ai/references/driver/2026-09-11-click-modifiers-contract.md`.
+  /// Mouse button for every down/up pair. Defaults to left.
+  #[serde(default)]
+  pub button: MouseButton,
   pub policy: InputPolicy,
   pub click: Click,
   pub window_strategy: WindowClickStrategy,
@@ -184,6 +185,7 @@ pub struct ClickOptions {
 impl Default for ClickOptions {
   fn default() -> Self {
     Self {
+      button: MouseButton::Left,
       policy: InputPolicy::BackgroundPreferred,
       click: Click::Single,
       window_strategy: WindowClickStrategy::default(),

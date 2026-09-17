@@ -459,7 +459,7 @@ fn click_rpc_preserves_modifiers_for_window_and_screen_delivery() {
     ..Default::default()
   }))
   .unwrap();
-  let (_, screen) = screen_click_options_from_proto(Some(proto::ScreenClickOptions {
+  let (_, _, screen) = screen_click_options_from_proto(Some(proto::ScreenClickOptions {
     modifiers: Some(modifiers),
     ..Default::default()
   }))
@@ -475,7 +475,7 @@ fn click_rpc_preserves_modifiers_for_window_and_screen_delivery() {
   );
   assert_eq!(screen, window.modifiers);
   assert!(click_options_from_proto(None).unwrap().modifiers.is_empty());
-  assert!(screen_click_options_from_proto(Some(Default::default())).unwrap().1.is_empty());
+  assert!(screen_click_options_from_proto(Some(Default::default())).unwrap().2.is_empty());
 }
 
 #[test]
@@ -745,4 +745,52 @@ mod linux_keyboard_tests {
     assert_eq!(progress.completed_presses, 0);
     assert!(progress.completed.is_empty());
   }
+}
+
+#[test]
+fn click_rpc_decodes_all_buttons_and_rejects_unknown_before_delivery() {
+  for (wire, button) in [
+    (proto::MouseButton::Unspecified, auv_driver::MouseButton::Left),
+    (proto::MouseButton::Left, auv_driver::MouseButton::Left),
+    (proto::MouseButton::Right, auv_driver::MouseButton::Right),
+    (proto::MouseButton::Middle, auv_driver::MouseButton::Middle),
+  ] {
+    assert_eq!(
+      click_options_from_proto(Some(proto::ClickOptions {
+        button: wire as i32,
+        ..Default::default()
+      }))
+      .unwrap()
+      .button,
+      button
+    );
+    assert_eq!(
+      screen_click_options_from_proto(Some(proto::ScreenClickOptions {
+        button: wire as i32,
+        ..Default::default()
+      }))
+      .unwrap()
+      .0,
+      button
+    );
+  }
+  assert_eq!(click_options_from_proto(None).unwrap().button, auv_driver::MouseButton::Left);
+  assert_eq!(
+    click_options_from_proto(Some(proto::ClickOptions {
+      button: 99,
+      ..Default::default()
+    }))
+    .unwrap_err()
+    .code(),
+    tonic::Code::InvalidArgument
+  );
+  assert_eq!(
+    screen_click_options_from_proto(Some(proto::ScreenClickOptions {
+      button: 99,
+      ..Default::default()
+    }))
+    .unwrap_err()
+    .code(),
+    tonic::Code::InvalidArgument
+  );
 }

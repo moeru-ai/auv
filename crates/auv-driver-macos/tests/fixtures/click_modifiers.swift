@@ -11,6 +11,8 @@ final class Receiver: NSView {
   override func mouseUp(with event: NSEvent) {}
   override func rightMouseDown(with event: NSEvent) {}
   override func rightMouseUp(with event: NSEvent) {}
+  override func otherMouseDown(with event: NSEvent) {}
+  override func otherMouseUp(with event: NSEvent) {}
 }
 
 let app = NSApplication.shared
@@ -21,13 +23,14 @@ let window = NSWindow(
 )
 window.title = "AUV ClickModifiers receiver"
 window.contentView = Receiver(frame: NSRect(x: 0, y: 0, width: 360, height: 240))
-let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp]) { event in
+let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp]) { event in
   guard event.windowNumber == window.windowNumber else { return event }
   let point = event.locationInWindow
   // Ignore the compatibility route's off-window primer events.
   guard window.contentView!.bounds.contains(point) else { return event }
   let record: [String: Any] = [
     "type": event.type.rawValue,
+    "button": event.buttonNumber,
     "flags": event.modifierFlags.rawValue,
     "count": event.clickCount,
     "window": event.windowNumber,
