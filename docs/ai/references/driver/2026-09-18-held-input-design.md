@@ -12,12 +12,12 @@ remains explicitly unsupported.
 ## Contract
 
 - Extend InputService with CreateMouse, DeleteMouse, MouseDown, MouseUp,
-  HoldMouse, and DragMouse. Existing MoveMouse and StreamMouseMotion share the
+  and DragMouse. Existing MoveMouse and StreamMouseMotion share the
   driver execution path. Library and Rust/TypeScript clients expose these calls.
 - Mouse ID zero is shared across Runs using the same local driver process.
   CreateMouse explicitly allocates separate logical state, not an OS cursor.
   DeleteMouse releases owned input first and refuses to delete the default mouse.
-- Reuse InputTarget for addressing. Omission at down/hold selects foreground;
+- Reuse InputTarget for addressing. Omission on MouseDown selects foreground;
   omission during movement continues a held route, otherwise selects foreground.
   Window targets retain observed window and process identity. Application-only
   mouse addressing is unsupported rather than implicitly choosing a window.
@@ -32,7 +32,11 @@ remains explicitly unsupported.
 - MouseDown holds one left/right/middle button. RPC omission selects left and
   a 30-second timeout; explicit timeouts must be positive and at most 60 seconds.
   MouseUp is idempotent after known release. Additional down while held is rejected.
-- HoldMouse keeps a button down for a positive duration up to 60 seconds.
+- Local driver `hold_mouse` is a convenience operation that keeps a button down
+  for a positive duration up to 60 seconds, using the shared press/release lifecycle.
+  There is no HoldMouse RPC or remote Rust/TypeScript hold method. Remote callers
+  use MouseDown/MoveMouse/MouseUp; a timed remote convenience is deferred until
+  an approved atomic sequence contract can preserve admission and cleanup.
   DragMouse performs down, sampled movement, and up under one admission.
   Both use the same primitive state transitions and cleanup as cross-call input.
 - InputActionResult reports delivery only. Feedback, video, and verification

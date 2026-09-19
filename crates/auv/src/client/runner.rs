@@ -1152,31 +1152,6 @@ impl InputClient {
     input_action_result_from_proto(required(response.action, "MouseUp omitted action")?)
   }
 
-  pub async fn hold_mouse(
-    &self,
-    target: &auv_driver::InputTarget,
-    mouse: u64,
-    point: auv_driver::Point,
-    button: auv_driver::MouseButton,
-    duration: std::time::Duration,
-  ) -> Result<auv_driver::InputActionResult, CapabilityError> {
-    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .hold_mouse(proto::HoldMouseRequest {
-        target: Some(input_target_to_proto(target)),
-        mouse,
-        point: Some(proto::ScreenPoint {
-          x: point.x,
-          y: point.y,
-        }),
-        button: mouse_button_to_proto(button) as i32,
-        duration: Some(duration_to_proto(duration)?),
-      })
-      .await
-      .map_err(capability_status)?
-      .into_inner();
-    input_action_result_from_proto(required(response.action, "HoldMouse omitted action")?)
-  }
-
   pub async fn drag_mouse(
     &self,
     movement: auv_driver::MoveMouseRequest,

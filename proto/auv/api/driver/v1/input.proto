@@ -9,6 +9,9 @@ import "auv/api/driver/v1/window.proto";
 import "google/protobuf/duration.proto";
 
 service InputService {
+  // NOTICE: Timed hold is a local driver convenience, not an RPC capability.
+  // Remote convenience awaits an approved atomic sequence contract; client-side
+  // sleep cannot preserve whole-gesture admission and cancellation cleanup.
   // Creates logical state in this Runner; it does not create an OS cursor.
   rpc CreateMouse(CreateMouseRequest) returns (CreateMouseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
@@ -26,11 +29,6 @@ service InputService {
   }
   // Retries uncertain release; a known released mouse returns a Noop action.
   rpc MouseUp(MouseUpRequest) returns (MouseUpResponse) {
-    option (auv.api.annotations.v1.discoverable) = true;
-    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
-  }
-  // Complete bounded press/release, using the primitive lifecycle.
-  rpc HoldMouse(HoldMouseRequest) returns (HoldMouseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
@@ -514,20 +512,6 @@ message MouseUpRequest {
   uint64 mouse = 1;
 }
 message MouseUpResponse {
-  InputActionResult action = 1;
-}
-
-message HoldMouseRequest {
-  // Zero selects the shared default mouse.
-  uint64 mouse = 1;
-  ScreenPoint point = 2;
-  MouseButton button = 3;
-  // Required, positive, and at most 60 seconds.
-  google.protobuf.Duration duration = 4;
-  // Omission selects foreground. Applications without a window are unsupported.
-  InputTarget target = 5;
-}
-message HoldMouseResponse {
   InputActionResult action = 1;
 }
 

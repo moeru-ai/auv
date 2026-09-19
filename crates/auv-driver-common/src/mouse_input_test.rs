@@ -200,3 +200,14 @@ fn shutdown_interrupts_an_active_hold_and_releases_before_returning() {
   assert!(worker.join().unwrap().is_err());
   assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up"]);
 }
+
+#[test]
+fn complete_hold_returns_release_evidence_after_matching_down_and_up() {
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let receiver = Arc::new(Receiver::default());
+  let action = coordinator.hold(0, Point::new(1., 2.), MouseButton::Left, Duration::from_millis(1), receiver.clone()).unwrap();
+  assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up"]);
+  assert_eq!(action, InputActionResult::single_success(crate::InputDeliveryPath::ForegroundSystemEvents));
+  coordinator.move_to(0, Point::new(3., 4.), receiver.clone()).unwrap();
+  assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up", "move"]);
+}

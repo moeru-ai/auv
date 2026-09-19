@@ -64,7 +64,6 @@ export interface RunnerClient {
     createMouse: (request: Init<typeof InputService.method.createMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.createMouse.output>>
     deleteMouse: (request: Init<typeof InputService.method.deleteMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.deleteMouse.output>>
     dragMouse: (request: Init<typeof InputService.method.dragMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.dragMouse.output>>
-    holdMouse: (request: Init<typeof InputService.method.holdMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.holdMouse.output>>
     mouseDown: (request: Init<typeof InputService.method.mouseDown.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseDown.output>>
     mouseUp: (request: Init<typeof InputService.method.mouseUp.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseUp.output>>
     moveMouse: (request: Init<typeof MoveMouseRequestSchema>, options?: OperationOptions) => Promise<AsyncIterable<MoveMouseStreamResponse>>
@@ -194,7 +193,6 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       createMouse: (request, options) => unary(InputService.method.createMouse, request, options),
       deleteMouse: (request, options) => unary(InputService.method.deleteMouse, request, options),
       dragMouse: (request, options) => unary(InputService.method.dragMouse, request, options),
-      holdMouse: (request, options) => unary(InputService.method.holdMouse, request, options),
       mouseDown: (request, options) => unary(InputService.method.mouseDown, request, options),
       mouseUp: (request, options) => unary(InputService.method.mouseUp, request, options),
       moveMouse: (request, options) => serverStream(InputService.method.moveMouse, request, options),

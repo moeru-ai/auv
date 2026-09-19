@@ -565,22 +565,6 @@ impl InputService for LocalInputService {
       action: Some(input_action_to_proto(action)?),
     }))
   }
-  async fn hold_mouse(&self, request: Request<proto::HoldMouseRequest>) -> Result<Response<proto::HoldMouseResponse>, Status> {
-    let request = request.into_inner();
-    let point = screen_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?.point();
-    let button = mouse_button_from_proto(request.button)?;
-    let duration = duration_from_proto(request.duration, std::time::Duration::ZERO, "duration")?;
-    let target = request
-      .target
-      .map(|target| input_target_from_proto(&self.session, Some(target)))
-      .transpose()?
-      .unwrap_or(auv_driver::InputTarget::Foreground);
-    let session = self.session.clone();
-    let action = run_input_blocking(move || session.input().hold_mouse(&target, request.mouse, point, button, duration)).await?;
-    Ok(Response::new(proto::HoldMouseResponse {
-      action: Some(input_action_to_proto(action)?),
-    }))
-  }
   async fn drag_mouse(&self, request: Request<proto::DragMouseRequest>) -> Result<Response<proto::DragMouseResponse>, Status> {
     let request = request.into_inner();
     let movement =

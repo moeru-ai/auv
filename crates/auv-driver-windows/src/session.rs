@@ -432,6 +432,8 @@ impl InputApi<'_> {
     auv_driver_common::mouse_input::mouse_coordinator().motion(request, None, backend, notify)
   }
 
+  /// Local convenience: press, wait, and release under one admission.
+  /// This composes the mouse lifecycle; it is not a separate Runner capability.
   pub fn hold_mouse(
     &self,
     target: &auv_driver_common::InputTarget,
