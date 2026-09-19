@@ -176,6 +176,18 @@ impl InputSession {
     )
   }
 
+  pub fn button(&mut self, button: MouseButton, down: bool) -> DriverResult<()> {
+    self.require_pointer()?;
+    self.notify_pointer_button(
+      button,
+      if down {
+        KeyState::Pressed
+      } else {
+        KeyState::Released
+      },
+    )
+  }
+
   pub fn move_to(&mut self, point: Point) -> DriverResult<()> {
     self.require_pointer()?;
     self.move_pointer_to(point)

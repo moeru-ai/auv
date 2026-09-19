@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CaptureWindowRequestSchema, CaptureWindowResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, MouseButton } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
@@ -48,6 +48,50 @@ describe('runner Driver control surface', () => {
     expect(screen.options?.modifiers).toMatchObject(modifiers)
     expect(targeted.options?.modifiers).toMatchObject(modifiers)
     expect(targeted.window?.windowId).toBe('modifier-target')
+  })
+
+  it('retains a created mouse and exact window owner across primitive and complete gestures', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          switch (call.method) {
+            case '/auv.api.driver.v1.InputService/CreateMouse':
+              return toBinary(CreateMouseResponseSchema, create(CreateMouseResponseSchema, { mouse: 7n }))
+            case '/auv.api.driver.v1.InputService/DragMouse':
+              return toBinary(DragMouseResponseSchema, create(DragMouseResponseSchema))
+            case '/auv.api.driver.v1.InputService/MouseDown':
+              return toBinary(MouseDownResponseSchema, create(MouseDownResponseSchema))
+            case '/auv.api.driver.v1.InputService/MouseUp':
+              return toBinary(MouseUpResponseSchema, create(MouseUpResponseSchema))
+            default: throw new Error(`unexpected method: ${call.method}`)
+          }
+        },
+      },
+    })
+    const input = createAuv(connection).runner({ runnerClass: 'auv.core.local' }).input
+    const { mouse } = await input.createMouse({})
+    const target = { recipient: { case: 'window' as const, value: { processId: 123, ref: { windowId: 'window-42' } } } }
+    await input.mouseDown({ button: MouseButton.RIGHT, mouse, point: { x: 10, y: 20 }, target, timeout: { seconds: 2n } })
+    await input.mouseUp({ mouse })
+    await input.dragMouse({ button: MouseButton.MIDDLE, movement: { mouse, start: { source: { case: 'point', value: { x: 20, y: 30 } } }, target } })
+    const down = fromBinary(MouseDownRequestSchema, calls[1]!.body)
+    const up = fromBinary(MouseUpRequestSchema, calls[2]!.body)
+    const drag = fromBinary(DragMouseRequestSchema, calls[3]!.body)
+    expect(down.mouse).toBe(7n)
+    expect(up.mouse).toBe(7n)
+    expect(down.target?.recipient).toMatchObject(target.recipient)
+    expect(down.button).toBe(MouseButton.RIGHT)
+    expect(down.timeout?.seconds).toBe(2n)
+    expect(drag.movement?.mouse).toBe(7n)
+    expect(drag.movement?.target?.recipient).toMatchObject(target.recipient)
+    expect(drag.movement?.start?.source).toMatchObject({ case: 'point', value: { x: 20, y: 30 } })
+    await connection.close()
   })
 
   it('binds a resolved window by ID and refreshes observations through each capability call', async () => {

@@ -38,7 +38,11 @@ pub struct MouseMotionOptions {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct MouseMotionPlan {
+pub struct MoveMouseRequest {
+  /// Zero selects the shared default logical mouse.
+  pub mouse: u64,
+  /// Omission continues a held route, otherwise selects foreground delivery.
+  pub target: Option<crate::InputTarget>,
   pub start: MouseStart,
   pub curve: MouseCurve,
   pub mapping: MouseCurveMapping,
@@ -51,9 +55,11 @@ pub struct MouseMotionSample {
   pub elapsed: Duration,
 }
 
-impl MouseMotionPlan {
+impl MoveMouseRequest {
   pub fn direct(point: Point) -> Self {
     Self {
+      mouse: 0,
+      target: None,
       start: MouseStart::Screen(point),
       curve: MouseCurve {
         start: Point::new(0.0, 0.0),
@@ -70,7 +76,7 @@ impl MouseMotionPlan {
     }
   }
 
-  /// Validates and samples the plan after the caller resolves `MouseStart`.
+  /// Validates and samples the request after the caller resolves `MouseStart`.
   pub fn samples(&self, resolved_start: Point) -> DriverResult<Vec<MouseMotionSample>> {
     validate_point(resolved_start, "resolved mouse start")?;
     validate_point(self.curve.start, "curve start")?;
@@ -187,7 +193,9 @@ mod tests {
 
   #[test]
   fn maps_normalized_curve_relative_to_resolved_start() {
-    let plan = MouseMotionPlan {
+    let request = MoveMouseRequest {
+      mouse: 0,
+      target: None,
       start: MouseStart::Current,
       curve: MouseCurve {
         start: Point::new(0.25, 0.25),
@@ -206,7 +214,7 @@ mod tests {
         sample_rate_hz: 10,
       },
     };
-    let samples = plan.samples(Point::new(100.0, 200.0)).unwrap();
+    let samples = request.samples(Point::new(100.0, 200.0)).unwrap();
     assert_eq!(samples.first().unwrap().point, Point::new(100.0, 200.0));
     assert_eq!(samples.last().unwrap().point, Point::new(700.0, 500.0));
     assert_eq!(samples.last().unwrap().elapsed, Duration::from_secs(1));
@@ -214,29 +222,29 @@ mod tests {
 
   #[test]
   fn rejects_non_finite_curve_coordinates_before_delivery() {
-    let mut plan = MouseMotionPlan::direct(Point::new(1.0, 2.0));
-    plan.curve.segments.push(MouseCubicBezierSegment {
+    let mut request = MoveMouseRequest::direct(Point::new(1.0, 2.0));
+    request.curve.segments.push(MouseCubicBezierSegment {
       control_1: Point::new(f64::NAN, 0.0),
       control_2: Point::new(0.0, 0.0),
       end: Point::new(1.0, 1.0),
     });
-    assert!(matches!(plan.samples(Point::new(1.0, 2.0)), Err(DriverError::InvalidInput { .. })));
+    assert!(matches!(request.samples(Point::new(1.0, 2.0)), Err(DriverError::InvalidInput { .. })));
   }
 
   #[test]
   fn maximum_duration_and_rate_keep_the_requested_sample_rate() {
-    let mut plan = MouseMotionPlan::direct(Point::new(1.0, 2.0));
-    plan.curve.segments.push(MouseCubicBezierSegment {
+    let mut request = MoveMouseRequest::direct(Point::new(1.0, 2.0));
+    request.curve.segments.push(MouseCubicBezierSegment {
       control_1: Point::new(0.25, 0.0),
       control_2: Point::new(0.75, 1.0),
       end: Point::new(1.0, 1.0),
     });
-    plan.options = MouseMotionOptions {
+    request.options = MouseMotionOptions {
       duration: Duration::from_secs(60),
       sample_rate_hz: 240,
     };
 
-    let samples = plan.samples(Point::new(1.0, 2.0)).expect("maximum valid timing");
+    let samples = request.samples(Point::new(1.0, 2.0)).expect("maximum valid timing");
     assert_eq!(samples.len(), 14_401);
     assert_eq!(samples.last().expect("final sample").elapsed, Duration::from_secs(60));
   }

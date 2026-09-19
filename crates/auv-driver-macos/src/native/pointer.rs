@@ -126,3 +126,39 @@ pub(super) fn click_flags(modifiers: ClickModifiers) -> u64 {
 #[cfg(test)]
 #[path = "pointer_test.rs"]
 mod tests;
+
+/// Phase 0 moves (button -1 means unheld), 1 presses, and 2 releases.
+#[cfg(target_os = "macos")]
+pub fn pointer_event(x: f64, y: f64, button_code: i32, phase: u8) -> AuvResult<()> {
+  action_result("pointer_event", super::binding::ffi::pointer_event(x, y, button_code, phase))
+}
+#[cfg(not(target_os = "macos"))]
+pub fn pointer_event(_x: f64, _y: f64, _button_code: i32, _phase: u8) -> AuvResult<()> {
+  Err("macOS native pointer input is unsupported on this target".into())
+}
+
+#[cfg(target_os = "macos")]
+pub fn window_pointer_event(
+  pid: i64,
+  window: i64,
+  point: auv_driver_common::Point,
+  local: auv_driver_common::Point,
+  button: i32,
+  phase: u8,
+) -> AuvResult<()> {
+  action_result(
+    "window_pointer_event",
+    super::binding::ffi::window_pointer_event(pid, window, point.x, point.y, local.x, local.y, button, phase),
+  )
+}
+#[cfg(not(target_os = "macos"))]
+pub fn window_pointer_event(
+  _pid: i64,
+  _window: i64,
+  _point: auv_driver_common::Point,
+  _local: auv_driver_common::Point,
+  _button: i32,
+  _phase: u8,
+) -> AuvResult<()> {
+  Err("macOS window pointer input is unsupported on this target".into())
+}

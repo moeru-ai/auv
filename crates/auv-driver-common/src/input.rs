@@ -265,7 +265,7 @@ impl KeyboardInput {
 /// Recipient scope for input preparation and delivery. Application selection
 /// does not imply a window or text-control selection. A Window retains its
 /// observed owner and id for exact-window validation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum InputTarget {
   /// Explicit global input. No activation or recipient guarantee.
   Foreground,

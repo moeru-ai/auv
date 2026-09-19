@@ -1,26 +1,5 @@
 use super::*;
 
-#[test]
-fn overdue_mouse_samples_coalesce_but_keep_the_final_sample() {
-  let samples = [
-    auv_driver::MouseMotionSample {
-      point: auv_driver::Point::new(0.0, 0.0),
-      elapsed: std::time::Duration::ZERO,
-    },
-    auv_driver::MouseMotionSample {
-      point: auv_driver::Point::new(1.0, 1.0),
-      elapsed: std::time::Duration::from_millis(8),
-    },
-    auv_driver::MouseMotionSample {
-      point: auv_driver::Point::new(2.0, 2.0),
-      elapsed: std::time::Duration::from_millis(16),
-    },
-  ];
-
-  assert_eq!(latest_due_mouse_sample(&samples, 0, std::time::Duration::from_millis(12)), 1);
-  assert_eq!(latest_due_mouse_sample(&samples, 2, std::time::Duration::from_secs(1)), 2);
-}
-
 #[tokio::test]
 async fn streamed_mouse_motion_rejects_cancel_before_begin() {
   let mut requests = tokio_stream::iter([Ok(proto::StreamMouseMotionRequest {
@@ -28,7 +7,7 @@ async fn streamed_mouse_motion_rejects_cancel_before_begin() {
   })]);
   let (sender, _receiver) = tokio::sync::mpsc::channel(1);
 
-  let status = collect_mouse_motion(&mut requests, &sender).await.expect_err("cancel must follow begin");
+  let status = collect_mouse_motion(&auv_driver::open_local().unwrap(), &mut requests, &sender).await.expect_err("cancel must follow begin");
 
   assert_eq!(status.code(), tonic::Code::InvalidArgument);
   assert_eq!(status.message(), "moveMouse cancel requires begin");
@@ -555,7 +534,6 @@ fn overlay_shadow_mapper_preserves_native_dimensions_and_rejects_invalid_blur() 
 async fn keyboard_rpc_requires_explicit_recipient_before_delivery() {
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    mouse_motion: Default::default(),
   };
   let error = service
     .input_keyboard(Request::new(proto::InputKeyboardRequest {
@@ -589,10 +567,7 @@ fn keyboard_press_request(key: &str, count: u32) -> proto::KeyboardInput {
 async fn targeted_keyboard_rpc_rejects_changed_window_owner() {
   let session = auv_driver::open_local().unwrap();
   let window = session.window().list().unwrap().into_iter().find(|window| window.process_id.is_some()).unwrap();
-  let service = LocalInputService {
-    session,
-    mouse_motion: Default::default(),
-  };
+  let service = LocalInputService { session };
   for dry_run in [false, true] {
     let error = service
       .input_keyboard(Request::new(proto::InputKeyboardRequest {
@@ -621,7 +596,6 @@ async fn keyboard_rpc_retains_failed_action_index_before_any_delivery() {
   use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    mouse_motion: Default::default(),
   };
   let error = service
     .input_keyboard(Request::new(proto::InputKeyboardRequest {
@@ -649,7 +623,6 @@ async fn press_keys_rpc_uses_the_keyboard_repeat_validation_contract() {
   use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    mouse_motion: Default::default(),
   };
   let error = service
     .press_keys(Request::new(proto::PressKeysRequest {
@@ -676,7 +649,6 @@ async fn keyboard_rpc_reports_wire_validation_position_without_delivering_prefix
   use prost::Message;
   let service = LocalInputService {
     session: auv_driver::open_local().unwrap(),
-    mouse_motion: Default::default(),
   };
   let error = service
     .input_keyboard(Request::new(proto::InputKeyboardRequest {
@@ -706,7 +678,6 @@ mod linux_keyboard_tests {
     use auv_driver::Driver;
     let service = LocalInputService {
       session: auv_driver::LocalDriver::new().open_local().unwrap(),
-      mouse_motion: Default::default(),
     };
     let press = |key: &str| proto::KeyboardInput {
       action: Some(proto::keyboard_input::Action::Press(proto::KeyboardPress {

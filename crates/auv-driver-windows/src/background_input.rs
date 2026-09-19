@@ -68,6 +68,21 @@ pub(crate) fn scroll_at_window(_window: &Window, _screen_point: Point, _scroll: 
   Err(auv_driver_common::error::DriverError::unsupported("window.scroll background delivery"))
 }
 
+pub(crate) fn mouse_backend(window: Window) -> DriverResult<std::sync::Arc<dyn auv_driver_common::mouse_input::MouseBackend>> {
+  #[cfg(target_os = "windows")]
+  {
+    Ok(std::sync::Arc::new(native::HeldMouse {
+      window,
+      child: std::sync::Mutex::new(None),
+    }))
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = window;
+    Err(auv_driver_common::DriverError::unsupported("windows background mouse"))
+  }
+}
+
 #[cfg(target_os = "windows")]
 mod native {
   use auv_driver_common::error::DriverResult;
@@ -85,6 +100,85 @@ mod native {
   use crate::error::backend;
   use crate::input::click_parts;
   use crate::window::window_handle;
+
+  /// The receiver is resolved once, so dragging across another control does
+  /// not transfer button ownership to that control.
+  pub(super) struct HeldMouse {
+    pub(super) window: Window,
+    pub(super) child: std::sync::Mutex<Option<isize>>,
+  }
+  impl HeldMouse {
+    fn event(
+      &self,
+      point: Point,
+      button: Option<auv_driver_common::MouseButton>,
+      phase: u8,
+    ) -> DriverResult<auv_driver_common::InputActionResult> {
+      use windows::Win32::System::SystemServices::{MK_MBUTTON, MK_RBUTTON};
+      use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, IsChild, IsWindow, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
+      };
+      let parent = window_handle(&self.window)?;
+      let mut pid = 0;
+      // SAFETY: HWND is an opaque handle; the pid output points to live storage.
+      unsafe {
+        GetWindowThreadProcessId(parent, Some(&mut pid));
+      }
+      if self.window.process_id != Some(pid) || pid == 0 {
+        return Err(backend("held mouse target owner changed"));
+      }
+      let mut child = self.child.lock().map_err(|_| backend("held receiver state poisoned"))?;
+      let target = match *child {
+        Some(raw) => HWND(raw as *mut std::ffi::c_void),
+        None => {
+          let hwnd = resolve_target_hwnd(&self.window, point)?;
+          *child = Some(hwnd.0 as isize);
+          hwnd
+        }
+      };
+      // SAFETY: these functions validate opaque window handles and retain none.
+      if !unsafe { IsWindow(target) }.as_bool() || (target != parent && !unsafe { IsChild(parent, target) }.as_bool()) {
+        return Err(backend("held mouse receiver disappeared"));
+      }
+      let client = screen_to_client(target, point)?;
+      if i16::try_from(client.x).is_err() || i16::try_from(client.y).is_err() {
+        return Err(backend("background pointer coordinate exceeds signed 16-bit message range"));
+      }
+      let (down, up, held) = match button.unwrap_or(auv_driver_common::MouseButton::Left) {
+        auv_driver_common::MouseButton::Left => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+        auv_driver_common::MouseButton::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
+        auv_driver_common::MouseButton::Middle => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
+      };
+      let message = match phase {
+        1 => down,
+        2 => up,
+        _ => WM_MOUSEMOVE,
+      };
+      let flags = if button.is_some() && phase != 2 {
+        held.0 as usize
+      } else {
+        0
+      };
+      post(target, message, WPARAM(flags), make_lparam(client.x, client.y))?;
+      Ok(auv_driver_common::InputActionResult::single_success(auv_driver_common::InputDeliveryPath::WindowTargetedMouse))
+    }
+  }
+  impl auv_driver_common::mouse_input::MouseBackend for HeldMouse {
+    fn target(&self) -> auv_driver_common::InputTarget {
+      auv_driver_common::InputTarget::Window(self.window.clone())
+    }
+    fn move_to(&self, point: Point, held: Option<auv_driver_common::MouseButton>) -> DriverResult<auv_driver_common::InputActionResult> {
+      self.event(point, held, 0)
+    }
+    fn button(
+      &self,
+      point: Point,
+      button: auv_driver_common::MouseButton,
+      down: bool,
+    ) -> DriverResult<auv_driver_common::InputActionResult> {
+      self.event(point, Some(button), if down { 1 } else { 2 })
+    }
+  }
 
   // NOTICE: bounds hit-test descent against a pathological or cyclic child
   // hierarchy so resolution cannot loop forever.

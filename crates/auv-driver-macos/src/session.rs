@@ -538,15 +538,94 @@ impl WindowApi<'_> {
 
 impl WindowInput for WindowApi<'_> {
   fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.click_impl(window, point, options)
   }
 
   fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.scroll_impl(window, point, scroll, options)
   }
 }
 
 impl InputApi<'_> {
+  /// A complete drag composes press, sampled movement, and release under one admission.
+  pub fn drag_mouse(
+    &self,
+    request: auv_driver_common::MoveMouseRequest,
+    button: auv_driver_common::MouseButton,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    let backend = self.pointer_backend(request.target.as_ref())?;
+    auv_driver_common::mouse_input::mouse_coordinator().motion(request, Some(button), backend, |_| true)
+  }
+
+  fn pointer_backend(
+    &self,
+    target: Option<&auv_driver_common::InputTarget>,
+  ) -> DriverResult<std::sync::Arc<dyn auv_driver_common::mouse_input::MouseBackend>> {
+    match target {
+      None | Some(auv_driver_common::InputTarget::Foreground) => Ok(std::sync::Arc::new(PointerBackend)),
+      Some(auv_driver_common::InputTarget::Window(window)) => Ok(std::sync::Arc::new(WindowPointerBackend {
+        session: *self.session,
+        window: window.clone(),
+      })),
+      Some(auv_driver_common::InputTarget::Application { .. }) => {
+        Err(auv_driver_common::DriverError::unsupported("mouse input requires a window or foreground target"))
+      }
+    }
+  }
+
+  pub fn move_mouse(
+    &self,
+    request: auv_driver_common::MoveMouseRequest,
+    notify: impl FnMut(auv_driver_common::mouse_input::MotionEvent) -> bool,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    let backend = self.pointer_backend(request.target.as_ref())?;
+    auv_driver_common::mouse_input::mouse_coordinator().motion(request, None, backend, notify)
+  }
+
+  /// Local convenience: press, wait, and release under one admission.
+  /// This composes the mouse lifecycle; it is not a separate Runner capability.
+  pub fn hold_mouse(
+    &self,
+    target: &auv_driver_common::InputTarget,
+    mouse: u64,
+    point: Point,
+    button: auv_driver_common::MouseButton,
+    duration: std::time::Duration,
+  ) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().hold(mouse, point, button, duration, self.pointer_backend(Some(target))?)
+  }
+
+  /// Creates logical state; this does not create an independent OS cursor.
+  pub fn create_mouse(&self) -> DriverResult<u64> {
+    auv_driver_common::mouse_input::mouse_coordinator().create_mouse()
+  }
+
+  pub fn delete_mouse(&self, mouse: u64) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().delete_mouse(mouse)
+  }
+
+  /// Holds one button until mouse_up or the mandatory bounded timeout.
+  pub fn mouse_down(
+    &self,
+    target: &auv_driver_common::InputTarget,
+    mouse: u64,
+    point: Point,
+    button: auv_driver_common::MouseButton,
+    timeout: std::time::Duration,
+  ) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().down(mouse, point, button, timeout, self.pointer_backend(Some(target))?)
+  }
+
+  pub fn mouse_up(&self, mouse: u64) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().up(mouse)
+  }
+
+  pub fn move_mouse_to(&self, mouse: u64, point: Point) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().move_to(mouse, point, std::sync::Arc::new(PointerBackend))
+  }
+
   /// Prepare application or exact-window focus. This selects no text control
   /// and installs no focus lease; subsequent delivery must remain PID-bound.
   pub fn prepare_for_input(
@@ -711,9 +790,7 @@ impl InputApi<'_> {
   }
 
   pub fn move_to(&self, point: Point) -> DriverResult<InputActionResult> {
-    let _ = self.session;
-    crate::native::pointer::move_point(point.x, point.y, 0).map_err(backend)?;
-    Ok(foreground_system_events_result(DisturbanceLevel::Temporary, DisturbanceLevel::None, DisturbanceLevel::None))
+    self.move_mouse_to(0, point)
   }
 
   pub fn click_at(
@@ -723,6 +800,7 @@ impl InputApi<'_> {
     click: Click,
     modifiers: auv_driver_common::ClickModifiers,
   ) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let _ = self.session;
     let (count, interval) = click_parts(&click)?;
     crate::native::pointer::click_point(
@@ -742,6 +820,7 @@ impl InputApi<'_> {
   }
 
   pub fn scroll_global_hid(&self, point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let _ = self.session;
     crate::native::pointer::scroll_point(point.x, point.y, scroll.delta_x, scroll.delta_y).map_err(backend)?;
     if !settle.is_zero() {
@@ -2147,3 +2226,85 @@ fn paste_text_impl(options: PasteTextOptions, target: Option<(i64, i64)>) -> Dri
 #[cfg(test)]
 #[path = "session_test.rs"]
 mod tests;
+
+struct PointerBackend;
+impl auv_driver_common::mouse_input::MouseBackend for PointerBackend {
+  fn current_position(&self) -> DriverResult<Point> {
+    let (x, y) = crate::native::pointer::current_mouse_logical_point().map_err(|message| DriverError::Backend { message })?;
+    Ok(Point::new(x, y))
+  }
+  fn move_to(&self, point: Point, held: Option<auv_driver_common::MouseButton>) -> DriverResult<InputActionResult> {
+    use auv_driver_common::MouseButton;
+    let button = match held {
+      None => -1,
+      Some(MouseButton::Left) => 0,
+      Some(MouseButton::Right) => 1,
+      Some(MouseButton::Middle) => 2,
+    };
+    crate::native::pointer::pointer_event(point.x, point.y, button, 0).map_err(|message| DriverError::Backend { message })?;
+    Ok(pointer_delivery_result())
+  }
+  fn button(&self, point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<InputActionResult> {
+    use auv_driver_common::MouseButton;
+    let button = match button {
+      MouseButton::Left => 0,
+      MouseButton::Right => 1,
+      MouseButton::Middle => 2,
+    };
+    crate::native::pointer::pointer_event(point.x, point.y, button, if down { 1 } else { 2 })
+      .map_err(|message| DriverError::Backend { message })?;
+    Ok(pointer_delivery_result())
+  }
+}
+fn pointer_delivery_result() -> InputActionResult {
+  let mut result = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
+  result.mouse_disturbance = DisturbanceLevel::Temporary;
+  result.focus_disturbance = DisturbanceLevel::Unknown;
+  result
+}
+
+struct WindowPointerBackend {
+  session: MacosDriverSession,
+  window: Window,
+}
+impl WindowPointerBackend {
+  fn post(&self, point: Point, button: Option<auv_driver_common::MouseButton>, phase: u8) -> DriverResult<InputActionResult> {
+    let current = self
+      .session
+      .window()
+      .list()?
+      .into_iter()
+      .find(|window| window.reference == self.window.reference)
+      .ok_or_else(|| not_found("held mouse target window"))?;
+    if current.process_id != self.window.process_id {
+      return Err(invalid_input("held mouse target owner changed"));
+    }
+    let code = match button {
+      None => -1,
+      Some(auv_driver_common::MouseButton::Left) => 0,
+      Some(auv_driver_common::MouseButton::Right) => 1,
+      Some(auv_driver_common::MouseButton::Middle) => 2,
+    };
+    crate::native::pointer::window_pointer_event(
+      window_pid(&current)?,
+      window_number(&current)?,
+      point,
+      Point::new(point.x - current.frame.origin.x, point.y - current.frame.origin.y),
+      code,
+      phase,
+    )
+    .map_err(backend)?;
+    Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse))
+  }
+}
+impl auv_driver_common::mouse_input::MouseBackend for WindowPointerBackend {
+  fn target(&self) -> InputTarget {
+    InputTarget::Window(self.window.clone())
+  }
+  fn move_to(&self, point: Point, held: Option<auv_driver_common::MouseButton>) -> DriverResult<InputActionResult> {
+    self.post(point, held, 0)
+  }
+  fn button(&self, point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<InputActionResult> {
+    self.post(point, Some(button), if down { 1 } else { 2 })
+  }
+}

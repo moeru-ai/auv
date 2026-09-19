@@ -790,6 +790,33 @@ capability and retain its `InputActionResult`, input policy, attempts, fallback
 reason, and disturbance metadata. The driver capabilities remain distinct;
 the unified operation is a frontend and typed-command contract.
 
+## Mouse Movement Request
+
+`MoveMouseRequest` is the caller's movement request: logical mouse identity,
+optional target, start, curve, mapping, and sampling/timing options. It replaces
+`MouseMotionPlan`; it does not introduce a planner or a separate approval stage.
+Samples and delivery feedback are distinct from requested movement and from
+application verification.
+
+## Logical Mouse
+
+A logical mouse retains position and held-button state in one driver authority.
+Mouse zero is shared across Runs; explicit creation allocates separate logical
+state. A Run is recording/correlation context, not mouse ownership. A logical
+mouse does not claim an independent OS cursor or simultaneous native interaction.
+
+## Input Target Coordination
+
+InputTarget addresses the recipient; it is distinct from logical mouse identity
+and from backend resource conflicts. The local driver initially serializes all
+mouse routes on one conservative desktop resource. A held mouse retains this
+reservation from down through up. Its continuations can pass foreign waiters,
+while each mouse's admitted requests stay ordered. Complete gestures reserve the
+whole sequence. Failed release keeps ownership until explicit recovery.
+
+The guarantee covers cooperating calls in one driver process, not unrelated
+processes or human input. See the [held-input contract](ai/references/driver/2026-09-18-held-input-design.md).
+
 ## Keyboard Input
 
 `Key` represents a logical key as `Modifier` or `Symbol(Keysym)`. `Keysym` comes
