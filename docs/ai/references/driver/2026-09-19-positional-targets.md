@@ -86,14 +86,5 @@ target/debug/auv-netease-music now-playing --format json
   verification supplies semantic evidence. No claim of background-only success
   is made.
 
-Local evidence retained in the originating checkout (ignored, unavailable in a
-fresh clone, and not fixtures or committed UI datasets):
-
-- Run records: `docs/notes/neko/2026-09-19-positional-live/records.jsonl`
-- Final command result: `docs/notes/neko/2026-09-19-positional-live/final-result.json`
-- Before media state: `docs/notes/neko/2026-09-19-positional-live/final-before-media.json`
-- After media state: `docs/notes/neko/2026-09-19-positional-live/final-after-media.json`
-- Final verification screenshot: `docs/notes/neko/2026-09-19-positional-live/artifacts/01a0ba04-0ae7-75c0-9b98-dd1467e1713c/01a0ba04-3192-70f5-9771-57c2317018af.png`
-
 The observed main-window selection and foreground-input behavior remain
 follow-up concerns; this slice does not broaden their support guarantees.
