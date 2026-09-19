@@ -15,7 +15,7 @@ import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1
 import type { ScreenPointSchema, ScreenRectSchema, WindowPointSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type {
   ClickOptionsSchema,
-  MouseMotionPlanSchema,
+  MoveMouseRequestSchema,
   MoveMouseStreamResponse,
   PasteTextOptionsSchema,
   ScreenClickOptionsSchema,
@@ -60,8 +60,15 @@ export interface RunnerClient {
     list: (options?: OperationOptions) => Promise<readonly Display[]>
   }
   readonly input: {
+    createMouse: (request: Init<typeof InputService.method.createMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.createMouse.output>>
+    deleteMouse: (request: Init<typeof InputService.method.deleteMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.deleteMouse.output>>
+    mouseDown: (request: Init<typeof InputService.method.mouseDown.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseDown.output>>
+    mouseUp: (request: Init<typeof InputService.method.mouseUp.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseUp.output>>
+    holdMouse: (request: Init<typeof InputService.method.holdMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.holdMouse.output>>
+    dragMouse: (request: Init<typeof InputService.method.dragMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.dragMouse.output>>
+
     clickScreenPoint: (point: Init<typeof ScreenPointSchema>, clickOptions: Init<typeof ScreenClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickScreenPoint.output>>
-    moveMouse: (plan: Init<typeof MouseMotionPlanSchema>, options?: OperationOptions) => Promise<AsyncIterable<MoveMouseStreamResponse>>
+    moveMouse: (request: Init<typeof MoveMouseRequestSchema>, options?: OperationOptions) => Promise<AsyncIterable<MoveMouseStreamResponse>>
     pasteText: (text: string, inputOptions?: Init<typeof PasteTextOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.pasteText.output>>
     pressKey: (key: string, options?: PressKeyOptions) => Promise<Shape<typeof InputService.method.pressKey.output>>
     streamMouseMotion: (options?: OperationOptions) => Promise<TypedDuplexCall<typeof InputService.method.streamMouseMotion.input, typeof InputService.method.streamMouseMotion.output>>
@@ -184,8 +191,15 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       list: async options => (await unary(DisplayService.method.listDisplays, {}, options)).displays,
     },
     input: {
+      createMouse: (request, options) => unary(InputService.method.createMouse, request, options),
+      deleteMouse: (request, options) => unary(InputService.method.deleteMouse, request, options),
+      mouseDown: (request, options) => unary(InputService.method.mouseDown, request, options),
+      mouseUp: (request, options) => unary(InputService.method.mouseUp, request, options),
+      holdMouse: (request, options) => unary(InputService.method.holdMouse, request, options),
+      dragMouse: (request, options) => unary(InputService.method.dragMouse, request, options),
+
       clickScreenPoint: (point, clickOptions, options) => unary(InputService.method.clickScreenPoint, { options: clickOptions, point }, options),
-      moveMouse: (plan, options) => serverStream(InputService.method.moveMouse, { plan }, options),
+      moveMouse: (request, options) => serverStream(InputService.method.moveMouse, request, options),
       pasteText: (text, options, operation) => unary(InputService.method.pasteText, { options, text }, operation),
       pressKey: (key, options = {}) => unary(InputService.method.pressKey, { key, settle: options.settle }, options),
       streamMouseMotion: options => duplex(InputService.method.streamMouseMotion, options),

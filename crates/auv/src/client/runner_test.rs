@@ -150,10 +150,10 @@ async fn runner_input_exposes_typed_screen_point_click() {
 async fn runner_input_exposes_typed_mouse_motion() {
   let runner = RunnerClient::new(disconnected_client(), route()).expect("runner client");
   let input = runner.input();
-  let call = input.move_mouse(auv_driver::MouseMotionPlan::direct(auv_driver::Point::new(10.0, 20.0)));
+  let call = input.move_mouse(auv_driver::MoveMouseRequest::direct(auv_driver::Point::new(10.0, 20.0)));
   drop(call);
 
-  let plan = auv_driver::MouseMotionPlan::direct(auv_driver::Point::new(10.0, 20.0));
+  let plan = auv_driver::MoveMouseRequest::direct(auv_driver::Point::new(10.0, 20.0));
   let streaming_call = input.stream_mouse_motion(&plan);
   drop(streaming_call);
 }

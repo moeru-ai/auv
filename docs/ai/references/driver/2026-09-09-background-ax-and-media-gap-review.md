@@ -2,6 +2,8 @@
 
 > NOTICE: This source review records historical revisions. The [Wayland background input research](2026-09-13-wayland-background-input-research.md) records the 2026-09-13 decision, later implementation PRs, and evidence boundaries. Candidate rows do not authorize implementation.
 
+> Update 2026-09-19: The owner approved the held-mouse slice across three desktop platforms and existing window background routes. The [held-input contract and evidence](2026-09-18-held-input-design.md) records implementation, AppKit receipt validation, and remaining Windows/Linux native validation. This does not claim Chromium-compatible held input or native multi-pointer isolation.
+
 > Update 2026-09-17: BG-1 modifier and button integration have landed; see the [button contract and evidence](2026-09-17-click-buttons-contract.md). Hold/drag remains intentionally deferred. The fixed-revision tables below describe the original review. BG-2 dual posting and count capping are unchanged; the modifier receiver has since recorded duplicate AppKit events.
 
 Date: 2026-09-09. Classification: docs-only research.

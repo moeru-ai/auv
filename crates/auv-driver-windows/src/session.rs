@@ -21,7 +21,7 @@ use crate::clipboard::{
 };
 use crate::driver::WindowsDriverSession;
 use crate::error::{invalid_input, not_found};
-use crate::input::{click_at, copy, current_position, move_to, paste, press_key, scroll_at, type_text};
+use crate::input::{click_at, copy, current_position, paste, press_key, scroll_at, type_text};
 use crate::mutation::mutate_window;
 use crate::permission::{WindowsPermissionProbe, probe as probe_permissions};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
@@ -331,10 +331,12 @@ impl WindowApi<'_> {
 
 impl WindowInput for WindowApi<'_> {
   fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.click_impl(window, point, options)
   }
 
   fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.scroll_impl(window, point, scroll, options)
   }
 }
@@ -398,6 +400,78 @@ impl VisionApi<'_> {
 }
 
 impl InputApi<'_> {
+  /// A complete drag composes press, sampled movement, and release under one admission.
+  pub fn drag_mouse(
+    &self,
+    request: auv_driver_common::MoveMouseRequest,
+    button: auv_driver_common::MouseButton,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    let backend = self.pointer_backend(request.target.as_ref())?;
+    auv_driver_common::mouse_input::mouse_coordinator().motion(request, Some(button), backend, |_| true)
+  }
+
+  fn pointer_backend(
+    &self,
+    target: Option<&auv_driver_common::InputTarget>,
+  ) -> DriverResult<std::sync::Arc<dyn auv_driver_common::mouse_input::MouseBackend>> {
+    match target {
+      None | Some(auv_driver_common::InputTarget::Foreground) => Ok(std::sync::Arc::new(crate::input::MouseBackend)),
+      Some(auv_driver_common::InputTarget::Window(window)) => crate::background_input::mouse_backend(window.clone()),
+      Some(auv_driver_common::InputTarget::Application { .. }) => {
+        Err(auv_driver_common::DriverError::unsupported("mouse input requires a window or foreground target"))
+      }
+    }
+  }
+
+  pub fn move_mouse(
+    &self,
+    request: auv_driver_common::MoveMouseRequest,
+    notify: impl FnMut(auv_driver_common::mouse_input::MotionEvent) -> bool,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    let backend = self.pointer_backend(request.target.as_ref())?;
+    auv_driver_common::mouse_input::mouse_coordinator().motion(request, None, backend, notify)
+  }
+
+  pub fn hold_mouse(
+    &self,
+    target: &auv_driver_common::InputTarget,
+    mouse: u64,
+    point: Point,
+    button: auv_driver_common::MouseButton,
+    duration: std::time::Duration,
+  ) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().hold(mouse, point, button, duration, self.pointer_backend(Some(target))?)
+  }
+
+  /// Creates logical state; this does not create an independent OS cursor.
+  pub fn create_mouse(&self) -> DriverResult<u64> {
+    auv_driver_common::mouse_input::mouse_coordinator().create_mouse()
+  }
+
+  pub fn delete_mouse(&self, mouse: u64) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().delete_mouse(mouse)
+  }
+
+  /// Holds one button until mouse_up or the mandatory bounded timeout.
+  pub fn mouse_down(
+    &self,
+    target: &auv_driver_common::InputTarget,
+    mouse: u64,
+    point: Point,
+    button: auv_driver_common::MouseButton,
+    timeout: std::time::Duration,
+  ) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().down(mouse, point, button, timeout, self.pointer_backend(Some(target))?)
+  }
+
+  pub fn mouse_up(&self, mouse: u64) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().up(mouse)
+  }
+
+  pub fn move_mouse_to(&self, mouse: u64, point: Point) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().move_to(mouse, point, std::sync::Arc::new(crate::input::MouseBackend))
+  }
+
   pub fn current_position(&self) -> DriverResult<Point> {
     let _ = self.session;
     current_position()
@@ -405,8 +479,7 @@ impl InputApi<'_> {
 
   /// Moves the pointer to `point` without activating the target beneath it.
   pub fn move_to(&self, point: Point) -> DriverResult<InputActionResult> {
-    let _ = self.session;
-    move_to(point)
+    self.move_mouse_to(0, point)
   }
 
   /// Moves the pointer to `point` (screen coordinates) and issues a click.
@@ -417,12 +490,14 @@ impl InputApi<'_> {
     click: Click,
     modifiers: auv_driver_common::ClickModifiers,
   ) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let _ = self.session;
     click_at(point, button, click, modifiers)
   }
 
   /// Moves the pointer to `point` and emits a mouse-wheel scroll.
   pub fn scroll_at(&self, point: Point, scroll: Scroll, settle: std::time::Duration) -> DriverResult<InputActionResult> {
+    let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let _ = self.session;
     scroll_at(point, scroll, settle)
   }

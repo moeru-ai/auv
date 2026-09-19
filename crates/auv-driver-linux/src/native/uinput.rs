@@ -56,6 +56,15 @@ impl InputSession {
     })
   }
 
+  pub fn button(&mut self, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<()> {
+    let key = match button {
+      auv_driver_common::MouseButton::Left => KeyCode::BTN_LEFT,
+      auv_driver_common::MouseButton::Right => KeyCode::BTN_RIGHT,
+      auv_driver_common::MouseButton::Middle => KeyCode::BTN_MIDDLE,
+    };
+    emit_key(&mut self.device, key, down)
+  }
+
   pub fn move_to(&mut self, point: Point) -> DriverResult<()> {
     let displays = list_displays()?.displays;
     // TODO: per-output absolute-device mapping differs across compositors.

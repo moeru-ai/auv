@@ -393,6 +393,17 @@ pub(crate) mod ffi {
     fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse;
     fn find_visual_rows(request: NativeVisualRowsRequest) -> NativeVisualRowsResponse;
     fn click_point(x: f64, y: f64, button_code: i32, click_count: i64, click_interval_ms: u64, modifier_flags: u64) -> NativeActionResponse;
+    fn window_pointer_event(
+      pid: i64,
+      window_number: i64,
+      x: f64,
+      y: f64,
+      local_x: f64,
+      local_y: f64,
+      button_code: i32,
+      phase: u8,
+    ) -> NativeActionResponse;
+    fn pointer_event(x: f64, y: f64, button_code: i32, phase: u8) -> NativeActionResponse;
     fn move_point(x: f64, y: f64, button_code: i32) -> NativeActionResponse;
     fn click_window_point(
       pid: i64,

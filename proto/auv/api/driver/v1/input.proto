@@ -9,6 +9,37 @@ import "auv/api/driver/v1/window.proto";
 import "google/protobuf/duration.proto";
 
 service InputService {
+  // Creates logical state in this Runner; it does not create an OS cursor.
+  rpc CreateMouse(CreateMouseRequest) returns (CreateMouseResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // Releases owned input before removing state; mouse zero cannot be deleted.
+  rpc DeleteMouse(DeleteMouseRequest) returns (DeleteMouseResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // Retains a desktop resource through MouseUp or timeout. Runs share mouse zero.
+  rpc MouseDown(MouseDownRequest) returns (MouseDownResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // Retries uncertain release; a known released mouse returns a Noop action.
+  rpc MouseUp(MouseUpRequest) returns (MouseUpResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // Complete bounded press/release, using the primitive lifecycle.
+  rpc HoldMouse(HoldMouseRequest) returns (HoldMouseResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // Complete press/movement/release. Cancellation attempts release on the same route.
+  rpc DragMouse(DragMouseRequest) returns (DragMouseResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+
   // Validate the complete action list, then execute in order. Recipient identity
   // is bound once and checked before every action/repetition. No global fallback.
   // Older servers return UNIMPLEMENTED rather than ignoring a target.
@@ -32,6 +63,7 @@ service InputService {
   }
   // Accepts one complete motion and streams delivery progress. Invalid input
   // ends the RPC with a gRPC status before the first pointer event.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
   rpc MoveMouse(MoveMouseRequest) returns (stream MoveMouseStreamResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
@@ -250,15 +282,18 @@ message MouseMotionOptions {
   uint32 sample_rate_hz = 2;
 }
 
-message MouseMotionPlan {
-  MouseStart start = 1;
-  MouseCurve curve = 2;
-  MouseCurveMapping mapping = 3;
-  MouseMotionOptions options = 4;
-}
-
+// Screen-space points, including for a window-targeted route. An omitted
+// target continues a held route or selects foreground delivery when released.
 message MoveMouseRequest {
-  MouseMotionPlan plan = 1;
+  reserved 1;
+  reserved "plan";
+  MouseStart start = 2;
+  MouseCurve curve = 3;
+  MouseCurveMapping mapping = 4;
+  MouseMotionOptions options = 5;
+  // Zero selects the shared default mouse; IDs otherwise come from CreateMouse.
+  uint64 mouse = 6;
+  InputTarget target = 7;
 }
 
 message MouseMotionStarted {
@@ -289,6 +324,8 @@ message MoveMouseStreamResponse {
 }
 
 message StreamMouseMotionBegin {
+  InputTarget target = 6;
+  uint64 mouse = 5;
   MouseStart start = 1;
   MouseCurvePoint curve_start = 2;
   MouseCurveMapping mapping = 3;
@@ -445,4 +482,61 @@ message PressKeysRequest {
 message PressKeysResponse {
   // Absent for dry-run. Errors carry KeyboardInputProgress like InputKeyboard.
   InputActionResult action = 1;
+}
+
+message CreateMouseRequest {}
+message CreateMouseResponse {
+  uint64 mouse = 1;
+}
+
+message DeleteMouseRequest {
+  uint64 mouse = 1;
+}
+message DeleteMouseResponse {
+  InputActionResult action = 1;
+}
+
+message MouseDownRequest {
+  // Zero selects the shared default mouse.
+  uint64 mouse = 1;
+  ScreenPoint point = 2;
+  MouseButton button = 3;
+  // Omission uses 30 seconds; explicit values must be in (0, 60s].
+  google.protobuf.Duration timeout = 4;
+  // Omission selects foreground. Applications without a window are unsupported.
+  InputTarget target = 5;
+}
+message MouseDownResponse {
+  InputActionResult action = 1;
+}
+
+message MouseUpRequest {
+  uint64 mouse = 1;
+}
+message MouseUpResponse {
+  InputActionResult action = 1;
+}
+
+message HoldMouseRequest {
+  // Zero selects the shared default mouse.
+  uint64 mouse = 1;
+  ScreenPoint point = 2;
+  MouseButton button = 3;
+  // Required, positive, and at most 60 seconds.
+  google.protobuf.Duration duration = 4;
+  // Omission selects foreground. Applications without a window are unsupported.
+  InputTarget target = 5;
+}
+message HoldMouseResponse {
+  InputActionResult action = 1;
+}
+
+message DragMouseRequest {
+  MoveMouseRequest movement = 1;
+  MouseButton button = 2;
+}
+
+message DragMouseResponse {
+  ScreenPoint point = 1;
+  InputActionResult action = 2;
 }

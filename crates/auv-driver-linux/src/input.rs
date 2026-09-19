@@ -61,6 +61,14 @@ impl InputSession {
     Ok(())
   }
 
+  fn button(&mut self, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<()> {
+    match self {
+      Self::Portal(session) => session.button(button, down),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => session.button(button, down),
+    }
+  }
+
   fn move_to(&mut self, point: Point) -> DriverResult<()> {
     match self {
       Self::Portal(session) => session.move_to(point),
@@ -106,11 +114,6 @@ fn click_modifier_keysyms(modifiers: ClickModifiers) -> Vec<i32> {
   .into_iter()
   .filter_map(|(enabled, key)| enabled.then_some(key))
   .collect()
-}
-
-pub(crate) fn move_to(state: &Arc<Mutex<LinuxDriverSessionState>>, point: Point) -> DriverResult<InputActionResult> {
-  with_input_session(state, |session| session.move_to(point))?;
-  Ok(pointer_result())
 }
 
 pub(crate) fn current_position() -> DriverResult<Point> {
@@ -231,30 +234,45 @@ pub fn reserved_input_result(reason: impl Into<String>) -> InputActionResult {
   }
 }
 
-pub(crate) fn with_input_session<T>(
-  state: &Arc<Mutex<LinuxDriverSessionState>>,
-  operation: impl FnOnce(&mut InputSession) -> DriverResult<T>,
-) -> DriverResult<T> {
-  let mut state = state.lock().expect("linux driver session state poisoned");
+fn input_session(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<Arc<Mutex<InputSession>>> {
+  let mut state = state.lock().map_err(|_| backend("linux driver session state poisoned"))?;
   if state.input_session.is_none() {
     let restore_tokens = state.restore_tokens.clone();
-    state.input_session = Some(match state.input_backend {
+    let input = match state.input_backend {
       InputBackend::Portal => InputSession::Portal(PortalInput::open(restore_tokens.as_ref(), state.portal_app_id.as_ref())?),
       #[cfg(target_os = "linux")]
       InputBackend::Uinput => InputSession::Uinput(crate::native::uinput::InputSession::open()?),
       #[cfg(not(target_os = "linux"))]
       InputBackend::Uinput => return Err(DriverError::unsupported("Linux uinput")),
-    });
+    };
+    state.input_session = Some(Arc::new(Mutex::new(input)));
   }
-  let result = operation(state.input_session.as_mut().expect("input session was just initialized"));
+  Ok(state.input_session.as_ref().unwrap().clone())
+}
+
+pub(crate) fn with_input_session<T>(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  operation: impl FnOnce(&mut InputSession) -> DriverResult<T>,
+) -> DriverResult<T> {
+  deliver_input(state, &input_session(state)?, operation)
+}
+
+/// Keeps an in-flight session alive while invalidating only its reusable cache
+/// entry on transport failure. Never substitutes a session during held cleanup.
+fn deliver_input<T>(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  session: &Arc<Mutex<InputSession>>,
+  operation: impl FnOnce(&mut InputSession) -> DriverResult<T>,
+) -> DriverResult<T> {
+  let result = operation(&mut *session.lock().map_err(|_| backend("linux input session poisoned"))?);
   if matches!(&result, Err(DriverError::Backend { .. } | DriverError::PermissionDenied { .. })) {
-    // A successful input call does not prove semantic delivery. An error drops
-    // either backend on transport/permission failures, never on invalid input,
-    // and never retries the same operation. For Portal, a restored
-    // stream still delivers events. Drop a failed session so the next action
-    // reopens it through the durable restore-token rotation instead of reusing
-    // a stale stream indefinitely.
-    state.input_session = None;
+    // Drop failed sessions for future operations without retrying delivery.
+    // A held mouse retains its original Arc so cleanup never uses a newly
+    // opened Portal session or a different uinput device.
+    let mut state = state.lock().map_err(|_| backend("linux driver session state poisoned"))?;
+    if state.input_session.as_ref().is_some_and(|current| Arc::ptr_eq(current, session)) {
+      state.input_session = None;
+    }
   }
   result
 }
@@ -493,5 +511,35 @@ pub(crate) fn combine_release(action: DriverResult<()>, release: DriverResult<()
   match (action, release) {
     (Ok(()), result) | (result, Ok(())) => result,
     (Err(action), Err(release)) => Err(backend(format!("{action}; additionally failed to release input: {release}"))),
+  }
+}
+
+pub(crate) struct MouseBackend {
+  state: Arc<Mutex<LinuxDriverSessionState>>,
+  pinned: Mutex<Option<Arc<Mutex<InputSession>>>>,
+}
+impl MouseBackend {
+  pub(crate) fn new(state: Arc<Mutex<LinuxDriverSessionState>>) -> Self {
+    Self {
+      state,
+      pinned: Mutex::new(None),
+    }
+  }
+  fn session(&self) -> DriverResult<Arc<Mutex<InputSession>>> {
+    let mut pinned = self.pinned.lock().map_err(|_| backend("mouse session pin poisoned"))?;
+    if pinned.is_none() {
+      *pinned = Some(input_session(&self.state)?);
+    }
+    Ok(pinned.as_ref().unwrap().clone())
+  }
+}
+impl auv_driver_common::mouse_input::MouseBackend for MouseBackend {
+  fn move_to(&self, point: Point, _held: Option<auv_driver_common::MouseButton>) -> DriverResult<InputActionResult> {
+    deliver_input(&self.state, &self.session()?, |session| session.move_to(point))?;
+    Ok(pointer_result())
+  }
+  fn button(&self, _point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<InputActionResult> {
+    deliver_input(&self.state, &self.session()?, |session| session.button(button, down))?;
+    Ok(pointer_result())
   }
 }

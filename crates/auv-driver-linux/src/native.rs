@@ -61,6 +61,10 @@ pub mod portal {
   pub struct InputSession;
 
   impl InputSession {
+    pub fn button(&mut self, _button: auv_driver_common::MouseButton, _down: bool) -> DriverResult<()> {
+      Err(DriverError::unsupported("linux.portal.input"))
+    }
+
     pub fn move_to(&mut self, _point: Point) -> DriverResult<()> {
       Err(DriverError::unsupported("linux.portal.input"))
     }

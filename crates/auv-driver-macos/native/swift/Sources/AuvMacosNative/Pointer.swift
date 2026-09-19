@@ -793,3 +793,62 @@ func scroll_window_point(
 
   return nativeActionOk()
 }
+
+// Shared held-input execution selects dragged events while a button is down.
+// CGEvent posting is delivery evidence; it does not verify the receiving UI.
+func pointer_event(x: Double, y: Double, button_code: Int32, phase: UInt8) -> NativeActionResponse {
+  let button = mouseButton(button_code)
+  let type: CGEventType
+  switch phase {
+  case 1: type = mouseDownType(button)
+  case 2: type = mouseUpType(button)
+  case 0:
+    switch button_code {
+    case 0: type = .leftMouseDragged
+    case 1: type = .rightMouseDragged
+    case 2: type = .otherMouseDragged
+    default: type = .mouseMoved
+    }
+  default: return nativeActionError("invalid pointer phase", "use move, down, or up")
+  }
+  guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
+    mouseCursorPosition: CGPoint(x: x, y: y), mouseButton: button) else {
+    return nativeActionError("failed to create pointer event", "check Accessibility permission")
+  }
+  event.post(tap: .cghidEventTap)
+  return nativeActionOk()
+}
+
+// The PID-targeted route stays fixed through the held interval. No foreground
+// fallback is attempted, including on release failure.
+// TODO: Chromium compatibility priming for cross-call gestures needs receiver
+// evidence before extending the click-only compatibility sequence to dragging.
+func window_pointer_event(pid: Int64, window_number: Int64, x: Double, y: Double,
+  local_x: Double, local_y: Double, button_code: Int32, phase: UInt8) -> NativeActionResponse {
+  guard let setWindowLocation = cgEventSetWindowLocation else {
+    return nativeActionError("window event location is unavailable", "use a supported macOS version")
+  }
+  let button = mouseButton(button_code)
+  let type: CGEventType
+  switch phase {
+  case 1: type = mouseDownType(button)
+  case 2: type = mouseUpType(button)
+  case 0:
+    switch button_code {
+    case 0: type = .leftMouseDragged
+    case 1: type = .rightMouseDragged
+    case 2: type = .otherMouseDragged
+    default: type = .mouseMoved
+    }
+  default: return nativeActionError("invalid pointer phase", "use move, down, or up")
+  }
+  guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
+    mouseCursorPosition: CGPoint(x: x, y: y), mouseButton: button) else {
+    return nativeActionError("failed to create window pointer event", "check Accessibility permission")
+  }
+  stampPidTargetedMouseEvent(event, pid: pid, windowNumber: window_number,
+    windowLocation: CGPoint(x: local_x, y: local_y), clickState: button_code < 0 ? 0 : 1,
+    buttonNumber: Int64(max(button_code, 0)), setWindowLocation: setWindowLocation, flags: [])
+  event.postToPid(pid_t(pid))
+  return nativeActionOk()
+}

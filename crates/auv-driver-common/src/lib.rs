@@ -7,6 +7,7 @@ pub mod geometry;
 pub mod input;
 pub mod keyboard;
 pub mod mouse;
+pub mod mouse_input;
 pub mod permission;
 pub mod readiness;
 pub mod selector;
@@ -33,8 +34,8 @@ pub use input::{
 };
 pub use keyboard::{Key, Keysym, Modifier};
 pub use mouse::{
-  MOUSE_MOTION_MAX_SEGMENTS, MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionPlan, MouseMotionSample,
-  MouseStart,
+  MOUSE_MOTION_MAX_SEGMENTS, MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionSample, MouseStart,
+  MoveMouseRequest,
 };
 pub use permission::{PermissionProbe, PermissionStatus};
 pub use readiness::{ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus};

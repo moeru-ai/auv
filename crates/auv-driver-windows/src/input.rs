@@ -55,6 +55,7 @@ pub fn click_at(
   click: Click,
   modifiers: ClickModifiers,
 ) -> DriverResult<InputActionResult> {
+  let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
   let (count, interval) = click_parts(&click)?;
   native::click(point, button, count, interval, &click_modifier_keys(modifiers))?;
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
@@ -73,8 +74,7 @@ fn click_modifier_keys(modifiers: ClickModifiers) -> Vec<u16> {
 }
 
 pub fn move_to(point: Point) -> DriverResult<InputActionResult> {
-  native::move_to(point)?;
-  Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::None, DisturbanceLevel::None))
+  auv_driver_common::mouse_input::mouse_coordinator().move_to(0, point, std::sync::Arc::new(MouseBackend))
 }
 
 pub fn current_position() -> DriverResult<Point> {
@@ -90,6 +90,7 @@ pub(crate) fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
 }
 
 pub fn scroll_at(point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
+  let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
   native::scroll(point, scroll)?;
   sleep_if_nonzero(settle);
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
@@ -361,6 +362,11 @@ mod native {
     Ok(Point::new(f64::from(point.x), f64::from(point.y)))
   }
 
+  pub(super) fn button(button: auv_driver_common::MouseButton, down: bool) -> DriverResult<()> {
+    let flags = button_flags(button);
+    send_inputs(&[mouse_input(0, 0, 0, if down { flags.0 } else { flags.1 })])
+  }
+
   pub(super) fn move_to(point: Point) -> DriverResult<()> {
     let origin_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
     let origin_y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
@@ -531,6 +537,10 @@ mod native {
     Err(DriverError::unsupported("input.current_position"))
   }
 
+  pub(super) fn button(_button: auv_driver_common::MouseButton, _down: bool) -> DriverResult<()> {
+    Err(auv_driver_common::DriverError::unsupported("windows mouse button"))
+  }
+
   pub(super) fn move_to(_point: Point) -> DriverResult<()> {
     Err(DriverError::unsupported("input.move_to"))
   }
@@ -561,3 +571,19 @@ mod native {
 #[cfg(test)]
 #[path = "input_test.rs"]
 mod tests;
+
+#[derive(Clone)]
+pub(crate) struct MouseBackend;
+impl auv_driver_common::mouse_input::MouseBackend for MouseBackend {
+  fn current_position(&self) -> DriverResult<Point> {
+    native::current_position()
+  }
+  fn move_to(&self, point: Point, _held: Option<auv_driver_common::MouseButton>) -> DriverResult<InputActionResult> {
+    native::move_to(point)?;
+    Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+  }
+  fn button(&self, _point: Point, button: auv_driver_common::MouseButton, down: bool) -> DriverResult<InputActionResult> {
+    native::button(button, down)?;
+    Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+  }
+}

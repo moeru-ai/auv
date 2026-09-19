@@ -71,7 +71,7 @@ pub(crate) struct LinuxDriverSessionState {
   // is deferred with that shared-session slice because GNOME currently hangs
   // when the standalone clipboard session calls SelectDevices with no devices.
   pub(crate) clipboard_session: Option<ClipboardSession>,
-  pub(crate) input_session: Option<crate::input::InputSession>,
+  pub(crate) input_session: Option<Arc<Mutex<crate::input::InputSession>>>,
   pub(crate) input_backend: InputBackend,
   pub(crate) screencast_session: Option<ScreenCastSession>,
   pub(crate) restore_tokens: Option<RestoreTokenStore>,

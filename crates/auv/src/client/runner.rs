@@ -1097,12 +1097,109 @@ fn permission_status_from_proto(value: i32, field: &'static str) -> Result<auv_d
 }
 
 impl InputClient {
-  /// Executes one complete mouse motion plan and returns its progress stream.
-  pub async fn move_mouse(&self, plan: auv_driver::MouseMotionPlan) -> Result<MouseMotionStream, CapabilityError> {
+  /// Allocates logical mouse state on this Runner; zero remains the shared mouse.
+  pub async fn create_mouse(&self) -> Result<u64, CapabilityError> {
+    Ok(
+      proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+        .create_mouse(proto::CreateMouseRequest {})
+        .await
+        .map_err(capability_status)?
+        .into_inner()
+        .mouse,
+    )
+  }
+
+  pub async fn delete_mouse(&self, mouse: u64) -> Result<auv_driver::InputActionResult, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .move_mouse(proto::MoveMouseRequest {
-        plan: Some(mouse_motion_plan_to_proto(plan)?),
+      .delete_mouse(proto::DeleteMouseRequest { mouse })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    input_action_result_from_proto(required(response.action, "DeleteMouse response omitted InputActionResult")?)
+  }
+
+  pub async fn mouse_down(
+    &self,
+    target: &auv_driver::InputTarget,
+    mouse: u64,
+    point: auv_driver::Point,
+    button: auv_driver::MouseButton,
+    timeout: std::time::Duration,
+  ) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .mouse_down(proto::MouseDownRequest {
+        target: Some(input_target_to_proto(target)),
+        mouse,
+        point: Some(proto::ScreenPoint {
+          x: point.x,
+          y: point.y,
+        }),
+        button: mouse_button_to_proto(button) as i32,
+        timeout: Some(duration_to_proto(timeout)?),
       })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("MouseDown omitted action".into()))?)
+  }
+
+  pub async fn mouse_up(&self, mouse: u64) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .mouse_up(proto::MouseUpRequest { mouse })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("MouseUp omitted action".into()))?)
+  }
+
+  pub async fn hold_mouse(
+    &self,
+    target: &auv_driver::InputTarget,
+    mouse: u64,
+    point: auv_driver::Point,
+    button: auv_driver::MouseButton,
+    duration: std::time::Duration,
+  ) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .hold_mouse(proto::HoldMouseRequest {
+        target: Some(input_target_to_proto(target)),
+        mouse,
+        point: Some(proto::ScreenPoint {
+          x: point.x,
+          y: point.y,
+        }),
+        button: mouse_button_to_proto(button) as i32,
+        duration: Some(duration_to_proto(duration)?),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("HoldMouse omitted action".into()))?)
+  }
+
+  pub async fn drag_mouse(
+    &self,
+    movement: auv_driver::MoveMouseRequest,
+    button: auv_driver::MouseButton,
+  ) -> Result<(auv_driver::Point, auv_driver::InputActionResult), CapabilityError> {
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .drag_mouse(proto::DragMouseRequest {
+        movement: Some(move_mouse_request_to_proto(movement)?),
+        button: mouse_button_to_proto(button) as i32,
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    let point = response.point.ok_or_else(|| CapabilityError::InvalidResponse("DragMouse omitted point".into()))?;
+    let action =
+      input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("DragMouse omitted action".into()))?)?;
+    Ok((auv_driver::Point::new(point.x, point.y), action))
+  }
+
+  /// Executes one complete mouse motion request and returns its progress stream.
+  pub async fn move_mouse(&self, request: auv_driver::MoveMouseRequest) -> Result<MouseMotionStream, CapabilityError> {
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .move_mouse(move_mouse_request_to_proto(request)?)
       .await
       .map_err(capability_status)?
       .into_inner();
@@ -1111,15 +1208,17 @@ impl InputClient {
 
   /// Opens a bidirectional mouse motion stream. The server validates and
   /// executes the complete curve after `finish`.
-  pub async fn stream_mouse_motion(&self, plan: &auv_driver::MouseMotionPlan) -> Result<MouseMotionSession, CapabilityError> {
+  pub async fn stream_mouse_motion(&self, request: &auv_driver::MoveMouseRequest) -> Result<MouseMotionSession, CapabilityError> {
     let (requests, receiver) = tokio::sync::mpsc::channel(16);
     requests
       .send(proto::StreamMouseMotionRequest {
         event: Some(proto::stream_mouse_motion_request::Event::Begin(proto::StreamMouseMotionBegin {
-          start: Some(mouse_start_to_proto(plan.start)),
-          curve_start: Some(mouse_curve_point_to_proto(plan.curve.start)),
-          mapping: Some(mouse_mapping_to_proto(plan.mapping)),
-          options: Some(mouse_options_to_proto(plan.options)?),
+          mouse: request.mouse,
+          target: request.target.as_ref().map(input_target_to_proto),
+          start: Some(mouse_start_to_proto(request.start)),
+          curve_start: Some(mouse_curve_point_to_proto(request.curve.start)),
+          mapping: Some(mouse_mapping_to_proto(request.mapping)),
+          options: Some(mouse_options_to_proto(request.options)?),
         })),
       })
       .await
@@ -1282,15 +1381,17 @@ fn duration_from_proto(value: prost_types::Duration, field: &'static str) -> Res
   value.try_into().map_err(|_| CapabilityError::InvalidResponse(format!("{field} returned an invalid duration")))
 }
 
-fn mouse_motion_plan_to_proto(plan: auv_driver::MouseMotionPlan) -> Result<proto::MouseMotionPlan, CapabilityError> {
-  Ok(proto::MouseMotionPlan {
-    start: Some(mouse_start_to_proto(plan.start)),
+fn move_mouse_request_to_proto(request: auv_driver::MoveMouseRequest) -> Result<proto::MoveMouseRequest, CapabilityError> {
+  Ok(proto::MoveMouseRequest {
+    mouse: request.mouse,
+    target: request.target.as_ref().map(input_target_to_proto),
+    start: Some(mouse_start_to_proto(request.start)),
     curve: Some(proto::MouseCurve {
-      start: Some(mouse_curve_point_to_proto(plan.curve.start)),
-      segments: plan.curve.segments.into_iter().map(mouse_segment_to_proto).collect(),
+      start: Some(mouse_curve_point_to_proto(request.curve.start)),
+      segments: request.curve.segments.into_iter().map(mouse_segment_to_proto).collect(),
     }),
-    mapping: Some(mouse_mapping_to_proto(plan.mapping)),
-    options: Some(mouse_options_to_proto(plan.options)?),
+    mapping: Some(mouse_mapping_to_proto(request.mapping)),
+    options: Some(mouse_options_to_proto(request.options)?),
   })
 }
 

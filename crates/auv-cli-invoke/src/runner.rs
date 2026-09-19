@@ -345,7 +345,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         let point = selected_screen_point(&input, "input.moveMouse")?;
         let mut stream = runner
           .input()
-          .move_mouse(auv_driver::MouseMotionPlan::direct(point.point()))
+          .move_mouse(auv_driver::MoveMouseRequest::direct(point.point()))
           .await
           .map_err(|status| format!("InputService/MoveMouse failed: {status}"))?;
         while let Some(event) = stream.next().await.map_err(|status| format!("InputService/MoveMouse failed: {status}"))? {
