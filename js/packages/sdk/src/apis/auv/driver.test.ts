@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CaptureWindowRequestSchema, CaptureWindowResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { CreateMouseResponseSchema, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, MouseButton } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
@@ -63,12 +63,12 @@ describe('runner Driver control surface', () => {
           switch (call.method) {
             case '/auv.api.driver.v1.InputService/CreateMouse':
               return toBinary(CreateMouseResponseSchema, create(CreateMouseResponseSchema, { mouse: 7n }))
+            case '/auv.api.driver.v1.InputService/DragMouse':
+              return toBinary(DragMouseResponseSchema, create(DragMouseResponseSchema))
             case '/auv.api.driver.v1.InputService/MouseDown':
               return toBinary(MouseDownResponseSchema, create(MouseDownResponseSchema))
             case '/auv.api.driver.v1.InputService/MouseUp':
               return toBinary(MouseUpResponseSchema, create(MouseUpResponseSchema))
-            case '/auv.api.driver.v1.InputService/DragMouse':
-              return toBinary(DragMouseResponseSchema, create(DragMouseResponseSchema))
             default: throw new Error(`unexpected method: ${call.method}`)
           }
         },
@@ -76,10 +76,10 @@ describe('runner Driver control surface', () => {
     })
     const input = createAuv(connection).runner({ runnerClass: 'auv.core.local' }).input
     const { mouse } = await input.createMouse({})
-    const target = { recipient: { case: 'window' as const, value: { ref: { windowId: 'window-42' }, processId: 123 } } }
-    await input.mouseDown({ mouse, point: { x: 10, y: 20 }, button: MouseButton.RIGHT, target, timeout: { seconds: 2n } })
+    const target = { recipient: { case: 'window' as const, value: { processId: 123, ref: { windowId: 'window-42' } } } }
+    await input.mouseDown({ button: MouseButton.RIGHT, mouse, point: { x: 10, y: 20 }, target, timeout: { seconds: 2n } })
     await input.mouseUp({ mouse })
-    await input.dragMouse({ button: MouseButton.MIDDLE, movement: { mouse, target, start: { source: { case: 'point', value: { x: 20, y: 30 } } } } })
+    await input.dragMouse({ button: MouseButton.MIDDLE, movement: { mouse, start: { source: { case: 'point', value: { x: 20, y: 30 } } }, target } })
     const down = fromBinary(MouseDownRequestSchema, calls[1]!.body)
     const up = fromBinary(MouseUpRequestSchema, calls[2]!.body)
     const drag = fromBinary(DragMouseRequestSchema, calls[3]!.body)

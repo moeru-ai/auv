@@ -113,8 +113,9 @@ Validation commands:
 - `pnpm --filter @auv-js/sdk exec vitest run src/apis/auv/driver.test.ts`: four tests passed.
 - `buf lint` and `buf generate`: passed. `buf breaking` reports the intentional
   removal of MouseMotionPlan and the old MoveMouseRequest.plan field.
-- SDK `typecheck` remains blocked by unchanged AbortSignal.any typing errors in
-  client.ts, driver.ts, and node/daemon.ts.
+- After a frozen-lockfile dependency install in the isolated PR worktree,
+  `pnpm lint` and `pnpm typecheck` pass. Earlier AbortSignal.any typing errors
+  in the original workspace did not reproduce with these installed dependencies.
 - Running Windows unit tests on the macOS host fails two pre-existing native
   expectations (OCR InvalidImage and ScreenToClient); the Windows target check
   is the relevant compilation evidence, not a native execution claim.
