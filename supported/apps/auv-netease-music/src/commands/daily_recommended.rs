@@ -3,7 +3,7 @@ use crate::*;
 #[cfg(target_os = "macos")]
 use crate::telemetry::{DailyRecommendedInputDelivered, DailyRecommendedPlayAllChecked};
 #[cfg(target_os = "macos")]
-use auv_driver::{InputActionResult, InputDeliveryPath, WindowInput as _};
+use auv_driver::{InputActionResult, WindowInput as _};
 
 #[cfg(target_os = "macos")]
 #[derive(serde::Serialize)]
@@ -237,22 +237,25 @@ impl DailyRecommendedRun<'_> {
       .vision()
       .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{action_id}: OCR failed: {error}"))?;
-    let recognition = recognition_in_window_space(recognition, &capture);
-    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
-    let Some(target) = best_text_match(&recognition, query, window_size, guard) else {
+    let recognition = recognition.relative_to(capture.bounds.origin);
+    let Some(target) = best_text_match(&recognition, query, &self.window, guard) else {
       return Err(format!("{action_id}: text {query:?} was not found"));
     };
-    let bounds = ViewBounds::new(target.bounds.origin.x, target.bounds.origin.y, target.bounds.size.width, target.bounds.size.height);
-    let point = target.action_point();
+    let bounds = ViewBounds::new(
+      target.value.bounds.origin.x,
+      target.value.bounds.origin.y,
+      target.value.bounds.size.width,
+      target.value.bounds.size.height,
+    );
     let result = self
       .session
       .window()
-      .click(&self.window, WindowPoint::new(point.x, point.y), daily_recommended_window_click_options())
+      .click_target(&target, daily_recommended_window_click_options())
       .map_err(|error| format!("{action_id}: click failed: {error}"))?;
     if self.inputs.settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
     }
-    auv_tracing::emit_event!(action.delivered(target.text, bounds, result));
+    auv_tracing::emit_event!(action.delivered(target.value.text, bounds, result));
     Ok(())
   }
 
@@ -270,42 +273,31 @@ impl DailyRecommendedRun<'_> {
       .vision()
       .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{action_id}: OCR failed: {error}"))?;
-    let recognition = recognition_in_window_space(recognition, &capture);
-    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
-    let Some(target) = best_text_match(&recognition, query, window_size, guard) else {
+    let recognition = recognition.relative_to(capture.bounds.origin);
+    let Some(target) = best_text_match(&recognition, query, &self.window, guard) else {
       return Err(format!("{action_id}: text {query:?} was not found"));
     };
-    let bounds = ViewBounds::new(target.bounds.origin.x, target.bounds.origin.y, target.bounds.size.width, target.bounds.size.height);
-    let point = target.action_point();
-    let screen_point = self
+    let bounds = ViewBounds::new(
+      target.value.bounds.origin.x,
+      target.value.bounds.origin.y,
+      target.value.bounds.size.width,
+      target.value.bounds.size.height,
+    );
+    let delivery = self
       .session
       .window()
-      .to_screen_point(&self.window, WindowPoint::new(point.x, point.y))
-      .map_err(|error| format!("{action_id}: screen point projection failed: {error}"))?;
-    let lease = self
-      .session
-      .window()
-      .prepare_for_input(
-        &self.window,
-        PrepareForInputOptions {
-          activation: ActivationPolicy::Foreground {
-            settle: std::time::Duration::from_millis(self.inputs.settle_ms),
-          },
-          preserve_frontmost: false,
-          install_focus_guard: false,
-          settle: std::time::Duration::from_millis(0),
+      .click_target(
+        &target,
+        auv_driver::ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          ..daily_recommended_window_click_options()
         },
       )
-      .map_err(|error| format!("{action_id}: foreground preparation failed: {error}"))?;
-    let click_result = self.session.input().click_at(screen_point.point(), auv_driver::MouseButton::Left, Click::Single, Default::default());
-    let restore_result = self.session.window().restore_input(lease);
-    click_result.map_err(|error| format!("{action_id}: foreground click failed: {error}"))?;
-    restore_result.map_err(|error| format!("{action_id}: foreground restore failed: {error}"))?;
+      .map_err(|error| format!("{action_id}: foreground click failed: {error}"))?;
     if self.inputs.settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
     }
-    let delivery = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
-    auv_tracing::emit_event!(action.delivered(target.text, bounds, delivery));
+    auv_tracing::emit_event!(action.delivered(target.value.text, bounds, delivery));
     Ok(())
   }
 
@@ -325,24 +317,28 @@ impl DailyRecommendedRun<'_> {
       .vision()
       .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("daily recommended card OCR failed: {error}"))?;
-    let recognition = recognition_in_window_space(recognition, &capture);
-    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
-    let Some(target) = best_text_match(&recognition, "每日推荐", window_size, |bounds, size| {
+    let recognition = recognition.relative_to(capture.bounds.origin);
+    let Some(mut target) = best_text_match(&recognition, "每日推荐", &self.window, |bounds, size| {
       bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35
     }) else {
       return Err("daily recommended card title was not found on recommendation home".to_string());
     };
-    let bounds = ViewBounds::new(target.bounds.origin.x, target.bounds.origin.y, target.bounds.size.width, target.bounds.size.height);
-    let point = daily_recommended_card_click_point(bounds);
+    let bounds = ViewBounds::new(
+      target.value.bounds.origin.x,
+      target.value.bounds.origin.y,
+      target.value.bounds.size.width,
+      target.value.bounds.size.height,
+    );
+    target.position.point = daily_recommended_card_click_point(bounds);
     let result = self
       .session
       .window()
-      .click(&self.window, WindowPoint::new(point.x, point.y), daily_recommended_window_click_options())
+      .click_target(&target, daily_recommended_window_click_options())
       .map_err(|error| format!("daily recommended card body click failed: {error}"))?;
     if self.inputs.settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
     }
-    auv_tracing::emit_event!(DailyRecommendedClick::OpenDailyRecommendedCard.delivered(target.text, bounds, result));
+    auv_tracing::emit_event!(DailyRecommendedClick::OpenDailyRecommendedCard.delivered(target.value.text, bounds, result));
     if self.play_all_is_visible(false)? {
       Ok(())
     } else {
@@ -367,9 +363,8 @@ impl DailyRecommendedRun<'_> {
         .vision()
         .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
         .map_err(|error| format!("daily recommended fallback OCR failed: {error}"))?;
-      let recognition = recognition_in_window_space(recognition, &capture);
-      let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
-      let visible = best_text_match(&recognition, "播放全部", window_size, |bounds, size| bounds.x > size.width * 0.18).is_some();
+      let recognition = recognition.relative_to(capture.bounds.origin);
+      let visible = best_text_match(&recognition, "播放全部", &self.window, |bounds, size| bounds.x > size.width * 0.18).is_some();
       if visible {
         self.known_limits.push("Play All was visible while opening Daily Recommended".to_string());
       } else if record_absent_diagnostic {
@@ -469,9 +464,10 @@ impl DailyRecommendedRun<'_> {
 pub(crate) fn best_text_match(
   recognition: &TextRecognition,
   query: &str,
-  window_size: Size,
+  window: &auv_driver::Window,
   guard: impl Fn(ViewBounds, Size) -> bool,
-) -> Option<auv_driver::vision::RecognizedText> {
+) -> Option<auv_driver::Positioned<auv_driver::vision::RecognizedText>> {
+  let window_size = window.frame.size;
   recognition
     .regions
     .iter()
@@ -484,6 +480,7 @@ pub(crate) fn best_text_match(
     })
     .min_by(|left, right| left.bounds.origin.y.partial_cmp(&right.bounds.origin.y).unwrap_or(std::cmp::Ordering::Equal))
     .cloned()
+    .map(|text| text.in_window(&window.reference))
 }
 
 fn daily_recommended_card_click_point(title_bounds: ViewBounds) -> auv_driver::Point {

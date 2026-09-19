@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{Point, Rect};
+use crate::geometry::{Point, Position, Positioned, Rect, WindowPoint};
+use crate::window::WindowRef;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecognizedText {
@@ -12,6 +13,16 @@ pub struct RecognizedText {
 impl RecognizedText {
   pub fn action_point(&self) -> Point {
     self.bounds.center()
+  }
+
+  /// Binds window-local recognition to its source window. Convert recognition
+  /// into window space before calling this; no coordinate conversion is implicit.
+  pub fn in_window(self, window: &WindowRef) -> Positioned<Self> {
+    let position = Position::in_window(window, WindowPoint::from(self.action_point()));
+    Positioned {
+      value: self,
+      position,
+    }
   }
 }
 
@@ -64,6 +75,17 @@ impl TextRecognitionOptions {
 }
 
 impl TextRecognition {
+  /// Changes the origin of already-scaled logical bounds. For full-window
+  /// capture OCR, pass the capture bounds origin to obtain window-local bounds.
+  /// Pixel scaling is owned by the recognition producer and must not be repeated.
+  pub fn relative_to(mut self, origin: Point) -> Self {
+    for region in &mut self.regions {
+      region.bounds.origin.x -= origin.x;
+      region.bounds.origin.y -= origin.y;
+    }
+    self
+  }
+
   pub fn find_contains(&self, query: &str) -> Vec<&RecognizedText> {
     let normalized_query = query.to_lowercase();
     self.regions.iter().filter(|region| region.text.to_lowercase().contains(&normalized_query)).collect()
