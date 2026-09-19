@@ -1140,7 +1140,7 @@ impl InputClient {
       .await
       .map_err(capability_status)?
       .into_inner();
-    input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("MouseDown omitted action".into()))?)
+    input_action_result_from_proto(required(response.action, "MouseDown omitted action")?)
   }
 
   pub async fn mouse_up(&self, mouse: u64) -> Result<auv_driver::InputActionResult, CapabilityError> {
@@ -1149,7 +1149,7 @@ impl InputClient {
       .await
       .map_err(capability_status)?
       .into_inner();
-    input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("MouseUp omitted action".into()))?)
+    input_action_result_from_proto(required(response.action, "MouseUp omitted action")?)
   }
 
   pub async fn hold_mouse(
@@ -1174,7 +1174,7 @@ impl InputClient {
       .await
       .map_err(capability_status)?
       .into_inner();
-    input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("HoldMouse omitted action".into()))?)
+    input_action_result_from_proto(required(response.action, "HoldMouse omitted action")?)
   }
 
   pub async fn drag_mouse(
@@ -1190,9 +1190,8 @@ impl InputClient {
       .await
       .map_err(capability_status)?
       .into_inner();
-    let point = response.point.ok_or_else(|| CapabilityError::InvalidResponse("DragMouse omitted point".into()))?;
-    let action =
-      input_action_result_from_proto(response.action.ok_or_else(|| CapabilityError::InvalidResponse("DragMouse omitted action".into()))?)?;
+    let point = required(response.point, "DragMouse omitted point")?;
+    let action = input_action_result_from_proto(required(response.action, "DragMouse omitted action")?)?;
     Ok((auv_driver::Point::new(point.x, point.y), action))
   }
 

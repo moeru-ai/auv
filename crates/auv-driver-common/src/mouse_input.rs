@@ -31,13 +31,13 @@ struct Held {
   backend: Arc<dyn MouseBackend>,
   deadline: Instant,
   generation: u64,
+  uncertain: bool,
 }
 
 #[derive(Default)]
 struct MouseState {
   point: Option<Point>,
   held: Option<Held>,
-  uncertain: bool,
 }
 
 struct State {
@@ -121,7 +121,7 @@ impl MouseCoordinator {
       let eligible = state.waiting.iter().find(|(_, mouse)| state.holder.is_none_or(|holder| holder == *mouse));
       if !state.active && eligible == Some(&(ticket, id)) {
         state.waiting.retain(|(item, _)| *item != ticket);
-        if state.mice[&id].uncertain && !recovery {
+        if state.mice[&id].held.as_ref().is_some_and(|held| held.uncertain) && !recovery {
           self.changed.notify_all();
           return Err(invalid("mouse release is uncertain; explicitly release before reusing this desktop"));
         }
@@ -172,6 +172,7 @@ impl MouseCoordinator {
         backend: backend.clone(),
         deadline: Instant::now() + timeout,
         generation,
+        uncertain: false,
       });
       state.holder = Some(id);
       generation
@@ -280,15 +281,7 @@ impl MouseCoordinator {
       while next_index < samples.len() {
         let index = latest_due_mouse_sample(&samples, next_index, started.elapsed());
         let sample = &samples[index];
-        while started.elapsed() < sample.elapsed {
-          if input_cancelled() || self.stopping() {
-            return Err(invalid("mouse movement cancelled"));
-          }
-          std::thread::sleep((sample.elapsed - started.elapsed().min(sample.elapsed)).min(Duration::from_millis(10)));
-        }
-        if input_cancelled() || self.stopping() {
-          return Err(invalid("mouse movement cancelled"));
-        }
+        self.wait_until(started + sample.elapsed, "mouse movement cancelled")?;
         let expired = self.state.lock().unwrap().mice[&id].held.as_ref().is_some_and(|held| Instant::now() >= held.deadline);
         if expired && button.is_none() {
           return Err(invalid("held mouse deadline expired"));
@@ -328,15 +321,11 @@ impl MouseCoordinator {
     validate_mouse(id)?;
     let _admission = self.enter(id, false)?;
     self.down_admitted(id, point, button, duration, backend)?;
-    let deadline = Instant::now() + duration;
-    while Instant::now() < deadline && !input_cancelled() && !self.stopping() {
-      std::thread::sleep(deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(10)));
-    }
+    let wait = self.wait_until(Instant::now() + duration, "mouse hold cancelled");
     let release = self.release_admitted(id);
-    if input_cancelled() || self.stopping() {
-      combine(Err(invalid("mouse hold cancelled")), release)
-    } else {
-      release
+    match wait {
+      Ok(()) => release,
+      Err(error) => combine(Err(error), release),
     }
   }
 
@@ -357,8 +346,19 @@ impl MouseCoordinator {
     Ok(action)
   }
 
-  fn stopping(&self) -> bool {
-    self.state.lock().unwrap().stopping
+  /// Active gestures keep admission while waiting, but must let cancellation
+  /// and shutdown reach their release path without waiting for the full delay.
+  fn wait_until(&self, deadline: Instant, cancelled: &str) -> DriverResult<()> {
+    loop {
+      if input_cancelled() || self.state.lock().unwrap().stopping {
+        return Err(invalid(cancelled));
+      }
+      let remaining = deadline.saturating_duration_since(Instant::now());
+      if remaining.is_zero() {
+        return Ok(());
+      }
+      std::thread::sleep(remaining.min(Duration::from_millis(10)));
+    }
   }
 
   /// Stops admission, lets active work clean up, then releases any cross-call
@@ -397,10 +397,12 @@ impl MouseCoordinator {
     let result = backend.button(point, button, false);
     let mut state = self.state.lock().unwrap();
     let mouse = state.mice.get_mut(&id).unwrap();
-    mouse.uncertain = result.is_err();
     if result.is_ok() {
       mouse.held = None;
       state.holder = None;
+    } else {
+      // Uncertainty belongs to the retained hold, never to a released mouse.
+      mouse.held.as_mut().unwrap().uncertain = true;
     }
     result
   }

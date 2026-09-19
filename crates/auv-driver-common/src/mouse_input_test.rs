@@ -68,6 +68,9 @@ fn failed_release_retains_reservation_until_explicit_recovery() {
   receiver.fail_up.store(false, Ordering::SeqCst);
   coordinator.up(0).unwrap();
   assert_eq!(coordinator.state.lock().unwrap().holder, None);
+  coordinator.down(0, Point::new(3., 4.), MouseButton::Right, Duration::from_secs(1), receiver.clone()).unwrap();
+  coordinator.up(0).unwrap();
+  assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up", "up", "move", "down", "up"]);
 }
 fn wait_for(mut ready: impl FnMut() -> bool) {
   let deadline = Instant::now() + Duration::from_secs(2);
@@ -180,5 +183,20 @@ fn shutdown_releases_cross_call_input_and_rejects_new_delivery() {
   coordinator.shutdown().unwrap();
   assert!(coordinator.move_to(0, Point::new(3., 4.), receiver.clone()).is_err());
   assert!(coordinator.create_mouse().is_err());
+  assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up"]);
+}
+
+#[test]
+fn shutdown_interrupts_an_active_hold_and_releases_before_returning() {
+  let coordinator = Arc::new(MouseCoordinator::default());
+  let receiver = Arc::new(Receiver::default());
+  let worker = {
+    let coordinator = coordinator.clone();
+    let receiver = receiver.clone();
+    std::thread::spawn(move || coordinator.hold(0, Point::new(1., 2.), MouseButton::Left, Duration::from_secs(60), receiver))
+  };
+  wait_for(|| receiver.events.lock().unwrap().iter().any(|event| event == "down"));
+  coordinator.shutdown().unwrap();
+  assert!(worker.join().unwrap().is_err());
   assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up"]);
 }
