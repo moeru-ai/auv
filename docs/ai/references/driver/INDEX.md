@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **41**
+Count: **42**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -52,6 +52,8 @@ Count: **41**
 - [`2026-09-13-mobile-use-platform-backends-research.md`](2026-09-13-mobile-use-platform-backends-research.md): Source-backed mobile agent modes, Android/iOS/Harmony backends, clone inventory, and OpenHarmony evidence boundaries.
 
 - [`2026-09-14-iphone-phone-use-source-review.md`](2026-09-14-iphone-phone-use-source-review.md): Source review of eight iPhone phone-use projects, DeviceKit, input paths, setup dependencies, and visual-loop limits.
+
+- [`2026-09-19-positional-targets.md`](2026-09-19-positional-targets.md): Window-bound positional targets, NetEase migration, and live validation evidence.
 
 ## Related
 

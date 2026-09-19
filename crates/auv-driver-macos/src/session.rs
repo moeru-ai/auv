@@ -7,7 +7,7 @@ use std::time::Duration;
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::{Display, ObservedDisplays};
 use auv_driver_common::error::{DriverError, DriverResult};
-use auv_driver_common::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+use auv_driver_common::geometry::{CoordinateSpace, Point, Positional, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
   InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError, PasteTextOptions, PrepareForInputOptions,
@@ -201,6 +201,25 @@ impl DisplayApi<'_> {
 }
 
 impl WindowApi<'_> {
+  /// Clicks a window-local target using its original window identity and the
+  /// window's current frame. Never substitutes another main/frontmost window
+  /// or re-recognizes the target. Delivery policy and evidence remain driver-owned.
+  ///
+  /// NOTICE: This consumer currently accepts window positions on macOS only.
+  /// Screen/display targets and other platform consumers are deferred until a
+  /// concrete caller needs their routing and input-policy contracts.
+  pub fn click_target(&self, target: &(impl Positional + ?Sized), options: ClickOptions) -> DriverResult<InputActionResult> {
+    let position = target.position();
+    let CoordinateSpace::Window(id) = position.coordinate_space else {
+      return Err(invalid_input("window.click_target requires a window-local position"));
+    };
+    if id.is_empty() || !position.point.x.is_finite() || !position.point.y.is_finite() {
+      return Err(invalid_input("window.click_target requires a window id and finite coordinates"));
+    }
+    let window = self.list()?.into_iter().find(|window| window.reference.id == id).ok_or_else(|| not_found(format!("window {id}")))?;
+    self.click(&window, WindowPoint::from(position.point), options)
+  }
+
   pub fn list(&self) -> DriverResult<Vec<Window>> {
     let _ = self.session;
     let snapshot = crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;

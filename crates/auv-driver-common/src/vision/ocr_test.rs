@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn window_text_target_preserves_identity_and_logical_coordinates_through_serialization() {
+  use crate::geometry::{CoordinateSpace, Positional};
+
+  // OCR already converts image pixels to logical coordinates. Changing origin
+  // must preserve extent and confidence, rather than scaling them a second time.
+  let recognition = TextRecognition {
+    text: "target".into(),
+    regions: vec![RecognizedText {
+      text: "target".into(),
+      bounds: Rect::new(-180.5, 320.25, 40.0, 18.0),
+      confidence: Some(0.9),
+    }],
+  }
+  .relative_to(Point::new(-200.0, 300.0));
+  let window = WindowRef {
+    id: "observed-window".into(),
+  };
+  let target = recognition.regions.into_iter().next().unwrap().in_window(&window);
+  let encoded = serde_json::to_string(&target).unwrap();
+  let decoded: Positioned<RecognizedText> = serde_json::from_str(&encoded).unwrap();
+
+  assert_eq!(decoded.position().coordinate_space, CoordinateSpace::Window(window.id));
+  assert_eq!(decoded.position().point, Point::new(39.5, 29.25));
+  assert_eq!(decoded.value.bounds, Rect::new(19.5, 20.25, 40.0, 18.0));
+  assert_eq!(decoded.value.confidence, Some(0.9));
+  assert_eq!(decoded.value.text, "target");
+}
+
+#[test]
 fn text_recognition_finds_case_insensitive_contains_match() {
   let recognition = TextRecognition {
     text: "Cure For Me\nAURORA".to_string(),

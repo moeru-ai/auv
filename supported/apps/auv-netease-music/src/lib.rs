@@ -68,7 +68,7 @@ use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{ActivationPolicy, Click, InputPolicy, LocalDriverSession, PrepareForInputOptions, Scroll, ScrollOptions, WindowPoint};
+use auv_driver::{ActivationPolicy, InputPolicy, LocalDriverSession, PrepareForInputOptions, Scroll, ScrollOptions, WindowPoint};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::native::tree::capture_ax_tree_snapshot;
 #[cfg(target_os = "macos")]
@@ -707,15 +707,6 @@ fn empty_root() -> ViewNodeRecord {
     evidence: Vec::new(),
     children: Vec::new(),
   }
-}
-
-#[cfg(target_os = "macos")]
-fn recognition_in_window_space(mut recognition: TextRecognition, capture: &Capture) -> TextRecognition {
-  for region in &mut recognition.regions {
-    region.bounds.origin.x -= capture.bounds.origin.x;
-    region.bounds.origin.y -= capture.bounds.origin.y;
-  }
-  recognition
 }
 
 fn crop_image(image: &RgbaImage, bounds: ViewBounds, scale_factor: f64) -> RgbaImage {
