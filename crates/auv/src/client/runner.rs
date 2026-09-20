@@ -1629,6 +1629,7 @@ fn capture_from_proto(capture: proto::CapturedFrame) -> Result<auv_driver::Captu
   let image = image::RgbaImage::from_raw(image.width, image.height, image.data)
     .ok_or_else(|| CapabilityError::InvalidResponse("CapturedFrame contains malformed RGBA8 data".to_string()))?;
   Ok(auv_driver::Capture {
+    origin: capture.origin.map(position_from_proto).transpose()?,
     image,
     bounds: auv_driver::Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
     scale_factor: capture.scale_factor,
@@ -1641,6 +1642,7 @@ fn capture_to_proto(capture: auv_driver::Capture) -> Result<proto::CapturedFrame
   let width = capture.image.width();
   let height = capture.image.height();
   Ok(proto::CapturedFrame {
+    origin: capture.origin.map(position_to_proto),
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width,
       height,
@@ -1671,6 +1673,7 @@ fn ocr_matches_from_proto(matches: Vec<proto::TextMatch>) -> Result<auv_driver::
 
 fn text_recognition_from_proto(response: proto::RecognizeTextResponse) -> Result<auv_driver::TextRecognition, CapabilityError> {
   Ok(auv_driver::TextRecognition {
+    origin: response.origin.map(position_from_proto).transpose()?,
     text: response.text,
     regions: response
       .regions
@@ -1684,6 +1687,38 @@ fn text_recognition_from_proto(response: proto::RecognizeTextResponse) -> Result
         })
       })
       .collect::<Result<_, CapabilityError>>()?,
+  })
+}
+
+fn position_to_proto(position: auv_driver::Position) -> proto::Position {
+  use proto::position::CoordinateSpace;
+  proto::Position {
+    x: position.point.x,
+    y: position.point.y,
+    coordinate_space: Some(match position.coordinate_space {
+      auv_driver::CoordinateSpace::Screen => CoordinateSpace::Screen(true),
+      auv_driver::CoordinateSpace::Display(id) => CoordinateSpace::DisplayId(id),
+      auv_driver::CoordinateSpace::Window(id) => CoordinateSpace::WindowId(id),
+    }),
+  }
+}
+
+fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position, CapabilityError> {
+  use proto::position::CoordinateSpace;
+  if !position.x.is_finite() || !position.y.is_finite() {
+    return Err(CapabilityError::InvalidResponse("position coordinates must be finite".to_string()));
+  }
+  let coordinate_space = match position.coordinate_space {
+    Some(CoordinateSpace::Screen(true)) => auv_driver::CoordinateSpace::Screen,
+    Some(CoordinateSpace::DisplayId(id)) if !id.is_empty() => auv_driver::CoordinateSpace::Display(id),
+    Some(CoordinateSpace::WindowId(id)) if !id.is_empty() => auv_driver::CoordinateSpace::Window(id),
+    _ => {
+      return Err(CapabilityError::InvalidResponse("position requires an explicit coordinate space and nonempty resource id".to_string()));
+    }
+  };
+  Ok(auv_driver::Position {
+    point: auv_driver::Point::new(position.x, position.y),
+    coordinate_space,
   })
 }
 

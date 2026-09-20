@@ -23,3 +23,14 @@ message ScreenRect {
   double width = 3;
   double height = 4;
 }
+
+// A logical point with an explicit owning coordinate space.
+message Position {
+  double x = 1;
+  double y = 2;
+  oneof coordinate_space {
+    bool screen = 3; // Must be true when selected.
+    string display_id = 4;
+    string window_id = 5;
+  }
+}

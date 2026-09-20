@@ -31,6 +31,8 @@ message CapturedFrame {
   double scale_factor = 3;
   string backend = 4;
   optional string fallback_reason = 5;
+  // Image top-left in its owning space. Missing means unbound, never screen by default.
+  Position origin = 6;
 }
 
 message CaptureWindowRequest {

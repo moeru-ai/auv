@@ -179,6 +179,7 @@ fn text_recognition_from_result(result: &windows::Media::Ocr::OcrResult) -> Resu
     });
   }
   Ok(TextRecognition {
+    origin: None,
     text: line_texts.join("\n"),
     regions,
   })

@@ -237,8 +237,8 @@ impl DailyRecommendedRun<'_> {
       .vision()
       .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{action_id}: OCR failed: {error}"))?;
-    let recognition = recognition.relative_to(capture.bounds.origin);
-    let Some(target) = best_text_match(&recognition, query, &self.window, guard) else {
+    let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
+    let Some(target) = best_text_match(&recognition, query, self.window.frame.size, guard)? else {
       return Err(format!("{action_id}: text {query:?} was not found"));
     };
     let bounds = ViewBounds::new(
@@ -273,8 +273,8 @@ impl DailyRecommendedRun<'_> {
       .vision()
       .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{action_id}: OCR failed: {error}"))?;
-    let recognition = recognition.relative_to(capture.bounds.origin);
-    let Some(target) = best_text_match(&recognition, query, &self.window, guard) else {
+    let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
+    let Some(target) = best_text_match(&recognition, query, self.window.frame.size, guard)? else {
       return Err(format!("{action_id}: text {query:?} was not found"));
     };
     let bounds = ViewBounds::new(
@@ -317,10 +317,11 @@ impl DailyRecommendedRun<'_> {
       .vision()
       .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("daily recommended card OCR failed: {error}"))?;
-    let recognition = recognition.relative_to(capture.bounds.origin);
-    let Some(mut target) = best_text_match(&recognition, "每日推荐", &self.window, |bounds, size| {
+    let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
+    let Some(mut target) = best_text_match(&recognition, "每日推荐", self.window.frame.size, |bounds, size| {
       bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35
-    }) else {
+    })?
+    else {
       return Err("daily recommended card title was not found on recommendation home".to_string());
     };
     let bounds = ViewBounds::new(
@@ -363,8 +364,9 @@ impl DailyRecommendedRun<'_> {
         .vision()
         .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
         .map_err(|error| format!("daily recommended fallback OCR failed: {error}"))?;
-      let recognition = recognition.relative_to(capture.bounds.origin);
-      let visible = best_text_match(&recognition, "播放全部", &self.window, |bounds, size| bounds.x > size.width * 0.18).is_some();
+      let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
+      let visible =
+        best_text_match(&recognition, "播放全部", self.window.frame.size, |bounds, size| bounds.x > size.width * 0.18)?.is_some();
       if visible {
         self.known_limits.push("Play All was visible while opening Daily Recommended".to_string());
       } else if record_absent_diagnostic {
@@ -464,23 +466,20 @@ impl DailyRecommendedRun<'_> {
 pub(crate) fn best_text_match(
   recognition: &TextRecognition,
   query: &str,
-  window: &auv_driver::Window,
+  window_size: Size,
   guard: impl Fn(ViewBounds, Size) -> bool,
-) -> Option<auv_driver::Positioned<auv_driver::vision::RecognizedText>> {
-  let window_size = window.frame.size;
-  recognition
-    .regions
-    .iter()
-    .filter(|region| normalize_identity(&region.text).contains(&normalize_identity(query)))
-    .filter(|region| {
-      guard(
-        ViewBounds::new(region.bounds.origin.x, region.bounds.origin.y, region.bounds.size.width, region.bounds.size.height),
-        window_size,
-      )
-    })
-    .min_by(|left, right| left.bounds.origin.y.partial_cmp(&right.bounds.origin.y).unwrap_or(std::cmp::Ordering::Equal))
-    .cloned()
-    .map(|text| text.in_window(&window.reference))
+) -> Result<Option<auv_driver::Positioned<auv_driver::vision::RecognizedText>>, String> {
+  Ok(
+    recognition
+      .positioned_regions()
+      .map_err(|error| error.to_string())?
+      .filter(|region| normalize_identity(&region.value.text).contains(&normalize_identity(query)))
+      .filter(|region| {
+        let bounds = region.value.bounds;
+        guard(ViewBounds::new(bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height), window_size)
+      })
+      .min_by(|left, right| left.value.bounds.origin.y.partial_cmp(&right.value.bounds.origin.y).unwrap_or(std::cmp::Ordering::Equal)),
+  )
 }
 
 fn daily_recommended_card_click_point(title_bounds: ViewBounds) -> auv_driver::Point {

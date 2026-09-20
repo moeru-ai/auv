@@ -4214,6 +4214,7 @@ fn capture_from_image(image: &Path) -> Result<Capture, CliError> {
   let width = rgba.width();
   let height = rgba.height();
   Ok(Capture {
+    origin: None,
     image: rgba,
     bounds: Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
     scale_factor: 1.0,
@@ -5210,6 +5211,7 @@ fn card_corner_capture(capture: &Capture, state: &BalatroState, card: &CardSlot)
   let scale = 6;
   let resized = image::imageops::resize(&crop, width * scale, height * scale, image::imageops::FilterType::Nearest);
   Capture {
+    origin: None,
     image: resized,
     bounds: Rect::new(0.0, 0.0, f64::from(width * scale), f64::from(height * scale)),
     scale_factor: capture.scale_factor,

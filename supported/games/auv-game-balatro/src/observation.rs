@@ -539,6 +539,10 @@ fn ocr_capture_for_ui(capture: &Capture, ui: &DetectionResult) -> Option<Capture
   let x_scale = capture.bounds.size.width / f64::from(image_width);
   let y_scale = capture.bounds.size.height / f64::from(image_height);
   Some(Capture {
+    origin: capture.origin.as_ref().map(|origin| auv_driver::Position {
+      point: auv_driver::Point::new(origin.point.x + f64::from(x) * x_scale, origin.point.y + f64::from(y) * y_scale),
+      coordinate_space: origin.coordinate_space.clone(),
+    }),
     image: image::imageops::crop_imm(&capture.image, x, y, width, height).to_image(),
     bounds: auv_driver::Rect::new(
       capture.bounds.origin.x + f64::from(x) * x_scale,

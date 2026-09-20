@@ -326,7 +326,7 @@ impl LiveViewProvider {
         .vision()
         .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
         .map_err(|error| format!("live observation full-window OCR failed: {error}"))?;
-      let recognition = recognition.relative_to(capture.bounds.origin);
+      let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       let window_size = Size::new(window.frame.size.width, window.frame.size.height);
       let screen = if scope.screen {
         screen::classify_screen(&recognition, window_size)

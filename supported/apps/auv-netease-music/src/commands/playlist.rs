@@ -839,7 +839,7 @@ fn verify_playlist_select_title(
         .vision()
         .recognize_text_in_capture_with_options(&capture, ocr_ratio, ocr_options.clone())
         .map_err(|error| format!("playlist select verification OCR failed: {error}"))?;
-      let recognition = recognition.relative_to(capture.bounds.origin);
+      let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       last_recognition = Some(recognition.clone());
       // NOTICE(a6c-4b): top-nav OCR in the upper band is not playlist detail title.
       observed_title = playlist_select_verification_title(&recognition, window_size, sidebar_bounds, target_label);
@@ -866,7 +866,7 @@ fn verify_playlist_select_title(
         .vision()
         .recognize_text_in_capture_with_options(&capture, sidebar_ratio, ocr_options.clone())
         .map_err(|error| format!("playlist select verification sidebar echo OCR failed: {error}"))?;
-      let sidebar_recognition = sidebar_recognition.relative_to(capture.bounds.origin);
+      let sidebar_recognition = sidebar_recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       crate::telemetry::json_artifact("auv.netease.playlist_select.sidebar_echo_recognition", &sidebar_recognition);
       if let Some(echo_title) = playlist_select_verification_sidebar_row_echo_from_recognition(
         &sidebar_recognition,
@@ -968,11 +968,12 @@ fn run_playlist_play_resolved(
     .vision()
     .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("playlist play-all OCR failed: {error}"))?;
-  let recognition = recognition.relative_to(capture.bounds.origin);
+  let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
   let before_bottom_text = recognize_playlist_bottom_text(&session, &capture, inputs);
-  let Some(target) = best_text_match(&recognition, "播放全部", &window, |bounds, size| {
+  let Some(target) = best_text_match(&recognition, "播放全部", window.frame.size, |bounds, size| {
     bounds.x > size.width * 0.18 && bounds.y > size.height * 0.12 && bounds.y < size.height * 0.55
-  }) else {
+  })?
+  else {
     return Err("playlist play-all text \"播放全部\" was not found".to_string());
   };
   let target_bounds = ViewBounds::new(

@@ -41,6 +41,7 @@ pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Wind
   let display = capture_display(state, None)?;
   let crop = crop_capture_to_window(&display.capture, window.frame)?;
   Ok(Capture {
+    origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image: crop,
     bounds: window.frame,
     scale_factor: display.capture.scale_factor,

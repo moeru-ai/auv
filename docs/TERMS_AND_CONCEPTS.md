@@ -940,7 +940,19 @@ position carries the exact window ID from `WindowRef`; an application selector
 alone does not identify a coordinate space. `WindowPoint` remains an unbound
 local point and needs a window before it can supply a complete position.
 
-`Positional` supplies that position without IO or implicit re-recognition.
+`Positional` supplies that position without IO or implicit re-recognition;
+`position()` returns an error for unbound data. A `Capture` implements it through
+its optional `origin`: the image top-left in the owning coordinate space. A
+full-window capture uses `(0, 0)` and the exact captured window ID. Detached
+images remain unbound.
+
+`TextRecognition.origin` interprets region bounds as logical offsets.
+`relative_to(&impl Positional)` rebases those offsets within the same coordinate
+space and retains the new origin; repeated rebasing to the same origin is
+idempotent. `positioned_regions()` carries that origin into each text center,
+without attaching a window manually. Unbound observations and cross-space
+rebasing return errors. Capture and OCR origins survive Runner transport;
+older serialized observations without origins remain unbound.
 `Positioned<T>` keeps domain data alongside an explicitly selected position;
 that point may differ from the center of the observed bounds. These types do
 not assert visibility, freshness, or actionability. Input policies and delivery

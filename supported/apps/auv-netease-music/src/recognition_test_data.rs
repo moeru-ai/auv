@@ -1,5 +1,6 @@
 pub(super) fn fake_recognition(rows: Vec<(&str, f64, f64, f64, f64)>) -> auv_driver::vision::TextRecognition {
   auv_driver::vision::TextRecognition {
+    origin: None,
     text: rows.iter().map(|(text, _, _, _, _)| *text).collect::<Vec<_>>().join("\n"),
     regions: rows
       .into_iter()

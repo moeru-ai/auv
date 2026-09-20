@@ -130,6 +130,7 @@ fn crop_capture_to_window_uses_window_extents_inside_display_capture() {
   let mut image = image::RgbaImage::new(10, 10);
   image.put_pixel(3, 4, image::Rgba([1, 2, 3, 4]));
   let capture = Capture {
+    origin: None,
     image,
     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
     scale_factor: 1.0,

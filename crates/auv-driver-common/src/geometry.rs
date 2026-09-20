@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::DriverResult;
 use crate::window::WindowRef;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -30,22 +31,23 @@ impl Position {
 
 /// Supplies an observed position; this does not promise visibility, freshness,
 /// or support for a particular action. It never re-runs a locator.
+/// Unbound data, such as a detached image, returns an error.
 pub trait Positional {
-  fn position(&self) -> Position;
+  fn position(&self) -> DriverResult<Position>;
 }
 
 impl Positional for Position {
-  fn position(&self) -> Position {
-    self.clone()
+  fn position(&self) -> DriverResult<Position> {
+    Ok(self.clone())
   }
 }
 
 impl Positional for ScreenPoint {
-  fn position(&self) -> Position {
-    Position {
+  fn position(&self) -> DriverResult<Position> {
+    Ok(Position {
       point: self.point(),
       coordinate_space: CoordinateSpace::Screen,
-    }
+    })
   }
 }
 
@@ -59,8 +61,8 @@ pub struct Positioned<T> {
 }
 
 impl<T> Positional for Positioned<T> {
-  fn position(&self) -> Position {
-    self.position.clone()
+  fn position(&self) -> DriverResult<Position> {
+    Ok(self.position.clone())
   }
 }
 

@@ -51,6 +51,10 @@ pub fn capture_display(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Op
       let display = target.map(|target| target.display).unwrap_or_else(|| display_from_screencast_frame(&frame));
       let scale_factor = capture_scale_factor(&frame.image, display.frame, display.scale_factor);
       let capture = Capture {
+        origin: Some(auv_driver_common::Position {
+          point: display.frame.origin,
+          coordinate_space: auv_driver_common::CoordinateSpace::Screen,
+        }),
         image: frame.image,
         bounds: display.frame,
         scale_factor,
@@ -74,6 +78,10 @@ fn capture_display_from_captured(target: Option<display::DisplayTarget>, capture
   let display = target.map(|target| target.display).unwrap_or_else(|| synthetic_display_from_image(&captured.image));
   let scale_factor = capture_scale_factor(&captured.image, display.frame, display.scale_factor);
   let capture = Capture {
+    origin: Some(auv_driver_common::Position {
+      point: display.frame.origin,
+      coordinate_space: auv_driver_common::CoordinateSpace::Screen,
+    }),
     image: captured.image,
     bounds: display.frame,
     scale_factor,
@@ -109,6 +117,10 @@ pub fn capture_region(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Opt
   };
   let scale_factor = capture_scale_factor(&captured.image, region, target.display.scale_factor);
   let capture = Capture {
+    origin: Some(auv_driver_common::Position {
+      point: region.origin,
+      coordinate_space: auv_driver_common::CoordinateSpace::Screen,
+    }),
     image: captured.image,
     bounds: region,
     scale_factor,

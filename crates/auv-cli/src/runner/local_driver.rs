@@ -1385,6 +1385,7 @@ fn recognition_options(custom_words: Vec<String>, recognition_languages: Vec<Str
 
 fn recognition_to_proto(recognition: auv_driver::TextRecognition) -> proto::RecognizeTextResponse {
   proto::RecognizeTextResponse {
+    origin: recognition.origin.map(position_to_proto),
     text: recognition.text,
     regions: recognition
       .regions
@@ -1420,6 +1421,7 @@ fn capture_from_proto(capture: proto::CapturedFrame) -> Result<auv_driver::Captu
     return Err(Status::invalid_argument("capture.scale_factor must be finite and positive"));
   }
   Ok(auv_driver::Capture {
+    origin: capture.origin.map(position_from_proto).transpose()?,
     image,
     bounds,
     scale_factor: capture.scale_factor,
@@ -1616,6 +1618,7 @@ pub(super) fn capture_to_proto(capture: auv_driver::Capture) -> proto::CapturedF
   let width = capture.image.width();
   let height = capture.image.height();
   proto::CapturedFrame {
+    origin: capture.origin.map(position_to_proto),
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width,
       height,
@@ -1766,6 +1769,36 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
 #[cfg(not(any(unix, windows)))]
 pub async fn serve_inherited() -> Result<(), String> {
   Err("the first local driver Runner is not supported on this platform".to_string())
+}
+
+fn position_to_proto(position: auv_driver::Position) -> proto::Position {
+  use proto::position::CoordinateSpace;
+  proto::Position {
+    x: position.point.x,
+    y: position.point.y,
+    coordinate_space: Some(match position.coordinate_space {
+      auv_driver::CoordinateSpace::Screen => CoordinateSpace::Screen(true),
+      auv_driver::CoordinateSpace::Display(id) => CoordinateSpace::DisplayId(id),
+      auv_driver::CoordinateSpace::Window(id) => CoordinateSpace::WindowId(id),
+    }),
+  }
+}
+
+fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position, Status> {
+  use proto::position::CoordinateSpace;
+  if !position.x.is_finite() || !position.y.is_finite() {
+    return Err(Status::invalid_argument("position coordinates must be finite".to_string()));
+  }
+  let coordinate_space = match position.coordinate_space {
+    Some(CoordinateSpace::Screen(true)) => auv_driver::CoordinateSpace::Screen,
+    Some(CoordinateSpace::DisplayId(id)) if !id.is_empty() => auv_driver::CoordinateSpace::Display(id),
+    Some(CoordinateSpace::WindowId(id)) if !id.is_empty() => auv_driver::CoordinateSpace::Window(id),
+    _ => return Err(Status::invalid_argument("position requires an explicit coordinate space and nonempty resource id".to_string())),
+  };
+  Ok(auv_driver::Position {
+    point: auv_driver::Point::new(position.x, position.y),
+    coordinate_space,
+  })
 }
 
 #[cfg(test)]

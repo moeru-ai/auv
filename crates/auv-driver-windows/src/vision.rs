@@ -24,7 +24,10 @@ pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: 
   if crop.width == 0 || crop.height == 0 {
     // An empty sub-region has no pixels to recognize; return an empty result
     // rather than handing a zero-sized bitmap to the OCR engine.
-    return Ok(TextRecognition::default());
+    return Ok(TextRecognition {
+      origin: capture.recognition_origin(),
+      ..Default::default()
+    });
   }
   let cropped = image::imageops::crop_imm(&capture.image, crop.x, crop.y, crop.width, crop.height).to_image();
   let recognition = recognize_text_in_rgba(cropped.as_raw(), crop.width, crop.height, options).map_err(backend)?;
@@ -111,7 +114,11 @@ fn map_recognition_to_capture(recognition: &TextRecognition, capture: &Capture, 
     })
     .collect::<Vec<_>>();
   let text = regions.iter().map(|region| region.text.as_str()).collect::<Vec<_>>().join("\n");
-  TextRecognition { text, regions }
+  TextRecognition {
+    origin: capture.recognition_origin(),
+    text,
+    regions,
+  }
 }
 
 fn ocr_matches_from_recognition(recognition: &TextRecognition, query: &str) -> OcrMatches {

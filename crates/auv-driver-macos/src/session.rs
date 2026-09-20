@@ -209,7 +209,7 @@ impl WindowApi<'_> {
   /// Screen/display targets and other platform consumers are deferred until a
   /// concrete caller needs their routing and input-policy contracts.
   pub fn click_target(&self, target: &(impl Positional + ?Sized), options: ClickOptions) -> DriverResult<InputActionResult> {
-    let position = target.position();
+    let position = target.position()?;
     let CoordinateSpace::Window(id) = position.coordinate_space else {
       return Err(invalid_input("window.click_target requires a window-local position"));
     };
@@ -1721,6 +1721,10 @@ fn capture_display_xcap(selector: Option<&str>) -> DriverResult<DisplayCapture> 
   let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
   let capture = Capture {
+    origin: Some(auv_driver_common::Position {
+      point: target.display.frame.origin,
+      coordinate_space: auv_driver_common::CoordinateSpace::Screen,
+    }),
     image,
     bounds: target.display.frame,
     scale_factor: target.display.scale_factor,
@@ -1754,6 +1758,10 @@ fn capture_region_xcap(selector: Option<&str>, region: Rect) -> DriverResult<Reg
   let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
   let capture = Capture {
+    origin: Some(auv_driver_common::Position {
+      point: region.origin,
+      coordinate_space: auv_driver_common::CoordinateSpace::Screen,
+    }),
     image,
     bounds: region,
     scale_factor: target.display.scale_factor,
@@ -1898,6 +1906,7 @@ fn capture_window_swift(window: &Window) -> DriverResult<Capture> {
     1.0
   };
   Ok(Capture {
+    origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
     bounds: window.frame,
     scale_factor,
@@ -1928,6 +1937,7 @@ fn capture_window_xcap(window: &Window, fallback_reason: Option<String>) -> Driv
   };
   let image = RgbaImage::from_raw(width, height, image.into_raw()).ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
   Ok(Capture {
+    origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
     bounds: window.frame,
     scale_factor,
@@ -1993,6 +2003,7 @@ fn text_recognition_from_native(native: &NativeOcrTextCapture, capture: &Capture
     .collect::<Vec<_>>();
   let text = matches.iter().map(|recognized| recognized.text.as_str()).collect::<Vec<_>>().join("\n");
   TextRecognition {
+    origin: capture.recognition_origin(),
     text,
     regions: matches,
   }

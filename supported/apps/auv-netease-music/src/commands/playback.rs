@@ -346,7 +346,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     .vision()
     .recognize_text_in_capture_with_options(&before_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("initial playback OCR failed: {error}"))?;
-  let before_recognition = before_recognition.relative_to(before_capture.bounds.origin);
+  let before_recognition = before_recognition.relative_to(&before_capture).map_err(|error| error.to_string())?;
   let before_screen = screen::classify_screen(&before_recognition, window_size);
   let control_state = classify_bottom_playback_control_state(&before_capture.image);
   let mut player = PlayerView::from_control_state(control_state);
@@ -418,7 +418,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     .vision()
     .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("post-click detail OCR failed: {error}"))?;
-  recognition = recognition.relative_to(after_capture.bounds.origin);
+  recognition = recognition.relative_to(&after_capture).map_err(|error| error.to_string())?;
   let mut screen = screen::classify_screen(&recognition, window_size);
   let mut detail_screen_detected = screen.is_playing_song_detail();
   if !detail_screen_detected {
@@ -458,7 +458,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       .vision()
       .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
       .map_err(|error| format!("post-foreground-click detail OCR failed: {error}"))?;
-    recognition = recognition.relative_to(after_capture.bounds.origin);
+    recognition = recognition.relative_to(&after_capture).map_err(|error| error.to_string())?;
     screen = screen::classify_screen(&recognition, window_size);
     detail_screen_detected = screen.is_playing_song_detail();
   }

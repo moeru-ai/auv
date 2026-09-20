@@ -63,6 +63,7 @@ fn region_capture_result_keeps_pixels_out_of_json() {
       is_builtin: Some(false),
     },
     capture: auv_driver::Capture {
+      origin: None,
       image: RgbaImage::new(320, 180),
       bounds: auv_driver::Rect::new(100.0, 120.0, 320.0, 180.0),
       scale_factor: 1.0,
