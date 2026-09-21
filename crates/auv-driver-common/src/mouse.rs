@@ -327,5 +327,4 @@ mod tests {
     assert_eq!(samples.at(samples.len() - 1).point, Point::new(3.0, 0.0));
     assert_eq!(samples.at(samples.len() - 1).elapsed, request.options.duration);
   }
-
 }
