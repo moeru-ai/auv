@@ -136,3 +136,22 @@ Final focused checks passed: Linux/Windows vision geometry (4/5 tests), Runner
 mapping (28 passed, 1 ignored), formatting, diff checks, and Clippy for common,
 macOS, NetEase, SDK, Runner CLI, and the Balatro library (existing warnings).
 Playback was paused after live testing; system media confirmed `is_playing=false`.
+
+## Public constructors and shared wire conversion
+
+`Position::in_screen(ScreenPoint)` and `Position::in_window(&WindowRef,
+WindowPoint)` bind existing logical coordinates without conversion, resource
+lookup, freshness checks, or actionability checks. Both are documented; screen
+capture producers and `ScreenPoint::position()` use the screen constructor.
+
+`auv::protocol::position` owns the shared Runner position encoder, decoder, and
+`DecodeError`. The SDK and Runner CLI only map that error into
+`CapabilityError::InvalidResponse` and `Status::invalid_argument`. The `auv`
+crate already depends on domain and protocol types and is consumed by the CLI,
+so this introduces no new crate dependencies and leaves `auv-api-proto`
+independent of driver domain types. Validation tests exercise the shared decoder;
+endpoint tests retain coverage for origin transport and error mapping.
+
+Review follow-up validation: common, SDK, and Runner CLI library tests passed
+(127 passed, 1 ignored). Focused Clippy passed with existing warnings; formatting
+and diff checks passed. This refactor preserves encoding and validation behavior.

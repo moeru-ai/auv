@@ -464,7 +464,7 @@ fn overlay_cursor_shadow_serializes_without_scaling_native_dimensions() {
 }
 
 #[test]
-fn coordinate_origins_survive_transport_and_reject_malformed_spaces() {
+fn coordinate_origins_survive_transport_and_map_decode_errors() {
   for coordinate_space in [
     auv_driver::CoordinateSpace::Screen,
     auv_driver::CoordinateSpace::Display("display-1".into()),
@@ -484,25 +484,5 @@ fn coordinate_origins_survive_transport_and_reject_malformed_spaces() {
     assert_eq!(recognized.origin, Some(origin));
   }
   assert!(text_recognition_from_proto(proto::RecognizeTextResponse::default()).unwrap().origin.is_none());
-  for space in [
-    None,
-    Some(proto::position::CoordinateSpace::Screen(false)),
-    Some(proto::position::CoordinateSpace::WindowId(String::new())),
-  ] {
-    assert!(
-      position_from_proto(proto::Position {
-        coordinate_space: space,
-        ..Default::default()
-      })
-      .is_err()
-    );
-  }
-  assert!(
-    position_from_proto(proto::Position {
-      x: f64::INFINITY,
-      coordinate_space: Some(proto::position::CoordinateSpace::Screen(true)),
-      ..Default::default()
-    })
-    .is_err()
-  );
+  assert!(matches!(position_from_proto(proto::Position::default()), Err(CapabilityError::InvalidResponse(_))));
 }

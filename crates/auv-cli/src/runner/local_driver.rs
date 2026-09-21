@@ -1,5 +1,6 @@
 //! First-party local Driver Runner served on a daemon-inherited stream.
 
+use auv::protocol::position::encode as position_to_proto;
 use auv_api_proto::auv::api::driver::macos::v1 as macos_proto;
 use auv_api_proto::auv::api::driver::macos::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::application_service_server::{ApplicationService, ApplicationServiceServer};
@@ -1771,34 +1772,8 @@ pub async fn serve_inherited() -> Result<(), String> {
   Err("the first local driver Runner is not supported on this platform".to_string())
 }
 
-fn position_to_proto(position: auv_driver::Position) -> proto::Position {
-  use proto::position::CoordinateSpace;
-  proto::Position {
-    x: position.point.x,
-    y: position.point.y,
-    coordinate_space: Some(match position.coordinate_space {
-      auv_driver::CoordinateSpace::Screen => CoordinateSpace::Screen(true),
-      auv_driver::CoordinateSpace::Display(id) => CoordinateSpace::DisplayId(id),
-      auv_driver::CoordinateSpace::Window(id) => CoordinateSpace::WindowId(id),
-    }),
-  }
-}
-
 fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position, Status> {
-  use proto::position::CoordinateSpace;
-  if !position.x.is_finite() || !position.y.is_finite() {
-    return Err(Status::invalid_argument("position coordinates must be finite".to_string()));
-  }
-  let coordinate_space = match position.coordinate_space {
-    Some(CoordinateSpace::Screen(true)) => auv_driver::CoordinateSpace::Screen,
-    Some(CoordinateSpace::DisplayId(id)) if !id.is_empty() => auv_driver::CoordinateSpace::Display(id),
-    Some(CoordinateSpace::WindowId(id)) if !id.is_empty() => auv_driver::CoordinateSpace::Window(id),
-    _ => return Err(Status::invalid_argument("position requires an explicit coordinate space and nonempty resource id".to_string())),
-  };
-  Ok(auv_driver::Position {
-    point: auv_driver::Point::new(position.x, position.y),
-    coordinate_space,
-  })
+  auv::protocol::position::decode(position).map_err(|error| Status::invalid_argument(error.to_string()))
 }
 
 #[cfg(test)]

@@ -812,3 +812,10 @@ fn click_rpc_decodes_all_buttons_and_rejects_unknown_before_delivery() {
     tonic::Code::InvalidArgument
   );
 }
+
+#[test]
+fn malformed_position_is_an_invalid_argument() {
+  let error = position_from_proto(proto::Position::default()).unwrap_err();
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  assert_eq!(error.message(), auv::protocol::position::DecodeError::InvalidCoordinateSpace.to_string());
+}

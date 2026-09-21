@@ -21,6 +21,19 @@ pub struct Position {
 }
 
 impl Position {
+  /// Binds a logical screen point to screen space without querying displays or
+  /// validating coordinate freshness, finiteness, visibility, or actionability.
+  pub fn in_screen(point: ScreenPoint) -> Self {
+    Self {
+      point: point.point(),
+      coordinate_space: CoordinateSpace::Screen,
+    }
+  }
+
+  /// Binds an already window-local logical point to this exact `WindowRef` ID.
+  /// This copies the ID; it neither resolves a window nor converts screen
+  /// coordinates. It does not validate window existence, coordinate freshness,
+  /// finiteness, visibility, or actionability.
   pub fn in_window(window: &WindowRef, point: WindowPoint) -> Self {
     Self {
       point: point.point(),
@@ -44,10 +57,7 @@ impl Positional for Position {
 
 impl Positional for ScreenPoint {
   fn position(&self) -> DriverResult<Position> {
-    Ok(Position {
-      point: self.point(),
-      coordinate_space: CoordinateSpace::Screen,
-    })
+    Ok(Position::in_screen(*self))
   }
 }
 
