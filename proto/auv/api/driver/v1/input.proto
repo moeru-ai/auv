@@ -499,7 +499,8 @@ message MouseDownRequest {
   uint64 mouse = 1;
   ScreenPoint point = 2;
   MouseButton button = 3;
-  // Omission uses 30 seconds; explicit values must be in (0, 60s].
+  // Omission uses 30 seconds; explicit values must be positive.
+  // This is a caller-selected release deadline, not a maximum hold duration.
   google.protobuf.Duration timeout = 4;
   // Omission selects foreground. Applications without a window are unsupported.
   InputTarget target = 5;
