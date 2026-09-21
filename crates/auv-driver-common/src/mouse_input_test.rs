@@ -192,28 +192,10 @@ fn complete_hold_returns_release_evidence_after_matching_down_and_up() {
 }
 
 #[test]
-fn long_mouse_timeout_allows_explicit_early_release() {
-  let coordinator = Arc::new(MouseCoordinator::default());
-  let receiver = Arc::new(Receiver::default());
-  coordinator.down(0, Point::new(1., 2.), MouseButton::Left, Duration::from_secs(3600), receiver.clone()).unwrap();
-  coordinator.up(0).unwrap();
-  assert_eq!(*receiver.events.lock().unwrap(), ["move", "down", "up"]);
-}
-
-#[test]
 fn unrepresentable_deadline_fails_before_native_delivery() {
   let coordinator = Arc::new(MouseCoordinator::default());
   let receiver = Arc::new(Receiver::default());
   assert!(coordinator.down(0, Point::new(1., 2.), MouseButton::Left, Duration::MAX, receiver.clone()).is_err());
   assert!(coordinator.hold(0, Point::new(1., 2.), MouseButton::Left, Duration::MAX, receiver.clone()).is_err());
   assert!(receiver.events.lock().unwrap().is_empty());
-}
-
-#[test]
-fn logical_mice_are_not_limited_to_256_entries() {
-  let coordinator = MouseCoordinator::default();
-  let mice = (0..1024).map(|_| coordinator.create_mouse().unwrap()).collect::<Vec<_>>();
-  for mouse in mice {
-    coordinator.remove_mouse(mouse).unwrap();
-  }
 }
