@@ -1110,13 +1110,13 @@ impl InputClient {
     )
   }
 
-  pub async fn delete_mouse(&self, mouse: u64) -> Result<auv_driver::InputActionResult, CapabilityError> {
+  pub async fn remove_mouse(&self, mouse: u64) -> Result<auv_driver::InputActionResult, CapabilityError> {
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
-      .delete_mouse(proto::DeleteMouseRequest { mouse })
+      .remove_mouse(proto::RemoveMouseRequest { mouse })
       .await
       .map_err(capability_status)?
       .into_inner();
-    input_action_result_from_proto(required(response.action, "DeleteMouse response omitted InputActionResult")?)
+    input_action_result_from_proto(required(response.action, "RemoveMouse response omitted InputActionResult")?)
   }
 
   pub async fn mouse_down(

@@ -48,7 +48,7 @@ fn background_down_drag_up_reaches_the_same_appkit_receiver() {
     session.input().mouse_up(mouse)?;
     Ok::<_, auv_driver_common::DriverError>(())
   })();
-  let cleanup = session.input().delete_mouse(mouse);
+  let cleanup = session.input().remove_mouse(mouse);
   result.unwrap();
   cleanup.unwrap();
   assert_eq!(events.recv_timeout(Duration::from_secs(3)).unwrap(), "down");

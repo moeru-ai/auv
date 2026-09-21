@@ -18,7 +18,7 @@ service InputService {
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
   // Releases owned input before removing state; mouse zero cannot be deleted.
-  rpc DeleteMouse(DeleteMouseRequest) returns (DeleteMouseResponse) {
+  rpc RemoveMouse(RemoveMouseRequest) returns (RemoveMouseResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
@@ -487,10 +487,10 @@ message CreateMouseResponse {
   uint64 mouse = 1;
 }
 
-message DeleteMouseRequest {
+message RemoveMouseRequest {
   uint64 mouse = 1;
 }
-message DeleteMouseResponse {
+message RemoveMouseResponse {
   InputActionResult action = 1;
 }
 

@@ -536,10 +536,10 @@ impl InputService for LocalInputService {
       mouse: self.session.input().create_mouse().map_err(driver_status)?,
     }))
   }
-  async fn delete_mouse(&self, request: Request<proto::DeleteMouseRequest>) -> Result<Response<proto::DeleteMouseResponse>, Status> {
+  async fn remove_mouse(&self, request: Request<proto::RemoveMouseRequest>) -> Result<Response<proto::RemoveMouseResponse>, Status> {
     let session = self.session.clone();
-    let action = run_input_blocking(move || session.input().delete_mouse(request.into_inner().mouse)).await?;
-    Ok(Response::new(proto::DeleteMouseResponse {
+    let action = run_input_blocking(move || session.input().remove_mouse(request.into_inner().mouse)).await?;
+    Ok(Response::new(proto::RemoveMouseResponse {
       action: Some(input_action_to_proto(action)?),
     }))
   }

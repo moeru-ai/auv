@@ -11,12 +11,12 @@ remains explicitly unsupported.
 
 ## Contract
 
-- Extend InputService with CreateMouse, DeleteMouse, MouseDown, MouseUp,
+- Extend InputService with CreateMouse, RemoveMouse, MouseDown, MouseUp,
   and DragMouse. Existing MoveMouse and StreamMouseMotion share the
   driver execution path. Library and Rust/TypeScript clients expose these calls.
 - Mouse ID zero is shared across Runs using the same local driver process.
   CreateMouse explicitly allocates separate logical state, not an OS cursor.
-  DeleteMouse releases owned input first and refuses to delete the default mouse.
+  RemoveMouse releases owned input first and refuses to remove the default mouse.
 - Reuse InputTarget for addressing. Omission on MouseDown selects foreground;
   omission during movement continues a held route, otherwise selects foreground.
   Window targets retain observed window and process identity. Application-only
@@ -64,7 +64,7 @@ Complete holds poll cancellation; movement checks cancellation between samples.
 Closing movement feedback aborts delivery and cleans up held input. Cross-call
 down has a watchdog even if the client never issues another call. Failed cleanup
 retains ownership and quarantines normal reuse; explicit MouseUp retries release.
-DeleteMouse does not erase uncertain ownership and returns the release's typed
+RemoveMouse does not erase uncertain ownership and returns the release's typed
 delivery result. Normal Runner shutdown stops admission and releases cross-call
 input. A force-killed process cannot run its watchdog or cleanup; time bounds
 apply while the driver remains alive and its native calls return. Native post failures may follow

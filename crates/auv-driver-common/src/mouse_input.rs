@@ -89,7 +89,7 @@ impl MouseCoordinator {
       return Err(invalid("mouse input is shutting down"));
     }
     if state.mice.len() >= MAX_MICE {
-      return Err(invalid("too many logical mice; delete unused mice"));
+      return Err(invalid("too many logical mice; remove unused mice"));
     }
     let id = state.next_id;
     state.next_id += 1;
@@ -116,7 +116,7 @@ impl MouseCoordinator {
       if !state.mice.contains_key(&id) {
         state.waiting.retain(|(item, _)| *item != ticket);
         self.changed.notify_all();
-        return Err(invalid("logical mouse was deleted"));
+        return Err(invalid("logical mouse was removed"));
       }
       let eligible = state.waiting.iter().find(|(_, mouse)| state.holder.is_none_or(|holder| holder == *mouse));
       if !state.active && eligible == Some(&(ticket, id)) {
@@ -335,9 +335,9 @@ impl MouseCoordinator {
     self.release_admitted(id)
   }
 
-  pub fn delete_mouse(&self, id: MouseId) -> DriverResult<InputActionResult> {
+  pub fn remove_mouse(&self, id: MouseId) -> DriverResult<InputActionResult> {
     if id == 0 {
-      return Err(invalid("the default mouse cannot be deleted"));
+      return Err(invalid("the default mouse cannot be removed"));
     }
     validate_mouse(id)?;
     let _admission = self.enter(id, true)?;

@@ -384,8 +384,8 @@ impl InputApi<'_> {
     auv_driver_common::mouse_input::mouse_coordinator().create_mouse()
   }
 
-  pub fn delete_mouse(&self, mouse: u64) -> DriverResult<InputActionResult> {
-    auv_driver_common::mouse_input::mouse_coordinator().delete_mouse(mouse)
+  pub fn remove_mouse(&self, mouse: u64) -> DriverResult<InputActionResult> {
+    auv_driver_common::mouse_input::mouse_coordinator().remove_mouse(mouse)
   }
 
   /// Holds one button until mouse_up or the mandatory bounded timeout.
