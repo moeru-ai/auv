@@ -11,7 +11,6 @@ use crate::{DriverError, DriverResult, InputActionResult, MouseButton, Point};
 /// Zero selects the shared mouse, independently of run identity.
 pub type MouseId = u64;
 const MAX_MICE: usize = 256;
-pub const MAX_MOUSE_HOLD: Duration = Duration::from_secs(60);
 
 /// The native boundary preserves the same delivery route until release.
 /// Implementations must report uncertain delivery as an error.
@@ -141,8 +140,8 @@ impl MouseCoordinator {
     backend: Arc<dyn MouseBackend>,
   ) -> DriverResult<InputActionResult> {
     validate_point(point)?;
-    if timeout.is_zero() || timeout > MAX_MOUSE_HOLD {
-      return Err(invalid("mouse hold timeout must be in (0, 60s]"));
+    if timeout.is_zero() {
+      return Err(invalid("mouse hold timeout must be positive"));
     }
     validate_mouse(id)?;
     let _admission = self.enter(id, false)?;
@@ -161,6 +160,7 @@ impl MouseCoordinator {
       // TODO: multi-button chords await an approved native receiver contract.
       return Err(invalid("this mouse already holds a button"));
     }
+    let deadline = Instant::now().checked_add(timeout).ok_or_else(|| invalid("mouse timeout exceeds the platform clock range"))?;
     backend.move_to(point, None)?;
     let generation = {
       let mut state = self.state.lock().unwrap();
@@ -170,7 +170,7 @@ impl MouseCoordinator {
       mouse.held = Some(Held {
         button,
         backend: backend.clone(),
-        deadline: Instant::now() + timeout,
+        deadline,
         generation,
         uncertain: false,
       });
@@ -272,7 +272,7 @@ impl MouseCoordinator {
       return combine(Err(invalid("mouse movement cancelled before delivery")), self.release_admitted(id)).map(|action| (start, action));
     }
     if let Some(button) = button {
-      self.down_admitted(id, start, button, MAX_MOUSE_HOLD, backend.clone())?;
+      self.down_admitted(id, start, button, request.options.duration, backend.clone())?;
     }
     let result = (|| {
       let started = Instant::now();
@@ -315,13 +315,14 @@ impl MouseCoordinator {
     backend: Arc<dyn MouseBackend>,
   ) -> DriverResult<InputActionResult> {
     validate_point(point)?;
-    if duration.is_zero() || duration > MAX_MOUSE_HOLD {
-      return Err(invalid("hold duration must be in (0, 60s]"));
+    if duration.is_zero() {
+      return Err(invalid("hold duration must be positive"));
     }
     validate_mouse(id)?;
     let _admission = self.enter(id, false)?;
     self.down_admitted(id, point, button, duration, backend)?;
-    let wait = self.wait_until(Instant::now() + duration, "mouse hold cancelled");
+    let deadline = self.state.lock().unwrap().mice[&id].held.as_ref().unwrap().deadline;
+    let wait = self.wait_until(deadline, "mouse hold cancelled");
     let release = self.release_admitted(id);
     match wait {
       Ok(()) => release,

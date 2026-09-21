@@ -30,10 +30,11 @@ remains explicitly unsupported.
   Alpha APIs do not retain a legacy alias, request decoder, or migration shim.
   The reserved field is a Protobuf deletion marker, not a compatibility path.
 - MouseDown holds one left/right/middle button. RPC omission selects left and
-  a 30-second timeout; explicit timeouts must be positive and at most 60 seconds.
+  a 30-second timeout; explicit timeouts must be positive, with no fixed maximum.
   MouseUp is idempotent after known release. Additional down while held is rejected.
 - Local driver `hold_mouse` is a convenience operation that keeps a button down
-  for a positive duration up to 60 seconds, using the shared press/release lifecycle.
+  for a caller-selected positive duration, using the shared press/release lifecycle.
+  Durations must fit the platform clock; there is no product-level hold limit.
   There is no HoldMouse RPC or remote Rust/TypeScript hold method. Remote callers
   use MouseDown/MoveMouse/MouseUp; a timed remote convenience is deferred until
   an approved atomic sequence contract can preserve admission and cleanup.
