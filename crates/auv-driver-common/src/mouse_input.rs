@@ -10,7 +10,6 @@ use crate::{DriverError, DriverResult, InputActionResult, MouseButton, Point};
 
 /// Zero selects the shared mouse, independently of run identity.
 pub type MouseId = u64;
-const MAX_MICE: usize = 256;
 
 /// The native boundary preserves the same delivery route until release.
 /// Implementations must report uncertain delivery as an error.
@@ -52,14 +51,14 @@ struct State {
 /// One authority per local driver process. Other processes and physical input
 /// are outside this guarantee; remote callers must use the same Runner.
 pub struct MouseCoordinator {
-  state: Mutex<State>,
-  changed: Condvar,
+  state: Arc<Mutex<State>>,
+  changed: Arc<Condvar>,
 }
 
 impl Default for MouseCoordinator {
   fn default() -> Self {
     Self {
-      state: Mutex::new(State {
+      state: Arc::new(Mutex::new(State {
         mice: HashMap::from([
           (0, MouseState::default()),
           (u64::MAX, MouseState::default()),
@@ -70,8 +69,8 @@ impl Default for MouseCoordinator {
         active: false,
         stopping: false,
         holder: None,
-      }),
-      changed: Condvar::new(),
+      })),
+      changed: Arc::new(Condvar::new()),
     }
   }
 }
@@ -87,10 +86,11 @@ impl MouseCoordinator {
     if state.stopping {
       return Err(invalid("mouse input is shutting down"));
     }
-    if state.mice.len() >= MAX_MICE {
-      return Err(invalid("too many logical mice; remove unused mice"));
-    }
     let id = state.next_id;
+    if id == u64::MAX {
+      return Err(invalid("logical mouse identity range exhausted"));
+    }
+    state.mice.try_reserve(1).map_err(|_| invalid("cannot allocate logical mouse state"))?;
     state.next_id += 1;
     state.mice.insert(id, MouseState::default());
     Ok(id)
@@ -99,12 +99,17 @@ impl MouseCoordinator {
   /// Admission is FIFO within each mouse. A waiting foreign mouse cannot block
   /// the holder's continuation, which is necessary for its eventual release.
   fn enter(&self, id: MouseId, recovery: bool) -> DriverResult<Admission<'_>> {
+    INPUT_CANCELLATION.with(|value| {
+      if let Some(cancellation) = value.borrow().as_ref() {
+        cancellation.register(self);
+      }
+    });
     let mut state = self.state.lock().unwrap();
     if !state.mice.contains_key(&id) {
       return Err(invalid("unknown logical mouse"));
     }
     let ticket = state.next_ticket;
-    state.next_ticket += 1;
+    state.next_ticket = state.next_ticket.checked_add(1).ok_or_else(|| invalid("mouse admission ticket range exhausted"))?;
     state.waiting.push_back((ticket, id));
     loop {
       if (input_cancelled() || state.stopping) && !recovery {
@@ -127,7 +132,7 @@ impl MouseCoordinator {
         state.active = true;
         return Ok(Admission { coordinator: self });
       }
-      state = self.changed.wait_timeout(state, Duration::from_millis(20)).unwrap().0;
+      state = self.changed.wait(state).unwrap();
     }
   }
 
@@ -186,19 +191,17 @@ impl MouseCoordinator {
     let coordinator = self.clone();
     let cancellation = INPUT_CANCELLATION.with(|value| value.borrow().clone());
     std::thread::spawn(move || {
+      let mut state = coordinator.state.lock().unwrap();
       loop {
-        std::thread::sleep(Duration::from_millis(20));
-        let due = {
-          let state = coordinator.state.lock().unwrap();
-          let Some(held) = state.mice.get(&id).and_then(|mouse| mouse.held.as_ref()) else {
-            return;
-          };
-          if held.generation != generation {
-            return;
-          }
-          Instant::now() >= held.deadline || cancellation.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+        let Some(held) = state.mice.get(&id).and_then(|mouse| mouse.held.as_ref()) else {
+          return;
         };
-        if due {
+        if held.generation != generation {
+          return;
+        }
+        let remaining = held.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || cancellation.as_ref().is_some_and(|flag| flag.is_cancelled()) {
+          drop(state);
           let Ok(_admission) = coordinator.enter(id, true) else {
             return;
           };
@@ -208,6 +211,7 @@ impl MouseCoordinator {
           }
           return;
         }
+        state = coordinator.changed.wait_timeout(state, remaining).unwrap().0;
       }
     });
     result
@@ -264,6 +268,8 @@ impl MouseCoordinator {
       crate::MouseStart::Current => self.position(id)?.map(Ok).unwrap_or_else(|| backend.current_position())?,
     };
     let samples = request.samples(start)?;
+    let started = Instant::now();
+    started.checked_add(request.options.duration).ok_or_else(|| invalid("mouse movement exceeds the platform clock range"))?;
     if !notify(MotionEvent::Started {
       point: start,
       samples: samples.len(),
@@ -279,18 +285,22 @@ impl MouseCoordinator {
       let mut result = InputActionResult::single_success(crate::InputDeliveryPath::Noop);
       let mut next_index = 0;
       while next_index < samples.len() {
-        let index = latest_due_mouse_sample(&samples, next_index, started.elapsed());
-        let sample = &samples[index];
-        self.wait_until(started + sample.elapsed, "mouse movement cancelled")?;
+        let index = samples.latest_due(next_index, started.elapsed());
+        let sample = samples.at(index);
+        let mut deadline = started.checked_add(sample.elapsed).ok_or_else(|| invalid("mouse sample exceeds the platform clock range"))?;
+        if button.is_none() {
+          // A cross-call hold must expire even between widely spaced samples.
+          if let Some(held) = &self.state.lock().unwrap().mice[&id].held {
+            deadline = deadline.min(held.deadline);
+          }
+        }
+        self.wait_until(deadline, "mouse movement cancelled")?;
         let expired = self.state.lock().unwrap().mice[&id].held.as_ref().is_some_and(|held| Instant::now() >= held.deadline);
         if expired && button.is_none() {
           return Err(invalid("held mouse deadline expired"));
         }
         result = self.move_admitted(id, sample.point, backend.clone())?;
-        if !notify(MotionEvent::Progress {
-          index,
-          sample: *sample,
-        }) {
+        if !notify(MotionEvent::Progress { index, sample }) {
           return Err(invalid("mouse movement cancelled"));
         }
         next_index = index + 1;
@@ -302,7 +312,7 @@ impl MouseCoordinator {
     } else {
       result
     };
-    Ok((samples.last().unwrap().point, result?))
+    Ok((samples.at(samples.len() - 1).point, result?))
   }
 
   /// A bounded hold is the primitive press/release lifecycle under one admission.
@@ -350,15 +360,16 @@ impl MouseCoordinator {
   /// Active gestures keep admission while waiting, but must let cancellation
   /// and shutdown reach their release path without waiting for the full delay.
   fn wait_until(&self, deadline: Instant, cancelled: &str) -> DriverResult<()> {
+    let mut state = self.state.lock().unwrap();
     loop {
-      if input_cancelled() || self.state.lock().unwrap().stopping {
+      if input_cancelled() || state.stopping {
         return Err(invalid(cancelled));
       }
       let remaining = deadline.saturating_duration_since(Instant::now());
       if remaining.is_zero() {
         return Ok(());
       }
-      std::thread::sleep(remaining.min(Duration::from_millis(10)));
+      state = self.changed.wait_timeout(state, remaining).unwrap().0;
     }
   }
 
@@ -449,11 +460,11 @@ mod tests;
 pub enum MotionEvent {
   Started {
     point: Point,
-    samples: usize,
+    samples: u64,
     duration: Duration,
   },
   Progress {
-    index: usize,
+    index: u64,
     sample: crate::MouseMotionSample,
   },
 }
@@ -486,17 +497,43 @@ impl Drop for DesktopInputGuard {
   }
 }
 
+/// Cancellation wakes every coordinator used by the operation, without polling.
+#[derive(Default)]
+pub struct InputCancellation {
+  cancelled: std::sync::atomic::AtomicBool,
+  waiters: Mutex<Vec<(std::sync::Weak<Mutex<State>>, std::sync::Weak<Condvar>)>>,
+}
+impl InputCancellation {
+  pub fn cancel(&self) {
+    self.cancelled.store(true, std::sync::atomic::Ordering::Release);
+    for (state, changed) in self.waiters.lock().unwrap().iter() {
+      if let (Some(state), Some(changed)) = (state.upgrade(), changed.upgrade()) {
+        let _state = state.lock().unwrap();
+        changed.notify_all();
+      }
+    }
+  }
+  fn is_cancelled(&self) -> bool {
+    self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+  }
+  fn register(&self, coordinator: &MouseCoordinator) {
+    let mut waiters = self.waiters.lock().unwrap();
+    waiters.retain(|(state, _)| state.strong_count() != 0);
+    if !waiters.iter().any(|(state, _)| state.ptr_eq(&Arc::downgrade(&coordinator.state))) {
+      waiters.push((Arc::downgrade(&coordinator.state), Arc::downgrade(&coordinator.changed)));
+    }
+  }
+}
 thread_local! {
-  static INPUT_CANCELLATION: std::cell::RefCell<Option<Arc<std::sync::atomic::AtomicBool>>> = const { std::cell::RefCell::new(None) };
+  static INPUT_CANCELLATION: std::cell::RefCell<Option<Arc<InputCancellation>>> = const { std::cell::RefCell::new(None) };
 }
 fn input_cancelled() -> bool {
-  INPUT_CANCELLATION.with(|value| value.borrow().as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)))
+  INPUT_CANCELLATION.with(|value| value.borrow().as_ref().is_some_and(|flag| flag.is_cancelled()))
 }
 
-/// Binds cancellation to synchronous native work on a blocking worker. The
-/// transport owns the flag; cancellation does not become part of replay input.
-pub fn with_input_cancellation<T>(cancelled: Arc<std::sync::atomic::AtomicBool>, action: impl FnOnce() -> T) -> T {
-  struct Restore(Option<Arc<std::sync::atomic::AtomicBool>>);
+/// Binds cancellation to synchronous native work. The transport owns the signal.
+pub fn with_input_cancellation<T>(cancelled: Arc<InputCancellation>, action: impl FnOnce() -> T) -> T {
+  struct Restore(Option<Arc<InputCancellation>>);
   impl Drop for Restore {
     fn drop(&mut self) {
       INPUT_CANCELLATION.with(|value| *value.borrow_mut() = self.0.take());
@@ -504,14 +541,6 @@ pub fn with_input_cancellation<T>(cancelled: Arc<std::sync::atomic::AtomicBool>,
   }
   let _restore = Restore(INPUT_CANCELLATION.with(|value| value.replace(Some(cancelled))));
   action()
-}
-
-fn latest_due_mouse_sample(samples: &[crate::MouseMotionSample], next_index: usize, elapsed: std::time::Duration) -> usize {
-  let mut index = next_index;
-  while index + 1 < samples.len() && samples[index + 1].elapsed <= elapsed {
-    index += 1;
-  }
-  index
 }
 
 fn same_target(a: &crate::InputTarget, b: &crate::InputTarget) -> bool {

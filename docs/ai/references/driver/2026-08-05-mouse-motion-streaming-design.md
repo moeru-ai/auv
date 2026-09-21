@@ -30,16 +30,22 @@ from normalized displacement to logical screen coordinates.
 
 ## Execution and safety
 
-The driver validates finite coordinates, positive mapping dimensions, bounded
-sample rate and duration, and the complete mapped trajectory before delivering
-the first point. The sampler flattens cubic curves and uses mapped arc length.
+The driver validates finite coordinates, positive mapping dimensions, valid
+timing and caller-selected curve tolerance, and the complete mapped trajectory
+before delivering the first point. There is no fixed maximum duration, sample
+rate, segment count, or time-sample count. The sampler adaptively flattens cubic
+curves using `MouseMotionOptions.curve_tolerance` (screen-space arc-length error
+budget per segment) and uses mapped arc length. Time samples are evaluated on
+demand rather than stored in a vector.
 As a result, progress has an approximately constant speed across segments.
 
 The first bidirectional implementation buffers segment batches until finish.
 This preserves all-or-nothing validation and avoids leaving the pointer at a
 partially executed position when a later batch is invalid. Cancellation before
-finish has no pointer effect. A disconnect during execution stops delivery at
-the last sample.
+finish has no pointer effect. A disconnect during execution cancels queued/active delivery and attempts held
+input cleanup. Slow feedback alone does not cancel execution: progress is a
+latest-value mailbox, while started and terminal outcomes are retained.
+Sample counts and indices are uint64 (Rust u64, TypeScript bigint).
 
 `MouseMotionCompleted.action` is input-delivery evidence. It is not semantic
 verification of any application state.

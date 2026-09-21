@@ -34,8 +34,7 @@ pub use input::{
 };
 pub use keyboard::{Key, Keysym, Modifier};
 pub use mouse::{
-  MOUSE_MOTION_MAX_SEGMENTS, MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionSample, MouseStart,
-  MoveMouseRequest,
+  MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionSample, MouseSamples, MouseStart, MoveMouseRequest,
 };
 pub use permission::{PermissionProbe, PermissionStatus};
 pub use readiness::{ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus};

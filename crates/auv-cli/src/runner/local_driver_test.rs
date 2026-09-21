@@ -790,3 +790,98 @@ fn malformed_position_is_an_invalid_argument() {
   assert_eq!(error.code(), tonic::Code::InvalidArgument);
   assert_eq!(error.message(), auv::protocol::position::DecodeError::InvalidCoordinateSpace.to_string());
 }
+
+#[tokio::test]
+async fn slow_feedback_does_not_block_native_motion_or_completion() {
+  let (native_done_tx, native_done_rx) = tokio::sync::oneshot::channel();
+  let allow_feedback = std::sync::Arc::new(tokio::sync::Notify::new());
+  let gate = allow_feedback.clone();
+  let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+  let observed = completed.clone();
+  let relay = tokio::spawn(run_mouse_motion(
+    move |mut notify| {
+      let point = auv_driver::Point::new(1.0, 2.0);
+      assert!(notify(auv_driver::mouse_input::MotionEvent::Started {
+        point,
+        samples: 10_000,
+        duration: std::time::Duration::ZERO
+      }));
+      for index in 0..10_000 {
+        assert!(notify(auv_driver::mouse_input::MotionEvent::Progress {
+          index,
+          sample: auv_driver::MouseMotionSample {
+            point,
+            elapsed: std::time::Duration::ZERO
+          }
+        }));
+      }
+      let _ = native_done_tx.send(());
+      Ok((point, auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::Noop)))
+    },
+    move |event| {
+      let gate = gate.clone();
+      let observed = observed.clone();
+      async move {
+        match event.unwrap() {
+          MouseMotionEvent::Started(_) => gate.notified().await,
+          MouseMotionEvent::Completed(_) => observed.store(true, std::sync::atomic::Ordering::Release),
+          _ => {}
+        }
+        Ok(())
+      }
+    },
+  ));
+  tokio::time::timeout(std::time::Duration::from_secs(5), native_done_rx).await.unwrap().unwrap();
+  assert!(!relay.is_finished());
+  allow_feedback.notify_one();
+  relay.await.unwrap();
+  assert!(completed.load(std::sync::atomic::Ordering::Acquire));
+}
+
+#[tokio::test]
+async fn dropped_feedback_relay_wakes_and_releases_native_hold() {
+  struct Receiver {
+    pressed: tokio::sync::Notify,
+    released: tokio::sync::Notify,
+  }
+  impl auv_driver::mouse_input::MouseBackend for Receiver {
+    fn move_to(&self, _: auv_driver::Point, _: Option<auv_driver::MouseButton>) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
+      Ok(auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::Noop))
+    }
+    fn button(
+      &self,
+      _: auv_driver::Point,
+      _: auv_driver::MouseButton,
+      down: bool,
+    ) -> auv_driver::DriverResult<auv_driver::InputActionResult> {
+      if down {
+        self.pressed.notify_one();
+      } else {
+        self.released.notify_one();
+      }
+      Ok(auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::Noop))
+    }
+  }
+  let receiver = std::sync::Arc::new(Receiver {
+    pressed: tokio::sync::Notify::new(),
+    released: tokio::sync::Notify::new(),
+  });
+  let backend = receiver.clone();
+  let relay = tokio::spawn(run_mouse_motion(
+    move |mut notify| {
+      let coordinator = std::sync::Arc::new(auv_driver::mouse_input::MouseCoordinator::default());
+      let point = auv_driver::Point::new(1.0, 2.0);
+      notify(auv_driver::mouse_input::MotionEvent::Started {
+        point,
+        samples: 1,
+        duration: std::time::Duration::from_secs(3600),
+      });
+      coordinator.hold(0, point, auv_driver::MouseButton::Left, std::time::Duration::from_secs(3600), backend).map(|action| (point, action))
+    },
+    |_| std::future::pending::<Result<(), ()>>(),
+  ));
+  tokio::time::timeout(std::time::Duration::from_secs(5), receiver.pressed.notified()).await.unwrap();
+  relay.abort();
+  assert!(relay.await.unwrap_err().is_cancelled());
+  tokio::time::timeout(std::time::Duration::from_secs(5), receiver.released.notified()).await.unwrap();
+}

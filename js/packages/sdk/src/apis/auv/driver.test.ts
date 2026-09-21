@@ -79,7 +79,7 @@ describe('runner Driver control surface', () => {
     const target = { recipient: { case: 'window' as const, value: { processId: 123, ref: { windowId: 'window-42' } } } }
     await input.mouseDown({ button: MouseButton.RIGHT, mouse, point: { x: 10, y: 20 }, target, timeout: { seconds: 2n } })
     await input.mouseUp({ mouse })
-    await input.dragMouse({ button: MouseButton.MIDDLE, movement: { mouse, start: { source: { case: 'point', value: { x: 20, y: 30 } } }, target } })
+    await input.dragMouse({ button: MouseButton.MIDDLE, movement: { mouse, options: { curveTolerance: 0.01, duration: { seconds: 3600n }, sampleRateHz: 1000 }, start: { source: { case: 'point', value: { x: 20, y: 30 } } }, target } })
     const down = fromBinary(MouseDownRequestSchema, calls[1]!.body)
     const up = fromBinary(MouseUpRequestSchema, calls[2]!.body)
     const drag = fromBinary(DragMouseRequestSchema, calls[3]!.body)
@@ -88,6 +88,7 @@ describe('runner Driver control surface', () => {
     expect(down.target?.recipient).toMatchObject(target.recipient)
     expect(down.button).toBe(MouseButton.RIGHT)
     expect(down.timeout?.seconds).toBe(2n)
+    expect(drag.movement?.options).toMatchObject({ curveTolerance: 0.01, duration: { seconds: 3600n }, sampleRateHz: 1000 })
     expect(drag.movement?.mouse).toBe(7n)
     expect(drag.movement?.target?.recipient).toMatchObject(target.recipient)
     expect(drag.movement?.start?.source).toMatchObject({ case: 'point', value: { x: 20, y: 30 } })

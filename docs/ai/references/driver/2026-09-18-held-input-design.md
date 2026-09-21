@@ -1,7 +1,7 @@
 # Held mouse input
 
 Date: 2026-09-19. Classification: approved feature.
-Status: implemented in the working tree; platform-specific evidence is listed below.
+Status: implemented; platform-specific evidence is listed below.
 
 The owner approved primitive mouse input, complete hold/drag composition,
 logical mice, and conservative shared-resource scheduling. The implementation
@@ -77,6 +77,35 @@ coordinate unrelated Runner processes, external automation, or physical input.
 Use one Runner authority per desktop for cooperating agents. Truly independent
 native mice and finer-grained backend resources need receiver evidence before
 weakening this conservative policy.
+
+## Caller-selected motion and event-driven scheduling
+
+Motion duration, sampling frequency, curve segment count, and logical mouse count
+have no fixed product maximum. Counts/identities must fit their integer types;
+clock deadlines and memory allocations must be representable/available. Requested
+sampling frequency is not a guarantee of native delivery throughput: overdue
+samples coalesce and the final endpoint is retained.
+
+`MouseMotionOptions.curve_tolerance` is a positive screen-space arc-length error
+budget per cubic segment. Adaptive subdivision replaces the fixed 24 steps;
+nonempty curves require an explicit tolerance. Timed curves require an explicit
+positive sample rate. Instant direct positioning needs neither and uses zero for
+both fields. `MoveMouseRequest::samples` returns `MouseSamples`, whose `at` and
+`latest_due` methods evaluate the schedule without allocating one item per tick.
+The former movement segment/sample caps and 60-second/240-Hz guards are removed.
+Protocol sample counts/indices are uint64; Rust exposes u64 and JS exposes bigint.
+
+`InputCancellation` wakes subscribed coordinators through condition variables.
+Admission, active waits, and watchdogs sleep until state changes or their actual
+deadline; there is no 10/20-ms polling policy. Shutdown and explicit cancellation
+wake these waits immediately. The former AtomicBool cancellation argument is
+replaced by `Arc<InputCancellation>`; callers request cancellation with `cancel()`.
+
+Progress uses a latest-value mailbox, not a fixed backlog of 16 events. Native
+execution never waits for network feedback and has no one-second feedback timeout.
+Started and terminal events are retained, and a single downstream handoff slot
+applies transport backpressure without buffering progress history. Disconnecting
+the receiver cancels even an operation still waiting for admission.
 
 ## Platform boundaries
 

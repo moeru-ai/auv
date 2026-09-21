@@ -120,11 +120,11 @@ pub struct ScreenPointClick {
 pub enum MouseMotionEvent {
   Started {
     resolved_start: auv_driver::Point,
-    planned_sample_count: u32,
+    planned_sample_count: u64,
     duration: std::time::Duration,
   },
   Progress {
-    sample_index: u32,
+    sample_index: u64,
     point: auv_driver::Point,
     scheduled_elapsed: std::time::Duration,
   },
@@ -1184,7 +1184,7 @@ impl InputClient {
   /// Opens a bidirectional mouse motion stream. The server validates and
   /// executes the complete curve after `finish`.
   pub async fn stream_mouse_motion(&self, request: &auv_driver::MoveMouseRequest) -> Result<MouseMotionSession, CapabilityError> {
-    let (requests, receiver) = tokio::sync::mpsc::channel(16);
+    let (requests, receiver) = tokio::sync::mpsc::channel(1);
     requests
       .send(proto::StreamMouseMotionRequest {
         event: Some(proto::stream_mouse_motion_request::Event::Begin(proto::StreamMouseMotionBegin {
@@ -1409,6 +1409,7 @@ fn mouse_options_to_proto(value: auv_driver::MouseMotionOptions) -> Result<proto
   Ok(proto::MouseMotionOptions {
     duration: Some(duration_to_proto(value.duration)?),
     sample_rate_hz: value.sample_rate_hz,
+    curve_tolerance: value.curve_tolerance,
   })
 }
 

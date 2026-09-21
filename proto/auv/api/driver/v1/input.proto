@@ -278,6 +278,8 @@ message MouseCurveMapping {
 message MouseMotionOptions {
   google.protobuf.Duration duration = 1;
   uint32 sample_rate_hz = 2;
+  // Positive screen-space arc-length approximation tolerance for nonempty curves.
+  double curve_tolerance = 3;
 }
 
 // Screen-space points, including for a window-targeted route. An omitted
@@ -297,13 +299,13 @@ message MoveMouseRequest {
 message MouseMotionStarted {
   ScreenPoint resolved_start = 1;
   // Planned samples can be skipped when delivery falls behind schedule.
-  uint32 planned_sample_count = 2;
+  uint64 planned_sample_count = 2;
   google.protobuf.Duration duration = 3;
 }
 
 message MouseMotionProgress {
   // This index can skip values when overdue intermediate samples are coalesced.
-  uint32 sample_index = 1;
+  uint64 sample_index = 1;
   ScreenPoint point = 2;
   google.protobuf.Duration scheduled_elapsed = 3;
 }

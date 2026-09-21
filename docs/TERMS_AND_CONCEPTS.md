@@ -795,8 +795,10 @@ the unified operation is a frontend and typed-command contract.
 `MoveMouseRequest` is the caller's movement request: logical mouse identity,
 optional target, start, curve, mapping, and sampling/timing options. It replaces
 `MouseMotionPlan`; it does not introduce a planner or a separate approval stage.
-Samples and delivery feedback are distinct from requested movement and from
-application verification.
+The caller selects sampling frequency and screen-space curve approximation
+tolerance; time samples are evaluated on demand. Delivery progress may coalesce
+without blocking input. Samples and delivery feedback are distinct from requested
+movement and from application verification.
 
 ## Logical Mouse
 

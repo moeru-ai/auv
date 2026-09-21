@@ -2,10 +2,6 @@ use std::time::Duration;
 
 use crate::{DriverError, DriverResult, Point};
 
-const FLATTEN_STEPS_PER_SEGMENT: usize = 24;
-pub const MOUSE_MOTION_MAX_SEGMENTS: usize = 4096;
-const MAX_SAMPLES: usize = 60 * 240;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MouseStart {
   Current,
@@ -31,10 +27,12 @@ pub struct MouseCurveMapping {
   pub height: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MouseMotionOptions {
   pub duration: Duration,
   pub sample_rate_hz: u32,
+  /// Positive screen-space arc-length approximation tolerance for curves.
+  pub curve_tolerance: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,87 +69,162 @@ impl MoveMouseRequest {
       },
       options: MouseMotionOptions {
         duration: Duration::ZERO,
-        sample_rate_hz: 120,
+        sample_rate_hz: 0,
+        curve_tolerance: 0.0,
       },
     }
   }
 
-  /// Validates and samples the request after the caller resolves `MouseStart`.
-  pub fn samples(&self, resolved_start: Point) -> DriverResult<Vec<MouseMotionSample>> {
+  /// Validates geometry once; time samples are evaluated on demand.
+  pub fn samples(&self, resolved_start: Point) -> DriverResult<MouseSamples> {
     validate_point(resolved_start, "resolved mouse start")?;
     validate_point(self.curve.start, "curve start")?;
     if !self.mapping.width.is_finite() || !self.mapping.height.is_finite() || self.mapping.width <= 0.0 || self.mapping.height <= 0.0 {
       return Err(invalid("mouse mapping width and height must be finite and positive"));
     }
-    if !(1..=240).contains(&self.options.sample_rate_hz) {
-      return Err(invalid("mouse sample_rate_hz must be in 1..=240"));
-    }
-    if self.options.duration > Duration::from_secs(60) {
-      return Err(invalid("mouse duration must not exceed 60 seconds"));
-    }
-    if self.curve.segments.len() > MOUSE_MOTION_MAX_SEGMENTS {
-      return Err(invalid("mouse curve has too many segments"));
-    }
     if self.curve.segments.is_empty() {
-      return Ok(vec![MouseMotionSample {
-        point: resolved_start,
-        elapsed: Duration::ZERO,
-      }]);
-    }
-
-    let mut polyline = vec![mapped(
-      self.curve.start,
-      self.curve.start,
-      resolved_start,
-      self.mapping,
-    )];
-    let mut from = self.curve.start;
-    for segment in &self.curve.segments {
-      validate_point(segment.control_1, "Bezier control point")?;
-      validate_point(segment.control_2, "Bezier control point")?;
-      validate_point(segment.end, "Bezier end point")?;
-      for step in 1..=FLATTEN_STEPS_PER_SEGMENT {
-        let t = step as f64 / FLATTEN_STEPS_PER_SEGMENT as f64;
-        polyline.push(mapped(cubic(from, *segment, t), self.curve.start, resolved_start, self.mapping));
-      }
-      from = segment.end;
-    }
-    for point in &polyline {
-      validate_point(*point, "mapped mouse curve point")?;
-    }
-
-    let mut cumulative = Vec::with_capacity(polyline.len());
-    cumulative.push(0.0);
-    for pair in polyline.windows(2) {
-      let distance = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
-      cumulative.push(cumulative.last().copied().unwrap_or(0.0) + distance);
-    }
-    let total_distance = *cumulative.last().unwrap_or(&0.0);
-    let sample_count =
-      ((self.options.duration.as_secs_f64() * f64::from(self.options.sample_rate_hz)).ceil() as usize).clamp(1, MAX_SAMPLES);
-    let mut samples = Vec::with_capacity(sample_count + 1);
-    for index in 0..=sample_count {
-      let ratio = index as f64 / sample_count as f64;
-      let point = interpolate_polyline(&polyline, &cumulative, total_distance * ratio);
-      samples.push(MouseMotionSample {
-        point,
-        elapsed: self.options.duration.mul_f64(ratio),
+      return Ok(MouseSamples {
+        points: vec![resolved_start],
+        distances: vec![0.0],
+        intervals: 0,
+        options: self.options,
       });
     }
-    Ok(samples)
+    if !self.options.curve_tolerance.is_finite() || self.options.curve_tolerance <= 0.0 {
+      return Err(invalid("mouse curve_tolerance must be finite and positive"));
+    }
+    if self.options.sample_rate_hz == 0 && !self.options.duration.is_zero() {
+      return Err(invalid("timed mouse movement requires a positive sample_rate_hz"));
+    }
+    let intervals = (self.options.duration.as_nanos() * u128::from(self.options.sample_rate_hz)).div_ceil(1_000_000_000).max(1);
+    let intervals = u64::try_from(intervals)
+      .ok()
+      .filter(|value| *value < u64::MAX)
+      .ok_or_else(|| invalid("mouse sample count exceeds the protocol integer range"))?;
+    let mut points = vec![resolved_start];
+    let mut from = resolved_start;
+    for segment in &self.curve.segments {
+      let control_1 = mapped(segment.control_1, self.curve.start, resolved_start, self.mapping);
+      let control_2 = mapped(segment.control_2, self.curve.start, resolved_start, self.mapping);
+      let end = mapped(segment.end, self.curve.start, resolved_start, self.mapping);
+      for point in [control_1, control_2, end] {
+        validate_point(point, "mapped curve coordinate")?;
+      }
+      flatten([from, control_1, control_2, end], self.options.curve_tolerance, &mut points)?;
+      from = end;
+    }
+    let mut distances = Vec::new();
+    distances.try_reserve(points.len()).map_err(|_| invalid("cannot allocate mouse curve distances"))?;
+    distances.push(0.0);
+    for pair in points.windows(2) {
+      let distance = distances.last().unwrap() + (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
+      if !distance.is_finite() {
+        return Err(invalid("mouse curve length is not finite"));
+      }
+      distances.push(distance);
+    }
+    Ok(MouseSamples {
+      points,
+      distances,
+      intervals,
+      options: self.options,
+    })
   }
+}
+
+/// Geometry is retained once; memory does not grow with duration or sample rate.
+pub struct MouseSamples {
+  points: Vec<Point>,
+  distances: Vec<f64>,
+  intervals: u64,
+  options: MouseMotionOptions,
+}
+impl MouseSamples {
+  pub fn len(&self) -> u64 {
+    self.intervals + 1
+  }
+  pub fn is_empty(&self) -> bool {
+    false
+  }
+  pub fn at(&self, index: u64) -> MouseMotionSample {
+    assert!(index < self.len());
+    let elapsed = if index == self.intervals {
+      self.options.duration
+    } else if self.options.sample_rate_hz == 0 {
+      Duration::ZERO
+    } else {
+      Duration::from_secs(index / u64::from(self.options.sample_rate_hz))
+        + Duration::from_nanos(
+          (u128::from(index % u64::from(self.options.sample_rate_hz)) * 1_000_000_000 / u128::from(self.options.sample_rate_hz)) as u64,
+        )
+    };
+    let elapsed = if self.intervals == 0 {
+      Duration::ZERO
+    } else {
+      elapsed
+    };
+    let ratio = if self.options.duration.is_zero() {
+      if index == self.intervals { 1.0 } else { 0.0 }
+    } else {
+      elapsed.as_secs_f64() / self.options.duration.as_secs_f64()
+    };
+    MouseMotionSample {
+      point: if index == self.intervals {
+        *self.points.last().unwrap()
+      } else {
+        interpolate_polyline(&self.points, &self.distances, self.distances.last().unwrap() * ratio)
+      },
+      elapsed,
+    }
+  }
+  /// Skip overdue samples arithmetically, without walking or allocating them.
+  pub fn latest_due(&self, next: u64, elapsed: Duration) -> u64 {
+    if elapsed >= self.options.duration {
+      return self.intervals;
+    }
+    let due = elapsed.as_nanos() * u128::from(self.options.sample_rate_hz) / 1_000_000_000;
+    (due.min(u128::from(self.intervals)) as u64).max(next)
+  }
+}
+
+// De Casteljau subdivision bounds arc-length error by control-polygon excess.
+// The caller selects accuracy in screen units, rather than a fixed step count.
+fn flatten(curve: [Point; 4], tolerance: f64, points: &mut Vec<Point>) -> DriverResult<()> {
+  let mut pending = vec![(curve, tolerance)];
+  while let Some(([a, b, c, d], tolerance)) = pending.pop() {
+    let polygon = (b.x - a.x).hypot(b.y - a.y) + (c.x - b.x).hypot(c.y - b.y) + (d.x - c.x).hypot(d.y - c.y);
+    let chord = (d.x - a.x).hypot(d.y - a.y);
+    if !polygon.is_finite() {
+      return Err(invalid("mouse curve length is not finite"));
+    }
+    if polygon - chord <= tolerance {
+      points.try_reserve(1).map_err(|_| invalid("cannot allocate mouse curve geometry"))?;
+      points.push(d);
+      continue;
+    }
+    let ab = midpoint(a, b);
+    let bc = midpoint(b, c);
+    let cd = midpoint(c, d);
+    let abc = midpoint(ab, bc);
+    let bcd = midpoint(bc, cd);
+    let mid = midpoint(abc, bcd);
+    let left = [a, ab, abc, mid];
+    let right = [mid, bcd, cd, d];
+    if left == [a, b, c, d] || right == [a, b, c, d] || tolerance / 2.0 == 0.0 {
+      return Err(invalid("mouse curve tolerance is below coordinate precision"));
+    }
+    pending.try_reserve(2).map_err(|_| invalid("cannot allocate mouse curve subdivision"))?;
+    pending.push((right, tolerance / 2.0));
+    pending.push((left, tolerance / 2.0));
+  }
+  Ok(())
+}
+fn midpoint(a: Point, b: Point) -> Point {
+  Point::new(a.x / 2.0 + b.x / 2.0, a.y / 2.0 + b.y / 2.0)
 }
 
 fn mapped(point: Point, origin: Point, start: Point, mapping: MouseCurveMapping) -> Point {
   Point::new(start.x + (point.x - origin.x) * mapping.width, start.y + (point.y - origin.y) * mapping.height)
-}
-
-fn cubic(start: Point, segment: MouseCubicBezierSegment, t: f64) -> Point {
-  let u = 1.0 - t;
-  Point::new(
-    u.powi(3) * start.x + 3.0 * u.powi(2) * t * segment.control_1.x + 3.0 * u * t.powi(2) * segment.control_2.x + t.powi(3) * segment.end.x,
-    u.powi(3) * start.y + 3.0 * u.powi(2) * t * segment.control_1.y + 3.0 * u * t.powi(2) * segment.control_2.y + t.powi(3) * segment.end.y,
-  )
 }
 
 fn interpolate_polyline(points: &[Point], distances: &[f64], target: f64) -> Point {
@@ -163,7 +236,7 @@ fn interpolate_polyline(points: &[Point], distances: &[f64], target: f64) -> Poi
     return points[0];
   }
   let span = distances[index] - distances[index - 1];
-  if span <= f64::EPSILON {
+  if span <= 0.0 {
     return points[index];
   }
   let ratio = (target - distances[index - 1]) / span;
@@ -212,12 +285,13 @@ mod tests {
       options: MouseMotionOptions {
         duration: Duration::from_secs(1),
         sample_rate_hz: 10,
+        curve_tolerance: 0.1,
       },
     };
     let samples = request.samples(Point::new(100.0, 200.0)).unwrap();
-    assert_eq!(samples.first().unwrap().point, Point::new(100.0, 200.0));
-    assert_eq!(samples.last().unwrap().point, Point::new(700.0, 500.0));
-    assert_eq!(samples.last().unwrap().elapsed, Duration::from_secs(1));
+    assert_eq!(samples.at(0).point, Point::new(100.0, 200.0));
+    assert_eq!(samples.at(samples.len() - 1).point, Point::new(700.0, 500.0));
+    assert_eq!(samples.at(samples.len() - 1).elapsed, Duration::from_secs(1));
   }
 
   #[test]
@@ -232,7 +306,7 @@ mod tests {
   }
 
   #[test]
-  fn maximum_duration_and_rate_keep_the_requested_sample_rate() {
+  fn long_high_rate_motion_samples_without_allocating_per_tick() {
     let mut request = MoveMouseRequest::direct(Point::new(1.0, 2.0));
     request.curve.segments.push(MouseCubicBezierSegment {
       control_1: Point::new(0.25, 0.0),
@@ -240,12 +314,67 @@ mod tests {
       end: Point::new(1.0, 1.0),
     });
     request.options = MouseMotionOptions {
-      duration: Duration::from_secs(60),
-      sample_rate_hz: 240,
+      duration: Duration::from_secs(3600),
+      sample_rate_hz: 1000,
+      curve_tolerance: 0.01,
     };
 
-    let samples = request.samples(Point::new(1.0, 2.0)).expect("maximum valid timing");
-    assert_eq!(samples.len(), 14_401);
-    assert_eq!(samples.last().expect("final sample").elapsed, Duration::from_secs(60));
+    let samples = request.samples(Point::new(1.0, 2.0)).expect("caller-selected timing");
+    assert_eq!(samples.len(), 3_600_001);
+    assert_eq!(samples.at(samples.len() - 1).elapsed, Duration::from_secs(3600));
+  }
+  #[test]
+  fn sample_indices_exceed_u32_without_materializing_the_schedule() {
+    let mut request = MoveMouseRequest::direct(Point::new(0.0, 0.0));
+    request.curve.segments = vec![MouseCubicBezierSegment {
+      control_1: Point::new(1.0, 0.0),
+      control_2: Point::new(2.0, 0.0),
+      end: Point::new(3.0, 0.0),
+    }];
+    request.options = MouseMotionOptions {
+      duration: Duration::from_secs(86_400),
+      sample_rate_hz: 1_000_000,
+      curve_tolerance: 0.01,
+    };
+    let samples = request.samples(Point::new(0.0, 0.0)).unwrap();
+    assert_eq!(samples.len(), 86_400_000_001);
+    assert_eq!(samples.points.len(), 2);
+    assert_eq!(samples.latest_due(0, Duration::from_secs(43_200)), 43_200_000_000);
+    assert_eq!(samples.at(samples.len() - 1).point, Point::new(3.0, 0.0));
+    assert_eq!(samples.at(samples.len() - 1).elapsed, request.options.duration);
+  }
+
+  #[test]
+  fn curves_accept_more_than_4096_segments() {
+    let mut request = MoveMouseRequest::direct(Point::new(0.0, 0.0));
+    request.curve.segments = (1..=5000)
+      .map(|index| {
+        let point = Point::new(f64::from(index), 0.0);
+        MouseCubicBezierSegment {
+          control_1: point,
+          control_2: point,
+          end: point,
+        }
+      })
+      .collect();
+    request.options.curve_tolerance = 0.01;
+    let samples = request.samples(Point::new(0.0, 0.0)).unwrap();
+    assert_eq!(samples.at(samples.len() - 1).point, Point::new(5000.0, 0.0));
+  }
+
+  #[test]
+  fn finer_requested_tolerance_refines_geometry() {
+    let curve = [
+      Point::new(0.0, 0.0),
+      Point::new(0.0, 100.0),
+      Point::new(100.0, 100.0),
+      Point::new(100.0, 0.0),
+    ];
+    let mut coarse = vec![curve[0]];
+    let mut fine = coarse.clone();
+    flatten(curve, 1.0, &mut coarse).unwrap();
+    flatten(curve, 0.01, &mut fine).unwrap();
+    assert!(fine.len() > coarse.len());
+    assert_eq!(fine.last(), Some(&curve[3]));
   }
 }
