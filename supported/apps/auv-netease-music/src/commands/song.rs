@@ -280,7 +280,7 @@ impl<'a> SongListScanner<'a> {
           self.inputs.ocr_options.clone(),
         )
         .map_err(|error| format!("song list OCR failed: {error}"))?;
-      let recognition = crate::recognition_in_window_space(recognition, &capture);
+      let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       let crop = crate::crop_image(&capture.image, self.region_bounds, capture.scale_factor);
       let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
       let scroll_motion =

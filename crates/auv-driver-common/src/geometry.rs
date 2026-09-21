@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::DriverResult;
+use crate::window::WindowRef;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoordinateSpace {
@@ -7,6 +10,70 @@ pub enum CoordinateSpace {
   Screen,
   Display(String),
   Window(String),
+}
+
+/// A point together with the space needed to interpret it. Window positions
+/// retain the exact window identity, not an app's mutable main-window selector.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Position {
+  pub point: Point,
+  pub coordinate_space: CoordinateSpace,
+}
+
+impl Position {
+  /// Binds a logical screen point to screen space without querying displays or
+  /// validating coordinate freshness, finiteness, visibility, or actionability.
+  pub fn in_screen(point: ScreenPoint) -> Self {
+    Self {
+      point: point.point(),
+      coordinate_space: CoordinateSpace::Screen,
+    }
+  }
+
+  /// Binds an already window-local logical point to this exact `WindowRef` ID.
+  /// This copies the ID; it neither resolves a window nor converts screen
+  /// coordinates. It does not validate window existence, coordinate freshness,
+  /// finiteness, visibility, or actionability.
+  pub fn in_window(window: &WindowRef, point: WindowPoint) -> Self {
+    Self {
+      point: point.point(),
+      coordinate_space: CoordinateSpace::Window(window.id.clone()),
+    }
+  }
+}
+
+/// Supplies an observed position; this does not promise visibility, freshness,
+/// or support for a particular action. It never re-runs a locator.
+/// Unbound data, such as a detached image, returns an error.
+pub trait Positional {
+  fn position(&self) -> DriverResult<Position>;
+}
+
+impl Positional for Position {
+  fn position(&self) -> DriverResult<Position> {
+    Ok(self.clone())
+  }
+}
+
+impl Positional for ScreenPoint {
+  fn position(&self) -> DriverResult<Position> {
+    Ok(Position::in_screen(*self))
+  }
+}
+
+/// Keeps domain data alongside its chosen action point and coordinate context.
+/// The point can differ from the data's bounds center (for example a card cover
+/// located using its title). Updating it is an explicit caller decision.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Positioned<T> {
+  pub value: T,
+  pub position: Position,
+}
+
+impl<T> Positional for Positioned<T> {
+  fn position(&self) -> DriverResult<Position> {
+    Ok(self.position.clone())
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

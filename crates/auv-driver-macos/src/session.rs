@@ -7,7 +7,7 @@ use std::time::Duration;
 use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver_common::display::{Display, ObservedDisplays};
 use auv_driver_common::error::{DriverError, DriverResult};
-use auv_driver_common::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+use auv_driver_common::geometry::{CoordinateSpace, Point, Positional, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver_common::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
   InputPreparationLease, InputTarget, KeyPressOptions, KeyboardInput, KeyboardInputError, PasteTextOptions, PrepareForInputOptions,
@@ -201,6 +201,25 @@ impl DisplayApi<'_> {
 }
 
 impl WindowApi<'_> {
+  /// Clicks a window-local target using its original window identity and the
+  /// window's current frame. Never substitutes another main/frontmost window
+  /// or re-recognizes the target. Delivery policy and evidence remain driver-owned.
+  ///
+  /// NOTICE: This consumer currently accepts window positions on macOS only.
+  /// Screen/display targets and other platform consumers are deferred until a
+  /// concrete caller needs their routing and input-policy contracts.
+  pub fn click_target(&self, target: &(impl Positional + ?Sized), options: ClickOptions) -> DriverResult<InputActionResult> {
+    let position = target.position()?;
+    let CoordinateSpace::Window(id) = position.coordinate_space else {
+      return Err(invalid_input("window.click_target requires a window-local position"));
+    };
+    if id.is_empty() || !position.point.x.is_finite() || !position.point.y.is_finite() {
+      return Err(invalid_input("window.click_target requires a window id and finite coordinates"));
+    }
+    let window = self.list()?.into_iter().find(|window| window.reference.id == id).ok_or_else(|| not_found(format!("window {id}")))?;
+    self.click(&window, WindowPoint::from(position.point), options)
+  }
+
   pub fn list(&self) -> DriverResult<Vec<Window>> {
     let _ = self.session;
     let snapshot = crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
@@ -1781,6 +1800,7 @@ fn capture_display_xcap(selector: Option<&str>) -> DriverResult<DisplayCapture> 
   let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
   let capture = Capture {
+    origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
     image,
     bounds: target.display.frame,
     scale_factor: target.display.scale_factor,
@@ -1814,6 +1834,7 @@ fn capture_region_xcap(selector: Option<&str>, region: Rect) -> DriverResult<Reg
   let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
   let capture = Capture {
+    origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(region.origin))),
     image,
     bounds: region,
     scale_factor: target.display.scale_factor,
@@ -1958,6 +1979,7 @@ fn capture_window_swift(window: &Window) -> DriverResult<Capture> {
     1.0
   };
   Ok(Capture {
+    origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
     bounds: window.frame,
     scale_factor,
@@ -1988,6 +2010,7 @@ fn capture_window_xcap(window: &Window, fallback_reason: Option<String>) -> Driv
   };
   let image = RgbaImage::from_raw(width, height, image.into_raw()).ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
   Ok(Capture {
+    origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
     bounds: window.frame,
     scale_factor,
@@ -2053,6 +2076,7 @@ fn text_recognition_from_native(native: &NativeOcrTextCapture, capture: &Capture
     .collect::<Vec<_>>();
   let text = matches.iter().map(|recognized| recognized.text.as_str()).collect::<Vec<_>>().join("\n");
   TextRecognition {
+    origin: capture.recognition_origin(),
     text,
     regions: matches,
   }

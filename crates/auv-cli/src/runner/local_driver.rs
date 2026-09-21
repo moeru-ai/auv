@@ -1,5 +1,6 @@
 //! First-party local Driver Runner served on a daemon-inherited stream.
 
+use auv::protocol::position::encode as position_to_proto;
 use auv_api_proto::auv::api::driver::macos::v1 as macos_proto;
 use auv_api_proto::auv::api::driver::macos::v1::accessibility_service_server::{AccessibilityService, AccessibilityServiceServer};
 use auv_api_proto::auv::api::driver::macos::v1::application_service_server::{ApplicationService, ApplicationServiceServer};
@@ -1379,6 +1380,7 @@ fn recognition_options(custom_words: Vec<String>, recognition_languages: Vec<Str
 
 fn recognition_to_proto(recognition: auv_driver::TextRecognition) -> proto::RecognizeTextResponse {
   proto::RecognizeTextResponse {
+    origin: recognition.origin.map(position_to_proto),
     text: recognition.text,
     regions: recognition
       .regions
@@ -1414,6 +1416,7 @@ fn capture_from_proto(capture: proto::CapturedFrame) -> Result<auv_driver::Captu
     return Err(Status::invalid_argument("capture.scale_factor must be finite and positive"));
   }
   Ok(auv_driver::Capture {
+    origin: capture.origin.map(position_from_proto).transpose()?,
     image,
     bounds,
     scale_factor: capture.scale_factor,
@@ -1610,6 +1613,7 @@ pub(super) fn capture_to_proto(capture: auv_driver::Capture) -> proto::CapturedF
   let width = capture.image.width();
   let height = capture.image.height();
   proto::CapturedFrame {
+    origin: capture.origin.map(position_to_proto),
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width,
       height,
@@ -1771,6 +1775,10 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
 #[cfg(not(any(unix, windows)))]
 pub async fn serve_inherited() -> Result<(), String> {
   Err("the first local driver Runner is not supported on this platform".to_string())
+}
+
+fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position, Status> {
+  auv::protocol::position::decode(position).map_err(|error| Status::invalid_argument(error.to_string()))
 }
 
 #[cfg(test)]

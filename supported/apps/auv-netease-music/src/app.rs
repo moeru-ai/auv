@@ -14,8 +14,6 @@ use crate::views::screen::ScreenView;
 use crate::views::sidebar::SidebarView;
 use crate::{SongListScanResult, models::SongSource};
 #[cfg(target_os = "macos")]
-use auv_driver::Capture;
-#[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
 use auv_driver::{RatioRect, Size};
@@ -328,7 +326,7 @@ impl LiveViewProvider {
         .vision()
         .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
         .map_err(|error| format!("live observation full-window OCR failed: {error}"))?;
-      let recognition = recognition_in_window_space(recognition, &capture);
+      let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       let window_size = Size::new(window.frame.size.width, window.frame.size.height);
       let screen = if scope.screen {
         screen::classify_screen(&recognition, window_size)
@@ -353,18 +351,6 @@ impl LiveViewProvider {
 
     Ok((screen, main, player))
   }
-}
-
-#[cfg(target_os = "macos")]
-fn recognition_in_window_space(
-  mut recognition: auv_driver::vision::TextRecognition,
-  capture: &Capture,
-) -> auv_driver::vision::TextRecognition {
-  for region in &mut recognition.regions {
-    region.bounds.origin.x -= capture.bounds.origin.x;
-    region.bounds.origin.y -= capture.bounds.origin.y;
-  }
-  recognition
 }
 
 struct CachedViews {

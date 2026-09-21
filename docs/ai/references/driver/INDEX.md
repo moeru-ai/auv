@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **43**
+Count: **44**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -55,6 +55,7 @@ Count: **43**
 
 - [`2026-09-18-held-input-design.md`](2026-09-18-held-input-design.md): Held mouse input contract: shared logical mouse state, ordered admission, cleanup, three-platform adapters, and validation boundaries.
 - [`2026-09-18-held-input-project-research.md`](2026-09-18-held-input-project-research.md): Pinned-source comparison of held-input APIs, cleanup lifecycles, and independent observation.
+- [`2026-09-19-positional-targets.md`](2026-09-19-positional-targets.md): Window-bound positional targets, NetEase migration, and live validation evidence.
 
 ## Related
 

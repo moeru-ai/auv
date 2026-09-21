@@ -87,6 +87,7 @@ fn display_capture_result_keeps_pixels_out_of_json() {
       is_builtin: Some(true),
     },
     capture: Capture {
+      origin: None,
       image: RgbaImage::new(2880, 1800),
       bounds: Rect::new(0.0, 0.0, 1440.0, 900.0),
       scale_factor: 2.0,

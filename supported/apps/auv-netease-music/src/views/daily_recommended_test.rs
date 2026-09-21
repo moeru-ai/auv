@@ -18,6 +18,7 @@ fn rejects_home_page_card_without_detail_play_label() {
 
 fn recognition(labels: &[&str]) -> TextRecognition {
   TextRecognition {
+    origin: None,
     text: labels.join("\n"),
     regions: labels
       .iter()

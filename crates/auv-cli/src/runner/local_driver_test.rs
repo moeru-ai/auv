@@ -284,6 +284,12 @@ fn media_control_outcome_mapper_preserves_before_after_and_verification() {
 #[test]
 fn captured_rgba_frame_preserves_alpha_and_screen_bounds() {
   let capture = auv_driver::Capture {
+    origin: Some(auv_driver::Position::in_window(
+      &auv_driver::WindowRef {
+        id: "window-7".into(),
+      },
+      auv_driver::WindowPoint::new(0.0, 0.0),
+    )),
     image: image::RgbaImage::from_raw(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).expect("valid RGBA fixture"),
     bounds: auv_driver::Rect::new(10.0, 20.0, 1.0, 0.5),
     scale_factor: 2.0,
@@ -291,7 +297,8 @@ fn captured_rgba_frame_preserves_alpha_and_screen_bounds() {
     fallback_reason: Some("fallback".to_string()),
   };
 
-  let frame = capture_to_proto(capture);
+  let frame = capture_to_proto(capture.clone());
+  assert_eq!(capture_from_proto(frame.clone()).unwrap(), capture);
 
   assert_eq!(frame.image.as_ref().expect("image").data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
   assert_eq!(
@@ -311,6 +318,7 @@ fn captured_rgba_frame_preserves_alpha_and_screen_bounds() {
 #[test]
 fn text_recognition_capture_rejects_malformed_rgba_before_ocr() {
   let error = capture_from_proto(proto::CapturedFrame {
+    origin: None,
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width: 2,
       height: 1,
@@ -346,6 +354,12 @@ fn text_recognition_region_must_stay_inside_normalized_bounds() {
 #[test]
 fn recognized_text_mapper_preserves_screen_bounds_and_confidence() {
   let response = recognition_to_proto(auv_driver::TextRecognition {
+    origin: Some(auv_driver::Position::in_window(
+      &auv_driver::WindowRef {
+        id: "window-7".into(),
+      },
+      auv_driver::WindowPoint::new(-10.0, -20.0),
+    )),
     text: "hello".to_string(),
     regions: vec![auv_driver::RecognizedText {
       text: "hello".to_string(),
@@ -353,6 +367,10 @@ fn recognized_text_mapper_preserves_screen_bounds_and_confidence() {
       confidence: Some(0.75),
     }],
   });
+  assert_eq!(
+    position_from_proto(response.origin.unwrap()).unwrap().coordinate_space,
+    auv_driver::CoordinateSpace::Window("window-7".into())
+  );
   assert_eq!(response.text, "hello");
   assert_eq!(response.regions[0].confidence, Some(0.75));
   assert_eq!(response.regions[0].bounds.as_ref().map(|bounds| bounds.x), Some(10.0));
@@ -764,4 +782,11 @@ fn click_rpc_decodes_all_buttons_and_rejects_unknown_before_delivery() {
     .code(),
     tonic::Code::InvalidArgument
   );
+}
+
+#[test]
+fn malformed_position_is_an_invalid_argument() {
+  let error = position_from_proto(proto::Position::default()).unwrap_err();
+  assert_eq!(error.code(), tonic::Code::InvalidArgument);
+  assert_eq!(error.message(), auv::protocol::position::DecodeError::InvalidCoordinateSpace.to_string());
 }

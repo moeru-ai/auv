@@ -108,6 +108,7 @@ fn song_detail_source_reads_adjacent_upper_right_source_value() {
 
 fn fake_recognition(regions: Vec<(&str, f64, f64, f64, f64)>) -> TextRecognition {
   TextRecognition {
+    origin: None,
     text: regions.iter().map(|(text, _, _, _, _)| *text).collect::<Vec<_>>().join("\n"),
     regions: regions
       .into_iter()

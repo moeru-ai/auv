@@ -5,6 +5,7 @@ use super::*;
 
 fn capture(width: u32, height: u32, bounds: Rect) -> Capture {
   Capture {
+    origin: None,
     image: RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255])),
     bounds,
     scale_factor: 1.0,
@@ -61,7 +62,13 @@ fn crop_pixels_full_region_covers_whole_image() {
 fn map_recognition_offsets_by_crop_origin_and_capture_scale() {
   // 2x scale: image is 200x100 px over a 100x50 capture-space frame whose
   // origin is offset, so 1 capture unit == 2 image pixels.
-  let capture = capture(200, 100, Rect::new(10.0, 20.0, 100.0, 50.0));
+  let mut capture = capture(200, 100, Rect::new(10.0, 20.0, 100.0, 50.0));
+  capture.origin = Some(auv_driver_common::Position::in_window(
+    &auv_driver_common::WindowRef {
+      id: "geometry-window".into(),
+    },
+    auv_driver_common::WindowPoint::new(0.0, 0.0),
+  ));
   let crop = CropPixels {
     x: 40,
     y: 20,
@@ -69,6 +76,7 @@ fn map_recognition_offsets_by_crop_origin_and_capture_scale() {
     height: 60,
   };
   let recognition = TextRecognition {
+    origin: None,
     text: "hi".to_string(),
     regions: vec![recognized("hi", Rect::new(8.0, 4.0, 20.0, 10.0))],
   };
@@ -82,11 +90,16 @@ fn map_recognition_offsets_by_crop_origin_and_capture_scale() {
   assert_eq!(bounds.size.width, 10.0);
   assert_eq!(bounds.size.height, 5.0);
   assert_eq!(mapped.regions[0].confidence, Some(0.9));
+  let local = mapped.relative_to(&capture).unwrap();
+  let target = local.positioned_regions().unwrap().next().unwrap();
+  assert_eq!(target.position.point, auv_driver_common::Point::new(29.0, 14.5));
+  assert_eq!(target.position.coordinate_space, auv_driver_common::CoordinateSpace::Window("geometry-window".into()));
 }
 
 #[test]
 fn ocr_matches_filters_to_query_and_flattens_confidence() {
   let recognition = TextRecognition {
+    origin: None,
     text: "Play\nPause".to_string(),
     regions: vec![
       RecognizedText {

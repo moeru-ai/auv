@@ -8,6 +8,7 @@ pub mod error;
 pub mod local;
 pub mod pairing;
 pub mod profile;
+pub mod protocol;
 pub mod resource;
 pub mod runners;
 pub mod runs;

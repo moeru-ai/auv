@@ -27,6 +27,7 @@ impl proto::capture_service_server::CaptureService for LargeCaptureService {
         ..Default::default()
       }),
       capture: Some(proto::CapturedFrame {
+        origin: None,
         image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
           width: 1280,
           height: 1024,
@@ -196,6 +197,7 @@ fn input_action_projection_rejects_unspecified_wire_enums() {
 #[test]
 fn capture_projection_preserves_rgba_and_screen_contract() {
   let capture = capture_from_proto(proto::CapturedFrame {
+    origin: None,
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width: 2,
       height: 1,
@@ -459,4 +461,28 @@ fn overlay_cursor_shadow_serializes_without_scaling_native_dimensions() {
   assert_eq!(encoded.sprite_size, 24.0);
   assert_eq!(encoded.shadow.as_ref().unwrap().blur_radius, 8.0);
   assert_eq!(encoded.shadow.unwrap().color.unwrap().alpha, 0.65);
+}
+
+#[test]
+fn coordinate_origins_survive_transport_and_map_decode_errors() {
+  for coordinate_space in [
+    auv_driver::CoordinateSpace::Screen,
+    auv_driver::CoordinateSpace::Display("display-1".into()),
+    auv_driver::CoordinateSpace::Window("window-1".into()),
+  ] {
+    let origin = auv_driver::Position {
+      point: auv_driver::Point::new(-200.0, 300.0),
+      coordinate_space,
+    };
+    let wire = position_to_proto(origin.clone());
+    assert_eq!(position_from_proto(wire.clone()).unwrap(), origin);
+    let recognized = text_recognition_from_proto(proto::RecognizeTextResponse {
+      origin: Some(wire),
+      ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(recognized.origin, Some(origin));
+  }
+  assert!(text_recognition_from_proto(proto::RecognizeTextResponse::default()).unwrap().origin.is_none());
+  assert!(matches!(position_from_proto(proto::Position::default()), Err(CapabilityError::InvalidResponse(_))));
 }

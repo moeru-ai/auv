@@ -4,6 +4,7 @@
 //! public hierarchy is independent of whether the daemon reaches a local child
 //! process or a paired remote Device.
 
+use crate::protocol::position::encode as position_to_proto;
 use auv_api_client::protocol::grpc::Client as GrpcClient;
 use auv_api_proto::auv::api::driver::macos::v1 as macos_proto;
 use auv_api_proto::auv::api::driver::v1 as proto;
@@ -1704,6 +1705,7 @@ fn capture_from_proto(capture: proto::CapturedFrame) -> Result<auv_driver::Captu
   let image = image::RgbaImage::from_raw(image.width, image.height, image.data)
     .ok_or_else(|| CapabilityError::InvalidResponse("CapturedFrame contains malformed RGBA8 data".to_string()))?;
   Ok(auv_driver::Capture {
+    origin: capture.origin.map(position_from_proto).transpose()?,
     image,
     bounds: auv_driver::Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
     scale_factor: capture.scale_factor,
@@ -1716,6 +1718,7 @@ fn capture_to_proto(capture: auv_driver::Capture) -> Result<proto::CapturedFrame
   let width = capture.image.width();
   let height = capture.image.height();
   Ok(proto::CapturedFrame {
+    origin: capture.origin.map(position_to_proto),
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width,
       height,
@@ -1746,6 +1749,7 @@ fn ocr_matches_from_proto(matches: Vec<proto::TextMatch>) -> Result<auv_driver::
 
 fn text_recognition_from_proto(response: proto::RecognizeTextResponse) -> Result<auv_driver::TextRecognition, CapabilityError> {
   Ok(auv_driver::TextRecognition {
+    origin: response.origin.map(position_from_proto).transpose()?,
     text: response.text,
     regions: response
       .regions
@@ -1760,6 +1764,10 @@ fn text_recognition_from_proto(response: proto::RecognizeTextResponse) -> Result
       })
       .collect::<Result<_, CapabilityError>>()?,
   })
+}
+
+fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position, CapabilityError> {
+  crate::protocol::position::decode(position).map_err(|error| CapabilityError::InvalidResponse(error.to_string()))
 }
 
 #[cfg(test)]

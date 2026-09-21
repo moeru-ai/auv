@@ -16,7 +16,10 @@ use crate::ocr::{find_text_in_rgba, recognize_text_in_rgba};
 pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: &TextRecognitionOptions) -> DriverResult<TextRecognition> {
   let crop = crop_pixels(capture, region);
   if crop.width == 0 || crop.height == 0 {
-    return Ok(TextRecognition::default());
+    return Ok(TextRecognition {
+      origin: capture.recognition_origin(),
+      ..Default::default()
+    });
   }
   let cropped = image::imageops::crop_imm(&capture.image, crop.x, crop.y, crop.width, crop.height).to_image();
   let recognition =
@@ -80,6 +83,7 @@ fn map_recognition_to_capture(recognition: &TextRecognition, capture: &Capture, 
     })
     .collect::<Vec<_>>();
   TextRecognition {
+    origin: capture.recognition_origin(),
     text: regions.iter().map(|region| region.text.as_str()).collect::<Vec<_>>().join("\n"),
     regions,
   }

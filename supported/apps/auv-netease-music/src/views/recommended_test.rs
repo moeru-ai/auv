@@ -39,6 +39,7 @@ fn rejects_daily_detail_text_without_the_recommended_playlist_section() {
 
 fn recognition(regions: Vec<(&str, f64, f64, f64, f64)>) -> TextRecognition {
   TextRecognition {
+    origin: None,
     text: regions.iter().map(|(text, _, _, _, _)| *text).collect::<Vec<_>>().join("\n"),
     regions: regions
       .into_iter()

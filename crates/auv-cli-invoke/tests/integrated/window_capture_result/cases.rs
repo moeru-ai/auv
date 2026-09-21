@@ -20,6 +20,7 @@ fn pixels_are_excluded_from_the_public_window_capture_result() {
       is_visible: true,
     },
     capture: Capture {
+      origin: None,
       image: RgbaImage::new(1280, 960),
       bounds: Rect::new(10.0, 20.0, 640.0, 480.0),
       scale_factor: 2.0,

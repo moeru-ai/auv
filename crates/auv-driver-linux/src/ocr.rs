@@ -162,6 +162,7 @@ fn text_recognition_from_tsv(tsv: &str) -> TextRecognition {
     })
     .collect::<Vec<_>>();
   TextRecognition {
+    origin: None,
     text: regions.iter().map(|region| region.text.as_str()).collect::<Vec<_>>().join("\n"),
     regions,
   }

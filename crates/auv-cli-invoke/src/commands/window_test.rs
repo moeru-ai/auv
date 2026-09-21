@@ -173,6 +173,7 @@ fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
   };
 
   let capture = auv_driver::Capture {
+    origin: None,
     image: image::RgbaImage::new(1, 1),
     bounds: Rect::new(10.0, 20.0, 1.0, 1.0),
     scale_factor: 1.0,

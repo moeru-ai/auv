@@ -34,6 +34,7 @@ fn remote_hover_text_promotes_an_object_read_and_records_evidence() {
   apply_hover_read_observation(
     &mut read,
     auv_driver::TextRecognition {
+      origin: None,
       text: "Telegram\nBlueprint\nCopies Joker to the right".to_string(),
       regions: vec![
         auv_driver::RecognizedText {

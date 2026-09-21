@@ -49,6 +49,8 @@ message RecognizeTextRequest {
 message RecognizeTextResponse {
   string text = 1;
   repeated RecognizedText regions = 2;
+  // Region bounds are logical offsets from this origin. Missing means unbound.
+  Position origin = 3;
 }
 
 message FindWindowTextRequest {

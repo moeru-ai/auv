@@ -115,7 +115,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
   let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
   let mut full_recognition = match session.vision().recognize_text_in_capture_with_options(&capture, full_window, inputs.ocr_options.clone())
   {
-    Ok(recognition) => recognition_in_window_space(recognition, &capture),
+    Ok(recognition) => recognition.relative_to(&capture).map_err(|error| error.to_string())?,
     Err(error) => {
       return Ok(PlaylistSidebarScan::empty_with_diagnostic(
         app_context,
@@ -176,7 +176,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
         }
       };
       full_recognition = match session.vision().recognize_text_in_capture_with_options(&capture, full_window, inputs.ocr_options.clone()) {
-        Ok(recognition) => recognition_in_window_space(recognition, &capture),
+        Ok(recognition) => recognition.relative_to(&capture).map_err(|error| error.to_string())?,
         Err(error) => {
           return Ok(PlaylistSidebarScan::empty_with_diagnostic(
             app_context,
@@ -237,7 +237,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
       }
     };
     full_recognition = match session.vision().recognize_text_in_capture_with_options(&capture, full_window, inputs.ocr_options.clone()) {
-      Ok(recognition) => recognition_in_window_space(recognition, &capture),
+      Ok(recognition) => recognition.relative_to(&capture).map_err(|error| error.to_string())?,
       Err(error) => {
         return Ok(PlaylistSidebarScan::empty_with_diagnostic(
           app_context,
@@ -301,7 +301,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
           }
         };
         full_recognition = match session.vision().recognize_text_in_capture_with_options(&capture, full_window, inputs.ocr_options.clone()) {
-          Ok(recognition) => recognition_in_window_space(recognition, &capture),
+          Ok(recognition) => recognition.relative_to(&capture).map_err(|error| error.to_string())?,
           Err(error) => {
             return Ok(PlaylistSidebarScan::empty_with_diagnostic(
               app_context,
@@ -432,7 +432,11 @@ impl LiveSidebarObserver {
       sidebar_recognition
     };
 
-    let window_recognition = recognition_in_window_space(recognition, &capture);
+    let window_recognition = recognition.relative_to(&capture).map_err(|error| ParserDiagnostic {
+      code: "sidebar_ocr_coordinate_origin_failed".into(),
+      message: error.to_string(),
+      node_id: None,
+    })?;
     let parse_bounds = crate::view_parsers::sidebar::target_probe::ls_parse_viewport_bounds_for_sidebar_ocr(
       self.sidebar_bounds,
       sidebar_region_count,

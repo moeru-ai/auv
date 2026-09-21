@@ -960,6 +960,38 @@ windows, animation timing, inherited starting positions, and rendering details.
 Runtime and command frontends provide target state and display policy; they do
 not drive animation frames across the platform seam.
 
+## Position and Positional
+
+A driver `Position` pairs a logical point with its `CoordinateSpace`. A window
+position carries the exact window ID from `WindowRef`; an application selector
+alone does not identify a coordinate space. `WindowPoint` remains an unbound
+local point and needs a window before it can supply a complete position.
+
+`Positional` supplies that position without IO or implicit re-recognition;
+`position()` returns an error for unbound data. A `Capture` implements it through
+its optional `origin`: the image top-left in the owning coordinate space. A
+full-window capture uses `(0, 0)` and the exact captured window ID. Detached
+images remain unbound.
+
+`TextRecognition.origin` interprets region bounds as logical offsets.
+`relative_to(&impl Positional)` rebases those offsets within the same coordinate
+space and retains the new origin; repeated rebasing to the same origin is
+idempotent. `positioned_regions()` carries that origin into each text center,
+without attaching a window manually. Unbound observations and cross-space
+rebasing return errors. Capture and OCR origins survive Runner transport;
+older serialized observations without origins remain unbound.
+`Positioned<T>` keeps domain data alongside an explicitly selected position;
+that point may differ from the center of the observed bounds. These types do
+not assert visibility, freshness, or actionability. Input policies and delivery
+evidence remain the responsibility of the driver, and semantic verification
+remains the responsibility of the operation.
+
+The initial consumer is macOS `WindowApi::click_target`: it resolves only the
+stored window ID, uses the window's current frame, and rejects missing windows
+or non-window positions. It does not select a replacement main window. Window
+movement can be accommodated; content reflow and OS window-ID reuse are not
+proven safe by this contract.
+
 ## Region
 
 A region is a crop or filter applied inside an observation scope.

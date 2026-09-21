@@ -31,6 +31,7 @@ impl FrameSource for FakeSource {
 
 fn capture(size: (u32, u32), value: u8) -> auv_driver::Capture {
   auv_driver::Capture {
+    origin: None,
     image: image::RgbaImage::from_pixel(size.0, size.1, image::Rgba([value, 2, 3, 255])),
     bounds: auv_driver::Rect::new(10.0, 20.0, f64::from(size.0), f64::from(size.1)),
     scale_factor: 1.0,

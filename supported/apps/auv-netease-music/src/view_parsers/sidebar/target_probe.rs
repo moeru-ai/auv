@@ -403,14 +403,14 @@ pub(crate) fn capture_sidebar_target_probe(
     options: ocr_options.clone(),
   };
   let recognition = if sidebar_region_count > 0 {
-    crate::recognition_in_window_space(sidebar_recognition, &capture)
+    sidebar_recognition.relative_to(&capture).map_err(|error| error.to_string())?
   } else {
     let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
     let fallback_recognition = session
       .vision()
       .recognize_text_in_capture_with_options(&capture, full_window, ocr_options)
       .map_err(|error| format!("sidebar target probe full-window OCR failed: {error}"))?;
-    crate::recognition_in_window_space(fallback_recognition, &capture)
+    fallback_recognition.relative_to(&capture).map_err(|error| error.to_string())?
   };
   let parse_viewport = probe_parse_viewport_bounds(sidebar_bounds, &ocr_context.profile);
   let observation = crate::view_parsers::sidebar::parse::parse_sidebar_viewport(observation_index, parse_viewport, &recognition);

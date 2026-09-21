@@ -20,6 +20,7 @@ fn song_list_bounds_include_the_live_title_column() {
 fn parse_song_list_rows_reads_the_current_live_layout() {
   let bounds = ViewBounds::new(329.0, 220.0, 1292.0, 655.0);
   let recognition = TextRecognition {
+    origin: None,
     text: "08\nMagnolia\nM2U / Guriri\nDeemo 原创音乐集\n02:30".to_string(),
     regions: vec![
       recognized("08", 362.0, 246.0, 18.0, 20.0),

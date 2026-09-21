@@ -55,6 +55,7 @@ pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
   let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
   let capture = Capture {
+    origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
     image,
     bounds: target.display.frame,
     scale_factor: target.display.scale_factor,
@@ -88,6 +89,7 @@ pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<Regi
   let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
   let capture = Capture {
+    origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(region.origin))),
     image,
     bounds: region,
     scale_factor: target.display.scale_factor,
@@ -124,6 +126,7 @@ pub fn capture_window(window: &Window) -> DriverResult<Capture> {
   let image = image::RgbaImage::from_raw(pixels.width, pixels.height, pixels.rgba)
     .ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
   Ok(Capture {
+    origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
     bounds: window.frame,
     scale_factor,

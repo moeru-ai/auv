@@ -279,6 +279,7 @@ fn ocr_capture_is_limited_to_detected_numeric_ui_and_preserves_screen_projection
   };
 
   let capture = Capture {
+    origin: None,
     image: RgbaImage::new(1000, 600),
     bounds: Rect::new(10.0, 20.0, 500.0, 300.0),
     scale_factor: 2.0,
@@ -316,6 +317,7 @@ fn ocr_capture_is_absent_without_numeric_ui() {
   };
 
   let capture = Capture {
+    origin: None,
     image: RgbaImage::new(1000, 600),
     bounds: Rect::new(0.0, 0.0, 1000.0, 600.0),
     scale_factor: 1.0,
@@ -376,6 +378,7 @@ fn driver_runner_ocr_logical_bounds_enrich_pixel_space_numeric_detection() {
     true,
   );
   let capture = Capture {
+    origin: None,
     image: RgbaImage::new(200, 100),
     bounds: Rect::new(10.0, 20.0, 20.0, 10.0),
     scale_factor: 10.0,
@@ -383,6 +386,7 @@ fn driver_runner_ocr_logical_bounds_enrich_pixel_space_numeric_detection() {
     fallback_reason: None,
   };
   let recognition = TextRecognition {
+    origin: None,
     text: "$1,234".to_string(),
     regions: vec![RecognizedText {
       text: "$1,234".to_string(),

@@ -839,7 +839,7 @@ fn verify_playlist_select_title(
         .vision()
         .recognize_text_in_capture_with_options(&capture, ocr_ratio, ocr_options.clone())
         .map_err(|error| format!("playlist select verification OCR failed: {error}"))?;
-      let recognition = crate::recognition_in_window_space(recognition, &capture);
+      let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       last_recognition = Some(recognition.clone());
       // NOTICE(a6c-4b): top-nav OCR in the upper band is not playlist detail title.
       observed_title = playlist_select_verification_title(&recognition, window_size, sidebar_bounds, target_label);
@@ -866,7 +866,7 @@ fn verify_playlist_select_title(
         .vision()
         .recognize_text_in_capture_with_options(&capture, sidebar_ratio, ocr_options.clone())
         .map_err(|error| format!("playlist select verification sidebar echo OCR failed: {error}"))?;
-      let sidebar_recognition = crate::recognition_in_window_space(sidebar_recognition, &capture);
+      let sidebar_recognition = sidebar_recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       crate::telemetry::json_artifact("auv.netease.playlist_select.sidebar_echo_recognition", &sidebar_recognition);
       if let Some(echo_title) = playlist_select_verification_sidebar_row_echo_from_recognition(
         &sidebar_recognition,
@@ -948,7 +948,7 @@ fn run_playlist_play_resolved(
   use crate::commands::daily_recommended::best_text_match;
   use crate::telemetry::PlaylistPlayInputDelivered;
   use auv_driver::selector::{App, Window};
-  use auv_driver::{ActivationPolicy, Click, InputActionResult, InputDeliveryPath, PrepareForInputOptions, RatioRect, Size, WindowPoint};
+  use auv_driver::{ClickOptions, InputPolicy, RatioRect};
 
   let select = run_playlist_select_resolved(inputs, query, scan, target)?;
   if !select.verification.passed() {
@@ -959,7 +959,6 @@ fn run_playlist_play_resolved(
   let app = App::bundle(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
-  let window_size = Size::new(window.frame.size.width, window.frame.size.height);
   let diagnostics = select.diagnostics.clone();
   let mut known_limits = select.known_limits.clone();
 
@@ -969,24 +968,27 @@ fn run_playlist_play_resolved(
     .vision()
     .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("playlist play-all OCR failed: {error}"))?;
-  let recognition = crate::recognition_in_window_space(recognition, &capture);
+  let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
   let before_bottom_text = recognize_playlist_bottom_text(&session, &capture, inputs);
-  let Some(target) = best_text_match(&recognition, "播放全部", window_size, |bounds, size| {
+  let Some(target) = best_text_match(&recognition, "播放全部", window.frame.size, |bounds, size| {
     bounds.x > size.width * 0.18 && bounds.y > size.height * 0.12 && bounds.y < size.height * 0.55
-  }) else {
+  })?
+  else {
     return Err("playlist play-all text \"播放全部\" was not found".to_string());
   };
-  let target_bounds = ViewBounds::new(target.bounds.origin.x, target.bounds.origin.y, target.bounds.size.width, target.bounds.size.height);
-  let point = target.action_point();
-  let click = session
-    .window()
-    .click(&window, WindowPoint::new(point.x, point.y), playlist_click_options())
-    .map_err(|error| format!("playlist play-all click failed: {error}"))?;
+  let target_bounds = ViewBounds::new(
+    target.value.bounds.origin.x,
+    target.value.bounds.origin.y,
+    target.value.bounds.size.width,
+    target.value.bounds.size.height,
+  );
+  let click =
+    session.window().click_target(&target, playlist_click_options()).map_err(|error| format!("playlist play-all click failed: {error}"))?;
   if inputs.scroll_settle_ms > 0 {
     std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
   }
   auv_tracing::emit_event!(PlaylistPlayInputDelivered::PlayAll {
-    label: target.text,
+    label: target.value.text.clone(),
     bounds: target_bounds,
     delivery: click,
   });
@@ -994,32 +996,19 @@ fn run_playlist_play_resolved(
   let mut verification = capture_playlist_play_verification(&session, &window, inputs, before_bottom_text.as_deref())?;
   if !verification.passed() {
     known_limits.push("window-targeted Play All click did not verify playback; retried with foreground click".to_string());
-    let screen_point = session
+    let delivery = session
       .window()
-      .to_screen_point(&window, WindowPoint::new(point.x, point.y))
-      .map_err(|error| format!("playlist play-all foreground point projection failed: {error}"))?;
-    let lease = session
-      .window()
-      .prepare_for_input(
-        &window,
-        PrepareForInputOptions {
-          activation: ActivationPolicy::Foreground {
-            settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
-          },
-          preserve_frontmost: false,
-          install_focus_guard: false,
-          settle: std::time::Duration::from_millis(0),
+      .click_target(
+        &target,
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          ..playlist_click_options()
         },
       )
-      .map_err(|error| format!("playlist play-all foreground preparation failed: {error}"))?;
-    let click_result = session.input().click_at(screen_point.point(), auv_driver::MouseButton::Left, Click::Single, Default::default());
-    let restore_result = session.window().restore_input(lease);
-    click_result.map_err(|error| format!("playlist play-all foreground click failed: {error}"))?;
-    restore_result.map_err(|error| format!("playlist play-all foreground restore failed: {error}"))?;
+      .map_err(|error| format!("playlist play-all foreground click failed: {error}"))?;
     if inputs.scroll_settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
     }
-    let delivery = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
     auv_tracing::emit_event!(PlaylistPlayInputDelivered::PlayAllForegroundRetry {
       label: "播放全部".to_string(),
       bounds: target_bounds,
