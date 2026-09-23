@@ -164,9 +164,8 @@ background posting. No new timing, Unicode, or menu routing fix is included here
 The harness exits **1** for these failing matrices. Raw receipts, CLI results,
 versions, and native Electron event logs are retained:
 
-- [Background summary](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/background/summary.json),
-  [Chrome receipts](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/background/chrome-results.json),
-  [Electron receipts](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/background/electron-results.json).
+- [Background summary](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/background/summary.json)
+  and the reproducible [receiver fixture](../../../../crates/auv-driver-macos/tests/fixtures/chromium_keyboard/run.py).
 - [Foreground control summary](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/foreground/summary.json)
   and sibling receipt files.
 - [Build identity](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/build.json)

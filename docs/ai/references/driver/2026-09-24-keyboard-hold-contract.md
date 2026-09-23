@@ -103,10 +103,8 @@ These checks demonstrate a held interval and cleanup, not just eventual text.
 | `😀`, persistent sender | **0/5** | **0/5** | 2/2 | 2/2 |
 
 Evidence: [background summary](evidence/2026-09-24-keyboard-hold-validation/hold-background/summary.json),
-[Chrome receipts](evidence/2026-09-24-keyboard-hold-validation/hold-background/chrome-results.json),
-[Electron receipts](evidence/2026-09-24-keyboard-hold-validation/hold-background/electron-results.json),
-[foreground control](evidence/2026-09-24-keyboard-hold-validation/hold-foreground/summary.json).
-Each directory also contains the independent Electron `before-input-event` log.
+[foreground control](evidence/2026-09-24-keyboard-hold-validation/hold-foreground/summary.json),
+and [selected receiver event samples](evidence/2026-09-24-keyboard-hold-validation/held-shift-before-after.json).
 [Build identity](evidence/2026-09-24-keyboard-hold-validation/build.json) records
 the revision and working-tree binary/source hashes.
 
@@ -141,10 +139,9 @@ therefore the authenticated path is part of this PR's macOS behavior and evidenc
 After the composition fix, five new background trials passed all five bounded
 hold/release cases and the held-Shift/ordinary-`b` case in both Chrome and
 Electron (5/5 per case and receiver). The latter produced `Bc` after release.
-[Post-fix summary](evidence/2026-09-24-keyboard-hold-validation/hold-composition-fix/summary.json),
-[Chrome receipts](evidence/2026-09-24-keyboard-hold-validation/hold-composition-fix/chrome-results.json),
-and [Electron receipts](evidence/2026-09-24-keyboard-hold-validation/hold-composition-fix/electron-results.json)
-record the exact observations. The fixture exits 1 because the separately noted
+[Post-fix summary](evidence/2026-09-24-keyboard-hold-validation/hold-composition-fix/summary.json)
+and the [before/after event samples](evidence/2026-09-24-keyboard-hold-validation/held-shift-before-after.json)
+record the counts and representative observations. The fixture exits 1 because the separately noted
 select-all replacement and emoji cases still fail.
 
 ### Remaining BG-2 boundaries
@@ -164,7 +161,7 @@ lost some Shift+B and Left inputs. This implementation leaves `input.keys` on it
 existing complete-press path, so adding the hold API does not fix those losses.
 These small samples do not establish an improvement over the previous 30/45 and
 26/45 run. See the [CLI summary](evidence/2026-09-24-keyboard-hold-validation/cli-background/summary.json)
-and sibling receiver logs.
+and the reproducible receiver fixture.
 
 No live auto-repeat, crash recovery, Linux/Windows receiver behavior, or RPC
 shutdown guarantee is established by these samples. The coordinator cancellation
