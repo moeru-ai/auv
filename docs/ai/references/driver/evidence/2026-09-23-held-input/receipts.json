@@ -1,0 +1,82 @@
+{
+  "base_commit": "d2e4d8da3c2c6f462027ff4a77177d0b1459f9e9",
+  "scope": "Test-only additions; production files unchanged",
+  "sha256": {
+    "crates/auv-driver-common/src/mouse_input.rs": "77abf31a5fc8ab837629b802a159cf9911f19738597a1f7ec843a081b5d9ecc7",
+    "crates/auv-driver-linux/src/input.rs": "a79cf3a420638c745a0766be6efd7d7fa5cc719d93153476ffc639aaeecd8961",
+    "crates/auv-driver-linux/src/native/uinput.rs": "6a50cc598ad3070881a3bd88c1dece54b128e448a805c3fb80ce88ba142051e5",
+    "crates/auv-driver-windows/src/input.rs": "ba3ad2773160b148220cf5be96b84503d987771bd2312036e2e9309a5d4e6058",
+    "crates/auv-driver-windows/src/background_input.rs": "ee9b3f0a5b390134113ff31b7f533888a5b53cd88153e8e97fcc687e289fb59f",
+    "crates/auv-driver-linux/tests/held_mouse.rs": "2a72a3a19c591ff81a6d041a91d0f4c82af046d3f901f9505bbd2d047c7179d2",
+    "crates/auv-driver-linux/tests/fixtures/held_mouse_receiver.py": "dbd6a009d93e94131f0f0298aa4818a3d0c8ddd35d17e46cbf46fbb1d9238b6a",
+    "crates/auv-driver-linux/src/native/portal/identity_test.rs": "c928cc3469be1e8b94f2707186576550491154d2bc3787256b68053846ddec9d",
+    "crates/auv-driver-windows/tests/held_mouse.rs": "f4f75419048b0303b656adb6fbe3b94e6b530165475e944ce8ddb9e3b5801c7f"
+  },
+  "evidence": {
+    "linux_uinput": {
+      "exit_code": 0,
+      "cases": [
+        {"button": "Left", "case": "cross-call", "receipts": ["move 0 300.0 299.9921875", "down 1 300.0 299.9921875", "move 256 380.0 340.00390625", "up 1 380.0 340.00390625"]},
+        {"button": "Left", "case": "hold", "receipts": ["move 0 300.0 299.9921875", "down 1 300.0 299.9921875", "up 1 300.0 299.9921875"]},
+        {"button": "Left", "case": "watchdog", "receipts": ["down 1 300.0 299.9921875", "up 1 300.0 299.9921875"]},
+        {"button": "Left", "case": "cancel", "receipts": ["down 1 300.0 299.9921875", "up 1 300.0 299.9921875"]},
+        {"button": "Left", "case": "drag", "receipts": ["down 1 300.0 299.9921875", "move 256 310.6640625 305.33203125", "move 256 321.328125 310.66796875", "move 256 331.9921875 315.98828125", "move 256 342.65625 321.328125", "move 256 353.3203125 326.6640625", "move 256 363.984375 331.984375", "move 256 374.6484375 337.32421875", "move 256 380.0 340.00390625", "up 1 380.0 340.00390625"]},
+        {"button": "Right", "case": "cross-call", "receipts": ["move 0 300.0 299.9921875", "down 3 300.0 299.9921875", "move 1024 380.0 340.00390625", "up 3 380.0 340.00390625"]},
+        {"button": "Right", "case": "hold", "receipts": ["move 0 300.0 299.9921875", "down 3 300.0 299.9921875", "up 3 300.0 299.9921875"]},
+        {"button": "Right", "case": "watchdog", "receipts": ["down 3 300.0 299.9921875", "up 3 300.0 299.9921875"]},
+        {"button": "Right", "case": "cancel", "receipts": ["down 3 300.0 299.9921875", "up 3 300.0 299.9921875"]},
+        {"button": "Right", "case": "drag", "receipts": ["down 3 300.0 299.9921875", "move 1024 310.6640625 305.33203125", "move 1024 321.328125 310.66796875", "move 1024 331.9921875 315.98828125", "move 1024 342.65625 321.328125", "move 1024 353.3203125 326.6640625", "move 1024 363.984375 331.984375", "move 1024 374.6484375 337.32421875", "move 1024 380.0 340.00390625", "up 3 380.0 340.00390625"]},
+        {"button": "Middle", "case": "cross-call", "receipts": ["move 0 300.0 299.9921875", "down 2 300.0 299.9921875", "move 512 380.0 340.00390625", "up 2 380.0 340.00390625"]},
+        {"button": "Middle", "case": "hold", "receipts": ["move 0 300.0 299.9921875", "down 2 300.0 299.9921875", "up 2 300.0 299.9921875"]},
+        {"button": "Middle", "case": "watchdog", "receipts": ["down 2 300.0 299.9921875", "up 2 300.0 299.9921875"]},
+        {"button": "Middle", "case": "cancel", "receipts": ["down 2 300.0 299.9921875", "up 2 300.0 299.9921875"]},
+        {"button": "Middle", "case": "drag", "receipts": ["down 2 300.0 299.9921875", "move 512 310.6640625 305.33203125", "move 512 321.328125 310.66796875", "move 512 331.9921875 315.98828125", "move 512 342.65625 321.328125", "move 512 353.3203125 326.6640625", "move 512 363.984375 331.984375", "move 512 374.6484375 337.32421875", "move 512 380.0 340.00390625", "up 2 380.0 340.00390625"]}
+      ]
+    },
+    "windows_background": {
+      "exit_code": 0,
+      "cases": [
+        {"button": "Left", "case": "cross-call", "receipts": [[512, 0, 120, 120], [513, 1, 120, 120], [512, 1, 200, 160], [514, 0, 200, 160]]},
+        {"button": "Left", "case": "hold", "receipts": [[512, 0, 120, 120], [513, 1, 120, 120], [514, 0, 120, 120]]},
+        {"button": "Left", "case": "watchdog", "receipts": [[512, 0, 120, 120], [513, 1, 120, 120], [514, 0, 120, 120]]},
+        {"button": "Left", "case": "cancel", "receipts": [[512, 0, 120, 120], [513, 1, 120, 120], [514, 0, 120, 120]]},
+        {"button": "Left", "case": "drag", "receipts": [[512, 0, 120, 120], [513, 1, 120, 120], [512, 1, 120, 120], [512, 1, 131, 125], [512, 1, 141, 131], [512, 1, 152, 136], [512, 1, 163, 141], [512, 1, 173, 147], [512, 1, 184, 152], [512, 1, 195, 157], [512, 1, 200, 160], [514, 0, 200, 160]]},
+        {"button": "Right", "case": "cross-call", "receipts": [[512, 0, 120, 120], [516, 2, 120, 120], [512, 2, 200, 160], [517, 0, 200, 160]]},
+        {"button": "Right", "case": "hold", "receipts": [[512, 0, 120, 120], [516, 2, 120, 120], [517, 0, 120, 120]]},
+        {"button": "Right", "case": "watchdog", "receipts": [[512, 0, 120, 120], [516, 2, 120, 120], [517, 0, 120, 120]]},
+        {"button": "Right", "case": "cancel", "receipts": [[512, 0, 120, 120], [516, 2, 120, 120], [517, 0, 120, 120]]},
+        {"button": "Right", "case": "drag", "receipts": [[512, 0, 120, 120], [516, 2, 120, 120], [512, 2, 120, 120], [512, 2, 131, 125], [512, 2, 141, 131], [512, 2, 152, 136], [512, 2, 163, 141], [512, 2, 173, 147], [512, 2, 184, 152], [512, 2, 195, 157], [512, 2, 200, 160], [517, 0, 200, 160]]},
+        {"button": "Middle", "case": "cross-call", "receipts": [[512, 0, 120, 120], [519, 16, 120, 120], [512, 16, 200, 160], [520, 0, 200, 160]]},
+        {"button": "Middle", "case": "hold", "receipts": [[512, 0, 120, 120], [519, 16, 120, 120], [520, 0, 120, 120]]},
+        {"button": "Middle", "case": "watchdog", "receipts": [[512, 0, 120, 120], [519, 16, 120, 120], [520, 0, 120, 120]]},
+        {"button": "Middle", "case": "cancel", "receipts": [[512, 0, 120, 120], [519, 16, 120, 120], [520, 0, 120, 120]]},
+        {"button": "Middle", "case": "drag", "receipts": [[512, 0, 120, 120], [519, 16, 120, 120], [512, 16, 120, 120], [512, 16, 131, 125], [512, 16, 141, 131], [512, 16, 152, 136], [512, 16, 163, 141], [512, 16, 173, 147], [512, 16, 184, 152], [512, 16, 195, 157], [512, 16, 200, 160], [520, 0, 200, 160]]}
+      ]
+    },
+    "windows_rdp_foreground": {
+      "exit_code": 0,
+      "cases": [
+        {"button": "Left", "case": "cross-call", "receipts": [[512, 0, 120, 120], [513, 1, 120, 120], [512, 1, 200, 160], [514, 0, 200, 160]]},
+        {"button": "Left", "case": "hold", "receipts": [[512, 0, 120, 120], [513, 1, 120, 120], [514, 0, 120, 120]]},
+        {"button": "Left", "case": "watchdog", "receipts": [[513, 1, 120, 120], [514, 0, 120, 120]]},
+        {"button": "Left", "case": "cancel", "receipts": [[513, 1, 120, 120], [514, 0, 120, 120]]},
+        {"button": "Left", "case": "drag", "receipts": [[513, 1, 120, 120], [512, 1, 130, 125], [512, 1, 141, 131], [512, 1, 152, 136], [512, 1, 162, 141], [512, 1, 173, 147], [512, 1, 184, 152], [512, 1, 194, 157], [512, 1, 200, 160], [514, 0, 200, 160]]},
+        {"button": "Right", "case": "cross-call", "receipts": [[512, 0, 120, 120], [516, 2, 120, 120], [512, 2, 200, 160], [517, 0, 200, 160]]},
+        {"button": "Right", "case": "hold", "receipts": [[512, 0, 120, 120], [516, 2, 120, 120], [517, 0, 120, 120]]},
+        {"button": "Right", "case": "watchdog", "receipts": [[516, 2, 120, 120], [517, 0, 120, 120]]},
+        {"button": "Right", "case": "cancel", "receipts": [[516, 2, 120, 120], [517, 0, 120, 120]]},
+        {"button": "Right", "case": "drag", "receipts": [[516, 2, 120, 120], [512, 2, 130, 125], [512, 2, 141, 131], [512, 2, 152, 136], [512, 2, 162, 141], [512, 2, 173, 147], [512, 2, 184, 152], [512, 2, 194, 157], [512, 2, 200, 160], [517, 0, 200, 160]]},
+        {"button": "Middle", "case": "cross-call", "receipts": [[512, 0, 120, 120], [519, 16, 120, 120], [512, 16, 200, 160], [520, 0, 200, 160]]},
+        {"button": "Middle", "case": "hold", "receipts": [[512, 0, 120, 120], [519, 16, 120, 120], [520, 0, 120, 120]]},
+        {"button": "Middle", "case": "watchdog", "receipts": [[519, 16, 120, 120], [520, 0, 120, 120]]},
+        {"button": "Middle", "case": "cancel", "receipts": [[519, 16, 120, 120], [520, 0, 120, 120]]},
+        {"button": "Middle", "case": "drag", "receipts": [[519, 16, 120, 120], [512, 16, 130, 125], [512, 16, 141, 131], [512, 16, 152, 136], [512, 16, 162, 141], [512, 16, 173, 147], [512, 16, 184, 152], [512, 16, 194, 157], [512, 16, 200, 160], [520, 0, 200, 160]]}
+      ]
+    },
+    "linux_portal_private_bus": {
+      "exit_code": 0,
+      "boundary": "Independent D-Bus protocol receipt; no live Portal desktop",
+      "receipt": ["select_devices", "select_sources", "start", "motion:7:20:30", "button:272:1", "motion:7:40:50", "button:272:0", "motion:7:20:30", "button:272:1", "button:272:0", "motion:7:20:30", "button:272:1", "button:272:0", "motion:7:20:30", "button:272:1", "button:272:0", "motion:7:20:30", "button:273:1", "motion:7:40:50", "button:273:0", "motion:7:20:30", "button:273:1", "button:273:0", "motion:7:20:30", "button:273:1", "button:273:0", "motion:7:20:30", "button:273:1", "button:273:0", "motion:7:20:30", "button:274:1", "motion:7:40:50", "button:274:0", "motion:7:20:30", "button:274:1", "button:274:0", "motion:7:20:30", "button:274:1", "button:274:0", "motion:7:20:30", "button:274:1", "button:274:0", "close"]
+    }
+  }
+}

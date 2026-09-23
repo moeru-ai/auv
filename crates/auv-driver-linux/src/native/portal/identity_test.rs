@@ -243,8 +243,7 @@ impl DeliveryFixture {
   }
 
   fn notify_pointer_motion_absolute(&self, _session: OwnedObjectPath, _options: HashMap<String, OwnedValue>, stream: u32, x: f64, y: f64) {
-    assert_eq!((stream, x, y), (7, 20.0, 30.0));
-    self.0.lock().unwrap().push("motion".into());
+    self.0.lock().unwrap().push(format!("motion:{stream}:{x}:{y}"));
   }
 
   fn notify_pointer_button(&self, _session: OwnedObjectPath, _options: HashMap<String, OwnedValue>, button: i32, state: u32) {
@@ -355,18 +354,18 @@ fn modified_click_reaches_portal_and_cancelled_selection_closes_session() {
       "select_devices",
       "select_sources",
       "start",
-      "motion",
-      "motion",
+      "motion:7:20:30",
+      "motion:7:20:30",
       "key:65505:1",
       "key:65507:1",
       "button:272:1",
       "button:272:0",
       "key:65507:0",
       "key:65505:0",
-      "motion",
+      "motion:7:20:30",
       "button:273:1",
       "button:273:0",
-      "motion",
+      "motion:7:20:30",
       "button:274:1",
       "button:274:0",
       "close",
@@ -441,4 +440,86 @@ fn keyboard_failure_releases_all_attempted_keys_and_reports_release_error() {
     let events = fixture.0.lock().unwrap();
     assert_eq!(events.iter().filter(|event| event.starts_with("key:")).map(String::as_str).collect::<Vec<_>>(), expected, "{case}");
   }
+}
+
+#[test]
+#[ignore = "requires dbus-daemon; independent Portal protocol receipt, not a live desktop"]
+fn held_mouse_reuses_portal_session_and_releases_on_timeout_and_cancel() {
+  if std::env::var_os("AUV_PORTAL_HELD_TEST_CHILD").is_some() {
+    use auv_driver_common::{
+      Driver, InputTarget, MouseButton, Point,
+      mouse_input::{InputCancellation, with_input_cancellation},
+    };
+    use std::time::Duration;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("remote-desktop-input-token"), "initial").unwrap();
+    let session = crate::LinuxDriver::new().with_portal_state_root(directory.path().to_path_buf()).open_local().unwrap();
+    let input = session.input();
+    let mouse = input.create_mouse().unwrap();
+    let start = Point::new(20.0, 30.0);
+    for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+      input.mouse_down(&InputTarget::Foreground, mouse, start, button, Duration::from_secs(3)).unwrap();
+      input.move_mouse_to(mouse, Point::new(40.0, 50.0)).unwrap();
+      input.mouse_up(mouse).unwrap();
+      input.hold_mouse(&InputTarget::Foreground, mouse, start, button, Duration::from_millis(30)).unwrap();
+      input.mouse_down(&InputTarget::Foreground, mouse, start, button, Duration::from_millis(50)).unwrap();
+      std::thread::sleep(Duration::from_millis(200));
+      let cancel = Arc::new(InputCancellation::default());
+      with_input_cancellation(cancel.clone(), || input.mouse_down(&InputTarget::Foreground, mouse, start, button, Duration::from_secs(5)))
+        .unwrap();
+      cancel.cancel();
+      std::thread::sleep(Duration::from_millis(200));
+      // Both known-release calls must be protocol no-ops after cancellation.
+      input.mouse_up(mouse).unwrap();
+      input.mouse_up(mouse).unwrap();
+    }
+    input.remove_mouse(mouse).unwrap();
+    return;
+  }
+  let mut bus =
+    PrivateBus(Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).spawn().unwrap());
+  let mut address = String::new();
+  std::io::BufReader::new(bus.0.stdout.take().unwrap()).read_line(&mut address).unwrap();
+  let fixture = DeliveryFixture::default();
+  let _service = zbus::blocking::connection::Builder::address(address.trim())
+    .unwrap()
+    .name(PORTAL_DESTINATION)
+    .unwrap()
+    .serve_at(PORTAL_PATH, fixture.clone())
+    .unwrap()
+    .serve_at(PORTAL_PATH, DeliveryScreenCast(fixture.clone()))
+    .unwrap()
+    .build()
+    .unwrap();
+  let output = Command::new(std::env::current_exe().unwrap())
+    .args([
+      "--ignored",
+      "held_mouse_reuses_portal_session_and_releases_on_timeout_and_cancel",
+    ])
+    .env("AUV_PORTAL_HELD_TEST_CHILD", "1")
+    .env("DBUS_SESSION_BUS_ADDRESS", address.trim())
+    .env_remove("WAYLAND_DISPLAY")
+    .output()
+    .unwrap();
+  assert!(output.status.success(), "{} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+  let mut expected: Vec<String> = ["select_devices", "select_sources", "start"].into_iter().map(str::to_owned).collect();
+  for button in [272, 273, 274] {
+    expected.extend([
+      "motion:7:20:30".into(),
+      format!("button:{button}:1"),
+      "motion:7:40:50".into(),
+      format!("button:{button}:0"),
+    ]);
+    for _ in 0..3 {
+      expected.extend([
+        "motion:7:20:30".into(),
+        format!("button:{button}:1"),
+        format!("button:{button}:0"),
+      ]);
+    }
+  }
+  expected.push("close".into());
+  let events = fixture.0.lock().unwrap();
+  println!("Portal held receipt: {events:?}");
+  assert_eq!(*events, expected, "one session through moves, releases, and cleanup; no duplicate up");
 }

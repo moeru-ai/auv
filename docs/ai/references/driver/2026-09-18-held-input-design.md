@@ -3,6 +3,10 @@
 Date: 2026-09-19. Classification: approved feature.
 Status: implemented; platform-specific evidence is listed below.
 
+Update 2026-09-23: [Native validation](2026-09-23-held-input-native-validation.md)
+adds Windows posted-message/RDP and Linux GNOME/uinput receipt, plus isolated
+Portal protocol receipt. Live Portal and macOS desktop receipt remain pending.
+
 The owner approved primitive mouse input, complete hold/drag composition,
 logical mice, and conservative shared-resource scheduling. The implementation
 covers macOS, Windows, and Linux desktop routes, plus existing macOS PID-targeted
@@ -113,10 +117,10 @@ the receiver cancels even an operation still waiting for admission.
 | --- | --- | --- |
 | macOS desktop | CGEvent down/dragged/up | Native build; live receipt pending |
 | macOS window | Fixed window/PID, window-local stamping, postToPid | AppKit receiver observed down → dragged → up on 2026-09-19 |
-| Windows desktop | SendInput button transitions and absolute motion | Windows target compile; live receipt pending |
-| Windows window | Fixed child HWND, button mask on WM_MOUSEMOVE, posted down/up | Windows target compile; live receipt pending |
-| Linux Portal | Retained RemoteDesktop session, button/motion calls | Native Linux validation pending |
-| Linux uinput | Retained virtual device, key/button transitions and motion | Native Linux validation pending |
+| Windows desktop | SendInput button transitions and absolute motion | Win32 receiver in Windows 11 RDP session: 15 cases passed on 2026-09-23 |
+| Windows window | Fixed child HWND, button mask on WM_MOUSEMOVE, posted down/up | Hidden Win32 receiver: 15 cases passed on 2026-09-23 |
+| Linux Portal | Retained RemoteDesktop session, button/motion calls | Native tests and isolated D-Bus held receipt passed on 2026-09-23; live receipt blocked by missing RemoteDesktop interface |
+| Linux uinput | Retained virtual device, key/button transitions and motion | GNOME/GTK4 receiver: 15 cases passed on 2026-09-23 |
 
 NOTICE: The macOS Chromium-compatible click primer remains click-only. Extending
 its offscreen priming and dual-post sequence to cross-call held gestures requires
@@ -154,9 +158,10 @@ Validation commands:
   expectations (OCR InvalidImage and ScreenToClient); the Windows target check
   is the relevant compilation evidence, not a native execution claim.
 
-Remote Linux/Windows native receipt validation currently encounters a broken
-SOCKS path to the existing Kubernetes transport. A local Linux cross-check also
-requires a Linux pkg-config/sysroot for leptonica; neither is behavior evidence.
+The original 2026-09-19 remote validation encountered a broken SOCKS path.
+That transport was restored for the [2026-09-23 native validation](2026-09-23-held-input-native-validation.md).
+The earlier macOS-host Linux cross-check lacked a Linux pkg-config/sysroot for
+leptonica; the later checks ran natively on Linux with its installed dependencies.
 
 ## Related references
 
