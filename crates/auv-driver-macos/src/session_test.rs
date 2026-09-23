@@ -880,6 +880,33 @@ fn keyboard_combinations_repeat_in_order_and_keep_special_keys_with_modifiers() 
   assert!(actions.iter().all(|action| action.attempts.iter().all(|attempt| attempt.succeeded) && !action.verified));
 }
 
+#[test]
+fn held_keyboard_combination_posts_ordered_transitions_and_modifier_flags() {
+  use crate::native::input::tests::with_transition_recorder;
+  let session = MacosDriverSession { _private: () };
+  let (result, recorder) = with_transition_recorder(|| {
+    let mut hold = session.input().key_down(
+      &InputTarget::Foreground,
+      vec!["cmd".into(), "shift".into(), "a".into()],
+      InputPolicy::ForegroundPreferred,
+      Duration::from_secs(1),
+    )?;
+    hold.release()
+  });
+  assert!(!result.unwrap().verified);
+  assert_eq!(
+    recorder.calls,
+    vec![
+      (None, 55, true, 1 << 20),
+      (None, 56, true, (1 << 20) | (1 << 17)),
+      (None, 0, true, (1 << 20) | (1 << 17)),
+      (None, 0, false, (1 << 20) | (1 << 17)),
+      (None, 56, false, 1 << 20),
+      (None, 55, false, 0),
+    ]
+  );
+}
+
 // ROOT CAUSE:
 // Restarting the whole request after a later failed repetition duplicates input.
 // The result must retain completed actions, completed repetitions, and the cause.

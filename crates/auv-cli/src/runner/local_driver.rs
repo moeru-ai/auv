@@ -43,6 +43,14 @@ struct LocalInputService {
   session: auv_driver::LocalDriverSession,
 }
 
+impl Drop for LocalInputService {
+  fn drop(&mut self) {
+    // The Runner owns the only public cross-call keyboard hold in this process.
+    // A timeout remains the fallback if native shutdown cleanup fails.
+    let _ = auv_driver::keyboard_coordinator().shutdown();
+  }
+}
+
 struct LocalOverlayService {
   session: auv_driver::LocalDriverSession,
   owner_thread: std::thread::ThreadId,
@@ -633,6 +641,47 @@ impl InputService for LocalInputService {
       .into_inner();
     Ok(Response::new(proto::PressKeysResponse {
       action: response.actions.pop(),
+    }))
+  }
+
+  async fn key_down(&self, request: Request<proto::KeyDownRequest>) -> Result<Response<proto::KeyDownResponse>, Status> {
+    let request = request.into_inner();
+    let target = input_target_from_proto(&self.session, request.target)?;
+    let policy = held_key_policy_from_proto(request.policy)?;
+    let timeout = duration_from_proto(request.timeout, std::time::Duration::ZERO, "timeout")?;
+    if timeout.is_zero() || timeout > std::time::Duration::from_secs(30) {
+      return Err(Status::invalid_argument("timeout must be in (0, 30s]"));
+    }
+    let session = self.session.clone();
+    let hold = run_input_blocking(move || session.input().key_down(&target, request.keys, policy, timeout)).await?;
+    let action = input_action_to_proto(hold.down_result().clone())?;
+    Ok(Response::new(proto::KeyDownResponse {
+      hold_id: hold.into_id(),
+      action: Some(action),
+    }))
+  }
+
+  async fn key_up(&self, request: Request<proto::KeyUpRequest>) -> Result<Response<proto::KeyUpResponse>, Status> {
+    let hold = request.into_inner().hold_id;
+    let session = self.session.clone();
+    let action = run_input_blocking(move || session.input().key_up(hold)).await?;
+    Ok(Response::new(proto::KeyUpResponse {
+      action: Some(input_action_to_proto(action)?),
+    }))
+  }
+
+  async fn hold_keys(&self, request: Request<proto::HoldKeysRequest>) -> Result<Response<proto::HoldKeysResponse>, Status> {
+    let request = request.into_inner();
+    let target = input_target_from_proto(&self.session, request.target)?;
+    let policy = held_key_policy_from_proto(request.policy)?;
+    let duration = duration_from_proto(request.duration, std::time::Duration::ZERO, "duration")?;
+    if duration.is_zero() || duration > std::time::Duration::from_secs(30) {
+      return Err(Status::invalid_argument("duration must be in (0, 30s]"));
+    }
+    let session = self.session.clone();
+    let action = run_input_blocking(move || session.input().hold_keys(&target, request.keys, policy, duration)).await?;
+    Ok(Response::new(proto::HoldKeysResponse {
+      action: Some(input_action_to_proto(action)?),
     }))
   }
 
@@ -1303,6 +1352,16 @@ fn input_policy_from_proto(policy: i32) -> Result<auv_driver::InputPolicy, Statu
     Ok(proto::InputPolicy::BackgroundOnly) => Ok(auv_driver::InputPolicy::BackgroundOnly),
     Ok(proto::InputPolicy::ForegroundPreferred) => Ok(auv_driver::InputPolicy::ForegroundPreferred),
     Err(_) => Err(Status::invalid_argument("options.policy is unknown")),
+  }
+}
+
+// Held keys default to foreground because an absent target/policy must never
+// silently select a background route or imply a target that was not supplied.
+fn held_key_policy_from_proto(policy: i32) -> Result<auv_driver::InputPolicy, Status> {
+  if policy == proto::InputPolicy::Unspecified as i32 {
+    Ok(auv_driver::InputPolicy::ForegroundPreferred)
+  } else {
+    input_policy_from_proto(policy)
   }
 }
 

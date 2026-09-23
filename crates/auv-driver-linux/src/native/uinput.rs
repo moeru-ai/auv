@@ -128,6 +128,10 @@ impl InputSession {
     layout.validate_keys(keys, &self.keys)
   }
 
+  pub fn key_transition(&mut self, key: KeyCode, down: bool) -> DriverResult<()> {
+    emit_key(&mut self.device, key, down)
+  }
+
   pub fn key_chord(&mut self, layout: &Keymap, modifiers: &[i32], key: i32) -> DriverResult<()> {
     // A prepared operation owns the layout snapshot: no Wayland IO occurs
     // between characters. Lock states, compose and IME remain unmodeled.

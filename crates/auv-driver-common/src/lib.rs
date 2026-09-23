@@ -6,6 +6,7 @@ pub mod error;
 pub mod geometry;
 pub mod input;
 pub mod keyboard;
+pub mod keyboard_input;
 pub mod mouse;
 pub mod mouse_input;
 pub mod permission;
@@ -33,6 +34,7 @@ pub use input::{
   ScrollDeliveryStrategy, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy, WindowInput,
 };
 pub use keyboard::{Key, Keysym, Modifier};
+pub use keyboard_input::{KeyboardBackend, KeyboardCoordinator, KeyboardHold, KeyboardHoldId, keyboard_coordinator};
 pub use mouse::{
   MouseCubicBezierSegment, MouseCurve, MouseCurveMapping, MouseMotionOptions, MouseMotionSample, MouseSamples, MouseStart, MoveMouseRequest,
 };

@@ -2,6 +2,8 @@
 
 > NOTICE: This source review records historical revisions. The [Wayland background input research](2026-09-13-wayland-background-input-research.md) records the 2026-09-13 decision, later implementation PRs, and evidence boundaries. Candidate rows do not authorize implementation.
 
+> Update 2026-09-23: The owner-approved BG-2 keyboard authentication slice now prepares a private event authentication message and submits once through SkyLight, retaining public PID delivery when preparation is unavailable. [Implementation and receiver evidence](2026-09-23-background-keyboard-authentication.md) include real AppKit, Chrome, and Electron tests. The Chromium-family matrix remains failing: background emoji insertion and select-all replacement fail, and physical keys can be lost. Authentication does not close BG-2. Mouse dual posting and count capping are unchanged.
+
 > Update 2026-09-23: BG-1 held input now has independent Windows background-message and RDP foreground receipt, Linux GNOME/uinput receipt, and isolated Portal protocol receipt. See [native validation](2026-09-23-held-input-native-validation.md). Live Portal receipt remains blocked by the current service's missing RemoteDesktop interface; macOS desktop receipt is still pending. The historical table below is not a current implementation backlog.
 
 > Update 2026-09-19: The owner approved the held-mouse slice across three desktop platforms and existing window background routes. The [held-input contract and evidence](2026-09-18-held-input-design.md) records implementation, AppKit receipt validation, and remaining Windows/Linux native validation. This does not claim Chromium-compatible held input or native multi-pointer isolation.

@@ -119,6 +119,18 @@ impl InputSession {
     combine_release(press, self.notify_keyboard_keysym(keysym, KeyState::Released))
   }
 
+  pub fn key_transition(&self, keysym: i32, down: bool) -> DriverResult<()> {
+    self.require_keyboard()?;
+    self.notify_keyboard_keysym(
+      keysym,
+      if down {
+        KeyState::Pressed
+      } else {
+        KeyState::Released
+      },
+    )
+  }
+
   pub fn key_chord(&mut self, modifiers: &[i32], key: i32) -> DriverResult<()> {
     self.require_keyboard()?;
     with_held_keys(

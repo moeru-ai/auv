@@ -513,7 +513,7 @@ impl InputCancellation {
       }
     }
   }
-  fn is_cancelled(&self) -> bool {
+  pub fn is_cancelled(&self) -> bool {
     self.cancelled.load(std::sync::atomic::Ordering::Acquire)
   }
   fn register(&self, coordinator: &MouseCoordinator) {
@@ -529,6 +529,10 @@ thread_local! {
 }
 fn input_cancelled() -> bool {
   INPUT_CANCELLATION.with(|value| value.borrow().as_ref().is_some_and(|flag| flag.is_cancelled()))
+}
+
+pub fn current_input_cancellation() -> Option<Arc<InputCancellation>> {
+  INPUT_CANCELLATION.with(|value| value.borrow().clone())
 }
 
 /// Binds cancellation to synchronous native work. The transport owns the signal.

@@ -568,6 +568,56 @@ impl WindowInput for WindowApi<'_> {
 }
 
 impl InputApi<'_> {
+  /// Begin a bounded hold of one validated key combination. The same native
+  /// recipient and key codes are retained for timeout and explicit release.
+  pub fn key_down(
+    &self,
+    target: &InputTarget,
+    keys: Vec<String>,
+    policy: InputPolicy,
+    timeout: Duration,
+  ) -> DriverResult<auv_driver_common::KeyboardHold> {
+    let codes = parse_key_combination(&PressKeysOptions {
+      keys,
+      ..Default::default()
+    })?;
+    if matches!(target, InputTarget::Foreground) && policy != InputPolicy::ForegroundPreferred {
+      return Err(invalid_input("background keyboard input requires an application or window target"));
+    }
+    let recipient = match target {
+      InputTarget::Foreground => None,
+      _ => Some(resolve_input_target(target)?),
+    };
+    if let Some(recipient) = recipient {
+      if policy == InputPolicy::ForegroundPreferred {
+        prepare_input_recipient(recipient, foreground_prepare_options(Duration::ZERO))?;
+      } else {
+        crate::native::window::validate_input_target(recipient.0, recipient.1, false).map_err(backend)?;
+      }
+    }
+    let coordinator = auv_driver_common::keyboard_coordinator().clone();
+    let backend = std::sync::Arc::new(HeldKeyboardBackend { recipient, codes });
+    coordinator.down(backend, timeout)
+  }
+
+  pub fn key_up(&self, hold: auv_driver_common::KeyboardHoldId) -> DriverResult<InputActionResult> {
+    auv_driver_common::keyboard_coordinator().up(hold)
+  }
+
+  /// Hold and release under one call, including timeout cleanup.
+  pub fn hold_keys(
+    &self,
+    target: &InputTarget,
+    keys: Vec<String>,
+    policy: InputPolicy,
+    duration: Duration,
+  ) -> DriverResult<InputActionResult> {
+    // Leave a cleanup margin so the bounded call normally owns its release;
+    // the coordinator deadline remains a fallback if this call stalls.
+    let mut hold = self.key_down(target, keys, policy, duration.saturating_add(Duration::from_secs(1)))?;
+    hold.wait_and_release(duration)
+  }
+
   /// A complete drag composes press, sampled movement, and release under one admission.
   pub fn drag_mouse(
     &self,
@@ -1194,6 +1244,43 @@ fn type_text_foreground(text: &str, options: TypeTextOptions) -> DriverResult<()
 
 /// Compile names to native virtual keys before any activation or event creation.
 /// Modifiers precede ordinary keys; aliases cannot produce duplicate key-downs.
+struct HeldKeyboardBackend {
+  recipient: Option<(i64, i64)>,
+  codes: Vec<i32>,
+}
+
+impl auv_driver_common::KeyboardBackend for HeldKeyboardBackend {
+  fn key_count(&self) -> usize {
+    self.codes.len()
+  }
+
+  fn key(&self, index: usize, down: bool) -> DriverResult<()> {
+    let held = if down {
+      &self.codes[..=index]
+    } else {
+      &self.codes[..index]
+    };
+    let mut flags = 0u64;
+    for code in held {
+      flags |= match *code {
+        55 => 1 << 20, // Command
+        56 => 1 << 17, // Shift
+        58 => 1 << 19, // Option
+        59 => 1 << 18, // Control
+        _ => 0,
+      };
+    }
+    crate::native::input::key_transition(self.recipient, self.codes[index], down, flags).map_err(backend)
+  }
+
+  fn result(&self) -> InputActionResult {
+    match self.recipient {
+      Some(_) => InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard),
+      None => foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None),
+    }
+  }
+}
+
 fn parse_key_combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> {
   if options.keys.is_empty() {
     return Err(invalid_input("keys must not be empty"));

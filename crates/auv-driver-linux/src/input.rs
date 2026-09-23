@@ -5,6 +5,7 @@ use crate::driver::InputBackend;
 use crate::driver::LinuxDriverSessionState;
 use crate::error::{backend, invalid_input};
 use crate::native::portal::{InputSession as PortalSession, PortalInput};
+use auv_driver_common::KeyboardBackend;
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::Point;
 use auv_driver_common::input::{
@@ -22,6 +23,36 @@ pub(crate) enum InputSession {
 }
 
 impl InputSession {
+  fn held_keys(&self, symbols: &[i32]) -> DriverResult<Vec<HeldKey>> {
+    match self {
+      Self::Portal(_) => Ok(symbols.iter().copied().map(HeldKey::Portal).collect()),
+      #[cfg(target_os = "linux")]
+      Self::Uinput(session) => {
+        let layout = crate::native::keymap::Keymap::load()?;
+        session.validate_keys(&layout, symbols)?;
+        let strokes = symbols.iter().map(|symbol| layout.stroke(*symbol)).collect::<DriverResult<Vec<_>>>()?;
+        let mut keys = strokes.iter().map(|stroke| HeldKey::Uinput(stroke.key)).collect::<Vec<_>>();
+        if strokes.iter().any(|stroke| stroke.shift) {
+          let shift = layout.stroke(keysym::SHIFT_L)?.key;
+          if !keys.contains(&HeldKey::Uinput(shift)) {
+            keys.insert(0, HeldKey::Uinput(shift));
+          }
+        }
+        Ok(keys)
+      }
+    }
+  }
+
+  fn key_transition(&mut self, key: &HeldKey, down: bool) -> DriverResult<()> {
+    match (self, key) {
+      (Self::Portal(session), HeldKey::Portal(symbol)) => session.key_transition(*symbol, down),
+      #[cfg(target_os = "linux")]
+      (Self::Uinput(session), HeldKey::Uinput(code)) => session.key_transition(*code, down),
+      #[cfg(target_os = "linux")]
+      _ => Err(backend("held keyboard backend changed")),
+    }
+  }
+
   pub(crate) fn keyboard_layout(&self) -> DriverResult<KeyboardLayout> {
     match self {
       Self::Portal(_) => Ok(KeyboardLayout::Portal),
@@ -90,6 +121,38 @@ impl InputSession {
       Self::Uinput(session) => session.scroll_at(point, scroll),
     }
   }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HeldKey {
+  Portal(i32),
+  #[cfg(target_os = "linux")]
+  Uinput(evdev::KeyCode),
+}
+
+struct HeldKeyboardBackend {
+  session: Arc<Mutex<InputSession>>,
+  keys: Vec<HeldKey>,
+}
+
+impl KeyboardBackend for HeldKeyboardBackend {
+  fn key_count(&self) -> usize {
+    self.keys.len()
+  }
+
+  fn key(&self, index: usize, down: bool) -> DriverResult<()> {
+    self.session.lock().map_err(|_| backend("linux input session poisoned"))?.key_transition(&self.keys[index], down)
+  }
+
+  fn result(&self) -> InputActionResult {
+    keyboard_result()
+  }
+}
+
+pub(crate) fn held_keyboard_backend(state: &Arc<Mutex<LinuxDriverSessionState>>, symbols: &[i32]) -> DriverResult<Arc<dyn KeyboardBackend>> {
+  let session = input_session(state)?;
+  let keys = session.lock().map_err(|_| backend("linux input session poisoned"))?.held_keys(symbols)?;
+  Ok(Arc::new(HeldKeyboardBackend { session, keys }))
 }
 
 pub(crate) fn click_at(

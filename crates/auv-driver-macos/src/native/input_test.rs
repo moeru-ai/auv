@@ -64,3 +64,35 @@ pub(crate) fn with_combination_recorder<T>(fail_on: Option<usize>, run: impl FnO
   let recorder = KEY_COMBINATIONS.with_borrow_mut(|state| state.take().unwrap());
   (result, recorder)
 }
+
+#[derive(Default)]
+pub(crate) struct KeyTransitionRecorder {
+  pub calls: Vec<(Option<(i64, i64)>, i32, bool, u64)>,
+}
+thread_local! {
+  static KEY_TRANSITIONS: std::cell::RefCell<Option<KeyTransitionRecorder>> = const { std::cell::RefCell::new(None) };
+}
+pub(crate) fn record_transition(target: Option<(i64, i64)>, key: i32, down: bool, flags: u64) -> Option<super::AuvResult<()>> {
+  KEY_TRANSITIONS.with_borrow_mut(|recorder| {
+    let recorder = recorder.as_mut()?;
+    recorder.calls.push((target, key, down, flags));
+    Some(Ok(()))
+  })
+}
+
+pub(crate) fn with_transition_recorder<T>(run: impl FnOnce() -> T) -> (T, KeyTransitionRecorder) {
+  struct Reset;
+  impl Drop for Reset {
+    fn drop(&mut self) {
+      KEY_TRANSITIONS.with_borrow_mut(|state| *state = None);
+    }
+  }
+  KEY_TRANSITIONS.with_borrow_mut(|state| {
+    assert!(state.is_none());
+    *state = Some(KeyTransitionRecorder::default());
+  });
+  let _reset = Reset;
+  let result = run();
+  let recorder = KEY_TRANSITIONS.with_borrow_mut(|state| state.take().unwrap());
+  (result, recorder)
+}

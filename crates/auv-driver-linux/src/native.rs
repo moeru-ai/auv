@@ -91,6 +91,10 @@ pub mod portal {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 
+    pub fn key_transition(&mut self, _keysym: i32, _down: bool) -> DriverResult<()> {
+      Err(DriverError::unsupported("linux.portal.input"))
+    }
+
     pub fn key_chord(&mut self, _modifiers: &[i32], _key: i32) -> DriverResult<()> {
       Err(DriverError::unsupported("linux.portal.input"))
     }

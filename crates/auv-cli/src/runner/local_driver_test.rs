@@ -663,6 +663,39 @@ async fn press_keys_rpc_uses_the_keyboard_repeat_validation_contract() {
 }
 
 #[tokio::test]
+async fn keyboard_hold_rpc_rejects_missing_deadline_before_delivery() {
+  let service = LocalInputService {
+    session: auv_driver::open_local().unwrap(),
+  };
+  let target = proto::InputTarget {
+    recipient: Some(proto::input_target::Recipient::Foreground(true)),
+  };
+  let down = service
+    .key_down(Request::new(proto::KeyDownRequest {
+      target: Some(target.clone()),
+      keys: vec!["shift".into()],
+      policy: proto::InputPolicy::ForegroundPreferred as i32,
+      timeout: None,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(down.code(), tonic::Code::InvalidArgument);
+  assert!(down.message().contains("timeout"));
+
+  let hold = service
+    .hold_keys(Request::new(proto::HoldKeysRequest {
+      target: Some(target),
+      keys: vec!["shift".into()],
+      policy: proto::InputPolicy::ForegroundPreferred as i32,
+      duration: None,
+    }))
+    .await
+    .unwrap_err();
+  assert_eq!(hold.code(), tonic::Code::InvalidArgument);
+  assert!(hold.message().contains("duration"));
+}
+
+#[tokio::test]
 async fn keyboard_rpc_reports_wire_validation_position_without_delivering_prefix() {
   use prost::Message;
   let service = LocalInputService {

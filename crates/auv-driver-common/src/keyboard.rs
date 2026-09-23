@@ -31,7 +31,8 @@ impl FromStr for Modifier {
 
 /// A portable modifier or a logical XKB symbol, never a native physical keycode.
 /// Parsing a symbol does not establish platform support or a keyboard-layout mapping.
-/// TODO: physical keycodes and persistent holds need a separate approved delivery contract.
+/// TODO(keyboard-physical-code): native physical keycodes remain deferred until
+/// an owner approves a portable identity contract; held keys use resolved names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
   Modifier(Modifier),

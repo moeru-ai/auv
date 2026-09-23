@@ -5,12 +5,46 @@ import { describe, expect, it } from 'vitest'
 
 import { CaptureWindowRequestSchema, CaptureWindowResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
 
 describe('runner Driver control surface', () => {
+  it('preserves a held chord and its opaque release ID across Runner calls', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          switch (call.method) {
+            case '/auv.api.driver.v1.InputService/KeyDown':
+              return toBinary(KeyDownResponseSchema, create(KeyDownResponseSchema, { holdId: 17n }))
+            case '/auv.api.driver.v1.InputService/KeyUp':
+              return toBinary(KeyUpResponseSchema, create(KeyUpResponseSchema))
+            case '/auv.api.driver.v1.InputService/HoldKeys':
+              return toBinary(HoldKeysResponseSchema, create(HoldKeysResponseSchema))
+            default: throw new Error(`unexpected method: ${call.method}`)
+          }
+        },
+      },
+    })
+    const input = createAuv(connection).runner({ runnerClass: 'auv.core.local' }).input
+    const target = { recipient: { case: 'foreground' as const, value: true } }
+    const { holdId } = await input.keyDown({ target, keys: ['shift', 'a'], timeout: { seconds: 5n } })
+    await input.keyUp({ holdId })
+    await input.holdKeys({ target, keys: ['space'], duration: { seconds: 1n } })
+    expect(fromBinary(KeyDownRequestSchema, calls[0]!.body).keys).toEqual(['shift', 'a'])
+    expect(fromBinary(KeyDownRequestSchema, calls[0]!.body).timeout?.seconds).toBe(5n)
+    expect(fromBinary(KeyUpRequestSchema, calls[1]!.body).holdId).toBe(17n)
+    expect(fromBinary(HoldKeysRequestSchema, calls[2]!.body).duration?.seconds).toBe(1n)
+    await connection.close()
+  })
+
   it('preserves click buttons and modifiers in both screen and window protobuf requests', async () => {
     const calls: UnaryCall[] = []
     const connection = await connect({

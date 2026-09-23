@@ -834,6 +834,15 @@ keys before releasing them in reverse order. Repetition repeats a complete
 press/release, with an explicit interval; it is distinct from holding a key
 or operating-system auto-repeat.
 
+A **keyboard hold** keeps one validated key combination down beyond its initial
+submission. A timed hold owns its down, wait, and reverse-order release in one
+operation. A cross-call hold returns an opaque hold ID; `KeyUp` releases the
+same native route by ID. Every cross-call hold has a required deadline, and
+Runner shutdown or request cancellation attempts cleanup. A failed release
+keeps the hold uncertain and available for explicit retry; a successful native
+post still does not verify an application effect. Only one combination is held
+per local driver process. See the [keyboard hold contract](ai/references/driver/2026-09-24-keyboard-hold-contract.md).
+
 `InputKeyboard` executes an ordered list of typed keyboard actions (press,
 Unicode text, or clipboard paste). `PressKey` and `PressKeys` are conveniences
 that use this interpreter. The released PressKey shortcut spelling remains a

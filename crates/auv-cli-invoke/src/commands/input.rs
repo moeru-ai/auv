@@ -10,6 +10,8 @@ const ROOT_STRUCTURED_ARTIFACT_JSON_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
 pub fn group() -> CommandGroup {
   // TODO(invoke-input-stubs): incomplete input commands stay intentionally
   // unregistered until owner-approved implementations have behavioral evidence.
+  // TODO(invoke-keyboard-hold): cross-call holds need a persistent invoke owner
+  // and release route; expose them here after that frontend lifecycle is defined.
   CommandGroup::new("input", "INPUT")
     .command(focus_text_input_invoke_command())
     .command(ax_focus_text_input_invoke_command())

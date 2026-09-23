@@ -1,0 +1,1324 @@
+{
+  "evidence_level": "live probe, not cross-version support or proof of improvement over baseline",
+  "observations": [
+    {
+      "platform": "macOS 26.3 (25D2125) arm64",
+      "chrome": "153.0.8010.53",
+      "window": "21802",
+      "frontmost_preserved": true,
+      "commands": [
+        {
+          "command_id": "input.typeText",
+          "result": {
+            "attempts": [
+              {
+                "message": "events posted to pid=4046, window=21802; control effect not verified",
+                "path": "window_targeted_keyboard",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "none",
+            "mouse_disturbance": "none",
+            "selected_path": "window_targeted_keyboard",
+            "verified": false
+          }
+        },
+        {
+          "command_id": "input.key",
+          "result": {
+            "attempts": [
+              {
+                "message": "events posted to pid=4046, window=21802; control effect not verified",
+                "path": "window_targeted_keyboard",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "none",
+            "mouse_disturbance": "none",
+            "selected_path": "window_targeted_keyboard",
+            "verified": false
+          }
+        }
+      ],
+      "receipt": {
+        "seq": 9,
+        "value": "A猫",
+        "focused": false,
+        "events": [
+          {
+            "type": "keydown",
+            "key": "A",
+            "code": "KeyA",
+            "shift": false,
+            "meta": false,
+            "trusted": true
+          },
+          {
+            "type": "beforeinput",
+            "data": "A",
+            "trusted": true
+          },
+          {
+            "type": "input",
+            "data": "A",
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "a",
+            "code": "KeyA",
+            "shift": false,
+            "meta": false,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "猫",
+            "code": "KeyA",
+            "shift": false,
+            "meta": false,
+            "trusted": true
+          },
+          {
+            "type": "beforeinput",
+            "data": "猫",
+            "trusted": true
+          },
+          {
+            "type": "input",
+            "data": "猫",
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "a",
+            "code": "KeyA",
+            "shift": false,
+            "meta": false,
+            "trusted": true
+          }
+        ]
+      }
+    },
+    {
+      "platform": "macOS 26.3 (25D2125) arm64",
+      "chrome": "153.0.8010.53",
+      "window": "21820",
+      "frontmost_preserved": true,
+      "commands": [
+        {
+          "command_id": "input.typeText",
+          "result": {
+            "attempts": [
+              {
+                "message": "events posted to pid=6764, window=21820; control effect not verified",
+                "path": "window_targeted_keyboard",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "none",
+            "mouse_disturbance": "none",
+            "selected_path": "window_targeted_keyboard",
+            "verified": false
+          }
+        },
+        {
+          "command_id": "input.key",
+          "result": {
+            "attempts": [
+              {
+                "message": "events posted to pid=6764, window=21820; control effect not verified",
+                "path": "window_targeted_keyboard",
+                "succeeded": true
+              }
+            ],
+            "clipboard_disturbance": "none",
+            "focus_disturbance": "none",
+            "mouse_disturbance": "none",
+            "selected_path": "window_targeted_keyboard",
+            "verified": false
+          }
+        }
+      ],
+      "stages": [
+        {
+          "mode": "public",
+          "kind": "key",
+          "delay_seconds": 0.0,
+          "window_fields_stamped": true,
+          "value_before": "A猫B",
+          "value_after": "A猫B",
+          "cumulative_events": [
+            {
+              "type": "keydown",
+              "key": "A",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "猫",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            }
+          ]
+        },
+        {
+          "mode": "auth",
+          "kind": "key",
+          "delay_seconds": 0.0,
+          "window_fields_stamped": true,
+          "value_before": "A猫B",
+          "value_after": "A猫B",
+          "cumulative_events": [
+            {
+              "type": "keydown",
+              "key": "A",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "猫",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            }
+          ]
+        },
+        {
+          "mode": "auth",
+          "kind": "key",
+          "delay_seconds": 0.008,
+          "window_fields_stamped": false,
+          "value_before": "A猫B",
+          "value_after": "A猫Bb",
+          "cumulative_events": [
+            {
+              "type": "keydown",
+              "key": "A",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "猫",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            }
+          ]
+        },
+        {
+          "mode": "auth",
+          "kind": "chord",
+          "delay_seconds": 0.008,
+          "window_fields_stamped": true,
+          "value_before": "A猫Bb",
+          "value_after": "A猫BbB",
+          "cumulative_events": [
+            {
+              "type": "keydown",
+              "key": "A",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "猫",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            }
+          ]
+        },
+        {
+          "mode": "public",
+          "kind": "chord",
+          "delay_seconds": 0.008,
+          "window_fields_stamped": true,
+          "value_before": "A猫BbB",
+          "value_after": "A猫BbBB",
+          "cumulative_events": [
+            {
+              "type": "keydown",
+              "key": "A",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "猫",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            }
+          ]
+        },
+        {
+          "mode": "public",
+          "kind": "unicode",
+          "delay_seconds": 0.008,
+          "window_fields_stamped": true,
+          "value_before": "A猫BbBB",
+          "value_after": "A猫BbBBX",
+          "cumulative_events": [
+            {
+              "type": "keydown",
+              "key": "A",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "猫",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "X",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "X",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "X",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            }
+          ]
+        },
+        {
+          "mode": "auth",
+          "kind": "unicode",
+          "delay_seconds": 0.008,
+          "window_fields_stamped": true,
+          "value_before": "A猫BbBBX",
+          "value_after": "A猫BbBBXX",
+          "cumulative_events": [
+            {
+              "type": "keydown",
+              "key": "A",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "A",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "猫",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "猫",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "a",
+              "code": "KeyA",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "b",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "B",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "B",
+              "code": "KeyB",
+              "shift": true,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "Shift",
+              "code": "ShiftLeft",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "X",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "X",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "X",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "keydown",
+              "key": "X",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            },
+            {
+              "type": "beforeinput",
+              "data": "X",
+              "trusted": true
+            },
+            {
+              "type": "input",
+              "data": "X",
+              "trusted": true
+            },
+            {
+              "type": "keyup",
+              "key": "b",
+              "code": "KeyB",
+              "shift": false,
+              "meta": false,
+              "trusted": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

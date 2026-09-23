@@ -516,6 +516,30 @@ impl InputApi<'_> {
     press_key(options)
   }
 
+  pub fn key_down(
+    &self,
+    target: &auv_driver_common::InputTarget,
+    keys: Vec<String>,
+    policy: InputPolicy,
+    timeout: std::time::Duration,
+  ) -> DriverResult<auv_driver_common::KeyboardHold> {
+    crate::input::key_down(target, keys, policy, timeout)
+  }
+
+  pub fn key_up(&self, hold: auv_driver_common::KeyboardHoldId) -> DriverResult<InputActionResult> {
+    crate::input::key_up(hold)
+  }
+
+  pub fn hold_keys(
+    &self,
+    target: &auv_driver_common::InputTarget,
+    keys: Vec<String>,
+    policy: InputPolicy,
+    duration: std::time::Duration,
+  ) -> DriverResult<InputActionResult> {
+    crate::input::hold_keys(target, keys, policy, duration)
+  }
+
   /// Issues the system copy shortcut (Ctrl+C) against the foreground target.
   pub fn copy(&self) -> DriverResult<()> {
     let _ = self.session;

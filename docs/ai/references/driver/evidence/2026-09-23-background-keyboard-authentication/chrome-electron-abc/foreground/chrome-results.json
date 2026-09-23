@@ -1,0 +1,2442 @@
+[
+  {
+    "case": "unicode_bmp",
+    "repetition": 1,
+    "expected": "A猫",
+    "commands": [
+      [
+        "input.typeText",
+        "A猫"
+      ]
+    ],
+    "started_ms": 1790128769947,
+    "receipt": {
+      "caseId": "unicode_bmp-1",
+      "sequence": 11,
+      "value": "A猫",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "A",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "A",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "A",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "猫",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "猫",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "猫",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-4bfc-7687-b978-b81ae5d522f3",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128771064
+  },
+  {
+    "case": "unicode_emoji",
+    "repetition": 1,
+    "expected": "😀",
+    "commands": [
+      [
+        "input.typeText",
+        "😀"
+      ]
+    ],
+    "started_ms": 1790128771064,
+    "receipt": {
+      "caseId": "unicode_emoji-1",
+      "sequence": 16,
+      "value": "😀",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "😀",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "😀",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "😀",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-5065-73ec-b0ee-d897944b7386",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128772174
+  },
+  {
+    "case": "plain_key",
+    "repetition": 1,
+    "expected": "b",
+    "commands": [
+      [
+        "input.keys",
+        "b"
+      ]
+    ],
+    "started_ms": 1790128772175,
+    "receipt": {
+      "caseId": "plain_key-1",
+      "sequence": 21,
+      "value": "b",
+      "selection": [
+        1,
+        1
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "b",
+          "code": "KeyB",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "b",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "b",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "b",
+          "code": "KeyB",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-54bc-7444-a720-dd424a2ac6c3",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128773296
+  },
+  {
+    "case": "shift_key",
+    "repetition": 1,
+    "expected": "B",
+    "commands": [
+      [
+        "input.keys",
+        "shift",
+        "b"
+      ]
+    ],
+    "started_ms": 1790128773297,
+    "receipt": {
+      "caseId": "shift_key-1",
+      "sequence": 27,
+      "value": "B",
+      "selection": [
+        1,
+        1
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "Shift",
+          "code": "ShiftLeft",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-595a-77c0-8d24-3e6148699f45",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128774473
+  },
+  {
+    "case": "repeat_key",
+    "repetition": 1,
+    "expected": "xxx",
+    "commands": [
+      [
+        "input.keys",
+        "x",
+        "--count",
+        "3",
+        "--interval-ms",
+        "50"
+      ]
+    ],
+    "started_ms": 1790128774474,
+    "receipt": {
+      "caseId": "repeat_key-1",
+      "sequence": 40,
+      "value": "xxx",
+      "selection": [
+        3,
+        3
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-5db5-75a9-bd8d-5319dc708836",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            },
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            },
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128775979
+  },
+  {
+    "case": "select_all_replace",
+    "repetition": 1,
+    "expected": "Z",
+    "commands": [
+      [
+        "input.keys",
+        "cmd",
+        "a"
+      ],
+      [
+        "input.typeText",
+        "Z"
+      ]
+    ],
+    "started_ms": 1790128775980,
+    "receipt": {
+      "caseId": "select_all_replace-1",
+      "sequence": 48,
+      "value": "Z",
+      "selection": [
+        1,
+        1
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "Meta",
+          "code": "MetaLeft",
+          "shift": false,
+          "meta": true,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": true,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": true,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "Z",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "Z",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "Z",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-639c-773d-8ae9-a8ce79e2e227",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      },
+      {
+        "run_id": "01a0cbfd-646c-73da-9d5a-e96419ae3622",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128777305
+  },
+  {
+    "case": "arrow_left",
+    "repetition": 1,
+    "expected": "aXb",
+    "commands": [
+      [
+        "input.keys",
+        "left"
+      ],
+      [
+        "input.typeText",
+        "X"
+      ]
+    ],
+    "started_ms": 1790128777306,
+    "receipt": {
+      "caseId": "arrow_left-1",
+      "sequence": 55,
+      "value": "aXb",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "ArrowLeft",
+          "code": "ArrowLeft",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "ArrowLeft",
+          "code": "ArrowLeft",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "X",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "X",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "X",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-6900-7433-ba2e-d3b5e907488e",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      },
+      {
+        "run_id": "01a0cbfd-69cd-7049-89a4-e715a7c0e203",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128778677
+  },
+  {
+    "case": "return",
+    "repetition": 1,
+    "expected": "ab\n",
+    "commands": [
+      [
+        "input.keys",
+        "return"
+      ]
+    ],
+    "started_ms": 1790128778677,
+    "receipt": {
+      "caseId": "return-1",
+      "sequence": 60,
+      "value": "ab\n",
+      "selection": [
+        3,
+        3
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "Enter",
+          "code": "Enter",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": null,
+          "inputType": "insertLineBreak",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": null,
+          "inputType": "insertLineBreak",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "Enter",
+          "code": "Enter",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-6e1f-7164-8c1f-50aaaa9424e2",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128779798
+  },
+  {
+    "case": "modifier_release",
+    "repetition": 1,
+    "expected": "Bc",
+    "commands": [
+      [
+        "input.keys",
+        "shift",
+        "b"
+      ],
+      [
+        "input.keys",
+        "c"
+      ]
+    ],
+    "started_ms": 1790128779799,
+    "receipt": {
+      "caseId": "modifier_release-1",
+      "sequence": 70,
+      "value": "Bc",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "Shift",
+          "code": "ShiftLeft",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "c",
+          "code": "KeyC",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "c",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "c",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "c",
+          "code": "KeyC",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-72b1-7300-9926-14deea0d6a70",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      },
+      {
+        "run_id": "01a0cbfd-737f-7296-a2de-fc97e67d264f",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128781163
+  },
+  {
+    "case": "unicode_bmp",
+    "repetition": 2,
+    "expected": "A猫",
+    "commands": [
+      [
+        "input.typeText",
+        "A猫"
+      ]
+    ],
+    "started_ms": 1790128781164,
+    "receipt": {
+      "caseId": "unicode_bmp-2",
+      "sequence": 79,
+      "value": "A猫",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "A",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "A",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "A",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "猫",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "猫",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "猫",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-77db-702e-826e-389ed82d0eee",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128782286
+  },
+  {
+    "case": "unicode_emoji",
+    "repetition": 2,
+    "expected": "😀",
+    "commands": [
+      [
+        "input.typeText",
+        "😀"
+      ]
+    ],
+    "started_ms": 1790128782286,
+    "receipt": {
+      "caseId": "unicode_emoji-2",
+      "sequence": 80,
+      "value": "",
+      "selection": [
+        0,
+        0
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": []
+    },
+    "checks": {
+      "text": false,
+      "input_count": false,
+      "key_pairs": false,
+      "focus": true,
+      "trusted_events": false,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-7c69-75cd-82e1-958195399323",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": false,
+    "finished_ms": 1790128783443
+  },
+  {
+    "case": "plain_key",
+    "repetition": 2,
+    "expected": "b",
+    "commands": [
+      [
+        "input.keys",
+        "b"
+      ]
+    ],
+    "started_ms": 1790128783444,
+    "receipt": {
+      "caseId": "plain_key-2",
+      "sequence": 85,
+      "value": "b",
+      "selection": [
+        1,
+        1
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "b",
+          "code": "KeyB",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "b",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "b",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "b",
+          "code": "KeyB",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-80bf-70a2-af21-db241c80c64a",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128784566
+  },
+  {
+    "case": "shift_key",
+    "repetition": 2,
+    "expected": "B",
+    "commands": [
+      [
+        "input.keys",
+        "shift",
+        "b"
+      ]
+    ],
+    "started_ms": 1790128784567,
+    "receipt": {
+      "caseId": "shift_key-2",
+      "sequence": 91,
+      "value": "B",
+      "selection": [
+        1,
+        1
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "Shift",
+          "code": "ShiftLeft",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-8523-76f7-b7a4-d2667ea98a7e",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128785682
+  },
+  {
+    "case": "repeat_key",
+    "repetition": 2,
+    "expected": "xxx",
+    "commands": [
+      [
+        "input.keys",
+        "x",
+        "--count",
+        "3",
+        "--interval-ms",
+        "50"
+      ]
+    ],
+    "started_ms": 1790128785682,
+    "receipt": {
+      "caseId": "repeat_key-2",
+      "sequence": 104,
+      "value": "xxx",
+      "selection": [
+        3,
+        3
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "x",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "x",
+          "code": "KeyX",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-89b1-7423-bfc6-5f38c310cffb",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            },
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            },
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128787227
+  },
+  {
+    "case": "select_all_replace",
+    "repetition": 2,
+    "expected": "Z",
+    "commands": [
+      [
+        "input.keys",
+        "cmd",
+        "a"
+      ],
+      [
+        "input.typeText",
+        "Z"
+      ]
+    ],
+    "started_ms": 1790128787228,
+    "receipt": {
+      "caseId": "select_all_replace-2",
+      "sequence": 112,
+      "value": "Z",
+      "selection": [
+        1,
+        1
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "Meta",
+          "code": "MetaLeft",
+          "shift": false,
+          "meta": true,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": true,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": true,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "Z",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "Z",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "Z",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-8fb5-711c-8967-5a648abd5b29",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      },
+      {
+        "run_id": "01a0cbfd-907e-74d5-8cb7-52a633d0ebdb",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128788575
+  },
+  {
+    "case": "arrow_left",
+    "repetition": 2,
+    "expected": "aXb",
+    "commands": [
+      [
+        "input.keys",
+        "left"
+      ],
+      [
+        "input.typeText",
+        "X"
+      ]
+    ],
+    "started_ms": 1790128788576,
+    "receipt": {
+      "caseId": "arrow_left-2",
+      "sequence": 119,
+      "value": "aXb",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "ArrowLeft",
+          "code": "ArrowLeft",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "ArrowLeft",
+          "code": "ArrowLeft",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "X",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "X",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "X",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "a",
+          "code": "KeyA",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-94cd-7179-a9f6-c3d50eeb4309",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      },
+      {
+        "run_id": "01a0cbfd-959f-7559-a7e3-16918a4737bf",
+        "status": "completed",
+        "command_id": "input.typeText",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128789913
+  },
+  {
+    "case": "return",
+    "repetition": 2,
+    "expected": "ab\n",
+    "commands": [
+      [
+        "input.keys",
+        "return"
+      ]
+    ],
+    "started_ms": 1790128789914,
+    "receipt": {
+      "caseId": "return-2",
+      "sequence": 120,
+      "value": "ab",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": []
+    },
+    "checks": {
+      "text": false,
+      "input_count": false,
+      "key_pairs": false,
+      "focus": true,
+      "trusted_events": false,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-9a35-7500-b3c3-1bce5c86deb4",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": false,
+    "finished_ms": 1790128791074
+  },
+  {
+    "case": "modifier_release",
+    "repetition": 2,
+    "expected": "Bc",
+    "commands": [
+      [
+        "input.keys",
+        "shift",
+        "b"
+      ],
+      [
+        "input.keys",
+        "c"
+      ]
+    ],
+    "started_ms": 1790128791075,
+    "receipt": {
+      "caseId": "modifier_release-2",
+      "sequence": 130,
+      "value": "Bc",
+      "selection": [
+        2,
+        2
+      ],
+      "documentFocused": true,
+      "inputSelected": true,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+      "events": [
+        {
+          "type": "keydown",
+          "key": "Shift",
+          "code": "ShiftLeft",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "B",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "B",
+          "code": "KeyB",
+          "shift": true,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keydown",
+          "key": "c",
+          "code": "KeyC",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "beforeinput",
+          "data": "c",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "input",
+          "data": "c",
+          "inputType": "insertText",
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        },
+        {
+          "type": "keyup",
+          "key": "c",
+          "code": "KeyC",
+          "shift": false,
+          "meta": false,
+          "control": false,
+          "alt": false,
+          "repeat": false,
+          "composing": false,
+          "trusted": true,
+          "documentFocused": true
+        }
+      ]
+    },
+    "checks": {
+      "text": true,
+      "input_count": true,
+      "key_pairs": true,
+      "focus": true,
+      "trusted_events": true,
+      "submission_unverified": true
+    },
+    "driver_results": [
+      {
+        "run_id": "01a0cbfd-9e8e-752e-b5da-64b79bd3dfa3",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      },
+      {
+        "run_id": "01a0cbfd-9f58-7393-8d69-dcbe9b4f530e",
+        "status": "completed",
+        "command_id": "input.keys",
+        "result": {
+          "attempts": [
+            {
+              "message": "events posted to pid=38540, window=22169; control effect not verified",
+              "path": "window_targeted_keyboard",
+              "succeeded": true
+            }
+          ],
+          "clipboard_disturbance": "none",
+          "focus_disturbance": "foreground",
+          "mouse_disturbance": "none",
+          "selected_path": "window_targeted_keyboard",
+          "verified": false
+        }
+      }
+    ],
+    "foreground_before": 38540,
+    "foreground_after": 38540,
+    "input_source": "com.apple.keylayout.ABC",
+    "passed": true,
+    "finished_ms": 1790128792388
+  }
+]

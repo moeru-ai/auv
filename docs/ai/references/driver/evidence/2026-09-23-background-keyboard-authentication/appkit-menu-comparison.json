@@ -1,0 +1,219 @@
+{
+  "evidence_level": "live negative probe; both transports fail selection in this fixture",
+  "observations": [
+    {
+      "transport": "public",
+      "initial_text": "ABC",
+      "actions": [
+        "Command+A",
+        "type Z"
+      ],
+      "text_after": "ABCZ",
+      "events": [
+        {
+          "characters": "A",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 10,
+          "flags": 0
+        },
+        {
+          "characters": "a",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 11,
+          "flags": 0
+        },
+        {
+          "characters": "B",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 10,
+          "flags": 0
+        },
+        {
+          "characters": "a",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 11,
+          "flags": 0
+        },
+        {
+          "characters": "C",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 10,
+          "flags": 0
+        },
+        {
+          "characters": "a",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 11,
+          "flags": 0
+        },
+        {
+          "characters": "",
+          "window": 21841,
+          "key": 55,
+          "active": false,
+          "type": 12,
+          "flags": 1048576
+        },
+        {
+          "characters": "a",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 10,
+          "flags": 1048576
+        },
+        {
+          "characters": "a",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 11,
+          "flags": 1048576
+        },
+        {
+          "characters": "",
+          "window": 21841,
+          "key": 55,
+          "active": false,
+          "type": 12,
+          "flags": 0
+        },
+        {
+          "characters": "Z",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 10,
+          "flags": 0
+        },
+        {
+          "characters": "a",
+          "window": 21841,
+          "key": 0,
+          "active": false,
+          "type": 11,
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "transport": "authenticated",
+      "initial_text": "ABC",
+      "actions": [
+        "Command+A",
+        "type Z"
+      ],
+      "text_after": "ABCZ",
+      "events": [
+        {
+          "flags": 0,
+          "characters": "A",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 10
+        },
+        {
+          "flags": 0,
+          "characters": "a",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 11
+        },
+        {
+          "flags": 0,
+          "characters": "B",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 10
+        },
+        {
+          "flags": 0,
+          "characters": "a",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 11
+        },
+        {
+          "flags": 0,
+          "characters": "C",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 10
+        },
+        {
+          "flags": 0,
+          "characters": "a",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 11
+        },
+        {
+          "flags": 1048576,
+          "characters": "",
+          "active": false,
+          "key": 55,
+          "window": 21850,
+          "type": 12
+        },
+        {
+          "flags": 1048576,
+          "characters": "a",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 10
+        },
+        {
+          "flags": 1048576,
+          "characters": "a",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 11
+        },
+        {
+          "flags": 0,
+          "characters": "",
+          "active": false,
+          "key": 55,
+          "window": 21850,
+          "type": 12
+        },
+        {
+          "flags": 0,
+          "characters": "Z",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 10
+        },
+        {
+          "flags": 0,
+          "characters": "a",
+          "active": false,
+          "key": 0,
+          "window": 21850,
+          "type": 11
+        }
+      ]
+    }
+  ]
+}

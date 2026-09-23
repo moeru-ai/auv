@@ -2,7 +2,7 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **45**
+Count: **48**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -55,8 +55,11 @@ Count: **45**
 
 - [`2026-09-18-held-input-design.md`](2026-09-18-held-input-design.md): Held mouse input contract: shared logical mouse state, ordered admission, cleanup, three-platform adapters, and validation boundaries.
 - [`2026-09-23-held-input-native-validation.md`](2026-09-23-held-input-native-validation.md): BG-1 Windows background/RDP and Linux uinput receipts, Portal protocol validation, reproducible tests, and remaining live evidence gaps.
+- [`2026-09-24-keyboard-hold-contract.md`](2026-09-24-keyboard-hold-contract.md): Timed and cross-call keyboard holds, Chrome/Electron release receipts, and the held-modifier composition regression and fix.
 - [`2026-09-18-held-input-project-research.md`](2026-09-18-held-input-project-research.md): Pinned-source comparison of held-input APIs, cleanup lifecycles, and independent observation.
 - [`2026-09-19-positional-targets.md`](2026-09-19-positional-targets.md): Window-bound positional targets, NetEase migration, and live validation evidence.
+- [`2026-09-23-background-delivery-project-comparison.md`](2026-09-23-background-delivery-project-comparison.md): BG-2 source comparison of CUA, KWWK, locally bundled OpenAI Sky, and MaaFramework; transport selection, click counts, and evidence limits.
+- [`2026-09-23-background-keyboard-authentication.md`](2026-09-23-background-keyboard-authentication.md): Authenticated macOS keyboard submission, guarded public fallback, native contract tests, and AppKit/Chrome/Electron receiver evidence, including failing compatibility cases.
 
 ## Related
 
