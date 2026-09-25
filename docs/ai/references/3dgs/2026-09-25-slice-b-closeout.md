@@ -87,9 +87,11 @@ PSNR 随步数单调下降。没有证据支持"3DGS 可作为空间记忆模块
 
 ## 产物位置清单
 
-- 真实 M2 会话：`F:/auv/.tmp/m2-session`（2026-09-12）
-- Train-view 训练输出：`F:/auv/.tmp/sliceb-training`（splat_*.ply + eval_*/）
-- Holdout 训练输出：`F:/auv/.tmp/sliceb-holdout-training`（holdout_*.ply + eval_*/）
-- Holdout package：`F:/auv/.tmp/sliceb-holdout`（2 训练 + 1 val）
-- 原始 3 视角训练包：`F:/auv/.tmp/m4-session/training-package`
+本地持久化产物（均在 `.tmp/` 下，未提交大文件至版本库）：
+
+- 真实 M2 会话：`F:/auv/.tmp/m2-session`（2026-09-12 真实会话，1.28 MB / 1,337,958 字节，20 文件）
+- Train-view 训练输出：`F:/auv/.tmp/sliceb-training`（splat_*.ply + eval_*/，5.95 MB / 6,239,578 字节，27 文件）
+- Holdout 训练输出：`F:/auv/.tmp/sliceb-holdout-training`（holdout_*.ply + eval_*/，3.59 MB / 3,769,512 字节，17 文件）
+- Holdout package：`F:/auv/.tmp/sliceb-holdout`（2 训练 + 1 val，1.19 MB / 1,248,887 字节，8 文件）
+- 原始 3 视角训练包：`F:/auv/.tmp/m4-session/training-package`（2.40 MB / 2,521,147 字节，18 文件）
 - 远端：`origin/3dgs-research`（含 M2 replay 测试、诚实测量工具）
