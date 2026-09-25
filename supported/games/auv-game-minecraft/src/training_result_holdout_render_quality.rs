@@ -30,7 +30,7 @@ const HOLDOUT_RENDER_QUALITY_MANIFEST_FILE: &str = "minecraft-3dgs-holdout-rende
 const HOLDOUT_RENDER_QUALITY_INSPECT_FILE: &str = "minecraft-3dgs-holdout-render-quality-inspect.json";
 
 const METRIC_PARTIAL_KNOWN_LIMIT: &str = "MC-17 does not resize, crop, or auto-align mismatched holdout images in D1";
-const SSIM_DEFERRED_KNOWN_LIMIT: &str = "MC-17 D1 defers SSIM computation";
+const SSIM_METHOD_KNOWN_LIMIT: &str = "MC-17 D1 SSIM is a pure-Rust 8x8 box-window mean over the three RGB channels with C1=(0.01*255)^2 and C2=(0.03*255)^2 (no Gaussian weighting, no new dependency); images smaller than 8x8 are scored as a single window at their actual size";
 const PERFECT_MATCH_PSNR_KNOWN_LIMIT: &str = "MC-17 omits PSNR when MSE is zero (identical RGB8 pixels)";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -286,7 +286,7 @@ pub fn measure_3dgs_holdout_render_quality(
   let mut known_limits = BTreeSet::new();
   known_limits.insert(MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT.to_string());
   known_limits.insert(METRIC_PARTIAL_KNOWN_LIMIT.to_string());
-  known_limits.insert(SSIM_DEFERRED_KNOWN_LIMIT.to_string());
+  known_limits.insert(SSIM_METHOD_KNOWN_LIMIT.to_string());
 
   let holdout_preview_manifest =
     read_json_file::<TrainingResultHoldoutPreviewManifest>(&inputs.holdout_preview_manifest_path, "MC-16 holdout preview manifest").ok();
@@ -540,7 +540,7 @@ fn finish_output(
     l1_mean_available: metrics.as_ref().and_then(|value| value.l1_mean).is_some(),
     mse_available: metrics.as_ref().and_then(|value| value.mse).is_some(),
     psnr_available: metrics.as_ref().and_then(|value| value.psnr).is_some(),
-    ssim_available: false,
+    ssim_available: metrics.as_ref().and_then(|value| value.ssim).is_some(),
     metrics,
     status: outcome.status,
     reason: outcome.reason,
@@ -831,8 +831,80 @@ fn compute_rgb8_metrics(source: &RgbImage, rendered: &RgbImage) -> HoldoutRender
     l1_mean: Some(l1_mean),
     mse: Some(mse),
     psnr,
-    ssim: None,
+    ssim: Some(compute_ssim(source, rendered)),
   }
+}
+
+// 8x8 box-window SSIM over RGB8 images, pure Rust (no new dependency).
+// Each non-overlapping window is scored per RGB channel with the standard
+// SSIM formula and the C1/C2 stability constants for 8-bit pixels; the image
+// score is the mean over all windows and channels. Edge windows use the
+// remaining pixels, and images smaller than 8x8 are scored as a single window,
+// so small fixtures still produce a defined value.
+const SSIM_WINDOW_SIZE: u32 = 8;
+const SSIM_C1: f64 = 6.5025; // (0.01 * 255)^2
+const SSIM_C2: f64 = 58.5225; // (0.03 * 255)^2
+
+fn compute_ssim(source: &RgbImage, rendered: &RgbImage) -> f64 {
+  debug_assert_eq!((source.width(), source.height()), (rendered.width(), rendered.height()));
+
+  let mut window_sum = 0.0_f64;
+  let mut window_count = 0_u64;
+
+  let mut top = 0;
+  while top < source.height() {
+    let mut left = 0;
+    while left < source.width() {
+      let window_width = (source.width() - left).min(SSIM_WINDOW_SIZE);
+      let window_height = (source.height() - top).min(SSIM_WINDOW_SIZE);
+      window_sum += ssim_box_window(source, rendered, left, top, window_width, window_height);
+      window_count += 1;
+      left += SSIM_WINDOW_SIZE;
+    }
+    top += SSIM_WINDOW_SIZE;
+  }
+
+  window_sum / window_count as f64
+}
+
+fn ssim_box_window(source: &RgbImage, rendered: &RgbImage, left: u32, top: u32, width: u32, height: u32) -> f64 {
+  let pixel_count = f64::from(width) * f64::from(height);
+  let mut channel_sum = 0.0_f64;
+
+  for channel in 0..3_usize {
+    let mut sum_source = 0.0_f64;
+    let mut sum_rendered = 0.0_f64;
+    let mut sum_source_sq = 0.0_f64;
+    let mut sum_rendered_sq = 0.0_f64;
+    let mut sum_cross = 0.0_f64;
+
+    for dy in 0..height {
+      for dx in 0..width {
+        let source_value = f64::from(source.get_pixel(left + dx, top + dy).0[channel]);
+        let rendered_value = f64::from(rendered.get_pixel(left + dx, top + dy).0[channel]);
+        sum_source += source_value;
+        sum_rendered += rendered_value;
+        sum_source_sq += source_value * source_value;
+        sum_rendered_sq += rendered_value * rendered_value;
+        sum_cross += source_value * rendered_value;
+      }
+    }
+
+    let mean_source = sum_source / pixel_count;
+    let mean_rendered = sum_rendered / pixel_count;
+    // Population variance/covariance (divided by N); the N vs N-1 choice
+    // cancels in the SSIM ratio, so the biased form is fine here.
+    let variance_source = sum_source_sq / pixel_count - mean_source * mean_source;
+    let variance_rendered = sum_rendered_sq / pixel_count - mean_rendered * mean_rendered;
+    let covariance = sum_cross / pixel_count - mean_source * mean_rendered;
+
+    let numerator = (2.0 * mean_source * mean_rendered + SSIM_C1) * (2.0 * covariance + SSIM_C2);
+    let denominator = (mean_source * mean_source + mean_rendered * mean_rendered + SSIM_C1)
+      * (variance_source + variance_rendered + SSIM_C2);
+    channel_sum += numerator / denominator;
+  }
+
+  channel_sum / 3.0
 }
 
 fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingResultHoldoutRenderQualityResult<T> {
@@ -1225,9 +1297,27 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     assert_eq!(metrics.l1_mean, Some(0.0));
     assert_eq!(metrics.mse, Some(0.0));
     assert!(metrics.psnr.is_none());
-    assert!(metrics.ssim.is_none());
+    // COPY_RENDER_COMMAND renders the holdout screenshot onto itself, so the
+    // identical 4x4 fixture images must score SSIM 1.0 (single box window).
+    assert!((metrics.ssim.expect("ssim") - 1.0).abs() < 1e-9);
     assert!(output.inspect_report.l1_mean_available);
-    assert!(!output.inspect_report.ssim_available);
+    assert!(output.inspect_report.ssim_available);
+  }
+
+  #[test]
+  fn ssim_identical_images_scores_one() {
+    let image: RgbImage = ImageBuffer::from_fn(20, 12, |x, y| Rgb([(x * 13) as u8, (y * 17) as u8, 200]));
+    let ssim = compute_ssim(&image, &image);
+    assert!((ssim - 1.0).abs() < 1e-9, "identical images must score SSIM 1.0, got {ssim}");
+  }
+
+  #[test]
+  fn ssim_clearly_different_images_scores_below_one() {
+    let dark: RgbImage = ImageBuffer::from_fn(20, 12, |_x, _y| Rgb([10, 10, 10]));
+    let bright: RgbImage = ImageBuffer::from_fn(20, 12, |_x, _y| Rgb([240, 240, 240]));
+    let ssim = compute_ssim(&dark, &bright);
+    assert!(ssim < 1.0, "clearly different images must score SSIM below 1.0, got {ssim}");
+    assert!(ssim > 0.0, "constant dark vs bright SSIM should stay positive, got {ssim}");
   }
 
   #[test]

@@ -540,6 +540,10 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      // NOTICE(observer-viewpoint): this direct backend test has no caller
+      // viewpoint available; None keeps the historical raycast-hit frame
+      // pose fallback path.
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: true,
       use_closed_scene_toy_provider: false,
@@ -574,6 +578,10 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      // NOTICE(observer-viewpoint): this direct backend test has no caller
+      // viewpoint available; None keeps the historical raycast-hit frame
+      // pose fallback path.
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: true,
       use_closed_scene_toy_provider: false,
@@ -610,6 +618,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: true,
       use_closed_scene_toy_provider: false,
@@ -639,6 +648,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,

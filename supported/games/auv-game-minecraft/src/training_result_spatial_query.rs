@@ -25,7 +25,8 @@ use crate::training_result_spatial_query_provider::{
   run_checkpoint_native_provider_backend, run_closed_scene_toy_provider_backend,
 };
 use crate::types::{
-  BlockFace, BlockPosition, MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility, mc6_projection_target_for_frame,
+  BlockFace, BlockPosition, MinecraftSpatialFrame, MinecraftTargetSemantics, PlayerPose, ProjectionVisibility,
+  mc6_projection_target_for_frame,
 };
 
 pub type TrainingResultSpatialQueryResult<T> = Result<T, String>;
@@ -36,12 +37,21 @@ pub const TRAINING_RESULT_SPATIAL_QUERY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
 const QUERY_MANIFEST_FILE: &str = "minecraft-3dgs-training-result-query.json";
 const QUERY_INSPECT_FILE: &str = "minecraft-3dgs-training-result-query-inspect.json";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+// NOTICE(observer-viewpoint-eq): Eq was removed from this derive list because the new
+// observer_viewpoint field holds PlayerPose (f64 eye_position/yaw/pitch), and f64 does
+// not implement Eq. PartialEq is kept for the existing assert_eq! tests; no code in the
+// workspace required Eq (checked 2026-09-25). Only re-add Eq if PlayerPose ever becomes Eq.
+#[derive(Clone, Debug, PartialEq)]
 pub struct TrainingResultSpatialQueryInputs {
   pub training_result_semantic_manifest_path: PathBuf,
   pub target_block: BlockPosition,
   pub target_face: Option<BlockFace>,
   pub target_semantics: MinecraftTargetSemantics,
+  // Explicit caller-supplied observer viewpoint for the reference projection. When Some,
+  // it takes precedence over the historical implicit derivation (newest scene-packet
+  // frame whose crosshair raycast hit the target block). When None, behavior is
+  // unchanged (raycast-hit frame pose fallback).
+  pub observer_viewpoint: Option<PlayerPose>,
   pub query_command: Option<String>,
   pub use_checkpoint_native_provider: bool,
   pub use_closed_scene_toy_provider: bool,
@@ -324,6 +334,20 @@ pub fn query_3dgs_training_result(
     .insert("projection_reference is a scene-packet fallback reference backend, not a checkpoint-native Gaussian query core".to_string());
   known_limits
     .insert("MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption".to_string());
+  // Honest observer-viewpoint provenance: the contract now accepts an explicit
+  // observer_viewpoint, but callers may still omit it. Record which path this
+  // query took so a future reader can tell explicit re-posing apart from the
+  // historical raycast-hit frame pose fallback.
+  if inputs.observer_viewpoint.is_some() {
+    known_limits.insert(
+      "MC-12 observer viewpoint is caller-supplied (observer_viewpoint); reference projection re-poses the selected basis frame's player_pose. The explicit pose feeds HitFaceCenter aim-point estimation (estimate_raycast_hit_point) and the MC-2 telemetry-v0 rotation-only view-matrix compat path; full-matrix frames otherwise project from view_matrix/projection_matrix alone"
+        .to_string(),
+    );
+  } else {
+    known_limits.insert(
+      "MC-12 observer viewpoint falls back to the raycast-hit scene-packet frame pose; no explicit observer_viewpoint was supplied".to_string(),
+    );
+  }
   if inputs.use_checkpoint_native_provider {
     known_limits.insert(MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT.to_string());
   }
@@ -650,7 +674,7 @@ pub(crate) fn run_projection_reference_backend(
   scene_packet_dir: &Path,
   inputs: &TrainingResultSpatialQueryInputs,
 ) -> TrainingResultSpatialQueryResult<BackendOutcome> {
-  let Some((frame_record, frame)) = select_reference_frame(scene_packet_manifest, scene_packet_dir, inputs.target_block) else {
+  let Some((frame_record, mut frame)) = select_reference_frame(scene_packet_manifest, scene_packet_dir, inputs.target_block) else {
     return Ok(BackendOutcome {
       answer: TrainingResultSpatialQueryAnswer {
         status: TrainingResultSpatialQueryStatus::Failed,
@@ -673,6 +697,16 @@ pub(crate) fn run_projection_reference_backend(
   let frame_json_path = scene_packet_dir.join(&frame_record.frame_json_path);
   if !frame_json_path.is_file() {
     return Err(format!("MC-12 selected scene packet frame JSON is missing at {}", frame_json_path.display()));
+  }
+
+  // Observer viewpoint resolution. Historically the viewpoint is implicit: the selected
+  // frame is the newest scene-packet frame whose crosshair raycast hit the target block,
+  // and projection uses that frame's player_pose. An explicit observer_viewpoint takes
+  // precedence by re-posing the same basis frame, so basis_frame_id and the screenshot
+  // reference stay intact while the projection geometry follows the caller. Which path
+  // was taken is recorded in the MC-12 known_limits by the caller of this backend.
+  if let Some(viewpoint) = inputs.observer_viewpoint {
+    frame.player_pose = viewpoint;
   }
 
   let mut target = mc6_projection_target_for_frame(inputs.target_block, &frame, inputs.target_semantics);
@@ -917,6 +951,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -930,6 +965,72 @@ mod tests {
     assert_eq!(output.manifest.comparison_verdict, Some(TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly));
     assert_eq!(output.inspect_report.reference_status, TrainingResultSpatialQueryStatus::Answered);
     assert!(output.manifest.screen_point.is_some());
+    assert!(
+      output
+        .manifest
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("falls back to the raycast-hit scene-packet frame pose")),
+      "omitted observer_viewpoint must record the fallback path in known_limits"
+    );
+  }
+
+  #[test]
+  fn explicit_observer_viewpoint_reposes_reference_projection() {
+    let temp = TempDir::new().expect("tempdir");
+    let target_block = BlockPosition::new(0, 0, 0);
+    let frame = test_frame(target_block, identity_matrix(), identity_matrix());
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
+
+    let fallback_output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
+      training_result_semantic_manifest_path: semantic_manifest_path.clone(),
+      target_block,
+      target_face: None,
+      target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
+      query_command: None,
+      use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
+      output_dir: temp.path().join("query-output-fallback"),
+    })
+    .expect("fallback query");
+
+    // Explicit viewpoint offset from the fixture frame pose (eye at origin, yaw 0, pitch 0)
+    // so the re-posed projection must differ geometrically from the fallback path.
+    let explicit_viewpoint = PlayerPose {
+      eye_position: Vec3::new(0.5, 0.5, 0.5),
+      yaw: 10.0,
+      pitch: -5.0,
+    };
+    let explicit_output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
+      training_result_semantic_manifest_path: semantic_manifest_path,
+      target_block,
+      target_face: None,
+      target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: Some(explicit_viewpoint),
+      query_command: None,
+      use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
+      output_dir: temp.path().join("query-output-explicit"),
+    })
+    .expect("explicit viewpoint query");
+
+    assert_eq!(explicit_output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert!(
+      explicit_output
+        .manifest
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("caller-supplied (observer_viewpoint)")),
+      "explicit observer_viewpoint must be recorded in known_limits"
+    );
+    // The explicit pose feeds HitFaceCenter aim-point estimation
+    // (estimate_raycast_hit_point) and the rotation-only view-matrix compat
+    // translation, so the projected screen point must move relative to fallback.
+    assert_ne!(explicit_output.manifest.screen_point, fallback_output.manifest.screen_point);
   }
 
   #[test]
@@ -945,6 +1046,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -972,6 +1074,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -999,6 +1102,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: Some(provider_command.to_string()),
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1029,6 +1133,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: Some(provider_command),
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1063,6 +1168,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: Some("exit 17".to_string()),
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1095,6 +1201,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1121,6 +1228,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1195,6 +1303,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: Some(provider_command.to_string()),
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1231,6 +1340,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1261,6 +1371,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1274,6 +1385,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::BlockCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1287,6 +1399,7 @@ mod tests {
       target_block,
       target_face: Some(BlockFace::East),
       target_semantics: MinecraftTargetSemantics::BlockCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1314,6 +1427,7 @@ mod tests {
       target_block: BlockPosition::new(0, 0, 0),
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1333,6 +1447,7 @@ mod tests {
       target_block: BlockPosition::new(0, 0, 0),
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: false,
@@ -1367,6 +1482,7 @@ mod tests {
       target_block,
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: true,
       use_closed_scene_toy_provider: false,
@@ -1399,6 +1515,7 @@ mod tests {
       target_block,
       target_face: Some(BlockFace::North),
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      observer_viewpoint: None,
       query_command: None,
       use_checkpoint_native_provider: false,
       use_closed_scene_toy_provider: true,

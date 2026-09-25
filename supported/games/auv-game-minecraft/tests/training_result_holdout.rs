@@ -291,6 +291,9 @@ fn real_source_mc14_spatial_query_after_holdout_chain() {
     },
     target_face: None,
     target_semantics: MinecraftTargetSemantics::BlockCenter,
+    // NOTICE(observer-viewpoint): integration chain has no caller viewpoint;
+    // None keeps the historical raycast-hit frame pose fallback path.
+    observer_viewpoint: None,
     query_command: None,
     use_checkpoint_native_provider: false,
     use_closed_scene_toy_provider: false,
