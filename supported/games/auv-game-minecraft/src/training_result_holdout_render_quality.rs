@@ -331,6 +331,30 @@ pub fn measure_3dgs_holdout_render_quality(
   finish_output(inputs, generated_at_millis, outcome, holdout_preview_manifest.as_ref(), known_limits)
 }
 
+/// Load a source PNG and a rendered PNG from disk and compute RGB8 photometric
+/// metrics with the Slice A algorithm (PSNR + pure-Rust 8x8 box-window SSIM).
+///
+/// This is the honest measurement path for real Brush eval renders: no resize,
+/// no crop, no auto-align. Returns an error (not partial metrics) when either
+/// image cannot be loaded or their sizes differ.
+pub fn compare_png_pair(source_path: &Path, rendered_path: &Path) -> TrainingResultHoldoutRenderQualityResult<HoldoutRenderQualityMetrics> {
+  let source = image::open(source_path).map_err(|error| format!("failed to load source PNG {}: {error}", source_path.display()))?.to_rgb8();
+  let rendered =
+    image::open(rendered_path).map_err(|error| format!("failed to load rendered PNG {}: {error}", rendered_path.display()))?.to_rgb8();
+  if (source.width(), source.height()) != (rendered.width(), rendered.height()) {
+    return Err(format!(
+      "image size mismatch: source {} is {}x{}, rendered {} is {}x{}; MC-17 does not resize or crop",
+      source_path.display(),
+      source.width(),
+      source.height(),
+      rendered_path.display(),
+      rendered.width(),
+      rendered.height(),
+    ));
+  }
+  Ok(compute_rgb8_metrics(&source, &rendered))
+}
+
 fn evaluate_semantic_ready_gates(
   inputs: &TrainingResultHoldoutRenderQualityInputs,
   holdout_preview: &TrainingResultHoldoutPreviewManifest,
