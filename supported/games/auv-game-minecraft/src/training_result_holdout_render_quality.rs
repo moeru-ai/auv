@@ -899,8 +899,8 @@ fn ssim_box_window(source: &RgbImage, rendered: &RgbImage, left: u32, top: u32, 
     let covariance = sum_cross / pixel_count - mean_source * mean_rendered;
 
     let numerator = (2.0 * mean_source * mean_rendered + SSIM_C1) * (2.0 * covariance + SSIM_C2);
-    let denominator = (mean_source * mean_source + mean_rendered * mean_rendered + SSIM_C1)
-      * (variance_source + variance_rendered + SSIM_C2);
+    let denominator =
+      (mean_source * mean_source + mean_rendered * mean_rendered + SSIM_C1) * (variance_source + variance_rendered + SSIM_C2);
     channel_sum += numerator / denominator;
   }
 

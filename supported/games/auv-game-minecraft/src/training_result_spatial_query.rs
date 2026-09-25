@@ -345,7 +345,8 @@ pub fn query_3dgs_training_result(
     );
   } else {
     known_limits.insert(
-      "MC-12 observer viewpoint falls back to the raycast-hit scene-packet frame pose; no explicit observer_viewpoint was supplied".to_string(),
+      "MC-12 observer viewpoint falls back to the raycast-hit scene-packet frame pose; no explicit observer_viewpoint was supplied"
+        .to_string(),
     );
   }
   if inputs.use_checkpoint_native_provider {
@@ -966,11 +967,7 @@ mod tests {
     assert_eq!(output.inspect_report.reference_status, TrainingResultSpatialQueryStatus::Answered);
     assert!(output.manifest.screen_point.is_some());
     assert!(
-      output
-        .manifest
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("falls back to the raycast-hit scene-packet frame pose")),
+      output.manifest.known_limits.iter().any(|limit| limit.contains("falls back to the raycast-hit scene-packet frame pose")),
       "omitted observer_viewpoint must record the fallback path in known_limits"
     );
   }
@@ -1020,11 +1017,7 @@ mod tests {
 
     assert_eq!(explicit_output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
     assert!(
-      explicit_output
-        .manifest
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("caller-supplied (observer_viewpoint)")),
+      explicit_output.manifest.known_limits.iter().any(|limit| limit.contains("caller-supplied (observer_viewpoint)")),
       "explicit observer_viewpoint must be recorded in known_limits"
     );
     // The explicit pose feeds HitFaceCenter aim-point estimation
