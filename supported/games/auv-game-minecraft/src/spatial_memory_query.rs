@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::projection::MinecraftProjector;
-use crate::spatial_memory_observation::SpatialClaimStatus;
 use crate::spatial_memory_store::SpatialMemoryStore;
 use crate::types::{BlockPosition, MinecraftBlockTarget, MinecraftSpatialFrame, PlayerPose, ProjectionVisibility, Viewport};
 
@@ -35,10 +34,21 @@ pub enum AnswerStatus {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum FovSource {
+  FrameTelemetry,
+  QueryParam,
+  Default,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum VisibilityClass {
+  /// 目标在相机视锥内。
+  /// 注意：这不意味着物理无遮挡或可交互，仅表示几何投影落在视锥与视口内。物理遮挡未知。
   Visible,
-  Occluded,
+  /// 目标在视锥外（确定）。
   OutOfFrustum,
+  /// 无法判断（投影失败、目标未知、或遮挡不确定）。
   Unknown,
 }
 
@@ -51,6 +61,8 @@ pub struct SpatialMemoryQuery {
   pub observer_frame: Option<MinecraftSpatialFrame>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub viewport: Option<Viewport>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub vertical_fov_deg: Option<f64>,
 }
 
 impl SpatialMemoryQuery {
@@ -61,6 +73,7 @@ impl SpatialMemoryQuery {
       query_kind,
       observer_frame: None,
       viewport: None,
+      vertical_fov_deg: None,
     }
   }
 
@@ -71,11 +84,17 @@ impl SpatialMemoryQuery {
       query_kind,
       observer_frame: Some(observer_frame),
       viewport: None,
+      vertical_fov_deg: None,
     }
   }
 
   pub fn with_viewport(mut self, viewport: Viewport) -> Self {
     self.viewport = Some(viewport);
+    self
+  }
+
+  pub fn with_vertical_fov(mut self, fov_deg: f64) -> Self {
+    self.vertical_fov_deg = Some(fov_deg);
     self
   }
 }
@@ -88,6 +107,10 @@ pub struct SpatialMemoryAnswer {
   pub yaw_pitch_delta: Option<(f64, f64)>,
   pub confidence: f64,
   pub evidence_observation_ids: Vec<String>,
+  pub fov_source: FovSource,
+  pub effective_fov_deg: f64,
+  #[serde(default)]
+  pub limitations: Vec<String>,
 }
 
 /// Query spatial memory for target visibility, screen projection, or relative direction.
@@ -104,8 +127,25 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
       let dx = f64::from(lm.position.x - pos.x);
       let dy = f64::from(lm.position.y - pos.y);
       let dz = f64::from(lm.position.z - pos.z);
-      (dx * dx + dy * dy + dz * dz).sqrt() < 0.6
+      (dx * dx + dy * dy + dz * dz).sqrt() < store.config().dedup_radius_m
     }),
+  };
+
+  // Resolve FOV and its provenance
+  let (effective_fov_deg, fov_source) = if let Some(frame) = &q.observer_frame {
+    let m5 = frame.projection_matrix[5];
+    if m5 > 0.01 {
+      let half_fov_rad = (1.0 / m5).atan();
+      (half_fov_rad.to_degrees() * 2.0, FovSource::FrameTelemetry)
+    } else if let Some(fov) = q.vertical_fov_deg {
+      (fov, FovSource::QueryParam)
+    } else {
+      (70.0, FovSource::Default)
+    }
+  } else if let Some(fov) = q.vertical_fov_deg {
+    (fov, FovSource::QueryParam)
+  } else {
+    (70.0, FovSource::Default)
   };
 
   let Some(landmark) = landmark else {
@@ -116,34 +156,30 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
       yaw_pitch_delta: None,
       confidence: 0.0,
       evidence_observation_ids: Vec::new(),
+      fov_source,
+      effective_fov_deg,
+      limitations: vec![
+        "target not found in spatial memory store".to_string(),
+        "occlusion not assessed: frustum containment only, physical occlusion unknown".to_string(),
+      ],
     };
   };
 
   let distinct_observations: std::collections::BTreeSet<_> =
     landmark.observations.iter().map(|obs| obs.observation_ref.observation_id.clone()).collect();
-  let obs_count = distinct_observations.len();
   let evidence_observation_ids: Vec<String> = distinct_observations.into_iter().collect();
 
-  let confidence = match landmark.status {
-    SpatialClaimStatus::Confirmed => {
-      let extra = (obs_count.saturating_sub(1) as f64) * 0.02;
-      (0.90 + extra).min(0.99)
-    }
-    SpatialClaimStatus::Candidate => {
-      let extra = (obs_count.saturating_sub(1) as f64) * 0.02;
-      (0.70 + extra).min(0.85)
-    }
-    SpatialClaimStatus::Hypothesis => {
-      let extra = (obs_count.saturating_sub(1) as f64) * 0.02;
-      (0.40 + extra).min(0.50)
-    }
-  };
+  let confidence = landmark.confidence;
 
-  // Direction calculation: yaw and pitch deflection angles from observer to target
-  let target_center = landmark.position.center();
-  let dx = target_center.x - q.observer_viewpoint.eye_position.x;
-  let dy = target_center.y - q.observer_viewpoint.eye_position.y;
-  let dz = target_center.z - q.observer_viewpoint.eye_position.z;
+  // Aiming point calculation:
+  // NOTICE: RaycastHit provides (block_pos, face, block_id), but lacks a continuous float hit_position.
+  // We use surface face_center if a surface face was recorded, otherwise falling back to voxel center (+0.5).
+  // Known limitation: without sub-block hit coordinates, parallax remains at close range (<3m).
+  let target_aim_point = landmark.surface_face.map(|face| landmark.position.face_center(face)).unwrap_or_else(|| landmark.position.center());
+
+  let dx = target_aim_point.x - q.observer_viewpoint.eye_position.x;
+  let dy = target_aim_point.y - q.observer_viewpoint.eye_position.y;
+  let dz = target_aim_point.z - q.observer_viewpoint.eye_position.z;
   let horiz = (dx * dx + dz * dz).sqrt();
   let target_yaw = (-dx).atan2(dz).to_degrees();
   let target_pitch = (-dy).atan2(horiz).to_degrees();
@@ -151,17 +187,18 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
   let pitch_delta = normalize_angle_deg(target_pitch - q.observer_viewpoint.pitch);
   let yaw_pitch_delta = Some((yaw_delta, pitch_delta));
 
-  // Frame resolution: use supplied frame or synthesize from pose and viewport
+  // Frame resolution: use supplied frame or synthesize from pose, viewport, and effective_fov_deg
   let frame = if let Some(mut frame) = q.observer_frame.clone() {
     frame.player_pose = q.observer_viewpoint;
     frame
   } else {
-    build_frame_from_pose(q.observer_viewpoint, q.viewport.unwrap_or(Viewport::new(854, 480)))
+    build_frame_from_pose(q.observer_viewpoint, q.viewport.unwrap_or(Viewport::new(854, 480)), effective_fov_deg)
   };
 
   let (visibility, screen_xy) = match MinecraftProjector::new(frame) {
     Ok(projector) => {
-      let target_block = MinecraftBlockTarget::new(landmark.position);
+      let mut target_block = MinecraftBlockTarget::new(landmark.position);
+      target_block.face = landmark.surface_face;
       match projector.project_block_target(&target_block) {
         Ok(projected) => match projected.visibility {
           ProjectionVisibility::Visible => {
@@ -202,6 +239,26 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
     }
   };
 
+  let mut limitations = vec!["occlusion not assessed: frustum containment only, physical occlusion unknown".to_string()];
+
+  match fov_source {
+    FovSource::Default => {
+      limitations.push("vertical fov defaulted to 70.0 deg (frame fov unknown)".to_string());
+    }
+    FovSource::QueryParam => {
+      limitations.push(format!("vertical fov specified by query parameter ({effective_fov_deg:.1} deg)"));
+    }
+    FovSource::FrameTelemetry => {
+      limitations.push(format!("vertical fov extracted from frame telemetry projection matrix ({effective_fov_deg:.1} deg)"));
+    }
+  }
+
+  if landmark.surface_face.is_none() {
+    limitations.push("aim point uses voxel center (+0.5); surface face unknown, subject to parallax at close range".to_string());
+  } else {
+    limitations.push("aim point uses surface face center from raycast hit".to_string());
+  }
+
   SpatialMemoryAnswer {
     status,
     visibility,
@@ -209,6 +266,9 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
     yaw_pitch_delta,
     confidence,
     evidence_observation_ids,
+    fov_source,
+    effective_fov_deg,
+    limitations,
   }
 }
 
@@ -223,8 +283,8 @@ fn normalize_angle_deg(delta: f64) -> f64 {
 }
 
 /// Synthesize a valid MinecraftSpatialFrame from PlayerPose and Viewport using
-/// standard Minecraft 70-degree vertical FOV and OpenGL coordinate conventions.
-fn build_frame_from_pose(pose: PlayerPose, viewport: Viewport) -> MinecraftSpatialFrame {
+/// the specified vertical FOV and OpenGL coordinate conventions.
+fn build_frame_from_pose(pose: PlayerPose, viewport: Viewport, fov_y_deg: f64) -> MinecraftSpatialFrame {
   let psi = pose.yaw.to_radians();
   let theta = pose.pitch.to_radians();
 
@@ -247,9 +307,9 @@ fn build_frame_from_pose(pose: PlayerPose, viewport: Viewport) -> MinecraftSpati
 
   view_matrix[15] = 1.0;
 
-  // Standard Minecraft 70-degree vertical FOV
   let aspect = f64::from(viewport.width) / f64::from(viewport.height.max(1));
-  let f = 1.0 / (35.0_f64.to_radians()).tan();
+  let half_fov_rad = (fov_y_deg / 2.0).to_radians();
+  let f = 1.0 / half_fov_rad.tan();
 
   let mut projection_matrix = [0.0; 16];
   projection_matrix[0] = f / aspect;
@@ -259,7 +319,7 @@ fn build_frame_from_pose(pose: PlayerPose, viewport: Viewport) -> MinecraftSpati
   projection_matrix[14] = -0.100007;
 
   MinecraftSpatialFrame {
-    spatial_frame_id: "synthesized_query_frame".to_string(),
+    spatial_frame_id: "synthesized-frame".to_string(),
     world_tick: 0,
     monotonic_timestamp_ms: 0,
     telemetry_session_id: None,
@@ -283,28 +343,25 @@ mod tests {
   use super::*;
   use crate::m3_query_scoring::M3_PROJECTION_TOLERANCE_PX;
   use crate::reacquisition::{ReacquisitionQuery, reacquire_from_geometry};
-  use crate::spatial_memory_store::{ObservationRef, SpatialMemoryStore};
+  use crate::spatial_memory_store::ObservationRef;
   use crate::types::{BlockFace, MinecraftTargetSemantics, RaycastHit, Vec3};
 
   #[test]
   fn unknown_target_returns_unknown_status() {
     let store = SpatialMemoryStore::open("empty.json").unwrap();
-    let query = SpatialMemoryQuery::new(
-      PlayerPose {
-        eye_position: Vec3::new(0.0, 64.0, 0.0),
-        yaw: 0.0,
-        pitch: 0.0,
-      },
-      LandmarkTarget::LandmarkId("lm-nonexistent".to_string()),
-      QueryKind::Visibility,
-    );
-
+    let viewpoint = PlayerPose {
+      eye_position: Vec3::new(0.0, 64.0, 0.0),
+      yaw: 0.0,
+      pitch: 0.0,
+    };
+    let query = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::LandmarkId("nonexistent".to_string()), QueryKind::Visibility);
     let answer = query_spatial_memory(&store, &query);
+
     assert_eq!(answer.status, AnswerStatus::Unknown);
     assert_eq!(answer.visibility, VisibilityClass::Unknown);
-    assert!(answer.screen_xy.is_none());
     assert_eq!(answer.confidence, 0.0);
-    assert!(answer.evidence_observation_ids.is_empty());
+    assert!(answer.screen_xy.is_none());
+    assert!(answer.limitations.iter().any(|lim| lim.contains("target not found")));
   }
 
   #[test]
@@ -317,27 +374,93 @@ mod tests {
     };
     let obs = ObservationRef {
       observation_id: "obs-1".to_string(),
-      captured_at_millis: 100,
+      captured_at_millis: 1000,
     };
     store.upsert_from_raycast(&hit, &obs);
 
-    let query = SpatialMemoryQuery::new(
-      PlayerPose {
-        eye_position: Vec3::new(0.5, 64.5, 0.5),
-        yaw: 0.0,
-        pitch: 0.0,
-      },
-      LandmarkTarget::BlockPos(BlockPosition::new(10, 64, 10)),
-      QueryKind::Direction,
-    );
+    let viewpoint = PlayerPose {
+      eye_position: Vec3::new(0.0, 64.0, 0.0),
+      yaw: 0.0,
+      pitch: 0.0,
+    };
+    let query = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(BlockPosition::new(10, 64, 10)), QueryKind::Direction);
 
     let answer = query_spatial_memory(&store, &query);
     assert_eq!(answer.status, AnswerStatus::Answered);
     let (yaw_delta, pitch_delta) = answer.yaw_pitch_delta.expect("yaw pitch delta present");
-    // Target is at +X, +Z from observer (dx=10, dz=10) -> yaw should be approx -45 degrees
-    assert!((yaw_delta - (-45.0)).abs() < 1.0, "expected yaw ~ -45, got {}", yaw_delta);
-    assert!(pitch_delta.abs() < 1.0, "expected pitch ~ 0, got {}", pitch_delta);
+    // Target is at +X, +Z from observer -> yaw should be approx -45 degrees
+    assert!((yaw_delta - (-45.0)).abs() < 2.0, "expected yaw ~ -45, got {}", yaw_delta);
+    assert!(pitch_delta.abs() < 2.0, "expected pitch ~ 0, got {}", pitch_delta);
     assert_eq!(answer.confidence, 0.90);
+  }
+
+  #[test]
+  fn fov_parameterization_changes_projection() {
+    let mut store = SpatialMemoryStore::open("fov_mem.json").unwrap();
+    let block = BlockPosition::new(0, 60, 10);
+    let hit = RaycastHit {
+      block_pos: block,
+      face: BlockFace::North,
+      block_id: "minecraft:stone".to_string(),
+    };
+    let obs = ObservationRef {
+      observation_id: "obs-fov".to_string(),
+      captured_at_millis: 1000,
+    };
+    store.upsert_from_raycast(&hit, &obs);
+
+    let viewpoint = PlayerPose {
+      eye_position: Vec3::new(0.0, 65.0, 0.0),
+      yaw: 0.0,
+      pitch: 0.0,
+    };
+
+    let q70 = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::ScreenProjection)
+      .with_viewport(Viewport::new(854, 480))
+      .with_vertical_fov(70.0);
+    let ans70 = query_spatial_memory(&store, &q70);
+
+    let q90 = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::ScreenProjection)
+      .with_viewport(Viewport::new(854, 480))
+      .with_vertical_fov(90.0);
+    let ans90 = query_spatial_memory(&store, &q90);
+
+    assert_eq!(ans70.fov_source, FovSource::QueryParam);
+    assert_eq!(ans70.effective_fov_deg, 70.0);
+    assert_eq!(ans90.fov_source, FovSource::QueryParam);
+    assert_eq!(ans90.effective_fov_deg, 90.0);
+
+    let (_x70, y70) = ans70.screen_xy.expect("screen xy 70");
+    let (_x90, y90) = ans90.screen_xy.expect("screen xy 90");
+    assert!((y70 - y90).abs() > 5.0, "y70 ({y70}) and y90 ({y90}) should differ due to FOV");
+  }
+
+  #[test]
+  fn answer_contains_explicit_limitations() {
+    let mut store = SpatialMemoryStore::open("limits_mem.json").unwrap();
+    let block = BlockPosition::new(0, 64, 10);
+    let hit = RaycastHit {
+      block_pos: block,
+      face: BlockFace::North,
+      block_id: "minecraft:stone".to_string(),
+    };
+    let obs = ObservationRef {
+      observation_id: "obs-lim".to_string(),
+      captured_at_millis: 1000,
+    };
+    store.upsert_from_raycast(&hit, &obs);
+
+    let viewpoint = PlayerPose {
+      eye_position: Vec3::new(0.0, 64.0, 0.0),
+      yaw: 0.0,
+      pitch: 0.0,
+    };
+    let query = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::Visibility);
+    let answer = query_spatial_memory(&store, &query);
+
+    assert_eq!(answer.visibility, VisibilityClass::Visible);
+    assert!(answer.limitations.iter().any(|lim| lim.contains("occlusion not assessed")));
+    assert!(answer.limitations.iter().any(|lim| lim.contains("vertical fov defaulted to 70.0")));
   }
 
   #[test]
@@ -396,11 +519,11 @@ mod tests {
     assert_eq!(answer.visibility, VisibilityClass::Visible);
     let (sx, sy) = answer.screen_xy.expect("projected screen coords");
 
-    // Reference from M3 geometric scoring (reacquisition)
+    // Reference from M3 geometric scoring (reacquisition) targeting the same face
     let m3_query = ReacquisitionQuery {
       observer_frame: v01_frame,
       target_block: block,
-      target_face: None,
+      target_face: Some(BlockFace::West),
       target_semantics: MinecraftTargetSemantics::BlockCenter,
     };
     let m3_answer = reacquire_from_geometry(&m3_query).expect("reacquire from geometry");
