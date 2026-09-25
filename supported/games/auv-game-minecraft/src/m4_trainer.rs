@@ -12,6 +12,8 @@
 //! across domains; `capture_skew_ms` is recorded, not wall-clock alignment proof.
 //! NOTICE(m4-vlm-boundary): crate内无 VLM transport; M4 不声称 VLM 几何命中率。
 
+#![deprecated(note = "3DGS-as-memory line paused per 2026-09-25 closeout (sparse-view does not generalize). See docs/ai/references/3dgs/2026-09-25-slice-b-closeout.md. Do not build on this.")]
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

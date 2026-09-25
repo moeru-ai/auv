@@ -193,6 +193,7 @@ struct CompatibilityEvaluation {
   used_legacy_view_translation_fallback: bool,
 }
 
+#[deprecated(note = "3DGS-as-memory line paused per 2026-09-25 closeout (sparse-view does not generalize). See docs/ai/references/3dgs/2026-09-25-slice-b-closeout.md.")]
 pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPackageResult<TrainingPackageOutput> {
   let scene_packet_manifest = read_json_file::<ScenePacketManifest>(&inputs.scene_packet_manifest_path, "MC-7 D2 scene packet manifest")?;
   let scene_packet_dir = inputs
