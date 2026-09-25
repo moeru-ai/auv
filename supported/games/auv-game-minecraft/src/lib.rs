@@ -26,6 +26,7 @@ pub mod projection;
 pub mod reacquisition;
 pub mod sample_builder;
 pub mod scene_packet;
+pub mod spatial_memory_ingest;
 pub mod spatial_memory_observation;
 pub mod spatial_memory_store;
 pub mod stage_status;
@@ -120,6 +121,7 @@ pub use scene_packet::{
   ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketInputs, ScenePacketInspectCounts, ScenePacketInspectReport,
   ScenePacketManifest, ScenePacketOutput, ScenePacketResourcePackCoverage, export_3dgs_scene_packet,
 };
+pub use spatial_memory_ingest::{IngestReport, ingest_m2_session};
 pub use spatial_memory_observation::{
   ObservationInputEvent, SINGLE_VIEW_SPATIAL_MEMORY_PROMPT, SPATIAL_HYPOTHESIS_PATCH_SCHEMA_VERSION,
   SPATIAL_MEMORY_OBSERVATION_SCHEMA_VERSION, SpatialClaimKind, SpatialClaimStatus, SpatialConfidence, SpatialCoordinateSpace,
