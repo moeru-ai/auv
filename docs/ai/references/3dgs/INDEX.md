@@ -28,6 +28,8 @@
 
 ## 相关文档
 
+- [`2026-09-26-spatial-memory-redesign.md`](2026-09-26-spatial-memory-redesign.md) - 结构化空间记忆模块设计（确定性几何替代 3DGS）
+- [`2026-09-25-slice-b-closeout.md`](2026-09-25-slice-b-closeout.md) - 3DGS 稀疏视角不泛化实证 closeout 记录
 - [`../apps/minecraft/INDEX.md`](../apps/minecraft/INDEX.md) - Minecraft vertical 历史和当前 3DGS lane 记录
 - [`../apps/minecraft/2026-07-27-minecraft-3dgs-spatial-memory-lane-handoff.md`](../apps/minecraft/2026-07-27-minecraft-3dgs-spatial-memory-lane-handoff.md) - 已知 capture 和 reacquisition 限制
 - [`../apps/minecraft/2026-07-26-minecraft-3dgs-trainer-backend-evidence.md`](../apps/minecraft/2026-07-26-minecraft-3dgs-trainer-backend-evidence.md) - trainer 可达性证据；未宣称真实 trainer 已运行
