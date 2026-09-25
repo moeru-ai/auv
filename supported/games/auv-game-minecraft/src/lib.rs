@@ -122,7 +122,7 @@ pub use scene_packet::{
   ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketInputs, ScenePacketInspectCounts, ScenePacketInspectReport,
   ScenePacketManifest, ScenePacketOutput, ScenePacketResourcePackCoverage, export_3dgs_scene_packet,
 };
-pub use spatial_memory_ingest::{IngestReport, ingest_m2_session};
+pub use spatial_memory_ingest::{IngestReport, LandmarkIngest, MinecraftRaycastIngest, ingest_m2_session};
 pub use spatial_memory_observation::{
   ObservationInputEvent, SINGLE_VIEW_SPATIAL_MEMORY_PROMPT, SPATIAL_HYPOTHESIS_PATCH_SCHEMA_VERSION,
   SPATIAL_MEMORY_OBSERVATION_SCHEMA_VERSION, SpatialClaimKind, SpatialClaimStatus, SpatialConfidence, SpatialCoordinateSpace,
@@ -131,11 +131,11 @@ pub use spatial_memory_observation::{
   SpatialSignalTier, validate_spatial_hypothesis_patch,
 };
 pub use spatial_memory_query::{
-  AnswerStatus, LandmarkTarget, QueryKind, SpatialMemoryAnswer, SpatialMemoryQuery, VisibilityClass, query_spatial_memory,
+  AnswerStatus, FovSource, LandmarkTarget, QueryKind, SpatialMemoryAnswer, SpatialMemoryQuery, VisibilityClass, query_spatial_memory,
 };
 pub use spatial_memory_store::{
   LandmarkKind, LandmarkObservation, LandmarkSource, ObservationRef, SPATIAL_MEMORY_STORE_SCHEMA_VERSION, SpatialLandmark,
-  SpatialMemoryStore, SpatialMemoryStoreData, SpatialMemoryStoreError,
+  SpatialMemoryConfig, SpatialMemoryStore, SpatialMemoryStoreData, SpatialMemoryStoreError,
 };
 pub use stage_status::StageStatus;
 pub use training_job::{
