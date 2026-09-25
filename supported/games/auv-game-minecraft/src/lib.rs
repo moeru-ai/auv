@@ -27,6 +27,7 @@ pub mod reacquisition;
 pub mod sample_builder;
 pub mod scene_packet;
 pub mod spatial_memory_observation;
+pub mod spatial_memory_store;
 pub mod stage_status;
 pub mod training_job;
 pub mod training_launch;
@@ -125,6 +126,10 @@ pub use spatial_memory_observation::{
   SpatialFollowUpAction, SpatialFollowUpRequest, SpatialHypothesisMemory, SpatialHypothesisPatch, SpatialMemoryClaim,
   SpatialMemoryPatchValidationError, SpatialMemoryWriteScope, SpatialObservationPacket, SpatialSignalAvailability, SpatialSignalKind,
   SpatialSignalTier, validate_spatial_hypothesis_patch,
+};
+pub use spatial_memory_store::{
+  LandmarkKind, LandmarkObservation, LandmarkSource, ObservationRef, SPATIAL_MEMORY_STORE_SCHEMA_VERSION, SpatialLandmark,
+  SpatialMemoryStore, SpatialMemoryStoreData, SpatialMemoryStoreError,
 };
 pub use stage_status::StageStatus;
 pub use training_job::{
