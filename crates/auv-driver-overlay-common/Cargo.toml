@@ -13,7 +13,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-driver-common = { path = "../auv-driver-common" }
+auv-driver-common = { version = "0.0.20", path = "../auv-driver-common" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

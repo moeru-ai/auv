@@ -86,6 +86,6 @@ jobs:
           changes=$(git status --porcelain --untracked-files=all -- proto/vendor)
           if [ -n "$changes" ]; then
             printf '%s\n' "$changes"
-            echo "Run scripts/generate-proto-vendor and commit proto/vendor."
+            echo "Run scripts/generate-proto-vendor."
             exit 1
           fi

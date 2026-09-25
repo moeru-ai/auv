@@ -36,9 +36,14 @@ vendored files manually. Review and commit the lockfile and vendor changes
 together, then run the normal schema and Rust checks.
 
 Rust checks, JS CLI builds, and release builds consume the checked-in sources
-without regenerating them. A separate CI job runs both export scripts and
+without regenerating them. A separate CI job runs the vendor export script and
 rejects modified, deleted, or untracked vendor files. This checks reproducibility
 without repairing an incomplete checkout before Cargo gets to compile it.
+
+The `auv-api-proto/proto` symlink points to the root `proto/` directory in a
+Git checkout. Cargo follows the link and includes only the required schemas
+in the crates.io archive. The archive contains regular files and builds
+without access to the Git checkout.
 
 ## Regression and evidence
 
@@ -60,6 +65,8 @@ the proposed changes (snapshot `98f14234cfec50c04c2ef58ac4ae936b64b5c53c`):
   build cache was reused; this was not a cold-cache benchmark.
 - The installed `auv --help` and `auv invoke --help` both exited successfully.
 - `cargo test -p auv-api-proto --locked`: 3 tests passed.
+- `cargo package -p auv-api-proto --allow-dirty` created and compiled a
+  self-contained archive on macOS arm64 on 2026-09-23.
 - `cargo fmt --check`, shell syntax, workflow YAML parsing, and whitespace checks
   passed (rustfmt reported existing configuration warnings).
 
@@ -69,7 +76,6 @@ PowerShell regeneration script; those platforms were not run locally.
 
 ## Boundary
 
-This fix covers Git source distribution. NOTICE: crates.io packaging of schemas
-outside individual crate directories is deferred until an owner-approved
-registry-publication slice; this Git-install check does not establish that
-`cargo package` produces self-contained crate archives.
+This contract covers Git source distribution and the `auv-api-proto`
+crates.io archive. Buf generation still uses the root `proto/` directory.
+The Cargo snapshot exists only for registry source distribution.

@@ -13,8 +13,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv = { path = "../auv" }
-auv-api-proto = { path = "../auv-api-proto" }
+auv = { package = "auv-core", version = "0.0.20", path = "../auv" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
 axum = { version = "0.8", features = ["http2", "ws"] }
 bytes = "1"
 futures-util = "0.3"
@@ -61,5 +61,5 @@ windows = { version = "0.58", features = [
 ] }
 
 [build-dependencies]
-auv-api-proto = { path = "../auv-api-proto" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
 tonic-rest-build = "=0.1.5"

@@ -3,7 +3,7 @@ name = "auv-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -20,16 +20,16 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "env"] }
-auv = { path = "../auv" }
-auv-driver = { path = "../auv-driver" }
-auv-driver-macos = { path = "../auv-driver-macos" }
-auv-cli-common = { path = "../auv-cli-common" }
-auv-cli-invoke = { path = "../auv-cli-invoke" }
-auv-media-macos = { path = "../auv-media-macos" }
-auv-api-server = { path = "../auv-api-server" }
-auv-daemon = { path = "../auv-daemon" }
-auv-api-proto = { path = "../auv-api-proto" }
-auv-tracing = { path = "../auv-tracing", features = ["file-store"] }
+auv = { package = "auv-core", version = "0.0.20", path = "../auv" }
+auv-driver = { version = "0.0.20", path = "../auv-driver" }
+auv-driver-macos = { version = "0.0.20", path = "../auv-driver-macos" }
+auv-cli-common = { version = "0.0.20", path = "../auv-cli-common" }
+auv-cli-invoke = { version = "0.0.20", path = "../auv-cli-invoke" }
+auv-media-macos = { version = "0.0.20", path = "../auv-media-macos" }
+auv-api-server = { version = "0.0.20", path = "../auv-api-server" }
+auv-daemon = { version = "0.0.20", path = "../auv-daemon" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
+auv-tracing = { version = "0.0.20", path = "../auv-tracing", features = ["file-store"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 prost = "0.14"
@@ -53,9 +53,9 @@ objc2-core-foundation = "0.3"
 swift-bridge-build = "0.1.59"
 
 [dev-dependencies]
-auv-api-client = { path = "../auv-api-client" }
-auv-api-proto = { path = "../auv-api-proto" }
-auv-tracing = { path = "../auv-tracing", features = ["file-store", "memory-store"] }
+auv-api-client = { version = "0.0.20", path = "../auv-api-client" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
+auv-tracing = { version = "0.0.20", path = "../auv-tracing", features = ["file-store", "memory-store"] }
 axum = { version = "0.8", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 rcgen = "0.14"

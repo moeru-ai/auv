@@ -13,7 +13,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-driver-overlay-common = { path = "../auv-driver-overlay-common" }
+auv-driver-overlay-common = { version = "0.0.20", path = "../auv-driver-overlay-common" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 swift-bridge = "0.1.59"
@@ -23,4 +23,4 @@ serde_json = "1"
 swift-bridge-build = "0.1.59"
 
 [dev-dependencies]
-auv-driver-common = { path = "../auv-driver-common" }
+auv-driver-common = { version = "0.0.20", path = "../auv-driver-common" }

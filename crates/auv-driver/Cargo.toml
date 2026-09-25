@@ -17,14 +17,14 @@ default = []
 overlay = ["dep:auv-driver-overlay", "auv-driver-linux/overlay", "auv-driver-macos/overlay", "auv-driver-windows/overlay"]
 
 [dependencies]
-auv-driver-common = { path = "../auv-driver-common" }
-auv-driver-overlay = { path = "../auv-driver-overlay", optional = true }
+auv-driver-common = { version = "0.0.20", path = "../auv-driver-common" }
+auv-driver-overlay = { version = "0.0.20", path = "../auv-driver-overlay", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-auv-driver-linux = { path = "../auv-driver-linux" }
+auv-driver-linux = { version = "0.0.20", path = "../auv-driver-linux" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-driver-macos = { path = "../auv-driver-macos" }
+auv-driver-macos = { version = "0.0.20", path = "../auv-driver-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-auv-driver-windows = { path = "../auv-driver-windows" }
+auv-driver-windows = { version = "0.0.20", path = "../auv-driver-windows" }

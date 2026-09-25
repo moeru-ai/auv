@@ -13,7 +13,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-api-proto = { path = "../auv-api-proto" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
 http = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 prost-types = "0.14"

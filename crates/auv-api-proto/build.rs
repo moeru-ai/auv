@@ -1,5 +1,30 @@
 use std::path::PathBuf;
 
+const SCHEMA_PATHS: &[&str] = &[
+  "auv/api/daemon/v1/health.proto",
+  "auv/api/daemon/v1/discovery.proto",
+  "auv/api/daemon/v1/device.proto",
+  "auv/api/daemon/v1/pairing.proto",
+  "auv/api/annotations/v1/annotations.proto",
+  "auv/api/daemon/v1/run.proto",
+  "auv/api/daemon/v1/runner.proto",
+  "auv/api/transport/websocket/v1/websocket.proto",
+  "auv/api/driver/v1/capture.proto",
+  "auv/api/driver/v1/recent_frames.proto",
+  "auv/api/driver/v1/display.proto",
+  "auv/api/driver/v1/window.proto",
+  "auv/api/driver/v1/geometry.proto",
+  "auv/api/driver/v1/input.proto",
+  "auv/api/driver/v1/overlay.proto",
+  "auv/api/driver/v1/text_recognition.proto",
+  "auv/api/driver/macos/v1/permission.proto",
+  "auv/api/driver/macos/v1/accessibility.proto",
+  "auv/api/driver/macos/v1/application.proto",
+  "auv/api/driver/macos/v1/media_control.proto",
+  "auv/api/image/v1/image.proto",
+  "auv/api/image/v1/region.proto",
+];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let protoc = protoc_bin_vendored::protoc_bin_path()?;
   // NOTICE(proto-build): Cargo builds use a vendored `protoc` so this crate can
@@ -8,6 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   unsafe {
     std::env::set_var("PROTOC", protoc);
   }
+
+  let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
+  // NOTICE(proto-source): In the checkout, `proto` links to the repository's
+  // canonical schema tree. Cargo flattens selected files into the crate archive.
+  let package_proto = manifest_dir.join("proto");
 
   let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
   let mut builder = tonic_prost_build::configure().file_descriptor_set_path(out_dir.join("auv.api.bin")).message_attribute(
@@ -118,57 +148,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   ] {
     builder = builder.field_attribute(field, "#[serde(skip_serializing_if = \"crate::is_false\")]");
   }
-  builder.compile_protos(
-    &[
-      "../../proto/auv/api/daemon/v1/health.proto",
-      "../../proto/auv/api/daemon/v1/discovery.proto",
-      "../../proto/auv/api/daemon/v1/device.proto",
-      "../../proto/auv/api/daemon/v1/pairing.proto",
-      "../../proto/auv/api/annotations/v1/annotations.proto",
-      "../../proto/auv/api/daemon/v1/run.proto",
-      "../../proto/auv/api/daemon/v1/runner.proto",
-      "../../proto/auv/api/transport/websocket/v1/websocket.proto",
-      "../../proto/auv/api/driver/v1/capture.proto",
-      "../../proto/auv/api/driver/v1/recent_frames.proto",
-      "../../proto/auv/api/driver/v1/display.proto",
-      "../../proto/auv/api/driver/v1/window.proto",
-      "../../proto/auv/api/driver/v1/geometry.proto",
-      "../../proto/auv/api/driver/v1/input.proto",
-      "../../proto/auv/api/driver/v1/overlay.proto",
-      "../../proto/auv/api/driver/v1/text_recognition.proto",
-      "../../proto/auv/api/driver/macos/v1/permission.proto",
-      "../../proto/auv/api/driver/macos/v1/accessibility.proto",
-      "../../proto/auv/api/driver/macos/v1/application.proto",
-      "../../proto/auv/api/driver/macos/v1/media_control.proto",
-      "../../proto/auv/api/image/v1/image.proto",
-      "../../proto/auv/api/image/v1/region.proto",
-    ],
-    &["../../proto", "../../proto/vendor"],
-  )?;
+  let schemas = SCHEMA_PATHS.iter().map(|relative| package_proto.join(relative)).collect::<Vec<_>>();
+  let includes = [package_proto.clone(), package_proto.join("vendor")];
+  builder.compile_protos(&schemas, &includes)?;
 
-  println!("cargo:rerun-if-changed=../../proto/auv/api/daemon/v1/health.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/daemon/v1/discovery.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/daemon/v1/device.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/daemon/v1/pairing.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/annotations/v1/annotations.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/daemon/v1/run.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/daemon/v1/runner.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/transport/websocket/v1/websocket.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/capture.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/recent_frames.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/display.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/window.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/geometry.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/input.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/overlay.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/v1/text_recognition.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/macos/v1/permission.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/macos/v1/accessibility.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/macos/v1/application.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/driver/macos/v1/media_control.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/image/v1/image.proto");
-  println!("cargo:rerun-if-changed=../../proto/auv/api/image/v1/region.proto");
-  println!("cargo:rerun-if-changed=../../proto/vendor/google/api/annotations.proto");
-  println!("cargo:rerun-if-changed=../../proto/vendor/google/api/http.proto");
+  println!("cargo:rerun-if-changed={}", package_proto.join("auv/api").display());
+  println!("cargo:rerun-if-changed={}", package_proto.join("vendor/google/api").display());
   Ok(())
 }

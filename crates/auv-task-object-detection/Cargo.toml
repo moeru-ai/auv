@@ -17,7 +17,7 @@ default = []
 ultralytics = ["dep:auv-inference-ultralytics"]
 
 [dependencies]
-auv-inference-common = { path = "../auv-inference-common" }
-auv-inference-ultralytics = { path = "../auv-inference-ultralytics", optional = true }
+auv-inference-common = { version = "0.0.20", path = "../auv-inference-common" }
+auv-inference-ultralytics = { version = "0.0.20", path = "../auv-inference-ultralytics", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }

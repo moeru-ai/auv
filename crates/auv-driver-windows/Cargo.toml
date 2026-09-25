@@ -17,8 +17,8 @@ default = []
 overlay = ["dep:auv-driver-overlay"]
 
 [dependencies]
-auv-driver-common = { path = "../auv-driver-common" }
-auv-driver-overlay = { path = "../auv-driver-overlay", features = ["windows"], optional = true }
+auv-driver-common = { version = "0.0.20", path = "../auv-driver-common" }
+auv-driver-overlay = { version = "0.0.20", path = "../auv-driver-overlay", features = ["windows"], optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
 thiserror = "2"
 

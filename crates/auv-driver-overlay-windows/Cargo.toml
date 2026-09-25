@@ -13,8 +13,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-driver-common = { path = "../auv-driver-common" }
-auv-driver-overlay-common = { path = "../auv-driver-overlay-common" }
+auv-driver-common = { version = "0.0.20", path = "../auv-driver-common" }
+auv-driver-overlay-common = { version = "0.0.20", path = "../auv-driver-overlay-common" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [

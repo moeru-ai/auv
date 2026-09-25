@@ -1,5 +1,5 @@
 [package]
-name = "auv"
+name = "auv-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,11 +13,11 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-api-client = { path = "../auv-api-client" }
-auv-api-proto = { path = "../auv-api-proto" }
-auv-driver = { path = "../auv-driver" }
-auv-driver-overlay-common = { path = "../auv-driver-overlay-common" }
-auv-media-macos = { path = "../auv-media-macos" }
+auv-api-client = { version = "0.0.20", path = "../auv-api-client" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
+auv-driver = { version = "0.0.20", path = "../auv-driver" }
+auv-driver-overlay-common = { version = "0.0.20", path = "../auv-driver-overlay-common" }
+auv-media-macos = { version = "0.0.20", path = "../auv-media-macos" }
 directories = "6"
 fs2 = "0.4"
 futures-util = "0.3"

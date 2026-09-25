@@ -176,8 +176,9 @@ experience; it does not own the underlying capability implementations or
 daemon lifecycle. `auv-api-client` remains the remote wire client and
 `auv-driver` remains the local Driver contract. Application code must not branch
 between separate local and remote operation APIs merely because an executable
-is running directly or as a daemon-managed Runner. The `auv` crate is a thin
-SDK/interface, not an aggregate runtime crate; it does not own daemon lifecycle,
+is running directly or as a daemon-managed Runner. The `auv-core` package
+(imported as `auv` inside this workspace) is a thin SDK/interface, not an
+aggregate runtime crate; it does not own daemon lifecycle,
 run persistence, tracing persistence, or platform implementations.
 
 The operation interface statically exposes AUV-owned typed capabilities and provides a gRPC
@@ -203,7 +204,7 @@ implicit local fallback. A higher-level operation may implement an explicit,
 domain-visible fallback policy, but the operation interface does not silently change the
 Device on which an operation executes.
 
-The `auv` crate also owns process/client context resolution: `AuvContext`,
+The `auv-core` package also owns process/client context resolution: `AuvContext`,
 profile selection, environment parsing, local daemon endpoint discovery, and
 their precedence rules. These concerns are shared by CLI plugins, executable
 Runners, and library callers, so they are not owned by `auv-cli-common`.

@@ -155,6 +155,23 @@ jobs:
             ${{ matrix.archive }}.sha256
             js/packages/cli/${{ matrix.binding }}
 
+  publish-crates:
+    name: Publish crates.io packages
+    needs: build
+    if: github.event_name == 'release' && github.repository == 'moeru-ai/auv'
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish Rust crates
+        run: cargo publish --workspace --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
   publish:
     name: Publish release artifacts
     needs:

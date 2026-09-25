@@ -3,7 +3,7 @@ name = "auv-cli-invoke"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 readme.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -17,14 +17,14 @@ default = ["overlay"]
 overlay = ["auv-driver/overlay"]
 
 [dependencies]
-auv = { path = "../auv" }
-auv-api-proto = { path = "../auv-api-proto" }
-auv-cli-common = { path = "../auv-cli-common" }
-auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }
-auv-driver = { path = "../auv-driver" }
-auv-media-macos = { path = "../auv-media-macos" }
-auv-scan = { path = "../auv-scan" }
-auv-tracing = { path = "../auv-tracing" }
+auv = { package = "auv-core", version = "0.0.20", path = "../auv" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
+auv-cli-common = { version = "0.0.20", path = "../auv-cli-common" }
+auv-cli-invoke-macros = { version = "0.0.20", path = "../auv-cli-invoke-macros" }
+auv-driver = { version = "0.0.20", path = "../auv-driver" }
+auv-media-macos = { version = "0.0.20", path = "../auv-media-macos" }
+auv-scan = { version = "0.0.20", path = "../auv-scan" }
+auv-tracing = { version = "0.0.20", path = "../auv-tracing" }
 anstream = "1"
 anstyle = "1"
 clap = { version = "4.5", features = ["derive"] }
@@ -40,8 +40,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 thiserror = "2"
 
 [dev-dependencies]
-auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+auv-tracing = { version = "0.0.20", path = "../auv-tracing", features = ["memory-store"] }
 tokio = { version = "1", features = ["macros", "rt"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-driver-macos = { path = "../auv-driver-macos" }
+auv-driver-macos = { version = "0.0.20", path = "../auv-driver-macos" }

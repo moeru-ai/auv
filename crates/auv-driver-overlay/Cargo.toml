@@ -13,7 +13,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-driver-overlay-common = { path = "../auv-driver-overlay-common" }
+auv-driver-overlay-common = { version = "0.0.20", path = "../auv-driver-overlay-common" }
 
 serde_json = "1"
 
@@ -23,7 +23,7 @@ macos = ["dep:auv-driver-overlay-macos"]
 windows = ["dep:auv-driver-overlay-windows"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-driver-overlay-macos = { path = "../auv-driver-overlay-macos", optional = true }
+auv-driver-overlay-macos = { version = "0.0.20", path = "../auv-driver-overlay-macos", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-auv-driver-overlay-windows = { path = "../auv-driver-overlay-windows", optional = true }
+auv-driver-overlay-windows = { version = "0.0.20", path = "../auv-driver-overlay-windows", optional = true }

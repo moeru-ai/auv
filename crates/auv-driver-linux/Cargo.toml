@@ -5,6 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 publish = true
 autoexamples = false
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Linux driver for AUV"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [features]
 default = []
@@ -18,7 +25,7 @@ name = "validate"
 path = "examples/validate.rs"
 
 [dependencies]
-auv-driver-common = { path = "../auv-driver-common" }
+auv-driver-common = { version = "0.0.20", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 

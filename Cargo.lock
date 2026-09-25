@@ -370,35 +370,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "auv"
-version = "0.0.20"
-dependencies = [
- "auv-api-client",
- "auv-api-proto",
- "auv-driver",
- "auv-driver-overlay-common",
- "auv-media-macos",
- "directories",
- "fs2",
- "futures-util",
- "getrandom 0.3.4",
- "hex",
- "http",
- "image",
- "prost",
- "prost-types",
- "rustix 1.1.5",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-stream",
- "tonic",
- "windows 0.58.0",
-]
-
-[[package]]
 name = "auv-api-client"
 version = "0.0.20"
 dependencies = [
@@ -432,8 +403,8 @@ dependencies = [
 name = "auv-api-server"
 version = "0.0.20"
 dependencies = [
- "auv",
  "auv-api-proto",
+ "auv-core",
  "axum",
  "bytes",
  "futures-util",
@@ -498,12 +469,12 @@ dependencies = [
 name = "auv-cli"
 version = "0.0.20"
 dependencies = [
- "auv",
  "auv-api-client",
  "auv-api-proto",
  "auv-api-server",
  "auv-cli-common",
  "auv-cli-invoke",
+ "auv-core",
  "auv-daemon",
  "auv-driver",
  "auv-driver-macos",
@@ -561,10 +532,10 @@ version = "0.0.20"
 dependencies = [
  "anstream",
  "anstyle",
- "auv",
  "auv-api-proto",
  "auv-cli-common",
  "auv-cli-invoke-macros",
+ "auv-core",
  "auv-driver",
  "auv-driver-macos",
  "auv-media-macos",
@@ -593,13 +564,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-core"
+version = "0.0.20"
+dependencies = [
+ "auv-api-client",
+ "auv-api-proto",
+ "auv-driver",
+ "auv-driver-overlay-common",
+ "auv-media-macos",
+ "directories",
+ "fs2",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hex",
+ "http",
+ "image",
+ "prost",
+ "prost-types",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "auv-daemon"
 version = "0.0.20"
 dependencies = [
- "auv",
  "auv-api-client",
  "auv-api-proto",
  "auv-api-server",
+ "auv-core",
  "fs2",
  "futures-util",
  "getrandom 0.3.4",
@@ -749,10 +749,10 @@ dependencies = [
 name = "auv-game-balatro"
 version = "0.0.20"
 dependencies = [
- "auv",
  "auv-api-client",
  "auv-api-proto",
  "auv-api-server",
+ "auv-core",
  "auv-daemon",
  "auv-driver",
  "auv-driver-macos",
@@ -887,11 +887,11 @@ dependencies = [
 name = "auv-netease-music"
 version = "0.0.20"
 dependencies = [
- "auv",
  "auv-api-client",
  "auv-api-proto",
  "auv-api-server",
  "auv-cli-common",
+ "auv-core",
  "auv-daemon",
  "auv-driver",
  "auv-driver-macos",

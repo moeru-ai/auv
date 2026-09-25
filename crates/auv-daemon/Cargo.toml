@@ -13,10 +13,10 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv = { path = "../auv" }
-auv-api-client = { path = "../auv-api-client" }
-auv-api-proto = { path = "../auv-api-proto" }
-auv-api-server = { path = "../auv-api-server" }
+auv = { package = "auv-core", version = "0.0.20", path = "../auv" }
+auv-api-client = { version = "0.0.20", path = "../auv-api-client" }
+auv-api-proto = { version = "0.0.20", path = "../auv-api-proto" }
+auv-api-server = { version = "0.0.20", path = "../auv-api-server" }
 fs2 = "0.4"
 getrandom = "0.3"
 hex = "0.4"

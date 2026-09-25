@@ -19,7 +19,7 @@ card-corner-onnx = ["dep:auv-inference-ort"]
 cuda = ["auv-inference-ultralytics/cuda"]
 
 [dependencies]
-auv = { path = "../../../crates/auv" }
+auv = { package = "auv-core", path = "../../../crates/auv" }
 auv-api-client = { path = "../../../crates/auv-api-client" }
 auv-api-proto = { path = "../../../crates/auv-api-proto" }
 auv-api-server = { path = "../../../crates/auv-api-server" }

@@ -25,7 +25,7 @@ name = "auv-runner-netease-music"
 path = "src/bin/auv-runner-netease-music.rs"
 
 [dependencies]
-auv = { path = "../../../crates/auv" }
+auv = { package = "auv-core", path = "../../../crates/auv" }
 auv-cli-common = { path = "../../../crates/auv-cli-common" }
 auv-api-client = { path = "../../../crates/auv-api-client" }
 auv-api-proto = { path = "../../../crates/auv-api-proto" }

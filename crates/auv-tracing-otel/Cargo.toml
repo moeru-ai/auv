@@ -14,12 +14,12 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-tracing = { path = "../auv-tracing" }
+auv-tracing = { version = "0.0.20", path = "../auv-tracing" }
 opentelemetry = { version = "0.32", default-features = false, features = ["logs", "trace"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs", "trace"] }
 
 [dev-dependencies]
-auv-tracing = { path = "../auv-tracing", features = ["memory-store"] }
+auv-tracing = { version = "0.0.20", path = "../auv-tracing", features = ["memory-store"] }
 futures-executor = "0.3"
 futures-util = { version = "0.3", features = ["io"] }
 

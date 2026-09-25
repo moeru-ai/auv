@@ -47,7 +47,7 @@ visualize = ["ultralytics-inference/visualize"]
 video = ["ultralytics-inference/video"]
 
 [dependencies]
-auv-inference-common = { path = "../auv-inference-common" }
+auv-inference-common = { version = "0.0.20", path = "../auv-inference-common" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 serde = { version = "1", features = ["derive"] }
 ultralytics-inference = { version = "0.0.18", default-features = false }
