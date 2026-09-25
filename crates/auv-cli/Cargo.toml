@@ -53,6 +53,7 @@ objc2-core-foundation = "0.3"
 swift-bridge-build = "0.1.59"
 
 [dev-dependencies]
+clap = { version = "4.5", features = ["derive"] }
 auv-api-client = { path = "../auv-api-client" }
 auv-api-proto = { path = "../auv-api-proto" }
 auv-tracing = { path = "../auv-tracing", features = ["file-store", "memory-store"] }

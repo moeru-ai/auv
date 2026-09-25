@@ -1,4 +1,12 @@
 {
+  // Only load the main AUV workspace and the independent NAPI crate. Ignore
+  // scratch `.tmp/**` session tools so rust-analyzer does not report them as
+  // unlinked Cargo.toml files.
+  "rust-analyzer.linkedProjects": [
+    "Cargo.toml",
+    "js/packages/cli/Cargo.toml"
+  ],
+
   "editor.quickSuggestions": {
     "comments": "off",
     "strings": "off",

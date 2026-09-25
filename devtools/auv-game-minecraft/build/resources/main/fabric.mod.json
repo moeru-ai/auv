@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "auv-minecraft-telemetry",
+  "version": "0.0.1",
+  "name": "AUV Minecraft Telemetry",
+  "description": "Read-only Fabric telemetry gate for the AUV Minecraft lane.",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "ai.moeru.auv.minecraft.telemetry.AuvMinecraftTelemetryMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.10",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

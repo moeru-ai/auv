@@ -1,5 +1,14 @@
 use auv_cli::cli::help_text;
+use auv_cli::commands::doctor::DoctorArgs;
 use auv_cli_invoke::InvokeCliParse;
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "doctor")]
+struct DoctorCli {
+  #[command(flatten)]
+  args: DoctorArgs,
+}
 
 fn arguments(values: &[&str]) -> Vec<String> {
   values.iter().map(|value| (*value).to_string()).collect()
@@ -117,15 +126,8 @@ fn unknown_top_level_names_are_reserved_for_external_plugins() {
 
 #[test]
 fn doctor_can_explicitly_request_missing_permissions() {
-  let command = parse_cli(&arguments(&["doctor", "--json", "--request-permissions"])).expect("doctor should parse");
-  let CliCommand::PermissionCheck {
-    json,
-    request_permissions,
-  } = command
-  else {
-    panic!("expected permission check command");
-  };
+  let cli = DoctorCli::try_parse_from(arguments(&["doctor", "--json", "--request-permissions"])).expect("doctor should parse");
 
-  assert!(json);
-  assert!(request_permissions);
+  assert!(cli.args.json);
+  assert!(cli.args.request_permissions);
 }

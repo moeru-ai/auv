@@ -331,11 +331,43 @@ Installed **Brush v0.3.0** prebuilt `brush_app.exe` to `F:\auv\.tmp\m4-session\b
 **Honest live result:** trainer **did run** (`exit 0`); output
 `trainer-output/brush/splat_200.ply` (46 388 B). MC-7 default 1-vertex raycast seed
 panicked Brush; throwaway densification to **190** `nearby_blocks` centers unblocked
-training. `record-tool/` rebound `packet.json` + `m4-report.json` through
-`build_m4_trainer_packet_from_session` / `write_m4_trainer_result_report`.
-`meets_m4_trainer_gate=false` — holdout render (MC-17) and holdout spatial-query
-(M3) metrics **not** computed in this smoke; **not** geometric reconstruction accuracy.
-M3 live VLM (`projection_pixel_error_px≈91.3`) remains memory/query honesty only.
+training. **Not** geometric reconstruction accuracy.
+
+**Holdout photometric metrics (MC-17, 2026-09-12, `F:\auv\.tmp\m4-session/holdout-metrics.json`):**
+Brush v0.3.0 rendered packet holdouts via `transforms_val.json` + `init.ply=splat_200.ply`
+and `--eval-save-to-disk` (step 1). Renders:
+`holdout-renders/m1-frame-146938-9332503893900.png` (translate/v02) and
+`holdout-renders/m1-frame-147101-9340652027000.png` (revisit/v03). Ground truth:
+`.tmp/m2-session/v02|v03/screenshot.png` (870×519, `image_size_match=true`).
+
+| Holdout id | Role | In train set? | l1_mean | mse | psnr | ssim |
+| --- | --- | --- | --- | --- | --- | --- |
+| `m1-frame-146938-9332503893900` | translate (v02) | **yes** (`frame_000002`) | 30.06 | 2806.34 | 13.65 | 0.539 |
+| `m1-frame-147101-9340652027000` | revisit (v03) | **yes** (`frame_000003`) | 32.81 | 2585.78 | 14.00 | 0.486 |
+
+NOTICE: in-training-view photometric comparison on packet holdout roles — **not**
+unseen-view generalization (`transforms.json` still has all three frames).
+
+**Holdout spatial-query metrics (2026-09-12, `F:\auv\.tmp\m4-session/spatial-query-metrics.json`):**
+`packet.json` names two holdout observation ids — `m1-frame-146938-9332503893900`
+(`translate` / v02) and `m1-frame-147101-9340652027000` (`revisit` / v03). Throwaway
+`spatial-query-tool/` scores each via crate M3 APIs →
+`m4_holdout_spatial_query_metric_from_m3`.
+
+| Holdout id | Role | Score source | `meets_m3_query_gate` | `visibility_class_correct` | `projection_pixel_error_px` | `projection_within_tolerance` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `m1-frame-146938-9332503893900` | translate (v02) | **live VLM** — reused `.tmp/m3-session/vlm/m3-query-report.json` (ids match) | true | true | ≈91.3 | true |
+| `m1-frame-147101-9340652027000` | revisit (v03) | **fixture_only** — holdout-derived geometry response via `verify_m3_query_from_session` (no live VLM for this view) | true | true | 0.0 | true |
+
+NOTICE: **both holdout views were also in the Brush train set** — all three M2 views
+(anchor/translate/revisit) appear in `training-package/compat/nerfstudio/transforms.json`
+(`frame_000001`–`frame_000003`). Holdout here means M4 evaluation ids, not
+train/test exclusion in this smoke.
+
+`record-tool/` rendezvous after both `holdout-metrics.json` and
+`spatial-query-metrics.json` landed → `m4-report.json` now
+`meets_m4_trainer_gate=true`. M3 live VLM on v02 (`≈91px`) remains memory/query
+honesty only — **not** VLM geometric hit-rate.
 
 ### Windows M1 PowerShell workflow (Phase 0 invoke producer)
 
@@ -453,7 +485,8 @@ rest are not owner-approved.
    semantics. Depends on 2 or a mod change.
 6. ~~**First real trainer run (M4).**~~ — **library closed 2026-09-12**
    (`m4_trainer.rs`); **live Brush smoke closed 2026-09-12** (`.tmp/m4-session/`,
-   `splat_200.ply`, `meets_m4_trainer_gate=false` until holdout metrics).
+   `splat_200.ply`; `meets_m4_trainer_gate=true` after MC-17 photometric +
+   holdout spatial-query rendezvous, 2026-09-12).
 7. **Replace `checkpoint_native` with real inference.** Depends on 6. Only
    meaningful once slice 4 provides a geometric baseline to compare against.
 

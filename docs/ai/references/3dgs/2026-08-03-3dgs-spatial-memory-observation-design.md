@@ -591,10 +591,39 @@ nvcc）。实跑 smoke：
 
 **诚实记录：** `trainer_exit_status=0`；产出 `splat_200.ply`（46 388 B）。MC-7 默认
 单点 raycast seed 导致 Brush panic；throwaway 将 seed 增密至 190 个 `nearby_blocks`
-中心后训练成功。`record-tool/` 经 `write_m4_trainer_result_report` 写入
-`m4-report.json`：`meets_m4_trainer_gate=false`（缺 holdout render metrics 与 holdout
-spatial-query metrics；本 smoke 未跑 MC-17 / M3 holdout scorer）。**不是**几何重建
-准确率声明。M3 live VLM（`~91px` projection error）仍是 memory/query 诚实记录。
+中心后训练成功。**不是**几何重建准确率声明。
+
+**Holdout photometric 证据（MC-17，2026-09-12，`F:\auv\.tmp\m4-session/holdout-metrics.json`）：**
+Brush v0.3.0 以 `init.ply=splat_200.ply` + `transforms_val.json`（translate/revisit）
+跑 `--eval-save-to-disk`（step 1）；渲染在 `holdout-renders/`。与 M2 capture PNG
+（870×519，`image_size_match=true`）对比：
+
+| Holdout id | 视角角色 | 在训练集内？ | l1_mean | mse | psnr | ssim |
+| --- | --- | --- | --- | --- | --- | --- |
+| `m1-frame-146938-9332503893900` | translate (v02) | **是** (`frame_000002`) | 30.06 | 2806.34 | 13.65 | 0.539 |
+| `m1-frame-147101-9340652027000` | revisit (v03) | **是** (`frame_000003`) | 32.81 | 2585.78 | 14.00 | 0.486 |
+
+NOTICE：上表是 packet 指定 holdout 角色上的 **in-training-view** 光度对比，**不是**
+unseen-view 泛化。`transforms.json` 仍含全部三帧。
+
+**Holdout spatial-query 证据（2026-09-12，`F:\auv\.tmp\m4-session/spatial-query-metrics.json`）：**
+`packet.json` 与 photometric sibling 对齐，holdout observation id 为
+`m1-frame-146938-9332503893900`（`translate` / v02）与
+`m1-frame-147101-9340652027000`（`revisit` / v03）。throwaway `spatial-query-tool/`
+经 crate `verify_m3_query_from_session` / `m4_holdout_spatial_query_metric_from_m3`
+落盘：
+
+| Holdout id | 视角角色 | 评分来源 | `meets_m3_query_gate` | `visibility_class_correct` | `projection_pixel_error_px` | `projection_within_tolerance` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `m1-frame-146938-9332503893900` | translate (v02) | **live VLM** — 复用 `.tmp/m3-session/vlm/m3-query-report.json`（observation id 匹配） | true | true | ≈91.3 | true |
+| `m1-frame-147101-9340652027000` | revisit (v03) | **fixture_only** — holdout 几何导出响应（该视角无 live VLM） | true | true | 0.0 | true |
+
+NOTICE：**两个 holdout 视角也都在 Brush 训练集内** — `transforms.json` 含全部三帧
+（anchor/translate/revisit）。本 smoke 的 holdout 指 M4 评估 id，不是 train/test 划分。
+
+photometric + spatial-query 双 metric family 经 `record-tool/` rendezvous 后，
+`m4-report.json` 现为 `meets_m4_trainer_gate=true`。v02 live VLM（`≈91px`）仍是
+memory/query 诚实记录，**不是** VLM 几何命中率。
 
 ## 9. 当前 Minecraft 代码和已知边界
 
