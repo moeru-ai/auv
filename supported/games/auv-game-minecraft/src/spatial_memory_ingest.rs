@@ -9,11 +9,13 @@ use serde::{Deserialize, Serialize};
 use crate::m2_multi_view::{M2Session, m2_session_withheld_truth};
 use crate::spatial_memory_store::{ObservationRef, SpatialMemoryStore};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IngestReport {
   pub landmarks_created: usize,
   pub landmarks_merged: usize,
   pub observations_skipped: usize,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub skipped_reason: Option<String>,
 }
 
 /// Pluggable interface for ingesting platform-specific observations into spatial memory.

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use auv_game_minecraft::depth_calibration::AffineDepthCalibrator;
 use auv_game_minecraft::spatial_memory_ingest::LandmarkIngest;
 use auv_game_minecraft::spatial_memory_store::{ObservationRef, SpatialMemoryConfig, SpatialMemoryStore};
 use auv_game_minecraft::types::{BlockPosition, PlayerPose, Vec3, Viewport};
@@ -281,9 +282,14 @@ fn test_perception_and_spatial_memory_benchmarks() {
     observation_id: "bench-obs".to_string(),
     captured_at_millis: 1000,
   };
+  let mut calibrator = AffineDepthCalibrator::new(20);
+  calibrator.add_anchor(441.0, 3.866);
+  calibrator.add_anchor(482.0, 2.271);
+
   let ingest_midas = VisualPerceptionIngest {
     detector: &detector,
     depth: &midas_estimator,
+    calibrator: &calibrator,
     screenshot: test_img,
     observer: observer.clone(),
     viewport,
@@ -307,6 +313,7 @@ fn test_perception_and_spatial_memory_benchmarks() {
   let ingest_da2 = VisualPerceptionIngest {
     detector: &detector,
     depth: &da2_estimator,
+    calibrator: &calibrator,
     screenshot: test_img,
     observer,
     viewport,

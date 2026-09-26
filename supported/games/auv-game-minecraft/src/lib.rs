@@ -8,6 +8,7 @@ pub mod bind;
 pub mod closed_scene_toy_fixture;
 mod compare;
 pub mod dataset;
+pub mod depth_calibration;
 pub mod evidence;
 pub mod ingest;
 pub mod input_target;
@@ -55,6 +56,7 @@ pub use dataset::{
   SpatialBundleArtifactRecord, SpatialBundleCounts, SpatialBundleDirectory, SpatialBundleInputs, SpatialBundleManifest, SpatialBundleOutput,
   SpatialBundleSourceArtifact, export_spatial_bundle,
 };
+pub use depth_calibration::AffineDepthCalibrator;
 #[allow(deprecated)]
 pub use ingest::{TailFrameWaitConfig, read_latest_spatial_frame_from_tail, read_latest_spatial_frame_newer_than};
 pub use input_target::projected_window_point;
@@ -218,7 +220,7 @@ pub use verify::{
 };
 pub use visual_perception::{
   DEFAULT_MINECRAFT_CLASSES, DepthEstimator, DepthMap, Detection, PerceivedLandmark, VisualPerceptionIngest, YoloWorldConfig,
-  YoloWorldDetector, back_project,
+  YoloWorldDetector, back_project, robust_bbox_depth,
 };
 
 // NOTICE(mc4-live-refusal): MC-4 refusal logic now closes crate-local mismatch cases that can be

@@ -57,6 +57,11 @@ fn test_visual_perception_replay_end_to_end() {
   let scale = depth_estimator.calibrate_from_raycast(true_depth_at_crosshair, pred_depth_center);
   assert!(scale > 0.0, "calibrated depth scale must be positive");
 
+  let mut calibrator = auv_game_minecraft::depth_calibration::AffineDepthCalibrator::new(20);
+  calibrator.add_anchor(pred_depth_center as f32, true_depth_at_crosshair as f32);
+  calibrator.add_anchor(pred_depth_center as f32 * 0.5, true_depth_at_crosshair as f32 * 0.5);
+  assert!(calibrator.fit().is_some(), "calibrator must be fitted");
+
   // 2. Initialize YOLO-World detector
   let yolo_config = YoloWorldConfig {
     model_path: yolo_path,
@@ -77,6 +82,7 @@ fn test_visual_perception_replay_end_to_end() {
   let ingest = VisualPerceptionIngest {
     detector: &detector,
     depth: &depth_estimator,
+    calibrator: &calibrator,
     screenshot: &screenshot,
     observer,
     viewport,

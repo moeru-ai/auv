@@ -10,6 +10,7 @@ use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::depth_calibration::AffineDepthCalibrator;
 use crate::spatial_memory_ingest::{IngestReport, LandmarkIngest};
 use crate::spatial_memory_store::{ObservationRef, SpatialMemoryStore};
 use crate::types::{BlockPosition, PlayerPose, Vec3, Viewport};
@@ -419,6 +420,55 @@ pub fn back_project(screen_point: (f64, f64), metric_depth: f64, viewport: Viewp
   )
 }
 
+/// 对 bbox 内缩 inset_ratio（默认 0.2）后的区域取深度中位数。
+/// 返回 None 当且仅当内缩后区域为空（退化 bbox）或无有效像素。
+pub fn robust_bbox_depth(
+  depth_map: &[f32],
+  width: usize,
+  height: usize,
+  bbox: (f32, f32, f32, f32), // (x1, y1, x2, y2)
+  inset_ratio: f32,
+) -> Option<f32> {
+  let (x1, y1, x2, y2) = bbox;
+  let w = x2 - x1;
+  let h = y2 - y1;
+  if w <= 0.0 || h <= 0.0 {
+    return None;
+  }
+  let inset_x = w * inset_ratio;
+  let inset_y = h * inset_ratio;
+  let in_x1 = (x1 + inset_x).max(0.0).min(width as f32);
+  let in_x2 = (x2 - inset_x).max(0.0).min(width as f32);
+  let in_y1 = (y1 + inset_y).max(0.0).min(height as f32);
+  let in_y2 = (y2 - inset_y).max(0.0).min(height as f32);
+
+  if in_x2 <= in_x1 || in_y2 <= in_y1 {
+    return None;
+  }
+
+  let min_x = in_x1.floor() as usize;
+  let max_x = (in_x2.ceil() as usize).min(width);
+  let min_y = in_y1.floor() as usize;
+  let max_y = (in_y2.ceil() as usize).min(height);
+
+  let mut values = Vec::new();
+  for y in min_y..max_y {
+    for x in min_x..max_x {
+      let val = depth_map[y * width + x];
+      if val.is_finite() && val > 0.0 {
+        values.push(val);
+      }
+    }
+  }
+
+  if values.is_empty() {
+    return None;
+  }
+
+  values.sort_by(|a, b| a.total_cmp(b));
+  Some(values[values.len() / 2])
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PerceivedLandmark {
   pub position: Vec3,
@@ -433,6 +483,7 @@ pub struct PerceivedLandmark {
 pub struct VisualPerceptionIngest<'a> {
   pub detector: &'a YoloWorldDetector,
   pub depth: &'a DepthEstimator,
+  pub calibrator: &'a AffineDepthCalibrator,
   pub screenshot: &'a DynamicImage,
   pub observer: PlayerPose,
   pub viewport: Viewport,
@@ -443,10 +494,19 @@ pub struct VisualPerceptionIngest<'a> {
 impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
   fn ingest(&self, store: &mut SpatialMemoryStore, _now_millis: u64) -> IngestReport {
     let mut report = IngestReport::default();
+
+    // P2c: Zero-anchor gate - if calibrator has no fit, abort and skip
+    if self.calibrator.fit().is_none() {
+      report.observations_skipped += 1;
+      report.skipped_reason = Some("no depth calibration anchors".to_string());
+      return report;
+    }
+
     let detections = match self.detector.detect(self.screenshot) {
       Ok(d) => d,
-      Err(_) => {
+      Err(e) => {
         report.observations_skipped += 1;
+        report.skipped_reason = Some(format!("detector failure: {e}"));
         return report;
       }
     };
@@ -457,8 +517,9 @@ impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
 
     let depth_map = match self.depth.estimate(self.screenshot) {
       Ok(dm) => dm,
-      Err(_) => {
+      Err(e) => {
         report.observations_skipped += 1;
+        report.skipped_reason = Some(format!("depth estimator failure: {e}"));
         return report;
       }
     };
@@ -466,7 +527,25 @@ impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
     for det in detections {
       let cx = (det.bbox.0 + det.bbox.2) * 0.5;
       let cy = (det.bbox.1 + det.bbox.3) * 0.5;
-      let metric_depth = self.depth.metric_depth_at(&depth_map, cx, cy);
+
+      let raw_depth_opt = robust_bbox_depth(
+        &depth_map.values,
+        depth_map.width as usize,
+        depth_map.height as usize,
+        (det.bbox.0 as f32, det.bbox.1 as f32, det.bbox.2 as f32, det.bbox.3 as f32),
+        0.2,
+      );
+
+      let Some(raw_depth) = raw_depth_opt else {
+        report.observations_skipped += 1;
+        continue;
+      };
+
+      let Some(metric_depth) = self.calibrator.calibrate(raw_depth) else {
+        report.observations_skipped += 1;
+        continue;
+      };
+      let metric_depth = metric_depth as f64;
 
       let world_pos = back_project((cx, cy), metric_depth, self.viewport, &self.observer, self.vertical_fov_deg);
 
@@ -626,5 +705,75 @@ mod tests {
       assert!(det.bbox.2 >= det.bbox.0);
       assert!(det.bbox.3 >= det.bbox.1);
     }
+  }
+
+  #[test]
+  fn test_robust_bbox_depth_ignores_center_hole() {
+    // 100x100 depth map, everywhere is 3.0m, but center (45..55, 45..55) is 60.0m (sky hole)
+    let mut data = vec![3.0f32; 100 * 100];
+    for y in 45..55 {
+      for x in 45..55 {
+        data[y * 100 + x] = 60.0f32;
+      }
+    }
+
+    // Bbox covering 30..70, with 20% inset it covers 38..62
+    // Inside the 24x24 inset region (576 px), the 10x10 hole (100 px) is only 17% of pixels.
+    // The median is guaranteed to remain 3.0m (ignoring the 60m center hole).
+    let bbox = (30.0, 30.0, 70.0, 70.0);
+    let depth = robust_bbox_depth(&data, 100, 100, bbox, 0.2).expect("depth computed");
+    assert!((depth - 3.0).abs() < 1e-4, "expected robust depth 3.0m, got {}", depth);
+  }
+
+  #[test]
+  fn test_zero_anchor_gate_skips_ingest() {
+    let empty_calibrator = AffineDepthCalibrator::new(20);
+    assert_eq!(empty_calibrator.fit(), None);
+
+    // Any detector / depth estimator path will be short-circuited before inference
+    // We construct a mock-like or real instance if models exist, or test gate directly
+    let yolo_path = PathBuf::from("F:/auv/.tmp/models/yolov8s-worldv2.onnx");
+    let depth_path = PathBuf::from("F:/auv/.tmp/models/model-small.onnx");
+    let screenshot_path = PathBuf::from("F:/auv/.tmp/m2-session/v01/screenshot.png");
+    if !yolo_path.is_file() || !depth_path.is_file() || !screenshot_path.is_file() {
+      return;
+    }
+
+    let img = image::open(&screenshot_path).unwrap();
+    let detector = YoloWorldDetector::new(YoloWorldConfig {
+      model_path: yolo_path,
+      confidence_threshold: 0.05,
+      iou_threshold: 0.45,
+      input_size: 640,
+      classes: DEFAULT_MINECRAFT_CLASSES.iter().map(|s| s.to_string()).collect(),
+    })
+    .unwrap();
+    let depth = DepthEstimator::new(&depth_path).unwrap();
+
+    let ingest = VisualPerceptionIngest {
+      detector: &detector,
+      depth: &depth,
+      calibrator: &empty_calibrator,
+      screenshot: &img,
+      observer: PlayerPose {
+        eye_position: Vec3::new(0.0, 64.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      viewport: Viewport::new(854, 480),
+      vertical_fov_deg: 70.0,
+      observation_ref: ObservationRef {
+        observation_id: "obs-gate".to_string(),
+        captured_at_millis: 1000,
+      },
+    };
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let mut store = SpatialMemoryStore::open(tmp.path()).unwrap();
+    let report = ingest.ingest(&mut store, 1000);
+
+    assert_eq!(report.landmarks_created, 0);
+    assert_eq!(report.observations_skipped, 1);
+    assert_eq!(report.skipped_reason, Some("no depth calibration anchors".to_string()));
   }
 }
