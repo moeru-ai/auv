@@ -2,7 +2,12 @@
 
 Platform drivers, input, window, capture, permissions
 
-Count: **48**
+Executable GUI evaluations live in
+[`evals/auv-base`](../../../../evals/auv-base/README.md), organized by platform with
+test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
+use TypeScript. Raw run output stays local.
+
+Count: **49**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -55,7 +60,8 @@ Count: **48**
 
 - [`2026-09-18-held-input-design.md`](2026-09-18-held-input-design.md): Held mouse input contract: shared logical mouse state, ordered admission, cleanup, three-platform adapters, and validation boundaries.
 - [`2026-09-23-held-input-native-validation.md`](2026-09-23-held-input-native-validation.md): BG-1 Windows background/RDP and Linux uinput receipts, Portal protocol validation, reproducible tests, and remaining live evidence gaps.
-- [`2026-09-24-keyboard-hold-contract.md`](2026-09-24-keyboard-hold-contract.md): Timed and cross-call keyboard holds, modifier composition, lifecycle, and bounded validation limits.
+- [`2026-09-24-keyboard-hold-contract.md`](2026-09-24-keyboard-hold-contract.md): Timed and cross-call keyboard holds, the held-modifier fix, and receiver-backed diagnosis of background command-target and Unicode IME-focus failures on 2026-09-25.
+- [`2026-09-26-no-raise-keyboard-probe.md`](2026-09-26-no-raise-keyboard-probe.md): Swift/Electron/Chrome experiments with no-raise activation, key-window records, explicit restoration, and independent agent-browser receipts; test-only evidence.
 - [`2026-09-18-held-input-project-research.md`](2026-09-18-held-input-project-research.md): Pinned-source comparison of held-input APIs, cleanup lifecycles, and independent observation.
 - [`2026-09-19-positional-targets.md`](2026-09-19-positional-targets.md): Window-bound positional targets, NetEase migration, and live validation evidence.
 - [`2026-09-23-background-delivery-project-comparison.md`](2026-09-23-background-delivery-project-comparison.md): BG-2 source comparison of CUA, KWWK, locally bundled OpenAI Sky, and MaaFramework; transport selection, click counts, and evidence limits.
