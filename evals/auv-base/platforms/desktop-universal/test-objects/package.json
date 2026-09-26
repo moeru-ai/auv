@@ -1,0 +1,16 @@
+{
+  "name": "@auv-evals/test-objects",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "electron": "catalog:",
+    "electron-vite": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}
