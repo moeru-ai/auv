@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::occlusion::{MetricDepthMap, OcclusionVerdict, check_occlusion};
 use crate::projection::MinecraftProjector;
 use crate::spatial_memory_store::SpatialMemoryStore;
 use crate::types::{BlockPosition, MinecraftBlockTarget, MinecraftSpatialFrame, PlayerPose, ProjectionVisibility, Viewport};
@@ -43,12 +44,13 @@ pub enum FovSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VisibilityClass {
-  /// 目标在相机视锥内。
-  /// 注意：这不意味着物理无遮挡或可交互，仅表示几何投影落在视锥与视口内。物理遮挡未知。
+  /// 在视锥内，且当前帧深度图确认前方无遮挡（或未提供深度图时视锥几何可见）。
   Visible,
+  /// 在视锥内，但当前帧深度图显示前方有更近的表面遮挡。
+  Occluded,
   /// 目标在视锥外（确定）。
   OutOfFrustum,
-  /// 无法判断（投影失败、目标未知、或遮挡不确定）。
+  /// 无法判断（投影失败、目标未知、未标定或投影越界——无法判断遮挡）。
   Unknown,
 }
 
@@ -120,7 +122,7 @@ pub struct SpatialMemoryAnswer {
 /// 2. Projects target position onto observer viewport using `MinecraftProjector`.
 /// 3. Occlusion is never guessed; without explicit depth evidence it remains `Unknown`.
 /// 4. Confidence is determined by claim status and observation evidence count.
-pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) -> SpatialMemoryAnswer {
+pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery, depth_map: Option<&MetricDepthMap>) -> SpatialMemoryAnswer {
   let landmark = match &q.target {
     LandmarkTarget::LandmarkId(id) => store.get(id),
     LandmarkTarget::BlockPos(pos) => store.landmarks().values().find(|lm| {
@@ -195,7 +197,7 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
     build_frame_from_pose(q.observer_viewpoint, q.viewport.unwrap_or(Viewport::new(854, 480)), effective_fov_deg)
   };
 
-  let (visibility, screen_xy) = match MinecraftProjector::new(frame) {
+  let (mut visibility, screen_xy) = match MinecraftProjector::new(frame) {
     Ok(projector) => {
       let mut target_block = MinecraftBlockTarget::new(landmark.position);
       target_block.face = landmark.surface_face;
@@ -214,6 +216,38 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
     }
     Err(_) => (VisibilityClass::Unknown, None),
   };
+
+  let mut limitations = Vec::new();
+
+  // If in frustum, check physical occlusion if depth map is provided:
+  if visibility == VisibilityClass::Visible {
+    if let Some(dm) = depth_map {
+      if let Some(xy) = screen_xy {
+        let landmark_dist = (dx * dx + dy * dy + dz * dz).sqrt();
+        let verdict = check_occlusion((xy.0 as f32, xy.1 as f32), landmark_dist, Some(dm), 1.0);
+        match verdict {
+          OcclusionVerdict::Visible => {
+            visibility = VisibilityClass::Visible;
+            limitations.push("target confirmed visible: no foreground occlusion detected in depth map".to_string());
+          }
+          OcclusionVerdict::Occluded => {
+            visibility = VisibilityClass::Occluded;
+            limitations.push("target occluded: depth map detects foreground geometry in front of target".to_string());
+          }
+          OcclusionVerdict::Unknown => {
+            visibility = VisibilityClass::Unknown;
+            limitations.push("occlusion unknown: depth map samples unavailable or out of bounds".to_string());
+          }
+        }
+      } else {
+        limitations.push("occlusion not assessed: projected screen point unavailable".to_string());
+      }
+    } else {
+      limitations.push("occlusion not assessed: frustum containment only, physical occlusion unknown".to_string());
+    }
+  } else {
+    limitations.push("target outside frustum or projection failed".to_string());
+  }
 
   let status = match q.query_kind {
     QueryKind::Visibility => {
@@ -238,8 +272,6 @@ pub fn query_spatial_memory(store: &SpatialMemoryStore, q: &SpatialMemoryQuery) 
       }
     }
   };
-
-  let mut limitations = vec!["occlusion not assessed: frustum containment only, physical occlusion unknown".to_string()];
 
   match fov_source {
     FovSource::Default => {
@@ -355,7 +387,7 @@ mod tests {
       pitch: 0.0,
     };
     let query = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::LandmarkId("nonexistent".to_string()), QueryKind::Visibility);
-    let answer = query_spatial_memory(&store, &query);
+    let answer = query_spatial_memory(&store, &query, None);
 
     assert_eq!(answer.status, AnswerStatus::Unknown);
     assert_eq!(answer.visibility, VisibilityClass::Unknown);
@@ -385,7 +417,7 @@ mod tests {
     };
     let query = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(BlockPosition::new(10, 64, 10)), QueryKind::Direction);
 
-    let answer = query_spatial_memory(&store, &query);
+    let answer = query_spatial_memory(&store, &query, None);
     assert_eq!(answer.status, AnswerStatus::Answered);
     let (yaw_delta, pitch_delta) = answer.yaw_pitch_delta.expect("yaw pitch delta present");
     // Target is at +X, +Z from observer -> yaw should be approx -45 degrees
@@ -418,12 +450,12 @@ mod tests {
     let q70 = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::ScreenProjection)
       .with_viewport(Viewport::new(854, 480))
       .with_vertical_fov(70.0);
-    let ans70 = query_spatial_memory(&store, &q70);
+    let ans70 = query_spatial_memory(&store, &q70, None);
 
     let q90 = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::ScreenProjection)
       .with_viewport(Viewport::new(854, 480))
       .with_vertical_fov(90.0);
-    let ans90 = query_spatial_memory(&store, &q90);
+    let ans90 = query_spatial_memory(&store, &q90, None);
 
     assert_eq!(ans70.fov_source, FovSource::QueryParam);
     assert_eq!(ans70.effective_fov_deg, 70.0);
@@ -456,7 +488,7 @@ mod tests {
       pitch: 0.0,
     };
     let query = SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::Visibility);
-    let answer = query_spatial_memory(&store, &query);
+    let answer = query_spatial_memory(&store, &query, None);
 
     assert_eq!(answer.visibility, VisibilityClass::Visible);
     assert!(answer.limitations.iter().any(|lim| lim.contains("occlusion not assessed")));
@@ -513,7 +545,7 @@ mod tests {
 
     // Query spatial memory using anchor viewpoint & frame
     let query = SpatialMemoryQuery::with_frame(v01_frame.clone(), LandmarkTarget::BlockPos(block), QueryKind::ScreenProjection);
-    let answer = query_spatial_memory(&store, &query);
+    let answer = query_spatial_memory(&store, &query, None);
 
     assert_eq!(answer.status, AnswerStatus::Answered);
     assert_eq!(answer.visibility, VisibilityClass::Visible);
@@ -535,5 +567,71 @@ mod tests {
     // Multi-observation confidence: 2 observations -> 0.90 + 0.02 = 0.92
     assert_eq!(answer.confidence, 0.92);
     assert_eq!(answer.evidence_observation_ids, vec!["v01-obs", "v02-obs"]);
+  }
+
+  #[test]
+  fn query_with_depth_map_detects_occlusion() {
+    let mut store = SpatialMemoryStore::open("occl_mem.json").unwrap();
+    // Target is 20m ahead at (0, 64, 20)
+    let block = BlockPosition::new(0, 64, 20);
+    let hit = RaycastHit {
+      block_pos: block,
+      face: BlockFace::North,
+      block_id: "minecraft:chest".to_string(),
+    };
+    let obs = ObservationRef {
+      observation_id: "obs-chest".to_string(),
+      captured_at_millis: 1000,
+    };
+    store.upsert_from_raycast(&hit, &obs);
+
+    let viewpoint = PlayerPose {
+      eye_position: Vec3::new(0.0, 64.0, 0.0),
+      yaw: 0.0,
+      pitch: 0.0,
+    };
+    let query =
+      SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::Visibility).with_viewport(Viewport::new(854, 480));
+
+    // Depth map indicates a wall at 5.0m across all pixels
+    let depth_map = MetricDepthMap::new(vec![5.0f32; 854 * 480], 854, 480);
+
+    let answer = query_spatial_memory(&store, &query, Some(&depth_map));
+    assert_eq!(answer.status, AnswerStatus::Answered);
+    assert_eq!(answer.visibility, VisibilityClass::Occluded);
+    assert!(answer.limitations.iter().any(|lim| lim.contains("target occluded")));
+  }
+
+  #[test]
+  fn query_with_depth_map_confirms_visibility() {
+    let mut store = SpatialMemoryStore::open("vis_mem.json").unwrap();
+    // Target is 4m ahead at (0, 64, 4)
+    let block = BlockPosition::new(0, 64, 4);
+    let hit = RaycastHit {
+      block_pos: block,
+      face: BlockFace::North,
+      block_id: "minecraft:crafting_table".to_string(),
+    };
+    let obs = ObservationRef {
+      observation_id: "obs-ct".to_string(),
+      captured_at_millis: 1000,
+    };
+    store.upsert_from_raycast(&hit, &obs);
+
+    let viewpoint = PlayerPose {
+      eye_position: Vec3::new(0.0, 64.0, 0.0),
+      yaw: 0.0,
+      pitch: 0.0,
+    };
+    let query =
+      SpatialMemoryQuery::new(viewpoint, LandmarkTarget::BlockPos(block), QueryKind::Visibility).with_viewport(Viewport::new(854, 480));
+
+    // Depth map indicates wall at 10.0m (behind the target)
+    let depth_map = MetricDepthMap::new(vec![10.0f32; 854 * 480], 854, 480);
+
+    let answer = query_spatial_memory(&store, &query, Some(&depth_map));
+    assert_eq!(answer.status, AnswerStatus::Answered);
+    assert_eq!(answer.visibility, VisibilityClass::Visible);
+    assert!(answer.limitations.iter().any(|lim| lim.contains("target confirmed visible")));
   }
 }
