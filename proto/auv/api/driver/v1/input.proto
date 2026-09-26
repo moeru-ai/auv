@@ -50,6 +50,20 @@ service InputService {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
+  // A bounded combination remains down until KeyUp or its release deadline.
+  rpc KeyDown(KeyDownRequest) returns (KeyDownResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  rpc KeyUp(KeyUpRequest) returns (KeyUpResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // One call owns both transitions and the dwell between them.
+  rpc HoldKeys(HoldKeysRequest) returns (HoldKeysResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
 
   rpc ClickWindowPoint(ClickWindowPointRequest) returns (ClickWindowPointResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
@@ -481,6 +495,36 @@ message PressKeysRequest {
 
 message PressKeysResponse {
   // Absent for dry-run. Errors carry KeyboardInputProgress like InputKeyboard.
+  InputActionResult action = 1;
+}
+
+message KeyDownRequest {
+  InputTarget target = 1;
+  repeated string keys = 2;
+  // Unspecified selects foreground-preferred.
+  InputPolicy policy = 3;
+  // Required, positive, and bounded by the Runner. Timeout attempts release.
+  google.protobuf.Duration timeout = 4;
+}
+message KeyDownResponse {
+  uint64 hold_id = 1;
+  InputActionResult action = 2;
+}
+message KeyUpRequest {
+  uint64 hold_id = 1;
+}
+message KeyUpResponse {
+  InputActionResult action = 1;
+}
+message HoldKeysRequest {
+  InputTarget target = 1;
+  repeated string keys = 2;
+  // Unspecified selects foreground-preferred.
+  InputPolicy policy = 3;
+  // Required, positive. The call returns after release is attempted.
+  google.protobuf.Duration duration = 4;
+}
+message HoldKeysResponse {
   InputActionResult action = 1;
 }
 

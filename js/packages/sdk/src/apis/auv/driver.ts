@@ -63,6 +63,9 @@ export interface RunnerClient {
     clickScreenPoint: (point: Init<typeof ScreenPointSchema>, clickOptions: Init<typeof ScreenClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickScreenPoint.output>>
     createMouse: (request: Init<typeof InputService.method.createMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.createMouse.output>>
     dragMouse: (request: Init<typeof InputService.method.dragMouse.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.dragMouse.output>>
+    holdKeys: (request: Init<typeof InputService.method.holdKeys.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.holdKeys.output>>
+    keyDown: (request: Init<typeof InputService.method.keyDown.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.keyDown.output>>
+    keyUp: (request: Init<typeof InputService.method.keyUp.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.keyUp.output>>
     mouseDown: (request: Init<typeof InputService.method.mouseDown.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseDown.output>>
     mouseUp: (request: Init<typeof InputService.method.mouseUp.input>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.mouseUp.output>>
     moveMouse: (request: Init<typeof MoveMouseRequestSchema>, options?: OperationOptions) => Promise<AsyncIterable<MoveMouseStreamResponse>>
@@ -192,6 +195,9 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       clickScreenPoint: (point, clickOptions, options) => unary(InputService.method.clickScreenPoint, { options: clickOptions, point }, options),
       createMouse: (request, options) => unary(InputService.method.createMouse, request, options),
       dragMouse: (request, options) => unary(InputService.method.dragMouse, request, options),
+      holdKeys: (request, options) => unary(InputService.method.holdKeys, request, options),
+      keyDown: (request, options) => unary(InputService.method.keyDown, request, options),
+      keyUp: (request, options) => unary(InputService.method.keyUp, request, options),
       mouseDown: (request, options) => unary(InputService.method.mouseDown, request, options),
       mouseUp: (request, options) => unary(InputService.method.mouseUp, request, options),
       moveMouse: (request, options) => serverStream(InputService.method.moveMouse, request, options),

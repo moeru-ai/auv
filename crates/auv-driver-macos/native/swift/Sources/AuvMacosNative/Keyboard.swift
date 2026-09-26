@@ -48,8 +48,22 @@ private enum KeyboardDelivery {
       event.post(tap: .cgSessionEventTap)
     case let .process(pid, windowNumber):
       stampKeyboardTarget(event, pid: pid, windowNumber: windowNumber)
-      event.postToPid(pid_t(pid))
+      postKeyboardEvent(event, to: pid_t(pid))
     }
+  }
+}
+
+// Native posting has no acknowledgement. Keep only the modifier flags for the
+// same recipient until the matching held-key transition releases them.
+private let heldModifierLock = NSLock()
+private var heldModifierFlags: [String: CGEventFlags] = [:]
+
+private func keyboardRecipientKey(_ delivery: KeyboardDelivery) -> String {
+  switch delivery {
+  case .foreground:
+    return "foreground"
+  case let .process(pid, windowNumber):
+    return "\(pid):\(windowNumber)"
   }
 }
 
@@ -103,6 +117,8 @@ private func typeText(
   text: String,
   inter_char_delay_ms: UInt64
 ) -> NativeActionResponse {
+  // TODO: Unicode text events do not compose with a held modifier. Define that
+  // interaction with receiver evidence before extending held-key semantics.
   let source = delivery.eventSource
   let delaySeconds = Double(inter_char_delay_ms) / 1000.0
   let characters = Array(text)
@@ -158,24 +174,51 @@ private func hotkey(
 // acknowledgement; a completed key combination is still unverified input submission.
 private func pressKeys(delivery: KeyboardDelivery, keyCodes: [Int32]) -> NativeActionResponse {
   guard !keyCodes.isEmpty else { return nativeActionError("keys must not be empty", "provide at least one key") }
+  heldModifierLock.lock()
+  defer { heldModifierLock.unlock() }
   let source = delivery.eventSource
   var events: [CGEvent] = []
-  var flags = CGEventFlags()
+  let heldFlags = heldModifierFlags[keyboardRecipientKey(delivery)] ?? []
+  var localFlags = CGEventFlags()
   let modifiers = modifierKeys(command: true, shift: true, option: true, control: true)
   func modifier(_ code: Int32) -> CGEventFlags {
     modifiers.first { Int32($0.keyCode) == code }?.flag ?? []
   }
   for (codes, down) in [(keyCodes, true), (Array(keyCodes.reversed()), false)] {
     for code in codes {
-      if down { flags.formUnion(modifier(code)) } else { flags.subtract(modifier(code)) }
+      if down { localFlags.formUnion(modifier(code)) } else { localFlags.subtract(modifier(code)) }
       guard let key = validatedKeyCode(code),
-        let event = makeKeyboardEvent(source: source, keyCode: key, keyDown: down, flags: flags) else {
+        let event = makeKeyboardEvent(source: source, keyCode: key, keyDown: down, flags: heldFlags.union(localFlags)) else {
         return nativeActionError("failed to create key combination event", "check key codes and Accessibility permission")
       }
       events.append(event)
     }
   }
+  // TODO: Toolkit-specific key dwell and background menu routing are separate
+  // from event authentication and need an owner-approved compatibility slice.
+  // Receiver evidence: `2026-09-23-background-keyboard-authentication.md`.
   for event in events { delivery.post(event) }
+  return nativeActionOk()
+}
+
+// A held combination is delivered one transition at a time. Rust retains the
+// recipient and resolved codes until release, including timeout cleanup.
+func key_transition(pid: Int64, window_number: Int64, key_code: Int32, down: Bool, flags: UInt64) -> NativeActionResponse {
+  let delivery: KeyboardDelivery = pid == 0 ? .foreground : .process(pid: pid, windowNumber: window_number)
+  heldModifierLock.lock()
+  defer { heldModifierLock.unlock() }
+  guard let code = validatedKeyCode(key_code),
+    let event = makeKeyboardEvent(source: delivery.eventSource, keyCode: code, keyDown: down, flags: CGEventFlags(rawValue: flags)) else {
+    return nativeActionError("failed to create held keyboard event", "check key code and Accessibility permission")
+  }
+  delivery.post(event)
+  let recipient = keyboardRecipientKey(delivery)
+  let modifierFlags = CGEventFlags(rawValue: flags).intersection([.maskCommand, .maskShift, .maskAlternate, .maskControl])
+  if modifierFlags.isEmpty {
+    heldModifierFlags.removeValue(forKey: recipient)
+  } else {
+    heldModifierFlags[recipient] = modifierFlags
+  }
   return nativeActionOk()
 }
 

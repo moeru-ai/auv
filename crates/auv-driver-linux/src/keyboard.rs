@@ -45,6 +45,41 @@ pub(crate) fn combination(options: &PressKeysOptions) -> DriverResult<Vec<i32>> 
 }
 
 impl InputApi<'_> {
+  pub fn key_down(
+    &self,
+    target: &InputTarget,
+    keys: Vec<String>,
+    policy: InputPolicy,
+    timeout: Duration,
+  ) -> DriverResult<auv_driver_common::KeyboardHold> {
+    if !matches!(target, InputTarget::Foreground) || policy != InputPolicy::ForegroundPreferred {
+      return Err(DriverError::unsupported("Linux targeted keyboard input"));
+    }
+    let symbols = combination(&PressKeysOptions {
+      keys,
+      ..Default::default()
+    })?;
+    let backend = crate::input::held_keyboard_backend(&self.session.state, &symbols)?;
+    let coordinator = auv_driver_common::keyboard_coordinator().clone();
+    coordinator.down(backend, timeout)
+  }
+
+  pub fn key_up(&self, hold: auv_driver_common::KeyboardHoldId) -> DriverResult<InputActionResult> {
+    auv_driver_common::keyboard_coordinator().up(hold)
+  }
+
+  pub fn hold_keys(
+    &self,
+    target: &InputTarget,
+    keys: Vec<String>,
+    policy: InputPolicy,
+    duration: Duration,
+  ) -> DriverResult<InputActionResult> {
+    // Give this call time to release before the coordinator's fallback deadline.
+    let mut hold = self.key_down(target, keys, policy, duration.saturating_add(Duration::from_secs(1)))?;
+    hold.wait_and_release(duration)
+  }
+
   /// Validate an entire foreground batch before delivery. Errors retain completed
   /// actions and repetitions; submitted events never establish semantic success.
   pub fn input_keyboard(

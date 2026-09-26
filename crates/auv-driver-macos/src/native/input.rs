@@ -129,6 +129,23 @@ pub fn press_keys(target: Option<(i64, i64)>, key_codes: Vec<i32>) -> AuvResult<
   }
 }
 
+pub fn key_transition(target: Option<(i64, i64)>, key_code: i32, down: bool, flags: u64) -> AuvResult<()> {
+  #[cfg(test)]
+  if let Some(result) = tests::record_transition(target, key_code, down, flags) {
+    return result;
+  }
+  #[cfg(target_os = "macos")]
+  {
+    let (pid, number) = target.unwrap_or((0, 0));
+    action_result("key_transition", super::binding::ffi::key_transition(pid, number, key_code, down, flags))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (target, key_code, down, flags);
+    Err("macOS native held keyboard input is unsupported on this target".into())
+  }
+}
+
 #[cfg(target_os = "macos")]
 pub fn press_key_in_window(pid: i64, window_number: i64, key_code: i32) -> AuvResult<()> {
   action_result("press_key_in_window", native_press_key_in_window(pid, window_number, key_code))

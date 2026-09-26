@@ -8,11 +8,6 @@ private typealias CGEventSetWindowLocationFn = @convention(c) (
   CGPoint
 ) -> Void
 
-private typealias SLEventPostToPidFn = @convention(c) (
-  pid_t,
-  CGEvent
-) -> Void
-
 private let cgEventSetWindowLocation: CGEventSetWindowLocationFn? = {
   let symbolName = "CGEventSetWindowLocation"
   let globalHandle = UnsafeMutableRawPointer(bitPattern: -2)
@@ -28,17 +23,6 @@ private let cgEventSetWindowLocation: CGEventSetWindowLocationFn? = {
     return nil
   }
   return unsafeBitCast(symbol, to: CGEventSetWindowLocationFn.self)
-}()
-
-private let slEventPostToPid: SLEventPostToPidFn? = {
-  let symbolName = "SLEventPostToPid"
-  let skyLightPath = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
-  _ = dlopen(skyLightPath, RTLD_LAZY | RTLD_GLOBAL)
-  let globalHandle = UnsafeMutableRawPointer(bitPattern: -2)
-  guard let symbol = dlsym(globalHandle, symbolName) else {
-    return nil
-  }
-  return unsafeBitCast(symbol, to: SLEventPostToPidFn.self)
 }()
 
 private enum WindowClickStrategyCode: Int32 {

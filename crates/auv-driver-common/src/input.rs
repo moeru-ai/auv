@@ -152,8 +152,8 @@ impl InputPreparationLease {
 /// input-forwarding applications may need a different delivery contract.
 /// Windows foreground and Linux portal input use scoped key transitions;
 /// Meta means Windows/Super. Windows background supports Shift/Control only.
-/// TODO(click-held-keys): arbitrary keys, sided modifiers and persistent holds
-/// need an owner-approved keyboard identity and cancellation/release contract.
+/// TODO(click-held-keys): ClickOptions does not bind a keyboard hold ID.
+/// Cross-action modifier ownership awaits an approved combined input contract.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ClickModifiers {
@@ -234,6 +234,8 @@ impl Default for TypeTextOptions {
 /// One action in an ordered keyboard input request. Policy is owned by each action,
 /// so text options and the enclosing request cannot disagree.
 /// This is also the payload of the Runner's target-bound keyboard RPC.
+/// NOTICE(keyboard-hold-batch): held keys use separate KeyDown/KeyUp operations;
+/// a cross-call hold cannot be represented as one completed batch action.
 /// TODO(control-target): control selectors are intentionally separate; see
 /// `2026-09-08-targeted-keyboard-contract.md`. Reopen only with an approved
 /// driver contract for selecting and verifying an application-owned control.
@@ -277,8 +279,7 @@ pub enum InputTarget {
 
 /// A key combination: keys go down in order and come up in reverse order. Modifiers
 /// precede ordinary keys. Each repetition releases every key before the next.
-/// TODO(key-hold): independent down/up and hold duration are deferred until an
-/// approved cancellation/release contract exists; counts are discrete presses.
+/// Held input uses KeyDown/KeyUp or HoldKeys; counts are discrete presses.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PressKeysOptions {

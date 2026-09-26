@@ -437,6 +437,7 @@ pub(crate) mod ffi {
     fn type_text_foreground(text: String, inter_char_delay_ms: u64) -> NativeActionResponse;
     fn press_keys_foreground(key_codes: Vec<i32>) -> NativeActionResponse;
     fn press_keys_in_window(pid: i64, window_number: i64, key_codes: Vec<i32>) -> NativeActionResponse;
+    fn key_transition(pid: i64, window_number: i64, key_code: i32, down: bool, flags: u64) -> NativeActionResponse;
     fn press_key_foreground(key_code: i32) -> NativeActionResponse;
     fn hotkey_foreground(key_code: i32, command: bool, shift: bool, option: bool, control: bool) -> NativeActionResponse;
     fn type_text_in_window(pid: i64, window_number: i64, text: String, inter_char_delay_ms: u64) -> NativeActionResponse;

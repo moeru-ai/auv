@@ -132,9 +132,10 @@ require a positive interval; a single press requires zero interval. Interval
 is a minimum wait between complete repetitions, followed by recipient/focus
 checks, not an exact event timestamp. Settle applies once after the final press.
 This is not a hold, OS auto-repeat, or a repeat of the whole action list.
-Independent key-down/up, holds, and cancellation/release coordination remain
-intentionally deferred. A started synchronous request is not cancelled merely
-because the caller disconnects; callers must not treat disconnect as rollback.
+The Driver's later `KeyDown`/`KeyUp` and `HoldKeys` operations live outside this
+ordered batch; see the [keyboard hold contract](../driver/2026-09-24-keyboard-hold-contract.md).
+Invoke does not yet own a persistent hold ID across commands. A started
+synchronous request is not rolled back merely because the caller disconnects.
 
 The driver validates the whole list before resolving/activating the recipient.
 It binds a target process once, then checks identity and applies the action's

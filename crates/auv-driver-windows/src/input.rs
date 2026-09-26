@@ -19,6 +19,7 @@ use auv_driver_common::input::{
   Click, ClickModifiers, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll,
   TextSubmit, TypeTextOptions,
 };
+use auv_driver_common::{InputTarget, KeyboardBackend, KeyboardHold, KeyboardHoldId};
 
 use crate::error::invalid_input;
 
@@ -111,6 +112,60 @@ pub fn press_key(options: KeyPressOptions) -> DriverResult<InputActionResult> {
   native::press_chord(&chord)?;
   sleep_if_nonzero(options.settle);
   Ok(foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
+}
+
+struct HeldKeyboardBackend {
+  keys: Vec<u16>,
+}
+
+impl KeyboardBackend for HeldKeyboardBackend {
+  fn key_count(&self) -> usize {
+    self.keys.len()
+  }
+  fn key(&self, index: usize, down: bool) -> DriverResult<()> {
+    native::key_transition(self.keys[index], down)
+  }
+  fn result(&self) -> InputActionResult {
+    foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None)
+  }
+}
+
+pub fn key_down(target: &InputTarget, keys: Vec<String>, policy: InputPolicy, timeout: Duration) -> DriverResult<KeyboardHold> {
+  if !matches!(target, InputTarget::Foreground) || policy != InputPolicy::ForegroundPreferred {
+    return Err(auv_driver_common::DriverError::unsupported("Windows targeted keyboard input"));
+  }
+  if keys.is_empty() {
+    return Err(invalid_input("keys must not be empty"));
+  }
+  let mut codes = Vec::with_capacity(keys.len());
+  let mut ordinary = false;
+  for key in keys {
+    let modifier = modifier_virtual_key(&key);
+    if ordinary && modifier.is_some() {
+      return Err(invalid_input("modifiers must precede ordinary keys"));
+    }
+    ordinary |= modifier.is_none();
+    let code = modifier
+      .or_else(|| special_virtual_key(&key))
+      .or_else(|| single_char_virtual_key(&key))
+      .ok_or_else(|| invalid_input(format!("invalid key {key:?}")))?;
+    if codes.contains(&code) {
+      return Err(invalid_input("a combination cannot contain duplicate keys"));
+    }
+    codes.push(code);
+  }
+  let coordinator = auv_driver_common::keyboard_coordinator().clone();
+  coordinator.down(std::sync::Arc::new(HeldKeyboardBackend { keys: codes }), timeout)
+}
+
+pub fn key_up(hold: KeyboardHoldId) -> DriverResult<InputActionResult> {
+  auv_driver_common::keyboard_coordinator().up(hold)
+}
+
+pub fn hold_keys(target: &InputTarget, keys: Vec<String>, policy: InputPolicy, duration: Duration) -> DriverResult<InputActionResult> {
+  // Give this call time to release before the coordinator's fallback deadline.
+  let mut hold = key_down(target, keys, policy, duration.saturating_add(Duration::from_secs(1)))?;
+  hold.wait_and_release(duration)
 }
 
 /// Issues the system copy shortcut (Ctrl+C) against the foreground target.
@@ -521,6 +576,17 @@ mod native {
     }
     send_inputs(&inputs)
   }
+
+  pub(super) fn key_transition(key: u16, down: bool) -> DriverResult<()> {
+    send_inputs(&[virtual_key_input(
+      key,
+      if down {
+        KEYBD_EVENT_FLAGS(0)
+      } else {
+        KEYEVENTF_KEYUP
+      },
+    )])
+  }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -565,6 +631,10 @@ mod native {
 
   pub(super) fn press_chord(_chord: &KeyChord) -> DriverResult<()> {
     Err(DriverError::unsupported("input.press_key"))
+  }
+
+  pub(super) fn key_transition(_key: u16, _down: bool) -> DriverResult<()> {
+    Err(DriverError::unsupported("input.key_down"))
   }
 }
 
