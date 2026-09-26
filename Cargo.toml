@@ -41,6 +41,7 @@ members = [
   "crates/auv-driver-overlay-windows",
   "supported/apps/auv-steam",
   "crates/auv-view",
+  "evals/auv-base",
 ]
 default-members = [ "crates/auv-cli" ]
 resolver = "2"

@@ -495,6 +495,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-base-evals"
+version = "0.0.20"
+dependencies = [
+ "anyhow",
+ "auv-driver-common",
+ "auv-driver-macos",
+ "axum",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "auv-cli"
 version = "0.0.20"
 dependencies = [
