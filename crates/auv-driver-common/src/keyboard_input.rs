@@ -40,6 +40,12 @@ pub struct KeyboardCoordinator {
   changed: Condvar,
 }
 
+/// Return the process-wide keyboard coordinator.
+///
+/// NOTICE: The static retains a strong Arc and is not dropped at process exit.
+/// Coordinator Drop therefore cannot release outstanding holds on exit; owners
+/// that transfer holds with `KeyboardHold::into_id` must call `shutdown` while
+/// the input backend is still available.
 pub fn keyboard_coordinator() -> &'static Arc<KeyboardCoordinator> {
   static COORDINATOR: OnceLock<Arc<KeyboardCoordinator>> = OnceLock::new();
   COORDINATOR.get_or_init(|| Arc::new(KeyboardCoordinator::default()))
@@ -218,6 +224,11 @@ impl KeyboardHold {
   }
 
   /// Transfer release ownership to a Runner that persists the ID across RPCs.
+  ///
+  /// This disables this guard's Drop cleanup so the keys stay down after the
+  /// current RPC returns. The Runner must release the ID with `key_up` or call
+  /// coordinator `shutdown` when its service ends. Timeout cleanup can only
+  /// run while the process is alive.
   pub fn into_id(mut self) -> KeyboardHoldId {
     self.id.take().expect("held keyboard ID")
   }

@@ -12,11 +12,6 @@ documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-# Opt-in sender for the independent Chrome/Electron receiver fixtures.
-[[example]]
-name = "keyboard-receiver-sender"
-path = "tests/fixtures/chromium_keyboard/sender.rs"
-
 [features]
 default = []
 overlay = ["dep:auv-driver-overlay"]

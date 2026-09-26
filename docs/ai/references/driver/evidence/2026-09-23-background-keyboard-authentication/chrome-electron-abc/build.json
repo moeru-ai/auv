@@ -1,9 +1,0 @@
-{
-  "revision": "f986875427f770607918bff38dec171a0ed3d040",
-  "working_tree_authentication_changes": true,
-  "sha256": {
-    "target/debug/auv": "62e606dea9fa73856715093631fc14559c0c663005e07849fd268775d92f9896",
-    "crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/EventPosting.swift": "d6648fb65312434514161ce0c21ee34f6721589d3af4dd89f5d675e82112f29b",
-    "crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Keyboard.swift": "e623df0d6ae688045bfcb36d13654fd736c33eeba39fe1854556b12fce469ba3"
-  }
-}

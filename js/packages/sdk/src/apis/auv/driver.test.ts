@@ -22,12 +22,12 @@ describe('runner Driver control surface', () => {
         async unary(call) {
           calls.push(call)
           switch (call.method) {
-            case '/auv.api.driver.v1.InputService/HoldKeys':
-              return toBinary(HoldKeysResponseSchema, create(HoldKeysResponseSchema))
             case '/auv.api.driver.v1.InputService/KeyDown':
               return toBinary(KeyDownResponseSchema, create(KeyDownResponseSchema, { holdId: 17n }))
             case '/auv.api.driver.v1.InputService/KeyUp':
               return toBinary(KeyUpResponseSchema, create(KeyUpResponseSchema))
+            case '/auv.api.driver.v1.InputService/HoldKeys':
+              return toBinary(HoldKeysResponseSchema, create(HoldKeysResponseSchema))
             default: throw new Error(`unexpected method: ${call.method}`)
           }
         },
@@ -35,9 +35,9 @@ describe('runner Driver control surface', () => {
     })
     const input = createAuv(connection).runner({ runnerClass: 'auv.core.local' }).input
     const target = { recipient: { case: 'foreground' as const, value: true } }
-    const { holdId } = await input.keyDown({ keys: ['shift', 'a'], target, timeout: { seconds: 5n } })
+    const { holdId } = await input.keyDown({ target, keys: ['shift', 'a'], timeout: { seconds: 5n } })
     await input.keyUp({ holdId })
-    await input.holdKeys({ duration: { seconds: 1n }, keys: ['space'], target })
+    await input.holdKeys({ target, keys: ['space'], duration: { seconds: 1n } })
     expect(fromBinary(KeyDownRequestSchema, calls[0]!.body).keys).toEqual(['shift', 'a'])
     expect(fromBinary(KeyDownRequestSchema, calls[0]!.body).timeout?.seconds).toBe(5n)
     expect(fromBinary(KeyUpRequestSchema, calls[1]!.body).holdId).toBe(17n)

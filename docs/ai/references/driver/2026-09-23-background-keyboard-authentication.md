@@ -4,8 +4,10 @@ Date: 2026-09-23. Classification: approved feature, followed by owner-requested 
 
 Update 2026-09-24: The [held-key receiver follow-up](2026-09-24-keyboard-hold-contract.md#macos-receiver-validation)
 adds persistent-sender controls and real timed/release receipts. Basic holds pass;
-held modifiers do not compose with ordinary presses, and background menu/emoji
-failures remain. Those results do not replace the historical CLI matrix below.
+the modifier composition failure found on that date was subsequently fixed and
+[revalidated on 2026-09-25](2026-09-24-keyboard-hold-contract.md#modifier-composition-revalidation-2026-09-25).
+Background menu/emoji failures remain. Those results do not replace the historical
+CLI matrix below.
 
 The owner approved adding the keyboard authentication mechanism discussed in the
 [BG-2 comparison](2026-09-23-background-delivery-project-comparison.md). This slice
@@ -70,8 +72,9 @@ There is no raw access to offsets inside the CGEvent object.
 - `cargo test`: passed, 84 tests and 1 ignored in the workspace's default CLI
   members. This command is not the whole-workspace test suite.
 - `cargo test -p auv-driver-macos -p auv-driver-common --lib`: 156 passed, 5 ignored.
-- `cargo test -p auv-driver-macos --test keyboard_authentication -- --include-ignored --nocapture`:
-  native contract and AppKit receiver tests pass on macOS 26.3 (25D2125), arm64.
+- `cargo test -p auv-driver-macos --test keyboard_authentication` and
+  `cargo test -p auv-base-evals --test appkit-keyboard -- --include-ignored --nocapture`:
+  native contract and AppKit receiver tests pass (commands updated after relocation) on macOS 26.3 (25D2125), arm64.
 - Formatting and diff checks passed.
 
 The no-input native test injects the external copy, factory, attachment, and post
@@ -81,8 +84,7 @@ copy/factory failure never posts. It also executes the real native copy, factory
 and attachment while replacing only the final post. This proves preparation on
 the tested host without sending input to an unrelated application.
 
-[Native and AppKit test output](evidence/2026-09-23-background-keyboard-authentication/appkit-and-native-tests.log)
-records the final receiver run. The independent AppKit NSTextView receiver observed `A猫B`, with one down and one
+The independent AppKit NSTextView receiver observed `A猫B`, with one down and one
 up for each of the three text/key inputs, correct Shift flags, balanced modifier
 transitions, the expected window, and `active:false` throughout receipt. Its test
 is opt-in because it opens a bounded GUI fixture and requires Accessibility.
@@ -90,8 +92,7 @@ is opt-in because it opens a bounded GUI fixture and requires Accessibility.
 A separate live Chrome 153.0.8010.53 probe used a new temporary browser profile and
 a localhost page with a focused textarea. Its DOM receiver logged background
 Unicode text `A猫` exactly once, with the previously foreground application
-preserved. The driver still returned `verified:false`. See
-[Chrome receipts and comparisons](evidence/2026-09-23-background-keyboard-authentication/chromium.json).
+preserved. The driver still returned `verified:false`.
 
 This does **not** establish universal Chromium keyboard support or a measured
 improvement over the public route. One immediate `Shift+B` request failed to reach
@@ -103,15 +104,14 @@ No timing changes were made as part of authentication.
 An additional AppKit menu fixture tested Cmd+A followed by `Z` after initial `ABC`.
 Both public and authenticated posting produced `ABCZ`, rather than replacing the
 selection. This is a negative baseline observation, not an authentication-only
-regression or a passing replacement claim. See
-[menu comparison](evidence/2026-09-23-background-keyboard-authentication/appkit-menu-comparison.json).
+regression or a passing replacement claim.
 The committed AppKit receiver test asserts the observed text/Shift sequence; it
 does not assert that background menu selection works.
 
 ## Chrome and Electron receiver matrix
 
 The owner requested real Chrome and sample Electron tests after implementation.
-The committed [receiver harness](../../../../crates/auv-driver-macos/tests/fixtures/chromium_keyboard/run.py)
+The committed [receiver harness](../../../../evals/auv-base/platforms/desktop-macos/tasks/keyboard.rs)
 launches each application with a new temporary profile and the same localhost
 textarea receiver. It addresses only the window belonging to the process it
 started. Electron uses a sandboxed renderer without Node integration and a normal
@@ -161,30 +161,24 @@ behavior work in that condition. Intermittent key loss also occurred in foregrou
 controls, so the observations cannot attribute all failures to authentication or
 background posting. No new timing, Unicode, or menu routing fix is included here.
 
-The harness exits **1** for these failing matrices. Raw receipts, CLI results,
-versions, and native Electron event logs are retained:
-
-- [Background summary](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/background/summary.json)
-  and the reproducible [receiver fixture](../../../../crates/auv-driver-macos/tests/fixtures/chromium_keyboard/run.py).
-- [Foreground control summary](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/foreground/summary.json)
-  and sibling receipt files.
-- [Build identity](evidence/2026-09-23-background-keyboard-authentication/chrome-electron-abc/build.json)
-  includes the base revision and hashes of the tested binary and native source;
-  authentication was an uncommitted working-tree change.
+The harness exits **1** for these failing matrices. These are locally observed
+results. Raw receipts, CLI output, build metadata, and native event logs remain
+local and are excluded from the PR; the reproduction commands below generate
+fresh output in a temporary directory.
 
 Reproduce from the repository root on a macOS GUI session with Accessibility
 permission and Chrome installed. Each invocation briefly opens its own receivers,
 restores the previous foreground application/input source, and removes its profiles:
 
 ```sh
-cargo build -p auv-cli
+just eval build
 probe_root="$(mktemp -d)"
 npm install --prefix "$probe_root" --no-audit --no-fund electron@44.4.4
 node "$probe_root/node_modules/electron/install.js"
-python3 crates/auv-driver-macos/tests/fixtures/chromium_keyboard/run.py \
+just eval keyboard \
   --electron "$probe_root/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" \
   --output "$probe_root/background" --repetitions 5
-python3 crates/auv-driver-macos/tests/fixtures/chromium_keyboard/run.py \
+just eval keyboard \
   --electron "$probe_root/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" \
   --output "$probe_root/foreground" --repetitions 2 --mode foreground
 ```
