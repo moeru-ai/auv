@@ -21,6 +21,7 @@ pub mod m2_multi_view;
 pub mod m3_query_scoring;
 pub mod m4_trainer;
 pub mod measurement;
+pub mod memory_maintenance;
 pub mod occlusion;
 pub mod overlay;
 pub mod prep;
@@ -107,6 +108,7 @@ pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,
   TextureSweepSampleSet, TextureSweepSampleSource, TextureSweepThresholds, build_texture_sweep_report, evaluate_texture_sweep,
 };
+pub use memory_maintenance::{MemoryMaintenance, apply_raycast_negative_evidence};
 pub use occlusion::{MetricDepthMap, OcclusionVerdict, check_occlusion};
 pub use overlay::render_projection_overlay;
 pub use prep::{

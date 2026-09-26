@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::m2_multi_view::{M2Session, m2_session_withheld_truth};
+use crate::memory_maintenance::{MemoryMaintenance, apply_raycast_negative_evidence};
 use crate::spatial_memory_store::{ObservationRef, SpatialMemoryStore};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,11 +36,40 @@ pub trait LandmarkIngest {
 /// Minecraft telemetry-based ingest using Tier 3 raycast hits from M2 sessions.
 pub struct MinecraftRaycastIngest<'a> {
   pub session: &'a M2Session,
+  pub maintenance: std::cell::RefCell<MemoryMaintenance>,
+  pub negative_evidence_radius_m: f64,
+}
+
+impl<'a> MinecraftRaycastIngest<'a> {
+  pub fn new(session: &'a M2Session) -> Self {
+    Self {
+      session,
+      maintenance: std::cell::RefCell::new(MemoryMaintenance::default()),
+      negative_evidence_radius_m: 0.5,
+    }
+  }
+
+  pub fn with_maintenance(session: &'a M2Session, maintenance: MemoryMaintenance) -> Self {
+    Self {
+      session,
+      maintenance: std::cell::RefCell::new(maintenance),
+      negative_evidence_radius_m: 0.5,
+    }
+  }
+
+  pub fn with_negative_evidence_radius(mut self, radius_m: f64) -> Self {
+    self.negative_evidence_radius_m = radius_m;
+    self
+  }
 }
 
 impl<'a> LandmarkIngest for MinecraftRaycastIngest<'a> {
-  fn ingest(&self, store: &mut SpatialMemoryStore, _now_millis: u64) -> IngestReport {
+  fn ingest(&self, store: &mut SpatialMemoryStore, now_millis: u64) -> IngestReport {
     let mut report = IngestReport::default();
+
+    // 1. Lifecycle maintenance: maybe prune stale landmarks at entry
+    self.maintenance.borrow_mut().maybe_prune(store, now_millis);
+
     let withheld_frames = m2_session_withheld_truth(self.session);
 
     for (i, obs) in self.session.observations.iter().enumerate() {
@@ -67,6 +97,10 @@ impl<'a> LandmarkIngest for MinecraftRaycastIngest<'a> {
         } else {
           report.landmarks_merged += 1;
         }
+
+        // 2. Apply negative evidence along the line of sight from player eye to hit block
+        let eye = (frame.player_pose.eye_position.x, frame.player_pose.eye_position.y, frame.player_pose.eye_position.z);
+        apply_raycast_negative_evidence(store, eye, hit.block_pos, self.negative_evidence_radius_m);
       } else {
         report.observations_skipped += 1;
       }
@@ -83,7 +117,7 @@ impl<'a> LandmarkIngest for MinecraftRaycastIngest<'a> {
 /// Observations lacking a valid raycast hit are skipped honestly.
 pub fn ingest_m2_session(store: &mut SpatialMemoryStore, session: &M2Session) -> IngestReport {
   let now_millis = session.observations.last().map(|o| o.captured_at_millis).unwrap_or(0);
-  MinecraftRaycastIngest { session }.ingest(store, now_millis)
+  MinecraftRaycastIngest::new(session).ingest(store, now_millis)
 }
 
 #[cfg(test)]
@@ -194,12 +228,83 @@ mod tests {
     let session = build_m2_session_from_captures(Some("test-trait".to_string()), &captures).expect("valid session");
     let mut store = SpatialMemoryStore::open("trait_mem.json").unwrap();
 
-    let ingest_impl: Box<dyn LandmarkIngest> = Box::new(MinecraftRaycastIngest { session: &session });
+    let ingest_impl: Box<dyn LandmarkIngest> = Box::new(MinecraftRaycastIngest::new(&session));
     let report = ingest_impl.ingest(&mut store, 1000);
 
     assert_eq!(report.landmarks_created, 1);
     assert_eq!(report.landmarks_merged, 0);
     assert_eq!(report.observations_skipped, 0);
     assert_eq!(store.len(), 1);
+  }
+
+  #[test]
+  fn test_production_ingest_executes_maintenance_and_negative_evidence() {
+    let mut store = SpatialMemoryStore::open("test_prod_ingest.json").unwrap();
+
+    // 1. Put an existing stale landmark in store (captured at t = 100)
+    let hit_stale = RaycastHit {
+      block_pos: BlockPosition::new(10, 60, 10),
+      face: BlockFace::Up,
+      block_id: "minecraft:oak_log".to_string(),
+    };
+    let obs_stale = ObservationRef {
+      observation_id: "obs-stale".to_string(),
+      captured_at_millis: 100,
+    };
+    let stale_id = store.upsert_from_raycast(&hit_stale, &obs_stale);
+
+    // 2. Put an existing blocking landmark directly on the path of the future raycast
+    // Ray will travel from eye (10.0, 66.0, 10.0) to hit (10, 65, 20)
+    // Landmark is at (10, 65, 15), within 0.5m of the ray
+    let hit_blocking = RaycastHit {
+      block_pos: BlockPosition::new(10, 65, 15),
+      face: BlockFace::Up,
+      block_id: "minecraft:stone".to_string(),
+    };
+    let obs_blocking = ObservationRef {
+      observation_id: "obs-blocking".to_string(),
+      captured_at_millis: 350_000,
+    };
+    let blocking_id = store.upsert_from_raycast(&hit_blocking, &obs_blocking);
+    assert_eq!(store.get(&blocking_id).unwrap().consecutive_misses, 0);
+
+    assert_eq!(store.len(), 2);
+
+    // 3. Create an M2 session whose raycast hits (10, 65, 20) at t = 400_000
+    let hit_target = RaycastHit {
+      block_pos: BlockPosition::new(10, 65, 20),
+      face: BlockFace::North,
+      block_id: "minecraft:diamond_block".to_string(),
+    };
+    let captures = vec![M2ViewCaptureInput {
+      telemetry_path: None,
+      frame: Some(test_frame("prod-f1", Vec3::new(10.0, 66.0, 10.0), Some(hit_target))),
+      screenshot_artifact_ref: "auv://runs/r1/artifacts/prod-s1".to_string(),
+      capture_monotonic_timestamp_ms: Some(400_000),
+      role: M2ViewRole::Anchor,
+      input_history: Vec::new(),
+    }];
+
+    let session = build_m2_session_from_captures(Some("test-prod-lifecycle".to_string()), &captures).expect("valid session");
+
+    // 4. Run ingest via MinecraftRaycastIngest in the production path
+    let ingest = MinecraftRaycastIngest::new(&session);
+    let report = ingest.ingest(&mut store, 400_000);
+
+    assert_eq!(report.landmarks_created, 1);
+
+    // 5. Invariant verifications:
+    // a. Stale landmark at (10, 60, 10) was pruned via maintenance.maybe_prune in production path:
+    assert!(store.get(&stale_id).is_none(), "stale landmark must be pruned during ingest");
+
+    // b. Blocking landmark at (10, 65, 15) received negative evidence in production path:
+    let blocking_lm = store.get(&blocking_id).expect("blocking landmark should remain until threshold exceeded");
+    assert_eq!(blocking_lm.consecutive_misses, 1, "blocking landmark must receive a miss from passing ray");
+    assert!(blocking_lm.confidence < 0.90, "confidence must be penalized");
+
+    // c. Target landmark at (10, 65, 20) was created with 0 misses:
+    let target_lm = store.get("lm-10-65-20-block_surface").expect("target landmark must exist");
+    assert_eq!(target_lm.consecutive_misses, 0, "hit target must not be penalized");
+    assert_eq!(target_lm.confidence, 0.90);
   }
 }

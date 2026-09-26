@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::depth_calibration::AffineDepthCalibrator;
 use crate::spatial_memory_ingest::{IngestReport, LandmarkIngest};
-use crate::spatial_memory_store::{ObservationRef, SpatialMemoryStore};
+use crate::spatial_memory_store::{LandmarkKind, ObservationRef, SpatialMemoryStore};
 use crate::types::{BlockPosition, PlayerPose, Vec3, Viewport};
 
 pub const DEFAULT_MINECRAFT_CLASSES: [&str; 10] = [
@@ -491,6 +491,17 @@ pub struct VisualPerceptionIngest<'a> {
   pub observation_ref: ObservationRef,
 }
 
+/// Category routing for visual perception landmarks:
+/// - Static: blocks, containers, furniture with durable world positions:
+///   `["chest", "furnace", "crafting table", "crafting_table", "door", "bed", "torch"]`
+/// - Dynamic: mobs, animals, players, or high-false-positive categories like "tree"
+///   (which uses dynamic TTL cleanup to avoid cluttering static memory).
+/// - Unknown categories: defaulted to Dynamic as a conservative fallback.
+pub fn is_static_category(label: &str) -> bool {
+  let lower = label.to_lowercase();
+  matches!(lower.as_str(), "chest" | "furnace" | "crafting table" | "crafting_table" | "door" | "bed" | "torch")
+}
+
 impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
   fn ingest(&self, store: &mut SpatialMemoryStore, _now_millis: u64) -> IngestReport {
     let mut report = IngestReport::default();
@@ -524,6 +535,20 @@ impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
       }
     };
 
+    let mut next_track_id = store
+      .landmarks()
+      .values()
+      .filter_map(|lm| {
+        if let LandmarkKind::Dynamic { track_id, .. } = lm.kind {
+          Some(track_id)
+        } else {
+          None
+        }
+      })
+      .max()
+      .unwrap_or(0)
+      + 1;
+
     for det in detections {
       let cx = (det.bbox.0 + det.bbox.2) * 0.5;
       let cy = (det.bbox.1 + det.bbox.3) * 0.5;
@@ -553,7 +578,54 @@ impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
 
       let label_desc = format!("{} ({:.2})", det.label, det.confidence);
       let len_before = store.len();
-      store.upsert_from_perception(block_pos, &label_desc, det.confidence, &self.observation_ref);
+
+      if is_static_category(&det.label) {
+        store.upsert_from_perception(block_pos, &label_desc, det.confidence, &self.observation_ref);
+      } else {
+        // NOTICE (Naive Tracking Heuristic):
+        // This is a naive heuristic association (same class name prefix and inter-frame
+        // 3D displacement < 2.0m), NOT a full multi-target tracker (MOT / Kalman filter).
+        // It provides lightweight track continuity for dynamic entities in single sessions.
+        let mut matched_track_id = None;
+        for lm in store.landmarks().values() {
+          if let LandmarkKind::Dynamic { track_id, .. } = lm.kind {
+            let same_class = lm.description.as_deref().map(|d| d.starts_with(&det.label)).unwrap_or(false);
+            if same_class {
+              let lm_pos = lm
+                .continuous_position
+                .unwrap_or_else(|| (f64::from(lm.position.x) + 0.5, f64::from(lm.position.y) + 0.5, f64::from(lm.position.z) + 0.5));
+              let dx = world_pos.x - lm_pos.0;
+              let dy = world_pos.y - lm_pos.1;
+              let dz = world_pos.z - lm_pos.2;
+              let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+              if dist < 2.0 {
+                matched_track_id = Some(track_id);
+                break;
+              }
+            }
+          }
+        }
+
+        let track_id = if let Some(tid) = matched_track_id {
+          tid
+        } else {
+          let tid = next_track_id;
+          next_track_id += 1;
+          tid
+        };
+
+        const DYNAMIC_TTL_MILLIS: u64 = 10_000;
+        store.upsert_dynamic_landmark(
+          track_id,
+          DYNAMIC_TTL_MILLIS,
+          block_pos,
+          Some((world_pos.x, world_pos.y, world_pos.z)),
+          &label_desc,
+          det.confidence,
+          &self.observation_ref,
+        );
+      }
+
       let len_after = store.len();
       if len_after > len_before {
         report.landmarks_created += 1;
@@ -650,9 +722,25 @@ mod tests {
 
     assert_eq!(lm.status, SpatialClaimStatus::Candidate);
     assert_eq!(lm.source, LandmarkSource::VisualPerception);
-    assert_eq!(lm.kind, LandmarkKind::Object);
+    assert_eq!(lm.kind, LandmarkKind::Static);
     assert_eq!(lm.description, Some("tree (0.75)".to_string()));
     assert!(lm.confidence <= 0.50);
+  }
+
+  #[test]
+  fn test_visual_perception_category_routing() {
+    assert!(is_static_category("chest"));
+    assert!(is_static_category("Furnace"));
+    assert!(is_static_category("crafting table"));
+    assert!(is_static_category("door"));
+    assert!(is_static_category("bed"));
+    assert!(is_static_category("torch"));
+
+    assert!(!is_static_category("sheep"));
+    assert!(!is_static_category("pig"));
+    assert!(!is_static_category("cow"));
+    assert!(!is_static_category("tree"));
+    assert!(!is_static_category("unknown_entity"));
   }
 
   #[test]

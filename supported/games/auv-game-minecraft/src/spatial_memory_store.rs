@@ -18,19 +18,29 @@ pub const SPATIAL_MEMORY_STORE_SCHEMA_VERSION: u32 = 1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LandmarkKind {
-  BlockSurface,
-  Object,
-  Region,
-  PathNode,
+  /// 静态：方块/容器/门，锚定 BlockPosition 栅格（现有行为）。
+  #[serde(
+    alias = "block_surface",
+    alias = "object",
+    alias = "region",
+    alias = "path_node"
+  )]
+  Static,
+  /// 动态：生物/玩家，连续浮点坐标 + 追踪 ID + 生存期。
+  Dynamic { track_id: u64, ttl_millis: u64 },
+}
+
+impl Default for LandmarkKind {
+  fn default() -> Self {
+    Self::Static
+  }
 }
 
 impl LandmarkKind {
   pub fn as_str(&self) -> &'static str {
     match self {
-      Self::BlockSurface => "block_surface",
-      Self::Object => "object",
-      Self::Region => "region",
-      Self::PathNode => "path_node",
+      Self::Static => "block_surface",
+      Self::Dynamic { .. } => "dynamic",
     }
   }
 }
@@ -67,8 +77,11 @@ fn default_landmark_confidence() -> f64 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpatialLandmark {
   pub landmark_id: String,
+  #[serde(default)]
   pub kind: LandmarkKind,
   pub position: BlockPosition,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub continuous_position: Option<(f64, f64, f64)>,
   pub first_observed: ObservationRef,
   pub observations: Vec<LandmarkObservation>,
   pub status: SpatialClaimStatus,
@@ -221,9 +234,11 @@ impl SpatialMemoryStore {
   }
 
   /// Prune stale or low-confidence landmarks based on configured thresholds:
-  /// - `now_millis - last_observed_millis > stale_threshold_millis`
-  /// - `confidence < min_confidence`
-  /// - `consecutive_misses >= max_consecutive_misses`
+  /// - Dynamic landmarks: evicted immediately if `now_millis - last_observed_millis > ttl_millis`
+  /// - Static landmarks:
+  ///   - `now_millis - last_observed_millis > stale_threshold_millis`
+  ///   - `confidence < min_confidence`
+  ///   - `consecutive_misses >= max_consecutive_misses`
   /// Returns the number of pruned landmarks.
   pub fn prune_stale(&mut self, now_millis: u64) -> usize {
     let before_len = self.landmarks.len();
@@ -231,13 +246,19 @@ impl SpatialMemoryStore {
     let min_conf = self.config.min_confidence;
     let max_misses = self.config.max_consecutive_misses;
 
-    self.landmarks.retain(|_id, lm| {
-      let is_expired =
-        stale_threshold > 0 && lm.last_observed_millis > 0 && now_millis.saturating_sub(lm.last_observed_millis) > stale_threshold;
-      let is_low_confidence = lm.confidence < min_conf;
-      let is_too_many_misses = max_misses > 0 && lm.consecutive_misses >= max_misses;
+    self.landmarks.retain(|_id, lm| match lm.kind {
+      LandmarkKind::Dynamic { ttl_millis, .. } => {
+        let is_expired = ttl_millis > 0 && lm.last_observed_millis > 0 && now_millis.saturating_sub(lm.last_observed_millis) > ttl_millis;
+        !is_expired
+      }
+      LandmarkKind::Static => {
+        let is_expired =
+          stale_threshold > 0 && lm.last_observed_millis > 0 && now_millis.saturating_sub(lm.last_observed_millis) > stale_threshold;
+        let is_low_confidence = lm.confidence < min_conf;
+        let is_too_many_misses = max_misses > 0 && lm.consecutive_misses >= max_misses;
 
-      !is_expired && !is_low_confidence && !is_too_many_misses
+        !is_expired && !is_low_confidence && !is_too_many_misses
+      }
     });
 
     before_len - self.landmarks.len()
@@ -268,12 +289,13 @@ impl SpatialMemoryStore {
       landmark.surface_face = Some(hit.face);
       id
     } else {
-      let kind = LandmarkKind::BlockSurface;
+      let kind = LandmarkKind::Static;
       let landmark_id = format!("lm-{}-{}-{}-{}", hit.block_pos.x, hit.block_pos.y, hit.block_pos.z, kind.as_str());
       let landmark = SpatialLandmark {
         landmark_id: landmark_id.clone(),
         kind,
         position: hit.block_pos,
+        continuous_position: None,
         first_observed: obs.clone(),
         observations: vec![LandmarkObservation {
           observation_ref: obs.clone(),
@@ -341,13 +363,91 @@ impl SpatialMemoryStore {
       landmark.description = Some(label.to_string());
       id
     } else {
-      let kind = LandmarkKind::Object;
+      let kind = LandmarkKind::Static;
       let landmark_id = format!("lm-{}-{}-{}-{}", block_pos.x, block_pos.y, block_pos.z, kind.as_str());
       let confidence = (detection_confidence * 0.5).clamp(0.1, 0.5);
       let landmark = SpatialLandmark {
         landmark_id: landmark_id.clone(),
         kind,
         position: block_pos,
+        continuous_position: None,
+        first_observed: obs.clone(),
+        observations: vec![LandmarkObservation {
+          observation_ref: obs.clone(),
+          source: LandmarkSource::VisualPerception,
+          hit_face: None,
+          block_id: None,
+        }],
+        status: SpatialClaimStatus::Candidate,
+        source: LandmarkSource::VisualPerception,
+        description: Some(label.to_string()),
+        surface_face: None,
+        observation_count: 1,
+        last_observed_millis: obs.captured_at_millis,
+        consecutive_misses: 0,
+        confidence,
+      };
+      self.landmarks.insert(landmark_id.clone(), landmark);
+      landmark_id
+    }
+  }
+
+  /// Upsert a dynamic landmark (mob, animal, player) tracked by a persistent track ID.
+  ///
+  /// Dynamic Landmark Semantics:
+  /// - Deduplicated by `track_id` rather than discrete 0.6m block grid.
+  /// - Consecutive observations with the same `track_id` update the position (continuous and block),
+  ///   reset consecutive misses to 0, update last observed timestamp, and refresh the label.
+  /// - Dynamic landmarks carry a finite TTL (`ttl_millis`) and are evicted immediately when
+  ///   `now_millis - last_observed_millis > ttl_millis`.
+  pub fn upsert_dynamic_landmark(
+    &mut self,
+    track_id: u64,
+    ttl_millis: u64,
+    block_pos: BlockPosition,
+    continuous_pos: Option<(f64, f64, f64)>,
+    label: &str,
+    detection_confidence: f64,
+    obs: &ObservationRef,
+  ) -> String {
+    let matching_id = self.landmarks.iter().find_map(|(id, lm)| {
+      if let LandmarkKind::Dynamic { track_id: tid, .. } = lm.kind {
+        if tid == track_id {
+          return Some(id.clone());
+        }
+      }
+      None
+    });
+
+    if let Some(id) = matching_id {
+      let _ = self.record_observation(&id, obs.captured_at_millis);
+      let landmark = self.landmarks.get_mut(&id).expect("landmark exists");
+      landmark.position = block_pos;
+      landmark.continuous_position = continuous_pos;
+      landmark.observations.push(LandmarkObservation {
+        observation_ref: obs.clone(),
+        source: LandmarkSource::VisualPerception,
+        hit_face: None,
+        block_id: None,
+      });
+      landmark.description = Some(label.to_string());
+      landmark.kind = LandmarkKind::Dynamic {
+        track_id,
+        ttl_millis,
+      };
+      id
+    } else {
+      let kind = LandmarkKind::Dynamic {
+        track_id,
+        ttl_millis,
+      };
+      let landmark_id = format!("lm-track-{}-{}", track_id, kind.as_str());
+      let confidence = (detection_confidence * 0.5).clamp(0.1, 0.5);
+      let landmark = SpatialLandmark {
+        landmark_id: landmark_id.clone(),
+        kind,
+        position: block_pos,
+        continuous_position: continuous_pos,
         first_observed: obs.clone(),
         observations: vec![LandmarkObservation {
           observation_ref: obs.clone(),
@@ -588,6 +688,7 @@ mod tests {
 
     let data: SpatialMemoryStoreData = serde_json::from_str(old_json).expect("deserialize old json");
     let lm = data.landmarks.get("lm-legacy").expect("landmark present");
+    assert_eq!(lm.kind, LandmarkKind::Static);
     assert_eq!(lm.observation_count, 0);
     assert_eq!(lm.consecutive_misses, 0);
     assert_eq!(lm.confidence, 0.90);
@@ -682,5 +783,79 @@ mod tests {
     let inside = store.query_radius(BlockPosition::new(0, 0, 0), 5.0);
     assert_eq!(inside.len(), 1);
     assert_eq!(inside[0].position, BlockPosition::new(0, 0, 0));
+  }
+
+  #[test]
+  fn test_dynamic_landmark_upsert_deduplication_by_track_id() {
+    let mut store = SpatialMemoryStore::open("memory.json").unwrap();
+    let obs1 = ObservationRef {
+      observation_id: "obs-track-1".to_string(),
+      captured_at_millis: 1000,
+    };
+    let obs2 = ObservationRef {
+      observation_id: "obs-track-2".to_string(),
+      captured_at_millis: 2000,
+    };
+
+    let id1 =
+      store.upsert_dynamic_landmark(42, 10_000, BlockPosition::new(10, 64, 10), Some((10.2, 64.0, 10.1)), "sheep (0.80)", 0.80, &obs1);
+    assert_eq!(store.len(), 1);
+
+    // Sheep moves 4 blocks away in the next frame:
+    let id2 =
+      store.upsert_dynamic_landmark(42, 10_000, BlockPosition::new(14, 64, 11), Some((14.1, 64.0, 11.3)), "sheep (0.85)", 0.85, &obs2);
+
+    // Same track ID must deduplicate to single landmark and update position to latest
+    assert_eq!(id1, id2);
+    assert_eq!(store.len(), 1);
+    let lm = store.get(&id1).unwrap();
+    assert_eq!(lm.position, BlockPosition::new(14, 64, 11));
+    assert_eq!(lm.continuous_position, Some((14.1, 64.0, 11.3)));
+    assert_eq!(lm.description, Some("sheep (0.85)".to_string()));
+    assert_eq!(lm.last_observed_millis, 2000);
+    assert_eq!(lm.observations.len(), 2);
+    assert_eq!(
+      lm.kind,
+      LandmarkKind::Dynamic {
+        track_id: 42,
+        ttl_millis: 10_000
+      }
+    );
+  }
+
+  #[test]
+  fn test_dynamic_landmark_ttl_pruning_does_not_affect_static() {
+    let mut store = SpatialMemoryStore::open("memory.json").unwrap();
+
+    // 1. Static landmark: observed at t = 1000, default stale threshold = 300_000
+    let hit_static = RaycastHit {
+      block_pos: BlockPosition::new(0, 64, 0),
+      face: BlockFace::Up,
+      block_id: "minecraft:chest".to_string(),
+    };
+    let obs_static = ObservationRef {
+      observation_id: "obs-chest".to_string(),
+      captured_at_millis: 1000,
+    };
+    let static_id = store.upsert_from_raycast(&hit_static, &obs_static);
+
+    // 2. Dynamic landmark: observed at t = 1000, TTL = 10_000
+    let obs_dyn = ObservationRef {
+      observation_id: "obs-sheep".to_string(),
+      captured_at_millis: 1000,
+    };
+    let dynamic_id =
+      store.upsert_dynamic_landmark(99, 10_000, BlockPosition::new(5, 64, 5), Some((5.0, 64.0, 5.0)), "sheep (0.70)", 0.70, &obs_dyn);
+
+    assert_eq!(store.len(), 2);
+
+    // At t = 15_000:
+    // Dynamic landmark: elapsed = 14_000 > 10_000 (TTL expired) -> must be pruned
+    // Static landmark: elapsed = 14_000 <= 300_000 -> must NOT be pruned
+    let pruned = store.prune_stale(15_000);
+    assert_eq!(pruned, 1);
+    assert_eq!(store.len(), 1);
+    assert!(store.get(&static_id).is_some(), "static landmark must remain unaffected by dynamic TTL");
+    assert!(store.get(&dynamic_id).is_none(), "dynamic landmark must be pruned after TTL expires");
   }
 }
