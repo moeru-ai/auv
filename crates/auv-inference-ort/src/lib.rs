@@ -73,14 +73,26 @@ impl OrtSession {
   }
 
   pub fn run_f32(&self, input: F32Tensor) -> InferenceResult<Vec<F32Tensor>> {
-    let array = ArrayD::from_shape_vec(IxDyn(&input.shape), input.data).map_err(|error| InferenceError::Backend {
-      message: error.to_string(),
-    })?;
-    let tensor = TensorRef::from_array_view(array.view()).map_err(backend_error)?;
+    self.run_tensors(vec![input])
+  }
+
+  pub fn run_tensors(&self, inputs: Vec<F32Tensor>) -> InferenceResult<Vec<F32Tensor>> {
+    let mut arrays = Vec::with_capacity(inputs.len());
+    for input in &inputs {
+      let array = ArrayD::from_shape_vec(IxDyn(&input.shape), input.data.clone()).map_err(|error| InferenceError::Backend {
+        message: error.to_string(),
+      })?;
+      arrays.push(array);
+    }
+    let mut feed_inputs = Vec::with_capacity(inputs.len());
+    for (i, input) in inputs.iter().enumerate() {
+      let tensor = TensorRef::from_array_view(arrays[i].view()).map_err(backend_error)?;
+      feed_inputs.push((input.name.clone(), tensor));
+    }
     let mut model = self.model.lock().map_err(|error| InferenceError::SessionUnavailable {
       reason: error.to_string(),
     })?;
-    let outputs = model.run(vec![(input.name, tensor)]).map_err(backend_error)?;
+    let outputs = model.run(feed_inputs).map_err(backend_error)?;
 
     outputs
       .keys()
@@ -106,6 +118,18 @@ impl OrtSession {
 impl OrtSession {
   pub fn load(config: OrtModelConfig) -> InferenceResult<Self> {
     require_model_path(&config.model_path)?;
+    Err(InferenceError::Backend {
+      message: "auv-inference-ort built without runtime feature".to_string(),
+    })
+  }
+
+  pub fn run_f32(&self, _input: F32Tensor) -> InferenceResult<Vec<F32Tensor>> {
+    Err(InferenceError::Backend {
+      message: "auv-inference-ort built without runtime feature".to_string(),
+    })
+  }
+
+  pub fn run_tensors(&self, _inputs: Vec<F32Tensor>) -> InferenceResult<Vec<F32Tensor>> {
     Err(InferenceError::Backend {
       message: "auv-inference-ort built without runtime feature".to_string(),
     })

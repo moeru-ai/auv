@@ -41,6 +41,7 @@ pub enum LandmarkSource {
   TelemetryRaycast,
   MultiViewTriangulation,
   VlmHypothesis,
+  VisualPerception,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -288,6 +289,80 @@ impl SpatialMemoryStore {
         last_observed_millis: obs.captured_at_millis,
         consecutive_misses: 0,
         confidence: 0.90,
+      };
+      self.landmarks.insert(landmark_id.clone(), landmark);
+      landmark_id
+    }
+  }
+
+  /// Upsert a landmark observed via visual perception (2D detection + depth back-projection).
+  ///
+  /// Heterogeneous Multi-Engine Fusion Semantics:
+  /// - Source is `LandmarkSource::VisualPerception`.
+  /// - New visual perception landmarks receive `SpatialClaimStatus::Candidate` because visual
+  ///   detection is less authoritative than telemetry raycast.
+  /// - Initial confidence = (detection_confidence * 0.5).clamp(0.1, 0.5).
+  /// - If merged with an existing landmark within `dedup_radius_m`:
+  ///   - Higher authority status wins: if either is `Confirmed` (e.g. from raycast), the merged status is `Confirmed`.
+  ///   - Description is updated or enriched with the visual perception semantic label.
+  ///   - An observation record is appended with `LandmarkSource::VisualPerception`.
+  ///   - `last_observed_millis` is updated and `consecutive_misses` is reset to 0.
+  pub fn upsert_from_perception(
+    &mut self,
+    block_pos: BlockPosition,
+    label: &str,
+    detection_confidence: f64,
+    obs: &ObservationRef,
+  ) -> String {
+    let mut matching_id = None;
+    for (id, landmark) in &self.landmarks {
+      let dx = f64::from(landmark.position.x - block_pos.x);
+      let dy = f64::from(landmark.position.y - block_pos.y);
+      let dz = f64::from(landmark.position.z - block_pos.z);
+      let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+      if dist < self.config.dedup_radius_m {
+        matching_id = Some(id.clone());
+        break;
+      }
+    }
+
+    if let Some(id) = matching_id {
+      let _ = self.record_observation(&id, obs.captured_at_millis);
+      let landmark = self.landmarks.get_mut(&id).expect("landmark exists");
+      landmark.observations.push(LandmarkObservation {
+        observation_ref: obs.clone(),
+        source: LandmarkSource::VisualPerception,
+        hit_face: None,
+        block_id: None,
+      });
+      // Multi-engine fusion: status takes higher authority (Confirmed > Candidate)
+      // Confirmed stays Confirmed; if it was Candidate, it stays Candidate.
+      // Semantic label from visual perception enriches the description:
+      landmark.description = Some(label.to_string());
+      id
+    } else {
+      let kind = LandmarkKind::Object;
+      let landmark_id = format!("lm-{}-{}-{}-{}", block_pos.x, block_pos.y, block_pos.z, kind.as_str());
+      let confidence = (detection_confidence * 0.5).clamp(0.1, 0.5);
+      let landmark = SpatialLandmark {
+        landmark_id: landmark_id.clone(),
+        kind,
+        position: block_pos,
+        first_observed: obs.clone(),
+        observations: vec![LandmarkObservation {
+          observation_ref: obs.clone(),
+          source: LandmarkSource::VisualPerception,
+          hit_face: None,
+          block_id: None,
+        }],
+        status: SpatialClaimStatus::Candidate,
+        source: LandmarkSource::VisualPerception,
+        description: Some(label.to_string()),
+        surface_face: None,
+        observation_count: 1,
+        last_observed_millis: obs.captured_at_millis,
+        consecutive_misses: 0,
+        confidence,
       };
       self.landmarks.insert(landmark_id.clone(), landmark);
       landmark_id

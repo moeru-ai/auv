@@ -772,6 +772,8 @@ version = "0.0.16"
 dependencies = [
  "auv-driver",
  "auv-file",
+ "auv-inference-common",
+ "auv-inference-ort",
  "auv-query-readiness",
  "auv-tracing",
  "futures-executor",

@@ -45,6 +45,7 @@ pub mod training_result_spatial_query_action_wiring;
 pub mod training_result_spatial_query_provider;
 pub mod types;
 pub mod verify;
+pub mod visual_perception;
 
 pub use artifact::{MinecraftProjectionArtifact, ProjectionViewportBounds};
 pub use bind::{BoundSpatialFrame, bind_capture_to_frame};
@@ -212,6 +213,10 @@ pub use types::{
 pub use verify::{
   MismatchRefusal, MismatchRefusalReason, WorldDiffFailure, WorldDiffRequest, WorldDiffVerdict, evaluate_mismatch_refusal,
   evaluate_world_diff,
+};
+pub use visual_perception::{
+  DEFAULT_MINECRAFT_CLASSES, DepthEstimator, DepthMap, Detection, PerceivedLandmark, VisualPerceptionIngest, YoloWorldConfig,
+  YoloWorldDetector, back_project,
 };
 
 // NOTICE(mc4-live-refusal): MC-4 refusal logic now closes crate-local mismatch cases that can be
