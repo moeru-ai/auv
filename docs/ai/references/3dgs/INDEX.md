@@ -28,6 +28,7 @@
 
 ## 相关文档
 
+- [`2026-09-27-step5-agent-integration.md`](2026-09-27-step5-agent-integration.md) - Step 5 Agent 集成与有界实战测试（1Hz 循环、记忆动作 wiring、实测指标）
 - [`2026-09-26-spatial-memory-boundaries.md`](2026-09-26-spatial-memory-boundaries.md) - 结构化空间记忆架构边界 ADR（6 条系统级已知局限）
 - [`2026-09-26-spatial-memory-redesign.md`](2026-09-26-spatial-memory-redesign.md) - 结构化空间记忆模块设计（确定性几何替代 3DGS）
 - [`2026-09-25-slice-b-closeout.md`](2026-09-25-slice-b-closeout.md) - 3DGS 稀疏视角不泛化实证 closeout 记录

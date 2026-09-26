@@ -489,6 +489,44 @@ pub struct VisualPerceptionIngest<'a> {
   pub viewport: Viewport,
   pub vertical_fov_deg: f64,
   pub observation_ref: ObservationRef,
+  pub static_whitelist: Option<Vec<String>>,
+  pub confidence_threshold: Option<f64>,
+}
+
+impl<'a> VisualPerceptionIngest<'a> {
+  pub fn new(
+    detector: &'a YoloWorldDetector,
+    depth: &'a DepthEstimator,
+    calibrator: &'a AffineDepthCalibrator,
+    screenshot: &'a DynamicImage,
+    observer: PlayerPose,
+    viewport: Viewport,
+    vertical_fov_deg: f64,
+    observation_ref: ObservationRef,
+  ) -> Self {
+    Self {
+      detector,
+      depth,
+      calibrator,
+      screenshot,
+      observer,
+      viewport,
+      vertical_fov_deg,
+      observation_ref,
+      static_whitelist: None,
+      confidence_threshold: None,
+    }
+  }
+
+  pub fn with_whitelist(mut self, whitelist: Vec<String>) -> Self {
+    self.static_whitelist = Some(whitelist);
+    self
+  }
+
+  pub fn with_confidence_threshold(mut self, threshold: f64) -> Self {
+    self.confidence_threshold = Some(threshold);
+    self
+  }
 }
 
 /// Category routing for visual perception landmarks:
@@ -550,6 +588,13 @@ impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
       + 1;
 
     for det in detections {
+      if let Some(min_conf) = self.confidence_threshold {
+        if det.confidence < min_conf {
+          report.observations_skipped += 1;
+          continue;
+        }
+      }
+
       let cx = (det.bbox.0 + det.bbox.2) * 0.5;
       let cy = (det.bbox.1 + det.bbox.3) * 0.5;
 
@@ -579,7 +624,12 @@ impl<'a> LandmarkIngest for VisualPerceptionIngest<'a> {
       let label_desc = format!("{} ({:.2})", det.label, det.confidence);
       let len_before = store.len();
 
-      if is_static_category(&det.label) {
+      let is_static = match &self.static_whitelist {
+        Some(whitelist) => whitelist.iter().any(|item| item.eq_ignore_ascii_case(&det.label)),
+        None => is_static_category(&det.label),
+      };
+
+      if is_static {
         store.upsert_from_perception(block_pos, &label_desc, det.confidence, &self.observation_ref);
       } else {
         // NOTICE (Naive Tracking Heuristic):
@@ -854,6 +904,8 @@ mod tests {
         observation_id: "obs-gate".to_string(),
         captured_at_millis: 1000,
       },
+      static_whitelist: None,
+      confidence_threshold: None,
     };
 
     let tmp = tempfile::NamedTempFile::new().unwrap();

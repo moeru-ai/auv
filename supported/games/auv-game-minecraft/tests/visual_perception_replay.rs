@@ -88,6 +88,8 @@ fn test_visual_perception_replay_end_to_end() {
     viewport,
     vertical_fov_deg: 70.0,
     observation_ref: obs_ref,
+    static_whitelist: None,
+    confidence_threshold: None,
   };
 
   // 4. Ingest into fresh store

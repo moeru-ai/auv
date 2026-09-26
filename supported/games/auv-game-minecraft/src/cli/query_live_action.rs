@@ -29,3 +29,9 @@ impl DirectWindowPointClickExecutor {
     Ok(action)
   }
 }
+
+impl crate::ActionExecutor for DirectWindowPointClickExecutor {
+  fn click(&self, window_point: WindowPoint) -> Result<InputActionResult, String> {
+    self.click(window_point)
+  }
+}

@@ -3,6 +3,7 @@ pub mod cli;
 #[cfg(feature = "tracing")]
 pub mod run_read;
 
+pub mod agent_memory_loop;
 pub mod artifact;
 pub mod bind;
 pub mod closed_scene_toy_fixture;
@@ -21,6 +22,7 @@ pub mod m2_multi_view;
 pub mod m3_query_scoring;
 pub mod m4_trainer;
 pub mod measurement;
+pub mod memory_action_wiring;
 pub mod memory_maintenance;
 pub mod occlusion;
 pub mod overlay;
@@ -50,6 +52,7 @@ pub mod types;
 pub mod verify;
 pub mod visual_perception;
 
+pub use agent_memory_loop::{AgentMemoryLoop, AgentMemoryLoopConfig, LiveCapture, LoopError, TickReport};
 pub use artifact::{MinecraftProjectionArtifact, ProjectionViewportBounds};
 pub use bind::{BoundSpatialFrame, bind_capture_to_frame};
 pub use dataset::{
@@ -108,6 +111,7 @@ pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport, TextureSweepReportRow, TextureSweepSample,
   TextureSweepSampleSet, TextureSweepSampleSource, TextureSweepThresholds, build_texture_sweep_report, evaluate_texture_sweep,
 };
+pub use memory_action_wiring::{ActionExecutor, MemoryActionOutcome, MemoryActionQuery, MockActionExecutor, wire_memory_query_to_action};
 pub use memory_maintenance::{MemoryMaintenance, apply_raycast_negative_evidence};
 pub use occlusion::{MetricDepthMap, OcclusionVerdict, check_occlusion};
 pub use overlay::render_projection_overlay;

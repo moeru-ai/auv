@@ -295,6 +295,8 @@ fn test_perception_and_spatial_memory_benchmarks() {
     viewport,
     vertical_fov_deg: 70.0,
     observation_ref: obs_ref.clone(),
+    static_whitelist: None,
+    confidence_threshold: None,
   };
 
   let mut temp_store =
@@ -319,6 +321,8 @@ fn test_perception_and_spatial_memory_benchmarks() {
     viewport,
     vertical_fov_deg: 70.0,
     observation_ref: obs_ref.clone(),
+    static_whitelist: None,
+    confidence_threshold: None,
   };
   let mut e2e_da2_times = Vec::with_capacity(rounds);
   for _ in 0..rounds {
