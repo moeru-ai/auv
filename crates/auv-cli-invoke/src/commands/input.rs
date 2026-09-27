@@ -19,6 +19,8 @@ pub fn group() -> CommandGroup {
     .command(paste_text_preserve_clipboard_invoke_command())
     .command(press_key_invoke_command())
     .command(press_keys_invoke_command())
+    .command(press_keys_named_invoke_command())
+    .command(hold_keys_invoke_command())
     .command(input_keyboard_invoke_command())
     .command(move_mouse_invoke_command())
     .command(click_point_invoke_command())
@@ -290,6 +292,101 @@ struct PressKeysArgs {
   description = "Press and release a key combination, optionally repeated. Keys are released in reverse order; effects remain unverified.", input = PressKeysArgs)]
 async fn press_keys(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
   execute_keyboard(&input, vec![args.into()])
+}
+
+// NOTICE: input.keys is the existing complete-press spelling. Keep both
+// commands on the same typed path while callers adopt the explicit verb.
+#[invoke_command(id = "input.pressKeys", target = OptionalKeyboard, group = "input",
+  description = "Press and release a key combination, optionally repeated. Equivalent to input.keys.", input = PressKeysArgs)]
+async fn press_keys_named(input: InvokeCommandInput, args: PressKeysArgs) -> crate::InvokeExecutionResult {
+  press_keys(input, args).await
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(after_long_help = "Example:\n  auv invoke input.holdKeys shift --duration-ms 800")]
+struct HoldKeysArgs {
+  /// One key combination. Modifiers precede ordinary keys.
+  #[arg(value_name = "KEY", num_args = 1..)]
+  keys: Vec<String>,
+  /// Time between key down and release, in milliseconds (1..=30000).
+  #[arg(long)]
+  #[serde(rename = "duration-ms")]
+  duration_ms: u64,
+  /// Foreground prepares focus; background modes require an application or window target.
+  #[arg(long, value_enum)]
+  #[serde(rename = "input-policy")]
+  input_policy: Option<InputPolicyArg>,
+}
+
+impl HoldKeysArgs {
+  fn validated(self, has_target: bool) -> Result<(Vec<String>, auv_driver::InputPolicy, std::time::Duration), crate::InvokeFailure> {
+    if self.keys.is_empty() {
+      return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "hold keys must not be empty"));
+    }
+    if !(1..=30_000).contains(&self.duration_ms) {
+      return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "hold duration must be in (0, 30s]"));
+    }
+    let policy = keyboard_policy(self.input_policy);
+    if !has_target && policy != auv_driver::InputPolicy::ForegroundPreferred {
+      return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "background keyboard input requires --target"));
+    }
+    Ok((self.keys, policy, std::time::Duration::from_millis(self.duration_ms)))
+  }
+}
+
+#[invoke_command(id = "input.holdKeys", target = OptionalKeyboard, group = "input",
+  description = "Hold one key combination for a bounded duration, then release it. Delivery does not verify application effects.", input = HoldKeysArgs)]
+async fn hold_keys(input: InvokeCommandInput, args: HoldKeysArgs) -> crate::InvokeExecutionResult {
+  let (keys, policy, duration) = args.validated(input.target.is_some())?;
+  execute_hold_keys(&input, keys, policy, duration).await
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn execute_hold_keys(
+  input: &InvokeCommandInput,
+  keys: Vec<String>,
+  policy: auv_driver::InputPolicy,
+  duration: std::time::Duration,
+) -> crate::InvokeExecutionResult {
+  let session = auv::local::open()?;
+  let target = local_keyboard_target(input, &session)?;
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  if input.dry_run {
+    let options = auv_driver::PressKeysOptions {
+      keys,
+      ..Default::default()
+    };
+    session.input().input_keyboard(&target, vec![auv_driver::KeyboardInput::PressKeys { options, policy }], true)?;
+    return targeted_keyboard_output(None).map_err(Into::into);
+  }
+
+  // Dropping the invoke future wakes the held-key wait, including RPC cancellation.
+  struct CancelOnDrop(std::sync::Arc<auv_driver::input_cancellation::InputCancellation>);
+  impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+      self.0.cancel();
+    }
+  }
+  let signal = std::sync::Arc::new(auv_driver::input_cancellation::InputCancellation::default());
+  let guard = CancelOnDrop(signal.clone());
+  let action = tokio::select! {
+    _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
+    result = tokio::task::spawn_blocking(move || auv_driver::input_cancellation::with_input_cancellation(signal, || {
+      session.input().hold_keys(&target, keys, policy, duration)
+    })) => result.map_err(|error| format!("input task failed: {error}"))??,
+  };
+  drop(guard);
+  targeted_keyboard_output(Some(&action)).map_err(Into::into)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+async fn execute_hold_keys(
+  _input: &InvokeCommandInput,
+  _keys: Vec<String>,
+  _policy: auv_driver::InputPolicy,
+  _duration: std::time::Duration,
+) -> crate::InvokeExecutionResult {
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard invoke is available only on macOS and Linux"))
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -875,12 +972,20 @@ pub(crate) fn decode_keyboard_input(input: &InvokeCommandInput) -> Result<Vec<au
   use crate::command::decode_args;
   match input.command_id.as_str() {
     "input.key" => decode_args::<PressKeyArgs>(input).map(|args| vec![args.into()]),
-    "input.keys" => decode_args::<PressKeysArgs>(input).map(|args| vec![args.into()]),
+    "input.keys" | "input.pressKeys" => decode_args::<PressKeysArgs>(input).map(|args| vec![args.into()]),
     "input.typeText" => decode_args::<TypeTextArgs>(input).map(|args| vec![args.into()]),
     "input.pasteText" => decode_args::<PasteTextArgs>(input).map(|args| vec![args.into()]),
     "input.keyboard" => decode_args::<InputKeyboardArgs>(input)?.into_keyboard_inputs(),
     _ => Err(format!("{} is not a keyboard input command", input.command_id)),
   }
+}
+
+pub(crate) fn decode_hold_keys(
+  input: &InvokeCommandInput,
+) -> Result<(Vec<String>, auv_driver::InputPolicy, std::time::Duration), crate::InvokeFailure> {
+  crate::command::decode_args::<HoldKeysArgs>(input)
+    .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?
+    .validated(input.target.is_some())
 }
 
 /// Reject an impossible foreground policy before opening either driver route.
@@ -898,6 +1003,17 @@ pub(crate) fn validate_keyboard_policy(
 fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   validate_keyboard_policy(input, &keyboard)?;
   let session = auv::local::open()?;
+  let target = local_keyboard_target(input, &session)?;
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let result = session.input().input_keyboard(&target, keyboard, input.dry_run).map_err(Into::into);
+  keyboard_output(input, result)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn local_keyboard_target(
+  input: &InvokeCommandInput,
+  session: &auv_driver::LocalDriverSession,
+) -> Result<auv_driver::InputTarget, crate::InvokeFailure> {
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
     Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
@@ -914,9 +1030,7 @@ fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::Keyboa
       return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, "display target is unsupported for keyboard input"));
     }
   };
-  input.cancellation.check().map_err(|error| error.to_string())?;
-  let result = session.input().input_keyboard(&target, keyboard, input.dry_run).map_err(Into::into);
-  keyboard_output(input, result)
+  Ok(target)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

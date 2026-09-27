@@ -1284,6 +1284,30 @@ impl InputClient {
       .map(|actions| actions.map(|mut actions| actions.remove(0)))
   }
 
+  /// Hold one key combination for a bounded duration and report its release.
+  pub async fn hold_keys(
+    &self,
+    target: &auv_driver::InputTarget,
+    keys: Vec<String>,
+    policy: auv_driver::InputPolicy,
+    duration: std::time::Duration,
+  ) -> Result<auv_driver::InputActionResult, CapabilityError> {
+    if duration.is_zero() || duration > std::time::Duration::from_secs(30) {
+      return Err(CapabilityError::InvalidArgument("keyboard hold duration must be in (0, 30s]".into()));
+    }
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .hold_keys(proto::HoldKeysRequest {
+        target: Some(input_target_to_proto(target)),
+        keys,
+        policy: input_policy_to_proto(policy) as i32,
+        duration: Some(duration_to_proto(duration)?),
+      })
+      .await
+      .map_err(keyboard_capability_status)?
+      .into_inner();
+    input_action_result_from_proto(required(response.action, "HoldKeys response omitted InputActionResult")?)
+  }
+
   /// Types text using the supplied delivery policy.
   pub async fn type_text(
     &self,
