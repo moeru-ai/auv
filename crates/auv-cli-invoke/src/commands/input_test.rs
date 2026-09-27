@@ -460,8 +460,10 @@ fn press_keys_alias_uses_the_existing_keyboard_action() {
     dry_run: true,
     cancellation: Default::default(),
   };
+
   let mut old = input.clone();
   old.command_id = "input.keys".into();
+
   assert_eq!(decode_keyboard_input(&input).unwrap(), decode_keyboard_input(&old).unwrap());
 }
 
@@ -473,6 +475,7 @@ fn hold_keys_validates_duration_and_target_policy_before_io() {
   else {
     panic!("expected parsed invocation");
   };
+
   let input = crate::InvokeCommandInput {
     command_id: command.id.into(),
     target: None,
@@ -481,6 +484,7 @@ fn hold_keys_validates_duration_and_target_policy_before_io() {
     dry_run: true,
     cancellation: Default::default(),
   };
+
   let (keys, policy, duration) = decode_hold_keys(&input).unwrap();
   assert_eq!(keys, vec!["shift"]);
   assert_eq!(policy, auv_driver::InputPolicy::ForegroundPreferred);
@@ -489,6 +493,7 @@ fn hold_keys_validates_duration_and_target_policy_before_io() {
   let mut invalid = input.clone();
   invalid.inputs.insert("duration-ms".into(), "30001".into());
   assert_eq!(decode_hold_keys(&invalid).unwrap_err().code, crate::FailureCode::InvalidInput);
+
   invalid.inputs.insert("duration-ms".into(), "800".into());
   invalid.inputs.insert("input-policy".into(), "background-only".into());
   assert_eq!(decode_hold_keys(&invalid).unwrap_err().code, crate::FailureCode::InvalidInput);

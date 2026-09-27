@@ -308,10 +308,12 @@ struct HoldKeysArgs {
   /// One key combination. Modifiers precede ordinary keys.
   #[arg(value_name = "KEY", num_args = 1..)]
   keys: Vec<String>,
+
   /// Time between key down and release, in milliseconds (1..=30000).
   #[arg(long)]
   #[serde(rename = "duration-ms")]
   duration_ms: u64,
+
   /// Foreground prepares focus; background modes require an application or window target.
   #[arg(long, value_enum)]
   #[serde(rename = "input-policy")]
@@ -323,13 +325,16 @@ impl HoldKeysArgs {
     if self.keys.is_empty() {
       return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "hold keys must not be empty"));
     }
+
     if !(1..=30_000).contains(&self.duration_ms) {
       return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "hold duration must be in (0, 30s]"));
     }
+
     let policy = keyboard_policy(self.input_policy);
     if !has_target && policy != auv_driver::InputPolicy::ForegroundPreferred {
       return Err(crate::InvokeFailure::new(crate::FailureCode::InvalidInput, "background keyboard input requires --target"));
     }
+
     Ok((self.keys, policy, std::time::Duration::from_millis(self.duration_ms)))
   }
 }
@@ -351,6 +356,7 @@ async fn execute_hold_keys(
   let session = auv::local::open()?;
   let target = local_keyboard_target(input, &session)?;
   input.cancellation.check().map_err(|error| error.to_string())?;
+
   if input.dry_run {
     let options = auv_driver::PressKeysOptions {
       keys,
@@ -367,14 +373,17 @@ async fn execute_hold_keys(
       self.0.cancel();
     }
   }
+
   let signal = std::sync::Arc::new(auv_driver::input_cancellation::InputCancellation::default());
   let guard = CancelOnDrop(signal.clone());
+
   let action = tokio::select! {
     _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
     result = tokio::task::spawn_blocking(move || auv_driver::input_cancellation::with_input_cancellation(signal, || {
       session.input().hold_keys(&target, keys, policy, duration)
     })) => result.map_err(|error| format!("input task failed: {error}"))??,
   };
+
   drop(guard);
   targeted_keyboard_output(Some(&action)).map_err(Into::into)
 }
@@ -1004,6 +1013,7 @@ fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::Keyboa
   validate_keyboard_policy(input, &keyboard)?;
   let session = auv::local::open()?;
   let target = local_keyboard_target(input, &session)?;
+
   input.cancellation.check().map_err(|error| error.to_string())?;
   let result = session.input().input_keyboard(&target, keyboard, input.dry_run).map_err(Into::into);
   keyboard_output(input, result)

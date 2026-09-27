@@ -34,6 +34,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
   if let Some(command) = crate::default_registry().resolve(&input.command_id) {
     command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
   }
+
   if matches!(
     input.command_id.as_str(),
     "input.key" | "input.keys" | "input.pressKeys" | "input.keyboard" | "input.typeText" | "input.pasteText"
@@ -43,6 +44,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
     return execute_keyboard(input, keyboard, context).await;
   }
+
   if input.command_id == "input.holdKeys" {
     let (keys, policy, duration) = crate::commands::input::decode_hold_keys(&input)?;
     return execute_hold_keys(input, keys, policy, duration, context).await;
@@ -617,6 +619,7 @@ async fn execute_keyboard(
 
   let target = runner_keyboard_target(&input, &runner).await?;
   input.cancellation.check().map_err(|error| error.to_string())?;
+
   let result = runner.input().input_keyboard(&target, keyboard, input.dry_run).await.map_err(Into::into);
   crate::commands::input::keyboard_output(&input, result)
 }
@@ -639,6 +642,7 @@ async fn runner_keyboard_target(
     }
     Some(crate::ExecutionTarget::Display { .. }) => unreachable!("target policy validated"),
   };
+
   Ok(target)
 }
 
@@ -654,6 +658,7 @@ async fn execute_hold_keys(
   let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
   let target = runner_keyboard_target(&input, &runner).await?;
   input.cancellation.check().map_err(|error| error.to_string())?;
+
   if input.dry_run {
     let options = auv_driver::PressKeysOptions {
       keys,
@@ -662,10 +667,12 @@ async fn execute_hold_keys(
     runner.input().input_keyboard(&target, vec![auv_driver::KeyboardInput::PressKeys { options, policy }], true).await?;
     return crate::commands::input::targeted_keyboard_output(None).map_err(Into::into);
   }
+
   let client = runner.input();
   let action = tokio::select! {
     _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
     result = client.hold_keys(&target, keys, policy, duration) => result?,
   };
+
   crate::commands::input::targeted_keyboard_output(Some(&action)).map_err(Into::into)
 }

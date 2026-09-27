@@ -1295,6 +1295,7 @@ impl InputClient {
     if duration.is_zero() || duration > std::time::Duration::from_secs(30) {
       return Err(CapabilityError::InvalidArgument("keyboard hold duration must be in (0, 30s]".into()));
     }
+
     let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
       .hold_keys(proto::HoldKeysRequest {
         target: Some(input_target_to_proto(target)),
@@ -1305,6 +1306,7 @@ impl InputClient {
       .await
       .map_err(keyboard_capability_status)?
       .into_inner();
+
     input_action_result_from_proto(required(response.action, "HoldKeys response omitted InputActionResult")?)
   }
 
