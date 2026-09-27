@@ -1,17 +1,24 @@
-name: Release npm packages
+name: Release packages
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing version tag to publish to crates.io
+        required: true
+        type: string
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  release:
+  release-npm:
     name: Release npm packages
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -52,3 +59,19 @@ jobs:
       - name: Publish packages
         run: >-
           pnpm -r --filter @auv-js/api-client --filter @auv-js/sdk publish --access public --no-git-checks
+
+  release-crates:
+    name: Publish crates.io packages
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag_name || github.ref_name }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish Rust crates
+        run: cargo publish --workspace --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
