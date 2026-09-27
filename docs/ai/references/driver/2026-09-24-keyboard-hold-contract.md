@@ -1,35 +1,28 @@
 # Keyboard hold contract
 
-Date: 2026-09-24; revalidated 2026-09-25. Classification: approved feature, with
-test-only receiver follow-ups. Status: same-recipient held modifier composition
-now passes macOS receiver checks; background menu and emoji limitations remain.
-The [background diagnosis](#background-failure-diagnosis-2026-09-25) identifies
-separate command-target and IME-focus barriers; it does not close either limitation.
-The [2026-09-26 no-raise experiment](2026-09-26-no-raise-keyboard-probe.md) establishes
-a test-only positive sequence with key-window records and explicit restoration;
-that sequence has not been integrated into production input delivery.
+Date: 2026-09-24. Classification: approved feature. Status: implemented for
+review; receiver validation is bounded to the host and applications below.
 
-`PressKeys` remains a complete down/up combination. `HoldKeys` owns a bounded
+`PressKeys` remains a completed down/up combination. `HoldKeys` owns a bounded
 down/wait/up operation. `KeyDown` returns an opaque hold ID and a down
-`InputActionResult`; `KeyUp` releases that ID and returns release evidence.
-Both new operations use the existing `InputTarget`, `InputPolicy`, key-name
-validation, and `InputActionResult`. An unspecified policy selects foreground
-for these new RPCs. The Runner requires a positive duration or timeout no
-greater than 30 seconds. Rust callers use `KeyboardHold.release()` to observe
-release errors; dropping the handle attempts cleanup.
+`InputActionResult`; `KeyUp` releases that ID and reports the release attempt.
+The new operations reuse `InputTarget`, `InputPolicy`, key-name validation, and
+`InputActionResult`. The Runner requires a positive duration or timeout no
+greater than 30 seconds. An unspecified policy selects foreground for these
+new RPCs.
 
-Rust driver call:
+Partial Rust call (`session` is a local driver session; imports omitted):
 
 ```rust
 let input = session.input();
 let target = InputTarget::Foreground;
 input.hold_keys(&target, vec!["space".into()], InputPolicy::ForegroundPreferred, Duration::from_millis(800))?;
 let mut held = input.key_down(&target, vec!["shift".into()], InputPolicy::ForegroundPreferred, Duration::from_secs(5))?;
-// Perform related input while the key is down.
+// Send related input while the key is down.
 held.release()?;
 ```
 
-The JS SDK exposes the same Runner operations as protobuf-shaped requests:
+The JS SDK exposes the Runner operations as protobuf-shaped requests:
 
 ```ts
 const input = auv.runner({ runnerClass: 'auv.core.local', runId: run.id }).input
@@ -37,12 +30,14 @@ const target = { recipient: { case: 'foreground' as const, value: true } }
 await input.holdKeys({ target, keys: ['space'], duration: { seconds: 0n, nanos: 800_000_000 } })
 const { holdId } = await input.keyDown({ target, keys: ['shift'], timeout: { seconds: 5n } })
 try {
-  // Perform related input while the key is down.
+  // Send related input to the same recipient.
 }
 finally {
   await input.keyUp({ holdId })
 }
 ```
+
+## Ownership and release
 
 The process-wide controller admits one held combination at a time. It records
 ownership before native posting, releases keys in reverse order after a failed
@@ -62,20 +57,41 @@ still uncertain, rather than a guarantee that no key remains down.
 fallback deadline, so its normal result describes that release transition.
 Cancellation during a blocking hold attempts the same release.
 
-macOS keeps the original pid/window routing and modifier flags through each
-transition. Linux supports foreground Portal and uinput routes with the
-original input session retained; target-bound keyboard input is still
-unsupported there. Windows uses foreground `SendInput`; target-bound input
-remains unsupported. No platform claims receiver acceptance or key auto-repeat
-from a successful submission.
+## Platform delivery
 
-Validation so far: shared controller tests cover reverse release, retry after
-failed release, cancellation, and deadline cleanup; macOS unit tests record the
-native transition sequence and modifier flags. The full default Cargo suite,
-macOS SwiftPM build, Windows target check, Linux container check, Buf lint and
-breaking check, Runner RPC validation, and JS request serialization passed.
-The SDK typecheck passed on the updated PR worktree. The following macOS receiver tests add bounded behavior evidence;
-other platforms and live Runner RPC lifecycle behavior still need native validation.
+macOS preserves the resolved pid/window and modifier flags through each held
+transition. A separate ordinary `PressKeys` call to the same recipient inherits
+held modifier flags; unrelated recipients do not. Linux supports foreground
+Portal and uinput routes with the original input session retained. Windows
+uses foreground `SendInput`. Target-bound keyboard input remains unsupported
+on Linux and Windows in this slice.
+
+All driver results report input delivery, not semantic success. In particular,
+successful posting does not establish key auto-repeat, text editing, or menu
+command acceptance by the receiving application.
+
+## Validation boundary
+
+Coordinator tests cover reverse release, failed-release retry, cancellation,
+deadline cleanup, and modifier ownership. macOS unit tests record native
+transition order and flags. The native authentication test checks preparation
+and one submission without sending input to an unrelated application.
+The default Cargo suite, focused driver tests, SwiftPM build, Windows target
+check, Buf lint/breaking check, Runner validation, and SDK serialization tests
+passed on the PR worktree.
+
+Earlier local macOS 26.3 receiver probes with Chrome 153 and Electron 44
+observed five timed/down/up/timeout/Drop cases passing 25/25 per application
+and held Shift plus a separate `b` passing 5/5 after the modifier fix.
+Background Cmd+A replacement and emoji insertion remained 0/5 per
+application. These are bounded historical observations, not platform support
+claims. Raw receipts and temporary receiver code are not part of this PR;
+the reproducible GUI harness lives under
+[`evals/auv-base`](../../../../evals/auv-base/README.md).
+
+Linux/Windows live receiver behavior, key auto-repeat, process-crash recovery,
+and live Runner RPC shutdown remain unverified. A successful submission is not
+a substitute for a separate receiver result.
 
 ## macOS receiver validation
 
