@@ -93,7 +93,7 @@ fn main() {
   }
 
   drop(held);
-  auv_driver_common::keyboard_coordinator().shutdown().unwrap();
+  auv_driver_common::keyboard_hold_controller().shutdown().unwrap();
 }
 
 #[cfg(not(target_os = "macos"))]
