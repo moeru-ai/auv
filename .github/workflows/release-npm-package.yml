@@ -4,12 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: Existing version tag to publish to crates.io
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -18,7 +12,6 @@ permissions:
 jobs:
   release-npm:
     name: Release npm packages
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -68,7 +61,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: refs/tags/${{ inputs.tag_name || github.ref_name }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - name: Publish Rust crates

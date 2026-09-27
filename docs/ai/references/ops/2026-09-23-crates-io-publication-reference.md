@@ -30,14 +30,10 @@ The Rust CI matrix tests the workspace on Linux, macOS, and Windows. A `v*`
 tag push in `moeru-ai/auv` starts the Release packages workflow for the SDK
 npm packages and Cargo. The NAPI and CLI npm packages still need the binary
 artifacts produced by the GitHub Release workflow. The Cargo job checks out
-the tag and runs
-`cargo publish --workspace --locked`. Cargo selects the publishable workspace
-crates and publishes them in dependency order. The job needs a
-`CARGO_REGISTRY_TOKEN` repository secret with publish access. To backfill a tag
-that was pushed before this trigger existed, manually run the Release packages
-workflow from `main` with `tag_name` set to the existing tag; the npm job is
-skipped on manual runs. The Release workflow's prerelease and artifact-upload
-events do not publish crates.
+the tag and runs `cargo publish --workspace --locked`. Cargo selects the
+publishable workspace crates and publishes them in dependency order. The job
+needs a `CARGO_REGISTRY_TOKEN` repository secret with publish access. The
+Release workflow's prerelease and artifact-upload events do not publish crates.
 
 The complete 29-crate package set passed on macOS arm64 on 2026-09-24. The run used
 Cargo 1.96.0, CMake 4.1.2, and Apple Swift 6.2.1.
