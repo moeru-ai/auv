@@ -27,8 +27,10 @@ development shell now provides CMake and exposes the system Swift compiler.
 ## Validation and publication
 
 The Rust CI matrix tests the workspace on Linux, macOS, and Windows. A `v*`
-tag push in `moeru-ai/auv` starts the Release packages workflow for both npm
-and Cargo. The Cargo job checks out the tag and runs
+tag push in `moeru-ai/auv` starts the Release packages workflow for the SDK
+npm packages and Cargo. The NAPI and CLI npm packages still need the binary
+artifacts produced by the GitHub Release workflow. The Cargo job checks out
+the tag and runs
 `cargo publish --workspace --locked`. Cargo selects the publishable workspace
 crates and publishes them in dependency order. The job needs a
 `CARGO_REGISTRY_TOKEN` repository secret with publish access. To backfill a tag

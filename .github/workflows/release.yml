@@ -247,6 +247,8 @@ jobs:
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
 
+  # NOTICE: NAPI and CLI npm packages need the binaries built for a GitHub
+  # Release, so they remain on this event instead of the registry tag workflow.
   publish-npm-cli:
     name: Publish NAPI and CLI npm packages
     needs: publish
