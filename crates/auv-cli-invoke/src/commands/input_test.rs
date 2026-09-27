@@ -450,6 +450,55 @@ fn keyboard_target_payload_reuses_driver_options_and_preserves_text() {
   );
 }
 
+#[test]
+fn press_keys_alias_uses_the_existing_keyboard_action() {
+  let input = crate::InvokeCommandInput {
+    command_id: "input.pressKeys".into(),
+    target: None,
+    inputs: [("keys".into(), "[\"cmd\",\"a\"]".into())].into(),
+    typed_args: None,
+    dry_run: true,
+    cancellation: Default::default(),
+  };
+
+  let mut old = input.clone();
+  old.command_id = "input.keys".into();
+
+  assert_eq!(decode_keyboard_input(&input).unwrap(), decode_keyboard_input(&old).unwrap());
+}
+
+#[test]
+fn hold_keys_validates_duration_and_target_policy_before_io() {
+  let command = hold_keys_invoke_command();
+  let crate::InvokeCommandCliParse::Invoke { inputs, .. } =
+    command.parse_cli_args(&["shift".into(), "--duration-ms".into(), "800".into()]).unwrap()
+  else {
+    panic!("expected parsed invocation");
+  };
+
+  let input = crate::InvokeCommandInput {
+    command_id: command.id.into(),
+    target: None,
+    inputs,
+    typed_args: None,
+    dry_run: true,
+    cancellation: Default::default(),
+  };
+
+  let (keys, policy, duration) = decode_hold_keys(&input).unwrap();
+  assert_eq!(keys, vec!["shift"]);
+  assert_eq!(policy, auv_driver::InputPolicy::ForegroundPreferred);
+  assert_eq!(duration, std::time::Duration::from_millis(800));
+
+  let mut invalid = input.clone();
+  invalid.inputs.insert("duration-ms".into(), "30001".into());
+  assert_eq!(decode_hold_keys(&invalid).unwrap_err().code, crate::FailureCode::InvalidInput);
+
+  invalid.inputs.insert("duration-ms".into(), "800".into());
+  invalid.inputs.insert("input-policy".into(), "background-only".into());
+  assert_eq!(decode_hold_keys(&invalid).unwrap_err().code, crate::FailureCode::InvalidInput);
+}
+
 #[tokio::test]
 async fn focus_text_requires_application_even_in_dry_run() {
   let command = focus_text_input_invoke_command();

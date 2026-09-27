@@ -12,7 +12,7 @@ is not evidence that every command accepts every resource type.
 
 | Commands | Accepted target | Effect |
 | --- | --- | --- |
-| `input.key`, `input.keys`, `input.keyboard`, `input.typeText`, `input.pasteText` | optional application or window | Resolve the running application or exact observed window; apply the explicit input policy; post events to the owning pid. |
+| `input.key`, `input.keys`, `input.pressKeys`, `input.holdKeys`, `input.keyboard`, `input.typeText`, `input.pasteText` | optional application or window | Resolve the running application or exact observed window; apply the explicit input policy; post events to the owning pid. |
 | `input.focusText`, `input.axFocusText` | required application | Select an AX text control and request focus. This remains separate from application/window activation. |
 | `input.clickPoint` | optional application, window, display | Existing logical screen/window/display coordinate contract; `--normalized` uses target-local ratios. |
 | `window.capture/findText/waitForText/clickText` | optional application | Existing window selector, including command-local title options. |
@@ -108,12 +108,17 @@ The approved keyboard model separates a key, a key combination, and an ordered r
   driver semantics; they are not converted to physical key names.
 
 `input.key` retains legacy shortcut spelling and adds `--count`/`--interval-ms`.
-`input.keys` accepts explicit positional keys. `input.keyboard --actions JSON`
+`input.keys` accepts explicit positional keys. `input.pressKeys` is the same
+complete press/release operation with an explicit verb. `input.holdKeys` holds
+one combination for `--duration-ms` (1..=30000) and releases it before the
+invoke call returns. `input.keyboard --actions JSON`
 accepts an array of tagged actions. MCP uses the same registered commands and
 metadata. Its string-valued `inputs.keys` must contain an encoded JSON array.
 
 ```sh
 auv invoke input.keys cmd shift p --target app:com.example.editor
+auv invoke input.pressKeys cmd shift p --target app:com.example.editor
+auv invoke input.holdKeys shift --duration-ms 800 --target app:com.example.editor
 auv invoke input.key return --count 2 --interval-ms 100 --target window:123
 auv invoke input.keyboard --target app:com.netease.163music \
   --actions '[{"kind":"press","keys":["escape"],"count":3,"interval_ms":100},{"kind":"type_text","text":"hello"}]'
@@ -132,10 +137,11 @@ require a positive interval; a single press requires zero interval. Interval
 is a minimum wait between complete repetitions, followed by recipient/focus
 checks, not an exact event timestamp. Settle applies once after the final press.
 This is not a hold, OS auto-repeat, or a repeat of the whole action list.
-The Driver's later `KeyDown`/`KeyUp` and `HoldKeys` operations live outside this
+`input.holdKeys` uses the Driver's bounded `HoldKeys` operation outside the
 ordered batch; see the [keyboard hold contract](../driver/2026-09-24-keyboard-hold-contract.md).
-Invoke does not yet own a persistent hold ID across commands. A started
-synchronous request is not rolled back merely because the caller disconnects.
+Invoke does not own a persistent hold ID across commands, so Driver `KeyDown`
+and `KeyUp` remain outside invoke. Cancellation of the bounded hold releases
+its keys; ordinary completed key presses are not rolled back.
 
 The driver validates the whole list before resolving/activating the recipient.
 It binds a target process once, then checks identity and applies the action's

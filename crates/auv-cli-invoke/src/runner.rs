@@ -34,11 +34,19 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
   if let Some(command) = crate::default_registry().resolve(&input.command_id) {
     command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
   }
-  if matches!(input.command_id.as_str(), "input.key" | "input.keys" | "input.keyboard" | "input.typeText" | "input.pasteText") {
-    let keyboard = crate::commands::input::decode_keyboard_input(&input)
-      .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
-    crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
-    return execute_keyboard(input, keyboard, context).await;
+
+  match input.command_id.as_str() {
+    "input.key" | "input.keys" | "input.pressKeys" | "input.keyboard" | "input.typeText" | "input.pasteText" => {
+      let keyboard = crate::commands::input::decode_keyboard_input(&input)
+        .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+      crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
+      return execute_keyboard(input, keyboard, context).await;
+    }
+    "input.holdKeys" => {
+      let (keys, policy, duration) = crate::commands::input::decode_hold_keys(&input)?;
+      return execute_hold_keys(input, keys, policy, duration, context).await;
+    }
+    _ => {}
   }
 
   let command_id = input.command_id.as_str();
@@ -608,6 +616,17 @@ async fn execute_keyboard(
   let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
 
+  let target = runner_keyboard_target(&input, &runner).await?;
+  input.cancellation.check().map_err(|error| error.to_string())?;
+
+  let result = runner.input().input_keyboard(&target, keyboard, input.dry_run).await.map_err(Into::into);
+  crate::commands::input::keyboard_output(&input, result)
+}
+
+async fn runner_keyboard_target(
+  input: &crate::InvokeCommandInput,
+  runner: &auv::client::runner::RunnerClient,
+) -> Result<auv_driver::InputTarget, crate::InvokeFailure> {
   let target = match input.target.as_ref() {
     None => auv_driver::InputTarget::Foreground,
     Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
@@ -622,7 +641,37 @@ async fn execute_keyboard(
     }
     Some(crate::ExecutionTarget::Display { .. }) => unreachable!("target policy validated"),
   };
+
+  Ok(target)
+}
+
+async fn execute_hold_keys(
+  input: crate::InvokeCommandInput,
+  keys: Vec<String>,
+  policy: auv_driver::InputPolicy,
+  duration: std::time::Duration,
+  context: auv::AuvContext,
+) -> crate::InvokeExecutionResult {
+  let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
+  let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
+  let target = runner_keyboard_target(&input, &runner).await?;
   input.cancellation.check().map_err(|error| error.to_string())?;
-  let result = runner.input().input_keyboard(&target, keyboard, input.dry_run).await.map_err(Into::into);
-  crate::commands::input::keyboard_output(&input, result)
+
+  if input.dry_run {
+    let options = auv_driver::PressKeysOptions {
+      keys,
+      ..Default::default()
+    };
+    runner.input().input_keyboard(&target, vec![auv_driver::KeyboardInput::PressKeys { options, policy }], true).await?;
+    return crate::commands::input::targeted_keyboard_output(None).map_err(Into::into);
+  }
+
+  let client = runner.input();
+  let action = tokio::select! {
+    _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
+    result = client.hold_keys(&target, keys, policy, duration) => result?,
+  };
+
+  crate::commands::input::targeted_keyboard_output(Some(&action)).map_err(Into::into)
 }
