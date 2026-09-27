@@ -35,19 +35,18 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     command.target.validate(&input).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidTarget, message))?;
   }
 
-  if matches!(
-    input.command_id.as_str(),
-    "input.key" | "input.keys" | "input.pressKeys" | "input.keyboard" | "input.typeText" | "input.pasteText"
-  ) {
-    let keyboard = crate::commands::input::decode_keyboard_input(&input)
-      .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
-    crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
-    return execute_keyboard(input, keyboard, context).await;
-  }
-
-  if input.command_id == "input.holdKeys" {
-    let (keys, policy, duration) = crate::commands::input::decode_hold_keys(&input)?;
-    return execute_hold_keys(input, keys, policy, duration, context).await;
+  match input.command_id.as_str() {
+    "input.key" | "input.keys" | "input.pressKeys" | "input.keyboard" | "input.typeText" | "input.pasteText" => {
+      let keyboard = crate::commands::input::decode_keyboard_input(&input)
+        .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+      crate::commands::input::validate_keyboard_policy(&input, &keyboard)?;
+      return execute_keyboard(input, keyboard, context).await;
+    }
+    "input.holdKeys" => {
+      let (keys, policy, duration) = crate::commands::input::decode_hold_keys(&input)?;
+      return execute_hold_keys(input, keys, policy, duration, context).await;
+    }
+    _ => {}
   }
 
   let command_id = input.command_id.as_str();
