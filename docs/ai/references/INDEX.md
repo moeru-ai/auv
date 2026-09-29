@@ -36,7 +36,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 |---|---|---|---|
 | [`runtime/`](runtime/INDEX.md) | Active | Execution, contract, action seam, admission, query readiness | |
 | [`invoke-cli/`](invoke-cli/INDEX.md) | Active | Invoke routing, CLI handlers, catalog | |
-| [`session-api/`](session-api/INDEX.md) | Active | AUV operation interface, daemon control API, opaque capability routing, Device, Run, and Runner; folder name retained from the session prototype | |
+| [`session-api/`](session-api/INDEX.md) | Active | AUV operation interface, daemon control API, opaque capability routing, Device, Run, and Runner; folder name retained from the session prototype | [Device unlock research and experiments](session-api/2026-09-27-remote-device-unlock-research.md) |
 | [`inspect/`](inspect/INDEX.md) | Active | Run recording, inspect viewer, trace | |
 | [`driver/`](driver/INDEX.md) | Active | Platform drivers, input, window, permissions | [Computer-use and Wayland research](driver/2026-09-13-wayland-background-input-research.md), [iPhone phone-use source review](driver/2026-09-14-iphone-phone-use-source-review.md), [Held-input contract](driver/2026-09-18-held-input-design.md), [Held-input project evidence](driver/2026-09-18-held-input-project-research.md), [Background delivery comparison](driver/2026-09-23-background-delivery-project-comparison.md), [Keyboard authentication](driver/2026-09-23-background-keyboard-authentication.md) |
 | [`view-memory/`](view-memory/INDEX.md) | Active | View-parser IR and view memory | |

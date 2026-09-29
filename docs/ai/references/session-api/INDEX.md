@@ -18,8 +18,13 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 `auv-api-client` and `auv-api-server` become protocol boundaries. MCP remains in
 `auv-cli`.
 
-Count: **26**
+Count: **31**
 
+- [`2026-09-27-remote-device-unlock-research.md`](2026-09-27-remote-device-unlock-research.md) — historical policy interview, three native existing-session unlock proofs, and failed macOS signed-out input gates; candidate implementation remains in PR #198.
+- [`2026-09-28-macos-remote-desktop-loginwindow-research.md`](2026-09-28-macos-remote-desktop-loginwindow-research.md) — primary-source comparison of Apple remote desktop services and third-party login-window mechanisms; no AUV support claim.
+- [`2026-09-28-macos-locked-session-host-gate.md`](2026-09-28-macos-locked-session-host-gate.md) — signed Aqua helper and two supervised black-display unlocks through local Unix DeviceService; paired network authentication was not exercised.
+- [`2026-09-28-linux-gnome-locked-session-host-handoff.md`](2026-09-28-linux-gnome-locked-session-host-handoff.md) — two paired existing-session unlocks on one GNOME host with PAM revalidation; automatic display wake and rotated-password rejection remain unproved.
+- [`2026-09-28-windows-locked-session-host-handoff.md`](2026-09-28-windows-locked-session-host-handoff.md) — one paired locked-console unlock with WTS readback and owner confirmation; release installation and broader configurations remain open.
 - [`2026-09-08-protobuf-source-distribution-reference.md`](2026-09-08-protobuf-source-distribution-reference.md) — checked-in BSR exports, dependency updates, and clean-checkout Cargo installation checks.
 - [`2026-08-17-protobuf-json-schema-library-research.md`](2026-08-17-protobuf-json-schema-library-research.md) — primary-source evaluation of runtime and build-time Protobuf-to-JSON-Schema libraries; no browser-compatible `DescMessage` drop-in exists, with two viable future paths documented.
 - [`2026-08-16-windows-local-runner-ipc-handoff.md`](2026-08-16-windows-local-runner-ipc-handoff.md) - Windows local API and daemon-to-Runner named-pipe transports, paired use, tests, and current limits.
