@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **49**
+Count: **53**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -66,6 +66,10 @@ Count: **49**
 - [`2026-09-19-positional-targets.md`](2026-09-19-positional-targets.md): Window-bound positional targets, NetEase migration, and live validation evidence.
 - [`2026-09-23-background-delivery-project-comparison.md`](2026-09-23-background-delivery-project-comparison.md): BG-2 source comparison of CUA, KWWK, locally bundled OpenAI Sky, and MaaFramework; transport selection, click counts, and evidence limits.
 - [`2026-09-23-background-keyboard-authentication.md`](2026-09-23-background-keyboard-authentication.md): Authenticated macOS keyboard submission, guarded public fallback, native contract tests, and AppKit/Chrome/Electron receiver evidence, including failing compatibility cases.
+- [`2026-09-27-macos-lock-screen-research.md`](2026-09-27-macos-lock-screen-research.md): macOS locked session, LoginWindow, and FileVault preboot boundaries; Apple APIs and remote-host source evidence.
+- [`2026-09-27-windows-linux-login-screen-research.md`](2026-09-27-windows-linux-login-screen-research.md): Windows secure-desktop and Linux greeter capture/input source review.
+- [`2026-09-27-sky-cua-lock-screen-research.md`](2026-09-27-sky-cua-lock-screen-research.md): Public Codex issue and open-source CUA paths, with lock-screen evidence limits.
+- [`2026-09-27-lock-and-login-screen-deep-research.md`](2026-09-27-lock-and-login-screen-deep-research.md): Pinned-source follow-up on secure desktop APIs, session workers, greeter capture, AUV Runner placement, and credential boundaries.
 
 ## Related
 
