@@ -527,6 +527,36 @@ impl Control for Daemon {
     }
   }
 
+  async fn ensure_user_session_locked(
+    &self,
+    caller: &CallerId,
+    target: auv::devices::UserSessionTarget,
+  ) -> Result<auv::devices::EnsureUserSessionLockedEffect, auv::devices::DeviceEntryErrorReason> {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+      #[cfg(windows)]
+      {
+        self
+          .device_entry
+          .as_ref()
+          .ok_or(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)?
+          .ensure_user_session_locked(caller, target)
+          .await
+      }
+
+      #[cfg(not(windows))]
+      {
+        self.device_entry.ensure_user_session_locked(caller, target).await
+      }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      let _ = (caller, target);
+      Err(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)
+    }
+  }
+
   fn create_run(&self, caller: &CallerId, request: auv::runs::CreateRun) -> Result<auv::runs::Run, ControlError> {
     let response = Daemon::create_run(
       self,

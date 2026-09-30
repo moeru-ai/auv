@@ -22,6 +22,10 @@ impl LinuxSessionHost {
     selected_in_state_from(selected, unique_sessions(current_user_sessions()?)?, UserSessionLockState::Locked)
   }
 
+  fn selected_usable(&self, selected: &ObservedSession) -> Result<GnomeSession, DeviceEntryErrorReason> {
+    selected_in_state_from(selected, unique_sessions(current_user_sessions()?)?, UserSessionLockState::Usable)
+  }
+
   async fn verify_stored_password(
     &self,
     selected: &ObservedSession,
@@ -86,6 +90,11 @@ impl SessionHost for LinuxSessionHost {
       // label that race as a delivered unlock effect.
       UnlockOutcome::AlreadyUsable => Err(DeviceEntryErrorReason::StaleSession),
     }
+  }
+
+  fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+    let session = self.selected_usable(selected)?;
+    device_unlock::lock_existing_session(&session).map_err(map_error)
   }
 }
 
@@ -248,6 +257,27 @@ mod tests {
       ),
       Err(DeviceEntryErrorReason::StaleSession)
     ));
+  }
+
+  #[test]
+  fn lock_selection_requires_the_exact_usable_login() {
+    let current = session("52", 1000, "seat0", UserSessionLockState::Usable);
+    let selected = selected(&current);
+    let expected = current.native.clone();
+
+    assert_eq!(selected_in_state_from(&selected, vec![current], UserSessionLockState::Usable), Ok(expected));
+    assert_eq!(
+      selected_in_state_from(&selected, vec![session("52", 2000, "seat0", UserSessionLockState::Usable)], UserSessionLockState::Usable),
+      Err(DeviceEntryErrorReason::StaleSession)
+    );
+    assert_eq!(
+      selected_in_state_from(&selected, vec![session("52", 1000, "seat0", UserSessionLockState::Locked)], UserSessionLockState::Usable),
+      Err(DeviceEntryErrorReason::StaleSession)
+    );
+    assert_eq!(
+      selected_in_state_from(&selected, vec![session("52", 1000, "seat0", UserSessionLockState::Usable)], UserSessionLockState::Locked),
+      Err(DeviceEntryErrorReason::StaleSession)
+    );
   }
 
   #[test]

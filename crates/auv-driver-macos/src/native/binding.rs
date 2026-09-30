@@ -367,6 +367,17 @@ pub(crate) mod ffi {
     DeadlineExceeded,
   }
 
+  // The signed Aqua helper calls this only for one selected usable console.
+  // Posting the shortcut is not proof that the OS locked the session.
+  enum NativeDeviceLockOutcome {
+    Submitted,
+    AlreadyLocked,
+    IdentityMismatch,
+    PermissionMissing,
+    SessionChanged,
+    EventUnavailable,
+  }
+
   #[swift_bridge(swift_repr = "struct")]
   struct NativeMouseLocationResponse {
     x: f64,
@@ -459,6 +470,7 @@ pub(crate) mod ffi {
       selector: String,
       posting_budget_seconds: f64,
     ) -> NativeDeviceUnlockOutcome;
+    fn lock_selected_session(expected_uid: u32, selector: String) -> NativeDeviceLockOutcome;
     fn press_keys_foreground(key_codes: Vec<i32>) -> NativeActionResponse;
     fn press_keys_in_window(pid: i64, window_number: i64, key_codes: Vec<i32>) -> NativeActionResponse;
     fn key_transition(pid: i64, window_number: i64, key_code: i32, down: bool, flags: u64) -> NativeActionResponse;

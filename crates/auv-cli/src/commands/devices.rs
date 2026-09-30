@@ -6,7 +6,7 @@ use clap::{Args, Subcommand};
 
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # List current OS login sessions on a paired Device\n  auv --device <NAME> devices sessions\n\n  # Unlock an existing OS login session\n  auv --device <NAME> devices unlock --user neko\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
+  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # List current OS login sessions on a paired Device\n  auv --device <NAME> devices sessions\n\n  # Lock and unlock an existing OS login session\n  auv --device <NAME> devices lock --user neko\n  auv --device <NAME> devices unlock --user neko\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
 )]
 pub struct DevicesArgs {
   #[command(subcommand)]
@@ -24,6 +24,8 @@ pub enum DevicesCommand {
   Sessions(DeviceSessionsArgs),
   /// Unlock an existing OS login session (requires a validated native host).
   Unlock(DeviceSessionTargetArgs),
+  /// Lock an existing usable OS login session and verify its final state.
+  Lock(DeviceSessionTargetArgs),
   /// Establish or administer paired Device trust.
   #[command(
     long_about = "Pairing is a two-machine enrollment flow. The daemon host creates a short, one-time bootstrap token locally. The client consumes that token once, receives an opaque Device credential, and saves it in a named local profile.\n\nRegistration is deliberately local to the daemon host: a remote unauthenticated caller cannot create pairing tokens. After enrollment, normal AUV commands select the paired Device and reuse the saved credential automatically."
@@ -189,7 +191,8 @@ pub async fn run(args: DevicesArgs, selection: &auv::selection::RootSelection) -
     DevicesCommand::List(args) => list(args, selection).await,
     DevicesCommand::Get(args) => get(args, selection).await,
     DevicesCommand::Sessions(args) => sessions(args, selection).await,
-    DevicesCommand::Unlock(args) => unlock(args, selection).await,
+    DevicesCommand::Unlock(args) => change_lock_state(args, selection, false).await,
+    DevicesCommand::Lock(args) => change_lock_state(args, selection, true).await,
     DevicesCommand::Pair(args) => pairing(args, selection).await,
     DevicesCommand::Unpair(args) => trust(args, selection, TrustAction::Unpair).await,
     DevicesCommand::Enable(args) => trust(args, selection, TrustAction::Enable).await,
@@ -303,7 +306,7 @@ async fn sessions(args: DeviceSessionsArgs, selection: &auv::selection::RootSele
   Ok(0)
 }
 
-async fn unlock(args: DeviceSessionTargetArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {
+async fn change_lock_state(args: DeviceSessionTargetArgs, selection: &auv::selection::RootSelection, lock: bool) -> Result<i32, String> {
   let (client, _) = auv::Client::selected(args.endpoint.as_deref(), selection)
     .await
     .map_err(|error| error.to_string())?
@@ -314,8 +317,13 @@ async fn unlock(args: DeviceSessionTargetArgs, selection: &auv::selection::RootS
     (None, Some(session)) => auv::devices::UserSessionTarget::SessionSelector(session),
     _ => return Err("specify exactly one of --user or --session".to_string()),
   };
-  let effect = client.devices().ensure_user_session_unlocked(target).await.map_err(|error| error.to_string())?;
-  let (kind, user, session_selector) = (effect.kind.as_str(), effect.user, effect.session_selector);
+  let (kind, user, session_selector) = if lock {
+    let effect = client.devices().ensure_user_session_locked(target).await.map_err(|error| error.to_string())?;
+    (effect.kind.as_str(), effect.user, Some(effect.session_selector))
+  } else {
+    let effect = client.devices().ensure_user_session_unlocked(target).await.map_err(|error| error.to_string())?;
+    (effect.kind.as_str(), effect.user, effect.session_selector)
+  };
 
   if args.json {
     println!(

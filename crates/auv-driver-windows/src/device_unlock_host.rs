@@ -3,6 +3,9 @@
 //! This is an internal host primitive, not a service registration. The caller
 //! must run under the installed LocalSystem service identity. No remote request
 //! may carry a secret or choose the worker executable.
+// TODO(device-session-control-names): Rename this legacy unlock-named host and
+// worker after a separately approved installation migration; this port keeps
+// deployed executable naming stable while adding the lock route.
 
 use crate::device_session::ConsoleSession;
 
@@ -32,10 +35,22 @@ pub fn unlock_with_worker(target: &ConsoleSession, credential: &str) -> Result<C
   native::unlock_with_worker(target, credential)
 }
 
+/// Lock this exact usable physical-console login from the installed
+/// selected-session worker and independently read back its locked WTS state.
+/// No credential or pipe is involved in this operation.
+pub fn lock_with_worker(target: &ConsoleSession) -> Result<ConsoleSession, HostError> {
+  native::lock_with_worker(target)
+}
+
 /// Entrypoint used only by the separately installed Windows worker executable.
 /// Worker arguments contain a session identity and random pipe name, no secret.
 pub fn run_worker(pipe_name: &str, session_id: u32, logon_time: i64, account_sid: &str) -> Result<(), HostError> {
   native::run_worker(pipe_name, session_id, logon_time, account_sid)
+}
+
+/// Entrypoint for the same installed worker's non-secret lock operation.
+pub fn run_lock_worker(session_id: u32, logon_time: i64, account_sid: &str) -> Result<(), HostError> {
+  native::run_lock_worker(session_id, logon_time, account_sid)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -47,7 +62,15 @@ mod native {
     Err(HostError::Unavailable)
   }
 
+  pub(super) fn lock_with_worker(_: &ConsoleSession) -> Result<ConsoleSession, HostError> {
+    Err(HostError::Unavailable)
+  }
+
   pub(super) fn run_worker(_: &str, _: u32, _: i64, _: &str) -> Result<(), HostError> {
+    Err(HostError::Unavailable)
+  }
+
+  pub(super) fn run_lock_worker(_: u32, _: i64, _: &str) -> Result<(), HostError> {
     Err(HostError::Unavailable)
   }
 }
@@ -86,7 +109,10 @@ mod native {
   use zeroize::Zeroizing;
 
   use super::HostError;
-  use crate::device_session::{ConsoleLockState, ConsoleSession, observe_console, unlock_existing_session};
+  use crate::device_session::{
+    ConsoleLockState, ConsoleSession, lock_existing_session, observe_console, unlock_existing_session,
+    verify_local_system_process_in_session,
+  };
 
   struct OwnedHandle(HANDLE);
   impl Drop for OwnedHandle {
@@ -110,6 +136,11 @@ mod native {
     _thread: OwnedHandle,
     pid: u32,
     completed: bool,
+  }
+
+  enum WorkerMode<'a> {
+    Unlock(&'a str),
+    Lock,
   }
 
   const PIPE_PAYLOAD_BYTES: usize = 258;
@@ -141,6 +172,57 @@ mod native {
     Ok(())
   }
 
+  fn checked_usable_target(target: &ConsoleSession) -> Result<(), HostError> {
+    let current = observe_console().map_err(|_| HostError::Unverified)?.ok_or(HostError::StaleSession)?;
+
+    if !target.same_login(&current) || target.lock_state != ConsoleLockState::Usable {
+      return Err(HostError::StaleSession);
+    }
+
+    if current.lock_state != ConsoleLockState::Usable {
+      return Err(HostError::StaleSession);
+    }
+
+    Ok(())
+  }
+
+  pub(super) fn lock_with_worker(target: &ConsoleSession) -> Result<ConsoleSession, HostError> {
+    verify_local_system_process_in_session(0).map_err(|_| HostError::WorkerIdentity)?;
+    checked_usable_target(target)?;
+    let worker_executable = std::env::current_exe().map_err(|_| HostError::Unavailable)?.with_file_name("auv-device-unlock-worker.exe");
+
+    if !worker_executable.is_absolute() {
+      return Err(HostError::Unavailable);
+    }
+
+    let mut worker = launch_worker(&worker_executable, WorkerMode::Lock, target)?;
+    // SAFETY: This is the exact selected-session worker process just created.
+    if unsafe { WaitForSingleObject(worker.process.0, 8_000) } != WAIT_OBJECT_0 {
+      return Err(HostError::WorkerUnavailable);
+    }
+
+    worker.completed = true;
+    let mut exit = 1u32;
+    // SAFETY: The exit-code pointer and owned process handle remain live.
+    unsafe { GetExitCodeProcess(worker.process.0, &mut exit) }.map_err(|_| HostError::Unverified)?;
+
+    if exit != 0 {
+      return Err(HostError::Unverified);
+    }
+
+    let current = observe_console().map_err(|_| HostError::Unverified)?.ok_or(HostError::StaleSession)?;
+
+    if !target.same_login(&current) {
+      return Err(HostError::StaleSession);
+    }
+
+    if current.lock_state != ConsoleLockState::Locked {
+      return Err(HostError::Unverified);
+    }
+
+    Ok(current)
+  }
+
   pub(super) fn unlock_with_worker(target: &ConsoleSession, credential: &str) -> Result<ConsoleSession, HostError> {
     checked_target(target)?;
     let worker_executable = std::env::current_exe().map_err(|_| HostError::Unavailable)?.with_file_name("auv-device-unlock-worker.exe");
@@ -157,7 +239,7 @@ mod native {
 
     let pipe_name = format!("\\\\.\\pipe\\auv-device-unlock-{}-{}", std::process::id(), hex(&nonce));
     let pipe = restricted_pipe(&pipe_name)?;
-    let mut worker = launch_worker(&worker_executable, &pipe_name, target)?;
+    let mut worker = launch_worker(&worker_executable, WorkerMode::Unlock(&pipe_name), target)?;
     connect_worker(&pipe, &worker)?;
     checked_target(target)?;
 
@@ -250,7 +332,7 @@ mod native {
     }
   }
 
-  fn launch_worker(exe: &Path, pipe_name: &str, target: &ConsoleSession) -> Result<Worker, HostError> {
+  fn launch_worker(exe: &Path, mode: WorkerMode<'_>, target: &ConsoleSession) -> Result<Worker, HostError> {
     // Stable SIDs from Windows contain only this alphabet. This also keeps the
     // non-secret command line unambiguous to the Windows argument parser.
     if !target.account_sid.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
@@ -258,7 +340,10 @@ mod native {
     }
 
     let exe_wide = wide(exe.as_os_str());
-    let arguments = format!("{} {} {} {}", pipe_name, target.session_id, target.logon_time, target.account_sid);
+    let arguments = match mode {
+      WorkerMode::Unlock(pipe_name) => format!("{} {} {} {}", pipe_name, target.session_id, target.logon_time, target.account_sid),
+      WorkerMode::Lock => format!("--lock {} {} {}", target.session_id, target.logon_time, target.account_sid),
+    };
     let command = format!("\"{}\" {arguments}", exe.display());
     let mut command_wide = wide(std::ffi::OsStr::new(&command));
     let mut raw_token = HANDLE::default();
@@ -457,6 +542,19 @@ mod native {
     let credential = Zeroizing::new(String::from_utf16(&units).map_err(|_| HostError::TransferFailed)?);
     checked_target(&target)?;
     unlock_existing_session(&target, &credential).map_err(|_| HostError::Unverified)?;
+    Ok(())
+  }
+
+  pub(super) fn run_lock_worker(session_id: u32, logon_time: i64, account_sid: &str) -> Result<(), HostError> {
+    let target = ConsoleSession {
+      session_id,
+      logon_time,
+      account_sid: account_sid.to_owned(),
+      domain: String::new(),
+      user: String::new(),
+      lock_state: ConsoleLockState::Usable,
+    };
+    lock_existing_session(&target).map_err(|_| HostError::Unverified)?;
     Ok(())
   }
 }

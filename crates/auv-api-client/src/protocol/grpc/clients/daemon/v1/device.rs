@@ -62,4 +62,12 @@ impl Client {
   ) -> Result<daemon_proto::EnsureUserSessionUnlockedResponse, tonic::Status> {
     Ok(self.inner.ensure_user_session_unlocked(request).await?.into_inner())
   }
+
+  /// Requests a verified lock of one existing OS login session.
+  pub async fn ensure_user_session_locked(
+    &mut self,
+    request: daemon_proto::EnsureUserSessionLockedRequest,
+  ) -> Result<daemon_proto::EnsureUserSessionLockedResponse, tonic::Status> {
+    Ok(self.inner.ensure_user_session_locked(request).await?.into_inner())
+  }
 }

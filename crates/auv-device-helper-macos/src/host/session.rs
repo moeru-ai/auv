@@ -5,10 +5,30 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use auv_driver_macos::device_session::{ConsoleSession, ObserveError, observe_console};
+use auv_driver_macos::device_session_lock::LockFailure;
 
 use crate::{HostError, InputFailure};
 
 use super::vault;
+
+pub(super) fn lock(uid: u32, selector: &str, started: Instant) -> Result<(), HostError> {
+  if selected(uid, selector)?.is_locked() {
+    return Err(HostError::AlreadyLocked);
+  }
+
+  // Native delivery checks the same selected, usable console immediately
+  // before posting. No Keychain item or credential is involved in locking.
+  auv_driver_macos::device_session_lock::submit(uid, selector).map_err(|error| match error {
+    LockFailure::AlreadyLocked => HostError::AlreadyLocked,
+    LockFailure::IdentityMismatch => HostError::Unauthorized,
+    LockFailure::SessionChanged => HostError::StaleSession,
+    LockFailure::PermissionMissing | LockFailure::EventUnavailable | LockFailure::Unavailable => HostError::Unavailable,
+  })?;
+
+  // A posted HID event has no recipient acknowledgement. Read the exact login
+  // back through the observer instead of treating delivery as a lock effect.
+  wait_for_state(uid, selector, true, started + Duration::from_secs(10))
+}
 
 pub(super) fn unlock(home: &Path, uid: u32, selector: &str, started: Instant) -> Result<(), HostError> {
   if !selected(uid, selector)?.is_locked() {
@@ -34,10 +54,14 @@ pub(super) fn unlock(home: &Path, uid: u32, selector: &str, started: Instant) ->
   auv_driver_macos::device_session_unlock::submit(&secret, uid, selector, posting_budget).map_err(input_error)?;
   drop(secret);
 
-  let deadline = Instant::now() + Duration::from_secs(10);
+  wait_for_state(uid, selector, false, Instant::now() + Duration::from_secs(10))
+}
 
+// Read back the exact selected login until its requested lock state is observed.
+// Callers choose the deadline origin to preserve their posting budgets.
+fn wait_for_state(uid: u32, selector: &str, locked: bool, deadline: Instant) -> Result<(), HostError> {
   loop {
-    if !selected(uid, selector)?.is_locked() {
+    if selected(uid, selector)?.is_locked() == locked {
       return Ok(());
     }
 

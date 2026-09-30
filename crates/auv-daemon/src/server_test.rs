@@ -415,6 +415,10 @@ async fn device_entry_loopback_requires_authorization_before_selection() {
 
   assert_eq!(missing.code(), tonic::Code::Unauthenticated);
 
+  let missing_lock = devices.ensure_user_session_locked(proto::EnsureUserSessionLockedRequest { target: None }).await.unwrap_err();
+
+  assert_eq!(missing_lock.code(), tonic::Code::Unauthenticated);
+
   let blank = devices
     .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
       target: Some(proto::ensure_user_session_unlocked_request::Target::SessionSelector("  ".into())),
@@ -437,6 +441,15 @@ async fn device_entry_loopback_requires_authorization_before_selection() {
     .unwrap_err();
 
   assert_eq!(error.code(), tonic::Code::Unauthenticated);
+
+  let lock_error = devices
+    .ensure_user_session_locked(proto::EnsureUserSessionLockedRequest {
+      target: Some(proto::ensure_user_session_locked_request::Target::User("neko".into())),
+    })
+    .await
+    .unwrap_err();
+
+  assert_eq!(lock_error.code(), tonic::Code::Unauthenticated);
 
   shutdown.cancel();
   task.await.unwrap().unwrap();
@@ -483,6 +496,10 @@ async fn owner_verified_unix_can_reach_device_entry_policy() {
 
   assert_eq!(missing.code(), tonic::Code::InvalidArgument);
 
+  let missing_lock = devices.ensure_user_session_locked(proto::EnsureUserSessionLockedRequest { target: None }).await.unwrap_err();
+
+  assert_eq!(missing_lock.code(), tonic::Code::InvalidArgument);
+
   let outcome = devices
     .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
       target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
@@ -495,6 +512,19 @@ async fn owner_verified_unix_can_reach_device_entry_policy() {
   };
 
   assert_eq!(error.reason, device_entry_denied_reason() as i32);
+
+  let lock_outcome = devices
+    .ensure_user_session_locked(proto::EnsureUserSessionLockedRequest {
+      target: Some(proto::ensure_user_session_locked_request::Target::User("neko".into())),
+    })
+    .await
+    .unwrap();
+
+  let Some(proto::ensure_user_session_locked_response::Result::Error(lock_error)) = lock_outcome.result else {
+    panic!("verified Unix caller must reach the Device lock policy")
+  };
+
+  assert_eq!(lock_error.reason, device_entry_denied_reason() as i32);
 
   shutdown.cancel();
   task.await.unwrap().unwrap();

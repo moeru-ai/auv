@@ -16,7 +16,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use auv::devices::{DeviceEntryErrorReason, EnsureUserSessionUnlockedEffect, UserSession, UserSessionTarget};
+use auv::devices::{DeviceEntryErrorReason, EnsureUserSessionLockedEffect, EnsureUserSessionUnlockedEffect, UserSession, UserSessionTarget};
 #[cfg(windows)]
 use auv_api_client::device_local::named_pipe_name;
 #[cfg(unix)]
@@ -215,6 +215,14 @@ impl LocalState {
     target: UserSessionTarget,
   ) -> Result<EnsureUserSessionUnlockedEffect, DeviceEntryErrorReason> {
     self.policy.ensure(caller, target).await
+  }
+
+  pub(crate) async fn ensure_user_session_locked(
+    &self,
+    caller: &CallerId,
+    target: UserSessionTarget,
+  ) -> Result<EnsureUserSessionLockedEffect, DeviceEntryErrorReason> {
+    self.policy.ensure_locked(caller, target).await
   }
 
   #[cfg(all(test, unix))]

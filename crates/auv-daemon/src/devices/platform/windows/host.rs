@@ -5,7 +5,7 @@
 
 use auv::devices::{DeviceEntryErrorReason, UserSession, UserSessionConnectionKind, UserSessionLockState};
 use auv_driver_windows::device_session::{ConsoleLockState, ConsoleSession, ConsoleSessionError, observe_console};
-use auv_driver_windows::device_unlock_host::{HostError, unlock_with_worker};
+use auv_driver_windows::device_unlock_host::{HostError, lock_with_worker, unlock_with_worker};
 
 use super::policy::{ObservedSession, SessionHost};
 use super::vault_windows::{self, VaultError};
@@ -48,6 +48,17 @@ impl SessionHost for WindowsSessionHost {
     let after = unlock_with_worker(&session, &credential).map_err(host_error)?;
 
     if !session.same_login(&after) || after.lock_state != ConsoleLockState::Usable {
+      return Err(DeviceEntryErrorReason::OutcomeUnverified);
+    }
+
+    Ok(())
+  }
+
+  fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+    let current = selected_console(selected, ConsoleLockState::Usable)?;
+    let after = lock_with_worker(&current).map_err(host_error)?;
+
+    if !current.same_login(&after) || after.lock_state != ConsoleLockState::Locked {
       return Err(DeviceEntryErrorReason::OutcomeUnverified);
     }
 
@@ -155,5 +166,15 @@ mod tests {
 
     assert!(!selected_matches_console(&selected, &different, ConsoleLockState::Locked));
     assert!(!selected_matches_console(&selected, &session(ConsoleLockState::Usable), ConsoleLockState::Locked));
+  }
+
+  #[test]
+  fn lock_requires_the_selected_login_to_still_be_usable() {
+    let current = session(ConsoleLockState::Usable);
+    let selected = observed(&current);
+
+    assert!(selected_matches_console(&selected, &current, ConsoleLockState::Usable));
+    assert!(!selected_matches_console(&selected, &session(ConsoleLockState::Locked), ConsoleLockState::Usable));
+    assert!(!selected_matches_console(&observed(&session(ConsoleLockState::Locked)), &current, ConsoleLockState::Usable));
   }
 }

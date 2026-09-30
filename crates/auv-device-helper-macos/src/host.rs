@@ -142,16 +142,19 @@ fn execute(operation: Operation, payload: &[u8], home: &Path, uid: u32, started:
 
       vault::enroll(home, uid, payload)
     }
-    Operation::Probe | Operation::Unlock if !payload.is_empty() => {
+    Operation::Probe | Operation::Unlock | Operation::Lock if !payload.is_empty() => {
       let selector = std::str::from_utf8(payload).map_err(|_| HostError::InvalidRequest)?;
 
-      if operation == Operation::Probe {
-        session::probe_locked(home, uid, selector)
-      } else {
-        // The native primitive clears retained input without a preliminary
-        // Return. DeviceService verifies the same session after this helper
-        // returns; see the installed gate in the macOS session reference.
-        session::unlock(home, uid, selector, started)
+      match operation {
+        Operation::Probe => session::probe_locked(home, uid, selector),
+        Operation::Unlock => {
+          // The native primitive clears retained input without a preliminary
+          // Return. DeviceService verifies the same session after this helper
+          // returns; see the installed gate in the macOS session reference.
+          session::unlock(home, uid, selector, started)
+        }
+        Operation::Lock => session::lock(uid, selector, started),
+        _ => unreachable!("only session operations enter this branch"),
       }
     }
     Operation::Remove if payload.is_empty() => vault::remove(home, uid),
@@ -180,6 +183,7 @@ fn status(error: HostError) -> u8 {
     HostError::InvalidRequest => 2,
     HostError::StaleSession => 3,
     HostError::NotLocked => 4,
+    HostError::AlreadyLocked => 18,
     HostError::VaultUnavailable => 5,
     HostError::InputUnavailable => 6,
     HostError::InputUnavailableAt(InputFailure::InvalidRequest) => 9,
@@ -218,11 +222,25 @@ mod tests {
     let mut header = [0_u8; 12];
     header[..4].copy_from_slice(MAGIC);
     header[4] = VERSION;
-    header[5] = 5;
+    header[5] = 6;
     header[6..10].copy_from_slice(&uid.to_be_bytes());
 
     assert_eq!(decode_header(&header, uid), Err(HostError::InvalidRequest));
     assert_eq!(status(HostError::InvalidRequest), 2);
+  }
+
+  #[test]
+  fn lock_operation_and_already_locked_status_round_trip() {
+    let uid = getuid().as_raw();
+    let mut header = [0_u8; 12];
+    header[..4].copy_from_slice(MAGIC);
+    header[4] = VERSION;
+    header[6..10].copy_from_slice(&uid.to_be_bytes());
+    header[5] = Operation::Lock as u8;
+
+    assert_eq!(decode_header(&header, uid), Ok((Operation::Lock, 0)));
+    assert_eq!(status(HostError::AlreadyLocked), 18);
+    assert_eq!(crate::decode_status(18), Err(HostError::AlreadyLocked));
   }
 
   #[test]
@@ -292,6 +310,7 @@ mod tests {
       Operation::Probe,
       Operation::Remove,
       Operation::Unlock,
+      Operation::Lock,
     ] {
       let (mut client, mut server) = UnixStream::pair().unwrap();
       let mut header = [0_u8; 12];

@@ -82,6 +82,49 @@ pub fn unlock_existing_session(target: &ConsoleSession, credential: &str) -> Res
   native::unlock_existing_session(target, credential)
 }
 
+/// Request a lock from a LocalSystem worker placed on this login's interactive
+/// Default desktop, then observe the same physical-console login as locked.
+/// A successful `LockWorkStation` call alone is only an initiation receipt.
+pub fn lock_existing_session(target: &ConsoleSession) -> Result<ConsoleSession, ConsoleLockError> {
+  native::lock_existing_session(target)
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ConsoleLockError {
+  #[error("the selected console login changed")]
+  StaleSession,
+  #[error("the selected console is already locked")]
+  AlreadyLocked,
+  #[error("the selected console lock state is unknown")]
+  UnknownState,
+  #[error("a console-session LocalSystem worker is required")]
+  WorkerIdentity,
+  #[error("the interactive Default desktop is unavailable")]
+  DesktopUnavailable,
+  #[error("Windows rejected the lock request")]
+  LockRejected,
+  #[error("the console lock outcome could not be verified")]
+  Unverified,
+  #[error("physical-console lock requires Windows")]
+  UnsupportedPlatform,
+}
+
+fn require_same_usable_login(target: &ConsoleSession, current: &ConsoleSession) -> Result<(), ConsoleLockError> {
+  if !target.same_login(current) {
+    return Err(ConsoleLockError::StaleSession);
+  }
+
+  if target.lock_state != ConsoleLockState::Usable {
+    return Err(ConsoleLockError::StaleSession);
+  }
+
+  match current.lock_state {
+    ConsoleLockState::Usable => Ok(()),
+    ConsoleLockState::Locked => Err(ConsoleLockError::AlreadyLocked),
+    ConsoleLockState::Unknown => Err(ConsoleLockError::UnknownState),
+  }
+}
+
 /// Errors are intentionally independent of the credential and its length.
 #[derive(Debug, thiserror::Error)]
 pub enum ConsoleUnlockError {
@@ -127,6 +170,7 @@ mod native {
     ProcessIdToSessionId, WTS_CURRENT_SERVER_HANDLE, WTS_SESSIONSTATE_LOCK, WTS_SESSIONSTATE_UNLOCK, WTSActive, WTSDomainName,
     WTSFreeMemory, WTSGetActiveConsoleSessionId, WTSINFOEXW, WTSQuerySessionInformationW, WTSQueryUserToken, WTSSessionInfoEx, WTSUserName,
   };
+  use windows::Win32::System::Shutdown::LockWorkStation;
   use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, DESKTOP_WRITEOBJECTS, GetThreadDesktop,
     GetUserObjectInformationW, HDESK, OpenInputDesktop, SetThreadDesktop, UOI_NAME,
@@ -138,7 +182,7 @@ mod native {
   use windows::core::PWSTR;
   use zeroize::Zeroizing;
 
-  use super::{ConsoleLockState, ConsoleSession, ConsoleSessionError, ConsoleUnlockError};
+  use super::{ConsoleLockError, ConsoleLockState, ConsoleSession, ConsoleSessionError, ConsoleUnlockError, require_same_usable_login};
 
   const LIMITED_DESKTOP_ACCESS: DESKTOP_ACCESS_FLAGS = DESKTOP_ACCESS_FLAGS(DESKTOP_READOBJECTS.0 | DESKTOP_WRITEOBJECTS.0);
   const INPUT_DELIVERY_DESKTOP_ACCESS: DESKTOP_ACCESS_FLAGS = DESKTOP_ACCESS_FLAGS(0x000F_01FF);
@@ -332,6 +376,53 @@ mod native {
 
       if Instant::now() >= deadline {
         return Err(ConsoleUnlockError::Unverified);
+      }
+
+      thread::sleep(Duration::from_millis(100));
+    }
+  }
+
+  pub(super) fn lock_existing_session(target: &ConsoleSession) -> Result<ConsoleSession, ConsoleLockError> {
+    verify_local_system_process_in_session(target.session_id).map_err(|_| ConsoleLockError::WorkerIdentity)?;
+    let current = observe_console().map_err(|_| ConsoleLockError::Unverified)?.ok_or(ConsoleLockError::StaleSession)?;
+    require_same_usable_login(target, &current)?;
+    // LockWorkStation requires the calling process to run on the interactive
+    // desktop. The worker is launched on winsta0\\default; also check both
+    // the current input desktop and this thread's bound desktop before input.
+    if input_desktop_name().map_err(|_| ConsoleLockError::DesktopUnavailable)? != "Default" {
+      return Err(ConsoleLockError::DesktopUnavailable);
+    }
+
+    // SAFETY: GetThreadDesktop only reads the desktop bound to this thread.
+    let thread_desktop = unsafe { GetThreadDesktop(GetCurrentThreadId()) }.map_err(|_| ConsoleLockError::DesktopUnavailable)?;
+
+    if desktop_name(thread_desktop).map_err(|_| ConsoleLockError::DesktopUnavailable)? != "Default" {
+      return Err(ConsoleLockError::DesktopUnavailable);
+    }
+
+    let current = observe_console().map_err(|_| ConsoleLockError::Unverified)?.ok_or(ConsoleLockError::StaleSession)?;
+    require_same_usable_login(target, &current)?;
+    // NOTICE(device-lock-windows-receipt): Microsoft documents this as an
+    // asynchronous initiation receipt, so require the same-login WTS readback.
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation
+    // SAFETY: This process is the verified worker in the selected interactive
+    // session and Default desktop.
+    unsafe { LockWorkStation() }.map_err(|_| ConsoleLockError::LockRejected)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    loop {
+      let current = observe_console().map_err(|_| ConsoleLockError::Unverified)?.ok_or(ConsoleLockError::StaleSession)?;
+
+      if !target.same_login(&current) {
+        return Err(ConsoleLockError::StaleSession);
+      }
+
+      if current.lock_state == ConsoleLockState::Locked {
+        return Ok(current);
+      }
+
+      if Instant::now() >= deadline {
+        return Err(ConsoleLockError::Unverified);
       }
 
       thread::sleep(Duration::from_millis(100));
@@ -638,7 +729,7 @@ mod native {
 
 #[cfg(not(target_os = "windows"))]
 mod native {
-  use super::{ConsoleSession, ConsoleSessionError, ConsoleUnlockError};
+  use super::{ConsoleLockError, ConsoleSession, ConsoleSessionError, ConsoleUnlockError};
 
   pub(super) fn observe_console() -> Result<Option<ConsoleSession>, ConsoleSessionError> {
     Err(ConsoleSessionError::UnsupportedPlatform)
@@ -647,11 +738,59 @@ mod native {
   pub(super) fn unlock_existing_session(_: &ConsoleSession, _: &str) -> Result<ConsoleSession, ConsoleUnlockError> {
     Err(ConsoleUnlockError::UnsupportedPlatform)
   }
+
+  pub(super) fn lock_existing_session(_: &ConsoleSession) -> Result<ConsoleSession, ConsoleLockError> {
+    Err(ConsoleLockError::UnsupportedPlatform)
+  }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::{ConsoleLockState, ConsoleSession};
+  use super::{ConsoleLockError, ConsoleLockState, ConsoleSession, require_same_usable_login};
+
+  #[test]
+  fn lock_requires_the_same_usable_login() {
+    let target = ConsoleSession {
+      session_id: 5,
+      logon_time: 123,
+      account_sid: "S-1-5-21-100".into(),
+      domain: "PC".into(),
+      user: "owner".into(),
+      lock_state: ConsoleLockState::Usable,
+    };
+
+    assert_eq!(require_same_usable_login(&target, &target), Ok(()));
+    assert_eq!(
+      require_same_usable_login(
+        &target,
+        &ConsoleSession {
+          logon_time: 124,
+          ..target.clone()
+        }
+      ),
+      Err(ConsoleLockError::StaleSession)
+    );
+    assert_eq!(
+      require_same_usable_login(
+        &target,
+        &ConsoleSession {
+          lock_state: ConsoleLockState::Locked,
+          ..target.clone()
+        }
+      ),
+      Err(ConsoleLockError::AlreadyLocked)
+    );
+    assert_eq!(
+      require_same_usable_login(
+        &target,
+        &ConsoleSession {
+          lock_state: ConsoleLockState::Unknown,
+          ..target.clone()
+        }
+      ),
+      Err(ConsoleLockError::UnknownState)
+    );
+  }
 
   #[test]
   fn selector_and_login_identity_reject_reused_session_id() {

@@ -21,6 +21,7 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 Count: **36**
 
 - [`2026-09-28-remote-device-entry-implementation-design.md`](2026-09-28-remote-device-entry-implementation-design.md) — current locked-existing-session-first Device unlock contract and three-platform implementation plan; signed-out entry deferred.
+- [`2026-09-30-device-lock-contract-and-review.md`](2026-09-30-device-lock-contract-and-review.md) — experimental lock API/CLI/MCP contract, configuration-specific gate evidence, pairing experience, and prioritized architecture review.
 - [`2026-09-27-device-entry-credential-decision.md`](2026-09-27-device-entry-credential-decision.md) — accepted target-local persistent credential enrollment and deletion; pre-login storage requirements now deferred.
 - [`2026-09-27-device-login-host-lifecycle-decision.md`](2026-09-27-device-login-host-lifecycle-decision.md) — historical machine-level daemon lifecycle decision for the deferred signed-out phase.
 - [`2026-09-27-device-unlock-authority-decision.md`](2026-09-27-device-unlock-authority-decision.md) — accepted paired-bearer authority for existing-session unlock; earlier sign-in scope deferred.

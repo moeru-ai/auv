@@ -110,6 +110,17 @@ pub(crate) fn ensure_user_session_unlocked_effect(
   }
 }
 
+pub(crate) fn ensure_user_session_locked_effect(value: auv::devices::EnsureUserSessionLockedEffect) -> proto::EnsureUserSessionLockedEffect {
+  proto::EnsureUserSessionLockedEffect {
+    kind: match value.kind {
+      auv::devices::DeviceLockEffectKind::AlreadyLocked => proto::DeviceLockEffectKind::AlreadyLocked,
+      auv::devices::DeviceLockEffectKind::LockedExistingSession => proto::DeviceLockEffectKind::LockedExistingSession,
+    } as i32,
+    user: value.user,
+    session_selector: value.session_selector,
+  }
+}
+
 pub(crate) fn device_entry_error_reason(value: auv::devices::DeviceEntryErrorReason) -> proto::DeviceEntryErrorReason {
   match value {
     auv::devices::DeviceEntryErrorReason::Unauthorized => proto::DeviceEntryErrorReason::Unauthorized,

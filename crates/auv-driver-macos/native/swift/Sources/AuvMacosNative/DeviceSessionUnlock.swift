@@ -6,6 +6,10 @@ import Foundation
 import IOKit
 import IOKit.pwr_mgt
 
+// TODO(device-session-control-names): Rename this legacy unlock-named source
+// after a separately approved native-source migration; this port keeps the
+// existing Swift package layout stable while adding the lock route.
+
 // These routes belong only in the signed graphical helper for the selected
 // physical console. The caller independently checks the same session.
 private func selectedConsoleLockState(uid: UInt32, selector: String) -> Bool? {
@@ -152,6 +156,42 @@ private func keyPair(_ code: CGKeyCode, flags: CGEventFlags = []) -> (CGEvent, C
 private func post(_ pair: (CGEvent, CGEvent)) {
   pair.0.post(tap: .cghidEventTap)
   pair.1.post(tap: .cghidEventTap)
+}
+
+func lock_selected_session(expected_uid: UInt32, selector: RustString) -> NativeDeviceLockOutcome {
+  guard getuid() == expected_uid, geteuid() == expected_uid else {
+    return .IdentityMismatch
+  }
+  guard CGPreflightPostEventAccess() else {
+    return .PermissionMissing
+  }
+  let selected = selector.toString()
+  guard let locked = selectedConsoleLockState(uid: expected_uid, selector: selected) else {
+    return .SessionChanged
+  }
+  guard !locked else { return .AlreadyLocked }
+  // NOTICE(device-entry-macos-lock): CGSession -suspend switches users; the
+  // installed Aqua helper posts the same lock shortcut as Control–Command–Q.
+  // The caller still requires independent IORegistry readback of this login.
+  // NOTICE: macOS virtual keycodes 55, 59, and 12 are Command, Control, and Q.
+  guard let command = keyPair(55), let control = keyPair(59), let lock = keyPair(12) else {
+    return .EventUnavailable
+  }
+  command.0.flags = .maskCommand
+  control.0.flags = [.maskCommand, .maskControl]
+  lock.0.flags = [.maskCommand, .maskControl]
+  lock.1.flags = [.maskCommand, .maskControl]
+  control.1.flags = .maskCommand
+  guard let stillLocked = selectedConsoleLockState(uid: expected_uid, selector: selected) else {
+    return .SessionChanged
+  }
+  guard !stillLocked else { return .AlreadyLocked }
+  // Allocate the complete chord before posting so allocation failure cannot
+  // strand a held modifier. Always release in reverse order after Q is sent.
+  for event in [command.0, control.0, lock.0, lock.1, control.1, command.1] {
+    event.post(tap: .cghidEventTap)
+  }
+  return .Submitted
 }
 
 func submit_locked_session_credential(

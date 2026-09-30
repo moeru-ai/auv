@@ -458,6 +458,35 @@ mod frontend {
         Err(error) => Err(McpError::internal_error(error.to_string(), None)),
       }
     }
+
+    /// Triggering workflow: MCP `tools/call` for `device_ensure_user_session_locked`
+    /// selects a Device and calls the same typed operation as the CLI.
+    #[tool(
+      description = "Lock one existing usable OS login session on a selected Device. Set exactly one of user or session_selector. The target verifies the exact session is locked; no enrolled credential is read."
+    )]
+    async fn device_ensure_user_session_locked(
+      &self,
+      Parameters(req): Parameters<DeviceUnlockToolRequest>,
+    ) -> Result<CallToolResult, McpError> {
+      let target = req.target()?;
+      let selection = device_selection(req.device_name, req.device_id)?;
+      let (client, _) = auv::Client::selected(None, &selection)
+        .await
+        .map_err(device_selection_error)?
+        .ok_or_else(|| McpError::internal_error("no AUV daemon was discovered", None))?;
+
+      match client.devices().ensure_user_session_locked(target).await {
+        Ok(effect) => Ok(CallToolResult::structured(serde_json::json!({
+          "effect": effect.kind.as_str(),
+          "user": effect.user,
+          "session_selector": effect.session_selector,
+        }))),
+        Err(auv::devices::DeviceError::Entry(reason)) => Ok(CallToolResult::structured_error(serde_json::json!({
+          "reason": reason.as_str(),
+        }))),
+        Err(error) => Err(McpError::internal_error(error.to_string(), None)),
+      }
+    }
   }
 
   impl ServerHandler for McpServer {

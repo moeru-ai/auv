@@ -63,6 +63,13 @@ impl SessionHost for MacosSessionHost {
     // Policy performs another independent observation after this returns.
     auv_device_helper_macos::unlock(&account.home, account.uid, &selected.public.selector).map_err(map_host_error)
   }
+
+  fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+    let account = self.selected_account(selected, UserSessionLockState::Usable)?;
+    // The signed Aqua helper rechecks this exact usable console before
+    // posting, then independently observes it becoming locked.
+    auv_device_helper_macos::lock(&account.home, account.uid, &selected.public.selector).map_err(map_host_error)
+  }
 }
 
 impl MacosSessionHost {
@@ -107,7 +114,7 @@ fn validate_selected_state(
 
 fn map_host_error(error: HostError) -> DeviceEntryErrorReason {
   match error {
-    HostError::StaleSession | HostError::NotLocked => DeviceEntryErrorReason::StaleSession,
+    HostError::StaleSession | HostError::NotLocked | HostError::AlreadyLocked => DeviceEntryErrorReason::StaleSession,
     HostError::OutcomeUnverified | HostError::InputUnavailable => DeviceEntryErrorReason::OutcomeUnverified,
     HostError::InputUnavailableAt(stage) => {
       // NOTICE(device-entry-macos-diagnostics): The installed LaunchDaemon

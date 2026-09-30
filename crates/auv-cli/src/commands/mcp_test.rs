@@ -14,9 +14,11 @@ fn device_entry_mcp_tools_expose_only_nonsecret_selection_and_target_fields() {
   let sessions = tools.iter().find(|tool| tool.name == "device_list_user_sessions").expect("Device sessions tool");
   let get_session = tools.iter().find(|tool| tool.name == "device_get_user_session").expect("Device get session tool");
   let unlock = tools.iter().find(|tool| tool.name == "device_ensure_user_session_unlocked").expect("Device unlock tool");
+  let lock = tools.iter().find(|tool| tool.name == "device_ensure_user_session_locked").expect("Device lock tool");
   let session_schema = serde_json::to_value(&sessions.input_schema).unwrap();
   let get_schema = serde_json::to_value(&get_session.input_schema).unwrap();
   let unlock_schema = serde_json::to_value(&unlock.input_schema).unwrap();
+  let lock_schema = serde_json::to_value(&lock.input_schema).unwrap();
   let session_properties = session_schema["properties"].as_object().unwrap();
   let get_properties = get_schema["properties"].as_object().unwrap();
   let unlock_properties = unlock_schema["properties"].as_object().unwrap();
@@ -26,6 +28,7 @@ fn device_entry_mcp_tools_expose_only_nonsecret_selection_and_target_fields() {
   assert_eq!(get_schema["additionalProperties"], false);
   assert_eq!(unlock_properties.keys().map(String::as_str).collect::<Vec<_>>(), ["device_id", "device_name", "session_selector", "user"]);
   assert_eq!(unlock_schema["additionalProperties"], false);
+  assert_eq!(lock_schema, unlock_schema);
 }
 
 #[test]

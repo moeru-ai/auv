@@ -1,8 +1,11 @@
-//! Existing GNOME Wayland session unlock through logind.
+//! Existing GNOME Wayland session lock and unlock through logind.
 //!
 //! This adapter is deliberately scoped to one physical session owned by the
 //! caller's effective UID. A target host must authorize the remote Device
 //! request, local enrollment, and audit before calling it.
+// TODO(device-session-control-names): Rename this legacy unlock-named module
+// after a separately approved driver namespace migration; this port keeps
+// existing callers stable while adding the paired lock operation.
 
 use std::time::{Duration, Instant};
 
@@ -156,29 +159,7 @@ pub fn unlock_user_session(session: &GnomeSession) -> Result<UnlockOutcome, Unlo
   let manager = Proxy::new(&system, LOGIN_DEST, LOGIN_PATH, LOGIN_MANAGER).map_err(|_| UnlockError::ServiceUnavailable)?;
   let path: OwnedObjectPath = manager.call("GetSession", &(session.id.as_str(),)).map_err(|_| UnlockError::StaleSession)?;
   let selected = Proxy::new(&system, LOGIN_DEST, path.as_str(), LOGIN_SESSION).map_err(|_| UnlockError::ServiceUnavailable)?;
-  // GetSession can resolve a reused ID after the earlier snapshot. Validate
-  // the exact login identity on the object that will receive Unlock.
-  let current_id: String = selected.get_property("Id").map_err(|_| UnlockError::StaleSession)?;
-  let started_at_micros: u64 = selected.get_property("Timestamp").map_err(|_| UnlockError::StaleSession)?;
-  let (uid, _): (u32, OwnedObjectPath) = selected.get_property("User").map_err(|_| UnlockError::StaleSession)?;
-  let user: String = selected.get_property("Name").map_err(|_| UnlockError::StaleSession)?;
-  let (seat, _): (String, OwnedObjectPath) = selected.get_property("Seat").map_err(|_| UnlockError::StaleSession)?;
-  // Active can change while the login identity remains the same. Recheck the
-  // delivery object's console eligibility immediately before calling Unlock.
-  let kind: String = selected.get_property("Type").map_err(|_| UnlockError::StaleSession)?;
-  let class: String = selected.get_property("Class").map_err(|_| UnlockError::StaleSession)?;
-  let remote: bool = selected.get_property("Remote").map_err(|_| UnlockError::StaleSession)?;
-  let active: bool = selected.get_property("Active").map_err(|_| UnlockError::StaleSession)?;
-
-  if current_id != session.id
-    || started_at_micros != session.started_at_micros
-    || uid != session.uid
-    || user != session.user
-    || seat != session.seat
-    || !eligible_session(&kind, &class, remote, active)
-  {
-    return Err(UnlockError::StaleSession);
-  }
+  require_exact_active_session(&selected, session)?;
   // The earlier inventory may have observed a lock that the user cleared
   // while we resolved the delivery object. Recheck logind's lock state on
   // that exact object before invoking logind Unlock.
@@ -201,6 +182,70 @@ pub fn unlock_user_session(session: &GnomeSession) -> Result<UnlockOutcome, Unlo
       Err(_) => return Err(UnlockError::OutcomeUnverified),
     }
   }
+}
+
+/// Requests a lock for one existing usable session, then independently reads
+/// back that same login as locked. The logind hint alone does not prove that
+/// GNOME rendered its lock screen; an installed host gate must check the UI.
+pub fn lock_existing_session(session: &GnomeSession) -> Result<(), UnlockError> {
+  let before = selected_session(session)?;
+
+  if before.lock_state != LockState::Usable {
+    return Err(UnlockError::StaleSession);
+  }
+
+  let system = system_connection()?;
+  let manager = Proxy::new(&system, LOGIN_DEST, LOGIN_PATH, LOGIN_MANAGER).map_err(|_| UnlockError::ServiceUnavailable)?;
+  let path: OwnedObjectPath = manager.call("GetSession", &(session.id.as_str(),)).map_err(|_| UnlockError::StaleSession)?;
+  let selected = Proxy::new(&system, LOGIN_DEST, path.as_str(), LOGIN_SESSION).map_err(|_| UnlockError::ServiceUnavailable)?;
+  require_exact_active_session(&selected, session)?;
+  // Do not relock a session the user already locked during object resolution.
+  let locked_hint: bool = selected.get_property("LockedHint").map_err(|_| UnlockError::ServiceUnavailable)?;
+
+  if locked_hint {
+    return Err(UnlockError::StaleSession);
+  }
+
+  selected.call::<_, _, ()>("Lock", &()).map_err(|_| UnlockError::ServiceUnavailable)?;
+
+  let deadline = Instant::now() + Duration::from_secs(5);
+
+  loop {
+    match selected_session(session) {
+      Ok(current) if current.lock_state == LockState::Locked => return Ok(()),
+      Ok(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+      Ok(_) => return Err(UnlockError::OutcomeUnverified),
+      Err(UnlockError::StaleSession) => return Err(UnlockError::StaleSession),
+      Err(_) => return Err(UnlockError::OutcomeUnverified),
+    }
+  }
+}
+
+/// `GetSession` may resolve a reused ID, and a session can leave the active
+/// physical seat between inventory and delivery. Recheck on the exact D-Bus
+/// object that receives either Lock or Unlock.
+fn require_exact_active_session(selected: &Proxy<'_>, session: &GnomeSession) -> Result<(), UnlockError> {
+  let current_id: String = selected.get_property("Id").map_err(|_| UnlockError::StaleSession)?;
+  let started_at_micros: u64 = selected.get_property("Timestamp").map_err(|_| UnlockError::StaleSession)?;
+  let (uid, _): (u32, OwnedObjectPath) = selected.get_property("User").map_err(|_| UnlockError::StaleSession)?;
+  let user: String = selected.get_property("Name").map_err(|_| UnlockError::StaleSession)?;
+  let (seat, _): (String, OwnedObjectPath) = selected.get_property("Seat").map_err(|_| UnlockError::StaleSession)?;
+  let kind: String = selected.get_property("Type").map_err(|_| UnlockError::StaleSession)?;
+  let class: String = selected.get_property("Class").map_err(|_| UnlockError::StaleSession)?;
+  let remote: bool = selected.get_property("Remote").map_err(|_| UnlockError::StaleSession)?;
+  let active: bool = selected.get_property("Active").map_err(|_| UnlockError::StaleSession)?;
+
+  if current_id != session.id
+    || started_at_micros != session.started_at_micros
+    || uid != session.uid
+    || user != session.user
+    || seat != session.seat
+    || !eligible_session(&kind, &class, remote, active)
+  {
+    return Err(UnlockError::StaleSession);
+  }
+
+  Ok(())
 }
 
 fn selected_session(selected: &GnomeSession) -> Result<GnomeSession, UnlockError> {

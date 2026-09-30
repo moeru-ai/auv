@@ -113,4 +113,30 @@ impl DeviceService for DeviceServiceGrpc {
       result: Some(result),
     }))
   }
+
+  async fn ensure_user_session_locked(
+    &self,
+    request: Request<proto::EnsureUserSessionLockedRequest>,
+  ) -> Result<Response<proto::EnsureUserSessionLockedResponse>, Status> {
+    let caller = authentication::device_entry_caller(&request)?.clone();
+    let target = match request.into_inner().target {
+      Some(proto::ensure_user_session_locked_request::Target::User(user)) if !user.trim().is_empty() => {
+        auv::devices::UserSessionTarget::User(user)
+      }
+      Some(proto::ensure_user_session_locked_request::Target::SessionSelector(selector)) if !selector.trim().is_empty() => {
+        auv::devices::UserSessionTarget::SessionSelector(selector)
+      }
+      _ => return Err(Status::invalid_argument("exactly one non-empty user or session_selector is required")),
+    };
+    let result = match self.daemon.ensure_user_session_locked(&caller, target).await {
+      Ok(effect) => proto::ensure_user_session_locked_response::Result::Effect(domain::ensure_user_session_locked_effect(effect)),
+      Err(reason) => proto::ensure_user_session_locked_response::Result::Error(proto::DeviceEntryError {
+        reason: domain::device_entry_error_reason(reason) as i32,
+      }),
+    };
+
+    Ok(Response::new(proto::EnsureUserSessionLockedResponse {
+      result: Some(result),
+    }))
+  }
 }

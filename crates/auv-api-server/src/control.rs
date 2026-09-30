@@ -220,6 +220,12 @@ pub trait Control: Send + Sync {
     caller: &CallerId,
     target: auv::devices::UserSessionTarget,
   ) -> Result<auv::devices::EnsureUserSessionUnlockedEffect, auv::devices::DeviceEntryErrorReason>;
+  /// Requests a verified lock of one existing usable OS login instance.
+  async fn ensure_user_session_locked(
+    &self,
+    caller: &CallerId,
+    target: auv::devices::UserSessionTarget,
+  ) -> Result<auv::devices::EnsureUserSessionLockedEffect, auv::devices::DeviceEntryErrorReason>;
   /// Creates a Run owned by the caller.
   fn create_run(&self, caller: &CallerId, request: auv::runs::CreateRun) -> Result<auv::runs::Run, ControlError>;
   /// Stops a caller-owned Run.

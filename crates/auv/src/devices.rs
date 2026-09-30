@@ -134,6 +134,36 @@ pub enum UserSessionTarget {
   SessionSelector(String),
 }
 
+/// Independently verified effect of a Device lock operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceLockEffectKind {
+  /// The selected session was already locked; no input was sent.
+  AlreadyLocked,
+  /// An existing usable session became locked.
+  LockedExistingSession,
+}
+
+impl DeviceLockEffectKind {
+  /// Stable name for command and API presentations.
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::AlreadyLocked => "ALREADY_LOCKED",
+      Self::LockedExistingSession => "LOCKED_EXISTING_SESSION",
+    }
+  }
+}
+
+/// Result returned after verifying the target OS is locked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnsureUserSessionLockedEffect {
+  /// Verified outcome.
+  pub kind: DeviceLockEffectKind,
+  /// OS account that owns the selected existing session.
+  pub user: String,
+  /// Selector independently observed after the lock request.
+  pub session_selector: String,
+}
+
 /// Independently verified effect of a Device entry operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceEntryEffectKind {
@@ -400,6 +430,29 @@ impl Devices {
     }
   }
 
+  /// Asks the target to lock one existing usable OS session. The target
+  /// revalidates the selected login instance and verifies its final state.
+  pub async fn ensure_user_session_locked(&self, target: UserSessionTarget) -> Result<EnsureUserSessionLockedEffect, DeviceError> {
+    let target = match target {
+      UserSessionTarget::User(user) => proto::ensure_user_session_locked_request::Target::User(user),
+      UserSessionTarget::SessionSelector(selector) => proto::ensure_user_session_locked_request::Target::SessionSelector(selector),
+    };
+    let response = self
+      .client
+      .grpc_client()
+      .devices()
+      .ensure_user_session_locked(proto::EnsureUserSessionLockedRequest {
+        target: Some(target),
+      })
+      .await
+      .map_err(|status| ClientError::from_status("EnsureUserSessionLocked", status))?;
+
+    match response.result.ok_or(DeviceError::InvalidEntryResponse)? {
+      proto::ensure_user_session_locked_response::Result::Effect(effect) => effect.try_into(),
+      proto::ensure_user_session_locked_response::Result::Error(error) => Err(entry_error(error)?.into()),
+    }
+  }
+
   /// Observes all configured paired profiles without failing the whole list
   /// when an individual remote is offline or unauthorized.
   pub async fn observe_configured(store: &ProfileStore) -> Result<Vec<ConfiguredDeviceObservation>, DeviceError> {
@@ -542,6 +595,28 @@ impl TryFrom<proto::EnsureUserSessionUnlockedEffect> for EnsureUserSessionUnlock
   }
 }
 
+impl TryFrom<proto::EnsureUserSessionLockedEffect> for EnsureUserSessionLockedEffect {
+  type Error = DeviceError;
+
+  fn try_from(effect: proto::EnsureUserSessionLockedEffect) -> Result<Self, Self::Error> {
+    if effect.user.is_empty() || effect.session_selector.is_empty() {
+      return Err(DeviceError::InvalidEntryResponse);
+    }
+
+    let kind = match proto::DeviceLockEffectKind::try_from(effect.kind).map_err(|_| DeviceError::InvalidEntryResponse)? {
+      proto::DeviceLockEffectKind::Unspecified => return Err(DeviceError::InvalidEntryResponse),
+      proto::DeviceLockEffectKind::AlreadyLocked => DeviceLockEffectKind::AlreadyLocked,
+      proto::DeviceLockEffectKind::LockedExistingSession => DeviceLockEffectKind::LockedExistingSession,
+    };
+
+    Ok(Self {
+      kind,
+      user: effect.user,
+      session_selector: effect.session_selector,
+    })
+  }
+}
+
 fn entry_error(error: proto::DeviceEntryError) -> Result<DeviceEntryErrorReason, DeviceError> {
   Ok(match proto::DeviceEntryErrorReason::try_from(error.reason).map_err(|_| DeviceError::InvalidEntryResponse)? {
     proto::DeviceEntryErrorReason::Unspecified => return Err(DeviceError::InvalidEntryResponse),
@@ -656,6 +731,38 @@ mod tests {
       }),
       Err(DeviceError::InvalidEntryResponse)
     ));
+  }
+
+  #[test]
+  fn lock_effect_requires_verified_kind_and_exact_session() {
+    let effect = proto::EnsureUserSessionLockedEffect {
+      kind: proto::DeviceLockEffectKind::LockedExistingSession as i32,
+      user: "neko".into(),
+      session_selector: "macos:login".into(),
+    };
+
+    assert_eq!(
+      EnsureUserSessionLockedEffect::try_from(effect.clone()).unwrap(),
+      EnsureUserSessionLockedEffect {
+        kind: DeviceLockEffectKind::LockedExistingSession,
+        user: "neko".into(),
+        session_selector: "macos:login".into(),
+      }
+    );
+    assert!(
+      EnsureUserSessionLockedEffect::try_from(proto::EnsureUserSessionLockedEffect {
+        kind: 0,
+        ..effect.clone()
+      })
+      .is_err()
+    );
+    assert!(
+      EnsureUserSessionLockedEffect::try_from(proto::EnsureUserSessionLockedEffect {
+        session_selector: String::new(),
+        ..effect
+      })
+      .is_err()
+    );
   }
 
   #[test]

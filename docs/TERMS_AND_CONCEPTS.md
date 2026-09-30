@@ -362,6 +362,16 @@ grants authority to ask the target Device to act, not an OS login credential.
 The target keeps any OS credential local and must verify the intended existing
 session became usable. Remote session operations belong to `DeviceService`:
 `ListUserSessions`, `GetUserSession`, and `EnsureUserSessionUnlocked`.
+The paired Device surface also includes `EnsureUserSessionLocked` for the
+owner-approved lock action. It uses the same directed pairing authority,
+target-local capability switch, account enrollment boundary, and restricted
+audit. It does not read or transmit the enrolled credential. The target
+revalidates the selected existing login instance and independently reads back
+`LOCKED`; a session already locked returns `ALREADY_LOCKED` without input.
+The CLI and MCP expose this typed operation as `devices lock` and
+`device_ensure_user_session_locked`. This is an implementation contract with
+build and narrow native test evidence; installed three-Device lock gates are
+still pending.
 
 Target-local credential management belongs to `DeviceLocalService`: `Enroll`,
 `GetEnrollment`, `ListEnrollments`, and `RemoveEnrollment`; its local policy and

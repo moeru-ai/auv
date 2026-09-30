@@ -8,8 +8,8 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use auv::devices::{
-  DeviceEntryEffectKind, DeviceEntryErrorReason, EnrollmentState, EnsureUserSessionUnlockedEffect, UserSession, UserSessionLockState,
-  UserSessionTarget,
+  DeviceEntryEffectKind, DeviceEntryErrorReason, DeviceLockEffectKind, EnrollmentState, EnsureUserSessionLockedEffect,
+  EnsureUserSessionUnlockedEffect, UserSession, UserSessionLockState, UserSessionTarget,
 };
 use auv_api_server::control::{CallerId, Pairing};
 
@@ -55,6 +55,8 @@ pub(super) trait SessionHost: Send + Sync {
   ) -> impl Future<Output = Result<(), DeviceEntryErrorReason>> + Send + 'a;
   /// Returns only after independent same-session OS readback.
   fn unlock_locked(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason>;
+  /// Locks one exact usable session and reads back the same login instance.
+  fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason>;
 }
 
 pub(super) struct AccountLocks {
@@ -147,6 +149,70 @@ impl<H: SessionHost> Policy<H> {
     }
   }
 
+  pub(super) async fn ensure_locked(
+    &self,
+    caller: &CallerId,
+    target: UserSessionTarget,
+  ) -> Result<EnsureUserSessionLockedEffect, DeviceEntryErrorReason> {
+    let mut attempt = AuditAttempt::begin(Arc::clone(&self.audit), caller)?;
+    let _policy_guard = self.policy_gate.read().await;
+    let result = self.ensure_locked_inner(caller, &target, &mut attempt.selected).await;
+    let audit_result = match &result {
+      Ok(DeviceLockEffectKind::AlreadyLocked) => "ALREADY_LOCKED",
+      Ok(DeviceLockEffectKind::LockedExistingSession) => "LOCKED_EXISTING_SESSION",
+      Err(reason) => reason.as_str(),
+    };
+    attempt.finish_named(audit_result)?;
+
+    match (attempt.selected.take(), result) {
+      (Some(selected), Ok(kind)) => Ok(EnsureUserSessionLockedEffect {
+        kind,
+        user: selected.public.user,
+        session_selector: selected.public.selector,
+      }),
+      (_, Err(reason)) => Err(reason),
+      (None, Ok(_)) => Err(DeviceEntryErrorReason::ServiceUnavailable),
+    }
+  }
+
+  async fn ensure_locked_inner(
+    &self,
+    caller: &CallerId,
+    target: &UserSessionTarget,
+    selected_for_audit: &mut Option<ObservedSession>,
+  ) -> Result<DeviceLockEffectKind, DeviceEntryErrorReason> {
+    self.reauthorize(caller)?;
+    self.require_enabled()?;
+    let selected = select(self.host.sessions()?, target)?;
+    *selected_for_audit = Some(selected.clone());
+    let _account_guard = self.account_locks.lock(&selected.os_account_id).await?;
+    self.reauthorize(caller)?;
+    self.require_enabled()?;
+    let selected = self.reobserve(&selected)?;
+    // Keep the accepted Device-entry account boundary: pairing alone must
+    // not grant lock-only access to an unenrolled OS account. Lock never
+    // retrieves the credential, but the target must have enrolled it.
+    self.enrollment_for_lock(&selected)?;
+
+    match selected.public.lock_state {
+      UserSessionLockState::Locked => return Ok(DeviceLockEffectKind::AlreadyLocked),
+      UserSessionLockState::Unknown => return Err(DeviceEntryErrorReason::UnsupportedOsState),
+      UserSessionLockState::Usable => {}
+    }
+
+    // Native delivery is synchronous. Pairing revocation after this check
+    // affects later requests; a request already admitted may complete.
+    self.reauthorize(caller)?;
+    self.host.lock_usable(&selected)?;
+    let after = self.reobserve(&selected)?;
+
+    if after.public.lock_state != UserSessionLockState::Locked {
+      return Err(DeviceEntryErrorReason::OutcomeUnverified);
+    }
+
+    Ok(DeviceLockEffectKind::LockedExistingSession)
+  }
+
   async fn ensure_inner(
     &self,
     caller: &CallerId,
@@ -227,6 +293,17 @@ impl<H: SessionHost> Policy<H> {
   }
 
   fn eligible_enrollment(&self, selected: &ObservedSession) -> Result<Enrollment, DeviceEntryErrorReason> {
+    let enrollment = self.enrollment_for_lock(selected)?;
+
+    if enrollment.state == EnrollmentState::Pending && selected.public.lock_state == UserSessionLockState::Usable {
+      // Pending credentials can become Ready only under the locked host.
+      return Err(DeviceEntryErrorReason::Unenrolled);
+    }
+
+    Ok(enrollment)
+  }
+
+  fn enrollment_for_lock(&self, selected: &ObservedSession) -> Result<Enrollment, DeviceEntryErrorReason> {
     let enrollment = self.store.enrollment(&selected.os_account_id)?.ok_or(DeviceEntryErrorReason::Unenrolled)?;
 
     if enrollment.os_account_id != selected.os_account_id || enrollment.user != selected.public.user || enrollment.generation == 0 {
@@ -235,11 +312,6 @@ impl<H: SessionHost> Policy<H> {
 
     if enrollment.state == EnrollmentState::Suspended {
       return Err(DeviceEntryErrorReason::Suspended);
-    }
-
-    if enrollment.state == EnrollmentState::Pending && selected.public.lock_state == UserSessionLockState::Usable {
-      // Pending credentials can become Ready only under the locked host.
-      return Err(DeviceEntryErrorReason::Unenrolled);
     }
 
     Ok(enrollment)
@@ -301,6 +373,10 @@ impl<H: SessionHost> Policy<H> {
 /// Owns the interval between a durable admission record and its terminal
 /// record. Tokio drops this guard when a queued request future is canceled.
 struct AuditAttempt {
+  // TODO(device-lock-audit-operation): Denied and canceled records do not yet
+  // distinguish lock from unlock. Keep the persisted/local-read schema in
+  // this slice; add an operation field after its migration and API contract
+  // are approved.
   audit: Arc<Audit>,
   id: String,
   caller: String,
@@ -323,10 +399,14 @@ impl AuditAttempt {
   }
 
   fn finish(&mut self, result: &Result<DeviceEntryEffectKind, DeviceEntryErrorReason>) -> Result<(), DeviceEntryErrorReason> {
+    self.finish_named(result_name(result))
+  }
+
+  fn finish_named(&mut self, result: &'static str) -> Result<(), DeviceEntryErrorReason> {
     // Once native input might have occurred, a failed terminal write must not
     // be replaced by a misleading CANCELED record during Drop.
     self.finished = true;
-    let written = self.audit.append(record("outcome", &self.id, &self.caller, self.selected.as_ref(), Some(result_name(result))));
+    let written = self.audit.append(record("outcome", &self.id, &self.caller, self.selected.as_ref(), Some(result)));
 
     if written.is_err() {
       self.audit.poison();
@@ -459,6 +539,19 @@ mod tests {
       current.public.lock_state = UserSessionLockState::Usable;
       Ok(())
     }
+
+    fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+      self.deliveries.fetch_add(1, Ordering::SeqCst);
+
+      if let Some(error) = *self.delivery_error.lock().unwrap() {
+        return Err(error);
+      }
+
+      let mut sessions = self.sessions.lock().unwrap();
+      let current = sessions.iter_mut().find(|current| current.public.selector == selected.public.selector).unwrap();
+      current.public.lock_state = UserSessionLockState::Locked;
+      Ok(())
+    }
   }
 
   fn session(selector: &str, state: UserSessionLockState) -> ObservedSession {
@@ -504,6 +597,87 @@ mod tests {
     let caller = pairing.authenticate_bearer(&enrolled.expose_credential_once()).unwrap();
     policy.pairing = Some(Arc::new(pairing.clone()));
     (root, Arc::new(policy), pairing, caller)
+  }
+
+  // TODO(device-lock-windows-fixture): This policy fixture uses a user-owned
+  // temp directory, while Windows MetadataStore requires SYSTEM-only ACLs.
+  // Add a SYSTEM-owned fixture before running these policy cases on Windows.
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn lock_verifies_exact_session_without_credential_probe() {
+    let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Usable)]));
+    let (root, policy) = fixture(Arc::clone(&host));
+    policy.store.invalidate_for_enroll("neko", "uid:1000").unwrap();
+    let enrollment = policy.store.publish_pending("neko", "uid:1000").unwrap();
+    policy.store.promote_ready("uid:1000", enrollment.generation).unwrap();
+    let result = policy.ensure_locked(&caller(), UserSessionTarget::SessionSelector("s".into())).await.unwrap();
+
+    assert_eq!(result.kind, DeviceLockEffectKind::LockedExistingSession);
+    assert_eq!(result.session_selector, "s");
+    assert_eq!(host.deliveries.load(Ordering::SeqCst), 1);
+    assert_eq!(host.probes.load(Ordering::SeqCst), 0);
+    assert_eq!(host.ready_probes.load(Ordering::SeqCst), 0);
+    assert_eq!(policy.get("s").unwrap().lock_state, UserSessionLockState::Locked);
+
+    let audit = std::fs::read_to_string(root.path().join("device-entry-audit.jsonl")).unwrap();
+
+    assert!(audit.contains("LOCKED_EXISTING_SESSION"));
+
+    let again = policy.ensure_locked(&caller(), UserSessionTarget::SessionSelector("s".into())).await.unwrap();
+
+    assert_eq!(again.kind, DeviceLockEffectKind::AlreadyLocked);
+    assert_eq!(host.deliveries.load(Ordering::SeqCst), 1);
+  }
+
+  // ROOT CAUSE:
+  //
+  // A new enrollment is Pending while the desktop is Usable. Reusing the
+  // unlock eligibility check rejected remote lock, so the first locked-host
+  // credential verification required a person to lock the machine locally.
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn pending_enrollment_can_remote_lock_then_promote_on_first_unlock() {
+    let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Usable)]));
+    let (_root, policy) = fixture(Arc::clone(&host));
+    policy.store.invalidate_for_enroll("neko", "uid:1000").unwrap();
+    policy.store.publish_pending("neko", "uid:1000").unwrap();
+
+    let locked = policy.ensure_locked(&caller(), UserSessionTarget::SessionSelector("s".into())).await.unwrap();
+
+    assert_eq!(locked.kind, DeviceLockEffectKind::LockedExistingSession);
+    assert_eq!(locked.session_selector, "s");
+    assert_eq!(host.probes.load(Ordering::SeqCst), 0);
+    assert_eq!(policy.store.enrollment("uid:1000").unwrap().unwrap().state, EnrollmentState::Pending);
+
+    let unlocked = policy.ensure(&caller(), UserSessionTarget::SessionSelector("s".into())).await.unwrap();
+
+    assert_eq!(unlocked.kind, DeviceEntryEffectKind::UnlockedExistingSession);
+    assert_eq!(unlocked.session_selector.as_deref(), Some("s"));
+    assert_eq!(host.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(policy.store.enrollment("uid:1000").unwrap().unwrap().state, EnrollmentState::Ready);
+    assert_eq!(policy.get("s").unwrap().lock_state, UserSessionLockState::Usable);
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn lock_denies_unpaired_caller_before_native_input() {
+    let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Usable)]));
+    let (_root, policy) = fixture(Arc::clone(&host));
+    let error = policy.ensure_locked(&CallerId::paired_device("revoked"), UserSessionTarget::User("neko".into())).await.unwrap_err();
+
+    assert_eq!(error, DeviceEntryErrorReason::Unauthorized);
+    assert_eq!(host.deliveries.load(Ordering::SeqCst), 0);
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn lock_denies_unenrolled_account_before_native_input() {
+    let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Usable)]));
+    let (_root, policy) = fixture(Arc::clone(&host));
+    let error = policy.ensure_locked(&caller(), UserSessionTarget::User("neko".into())).await.unwrap_err();
+
+    assert_eq!(error, DeviceEntryErrorReason::Unenrolled);
+    assert_eq!(host.deliveries.load(Ordering::SeqCst), 0);
   }
 
   // ROOT CAUSE:
@@ -661,6 +835,10 @@ mod tests {
 
       fn unlock_locked(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
         self.inner.unlock_locked(selected)
+      }
+
+      fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+        self.inner.lock_usable(selected)
       }
     }
 
@@ -880,6 +1058,10 @@ mod tests {
       fn unlock_locked(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
         self.inner.unlock_locked(selected)
       }
+
+      fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+        self.inner.lock_usable(selected)
+      }
     }
 
     let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Locked)]));
@@ -965,6 +1147,10 @@ mod tests {
         self.entered.lock().unwrap().send(()).unwrap();
         self.release.lock().unwrap().recv_timeout(Duration::from_secs(5)).map_err(|_| DeviceEntryErrorReason::ServiceUnavailable)?;
         self.inner.unlock_locked(selected)
+      }
+
+      fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+        self.inner.lock_usable(selected)
       }
     }
 

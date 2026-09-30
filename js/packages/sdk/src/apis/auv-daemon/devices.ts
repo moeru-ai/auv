@@ -132,6 +132,10 @@ const ensureUserSessionUnlockedRpc = {
   output: EnsureUserSessionUnlockedResponseSchema,
 } satisfies RpcDefinition<typeof EnsureUserSessionUnlockedRequestSchema, typeof EnsureUserSessionUnlockedResponseSchema>
 
+// TODO(device-session-lock-js): Add the high-level JavaScript lock projection
+// after that SDK surface is owner-approved; this port preserves #201's
+// gRPC, Rust, CLI, and MCP scope.
+
 /** Ensures an existing selected OS login session is unlocked. */
 export async function ensureUserSessionUnlocked(
   connection: AuvConnection,

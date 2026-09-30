@@ -111,15 +111,20 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
     serde_json::json!({ "device_name": "mcp-entry-device" }),
     serde_json::json!({ "device_name": "mcp-entry-device", "user": "neko", "session_selector": "seat0:42" }),
   ] {
-    let error = client
-      .call_tool(CallToolRequestParam {
-        name: "device_ensure_user_session_unlocked".into(),
-        arguments: Some(invalid.as_object().unwrap().clone()),
-      })
-      .await
-      .expect_err("MCP must reject missing or conflicting OS targets");
+    for name in [
+      "device_ensure_user_session_unlocked",
+      "device_ensure_user_session_locked",
+    ] {
+      let error = client
+        .call_tool(CallToolRequestParam {
+          name: name.into(),
+          arguments: Some(invalid.as_object().unwrap().clone()),
+        })
+        .await
+        .expect_err("MCP must reject missing or conflicting OS targets");
 
-    assert!(error.to_string().contains("set exactly one nonempty user or session_selector"), "unexpected MCP validation error: {error}");
+      assert!(error.to_string().contains("set exactly one nonempty user or session_selector"), "unexpected MCP validation error: {error}");
+    }
   }
 
   let list = client
@@ -163,6 +168,11 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
       serde_json::json!({ "device_name": "mcp-entry-device", "user": "__auv_no_such_user__" }),
       inventory_error.as_deref().unwrap_or("UNSUPPORTED_OS_STATE"),
     ),
+    (
+      "device_ensure_user_session_locked",
+      serde_json::json!({ "device_name": "mcp-entry-device", "user": "__auv_no_such_user__" }),
+      inventory_error.as_deref().unwrap_or("UNSUPPORTED_OS_STATE"),
+    ),
   ] {
     let result = client
       .call_tool(CallToolRequestParam {
@@ -179,6 +189,7 @@ async fn mcp_device_entry_uses_selected_daemon_and_does_not_create_a_run() -> Re
     ("device_list_user_sessions", serde_json::json!({ "device_name": "different-device" })),
     ("device_get_user_session", serde_json::json!({ "device_name": "different-device", "session_selector": "seat0:42" })),
     ("device_ensure_user_session_unlocked", serde_json::json!({ "device_name": "different-device", "user": "neko" })),
+    ("device_ensure_user_session_locked", serde_json::json!({ "device_name": "different-device", "user": "neko" })),
   ] {
     let error = client
       .call_tool(CallToolRequestParam {

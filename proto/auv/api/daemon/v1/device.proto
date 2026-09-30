@@ -33,6 +33,10 @@ service DeviceService {
   // needed, is held on this Device; a user with no session is not signed in.
   // TODO(device-entry-http): See ListUserSessions for the deferred HTTP gate.
   rpc EnsureUserSessionUnlocked(EnsureUserSessionUnlockedRequest) returns (EnsureUserSessionUnlockedResponse);
+  // Locks one existing usable OS login session after independently reading
+  // back its exact selector. This operation never reads an enrolled credential.
+  // TODO(device-entry-http): See ListUserSessions for the deferred HTTP gate.
+  rpc EnsureUserSessionLocked(EnsureUserSessionLockedRequest) returns (EnsureUserSessionLockedResponse);
 }
 
 enum DevicePlatform {
@@ -166,6 +170,33 @@ message DeviceEntryError {
 message EnsureUserSessionUnlockedResponse {
   oneof result {
     EnsureUserSessionUnlockedEffect effect = 1;
+    DeviceEntryError error = 2;
+  }
+}
+
+message EnsureUserSessionLockedRequest {
+  // Exactly one non-empty target is required.
+  oneof target {
+    string user = 1;
+    string session_selector = 2;
+  }
+}
+
+enum DeviceLockEffectKind {
+  DEVICE_LOCK_EFFECT_KIND_UNSPECIFIED = 0;
+  DEVICE_LOCK_EFFECT_KIND_ALREADY_LOCKED = 1;
+  DEVICE_LOCK_EFFECT_KIND_LOCKED_EXISTING_SESSION = 2;
+}
+
+message EnsureUserSessionLockedEffect {
+  DeviceLockEffectKind kind = 1;
+  string user = 2;
+  string session_selector = 3;
+}
+
+message EnsureUserSessionLockedResponse {
+  oneof result {
+    EnsureUserSessionLockedEffect effect = 1;
     DeviceEntryError error = 2;
   }
 }
