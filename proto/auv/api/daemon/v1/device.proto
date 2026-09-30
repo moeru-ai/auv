@@ -21,6 +21,18 @@ service DeviceService {
       body: "*"
     };
   }
+  // Lists current OS login instances on this Device. These selectors are not
+  // SessionService resources and must be revalidated before an unlock attempt.
+  // TODO(device-entry-http): Add REST exposure only after a validated OpenAPI
+  // request contract is approved; this slice shares the typed gRPC path.
+  rpc ListUserSessions(ListUserSessionsRequest) returns (ListUserSessionsResponse);
+  // Resolves one current session selector against target OS state.
+  // TODO(device-entry-http): See ListUserSessions for the deferred HTTP gate.
+  rpc GetUserSession(GetUserSessionRequest) returns (GetUserSessionResponse);
+  // Ensures one existing OS login session is usable. The credential, if
+  // needed, is held on this Device; a user with no session is not signed in.
+  // TODO(device-entry-http): See ListUserSessions for the deferred HTTP gate.
+  rpc EnsureUserSessionUnlocked(EnsureUserSessionUnlockedRequest) returns (EnsureUserSessionUnlockedResponse);
 }
 
 enum DevicePlatform {
@@ -51,4 +63,109 @@ message GetDeviceRequest {
 
 message GetDeviceResponse {
   Device device = 1;
+}
+
+// A session is one current OS login instance, not a signed-out account.
+message UserSession {
+  // Opaque instance selector; a later request can fail if it has gone stale.
+  string session_selector = 1;
+  // Resolved OS account display name. Authority uses the account's stable OS identity.
+  string user = 2;
+  UserSessionLockState lock_state = 3;
+  UserSessionConnectionKind connection_kind = 4;
+  // Platform seat or connection label, if available.
+  string seat = 5;
+}
+
+enum UserSessionLockState {
+  USER_SESSION_LOCK_STATE_UNSPECIFIED = 0;
+  USER_SESSION_LOCK_STATE_LOCKED = 1;
+  USER_SESSION_LOCK_STATE_USABLE = 2;
+  // The host observed this session but cannot determine its lock state.
+  USER_SESSION_LOCK_STATE_UNKNOWN = 3;
+}
+
+enum UserSessionConnectionKind {
+  USER_SESSION_CONNECTION_KIND_UNSPECIFIED = 0;
+  USER_SESSION_CONNECTION_KIND_PHYSICAL = 1;
+  USER_SESSION_CONNECTION_KIND_REMOTE = 2;
+}
+
+message ListUserSessionsRequest {}
+
+message UserSessionList {
+  repeated UserSession sessions = 1;
+}
+
+message ListUserSessionsResponse {
+  oneof result {
+    UserSessionList list = 1;
+    DeviceEntryError error = 2;
+  }
+}
+
+message GetUserSessionRequest {
+  // Opaque selector returned by ListUserSessions.
+  string session_selector = 1;
+}
+
+message GetUserSessionResponse {
+  oneof result {
+    UserSession session = 1;
+    DeviceEntryError error = 2;
+  }
+}
+
+message EnsureUserSessionUnlockedRequest {
+  // Exactly one non-empty target is required. No credential or delivery
+  // override may be supplied by the remote caller.
+  oneof target {
+    string user = 1;
+    string session_selector = 2;
+  }
+}
+
+enum DeviceEntryEffectKind {
+  DEVICE_ENTRY_EFFECT_KIND_UNSPECIFIED = 0;
+  DEVICE_ENTRY_EFFECT_KIND_ALREADY_USABLE = 1;
+  DEVICE_ENTRY_EFFECT_KIND_UNLOCKED_EXISTING_SESSION = 2;
+  // NOTICE(device-entry-signed-out): Reserved from the initial wire contract.
+  // The locked-session release must not emit this effect; ordinary greeter
+  // sign-in needs a separate approved implementation and platform proof.
+  DEVICE_ENTRY_EFFECT_KIND_SIGNED_IN_NEW_SESSION = 3;
+}
+
+message EnsureUserSessionUnlockedEffect {
+  DeviceEntryEffectKind kind = 1;
+  string user = 2;
+  // Present when the resulting OS login instance can be identified.
+  string session_selector = 3;
+}
+
+// Fixed reasons keep local credential and native error text out of responses.
+enum DeviceEntryErrorReason {
+  DEVICE_ENTRY_ERROR_REASON_UNSPECIFIED = 0;
+  DEVICE_ENTRY_ERROR_REASON_DISABLED = 1;
+  DEVICE_ENTRY_ERROR_REASON_UNENROLLED = 2;
+  DEVICE_ENTRY_ERROR_REASON_SUSPENDED = 3;
+  DEVICE_ENTRY_ERROR_REASON_AMBIGUOUS_USER = 4;
+  DEVICE_ENTRY_ERROR_REASON_STALE_SESSION = 5;
+  DEVICE_ENTRY_ERROR_REASON_OCCUPIED_DESKTOP = 6;
+  DEVICE_ENTRY_ERROR_REASON_UNSUPPORTED_OS_STATE = 7;
+  DEVICE_ENTRY_ERROR_REASON_SERVICE_UNAVAILABLE = 8;
+  DEVICE_ENTRY_ERROR_REASON_CREDENTIAL_REJECTED = 9;
+  DEVICE_ENTRY_ERROR_REASON_OUTCOME_UNVERIFIED = 10;
+  DEVICE_ENTRY_ERROR_REASON_AUDIT_UNAVAILABLE = 11;
+  DEVICE_ENTRY_ERROR_REASON_UNAUTHORIZED = 12;
+}
+
+message DeviceEntryError {
+  DeviceEntryErrorReason reason = 1;
+}
+
+message EnsureUserSessionUnlockedResponse {
+  oneof result {
+    EnsureUserSessionUnlockedEffect effect = 1;
+    DeviceEntryError error = 2;
+  }
 }

@@ -54,6 +54,25 @@ fn daemon_json_uses_proto_enum_well_known_and_uint64_shapes() {
 }
 
 #[test]
+fn local_enrollment_credential_is_excluded_from_daemon_json() {
+  use crate::auv::api::daemon::v1::EnrollRequest;
+
+  // The daemon package derives JSON support for REST, but enrollment is a
+  // local gRPC-only request. This guards against accidentally copying a
+  // credential into a generic JSON log or HTTP payload.
+  let request = EnrollRequest {
+    user: "neko".into(),
+    credential: b"probe-secret".to_vec(),
+    ..Default::default()
+  };
+  let json = serde_json::to_value(&request).unwrap();
+
+  assert_eq!(json["user"], "neko");
+  assert!(json.get("credential").is_none());
+  assert!(!json.to_string().contains("probe-secret"));
+}
+
+#[test]
 fn daemon_control_services_are_typed_and_do_not_claim_watch() {
   let descriptor_set = FileDescriptorSet::decode(FILE_DESCRIPTOR_SET).expect("decode FILE_DESCRIPTOR_SET");
   let mut services = descriptor_set

@@ -259,7 +259,27 @@ impl PairingStore {
       if !record.enabled || credential.state != CredentialState::Active {
         return Err(PairingError::Unauthenticated);
       }
-      Ok(CallerId::paired_device(&record.pair_id))
+
+      Ok(CallerId::authenticated_paired_device(&record.pair_id, digest))
+    })
+  }
+
+  /// Reads the current pairing snapshot, including completed disable,
+  /// revocation, and unpair mutations, before a queued Device entry attempt.
+  pub fn is_active_caller(&self, caller: &CallerId) -> bool {
+    let (Some(pair_id), Some(digest)) = (caller.paired_device_id(), caller.credential_sha256()) else {
+      return false;
+    };
+
+    self.inner.with_snapshot(|snapshot| {
+      snapshot.devices.iter().any(|record| {
+        record.pair_id == pair_id
+          && record.enabled
+          && record
+            .device_credentials
+            .iter()
+            .any(|credential| credential.state == CredentialState::Active && digest_matches(&credential.credential_sha256, digest))
+      })
     })
   }
 
@@ -319,6 +339,10 @@ impl auv_api_server::control::Pairing for PairingStore {
     PairingStore::authenticate_bearer(self, credential).map_err(control_error)
   }
 
+  fn is_active_caller(&self, caller: &CallerId) -> bool {
+    PairingStore::is_active_caller(self, caller)
+  }
+
   fn issue_token(&self, lifetime: Option<Duration>) -> Result<auv_api_server::control::PairingToken, auv_api_server::control::PairingError> {
     Ok(auv_api_server::control::PairingToken {
       token: PairingStore::issue_token(self, lifetime).map_err(control_error)?.expose_once(),
@@ -372,6 +396,8 @@ fn control_error(error: PairingError) -> auv_api_server::control::PairingError {
   }
 }
 
-#[cfg(test)]
+// Temp-directory fixtures exercise Unix owner/mode semantics. Windows must
+// use the fixed LocalSystem ProgramData root and has its own native gate.
+#[cfg(all(test, unix))]
 #[path = "tests.rs"]
 mod tests;

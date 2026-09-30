@@ -443,6 +443,23 @@ impl Control for Daemon {
   fn get_device(&self, device_id: &str) -> Result<Option<auv::devices::Device>, ControlError> {
     Daemon::get_device(self, device_id).map(domain_device).transpose()
   }
+  fn list_user_sessions(&self, _caller: &CallerId) -> Result<Vec<auv::devices::UserSession>, auv::devices::DeviceEntryErrorReason> {
+    Err(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)
+  }
+  fn get_user_session(
+    &self,
+    _caller: &CallerId,
+    _session_selector: &str,
+  ) -> Result<auv::devices::UserSession, auv::devices::DeviceEntryErrorReason> {
+    Err(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)
+  }
+  async fn ensure_user_session_unlocked(
+    &self,
+    _caller: &CallerId,
+    _target: auv::devices::UserSessionTarget,
+  ) -> Result<auv::devices::EnsureUserSessionUnlockedEffect, auv::devices::DeviceEntryErrorReason> {
+    Err(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)
+  }
   fn create_run(&self, caller: &CallerId, request: auv::runs::CreateRun) -> Result<auv::runs::Run, ControlError> {
     let response = Daemon::create_run(
       self,

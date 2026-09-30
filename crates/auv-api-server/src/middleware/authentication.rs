@@ -89,6 +89,11 @@ pub(crate) async fn authenticate(State(state): State<Middleware>, mut request: R
   match state.authenticator.authenticate_http(&request) {
     Ok(caller) => {
       request.extensions_mut().insert(caller);
+
+      if let Some(admission) = state.authenticator.device_entry_admission() {
+        request.extensions_mut().insert(admission);
+      }
+
       next.run(request).await
     }
     Err(status) => authentication_error(&request, status),

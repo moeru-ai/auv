@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use auv_api_proto::auv::api::daemon::v1 as proto;
 
-use auv_api_client::PairedConnectConfig;
 use auv_api_client::protocol::grpc::Client as GrpcClient;
+use auv_api_client::{ConnectEndpoint, PairedConnectConfig};
 
 use crate::resource::{DeviceSelector, RunSelector, RunnerClassId};
 use crate::{AuvContext, ContextError, discovery, profile};
@@ -195,61 +195,8 @@ impl Client {
     }
     if context.daemon_endpoint.is_none() && (context.device_id.is_some() || context.device_name.is_some()) {
       let profiles = profile::ProfileStore::from_env()?;
-      let configured = match profiles.list_devices() {
-        Ok(configured) => configured,
-        Err(profile::ProfileError::Open { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(error.into()),
-      };
-      let remote_matches = configured
-        .iter()
-        .filter(|device| context.device_id.as_ref().is_none_or(|id| device.device_id() == id))
-        .filter(|device| context.device_name.as_ref().is_none_or(|name| device.device_name() == name))
-        .collect::<Vec<_>>();
-      let mut local = match discovery::resolve(None)? {
-        Some(endpoint) => {
-          let endpoint_display = endpoint.to_string();
-          Some((endpoint_display, GrpcClient::connect(endpoint).await.map_err(|error| ContextError::Connect(error.to_string()))?))
-        }
-        None => None,
-      };
-      let local_devices = match local.as_mut() {
-        Some((_, client)) => client
-          .devices()
-          .list_devices()
-          .await
-          .map_err(|status| ContextError::RemoteDeviceList(crate::error::ClientError::from_status("ListDevices", status)))?,
-        None => Vec::new(),
-      };
-      let local_matches = matching_devices(&context, &local_devices);
-      let candidate_ids = local_matches
-        .iter()
-        .filter_map(|device| device.r#ref.as_ref().map(|reference| reference.device_id.as_str()))
-        .chain(remote_matches.iter().map(|device| device.device_id()))
-        .collect::<Vec<_>>();
-      match (local_matches.as_slice(), remote_matches.as_slice()) {
-        ([local_device], []) => {
-          let (endpoint, grpc) = local.expect("local match requires a connected local daemon");
-          context_matches_canonical_device(&context, local_device)?;
-          context.daemon_endpoint = Some(endpoint);
-          return Ok(Self {
-            grpc,
-            context: Some(context),
-            paired_remote: false,
-            constraint: PlacementConstraint::Automatic,
-          });
-        }
-        ([], [remote]) => {
-          context.config_profile = Some(remote.config_profile().to_string());
-          return Self::resolve_context_with_profiles(context, &profiles).await;
-        }
-        ([], []) => return Err(ContextError::DeviceNotConfigured),
-        _ => {
-          return Err(ContextError::DeviceSelectionAmbiguous {
-            selector: context.device_id.clone().or(context.device_name.clone()).unwrap_or_default(),
-            candidate_ids: candidate_ids.join(", "),
-          });
-        }
-      }
+
+      return Self::resolve_device_context(context, &profiles, discovery::resolve(None)?).await;
     }
     let endpoint = match context.daemon_endpoint.as_deref() {
       Some(endpoint) => endpoint.parse().map_err(|source| discovery::DiscoveryError::InvalidEndpoint {
@@ -269,6 +216,82 @@ impl Client {
       paired_remote: false,
       constraint: PlacementConstraint::Automatic,
     })
+  }
+
+  // A dead discovery endpoint is allowed to fall away only when a single
+  // paired profile matches. A reachable local daemon still participates in
+  // ambiguity checks, and an unselected remote profile cannot hide its error.
+  async fn resolve_device_context(
+    mut context: AuvContext,
+    profiles: &profile::ProfileStore,
+    local_endpoint: Option<ConnectEndpoint>,
+  ) -> Result<Self, ContextError> {
+    let configured = match profiles.list_devices() {
+      Ok(configured) => configured,
+      Err(profile::ProfileError::Open { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+      Err(error) => return Err(error.into()),
+    };
+    let remote_matches = configured
+      .iter()
+      .filter(|device| {
+        context.device_id.as_ref().is_none_or(|id| DeviceSelector::by_id(id).matches_wire(device.device_id(), device.device_name()))
+      })
+      .filter(|device| context.device_name.as_ref().is_none_or(|name| device.device_name() == name))
+      .collect::<Vec<_>>();
+
+    let mut local = match local_endpoint {
+      Some(endpoint) => {
+        let endpoint_display = endpoint.to_string();
+
+        match GrpcClient::connect(endpoint).await {
+          Ok(grpc) => Some((endpoint_display, grpc)),
+          Err(_) if remote_matches.len() == 1 => None,
+          Err(error) => return Err(ContextError::Connect(error.to_string())),
+        }
+      }
+      None => None,
+    };
+    let local_devices = match local.as_mut() {
+      Some((_, client)) => client
+        .devices()
+        .list_devices()
+        .await
+        .map_err(|status| ContextError::RemoteDeviceList(crate::error::ClientError::from_status("ListDevices", status)))?,
+      None => Vec::new(),
+    };
+    let local_matches = matching_devices(&context, &local_devices);
+    let candidate_ids = local_matches
+      .iter()
+      .filter_map(|device| device.r#ref.as_ref().map(|reference| reference.device_id.as_str()))
+      .chain(remote_matches.iter().map(|device| device.device_id()))
+      .collect::<Vec<_>>();
+
+    match (local_matches.as_slice(), remote_matches.as_slice()) {
+      ([local_device], []) => {
+        let (endpoint, grpc) = local.expect("local match requires a connected local daemon");
+        context_matches_canonical_device(&context, local_device)?;
+        context.daemon_endpoint = Some(endpoint);
+
+        return Ok(Self {
+          grpc,
+          context: Some(context),
+          paired_remote: false,
+          constraint: PlacementConstraint::Automatic,
+        });
+      }
+      ([], [remote]) => {
+        context.config_profile = Some(remote.config_profile().to_string());
+
+        return Self::resolve_context_with_profiles(context, &profiles).await;
+      }
+      ([], []) => return Err(ContextError::DeviceNotConfigured),
+      _ => {
+        return Err(ContextError::DeviceSelectionAmbiguous {
+          selector: context.device_id.clone().or(context.device_name.clone()).unwrap_or_default(),
+          candidate_ids: candidate_ids.join(", "),
+        });
+      }
+    }
   }
 
   async fn resolve_run_context(context: AuvContext) -> Result<Self, ContextError> {

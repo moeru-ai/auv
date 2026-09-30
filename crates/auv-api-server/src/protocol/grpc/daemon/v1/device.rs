@@ -6,6 +6,7 @@ use auv_api_proto::auv::api::daemon::v1 as proto;
 use auv_api_proto::auv::api::daemon::v1::device_service_server::DeviceService;
 use tonic::{Request, Response, Status};
 
+use crate::authentication;
 use crate::control::Control;
 use crate::protocol::domain;
 use crate::protocol::grpc::status::map_control_error;
@@ -42,6 +43,74 @@ impl DeviceService for DeviceServiceGrpc {
       .ok_or_else(|| Status::not_found(format!("unknown Device: {device_id}")))?;
     Ok(Response::new(proto::GetDeviceResponse {
       device: Some(domain::device(device)),
+    }))
+  }
+
+  async fn list_user_sessions(
+    &self,
+    request: Request<proto::ListUserSessionsRequest>,
+  ) -> Result<Response<proto::ListUserSessionsResponse>, Status> {
+    let caller = authentication::device_entry_caller(&request)?;
+    let result = match self.daemon.list_user_sessions(caller) {
+      Ok(sessions) => proto::list_user_sessions_response::Result::List(proto::UserSessionList {
+        sessions: sessions.into_iter().map(domain::user_session).collect(),
+      }),
+      Err(reason) => proto::list_user_sessions_response::Result::Error(proto::DeviceEntryError {
+        reason: domain::device_entry_error_reason(reason) as i32,
+      }),
+    };
+
+    Ok(Response::new(proto::ListUserSessionsResponse {
+      result: Some(result),
+    }))
+  }
+
+  async fn get_user_session(
+    &self,
+    request: Request<proto::GetUserSessionRequest>,
+  ) -> Result<Response<proto::GetUserSessionResponse>, Status> {
+    let caller = authentication::device_entry_caller(&request)?;
+    let session_selector = &request.get_ref().session_selector;
+
+    if session_selector.trim().is_empty() {
+      return Err(Status::invalid_argument("session_selector is required"));
+    }
+
+    let result = match self.daemon.get_user_session(caller, session_selector) {
+      Ok(session) => proto::get_user_session_response::Result::Session(domain::user_session(session)),
+      Err(reason) => proto::get_user_session_response::Result::Error(proto::DeviceEntryError {
+        reason: domain::device_entry_error_reason(reason) as i32,
+      }),
+    };
+
+    Ok(Response::new(proto::GetUserSessionResponse {
+      result: Some(result),
+    }))
+  }
+
+  async fn ensure_user_session_unlocked(
+    &self,
+    request: Request<proto::EnsureUserSessionUnlockedRequest>,
+  ) -> Result<Response<proto::EnsureUserSessionUnlockedResponse>, Status> {
+    let caller = authentication::device_entry_caller(&request)?.clone();
+    let target = match request.into_inner().target {
+      Some(proto::ensure_user_session_unlocked_request::Target::User(user)) if !user.trim().is_empty() => {
+        auv::devices::UserSessionTarget::User(user)
+      }
+      Some(proto::ensure_user_session_unlocked_request::Target::SessionSelector(selector)) if !selector.trim().is_empty() => {
+        auv::devices::UserSessionTarget::SessionSelector(selector)
+      }
+      _ => return Err(Status::invalid_argument("exactly one non-empty user or session_selector is required")),
+    };
+    let result = match self.daemon.ensure_user_session_unlocked(&caller, target).await {
+      Ok(effect) => proto::ensure_user_session_unlocked_response::Result::Effect(domain::ensure_user_session_unlocked_effect(effect)),
+      Err(reason) => proto::ensure_user_session_unlocked_response::Result::Error(proto::DeviceEntryError {
+        reason: domain::device_entry_error_reason(reason) as i32,
+      }),
+    };
+
+    Ok(Response::new(proto::EnsureUserSessionUnlockedResponse {
+      result: Some(result),
     }))
   }
 }

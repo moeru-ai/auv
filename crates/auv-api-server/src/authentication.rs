@@ -20,6 +20,11 @@ pub(crate) enum Authenticator {
   PairedBearer { pairing: Arc<dyn Pairing> },
 }
 
+/// Proof that this request used a paired bearer or an owner-verified local
+/// transport. A loopback address alone cannot authorize Device entry.
+#[derive(Clone)]
+pub(crate) struct DeviceEntryAdmission(());
+
 impl Authenticator {
   pub(crate) fn local(#[cfg(unix)] allowed_unix_uid: Option<u32>, pairing: Option<Arc<dyn Pairing>>) -> Self {
     Self::Local {
@@ -84,6 +89,29 @@ impl Authenticator {
       Self::PairedBearer { pairing } => Some(pairing.clone()),
     }
   }
+
+  pub(crate) fn device_entry_admission(&self) -> Option<DeviceEntryAdmission> {
+    match self {
+      Self::PairedBearer { .. } => Some(DeviceEntryAdmission(())),
+      Self::Local {
+        #[cfg(unix)]
+        allowed_unix_uid,
+        pairing: _,
+      } => {
+        #[cfg(unix)]
+        {
+          allowed_unix_uid.map(|_| DeviceEntryAdmission(()))
+        }
+
+        #[cfg(windows)]
+        {
+          // TODO(device-entry-windows-local): Admit named-pipe Device entry
+          // after the listener verifies the peer SID for each request.
+          None
+        }
+      }
+    }
+  }
 }
 
 fn authenticate_bearer(pairing: &dyn Pairing, authorization: Option<&str>) -> Result<CallerId, Status> {
@@ -105,6 +133,16 @@ fn map_pairing_auth_error(error: PairingError) -> Status {
 /// Returns the authenticated caller inserted by the listener middleware.
 pub(crate) fn caller<T>(request: &tonic::Request<T>) -> Result<&CallerId, Status> {
   request.extensions().get::<CallerId>().ok_or_else(|| Status::internal("authenticated request is missing CallerId"))
+}
+
+/// Device entry also requires the transport proof issued after request
+/// authentication; a `CallerId` by itself does not prove local OS ownership.
+pub(crate) fn device_entry_caller<T>(request: &tonic::Request<T>) -> Result<&CallerId, Status> {
+  if request.extensions().get::<DeviceEntryAdmission>().is_none() {
+    return Err(Status::unauthenticated("Device entry requires a paired bearer or owner-verified local transport"));
+  }
+
+  caller(request)
 }
 
 /// Returns the authenticated caller inserted by the listener middleware.

@@ -4,6 +4,7 @@ const SCHEMA_PATHS: &[&str] = &[
   "auv/api/daemon/v1/health.proto",
   "auv/api/daemon/v1/discovery.proto",
   "auv/api/daemon/v1/device.proto",
+  "auv/api/daemon/v1/device_local.proto",
   "auv/api/daemon/v1/pairing.proto",
   "auv/api/annotations/v1/annotations.proto",
   "auv/api/daemon/v1/run.proto",
@@ -44,12 +45,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ".auv.api.daemon.v1",
     "#[derive(serde::Serialize, serde::Deserialize)] #[serde(default, rename_all = \"camelCase\", deny_unknown_fields)]",
   );
+  // NOTICE(proto-build): prost's nested oneof enums do not inherit the
+  // daemon-wide message derive. Remove these per-oneof attributes if prost
+  // generates the enums with the required serde derives automatically.
+  for oneof in [
+    ".auv.api.daemon.v1.ListUserSessionsResponse.result",
+    ".auv.api.daemon.v1.GetUserSessionResponse.result",
+    ".auv.api.daemon.v1.EnsureUserSessionUnlockedRequest.target",
+    ".auv.api.daemon.v1.EnsureUserSessionUnlockedResponse.result",
+  ] {
+    builder = builder.type_attribute(oneof, "#[derive(serde::Serialize, serde::Deserialize)]");
+  }
+
   // TODO(protojson-default-omission): non-Pairing daemon messages currently
   // emit some empty scalar/container fields through serde. Add descriptor-
   // driven skip attributes when the JSON contract requires byte-for-byte
   // canonical default omission; enum, uint64, Duration, and Timestamp wire
   // shapes are already explicit below.
   builder = builder
+    // NOTICE(device-local-secret): daemon messages otherwise derive serde for
+    // the shared REST model. Keep local enrollment credentials out of every
+    // JSON serialization and deserialization path; only local gRPC may carry
+    // these bytes.
+    .field_attribute(".auv.api.daemon.v1.EnrollRequest.credential", "#[serde(skip)]")
     .field_attribute(
       ".auv.api.daemon.v1.CreatePairingTokenRequest.ttl",
       "#[serde(default, skip_serializing_if = \"Option::is_none\", with = \"tonic_rest::serde::opt_duration\")]",

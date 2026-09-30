@@ -79,6 +79,54 @@ pub(crate) fn device(value: auv::devices::Device) -> proto::Device {
   }
 }
 
+pub(crate) fn user_session(value: auv::devices::UserSession) -> proto::UserSession {
+  proto::UserSession {
+    session_selector: value.selector,
+    user: value.user,
+    lock_state: match value.lock_state {
+      auv::devices::UserSessionLockState::Locked => proto::UserSessionLockState::Locked,
+      auv::devices::UserSessionLockState::Usable => proto::UserSessionLockState::Usable,
+      auv::devices::UserSessionLockState::Unknown => proto::UserSessionLockState::Unknown,
+    } as i32,
+    connection_kind: match value.connection_kind {
+      auv::devices::UserSessionConnectionKind::Unspecified => proto::UserSessionConnectionKind::Unspecified,
+      auv::devices::UserSessionConnectionKind::Physical => proto::UserSessionConnectionKind::Physical,
+      auv::devices::UserSessionConnectionKind::Remote => proto::UserSessionConnectionKind::Remote,
+    } as i32,
+    seat: value.seat.unwrap_or_default(),
+  }
+}
+
+pub(crate) fn ensure_user_session_unlocked_effect(
+  value: auv::devices::EnsureUserSessionUnlockedEffect,
+) -> proto::EnsureUserSessionUnlockedEffect {
+  proto::EnsureUserSessionUnlockedEffect {
+    kind: match value.kind {
+      auv::devices::DeviceEntryEffectKind::AlreadyUsable => proto::DeviceEntryEffectKind::AlreadyUsable,
+      auv::devices::DeviceEntryEffectKind::UnlockedExistingSession => proto::DeviceEntryEffectKind::UnlockedExistingSession,
+    } as i32,
+    user: value.user,
+    session_selector: value.session_selector.unwrap_or_default(),
+  }
+}
+
+pub(crate) fn device_entry_error_reason(value: auv::devices::DeviceEntryErrorReason) -> proto::DeviceEntryErrorReason {
+  match value {
+    auv::devices::DeviceEntryErrorReason::Unauthorized => proto::DeviceEntryErrorReason::Unauthorized,
+    auv::devices::DeviceEntryErrorReason::Disabled => proto::DeviceEntryErrorReason::Disabled,
+    auv::devices::DeviceEntryErrorReason::Unenrolled => proto::DeviceEntryErrorReason::Unenrolled,
+    auv::devices::DeviceEntryErrorReason::Suspended => proto::DeviceEntryErrorReason::Suspended,
+    auv::devices::DeviceEntryErrorReason::AmbiguousUser => proto::DeviceEntryErrorReason::AmbiguousUser,
+    auv::devices::DeviceEntryErrorReason::StaleSession => proto::DeviceEntryErrorReason::StaleSession,
+    auv::devices::DeviceEntryErrorReason::OccupiedDesktop => proto::DeviceEntryErrorReason::OccupiedDesktop,
+    auv::devices::DeviceEntryErrorReason::UnsupportedOsState => proto::DeviceEntryErrorReason::UnsupportedOsState,
+    auv::devices::DeviceEntryErrorReason::ServiceUnavailable => proto::DeviceEntryErrorReason::ServiceUnavailable,
+    auv::devices::DeviceEntryErrorReason::CredentialRejected => proto::DeviceEntryErrorReason::CredentialRejected,
+    auv::devices::DeviceEntryErrorReason::OutcomeUnverified => proto::DeviceEntryErrorReason::OutcomeUnverified,
+    auv::devices::DeviceEntryErrorReason::AuditUnavailable => proto::DeviceEntryErrorReason::AuditUnavailable,
+  }
+}
+
 pub(crate) fn run(value: auv::runs::Run) -> proto::Run {
   proto::Run {
     r#ref: Some(proto::RunRef {

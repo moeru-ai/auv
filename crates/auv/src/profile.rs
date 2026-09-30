@@ -457,7 +457,18 @@ fn write_document(path: &Path, document: &ConfigDocument) -> Result<(), ProfileE
   let file_name = path.file_name().and_then(|value| value.to_str()).ok_or_else(|| ProfileError::NoParent(path.to_path_buf()))?;
   let temporary = parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), sequence));
   let result = (|| {
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|source| ProfileError::Write {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::OpenOptionsExt as _;
+      // The temporary file contains a paired Device bearer before rename.
+      // Restrict it at creation so neither the temporary nor final path can
+      // get default file permissions under a permissive process umask.
+      options.mode(0o600);
+    }
+
+    let mut file = options.open(&temporary).map_err(|source| ProfileError::Write {
       kind: "config profile store",
       path: temporary.clone(),
       source,

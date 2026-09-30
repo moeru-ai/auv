@@ -7,6 +7,9 @@
 mod client;
 pub mod clients;
 
+#[cfg(windows)]
+pub(crate) use client::open_named_pipe;
+
 pub use client::{
   Client, ConnectEndpoint, EndpointParseError, PairedConnectConfig, PairedConnectError, ROUTE_DEVICE_METADATA, ROUTE_RUN_METADATA,
   ROUTE_RUNNER_CLASS_METADATA, RoutedTransport, RunnerRoute, RunnerRouteInterceptor,

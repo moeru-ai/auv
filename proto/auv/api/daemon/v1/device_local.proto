@@ -1,0 +1,140 @@
+// EXPERIMENTAL / UNSTABLE
+// Target-local Device management. This service must be served only over an
+// authenticated local IPC endpoint, never on the paired-device or HTTP listener.
+syntax = "proto3";
+
+package auv.api.daemon.v1;
+
+service DeviceLocalService {
+  // Every method must authorize the real local peer OS UID/SID. A user string
+  // or the shared local_owner shortcut is not proof of account ownership.
+  rpc GetEnrollment(GetEnrollmentRequest) returns (GetEnrollmentResponse);
+  // Administrators may list all accounts; ordinary callers see only their
+  // own enrollment, using the authenticated peer UID/SID for that decision.
+  rpc ListEnrollments(ListEnrollmentsRequest) returns (ListEnrollmentsResponse);
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  rpc RemoveEnrollment(RemoveEnrollmentRequest) returns (RemoveEnrollmentResponse);
+  // Reads the target-wide remote entry switch from this Device only.
+  rpc GetPolicy(GetPolicyRequest) returns (GetPolicyResponse);
+  // Only the authenticated target-local OS administrator may change it.
+  rpc SetPolicy(SetPolicyRequest) returns (SetPolicyResponse);
+  // Reads a bounded, account-filtered page from this Device's local audit.
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+}
+
+// An enrollment is bound to one resolved OS account, not to a display name.
+// This message contains no credential, vault reference, or native error text.
+message Enrollment {
+  // Current OS account display name; it is not an authority key.
+  string user = 1;
+  // Platform-stable account identity, such as a numeric UID or account SID.
+  string os_account_id = 2;
+  EnrollmentState state = 3;
+  EnrollmentStorageKind storage_kind = 4;
+}
+
+enum EnrollmentState {
+  ENROLLMENT_STATE_UNSPECIFIED = 0;
+  // The installed unlock host has verified that it can retrieve the secret.
+  ENROLLMENT_STATE_READY = 1;
+  // A confirmed OS credential rejection requires target-local re-enrollment.
+  ENROLLMENT_STATE_SUSPENDED = 2;
+  // Stored locally, but locked-session retrieval under the installed host
+  // identity has not yet been verified. Remote unlock is ineligible.
+  ENROLLMENT_STATE_PENDING = 3;
+}
+
+enum EnrollmentStorageKind {
+  ENROLLMENT_STORAGE_KIND_UNSPECIFIED = 0;
+  ENROLLMENT_STORAGE_KIND_PROTECTED = 1;
+  // Requires an explicit choice by a target-local OS administrator.
+  ENROLLMENT_STORAGE_KIND_PLAINTEXT_FILE = 2;
+}
+
+enum EnrollmentCredentialKind {
+  ENROLLMENT_CREDENTIAL_KIND_UNSPECIFIED = 0;
+  ENROLLMENT_CREDENTIAL_KIND_OS_PASSWORD = 1;
+  ENROLLMENT_CREDENTIAL_KIND_WINDOWS_PIN = 2;
+}
+
+message GetEnrollmentRequest {
+  // Resolve this name to a stable OS account identity before authorization.
+  string user = 1;
+}
+
+message GetEnrollmentResponse {
+  Enrollment enrollment = 1;
+}
+
+message ListEnrollmentsRequest {}
+
+message ListEnrollmentsResponse {
+  repeated Enrollment enrollments = 1;
+}
+
+message EnrollRequest {
+  // Resolve this name to a stable OS account identity before authorization;
+  // an administrator may enroll another account, an ordinary user only self.
+  string user = 1;
+  // UTF-8 bytes entered on this Device. Never log, trace, echo, or persist
+  // outside the selected target-local vault. Required and nonempty on every
+  // platform. NOTICE(device-local-secret): generated Debug may print this
+  // field, so implementations must never log or format the request.
+  bytes credential = 2;
+  // Validate that the kind is supported by the target OS unlock host.
+  EnrollmentCredentialKind credential_kind = 3;
+  // Must be explicit. Plaintext is administrator-only and never a fallback;
+  // READY requires a retrieval test by the actual installed unlock host.
+  EnrollmentStorageKind storage_kind = 4;
+}
+
+message EnrollResponse {
+  Enrollment enrollment = 1;
+}
+
+message RemoveEnrollmentRequest {
+  // Resolve this name to a stable OS account identity before authorization.
+  string user = 1;
+}
+
+message RemoveEnrollmentResponse {}
+
+message GetPolicyRequest {}
+
+message GetPolicyResponse {
+  bool enabled = 1;
+}
+
+message SetPolicyRequest {
+  bool enabled = 1;
+}
+
+message SetPolicyResponse {
+  bool enabled = 1;
+}
+
+message ListAuditRequest {
+  // Byte offset returned by the preceding page; zero starts at the beginning.
+  uint64 cursor = 1;
+  // Required number of visible records, from 1 through 100.
+  uint32 limit = 2;
+}
+
+message ListAuditResponse {
+  repeated AuditEntry entries = 1;
+  // Absent at end of the current audit file.
+  optional uint64 next_cursor = 2;
+}
+
+// A fixed, non-secret allowlist. Native errors and credential material never
+// enter this record or its target-local response.
+message AuditEntry {
+  string event = 1;
+  string attempt_id = 2;
+  string caller = 3;
+  optional string os_account_id = 4;
+  optional string user = 5;
+  optional string session_selector = 6;
+  optional string result = 7;
+  uint64 at_unix_millis = 8;
+}

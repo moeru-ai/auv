@@ -54,13 +54,21 @@ fn disable_and_remove_apply_to_the_next_bearer_lookup() {
   let store = PairingStore::open(directory.path().join("pairs.json")).unwrap();
   let token = store.issue_token(None).unwrap().expose_once();
   let bearer = store.consume_token(&token, "tablet".to_string(), "Tablet".to_string()).unwrap().expose_credential_once();
+  let caller = store.authenticate_bearer(&bearer).unwrap();
+
+  assert!(store.is_active_caller(&caller));
+  assert!(!format!("{caller:?}").contains(caller.credential_sha256().unwrap()));
 
   assert!(store.set_enabled("tablet", false).unwrap());
+  assert!(!store.is_active_caller(&caller));
   assert!(!store.set_enabled("tablet", false).unwrap());
   assert!(matches!(store.authenticate_bearer(&bearer), Err(PairingError::Unauthenticated)));
   assert!(store.set_enabled("tablet", true).unwrap());
+  assert!(store.is_active_caller(&caller));
   assert!(store.authenticate_bearer(&bearer).is_ok());
   store.remove_pair("tablet").unwrap();
+
+  assert!(!store.is_active_caller(&caller));
   assert!(matches!(store.authenticate_bearer(&bearer), Err(PairingError::Unauthenticated)));
 }
 

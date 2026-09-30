@@ -376,11 +376,14 @@ dependencies = [
  "auv-api-proto",
  "http",
  "hyper-util",
+ "libc",
  "prost-types",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
  "tonic",
  "tower",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -410,12 +413,14 @@ dependencies = [
  "futures-util",
  "http-body",
  "http-body-util",
+ "hyper-util",
  "libc",
  "prost",
  "prost-reflect",
  "prost-types",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-stream",
@@ -426,6 +431,7 @@ dependencies = [
  "tower",
  "tower-http",
  "windows 0.58.0",
+ "zeroize",
 ]
 
 [[package]]

@@ -23,7 +23,7 @@ prost-reflect = "0.16"
 prost-types = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tonic = { version = "0.14", features = ["transport"] }
@@ -34,6 +34,11 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 libc = "0.2"
 thiserror = "2"
+zeroize = "1"
+
+[dev-dependencies]
+hyper-util = { version = "0.1", features = ["tokio"] }
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -47,16 +52,19 @@ windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_System_Pipes",
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_Storage_Xps",
+  "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_System_DataExchange",
   "Win32_System_Memory",
   "Win32_System_RemoteDesktop",
+  "Win32_System_SystemServices",
   "Win32_System_Threading"
 ] }
 

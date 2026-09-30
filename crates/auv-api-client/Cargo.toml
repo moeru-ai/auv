@@ -17,7 +17,20 @@ auv-api-proto = { version = "0.0.22", path = "../auv-api-proto" }
 http = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 prost-types = "0.14"
+sha2 = "0.10"
 tokio = { version = "1", features = ["net", "time"] }
 tonic = { version = "0.14", features = ["transport", "tls-ring"] }
 tower = { version = "0.5", features = ["util"] }
 thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }

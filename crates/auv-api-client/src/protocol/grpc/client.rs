@@ -315,7 +315,9 @@ impl Client {
 }
 
 #[cfg(windows)]
-async fn open_named_pipe(path: String) -> std::io::Result<hyper_util::rt::TokioIo<tokio::net::windows::named_pipe::NamedPipeClient>> {
+pub(crate) async fn open_named_pipe(
+  path: String,
+) -> std::io::Result<hyper_util::rt::TokioIo<tokio::net::windows::named_pipe::NamedPipeClient>> {
   const ERROR_PIPE_BUSY: i32 = 231;
   // NOTICE(named-pipe-busy-retry): Windows exposes no async accept backlog for
   // named pipes. Retry the transient busy state while the server creates its

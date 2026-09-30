@@ -1,0 +1,174 @@
+//! Windows DeviceLocalService pipe opening and connected-server identity.
+//!
+//! This module owns the Win32 handle and token calls. No HTTP/2 bytes reach a
+//! pipe until the kernel-reported server process is verified as LocalSystem.
+
+use std::io;
+use std::mem::{align_of, size_of};
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle};
+
+use tokio::net::windows::named_pipe::NamedPipeClient;
+use windows::Win32::Foundation::{ERROR_PIPE_BUSY, FALSE, HANDLE};
+use windows::Win32::Security::{GetTokenInformation, IsWellKnownSid, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid};
+use windows::Win32::Storage::FileSystem::{
+  CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_MODE, OPEN_EXISTING, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
+};
+use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, GetNamedPipeServerSessionId};
+use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::core::{HRESULT, PCWSTR};
+
+// NOTICE(device-local-pipe-rights): GENERIC_WRITE includes the bit shared by
+// FILE_APPEND_DATA and FILE_CREATE_PIPE_INSTANCE. Request only read/write
+// data plus READ_CONTROL and SYNCHRONIZE, matching the listener's AU DACL.
+// Remove this custom open only if Tokio exposes an exact-access client API.
+// https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights
+const CLIENT_ACCESS: u32 = 0x0012_0003;
+
+pub(super) async fn open_verified(name: &str) -> io::Result<NamedPipeClient> {
+  if !valid_name(name) {
+    return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid Device-local pipe name"));
+  }
+
+  let path = format!(r"\\.\pipe\{name}");
+  let wide = std::ffi::OsStr::new(&path).encode_wide().chain(Some(0)).collect::<Vec<_>>();
+  let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+
+  loop {
+    match open_once(&wide) {
+      Ok(client) => return Ok(client),
+      Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as i32) && tokio::time::Instant::now() < deadline => {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+      }
+      Err(error) => return Err(error),
+    }
+  }
+}
+
+fn open_once(wide: &[u16]) -> io::Result<NamedPipeClient> {
+  // SAFETY: The local pipe path is NUL-terminated and remains live through
+  // CreateFileW. The returned handle is immediately put under sole ownership.
+  let raw = unsafe {
+    CreateFileW(
+      PCWSTR(wide.as_ptr()),
+      CLIENT_ACCESS,
+      FILE_SHARE_MODE(0),
+      None,
+      OPEN_EXISTING,
+      FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+      HANDLE::default(),
+    )
+  }
+  .map_err(|error| {
+    if error.code() == HRESULT::from_win32(ERROR_PIPE_BUSY.0) {
+      io::Error::from_raw_os_error(ERROR_PIPE_BUSY.0 as i32)
+    } else {
+      io::Error::other(error)
+    }
+  })?;
+  // SAFETY: CreateFileW returned one owned handle, transferred here.
+  let handle = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+  verify_server(HANDLE(handle.as_raw_handle()))?;
+  // SAFETY: Tokio takes sole ownership of this overlapped pipe handle.
+  unsafe { NamedPipeClient::from_raw_handle(handle.into_raw_handle()) }
+}
+
+fn valid_name(name: &str) -> bool {
+  name.starts_with("auv-device-local-") && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn verify_server(pipe: HANDLE) -> io::Result<()> {
+  let mut server_pid = 0u32;
+  let mut server_session = u32::MAX;
+  // SAFETY: Both calls write one live u32 for this connected pipe handle.
+  unsafe { GetNamedPipeServerProcessId(pipe, &mut server_pid) }.map_err(|_| identity_error())?;
+  unsafe { GetNamedPipeServerSessionId(pipe, &mut server_session) }.map_err(|_| identity_error())?;
+
+  if server_pid == 0 || server_session != 0 {
+    return Err(identity_error());
+  }
+
+  // SAFETY: The kernel supplied this PID for the connected pipe. The process
+  // handle pins that process while its primary token is inspected.
+  let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, server_pid) }.map_err(|_| identity_error())?;
+  // SAFETY: OpenProcess returned one owned process handle.
+  let process = unsafe { OwnedHandle::from_raw_handle(process.0) };
+  let mut token = HANDLE::default();
+  // SAFETY: The process handle stays live; Windows writes one owned token.
+  unsafe { OpenProcessToken(HANDLE(process.as_raw_handle()), TOKEN_QUERY, &mut token) }.map_err(|_| identity_error())?;
+  // SAFETY: OpenProcessToken returned one owned token handle.
+  let token = unsafe { OwnedHandle::from_raw_handle(token.0) };
+  let mut bytes = 0u32;
+  // SAFETY: A null output buffer requests the required TOKEN_USER size.
+  let _ = unsafe { GetTokenInformation(HANDLE(token.as_raw_handle()), TokenUser, None, 0, &mut bytes) };
+
+  if bytes < size_of::<TOKEN_USER>() as u32 || bytes > 64 * 1024 || align_of::<TOKEN_USER>() > align_of::<usize>() {
+    return Err(identity_error());
+  }
+
+  let mut data = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
+  // SAFETY: The word buffer is aligned and large enough for TOKEN_USER and
+  // its SID; both stay live through IsWellKnownSid.
+  unsafe { GetTokenInformation(HANDLE(token.as_raw_handle()), TokenUser, Some(data.as_mut_ptr().cast()), bytes, &mut bytes) }
+    .map_err(|_| identity_error())?;
+
+  if (bytes as usize) < size_of::<TOKEN_USER>() {
+    return Err(identity_error());
+  }
+
+  // SAFETY: Windows initialized an aligned TOKEN_USER in the buffer.
+  let user = unsafe { data.as_ptr().cast::<TOKEN_USER>().read() };
+
+  if user.User.Sid.0.is_null() || !unsafe { IsWellKnownSid(user.User.Sid, WinLocalSystemSid) }.as_bool() {
+    return Err(identity_error());
+  }
+
+  // A service that exits while checked cannot consume credentials. Re-read
+  // the pipe association before transferring it into the gRPC transport.
+  let mut current_pid = 0u32;
+  unsafe { GetNamedPipeServerProcessId(pipe, &mut current_pid) }.map_err(|_| identity_error())?;
+
+  if current_pid != server_pid {
+    return Err(identity_error());
+  }
+
+  Ok(())
+}
+
+fn identity_error() -> io::Error {
+  io::Error::new(io::ErrorKind::PermissionDenied, "Device-local pipe server must be LocalSystem in Session 0")
+}
+
+#[cfg(test)]
+mod tests {
+  use tokio::net::windows::named_pipe::ServerOptions;
+
+  use super::*;
+
+  #[test]
+  fn client_rights_exclude_pipe_instance_creation() {
+    assert_eq!(CLIENT_ACCESS & 0x0000_0003, 0x0000_0003);
+    assert_eq!(CLIENT_ACCESS & 0x0000_0004, 0);
+    assert_eq!(CLIENT_ACCESS & 0x0012_0000, 0x0012_0000);
+  }
+
+  #[test]
+  fn only_local_device_pipe_names_are_accepted() {
+    assert!(valid_name("auv-device-local-0123"));
+    assert!(!valid_name(r"\\host\pipe\auv-device-local-0123"));
+    assert!(!valid_name("other-pipe"));
+    assert!(!valid_name("auv-device-local-a\\b"));
+  }
+
+  #[tokio::test]
+  async fn rejects_same_user_server_before_exposing_a_channel() {
+    let name = format!("auv-device-local-test-{}", std::process::id());
+    let path = format!(r"\\.\pipe\{name}");
+    let server = ServerOptions::new().first_pipe_instance(true).reject_remote_clients(true).create(&path).unwrap();
+    let error = open_verified(&name).await.unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+
+    drop(server);
+  }
+}

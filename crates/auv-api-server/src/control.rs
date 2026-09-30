@@ -1,23 +1,78 @@
 //! Protocol-facing port implemented by the daemon server SDK.
 
+use std::hash::{Hash, Hasher};
+
 use tonic::transport::Channel;
 
 /// Authenticated caller identity supplied to daemon control operations.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CallerId(String);
+#[derive(Clone)]
+pub struct CallerId {
+  identity: String,
+  // This digest is authentication context only. Run ownership and audit use
+  // the stable identity, and Debug must never print credential-derived data.
+  credential_sha256: Option<String>,
+}
+
+impl std::fmt::Debug for CallerId {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter.debug_tuple("CallerId").field(&self.identity).finish()
+  }
+}
+
+impl PartialEq for CallerId {
+  fn eq(&self, other: &Self) -> bool {
+    self.identity == other.identity
+  }
+}
+
+impl Eq for CallerId {}
+
+impl Hash for CallerId {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.identity.hash(state);
+  }
+}
 
 impl CallerId {
   /// Returns the trusted local owner identity.
   pub fn local_owner() -> Self {
-    Self("local-owner".to_string())
+    Self {
+      identity: "local-owner".to_string(),
+      credential_sha256: None,
+    }
   }
-  /// Returns an identity for one authenticated paired Device.
+
+  /// Returns a stable paired Device identity without bearer proof. Device
+  /// entry requires the credential-bearing constructor below.
   pub fn paired_device(pair_id: &str) -> Self {
-    Self(format!("paired-device:{pair_id}"))
+    Self {
+      identity: format!("paired-device:{pair_id}"),
+      credential_sha256: None,
+    }
+  }
+
+  /// Carries an authenticated bearer's opaque digest to later policy checks.
+  /// The stable paired Device ID remains the Run and audit identity.
+  /// Call only after the pairing store has authenticated the bearer.
+  pub fn authenticated_paired_device(pair_id: &str, credential_sha256: String) -> Self {
+    Self {
+      identity: format!("paired-device:{pair_id}"),
+      credential_sha256: Some(credential_sha256),
+    }
+  }
+
+  /// Returns the stable paired Device ID, if this caller used pairing.
+  pub fn paired_device_id(&self) -> Option<&str> {
+    self.identity.strip_prefix("paired-device:")
+  }
+
+  /// Returns only the private authentication proof for live reauthorization.
+  pub fn credential_sha256(&self) -> Option<&str> {
+    self.credential_sha256.as_deref()
   }
   /// Returns the stable identity text.
   pub fn as_str(&self) -> &str {
-    &self.0
+    &self.identity
   }
 }
 
@@ -114,6 +169,8 @@ pub struct Enrollment {
 pub trait Pairing: Send + Sync {
   /// Authenticates one bearer credential.
   fn authenticate_bearer(&self, credential: &str) -> Result<CallerId, PairingError>;
+  /// Rechecks live authority for a paired Device after an operation has queued.
+  fn is_active_caller(&self, caller: &CallerId) -> bool;
   /// Issues a one-time enrollment token.
   fn issue_token(&self, lifetime: Option<std::time::Duration>) -> Result<PairingToken, PairingError>;
   /// Consumes a token and enrolls one paired Device.
@@ -126,6 +183,22 @@ pub trait Pairing: Send + Sync {
   fn unpair(&self, selector: &str) -> Result<bool, PairingError>;
 }
 
+#[cfg(test)]
+mod caller_tests {
+  use super::CallerId;
+
+  #[test]
+  fn bearer_proof_is_redacted_and_does_not_change_stable_caller_identity() {
+    let digest = "private-digest".to_string();
+    let authenticated = CallerId::authenticated_paired_device("tablet", digest.clone());
+    let stable = CallerId::paired_device("tablet");
+
+    assert_eq!(authenticated, stable);
+    assert_eq!(authenticated.as_str(), "paired-device:tablet");
+    assert!(!format!("{authenticated:?}").contains(&digest));
+  }
+}
+
 /// Typed daemon control port consumed by gRPC and REST protocol adapters.
 #[tonic::async_trait]
 pub trait Control: Send + Sync {
@@ -133,6 +206,20 @@ pub trait Control: Send + Sync {
   fn list_devices(&self) -> Result<Vec<auv::devices::Device>, ControlError>;
   /// Gets a Device by canonical identity.
   fn get_device(&self, device_id: &str) -> Result<Option<auv::devices::Device>, ControlError>;
+  /// Lists current OS login instances after target-local entry policy checks.
+  fn list_user_sessions(&self, caller: &CallerId) -> Result<Vec<auv::devices::UserSession>, auv::devices::DeviceEntryErrorReason>;
+  /// Resolves one current OS login instance by its opaque selector.
+  fn get_user_session(
+    &self,
+    caller: &CallerId,
+    session_selector: &str,
+  ) -> Result<auv::devices::UserSession, auv::devices::DeviceEntryErrorReason>;
+  /// Requests entry for a selected OS account or login instance.
+  async fn ensure_user_session_unlocked(
+    &self,
+    caller: &CallerId,
+    target: auv::devices::UserSessionTarget,
+  ) -> Result<auv::devices::EnsureUserSessionUnlockedEffect, auv::devices::DeviceEntryErrorReason>;
   /// Creates a Run owned by the caller.
   fn create_run(&self, caller: &CallerId, request: auv::runs::CreateRun) -> Result<auv::runs::Run, ControlError>;
   /// Stops a caller-owned Run.

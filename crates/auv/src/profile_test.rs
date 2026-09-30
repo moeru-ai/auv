@@ -103,6 +103,52 @@ fn profile_crud_is_atomic_and_stores_the_opaque_bearer_inline() {
   assert!(matches!(store.get_device("studio"), Err(ProfileError::UnknownConfigProfile(_))));
 }
 
+// ROOT CAUSE:
+//
+// With a permissive process umask, the atomic temporary file inherited
+// default permissions, so the published profile exposed its bearer to other
+// local users when its parent directory was traversable.
+//
+// Before the fix, a created or updated profile could be mode 0644. The fix
+// publishes the bearer only in a file that is private to its owner.
+#[cfg(unix)]
+#[test]
+fn newly_written_profile_keeps_bearer_private() {
+  use std::os::unix::fs::PermissionsExt as _;
+
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  let store = ProfileStore::from_path(&path);
+  store
+    .create(
+      "studio",
+      DeviceProfileInput {
+        device_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        device_name: "Studio".into(),
+        endpoint: "http://localhost:9847".into(),
+        device_credential: "bearer-secret".into(),
+      },
+    )
+    .unwrap();
+
+  assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+
+  std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+  store
+    .update(
+      "studio",
+      DeviceProfileInput {
+        device_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        device_name: "Studio 2".into(),
+        endpoint: "http://localhost:9848".into(),
+        device_credential: "new-bearer-secret".into(),
+      },
+    )
+    .unwrap();
+
+  assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+}
+
 #[test]
 fn damaged_profile_store_is_not_rewritten() {
   let directory = tempfile::tempdir().unwrap();

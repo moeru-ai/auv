@@ -8,6 +8,7 @@
 
 mod authentication;
 pub mod control;
+pub mod device_local;
 mod middleware;
 mod protocol;
 pub mod reflection;
