@@ -291,7 +291,7 @@ Since Vercel published the [`agent-browser`](https://github.com/vercel/agent-bro
 Platform support comes from the **Native desktop drivers** row. Other rows name
 a platform only when their support is different.
 
-| Capability | AUV | [Cua](https://github.com/trycua/cua) | `@oai/sky` (bundled)[^sky] | [OpenBridge](https://github.com/AFK-surf/OpenBridge) ([KWWK](https://github.com/EYHN/kwwk-computer-use-core) core) | Playwright |
+| Capability | AUV | [Cua](https://github.com/trycua/cua) | `@oai/sky`[^sky]<br>bundled | [OpenBridge](https://github.com/AFK-surf/OpenBridge) ([KWWK](https://github.com/EYHN/kwwk-computer-use-core) core) | Playwright |
 | --- | --- | --- | --- | --- | --- |
 | Agent model | 💡 BYOA | 💡 BYOA | 💡 agent-free API | 💡 OpenBridge built-in agent<br>KWWK is agent-free | 💡 BYOA + built-in Test Agents |
 | Language-agnostic API | ✅ Protobuf/gRPC | ✅ HTTP/WebSocket | ❌ | ❌ | ❌ |
