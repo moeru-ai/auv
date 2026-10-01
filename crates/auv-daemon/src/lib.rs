@@ -2,6 +2,11 @@
 //! serving, and shutdown lifecycle.
 
 mod daemon;
+// TODO(device-session-windows-stack): Windows compilation remains deferred to
+// the Windows adapter PR because the shared stores require its protected
+// LocalSystem persistence and session-host capability.
+#[cfg(unix)]
+mod devices;
 mod discovery;
 mod pairing;
 mod resource_id;
