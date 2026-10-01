@@ -20,6 +20,7 @@ interface CargoDependencyTables {
 interface CargoManifest extends CargoDependencyTables {
   package?: {
     publish?: boolean | string[] | { workspace: boolean }
+    version?: string
   }
   target?: Record<string, CargoDependencyTables>
 }
@@ -89,6 +90,18 @@ async function syncCargoToml() {
       memberUpdates.push({ path: memberPath, source: patch(memberSource, memberToml) })
     }
   }
+
+  // The N-API crate is an independent, unpublished Cargo workspace, so the
+  // member loop above cannot discover it. Its compiled version must still
+  // match the npm package version checked by the JavaScript entrypoint.
+  const nativeManifestPath = join(cwd(), 'js/packages/cli/Cargo.toml')
+  const nativeManifestSource = await readFile(nativeManifestPath, 'utf8')
+  const nativeManifest = parse(nativeManifestSource) as CargoManifest
+  if (nativeManifest.package?.version !== oldVersion) {
+    throw new Error(`js/packages/cli/Cargo.toml must use the current workspace version ${oldVersion}`)
+  }
+  nativeManifest.package.version = newVersion
+  memberUpdates.push({ path: nativeManifestPath, source: patch(nativeManifestSource, nativeManifest) })
 
   cargoToml.workspace.package.version = newVersion
   console.info(`Bumping Cargo.toml and ${memberUpdates.length} member manifests to ${newVersion}`)

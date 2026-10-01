@@ -8,6 +8,7 @@ export default defineConfig({
   entry: {
     binary: 'src-js/binary.ts',
     index: 'src-js/index.ts',
+    setup: 'src-js/setup.ts',
   },
   fixedExtension: false,
   format: 'esm',

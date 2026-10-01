@@ -25,6 +25,10 @@
       "types": "./dist/binary.d.ts",
       "import": "./dist/binary.js"
     },
+    "./setup": {
+      "types": "./dist/setup.d.ts",
+      "import": "./dist/setup.js"
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.js",
@@ -54,12 +58,15 @@
   },
   "scripts": {
     "artifacts": "napi artifacts && tsx ./scripts/stage-platform-packages.ts ./artifacts",
-    "build": "pnpm run build:js && napi build --platform --release --esm --js binding.js --dts binding.d.ts",
-    "build:debug": "pnpm run build:js && napi build --platform --esm --js binding.js --dts binding.d.ts",
+    "build": "pnpm run build:js && napi build --platform --release --esm --js binding.js --dts binding.d.ts -- --locked",
+    "build:debug": "pnpm run build:js && napi build --platform --esm --js binding.js --dts binding.d.ts -- --locked",
     "build:js": "tsdown",
     "create:npm-dirs": "napi create-npm-dirs",
     "prepublishOnly": "pnpm run build:js && napi prepublish -t npm --no-gh-release",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "std-env": "catalog:"
   },
   "optionalDependencies": {
     "@auv-js/cli-darwin-arm64": "workspace:*",

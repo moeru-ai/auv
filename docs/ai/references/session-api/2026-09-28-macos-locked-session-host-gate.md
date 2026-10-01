@@ -1,5 +1,15 @@
 # macOS locked-session Device host: package and live gate
 
+> NOTICE (2026-10-01): The evidence in this note belongs to the former
+> `dev.moeru.auv.device-entry-host` / `AUV Device Entry Host.app` identity.
+> Current packaging uses `ai.moeru.auv.helper` / `AUV Helper.app`, the
+> `ai.moeru.auv.device-entry.v1` Keychain service, a per-user Application
+> Support path, and `SMAppService.agent` registration.
+> Treat the historical gate below as mechanism evidence only. The renamed
+> signed app completed its own configuration-specific installed-host gate on
+> 2026-10-02; see
+> [`2026-10-01-macos-helper-setup.md`](2026-10-01-macos-helper-setup.md).
+
 Status: configuration-specific installed-host and local Unix DeviceService
 proof on macOS 26.3, recorded on 2026-09-29. Two supervised black-display
 DeviceService unlocks passed with same-session OS readback and owner-visible
@@ -182,14 +192,16 @@ and path check found no gate process or installed artifact.
 `auv-driver-macos::device_session_unlock::submit`. `package/package.sh` builds
 an app bundle with identifier `dev.moeru.auv.device-entry-host` and requires
 `AUV_MACOS_SIGN_IDENTITY` to name the reviewed Developer ID Application
-certificate. The first package pins Team ID `433DLLA855` in code and both
+certificate. The first package pinned Team ID `433DLLA855` in code and its
 packaging scripts; another team requires an explicit code review.
-It refuses ad-hoc signing. `package/install.sh` verifies the signature and
-identifier and installs the app root-owned at
+It refused ad-hoc signing. The former `package/install.sh` verified the
+signature and identifier and installed the app root-owned at
 `/Library/Application Support/AUV/AUV Device Entry Host.app`, plus the
 root-owned `/Library/LaunchAgents/dev.moeru.auv.device-entry-host.plist` and
 `/Library/Application Support/AUV/device-entry-host.team-id`. The installer
-verifies that the signed package matches the reviewed Team ID.
+verified that the signed package matched the reviewed Team ID. That legacy
+installer was removed with the 2026-10-01 per-user `SMAppService` setup; this
+section records only the historical gate environment.
 The LaunchAgent runs only in an already logged-in user's Aqua context. The
 installed app identity must receive Accessibility and Post Event permission.
 
@@ -236,7 +248,8 @@ enrollment bytes to this protocol.
    certificate identity, and Team ID. Build the app on the target with
    `AUV_MACOS_SIGN_IDENTITY='Developer ID Application: MOERU AI LTD (433DLLA855)' package/package.sh <empty-output-dir>`.
    Verify the app's code signature, designated requirement, and bundle ID.
-2. With `neko` already logged in, install the reviewed package through
+2. In the historical gate, with `neko` already logged in, the reviewed package
+   was installed through
    `sudo package/install.sh '<app-path>'`. Load the Aqua job in the current
    graphical login domain, or log out and back in, then confirm the running
    helper has the installed path/signature, UID `neko`, private socket mode,

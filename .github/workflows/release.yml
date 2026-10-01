@@ -99,19 +99,50 @@ jobs:
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build NAPI binding
-        working-directory: js/packages/cli
-        run: pnpm build --target ${{ matrix.target }}
-
-      - name: Build release binary
-        run: cargo build --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
-
-      - name: Import macOS signing certificate
+      - name: Import macOS signing certificates
         if: runner.os == 'macOS'
         uses: apple-actions/import-codesign-certs@v7
         with:
           p12-file-base64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+
+      - name: Build and notarize embedded macOS helper app
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          application_identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | head -n 1)"
+          test -n "$application_identity"
+          output="target/embedded-helper-${{ matrix.target }}"
+          notarization_archive="target/AUV-Helper-notarization-${{ matrix.target }}.zip"
+          embedded_archive="target/AUV-Helper-${{ matrix.target }}.zip"
+          AUV_MACOS_TARGET='${{ matrix.target }}' \
+            AUV_MACOS_SIGN_IDENTITY="$application_identity" \
+            crates/auv-device-helper-macos/package/package.sh "$output"
+          ditto -c -k --keepParent "$output/AUV Helper.app" "$notarization_archive"
+          xcrun notarytool submit "$notarization_archive" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$output/AUV Helper.app"
+          spctl --assess --type execute --verbose=2 "$output/AUV Helper.app"
+          ditto -c -k --keepParent "$output/AUV Helper.app" "$embedded_archive"
+          echo "AUV_MACOS_HELPER_APP_ARCHIVE_PATH=$PWD/$embedded_archive" >> "$GITHUB_ENV"
+
+      - name: Build NAPI binding
+        working-directory: js/packages/cli
+        run: |
+          pnpm build:js
+          pnpm exec napi build --platform --release --esm --js binding.js --dts binding.d.ts \
+            --target '${{ matrix.target }}' -- --locked
+
+      - name: Build release binary
+        run: cargo build --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
 
       - name: Sign macOS executable
         if: runner.os == 'macOS'

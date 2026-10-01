@@ -19,6 +19,44 @@ import { startAuv } from '@auv-js/sdk/node'
 const daemon = await startAuv({ binaryPath: binaryPath() })
 ```
 
+On macOS, the native binding exposes the same helper setup module as the CLI:
+
+```ts
+import {
+  installMacosHelper,
+  macosHelperStatus,
+  openMacosHelperAccessibilitySettings,
+  openMacosHelperBackgroundItemsSettings,
+  uninstallMacosHelper,
+} from '@auv-js/cli'
+
+const before = await macosHelperStatus()
+const installed = await installMacosHelper()
+
+if (installed.state === 'requires-approval') {
+  openMacosHelperBackgroundItemsSettings()
+}
+else if (installed.state === 'running') {
+  openMacosHelperAccessibilitySettings()
+}
+
+// Removes only the helper app and its Accessibility decision. Enrollment is
+// retained so a later reinstall does not require credential entry again.
+await uninstallMacosHelper()
+```
+
+`installMacosHelper()` validates and installs the embedded app under the
+current user's AUV Application Support directory, then registers its embedded
+LaunchAgent through `SMAppService`. It needs neither `sudo` nor an
+administrator password. Development bindings report `helperEmbedded=false`;
+official macOS release bindings carry the same signed and notarized helper app
+as the CLI.
+
+`uninstallMacosHelper()` waits for ServiceManagement to stop any in-flight
+helper process, resets the helper bundle's Accessibility decision, and removes
+only the installed app. It preserves enrollment and all other AUV Application
+Support content.
+
 ## Electron packaging
 
 Do not execute the binary from inside `app.asar`. During packaging, copy the

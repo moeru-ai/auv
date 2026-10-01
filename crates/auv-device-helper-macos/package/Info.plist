@@ -4,12 +4,17 @@
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleExecutable</key><string>auv-device-helper-macos</string>
-  <key>CFBundleIdentifier</key><string>dev.moeru.auv.device-entry-host</string>
+  <key>CFBundleIdentifier</key><string>ai.moeru.auv.helper</string>
+  <key>CFBundleDisplayName</key><string>AUV Helper</string>
+  <key>CFBundleIconFile</key><string>AUV Helper</string>
+  <key>CFBundleIconName</key><string>AUV Helper</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>AUV Device Entry Host</string>
+  <key>CFBundleName</key><string>AUV Helper</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.0.20</string>
+  <!-- package.sh replaces this placeholder from the Cargo package version. -->
+  <key>CFBundleShortVersionString</key><string>0.0.0</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict>
 </plist>

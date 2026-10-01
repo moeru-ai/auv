@@ -11,5 +11,6 @@ if (bindingVersion !== packageVersion) {
   console.warn(`The AUV native binding version (${bindingVersion}) does not match @auv-js/cli (${packageVersion}). This may cause unexpected behavior.`)
 }
 
-export * from '../binding.js'
+export { nativePackageVersion } from '../binding.js'
 export * from './binary.js'
+export * from './setup.js'

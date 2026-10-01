@@ -10,5 +10,6 @@ pub mod plugin;
 pub mod run;
 pub mod runner;
 pub mod serve;
+pub mod setup;
 #[cfg(windows)]
 pub mod windows_service;

@@ -13,19 +13,49 @@ team_id='433DLLA855'
 
 package_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$package_dir/../../.." && pwd)
-output_dir=${1:-"$repo_root/target/device-entry-macos"}
-app="$output_dir/AUV Device Entry Host.app"
+package_id=$(cargo pkgid --manifest-path "$repo_root/Cargo.toml" -p auv-device-helper-macos)
+package_version=${package_id##*#}
+if [ -z "$package_version" ] || [ "$package_version" = "$package_id" ]; then
+  echo 'could not resolve the auv-device-helper-macos package version' >&2
+  exit 1
+fi
+output_dir=${1:-"$repo_root/target/auv-helper-macos"}
+app="$output_dir/AUV Helper.app"
 if [ -e "$app" ]; then
   echo 'output app already exists; choose a new output directory' >&2
   exit 1
 fi
+icon_source="$package_dir/AUV Helper.icon"
+icon_output=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/auv-helper-icon.XXXXXX")
+trap '/bin/rm -rf "$icon_output"' EXIT
+icon_compiled="$icon_output/compiled"
+mkdir -p "$icon_compiled"
 
-cargo build --release --locked -p auv-device-helper-macos --manifest-path "$repo_root/Cargo.toml"
-mkdir -p "$app/Contents/MacOS"
-cp "$repo_root/target/release/auv-device-helper-macos" "$app/Contents/MacOS/auv-device-helper-macos"
+/usr/bin/xcrun actool "$icon_source" \
+  --compile "$icon_compiled" \
+  --platform macosx \
+  --minimum-deployment-target 13.0 \
+  --app-icon 'AUV Helper' \
+  --output-partial-info-plist "$icon_output/partial.plist" \
+  --output-format human-readable-text
+
+if [ -n "${AUV_MACOS_TARGET:-}" ]; then
+  MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --locked -p auv-device-helper-macos --features host --manifest-path "$repo_root/Cargo.toml" --target "$AUV_MACOS_TARGET"
+  helper_binary="$repo_root/target/$AUV_MACOS_TARGET/release/auv-device-helper-macos"
+else
+  MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --locked -p auv-device-helper-macos --features host --manifest-path "$repo_root/Cargo.toml"
+  helper_binary="$repo_root/target/release/auv-device-helper-macos"
+fi
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchAgents"
+cp "$helper_binary" "$app/Contents/MacOS/auv-device-helper-macos"
 cp "$package_dir/Info.plist" "$app/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleShortVersionString -string "$package_version" "$app/Contents/Info.plist"
+cp "$package_dir/ai.moeru.auv.helper.plist" "$app/Contents/Library/LaunchAgents/ai.moeru.auv.helper.plist"
+cp "$icon_compiled/AUV Helper.icns" "$app/Contents/Resources/AUV Helper.icns"
+cp "$icon_compiled/Assets.car" "$app/Contents/Resources/Assets.car"
 /usr/bin/plutil -lint "$app/Contents/Info.plist"
-/usr/bin/codesign --force --sign "$AUV_MACOS_SIGN_IDENTITY" "$app"
+/usr/bin/plutil -lint "$app/Contents/Library/LaunchAgents/ai.moeru.auv.helper.plist"
+/usr/bin/codesign --force --timestamp --options runtime --sign "$AUV_MACOS_SIGN_IDENTITY" "$app"
 /usr/bin/codesign --verify --strict --verbose=2 \
-  --test-requirement="=identifier \"dev.moeru.auv.device-entry-host\" and anchor apple generic and certificate leaf[subject.OU] = \"$team_id\"" "$app"
-echo "Signed helper package: $app"
+  --test-requirement="=identifier \"ai.moeru.auv.helper\" and anchor apple generic and certificate leaf[subject.OU] = \"$team_id\"" "$app"
+echo "Signed helper app: $app"

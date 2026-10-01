@@ -14,6 +14,7 @@ use crate::commands::plugin::PluginArgs;
 use crate::commands::run::RunArgs;
 use crate::commands::runner::RunnerArgs;
 use crate::commands::serve::ServeArgs;
+use crate::commands::setup::SetupArgs;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -59,6 +60,8 @@ enum RootCommand {
   ApiServer(ApiServerArgs),
   /// Run the AUV daemon in the foreground.
   Serve(ServeArgs),
+  /// Manage host-level support required by AUV.
+  Setup(SetupArgs),
   /// Issue a short-lived pairing token from the protected Windows service store.
   #[cfg(windows)]
   #[command(hide = true)]
@@ -137,6 +140,13 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     Some(RootCommand::Invoke(args)) => crate::commands::invoke::run(args, &selection, &project_root).await,
     Some(RootCommand::ApiServer(args)) => crate::commands::api_server::run(args, &project_root).await,
     Some(RootCommand::Serve(args)) => crate::commands::serve::run(args, &project_root).await,
+    Some(RootCommand::Setup(args)) => {
+      if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
+        return Err("setup cannot use --device, --device-id, or --run".to_string());
+      }
+
+      crate::commands::setup::run(args)
+    }
     #[cfg(windows)]
     Some(RootCommand::WindowsBootstrapPairingToken) => {
       if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
@@ -298,5 +308,17 @@ mod tests {
         command: crate::commands::device_local::PolicyCommand::Set { enabled: false }
       }
     ));
+  }
+
+  #[test]
+  fn setup_parses_macos_helper_install() {
+    let parsed = RootArgs::try_parse_from(["auv", "setup", "macos-helper", "install", "--json"]).unwrap();
+    assert!(matches!(parsed.command, Some(RootCommand::Setup(_))));
+  }
+
+  #[test]
+  fn setup_parses_macos_helper_uninstall() {
+    let parsed = RootArgs::try_parse_from(["auv", "setup", "macos-helper", "uninstall", "--json"]).unwrap();
+    assert!(matches!(parsed.command, Some(RootCommand::Setup(_))));
   }
 }

@@ -8,7 +8,10 @@ use zeroize::Zeroizing;
 
 use crate::HostError;
 
-const SERVICE: &str = "dev.auv.device-entry.v1";
+// NOTICE(device-entry-helper-identity-v1): The 2026-10-01 helper identity
+// migration intentionally requires fresh enrollment; the experimental host
+// has no released credential namespace that needs read compatibility.
+const SERVICE: &str = "ai.moeru.auv.device-entry.v1";
 
 fn keychain(home: &Path) -> Result<SecKeychain, HostError> {
   // NOTICE: The first release targets a logged-in, then locked session. The

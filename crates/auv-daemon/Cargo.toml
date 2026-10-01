@@ -43,7 +43,7 @@ zbus = "5.15"
 zeroize = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-device-helper-macos = { version = "0.0.22", path = "../auv-device-helper-macos" }
+auv-device-helper-macos = { version = "0.0.22", path = "../auv-device-helper-macos", default-features = false, features = ["transport"] }
 auv-driver-macos = { version = "0.0.22", path = "../auv-driver-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]

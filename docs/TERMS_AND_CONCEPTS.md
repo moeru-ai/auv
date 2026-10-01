@@ -382,7 +382,10 @@ paired remote callers. A session's lock state may be locked, usable, or unknown;
 The typed Device API returns an explicit unsupported-host result where no
 validated native host is configured. Installed locked-session gates passed on
 one macOS, one GNOME, and one Windows configuration; these do not establish
-general release support. See the
+general release support. The current `ai.moeru.auv.helper` identity passed a
+configuration-specific signed and notarized installed gate on 2026-10-02,
+including open-lid lock/unlock and two closed-lid unlocks of an existing
+session. See the
 [revised implementation design](ai/references/session-api/2026-09-28-remote-device-entry-implementation-design.md)
 and [unlock authority decision](ai/references/session-api/2026-09-27-device-unlock-authority-decision.md).
 
@@ -401,6 +404,19 @@ configuration-specific installed-path gate evidence; release installation and
 other host configurations remain open.
 The credential never travels in the remote unlock request. See the
 [credential decision](ai/references/session-api/2026-09-27-device-entry-credential-decision.md).
+
+On macOS, **Helper setup** is the target-local lifecycle for the signed Aqua
+helper used by locked-existing-session operations. The Rust setup module owns
+installed identity validation, per-user app placement, `SMAppService.agent`
+registration, and readiness inspection. `auv setup macos-helper` and the
+`@auv-js/cli` native binding are adapters over that same module. Official macOS
+release artifacts embed the signed and notarized app; source builds
+intentionally do not synthesize or ad-hoc sign one. Background Item approval
+and TCC Accessibility authorization for the installed helper are separate user
+decisions; setup requires neither `sudo` nor an administrator credential.
+Uninstall terminates and unregisters the helper, resets only its Accessibility
+decision, and removes only its app bundle; target-local enrollment and the
+remaining AUV Application Support state are retained.
 The target retains a local audit record of each remote entry request with
 the authenticated paired Device ID, selected OS user or login session,
 request time, and typed outcome. Credentials, secret-bearing key events,

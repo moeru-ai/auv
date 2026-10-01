@@ -12,15 +12,46 @@ documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+default = ["host"]
+identity = ["dep:core-foundation", "dep:nix", "dep:security-framework"]
+transport = ["identity", "dep:auv-driver-macos"]
+host = [
+  "transport",
+  "dep:block2",
+  "dep:objc2",
+  "dep:objc2-foundation",
+  "dep:objc2-service-management",
+  "dep:rustix",
+  "dep:security-framework-sys",
+  "dep:serde_json",
+  "dep:tokio",
+  "dep:zeroize",
+]
+setup = ["identity", "dep:tempfile"]
+
+[[bin]]
+name = "auv-device-helper-macos"
+path = "src/main.rs"
+required-features = ["host"]
+
 [dependencies]
-serde_json = "1"
-zeroize = "1"
+block2 = { version = "0.6", optional = true }
+serde_json = { version = "1", optional = true }
+zeroize = { version = "1", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-driver-macos = { version = "0.0.22", path = "../auv-driver-macos" }
-core-foundation = "0.10"
-nix = { version = "0.31", features = ["socket"] }
-rustix = { version = "1", features = ["process"] }
-security-framework = "3.7"
-security-framework-sys = "2.17"
-tokio = { version = "1", features = ["macros", "net", "rt", "io-util", "time"] }
+auv-driver-macos = { version = "0.0.22", path = "../auv-driver-macos", optional = true }
+core-foundation = { version = "0.10", optional = true }
+nix = { version = "0.31", features = ["socket", "user"], optional = true }
+objc2 = { version = "0.6", features = ["std"], optional = true }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSError", "NSString", "alloc"], optional = true }
+objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "block2", "objc2", "objc2-foundation"], optional = true }
+rustix = { version = "1", features = ["process"], optional = true }
+security-framework = { version = "3.7", optional = true }
+security-framework-sys = { version = "2.17", optional = true }
+tempfile = { version = "3", optional = true }
+tokio = { version = "1", features = ["macros", "net", "rt", "io-util", "time"], optional = true }
