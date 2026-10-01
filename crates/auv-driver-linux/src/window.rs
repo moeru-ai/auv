@@ -14,6 +14,8 @@ use auv_driver_common::error::DriverResult;
 use auv_driver_common::geometry::Rect;
 use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver_common::window::Window;
+#[cfg(any(target_os = "linux", test))]
+use auv_driver_common::window::WindowRef;
 
 #[cfg(target_os = "linux")]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
@@ -37,8 +39,16 @@ pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Wind
   // picker-driven and does not expose a stable mapping to an AT-SPI WindowRef.
   // Re-enable it only when the selected portal source can be proven to identify
   // this exact window; geometry similarity alone is insufficient for input.
-  validate_display_crop_fallback(window, "portal WINDOW source is not identity-bound to the requested AT-SPI WindowRef")?;
+  let windows = list_windows()?;
+  let window = resolve_capture_target(&windows, &window.reference, None)?;
   let display = capture_display(state, None)?;
+  // Portal consent can outlive the target or its geometry. Recheck the exact
+  // reference before assigning window coordinates to the captured pixels.
+  let windows_after = list_windows()?;
+  let window = resolve_capture_target(&windows_after, &window.reference, Some(window.frame))?;
+  // TODO(linux-window-frame-time-binding): before/after snapshots cannot detect
+  // motion that returns to the same frame or occlusion. Defer atomic binding
+  // until an owner-approved identity-bound capture source is available.
   let crop = crop_capture_to_window(&display.capture, window.frame)?;
   Ok(Capture {
     origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
@@ -164,9 +174,17 @@ fn display_crop_reason(display_fallback_reason: Option<String>) -> String {
   }
 }
 
-#[cfg(target_os = "linux")]
-fn validate_display_crop_fallback(window: &Window, window_source_error: &str) -> DriverResult<()> {
-  let windows = list_windows()?;
+#[cfg(any(target_os = "linux", test))]
+fn resolve_capture_target<'a>(windows: &'a [Window], reference: &WindowRef, expected_frame: Option<Rect>) -> DriverResult<&'a Window> {
+  let window = windows
+    .iter()
+    .find(|window| window.reference == *reference && window.is_visible)
+    .ok_or_else(|| not_found(format!("visible AT-SPI window {}", reference.id)))?;
+  if let Some(expected_frame) = expected_frame
+    && window.frame != expected_frame
+  {
+    return Err(invalid_input(format!("AT-SPI window {} changed frame during display capture; retry capture", reference.id)));
+  }
   if let Some(other) = windows.iter().find(|other| {
     other.reference.id != window.reference.id
       && other.is_visible
@@ -174,14 +192,14 @@ fn validate_display_crop_fallback(window: &Window, window_source_error: &str) ->
       && same_point(other.frame.origin.y, window.frame.origin.y)
   }) {
     return Err(invalid_input(format!(
-      "xdg-desktop-portal.screencast WINDOW source failed ({window_source_error}); display crop fallback is unsafe because target window {:?} shares AT-SPI origin {:?} with visible window {:?}",
+      "display crop fallback is unsafe because target window {:?} shares AT-SPI origin {:?} with visible window {:?}",
       window.title, window.frame.origin, other.title
     )));
   }
-  Ok(())
+  Ok(window)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn same_point(left: f64, right: f64) -> bool {
   (left - right).abs() <= 0.5
 }
