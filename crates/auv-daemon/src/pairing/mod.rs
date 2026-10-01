@@ -129,6 +129,15 @@ impl PairingStore {
     })
   }
 
+  /// Open the fixed, LocalSystem-owned ProgramData store for the installed
+  /// Windows Device service. This path never falls back to foreground storage.
+  #[cfg(windows)]
+  pub fn open_system(path: PathBuf) -> Result<Self, PairingError> {
+    Ok(Self {
+      inner: Arc::new(FileStore::open_system(path)?),
+    })
+  }
+
   pub fn list(&self) -> Vec<PairingRecord> {
     self.inner.devices()
   }

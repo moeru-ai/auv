@@ -46,6 +46,22 @@ zeroize = "1"
 auv-device-helper-macos = { version = "0.0.22", path = "../auv-device-helper-macos" }
 auv-driver-macos = { version = "0.0.22", path = "../auv-driver-macos" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+auv-driver-windows = { version = "0.0.22", path = "../auv-driver-windows" }
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Memory",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+] }
+zeroize = "1"
+
 [dev-dependencies]
 futures-util = "0.3"
 prost = "0.14"

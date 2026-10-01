@@ -10,6 +10,8 @@ mod background_input;
 pub mod capture;
 pub mod clipboard;
 mod descriptor;
+pub mod device_session;
+pub mod device_unlock_host;
 mod driver;
 mod error;
 pub mod input;

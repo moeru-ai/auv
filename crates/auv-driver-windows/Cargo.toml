@@ -21,6 +21,7 @@ auv-driver-common = { version = "0.0.22", path = "../auv-driver-common" }
 auv-driver-overlay = { version = "0.0.22", path = "../auv-driver-overlay", features = ["windows"], optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
 thiserror = "2"
+zeroize = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
@@ -34,16 +35,21 @@ windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_Storage_Xps",
+  "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_System_DataExchange",
+  "Win32_System_IO",
   "Win32_System_Memory",
+  "Win32_System_Pipes",
   "Win32_System_RemoteDesktop",
+  "Win32_System_StationsAndDesktops",
   "Win32_System_SystemServices",
   "Win32_System_Threading"
 ] }

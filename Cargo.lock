@@ -625,6 +625,7 @@ dependencies = [
  "auv-device-helper-macos",
  "auv-driver-linux",
  "auv-driver-macos",
+ "auv-driver-windows",
  "fs2",
  "futures-util",
  "getrandom 0.3.4",
@@ -651,6 +652,7 @@ dependencies = [
  "tonic-reflection",
  "tower",
  "uuid",
+ "windows 0.58.0",
  "zbus",
  "zeroize",
 ]
@@ -780,6 +782,7 @@ dependencies = [
  "thiserror 2.0.20",
  "windows 0.58.0",
  "xcap",
+ "zeroize",
 ]
 
 [[package]]

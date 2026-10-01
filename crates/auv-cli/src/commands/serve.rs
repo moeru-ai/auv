@@ -96,6 +96,8 @@ pub(super) async fn run_listeners(options: HostOptions, project_root: &std::path
     publish_discovery: options.publish_discovery,
     daemon_idle_timeout: options.daemon_idle_timeout.map(std::time::Duration::from_secs),
     runner_providers: providers,
+    #[cfg(windows)]
+    enable_device_entry: false,
   })
   .await?;
   for endpoint in server.endpoints() {
