@@ -1,9 +1,8 @@
 #[cfg(target_os = "macos")]
-mod service_management;
-
-#[cfg(target_os = "macos")]
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+  use auv_device_helper_macos::service_management;
+
   if let Some(command) = std::env::args().nth(1) {
     let result = match command.as_str() {
       "--service-management-register" => service_management::register().map(|status| status.as_str()),

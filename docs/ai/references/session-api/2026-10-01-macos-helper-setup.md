@@ -62,8 +62,15 @@ files are removed. Setup then resets the `Accessibility` TCC decision for only
 `ai.moeru.auv.helper` and removes only `AUV Helper.app`. The enrollment remains
 in the user's login Keychain, and the surrounding AUV Application Support
 directory, private socket directory, and other contents remain in place. A
-failure in validation, unregistration, TCC reset, or app removal is reported;
-uninstall does not delete broader state or attempt a rollback.
+failure in unregistration, TCC reset, or app removal is reported; uninstall
+does not delete broader state or attempt a rollback.
+
+An installed app that fails static validation is never executed. `install`
+refuses it and points to `uninstall`; `uninstall` skips the
+ServiceManagement call, still resets TCC and removes the bundle, and reports in
+`detail` that the LaunchAgent registration may remain. A later install places
+the new app at the same path, so that registration launches the validated
+replacement.
 
 The per-user installation weakens filesystem ownership relative to the former
 root-owned experiment. Runtime verification rejects unsigned changes and code
@@ -78,8 +85,8 @@ release, or when a previously signed helper must be revoked.
 
 - CLI:
   `auv setup macos-helper status|install|uninstall|open-background-items-settings|open-accessibility-settings`.
-- Node/Electron: `macosHelperStatus()`, asynchronous
-  `installMacosHelper()` and `uninstallMacosHelper()`,
+- Node/Electron: asynchronous `macosHelperStatus()`,
+  `installMacosHelper()`, and `uninstallMacosHelper()`,
   `openMacosHelperBackgroundItemsSettings()`, and
   `openMacosHelperAccessibilitySettings()` from `@auv-js/cli`.
 
@@ -94,7 +101,12 @@ Only a resolved peer that fails the pinned identity or installed-path checks is
 `invalid`.
 After a new registration, `busy` is not sufficient readiness: setup waits for
 `running` or returns an activation failure so an update can restore the prior
-app. `requires-approval` remains a successful registration that needs explicit
+app. Rollback first unregisters the replacement, so its process stops before
+its bundle is removed; a failed fresh install leaves no registration behind.
+If the replacement cannot be stopped, it stays in place and the previous app is
+retained in the staging directory. Readiness polling repeats only the
+ServiceManagement and socket checks; the static file, signature, and version
+checks run once before registration. `requires-approval` remains a successful registration that needs explicit
 user action in System Settings.
 
 The N-API crate enables only the helper crate's `setup` feature. The

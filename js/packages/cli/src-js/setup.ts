@@ -37,7 +37,7 @@ export async function uninstallMacosHelper(): Promise<MacosHelperStatus> {
 }
 
 /** Inspect the installed AUV Helper identity and current-user readiness. */
-export function macosHelperStatus(): Promise<MacosHelperStatus> {
+export async function macosHelperStatus(): Promise<MacosHelperStatus> {
   requireMacOS()
   return nativeMacosHelperStatus() as Promise<MacosHelperStatus>
 }

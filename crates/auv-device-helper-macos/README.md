@@ -59,7 +59,8 @@ Accessibility remains separate TCC authorization for the installed bundle.
 Uninstall waits for ServiceManagement to terminate the helper, resets only
 that bundle's Accessibility decision, and removes only `AUV Helper.app`.
 Enrollment remains in the login Keychain, and other AUV Application Support
-content is preserved.
+content is preserved. An installed app that fails validation is removed
+without being executed, so `uninstall` also recovers an `invalid` install.
 
 Source builds do not contain Apple release credentials or an embedded app.
 They report `helper_embedded=false`; status and registration remain available

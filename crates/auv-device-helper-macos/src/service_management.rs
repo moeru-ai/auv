@@ -4,51 +4,34 @@ use objc2::rc::Retained;
 use objc2_foundation::{NSError, NSString};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Status {
-  NotRegistered,
-  Enabled,
-  RequiresApproval,
-  NotFound,
-}
+use crate::ServiceStatus;
 
-impl Status {
-  pub(crate) fn as_str(self) -> &'static str {
-    match self {
-      Self::NotRegistered => "not-registered",
-      Self::Enabled => "enabled",
-      Self::RequiresApproval => "requires-approval",
-      Self::NotFound => "not-found",
-    }
-  }
-}
-
-pub(crate) fn status() -> Status {
+pub fn status() -> ServiceStatus {
   let service = service();
   // SAFETY: `service` is a retained SMAppService created by the framework;
   // `status` has no caller-owned pointer or lifetime requirements.
   match unsafe { service.status() } {
-    SMAppServiceStatus::Enabled => Status::Enabled,
-    SMAppServiceStatus::RequiresApproval => Status::RequiresApproval,
-    SMAppServiceStatus::NotFound => Status::NotFound,
-    _ => Status::NotRegistered,
+    SMAppServiceStatus::Enabled => ServiceStatus::Enabled,
+    SMAppServiceStatus::RequiresApproval => ServiceStatus::RequiresApproval,
+    SMAppServiceStatus::NotFound => ServiceStatus::NotFound,
+    _ => ServiceStatus::NotRegistered,
   }
 }
 
-pub(crate) fn register() -> Result<Status, String> {
+pub fn register() -> Result<ServiceStatus, String> {
   let service = service();
   // SAFETY: `service` is retained for the complete Objective-C call and the
   // generated binding owns the NSError out-parameter contract.
   let before = unsafe { service.status() };
   if before == SMAppServiceStatus::RequiresApproval {
-    return Ok(Status::RequiresApproval);
+    return Ok(ServiceStatus::RequiresApproval);
   }
   if before != SMAppServiceStatus::Enabled {
     // SAFETY: The generated binding translates the Objective-C NSError
     // convention into Result and retains the returned error when present.
     if let Err(error) = unsafe { service.registerAndReturnError() } {
-      if status() == Status::RequiresApproval {
-        return Ok(Status::RequiresApproval);
+      if status() == ServiceStatus::RequiresApproval {
+        return Ok(ServiceStatus::RequiresApproval);
       }
       return Err(error.to_string());
     }
@@ -56,7 +39,7 @@ pub(crate) fn register() -> Result<Status, String> {
   Ok(status())
 }
 
-pub(crate) fn unregister() -> Result<Status, String> {
+pub fn unregister() -> Result<ServiceStatus, String> {
   let service = service();
   // SAFETY: `service` remains retained across the Objective-C message send.
   let before = unsafe { service.status() };
@@ -89,12 +72,12 @@ pub(crate) fn unregister() -> Result<Status, String> {
     // A concurrent user/system action may win the race after the initial
     // status read. The terminal states still mean that no registered job can
     // launch or keep an in-flight request alive.
-    Err(_) if matches!(after, Status::NotRegistered | Status::NotFound) => Ok(after),
+    Err(_) if after.is_unregistered() => Ok(after),
     Err(error) => Err(error),
   }
 }
 
-pub(crate) fn open_settings() {
+pub fn open_settings() {
   // SAFETY: This class method takes no pointers and only asks the framework
   // to open its system-owned settings pane.
   unsafe { SMAppService::openSystemSettingsLoginItems() };

@@ -50,6 +50,7 @@ pub struct Status {
 pub enum Error {
   Unsupported,
   PayloadUnavailable,
+  UserUnavailable(String),
   InvalidInstallation(String),
   ArchiveRejected(String),
   ExtractionFailed(String),
@@ -69,6 +70,7 @@ impl std::fmt::Display for Error {
       Self::PayloadUnavailable => formatter.write_str(
         "this development build does not contain a signed AUV Helper app; use an official macOS release or rebuild with AUV_MACOS_HELPER_APP_ARCHIVE_PATH",
       ),
+      Self::UserUnavailable(detail) => write!(formatter, "AUV Helper setup needs the logged-in macOS user: {detail}"),
       Self::InvalidInstallation(detail) => write!(formatter, "the installed AUV Helper failed validation: {detail}"),
       Self::ArchiveRejected(detail) => write!(formatter, "the embedded AUV Helper failed validation: {detail}"),
       Self::ExtractionFailed(detail) => write!(formatter, "the embedded AUV Helper could not be extracted: {detail}"),
@@ -140,7 +142,18 @@ pub fn status() -> Status {
     };
   }
 
-  let service = match service_status(&layout.binary) {
+  runtime_status(&home, uid, &layout.binary, embedded)
+}
+
+/// Inspect ServiceManagement and socket readiness for an installation whose
+/// files, signature, and version were already validated.
+///
+/// Registration polling calls this directly: the static checks hash the whole
+/// bundle and spawn `sw_vers`/`plutil`, and their answer cannot change while
+/// launchd starts the job.
+#[cfg(target_os = "macos")]
+fn runtime_status(home: &std::path::Path, uid: u32, binary: &std::path::Path, embedded: bool) -> Status {
+  let service = match service_status(binary) {
     Ok(service) => service,
     Err(error) => {
       return Status {
@@ -165,7 +178,7 @@ pub fn status() -> Status {
     };
   }
 
-  match helper_readiness(&home, uid) {
+  match helper_readiness(home, uid) {
     HelperReadiness::Ready => Status {
       state: State::Running,
       detail: None,
@@ -239,14 +252,17 @@ pub fn install() -> Result<Status, Error> {
   }
   match status() {
     current if matches!(current.state, State::Running | State::Busy | State::RequiresApproval) => return Ok(current),
+    // Replacing an invalid app would execute its binary to unregister it.
+    // `uninstall` removes such an app without running it.
     current if current.state == State::Invalid => {
-      return Err(Error::InvalidInstallation(current.detail.unwrap_or_else(|| "unknown validation error".to_string())));
+      let detail = current.detail.unwrap_or_else(|| "unknown validation error".to_string());
+      return Err(Error::InvalidInstallation(format!("{detail}; uninstall the helper, then install again")));
     }
     current if current.state == State::Installed => {
-      let (_, home) = current_user()?;
+      let (uid, home) = current_user()?;
       let layout = super::installed_layout(&home);
       register(&layout.binary)?;
-      return status_after_registration();
+      return status_after_registration(&home, uid, &layout.binary);
     }
     _ => {}
   }
@@ -278,13 +294,19 @@ pub fn uninstall() -> Result<Status, Error> {
 
   let (_, home) = current_user()?;
   let layout = super::installed_layout(&home);
-  if layout.app.exists() {
-    verify_static_installation(&home).map_err(Error::InvalidInstallation)?;
-    unregister(&layout.binary)?;
+  let validation = if layout.app.exists() {
+    verify_static_installation(&home)
+  } else {
+    Ok(())
+  };
+  let retained = remove_installed_app(&layout.app, validation, || unregister(&layout.binary), reset_accessibility_authorization)?;
+  let mut status = status();
+  if let Some(reason) = retained {
+    status.detail = Some(format!(
+      "the removed app failed validation ({reason}), so it was not run to unregister its LaunchAgent; a later install reuses that registration"
+    ));
   }
-
-  remove_installed_app(&layout.app, reset_accessibility_authorization)?;
-  Ok(status())
+  Ok(status)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -318,7 +340,7 @@ pub fn open_background_items_settings() -> Result<(), Error> {
   let binary = super::installed_layout(&home).binary;
   if binary.exists() {
     verify_static_installation(&home).map_err(Error::InvalidInstallation)?;
-    service_command(&binary, "--service-management-open-settings").map(|_| ())
+    run_helper(&binary, "--service-management-open-settings").map(|_| ())
   } else {
     let result =
       std::process::Command::new("/usr/bin/open").arg("x-apple.systempreferences:com.apple.LoginItems-Settings.extension").status()?;
@@ -346,33 +368,45 @@ fn reset_accessibility_authorization() -> Result<(), Error> {
   }
 }
 
+/// Remove the helper app after unregistering it and resetting its
+/// Accessibility decision.
+///
+/// `validation` is the static check of the installed app. A failed check
+/// skips unregistration, because that runs the app's own binary, but still
+/// removes the bundle so an invalid install is never a dead end. The skipped
+/// reason is returned so callers can report the retained registration.
 #[cfg(target_os = "macos")]
-fn remove_installed_app(app: &std::path::Path, reset_accessibility: impl FnOnce() -> Result<(), Error>) -> Result<(), Error> {
+fn remove_installed_app(
+  app: &std::path::Path,
+  validation: Result<(), String>,
+  unregister_current: impl FnOnce() -> Result<(), Error>,
+  reset_accessibility: impl FnOnce() -> Result<(), Error>,
+) -> Result<Option<String>, Error> {
+  let installed = app.exists();
+  let retained = match validation {
+    Ok(()) if installed => {
+      unregister_current()?;
+      None
+    }
+    Ok(()) => None,
+    Err(reason) => Some(reason),
+  };
   reset_accessibility()?;
-  if app.exists() {
+  if installed {
     std::fs::remove_dir_all(app).map_err(|error| Error::RemovalFailed(error.to_string()))?;
   }
-  Ok(())
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ServiceStatus {
-  NotRegistered,
-  Enabled,
-  RequiresApproval,
-  NotFound,
+  Ok(retained)
 }
 
 #[cfg(target_os = "macos")]
 fn current_user() -> Result<(u32, std::path::PathBuf), Error> {
   let uid = nix::unistd::geteuid();
   if uid.is_root() {
-    return Err(Error::InvalidInstallation("setup must run in the logged-in user's session, not as root".to_string()));
+    return Err(Error::UserUnavailable("setup must run in the logged-in user's session, not as root".to_string()));
   }
   let user = nix::unistd::User::from_uid(uid)
-    .map_err(|error| Error::InvalidInstallation(format!("cannot resolve the current user: {error}")))?
-    .ok_or_else(|| Error::InvalidInstallation("the current user has no account record".to_string()))?;
+    .map_err(|error| Error::UserUnavailable(format!("cannot resolve the current user: {error}")))?
+    .ok_or_else(|| Error::UserUnavailable("the current user has no account record".to_string()))?;
   Ok((uid.as_raw(), user.dir))
 }
 
@@ -396,17 +430,11 @@ fn verify_static_installation(home: &std::path::Path) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn verify_app_signature(app: &std::path::Path) -> Result<(), String> {
   use core_foundation::url::CFURL;
-  use security_framework::os::macos::code_signing::{Flags, SecRequirement, SecStaticCode};
+  use security_framework::os::macos::code_signing::{Flags, SecStaticCode};
 
   let path = CFURL::from_path(app, true).ok_or_else(|| "the app path is not a file URL".to_string())?;
   let code = SecStaticCode::from_path(&path, Flags::NONE).map_err(|error| format!("cannot inspect code signature ({error})"))?;
-  let requirement: SecRequirement = format!(
-    "identifier \"{}\" and anchor apple generic and certificate leaf[subject.OU] = \"{}\"",
-    super::BUNDLE_ID,
-    super::EXPECTED_TEAM_ID
-  )
-  .parse()
-  .map_err(|error| format!("cannot create code requirement ({error})"))?;
+  let requirement = super::helper_requirement().map_err(|error| format!("cannot create code requirement ({error})"))?;
   code.check_validity(Flags::CHECK_ALL_ARCHITECTURES, &requirement).map_err(|error| format!("code signature does not match ({error})"))
 }
 
@@ -421,48 +449,42 @@ fn installed_version(app: &std::path::Path) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
+use super::ServiceStatus;
+
+#[cfg(target_os = "macos")]
 fn service_status(binary: &std::path::Path) -> Result<ServiceStatus, Error> {
-  let output = service_command(binary, "--service-management-status")?;
-  match output.as_str() {
-    "not-registered" => Ok(ServiceStatus::NotRegistered),
-    "enabled" => Ok(ServiceStatus::Enabled),
-    "requires-approval" => Ok(ServiceStatus::RequiresApproval),
-    "not-found" => Ok(ServiceStatus::NotFound),
-    value => Err(Error::ServiceManagementFailed(format!("unexpected status {value:?}"))),
-  }
+  service_command(binary, "--service-management-status")
 }
 
 #[cfg(target_os = "macos")]
 fn register(binary: &std::path::Path) -> Result<ServiceStatus, Error> {
-  let output = service_command(binary, "--service-management-register")?;
-  match output.as_str() {
-    "enabled" => Ok(ServiceStatus::Enabled),
-    "requires-approval" => Ok(ServiceStatus::RequiresApproval),
-    value => Err(Error::ServiceManagementFailed(format!("registration returned {value:?}"))),
+  match service_command(binary, "--service-management-register")? {
+    status @ (ServiceStatus::Enabled | ServiceStatus::RequiresApproval) => Ok(status),
+    status => Err(Error::ServiceManagementFailed(format!("registration returned {:?}", status.as_str()))),
   }
 }
 
 #[cfg(target_os = "macos")]
 fn unregister(binary: &std::path::Path) -> Result<(), Error> {
-  let status = service_status(binary)?;
-  if matches!(status, ServiceStatus::Enabled | ServiceStatus::RequiresApproval) {
-    let output = service_command(binary, "--service-management-unregister")?;
-    ensure_unregistered(&output)?;
+  if matches!(service_status(binary)?, ServiceStatus::Enabled | ServiceStatus::RequiresApproval) {
+    let status = service_command(binary, "--service-management-unregister")?;
+    if !status.is_unregistered() {
+      return Err(Error::ServiceManagementFailed(format!("unregistration returned {:?}", status.as_str())));
+    }
   }
   Ok(())
 }
 
+/// Run a status-reporting `--service-management-*` command of the validated
+/// helper binary and parse the status it prints.
 #[cfg(target_os = "macos")]
-fn ensure_unregistered(output: &str) -> Result<(), Error> {
-  if matches!(output, "not-registered" | "not-found") {
-    Ok(())
-  } else {
-    Err(Error::ServiceManagementFailed(format!("unregistration returned {output:?}")))
-  }
+fn service_command(binary: &std::path::Path, argument: &str) -> Result<ServiceStatus, Error> {
+  let value = run_helper(binary, argument)?;
+  ServiceStatus::parse(&value).ok_or_else(|| Error::ServiceManagementFailed(format!("{argument} returned {value:?}")))
 }
 
 #[cfg(target_os = "macos")]
-fn service_command(binary: &std::path::Path, argument: &str) -> Result<String, Error> {
+fn run_helper(binary: &std::path::Path, argument: &str) -> Result<String, Error> {
   let output = std::process::Command::new(binary).arg(argument).output().map_err(Error::Io)?;
   if output.status.success() {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -481,7 +503,11 @@ fn install_embedded_app(archive: &[u8]) -> Result<Status, Error> {
   use std::io::Write;
   use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-  let (_, home) = current_user()?;
+  // TODO(helper-setup-install-lock): Two concurrent installs for one user
+  // (for example the CLI and the N-API package) race on the final renames.
+  // Add a per-user lock under the install root when a frontend can trigger
+  // setup without user action; manual setup is serialized by the user today.
+  let (uid, home) = current_user()?;
   let layout = super::installed_layout(&home);
   let root = layout.app.parent().ok_or_else(|| Error::InvalidInstallation("the install root has no parent".to_string()))?;
   std::fs::create_dir_all(root)?;
@@ -516,7 +542,7 @@ fn install_embedded_app(archive: &[u8]) -> Result<Status, Error> {
     &backup,
     || unregister(&layout.binary),
     || register(&layout.binary).map(|_| ()),
-    status_after_registration,
+    || status_after_registration(&home, uid, &layout.binary),
   );
   match result {
     Err(Error::RollbackFailed(detail)) if backup.exists() => {
@@ -548,7 +574,7 @@ fn replace_installed_app(
   }
 
   if let Err(error) = std::fs::rename(candidate, installed) {
-    if had_previous && let Err(rollback) = restore_previous_app(installed, backup, &mut register_current) {
+    if had_previous && let Err(rollback) = restore_previous_app(installed, backup, &mut unregister_current, &mut register_current) {
       return Err(Error::RollbackFailed(format!("replacement failed ({error}); {rollback}")));
     }
     return Err(Error::Io(error));
@@ -557,7 +583,7 @@ fn replace_installed_app(
   let activation = register_current().and_then(|()| wait_until_ready());
   match activation {
     Ok(status) => Ok(status),
-    Err(error) => match restore_previous_app(installed, backup, &mut register_current) {
+    Err(error) => match restore_previous_app(installed, backup, &mut unregister_current, &mut register_current) {
       Ok(()) => Err(error),
       Err(rollback) => Err(Error::RollbackFailed(format!("activation failed ({error}); {rollback}"))),
     },
@@ -568,9 +594,15 @@ fn replace_installed_app(
 fn restore_previous_app(
   installed: &std::path::Path,
   backup: &std::path::Path,
+  unregister_current: &mut impl FnMut() -> Result<(), Error>,
   register_current: &mut impl FnMut() -> Result<(), Error>,
 ) -> Result<(), Error> {
   if installed.exists() {
+    // The replacement may already be registered and running. Registering the
+    // restored app is a no-op while the job is still enabled, so stop the
+    // replacement first; otherwise its process outlives its deleted bundle and
+    // a fresh install leaves a registration for a missing app.
+    unregister_current().map_err(|error| Error::RollbackFailed(format!("cannot stop replacement: {error}")))?;
     std::fs::remove_dir_all(installed).map_err(|error| Error::RollbackFailed(format!("cannot remove replacement: {error}")))?;
   }
   if backup.exists() {
@@ -581,8 +613,9 @@ fn restore_previous_app(
 }
 
 #[cfg(target_os = "macos")]
-fn status_after_registration() -> Result<Status, Error> {
-  wait_for_registration(status, || std::thread::sleep(std::time::Duration::from_millis(100)))
+fn status_after_registration(home: &std::path::Path, uid: u32, binary: &std::path::Path) -> Result<Status, Error> {
+  let embedded = embedded::archive().is_some();
+  wait_for_registration(|| runtime_status(home, uid, binary, embedded), || std::thread::sleep(std::time::Duration::from_millis(100)))
 }
 
 #[cfg(target_os = "macos")]
@@ -605,7 +638,7 @@ fn wait_for_registration(mut inspect: impl FnMut() -> Status, mut wait: impl FnM
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-  use std::cell::Cell;
+  use std::cell::{Cell, RefCell};
   use std::fs;
   use std::os::unix::fs::PermissionsExt;
   use std::os::unix::net::UnixListener;
@@ -617,7 +650,7 @@ mod tests {
   // failed unregistration. Both terminal states now mean no service remains.
   #[test]
   fn unregister_accepts_service_management_not_found_status() {
-    assert!(super::ensure_unregistered("not-found").is_ok());
+    assert!(crate::ServiceStatus::parse("not-found").is_some_and(crate::ServiceStatus::is_unregistered));
   }
 
   // ROOT CAUSE:
@@ -636,18 +669,108 @@ mod tests {
     fs::create_dir(&candidate).unwrap();
     fs::write(candidate.join("version"), "new").unwrap();
 
+    let calls = RefCell::new(Vec::new());
+
     let result = super::replace_installed_app(
       &installed,
       &candidate,
       &backup,
-      || Ok(()),
-      || Ok(()),
+      || {
+        let version = fs::read_to_string(installed.join("version")).unwrap();
+        calls.borrow_mut().push(format!("unregister {version}"));
+        Ok(())
+      },
+      || {
+        let version = fs::read_to_string(installed.join("version")).unwrap();
+        calls.borrow_mut().push(format!("register {version}"));
+        Ok(())
+      },
       || Err(super::Error::LaunchFailed("socket was not ready".to_string())),
     );
 
     assert!(matches!(result, Err(super::Error::LaunchFailed(_))));
     assert_eq!(fs::read_to_string(installed.join("version")).unwrap(), "old");
     assert!(!backup.exists());
+    assert_eq!(
+      calls.into_inner(),
+      [
+        "unregister old",
+        "register new",
+        "unregister new",
+        "register old"
+      ]
+    );
+  }
+
+  // ROOT CAUSE:
+  //
+  // When a fresh install never became ready, rollback deleted the new app
+  // without unregistering it. ServiceManagement kept an enabled job for a
+  // missing bundle, and a live replacement process kept running.
+  //
+  // The fix stops the replacement before removing it.
+  #[test]
+  fn failed_fresh_install_unregisters_the_replacement_before_removing_it() {
+    let root = tempfile::tempdir().unwrap();
+    let installed = root.path().join("AUV Helper.app");
+    let candidate = root.path().join("Candidate.app");
+    let backup = root.path().join("Previous.app");
+    fs::create_dir(&candidate).unwrap();
+    let calls = RefCell::new(Vec::new());
+
+    let result = super::replace_installed_app(
+      &installed,
+      &candidate,
+      &backup,
+      || {
+        calls.borrow_mut().push(format!("unregister present={}", installed.exists()));
+        Ok(())
+      },
+      || {
+        calls.borrow_mut().push("register".to_string());
+        Ok(())
+      },
+      || Err(super::Error::LaunchFailed("socket was not ready".to_string())),
+    );
+
+    assert!(matches!(result, Err(super::Error::LaunchFailed(_))));
+    assert!(!installed.exists());
+    assert_eq!(calls.into_inner(), ["register", "unregister present=true"]);
+  }
+
+  #[test]
+  fn rollback_keeps_the_replacement_when_it_cannot_be_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let installed = root.path().join("AUV Helper.app");
+    let candidate = root.path().join("Candidate.app");
+    let backup = root.path().join("Previous.app");
+    fs::create_dir(&installed).unwrap();
+    fs::write(installed.join("version"), "old").unwrap();
+    fs::create_dir(&candidate).unwrap();
+    fs::write(candidate.join("version"), "new").unwrap();
+    let unregistrations = Cell::new(0);
+
+    let result = super::replace_installed_app(
+      &installed,
+      &candidate,
+      &backup,
+      || {
+        unregistrations.set(unregistrations.get() + 1);
+        if unregistrations.get() == 1 {
+          Ok(())
+        } else {
+          Err(super::Error::ServiceManagementFailed("denied".to_string()))
+        }
+      },
+      || Ok(()),
+      || Err(super::Error::LaunchFailed("socket was not ready".to_string())),
+    );
+
+    // A running replacement must not lose its bundle; the caller retains the
+    // backup because it still exists.
+    assert!(matches!(result, Err(super::Error::RollbackFailed(_))));
+    assert_eq!(fs::read_to_string(installed.join("version")).unwrap(), "new");
+    assert_eq!(fs::read_to_string(backup.join("version")).unwrap(), "old");
   }
 
   // ROOT CAUSE:
@@ -743,13 +866,24 @@ mod tests {
     fs::create_dir(&entry).unwrap();
     fs::write(entry.join("enrollment-marker"), "preserved").unwrap();
     let reset = Cell::new(false);
+    let unregistered = Cell::new(false);
 
-    super::remove_installed_app(&app, || {
-      reset.set(true);
-      Ok(())
-    })
+    let retained = super::remove_installed_app(
+      &app,
+      Ok(()),
+      || {
+        unregistered.set(true);
+        Ok(())
+      },
+      || {
+        reset.set(true);
+        Ok(())
+      },
+    )
     .unwrap();
 
+    assert_eq!(retained, None);
+    assert!(unregistered.get());
     assert!(reset.get());
     assert!(!app.exists());
     assert_eq!(fs::read_to_string(entry.join("enrollment-marker")).unwrap(), "preserved");
@@ -761,9 +895,34 @@ mod tests {
     let app = root.path().join("AUV Helper.app");
     fs::create_dir(&app).unwrap();
 
-    let result = super::remove_installed_app(&app, || Err(super::Error::AccessibilityResetFailed("denied".to_string())));
+    let result = super::remove_installed_app(&app, Ok(()), || Ok(()), || Err(super::Error::AccessibilityResetFailed("denied".to_string())));
 
     assert!(matches!(result, Err(super::Error::AccessibilityResetFailed(_))));
     assert!(app.exists());
+  }
+
+  // ROOT CAUSE:
+  //
+  // If the installed app failed static validation, `install` rejected it as
+  // invalid and `uninstall` rejected it before removal, so neither command
+  // could recover and the user had to delete the bundle by hand.
+  //
+  // The fix removes an invalid app without executing its binary.
+  #[test]
+  fn uninstall_removes_an_invalid_app_without_running_it() {
+    let root = tempfile::tempdir().unwrap();
+    let app = root.path().join("AUV Helper.app");
+    fs::create_dir(&app).unwrap();
+
+    let retained = super::remove_installed_app(
+      &app,
+      Err("code signature does not match".to_string()),
+      || panic!("an app that failed validation must not be executed to unregister it"),
+      || Ok(()),
+    )
+    .unwrap();
+
+    assert_eq!(retained.as_deref(), Some("code signature does not match"));
+    assert!(!app.exists());
   }
 }

@@ -39,6 +39,57 @@ pub(crate) const EXPECTED_TEAM_ID: &str = "433DLLA855";
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 pub(crate) const LAUNCH_AGENT_LABEL: &str = "ai.moeru.auv.helper";
 
+/// Code requirement for the signed helper app, shared by on-disk setup
+/// validation and socket-peer validation. `package/package.sh` checks the
+/// same requirement with `codesign --test-requirement` after signing.
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+pub(crate) fn helper_requirement() -> Result<SecRequirement, security_framework::base::Error> {
+  format!("identifier \"{BUNDLE_ID}\" and anchor apple generic and certificate leaf[subject.OU] = \"{EXPECTED_TEAM_ID}\"").parse()
+}
+
+/// ServiceManagement registration state for the helper's LaunchAgent.
+///
+/// The helper's `--service-management-*` commands print `as_str` on stdout
+/// and setup parses it, so both sides of that process boundary share this
+/// type instead of mirroring string tables.
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "host")))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServiceStatus {
+  NotRegistered,
+  Enabled,
+  RequiresApproval,
+  NotFound,
+}
+
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "host")))]
+impl ServiceStatus {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::NotRegistered => "not-registered",
+      Self::Enabled => "enabled",
+      Self::RequiresApproval => "requires-approval",
+      Self::NotFound => "not-found",
+    }
+  }
+
+  pub fn parse(value: &str) -> Option<Self> {
+    [
+      Self::NotRegistered,
+      Self::Enabled,
+      Self::RequiresApproval,
+      Self::NotFound,
+    ]
+    .into_iter()
+    .find(|status| status.as_str() == value)
+  }
+
+  /// SMAppService reports `not-found` rather than `not-registered` after the
+  /// final registration is removed; both mean no job can launch.
+  pub fn is_unregistered(self) -> bool {
+    matches!(self, Self::NotRegistered | Self::NotFound)
+  }
+}
+
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 pub(crate) struct InstalledLayout {
   pub(crate) app: PathBuf,
@@ -297,10 +348,7 @@ fn verify_installed_helper(stream: &UnixStream, home: &Path) -> Result<(), Ident
   let layout = verify_installed_files(home)?;
 
   let code = code_for_socket_peer(stream)?;
-  let requirement: SecRequirement =
-    format!("identifier \"{BUNDLE_ID}\" and anchor apple generic and certificate leaf[subject.OU] = \"{EXPECTED_TEAM_ID}\"")
-      .parse()
-      .map_err(|_| IdentityError::Mismatch)?;
+  let requirement = helper_requirement().map_err(|_| IdentityError::Mismatch)?;
   code.check_validity(Flags::NONE, &requirement).map_err(|_| IdentityError::Mismatch)?;
   let actual = code.path(Flags::NONE).ok().and_then(|url| url.to_path()).ok_or(IdentityError::Mismatch)?;
 
@@ -440,3 +488,6 @@ mod tests {
 
 #[cfg(all(target_os = "macos", feature = "host"))]
 pub mod host;
+
+#[cfg(all(target_os = "macos", feature = "host"))]
+pub mod service_management;
