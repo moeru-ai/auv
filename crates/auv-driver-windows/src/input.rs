@@ -19,9 +19,13 @@ use auv_driver_common::input::{
   Click, ClickModifiers, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll,
   TextSubmit, TypeTextOptions,
 };
-use auv_driver_common::{InputTarget, KeyboardBackend, KeyboardHold, KeyboardHoldId};
+use auv_driver_common::{
+  DriverError, InputTarget, KeyboardBackend, KeyboardHold, KeyboardHoldId, KeyboardInput, KeyboardInputError, KeyboardInputProgress,
+  PressKeysOptions,
+};
 
 use crate::error::invalid_input;
+use crate::session::InputApi;
 
 /// Virtual-key code for a modifier, kept as a bare `u16` so shortcut parsing
 /// stays independent of the `windows` crate types.
@@ -114,6 +118,147 @@ pub fn press_key(options: KeyPressOptions) -> DriverResult<InputActionResult> {
   Ok(foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
+fn keyboard_failure(
+  cause: DriverError,
+  action_index: usize,
+  completed: Vec<InputActionResult>,
+  completed_presses: u32,
+) -> KeyboardInputError {
+  KeyboardInputError {
+    cause,
+    progress: KeyboardInputProgress {
+      action_index,
+      completed,
+      completed_presses,
+    },
+  }
+}
+
+fn combination(options: &PressKeysOptions) -> DriverResult<Vec<u16>> {
+  if options.keys.is_empty() || !(1..=255).contains(&options.count) || (options.count > 1 && options.interval.is_zero()) {
+    return Err(invalid_input("keys must not be empty; count must be 1..255 and repeated presses require a positive interval"));
+  }
+
+  let mut codes = Vec::with_capacity(options.keys.len());
+  let mut ordinary = false;
+
+  for key in &options.keys {
+    let modifier = modifier_virtual_key(key);
+
+    if ordinary && modifier.is_some() {
+      return Err(invalid_input("modifiers must precede ordinary keys"));
+    }
+
+    ordinary |= modifier.is_none();
+    let code = modifier
+      .or_else(|| special_virtual_key(key))
+      .or_else(|| single_char_virtual_key(key))
+      .ok_or_else(|| invalid_input(format!("invalid key {key:?}")))?;
+
+    if codes.contains(&code) {
+      return Err(invalid_input("a combination cannot contain duplicate keys"));
+    }
+
+    codes.push(code);
+  }
+
+  Ok(codes)
+}
+
+fn press_combination(codes: Vec<u16>) -> DriverResult<InputActionResult> {
+  // The existing hold controller releases an injected prefix if a key-down
+  // fails, and releases the complete chord in reverse order on success.
+  let mut hold = auv_driver_common::keyboard_hold_controller()
+    .clone()
+    .down(std::sync::Arc::new(HeldKeyboardBackend { keys: codes }), Duration::from_secs(2))?;
+  hold.wait_and_release(Duration::ZERO)
+}
+
+impl InputApi<'_> {
+  /// Validate a foreground batch before delivery and preserve action progress.
+  /// Windows target-aware keyboard routing awaits an exact recipient lease.
+  // TODO(windows-targeted-keyboard): accept Window/Application only after the
+  // recipient can be revalidated before every action and repetition.
+  pub fn input_keyboard(
+    &self,
+    target: &InputTarget,
+    inputs: Vec<KeyboardInput>,
+    dry_run: bool,
+  ) -> Result<Option<Vec<InputActionResult>>, KeyboardInputError> {
+    if inputs.is_empty() {
+      return Err(keyboard_failure(invalid_input("keyboard input requires at least one action"), 0, vec![], 0));
+    }
+
+    if !matches!(target, InputTarget::Foreground) {
+      return Err(keyboard_failure(DriverError::unsupported("Windows targeted keyboard input"), 0, vec![], 0));
+    }
+
+    let plans = inputs
+      .iter()
+      .enumerate()
+      .map(|(index, input)| {
+        if input.policy() != InputPolicy::ForegroundPreferred {
+          return Err(keyboard_failure(invalid_input("Windows keyboard input requires foreground-preferred policy"), index, vec![], 0));
+        }
+
+        let plan = match input {
+          KeyboardInput::PressKeys { options, .. } => combination(options).map(Some),
+          KeyboardInput::TypeText { options, .. } => text_submit_virtual_key(options.submit).map(|_| None),
+          // TODO(windows-paste-batch): an atomic clipboard snapshot, paste, and
+          // restore needs a verified consumption boundary before this action
+          // can join the ordered batch. Reopen for a tested clipboard slice.
+          KeyboardInput::PasteText { .. } => Err(DriverError::unsupported("Windows keyboard paste action")),
+        };
+
+        plan.map_err(|cause| keyboard_failure(cause, index, vec![], 0))
+      })
+      .collect::<Result<Vec<_>, _>>()?;
+
+    if dry_run {
+      return Ok(None);
+    }
+
+    let mut completed = Vec::with_capacity(inputs.len());
+
+    for (index, (input, plan)) in inputs.into_iter().zip(plans).enumerate() {
+      let action = match input {
+        KeyboardInput::PressKeys { options, .. } => {
+          let mut combined: Option<InputActionResult> = None;
+
+          for repetition in 0..options.count {
+            if repetition > 0 {
+              std::thread::sleep(options.interval);
+            }
+
+            let action = press_combination(plan.as_ref().expect("validated press combination").clone())
+              .map_err(|cause| keyboard_failure(cause, index, completed.clone(), repetition))?;
+
+            if let Some(combined) = &mut combined {
+              combined.attempts.extend(action.attempts);
+            } else {
+              combined = Some(action);
+            }
+          }
+
+          if !options.settle.is_zero() {
+            std::thread::sleep(options.settle);
+          }
+
+          combined.expect("validated positive press count")
+        }
+        KeyboardInput::TypeText { text, options } => {
+          type_text(&text, options).map_err(|cause| keyboard_failure(cause, index, completed.clone(), 0))?
+        }
+        KeyboardInput::PasteText { .. } => unreachable!("paste rejected during validation"),
+      };
+
+      completed.push(action);
+    }
+
+    Ok(Some(completed))
+  }
+}
+
 struct HeldKeyboardBackend {
   keys: Vec<u16>,
 }
@@ -134,26 +279,10 @@ pub fn key_down(target: &InputTarget, keys: Vec<String>, policy: InputPolicy, ti
   if !matches!(target, InputTarget::Foreground) || policy != InputPolicy::ForegroundPreferred {
     return Err(auv_driver_common::DriverError::unsupported("Windows targeted keyboard input"));
   }
-  if keys.is_empty() {
-    return Err(invalid_input("keys must not be empty"));
-  }
-  let mut codes = Vec::with_capacity(keys.len());
-  let mut ordinary = false;
-  for key in keys {
-    let modifier = modifier_virtual_key(&key);
-    if ordinary && modifier.is_some() {
-      return Err(invalid_input("modifiers must precede ordinary keys"));
-    }
-    ordinary |= modifier.is_none();
-    let code = modifier
-      .or_else(|| special_virtual_key(&key))
-      .or_else(|| single_char_virtual_key(&key))
-      .ok_or_else(|| invalid_input(format!("invalid key {key:?}")))?;
-    if codes.contains(&code) {
-      return Err(invalid_input("a combination cannot contain duplicate keys"));
-    }
-    codes.push(code);
-  }
+  let codes = combination(&PressKeysOptions {
+    keys,
+    ..Default::default()
+  })?;
   let controller = auv_driver_common::keyboard_hold_controller().clone();
   controller.down(std::sync::Arc::new(HeldKeyboardBackend { keys: codes }), timeout)
 }

@@ -3,12 +3,62 @@ use auv_driver_common::capture::{Activation, CaptureOptions};
 use auv_driver_common::geometry::{CoordinateSpace, RatioRect, Rect, ScreenPoint, WindowPoint};
 use auv_driver_common::input::{ClickOptions, InputPolicy, Scroll, ScrollDeliveryCandidate, ScrollOptions, WaitOptions, WindowInput};
 use auv_driver_common::window::{Window, WindowRef};
+use auv_driver_common::{InputTarget, KeyboardInput, PressKeysOptions};
 
 use super::{screen_point_for_window_point, window_point_for_screen_point};
 use crate::WindowsDriver;
 
 fn session() -> crate::WindowsDriverSession {
   WindowsDriver::new().open_local().expect("session opens")
+}
+
+#[test]
+fn keyboard_batch_rejects_invalid_tail_before_any_delivery() {
+  let actions = vec![
+    KeyboardInput::PressKeys {
+      options: PressKeysOptions {
+        keys: vec!["a".into()],
+        ..Default::default()
+      },
+      policy: InputPolicy::ForegroundPreferred,
+    },
+    KeyboardInput::PressKeys {
+      options: PressKeysOptions {
+        keys: vec!["control".into(), "a".into()],
+        count: 0,
+        ..Default::default()
+      },
+      policy: InputPolicy::ForegroundPreferred,
+    },
+  ];
+
+  let error = session().input().input_keyboard(&InputTarget::Foreground, actions, false).unwrap_err();
+
+  assert_eq!(error.progress.action_index, 1);
+  assert!(error.progress.completed.is_empty());
+  assert_eq!(error.progress.completed_presses, 0);
+}
+
+#[test]
+fn keyboard_dry_run_accepts_foreground_press_and_text_without_delivery() {
+  let actions = vec![
+    KeyboardInput::PressKeys {
+      options: PressKeysOptions {
+        keys: vec!["control".into(), "a".into()],
+        ..Default::default()
+      },
+      policy: InputPolicy::ForegroundPreferred,
+    },
+    KeyboardInput::TypeText {
+      text: "AUV probe".into(),
+      options: auv_driver_common::TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        ..Default::default()
+      },
+    },
+  ];
+
+  assert_eq!(session().input().input_keyboard(&InputTarget::Foreground, actions, true).unwrap(), None);
 }
 
 fn sample_window() -> Window {

@@ -192,17 +192,17 @@ async fn type_text(input: InvokeCommandInput, args: TypeTextArgs) -> crate::Invo
 }
 
 pub async fn type_text_into_active_control(text: String) -> Result<auv_driver::InputActionResult, String> {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = session.input().type_text(&text, auv_driver::TypeTextOptions::default()).map_err(|error| error.to_string())?;
     emit_input_action_result(&result);
     Ok(result)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = text;
-    Err("input.typeText is available only on macOS and Linux".to_string())
+    Err("input.typeText is unavailable on this platform".to_string())
   }
 }
 
@@ -346,7 +346,7 @@ async fn hold_keys(input: InvokeCommandInput, args: HoldKeysArgs) -> crate::Invo
   execute_hold_keys(&input, keys, policy, duration).await
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 async fn execute_hold_keys(
   input: &InvokeCommandInput,
   keys: Vec<String>,
@@ -388,14 +388,14 @@ async fn execute_hold_keys(
   targeted_keyboard_output(Some(&action)).map_err(Into::into)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 async fn execute_hold_keys(
   _input: &InvokeCommandInput,
   _keys: Vec<String>,
   _policy: auv_driver::InputPolicy,
   _duration: std::time::Duration,
 ) -> crate::InvokeExecutionResult {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard invoke is available only on macOS and Linux"))
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard invoke is unavailable on this platform"))
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -448,7 +448,7 @@ async fn press_key(input: InvokeCommandInput, args: PressKeyArgs) -> crate::Invo
 }
 
 pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputActionResult, String> {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let result = session
@@ -461,10 +461,10 @@ pub async fn press_key_in_active_app(key: String) -> Result<auv_driver::InputAct
     emit_input_action_result(&result);
     Ok(result)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
   {
     let _ = key;
-    Err("input.key is available only on macOS and Linux".to_string())
+    Err("input.key is unavailable on this platform".to_string())
   }
 }
 
@@ -1008,7 +1008,7 @@ pub(crate) fn validate_keyboard_policy(
   Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
   validate_keyboard_policy(input, &keyboard)?;
   let session = auv::local::open()?;
@@ -1019,7 +1019,7 @@ fn execute_keyboard(input: &InvokeCommandInput, keyboard: Vec<auv_driver::Keyboa
   keyboard_output(input, result)
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn local_keyboard_target(
   input: &InvokeCommandInput,
   session: &auv_driver::LocalDriverSession,
@@ -1043,9 +1043,9 @@ fn local_keyboard_target(
   Ok(target)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn execute_keyboard(_input: &InvokeCommandInput, _keyboard: Vec<auv_driver::KeyboardInput>) -> crate::InvokeExecutionResult {
-  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is available only on macOS and Linux"))
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "keyboard input is unavailable on this platform"))
 }
 
 /// Both frontends preserve completed action artifacts even when delivery stops.

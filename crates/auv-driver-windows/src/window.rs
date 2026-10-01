@@ -214,7 +214,7 @@ mod native {
     if activated {
       Ok(())
     } else {
-      Err(backend("SetForegroundWindow was refused; interact with NetEase Music once and retry"))
+      Err(backend("SetForegroundWindow was refused for the selected window"))
     }
   }
 

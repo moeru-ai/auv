@@ -53,13 +53,13 @@ async fn capture_display(input: InvokeCommandInput, _args: CaptureDisplayArgs) -
     output.report.as_mut().expect("display capture output always has a report").fields.push(overlay.report_field());
     Ok(output)
   }
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "linux", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let (result, artifact) = capture_primary_display_recorded_with_session(&session).await?;
     display_capture_output(&result, artifact)
   }
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     Err("display.capture is not available on this platform".to_string())
   }
@@ -84,18 +84,18 @@ pub async fn capture_primary_display() -> Result<auv_driver::DisplayCapture, Str
 }
 
 async fn capture_primary_display_recorded() -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     capture_primary_display_recorded_with_session(&session).await
   }
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     Err("display.capture is not available on this platform".to_string())
   }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn capture_primary_display_recorded_with_session(
   session: &auv_driver::LocalDriverSession,
 ) -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>), String> {
@@ -131,12 +131,12 @@ pub fn list_displays_output(displays: &auv_driver::ObservedDisplays) -> InvokeCo
 }
 
 pub async fn observe_displays() -> Result<auv_driver::ObservedDisplays, String> {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     session.display().list().map_err(|error| error.to_string())
   }
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
     Err("display.list is not available on this platform".to_string())
   }

@@ -54,15 +54,15 @@ async fn capture_region(input: InvokeCommandInput, args: CaptureRegionArgs) -> I
     return Ok(InvokeCommandOutput::completed());
   }
 
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let (capture, artifact) = capture_screen_region_recorded(region).await?;
     region_capture_output(&capture, artifact)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = region;
-    Err("screen.captureRegion is only available on macOS".to_string())
+    Err("screen.captureRegion is unavailable on this platform".to_string())
   }
 }
 
@@ -71,7 +71,7 @@ pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<auv_drive
 }
 
 async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv_driver::RegionCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let capture = session
@@ -84,10 +84,10 @@ async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv
     let artifact = emit_png_with_receipt("auv.driver.screen_region_capture", &capture.capture.image).await;
     Ok((capture, artifact))
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = region;
-    Err("screen.captureRegion is only available on macOS".to_string())
+    Err("screen.captureRegion is unavailable on this platform".to_string())
   }
 }
 

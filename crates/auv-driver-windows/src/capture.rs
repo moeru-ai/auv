@@ -11,9 +11,7 @@ use crate::error::backend;
 use crate::error::{invalid_input, not_found};
 use auv_driver_common::capture::{Capture, DisplayCapture, RegionCapture};
 use auv_driver_common::display::{Display, ObservedDisplays};
-#[cfg(not(target_os = "windows"))]
-use auv_driver_common::error::DriverError;
-use auv_driver_common::error::DriverResult;
+use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{CoordinateSpace, Rect};
 use auv_driver_common::window::Window;
 
@@ -51,14 +49,15 @@ pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
   let targets = display_targets_from_monitors(&monitors)?;
   let target = resolve_display_target(&targets, selector)?;
   let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
-  let image = monitor.capture_image().map_err(|error| backend(format!("failed to capture display: {error}")))?;
+  let image = retry_invalid_handle(|| monitor.capture_image().map_err(|error| backend(format!("failed to capture display: {error}"))))?;
   let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
+  let scale_factor = capture_scale_factor(&image, target.display.frame);
   let capture = Capture {
     origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
     image,
     bounds: target.display.frame,
-    scale_factor: target.display.scale_factor,
+    scale_factor,
     backend: CAPTURE_BACKEND.to_string(),
     fallback_reason: None,
   };
@@ -83,16 +82,17 @@ pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<Regi
   let local_y = integral_capture_dimension("y", region.origin.y - target.display.frame.origin.y)?;
   let width = integral_positive_capture_dimension("width", region.size.width)?;
   let height = integral_positive_capture_dimension("height", region.size.height)?;
-  let image = monitor
-    .capture_region(local_x, local_y, width, height)
-    .map_err(|error| backend(format!("failed to capture display region: {error}")))?;
+  let image = retry_invalid_handle(|| {
+    monitor.capture_region(local_x, local_y, width, height).map_err(|error| backend(format!("failed to capture display region: {error}")))
+  })?;
   let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
+  let scale_factor = capture_scale_factor(&image, region);
   let capture = Capture {
     origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(region.origin))),
     image,
     bounds: region,
-    scale_factor: target.display.scale_factor,
+    scale_factor,
     backend: CAPTURE_BACKEND.to_string(),
     fallback_reason: None,
   };
@@ -105,6 +105,35 @@ pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<Regi
 #[cfg(not(target_os = "windows"))]
 pub fn capture_region(_selector: Option<&str>, _region: Rect) -> DriverResult<RegionCapture> {
   Err(DriverError::unsupported("display.capture_region"))
+}
+
+/// Retry one observed transient GDI handle failure with fresh capture handles.
+// NOTICE(windows-xcap-e-handle): Repeated paired captures on
+// `luoling-windows-11` returned 0x80070006 while the visible desktop changed
+// between user and lock screens; an immediate next capture succeeded. xcap
+// 0.6.2 creates GDI handles per call in `src/windows/capture.rs`. The exact
+// failing Win32 call is not exposed. Remove this narrow retry when the
+// capture backend handles that transition without a transient error.
+#[cfg(target_os = "windows")]
+fn retry_invalid_handle<T>(mut capture: impl FnMut() -> DriverResult<T>) -> DriverResult<T> {
+  match capture() {
+    Err(DriverError::Backend { message }) if message.contains("0x80070006") => {
+      std::thread::sleep(std::time::Duration::from_millis(40));
+      capture()
+    }
+    result => result,
+  }
+}
+
+/// xcap reports Windows monitor bounds in desktop coordinates and DPI
+/// separately. A capture's scale must describe its actual pixel-to-bound ratio.
+#[cfg(any(target_os = "windows", test))]
+fn capture_scale_factor(image: &image::RgbaImage, bounds: Rect) -> f64 {
+  if bounds.size.width <= 0.0 {
+    return 1.0;
+  }
+
+  f64::from(image.width()) / bounds.size.width
 }
 
 #[cfg(target_os = "windows")]
