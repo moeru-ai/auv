@@ -1,6 +1,6 @@
 pub mod auth;
 #[cfg(target_os = "macos")]
-mod binding;
+pub(crate) mod binding;
 pub mod capture;
 pub mod clipboard;
 pub mod error;

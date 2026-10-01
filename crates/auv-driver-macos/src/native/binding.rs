@@ -352,6 +352,21 @@ pub(crate) mod ffi {
     recovery_hint: Option<String>,
   }
 
+  // Private to the signed Device Entry Host. Each failure is a fixed,
+  // non-secret stage; native error strings never cross this boundary.
+  enum NativeDeviceUnlockOutcome {
+    Submitted,
+    InvalidRequest,
+    IdentityMismatch,
+    PermissionMissing,
+    SessionChanged,
+    EventUnavailable,
+    WakeUnavailable,
+    FocusUnavailable,
+    FocusLost,
+    DeadlineExceeded,
+  }
+
   #[swift_bridge(swift_repr = "struct")]
   struct NativeMouseLocationResponse {
     x: f64,
@@ -435,6 +450,15 @@ pub(crate) mod ffi {
     fn validate_input_target(pid: i64, window_number: i64, require_window_focus: bool) -> NativeActionResponse;
     fn confirm_input_focus(pid: i64, window_number: i64) -> NativeActionResponse;
     fn type_text_foreground(text: String, inter_char_delay_ms: u64) -> NativeActionResponse;
+    // NOTICE(device-entry-macos-host): Only an installed, signed graphical
+    // helper may call this lock-screen HID route after Device policy and
+    // same-session checks. Ordinary input continues to use its own path.
+    fn submit_locked_session_credential(
+      credential: Vec<u8>,
+      expected_uid: u32,
+      selector: String,
+      posting_budget_seconds: f64,
+    ) -> NativeDeviceUnlockOutcome;
     fn press_keys_foreground(key_codes: Vec<i32>) -> NativeActionResponse;
     fn press_keys_in_window(pid: i64, window_number: i64, key_codes: Vec<i32>) -> NativeActionResponse;
     fn key_transition(pid: i64, window_number: i64, key_code: i32, down: bool, flags: u64) -> NativeActionResponse;

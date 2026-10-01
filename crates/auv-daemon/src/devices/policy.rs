@@ -919,6 +919,104 @@ mod tests {
     assert_eq!(host.deliveries.load(Ordering::SeqCst), 0);
   }
 
+  #[cfg(target_os = "macos")]
+  // ROOT CAUSE:
+  //
+  // If an administrator disabled remote unlock after its final enabled read,
+  // SetPolicy(false) could return while accepted native input was still in flight.
+  // The shared gate orders that input before the durable disable response.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+  async fn disabling_waits_for_accepted_native_input_and_denies_later_unlock() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use auv_api_server::device_local::{DeviceLocalControl, LocalOsPrincipal};
+
+    use super::super::enrollment_macos::MacosLocalEnrollment;
+
+    struct BlockingHost {
+      inner: Arc<Host>,
+      entered: Mutex<mpsc::Sender<()>>,
+      release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl SessionHost for BlockingHost {
+      fn sessions(&self) -> Result<Vec<ObservedSession>, DeviceEntryErrorReason> {
+        self.inner.sessions()
+      }
+
+      async fn verify_pending_credential(
+        &self,
+        selected: &ObservedSession,
+        authorize_effect: &(dyn Fn() -> Result<(), DeviceEntryErrorReason> + Send + Sync),
+      ) -> Result<(), DeviceEntryErrorReason> {
+        self.inner.verify_pending_credential(selected, authorize_effect).await
+      }
+
+      async fn verify_ready_credential(
+        &self,
+        selected: &ObservedSession,
+        authorize_effect: &(dyn Fn() -> Result<(), DeviceEntryErrorReason> + Send + Sync),
+      ) -> Result<(), DeviceEntryErrorReason> {
+        self.inner.verify_ready_credential(selected, authorize_effect).await
+      }
+
+      fn unlock_locked(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
+        self.entered.lock().unwrap().send(()).unwrap();
+        self.release.lock().unwrap().recv_timeout(Duration::from_secs(5)).map_err(|_| DeviceEntryErrorReason::ServiceUnavailable)?;
+        self.inner.unlock_locked(selected)
+      }
+    }
+
+    let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Locked)]));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (_root, policy) = fixture(BlockingHost {
+      inner: Arc::clone(&host),
+      entered: Mutex::new(entered_tx),
+      release: Mutex::new(release_rx),
+    });
+    policy.store.invalidate_for_enroll("neko", "uid:1000").unwrap();
+    let record = policy.store.publish_pending("neko", "uid:1000").unwrap();
+    policy.store.promote_ready("uid:1000", record.generation).unwrap();
+    let local = MacosLocalEnrollment::new(
+      Arc::clone(&policy.store),
+      Arc::clone(&policy.account_locks),
+      Arc::clone(&policy.audit),
+      Arc::clone(&policy.policy_gate),
+    );
+    let policy = Arc::new(policy);
+    let unlock = tokio::spawn({
+      let policy = Arc::clone(&policy);
+      async move { policy.ensure(&caller(), UserSessionTarget::User("neko".into())).await }
+    });
+    tokio::task::spawn_blocking(move || entered_rx.recv_timeout(Duration::from_secs(5)).unwrap()).await.unwrap();
+
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let disable = tokio::spawn(async move {
+      started_tx.send(()).unwrap();
+      local.set_policy(&LocalOsPrincipal::UnixUid(0), false).await
+    });
+    started_rx.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+      // Tokio's fair lock stops admitting new readers after the writer queues.
+      while policy.policy_gate.try_read().is_ok() {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .unwrap();
+
+    assert!(!disable.is_finished());
+
+    release_tx.send(()).unwrap();
+
+    assert_eq!(unlock.await.unwrap().unwrap().kind, DeviceEntryEffectKind::UnlockedExistingSession);
+    assert_eq!(disable.await.unwrap().unwrap(), false);
+    assert!(matches!(policy.ensure(&caller(), UserSessionTarget::User("neko".into())).await, Err(DeviceEntryErrorReason::Disabled)));
+    assert_eq!(host.deliveries.load(Ordering::SeqCst), 1);
+  }
+
   #[tokio::test]
   async fn usable_ready_session_is_noop_without_vault_probe_or_input() {
     let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Usable)]));

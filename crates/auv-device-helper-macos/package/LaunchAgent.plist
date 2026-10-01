@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.moeru.auv.device-entry-host</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Application Support/AUV/AUV Device Entry Host.app/Contents/MacOS/auv-device-helper-macos</string>
+  </array>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>AssociatedBundleIdentifiers</key>
+  <array><string>dev.moeru.auv.device-entry-host</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>

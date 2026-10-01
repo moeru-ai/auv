@@ -83,7 +83,7 @@ pub fn parse_listener(listener: &str, paired_tcp: bool) -> Result<ListenEndpoint
 /// Bound daemon server with discovery publication and graceful shutdown.
 pub struct Server {
   inner: auv_api_server::server::Server,
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
   device_local: std::sync::Arc<devices::LocalState>,
   discovery_file: Option<PathBuf>,
   publish_discovery: bool,
@@ -118,9 +118,9 @@ impl Server {
       }
     };
     let store_root = config.store_root;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let device_local = std::sync::Arc::new(devices::LocalState::open(&store_root, pairing.clone())?);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let local_state_for_daemon = std::sync::Arc::clone(&device_local);
     let runner_providers = config.runner_providers;
     let first_party_runners = config.first_party_runners;
@@ -139,7 +139,7 @@ impl Server {
           parent_endpoint,
           first_party_runners,
           runner_providers,
-          #[cfg(target_os = "linux")]
+          #[cfg(any(target_os = "linux", target_os = "macos"))]
           local_state_for_daemon,
         )?))
       },
@@ -147,7 +147,7 @@ impl Server {
     .await?;
     Ok(Self {
       inner: bound,
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "macos"))]
       device_local,
       discovery_file: config.discovery_file,
       publish_discovery: config.publish_discovery,
@@ -176,7 +176,7 @@ impl Server {
       None
     };
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
       // These independent listeners share state but never share route tables.
       // If either fails, stop the other and wait for its socket cleanup.
@@ -198,7 +198,7 @@ impl Server {
       }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     self.inner.serve(shutdown).await
   }
 }

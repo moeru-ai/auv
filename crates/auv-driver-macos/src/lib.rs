@@ -1,6 +1,10 @@
 mod accessibility;
 mod application;
 mod descriptor;
+#[doc(hidden)]
+pub mod device_session;
+#[doc(hidden)]
+pub mod device_session_unlock;
 mod driver;
 mod readiness;
 mod session;

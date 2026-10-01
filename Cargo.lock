@@ -622,7 +622,9 @@ dependencies = [
  "auv-api-proto",
  "auv-api-server",
  "auv-core",
+ "auv-device-helper-macos",
  "auv-driver-linux",
+ "auv-driver-macos",
  "fs2",
  "futures-util",
  "getrandom 0.3.4",
@@ -650,6 +652,21 @@ dependencies = [
  "tower",
  "uuid",
  "zbus",
+ "zeroize",
+]
+
+[[package]]
+name = "auv-device-helper-macos"
+version = "0.0.22"
+dependencies = [
+ "auv-driver-macos",
+ "core-foundation 0.10.1",
+ "nix 0.31.3",
+ "rustix 1.1.5",
+ "security-framework",
+ "security-framework-sys",
+ "serde_json",
+ "tokio",
  "zeroize",
 ]
 
@@ -3949,6 +3966,19 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+ "memoffset 0.9.1",
 ]
 
 [[package]]
