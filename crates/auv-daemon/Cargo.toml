@@ -36,6 +36,12 @@ tonic-health = "0.14"
 tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["serde", "v7"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+auv-driver-linux = { version = "0.0.22", path = "../auv-driver-linux" }
+libloading = "0.8"
+zbus = "5.15"
+zeroize = "1"
+
 [dev-dependencies]
 futures-util = "0.3"
 prost = "0.14"

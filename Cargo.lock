@@ -622,6 +622,7 @@ dependencies = [
  "auv-api-proto",
  "auv-api-server",
  "auv-core",
+ "auv-driver-linux",
  "fs2",
  "futures-util",
  "getrandom 0.3.4",
@@ -629,6 +630,7 @@ dependencies = [
  "http",
  "hyper-util",
  "libc",
+ "libloading 0.8.9",
  "prost",
  "prost-types",
  "reqwest",
@@ -647,6 +649,8 @@ dependencies = [
  "tonic-reflection",
  "tower",
  "uuid",
+ "zbus",
+ "zeroize",
 ]
 
 [[package]]
@@ -682,9 +686,11 @@ dependencies = [
  "futures-lite",
  "image",
  "leptess",
+ "libc",
  "pipewire",
  "serde",
  "tempfile",
+ "thiserror 2.0.20",
  "url",
  "wayland-client 0.31.15",
  "wayland-protocols 0.32.13",

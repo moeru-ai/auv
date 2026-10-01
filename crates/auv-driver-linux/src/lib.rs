@@ -15,6 +15,8 @@ mod atspi_stub;
 mod capture;
 mod clipboard;
 mod descriptor;
+#[cfg(target_os = "linux")]
+pub mod device_unlock;
 mod driver;
 mod error;
 pub mod input;

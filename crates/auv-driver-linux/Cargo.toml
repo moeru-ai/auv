@@ -28,6 +28,7 @@ path = "examples/validate.rs"
 auv-driver-common = { version = "0.0.22", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
+thiserror = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "remote_desktop", "screencast", "clipboard", "screenshot"] }
@@ -36,6 +37,7 @@ evdev = "0.13.2"
 fs2 = "0.4"
 futures-lite = "2"
 leptess = "0.14"
+libc = "0.2"
 pipewire = "0.8"
 url = "2"
 wayland-client = "0.31"
