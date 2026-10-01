@@ -362,6 +362,102 @@ mod frontend {
         CallToolResult::structured(value)
       })
     }
+
+    /// Triggering workflow: MCP `tools/call` for `device_list_user_sessions` reaches this
+    /// handler through `tool_router`, then calls `Devices::list_user_sessions` on
+    /// the selected Device client.
+    #[tool(
+      description = "Request current OS login sessions from one selected AUV Device. Select a configured paired Device by device_name or device_id, or use the local default. Requires a validated native host; unsupported hosts return a typed error."
+    )]
+    async fn device_list_user_sessions(&self, Parameters(req): Parameters<DeviceSessionsToolRequest>) -> Result<CallToolResult, McpError> {
+      let selection = device_selection(req.device_name, req.device_id)?;
+      let (client, _) = auv::Client::selected(None, &selection)
+        .await
+        .map_err(device_selection_error)?
+        .ok_or_else(|| McpError::internal_error("no AUV daemon was discovered", None))?;
+      // Device entry audit belongs to the target Device. This query creates no
+      // caller-owned Run or trace artifact in the MCP frontend.
+      match client.devices().list_user_sessions().await {
+        Ok(sessions) => Ok(CallToolResult::structured(serde_json::json!({
+          "sessions": sessions.iter().map(|session| serde_json::json!({
+            "session_selector": session.selector,
+            "user": session.user,
+            "lock_state": session.lock_state.as_str(),
+            "connection_kind": session.connection_kind.as_str(),
+            "seat": session.seat,
+          })).collect::<Vec<_>>(),
+        }))),
+        Err(auv::devices::DeviceError::Entry(reason)) => Ok(CallToolResult::structured_error(serde_json::json!({
+          "reason": reason.as_str(),
+        }))),
+        Err(error) => Err(McpError::internal_error(error.to_string(), None)),
+      }
+    }
+
+    /// Triggering workflow: MCP `tools/call` for `device_get_user_session`
+    /// reaches the selected Device through `Devices::get_user_session`.
+    #[tool(
+      description = "Get one current OS user session by the opaque session_selector returned by device_list_user_sessions. Requires a validated native host; unsupported hosts return a typed error."
+    )]
+    async fn device_get_user_session(
+      &self,
+      Parameters(req): Parameters<DeviceGetUserSessionToolRequest>,
+    ) -> Result<CallToolResult, McpError> {
+      if req.session_selector.trim().is_empty() {
+        return Err(invalid_params("session_selector must be nonempty"));
+      }
+
+      let selection = device_selection(req.device_name, req.device_id)?;
+      let (client, _) = auv::Client::selected(None, &selection)
+        .await
+        .map_err(device_selection_error)?
+        .ok_or_else(|| McpError::internal_error("no AUV daemon was discovered", None))?;
+
+      match client.devices().get_user_session(&req.session_selector).await {
+        Ok(session) => Ok(CallToolResult::structured(serde_json::json!({
+          "session_selector": session.selector,
+          "user": session.user,
+          "lock_state": session.lock_state.as_str(),
+          "connection_kind": session.connection_kind.as_str(),
+          "seat": session.seat,
+        }))),
+        Err(auv::devices::DeviceError::Entry(reason)) => Ok(CallToolResult::structured_error(serde_json::json!({
+          "reason": reason.as_str(),
+        }))),
+        Err(error) => Err(McpError::internal_error(error.to_string(), None)),
+      }
+    }
+
+    /// Triggering workflow: MCP `tools/call` for `device_ensure_user_session_unlocked` reaches this
+    /// handler through `tool_router`, then calls `Devices::ensure_user_session_unlocked` on the
+    /// selected Device client.
+    #[tool(
+      description = "Request unlock of one existing OS login session on a selected Device. Set exactly one of user or session_selector. A user with no existing session is not signed in. Requires a validated native host; unsupported hosts return a typed error. The credential stays on the target Device."
+    )]
+    async fn device_ensure_user_session_unlocked(
+      &self,
+      Parameters(req): Parameters<DeviceUnlockToolRequest>,
+    ) -> Result<CallToolResult, McpError> {
+      let target = req.target()?;
+      let selection = device_selection(req.device_name, req.device_id)?;
+      let (client, _) = auv::Client::selected(None, &selection)
+        .await
+        .map_err(device_selection_error)?
+        .ok_or_else(|| McpError::internal_error("no AUV daemon was discovered", None))?;
+      // The target owns the audit and verifies the effect; MCP does not record
+      // a caller-owned Run containing entry inputs or OS login state.
+      match client.devices().ensure_user_session_unlocked(target).await {
+        Ok(effect) => Ok(CallToolResult::structured(serde_json::json!({
+          "effect": effect.kind.as_str(),
+          "user": effect.user,
+          "session_selector": effect.session_selector,
+        }))),
+        Err(auv::devices::DeviceError::Entry(reason)) => Ok(CallToolResult::structured_error(serde_json::json!({
+          "reason": reason.as_str(),
+        }))),
+        Err(error) => Err(McpError::internal_error(error.to_string(), None)),
+      }
+    }
   }
 
   impl ServerHandler for McpServer {
@@ -395,7 +491,7 @@ mod frontend {
     fn get_info(&self) -> ServerInfo {
       ServerInfo {
         instructions: Some(
-          "MCP exposes explicit AUV tools backed by the registered typed invoke commands; no planner or NL parsing is present.".into(),
+          "MCP exposes explicit AUV invoke commands and typed Device unlock tools; no planner or NL parsing is present.".into(),
         ),
         capabilities: ServerCapabilities::builder().enable_tools().build(),
         ..Default::default()
@@ -498,6 +594,90 @@ mod frontend {
     dry_run: bool,
     #[serde(default)]
     store_root: Option<String>,
+  }
+
+  #[derive(Debug, Deserialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
+  struct DeviceSessionsToolRequest {
+    /// Exact configured Device name; omit for local discovery.
+    device_name: Option<String>,
+    /// Canonical Device ID or unambiguous prefix; omit for local discovery.
+    device_id: Option<String>,
+  }
+
+  #[derive(Debug, Deserialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
+  struct DeviceGetUserSessionToolRequest {
+    /// Exact configured Device name; omit for local discovery.
+    device_name: Option<String>,
+    /// Canonical Device ID or unambiguous prefix; omit for local discovery.
+    device_id: Option<String>,
+    /// Opaque selector returned by device_list_user_sessions.
+    session_selector: String,
+  }
+
+  #[derive(Debug, Deserialize, JsonSchema)]
+  #[serde(deny_unknown_fields)]
+  struct DeviceUnlockToolRequest {
+    /// Exact configured Device name; omit for local discovery.
+    device_name: Option<String>,
+    /// Canonical Device ID or unambiguous prefix; omit for local discovery.
+    device_id: Option<String>,
+    /// OS account on the selected Device.
+    user: Option<String>,
+    /// Opaque selector returned by device_list_user_sessions.
+    session_selector: Option<String>,
+  }
+
+  impl DeviceUnlockToolRequest {
+    fn target(&self) -> Result<auv::devices::UserSessionTarget, McpError> {
+      match (self.user.as_deref(), self.session_selector.as_deref()) {
+        (Some(user), None) if !user.trim().is_empty() => Ok(auv::devices::UserSessionTarget::User(user.to_string())),
+        (None, Some(selector)) if !selector.trim().is_empty() => Ok(auv::devices::UserSessionTarget::SessionSelector(selector.to_string())),
+        _ => Err(invalid_params("set exactly one nonempty user or session_selector")),
+      }
+    }
+  }
+
+  fn device_selection(device_name: Option<String>, device_id: Option<String>) -> Result<auv::selection::RootSelection, McpError> {
+    if device_name.as_ref().is_some_and(|value| value.trim().is_empty()) || device_id.as_ref().is_some_and(|value| value.trim().is_empty()) {
+      return Err(invalid_params("device_name and device_id must be nonempty when set"));
+    }
+
+    Ok(auv::selection::RootSelection {
+      device_name,
+      device_id,
+      run_id: None,
+    })
+  }
+
+  fn device_selection_error(error: auv::selection::SelectedClientError) -> McpError {
+    use auv::ContextError;
+    use auv::client::PlacementError;
+    use auv::devices::DeviceError;
+    use auv::selection::{SelectedClientError, SelectionError};
+
+    let caller_selection = match &error {
+      SelectedClientError::Selection(SelectionError::Device(device)) => matches!(
+        device,
+        DeviceError::Identity(_) | DeviceError::NotFound | DeviceError::Ambiguous { .. } | DeviceError::SelectionConflict { .. }
+      ),
+      SelectedClientError::Selection(_) | SelectedClientError::Placement(PlacementError::Selection(_)) => true,
+      SelectedClientError::Context(context) | SelectedClientError::Placement(PlacementError::Context(context)) => matches!(
+        context,
+        ContextError::Identity(_)
+          | ContextError::DeviceNotConfigured
+          | ContextError::DeviceSelectionAmbiguous { .. }
+          | ContextError::CanonicalDeviceMissing(_)
+      ),
+      _ => false,
+    };
+
+    if caller_selection {
+      invalid_params(error)
+    } else {
+      McpError::internal_error(error.to_string(), None)
+    }
   }
 
   fn invalid_params(message: impl ToString) -> McpError {

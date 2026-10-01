@@ -6,7 +6,7 @@ use clap::{Args, Subcommand};
 
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
+  after_long_help = "Examples:\n  # List local and paired Devices\n  auv devices list\n\n  # Inspect one Device by its stable ID\n  auv devices get <DEVICE_ID>\n\n  # List current OS login sessions on a paired Device\n  auv --device <NAME> devices sessions\n\n  # Unlock an existing OS login session\n  auv --device <NAME> devices unlock --user neko\n\n  # Learn the two-machine enrollment flow\n  auv devices pair --help\n\n  # Run the same typed operation on a paired Device\n  auv --device <NAME> invoke display.list"
 )]
 pub struct DevicesArgs {
   #[command(subcommand)]
@@ -20,6 +20,10 @@ pub enum DevicesCommand {
   List(DeviceListArgs),
   /// Get one Device by stable ID.
   Get(DeviceGetArgs),
+  /// List current OS login sessions (requires a validated native entry host).
+  Sessions(DeviceSessionsArgs),
+  /// Unlock an existing OS login session (requires a validated native host).
+  Unlock(DeviceSessionTargetArgs),
   /// Establish or administer paired Device trust.
   #[command(
     long_about = "Pairing is a two-machine enrollment flow. The daemon host creates a short, one-time bootstrap token locally. The client consumes that token once, receives an opaque Device credential, and saves it in a named local profile.\n\nRegistration is deliberately local to the daemon host: a remote unauthenticated caller cannot create pairing tokens. After enrollment, normal AUV commands select the paired Device and reuse the saved credential automatically."
@@ -123,6 +127,32 @@ pub struct DeviceGetArgs {
   pub json: bool,
 }
 
+#[derive(Clone, Debug, Args)]
+pub struct DeviceSessionsArgs {
+  /// Override daemon discovery with an explicit endpoint.
+  #[arg(long, value_name = "URI")]
+  pub endpoint: Option<String>,
+  /// Render machine-readable JSON.
+  #[arg(long)]
+  pub json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct DeviceSessionTargetArgs {
+  /// OS account with one existing session on the selected Device.
+  #[arg(long, required_unless_present = "session", conflicts_with = "session")]
+  pub user: Option<String>,
+  /// Opaque selector from `auv devices sessions`.
+  #[arg(long, required_unless_present = "user")]
+  pub session: Option<String>,
+  /// Override daemon discovery with an explicit endpoint.
+  #[arg(long, value_name = "URI")]
+  pub endpoint: Option<String>,
+  /// Render machine-readable JSON.
+  #[arg(long)]
+  pub json: bool,
+}
+
 #[derive(TableRow)]
 struct DeviceTableRow {
   #[table(header = "DEVICE ID")]
@@ -144,10 +174,22 @@ struct DeviceProfileTableRow {
   endpoint: String,
 }
 
+#[derive(TableRow)]
+struct UserSessionTableRow {
+  #[table(header = "SESSION")]
+  selector: String,
+  user: String,
+  lock_state: String,
+  connection_kind: String,
+  seat: Option<String>,
+}
+
 pub async fn run(args: DevicesArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {
   match args.command {
     DevicesCommand::List(args) => list(args, selection).await,
     DevicesCommand::Get(args) => get(args, selection).await,
+    DevicesCommand::Sessions(args) => sessions(args, selection).await,
+    DevicesCommand::Unlock(args) => unlock(args, selection).await,
     DevicesCommand::Pair(args) => pairing(args, selection).await,
     DevicesCommand::Unpair(args) => trust(args, selection, TrustAction::Unpair).await,
     DevicesCommand::Enable(args) => trust(args, selection, TrustAction::Enable).await,
@@ -219,6 +261,79 @@ async fn get(args: DeviceGetArgs, selection: &auv::selection::RootSelection) -> 
   } else {
     print_table(&[device_table_row(&device, "online")], "(no device)");
   }
+  Ok(0)
+}
+
+async fn sessions(args: DeviceSessionsArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {
+  let (client, _) = auv::Client::selected(args.endpoint.as_deref(), selection)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "no AUV daemon was discovered".to_string())?;
+
+  let sessions = client.devices().list_user_sessions().await.map_err(|error| error.to_string())?;
+
+  if args.json {
+    let values = sessions
+      .iter()
+      .map(|session| {
+        serde_json::json!({
+          "session_selector": session.selector,
+          "user": session.user,
+          "lock_state": session.lock_state.as_str(),
+          "connection_kind": session.connection_kind.as_str(),
+          "seat": session.seat,
+        })
+      })
+      .collect::<Vec<_>>();
+    println!("{}", serde_json::to_string_pretty(&values).map_err(|error| format!("failed to encode login sessions: {error}"))?);
+  } else {
+    let rows = sessions
+      .iter()
+      .map(|session| UserSessionTableRow {
+        selector: session.selector.clone(),
+        user: session.user.clone(),
+        lock_state: session.lock_state.as_str().to_lowercase(),
+        connection_kind: session.connection_kind.as_str().to_lowercase(),
+        seat: session.seat.clone(),
+      })
+      .collect::<Vec<_>>();
+    print_table(&rows, "(no login sessions)");
+  }
+
+  Ok(0)
+}
+
+async fn unlock(args: DeviceSessionTargetArgs, selection: &auv::selection::RootSelection) -> Result<i32, String> {
+  let (client, _) = auv::Client::selected(args.endpoint.as_deref(), selection)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "no AUV daemon was discovered".to_string())?;
+
+  let target = match (args.user, args.session) {
+    (Some(user), None) => auv::devices::UserSessionTarget::User(user),
+    (None, Some(session)) => auv::devices::UserSessionTarget::SessionSelector(session),
+    _ => return Err("specify exactly one of --user or --session".to_string()),
+  };
+  let effect = client.devices().ensure_user_session_unlocked(target).await.map_err(|error| error.to_string())?;
+  let (kind, user, session_selector) = (effect.kind.as_str(), effect.user, effect.session_selector);
+
+  if args.json {
+    println!(
+      "{}",
+      serde_json::to_string_pretty(&serde_json::json!({
+        "effect": kind,
+        "user": user,
+        "session_selector": session_selector,
+      }))
+      .map_err(|error| format!("failed to encode Device entry effect: {error}"))?
+    );
+  } else {
+    match session_selector {
+      Some(selector) => println!("{}: {} ({selector})", kind.to_lowercase(), user),
+      None => println!("{}: {}", kind.to_lowercase(), user),
+    }
+  }
+
   Ok(0)
 }
 

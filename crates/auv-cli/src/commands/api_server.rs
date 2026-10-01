@@ -113,6 +113,10 @@ async fn serve(args: ApiServerServeArgs, project_root: &std::path::Path) -> Resu
       publish_discovery: !args.no_discovery,
       daemon_idle_timeout: args.daemon_idle_timeout,
       runner_providers: args.runner_providers,
+      local_driver_runner: true,
+      emit_bound_endpoints: true,
+      #[cfg(windows)]
+      enable_device_entry: false,
     },
     project_root,
   )

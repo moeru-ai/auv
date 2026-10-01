@@ -338,6 +338,84 @@ paired Device, unpair a Device, or revoke credentials. Pairing has no separate
 administrator role; `PairDevice` is the only unauthenticated operation and
 requires a valid one-time bootstrap token.
 
+For the first native Device unlock release, every active paired Device bearer
+may request unlock of an **existing OS login session** without a separate
+per-Device grant. A bearer enrolled through a token created by another paired
+Device receives the same request authority. The target-wide capability is
+enabled by default; a target-local OS administrator may explicitly disable it.
+Disabling rejects remote unlock and remote OS login-session listing requests,
+but retains locally enrolled credentials. Re-enabling does not require
+per-account re-enrollment; credential deletion is separate. A user with no
+existing session cannot be signed in by this release.
+
+Each OS user must also enroll a usable login credential locally on the target
+before that user's existing session may be selected, even if a platform can
+unlock it without entering a password. Enrollment without a stored credential
+is not offered. A target-local OS administrator may enroll any OS user without
+requiring that user's separate confirmation. A non-administrator may enroll
+their own OS account locally, but not another user's account; the local
+interface must establish that identity through the OS. Deletion is separate:
+a non-administrator may delete their own enrollment and an OS administrator
+may delete any account's enrollment. Once deletion completes, later remote
+unlock requests for that account fail until re-enrollment. A paired bearer
+grants authority to ask the target Device to act, not an OS login credential.
+The target keeps any OS credential local and must verify the intended existing
+session became usable. Remote session operations belong to `DeviceService`:
+`ListUserSessions`, `GetUserSession`, and `EnsureUserSessionUnlocked`.
+
+Target-local credential management belongs to `DeviceLocalService`: `Enroll`,
+`GetEnrollment`, `ListEnrollments`, and `RemoveEnrollment`; its local policy and
+audit methods are `GetPolicy`, `SetPolicy`, and `ListAudit`. The local service
+requires a dedicated OS-authenticated IPC endpoint and is not available to
+paired remote callers. A session's lock state may be locked, usable, or unknown;
+`is_locked` and `is_unlocked` are true only for the corresponding known state.
+The typed Device API returns an explicit unsupported-host result where no
+validated native host is configured. Installed locked-session gates passed on
+one macOS, one GNOME, and one Windows configuration; these do not establish
+general release support. See the
+[revised implementation design](ai/references/session-api/2026-09-28-remote-device-entry-implementation-design.md)
+and [unlock authority decision](ai/references/session-api/2026-09-27-device-unlock-authority-decision.md).
+
+The target must have a previously enrolled, persistent OS login credential
+that its actual unlock host can read while the selected user session is locked.
+Enrollment occurs locally on the target. `PENDING` means the secret is stored
+but locked-session retrieval under the installed host identity has not been
+verified; it is not yet eligible for remote unlock. `READY` requires that
+retrieval, and `SUSPENDED` follows confirmed OS credential rejection. The first
+native release supports protected credential stores only and rejects a
+plaintext choice explicitly. The broader accepted policy permits a future
+administrator-selected plaintext fallback, but no current CLI or service
+surface offers it. There is no automatic fallback, and a remote paired caller
+can never make that storage choice. The protected backends have
+configuration-specific installed-path gate evidence; release installation and
+other host configurations remain open.
+The credential never travels in the remote unlock request. See the
+[credential decision](ai/references/session-api/2026-09-27-device-entry-credential-decision.md).
+The target retains a local audit record of each remote entry request with
+the authenticated paired Device ID, selected OS user or login session,
+request time, and typed outcome. Credentials, secret-bearing key events,
+and login-field screenshots are excluded from audit and Run artifacts.
+The target's local OS administrator may read all remote-entry audit history;
+an ordinary local user may read entries for their own OS account. A paired
+remote caller receives its current request result but cannot browse this
+history, including through ordinary caller-owned Run reads.
+Confirmed OS rejection of a stored credential suspends that account's remote
+entry until local re-enrollment; subsequent paired requests do not resubmit
+the rejected credential. Input-delivery failure alone does not confirm rejection.
+
+The accepted CLI action name is `auv devices unlock`. Its first native effect
+unlocks one existing OS login session. If that session is already usable, the
+operation succeeds with an explicit no-op outcome without reading a credential,
+posting input, or changing focus. A user with no current session returns an
+unsupported/no-session result and does not trigger greeter sign-in. The landed
+wire includes a `SIGNED_IN_NEW_SESSION` result variant from the prior broader
+design; this variant is reserved and must not be emitted in the first release.
+The `user`/`session_selector` request and effect fields have landed; native
+behavior has passed the three configuration-specific gates, while the precise
+no-session error remains to be finalized. Ordinary
+greeter sign-in and multi-user switching require a later approved slice and
+platform proof.
+
 ## Daemon
 
 The AUV daemon is the long-lived process role that owns API listeners,
@@ -376,6 +454,13 @@ future `auv daemon start|status|stop` frontend may integrate with launchd,
 systemd, or brew services while executing the same serving implementation.
 Listener type is transport configuration rather than a separate server role.
 
+For the first remote Device unlock release, the target daemon and platform
+host must remain reachable while an existing graphical user session is locked.
+A later signed-out release would also require a machine-level service started
+by the OS service manager and a controlled pre-login component; that broader
+lifecycle is not a gate for locked-session unlock. See the [host lifecycle
+decision](ai/references/session-api/2026-09-27-device-login-host-lifecycle-decision.md).
+
 The default local listener does not bind TCP. Linux and macOS use an owner-only
 Unix socket. Windows uses an owner-scoped named pipe and rejects remote pipe
 clients. A caller must use `--listen http://...` to bind TCP. A non-loopback
@@ -395,6 +480,17 @@ Session is not a public AUV control-plane resource. It may name an internal
 Driver session, ONNX session, SDK connection pool, or Runner-owned cache. An
 internal session is not canonical Run identity, Device identity, or an
 authentication credential.
+
+An **OS login session** is a platform-owned user login instance, distinct from
+AUV's internal sessions and Runs. The first Device unlock release targets a
+named user or a specific **existing** OS login session. A user name selects an
+eligible session only when exactly one matches; multiple matches require a
+specific login-session selector, and no match fails without creating a session.
+Active paired Devices may use a read-only Device operation to list existing OS
+login sessions, their users, identifiers, and lock state for explicit selection.
+This does not create a public AUV `SessionService`. The current experimental
+wire contract uses an opaque selector; installed host gates exercised
+selection on specific platform configurations.
 
 The retired experimental daemon once exposed a public `SessionService`. That
 prototype, its session-scoped `Connection`, and legacy `VisionService` were

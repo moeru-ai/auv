@@ -271,10 +271,10 @@ then posts Command+A and Backspace before the credential. It must recheck the
 same locked session and secure-field focus after clearing. macOS does not
 expose a character count through this field's AX attributes, so clearing is
 supported by the controlled visible-input gates below, not by an AX emptiness
-readback. The installed helper and actual DeviceService still require a
-supervised credential-delivery gate and independent post-action verification
-before this route can be enabled. The earlier Return-to-focus primitive was
-removed because it could submit retained partial input.
+readback. At this stage, the installed helper and actual DeviceService still
+required a supervised credential-delivery gate and independent post-action
+verification before this route could be enabled. The earlier Return-to-focus
+primitive was removed because it could submit retained partial input.
 
 A follow-up signed, read-only AX diagnostic on the same locked `neko` session
 tested this visibility question without a credential or posted event. Its
@@ -324,7 +324,13 @@ activation and clearing order. It passes the selected `macos:<UUID>` into
 Swift, checks the same locked physical console and exact focused loginwindow
 field before each credential character and before its single final Return,
 and stops posting if its seven-second budget expires. The helper reserves ten
-seconds for independent same-session readback under its request timeout.
+seconds for independent same-session readback under its 18-second request
+deadline. Keychain and HID work runs off the helper's async runtime so that
+deadline actually fires; if it does, the helper exits without replying,
+because synchronous native calls cannot be canceled, and launchd restarts it.
+The daemon client waits 25 seconds and reports an unanswered unlock as
+`OUTCOME_UNVERIFIED`, never as a clean `SERVICE_UNAVAILABLE`, so it does not
+release the account lock while helper input may still be in flight.
 Compilation and focused tests are implementation evidence only. One read-only
 lookup probe timed out while the target remained unlocked. A second signed,
 read-only probe launched in the existing locked session and found exactly one
@@ -364,6 +370,89 @@ must fail closed; the installed gate should exercise that case. The gate is for
 the tested macOS version and physical-console arrangement. A
 separate signed-out login test and a separate multi-session host selection
 design would be needed for those states.
+
+## 2026-09-30 paired retest: intermittent input failure after display sleep
+
+A second paired identity on the local Mac could list the exact `neko` console
+session and invoke `display.list` on `neko-mbp-m1`. An unlock requested roughly
+one second after that session became locked returned
+`UNLOCKED_EXISTING_SESSION` in 3.0 seconds; independent session readback was
+`USABLE`, and the owner saw the original desktop. Two earlier paired requests
+returned `OUTCOME_UNVERIFIED` in under one second and left the session locked.
+
+A controlled paired request 45 seconds after observing `LOCKED` read
+`CGDisplayIsAsleep=1` immediately before calling `EnsureUserSessionUnlocked`.
+It returned `OUTCOME_UNVERIFIED` in 0.9 seconds and the owner still saw the lock
+screen. A separate one-shot root client called the installed signed helper
+directly after the same delay and an observed sleeping display. One attempt
+returned success in 2.9 seconds with independent `USABLE` readback. A repeat
+returned `InputUnavailable` in 0.6 seconds and did not unlock. Both direct
+attempts first made the helper's non-input `probe_locked` check; that check did
+not reliably prevent the failure. No password or native input diagnostic was
+recorded.
+
+The failure is intermittent in the installed helper's input path; display
+sleep is a reproduced condition but is not by itself sufficient to cause it.
+`host/session.rs` currently discards the native action's static error string
+when mapping every posting failure to `InputUnavailable`, and
+`host_macos.rs` maps that together with a readback timeout to the same public
+`OUTCOME_UNVERIFIED` reason. The substage (permission, display wake, secure
+field focus, or posting deadline) remains unknown. A future installed retest
+needs non-secret stage reporting before changing wake or focus behavior. The
+one-shot probe binaries and local logs were removed after recording these
+results; the installed daemon and signed helper were not replaced.
+
+A follow-up diagnostic change carries a fixed input-failure stage from the
+Swift posting routine through the Rust driver and private helper response to
+the daemon. The stage contains no credential or native error text. The daemon
+logs it only to its target-local stderr and continues to return the existing
+`OUTCOME_UNVERIFIED` public reason. The private response retains the legacy
+generic status for an older installed helper. The Swift package builds and
+focused helper/daemon tests pass, but this diagnostic build has **not** been
+installed or tested against a locked Mac. It does not change wake, focus, or
+credential posting behavior. A coordinated daemon/helper installation and
+one supervised delayed-lock failure are needed to identify the failing stage;
+until then, no wake or focus fix is established.
+
+The diagnostic daemon and signed helper were installed together on
+`neko-mbp-m1` after correcting an installer-only restart issue: `launchctl
+bootout` left the old root-owned API Unix socket pathname, and the daemon
+properly refused to bind over it. The one-off diagnostic installer checks that the socket is
+root-owned and unheld before removing the stale pathname. The original daemon
+and helper were restored and their paired API verified during recovery, then
+the diagnostic pair was installed with a six-second startup and API-port
+check. Enrollment, pairing, policy, and store paths were preserved.
+
+Two paired unlocks were made after the exact session had remained `LOCKED`
+for 45 seconds. The first returned `UNLOCKED_EXISTING_SESSION`, read back
+`USABLE`, and the owner saw the original desktop. The second returned
+`OUTCOME_UNVERIFIED` with independent `LOCKED` readback. The owner saw the
+display wake but no successful input. The target-local daemon log reported
+the fixed stage `FocusUnavailable`; `pmset -g log` recorded display-off then
+display-on around the attempt. This locates the reproduced failure at the
+unique focused loginwindow secure-field gate after wake. It does not prove
+whether the field was absent, not yet focused, or AX temporarily unavailable.
+The prior native route checked once 350 ms after one harmless activation
+character. The focus-wait candidate waits up to two seconds, rechecks the
+exact locked session, and repeats only that harmless activation character
+until it can identify one focused secure field. It still clears the field
+before any credential character. Its signed helper Mach-O SHA-256 is
+`342f140c6a1bcd193d718560b901b6051ba9334c7fc21874789008aeb59b21ca`.
+The helper was installed on the same Mac while the diagnostic daemon remained
+running; the installer checked the previous installed helper, the new hash
+and Developer ID signature, and the Aqua LaunchAgent after replacement.
+SwiftPM and focused helper tests passed before this installation.
+
+The owner then ran three valid paired delayed-lock checks. In each, the same
+`neko` session remained `LOCKED` for 45 seconds before one request, the API
+returned `UNLOCKED_EXISTING_SESSION`, independent readback was `USABLE`, and
+the owner saw the original desktop. Power logs recorded display-off and
+display-on during all three checks. An intervening attempted check was discarded:
+the session became `USABLE` before its request, so the script sent no input.
+These three successful installed-host checks cover the reproduced
+display-sleep scenario, but do not establish reliability across other Mac
+versions, longer sleep cycles, system sleep, or closed-lid wake. Each valid
+check sent one request; no failed request was automatically retried.
 
 ## Rollback
 

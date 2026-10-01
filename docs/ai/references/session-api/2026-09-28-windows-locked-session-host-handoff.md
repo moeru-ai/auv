@@ -31,16 +31,18 @@ gates supersede only the earlier limits they explicitly retested.
 - `auv-driver-windows::device_session` observes one physical-console login and
   performs one locked-session credential submission inside a LocalSystem worker
   already placed in that session.
-- `auv-driver-windows::device_unlock_vault` stores a credential by stable
+- `auv-daemon` `device_entry::vault_windows` stores a credential by stable
   account SID in a machine-scope DPAPI blob under the OS ProgramData folder's
   `AUVDeviceEnrollments` leaf. It requires a LocalSystem process in Session 0,
   a SYSTEM-owned, SYSTEM-only protected directory and file DACL, and rejects
   reparse points. Machine-scope DPAPI does not itself restrict which local
-  principal can decrypt; the file ACL and process identity are required.
-- `auv-driver-windows::device_unlock_host::unlock_enrolled_with_worker` accepts
-  a validated `ConsoleSession` and resolves the worker executable beside the
-  installed service process. It
-  reads the credential within the LocalSystem host, duplicates the SYSTEM token
+  principal can decrypt; the file ACL and process identity are required. Its
+  SYSTEM-only object checks are shared with policy, audit, and pairing
+  storage in `device_entry::storage_windows`.
+- `auv-driver-windows::device_unlock_host::unlock_with_worker` accepts a
+  validated `ConsoleSession` and a credential that the daemon host has just
+  retrieved from its vault, and resolves the worker executable beside the
+  installed service process. It duplicates the SYSTEM token
   into the selected console session, creates a random one-shot local named
   pipe with a SYSTEM-only DACL, verifies that the connected client's PID is the
   newly started worker, and sends a fixed-size in-memory credential frame.

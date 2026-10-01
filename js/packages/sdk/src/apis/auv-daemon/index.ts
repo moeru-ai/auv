@@ -1,5 +1,16 @@
-export { getDevice, listDevices } from './devices'
-export type { Device, DevicePlatform, GetDeviceOptions } from './devices'
+export { AuvDeviceEntryError, ensureUserSessionUnlocked, getDevice, getUserSession, listDevices, listUserSessions } from './devices'
+export type {
+  Device,
+  DeviceEntryErrorReason,
+  DevicePlatform,
+  EnsureUserSessionUnlockedOptions,
+  GetDeviceOptions,
+  GetUserSessionOptions,
+  UserSession,
+  UserSessionConnectionKind,
+  UserSessionLockState,
+  UserSessionUnlockEffect,
+} from './devices'
 
 export { checkHealth } from './health'
 export type { Health, HealthStatus } from './health'

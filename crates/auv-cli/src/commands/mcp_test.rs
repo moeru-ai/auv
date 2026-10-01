@@ -8,6 +8,27 @@ fn default_mcp_server_accepts_its_invoke_registry_and_adapter_catalog() {
 }
 
 #[test]
+fn device_entry_mcp_tools_expose_only_nonsecret_selection_and_target_fields() {
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let tools = server.tool_router.list_all();
+  let sessions = tools.iter().find(|tool| tool.name == "device_list_user_sessions").expect("Device sessions tool");
+  let get_session = tools.iter().find(|tool| tool.name == "device_get_user_session").expect("Device get session tool");
+  let unlock = tools.iter().find(|tool| tool.name == "device_ensure_user_session_unlocked").expect("Device unlock tool");
+  let session_schema = serde_json::to_value(&sessions.input_schema).unwrap();
+  let get_schema = serde_json::to_value(&get_session.input_schema).unwrap();
+  let unlock_schema = serde_json::to_value(&unlock.input_schema).unwrap();
+  let session_properties = session_schema["properties"].as_object().unwrap();
+  let get_properties = get_schema["properties"].as_object().unwrap();
+  let unlock_properties = unlock_schema["properties"].as_object().unwrap();
+
+  assert_eq!(session_properties.keys().map(String::as_str).collect::<Vec<_>>(), ["device_id", "device_name"]);
+  assert_eq!(get_properties.keys().map(String::as_str).collect::<Vec<_>>(), ["device_id", "device_name", "session_selector"]);
+  assert_eq!(get_schema["additionalProperties"], false);
+  assert_eq!(unlock_properties.keys().map(String::as_str).collect::<Vec<_>>(), ["device_id", "device_name", "session_selector", "user"]);
+  assert_eq!(unlock_schema["additionalProperties"], false);
+}
+
+#[test]
 fn mcp_disables_incidental_overlays_but_preserves_explicit_overlay_operations() {
   let incidental = mcp_command_inputs(auv_cli_invoke::InvokeNamespace::Window, pairs(&[("overlay", "true")]));
   assert_eq!(incidental.get("overlay").map(String::as_str), Some("false"));

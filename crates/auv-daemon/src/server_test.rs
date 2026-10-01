@@ -19,11 +19,194 @@ fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
     daemon_idle_timeout: None,
     runner_providers: Vec::new(),
     first_party_runners: Default::default(),
+    #[cfg(windows)]
+    enable_device_entry: false,
   }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn ordinary_windows_server_does_not_open_system_device_entry() {
+  // ROOT CAUSE:
+  //
+  // If every Windows Server::bind opens the privileged Device entry store,
+  // ordinary `auv serve` fails before it can bind its existing API listener.
+  // The SCM mode alone opts into LocalSystem-only Device entry state.
+  let root = tempfile::tempdir().unwrap();
+  let server = super::Server::bind(config(
+    vec![ListenEndpoint::Tcp {
+      host: "127.0.0.1".into(),
+      port: 0,
+    }],
+    root.path(),
+  ))
+  .await
+  .unwrap();
+
+  assert!(server.device_local.is_none());
+  assert!(!root.path().join("store/control/device-entry").exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn disabled_device_entry_policy(root: &std::path::Path) {
+  use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+  let control = root.join("store/control");
+  let entry = control.join("device-entry");
+  std::fs::create_dir_all(&entry).unwrap();
+  std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
+  std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o700)).unwrap();
+  let mut options = std::fs::OpenOptions::new();
+  options.write(true).create_new(true).mode(0o600);
+  std::io::Write::write_all(&mut options.open(entry.join("device-entry-policy.json")).unwrap(), br#"{"enabled":false,"enrollments":{}}"#)
+    .unwrap();
+}
+
+fn device_entry_denied_reason() -> proto::DeviceEntryErrorReason {
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  return proto::DeviceEntryErrorReason::Disabled;
+  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  return proto::DeviceEntryErrorReason::UnsupportedOsState;
 }
 
 const DISPLAY_SERVICE: &str = "auv.api.driver.v1.DisplayService";
 const TEST_RUNNER_CLASS: &str = "example.runner.remote";
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn production_device_local_socket_serves_management_without_shared_routes() {
+  use auv_api_proto::auv::api::daemon::v1::device_local_service_client::DeviceLocalServiceClient;
+  use auv_api_proto::auv::api::daemon::v1::device_service_client::DeviceServiceClient;
+  use tonic::transport::Endpoint;
+
+  let root = tempfile::tempdir().unwrap();
+  let server = Server::bind(config(
+    vec![ListenEndpoint::Tcp {
+      host: "127.0.0.1".into(),
+      port: 0,
+    }],
+    root.path(),
+  ))
+  .await
+  .unwrap();
+  let BoundEndpoint::Tcp(address) = server.endpoint() else {
+    panic!("TCP endpoint")
+  };
+
+  let address = *address;
+  let socket = server.device_local.socket_path().to_path_buf();
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  for _ in 0..100 {
+    if socket.exists() {
+      break;
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+  }
+
+  if !socket.exists() {
+    if task.is_finished() {
+      panic!("daemon server stopped before DeviceLocalService socket bound: {:?}", task.await.unwrap());
+    }
+
+    panic!("dedicated DeviceLocalService socket did not bind at {}", socket.display());
+  }
+
+  use std::os::unix::fs::PermissionsExt;
+  let control_mode = std::fs::metadata(socket.parent().unwrap()).unwrap().permissions().mode() & 0o777;
+
+  assert_eq!(control_mode, 0o700, "the socket parent is traversable by this daemon UID and root only");
+
+  let connection_socket = socket.clone();
+  let channel = Endpoint::try_from("http://[::]:50051")
+    .unwrap()
+    .connect_with_connector(tower::service_fn(move |_: tonic::codegen::http::Uri| {
+      let socket = connection_socket.clone();
+      async move { tokio::net::UnixStream::connect(socket).await.map(hyper_util::rt::TokioIo::new) }
+    }))
+    .await
+    .unwrap();
+
+  let mut local = DeviceLocalServiceClient::new(channel.clone());
+
+  assert!(local.get_policy(proto::GetPolicyRequest {}).await.unwrap().into_inner().enabled);
+  assert!(local.list_enrollments(proto::ListEnrollmentsRequest {}).await.unwrap().into_inner().enrollments.is_empty());
+
+  let missing_device_route = DeviceServiceClient::new(channel).list_user_sessions(proto::ListUserSessionsRequest {}).await.unwrap_err();
+
+  assert_eq!(missing_device_route.code(), tonic::Code::Unimplemented);
+
+  let mut shared = DeviceLocalServiceClient::connect(format!("http://{address}")).await.unwrap();
+  let missing_local_route = shared.get_policy(proto::GetPolicyRequest {}).await.unwrap_err();
+
+  assert_eq!(missing_local_route.code(), tonic::Code::Unimplemented);
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+
+  assert!(!socket.exists());
+  assert!(!socket.parent().unwrap().exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn deep_store_root_still_binds_private_device_local_socket() {
+  use auv_api_client::device_local::{DeviceLocalClient, verify_unix_socket_directory};
+
+  // ROOT CAUSE:
+  //
+  // If the store root is deep, appending control/device-local.sock exceeds the
+  // Unix sockaddr length and the daemon exits before serving any listener.
+  // The dedicated socket now uses a short, store-specific private directory.
+  let root = tempfile::tempdir().unwrap();
+  let deep = root.path().join("nested".repeat(15)).join("project".repeat(15));
+  std::fs::create_dir_all(&deep).unwrap();
+  let server = Server::bind(config(
+    vec![ListenEndpoint::Tcp {
+      host: "127.0.0.1".into(),
+      port: 0,
+    }],
+    &deep,
+  ))
+  .await
+  .unwrap();
+  let socket = server.device_local.socket_path().to_path_buf();
+
+  assert!(socket.as_os_str().len() < 104);
+
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+
+  for _ in 0..100 {
+    if socket.exists() {
+      break;
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+  }
+
+  if !socket.exists() {
+    if task.is_finished() {
+      panic!("daemon stopped before binding short Device-local socket: {:?}", task.await.unwrap());
+    }
+
+    panic!("daemon did not bind short Device-local socket at {}", socket.display());
+  }
+
+  verify_unix_socket_directory(&socket).unwrap();
+  let mut client = DeviceLocalClient::connect_unix(&socket).await.unwrap();
+  let policy = client.service().get_policy(proto::GetPolicyRequest {}).await.unwrap().into_inner();
+
+  assert!(policy.enabled);
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+
+  assert!(!socket.exists());
+  assert!(!socket.parent().unwrap().exists());
+}
 
 #[cfg(windows)]
 #[tokio::test]
@@ -198,6 +381,126 @@ async fn typed_control_and_rest_share_the_daemon_backend() {
 }
 
 #[tokio::test]
+async fn device_entry_loopback_requires_authorization_before_selection() {
+  // ROOT CAUSE:
+  //
+  // If a root daemon exposed its loopback TCP listener, another local account
+  // could list sessions or request an unlock because loopback was treated as
+  // the daemon owner's identity.
+  //
+  // Before the fix, these requests reached the Device entry policy. The fix
+  // requires paired authentication or a verified local transport first.
+  let root = tempfile::tempdir().unwrap();
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  disabled_device_entry_policy(root.path());
+  let server = Server::bind(config(
+    vec![ListenEndpoint::Tcp {
+      host: "127.0.0.1".into(),
+      port: 0,
+    }],
+    root.path(),
+  ))
+  .await
+  .unwrap();
+  let BoundEndpoint::Tcp(address) = server.endpoint() else {
+    panic!("TCP endpoint")
+  };
+
+  let address = *address;
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+  let mut devices = GrpcClient::connect(format!("http://{address}").parse().unwrap()).await.unwrap().devices();
+
+  let missing = devices.ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest { target: None }).await.unwrap_err();
+
+  assert_eq!(missing.code(), tonic::Code::Unauthenticated);
+
+  let blank = devices
+    .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
+      target: Some(proto::ensure_user_session_unlocked_request::Target::SessionSelector("  ".into())),
+    })
+    .await
+    .unwrap_err();
+
+  assert_eq!(blank.code(), tonic::Code::Unauthenticated);
+
+  assert_eq!(devices.list_user_sessions().await.unwrap_err().code(), tonic::Code::Unauthenticated);
+
+  assert_eq!(devices.get_user_session(" ").await.unwrap_err().code(), tonic::Code::Unauthenticated);
+  assert_eq!(devices.get_user_session("seat0:42").await.unwrap_err().code(), tonic::Code::Unauthenticated);
+
+  let error = devices
+    .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
+      target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
+    })
+    .await
+    .unwrap_err();
+
+  assert_eq!(error.code(), tonic::Code::Unauthenticated);
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn owner_verified_unix_can_reach_device_entry_policy() {
+  let root = tempfile::tempdir().unwrap();
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  disabled_device_entry_policy(root.path());
+  let socket = root.path().join("api.sock");
+  let server = Server::bind(config(
+    vec![ListenEndpoint::Unix {
+      path: socket.clone(),
+    }],
+    root.path(),
+  ))
+  .await
+  .unwrap();
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+  let mut devices = GrpcClient::connect(auv_api_client::ConnectEndpoint::Unix(socket)).await.unwrap().devices();
+
+  let sessions = devices.list_user_sessions().await.unwrap();
+  let Some(proto::list_user_sessions_response::Result::Error(error)) = sessions.result else {
+    panic!("verified Unix caller must reach the Device entry policy")
+  };
+
+  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+
+  let blank_get = devices.get_user_session(" ").await.unwrap_err();
+
+  assert_eq!(blank_get.code(), tonic::Code::InvalidArgument);
+
+  let session = devices.get_user_session("seat0:42").await.unwrap();
+  let Some(proto::get_user_session_response::Result::Error(error)) = session.result else {
+    panic!("verified Unix caller must reach the Device entry policy")
+  };
+
+  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+
+  let missing = devices.ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest { target: None }).await.unwrap_err();
+
+  assert_eq!(missing.code(), tonic::Code::InvalidArgument);
+
+  let outcome = devices
+    .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
+      target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
+    })
+    .await
+    .unwrap();
+
+  let Some(proto::ensure_user_session_unlocked_response::Result::Error(error)) = outcome.result else {
+    panic!("verified Unix caller must reach the Device entry policy")
+  };
+
+  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn http_and_websocket_invoke_share_the_runner_route() {
   let root = tempfile::tempdir().unwrap();
   let (provider, runner_task) = remote_display_runner().await;
@@ -296,6 +599,8 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   // Before the fix, JSON clients received 415 Unsupported Media Type.
   // The fix keeps the protobuf service as the source of the JSON route shape.
   let root = tempfile::tempdir().unwrap();
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  disabled_device_entry_policy(root.path());
   let mut server_config = config(
     vec![
       ListenEndpoint::Tcp {
@@ -348,6 +653,19 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
 
   let unauthenticated_grpc = GrpcClient::connect(format!("http://{remote}").parse().unwrap()).await.unwrap();
   assert_eq!(unauthenticated_grpc.devices().list_devices().await.unwrap_err().code(), tonic::Code::Unauthenticated);
+  assert_eq!(unauthenticated_grpc.devices().list_user_sessions().await.unwrap_err().code(), tonic::Code::Unauthenticated);
+  assert_eq!(unauthenticated_grpc.devices().get_user_session("seat0:42").await.unwrap_err().code(), tonic::Code::Unauthenticated);
+  assert_eq!(
+    unauthenticated_grpc
+      .devices()
+      .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
+        target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
+      })
+      .await
+      .unwrap_err()
+      .code(),
+    tonic::Code::Unauthenticated
+  );
 
   let (mut unauthenticated_socket, _) = tokio_tungstenite::connect_async(format!("ws://{remote}/apis/auv/runtime/v1/invoke")).await.unwrap();
   unauthenticated_socket
@@ -432,12 +750,63 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   let run_id = created["run"]["ref"]["runId"].as_str().unwrap();
   let paired = GrpcClient::connect_paired(auv_api_client::PairedConnectConfig {
     endpoint: format!("http://{remote}").parse().unwrap(),
-    device_credential: credential,
+    device_credential: credential.clone(),
   })
   .await
   .unwrap();
+  let mut local_on_paired = proto::device_local_service_client::DeviceLocalServiceClient::connect(format!("http://{remote}")).await.unwrap();
+  let mut local_request = tonic::Request::new(proto::GetPolicyRequest {});
+  local_request.metadata_mut().insert("authorization", format!("Bearer {credential}").parse().unwrap());
+
+  assert_eq!(local_on_paired.get_policy(local_request).await.unwrap_err().code(), tonic::Code::Unimplemented);
+
   let runs = paired.runs().list_runs().await.unwrap();
   assert!(runs.iter().any(|run| run.r#ref.as_ref().is_some_and(|value| value.run_id == run_id)));
+
+  let sessions = paired.devices().list_user_sessions().await.unwrap();
+  let Some(proto::list_user_sessions_response::Result::Error(error)) = sessions.result else {
+    panic!("paired request must reach the native support gate")
+  };
+
+  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+
+  let session = paired.devices().get_user_session("seat0:42").await.unwrap();
+  let Some(proto::get_user_session_response::Result::Error(error)) = session.result else {
+    panic!("paired request must reach the native support gate")
+  };
+
+  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+
+  let outcome = paired
+    .devices()
+    .ensure_user_session_unlocked(proto::EnsureUserSessionUnlockedRequest {
+      target: Some(proto::ensure_user_session_unlocked_request::Target::User("neko".into())),
+    })
+    .await
+    .unwrap();
+
+  let Some(proto::ensure_user_session_unlocked_response::Result::Error(error)) = outcome.result else {
+    panic!("paired request must reach the native support gate")
+  };
+
+  assert_eq!(error.reason, device_entry_denied_reason() as i32);
+
+  #[cfg(target_os = "linux")]
+  {
+    // The paired route must reach the same policy and durable audit as the
+    // target-local service, without observing or unlocking a real session.
+    let audit = std::fs::read_to_string(root.path().join("store/control/device-entry/device-entry-audit.jsonl")).unwrap();
+    let records = audit.lines().map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()).collect::<Vec<_>>();
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["event"], "attempt");
+    assert_eq!(records[1]["event"], "outcome");
+    assert_eq!(records[0]["attempt_id"], records[1]["attempt_id"]);
+    assert_eq!(records[0]["caller"], "paired-device:browser-device");
+    assert_eq!(records[1]["caller"], "paired-device:browser-device");
+    assert_eq!(records[1]["result"], "DISABLED");
+    assert!(audit.find("credential").is_none());
+  }
 
   shutdown.cancel();
   task.await.unwrap().unwrap();

@@ -282,6 +282,70 @@ fn local_serve_and_devices_list_use_the_unix_daemon() {
   // fix checks the platform of the binary that started the local daemon.
   assert!(listed_table.contains(std::env::consts::OS), "{listed_table}");
 
+  let sessions = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "--device",
+      "inherited-device",
+      "devices",
+      "sessions",
+      "--endpoint",
+      &endpoint,
+      "--json",
+    ])
+    .output()
+    .expect("query OS login sessions");
+  // ROOT CAUSE:
+  // A headless Linux runner has no logind login, so its supported host can
+  // return an empty inventory. The old assertion classified every non-macOS
+  // host as unsupported. Keep this CLI routing test independent of login state.
+  if sessions.status.success() {
+    let inventory: serde_json::Value = serde_json::from_slice(&sessions.stdout).expect("session JSON");
+
+    assert!(inventory.is_array(), "session inventory must be a JSON array: {inventory}");
+  } else {
+    assert!(
+      [
+        "current OS state does not support Device entry",
+        "the Device entry service or worker is unavailable",
+        "the OS account has multiple eligible sessions",
+      ]
+      .iter()
+      .any(|reason| stderr(&sessions).contains(reason)),
+      "typed session inventory error was lost: {}",
+      stderr(&sessions)
+    );
+  }
+
+  // Use an absent account so this routing test never attempts native input on
+  // a developer's locked session, even when the macOS host is available.
+  let unlock = Command::new(env!("CARGO_BIN_EXE_auv"))
+    .args([
+      "--device",
+      "inherited-device",
+      "devices",
+      "unlock",
+      "--user",
+      "__auv_no_such_user__",
+      "--endpoint",
+      &endpoint,
+      "--json",
+    ])
+    .output()
+    .expect("request Device entry");
+
+  assert!(!unlock.status.success(), "absent OS account unexpectedly unlocked");
+  assert!(
+    [
+      "current OS state does not support Device entry",
+      "the Device entry service or worker is unavailable",
+      "the OS account has multiple eligible sessions",
+    ]
+    .iter()
+    .any(|reason| stderr(&unlock).contains(reason)),
+    "typed absent-account error was lost: {}",
+    stderr(&unlock)
+  );
+
   interrupt(&daemon.0);
   daemon.0.wait().expect("wait for local daemon");
   let deadline = Instant::now() + Duration::from_secs(2);

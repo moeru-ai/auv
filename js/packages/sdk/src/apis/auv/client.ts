@@ -2,7 +2,7 @@ import type { DescMessage, MessageShape } from '@bufbuild/protobuf'
 
 import type { AuvConnection } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
-import type { Device, GetDeviceOptions } from '../auv-daemon/devices'
+import type { Device, EnsureUserSessionUnlockedOptions, GetDeviceOptions, GetUserSessionOptions, UserSession, UserSessionUnlockEffect } from '../auv-daemon/devices'
 import type { Health } from '../auv-daemon/health'
 import type { CreatePairingTokenOptions, PairDeviceOptions, PairedDeviceOptions, PairingEnrollment, PairingToken, SetPairedDeviceEnabledOptions } from '../auv-daemon/pairing'
 import type { CreateRunnerOptions, DeleteRunnerOptions, GetRunnerClassOptions, GetRunnerOptions, ListRunnerClassesOptions, Runner, RunnerClass } from '../auv-daemon/runners'
@@ -11,7 +11,7 @@ import type { DiscoveredRunner, DiscoverRunnerOptions } from './discover'
 import type { RunnerClient, RunnerRouteOptions } from './driver'
 import type { InvokeDuplexOptions, InvokeServerStreamOptions, InvokeUnaryOptions } from './invoke'
 
-import { getDevice, listDevices } from '../auv-daemon/devices'
+import { ensureUserSessionUnlocked, getDevice, getUserSession, listDevices, listUserSessions } from '../auv-daemon/devices'
 import { checkHealth } from '../auv-daemon/health'
 import { createPairingToken, pairDevice, revokeDeviceCredential, setPairedDeviceEnabled, unpairDevice } from '../auv-daemon/pairing'
 import { createRunner, deleteRunner, getRunner, getRunnerClass, listRunnerClasses, listRunners } from '../auv-daemon/runners'
@@ -23,8 +23,11 @@ import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 export interface AuvClient {
   readonly connection: AuvConnection
   readonly devices: {
+    ensureUserSessionUnlocked: (options: EnsureUserSessionUnlockedOptions) => Promise<UserSessionUnlockEffect>
     get: (options: GetDeviceOptions) => Promise<Device>
+    getUserSession: (options: GetUserSessionOptions) => Promise<UserSession>
     list: (options?: OperationOptions) => Promise<readonly Device[]>
+    listUserSessions: (options?: OperationOptions) => Promise<readonly UserSession[]>
   }
   readonly health: {
     check: (options?: OperationOptions) => Promise<Health>
@@ -73,8 +76,11 @@ export function createAuv(connection: AuvConnection, options: CreateClientOption
   return {
     connection,
     devices: {
+      ensureUserSessionUnlocked: value => ensureUserSessionUnlocked(connection, operation(value)),
       get: value => getDevice(connection, operation(value)),
+      getUserSession: value => getUserSession(connection, operation(value)),
       list: value => listDevices(connection, operation(value)),
+      listUserSessions: value => listUserSessions(connection, operation(value)),
     },
     health: {
       check: value => checkHealth(connection, operation(value)),

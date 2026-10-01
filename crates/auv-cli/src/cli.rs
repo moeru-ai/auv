@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 
 use crate::commands::api_server::ApiServerArgs;
+use crate::commands::device_local::DeviceLocalArgs;
 use crate::commands::devices::DevicesArgs;
 use crate::commands::doctor::DoctorArgs;
 use crate::commands::invoke::InvokeArgs;
@@ -58,6 +59,12 @@ enum RootCommand {
   ApiServer(ApiServerArgs),
   /// Run the AUV daemon in the foreground.
   Serve(ServeArgs),
+  /// Issue a short-lived pairing token from the protected Windows service store.
+  #[cfg(windows)]
+  #[command(hide = true)]
+  WindowsBootstrapPairingToken,
+  /// Manage this Device's OS credential enrollment and unlock policy locally.
+  DeviceLocal(DeviceLocalArgs),
   /// Inspect Devices visible through an AUV daemon.
   #[command(
     long_about = "Devices are AUV execution targets exposed by a daemon. A local daemon publishes this machine as a Device; pairing adds another daemon as a remotely selectable Device.\n\n`auv devices list` combines the local daemon with saved paired profiles and reports whether each target is online. Pairing credentials stay in the local profile store and are reused automatically by later commands."
@@ -130,6 +137,21 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     Some(RootCommand::Invoke(args)) => crate::commands::invoke::run(args, &selection, &project_root).await,
     Some(RootCommand::ApiServer(args)) => crate::commands::api_server::run(args, &project_root).await,
     Some(RootCommand::Serve(args)) => crate::commands::serve::run(args, &project_root).await,
+    #[cfg(windows)]
+    Some(RootCommand::WindowsBootstrapPairingToken) => {
+      if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
+        return Err("windows-bootstrap-pairing-token cannot use --device, --device-id, or --run".to_string());
+      }
+
+      crate::commands::windows_service::issue_bootstrap_token()
+    }
+    Some(RootCommand::DeviceLocal(args)) => {
+      if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
+        return Err("device-local cannot use --device, --device-id, or --run".to_string());
+      }
+
+      crate::commands::device_local::run(args, &project_root).await
+    }
     Some(RootCommand::Devices(args)) => crate::commands::devices::run(args, &selection).await,
     Some(RootCommand::Runner(args)) => crate::commands::runner::run(args, &selection).await,
     Some(RootCommand::Run(args)) => crate::commands::run::run(args, &selection).await,
@@ -225,5 +247,56 @@ mod tests {
         std::path::PathBuf::from("second.json")
       ]
     );
+  }
+
+  #[test]
+  fn device_local_enroll_accepts_only_terminal_entered_credential() {
+    let parsed = RootArgs::try_parse_from([
+      "auv",
+      "device-local",
+      "--store-root",
+      "state",
+      "enroll",
+      "--user",
+      "neko",
+      "--kind",
+      "os-password",
+    ])
+    .unwrap();
+    let Some(RootCommand::DeviceLocal(args)) = parsed.command else {
+      panic!("device-local command")
+    };
+
+    assert_eq!(args.store_root.as_deref(), Some(std::path::Path::new("state")));
+    assert!(matches!(args.command, crate::commands::device_local::DeviceLocalCommand::Enroll { .. }));
+    assert!(
+      RootArgs::try_parse_from([
+        "auv",
+        "device-local",
+        "enroll",
+        "--user",
+        "neko",
+        "--kind",
+        "os-password",
+        "--credential",
+        "secret",
+      ])
+      .is_err()
+    );
+  }
+
+  #[test]
+  fn device_local_policy_accepts_explicit_false() {
+    let parsed = RootArgs::try_parse_from(["auv", "device-local", "policy", "set", "--enabled", "false"]).unwrap();
+    let Some(RootCommand::DeviceLocal(args)) = parsed.command else {
+      panic!("device-local command")
+    };
+
+    assert!(matches!(
+      args.command,
+      crate::commands::device_local::DeviceLocalCommand::Policy {
+        command: crate::commands::device_local::PolicyCommand::Set { enabled: false }
+      }
+    ));
   }
 }
