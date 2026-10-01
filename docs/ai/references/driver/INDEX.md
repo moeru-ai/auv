@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **53**
+Count: **54**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -70,6 +70,7 @@ Count: **53**
 - [`2026-09-27-windows-linux-login-screen-research.md`](2026-09-27-windows-linux-login-screen-research.md): Windows secure-desktop and Linux greeter capture/input source review.
 - [`2026-09-27-sky-cua-lock-screen-research.md`](2026-09-27-sky-cua-lock-screen-research.md): Public Codex issue and open-source CUA paths, with lock-screen evidence limits.
 - [`2026-09-27-lock-and-login-screen-deep-research.md`](2026-09-27-lock-and-login-screen-deep-research.md): Pinned-source follow-up on secure desktop APIs, session workers, greeter capture, AUV Runner placement, and credential boundaries.
+- [`2026-10-01-linux-screenshot-fallback.md`](2026-10-01-linux-screenshot-fallback.md): Partial-image regression, single-output coordinate checks, and live GNOME Screenshot evidence.
 
 ## Related
 

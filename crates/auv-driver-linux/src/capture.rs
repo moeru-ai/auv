@@ -62,8 +62,8 @@ pub fn capture_display(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Op
     }
     Err(error) => {
       let captured = capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || match target.as_ref() {
-        Some(target) => capture_area(target.display.frame, target.display.frame),
-        None => capture_full(),
+        Some(target) => capture_area(target.display.frame, target),
+        None => Err(backend("Screenshot fallback requires known display geometry")),
       })?;
       capture_display_from_captured(target, with_primary_capture_failure(captured, PORTAL_SCREENCAST_BACKEND, &error.to_string()))
     }
@@ -72,7 +72,25 @@ pub fn capture_display(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Op
 
 #[cfg(target_os = "linux")]
 fn capture_display_from_captured(target: Option<display::DisplayTarget>, captured: CapturedImage) -> DriverResult<DisplayCapture> {
-  let display = target.map(|target| target.display).unwrap_or_else(|| synthetic_display_from_image(&captured.image));
+  // NOTICE: Unbound images and non-native Screenshot pixel layouts cannot prove
+  // this display mapping. Accept them only after an owner-approved mapping contract.
+  let display = target.ok_or_else(|| backend("Screenshot fallback requires known display geometry"))?.display;
+  // Screenshot responses contain only a URI, without the selected area's
+  // origin or size. Reject partial images before assigning screen coordinates.
+  // https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Screenshot.html
+  if !display.scale_factor.is_finite() || display.scale_factor <= 0.0 {
+    return Err(backend("Screenshot fallback requires a positive finite display scale"));
+  }
+  let width = scaled_positive_capture_dimension("source width", display.frame.size.width, display.scale_factor)?;
+  let height = scaled_positive_capture_dimension("source height", display.frame.size.height, display.scale_factor)?;
+  if captured.image.dimensions() != (width, height) {
+    return Err(backend(format!(
+      "Screenshot fallback returned {}x{} pixels, but display {:?} requires {width}x{height}. The screenshot has no proven screen coordinates",
+      captured.image.width(),
+      captured.image.height(),
+      display.id
+    )));
+  }
   let scale_factor = capture_scale_factor(&captured.image, display.frame, display.scale_factor);
   let capture = Capture {
     origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(display.frame.origin))),
@@ -104,7 +122,7 @@ pub fn capture_region(state: &Arc<Mutex<LinuxDriverSessionState>>, selector: Opt
       fallback_reason: Some("region pixels were cropped from PipeWire screencast using Wayland xdg-output logical bounds".to_string()),
     },
     Err(error) => with_primary_capture_failure(
-      capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || capture_area(region, target.display.frame))?,
+      capture_fallback(PORTAL_SCREENCAST_BACKEND, &error, || capture_area(region, &target))?,
       PORTAL_SCREENCAST_BACKEND,
       &error.to_string(),
     ),
@@ -168,34 +186,45 @@ fn capture_monitor_frame_for_session(
 }
 
 #[cfg(target_os = "linux")]
-fn capture_full() -> DriverResult<CapturedImage> {
+fn capture_area(region: Rect, target: &display::DisplayTarget) -> DriverResult<CapturedImage> {
+  let targets = list_targets()?;
+  let source = screenshot_source(&targets, target)?;
+  let image = portal_screenshot()?;
+  // Consent can outlast an output change. Do not bind the image to stale bounds.
+  screenshot_source(&list_targets()?, source)?;
+  let full = capture_display_from_captured(
+    Some(source.clone()),
+    CapturedImage {
+      image,
+      backend: PORTAL_CAPTURE_BACKEND.to_string(),
+      fallback_reason: None,
+    },
+  )?;
   Ok(CapturedImage {
-    image: portal_screenshot()?,
-    backend: PORTAL_CAPTURE_BACKEND.to_string(),
-    fallback_reason: None,
-  })
-}
-
-#[cfg(target_os = "linux")]
-fn capture_area(region: Rect, source_bounds: Rect) -> DriverResult<CapturedImage> {
-  Ok(CapturedImage {
-    image: crop_portal_screenshot_to_region(portal_screenshot()?, source_bounds, region)?,
+    image: crop_portal_screenshot_to_region(full.capture.image, source.display.frame, region)?,
     backend: format!("{PORTAL_CAPTURE_BACKEND}.crop"),
-    fallback_reason: Some("region pixels were cropped from portal screenshot using Wayland xdg-output logical bounds".to_string()),
+    fallback_reason: Some("region pixels were cropped from a dimension-validated single-display portal screenshot".to_string()),
   })
 }
 
 #[cfg(target_os = "linux")]
-fn synthetic_display_from_image(image: &image::RgbaImage) -> Display {
-  Display {
-    id: "portal-screenshot".to_string(),
-    name: Some("XDG desktop portal screenshot".to_string()),
-    frame: Rect::new(0.0, 0.0, f64::from(image.width()), f64::from(image.height())),
-    coordinate_space: CoordinateSpace::Screen,
-    scale_factor: 1.0,
-    is_primary: true,
-    is_builtin: None,
+fn screenshot_source<'a>(
+  targets: &'a [display::DisplayTarget],
+  target: &display::DisplayTarget,
+) -> DriverResult<&'a display::DisplayTarget> {
+  // TODO(linux-screenshot-desktop-layout): multi-output Screenshot cropping is
+  // deferred because the URI has no composite layout or per-output pixel map.
+  // Re-open this fallback only with an owner-approved desktop mapping contract.
+  let [source] = targets else {
+    return Err(backend(format!("Screenshot fallback requires exactly one known display, found {}", targets.len())));
+  };
+  if source.display.id != target.display.id
+    || source.display.frame != target.display.frame
+    || source.display.scale_factor != target.display.scale_factor
+  {
+    return Err(backend("display geometry changed during Screenshot fallback"));
   }
+  Ok(source)
 }
 
 #[cfg(target_os = "linux")]
@@ -266,15 +295,25 @@ fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> Driv
 #[cfg(target_os = "linux")]
 fn portal_screenshot() -> DriverResult<image::RgbaImage> {
   use crate::native::portal::run;
-  use ashpd::desktop::screenshot::Screenshot;
+  use ashpd::desktop::screenshot::{AvailableTargets, ScreenshotOptions, ScreenshotProxy};
 
-  // NOTICE: this legacy Screenshot fallback still requests interactive consent;
+  // NOTICE: this legacy Screenshot fallback can still request user consent;
   // it does not consume the persistent ScreenCast grant. See
   // `docs/ai/references/driver/2026-09-12-linux-portal-authorization-and-runner-reuse.md`.
   // NOTICE(linux-portal-screenshot): GNOME Wayland does not expose a stable
   // non-portal screenshot API for ordinary clients. The compositor/user owns
   // screenshot consent; persistent capture uses ScreenCast/PipeWire above.
-  let response = run("take portal screenshot", async { Screenshot::request().interactive(true).modal(true).send().await?.response() })?;
+  // Disable area/window customization: its result has no coordinate metadata.
+  // Version 3 also exposes an explicit Screen target. Version 2 remains bounded
+  // by the single-output and exact pixel-dimension checks in `capture_area`.
+  let response = run("take portal screenshot", async {
+    let proxy = ScreenshotProxy::new().await?;
+    let mut options = ScreenshotOptions::default().set_interactive(false).set_modal(true);
+    if proxy.version() >= 3 {
+      options = options.set_target(AvailableTargets::Screen);
+    }
+    proxy.screenshot(None, options).await?.response()
+  })?;
   let path = url::Url::parse(response.uri().as_str())
     .map_err(|error| backend(format!("invalid screenshot URI: {error}")))?
     .to_file_path()

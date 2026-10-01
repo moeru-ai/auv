@@ -189,7 +189,9 @@ permission reporting.
 
 If startup fails, AUV closes the new sessions.
 When the owner closes, clipboard listeners exit. The owner waits for their threads to stop.
-Screenshot remains interactive and uses `url` for file-URI conversion.
+Screenshot uses `url` for file-URI conversion. As of 2026-10-01, the
+[fallback coordinate fix](2026-10-01-linux-screenshot-fallback.md) disables
+Screenshot customization and requires a dimension-validated single-output image.
 
 Two narrow boundaries still use zbus:
 
