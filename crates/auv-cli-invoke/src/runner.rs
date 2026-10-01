@@ -1,6 +1,8 @@
 //! Typed invoke execution through a selected daemon-owned Runner.
 
-async fn wait_for_selected_text<R, Call, Future, HasMatches>(
+/// Reuse the existing polling policy for local OCR and selected Runner calls.
+/// Callers own capture and recognition, including cancellation between Driver calls.
+pub(crate) async fn wait_for_selected_text<R, Call, Future, HasMatches>(
   command_id: &str,
   query: &str,
   options: auv_driver::WaitOptions,

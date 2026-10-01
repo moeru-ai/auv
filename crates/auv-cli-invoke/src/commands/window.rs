@@ -3,13 +3,15 @@ use crate::{
   InvokeReportValue, OptionalReportText, invoke_command,
 };
 use auv_cli_common::{TableRow, outputs::formats::table::TableOptions};
+use auv_driver::ScreenPoint;
+#[cfg(target_os = "macos")]
+use auv_driver::WindowInput as _;
 use auv_driver::overlay::{
   Overlay,
   components::{CaptureFrame, ClickTarget},
   layers::Outline,
   style::{Insets, OutlineStyle},
 };
-use auv_driver::{ScreenPoint, WindowInput as _};
 use auv_tracing::ArtifactMetadata;
 use clap::{Args, ValueEnum};
 use std::time::Duration;
@@ -34,11 +36,11 @@ struct ListWindowsArgs {}
 #[invoke_command(
   id = "window.list",
   group = "window",
-  description = "List visible macOS window candidates using the normalized AUV window selector model.",
+  description = "List visible window candidates using the normalized AUV window selector model (macOS and Linux).",
   input = ListWindowsArgs,
 )]
 async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
@@ -47,10 +49,10 @@ async fn list_windows(input: InvokeCommandInput, _args: ListWindowsArgs) -> Invo
     let windows = observe_windows().await?;
     list_windows_output(&windows)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     let _ = input;
-    Err("window.list is only available on macOS".to_string())
+    Err("window.list is only available on macOS and Linux".to_string())
   }
 }
 
@@ -63,19 +65,21 @@ pub fn list_windows_output(windows: &[auv_driver::Window]) -> InvokeCommandResul
 }
 
 pub async fn observe_windows() -> Result<Vec<auv_driver::Window>, String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     session.window().list().map_err(|error| error.to_string())
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
-    Err("window.list is only available on macOS".to_string())
+    Err("window.list is only available on macOS and Linux".to_string())
   }
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Examples:\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled")]
+#[command(
+  after_long_help = "Examples:\n  auv invoke window.capture --title Untitled\n  auv invoke window.capture --target com.apple.TextEdit --title Untitled\n\nOn Linux, app targets match the AT-SPI AccessibleId in window.list (BUNDLE in --wide output). Use --title when that field is absent. Linux captures a display crop and does not activate or unocclude the window."
+)]
 struct CaptureWindowArgs {
   /// Window title text used to select the capture target.
   #[arg(long, value_name = "TEXT")]
@@ -86,19 +90,21 @@ struct CaptureWindowArgs {
   id = "window.capture",
   target = OptionalApplication,
   group = "window",
-  description = "Capture one single-display window and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
+  description = "Capture one single-display window without activating it and emit a coordinate contract (macOS and Linux). Linux uses an AT-SPI display crop.",
   input = CaptureWindowArgs,
 )]
 async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
+    let selector = window_selector(&input, args.title.as_deref())?;
+    input.overlay_enabled()?;
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
     }
 
     let session = auv::local::open().map_err(|error| error.to_string())?;
-    let (result, artifact) =
-      capture_selected_window_recorded_with_session(&session, window_selector(&input, args.title.as_deref())?).await?;
+    let (result, artifact) = capture_selected_window_recorded_with_session(&session, selector).await?;
+    input.cancellation.check().map_err(|error| error.to_string())?;
     let capture_overlay = Overlay::new().with_layer(
       CaptureFrame::new(result.window.frame).with_label(result.window.title.clone().unwrap_or_else(|| "selected window".to_string())),
     );
@@ -111,10 +117,12 @@ async fn capture_window(input: InvokeCommandInput, args: CaptureWindowArgs) -> I
     // before treating window.* evidence as reliably available.
     Ok(output)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
-    let _ = input;
-    Err("window.capture is only available on macOS".to_string())
+    let _ = (input, args);
+    // TODO(invoke-window-windows): direct Windows observation stays deferred
+    // until an owner-approved slice validates its selector and capture path.
+    Err("window.capture is only available on macOS and Linux".to_string())
   }
 }
 
@@ -158,25 +166,29 @@ pub async fn capture_selected_window(selector: auv_driver::WindowSelector) -> Re
 async fn capture_selected_window_recorded(
   selector: auv_driver::WindowSelector,
 ) -> Result<(WindowCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     capture_selected_window_recorded_with_session(&session, selector).await
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     let _ = selector;
-    Err("window.capture is only available on macOS".to_string())
+    Err("window.capture is only available on macOS and Linux".to_string())
   }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn capture_selected_window_recorded_with_session(
   session: &auv_driver::LocalDriverSession,
   selector: auv_driver::WindowSelector,
 ) -> Result<(WindowCapture, Option<ArtifactMetadata>), String> {
   let window = session.window().resolve(selector).map_err(|error| error.to_string())?;
   let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
+  // NOTICE: window is the selector snapshot; a Driver can refresh geometry
+  // before capture. The captured region is authoritative in capture.bounds.
+  // TODO: descriptor refresh remains deferred until an owner-approved result
+  // contract defines how the resolved and captured observations agree.
   let artifact = emit_png_with_receipt("auv.driver.window_capture", &capture.image).await;
   Ok((WindowCapture { window, capture }, artifact))
 }
@@ -558,7 +570,7 @@ fn show_options(motion_ms: u64, auto_removal_ms: u64) -> auv_driver::overlay::Sh
     .with_auto_removal_after(Duration::from_millis(auto_removal_ms))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<auv_driver::WindowSelector, String> {
   use auv_driver::{App, TextMatcher, WindowSelector};
 
@@ -567,6 +579,10 @@ fn window_selector(input: &InvokeCommandInput, title: Option<&str>) -> Result<au
     ..WindowSelector::default()
   };
   if let Some(target) = input.application_target()? {
+    // Linux reuses AccessibleId in app_bundle_id. Do not guess application
+    // names when that identifier is absent; callers can select by title.
+    // TODO(cross-platform-application-selector): application-name targets
+    // require an owner-approved target contract, as in runner.rs.
     selector.app = Some(App::bundle_id(target));
   }
   if let Some(title) = title.filter(|value| !value.trim().is_empty()) {

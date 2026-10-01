@@ -2,8 +2,9 @@
 
 Invoke routing, CLI handlers, catalog, output contracts
 
-Count: **22**
+Count: **23**
 
+- [`2026-10-01-linux-observation-invoke-handoff.md`](2026-10-01-linux-observation-invoke-handoff.md) — direct Linux window, region capture, and screen OCR commands; contracts and shared wait policy
 - [`2026-09-08-targeted-keyboard-contract.md`](2026-09-08-targeted-keyboard-contract.md) — target preparation, key/combination/sequence hierarchy, failure progress, and macOS evidence
 - [`2026-09-03-click-point-target-contract-handoff.md`](2026-09-03-click-point-target-contract-handoff.md)
 - [`2026-08-04-remote-extension-runner-guide.md`](2026-08-04-remote-extension-runner-guide.md)

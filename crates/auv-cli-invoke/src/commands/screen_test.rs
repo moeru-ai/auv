@@ -34,7 +34,6 @@ fn capture_region_validates_the_same_region_before_dry_and_live_branches() {
   assert!(error.message.contains("greater than zero"));
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn screen_text_output_returns_typed_ocr_matches() {
   let matches = auv_driver::OcrMatches {

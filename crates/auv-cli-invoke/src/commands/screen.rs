@@ -37,7 +37,7 @@ struct CaptureRegionArgs {
 #[invoke_command(
   id = "screen.captureRegion",
   group = "screen",
-  description = "Capture one display-contained region and emit its coordinate contract.",
+  description = "Capture one display-contained region and emit its coordinate contract (macOS, Linux, and Windows).",
   input = CaptureRegionArgs,
 )]
 async fn capture_region(input: InvokeCommandInput, args: CaptureRegionArgs) -> InvokeCommandResult {
@@ -54,12 +54,12 @@ async fn capture_region(input: InvokeCommandInput, args: CaptureRegionArgs) -> I
     return Ok(InvokeCommandOutput::completed());
   }
 
-  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
   {
     let (capture, artifact) = capture_screen_region_recorded(region).await?;
     region_capture_output(&capture, artifact)
   }
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
   {
     let _ = region;
     Err("screen.captureRegion is unavailable on this platform".to_string())
@@ -71,7 +71,7 @@ pub async fn capture_screen_region(region: auv_driver::Rect) -> Result<auv_drive
 }
 
 async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv_driver::RegionCapture, Option<ArtifactMetadata>), String> {
-  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
   {
     let session = auv::local::open().map_err(|error| error.to_string())?;
     let capture = session
@@ -84,7 +84,7 @@ async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv
     let artifact = emit_png_with_receipt("auv.driver.screen_region_capture", &capture.capture.image).await;
     Ok((capture, artifact))
   }
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
   {
     let _ = region;
     Err("screen.captureRegion is unavailable on this platform".to_string())
@@ -131,83 +131,100 @@ struct WaitForScreenTextArgs {
 #[invoke_command(
   id = "screen.findText",
   group = "screen",
-  description = "Capture a screenshot and locate OCR text anchors in screenshot pixel space. Target activation is not yet available for this command.",
+  description = "Capture a screenshot and locate OCR text anchors in logical screen coordinates (macOS and Linux). Target activation is not yet available for this command.",
   input = FindScreenTextArgs,
 )]
 async fn find_screen_text(input: InvokeCommandInput, args: FindScreenTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     reject_target_activation(&input, "screen.findText")?;
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
     }
 
-    let matches = recognize_screen_text(args.query, false).await?;
+    let matches = recognize_screen_text_with_cancellation(args.query, false, &input.cancellation).await?;
     screen_text_matches_output(&matches)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     let _ = (input, args);
-    Err("screen text OCR is only available on macOS".to_string())
+    // TODO(invoke-screen-windows-ocr): Windows OCR wiring requires its own
+    // owner-approved native-host slice; this change validates Linux only.
+    Err("screen text OCR is only available on macOS and Linux".to_string())
   }
 }
 
 #[invoke_command(
   id = "screen.waitForText",
   group = "screen",
-  description = "Poll live-desktop OCR until a target text anchor appears or the timeout expires. Target activation is not yet available for this command.",
+  description = "Poll live-desktop OCR until a text anchor appears or the timeout expires (macOS and Linux). Target activation is not yet available for this command.",
   input = WaitForScreenTextArgs,
 )]
 async fn wait_for_screen_text(input: InvokeCommandInput, args: WaitForScreenTextArgs) -> InvokeCommandResult {
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     reject_target_activation(&input, "screen.waitForText")?;
     if input.dry_run {
       return Ok(InvokeCommandOutput::completed());
     }
 
-    let matches = recognize_screen_text(args.query, true).await?;
+    let matches = recognize_screen_text_with_cancellation(args.query, true, &input.cancellation).await?;
     screen_text_matches_output(&matches)
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     let _ = (input, args);
-    Err("screen text OCR is only available on macOS".to_string())
+    Err("screen text OCR is only available on macOS and Linux".to_string())
   }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub async fn recognize_screen_text(query: String, wait: bool) -> Result<auv_driver::OcrMatches, String> {
-  use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
-  use std::{thread, time::Instant};
+  recognize_screen_text_with_cancellation(query, wait, &Default::default()).await
+}
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn recognize_screen_text_with_cancellation(
+  query: String,
+  wait: bool,
+  cancellation: &crate::InvokeCancellation,
+) -> Result<auv_driver::OcrMatches, String> {
+  use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
+
+  cancellation.check().map_err(|error| error.to_string())?;
   let session = auv::local::open().map_err(|error| error.to_string())?;
-  let wait_options = WaitOptions::default();
-  let started = Instant::now();
-  loop {
+  let observe = || async {
+    // NOTICE: capture and OCR are synchronous Driver calls. Cancellation is
+    // observed between calls; an active call retains its Driver timeout.
+    cancellation.check().map_err(|error| error.to_string())?;
     let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
+    cancellation.check().map_err(|error| error.to_string())?;
     let matches = session
       .vision()
       .find_text_in_capture(&capture.capture, &query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
-    if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
-      if wait && matches.matches.is_empty() {
-        return Err(format!("screen.waitForText did not find text {query:?} before timeout"));
-      }
-      // TODO(invoke-recognition-result-artifacts): this records the OCR source
-      // screenshot and typed OCR matches, but not a structured
-      // recognition-result artifact with query/bounds/confidence. Add that
-      // after the artifact shape is accepted in the direct-command handoff.
-      emit_png("auv.driver.screen_ocr_source", &capture.capture.image);
-      return Ok(matches);
-    }
-    thread::sleep(wait_options.poll_interval);
-  }
+    cancellation.check().map_err(|error| error.to_string())?;
+    Ok((matches, capture))
+  };
+  let (matches, capture) = if wait {
+    crate::runner::wait_for_selected_text("screen.waitForText", &query, WaitOptions::default(), cancellation, observe, |(matches, _)| {
+      !matches.matches.is_empty()
+    })
+    .await?
+  } else {
+    observe().await?
+  };
+  // TODO(invoke-recognition-result-artifacts): this records the OCR source
+  // screenshot and typed OCR matches, but not a structured
+  // recognition-result artifact with query/bounds/confidence. Add that
+  // after the artifact shape is accepted in the direct-command handoff.
+  emit_png("auv.driver.screen_ocr_source", &capture.capture.image);
+  Ok(matches)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub async fn recognize_screen_text(_query: String, _wait: bool) -> Result<auv_driver::OcrMatches, String> {
-  Err("screen text OCR is only available on macOS".to_string())
+  Err("screen text OCR is only available on macOS and Linux".to_string())
 }
 
 fn screen_text_matches_output(matches: &auv_driver::OcrMatches) -> InvokeCommandResult {

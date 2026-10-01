@@ -93,6 +93,80 @@ async fn selected_disabled_overlay_validates_without_resolving_a_daemon() {
 }
 
 #[tokio::test]
+async fn text_wait_rejects_cancellation_before_observation() {
+  let cancellation = crate::InvokeCancellation::new();
+  cancellation.cancel();
+  let calls = std::cell::Cell::new(0);
+  let error = wait_for_selected_text(
+    "screen.waitForText",
+    "Ready",
+    Default::default(),
+    &cancellation,
+    || {
+      calls.set(calls.get() + 1);
+      async { Ok(false) }
+    },
+    |matched| *matched,
+  )
+  .await
+  .expect_err("cancelled wait must not observe the desktop");
+
+  assert_eq!(error, "invoke cancelled");
+  assert_eq!(calls.get(), 0);
+}
+
+#[tokio::test]
+async fn text_wait_cancels_during_the_poll_interval_without_another_observation() {
+  use futures_util::FutureExt;
+
+  let cancellation = crate::InvokeCancellation::new();
+  let calls = std::cell::Cell::new(0);
+  let waiting = wait_for_selected_text(
+    "screen.waitForText",
+    "Ready",
+    auv_driver::WaitOptions {
+      timeout: std::time::Duration::from_secs(30),
+      poll_interval: std::time::Duration::from_secs(30),
+    },
+    &cancellation,
+    || {
+      calls.set(calls.get() + 1);
+      async { Ok(false) }
+    },
+    |matched| *matched,
+  );
+  let mut waiting = std::pin::pin!(waiting);
+  assert!(waiting.as_mut().now_or_never().is_none(), "empty observation must enter the poll interval");
+  assert_eq!(calls.get(), 1);
+  cancellation.cancel();
+  let result = waiting.as_mut().now_or_never().expect("cancellation must finish without waiting for the poll timer");
+
+  assert_eq!(result.expect_err("cancelled wait"), "invoke cancelled");
+  assert_eq!(calls.get(), 1);
+}
+
+#[tokio::test]
+async fn text_wait_preserves_observation_errors_without_retry() {
+  let calls = std::cell::Cell::new(0);
+  let error = wait_for_selected_text(
+    "screen.waitForText",
+    "Ready",
+    Default::default(),
+    &Default::default(),
+    || {
+      calls.set(calls.get() + 1);
+      async { Err::<bool, _>("fixture capture permission denied".to_string()) }
+    },
+    |matched| *matched,
+  )
+  .await
+  .expect_err("observation failure");
+
+  assert_eq!(error, "fixture capture permission denied");
+  assert_eq!(calls.get(), 1);
+}
+
+#[tokio::test]
 async fn selected_text_wait_retries_until_the_first_matching_response() {
   let mut responses = std::collections::VecDeque::from([Vec::<u8>::new(), vec![1]]);
   let calls = std::cell::Cell::new(0);
