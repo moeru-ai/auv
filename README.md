@@ -234,9 +234,34 @@ That means:
 
 - If your agent can call a CLI, AUV can be used as computer use.
 - If your agent can write code, AUV can move repeated GUI work into reusable
-  Rust or JavaScript/TypeScript operations. Python bindings remain planned.
-  Once a GUI flow is finalized as an operation, repeated execution can approach
-  zero reasoning-token cost.
+  Rust or JavaScript/TypeScript operations. Once a GUI flow is finalized as an
+  operation, repeated execution can approach zero reasoning-token cost.
+- AUV's daemon and extension APIs use versioned Protobuf/gRPC contracts. A
+  language with compatible Protobuf/gRPC generators can generate a client for
+  those contracts without AUV inventing another language-specific protocol.
+  First-party SDK quality, packaging, and documentation are still separate
+  support claims: Rust and JavaScript/TypeScript are available today, while a
+  first-party Python SDK remains planned.
+
+The reusable pieces are split by responsibility, but they use one execution
+model instead of becoming unrelated wrappers:
+
+```mermaid
+flowchart LR
+  A[CLI / MCP / Rust / JS / generated clients] --> B[typed operation]
+  B --> C[local or remote Device / Runner]
+  C --> D[capability Driver]
+  D --> E[direct result]
+  D --> F[Run trace and artifacts]
+  E --> G[separate semantic verification]
+```
+
+Drivers own platform capabilities, operation crates own reusable workflows,
+and `auv-tracing` owns Run evidence and artifacts. The visual overlay remains a
+separate trust and debugging surface; drawing a cursor never stands in for
+input delivery or semantic verification. This package structure lets another
+frontend or generated language client reuse the same operations rather than
+reimplementing them around the CLI.
 
 ## Why even build AUV?
 
@@ -257,41 +282,78 @@ Since Vercel published the [`agent-browser`](https://github.com/vercel/agent-bro
 
 > What AUV can do, compared to other computer-use projects.
 
-- ✅: implemented and exposed by a current public repository surface.
-- ⚠️: implemented with the limit shown in the table or notes.
-- ⏳: planned, but not implemented.
+- ✅: yes.
+- ❌: no.
+- ⚠️: partial support. The cell states the limit.
+- ⏳: planned.
+- —: not assessed.
 
-| Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) ([KWWK](https://github.com/EYHN/kwwk-computer-use-core) core) | Playwright |
-| --- | --- | --- | --- | --- |
-| Agent model | 💡 BYOA | 💡 BYOA + built-in agent | 💡 OpenBridge built-in agent<br>KWWK is agent-free | 💡 BYOA + built-in Test Agents |
-| Scriptable | ✅ Rust + JS/TS<br>⏳ Python | ✅ Python/TypeScript/Rust SDKs | ✅ Swift package | ✅ JS/TS/Python/Java/.NET |
-| Native desktop drivers | ✅ macOS/Linux/Windows<br>⏳ Android/iOS | ✅ macOS/Linux/Windows | ⚠️ macOS only | ❌ browser only |
-| CLI | ✅ | ✅ | ❌ | ✅ |
-| MCP | ✅ | ✅ | ❌ | ✅ browser MCP |
-| Run / trace recording | ✅ runs + tracing + artifacts + OTEL export | ✅ per-action trajectories | ❌ | ⚠️ test traces + artifacts |
-| Display / window capture | ✅ macOS/Linux/Windows | ✅ macOS/Linux/Windows | ✅ macOS | ✅ browser only |
-| OCR | ✅ macOS Vision/Linux Tesseract/Windows OCR | ⚠️ BYOK | ❌ | ❌ |
-| Template image localization | ⚠️ typed result contract only | ⚠️ no dedicated tool | ❌ | ⚠️ visual snapshot comparison only |
-| Accessibility tree | ✅ macOS AX/Linux AT-SPI/Windows UIA | ✅ macOS AX/Linux AT-SPI/Windows UIA | ✅ macOS AX | ⚠️ browser only |
-| Accessibility actions | ⚠️ platform-specific focus/select paths | ✅ | ✅ | ⚠️ browser only |
-| Mouse / click | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
-| Background pointer input | ✅ macOS<br>❌ Linux/Windows | ✅ macOS/Linux/Windows, best effort | ✅ macOS background | ⚠️ browser only |
-| Foreground pointer input | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
-| Keyboard | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
-| Scroll | ✅ macOS/Linux/Windows | ✅ | ✅ | ⚠️ browser only |
-| Scroll native lists | ⚠️ reusable library and app integrations<br>Generic CLI deferred | ⚠️ no dedicated tool | ❌ | ⚠️ browser only |
-| Action evidence | ✅ attempts + fallback + disturbance + separate verification | ✅ structured tool outputs + trajectories | ⚠️ structured metadata | ⚠️ assertions + traces |
-| YOLO / Custom Models | ✅ | ✅ | ❌ | ❌ |
+Platform support comes from the **Native desktop drivers** row. Other rows name
+a platform only when their support is different.
 
-- **Scroll scan** is a major reason AUV exists. Most desktop automation stacks can
-scroll or read a screenshot, but they do not turn a native app's visual list into
-page records, row candidates, crop artifacts, OCR fragments, and inspectable
-stop reasons. AUV's current scroll-scan implementation is still contract work,
-so the old public `scan window-region` CLI was removed until the reusable API is
-clear.
-- **Feedback** means the automation returns machine-readable evidence after an
-attempt: what input path was used, what changed, what artifacts were captured,
-whether verification passed, and why an operation should retry, stop, or fail.
+| Capability | AUV | [Cua](https://github.com/trycua/cua) | `@oai/sky` (bundled)[^sky] | [OpenBridge](https://github.com/AFK-surf/OpenBridge) ([KWWK](https://github.com/EYHN/kwwk-computer-use-core) core) | Playwright |
+| --- | --- | --- | --- | --- | --- |
+| Agent model | 💡 BYOA | 💡 BYOA | 💡 agent-free API | 💡 OpenBridge built-in agent<br>KWWK is agent-free | 💡 BYOA + built-in Test Agents |
+| Language-agnostic API | ✅ Protobuf/gRPC | ✅ HTTP/WebSocket | ❌ | ❌ | ❌ |
+| Scriptable (Rust) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Scriptable (TypeScript) | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Scriptable (Python) | ⏳ first-party SDK | ✅ | ❌ | ❌ | ✅ |
+| Native desktop drivers | ✅ macOS/Linux/Windows<br>⏳ Android/iOS | ✅ macOS/Linux/Windows | ✅ macOS/Linux/Windows | ✅ macOS<br>❌ Linux/Windows | ❌ browser only |
+| CLI | ✅ | ✅ | ❌ | ❌ | ✅ |
+| MCP | ✅ | ✅ | ❌ | ❌ | ✅ browser MCP |
+| REPL / Codemode | ⏳ planned | ❌ | ✅ Node REPL | ❌ | ❌ |
+| Screen Lock/Unlock | ✅[^device-entry] | ❌ | ❌ | ❌ | ❌ |
+| Trace | ✅ Runs, artifacts, OpenTelemetry | ✅ trajectories | ❌ | ❌ | ✅ test traces |
+| Screenshot | ✅ | ✅ | ✅ | ✅ | ✅ |
+| OCR | ✅ macOS Vision/Linux Tesseract/Windows OCR | ⚠️ requires an external model key | ❌ | ❌ | ❌ |
+| Template Matching | ❌ locator<br>✅ result contract | ❌ | ❌ | ❌ | ❌ |
+| Accessibility tree | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Accessibility actions | ⚠️ focus and selection | ✅ | ✅ | ✅ | ✅ |
+| Mouse Click | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Mouse Move | ✅ | ✅ | ✅ Linux<br>❌ macOS/Windows | — | ✅ |
+| Background pointer input | ✅ macOS<br>❌ Linux/Windows | ⚠️ some apps require foreground | ✅ Linux window target<br>❌ macOS/Windows | ✅ | ✅ browser context |
+| Foreground pointer input | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyboard Hold | ✅ | ✅ | ✅ Linux timed hold<br>❌ macOS/Windows | — | ✅ |
+| Keyboard Input | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Scroll | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Ghost Cursor | ✅ macOS: multiple named cursors[^ghost-cursor]<br>❌ Linux/Windows | ⚠️ one agent cursor | ❌ | ❌ | ❌ |
+| Customizable Cursor | ✅ macOS: colors, SVG, shadow<br>⚠️ Windows: colors only<br>❌ Linux | ❌ | ❌ | ❌ | ❌ |
+| Scroll-to-list | ✅ library and app integrations<br>❌ generic CLI | ❌ | ❌ | ❌ | ✅ browser lists<br>❌ desktop lists |
+| Feedback | ✅ attempts, fallback, disturbance, verification | ✅ outputs and trajectories | ⚠️ state read after action | ⚠️ metadata only | ⚠️ assertions and traces |
+| YOLO / Custom Models | ✅ | ✅ | ❌ | ❌ | ❌ |
+
+- **Scroll scan** is a major reason AUV exists. Most desktop automation stacks
+  can scroll and capture a screenshot. They do not make page records, row
+  candidates, crop artifacts, OCR fragments, or clear stop reasons. The current
+  scroll-scan implementation is contract work. The old `scan window-region` CLI
+  will return when the reusable API is clear.
+- **Feedback** is machine-readable evidence for an action. It records the input
+  path, changes, artifacts, fallbacks, and verification result. This evidence
+  tells an operation when to retry, stop, or fail.
+
+[^device-entry]: **Evidence level: configuration-specific installed-host test.**
+  This API locks and unlocks an existing login session. It does not sign in a
+  user from the signed-out screen. The 2026-10-01 test ran 300 normal-use
+  lock/unlock cycles. The API passed 298 cycles on the first attempt (99.33%).
+  The requested OS state occurred on the first attempt in 299 cycles (99.67%).
+  All 300 cycles ended in the `USABLE` state. The test used dwell times of 15,
+  20, 25, and 30 seconds. A separate stress test used delays near zero. It
+  measured OS transition readiness, not normal-use reliability. Read the
+  [Device lock contract and platform evidence](docs/ai/references/session-api/2026-09-30-device-lock-contract-and-review.md)
+  for the typed contract, native mechanisms, and configuration limits. The raw
+  logs remain local. They are not in a durable evidence pack.
+
+[^ghost-cursor]: AUV does not define a numeric cursor limit. Host memory and
+  WindowServer resources limit the actual count. Ghost cursors are visual
+  overlays. They do not deliver input or prove an action result.
+
+[^sky]: **Evidence level: installed package documentation and TypeScript
+  declarations.** The inspected package is `@oai/sky` 0.7.1 from the ChatGPT
+  app. It is not available from the public npm registry. No native execution or
+  native binary inspection supports this column. See the
+  [local Sky API research](docs/ai/references/driver/2026-09-18-held-input-project-research.md)
+  and the
+  [background-delivery comparison](docs/ai/references/driver/2026-09-23-background-delivery-project-comparison.md).
 
 ## Development
 
