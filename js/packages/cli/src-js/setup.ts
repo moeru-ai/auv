@@ -30,12 +30,6 @@ export async function installMacosHelper(): Promise<MacosHelperStatus> {
   return installNativeMacosHelper() as Promise<MacosHelperStatus>
 }
 
-/** Unregister the helper, reset Accessibility, and remove only its app bundle. */
-export async function uninstallMacosHelper(): Promise<MacosHelperStatus> {
-  requireMacOS()
-  return uninstallNativeMacosHelper() as Promise<MacosHelperStatus>
-}
-
 /** Inspect the installed AUV Helper identity and current-user readiness. */
 export async function macosHelperStatus(): Promise<MacosHelperStatus> {
   requireMacOS()
@@ -52,6 +46,12 @@ export function openMacosHelperAccessibilitySettings(): void {
 export function openMacosHelperBackgroundItemsSettings(): void {
   requireMacOS()
   openNativeMacosHelperBackgroundItemsSettings()
+}
+
+/** Unregister the helper, reset Accessibility, and remove only its app bundle. */
+export async function uninstallMacosHelper(): Promise<MacosHelperStatus> {
+  requireMacOS()
+  return uninstallNativeMacosHelper() as Promise<MacosHelperStatus>
 }
 
 function requireMacOS(): void {
