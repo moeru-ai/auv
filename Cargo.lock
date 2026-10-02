@@ -676,6 +676,7 @@ dependencies = [
  "rustix 1.1.5",
  "security-framework",
  "security-framework-sys",
+ "semver",
  "serde_json",
  "tempfile",
  "tokio",

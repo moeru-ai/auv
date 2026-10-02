@@ -12,6 +12,7 @@ import {
 
 export type MacosHelperState
   = | 'busy'
+    | 'frontend-outdated'
     | 'installed'
     | 'invalid'
     | 'not-installed'

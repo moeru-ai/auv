@@ -417,6 +417,12 @@ decisions; setup requires neither `sudo` nor an administrator credential.
 Uninstall terminates and unregisters the helper, resets only its Accessibility
 decision, and removes only its app bundle; target-local enrollment and the
 remaining AUV Application Support state are retained.
+The CLI and SDK packages are independent setup frontends for one per-user
+helper. The **helper protocol** is the daemon-to-helper wire version; the
+helper declares the range it supports in its signed Info.plist. Any helper
+whose range includes the daemon's protocol is usable regardless of its
+version; setup upgrades only forward and never downgrades. See
+[helper protocol compatibility](ai/references/session-api/2026-10-02-macos-helper-protocol-compatibility.md).
 The target retains a local audit record of each remote entry request with
 the authenticated paired Device ID, selected OS user or login session,
 request time, and typed outcome. Credentials, secret-bearing key events,

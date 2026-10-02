@@ -64,8 +64,16 @@ without being executed, so `uninstall` also recovers an `invalid` install.
 
 Source builds do not contain Apple release credentials or an embedded app.
 They report `helper_embedded=false`; status and registration remain available
-for a valid installed helper at the same version. A fresh install or required
-version update fails with an actionable payload-unavailable error. Release CI
+for any valid, protocol-compatible installed helper. A fresh install or a
+required protocol update fails with an actionable payload-unavailable error.
+
+Usability depends only on protocols, not versions. `package/Info.plist`
+declares the helper's wire protocol range as `AUVHelperProtocolMin` and
+`AUVHelperProtocolMax`, kept equal to `SUPPORTED_PROTOCOLS` by a unit test.
+Setup keeps any helper whose range includes the frontend's protocol, upgrades
+a compatible helper only to a strictly newer embedded version, and never
+downgrades. A helper that dropped the frontend's protocol reports
+`frontend-outdated`. Release CI
 supplies `AUV_MACOS_HELPER_APP_ARCHIVE_PATH` only after building, signing,
 notarizing, and stapling the app.
 

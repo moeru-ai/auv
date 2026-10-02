@@ -18,8 +18,9 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 `auv-api-client` and `auv-api-server` become protocol boundaries. MCP remains in
 `auv-cli`.
 
-Count: **37**
+Count: **38**
 
+- [`2026-10-02-macos-helper-protocol-compatibility.md`](2026-10-02-macos-helper-protocol-compatibility.md) — helper usability decided by daemon wire-protocol range, not frontend version; forward-only upgrades and `frontend-outdated`.
 - [`2026-10-01-macos-helper-setup.md`](2026-10-01-macos-helper-setup.md) — shared Rust/CLI/N-API helper setup, embedded signed app release path, per-user `SMAppService` registration, and remaining clean-host gate.
 - [`2026-09-28-remote-device-entry-implementation-design.md`](2026-09-28-remote-device-entry-implementation-design.md) — current locked-existing-session-first Device unlock contract and three-platform implementation plan; signed-out entry deferred.
 - [`2026-09-30-device-lock-contract-and-review.md`](2026-09-30-device-lock-contract-and-review.md) — experimental lock API/CLI/MCP contract, configuration-specific gate evidence, pairing experience, and prioritized architecture review.

@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use zeroize::Zeroizing;
 
-use crate::{HostError, InputFailure, MAGIC, MAX_PAYLOAD, Operation, VERSION, socket_path};
+use crate::{HostError, InputFailure, MAGIC, MAX_PAYLOAD, Operation, SUPPORTED_PROTOCOLS, socket_path};
 
 pub async fn serve() -> Result<(), HostError> {
   let uid = getuid().as_raw();
@@ -163,8 +163,13 @@ fn execute(operation: Operation, payload: &[u8], home: &Path, uid: u32, started:
 }
 
 fn decode_header(header: &[u8; 12], uid: u32) -> Result<(Operation, usize), HostError> {
-  if &header[..4] != MAGIC || header[4] != VERSION || u32::from_be_bytes(header[6..10].try_into().unwrap()) != uid {
+  if &header[..4] != MAGIC || u32::from_be_bytes(header[6..10].try_into().unwrap()) != uid {
     return Err(HostError::Unauthorized);
+  }
+  // A version outside the declared range is a deployment mismatch, not an
+  // identity failure; report it distinctly so the daemon can say so.
+  if !SUPPORTED_PROTOCOLS.contains(&header[4]) {
+    return Err(HostError::ProtocolUnsupported);
   }
 
   let length = usize::from(u16::from_be_bytes(header[10..12].try_into().unwrap()));
@@ -197,19 +202,21 @@ fn status(error: HostError) -> u8 {
     HostError::InputUnavailableAt(InputFailure::DeadlineExceeded) => 17,
     HostError::InputUnavailableAt(InputFailure::Unavailable) => 6,
     HostError::OutcomeUnverified => 7,
+    HostError::ProtocolUnsupported => 19,
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::PROTOCOL_VERSION;
 
   #[test]
   fn request_for_another_uid_is_rejected_before_vault_access() {
     let uid = getuid().as_raw();
     let mut header = [0_u8; 12];
     header[..4].copy_from_slice(MAGIC);
-    header[4] = VERSION;
+    header[4] = PROTOCOL_VERSION;
     header[5] = Operation::Probe as u8;
     header[6..10].copy_from_slice(&uid.wrapping_add(1).to_be_bytes());
 
@@ -221,7 +228,7 @@ mod tests {
     let uid = getuid().as_raw();
     let mut header = [0_u8; 12];
     header[..4].copy_from_slice(MAGIC);
-    header[4] = VERSION;
+    header[4] = PROTOCOL_VERSION;
     header[5] = 6;
     header[6..10].copy_from_slice(&uid.to_be_bytes());
 
@@ -234,13 +241,43 @@ mod tests {
     let uid = getuid().as_raw();
     let mut header = [0_u8; 12];
     header[..4].copy_from_slice(MAGIC);
-    header[4] = VERSION;
+    header[4] = PROTOCOL_VERSION;
     header[6..10].copy_from_slice(&uid.to_be_bytes());
     header[5] = Operation::Lock as u8;
 
     assert_eq!(decode_header(&header, uid), Ok((Operation::Lock, 0)));
     assert_eq!(status(HostError::AlreadyLocked), 18);
     assert_eq!(crate::decode_status(18), Err(HostError::AlreadyLocked));
+  }
+
+  // ROOT CAUSE:
+  //
+  // A request header with an unsupported protocol version was rejected as
+  // `Unauthorized`, so a daemon/helper deployment mismatch looked like an
+  // identity failure. It now round-trips as `ProtocolUnsupported`.
+  #[test]
+  fn unsupported_protocol_version_is_reported_distinctly() {
+    let uid = getuid().as_raw();
+    let mut header = [0_u8; 12];
+    header[..4].copy_from_slice(MAGIC);
+    header[4] = SUPPORTED_PROTOCOLS.end() + 1;
+    header[5] = Operation::Probe as u8;
+    header[6..10].copy_from_slice(&uid.to_be_bytes());
+
+    assert_eq!(decode_header(&header, uid), Err(HostError::ProtocolUnsupported));
+    assert_eq!(crate::decode_status(status(HostError::ProtocolUnsupported)), Err(HostError::ProtocolUnsupported));
+  }
+
+  #[test]
+  fn unsupported_protocol_from_another_uid_is_still_unauthorized() {
+    let uid = getuid().as_raw();
+    let mut header = [0_u8; 12];
+    header[..4].copy_from_slice(MAGIC);
+    header[4] = SUPPORTED_PROTOCOLS.end() + 1;
+    header[5] = Operation::Probe as u8;
+    header[6..10].copy_from_slice(&uid.wrapping_add(1).to_be_bytes());
+
+    assert_eq!(decode_header(&header, uid), Err(HostError::Unauthorized));
   }
 
   #[test]
@@ -315,7 +352,7 @@ mod tests {
       let (mut client, mut server) = UnixStream::pair().unwrap();
       let mut header = [0_u8; 12];
       header[..4].copy_from_slice(MAGIC);
-      header[4] = VERSION;
+      header[4] = PROTOCOL_VERSION;
       header[5] = operation as u8;
       header[6..10].copy_from_slice(&uid.to_be_bytes());
       client.write_all(&header).await.unwrap();

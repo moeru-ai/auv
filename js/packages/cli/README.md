@@ -52,6 +52,14 @@ administrator password. Development bindings report `helperEmbedded=false`;
 official macOS release bindings carry the same signed and notarized helper app
 as the CLI.
 
+The CLI and every package that bundles `@auv-js/cli` are independent frontends
+for one per-user helper. Any helper whose declared protocol range includes this
+binding's protocol is usable, whatever its version. `installMacosHelper()`
+replaces it only when it is older than the embedded helper or does not support
+this protocol, and never downgrades it. If the installed helper dropped this
+binding's protocol, status reports `frontend-outdated`: update this package
+rather than the helper.
+
 `uninstallMacosHelper()` waits for ServiceManagement to stop any in-flight
 helper process, resets the helper bundle's Accessibility decision, and removes
 only the installed app. It preserves enrollment and all other AUV Application

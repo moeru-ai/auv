@@ -18,6 +18,7 @@ pub enum State {
   NotInstalled,
   Invalid,
   UpdateRequired,
+  FrontendOutdated,
   Installed,
   Busy,
   RequiresApproval,
@@ -31,6 +32,7 @@ impl State {
       Self::NotInstalled => "not-installed",
       Self::Invalid => "invalid",
       Self::UpdateRequired => "update-required",
+      Self::FrontendOutdated => "frontend-outdated",
       Self::Installed => "installed",
       Self::Busy => "busy",
       Self::RequiresApproval => "requires-approval",
@@ -52,6 +54,7 @@ pub enum Error {
   PayloadUnavailable,
   UserUnavailable(String),
   InvalidInstallation(String),
+  FrontendOutdated(String),
   ArchiveRejected(String),
   ExtractionFailed(String),
   ServiceManagementFailed(String),
@@ -72,6 +75,7 @@ impl std::fmt::Display for Error {
       ),
       Self::UserUnavailable(detail) => write!(formatter, "AUV Helper setup needs the logged-in macOS user: {detail}"),
       Self::InvalidInstallation(detail) => write!(formatter, "the installed AUV Helper failed validation: {detail}"),
+      Self::FrontendOutdated(detail) => write!(formatter, "this AUV frontend is too old for the installed AUV Helper: {detail}"),
       Self::ArchiveRejected(detail) => write!(formatter, "the embedded AUV Helper failed validation: {detail}"),
       Self::ExtractionFailed(detail) => write!(formatter, "the embedded AUV Helper could not be extracted: {detail}"),
       Self::ServiceManagementFailed(detail) => write!(formatter, "AUV Helper registration failed: {detail}"),
@@ -134,12 +138,36 @@ pub fn status() -> Status {
       helper_embedded: embedded,
     };
   }
-  if installed_version(&layout.app).as_deref() != Some(env!("CARGO_PKG_VERSION")) {
+  // Frontends only install and inspect the helper; the root daemon is its
+  // sole caller. Usability therefore depends on the wire protocol, never on
+  // whether this frontend's crate version equals the installed app's.
+  let Some(protocols) = declared_protocols(&layout.app) else {
     return Status {
-      state: State::UpdateRequired,
-      detail: Some(format!("installed version does not match {}", env!("CARGO_PKG_VERSION"))),
+      state: State::Invalid,
+      detail: Some("the installed helper does not declare its supported protocol range".to_string()),
       helper_embedded: embedded,
     };
+  };
+  let range = format!("{}-{}", protocols.start(), protocols.end());
+  match compatibility(&protocols, super::PROTOCOL_VERSION) {
+    Compatibility::Compatible => {}
+    Compatibility::HelperOutdated => {
+      return Status {
+        state: State::UpdateRequired,
+        detail: Some(format!("the installed helper supports protocols {range}; this AUV frontend needs {}", super::PROTOCOL_VERSION)),
+        helper_embedded: embedded,
+      };
+    }
+    Compatibility::FrontendOutdated => {
+      return Status {
+        state: State::FrontendOutdated,
+        detail: Some(format!(
+          "the installed helper supports protocols {range}; this AUV frontend speaks {}, so update this frontend",
+          super::PROTOCOL_VERSION
+        )),
+        helper_embedded: embedded,
+      };
+    }
   }
 
   runtime_status(&home, uid, &layout.binary, embedded)
@@ -250,25 +278,75 @@ pub fn install() -> Result<Status, Error> {
   if !supports_smappservice() {
     return Err(Error::Unsupported);
   }
-  match status() {
-    current if matches!(current.state, State::Running | State::Busy | State::RequiresApproval) => return Ok(current),
+  let current = status();
+  match current.state {
+    State::Unsupported => return Err(Error::Unsupported),
     // Replacing an invalid app would execute its binary to unregister it.
     // `uninstall` removes such an app without running it.
-    current if current.state == State::Invalid => {
+    State::Invalid => {
       let detail = current.detail.unwrap_or_else(|| "unknown validation error".to_string());
       return Err(Error::InvalidInstallation(format!("{detail}; uninstall the helper, then install again")));
     }
-    current if current.state == State::Installed => {
+    // Never downgrade: a newer daemon may depend on the installed protocols.
+    State::FrontendOutdated => {
+      return Err(Error::FrontendOutdated(current.detail.unwrap_or_else(|| "protocol not supported".to_string())));
+    }
+    State::NotInstalled | State::UpdateRequired => {}
+    // Upgrading would cancel the in-flight request; a later install upgrades.
+    State::Busy => return Ok(current),
+    State::Installed | State::Running | State::RequiresApproval => {
       let (uid, home) = current_user()?;
       let layout = super::installed_layout(&home);
-      register(&layout.binary)?;
-      return status_after_registration(&home, uid, &layout.binary);
+      let installed = installed_version(&layout.app);
+      if embedded::archive().is_none() || !upgrades_compatible_helper(installed.as_deref(), env!("CARGO_PKG_VERSION")) {
+        if current.state != State::Installed {
+          return Ok(current);
+        }
+        register(&layout.binary)?;
+        return status_after_registration(&home, uid, &layout.binary);
+      }
     }
-    _ => {}
   }
 
   let archive = embedded::archive().ok_or(Error::PayloadUnavailable)?;
   install_embedded_app(archive)
+}
+
+/// How the installed helper's declared protocol range relates to the
+/// protocol this frontend's daemon speaks.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Compatibility {
+  Compatible,
+  /// The helper predates this protocol; the embedded helper can replace it.
+  HelperOutdated,
+  /// The helper dropped this protocol; replacing it would be a downgrade.
+  FrontendOutdated,
+}
+
+#[cfg(target_os = "macos")]
+fn compatibility(declared: &std::ops::RangeInclusive<u8>, protocol: u8) -> Compatibility {
+  if protocol > *declared.end() {
+    Compatibility::HelperOutdated
+  } else if protocol < *declared.start() {
+    Compatibility::FrontendOutdated
+  } else {
+    Compatibility::Compatible
+  }
+}
+
+/// Whether `install` should replace a compatible helper with the embedded one.
+///
+/// Replacement only moves forward, so frontends at different versions converge
+/// on the newest helper instead of replacing each other's. An unreadable
+/// installed version keeps the compatible helper rather than guessing.
+#[cfg(target_os = "macos")]
+fn upgrades_compatible_helper(installed: Option<&str>, embedded: &str) -> bool {
+  let parse = |value: &str| semver::Version::parse(value).ok();
+  match (installed.and_then(parse), parse(embedded)) {
+    (Some(installed), Some(embedded)) => embedded > installed,
+    _ => false,
+  }
 }
 
 /// Unregister and remove the installed helper app for the current user.
@@ -440,11 +518,21 @@ fn verify_app_signature(app: &std::path::Path) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn installed_version(app: &std::path::Path) -> Option<String> {
-  let output = std::process::Command::new("/usr/bin/plutil")
-    .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
-    .arg(app.join("Contents").join("Info.plist"))
-    .output()
-    .ok()?;
+  info_value(&app.join("Contents").join("Info.plist"), "CFBundleShortVersionString")
+}
+
+/// Protocol range declared by the signed bundle's Info.plist.
+#[cfg(target_os = "macos")]
+fn declared_protocols(app: &std::path::Path) -> Option<std::ops::RangeInclusive<u8>> {
+  let info = app.join("Contents").join("Info.plist");
+  let min = info_value(&info, "AUVHelperProtocolMin")?.parse().ok()?;
+  let max = info_value(&info, "AUVHelperProtocolMax")?.parse().ok()?;
+  (min <= max).then_some(min..=max)
+}
+
+#[cfg(target_os = "macos")]
+fn info_value(info: &std::path::Path, key: &str) -> Option<String> {
+  let output = std::process::Command::new("/usr/bin/plutil").args(["-extract", key, "raw", "-o", "-"]).arg(info).output().ok()?;
   output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
@@ -855,6 +943,49 @@ mod tests {
     );
 
     assert!(matches!(result, Err(super::Error::LaunchFailed(detail)) if detail.contains("did not accept")));
+  }
+
+  // Setup reads the protocol range from the signed bundle instead of running
+  // the helper, so the packaged Info.plist must match the host's constant.
+  #[test]
+  fn packaged_info_plist_declares_the_supported_protocol_range() {
+    let info = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("package").join("Info.plist");
+    let min = super::info_value(&info, "AUVHelperProtocolMin").and_then(|value| value.parse::<u8>().ok());
+    let max = super::info_value(&info, "AUVHelperProtocolMax").and_then(|value| value.parse::<u8>().ok());
+
+    assert_eq!(min, Some(*crate::SUPPORTED_PROTOCOLS.start()));
+    assert_eq!(max, Some(*crate::SUPPORTED_PROTOCOLS.end()));
+    assert!(crate::SUPPORTED_PROTOCOLS.contains(&crate::PROTOCOL_VERSION));
+  }
+
+  #[test]
+  fn compatibility_depends_only_on_the_declared_protocol_range() {
+    use super::Compatibility::{Compatible, FrontendOutdated, HelperOutdated};
+
+    assert_eq!(super::compatibility(&(1..=3), 2), Compatible);
+    assert_eq!(super::compatibility(&(1..=1), 2), HelperOutdated);
+    assert_eq!(super::compatibility(&(2..=3), 1), FrontendOutdated);
+  }
+
+  // ROOT CAUSE:
+  //
+  // Setup accepted an installed helper only when its bundle version equalled
+  // the calling frontend's crate version. Two frontends at different versions
+  // (for example a global `auv` and an app bundling `@auv-js/cli`) therefore
+  // replaced each other's helper on every install, downgrading the newer one.
+  //
+  // The fix keeps any protocol-compatible helper and only upgrades forward.
+  #[test]
+  fn frontends_at_different_versions_do_not_replace_each_others_helper() {
+    assert!(!super::upgrades_compatible_helper(Some("0.0.25"), "0.0.22"));
+    assert!(super::upgrades_compatible_helper(Some("0.0.22"), "0.0.25"));
+    assert!(!super::upgrades_compatible_helper(Some("0.0.22"), "0.0.22"));
+  }
+
+  #[test]
+  fn an_unreadable_installed_version_keeps_the_compatible_helper() {
+    assert!(!super::upgrades_compatible_helper(None, "0.0.25"));
+    assert!(!super::upgrades_compatible_helper(Some("not-a-version"), "0.0.25"));
   }
 
   #[test]

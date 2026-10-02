@@ -28,7 +28,7 @@ host = [
   "dep:tokio",
   "dep:zeroize",
 ]
-setup = ["identity", "dep:tempfile"]
+setup = ["identity", "dep:semver", "dep:tempfile"]
 
 [[bin]]
 name = "auv-device-helper-macos"
@@ -53,5 +53,6 @@ objc2-service-management = { version = "0.3", default-features = false, features
 rustix = { version = "1", features = ["process"], optional = true }
 security-framework = { version = "3.7", optional = true }
 security-framework-sys = { version = "2.17", optional = true }
+semver = { version = "1", optional = true }
 tempfile = { version = "3", optional = true }
 tokio = { version = "1", features = ["macros", "net", "rt", "io-util", "time"], optional = true }

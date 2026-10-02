@@ -29,8 +29,8 @@ The release bump configuration separately updates the independent unpublished
 N-API Cargo manifest so its compiled version stays aligned with the npm package.
 
 Source builds intentionally embed no app archive. Status and registration of
-a valid same-version installed helper remain available. A fresh install or an
-installed-version update returns a payload-unavailable error. This keeps Apple
+any valid, protocol-compatible installed helper remain available. A fresh
+install or a required protocol update returns a payload-unavailable error. This keeps Apple
 release credentials out of ordinary Cargo builds and prevents local ad-hoc
 signing from becoming a TCC identity.
 
@@ -71,6 +71,10 @@ ServiceManagement call, still resets TCC and removes the bundle, and reports in
 `detail` that the LaunchAgent registration may remain. A later install places
 the new app at the same path, so that registration launches the validated
 replacement.
+
+Whether an installed helper is usable is decided by wire protocol
+compatibility, not by matching the frontend's version; see
+[helper protocol compatibility](2026-10-02-macos-helper-protocol-compatibility.md).
 
 The per-user installation weakens filesystem ownership relative to the former
 root-owned experiment. Runtime verification rejects unsigned changes and code

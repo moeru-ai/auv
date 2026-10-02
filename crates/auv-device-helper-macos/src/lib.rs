@@ -27,8 +27,21 @@ use std::os::unix::fs::MetadataExt;
 
 #[cfg(feature = "transport")]
 const MAGIC: &[u8; 4] = b"AUVE";
-#[cfg(feature = "transport")]
-const VERSION: u8 = 1;
+/// Wire protocol this build's daemon client sends in every request header.
+///
+/// Setup frontends compare it with the installed helper's declared range;
+/// crate versions never decide whether a helper is usable. Version 1 covers
+/// operations 1–5 (`Enroll` through `Lock`). Add operations by raising
+/// `SUPPORTED_PROTOCOLS`' end, and drop old daemons only by raising its start.
+/// See `docs/ai/references/session-api/2026-10-02-macos-helper-protocol-compatibility.md`.
+#[cfg(any(feature = "setup", feature = "transport"))]
+pub(crate) const PROTOCOL_VERSION: u8 = 1;
+
+/// Wire protocols this build's helper accepts. `package/Info.plist` declares
+/// the same range as `AUVHelperProtocolMin` / `AUVHelperProtocolMax` so setup
+/// can read it from the signed bundle without executing the helper.
+#[cfg(any(feature = "host", all(test, feature = "setup")))]
+pub(crate) const SUPPORTED_PROTOCOLS: std::ops::RangeInclusive<u8> = 1..=1;
 #[cfg(feature = "transport")]
 const MAX_PAYLOAD: usize = 1024;
 
@@ -169,6 +182,8 @@ pub enum HostError {
   // status only after an installed-host gate proves one; a timeout stays
   // OutcomeUnverified and must not suspend the enrollment.
   OutcomeUnverified,
+  /// The helper does not accept this daemon's wire protocol version.
+  ProtocolUnsupported,
 }
 
 /// Private helper transport uses the driver's fixed, non-secret input stage.
@@ -278,7 +293,7 @@ fn call(home: &Path, operation: Operation, uid: u32, payload: &[u8]) -> Result<(
   let length = u16::try_from(payload.len()).map_err(|_| HostError::InvalidRequest)?;
   let mut header = [0_u8; 12];
   header[..4].copy_from_slice(MAGIC);
-  header[4] = VERSION;
+  header[4] = PROTOCOL_VERSION;
   header[5] = operation as u8;
   header[6..10].copy_from_slice(&uid.to_be_bytes());
   header[10..12].copy_from_slice(&length.to_be_bytes());
@@ -321,6 +336,7 @@ fn decode_status(status: u8) -> Result<(), HostError> {
     16 => Err(HostError::InputUnavailableAt(InputFailure::FocusLost)),
     17 => Err(HostError::InputUnavailableAt(InputFailure::DeadlineExceeded)),
     18 => Err(HostError::AlreadyLocked),
+    19 => Err(HostError::ProtocolUnsupported),
     _ => Err(HostError::Unavailable),
   }
 }
