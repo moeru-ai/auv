@@ -181,7 +181,6 @@ impl WindowApi<'_> {
 
   /// Captures a single window's pixels via Windows.Graphics.Capture (WGC).
   pub fn capture_wgc(&self, window: &Window) -> DriverResult<Capture> {
-    let _ = self.session;
     crate::wgc::capture_window_wgc(window)
   }
 
@@ -643,7 +642,6 @@ impl DisplayApi<'_> {
 
   /// Captures a target display via Windows.Graphics.Capture (WGC).
   pub fn capture_wgc(&self, selector: Option<&str>) -> DriverResult<DisplayCapture> {
-    let _ = self.session;
     crate::wgc::capture_display_wgc(selector)
   }
 

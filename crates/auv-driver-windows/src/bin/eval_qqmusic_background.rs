@@ -4,6 +4,7 @@
 //! operations (metadata query, play, pause, toggle, next, previous, volume).
 #![cfg(target_os = "windows")]
 
+use auv_driver_windows::desktop::ensure_input_desktop;
 use auv_driver_windows::media::{AudioVolumeController, MediaPlaybackStatus, SmtcMediaManager};
 use std::fs::File;
 use std::io::Write;
@@ -34,15 +35,6 @@ fn assert_focus_unchanged(expected: HWND, operation: &str) {
     "REDLINE VIOLATION: Foreground focus stolen during '{operation}'! Expected: {:?}, Actual: {:?}",
     expected.0, current.0
   );
-}
-
-fn ensure_input_desktop() {
-  unsafe {
-    use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, OpenInputDesktop, SetThreadDesktop};
-    if let Ok(desktop) = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x000F_01FF)) {
-      let _ = SetThreadDesktop(desktop);
-    }
-  }
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {

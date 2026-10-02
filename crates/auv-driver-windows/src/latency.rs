@@ -1,8 +1,8 @@
 //! Latency telemetry instrumentation for Windows driver critical paths.
 //!
 //! Provides zero-overhead (compile-time gated) execution timing for:
-//! - `capture_display` (xcap/GDI full-screen capture)
-//! - `capture_window` (PrintWindow window capture)
+//! - `capture_display` (xcap/GDI and Windows.Graphics.Capture full-screen capture)
+//! - `capture_window` (PrintWindow and Windows.Graphics.Capture window capture)
 //! - Input injection: `click_at`, `press_key`, `scroll_at` (SendInput injection latency only, settle excluded)
 //! - `recognize_text_in_capture` (system OCR on sub-regions)
 //!
@@ -41,12 +41,6 @@ pub struct LatencyRecord {
 static TELEMETRY_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "latency-telemetry")]
-type SinkFn = Box<dyn Fn(&LatencyRecord) + Send + Sync + 'static>;
-
-#[cfg(feature = "latency-telemetry")]
-static TELEMETRY_SINK: Mutex<Option<SinkFn>> = Mutex::new(None);
-
-#[cfg(feature = "latency-telemetry")]
 static TELEMETRY_BUFFER: Mutex<Vec<LatencyRecord>> = Mutex::new(Vec::new());
 
 #[cfg(feature = "latency-telemetry")]
@@ -62,7 +56,7 @@ pub fn stop_recording() {
 #[cfg(feature = "latency-telemetry")]
 #[inline]
 pub fn is_recording() -> bool {
-  TELEMETRY_ACTIVE.load(Ordering::Relaxed)
+  TELEMETRY_ACTIVE.load(Ordering::SeqCst)
 }
 
 #[cfg(feature = "latency-telemetry")]
@@ -82,16 +76,6 @@ pub fn take_records() -> Vec<LatencyRecord> {
 }
 
 #[cfg(feature = "latency-telemetry")]
-pub fn set_telemetry_sink<F>(sink: Option<F>)
-where
-  F: Fn(&LatencyRecord) + Send + Sync + 'static,
-{
-  let mut guard = TELEMETRY_SINK.lock().unwrap();
-  *guard = sink.map(|f| Box::new(f) as SinkFn);
-  TELEMETRY_ACTIVE.store(guard.is_some(), Ordering::SeqCst);
-}
-
-#[cfg(feature = "latency-telemetry")]
 pub fn record_latency_event(path: &str, latency_ms: f64, resolution: Option<(u32, u32)>, backend: Option<&str>, details: Option<&str>) {
   if !is_recording() {
     return;
@@ -107,25 +91,9 @@ pub fn record_latency_event(path: &str, latency_ms: f64, resolution: Option<(u32
     details: details.map(|s| s.to_string()),
   };
 
-  if let Ok(guard) = TELEMETRY_SINK.lock() {
-    if let Some(ref sink) = *guard {
-      sink(&record);
-    }
-  }
-
   if let Ok(mut buf) = TELEMETRY_BUFFER.lock() {
     buf.push(record);
   }
-}
-
-#[cfg(feature = "latency-telemetry")]
-pub fn records_to_jsonl(records: &[LatencyRecord]) -> Result<String, serde_json::Error> {
-  let mut out = String::new();
-  for record in records {
-    out.push_str(&serde_json::to_string(record)?);
-    out.push('\n');
-  }
-  Ok(out)
 }
 
 #[cfg(feature = "latency-telemetry")]

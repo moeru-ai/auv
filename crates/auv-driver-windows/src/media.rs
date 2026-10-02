@@ -44,8 +44,8 @@ pub struct NowPlayingState {
 mod native {
   use windows::Media::Control::{GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager};
   use windows::Win32::Media::Audio::{
-    Endpoints::IAudioEndpointVolume, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDeviceEnumerator,
-    ISimpleAudioVolume, MMDeviceEnumerator, eMultimedia, eRender,
+    IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator,
+    eMultimedia, eRender,
   };
   use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
   use windows::core::Interface;
@@ -221,39 +221,10 @@ mod native {
     }
   }
 
-  /// CoreAudio volume control for master and per-process audio sessions.
+  /// CoreAudio volume control for per-process audio sessions.
   pub struct AudioVolumeController;
 
   impl AudioVolumeController {
-    /// Returns master system volume as a float in `[0.0, 1.0]`.
-    pub fn get_master_volume() -> DriverResult<f32> {
-      unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-          .map_err(|e| backend(format!("Failed to instantiate MMDeviceEnumerator: {e}")))?;
-        let device =
-          enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).map_err(|e| backend(format!("GetDefaultAudioEndpoint failed: {e}")))?;
-        let endpoint_vol: IAudioEndpointVolume =
-          device.Activate(CLSCTX_ALL, None).map_err(|e| backend(format!("Activate IAudioEndpointVolume failed: {e}")))?;
-        endpoint_vol.GetMasterVolumeLevelScalar().map_err(|e| backend(format!("GetMasterVolumeLevelScalar failed: {e}")))
-      }
-    }
-
-    /// Sets master system volume to a float in `[0.0, 1.0]`.
-    pub fn set_master_volume(level: f32) -> DriverResult<()> {
-      let clamped = level.clamp(0.0, 1.0);
-      unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-          .map_err(|e| backend(format!("Failed to instantiate MMDeviceEnumerator: {e}")))?;
-        let device =
-          enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).map_err(|e| backend(format!("GetDefaultAudioEndpoint failed: {e}")))?;
-        let endpoint_vol: IAudioEndpointVolume =
-          device.Activate(CLSCTX_ALL, None).map_err(|e| backend(format!("Activate IAudioEndpointVolume failed: {e}")))?;
-        endpoint_vol
-          .SetMasterVolumeLevelScalar(clamped, std::ptr::null())
-          .map_err(|e| backend(format!("SetMasterVolumeLevelScalar failed: {e}")))
-      }
-    }
-
     /// Returns process volume for `target_pid` in `[0.0, 1.0]`.
     pub fn get_process_volume(target_pid: u32) -> DriverResult<f32> {
       let vol = find_process_simple_volume(target_pid)?;
@@ -327,6 +298,10 @@ impl SmtcMediaManager {
     Err(DriverError::unsupported("SMTC is only supported on Windows"))
   }
 }
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Clone, Debug)]
+pub struct SmtcSession;
 
 #[cfg(not(target_os = "windows"))]
 pub struct AudioVolumeController;

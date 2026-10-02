@@ -18,6 +18,7 @@ use auv_driver_common::input::{Click, ClickModifiers, KeyPressOptions, MouseButt
 use auv_driver_common::vision::TextRecognitionOptions;
 
 use auv_driver_windows::capture::{capture_display, capture_window};
+use auv_driver_windows::desktop::ensure_input_desktop;
 use auv_driver_windows::input::{click_at, press_key, scroll_at};
 use auv_driver_windows::latency::{LatencyRecord, clear_records, save_records_to_jsonl, start_recording, stop_recording, take_records};
 use auv_driver_windows::vision::recognize_text_in_capture;
@@ -426,16 +427,6 @@ fn bench_ocr_path(samples: usize) -> (Option<LatencyStats>, Vec<LatencyRecord>) 
   let records = take_records();
   let stats = compute_stats("recognize_text_in_capture", "ROI 400x100", &records);
   (stats, records)
-}
-
-fn ensure_input_desktop() {
-  #[cfg(target_os = "windows")]
-  unsafe {
-    use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, OpenInputDesktop, SetThreadDesktop};
-    if let Ok(desktop) = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x000F_01FF)) {
-      let _ = SetThreadDesktop(desktop);
-    }
-  }
 }
 
 fn main() {

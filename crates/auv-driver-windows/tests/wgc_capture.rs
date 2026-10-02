@@ -8,21 +8,12 @@ use auv_driver_windows::WindowsDriver;
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, HBRUSH};
-use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, OpenInputDesktop, SetThreadDesktop};
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOW, SWP_FRAMECHANGED,
   SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, UnregisterClassW, WINDOW_EX_STYLE, WNDCLASSW,
   WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::w;
-
-fn ensure_input_desktop() {
-  unsafe {
-    if let Ok(desktop) = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x000F_01FF)) {
-      let _ = SetThreadDesktop(desktop);
-    }
-  }
-}
 
 struct TestWindow {
   hwnd: HWND,
@@ -69,7 +60,7 @@ fn create_test_window(
   height: i32,
   color_bgr: u32,
 ) -> (TestWindow, Window) {
-  ensure_input_desktop();
+  auv_driver_windows::desktop::ensure_input_desktop();
   let brush = unsafe { CreateSolidBrush(COLORREF(color_bgr)) };
 
   let class = WNDCLASSW {

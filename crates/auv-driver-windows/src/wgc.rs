@@ -34,7 +34,6 @@ mod native {
   use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
   use windows::Win32::Graphics::Dxgi::IDXGIDevice;
   use windows::Win32::Graphics::Gdi::{HMONITOR, MONITOR_DEFAULTTONEAREST, MonitorFromPoint};
-  use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, OpenInputDesktop, SetThreadDesktop};
   use windows::Win32::System::WinRT::Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess};
   use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
   use windows::core::{Interface, factory};
@@ -57,7 +56,7 @@ mod native {
       return Ok(ctx);
     }
 
-    ensure_input_desktop();
+    crate::desktop::ensure_input_desktop();
 
     unsafe {
       let mut d3d11_device: Option<ID3D11Device> = None;
@@ -100,17 +99,8 @@ mod native {
     D3D_CONTEXT.get().ok_or_else(|| backend("failed to retrieve initialized D3D context"))
   }
 
-  pub fn ensure_input_desktop() {
-    unsafe {
-      if let Ok(desktop) = OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x000F_01FF)) {
-        let _ = SetThreadDesktop(desktop);
-      }
-    }
-  }
-
   struct CachedSession {
     target_id: isize,
-    _item: GraphicsCaptureItem,
     frame_pool: Direct3D11CaptureFramePool,
     session: windows::Graphics::Capture::GraphicsCaptureSession,
     size: windows::Graphics::SizeInt32,
@@ -152,15 +142,15 @@ mod native {
     };
 
     if !is_match {
-      if let Some(prev) = session_guard.take() {
-        drop(prev);
-      }
+      session_guard.take();
 
       let frame_pool =
         Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)
           .map_err(|e| backend(format!("failed to create Direct3D11CaptureFramePool: {e}")))?;
 
       let (sender, receiver) = sync_channel::<()>(4);
+      // NOTICE: Discarding the WinRT EventRegistrationToken does not unregister the handler;
+      // the callback remains registered until frame_pool is closed via Close().
       let _token = frame_pool
         .FrameArrived(&TypedEventHandler::new(move |pool: &Option<Direct3D11CaptureFramePool>, _| {
           if pool.is_some() {
@@ -179,7 +169,6 @@ mod native {
 
       *session_guard = Some(CachedSession {
         target_id,
-        _item: item.clone(),
         frame_pool,
         session,
         size,
