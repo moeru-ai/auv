@@ -93,6 +93,58 @@ fn print_stats_table(stats_list: &[LatencyStats]) {
   }
 }
 
+fn print_freshness_breakdown(records: &[LatencyRecord]) {
+  let wgc_records: Vec<&LatencyRecord> = records.iter().filter(|r| r.backend.as_deref() == Some("wgc.windows")).collect();
+  if wgc_records.is_empty() {
+    return;
+  }
+  println!("\n=== WGC 帧新鲜度拆分 (Frame Freshness Breakdown) ===");
+  println!(
+    "| 测量路径 | 样本总量 | 新帧数 (fresh=true) | 新帧占比 | 新帧 P50 (ms) | 新帧 P95 (ms) | 复用帧数 (fresh=false) | 复用占比 | 复用 P50 (ms) |"
+  );
+  println!("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |");
+
+  use std::collections::BTreeMap;
+  let mut groups: BTreeMap<String, Vec<&LatencyRecord>> = BTreeMap::new();
+  for r in &wgc_records {
+    let key = r.path.clone();
+    groups.entry(key).or_default().push(r);
+  }
+
+  for (path, list) in groups {
+    let total = list.len();
+    let fresh: Vec<LatencyRecord> =
+      list.iter().filter(|r| r.details.as_deref().map(|d| d.contains("fresh=true")).unwrap_or(true)).map(|&r| r.clone()).collect();
+    let reused: Vec<LatencyRecord> =
+      list.iter().filter(|r| r.details.as_deref().map(|d| d.contains("fresh=false")).unwrap_or(false)).map(|&r| r.clone()).collect();
+
+    let fresh_stat = compute_stats(&path, "fresh=true", &fresh);
+    let reused_stat = compute_stats(&path, "fresh=false", &reused);
+
+    let fresh_count = fresh.len();
+    let fresh_ratio = if total > 0 {
+      fresh_count as f64 / total as f64 * 100.0
+    } else {
+      0.0
+    };
+    let fresh_p50 = fresh_stat.as_ref().map(|s| s.p50).unwrap_or(0.0);
+    let fresh_p95 = fresh_stat.as_ref().map(|s| s.p95).unwrap_or(0.0);
+
+    let reused_count = reused.len();
+    let reused_ratio = if total > 0 {
+      reused_count as f64 / total as f64 * 100.0
+    } else {
+      0.0
+    };
+    let reused_p50 = reused_stat.as_ref().map(|s| s.p50).unwrap_or(0.0);
+
+    println!(
+      "| `{}` | {} | {} | {:.1}% | **{:.2}** | **{:.2}** | {} | {:.1}% | {:.2} |",
+      path, total, fresh_count, fresh_ratio, fresh_p50, fresh_p95, reused_count, reused_ratio, reused_p50
+    );
+  }
+}
+
 fn bench_display_capture(samples: usize, scene: &str) -> (Option<LatencyStats>, Vec<LatencyRecord>) {
   println!("\n[1/5] Benchmarking `capture_display` (Scene: {scene}, Samples: {samples})...");
   // Warmup
@@ -485,21 +537,30 @@ fn main() {
     all_records.extend(r);
   }
 
-  if scene == "mhw" {
-    let (s, r) = bench_display_capture(samples, "MHW Running 1440p");
+  if scene == "mhw" || scene == "load" {
+    let (s, r) = bench_display_capture(samples, "GPU Load 1440p [gdi]");
     if let Some(stat) = s {
       all_stats.push(stat);
     }
     all_records.extend(r);
 
-    let (s_wgc, r_wgc) = bench_display_capture_wgc(samples, "MHW Running 1440p [wgc]");
+    let (s_wgc, r_wgc) = bench_display_capture_wgc(samples, "GPU Load 1440p [wgc]");
     if let Some(stat) = s_wgc {
       all_stats.push(stat);
     }
     all_records.extend(r_wgc);
+
+    if let Some(target_window) = find_or_spawn_target_window() {
+      let (s_wgc_win, r_wgc_win) = bench_window_capture_wgc(&target_window, samples);
+      if let Some(stat) = s_wgc_win {
+        all_stats.push(stat);
+      }
+      all_records.extend(r_wgc_win);
+    }
   }
 
   print_stats_table(&all_stats);
+  print_freshness_breakdown(&all_records);
 
   if let Err(e) = save_records_to_jsonl(&all_records, &output_path) {
     eprintln!("\nFailed to save records to {:?}: {}", output_path, e);

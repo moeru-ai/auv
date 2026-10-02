@@ -136,7 +136,7 @@ mod native {
   ///
   /// Reuses active Direct3D11CaptureFramePool and GraphicsCaptureSession across consecutive
   /// calls on the same target, avoiding the ~70ms DWM session negotiation on every frame.
-  pub fn capture_item_rgba(target_id: isize, item: &GraphicsCaptureItem, timeout: Duration) -> DriverResult<image::RgbaImage> {
+  pub fn capture_item_rgba(target_id: isize, item: &GraphicsCaptureItem, timeout: Duration) -> DriverResult<(image::RgbaImage, bool)> {
     let d3d = get_or_init_d3d_context()?;
     let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
 
@@ -277,12 +277,12 @@ mod native {
           let image = image::RgbaImage::from_raw(desc.Width, desc.Height, rgba)
             .ok_or_else(|| backend("failed to decode captured RGBA image buffer"))?;
           s.last_frame = Some(image.clone());
-          Ok(image)
+          Ok((image, true))
         }
       }
       None => {
         if let Some(ref img) = s.last_frame {
-          Ok(img.clone())
+          Ok((img.clone(), false))
         } else {
           Err(backend(format!("WGC frame arrival timed out after {:?}", timeout)))
         }
@@ -323,7 +323,7 @@ pub fn capture_window_wgc(window: &Window) -> DriverResult<Capture> {
   let start_time = Instant::now();
   let hwnd = window_handle(window)?;
   let item = native::item_for_window(hwnd)?;
-  let image = native::capture_item_rgba(hwnd.0 as isize, &item, Duration::from_millis(1000))?;
+  let (image, is_fresh) = native::capture_item_rgba(hwnd.0 as isize, &item, Duration::from_millis(1000))?;
   let (width, height) = (image.width(), image.height());
 
   let scale_factor = if window.frame.size.width > 0.0 {
@@ -334,7 +334,11 @@ pub fn capture_window_wgc(window: &Window) -> DriverResult<Capture> {
 
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let target_name = window.app_name.as_deref().or(window.title.as_deref());
-  crate::latency::record_latency_event("capture_window", elapsed_ms, Some((width, height)), Some(WGC_BACKEND), target_name);
+  let details = match target_name {
+    Some(name) => format!("fresh={is_fresh};target={name}"),
+    None => format!("fresh={is_fresh}"),
+  };
+  crate::latency::record_latency_event("capture_window", elapsed_ms, Some((width, height)), Some(WGC_BACKEND), Some(&details));
 
   Ok(Capture {
     origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
@@ -366,7 +370,7 @@ pub fn capture_display_wgc(selector: Option<&str>) -> DriverResult<DisplayCaptur
   let hmonitor = native::monitor_for_point(origin_x, origin_y);
 
   let item = native::item_for_monitor(hmonitor)?;
-  let image = native::capture_item_rgba(hmonitor.0 as isize, &item, Duration::from_millis(1000))?;
+  let (image, is_fresh) = native::capture_item_rgba(hmonitor.0 as isize, &item, Duration::from_millis(1000))?;
   let (width, height) = (image.width(), image.height());
 
   let scale_factor = if target.display.frame.size.width > 0.0 {
@@ -376,7 +380,11 @@ pub fn capture_display_wgc(selector: Option<&str>) -> DriverResult<DisplayCaptur
   };
 
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-  crate::latency::record_latency_event("capture_display", elapsed_ms, Some((width, height)), Some(WGC_BACKEND), selector);
+  let details = match selector {
+    Some(sel) => format!("fresh={is_fresh};selector={sel}"),
+    None => format!("fresh={is_fresh}"),
+  };
+  crate::latency::record_latency_event("capture_display", elapsed_ms, Some((width, height)), Some(WGC_BACKEND), Some(&details));
 
   let capture = Capture {
     origin: Some(auv_driver_common::Position::in_screen(auv_driver_common::ScreenPoint::from(target.display.frame.origin))),
