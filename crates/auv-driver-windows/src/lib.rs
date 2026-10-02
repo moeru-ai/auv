@@ -16,6 +16,7 @@ mod driver;
 mod error;
 pub mod input;
 pub mod latency;
+pub mod media;
 pub mod mutation;
 pub mod ocr;
 pub mod permission;
@@ -32,6 +33,7 @@ pub use auv_driver_common::{ProcessActivationResult, ProcessActivationVerificati
 pub use clipboard::ClipboardSnapshot;
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
 pub use driver::{WindowsDriver, WindowsDriverSession};
+pub use media::{AudioVolumeController, MediaPlaybackStatus, MediaTrackMetadata, NowPlayingState, SmtcMediaManager, SmtcSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{WindowsPermissionProbe, probe as probe_permissions};
 pub use readiness::assess_readiness;

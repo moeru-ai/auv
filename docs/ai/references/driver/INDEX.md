@@ -75,6 +75,9 @@ Count: **58**
 - [`2026-10-03-windows-driver-latency-baseline.md`](2026-10-03-windows-driver-latency-baseline.md): Windows 驱动延迟基线实测（capture_display/capture_window/SendInput/OCR 共 2,100 样本实测分布）与 WGC 立项决策依据。
 - [`2026-10-03-wgc-driver-implementation.md`](2026-10-03-wgc-driver-implementation.md): Windows 驱动 WGC v1 截图后端实施、正确性验收测试与延迟实测报告（1440p P50 达 10.75ms，相比 GDI 提升 17x）。
 - [`2026-10-03-wgc-gpu-load-degradation.md`](2026-10-03-wgc-gpu-load-degradation.md): GPU 负载下 WGC vs GDI 延迟与退化比实测报告（RTX 4070 Ti 100% 满载下 WGC P50 为 11.28ms，退化比 1.05x，新帧率 100%）。
+- [`2026-10-03-qqmusic-background-control.md`](2026-10-03-qqmusic-background-control.md): Windows 后台操控实测与交付报告：QQ 音乐 WinRT SMTC 与 CoreAudio 驱动实施、零焦点抢占（100 样本实测扰动为 0）与 UIA 边界分析。
+- [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
+
 
 ## Related
 
