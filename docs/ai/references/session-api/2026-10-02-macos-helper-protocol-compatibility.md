@@ -1,4 +1,4 @@
-# macOS Helper Protocol Compatibility
+# macOS Helper Protocol Compatibility and Revocation
 
 Status: **accepted and implemented on 2026-10-02** (PR #217). The owner
 accepted the recommended option for each of D1–D4.
@@ -77,10 +77,8 @@ only by raising `min`.
 - **D4 — wire diagnostics.** The host accepts any header version in
   `SUPPORTED_PROTOCOLS` and answers others with `HostError::ProtocolUnsupported`
   (status byte 19). Magic and UID checks still run first and stay
-  `Unauthorized`. The daemon logs a fixed local diagnostic and maps the error
-  to its existing unavailable reasons:
-  `TODO(macos-helper-protocol-reason)` records that adding a public reason
-  changes the Device and local-control protobufs.
+  `Unauthorized`. The daemon maps it to the public reason described in
+  [Public reason](#public-reason).
 
 ## Evidence
 
@@ -92,9 +90,49 @@ Unit tests in `auv-device-helper-macos`: `compatibility_depends_only_on_the_decl
 `unsupported_protocol_from_another_uid_is_still_unauthorized`. No live
 two-frontend installation has been exercised yet.
 
+## Security epoch revocation
+
+Accepted on 2026-10-02 as the owner-delegated follow-up to
+`REVIEW(helper-downgrade-policy)`. Protocol compatibility answers whether a
+helper *can* serve a daemon; the security epoch answers whether the daemon
+*trusts* that signed build. They change independently.
+
+- Each helper declares `AUVHelperSecurityEpoch` as an Info.plist **string**.
+  The daemon trusts a helper only when it satisfies the identity requirement
+  and `info[AUVHelperSecurityEpoch] >= "MIN_SECURITY_EPOCH"`.
+- Revocation is one release step: raise the epoch in `package/Info.plist` and
+  `MIN_SECURITY_EPOCH` together. New daemons reject every older signed helper.
+  Older daemons keep trusting the newer helper, so revocation never blocks a
+  rolling update. The epoch starts at 1.
+- The rule lives in the code requirement, which covers the signed Info.plist,
+  so a same-user attacker cannot reinstall a revoked helper to satisfy it
+  without re-signing with the pinned Team ID.
+- Setup validates identity statically, then reads the epoch. A revoked but
+  genuine helper is `update-required` and `install` replaces it; it is not
+  `invalid`. A socket peer that is a revoked build reports the same state.
+- The daemon client checks identity and epoch separately, so a revoked helper
+  surfaces as `HostError::Revoked` instead of an identity failure.
+
+Evidence: `security_epoch_clause_compares_string_epochs_numerically` signs
+throwaway bundles ad hoc and confirms that `"10" >= "2"` holds numerically, that
+`"1"` is rejected, and that an integer-typed value never matches. This is the
+basis for `NOTICE(helper-security-epoch-requirement)`. Measured on macOS 26.3.
+`packaged_info_plist_declares_a_trusted_security_epoch_as_a_string` keeps the
+packaged helper trusted by the daemon built with it.
+`helpers_below_the_minimum_security_epoch_are_not_trusted` covers setup's
+trust decision, including a missing epoch.
+
+## Public reason
+
+`DEVICE_ENTRY_ERROR_REASON_HOST_INCOMPATIBLE = 13` (Rust
+`DeviceEntryErrorReason::HostIncompatible`, SDK `'hostIncompatible'`) reports
+both a protocol mismatch and a revoked helper over the paired Device API. Local
+enrollment reports `LocalControlError::HostIncompatible` as gRPC
+`FAILED_PRECONDITION`. Both mean that updating AUV on the target resolves the
+failure and retrying does not. The reason is platform-neutral; only macOS
+produces it today. Older clients that predate the value treat it as an unknown
+enum value, which is acceptable because no released daemon emits it.
+
 ## Out of scope
 
-- Revoking a signed but vulnerable helper. That remains
-  `REVIEW(helper-downgrade-policy)` and needs a signed minimum-security
-  version, separate from protocol compatibility.
 - Locking against concurrent installs (`TODO(helper-setup-install-lock)`).

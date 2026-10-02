@@ -19,5 +19,8 @@
   <!-- Must equal SUPPORTED_PROTOCOLS in src/lib.rs; a unit test enforces it. -->
   <key>AUVHelperProtocolMin</key><integer>1</integer>
   <key>AUVHelperProtocolMax</key><integer>1</integer>
+  <!-- Must be a string: code requirements compare only string values. Raise
+       together with MIN_SECURITY_EPOCH in src/lib.rs to revoke older helpers. -->
+  <key>AUVHelperSecurityEpoch</key><string>1</string>
 </dict>
 </plist>

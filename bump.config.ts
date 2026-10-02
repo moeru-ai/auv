@@ -123,6 +123,10 @@ export default defineConfig({
 
     await syncCargoToml()
     await x('cargo', ['generate-lockfile'])
+    // The N-API crate is a separate Cargo workspace with its own committed
+    // lockfile, and release builds pass `--locked`. Refresh only the versions
+    // of its local path packages; leave registry dependencies untouched.
+    await x('cargo', ['update', '--workspace', '--offline', '--manifest-path', 'js/packages/cli/Cargo.toml'])
   },
   push: false,
   recursive: true,

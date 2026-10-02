@@ -135,6 +135,7 @@ pub(crate) fn device_entry_error_reason(value: auv::devices::DeviceEntryErrorRea
     auv::devices::DeviceEntryErrorReason::CredentialRejected => proto::DeviceEntryErrorReason::CredentialRejected,
     auv::devices::DeviceEntryErrorReason::OutcomeUnverified => proto::DeviceEntryErrorReason::OutcomeUnverified,
     auv::devices::DeviceEntryErrorReason::AuditUnavailable => proto::DeviceEntryErrorReason::AuditUnavailable,
+    auv::devices::DeviceEntryErrorReason::HostIncompatible => proto::DeviceEntryErrorReason::HostIncompatible,
   }
 }
 

@@ -107,6 +107,14 @@ describe('device user sessions', () => {
     expect(calls).toBe(1)
   })
 
+  it('exposes an incompatible target host as a typed entry error', async () => {
+    const response = toBinary(EnsureUserSessionUnlockedResponseSchema, create(EnsureUserSessionUnlockedResponseSchema, {
+      result: { case: 'error', value: { reason: DeviceEntryErrorReason.HOST_INCOMPATIBLE } },
+    }))
+
+    await expect(ensureUserSessionUnlocked(connectionFor(response), { user: 'neko' })).rejects.toEqual(new AuvDeviceEntryError('hostIncompatible'))
+  })
+
   it('rejects the reserved signed-out effect from this locked-session API', async () => {
     const response = toBinary(EnsureUserSessionUnlockedResponseSchema, create(EnsureUserSessionUnlockedResponseSchema, {
       result: { case: 'effect', value: { kind: DeviceEntryEffectKind.SIGNED_IN_NEW_SESSION, user: 'neko' } },

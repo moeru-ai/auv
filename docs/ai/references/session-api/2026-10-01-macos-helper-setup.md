@@ -78,12 +78,10 @@ compatibility, not by matching the frontend's version; see
 
 The per-user installation weakens filesystem ownership relative to the former
 root-owned experiment. Runtime verification rejects unsigned changes and code
-from another bundle identifier or Team ID, but it does not currently reject an
-older `ai.moeru.auv.helper` release signed by the same Team ID. Exact app-version
-pinning would prevent daemon/helper rolling updates, and no released minimum
-security version exists yet. This remains an explicit review boundary: define a
-signed compatibility or minimum-security version before the first stable
-release, or when a previously signed helper must be revoked.
+from another bundle identifier or Team ID. Older signed helpers are revoked by
+raising the signed security epoch (`AUVHelperSecurityEpoch`) together with
+the daemon's `MIN_SECURITY_EPOCH`; see
+[helper compatibility and revocation](2026-10-02-macos-helper-protocol-compatibility.md#security-epoch-revocation).
 
 ## Frontends
 

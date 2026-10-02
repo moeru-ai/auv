@@ -44,6 +44,7 @@ export type DeviceEntryErrorReason
     | 'auditUnavailable'
     | 'credentialRejected'
     | 'disabled'
+    | 'hostIncompatible'
     | 'occupiedDesktop'
     | 'outcomeUnverified'
     | 'serviceUnavailable'
@@ -240,6 +241,7 @@ function deviceEntryError(reason: ProtoDeviceEntryErrorReason): AuvDeviceEntryEr
     case ProtoDeviceEntryErrorReason.AUDIT_UNAVAILABLE: return new AuvDeviceEntryError('auditUnavailable')
     case ProtoDeviceEntryErrorReason.CREDENTIAL_REJECTED: return new AuvDeviceEntryError('credentialRejected')
     case ProtoDeviceEntryErrorReason.DISABLED: return new AuvDeviceEntryError('disabled')
+    case ProtoDeviceEntryErrorReason.HOST_INCOMPATIBLE: return new AuvDeviceEntryError('hostIncompatible')
     case ProtoDeviceEntryErrorReason.OCCUPIED_DESKTOP: return new AuvDeviceEntryError('occupiedDesktop')
     case ProtoDeviceEntryErrorReason.OUTCOME_UNVERIFIED: return new AuvDeviceEntryError('outcomeUnverified')
     case ProtoDeviceEntryErrorReason.SERVICE_UNAVAILABLE: return new AuvDeviceEntryError('serviceUnavailable')

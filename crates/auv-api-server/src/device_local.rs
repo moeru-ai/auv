@@ -90,6 +90,8 @@ pub enum LocalControlError {
   NotFound,
   UnsupportedCredentialKind,
   HostUnavailable,
+  /// The installed host speaks an unsupported protocol or is a revoked build.
+  HostIncompatible,
   Persistence,
 }
 
@@ -263,6 +265,9 @@ fn status(error: LocalControlError) -> Status {
     LocalControlError::NotFound => Status::not_found("enrollment not found"),
     LocalControlError::UnsupportedCredentialKind => Status::failed_precondition("credential kind is unavailable on this host"),
     LocalControlError::HostUnavailable => Status::unavailable("installed unlock host cannot retrieve this credential"),
+    LocalControlError::HostIncompatible => {
+      Status::failed_precondition("installed unlock host is incompatible with this daemon; update AUV on this machine")
+    }
     LocalControlError::Persistence => Status::internal("local enrollment store failed"),
   }
 }

@@ -138,6 +138,20 @@ pub fn status() -> Status {
       helper_embedded: embedded,
     };
   }
+  // The static signature check covers Info.plist, so the declared epoch is
+  // trustworthy here. A revoked helper is still genuine, so it is replaced
+  // rather than reported as invalid.
+  if !trusts_security_epoch(declared_security_epoch(&layout.app)) {
+    return Status {
+      state: State::UpdateRequired,
+      detail: Some(format!(
+        "the installed helper build is revoked; this AUV frontend requires security epoch {}",
+        super::MIN_SECURITY_EPOCH
+      )),
+      helper_embedded: embedded,
+    };
+  }
+
   // Frontends only install and inspect the helper; the root daemon is its
   // sole caller. Usability therefore depends on the wire protocol, never on
   // whether this frontend's crate version equals the installed app's.
@@ -222,6 +236,11 @@ fn runtime_status(home: &std::path::Path, uid: u32, binary: &std::path::Path, em
       detail: Some("AUV Helper is handling another request; try again after it finishes".to_string()),
       helper_embedded: embedded,
     },
+    HelperReadiness::Revoked => Status {
+      state: State::UpdateRequired,
+      detail: Some("the running helper process is a revoked build; install again to replace it".to_string()),
+      helper_embedded: embedded,
+    },
     HelperReadiness::IdentityMismatch => Status {
       state: State::Invalid,
       detail: Some(
@@ -239,6 +258,9 @@ enum HelperReadiness {
   NotReady,
   Busy,
   IdentityMismatch,
+  /// The process serving the socket is a revoked build, for example one that
+  /// outlived an update of its bundle.
+  Revoked,
 }
 
 #[cfg(target_os = "macos")]
@@ -248,6 +270,7 @@ impl HelperReadiness {
       Ok(()) => Self::Ready,
       Err(super::IdentityError::PeerUnavailable) => Self::Busy,
       Err(super::IdentityError::Mismatch) => Self::IdentityMismatch,
+      Err(super::IdentityError::Revoked) => Self::Revoked,
     }
   }
 }
@@ -512,13 +535,28 @@ fn verify_app_signature(app: &std::path::Path) -> Result<(), String> {
 
   let path = CFURL::from_path(app, true).ok_or_else(|| "the app path is not a file URL".to_string())?;
   let code = SecStaticCode::from_path(&path, Flags::NONE).map_err(|error| format!("cannot inspect code signature ({error})"))?;
-  let requirement = super::helper_requirement().map_err(|error| format!("cannot create code requirement ({error})"))?;
+  // Identity only: a revoked but genuine helper is replaced, not rejected as
+  // tampered, so `status` checks its security epoch separately.
+  let requirement = super::helper_identity_requirement().map_err(|error| format!("cannot create code requirement ({error})"))?;
   code.check_validity(Flags::CHECK_ALL_ARCHITECTURES, &requirement).map_err(|error| format!("code signature does not match ({error})"))
 }
 
 #[cfg(target_os = "macos")]
 fn installed_version(app: &std::path::Path) -> Option<String> {
   info_value(&app.join("Contents").join("Info.plist"), "CFBundleShortVersionString")
+}
+
+/// Whether the daemon built with this frontend trusts a helper declaring
+/// `epoch`. A missing epoch is untrusted, matching the code requirement.
+#[cfg(target_os = "macos")]
+fn trusts_security_epoch(epoch: Option<u32>) -> bool {
+  epoch.is_some_and(|epoch| epoch >= super::MIN_SECURITY_EPOCH)
+}
+
+/// Security epoch declared by the signed bundle's Info.plist.
+#[cfg(target_os = "macos")]
+fn declared_security_epoch(app: &std::path::Path) -> Option<u32> {
+  info_value(&app.join("Contents").join("Info.plist"), "AUVHelperSecurityEpoch")?.parse().ok()
 }
 
 /// Protocol range declared by the signed bundle's Info.plist.
@@ -956,6 +994,32 @@ mod tests {
     assert_eq!(min, Some(*crate::SUPPORTED_PROTOCOLS.start()));
     assert_eq!(max, Some(*crate::SUPPORTED_PROTOCOLS.end()));
     assert!(crate::SUPPORTED_PROTOCOLS.contains(&crate::PROTOCOL_VERSION));
+  }
+
+  // A packaged helper below the minimum epoch would be rejected by the very
+  // daemon built with it.
+  #[test]
+  fn packaged_info_plist_declares_a_trusted_security_epoch_as_a_string() {
+    let info = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("package").join("Info.plist");
+    let output = std::process::Command::new("/usr/bin/plutil")
+      .args(["-extract", "AUVHelperSecurityEpoch", "xml1", "-o", "-"])
+      .arg(&info)
+      .output()
+      .unwrap();
+    let epoch = super::info_value(&info, "AUVHelperSecurityEpoch").and_then(|value| value.parse::<u32>().ok());
+
+    assert!(String::from_utf8_lossy(&output.stdout).contains("<string>"), "code requirements match only string values");
+    assert!(epoch.is_some_and(|epoch| epoch >= crate::MIN_SECURITY_EPOCH));
+  }
+
+  #[test]
+  fn helpers_below_the_minimum_security_epoch_are_not_trusted() {
+    let minimum = crate::MIN_SECURITY_EPOCH;
+
+    assert!(super::trusts_security_epoch(Some(minimum)));
+    assert!(super::trusts_security_epoch(Some(minimum + 1)));
+    assert!(!super::trusts_security_epoch(Some(minimum - 1)));
+    assert!(!super::trusts_security_epoch(None));
   }
 
   #[test]

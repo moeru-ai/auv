@@ -52,12 +52,46 @@ pub(crate) const EXPECTED_TEAM_ID: &str = "433DLLA855";
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 pub(crate) const LAUNCH_AGENT_LABEL: &str = "ai.moeru.auv.helper";
 
-/// Code requirement for the signed helper app, shared by on-disk setup
-/// validation and socket-peer validation. `package/package.sh` checks the
-/// same requirement with `codesign --test-requirement` after signing.
+/// Oldest helper security epoch this build trusts.
+///
+/// Each helper declares its epoch as the signed Info.plist string
+/// `AUVHelperSecurityEpoch`. To revoke vulnerable helpers, raise the epoch in
+/// `package/Info.plist` and this minimum together: daemons then reject every
+/// older signed helper through the code requirement, and setup replaces it.
+/// Older daemons keep accepting the newer helper, so revocation never blocks
+/// a rolling update. Unlike `SUPPORTED_PROTOCOLS`, the epoch is a trust
+/// decision, not a capability.
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+pub(crate) const MIN_SECURITY_EPOCH: u32 = 1;
+
+/// Code requirement for the signed helper's identity: bundle identifier and
+/// pinned Team ID. `package/package.sh` checks the same identity with
+/// `codesign --test-requirement` after signing.
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+pub(crate) fn helper_identity_requirement() -> Result<SecRequirement, security_framework::base::Error> {
+  helper_identity().parse()
+}
+
+/// Identity requirement plus `MIN_SECURITY_EPOCH`, for code the daemon trusts.
+///
+/// NOTICE(helper-security-epoch-requirement): The requirement language
+/// compares a quoted constant with a string Info.plist value numerically
+/// (`"10" >= "2"` holds), but never matches an integer-typed value, so the
+/// Info.plist entry must be a `<string>`. Verified with
+/// `codesign -v -R='info[AUVHelperSecurityEpoch] >= "2"'` on macOS 26.3.
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 pub(crate) fn helper_requirement() -> Result<SecRequirement, security_framework::base::Error> {
-  format!("identifier \"{BUNDLE_ID}\" and anchor apple generic and certificate leaf[subject.OU] = \"{EXPECTED_TEAM_ID}\"").parse()
+  format!("{} and {}", helper_identity(), security_epoch_clause(MIN_SECURITY_EPOCH)).parse()
+}
+
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+fn security_epoch_clause(minimum: u32) -> String {
+  format!("info[AUVHelperSecurityEpoch] >= \"{minimum}\"")
+}
+
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+fn helper_identity() -> String {
+  format!("identifier \"{BUNDLE_ID}\" and anchor apple generic and certificate leaf[subject.OU] = \"{EXPECTED_TEAM_ID}\"")
 }
 
 /// ServiceManagement registration state for the helper's LaunchAgent.
@@ -161,6 +195,8 @@ pub(crate) fn verify_installed_files(home: &Path) -> Result<InstalledLayout, Ide
 pub(crate) enum IdentityError {
   PeerUnavailable,
   Mismatch,
+  /// A genuine helper whose security epoch is below `MIN_SECURITY_EPOCH`.
+  Revoked,
 }
 
 #[cfg(feature = "transport")]
@@ -184,6 +220,9 @@ pub enum HostError {
   OutcomeUnverified,
   /// The helper does not accept this daemon's wire protocol version.
   ProtocolUnsupported,
+  /// The installed helper is genuine but below `MIN_SECURITY_EPOCH`.
+  /// Detected by the daemon client before sending; never a wire status.
+  Revoked,
 }
 
 /// Private helper transport uses the driver's fixed, non-secret input stage.
@@ -284,6 +323,7 @@ fn call(home: &Path, operation: Operation, uid: u32, payload: &[u8]) -> Result<(
   verify_installed_helper(&stream, home).map_err(|error| match error {
     IdentityError::PeerUnavailable => HostError::Unavailable,
     IdentityError::Mismatch => HostError::Unauthorized,
+    IdentityError::Revoked => HostError::Revoked,
   })?;
   // NOTICE(device-entry-macos-deadline): The helper exits at its 18-second
   // request deadline instead of replying for unfinished input. This longer
@@ -356,16 +396,17 @@ fn verify_installed_helper(stream: &UnixStream, home: &Path) -> Result<(), Ident
   // audit token, which includes a PID version, before sending a credential.
   // The pinned Team ID and designated requirement reject modifications to
   // the per-user app even though its containing directory is user-owned.
-  // REVIEW(helper-downgrade-policy): This accepts an older app signed by the
-  // same Team ID because AUV has no released minimum helper version yet and
-  // exact-version pinning would prevent daemon/helper rolling updates. Define
-  // a signed compatibility or minimum-security version before the first stable
-  // release, or when a previously signed helper must be revoked.
+  // The security epoch rejects older signed helpers once they are revoked;
+  // see `MIN_SECURITY_EPOCH`.
   let layout = verify_installed_files(home)?;
 
   let code = code_for_socket_peer(stream)?;
-  let requirement = helper_requirement().map_err(|_| IdentityError::Mismatch)?;
-  code.check_validity(Flags::NONE, &requirement).map_err(|_| IdentityError::Mismatch)?;
+  let identity = helper_identity_requirement().map_err(|_| IdentityError::Mismatch)?;
+  code.check_validity(Flags::NONE, &identity).map_err(|_| IdentityError::Mismatch)?;
+  // Checked separately so a revoked genuine helper is reported as such
+  // instead of looking like a foreign process.
+  let trusted = helper_requirement().map_err(|_| IdentityError::Mismatch)?;
+  code.check_validity(Flags::NONE, &trusted).map_err(|_| IdentityError::Revoked)?;
   let actual = code.path(Flags::NONE).ok().and_then(|url| url.to_path()).ok_or(IdentityError::Mismatch)?;
 
   if !installed_helper_path_matches(&actual, &layout)? {
@@ -490,6 +531,38 @@ mod tests {
     let linked_layout = installed_layout(&linked_home);
     let actual = std::fs::canonicalize(&real_layout.binary).unwrap();
     assert!(installed_helper_path_matches(&actual, &linked_layout).unwrap());
+  }
+
+  // Guards NOTICE(helper-security-epoch-requirement): revocation relies on the
+  // requirement language comparing string epochs numerically.
+  #[test]
+  fn security_epoch_clause_compares_string_epochs_numerically() {
+    use security_framework::os::macos::code_signing::SecStaticCode;
+
+    let root = tempfile::tempdir().unwrap();
+    let requirement: SecRequirement = security_epoch_clause(2).parse().unwrap();
+    let satisfies = |name: &str, epoch: &str| {
+      let app = root.path().join(format!("{name}.app"));
+      let macos = app.join("Contents").join("MacOS");
+      std::fs::create_dir_all(&macos).unwrap();
+      std::fs::copy("/usr/bin/true", macos.join("probe")).unwrap();
+      std::fs::write(
+        app.join("Contents").join("Info.plist"),
+        format!(
+          "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleExecutable</key><string>probe</string><key>CFBundleIdentifier</key><string>test.auv.epoch</string><key>AUVHelperSecurityEpoch</key>{epoch}</dict></plist>"
+        ),
+      )
+      .unwrap();
+      let signed = std::process::Command::new("/usr/bin/codesign").args(["--force", "--sign", "-"]).arg(&app).output().unwrap();
+      assert!(signed.status.success(), "{}", String::from_utf8_lossy(&signed.stderr));
+      let url = core_foundation::url::CFURL::from_path(&app, true).unwrap();
+      SecStaticCode::from_path(&url, Flags::NONE).unwrap().check_validity(Flags::NONE, &requirement).is_ok()
+    };
+
+    assert!(!satisfies("one", "<string>1</string>"));
+    assert!(satisfies("two", "<string>2</string>"));
+    assert!(satisfies("ten", "<string>10</string>"), "epochs must compare numerically, not lexically");
+    assert!(!satisfies("integer", "<integer>10</integer>"), "integer-typed epochs never match");
   }
 
   #[test]

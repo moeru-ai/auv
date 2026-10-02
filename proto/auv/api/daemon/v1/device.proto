@@ -161,6 +161,10 @@ enum DeviceEntryErrorReason {
   DEVICE_ENTRY_ERROR_REASON_OUTCOME_UNVERIFIED = 10;
   DEVICE_ENTRY_ERROR_REASON_AUDIT_UNAVAILABLE = 11;
   DEVICE_ENTRY_ERROR_REASON_UNAUTHORIZED = 12;
+  // The installed target-local entry host cannot serve this daemon: it speaks
+  // an unsupported protocol or is a revoked build. Updating AUV on the target
+  // resolves it; retrying does not.
+  DEVICE_ENTRY_ERROR_REASON_HOST_INCOMPATIBLE = 13;
 }
 
 message DeviceEntryError {

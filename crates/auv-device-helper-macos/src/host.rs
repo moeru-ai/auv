@@ -203,6 +203,9 @@ fn status(error: HostError) -> u8 {
     HostError::InputUnavailableAt(InputFailure::Unavailable) => 6,
     HostError::OutcomeUnverified => 7,
     HostError::ProtocolUnsupported => 19,
+    // The client detects revocation before connecting; the helper never
+    // reports it, so it shares the generic unavailable byte.
+    HostError::Revoked => 8,
   }
 }
 

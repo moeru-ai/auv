@@ -126,22 +126,9 @@ fn map_host_error(error: HostError) -> DeviceEntryErrorReason {
       DeviceEntryErrorReason::OutcomeUnverified
     }
     HostError::VaultUnavailable => DeviceEntryErrorReason::Unenrolled,
-    HostError::ProtocolUnsupported => {
-      log_protocol_unsupported();
-      DeviceEntryErrorReason::ServiceUnavailable
-    }
+    HostError::ProtocolUnsupported | HostError::Revoked => DeviceEntryErrorReason::HostIncompatible,
     HostError::Unavailable | HostError::Unauthorized | HostError::InvalidRequest => DeviceEntryErrorReason::ServiceUnavailable,
   }
-}
-
-/// Report a daemon/helper protocol mismatch in the daemon's local log.
-///
-/// TODO(macos-helper-protocol-reason): Neither the paired API nor the local
-/// control API has a reason for this mismatch, and adding one changes their
-/// protobuf contracts. Callers map it to their existing unavailable reason
-/// until an owner-approved proto slice adds a public one.
-pub(super) fn log_protocol_unsupported() {
-  eprintln!("AUV macOS helper does not support this daemon's protocol; run `auv setup macos-helper status`");
 }
 
 // Device policy mapping for the physical macOS console observation.
@@ -288,7 +275,8 @@ mod tests {
       DeviceEntryErrorReason::OutcomeUnverified
     );
     assert_eq!(map_host_error(HostError::StaleSession), DeviceEntryErrorReason::StaleSession);
-    assert_eq!(map_host_error(HostError::ProtocolUnsupported), DeviceEntryErrorReason::ServiceUnavailable);
+    assert_eq!(map_host_error(HostError::ProtocolUnsupported), DeviceEntryErrorReason::HostIncompatible);
+    assert_eq!(map_host_error(HostError::Revoked), DeviceEntryErrorReason::HostIncompatible);
   }
 
   #[test]

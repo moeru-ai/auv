@@ -73,7 +73,12 @@ declares the helper's wire protocol range as `AUVHelperProtocolMin` and
 Setup keeps any helper whose range includes the frontend's protocol, upgrades
 a compatible helper only to a strictly newer embedded version, and never
 downgrades. A helper that dropped the frontend's protocol reports
-`frontend-outdated`. Release CI
+`frontend-outdated`.
+
+`AUVHelperSecurityEpoch` (an Info.plist string) is a separate trust level.
+Daemons require it to be at least `MIN_SECURITY_EPOCH` through the code
+requirement. To revoke older signed helpers, raise both values in one release;
+setup then reports the revoked helper as `update-required` and replaces it. Release CI
 supplies `AUV_MACOS_HELPER_APP_ARCHIVE_PATH` only after building, signing,
 notarizing, and stapling the app.
 

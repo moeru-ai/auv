@@ -421,8 +421,11 @@ The CLI and SDK packages are independent setup frontends for one per-user
 helper. The **helper protocol** is the daemon-to-helper wire version; the
 helper declares the range it supports in its signed Info.plist. Any helper
 whose range includes the daemon's protocol is usable regardless of its
-version; setup upgrades only forward and never downgrades. See
-[helper protocol compatibility](ai/references/session-api/2026-10-02-macos-helper-protocol-compatibility.md).
+version; setup upgrades only forward and never downgrades. The **helper
+security epoch** is a separate signed trust level: daemons reject helpers below
+their minimum epoch, which revokes vulnerable builds. Either failure surfaces as
+the `HOST_INCOMPATIBLE` Device entry reason. See
+[helper compatibility and revocation](ai/references/session-api/2026-10-02-macos-helper-protocol-compatibility.md).
 The target retains a local audit record of each remote entry request with
 the authenticated paired Device ID, selected OS user or login session,
 request time, and typed outcome. Credentials, secret-bearing key events,

@@ -225,6 +225,8 @@ pub enum DeviceEntryErrorReason {
   OutcomeUnverified,
   #[error("the target-local audit could not be written")]
   AuditUnavailable,
+  #[error("the installed Device entry host is incompatible with this daemon; update AUV on the target")]
+  HostIncompatible,
 }
 
 impl DeviceEntryErrorReason {
@@ -243,6 +245,7 @@ impl DeviceEntryErrorReason {
       Self::CredentialRejected => "CREDENTIAL_REJECTED",
       Self::OutcomeUnverified => "OUTCOME_UNVERIFIED",
       Self::AuditUnavailable => "AUDIT_UNAVAILABLE",
+      Self::HostIncompatible => "HOST_INCOMPATIBLE",
     }
   }
 }
@@ -632,6 +635,7 @@ fn entry_error(error: proto::DeviceEntryError) -> Result<DeviceEntryErrorReason,
     proto::DeviceEntryErrorReason::CredentialRejected => DeviceEntryErrorReason::CredentialRejected,
     proto::DeviceEntryErrorReason::OutcomeUnverified => DeviceEntryErrorReason::OutcomeUnverified,
     proto::DeviceEntryErrorReason::AuditUnavailable => DeviceEntryErrorReason::AuditUnavailable,
+    proto::DeviceEntryErrorReason::HostIncompatible => DeviceEntryErrorReason::HostIncompatible,
   })
 }
 
@@ -779,6 +783,13 @@ mod tests {
       })
       .unwrap(),
       DeviceEntryErrorReason::Unauthorized
+    );
+    assert_eq!(
+      entry_error(proto::DeviceEntryError {
+        reason: proto::DeviceEntryErrorReason::HostIncompatible as i32,
+      })
+      .unwrap(),
+      DeviceEntryErrorReason::HostIncompatible
     );
     assert!(matches!(
       entry_error(proto::DeviceEntryError {
