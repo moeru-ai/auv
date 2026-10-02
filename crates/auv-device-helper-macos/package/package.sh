@@ -38,6 +38,15 @@ mkdir -p "$icon_compiled"
   --app-icon 'AUV Helper' \
   --output-partial-info-plist "$icon_output/partial.plist" \
   --output-format human-readable-text
+# NOTICE(helper-icon-xcode): actool before Xcode 26 cannot read Icon Composer
+# `.icon` bundles and exits successfully without output. Fail here with the
+# cause instead of at a later copy.
+for compiled in 'AUV Helper.icns' 'Assets.car'; do
+  if [ ! -f "$icon_compiled/$compiled" ]; then
+    echo "actool produced no $compiled; AUV Helper.icon requires Xcode 26 or later ($(/usr/bin/xcodebuild -version | head -n 1))" >&2
+    exit 1
+  fi
+done
 
 if [ -n "${AUV_MACOS_TARGET:-}" ]; then
   MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --locked -p auv-device-helper-macos --features host --manifest-path "$repo_root/Cargo.toml" --target "$AUV_MACOS_TARGET"
