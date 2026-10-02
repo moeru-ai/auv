@@ -51,8 +51,10 @@ jobs:
             binding: auv-binding.darwin-x64.node
             executable: auv
           # NOTICE(helper-icon-xcode): The helper's Icon Composer icon needs
-          # Xcode 26, which requires macOS 15.6+; macos-14 cannot provide it.
-          - os: macos-15
+          # Xcode 26. macos-14 cannot run it, and on macos-15-arm64
+          # (macOS 15.7.9) Xcode 26.3's ibtoold crashes on a missing
+          # MediaToolbox symbol. macos-26 ships Xcode 26.6 on macOS 26.
+          - os: macos-26
             target: aarch64-apple-darwin
             archive: auv-aarch64-apple-darwin.tar.gz
             binding: auv-binding.darwin-arm64.node
