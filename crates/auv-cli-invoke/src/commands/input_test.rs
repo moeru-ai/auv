@@ -190,14 +190,15 @@ fn input_action_artifact_enforces_domain_and_four_mibibyte_bounds() {
 
 #[test]
 fn click_point_projects_normalized_local_coordinates() {
-  let point = resolve_local_point(0.5, 0.5, true, auv_driver::Size::new(1280.0, 720.0), "window").expect("normalized point");
+  let point =
+    resolve_local_point("input.clickPoint", 0.5, 0.5, true, auv_driver::Size::new(1280.0, 720.0), "window").expect("normalized point");
   assert_eq!(point, auv_driver::Point::new(640.0, 360.0));
 }
 
 #[test]
 fn click_point_rejects_local_coordinates_outside_target_bounds() {
-  let error =
-    resolve_local_point(1280.01, 20.0, false, auv_driver::Size::new(1280.0, 720.0), "window").expect_err("out-of-window point must fail");
+  let error = resolve_local_point("input.clickPoint", 1280.01, 20.0, false, auv_driver::Size::new(1280.0, 720.0), "window")
+    .expect_err("out-of-window point must fail");
   assert!(error.contains("outside target window bounds"), "{error}");
 }
 
@@ -206,7 +207,8 @@ fn click_point_rejects_incompatible_target_and_coordinate_basis() {
   let target = crate::ExecutionTarget::Display {
     id: "primary".to_string(),
   };
-  let error = click_point_basis(Some(&target), Some("window"), false, false, false).expect_err("display target cannot use window basis");
+  let error =
+    point_basis("input.clickPoint", Some(&target), Some("window"), false, false, false).expect_err("display target cannot use window basis");
   assert!(error.contains("incompatible"), "{error}");
 }
 
@@ -671,4 +673,209 @@ fn click_button_survives_cli_protocol_and_recorded_replay() {
   assert_eq!(ordinary.click_options().unwrap().button, auv_driver::MouseButton::Left);
   assert!(click_point_invoke_command().parse_cli_args(&["10".into(), "20".into(), "--button".into(), "back".into()]).is_err());
   assert!(parse_click_button(Some("back")).is_err());
+}
+
+fn drag_input(inputs: &[(&str, &str)], target: Option<crate::ExecutionTarget>) -> InvokeCommandInput {
+  InvokeCommandInput {
+    command_id: "input.drag".into(),
+    target,
+    inputs: inputs.iter().map(|(key, value)| ((*key).to_string(), (*value).to_string())).collect(),
+    typed_args: None,
+    dry_run: true,
+    cancellation: Default::default(),
+  }
+}
+
+// CLI arguments, MCP inputs, and Runner dispatch must decode to one plan.
+#[test]
+fn drag_cli_and_protocol_inputs_decode_to_the_same_plan() {
+  let crate::InvokeCommandCliParse::Invoke {
+    inputs, typed_args, ..
+  } = drag_invoke_command()
+    .parse_cli_args(&[
+      "--button".into(),
+      "right".into(),
+      "--".into(),
+      "10".into(),
+      "-20".into(),
+      "30".into(),
+      "40".into(),
+    ])
+    .unwrap()
+  else {
+    panic!("expected parsed invocation");
+  };
+  assert_eq!(inputs["start_y"], "-20.0");
+
+  let protocol: DragArgs = crate::command::decode_args(&drag_input(
+    &[
+      ("start_x", "10"),
+      ("start_y", "-20"),
+      ("end_x", "30"),
+      ("end_y", "40"),
+      ("button", "right"),
+    ],
+    None,
+  ))
+  .unwrap();
+  let typed = typed_args.get::<DragArgs>().unwrap().clone();
+  for args in [protocol, typed] {
+    let plan = args.plan(None).unwrap();
+    assert_eq!(plan.basis, RelativeToArg::Screen);
+    assert_eq!(plan.start, auv_driver::Point::new(10.0, -20.0));
+    assert_eq!(plan.end, auv_driver::Point::new(30.0, 40.0));
+    assert_eq!(plan.button, auv_driver::MouseButton::Right);
+    assert_eq!(plan.duration, std::time::Duration::from_millis(300));
+  }
+}
+
+#[test]
+fn drag_plan_rejects_invalid_requests_before_io() {
+  let window = Some(crate::ExecutionTarget::Window {
+    id: "window-1".to_string(),
+  });
+  let display = Some(crate::ExecutionTarget::Display {
+    id: "primary".to_string(),
+  });
+  let points = [
+    ("start_x", "0.1"),
+    ("start_y", "0.1"),
+    ("end_x", "0.2"),
+    ("end_y", "0.2"),
+  ];
+  for (extra, target, expected) in [
+    (vec![("duration-ms", "30001")], None, "input.drag --duration-ms must be within 0..=30000"),
+    (vec![("normalized", "true")], None, "input.drag --normalized is valid only relative to a window or display"),
+    (vec![("relative-to", "window")], display, "input.drag --target kind is incompatible with --relative-to window"),
+    (vec![("normalized", "true"), ("end_x", "1.5")], window, "input.drag --normalized coordinates must be within 0..=1"),
+  ] {
+    let mut inputs = points.to_vec();
+    inputs.retain(|(key, _)| extra.iter().all(|(extra_key, _)| extra_key != key));
+    inputs.extend(extra);
+    let input = drag_input(&inputs, target);
+    let error = crate::command::decode_args::<DragArgs>(&input).unwrap().plan(input.target.as_ref()).unwrap_err();
+    assert_eq!(error, expected);
+  }
+}
+
+// A window drag keeps the driver default unless the caller names a policy.
+// Foreground preparation exists only for window targets, like clickPoint.
+#[test]
+fn drag_input_policy_requires_window_basis_and_reaches_the_plan() {
+  let window = Some(crate::ExecutionTarget::Window {
+    id: "window-1".to_string(),
+  });
+  let points = [
+    ("start_x", "10"),
+    ("start_y", "20"),
+    ("end_x", "30"),
+    ("end_y", "20"),
+  ];
+  let plan = |inputs: &[(&str, &str)], target: Option<crate::ExecutionTarget>| {
+    let input = drag_input(inputs, target);
+    crate::command::decode_args::<DragArgs>(&input).unwrap().plan(input.target.as_ref())
+  };
+
+  assert_eq!(plan(&points, window.clone()).unwrap().policy, None);
+
+  let mut foreground = points.to_vec();
+  foreground.push(("input-policy", "foreground-preferred"));
+  assert_eq!(plan(&foreground, window).unwrap().policy, Some(auv_driver::InputPolicy::ForegroundPreferred));
+  assert_eq!(plan(&foreground, None).unwrap_err(), "input.drag --input-policy is valid only with --relative-to window");
+}
+
+#[test]
+fn drag_projects_both_endpoints_from_the_target_frame() {
+  let input = drag_input(
+    &[
+      ("start_x", "0.25"),
+      ("start_y", "0.5"),
+      ("end_x", "0.75"),
+      ("end_y", "0.5"),
+      ("normalized", "true"),
+    ],
+    Some(crate::ExecutionTarget::Window {
+      id: "window-1".to_string(),
+    }),
+  );
+  let plan = crate::command::decode_args::<DragArgs>(&input).unwrap().plan(input.target.as_ref()).unwrap();
+  let frame = auv_driver::Rect {
+    origin: auv_driver::Point::new(100.0, 50.0),
+    size: auv_driver::Size::new(800.0, 600.0),
+  };
+  let (start, end) = plan.screen_points(frame, "window").unwrap();
+  assert_eq!(start, ScreenPoint::new(300.0, 350.0));
+  assert_eq!(end, ScreenPoint::new(700.0, 350.0));
+
+  let mut outside = plan.clone();
+  outside.normalized = false;
+  outside.end = auv_driver::Point::new(800.5, 10.0);
+  let error = outside.screen_points(frame, "window").unwrap_err();
+  assert_eq!(error.code, crate::FailureCode::InvalidInput);
+  assert!(error.message.starts_with("input.drag point 800.5,10 is outside target window bounds"), "{error}");
+}
+
+// The driver receives one complete gesture: down at the start, motion along
+// the chord, and up at the end point after the requested duration.
+#[test]
+fn drag_movement_is_one_straight_screen_path_to_the_end_point() {
+  let start = auv_driver::Point::new(100.0, 200.0);
+  let end = auv_driver::Point::new(400.0, 260.0);
+  for (duration_ms, expected_samples) in [(0, 2), (300, 19)] {
+    let input = drag_input(
+      &[
+        ("start_x", "100"),
+        ("start_y", "200"),
+        ("end_x", "400"),
+        ("end_y", "260"),
+        ("duration-ms", &duration_ms.to_string()),
+      ],
+      None,
+    );
+    let plan = crate::command::decode_args::<DragArgs>(&input).unwrap().plan(None).unwrap();
+    let target = auv_driver::InputTarget::Window(test_window());
+    let request = plan.movement(target.clone(), ScreenPoint::new(start.x, start.y), ScreenPoint::new(end.x, end.y));
+    assert_eq!(request.target, Some(target));
+    assert_eq!(request.start, auv_driver::MouseStart::Screen(start));
+
+    let samples = request.samples(start).unwrap();
+    assert_eq!(samples.len(), expected_samples);
+    assert_eq!(samples.at(0).point, start);
+    let last = samples.at(samples.len() - 1);
+    assert_eq!(last.point, end);
+    assert_eq!(last.elapsed, std::time::Duration::from_millis(duration_ms));
+    for index in 0..samples.len() {
+      let point = samples.at(index).point;
+      let cross = (point.x - start.x) * (end.y - start.y) - (point.y - start.y) * (end.x - start.x);
+      assert!(cross.abs() < 1e-6, "sample {index} left the drag line: {point:?}");
+      assert!((start.x..=end.x).contains(&point.x), "sample {index} passed an endpoint: {point:?}");
+    }
+  }
+}
+
+#[test]
+fn drag_dry_run_reports_resolved_endpoints_without_delivery() {
+  let input = drag_input(
+    &[
+      ("start_x", "10"),
+      ("start_y", "20"),
+      ("end_x", "30"),
+      ("end_y", "40"),
+    ],
+    None,
+  );
+  let plan = crate::command::decode_args::<DragArgs>(&input).unwrap().plan(None).unwrap();
+  let mut result = DragResult::planned(&plan, ScreenPoint::new(110.0, 70.0), ScreenPoint::new(130.0, 90.0));
+  result.window = Some(test_window());
+  let output = drag_output(result).unwrap();
+
+  let value = output.result().expect("drag result");
+  assert_eq!(value["window"]["reference"]["id"], "window-1");
+  assert_eq!(value["screen_end"]["x"], 130.0);
+  assert_eq!(value["action"], serde_json::Value::Null);
+  let report = output.report.as_ref().expect("drag report");
+  assert_eq!(field_value(report, "Delivery"), "not_performed");
+  assert_eq!(field_value(report, "Verification"), "validation_only");
+  assert_eq!(field_value(report, "Screen start"), "110.0,70.0");
+  assert_eq!(field_value(report, "Window ID"), "window-1");
 }

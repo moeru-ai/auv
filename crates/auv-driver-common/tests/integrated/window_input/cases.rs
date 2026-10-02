@@ -1,6 +1,6 @@
 use auv_driver_common::{
-  ClickOptions, CoordinateSpace, DriverError, DriverResult, InputActionResult, InputPolicy, Rect, Scroll, ScrollOptions, Window,
-  WindowInput, WindowPoint, WindowRef,
+  ClickOptions, CoordinateSpace, DriverError, DriverResult, InputActionResult, InputPolicy, MouseButton, MoveMouseRequest, Point, Rect,
+  Scroll, ScrollOptions, Window, WindowInput, WindowPoint, WindowRef,
 };
 
 struct UnsupportedWindowInput;
@@ -12,6 +12,16 @@ impl WindowInput for UnsupportedWindowInput {
 
   fn scroll(&self, _window: &Window, _point: WindowPoint, _scroll: Scroll, _options: ScrollOptions) -> DriverResult<InputActionResult> {
     Err(DriverError::unsupported("window.scroll"))
+  }
+
+  fn drag(
+    &self,
+    _window: &Window,
+    _movement: MoveMouseRequest,
+    _button: MouseButton,
+    _policy: InputPolicy,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    Err(DriverError::unsupported("window.drag"))
   }
 }
 
@@ -50,6 +60,11 @@ fn unavailable_window_input_capabilities_are_explicit() {
     .scroll(&window, WindowPoint::new(20.0, 30.0), Scroll::new(0.0, -120.0), ScrollOptions::default())
     .expect_err("an adapter without window scroll support should reject the operation");
 
+  let drag_error = adapter
+    .drag(&window, MoveMouseRequest::direct(Point::new(120.0, 230.0)), MouseButton::Left, InputPolicy::ForegroundPreferred)
+    .expect_err("an adapter without window drag support should reject the operation");
+
   assert_eq!(click_error.to_string(), "window.click is not supported by this driver");
   assert_eq!(scroll_error.to_string(), "window.scroll is not supported by this driver");
+  assert_eq!(drag_error.to_string(), "window.drag is not supported by this driver");
 }

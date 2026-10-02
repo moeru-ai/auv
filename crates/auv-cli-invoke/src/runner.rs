@@ -48,6 +48,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       let (keys, policy, duration) = crate::commands::input::decode_hold_keys(&input)?;
       return execute_hold_keys(input, keys, policy, duration, context).await;
     }
+    "input.drag" => return execute_drag(input, context).await,
     _ => {}
   }
 
@@ -388,7 +389,8 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
   if normalized && (!(0.0..=1.0).contains(&requested.point().x) || !(0.0..=1.0).contains(&requested.point().y)) {
     return Err("input.clickPoint --normalized coordinates must be within 0..=1".to_string());
   }
-  let basis = crate::commands::input::click_point_basis(
+  let basis = crate::commands::input::point_basis(
+    "input.clickPoint",
     input.target.as_ref(),
     input.inputs.get("relative-to").map(String::as_str),
     normalized,
@@ -434,8 +436,14 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
       let window = resolved.resource();
-      let point =
-        crate::commands::input::resolve_local_point(requested_point.x, requested_point.y, normalized, window.frame.size, "window")?;
+      let point = crate::commands::input::resolve_local_point(
+        "input.clickPoint",
+        requested_point.x,
+        requested_point.y,
+        normalized,
+        window.frame.size,
+        "window",
+      )?;
       let response = resolved
         .click(auv_driver::WindowPoint::new(point.x, point.y), click_options)
         .await
@@ -468,8 +476,14 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
         .into_iter()
         .find(|display| display.id == *id)
         .ok_or_else(|| format!("input.clickPoint could not find display target {id:?}"))?;
-      let point =
-        crate::commands::input::resolve_local_point(requested_point.x, requested_point.y, normalized, display.frame.size, "display")?;
+      let point = crate::commands::input::resolve_local_point(
+        "input.clickPoint",
+        requested_point.x,
+        requested_point.y,
+        normalized,
+        display.frame.size,
+        "display",
+      )?;
       let screen_point = auv_driver::ScreenPoint::new(display.frame.origin.x + point.x, display.frame.origin.y + point.y);
       let response = runner
         .input()
@@ -676,4 +690,75 @@ async fn execute_hold_keys(
   };
 
   crate::commands::input::targeted_keyboard_output(Some(&action)).map_err(Into::into)
+}
+
+/// Runner route for `input.drag`: the same plan and path as local invoke,
+/// resolved through Runner window/display services and one DragMouse call.
+async fn execute_drag(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+  use crate::commands::input::{DragResult, RelativeToArg};
+
+  let plan = crate::commands::input::decode_drag(&input)?;
+  // TODO(drag-runner-window-policy): DragMouse carries no window input policy,
+  // so the Runner cannot foreground the window first. Add a window drag RPC
+  // when a Device or Run consumer needs foreground window drags.
+  if plan.policy == Some(auv_driver::InputPolicy::ForegroundPreferred) {
+    return Err(crate::InvokeFailure::new(
+      crate::FailureCode::Unsupported,
+      "input.drag --input-policy foreground-preferred is available only for local invoke",
+    ));
+  }
+  let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
+  let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
+
+  let (mut result, target) = match plan.basis {
+    RelativeToArg::Screen => {
+      let start = auv_driver::ScreenPoint::new(plan.start.x, plan.start.y);
+      let end = auv_driver::ScreenPoint::new(plan.end.x, plan.end.y);
+      (DragResult::planned(&plan, start, end), auv_driver::InputTarget::Foreground)
+    }
+    RelativeToArg::Window => {
+      let windows = runner.windows();
+      let window = match input.target.as_ref().expect("window-relative target validated") {
+        crate::ExecutionTarget::Application { .. } => windows.resolve(selected_window_selector(&input)).await?.resource().clone(),
+        crate::ExecutionTarget::Window { id } => {
+          windows.list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
+            crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find window target {id:?}"))
+          })?
+        }
+        crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
+      };
+      let (start, end) = plan.screen_points(window.frame, "window")?;
+      let mut result = DragResult::planned(&plan, start, end);
+      result.window = Some(window.clone());
+      (result, auv_driver::InputTarget::Window(window))
+    }
+    RelativeToArg::Display => {
+      let crate::ExecutionTarget::Display { id } = input.target.as_ref().expect("display-relative target validated") else {
+        unreachable!("target/basis validated")
+      };
+      let display = runner.displays().list().await?.displays.into_iter().find(|display| display.id == *id).ok_or_else(|| {
+        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find display target {id:?}"))
+      })?;
+      let (start, end) = plan.screen_points(display.frame, "display")?;
+      let mut result = DragResult::planned(&plan, start, end);
+      result.display = Some(display);
+      (result, auv_driver::InputTarget::Foreground)
+    }
+  };
+  if input.dry_run {
+    return crate::commands::input::drag_output(result).map_err(Into::into);
+  }
+
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let movement = plan.movement(target, result.screen_start, result.screen_end);
+  let client = runner.input();
+  let (point, action) = tokio::select! {
+    _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
+    response = client.drag_mouse(movement, plan.button) => response?,
+  };
+  crate::emit_input_action_result(&action);
+  result.final_point = Some(auv_driver::ScreenPoint::new(point.x, point.y));
+  result.action = Some(action);
+  crate::commands::input::drag_output(result).map_err(Into::into)
 }

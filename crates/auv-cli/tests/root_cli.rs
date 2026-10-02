@@ -962,6 +962,30 @@ fn click_point_dry_run_reports_the_validated_coordinate() {
 }
 
 #[test]
+fn drag_dry_run_reports_both_screen_endpoints() {
+  let output = run(&[
+    "invoke",
+    "input.drag",
+    "--duration-ms",
+    "0",
+    "--dry-run",
+    "--json",
+    "--",
+    "-20",
+    "300",
+    "700.5",
+    "320",
+  ]);
+
+  assert!(output.status.success(), "unexpected diagnostic:\n{}", stderr(&output));
+  let value: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("JSON output");
+  assert_eq!(value["result"]["screen_start"]["x"], -20.0);
+  assert_eq!(value["result"]["screen_end"]["x"], 700.5);
+  assert_eq!(value["result"]["duration_ms"], 0);
+  assert!(value["result"]["action"].is_null());
+}
+
+#[test]
 fn mouse_move_dry_run_reports_the_validated_coordinate() {
   let output = run(&[
     "invoke",
