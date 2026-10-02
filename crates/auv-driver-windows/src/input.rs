@@ -62,7 +62,11 @@ pub fn click_at(
 ) -> DriverResult<InputActionResult> {
   let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
   let (count, interval) = click_parts(&click)?;
+  let start_time = std::time::Instant::now();
   native::click(point, button, count, interval, &click_modifier_keys(modifiers))?;
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  let button_desc = format!("{button:?}");
+  crate::latency::record_latency_event("click_at", elapsed_ms, None, Some("SendInput"), Some(&button_desc));
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
@@ -96,7 +100,10 @@ pub(crate) fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
 
 pub fn scroll_at(point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
   let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
+  let start_time = std::time::Instant::now();
   native::scroll(point, scroll)?;
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  crate::latency::record_latency_event("scroll_at", elapsed_ms, None, Some("SendInput"), None);
   sleep_if_nonzero(settle);
   Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
@@ -113,7 +120,10 @@ pub fn type_text(text: &str, options: TypeTextOptions) -> DriverResult<InputActi
 
 pub fn press_key(options: KeyPressOptions) -> DriverResult<InputActionResult> {
   let chord = parse_key_chord(&options.key)?;
+  let start_time = std::time::Instant::now();
   native::press_chord(&chord)?;
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  crate::latency::record_latency_event("press_key", elapsed_ms, None, Some("SendInput"), Some(&options.key));
   sleep_if_nonzero(options.settle);
   Ok(foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }

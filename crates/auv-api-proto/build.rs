@@ -38,7 +38,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
   // NOTICE(proto-source): In the checkout, `proto` links to the repository's
   // canonical schema tree. Cargo flattens selected files into the crate archive.
-  let package_proto = manifest_dir.join("proto");
+  let mut package_proto = manifest_dir.join("proto");
+  if package_proto.is_file() {
+    if let Ok(link_target) = std::fs::read_to_string(&package_proto) {
+      let resolved = manifest_dir.join(link_target.trim());
+      if resolved.is_dir() {
+        package_proto = resolved;
+      }
+    }
+  }
 
   let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
   let mut builder = tonic_prost_build::configure().file_descriptor_set_path(out_dir.join("auv.api.bin")).message_attribute(

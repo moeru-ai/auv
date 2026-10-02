@@ -7,7 +7,7 @@ Executable GUI evaluations live in
 test objects, tasks, and cases. Rust runs evaluations; shared desktop receivers
 use TypeScript. Raw run output stays local.
 
-Count: **55**
+Count: **56**
 
 - [`2026-05-20-macos-driver-namespace-after-window-screen-design.md`](2026-05-20-macos-driver-namespace-after-window-screen-design.md)
 - [`2026-05-20-macos-osascript-backend-design.md`](2026-05-20-macos-osascript-backend-design.md)
@@ -72,6 +72,7 @@ Count: **55**
 - [`2026-09-27-lock-and-login-screen-deep-research.md`](2026-09-27-lock-and-login-screen-deep-research.md): Pinned-source follow-up on secure desktop APIs, session workers, greeter capture, AUV Runner placement, and credential boundaries.
 - [`2026-10-01-linux-screenshot-fallback.md`](2026-10-01-linux-screenshot-fallback.md): Partial-image regression, single-output coordinate checks, and live GNOME Screenshot evidence.
 - [`2026-10-01-linux-window-capture-reference-validation.md`](2026-10-01-linux-window-capture-reference-validation.md): Exact AT-SPI reference resolution, current-frame crops, before/after checks, and live regression evidence.
+- [`2026-10-03-windows-driver-latency-baseline.md`](2026-10-03-windows-driver-latency-baseline.md): Windows 驱动延迟基线实测（capture_display/capture_window/SendInput/OCR 共 2,100 样本实测分布）与 WGC 立项决策依据。
 
 ## Related
 

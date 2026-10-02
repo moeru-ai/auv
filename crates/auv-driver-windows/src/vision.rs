@@ -30,7 +30,16 @@ pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: 
     });
   }
   let cropped = image::imageops::crop_imm(&capture.image, crop.x, crop.y, crop.width, crop.height).to_image();
+  let start_time = std::time::Instant::now();
   let recognition = recognize_text_in_rgba(cropped.as_raw(), crop.width, crop.height, options).map_err(backend)?;
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  crate::latency::record_latency_event(
+    "recognize_text_in_capture",
+    elapsed_ms,
+    Some((crop.width, crop.height)),
+    Some("Windows.Media.Ocr"),
+    None,
+  );
   Ok(map_recognition_to_capture(&recognition, capture, crop))
 }
 

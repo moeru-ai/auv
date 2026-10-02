@@ -15,6 +15,7 @@ pub mod device_unlock_host;
 mod driver;
 mod error;
 pub mod input;
+pub mod latency;
 pub mod mutation;
 pub mod ocr;
 pub mod permission;

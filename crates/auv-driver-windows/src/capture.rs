@@ -45,11 +45,13 @@ pub fn list_displays() -> DriverResult<ObservedDisplays> {
 
 #[cfg(target_os = "windows")]
 pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
+  let start_time = std::time::Instant::now();
   let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   let targets = display_targets_from_monitors(&monitors)?;
   let target = resolve_display_target(&targets, selector)?;
   let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
   let image = retry_invalid_handle(|| monitor.capture_image().map_err(|error| backend(format!("failed to capture display: {error}"))))?;
+  let (width, height) = (image.width(), image.height());
   let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
   let scale_factor = capture_scale_factor(&image, target.display.frame);
@@ -61,6 +63,8 @@ pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
     backend: CAPTURE_BACKEND.to_string(),
     fallback_reason: None,
   };
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  crate::latency::record_latency_event("capture_display", elapsed_ms, Some((width, height)), Some(CAPTURE_BACKEND), selector);
   Ok(DisplayCapture {
     display: target.display,
     capture,
@@ -138,7 +142,9 @@ fn capture_scale_factor(image: &image::RgbaImage, bounds: Rect) -> f64 {
 
 #[cfg(target_os = "windows")]
 pub fn capture_window(window: &Window) -> DriverResult<Capture> {
+  let start_time = std::time::Instant::now();
   let pixels = window_native::capture_window_rgba(window)?;
+  let (width, height) = (pixels.width, pixels.height);
   // NOTICE: scale_factor is derived against the DWM frame width like the macOS
   // driver, and `bounds` reports the DWM frame. PrintWindow renders the full
   // window rect (including any non-client border), so the captured pixel extent
@@ -154,6 +160,9 @@ pub fn capture_window(window: &Window) -> DriverResult<Capture> {
   };
   let image = image::RgbaImage::from_raw(pixels.width, pixels.height, pixels.rgba)
     .ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  let target_name = window.app_name.as_deref().or(window.title.as_deref());
+  crate::latency::record_latency_event("capture_window", elapsed_ms, Some((width, height)), Some(WINDOW_CAPTURE_BACKEND), target_name);
   Ok(Capture {
     origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
