@@ -1,6 +1,8 @@
 use auv_driver_common::Driver;
 use auv_driver_common::capture::{Activation, CaptureOptions};
-use auv_driver_common::geometry::{CoordinateSpace, RatioRect, Rect, ScreenPoint, WindowPoint};
+#[cfg(target_os = "windows")]
+use auv_driver_common::geometry::RatioRect;
+use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
 use auv_driver_common::input::{ClickOptions, InputPolicy, Scroll, ScrollDeliveryCandidate, ScrollOptions, WaitOptions, WindowInput};
 use auv_driver_common::window::{Window, WindowRef};
 use auv_driver_common::{InputTarget, KeyboardInput, PressKeysOptions};

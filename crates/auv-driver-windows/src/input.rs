@@ -287,7 +287,7 @@ impl KeyboardBackend for HeldKeyboardBackend {
 
 pub fn key_down(target: &InputTarget, keys: Vec<String>, policy: InputPolicy, timeout: Duration) -> DriverResult<KeyboardHold> {
   if !matches!(target, InputTarget::Foreground) || policy != InputPolicy::ForegroundPreferred {
-    return Err(auv_driver_common::DriverError::unsupported("Windows targeted keyboard input"));
+    return Err(DriverError::unsupported("Windows targeted keyboard input"));
   }
   let codes = combination(&PressKeysOptions {
     keys,
@@ -734,7 +734,7 @@ mod native {
 
   use auv_driver_common::error::{DriverError, DriverResult};
   use auv_driver_common::geometry::Point;
-  use auv_driver_common::input::{Scroll, TypeTextOptions};
+  use auv_driver_common::input::{MouseButton, Scroll, TypeTextOptions};
 
   use super::KeyChord;
 
@@ -742,21 +742,15 @@ mod native {
     Err(DriverError::unsupported("input.current_position"))
   }
 
-  pub(super) fn button(_button: auv_driver_common::MouseButton, _down: bool) -> DriverResult<()> {
-    Err(auv_driver_common::DriverError::unsupported("windows mouse button"))
+  pub(super) fn button(_button: MouseButton, _down: bool) -> DriverResult<()> {
+    Err(DriverError::unsupported("windows mouse button"))
   }
 
   pub(super) fn move_to(_point: Point) -> DriverResult<()> {
     Err(DriverError::unsupported("input.move_to"))
   }
 
-  pub(super) fn click(
-    _point: Point,
-    _button: auv_driver_common::MouseButton,
-    _count: u32,
-    _interval: Duration,
-    _modifiers: &[u16],
-  ) -> DriverResult<()> {
+  pub(super) fn click(_point: Point, _button: MouseButton, _count: u32, _interval: Duration, _modifiers: &[u16]) -> DriverResult<()> {
     Err(DriverError::unsupported("input.click"))
   }
 

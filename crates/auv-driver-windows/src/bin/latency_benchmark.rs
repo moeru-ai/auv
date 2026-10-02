@@ -431,6 +431,9 @@ fn bench_ocr_path(samples: usize) -> (Option<LatencyStats>, Vec<LatencyRecord>) 
 
 fn main() {
   ensure_input_desktop();
+  if !cfg!(feature = "latency-telemetry") {
+    eprintln!("NOTICE: compiled without --features latency-telemetry; runtime latency records will not be populated.");
+  }
   let args: Vec<String> = std::env::args().collect();
   let mut samples = 300;
   let mut scene_filter: Option<String> = None;

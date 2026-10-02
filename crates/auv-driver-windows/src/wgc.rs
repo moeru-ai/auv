@@ -5,21 +5,26 @@
 //! with sub-10ms steady-state latency, coexisting with legacy GDI / PrintWindow
 //! backends under the `"wgc.windows"` backend tag.
 
-use std::sync::mpsc::sync_channel;
-use std::sync::{Mutex, OnceLock};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 use auv_driver_common::capture::{Capture, DisplayCapture};
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::window::Window;
 
-use crate::error::{backend, invalid_input};
+#[cfg(target_os = "windows")]
+use crate::error::backend;
+#[cfg(target_os = "windows")]
 use crate::window::window_handle;
 
 pub const WGC_BACKEND: &str = "wgc.windows";
 
 #[cfg(target_os = "windows")]
 mod native {
+  use std::sync::mpsc::sync_channel;
+  use std::sync::{Mutex, OnceLock};
+  use std::time::Duration;
+
   use super::*;
   use windows::Foundation::TypedEventHandler;
   use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
@@ -131,7 +136,10 @@ mod native {
     let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
 
     if size.Width <= 0 || size.Height <= 0 {
-      return Err(invalid_input(format!("target has zero or invalid dimensions ({}x{}); target may be minimized", size.Width, size.Height)));
+      return Err(crate::error::invalid_input(format!(
+        "target has zero or invalid dimensions ({}x{}); target may be minimized",
+        size.Width, size.Height
+      )));
     }
 
     let mut session_guard = ACTIVE_SESSION.lock().map_err(|_| backend("active session mutex poisoned"))?;
@@ -341,7 +349,7 @@ pub fn capture_window_wgc(window: &Window) -> DriverResult<Capture> {
 
 #[cfg(not(target_os = "windows"))]
 pub fn capture_window_wgc(_window: &Window) -> DriverResult<Capture> {
-  Err(DriverError::unsupported("window.capture_wgc"))
+  Err(auv_driver_common::error::DriverError::unsupported("window.capture_wgc"))
 }
 
 /// Captures a target display using Windows.Graphics.Capture.
@@ -392,5 +400,5 @@ pub fn capture_display_wgc(selector: Option<&str>) -> DriverResult<DisplayCaptur
 
 #[cfg(not(target_os = "windows"))]
 pub fn capture_display_wgc(_selector: Option<&str>) -> DriverResult<DisplayCapture> {
-  Err(DriverError::unsupported("display.capture_wgc"))
+  Err(auv_driver_common::error::DriverError::unsupported("display.capture_wgc"))
 }

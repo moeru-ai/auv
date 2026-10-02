@@ -23,7 +23,7 @@ fn ci_90978006366_click_parts_support_repeated_clicks() {
       count: 0,
       interval: Duration::from_millis(60),
     }),
-    Err(auv_driver_common::error::DriverError::InvalidInput { message })
+    Err(DriverError::InvalidInput { message })
       if message == "repeated click count must be greater than zero"
   ));
 }
@@ -106,7 +106,7 @@ fn text_submit_virtual_key_supports_return_only() {
 #[test]
 fn click_modifiers_map_to_standard_platform_keys() {
   assert_eq!(
-    click_modifier_keys(auv_driver_common::ClickModifiers {
+    click_modifier_keys(ClickModifiers {
       shift: true,
       control: true,
       alt: true,

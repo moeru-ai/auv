@@ -16,12 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "latency-telemetry")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(feature = "latency-telemetry")]
-use serde::{Deserialize, Serialize};
-
 /// Structured record of a single driver path execution latency.
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "latency-telemetry", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LatencyRecord {
   /// Unix epoch timestamp in milliseconds when the call completed.
   pub timestamp_unix_ms: u64,
@@ -96,7 +92,6 @@ pub fn record_latency_event(path: &str, latency_ms: f64, resolution: Option<(u32
   }
 }
 
-#[cfg(feature = "latency-telemetry")]
 pub fn save_records_to_jsonl(records: &[LatencyRecord], path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
   use std::io::Write;
   if let Some(parent) = path.as_ref().parent() {

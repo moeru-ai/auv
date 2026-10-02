@@ -11,6 +11,7 @@ use auv_driver_common::input::{
 use auv_driver_common::selector::WindowSelector;
 use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
 use auv_driver_common::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
+use auv_driver_common::{InputTarget, KeyboardHold, KeyboardHoldId, MouseButton};
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
 use crate::background_input;
@@ -143,14 +144,14 @@ impl WindowsDriverSession {
 impl OverlayApi<'_> {
   pub fn show(&self, overlay: &Overlay, options: ShowOptions) -> DriverResult<()> {
     let _ = self.session;
-    auv_driver_overlay::show(overlay, options).map_err(|error| auv_driver_common::error::DriverError::Backend {
+    auv_driver_overlay::show(overlay, options).map_err(|error| DriverError::Backend {
       message: error.to_string(),
     })
   }
 
   pub fn remove(&self) -> DriverResult<()> {
     let _ = self.session;
-    auv_driver_overlay::remove().map_err(|error| auv_driver_common::error::DriverError::Backend {
+    auv_driver_overlay::remove().map_err(|error| DriverError::Backend {
       message: error.to_string(),
     })
   }
@@ -415,16 +416,11 @@ impl InputApi<'_> {
     auv_driver_common::mouse_input::mouse_coordinator().motion(request, Some(button), backend, |_| true)
   }
 
-  fn pointer_backend(
-    &self,
-    target: Option<&auv_driver_common::InputTarget>,
-  ) -> DriverResult<std::sync::Arc<dyn auv_driver_common::mouse_input::MouseBackend>> {
+  fn pointer_backend(&self, target: Option<&InputTarget>) -> DriverResult<std::sync::Arc<dyn auv_driver_common::mouse_input::MouseBackend>> {
     match target {
-      None | Some(auv_driver_common::InputTarget::Foreground) => Ok(std::sync::Arc::new(crate::input::MouseBackend)),
-      Some(auv_driver_common::InputTarget::Window(window)) => crate::background_input::mouse_backend(window.clone()),
-      Some(auv_driver_common::InputTarget::Application { .. }) => {
-        Err(auv_driver_common::DriverError::unsupported("mouse input requires a window or foreground target"))
-      }
+      None | Some(InputTarget::Foreground) => Ok(std::sync::Arc::new(crate::input::MouseBackend)),
+      Some(InputTarget::Window(window)) => crate::background_input::mouse_backend(window.clone()),
+      Some(InputTarget::Application { .. }) => Err(DriverError::unsupported("mouse input requires a window or foreground target")),
     }
   }
 
@@ -441,10 +437,10 @@ impl InputApi<'_> {
   /// This composes the mouse lifecycle; it is not a separate Runner capability.
   pub fn hold_mouse(
     &self,
-    target: &auv_driver_common::InputTarget,
+    target: &InputTarget,
     mouse: u64,
     point: Point,
-    button: auv_driver_common::MouseButton,
+    button: MouseButton,
     duration: std::time::Duration,
   ) -> DriverResult<InputActionResult> {
     auv_driver_common::mouse_input::mouse_coordinator().hold(mouse, point, button, duration, self.pointer_backend(Some(target))?)
@@ -462,10 +458,10 @@ impl InputApi<'_> {
   /// Holds one button until mouse_up or the mandatory bounded timeout.
   pub fn mouse_down(
     &self,
-    target: &auv_driver_common::InputTarget,
+    target: &InputTarget,
     mouse: u64,
     point: Point,
-    button: auv_driver_common::MouseButton,
+    button: MouseButton,
     timeout: std::time::Duration,
   ) -> DriverResult<InputActionResult> {
     auv_driver_common::mouse_input::mouse_coordinator().down(mouse, point, button, timeout, self.pointer_backend(Some(target))?)
@@ -523,21 +519,21 @@ impl InputApi<'_> {
 
   pub fn key_down(
     &self,
-    target: &auv_driver_common::InputTarget,
+    target: &InputTarget,
     keys: Vec<String>,
     policy: InputPolicy,
     timeout: std::time::Duration,
-  ) -> DriverResult<auv_driver_common::KeyboardHold> {
+  ) -> DriverResult<KeyboardHold> {
     crate::input::key_down(target, keys, policy, timeout)
   }
 
-  pub fn key_up(&self, hold: auv_driver_common::KeyboardHoldId) -> DriverResult<InputActionResult> {
+  pub fn key_up(&self, hold: KeyboardHoldId) -> DriverResult<InputActionResult> {
     crate::input::key_up(hold)
   }
 
   pub fn hold_keys(
     &self,
-    target: &auv_driver_common::InputTarget,
+    target: &InputTarget,
     keys: Vec<String>,
     policy: InputPolicy,
     duration: std::time::Duration,
