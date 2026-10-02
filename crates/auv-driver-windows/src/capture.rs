@@ -17,17 +17,17 @@ use auv_driver_common::window::Window;
 
 /// Capture backend tag recorded on every produced display/region [`Capture`].
 #[cfg(target_os = "windows")]
-const CAPTURE_BACKEND: &str = "xcap.windows";
+pub const CAPTURE_BACKEND: &str = "xcap.windows";
 
 /// Capture backend tag recorded on every produced window [`Capture`].
 #[cfg(target_os = "windows")]
-const WINDOW_CAPTURE_BACKEND: &str = "printwindow.windows";
+pub const WINDOW_CAPTURE_BACKEND: &str = "printwindow.windows";
 
 /// Pairs a shared [`Display`] with its `xcap` monitor index.
 #[derive(Clone, Debug)]
-struct DisplayTarget {
-  index: usize,
-  display: Display,
+pub(crate) struct DisplayTarget {
+  pub(crate) index: usize,
+  pub(crate) display: Display,
 }
 
 #[cfg(target_os = "windows")]
@@ -179,7 +179,7 @@ pub fn capture_window(_window: &Window) -> DriverResult<Capture> {
 }
 
 #[cfg(target_os = "windows")]
-fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec<DisplayTarget>> {
+pub(crate) fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec<DisplayTarget>> {
   if monitors.is_empty() {
     return Err(not_found("display"));
   }
@@ -211,7 +211,7 @@ fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec
     .collect()
 }
 
-fn resolve_display_target(targets: &[DisplayTarget], selector: Option<&str>) -> DriverResult<DisplayTarget> {
+pub(crate) fn resolve_display_target(targets: &[DisplayTarget], selector: Option<&str>) -> DriverResult<DisplayTarget> {
   if let Some(selector) = selector {
     let selector = selector.trim();
     return targets

@@ -22,6 +22,7 @@ pub mod permission;
 mod readiness;
 mod session;
 pub mod vision;
+pub mod wgc;
 pub mod window;
 
 pub use accessibility::{AxNode, AxTreeSnapshot, focus_node, select_node, snapshot_window};

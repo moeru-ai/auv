@@ -21,6 +21,7 @@ use auv_driver_windows::capture::{capture_display, capture_window};
 use auv_driver_windows::input::{click_at, press_key, scroll_at};
 use auv_driver_windows::latency::{LatencyRecord, clear_records, save_records_to_jsonl, start_recording, stop_recording, take_records};
 use auv_driver_windows::vision::recognize_text_in_capture;
+use auv_driver_windows::wgc::{capture_display_wgc, capture_window_wgc};
 use auv_driver_windows::window::list_windows;
 
 #[derive(Debug, Clone)]
@@ -121,57 +122,11 @@ fn bench_display_capture(samples: usize, scene: &str) -> (Option<LatencyStats>, 
   (stats, records)
 }
 
-fn bench_window_capture(samples: usize) -> (Option<LatencyStats>, Vec<LatencyRecord>) {
-  println!("\n[2/5] Benchmarking `capture_window` (Targeting active application window, Samples: {samples})...");
-
-  // Try launching notepad via shell command
-  let _ = Command::new("cmd").args(["/c", "start", "notepad.exe"]).spawn();
-  sleep(Duration::from_millis(800));
-
-  let mut target_window = None;
-  for _ in 0..10 {
-    let all = list_windows().unwrap_or_default();
-    if let Some(w) = all.iter().find(|w| {
-      w.title.as_deref().map(|t| t.to_lowercase().contains("notepad") || t.contains("记事本") || t.contains("无标题")).unwrap_or(false)
-        || w.app_name.as_deref().map(|a| a.to_lowercase().contains("notepad")).unwrap_or(false)
-    }) {
-      target_window = Some(w.clone());
-      break;
-    }
-    sleep(Duration::from_millis(200));
-  }
-
-  // Fallback to any valid non-system desktop application window
-  if target_window.is_none() {
-    let all = list_windows().unwrap_or_default();
-    target_window = all.into_iter().find(|w| {
-      if let Some(app) = w.app_name.as_deref() {
-        let app_lower = app.to_lowercase();
-        app_lower != "explorer.exe"
-          && !app_lower.contains("overlay")
-          && app_lower != "cmd.exe"
-          && w.frame.size.width > 200.0
-          && w.frame.size.height > 200.0
-      } else {
-        false
-      }
-    });
-  }
-
-  let window = match target_window {
-    Some(w) => w,
-    None => {
-      eprintln!("  Failed to locate any application window");
-      return (None, Vec::new());
-    }
-  };
-
-  let target_desc = format!("{} ({})", window.app_name.as_deref().unwrap_or("unknown"), window.title.as_deref().unwrap_or("untitled"));
-  println!("  Found target window: {} [id={}, frame={:?}]", target_desc, window.reference.id, window.frame);
-
+fn bench_display_capture_wgc(samples: usize, scene: &str) -> (Option<LatencyStats>, Vec<LatencyRecord>) {
+  println!("\n[*] Benchmarking `capture_display_wgc` (Scene: {scene}, Samples: {samples})...");
   // Warmup
   for _ in 0..5 {
-    let _ = capture_window(&window);
+    let _ = capture_display_wgc(None);
     sleep(Duration::from_millis(10));
   }
 
@@ -183,7 +138,99 @@ fn bench_window_capture(samples: usize) -> (Option<LatencyStats>, Vec<LatencyRec
       use std::io::Write;
       let _ = std::io::stdout().flush();
     }
-    let _ = capture_window(&window);
+    if let Err(e) = capture_display_wgc(None) {
+      eprintln!("\n  capture_display_wgc error on #{}: {:?}", i + 1, e);
+    }
+    sleep(Duration::from_millis(10));
+  }
+  println!();
+  stop_recording();
+
+  let records = take_records();
+  let stats = compute_stats("capture_display", scene, &records);
+  (stats, records)
+}
+
+fn find_or_spawn_target_window() -> Option<auv_driver_common::window::Window> {
+  // Try launching notepad via shell command
+  let _ = Command::new("cmd").args(["/c", "start", "notepad.exe"]).spawn();
+  sleep(Duration::from_millis(800));
+
+  for _ in 0..10 {
+    let all = list_windows().unwrap_or_default();
+    if let Some(w) = all.iter().find(|w| {
+      w.title.as_deref().map(|t| t.to_lowercase().contains("notepad") || t.contains("记事本") || t.contains("无标题")).unwrap_or(false)
+        || w.app_name.as_deref().map(|a| a.to_lowercase().contains("notepad")).unwrap_or(false)
+    }) {
+      return Some(w.clone());
+    }
+    sleep(Duration::from_millis(200));
+  }
+
+  let all = list_windows().unwrap_or_default();
+  all.into_iter().find(|w| {
+    if let Some(app) = w.app_name.as_deref() {
+      let app_lower = app.to_lowercase();
+      app_lower != "explorer.exe"
+        && !app_lower.contains("overlay")
+        && app_lower != "cmd.exe"
+        && w.frame.size.width > 200.0
+        && w.frame.size.height > 200.0
+    } else {
+      false
+    }
+  })
+}
+
+fn bench_window_capture(window: &auv_driver_common::window::Window, samples: usize) -> (Option<LatencyStats>, Vec<LatencyRecord>) {
+  let target_desc =
+    format!("{} ({}) [printwindow]", window.app_name.as_deref().unwrap_or("unknown"), window.title.as_deref().unwrap_or("untitled"));
+  println!("\n[2/5] Benchmarking `capture_window` (Target: {target_desc}, Samples: {samples})...");
+
+  // Warmup
+  for _ in 0..5 {
+    let _ = capture_window(window);
+    sleep(Duration::from_millis(10));
+  }
+
+  clear_records();
+  start_recording();
+  for i in 0..samples {
+    if (i + 1) % 50 == 0 || i + 1 == samples {
+      print!("\r  Progress: {}/{}", i + 1, samples);
+      use std::io::Write;
+      let _ = std::io::stdout().flush();
+    }
+    let _ = capture_window(window);
+    sleep(Duration::from_millis(10));
+  }
+  println!();
+  stop_recording();
+
+  let records = take_records();
+  let stats = compute_stats("capture_window", &target_desc, &records);
+  (stats, records)
+}
+
+fn bench_window_capture_wgc(window: &auv_driver_common::window::Window, samples: usize) -> (Option<LatencyStats>, Vec<LatencyRecord>) {
+  let target_desc = format!("{} ({}) [wgc]", window.app_name.as_deref().unwrap_or("unknown"), window.title.as_deref().unwrap_or("untitled"));
+  println!("\n[*] Benchmarking `capture_window_wgc` (Target: {target_desc}, Samples: {samples})...");
+
+  // Warmup
+  for _ in 0..5 {
+    let _ = capture_window_wgc(window);
+    sleep(Duration::from_millis(10));
+  }
+
+  clear_records();
+  start_recording();
+  for i in 0..samples {
+    if (i + 1) % 50 == 0 || i + 1 == samples {
+      print!("\r  Progress: {}/{}", i + 1, samples);
+      use std::io::Write;
+      let _ = std::io::stdout().flush();
+    }
+    let _ = capture_window_wgc(window);
     sleep(Duration::from_millis(10));
   }
   println!();
@@ -384,12 +431,18 @@ fn main() {
   let run_all = scene_filter.is_none();
   let scene = scene_filter.as_deref().unwrap_or("all");
 
-  if run_all || scene == "idle" {
-    let (s, r) = bench_display_capture(samples, "Idle Desktop 1440p");
+  if run_all || scene == "idle" || scene == "wgc" || scene == "compare" {
+    let (s, r) = bench_display_capture(samples, "Idle Desktop 1440p [gdi]");
     if let Some(stat) = s {
       all_stats.push(stat);
     }
     all_records.extend(r);
+
+    let (s_wgc, r_wgc) = bench_display_capture_wgc(samples, "Idle Desktop 1440p [wgc]");
+    if let Some(stat) = s_wgc {
+      all_stats.push(stat);
+    }
+    all_records.extend(r_wgc);
   }
 
   if run_all || scene == "active" {
@@ -400,12 +453,22 @@ fn main() {
     all_records.extend(r);
   }
 
-  if run_all || scene == "window" {
-    let (s, r) = bench_window_capture(samples);
-    if let Some(stat) = s {
-      all_stats.push(stat);
+  if run_all || scene == "window" || scene == "wgc" || scene == "compare" {
+    if let Some(target_window) = find_or_spawn_target_window() {
+      let (s, r) = bench_window_capture(&target_window, samples);
+      if let Some(stat) = s {
+        all_stats.push(stat);
+      }
+      all_records.extend(r);
+
+      let (s_wgc, r_wgc) = bench_window_capture_wgc(&target_window, samples);
+      if let Some(stat) = s_wgc {
+        all_stats.push(stat);
+      }
+      all_records.extend(r_wgc);
+    } else {
+      eprintln!("  Failed to locate any application window");
     }
-    all_records.extend(r);
   }
 
   if run_all || scene == "input" {
@@ -428,6 +491,12 @@ fn main() {
       all_stats.push(stat);
     }
     all_records.extend(r);
+
+    let (s_wgc, r_wgc) = bench_display_capture_wgc(samples, "MHW Running 1440p [wgc]");
+    if let Some(stat) = s_wgc {
+      all_stats.push(stat);
+    }
+    all_records.extend(r_wgc);
   }
 
   print_stats_table(&all_stats);

@@ -179,6 +179,12 @@ impl WindowApi<'_> {
     capture_window(window)
   }
 
+  /// Captures a single window's pixels via Windows.Graphics.Capture (WGC).
+  pub fn capture_wgc(&self, window: &Window) -> DriverResult<Capture> {
+    let _ = self.session;
+    crate::wgc::capture_window_wgc(window)
+  }
+
   /// Maps a window-relative point to its absolute screen position by offsetting
   /// against the window's screen-space frame origin.
   pub fn to_screen_point(&self, window: &Window, point: WindowPoint) -> DriverResult<ScreenPoint> {
@@ -633,6 +639,12 @@ impl DisplayApi<'_> {
       return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
     capture_display(options.display.as_deref())
+  }
+
+  /// Captures a target display via Windows.Graphics.Capture (WGC).
+  pub fn capture_wgc(&self, selector: Option<&str>) -> DriverResult<DisplayCapture> {
+    let _ = self.session;
+    crate::wgc::capture_display_wgc(selector)
   }
 
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
