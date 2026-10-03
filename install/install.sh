@@ -2,6 +2,10 @@
 
 set -eu
 
+# TODO(unix-installer-tests): A committed fixture harness is deferred to keep
+# this owner-approved slice to one script; add it only with owner approval for
+# installer test tooling.
+
 error() {
   printf 'error: %s\n' "$*" >&2
 }
