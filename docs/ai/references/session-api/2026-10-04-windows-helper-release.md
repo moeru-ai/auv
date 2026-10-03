@@ -1,7 +1,8 @@
 # Windows helper release packaging
 
 Status: implemented release packaging contract as of 2026-10-04; privileged
-installation remains a separate gate.
+installation remains a separate gate. The proposed installed lifecycle is
+tracked in [Windows Helper installation lifecycle](2026-10-04-windows-helper-install.md).
 
 The Windows x86-64 release archive contains two version-matched Rust binaries:
 

@@ -15,6 +15,8 @@ use crate::commands::run::RunArgs;
 use crate::commands::runner::RunnerArgs;
 use crate::commands::serve::ServeArgs;
 use crate::commands::setup::SetupArgs;
+#[cfg(windows)]
+use crate::commands::windows_service::BootstrapArgs;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -65,7 +67,7 @@ enum RootCommand {
   /// Issue a short-lived pairing token from the protected Windows service store.
   #[cfg(windows)]
   #[command(hide = true)]
-  WindowsBootstrapPairingToken,
+  WindowsBootstrapPairingToken(BootstrapArgs),
   /// Manage this Device's OS credential enrollment and unlock policy locally.
   DeviceLocal(DeviceLocalArgs),
   /// Inspect Devices visible through an AUV daemon.
@@ -148,12 +150,12 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
       crate::commands::setup::run(args)
     }
     #[cfg(windows)]
-    Some(RootCommand::WindowsBootstrapPairingToken) => {
+    Some(RootCommand::WindowsBootstrapPairingToken(args)) => {
       if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
         return Err("windows-bootstrap-pairing-token cannot use --device, --device-id, or --run".to_string());
       }
 
-      crate::commands::windows_service::issue_bootstrap_token()
+      crate::commands::windows_service::run_bootstrap(args)
     }
     Some(RootCommand::DeviceLocal(args)) => {
       if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {
@@ -320,5 +322,46 @@ mod tests {
   fn setup_parses_macos_helper_uninstall() {
     let parsed = RootArgs::try_parse_from(["auv", "setup", "macos-helper", "uninstall", "--json"]).unwrap();
     assert!(matches!(parsed.command, Some(RootCommand::Setup(_))));
+  }
+
+  #[test]
+  fn setup_parses_windows_helper_lifecycle() {
+    for command in ["status", "install", "uninstall"] {
+      let parsed = RootArgs::try_parse_from(["auv", "setup", "windows-helper", command, "--json"]).unwrap();
+      assert!(matches!(parsed.command, Some(RootCommand::Setup(_))));
+    }
+  }
+
+  #[test]
+  fn pair_connect_accepts_token_stdin_without_token_argument() {
+    let parsed = RootArgs::try_parse_from([
+      "auv",
+      "devices",
+      "pair",
+      "--endpoint",
+      "http://127.0.0.1:9847",
+      "connect",
+      "--token-stdin",
+      "--label",
+      "MacBook",
+    ]);
+    assert!(parsed.is_ok());
+
+    assert!(
+      RootArgs::try_parse_from([
+        "auv",
+        "devices",
+        "pair",
+        "--endpoint",
+        "http://127.0.0.1:9847",
+        "connect",
+        "--token",
+        "secret",
+        "--token-stdin",
+        "--label",
+        "MacBook",
+      ])
+      .is_err()
+    );
   }
 }

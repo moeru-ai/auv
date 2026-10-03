@@ -3,7 +3,8 @@ use super::*;
 #[test]
 fn pairing_command_debug_redacts_bootstrap_token() {
   let command = PairingCommand::Connect {
-    token: "bootstrap-secret".to_string(),
+    token: Some("bootstrap-secret".to_string()),
+    token_stdin: false,
     device_id: None,
     label: "test".to_string(),
     profile: None,
