@@ -110,4 +110,3 @@ for installation through the repository-hosted plugin.
 - [`proto install`](https://moonrepo.dev/docs/proto/commands/install)
 - [alint proto manifest](https://github.com/moeru-ai/alint/blob/main/toolchain/proto/alint.toml)
 - [AUV release workflow](../../../.github/workflows/release.yml)
-
