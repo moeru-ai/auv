@@ -14,8 +14,8 @@
 
 - Support only `auv-x86_64-pc-windows-msvc.zip`; do not claim Windows ARM64.
 - Pin `ScoopInstaller/GithubActions` to `5bceeda181721d9d10a18fdcc3ddca6f33467ae6` (`v3.0.0`), the revision used by the current official BucketTemplate.
-- Trigger automatic updates only for stable releases with `release.types: [released]`; retain `workflow_dispatch` for recovery.
-- Checkout `main` explicitly because a release workflow otherwise runs from a tag ref.
+- Trigger automatic updates only for stable releases with `release.types: [released]`; retain `workflow_dispatch` for recovery. Route both through a typed `repository_dispatch` because Excavator does not support release events directly.
+- Checkout `main` explicitly; the repository dispatch also gives Excavator the `main` branch context it uses when committing updates.
 - Use the workflow `GITHUB_TOKEN`; do not add a PAT or another repository.
 - Do not add a renderer, wrapper script, pre/post-install hook, shortcut, persistence rule, or custom autoupdate implementation.
 - Preserve the README statement that Cargo/source-built macOS binaries do not embed the signed `AUV Helper.app`.
@@ -73,14 +73,14 @@ Expected: both commands exit `0` and print `true` from `jq`.
 
 - [ ] **Step 3: Add the Excavator workflow**
 
-Create `.github/workflows/update-scoop.yml` with one Windows job. Configure `release.types: [released]`, `workflow_dispatch`, `permissions.contents: write`, `actions/checkout@v6` with `ref: main`, and the pinned official Excavator action. Set `GITHUB_TOKEN` to `${{ secrets.GITHUB_TOKEN }}`, `SKIP_UPDATED` to `1`, and `THROW_ERROR` to `1`.
+Create `.github/workflows/update-scoop.yml` with a small dispatch job and one Windows update job. Configure `release.types: [released]` and `workflow_dispatch` to emit `repository_dispatch.types: [update-scoop]`; run the update job only for that supported event. Configure `permissions.contents: write`, `actions/checkout@v6` with `ref: main`, and the pinned official Excavator action. Set `GITHUB_TOKEN` to `${{ secrets.GITHUB_TOKEN }}`, `SKIP_UPDATED` to `1`, and `THROW_ERROR` to `1`.
 
 - [ ] **Step 4: Verify the workflow's fixed policy values**
 
 Run:
 
 ```sh
-rg -n 'types:.*released|workflow_dispatch|contents: write|ref: main|ScoopInstaller/GithubActions@5bceeda181721d9d10a18fdcc3ddca6f33467ae6|THROW_ERROR: 1' .github/workflows/update-scoop.yml
+rg -n 'types:.*released|repository_dispatch|types:.*update-scoop|workflow_dispatch|contents: write|ref: main|ScoopInstaller/GithubActions@5bceeda181721d9d10a18fdcc3ddca6f33467ae6|THROW_ERROR: 1' .github/workflows/update-scoop.yml
 git diff --check -- bucket/auv.json .github/workflows/update-scoop.yml
 ```
 

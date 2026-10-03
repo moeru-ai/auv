@@ -35,8 +35,9 @@ and SHA-256 hash. Its `checkver` reads AUV's GitHub releases, while
 ## Update workflow
 
 The workflow responds to a stable GitHub release (`release: released`) and to
-manual dispatch. It grants `contents: write`, checks out `main` explicitly,
-and invokes the official
+manual dispatch. Both entry points emit a repository dispatch so the updater
+runs from the default branch with an event supported by Excavator. It grants
+`contents: write`, checks out `main` explicitly, and invokes the official
 [`ScoopInstaller/GithubActions`](https://github.com/ScoopInstaller/GithubActions)
 Excavator action on a Windows runner. The action is pinned to the immutable
 revision used by ScoopInstaller's current
@@ -46,7 +47,8 @@ not to a moving branch. It uses the workflow's `GITHUB_TOKEN`, enables
 
 Excavator owns version detection, manifest rewriting, hash retrieval, and the
 resulting commit. AUV does not add a renderer, a wrapper script, or a parallel
-manifest-update implementation.
+manifest-update implementation; the workflow only adds the event-routing step
+needed to call the official action from a release.
 
 ## Validation and failure behavior
 
