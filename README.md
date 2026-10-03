@@ -101,6 +101,25 @@ Expand-Archive .\auv-x86_64-pc-windows-msvc.zip -DestinationPath .\auv
 
 Move `auv.exe` to a directory on your `PATH` to use `auv` from any terminal.
 
+### Install with proto
+
+Install and configure [proto](https://moonrepo.dev/docs/proto) first. Then add
+the AUV plugin and install the latest release:
+
+```sh
+proto plugin add auv "https://raw.githubusercontent.com/moeru-ai/auv/main/toolchain/proto/auv.toml" --to global
+proto install auv latest --config-mode global --pin global
+auv --version
+```
+
+The proto plugin supports Apple Silicon and Intel macOS, x86-64 and ARM64 GNU
+Linux with glibc, and x86-64 Windows. AUV does not currently publish proto
+artifacts for Linux musl or Windows ARM64.
+
+proto installs the official AUV release archive for the current platform. The
+macOS archive includes the signed `AUV Helper.app` used by the setup steps
+below.
+
 ### Install with Cargo
 
 Install [Rust](https://www.rust-lang.org/tools/install) before using this
