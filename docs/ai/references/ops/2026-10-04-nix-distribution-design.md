@@ -56,12 +56,17 @@ not suitable for a Nix sandbox package check.
 
 ## User flow
 
-With Nix 2.27 or newer and flakes enabled:
+With Nix 2.27 or newer and the `nix-command` and `flakes` experimental features
+enabled:
 
 ```sh
-nix profile install github:moeru-ai/auv#default
+nix profile install 'git+https://github.com/moeru-ai/auv#default'
 auv --version
 ```
+
+The Git transport is required because the package build needs the
+`mediaremote-adapter` submodule. Nix's `github:` archive fetcher does not honor
+`inputs.self.submodules`, while the Git fetcher does.
 
 This is an optional source-install route. It does not replace Homebrew, Scoop,
 proto, Cargo, or direct release downloads.
@@ -88,7 +93,9 @@ Before publication:
 4. Evaluate the Intel macOS and ARM64 Linux outputs without upgrading that
    evaluation into a native-build claim.
 5. Confirm the macOS package reports that no helper is embedded.
-6. Run the repository test suite, README generation, and `git diff --check`.
+6. Fetch the published branch with the documented `git+https` transport and
+   confirm that the `mediaremote-adapter` submodule is present before building.
+7. Run the repository test suite, README generation, and `git diff --check`.
 
 Native validation on 2026-10-04 built and ran `auv 0.0.25` on Apple Silicon
 macOS with Nix 2.34.1 and on GNU Linux x86-64 with Nix 2.32.4. The other two
