@@ -61,24 +61,40 @@ auv --version
 
 The Homebrew formula supports both Apple Silicon and Intel Macs.
 
-#### Linux
-
-Download the archive for your architecture from the
-[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest):
-
-- `auv-x86_64-unknown-linux-gnu.tar.gz` for x86-64
-- `auv-aarch64-unknown-linux-gnu.tar.gz` for ARM64
-
-Extract the archive, then place the `auv` executable in a directory on your
-`PATH`, such as `~/.local/bin`:
+Alternatively, install the official release binary with the shell installer:
 
 ```sh
-# This example uses the x86-64 archive. Use the ARM64 filename when needed.
-tar -xzf auv-x86_64-unknown-linux-gnu.tar.gz
-mkdir -p "$HOME/.local/bin"
-install -m 0755 auv "$HOME/.local/bin/auv"
-auv --version
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+"$HOME/.local/bin/auv" --version
 ```
+
+The macOS release binary installed this way includes the signed
+`AUV Helper.app` used by the setup steps below.
+
+#### Linux
+
+Install the latest official release for x86-64 or ARM64 GNU/Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+"$HOME/.local/bin/auv" --version
+```
+
+The installer verifies the release checksum and writes to `~/.local/bin`
+without `sudo`. To install an exact release or choose another directory, set
+`AUV_VERSION` or `AUV_INSTALL_DIR`:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh \
+  | AUV_VERSION=v0.0.25 AUV_INSTALL_DIR="$HOME/bin" sh
+```
+
+AUV currently publishes GNU/Linux release binaries, not Linux musl binaries.
+You can also download the archive and checksum directly from the
+[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest).
 
 #### Windows
 
