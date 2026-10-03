@@ -44,10 +44,10 @@ pub struct NowPlayingState {
 mod native {
   use windows::Media::Control::{GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager};
   use windows::Win32::Media::Audio::{
-    IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator,
-    eMultimedia, eRender,
+    DEVICE_STATE_ACTIVE, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDevice, IMMDeviceEnumerator,
+    ISimpleAudioVolume, MMDeviceEnumerator, eCommunications, eMultimedia, eRender,
   };
-  use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+  use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
   use windows::core::Interface;
 
   use super::{MediaPlaybackStatus, MediaTrackMetadata, NowPlayingState};
@@ -156,8 +156,13 @@ mod native {
     }
 
     pub fn snapshot(&self) -> DriverResult<NowPlayingState> {
-      let status = self.playback_status().unwrap_or(MediaPlaybackStatus::Closed);
-      let track = self.track_metadata().ok();
+      let status = self.playback_status()?;
+      let meta = self.track_metadata()?;
+      let track = if meta.title.is_empty() && meta.artist.is_empty() && meta.album_title.is_empty() {
+        None
+      } else {
+        Some(meta)
+      };
       Ok(NowPlayingState {
         app_id: self.app_id.clone(),
         status,
@@ -182,18 +187,22 @@ mod native {
     pub fn current_session(&self) -> DriverResult<Option<SmtcSession>> {
       match self.manager.GetCurrentSession() {
         Ok(session) => Ok(Some(SmtcSession::new(session))),
-        Err(_) => Ok(None),
+        // WinRT returns S_OK (0x0) with a null interface pointer when there is no active
+        // media session, which windows-rs converts into an Error with HRESULT(0).
+        // Only HRESULT(0) represents a legitimate absence of an active session; non-zero
+        // HRESULTs (e.g. RPC server unavailable, access denied) must be propagated.
+        Err(e) if e.code().0 == 0 => Ok(None),
+        Err(e) => Err(backend(format!("Failed to get current SMTC session: {e}"))),
       }
     }
 
     pub fn list_sessions(&self) -> DriverResult<Vec<SmtcSession>> {
       let sessions = self.manager.GetSessions().map_err(|e| backend(format!("Failed to get SMTC sessions: {e}")))?;
-      let count = sessions.Size().unwrap_or(0);
+      let count = sessions.Size().map_err(|e| backend(format!("Failed to get SMTC sessions size: {e}")))?;
       let mut result = Vec::with_capacity(count as usize);
       for i in 0..count {
-        if let Ok(s) = sessions.GetAt(i) {
-          result.push(SmtcSession::new(s));
-        }
+        let s = sessions.GetAt(i).map_err(|e| backend(format!("Failed to get SMTC session at index {i}: {e}")))?;
+        result.push(SmtcSession::new(s));
       }
       Ok(result)
     }
@@ -257,27 +266,73 @@ mod native {
     }
   }
 
-  fn find_process_simple_volume(target_pid: u32) -> DriverResult<ISimpleAudioVolume> {
-    unsafe {
-      let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-        .map_err(|e| backend(format!("Failed to instantiate MMDeviceEnumerator: {e}")))?;
-      let device =
-        enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).map_err(|e| backend(format!("GetDefaultAudioEndpoint failed: {e}")))?;
-      let mgr: IAudioSessionManager2 =
-        device.Activate(CLSCTX_ALL, None).map_err(|e| backend(format!("Activate IAudioSessionManager2 failed: {e}")))?;
-      let session_enum: IAudioSessionEnumerator =
-        mgr.GetSessionEnumerator().map_err(|e| backend(format!("GetSessionEnumerator failed: {e}")))?;
-      let count = session_enum.GetCount().map_err(|e| backend(format!("GetCount failed: {e}")))?;
+  struct ComGuard {
+    uninit: bool,
+  }
 
+  impl Drop for ComGuard {
+    fn drop(&mut self) {
+      if self.uninit {
+        unsafe { CoUninitialize() };
+      }
+    }
+  }
+
+  fn init_com() -> ComGuard {
+    let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    ComGuard { uninit: hr.is_ok() }
+  }
+
+  unsafe fn search_device_for_process_volume(device: &IMMDevice, target_pid: u32) -> Option<ISimpleAudioVolume> {
+    unsafe {
+      let mgr: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None).ok()?;
+      let session_enum: IAudioSessionEnumerator = mgr.GetSessionEnumerator().ok()?;
+      let count = session_enum.GetCount().ok()?;
       for i in 0..count {
         if let Ok(session_ctrl) = session_enum.GetSession(i)
           && let Ok(ctrl2) = session_ctrl.cast::<IAudioSessionControl2>()
           && ctrl2.GetProcessId().ok() == Some(target_pid)
           && let Ok(vol) = session_ctrl.cast::<ISimpleAudioVolume>()
         {
+          return Some(vol);
+        }
+      }
+      None
+    }
+  }
+
+  fn find_process_simple_volume(target_pid: u32) -> DriverResult<ISimpleAudioVolume> {
+    let _com = init_com();
+    unsafe {
+      let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+        .map_err(|e| backend(format!("Failed to instantiate MMDeviceEnumerator: {e}")))?;
+
+      // 1. Check default multimedia render endpoint first (fast path for common case)
+      if let Ok(default_device) = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)
+        && let Some(vol) = search_device_for_process_volume(&default_device, target_pid)
+      {
+        return Ok(vol);
+      }
+
+      // 2. Check default communications render endpoint (for voice / communication applications)
+      if let Ok(comm_device) = enumerator.GetDefaultAudioEndpoint(eRender, eCommunications)
+        && let Some(vol) = search_device_for_process_volume(&comm_device, target_pid)
+      {
+        return Ok(vol);
+      }
+
+      // 3. Enumerate all active render endpoints (handles processes explicitly routed to non-default devices)
+      let collection =
+        enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).map_err(|e| backend(format!("EnumAudioEndpoints failed: {e}")))?;
+      let count = collection.GetCount().map_err(|e| backend(format!("EnumAudioEndpoints GetCount failed: {e}")))?;
+      for i in 0..count {
+        if let Ok(device) = collection.Item(i)
+          && let Some(vol) = search_device_for_process_volume(&device, target_pid)
+        {
           return Ok(vol);
         }
       }
+
       Err(backend(format!("No active audio session found for PID {target_pid}")))
     }
   }
@@ -297,6 +352,22 @@ impl SmtcMediaManager {
   pub fn new() -> DriverResult<Self> {
     Err(DriverError::unsupported("SMTC is only supported on Windows"))
   }
+
+  pub fn current_session(&self) -> DriverResult<Option<SmtcSession>> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn list_sessions(&self) -> DriverResult<Vec<SmtcSession>> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn find_session(&self, _query: &str) -> DriverResult<Option<SmtcSession>> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn now_playing(&self) -> DriverResult<Option<NowPlayingState>> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -304,7 +375,69 @@ impl SmtcMediaManager {
 pub struct SmtcSession;
 
 #[cfg(not(target_os = "windows"))]
+impl SmtcSession {
+  pub fn app_id(&self) -> &str {
+    ""
+  }
+
+  pub fn playback_status(&self) -> DriverResult<MediaPlaybackStatus> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn track_metadata(&self) -> DriverResult<MediaTrackMetadata> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn play(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn pause(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn toggle_play_pause(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn skip_next(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn skip_previous(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn stop(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+
+  pub fn snapshot(&self) -> DriverResult<NowPlayingState> {
+    Err(DriverError::unsupported("SMTC is only supported on Windows"))
+  }
+}
+
+#[cfg(not(target_os = "windows"))]
 pub struct AudioVolumeController;
+
+#[cfg(not(target_os = "windows"))]
+impl AudioVolumeController {
+  pub fn get_process_volume(_target_pid: u32) -> DriverResult<f32> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+
+  pub fn set_process_volume(_target_pid: u32, _level: f32) -> DriverResult<()> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+
+  pub fn get_process_mute(_target_pid: u32) -> DriverResult<bool> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+
+  pub fn set_process_mute(_target_pid: u32, _muted: bool) -> DriverResult<()> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+}
 
 #[cfg(test)]
 #[path = "media_test.rs"]
