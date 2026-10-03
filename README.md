@@ -57,18 +57,38 @@ brew install moeru-ai/tap/auv
 auv --version
 ```
 
-#### Linux
-
-##### x86-64
+Alternatively, install the official release binary with the shell installer:
 
 ```sh
-mkdir -p "${HOME}/.local/bin" && curl -fsSL "https://github.com/moeru-ai/auv/releases/latest/download/auv-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C "${HOME}/.local/bin"
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+"$HOME/.local/bin/auv" --version
 ```
 
-##### ARM64
+> [!NOTE]
+>
+> The macOS release includes `AUV Helper.app`.
+
+#### Linux
+
+Install the latest official release for x86-64 or ARM64 GNU/Linux:
 
 ```sh
-mkdir -p "${HOME}/.local/bin" && curl -fsSL "https://github.com/moeru-ai/auv/releases/latest/download/auv-aarch64-unknown-linux-gnu.tar.gz" | tar -xz -C "${HOME}/.local/bin"
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+"$HOME/.local/bin/auv" --version
+```
+
+> [!TIP]
+>
+> The installer verifies the release checksum and installs to `~/.local/bin`
+> without `sudo`. Set `AUV_VERSION` or `AUV_INSTALL_DIR` to override the release
+> version or installation directory.
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh \
+  | AUV_VERSION=v0.0.26 AUV_INSTALL_DIR="$HOME/bin" sh
 ```
 
 #### Windows
