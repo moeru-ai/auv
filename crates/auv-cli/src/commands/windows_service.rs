@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use clap::Args;
 use tokio_util::sync::CancellationToken;
 use windows_service::service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType};
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle};
@@ -15,9 +16,19 @@ use zeroize::Zeroize;
 use super::serve::{ServeArgs, host_options, run_listeners_with_shutdown};
 
 const SERVICE_NAME: &str = "AuvDevice";
+pub(crate) const BOOTSTRAP_SERVICE_NAME: &str = "AuvDeviceBootstrap";
 static CONFIG: OnceLock<(ServeArgs, PathBuf)> = OnceLock::new();
+static BOOTSTRAP_OUTPUT: OnceLock<PathBuf> = OnceLock::new();
 
 windows_service::define_windows_service!(service_entry, service_main);
+windows_service::define_windows_service!(bootstrap_entry, bootstrap_main);
+
+#[derive(Clone, Debug, Args)]
+pub struct BootstrapArgs {
+  /// Fixed protected file receiving the one-time token.
+  #[arg(long, value_name = "PATH")]
+  output: PathBuf,
+}
 
 /// Dispatch the process to the SCM. The installer must register this exact
 /// service name and pass `serve --windows-service` in its image path.
@@ -31,18 +42,58 @@ pub fn run(args: ServeArgs, project_root: PathBuf) -> Result<i32, String> {
 /// One-shot, offline bootstrap for an installer running as LocalSystem before
 /// the SCM service starts. Only the token digest enters the protected store;
 /// the caller must redirect stdout into an administrator-and-SYSTEM-only file.
-pub fn issue_bootstrap_token() -> Result<i32, String> {
+pub fn run_bootstrap(args: BootstrapArgs) -> Result<i32, String> {
+  let expected = bootstrap_token_path()?;
+  if args.output != expected {
+    return Err(format!("Windows bootstrap output must be {}", expected.display()));
+  }
+  BOOTSTRAP_OUTPUT.set(args.output).map_err(|_| "AUV bootstrap service was already dispatched".to_string())?;
+  service_dispatcher::start(BOOTSTRAP_SERVICE_NAME, bootstrap_entry)
+    .map_err(|error| format!("failed to join Windows Service Control Manager for pairing bootstrap: {error}"))?;
+  Ok(0)
+}
+
+fn bootstrap_main(_scm_arguments: Vec<OsString>) {
+  if let Err(error) = serve_bootstrap() {
+    eprintln!("AUV Windows bootstrap service failed: {error}");
+  }
+}
+
+fn serve_bootstrap() -> Result<(), String> {
+  let status = service_control_handler::register(BOOTSTRAP_SERVICE_NAME, |control| match control {
+    ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+    _ => ServiceControlHandlerResult::NotImplemented,
+  })
+  .map_err(|error| format!("failed to register bootstrap SCM control handler: {error}"))?;
+  report(&status, ServiceState::StartPending, ServiceControlAccept::empty(), 0, 1, Duration::from_secs(30))?;
+  let result = issue_bootstrap_token();
+  let exit_code = if result.is_ok() { 0 } else { 1 };
+  let stopped = report(&status, ServiceState::Stopped, ServiceControlAccept::empty(), exit_code, 0, Duration::ZERO);
+  result.and(stopped)
+}
+
+fn issue_bootstrap_token() -> Result<(), String> {
   require_local_system_session_zero()?;
   let mut token = auv_daemon::issue_windows_bootstrap_token()?;
+  let output = BOOTSTRAP_OUTPUT.get().ok_or("AUV bootstrap output is missing")?;
   let output = (|| {
-    let mut stdout = std::io::stdout().lock();
-    stdout.write_all(token.as_bytes()).map_err(|error| format!("failed to write bootstrap token: {error}"))?;
-    stdout.write_all(b"\n").map_err(|error| format!("failed to terminate bootstrap token: {error}"))?;
-    stdout.flush().map_err(|error| format!("failed to flush bootstrap token: {error}"))
+    let mut file = std::fs::OpenOptions::new()
+      .write(true)
+      .create_new(true)
+      .open(output)
+      .map_err(|error| format!("failed to create protected bootstrap token file: {error}"))?;
+    file.write_all(token.as_bytes()).map_err(|error| format!("failed to write bootstrap token: {error}"))?;
+    file.write_all(b"\n").map_err(|error| format!("failed to terminate bootstrap token: {error}"))?;
+    file.sync_all().map_err(|error| format!("failed to persist bootstrap token: {error}"))
   })();
   token.zeroize();
   output?;
-  Ok(0)
+  Ok(())
+}
+
+fn bootstrap_token_path() -> Result<PathBuf, String> {
+  let program_data = std::env::var_os("ProgramData").ok_or("Windows did not provide ProgramData")?;
+  Ok(PathBuf::from(program_data).join("AUVBootstrap").join("pairing-token.txt"))
 }
 
 fn validate(args: &ServeArgs) -> Result<(), String> {

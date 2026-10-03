@@ -2,7 +2,7 @@ use auv_cli_common::{
   TableRow,
   outputs::formats::table::{self, TableOptions},
 };
-use clap::{Args, Subcommand};
+use clap::{ArgGroup, Args, Subcommand};
 
 #[derive(Clone, Debug, Args)]
 #[command(
@@ -409,12 +409,25 @@ async fn pairing(args: PairingArgs, selection: &auv::selection::RootSelection) -
     }
     PairingCommand::Connect {
       token,
+      token_stdin,
       device_id,
       label,
       profile,
       json,
     } => {
       let endpoint = args.endpoint.ok_or_else(|| "pair connect requires --endpoint http://HOST:PORT".to_string())?;
+      let token = if token_stdin {
+        use std::io::Read as _;
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input).map_err(|error| format!("failed to read bootstrap token from stdin: {error}"))?;
+        let token = input.trim().to_owned();
+        if token.is_empty() {
+          return Err("bootstrap token from stdin is empty".to_string());
+        }
+        token
+      } else {
+        token.ok_or("pair connect requires --token or --token-stdin")?
+      };
       tracing::info!(endpoint, service = "auv.api.daemon.v1.PairingService", method = "PairDevice", "calling bootstrap RPC");
       let store = auv::profile::ProfileStore::from_env().map_err(|error| error.to_string())?;
       let enrollment = auv::pairing::Pairing::enroll(
@@ -602,9 +615,14 @@ pub enum PairingCommand {
     ttl: Option<u64>,
   },
   /// Connect to a Device and save its credential as a local profile.
+  #[command(group(ArgGroup::new("bootstrap_token").required(true).multiple(false).args(["token", "token_stdin"])))]
   Connect {
     #[arg(long)]
-    token: String,
+    token: Option<String>,
+    /// Read the bootstrap token from standard input so it never enters the
+    /// process command line or shell history.
+    #[arg(long)]
+    token_stdin: bool,
     /// Stable caller identity. An opaque random ID is generated when omitted.
     #[arg(long)]
     device_id: Option<String>,

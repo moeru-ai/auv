@@ -10,6 +10,8 @@ pub struct SetupArgs {
 enum SetupCommand {
   /// Manage the signed helper used for locked macOS sessions.
   MacosHelper(MacosHelperArgs),
+  /// Manage the Windows service and helper used for locked sessions.
+  WindowsHelper(WindowsHelperArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -49,6 +51,36 @@ enum MacosHelperCommand {
   OpenBackgroundItemsSettings,
 }
 
+#[derive(Clone, Debug, Args)]
+struct WindowsHelperArgs {
+  #[command(subcommand)]
+  command: WindowsHelperCommand,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum WindowsHelperCommand {
+  /// Report the installed service, binaries, and current readiness.
+  Status {
+    /// Emit a stable machine-readable result.
+    #[arg(long)]
+    json: bool,
+  },
+  /// Install both release binaries and register the LocalSystem service.
+  Install {
+    /// Emit a stable machine-readable result after installation.
+    #[arg(long)]
+    json: bool,
+  },
+  /// Stop and unregister the service, then remove its installed binaries.
+  Uninstall {
+    /// Emit a stable machine-readable result after removal.
+    #[arg(long)]
+    json: bool,
+  },
+  /// Remove the short-lived first-pairing token file after it is consumed.
+  ClearBootstrapToken,
+}
+
 pub fn run(args: SetupArgs) -> Result<i32, String> {
   #[cfg(target_os = "macos")]
   {
@@ -84,13 +116,27 @@ pub fn run(args: SetupArgs) -> Result<i32, String> {
           }
         }
       }
+      SetupCommand::WindowsHelper(_) => Err("Windows helper setup is available only on Windows".to_string()),
     }
   }
 
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(target_os = "windows")]
+  {
+    match args.command {
+      SetupCommand::WindowsHelper(args) => match args.command {
+        WindowsHelperCommand::Status { json } => super::windows_helper_setup::status(json),
+        WindowsHelperCommand::Install { json } => super::windows_helper_setup::install(json),
+        WindowsHelperCommand::Uninstall { json } => super::windows_helper_setup::uninstall(json),
+        WindowsHelperCommand::ClearBootstrapToken => super::windows_helper_setup::clear_bootstrap_token(),
+      },
+      SetupCommand::MacosHelper(_) => Err("macOS helper setup is available only on macOS".to_string()),
+    }
+  }
+
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     let _ = args;
-    Err("macOS helper setup is available only on macOS".to_string())
+    Err("helper setup is available only on macOS and Windows".to_string())
   }
 }
 

@@ -21,6 +21,7 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 Count: **39**
 
 - [`2026-10-04-windows-helper-release.md`](2026-10-04-windows-helper-release.md) — `auv-helper.exe` naming, explicit Cargo target, Windows CI coverage, two-binary release archive, and the still-separate privileged installation gate.
+- [`2026-10-04-windows-helper-install.md`](2026-10-04-windows-helper-install.md) — protected two-binary install, SCM lifecycle, offline first-pairing bootstrap, status, and non-destructive uninstall contract.
 - [`2026-10-02-macos-helper-protocol-compatibility.md`](2026-10-02-macos-helper-protocol-compatibility.md) — helper usability decided by daemon wire-protocol range, not frontend version; forward-only upgrades, `frontend-outdated`, signed security-epoch revocation, and the `HOST_INCOMPATIBLE` reason.
 - [`2026-10-01-macos-helper-setup.md`](2026-10-01-macos-helper-setup.md) — shared Rust/CLI/N-API helper setup, embedded signed app release path, shipped helper identities (`helperApp` / `--helper-app`), per-user `SMAppService` registration, and remaining clean-host gate.
 - [`2026-09-28-remote-device-entry-implementation-design.md`](2026-09-28-remote-device-entry-implementation-design.md) — current locked-existing-session-first Device unlock contract and three-platform implementation plan; signed-out entry deferred.
