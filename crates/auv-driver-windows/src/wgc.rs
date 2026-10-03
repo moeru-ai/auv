@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use auv_driver_common::capture::{Capture, DisplayCapture};
 use auv_driver_common::error::DriverResult;
 use auv_driver_common::window::Window;
+use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "windows")]
 use crate::error::backend;
@@ -18,6 +19,16 @@ use crate::error::backend;
 use crate::window::window_handle;
 
 pub const WGC_BACKEND: &str = "wgc.windows";
+
+/// Result of a lightweight WGC window health check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowHealth {
+  pub width: u32,
+  pub height: u32,
+  pub non_black_ratio: f64,
+  pub is_fresh: bool,
+  pub alive: bool,
+}
 
 #[cfg(target_os = "windows")]
 mod native {
@@ -56,7 +67,7 @@ mod native {
 
   static D3D_CONTEXT: OnceLock<D3dContext> = OnceLock::new();
 
-  fn get_or_init_d3d_context() -> DriverResult<&'static D3dContext> {
+  pub(crate) fn get_or_init_d3d_context() -> DriverResult<&'static D3dContext> {
     if let Some(ctx) = D3D_CONTEXT.get() {
       return Ok(ctx);
     }
@@ -110,7 +121,9 @@ mod native {
     session: windows::Graphics::Capture::GraphicsCaptureSession,
     size: windows::Graphics::SizeInt32,
     receiver: std::sync::mpsc::Receiver<()>,
+    staging_texture: Option<ID3D11Texture2D>,
     last_frame: Option<image::RgbaImage>,
+    last_health: Option<WindowHealth>,
   }
 
   // SAFETY: WinRT capture session and frame pool are thread-safe COM objects;
@@ -126,6 +139,60 @@ mod native {
   }
 
   static ACTIVE_SESSION: Mutex<Option<CachedSession>> = Mutex::new(None);
+
+  fn try_get_next_frame(
+    frame_pool: &Direct3D11CaptureFramePool,
+  ) -> DriverResult<Option<windows::Graphics::Capture::Direct3D11CaptureFrame>> {
+    match frame_pool.TryGetNextFrame() {
+      Ok(frame) => Ok(Some(frame)),
+      Err(e) if e.code() == windows::core::HRESULT(0) => {
+        // WinRT returns S_OK (0x0) with null interface pointer when pool is empty.
+        // windows-rs converts this into Error with HRESULT(0).
+        Ok(None)
+      }
+      Err(e) => {
+        // Propagate real WinRT COM errors (device removed, closed, access denied, etc.)
+        Err(backend(format!("Direct3D11CaptureFramePool::TryGetNextFrame failed: {e}")))
+      }
+    }
+  }
+
+  fn get_or_create_staging(d3d: &D3dContext, s: &mut CachedSession, desc: &D3D11_TEXTURE2D_DESC) -> DriverResult<ID3D11Texture2D> {
+    if let Some(ref staging) = s.staging_texture {
+      let mut staging_desc = D3D11_TEXTURE2D_DESC::default();
+      unsafe { staging.GetDesc(&mut staging_desc) };
+      if staging_desc.Width == desc.Width && staging_desc.Height == desc.Height && staging_desc.Format == desc.Format {
+        return Ok(staging.clone());
+      }
+    }
+
+    let staging_desc = D3D11_TEXTURE2D_DESC {
+      Width: desc.Width,
+      Height: desc.Height,
+      MipLevels: 1,
+      ArraySize: 1,
+      Format: desc.Format,
+      SampleDesc: DXGI_SAMPLE_DESC {
+        Count: 1,
+        Quality: 0,
+      },
+      Usage: D3D11_USAGE_STAGING,
+      BindFlags: 0,
+      CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+      MiscFlags: 0,
+    };
+
+    let mut staging_texture = None;
+    unsafe {
+      d3d
+        .device
+        .CreateTexture2D(&staging_desc, None, Some(&mut staging_texture))
+        .map_err(|e| backend(format!("failed to create D3D11 staging texture: {e}")))?;
+    }
+    let staging = staging_texture.ok_or_else(|| backend("staging texture was None"))?;
+    s.staging_texture = Some(staging.clone());
+    Ok(staging)
+  }
 
   /// Captures a single frame from a `GraphicsCaptureItem` and maps it to an RGBA image.
   ///
@@ -181,14 +248,16 @@ mod native {
         session,
         size,
         receiver,
+        staging_texture: None,
         last_frame: None,
+        last_health: None,
       });
     }
 
     let s = session_guard.as_mut().unwrap();
 
     // Try to get next frame. If none ready immediately, wait on receiver.
-    let mut frame_opt = s.frame_pool.TryGetNextFrame().ok();
+    let mut frame_opt = try_get_next_frame(&s.frame_pool)?;
     if frame_opt.is_none() {
       let wait_timeout = if s.last_frame.is_none() {
         timeout
@@ -196,7 +265,7 @@ mod native {
         Duration::from_millis(15)
       };
       let _ = s.receiver.recv_timeout(wait_timeout);
-      frame_opt = s.frame_pool.TryGetNextFrame().ok();
+      frame_opt = try_get_next_frame(&s.frame_pool)?;
     }
 
     match frame_opt {
@@ -220,30 +289,7 @@ mod native {
           )));
         }
 
-        let staging_desc = D3D11_TEXTURE2D_DESC {
-          Width: desc.Width,
-          Height: desc.Height,
-          MipLevels: 1,
-          ArraySize: 1,
-          Format: desc.Format,
-          SampleDesc: DXGI_SAMPLE_DESC {
-            Count: 1,
-            Quality: 0,
-          },
-          Usage: D3D11_USAGE_STAGING,
-          BindFlags: 0,
-          CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-          MiscFlags: 0,
-        };
-
-        let mut staging_texture = None;
-        unsafe {
-          d3d
-            .device
-            .CreateTexture2D(&staging_desc, None, Some(&mut staging_texture))
-            .map_err(|e| backend(format!("failed to create D3D11 staging texture: {e}")))?;
-        }
-        let staging = staging_texture.ok_or_else(|| backend("staging texture was None"))?;
+        let staging = get_or_create_staging(d3d, s, &desc)?;
 
         let ctx = d3d.context.lock().map_err(|_| backend("d3d context mutex poisoned"))?;
         unsafe {
@@ -280,6 +326,182 @@ mod native {
       None => {
         if let Some(ref img) = s.last_frame {
           Ok((img.clone(), false))
+        } else {
+          Err(backend(format!("WGC frame arrival timed out after {:?}", timeout)))
+        }
+      }
+    }
+  }
+
+  /// Lightweight health check: checks window dimensions, pixel activity, and freshness
+  /// without allocating and decoding full RGBA image.
+  pub fn capture_item_health(target_id: isize, item: &GraphicsCaptureItem, timeout: Duration) -> DriverResult<WindowHealth> {
+    let d3d = get_or_init_d3d_context()?;
+    let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
+
+    if size.Width <= 0 || size.Height <= 0 {
+      return Err(crate::error::invalid_input(format!(
+        "target has zero or invalid dimensions ({}x{}); target may be minimized",
+        size.Width, size.Height
+      )));
+    }
+
+    let mut session_guard = ACTIVE_SESSION.lock().map_err(|_| backend("active session mutex poisoned"))?;
+
+    let is_match = match &*session_guard {
+      Some(s) => s.target_id == target_id && s.size.Width == size.Width && s.size.Height == size.Height,
+      None => false,
+    };
+
+    if !is_match {
+      session_guard.take();
+
+      let frame_pool =
+        Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)
+          .map_err(|e| backend(format!("failed to create Direct3D11CaptureFramePool: {e}")))?;
+
+      let (sender, receiver) = sync_channel::<()>(4);
+      let _token = frame_pool
+        .FrameArrived(&TypedEventHandler::new(move |pool: &Option<Direct3D11CaptureFramePool>, _| {
+          if pool.is_some() {
+            let _ = sender.try_send(());
+          }
+          Ok(())
+        }))
+        .map_err(|e| backend(format!("failed to register FrameArrived handler: {e}")))?;
+
+      let session = frame_pool.CreateCaptureSession(item).map_err(|e| backend(format!("failed to create GraphicsCaptureSession: {e}")))?;
+
+      let _ = session.SetIsBorderRequired(false);
+      let _ = session.SetIsCursorCaptureEnabled(false);
+
+      session.StartCapture().map_err(|e| backend(format!("failed to start GraphicsCaptureSession: {e}")))?;
+
+      *session_guard = Some(CachedSession {
+        target_id,
+        frame_pool,
+        session,
+        size,
+        receiver,
+        staging_texture: None,
+        last_frame: None,
+        last_health: None,
+      });
+    }
+
+    let s = session_guard.as_mut().unwrap();
+
+    let mut frame_opt = try_get_next_frame(&s.frame_pool)?;
+    if frame_opt.is_none() {
+      let wait_timeout = if s.last_health.is_none() && s.last_frame.is_none() {
+        timeout
+      } else {
+        Duration::from_millis(15)
+      };
+      let _ = s.receiver.recv_timeout(wait_timeout);
+      frame_opt = try_get_next_frame(&s.frame_pool)?;
+    }
+
+    match frame_opt {
+      Some(frame) => {
+        let surface = frame.Surface().map_err(|e| backend(format!("failed to obtain frame surface: {e}")))?;
+
+        let access: IDirect3DDxgiInterfaceAccess =
+          surface.cast().map_err(|e| backend(format!("failed to cast surface to IDirect3DDxgiInterfaceAccess: {e}")))?;
+
+        let texture: ID3D11Texture2D =
+          unsafe { access.GetInterface().map_err(|e| backend(format!("failed to obtain ID3D11Texture2D from surface: {e}")))? };
+
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { texture.GetDesc(&mut desc) };
+
+        if desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM {
+          return Err(backend(format!("unsupported pixel format {:?}: WGC v1 only supports B8G8R8A8_UNORM", desc.Format)));
+        }
+
+        let staging = get_or_create_staging(d3d, s, &desc)?;
+
+        let ctx = d3d.context.lock().map_err(|_| backend("d3d context mutex poisoned"))?;
+        unsafe {
+          ctx.CopyResource(&staging, &texture);
+
+          let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+          ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| backend(format!("failed to map staging texture: {e}")))?;
+
+          let width = desc.Width as usize;
+          let height = desc.Height as usize;
+          let row_pitch = mapped.RowPitch as usize;
+          let src_ptr = mapped.pData as *const u8;
+
+          // Subsample 1/16 pixels (every 4th row, every 4th pixel)
+          let mut non_black_sampled = 0usize;
+          let mut total_sampled = 0usize;
+          let step_y = 4usize;
+          let step_x = 4usize;
+
+          let mut y = 0usize;
+          while y < height {
+            let row_ptr = src_ptr.add(y * row_pitch);
+            let mut x = 0usize;
+            while x < width {
+              let px = row_ptr.add(x * 4);
+              let b = *px;
+              let g = *px.add(1);
+              let r = *px.add(2);
+              if r > 10 || g > 10 || b > 10 {
+                non_black_sampled += 1;
+              }
+              total_sampled += 1;
+              x += step_x;
+            }
+            y += step_y;
+          }
+
+          ctx.Unmap(&staging, 0);
+
+          let ratio = if total_sampled > 0 {
+            non_black_sampled as f64 / total_sampled as f64 * 100.0
+          } else {
+            0.0
+          };
+
+          let health = WindowHealth {
+            width: desc.Width,
+            height: desc.Height,
+            non_black_ratio: ratio,
+            is_fresh: true,
+            alive: ratio >= 50.0,
+          };
+          s.last_health = Some(health.clone());
+          Ok(health)
+        }
+      }
+      None => {
+        if let Some(ref h) = s.last_health {
+          let mut stale = h.clone();
+          stale.is_fresh = false;
+          Ok(stale)
+        } else if let Some(ref img) = s.last_frame {
+          let total = (img.width() * img.height()) as usize;
+          let raw = img.as_raw();
+          let mut non_black = 0usize;
+          for chunk in raw.chunks_exact(4) {
+            if chunk[0] > 10 || chunk[1] > 10 || chunk[2] > 10 {
+              non_black += 1;
+            }
+          }
+          let ratio = if total > 0 {
+            non_black as f64 / total as f64 * 100.0
+          } else {
+            0.0
+          };
+          Ok(WindowHealth {
+            width: img.width(),
+            height: img.height(),
+            non_black_ratio: ratio,
+            is_fresh: false,
+            alive: ratio >= 50.0,
+          })
         } else {
           Err(backend(format!("WGC frame arrival timed out after {:?}", timeout)))
         }
@@ -352,6 +574,38 @@ pub fn capture_window_wgc(_window: &Window) -> DriverResult<Capture> {
   Err(auv_driver_common::error::DriverError::unsupported("window.capture_wgc"))
 }
 
+/// Lightweight health check for a window using Windows.Graphics.Capture.
+/// Checks dimensions and non-black pixel ratio using mapped memory subsampling
+/// without full RGBA image decoding and memory allocation.
+#[cfg(target_os = "windows")]
+pub fn capture_window_health(window: &Window) -> DriverResult<WindowHealth> {
+  let start_time = Instant::now();
+  let hwnd = window_handle(window)?;
+  let item = native::item_for_window(hwnd)?;
+  let health = native::capture_item_health(hwnd.0 as isize, &item, Duration::from_millis(1000))?;
+
+  let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+  let target_name = window.app_name.as_deref().or(window.title.as_deref());
+  let details = match target_name {
+    Some(name) => format!("fresh={};target={};non_black={:.1}%", health.is_fresh, name, health.non_black_ratio),
+    None => format!("fresh={};non_black={:.1}%", health.is_fresh, health.non_black_ratio),
+  };
+  crate::latency::record_latency_event(
+    "capture_window_health",
+    elapsed_ms,
+    Some((health.width, health.height)),
+    Some(WGC_BACKEND),
+    Some(&details),
+  );
+
+  Ok(health)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn capture_window_health(_window: &Window) -> DriverResult<WindowHealth> {
+  Err(auv_driver_common::error::DriverError::unsupported("window.capture_window_health"))
+}
+
 /// Captures a target display using Windows.Graphics.Capture.
 ///
 /// Produces a [`DisplayCapture`] with backend `"wgc.windows"`.
@@ -401,4 +655,31 @@ pub fn capture_display_wgc(selector: Option<&str>) -> DriverResult<DisplayCaptur
 #[cfg(not(target_os = "windows"))]
 pub fn capture_display_wgc(_selector: Option<&str>) -> DriverResult<DisplayCapture> {
   Err(auv_driver_common::error::DriverError::unsupported("display.capture_wgc"))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use windows::Graphics::Capture::Direct3D11CaptureFramePool;
+  use windows::Graphics::DirectX::DirectXPixelFormat;
+  use windows::Graphics::SizeInt32;
+
+  #[test]
+  fn test_try_get_next_frame_empty() {
+    let d3d = native::get_or_init_d3d_context().unwrap();
+    let size = SizeInt32 {
+      Width: 100,
+      Height: 100,
+    };
+    let frame_pool =
+      Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size).unwrap();
+
+    let res = match frame_pool.TryGetNextFrame() {
+      Ok(f) => Ok(Some(f)),
+      Err(e) if e.code() == windows::core::HRESULT(0) => Ok(None),
+      Err(e) => Err(e),
+    };
+    assert!(res.is_ok(), "Expected Ok(None) for empty pool");
+    assert!(res.unwrap().is_none(), "Expected None for empty pool");
+  }
 }

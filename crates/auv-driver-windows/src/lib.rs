@@ -35,8 +35,11 @@ pub use clipboard::ClipboardSnapshot;
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
 pub use desktop::ensure_input_desktop;
 pub use driver::{WindowsDriver, WindowsDriverSession};
-pub use media::{AudioVolumeController, MediaPlaybackStatus, MediaTrackMetadata, NowPlayingState, SmtcMediaManager, SmtcSession};
+pub use media::{
+  AudioVolumeController, MediaPlaybackStatus, MediaTrackMetadata, NowPlayingState, ProcessAudioVolume, SmtcMediaManager, SmtcSession,
+};
 pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{WindowsPermissionProbe, probe as probe_permissions};
 pub use readiness::assess_readiness;
 pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
+pub use wgc::{WindowHealth, capture_window_health, capture_window_wgc};

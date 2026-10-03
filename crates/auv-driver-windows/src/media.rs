@@ -42,6 +42,7 @@ pub struct NowPlayingState {
 
 #[cfg(target_os = "windows")]
 mod native {
+  use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
   use windows::Media::Control::{GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager};
   use windows::Win32::Media::Audio::{
     DEVICE_STATE_ACTIVE, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDevice, IMMDeviceEnumerator,
@@ -155,6 +156,26 @@ mod native {
       op.get().map_err(|e| backend(format!("TryStopAsync execution failed for {}: {e}", self.app_id)))
     }
 
+    pub fn on_media_properties_changed<F>(&self, handler: F) -> DriverResult<EventRegistrationToken>
+    where
+      F: Fn() + Send + 'static,
+    {
+      self
+        .inner
+        .MediaPropertiesChanged(&TypedEventHandler::new(move |_, _| {
+          handler();
+          Ok(())
+        }))
+        .map_err(|e| backend(format!("Failed to register MediaPropertiesChanged for {}: {e}", self.app_id)))
+    }
+
+    pub fn remove_media_properties_changed(&self, token: EventRegistrationToken) -> DriverResult<()> {
+      self
+        .inner
+        .RemoveMediaPropertiesChanged(token)
+        .map_err(|e| backend(format!("Failed to unregister MediaPropertiesChanged for {}: {e}", self.app_id)))
+    }
+
     pub fn snapshot(&self) -> DriverResult<NowPlayingState> {
       let status = self.playback_status()?;
       let meta = self.track_metadata()?;
@@ -209,6 +230,11 @@ mod native {
 
     pub fn find_session(&self, query: &str) -> DriverResult<Option<SmtcSession>> {
       let lower = query.to_lowercase();
+      if let Ok(Some(current)) = self.current_session()
+        && current.app_id().to_lowercase().contains(&lower)
+      {
+        return Ok(Some(current));
+      }
       let sessions = self.list_sessions()?;
       for s in sessions {
         if s.app_id().to_lowercase().contains(&lower) {
@@ -230,39 +256,73 @@ mod native {
     }
   }
 
+  /// Reusable process audio volume handle, avoiding repeated MMDevice and AudioSession enumeration.
+  pub struct ProcessAudioVolume {
+    pid: u32,
+    vol: ISimpleAudioVolume,
+  }
+
+  // SAFETY: Initialized in multithreaded COM apartment (COINIT_MULTITHREADED).
+  unsafe impl Send for ProcessAudioVolume {}
+  unsafe impl Sync for ProcessAudioVolume {}
+
+  impl ProcessAudioVolume {
+    pub fn get_volume(&self) -> DriverResult<f32> {
+      unsafe { self.vol.GetMasterVolume().map_err(|e| backend(format!("GetMasterVolume failed for PID {}: {e}", self.pid))) }
+    }
+
+    pub fn set_volume(&self, level: f32) -> DriverResult<()> {
+      let clamped = level.clamp(0.0, 1.0);
+      unsafe {
+        self.vol.SetMasterVolume(clamped, std::ptr::null()).map_err(|e| backend(format!("SetMasterVolume failed for PID {}: {e}", self.pid)))
+      }
+    }
+
+    pub fn get_mute(&self) -> DriverResult<bool> {
+      unsafe { self.vol.GetMute().map(|b| b.as_bool()).map_err(|e| backend(format!("GetMute failed for PID {}: {e}", self.pid))) }
+    }
+
+    pub fn set_mute(&self, muted: bool) -> DriverResult<()> {
+      unsafe {
+        self
+          .vol
+          .SetMute(windows::Win32::Foundation::BOOL(if muted { 1 } else { 0 }), std::ptr::null())
+          .map_err(|e| backend(format!("SetMute failed for PID {}: {e}", self.pid)))
+      }
+    }
+  }
+
   /// CoreAudio volume control for per-process audio sessions.
   pub struct AudioVolumeController;
 
   impl AudioVolumeController {
+    /// Opens a reusable audio volume handle for `target_pid`.
+    pub fn open_process(target_pid: u32) -> DriverResult<ProcessAudioVolume> {
+      let vol = find_process_simple_volume(target_pid)?;
+      Ok(ProcessAudioVolume {
+        pid: target_pid,
+        vol,
+      })
+    }
+
     /// Returns process volume for `target_pid` in `[0.0, 1.0]`.
     pub fn get_process_volume(target_pid: u32) -> DriverResult<f32> {
-      let vol = find_process_simple_volume(target_pid)?;
-      unsafe { vol.GetMasterVolume().map_err(|e| backend(format!("GetMasterVolume failed for PID {target_pid}: {e}"))) }
+      Self::open_process(target_pid)?.get_volume()
     }
 
     /// Sets process volume for `target_pid` to a float in `[0.0, 1.0]`.
     pub fn set_process_volume(target_pid: u32, level: f32) -> DriverResult<()> {
-      let clamped = level.clamp(0.0, 1.0);
-      let vol = find_process_simple_volume(target_pid)?;
-      unsafe {
-        vol.SetMasterVolume(clamped, std::ptr::null()).map_err(|e| backend(format!("SetMasterVolume failed for PID {target_pid}: {e}")))
-      }
+      Self::open_process(target_pid)?.set_volume(level)
     }
 
     /// Returns process mute status for `target_pid`.
     pub fn get_process_mute(target_pid: u32) -> DriverResult<bool> {
-      let vol = find_process_simple_volume(target_pid)?;
-      unsafe { vol.GetMute().map(|b| b.as_bool()).map_err(|e| backend(format!("GetMute failed for PID {target_pid}: {e}"))) }
+      Self::open_process(target_pid)?.get_mute()
     }
 
     /// Sets process mute status for `target_pid`.
     pub fn set_process_mute(target_pid: u32, muted: bool) -> DriverResult<()> {
-      let vol = find_process_simple_volume(target_pid)?;
-      unsafe {
-        vol
-          .SetMute(windows::Win32::Foundation::BOOL(if muted { 1 } else { 0 }), std::ptr::null())
-          .map_err(|e| backend(format!("SetMute failed for PID {target_pid}: {e}")))
-      }
+      Self::open_process(target_pid)?.set_mute(muted)
     }
   }
 
@@ -339,10 +399,32 @@ mod native {
 }
 
 #[cfg(target_os = "windows")]
-pub use native::{AudioVolumeController, SmtcMediaManager, SmtcSession};
+pub use native::{AudioVolumeController, ProcessAudioVolume, SmtcMediaManager, SmtcSession};
 
 #[cfg(not(target_os = "windows"))]
 use auv_driver_common::error::{DriverError, DriverResult};
+
+#[cfg(not(target_os = "windows"))]
+pub struct ProcessAudioVolume;
+
+#[cfg(not(target_os = "windows"))]
+impl ProcessAudioVolume {
+  pub fn get_volume(&self) -> DriverResult<f32> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+
+  pub fn set_volume(&self, _level: f32) -> DriverResult<()> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+
+  pub fn get_mute(&self) -> DriverResult<bool> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+
+  pub fn set_mute(&self, _muted: bool) -> DriverResult<()> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+}
 
 #[cfg(not(target_os = "windows"))]
 pub struct SmtcMediaManager;
@@ -422,6 +504,10 @@ pub struct AudioVolumeController;
 
 #[cfg(not(target_os = "windows"))]
 impl AudioVolumeController {
+  pub fn open_process(_target_pid: u32) -> DriverResult<ProcessAudioVolume> {
+    Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
+  }
+
   pub fn get_process_volume(_target_pid: u32) -> DriverResult<f32> {
     Err(DriverError::unsupported("Audio volume control is only supported on Windows"))
   }
