@@ -71,9 +71,14 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 
 #### Linux
 
-Install the latest official release for x86-64 or ARM64 GNU/Linux:
+Current Linux releases are built on Ubuntu 24.04 and require glibc 2.39. On
+Ubuntu 24.04 or later, install the runtime libraries, then install the latest
+official release for x86-64 or ARM64:
 
 ```sh
+sudo apt-get update
+sudo apt-get install -y \
+  ca-certificates curl libtesseract5 liblept5 libpipewire-0.3-0 libxkbcommon0
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
 "$HOME/.local/bin/auv" --version

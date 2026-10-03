@@ -88,7 +88,7 @@ require_command mktemp
 require_command tar
 
 if [ "$version" != latest ]; then
-  if ! printf '%s\n' "$version" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+  if ! printf '%s\n' "$version" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
     error "Invalid release version: $version"
     exit 1
   fi
@@ -116,12 +116,28 @@ case "$(uname -m)" in
     ;;
 esac
 
-if [ "$platform" = unknown-linux-gnu ] && command -v ldd >/dev/null 2>&1; then
-  ldd_version=$(ldd --version 2>&1 || :)
-  if printf '%s\n' "$ldd_version" | grep -qi musl; then
-    error 'Linux musl is not supported by the published AUV release artifacts.'
-    exit 1
+if [ "$platform" = unknown-linux-gnu ]; then
+  libc=unknown
+  if command -v ldd >/dev/null 2>&1; then
+    ldd_version=$(ldd --version 2>&1 || :)
+    if printf '%s\n' "$ldd_version" | grep -qi musl; then
+      libc=musl
+    elif printf '%s\n' "$ldd_version" | grep -Eqi 'glibc|gnu libc'; then
+      libc=glibc
+    fi
   fi
+  for musl_loader in /lib/ld-musl-*.so.1; do
+    if [ -e "$musl_loader" ]; then
+      libc=musl
+      break
+    fi
+  done
+  case "$libc" in
+    glibc) ;;
+    musl) error 'Linux musl is not supported by the published AUV release artifacts.' ;;
+    *) error 'Could not confirm that this Linux host uses glibc.' ;;
+  esac
+  if [ "$libc" != glibc ]; then exit 1; fi
 fi
 
 target=$arch-$platform
@@ -182,9 +198,26 @@ if [ "$actual" != "$expected" ]; then
   exit 1
 fi
 
-tar -xzf "$archive_path" -C "$extract_dir" auv
-if [ ! -f "$extract_dir/auv" ]; then
+member_listing=$(LC_ALL=C tar -tvzf "$archive_path" auv 2>/dev/null) || {
   error "Release archive did not contain the auv executable: $archive"
+  exit 1
+}
+member_shape=$(printf '%s\n' "$member_listing" | awk 'NR == 1 { type = substr($1, 1, 1) } END { printf "%d:%s", NR, type }')
+if [ "$member_shape" != '1:-' ]; then
+  error "Release archive auv member was not a single regular file: $archive"
+  exit 1
+fi
+
+tar -xzf "$archive_path" -C "$extract_dir" auv
+if [ ! -f "$extract_dir/auv" ] || [ -L "$extract_dir/auv" ]; then
+  error "Release archive did not contain a regular auv executable: $archive"
+  exit 1
+fi
+
+chmod +x "$extract_dir/auv"
+if ! "$extract_dir/auv" --version >/dev/null; then
+  error 'The downloaded AUV binary cannot run on this host.'
+  error 'Check the documented GNU/Linux glibc and runtime library requirements.'
   exit 1
 fi
 
