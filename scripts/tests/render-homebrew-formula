@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "$0")/../.." && pwd -P)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+arm_sha=888a8c84d023af466552116578a2a03fcc6b55aaf83ed69a145ff3c78cde0127
+intel_sha=11d086d5d55900853bb7c2e74e2f07c798f82407c29d6ec825bd9b0d03f13314
+printf '%s\n' "$arm_sha" > "$work/arm.sha256"
+printf '%s\n' "$intel_sha" > "$work/intel.sha256"
+
+"$repo_root/scripts/render-homebrew-formula" \
+  v0.0.25 \
+  "$work/arm.sha256" \
+  "$work/intel.sha256" \
+  "$work/auv.rb"
+
+cat > "$work/expected.rb" <<'RUBY'
+class Auv < Formula
+  desc "Invoke and inspect core computer-use capabilities"
+  homepage "https://github.com/moeru-ai/auv"
+  license "Apache-2.0"
+
+  # TODO(homebrew-linux): Linuxbrew is deferred until both Linux artifacts have
+  # tap-side installation evidence and an owner-approved support slice.
+  depends_on :macos
+
+  # NOTICE: Homebrew loads tap formulae under Linux architecture contexts
+  # during validation. Select the archive by CPU here; the macOS requirement
+  # rejects Linux installation before it can use this URL.
+  if Hardware::CPU.arm?
+    url "https://github.com/moeru-ai/auv/releases/download/v0.0.25/auv-aarch64-apple-darwin.tar.gz"
+    sha256 "888a8c84d023af466552116578a2a03fcc6b55aaf83ed69a145ff3c78cde0127"
+  elsif Hardware::CPU.intel?
+    url "https://github.com/moeru-ai/auv/releases/download/v0.0.25/auv-x86_64-apple-darwin.tar.gz"
+    sha256 "11d086d5d55900853bb7c2e74e2f07c798f82407c29d6ec825bd9b0d03f13314"
+  end
+
+  def install
+    bin.install "auv"
+  end
+
+  test do
+    assert_equal "auv 0.0.25", shell_output("#{bin}/auv --version").strip
+  end
+end
+RUBY
+
+diff -u "$work/expected.rb" "$work/auv.rb"
+
+printf '%s %s\n' "${arm_sha:0:32}" "${arm_sha:32}" > "$work/arm.sha256"
+if "$repo_root/scripts/render-homebrew-formula" v0.0.25 "$work/arm.sha256" "$work/intel.sha256" "$work/rejected.rb"; then
+  echo "renderer accepted a checksum containing embedded whitespace" >&2
+  exit 1
+fi
+
+printf 'not-a-sha\n' > "$work/arm.sha256"
+if "$repo_root/scripts/render-homebrew-formula" v0.0.25 "$work/arm.sha256" "$work/intel.sha256" "$work/rejected.rb"; then
+  echo "renderer accepted an invalid arm64 checksum" >&2
+  exit 1
+fi
+
+if "$repo_root/scripts/render-homebrew-formula" v0.0.25-rc.1 "$work/intel.sha256" "$work/intel.sha256" "$work/rejected.rb"; then
+  echo "renderer accepted a prerelease tag" >&2
+  exit 1
+fi

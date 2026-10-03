@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 4 ]]; then
+  echo "usage: $0 <vX.Y.Z> <arm64-sha256-file> <x86_64-sha256-file> <output>" >&2
+  exit 2
+fi
+
+tag=$1
+arm_sha_file=$2
+intel_sha_file=$3
+output=$4
+
+if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Homebrew formula updates require a stable v-prefixed semantic version tag: $tag" >&2
+  exit 1
+fi
+
+read_sha() {
+  local architecture=$1
+  local source=$2
+  local checksum
+
+  checksum=$(<"$source")
+  if [[ ! $checksum =~ ^[0-9a-f]{64}$ ]]; then
+    echo "$architecture archive checksum must be 64 lowercase hexadecimal characters" >&2
+    exit 1
+  fi
+  printf '%s' "$checksum"
+}
+
+arm_sha=$(read_sha arm64 "$arm_sha_file")
+intel_sha=$(read_sha x86_64 "$intel_sha_file")
+version=${tag#v}
+temporary=$(mktemp "${output}.XXXXXX")
+trap 'rm -f "$temporary"' EXIT
+
+cat > "$temporary" <<RUBY
+class Auv < Formula
+  desc "Invoke and inspect core computer-use capabilities"
+  homepage "https://github.com/moeru-ai/auv"
+  license "Apache-2.0"
+
+  # TODO(homebrew-linux): Linuxbrew is deferred until both Linux artifacts have
+  # tap-side installation evidence and an owner-approved support slice.
+  depends_on :macos
+
+  # NOTICE: Homebrew loads tap formulae under Linux architecture contexts
+  # during validation. Select the archive by CPU here; the macOS requirement
+  # rejects Linux installation before it can use this URL.
+  if Hardware::CPU.arm?
+    url "https://github.com/moeru-ai/auv/releases/download/$tag/auv-aarch64-apple-darwin.tar.gz"
+    sha256 "$arm_sha"
+  elsif Hardware::CPU.intel?
+    url "https://github.com/moeru-ai/auv/releases/download/$tag/auv-x86_64-apple-darwin.tar.gz"
+    sha256 "$intel_sha"
+  end
+
+  def install
+    bin.install "auv"
+  end
+
+  test do
+    assert_equal "auv $version", shell_output("#{bin}/auv --version").strip
+  end
+end
+RUBY
+
+mv "$temporary" "$output"
+trap - EXIT
