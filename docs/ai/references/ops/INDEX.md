@@ -2,7 +2,7 @@
 
 Setup, tooling, feature gates, cross-cutting notes
 
-Count: **29**
+Count: **30**
 
 - [`2026-05-12-setup.md`](2026-05-12-setup.md)
 - [`2026-05-13-airi-desktop-reuse.md`](2026-05-13-airi-desktop-reuse.md)
@@ -33,6 +33,7 @@ Count: **29**
 - [`2026-10-04-nix-distribution-design.md`](2026-10-04-nix-distribution-design.md)
 - [`2026-10-04-proto-distribution-design.md`](2026-10-04-proto-distribution-design.md)
 - [`2026-10-04-scoop-distribution-design.md`](2026-10-04-scoop-distribution-design.md)
+- [`2026-10-04-unix-installer-design.md`](2026-10-04-unix-installer-design.md)
 
 ## Related
 
