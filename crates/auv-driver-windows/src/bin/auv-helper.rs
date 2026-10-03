@@ -1,4 +1,4 @@
-//! One-shot Windows console worker. Installed only with the privileged host.
+//! One-shot Windows console helper. Installed only with the privileged host.
 
 #[cfg(target_os = "windows")]
 fn main() {

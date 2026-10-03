@@ -154,7 +154,14 @@ jobs:
             --target '${{ matrix.target }}' -- --locked
 
       - name: Build release binary
-        run: cargo build --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
+        run: cargo build --locked --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
+
+      - name: Build Windows helper
+        if: runner.os == 'Windows'
+        # TODO(windows-release-signing): Authenticode-sign both Windows
+        # executables after a release certificate and provenance policy are
+        # owner-approved; archive packaging alone is not a signing claim.
+        run: cargo build --locked --release --package auv-driver-windows --bin auv-helper --target "${{ matrix.target }}"
 
       - name: Sign macOS executable
         if: runner.os == 'macOS'
@@ -171,6 +178,15 @@ jobs:
       - name: Verify binary starts
         run: target/${{ matrix.target }}/release/${{ matrix.executable }} --help
 
+      - name: Verify Windows helper rejects direct invocation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "target/${{ matrix.target }}/release/auv-helper.exe" -Wait -PassThru
+          if ($process.ExitCode -ne 2) {
+            throw "auv-helper.exe returned $($process.ExitCode) instead of rejecting direct invocation with exit code 2"
+          }
+
       - name: Create archive
         if: runner.os != 'Windows'
         run: tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release ${{ matrix.executable }}
@@ -178,7 +194,22 @@ jobs:
       - name: Create archive
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.executable }}" -DestinationPath "${{ matrix.archive }}"
+        run: |
+          Compress-Archive -Path @(
+            "target/${{ matrix.target }}/release/${{ matrix.executable }}",
+            "target/${{ matrix.target }}/release/auv-helper.exe"
+          ) -DestinationPath "${{ matrix.archive }}"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "${{ matrix.archive }}"))
+          try {
+            $entries = @($zip.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+          } finally {
+            $zip.Dispose()
+          }
+          $expected = @("auv-helper.exe", "${{ matrix.executable }}") | Sort-Object
+          if (Compare-Object $expected $entries) {
+            throw "Windows release archive does not contain exactly auv.exe and auv-helper.exe"
+          }
 
       - name: Calculate hash
         if: runner.os != 'Windows'

@@ -50,8 +50,7 @@ rejects an attempted concurrent bootstrap while the daemon holds the store.
 
 The following is the command shape for an administrator PowerShell session
 after the Windows `PairingStore` gate is closed, offline bootstrap has completed,
-and `auv.exe` and
-`auv-device-unlock-worker.exe` have been placed in a
+and `auv.exe` and `auv-helper.exe` have been placed in a
 protected `C:\Program Files\AUV` directory. The service creates
 `C:\ProgramData\AUVDeviceEntry` with SYSTEM ownership and the protected
 `O:SYD:P(A;;GA;;;SY)` security descriptor required by `storage_windows`.

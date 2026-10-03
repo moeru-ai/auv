@@ -3,11 +3,17 @@
 //! This is an internal host primitive, not a service registration. The caller
 //! must run under the installed LocalSystem service identity. No remote request
 //! may carry a secret or choose the worker executable.
-// TODO(device-session-control-names): Rename this legacy unlock-named host and
-// worker after a separately approved installation migration; this port keeps
-// deployed executable naming stable while adding the lock route.
+// TODO(device-session-control-module): Rename this public legacy unlock-named
+// module only with an explicit Rust API migration; the installed executable is
+// now the operation-neutral `auv-helper.exe`.
+
+#[cfg(any(target_os = "windows", test))]
+use std::path::{Path, PathBuf};
 
 use crate::device_session::ConsoleSession;
+
+#[cfg(any(target_os = "windows", test))]
+const HELPER_EXECUTABLE: &str = "auv-helper.exe";
 
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
@@ -51,6 +57,30 @@ pub fn run_worker(pipe_name: &str, session_id: u32, logon_time: i64, account_sid
 /// Entrypoint for the same installed worker's non-secret lock operation.
 pub fn run_lock_worker(session_id: u32, logon_time: i64, account_sid: &str) -> Result<(), HostError> {
   native::run_lock_worker(session_id, logon_time, account_sid)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn helper_executable(current_exe: &Path) -> Result<PathBuf, HostError> {
+  if !current_exe.is_absolute() {
+    return Err(HostError::Unavailable);
+  }
+
+  Ok(current_exe.with_file_name(HELPER_EXECUTABLE))
+}
+
+#[cfg(test)]
+mod tests {
+  use std::path::Path;
+
+  #[test]
+  fn installed_host_resolves_the_shipped_helper_beside_it() {
+    assert_eq!(super::helper_executable(Path::new("/Program Files/AUV/auv.exe")).unwrap(), Path::new("/Program Files/AUV/auv-helper.exe"));
+  }
+
+  #[test]
+  fn installed_host_rejects_a_relative_executable_path() {
+    assert!(super::helper_executable(Path::new("auv.exe")).is_err());
+  }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -108,7 +138,7 @@ mod native {
   use windows::core::{PCWSTR, PWSTR};
   use zeroize::Zeroizing;
 
-  use super::HostError;
+  use super::{HostError, helper_executable};
   use crate::device_session::{
     ConsoleLockState, ConsoleSession, lock_existing_session, observe_console, unlock_existing_session,
     verify_local_system_process_in_session,
@@ -189,11 +219,7 @@ mod native {
   pub(super) fn lock_with_worker(target: &ConsoleSession) -> Result<ConsoleSession, HostError> {
     verify_local_system_process_in_session(0).map_err(|_| HostError::WorkerIdentity)?;
     checked_usable_target(target)?;
-    let worker_executable = std::env::current_exe().map_err(|_| HostError::Unavailable)?.with_file_name("auv-device-unlock-worker.exe");
-
-    if !worker_executable.is_absolute() {
-      return Err(HostError::Unavailable);
-    }
+    let worker_executable = helper_executable(&std::env::current_exe().map_err(|_| HostError::Unavailable)?)?;
 
     let mut worker = launch_worker(&worker_executable, WorkerMode::Lock, target)?;
     // SAFETY: This is the exact selected-session worker process just created.
@@ -225,9 +251,9 @@ mod native {
 
   pub(super) fn unlock_with_worker(target: &ConsoleSession, credential: &str) -> Result<ConsoleSession, HostError> {
     checked_target(target)?;
-    let worker_executable = std::env::current_exe().map_err(|_| HostError::Unavailable)?.with_file_name("auv-device-unlock-worker.exe");
+    let worker_executable = helper_executable(&std::env::current_exe().map_err(|_| HostError::Unavailable)?)?;
 
-    if !worker_executable.is_absolute() || credential.is_empty() || credential.encode_utf16().count() > 128 {
+    if credential.is_empty() || credential.encode_utf16().count() > 128 {
       return Err(HostError::Unavailable);
     }
 
