@@ -1,0 +1,25 @@
+name: Update Scoop
+
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    name: Update Scoop manifest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Update Scoop manifest
+        uses: ScoopInstaller/GithubActions@5bceeda181721d9d10a18fdcc3ddca6f33467ae6 # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SKIP_UPDATED: 1
+          THROW_ERROR: 1
