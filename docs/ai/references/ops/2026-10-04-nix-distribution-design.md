@@ -44,7 +44,9 @@ will declare only the build tools and linked libraries required by the selected
 platform:
 
 - all platforms: CMake;
-- macOS: the existing system `swiftc` wrapper and `libiconv`;
+- macOS: the existing system `swiftc` pattern, a system `codesign` wrapper,
+  native-only framework compilation, Apple clang for the final Swift-aware
+  Darwin link, and `libiconv`;
 - Linux: `pkg-config`, the Nixpkgs bindgen hook, PipeWire, Wayland,
   libxkbcommon, Tesseract, and Leptonica.
 
@@ -87,6 +89,11 @@ Before publication:
    evaluation into a native-build claim.
 5. Confirm the macOS package reports that no helper is embedded.
 6. Run the repository test suite, README generation, and `git diff --check`.
+
+Native validation on 2026-10-04 built and ran `auv 0.0.25` on Apple Silicon
+macOS with Nix 2.34.1 and on GNU Linux x86-64 with Nix 2.32.4. The other two
+package outputs evaluated successfully. The macOS result also reported
+`helper_embedded: false`.
 
 ## Non-goals
 
