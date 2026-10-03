@@ -1,18 +1,18 @@
 {
-    "version": "0.0.25",
-    "description": "Invoke and inspect core computer-use capabilities",
-    "homepage": "https://github.com/moeru-ai/auv",
-    "license": "Apache-2.0",
-    "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.25/auv-x86_64-pc-windows-msvc.zip",
-    "hash": "4da4a39db5e3e00de3b5df6403baa4b8a372bfe69dd66deaf550482c90e61a7e",
-    "bin": "auv.exe",
-    "checkver": {
-        "github": "https://github.com/moeru-ai/auv"
-    },
-    "autoupdate": {
-        "url": "https://github.com/moeru-ai/auv/releases/download/v$version/auv-x86_64-pc-windows-msvc.zip",
-        "hash": {
-            "url": "$url.sha256"
-        }
+  "version": "0.0.25",
+  "description": "Invoke and inspect core computer-use capabilities",
+  "homepage": "https://github.com/moeru-ai/auv",
+  "license": "Apache-2.0",
+  "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.25/auv-x86_64-pc-windows-msvc.zip",
+  "hash": "4da4a39db5e3e00de3b5df6403baa4b8a372bfe69dd66deaf550482c90e61a7e",
+  "bin": "auv.exe",
+  "checkver": {
+    "github": "https://github.com/moeru-ai/auv"
+  },
+  "autoupdate": {
+    "url": "https://github.com/moeru-ai/auv/releases/download/v$version/auv-x86_64-pc-windows-msvc.zip",
+    "hash": {
+      "url": "$url.sha256"
     }
+  }
 }
