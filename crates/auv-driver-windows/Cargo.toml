@@ -21,6 +21,10 @@ latency-telemetry = []
 name = "auv-latency-benchmark"
 path = "src/bin/latency_benchmark.rs"
 
+[[bin]]
+name = "auv-helper"
+path = "src/bin/auv-helper.rs"
+
 [dependencies]
 auv-driver-common = { version = "0.0.25", path = "../auv-driver-common" }
 auv-driver-overlay = { version = "0.0.25", path = "../auv-driver-overlay", features = ["windows"], optional = true }

@@ -55,6 +55,9 @@ jobs:
       # Regression: compile the Git checkout before any proto dependency export.
       # Generating vendor here previously hid missing files from cargo install --git.
       - run: cargo check
+      - name: Build Windows helper
+        if: runner.os == 'Windows'
+        run: cargo build --locked --package auv-driver-windows --bin auv-helper
       - run: cargo test
       - run: cargo run --quiet -- invoke --help
       - run: git diff --check
