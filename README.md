@@ -108,7 +108,7 @@ the AUV plugin and install the latest release:
 
 ```sh
 proto plugin add auv "https://raw.githubusercontent.com/moeru-ai/auv/main/toolchain/proto/auv.toml" --to global
-proto install auv --config-mode global --pin global
+proto install auv latest --config-mode global --pin global
 auv --version
 ```
 

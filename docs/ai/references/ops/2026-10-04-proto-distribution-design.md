@@ -58,7 +58,7 @@ Before registry inclusion, users must add the plugin locator:
 proto plugin add auv \
   "https://raw.githubusercontent.com/moeru-ai/auv/main/toolchain/proto/auv.toml" \
   --to global
-proto install auv --config-mode global --pin global
+proto install auv latest --config-mode global --pin global
 auv --version
 ```
 
@@ -109,4 +109,4 @@ for installation through the repository-hosted plugin.
 - [`proto plugin add`](https://moonrepo.dev/docs/proto/commands/plugin/add)
 - [`proto install`](https://moonrepo.dev/docs/proto/commands/install)
 - [alint proto manifest](https://github.com/moeru-ai/alint/blob/main/toolchain/proto/alint.toml)
-- [AUV release workflow](../../../.github/workflows/release.yml)
+- [AUV release workflow](../../../../.github/workflows/release.yml)
