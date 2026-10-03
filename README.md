@@ -70,21 +70,31 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 ```
 
 The macOS release binary installed this way includes the signed
-`AUV Helper.app` used by the setup steps below.
+`AUV Helper.app` used by the setup steps below. See the
+[Unix installer verification record](docs/ai/references/ops/2026-10-04-unix-installer-design.md#verification)
+for current native evidence.
 
 #### Linux
 
-Install the latest official release for x86-64 or ARM64 GNU/Linux:
+Current Linux releases are built on Ubuntu 24.04 and require glibc 2.39. On
+Ubuntu 24.04 or later, install the runtime libraries, then install the latest
+official release for x86-64 or ARM64:
 
 ```sh
+sudo apt-get update
+sudo apt-get install -y \
+  ca-certificates curl libtesseract5 liblept5 libpipewire-0.3-0 libxkbcommon0
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
 "$HOME/.local/bin/auv" --version
 ```
 
 The installer verifies the release checksum and writes to `~/.local/bin`
-without `sudo`. To install an exact release or choose another directory, set
-`AUV_VERSION` or `AUV_INSTALL_DIR`:
+without `sudo`. These paths have fixture-level coverage on all four declared
+targets; see the
+[Unix installer verification record](docs/ai/references/ops/2026-10-04-unix-installer-design.md#verification).
+To install an exact release or choose another directory, set `AUV_VERSION` or
+`AUV_INSTALL_DIR`:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf \
@@ -92,8 +102,11 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   | AUV_VERSION=v0.0.25 AUV_INSTALL_DIR="$HOME/bin" sh
 ```
 
-AUV currently publishes GNU/Linux release binaries, not Linux musl binaries.
-You can also download the archive and checksum directly from the
+AUV currently publishes glibc-based GNU/Linux release binaries, not Linux musl
+binaries. See the
+[Unix installer verification record](docs/ai/references/ops/2026-10-04-unix-installer-design.md#verification)
+for the current evidence boundary. You can also download the archive and
+checksum directly from the
 [latest GitHub release](https://github.com/moeru-ai/auv/releases/latest).
 
 #### Windows
