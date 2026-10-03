@@ -120,6 +120,29 @@ proto installs the official AUV release archive for the current platform. The
 macOS archive includes the signed `AUV Helper.app` used by the setup steps
 below.
 
+### Install with Nix
+
+Install [Nix](https://nixos.org/download/) 2.27 or later and enable flakes,
+On macOS, install Apple's build tools first:
+
+```sh
+xcode-select --install
+```
+
+Then install the default AUV package from this repository:
+
+```sh
+nix profile install github:moeru-ai/auv#default
+auv --version
+```
+
+The flake defines source-built packages for Apple Silicon and Intel macOS and
+for x86-64 and ARM64 Linux. It does not support Windows or Linux musl.
+
+The Nix package does not embed the signed `AUV Helper.app`. On macOS, use
+Homebrew, proto, or a direct release download if you need to run
+`auv setup macos-helper install` with the official helper.
+
 ### Install with Cargo
 
 Install [Rust](https://www.rust-lang.org/tools/install) before using this
@@ -166,7 +189,7 @@ See the
 [Cargo Git-install verification](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md#regression-and-evidence)
 for the currently tested platform configurations.
 
-After installing AUV with either method, inspect the available commands with:
+After installing AUV, inspect the available commands with:
 
 ```sh
 auv --help
@@ -202,8 +225,8 @@ auv setup macos-helper open-accessibility-settings
 > [Shipped helper identity](crates/auv-device-helper-macos/README.md#shipped-helper-identity)
 > for the packaging and setup options.
 
-Source builds created with `cargo install` do not embed the signed helper app.
-They can inspect or manage an already installed compatible helper, but a fresh
+Source builds created with Cargo or Nix do not embed the signed helper app. They
+can inspect or manage an already installed compatible helper, but a fresh
 `auv setup macos-helper install` requires an official release build or an app
 supplied by an integrating project.
 
