@@ -77,25 +77,40 @@ that copied path at runtime.
   `resources/bin/auv` through `extraResources`.
 
 The Electron main process should own the child process and pass the resulting
-absolute path to `startAuv()`.
-
-An application may ship the macOS helper under its own name, icon, bundle
-identifier, and Developer ID team instead of using the official `AUV Helper`.
-Build it with `crates/auv-device-helper-macos/package/package.sh` and its
-`AUV_MACOS_HELPER_*` overrides, notarize and staple it, and place the unpacked
-app inside the application bundle (for example
-`YourApp.app/Contents/Library/Helpers/`). Then set `AUV_MACOS_HELPER_APP` to
-that absolute path in the `environment` passed to `startAuv()` and for every
-`auv setup macos-helper` invocation (or in `process.env` before calling the
-binding's setup functions). AUV reads the bundle identifier and Team ID from
-that app's signature, installs a copy under
-`~/Library/Application Support/<bundle identifier>/`, and trusts only that
-identity. See the
-[helper setup reference](../../../docs/ai/references/session-api/2026-10-01-macos-helper-setup.md#shipped-helper-identity). Importing `@auv-js/cli/binary` during staging
+absolute path to `startAuv()`. Importing `@auv-js/cli/binary` during staging
 does not load the NAPI addon. If the application also imports the root NAPI
 entrypoint at runtime, keep `*.node` files outside the ASAR with the packager's
 native-module/`asarUnpack` support. Keep the SDK independent of packaging policy
 so browser and remote-client consumers do not install a native executable.
+
+### Shipping your own macOS helper
+
+An application may ship the macOS helper under its own name, icon, bundle
+identifier, and Developer ID team instead of the official `AUV Helper`. Build
+it with `crates/auv-device-helper-macos/package/package.sh` and its
+`AUV_MACOS_HELPER_*` overrides, notarize and staple it, and embed the unpacked
+app in the application bundle without re-signing it (for example
+`YourApp.app/Contents/Library/Helpers/`). Pass that absolute path to both the
+daemon and setup:
+
+```ts
+import path from 'node:path'
+import process from 'node:process'
+
+import { installMacosHelper } from '@auv-js/cli'
+import { startAuv } from '@auv-js/sdk/node'
+
+const helperApp = path.join(process.resourcesPath, '..', 'Library', 'Helpers', 'Your Computer Use.app')
+
+const status = await installMacosHelper({ helperApp })
+const daemon = await startAuv({ binaryPath, platforms: { macos: { helperApp } } })
+```
+
+AUV reads the bundle identifier and Team ID from that app's signature, installs
+a copy under `~/Library/Application Support/<bundle identifier>/`, and the
+daemon trusts only that identity. The CLI equivalent is
+`auv setup macos-helper install --helper-app <path>`. See the
+[helper setup reference](../../../docs/ai/references/session-api/2026-10-01-macos-helper-setup.md#shipped-helper-identity).
 
 Supported packages currently cover macOS arm64/x64, glibc Linux arm64/x64, and
 Windows x64. Installing with optional dependencies disabled leaves no binary;

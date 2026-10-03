@@ -54,9 +54,12 @@ pub(crate) const OFFICIAL_BUNDLE_ID: &str = "ai.moeru.auv.helper";
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 const OFFICIAL_TEAM_ID: &str = "433DLLA855";
 
-/// Names an unpacked, signed helper app shipped by the frontend, for example
-/// inside an application that embeds AUV. When set, AUV installs and trusts
-/// that app instead of the official AUV Helper; see [`HelperIdentity`].
+/// Daemon process-boundary contract naming the unpacked, signed helper app
+/// shipped by the application that launches AUV; see [`HelperIdentity`].
+///
+/// Frontends expose it as a typed option instead (`startAuv({ platforms:
+/// { macos: { helperApp } } })`, `setup::Options::helper_app`, and
+/// `auv setup macos-helper --helper-app`), so callers never set it by hand.
 pub const HELPER_APP_ENV: &str = "AUV_MACOS_HELPER_APP";
 
 /// Oldest helper security epoch this build trusts.
@@ -73,9 +76,9 @@ pub(crate) const MIN_SECURITY_EPOCH: u32 = 1;
 
 /// Signed identity of the helper app this frontend installs and trusts.
 ///
-/// Without [`HELPER_APP_ENV`], this is the official `AUV Helper.app` signed by
-/// the AUV Team ID and installed from the archive embedded in release builds.
-/// With it, the bundle identifier and Team ID come from the shipped app's own
+/// Without a shipped helper app, this is the official `AUV Helper.app` signed
+/// by the AUV Team ID and installed from the archive embedded in release
+/// builds. With one, the bundle identifier and Team ID come from the shipped app's own
 /// valid Apple-issued signature, so an application embedding AUV can ship a
 /// helper under its own name, icon, and signing team without rebuilding AUV.
 ///
@@ -100,6 +103,15 @@ pub(crate) struct HelperIdentity {
 
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 impl HelperIdentity {
+  /// The official helper, or the identity of `helper_app` when an embedding
+  /// application ships its own.
+  pub(crate) fn select(helper_app: Option<&Path>) -> Result<Self, String> {
+    match helper_app {
+      Some(app) => Self::from_app(app).map_err(|error| format!("helper app {}: {error}", app.display())),
+      None => Ok(Self::official()),
+    }
+  }
+
   pub(crate) fn official() -> Self {
     Self {
       bundle_id: OFFICIAL_BUNDLE_ID.to_string(),
@@ -196,17 +208,15 @@ impl HelperIdentity {
   }
 }
 
-/// The helper identity selected for this process; see [`HelperIdentity`].
-#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) fn identity() -> Result<&'static HelperIdentity, &'static str> {
+/// The helper identity the daemon trusts, selected once per process from
+/// [`HELPER_APP_ENV`].
+#[cfg(all(target_os = "macos", feature = "transport"))]
+fn daemon_identity() -> Result<&'static HelperIdentity, &'static str> {
   static IDENTITY: std::sync::OnceLock<Result<HelperIdentity, String>> = std::sync::OnceLock::new();
   IDENTITY
-    .get_or_init(|| match std::env::var_os(HELPER_APP_ENV).filter(|value| !value.is_empty()) {
-      Some(app) => {
-        let app = PathBuf::from(app);
-        HelperIdentity::from_app(&app).map_err(|error| format!("{HELPER_APP_ENV}={}: {error}", app.display()))
-      }
-      None => Ok(HelperIdentity::official()),
+    .get_or_init(|| {
+      let app = std::env::var_os(HELPER_APP_ENV).filter(|value| !value.is_empty()).map(PathBuf::from);
+      HelperIdentity::select(app.as_deref())
     })
     .as_ref()
     .map_err(String::as_str)
@@ -487,7 +497,7 @@ pub fn lock(home: &Path, uid: u32, selector: &str) -> Result<(), HostError> {
 
 #[cfg(feature = "transport")]
 fn call(home: &Path, operation: Operation, uid: u32, payload: &[u8]) -> Result<(), HostError> {
-  let identity = identity().map_err(|_| HostError::Unavailable)?;
+  let identity = daemon_identity().map_err(|_| HostError::Unavailable)?;
   let mut stream = UnixStream::connect(identity.socket_path(home)).map_err(|_| HostError::Unavailable)?;
   verify_installed_helper(identity, &stream, home).map_err(|error| match error {
     IdentityError::PeerUnavailable => HostError::Unavailable,

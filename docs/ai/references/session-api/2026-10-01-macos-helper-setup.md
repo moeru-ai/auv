@@ -91,11 +91,16 @@ executable, may ship the helper under its own name, icon, bundle identifier,
 and Developer ID team. Setup and the daemon do not pin the official identity
 in that case:
 
-- `AUV_MACOS_HELPER_APP` names the unpacked, notarized helper app the
-  frontend ships. When it is unset or empty, the official
+- Every frontend takes the unpacked, notarized helper app as a typed option:
+  `setup::Options::helper_app` in Rust, `--helper-app` (or
+  `AUV_MACOS_HELPER_APP`) for `auv setup macos-helper`, `helperApp` for the
+  `@auv-js/cli` setup functions, and `startAuv({ platforms: { macos: {
+  helperApp } } })` in the SDK. The SDK passes it to the daemon as
+  `AUV_MACOS_HELPER_APP`, the daemon's process-boundary contract, like
+  `AUV_OVERLAY_THEME` for overlay themes. Without it, the official
   `ai.moeru.auv.helper` / `433DLLA855` identity and the embedded archive are
   used exactly as before.
-- When it is set, the app must be validly signed by an Apple-issued
+- When it is given, the app must be validly signed by an Apple-issued
   certificate with a Team ID. Its signing identifier and Team ID become the
   trusted identity for this process; a missing or invalid app makes `status`
   report `invalid` and `install` fail with the reason.
@@ -178,7 +183,9 @@ On 2026-10-03, the same host packaged a renamed helper
 `ai.moeru.auv.helper.identity-test`, `.icns` icon) with the package script
 overrides, signed it with Team ID `433DLLA855`, notarized it in submission
 `910b0a1e-71c7-4c3a-bacd-fd81c464befb`, and passed it through
-`AUV_MACOS_HELPER_APP` to a source-built CLI. Install placed it under
+`AUV_MACOS_HELPER_APP` to a source-built CLI; the same install and uninstall
+were repeated with `--helper-app`, and the N-API `macosHelperStatus({ helperApp
+})` reported the shipped and rejected apps. Install placed it under
 `~/Library/Application Support/ai.moeru.auv.helper.identity-test/`, its
 LaunchAgent registered and ran, status reported `running` through the peer
 identity check on its own socket, a repeated install was a no-op, and uninstall

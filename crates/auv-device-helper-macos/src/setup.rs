@@ -12,13 +12,27 @@ mod embedded {
   }
 }
 
+/// Which helper app setup manages.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Options {
+  /// Absolute path of the unpacked, notarized helper app shipped by the
+  /// application embedding AUV. Its signing identifier and Team ID become the
+  /// managed identity, and it installs under
+  /// `~/Library/Application Support/<bundle identifier>/`. `None` manages the
+  /// official AUV Helper from this build's embedded archive.
+  ///
+  /// The daemon must trust the same app; frontends pass it to `auv serve`
+  /// as [`super::HELPER_APP_ENV`].
+  pub helper_app: Option<std::path::PathBuf>,
+}
+
 /// Signed helper app this frontend can install.
 #[cfg(target_os = "macos")]
 enum Payload<'a> {
   /// Archive embedded by the release pipeline; its app version must equal
   /// this crate's version.
   Archive(&'static [u8]),
-  /// Unpacked app named by [`super::HELPER_APP_ENV`].
+  /// Unpacked app named by [`Options::helper_app`].
   App(&'a std::path::Path),
 }
 
@@ -37,17 +51,6 @@ impl<'a> Payload<'a> {
       Self::App(app) => installed_version(app),
     }
   }
-}
-
-/// User-facing name of the selected helper for messages.
-#[cfg(target_os = "macos")]
-fn helper_name() -> &'static str {
-  super::identity().map(super::HelperIdentity::display_name).unwrap_or("macOS helper")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn helper_name() -> &'static str {
-  "AUV Helper"
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,7 +87,7 @@ pub struct Status {
   pub state: State,
   pub detail: Option<String>,
   /// Whether this frontend carries a helper app it can install: an archive
-  /// embedded by a release build, or an app named by `AUV_MACOS_HELPER_APP`.
+  /// embedded by a release build, or [`Options::helper_app`].
   pub helper_embedded: bool,
 }
 
@@ -109,24 +112,20 @@ pub enum Error {
 impl std::fmt::Display for Error {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Self::Unsupported => write!(formatter, "{} setup requires macOS 13 or later", helper_name()),
-      Self::PayloadUnavailable => write!(
-        formatter,
-        "this build does not contain a signed {} app; use an official macOS release, set AUV_MACOS_HELPER_APP, or rebuild with AUV_MACOS_HELPER_APP_ARCHIVE_PATH",
-        helper_name()
+      Self::Unsupported => formatter.write_str("macOS helper setup requires macOS 13 or later"),
+      Self::PayloadUnavailable => formatter.write_str(
+        "this build does not contain a signed macOS helper app; use an official macOS release, pass the helper app shipped by the embedding application, or rebuild with AUV_MACOS_HELPER_APP_ARCHIVE_PATH",
       ),
-      Self::UserUnavailable(detail) => write!(formatter, "{} setup needs the logged-in macOS user: {detail}", helper_name()),
-      Self::InvalidInstallation(detail) => write!(formatter, "the installed {} failed validation: {detail}", helper_name()),
-      Self::FrontendOutdated(detail) => write!(formatter, "this AUV frontend is too old for the installed {}: {detail}", helper_name()),
-      Self::ArchiveRejected(detail) => write!(formatter, "the {} app to install failed validation: {detail}", helper_name()),
-      Self::ExtractionFailed(detail) => write!(formatter, "the {} app to install could not be staged: {detail}", helper_name()),
-      Self::ServiceManagementFailed(detail) => write!(formatter, "{} registration failed: {detail}", helper_name()),
-      Self::LaunchFailed(detail) => write!(formatter, "the registered {} did not become ready: {detail}", helper_name()),
-      Self::RollbackFailed(detail) => write!(formatter, "{} update rollback failed: {detail}", helper_name()),
-      Self::AccessibilityResetFailed(detail) => {
-        write!(formatter, "{} Accessibility authorization could not be reset: {detail}", helper_name())
-      }
-      Self::RemovalFailed(detail) => write!(formatter, "{} could not be removed: {detail}", helper_name()),
+      Self::UserUnavailable(detail) => write!(formatter, "macOS helper setup needs the logged-in macOS user: {detail}"),
+      Self::InvalidInstallation(detail) => write!(formatter, "the installed macOS helper failed validation: {detail}"),
+      Self::FrontendOutdated(detail) => write!(formatter, "this AUV frontend is too old for the installed macOS helper: {detail}"),
+      Self::ArchiveRejected(detail) => write!(formatter, "the macOS helper app to install failed validation: {detail}"),
+      Self::ExtractionFailed(detail) => write!(formatter, "the macOS helper app to install could not be staged: {detail}"),
+      Self::ServiceManagementFailed(detail) => write!(formatter, "macOS helper registration failed: {detail}"),
+      Self::LaunchFailed(detail) => write!(formatter, "the registered macOS helper did not become ready: {detail}"),
+      Self::RollbackFailed(detail) => write!(formatter, "macOS helper update rollback failed: {detail}"),
+      Self::AccessibilityResetFailed(detail) => write!(formatter, "macOS helper Accessibility authorization could not be reset: {detail}"),
+      Self::RemovalFailed(detail) => write!(formatter, "macOS helper could not be removed: {detail}"),
       Self::OpenSettingsFailed(detail) => write!(formatter, "could not open macOS settings: {detail}"),
       Self::Io(error) => write!(formatter, "helper setup I/O failed: {error}"),
     }
@@ -142,7 +141,7 @@ impl From<std::io::Error> for Error {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn status() -> Status {
+pub fn status(_options: &Options) -> Status {
   Status {
     state: State::Unsupported,
     detail: None,
@@ -151,17 +150,19 @@ pub fn status() -> Status {
 }
 
 #[cfg(target_os = "macos")]
-pub fn status() -> Status {
-  let identity = match super::identity() {
-    Ok(identity) => identity,
-    Err(detail) => {
-      return Status {
-        state: State::Invalid,
-        detail: Some(detail.to_string()),
-        helper_embedded: false,
-      };
-    }
-  };
+pub fn status(options: &Options) -> Status {
+  match super::HelperIdentity::select(options.helper_app.as_deref()) {
+    Ok(identity) => identity_status(&identity),
+    Err(detail) => Status {
+      state: State::Invalid,
+      detail: Some(detail),
+      helper_embedded: false,
+    },
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn identity_status(identity: &super::HelperIdentity) -> Status {
   let embedded = Payload::for_identity(identity).is_some();
   if !supports_smappservice() {
     return Status {
@@ -347,17 +348,18 @@ fn helper_readiness(identity: &super::HelperIdentity, home: &std::path::Path, ui
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn install() -> Result<Status, Error> {
+pub fn install(_options: &Options) -> Result<Status, Error> {
   Err(Error::Unsupported)
 }
 
 #[cfg(target_os = "macos")]
-pub fn install() -> Result<Status, Error> {
+pub fn install(options: &Options) -> Result<Status, Error> {
   if !supports_smappservice() {
     return Err(Error::Unsupported);
   }
-  let identity = super::identity().map_err(|detail| Error::ArchiveRejected(detail.to_string()))?;
-  let current = status();
+  let identity = super::HelperIdentity::select(options.helper_app.as_deref()).map_err(Error::ArchiveRejected)?;
+  let identity = &identity;
+  let current = identity_status(identity);
   match current.state {
     State::Unsupported => return Err(Error::Unsupported),
     // Replacing an invalid app would execute its binary to unregister it.
@@ -437,7 +439,7 @@ fn upgrades_compatible_helper(installed: Option<&str>, embedded: &str) -> bool {
 /// decision for the helper bundle is reset before only the app bundle is
 /// removed; other AUV Application Support content is preserved.
 #[cfg(not(target_os = "macos"))]
-pub fn uninstall() -> Result<Status, Error> {
+pub fn uninstall(_options: &Options) -> Result<Status, Error> {
   Err(Error::Unsupported)
 }
 
@@ -447,12 +449,13 @@ pub fn uninstall() -> Result<Status, Error> {
 /// decision for the helper bundle is reset before only the app bundle is
 /// removed; other AUV Application Support content is preserved.
 #[cfg(target_os = "macos")]
-pub fn uninstall() -> Result<Status, Error> {
+pub fn uninstall(options: &Options) -> Result<Status, Error> {
   if !supports_smappservice() {
     return Err(Error::Unsupported);
   }
 
-  let identity = super::identity().map_err(|detail| Error::InvalidInstallation(detail.to_string()))?;
+  let identity = super::HelperIdentity::select(options.helper_app.as_deref()).map_err(Error::InvalidInstallation)?;
+  let identity = &identity;
   let (_, home) = current_user()?;
   let layout = identity.layout(&home);
   let validation = if layout.app.exists() {
@@ -462,7 +465,7 @@ pub fn uninstall() -> Result<Status, Error> {
   };
   let retained =
     remove_installed_app(&layout.app, validation, || unregister(&layout.binary), || reset_accessibility_authorization(&identity.bundle_id))?;
-  let mut status = status();
+  let mut status = identity_status(identity);
   if let Some(reason) = retained {
     status.detail = Some(format!(
       "the removed app failed validation ({reason}), so it was not run to unregister its LaunchAgent; a later install reuses that registration"
@@ -492,13 +495,14 @@ pub fn open_accessibility_settings() -> Result<(), Error> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn open_background_items_settings() -> Result<(), Error> {
+pub fn open_background_items_settings(_options: &Options) -> Result<(), Error> {
   Err(Error::Unsupported)
 }
 
 #[cfg(target_os = "macos")]
-pub fn open_background_items_settings() -> Result<(), Error> {
-  let identity = super::identity().map_err(|detail| Error::InvalidInstallation(detail.to_string()))?;
+pub fn open_background_items_settings(options: &Options) -> Result<(), Error> {
+  let identity = super::HelperIdentity::select(options.helper_app.as_deref()).map_err(Error::InvalidInstallation)?;
+  let identity = &identity;
   let (_, home) = current_user()?;
   let binary = identity.layout(&home).binary;
   if binary.exists() {
@@ -1063,6 +1067,20 @@ mod tests {
     );
 
     assert!(matches!(result, Err(super::Error::LaunchFailed(detail)) if detail.contains("did not accept")));
+  }
+
+  // A shipped helper app is validated before any filesystem or
+  // ServiceManagement work, and its rejection is reported, not hidden behind
+  // the official helper's state.
+  #[test]
+  fn status_reports_a_rejected_shipped_helper_app() {
+    let status = super::status(&super::Options {
+      helper_app: Some("/System/Applications/Calculator.app".into()),
+    });
+
+    assert_eq!(status.state, super::State::Invalid);
+    assert!(status.detail.as_deref().is_some_and(|detail| detail.contains("no Team ID")), "{status:?}");
+    assert!(!status.helper_embedded);
   }
 
   // Setup reads the protocol range from the signed bundle instead of running

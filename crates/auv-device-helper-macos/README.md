@@ -107,9 +107,12 @@ AUV_MACOS_HELPER_ICON=/path/to/Example.icon \
 written as `<bundle identifier>.plist` with that label; the executable name
 stays `auv-device-helper-macos`.
 
-After notarizing and stapling the app, ship it unpacked and set
-`AUV_MACOS_HELPER_APP` to its absolute path for the `auv` daemon, `auv setup
-macos-helper`, and the N-API setup functions. Setup then reads the bundle
+After notarizing and stapling the app, ship it unpacked and pass its absolute
+path to every frontend: `setup::Options::helper_app`, `auv setup macos-helper
+--helper-app`, the N-API setup functions' `helperApp`, and `startAuv({
+platforms: { macos: { helperApp } } })` for the daemon. The daemon's own
+process-boundary contract is `AUV_MACOS_HELPER_APP`, which the SDK sets. Setup
+then reads the bundle
 identifier and Team ID from that app's valid Apple-issued signature, copies it
 to `~/Library/Application Support/<bundle identifier>/`, and the daemon trusts
 only that identity. Each helper identity has its own install root, private

@@ -419,7 +419,9 @@ decision, and removes only its app bundle; target-local enrollment and the
 remaining AUV Application Support state are retained.
 The **helper identity** is the bundle identifier and Team ID that setup and
 the daemon trust. It is the official `ai.moeru.auv.helper` unless the frontend
-names a **shipped helper** with `AUV_MACOS_HELPER_APP`: an application that
+names a **shipped helper app** (`helperApp` in the SDK and binding,
+`--helper-app` in the CLI, `AUV_MACOS_HELPER_APP` at the daemon process
+boundary): an application that
 embeds AUV may ship its own signed helper app, whose identity is read from that
 app's signature and which installs under its own Application Support
 directory, socket, and Keychain service.

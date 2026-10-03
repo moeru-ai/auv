@@ -1,4 +1,4 @@
-import type { MacosHelperStatus as NativeMacosHelperStatus } from '../binding.js'
+import type { MacosHelperOptions, MacosHelperStatus as NativeMacosHelperStatus } from '../binding.js'
 
 import { isMacOS } from 'std-env'
 
@@ -21,20 +21,25 @@ export type MacosHelperState
     | 'unsupported'
     | 'update-required'
 
+export type { MacosHelperOptions }
+
 export interface MacosHelperStatus extends Omit<NativeMacosHelperStatus, 'state'> {
   state: MacosHelperState
 }
 
-/** Install and register the signed helper embedded in this build. */
-export async function installMacosHelper(): Promise<MacosHelperStatus> {
+/**
+ * Install and register the signed helper embedded in this build, or
+ * `options.helperApp` when the embedding application ships its own helper.
+ */
+export async function installMacosHelper(options?: MacosHelperOptions): Promise<MacosHelperStatus> {
   requireMacOS()
-  return installNativeMacosHelper() as Promise<MacosHelperStatus>
+  return installNativeMacosHelper(options) as Promise<MacosHelperStatus>
 }
 
-/** Inspect the installed AUV Helper identity and current-user readiness. */
-export async function macosHelperStatus(): Promise<MacosHelperStatus> {
+/** Inspect the installed helper identity and current-user readiness. */
+export async function macosHelperStatus(options?: MacosHelperOptions): Promise<MacosHelperStatus> {
   requireMacOS()
-  return nativeMacosHelperStatus() as Promise<MacosHelperStatus>
+  return nativeMacosHelperStatus(options) as Promise<MacosHelperStatus>
 }
 
 /** Open System Settings at Privacy & Security > Accessibility. */
@@ -44,19 +49,19 @@ export function openMacosHelperAccessibilitySettings(): void {
 }
 
 /** Open System Settings at General > Login Items & Extensions. */
-export function openMacosHelperBackgroundItemsSettings(): void {
+export function openMacosHelperBackgroundItemsSettings(options?: MacosHelperOptions): void {
   requireMacOS()
-  openNativeMacosHelperBackgroundItemsSettings()
+  openNativeMacosHelperBackgroundItemsSettings(options)
 }
 
 /** Unregister the helper, reset Accessibility, and remove only its app bundle. */
-export async function uninstallMacosHelper(): Promise<MacosHelperStatus> {
+export async function uninstallMacosHelper(options?: MacosHelperOptions): Promise<MacosHelperStatus> {
   requireMacOS()
-  return uninstallNativeMacosHelper() as Promise<MacosHelperStatus>
+  return uninstallNativeMacosHelper(options) as Promise<MacosHelperStatus>
 }
 
 function requireMacOS(): void {
   if (!isMacOS) {
-    throw new Error('AUV Helper setup is available only on macOS.')
+    throw new Error('macOS helper setup is available only on macOS.')
   }
 }

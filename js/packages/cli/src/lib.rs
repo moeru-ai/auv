@@ -12,12 +12,23 @@ pub fn native_package_version() -> &'static str {
   env!("CARGO_PKG_VERSION")
 }
 
+/// Which helper app setup manages.
+#[napi(object)]
+#[derive(Clone, Default)]
+pub struct MacosHelperOptions {
+  /// Absolute path of the unpacked, notarized helper app shipped by the
+  /// application embedding AUV. Omit it to manage the official AUV Helper
+  /// embedded in release builds. Pass the same path to `startAuv({ platforms:
+  /// { macos: { helperApp } } })` so the daemon trusts that helper.
+  pub helper_app: Option<String>,
+}
+
 #[napi(object)]
 pub struct MacosHelperStatus {
   pub state: String,
   pub detail: Option<String>,
   /// Whether this binding can install a helper: one embedded by a release
-  /// build, or the app named by `AUV_MACOS_HELPER_APP`.
+  /// build, or `helperApp`.
   pub helper_embedded: bool,
 }
 
@@ -26,19 +37,18 @@ pub struct MacosHelperStatus {
 /// Signature validation and ServiceManagement inspection run off the
 /// JavaScript thread because they perform blocking platform calls.
 #[napi(ts_return_type = "Promise<MacosHelperStatus>")]
-pub fn macos_helper_status() -> AsyncTask<MacosHelperStatusTask> {
-  AsyncTask::new(MacosHelperStatusTask)
+pub fn macos_helper_status(options: Option<MacosHelperOptions>) -> AsyncTask<MacosHelperStatusTask> {
+  AsyncTask::new(MacosHelperStatusTask(options.unwrap_or_default()))
 }
 
-/// Install and register the signed AUV Helper embedded in this build, or the
-/// app named by `AUV_MACOS_HELPER_APP` when the embedding application ships
-/// its own helper.
+/// Install and register the signed AUV Helper embedded in this build, or
+/// `helperApp` when the embedding application ships its own helper.
 ///
 /// The work runs off the JavaScript thread because archive verification and
 /// ServiceManagement registration perform blocking platform calls.
 #[napi(ts_return_type = "Promise<MacosHelperStatus>")]
-pub fn install_macos_helper() -> AsyncTask<InstallMacosHelper> {
-  AsyncTask::new(InstallMacosHelper)
+pub fn install_macos_helper(options: Option<MacosHelperOptions>) -> AsyncTask<InstallMacosHelper> {
+  AsyncTask::new(InstallMacosHelper(options.unwrap_or_default()))
 }
 
 /// Unregister the helper, reset its Accessibility decision, and remove its app.
@@ -47,8 +57,8 @@ pub fn install_macos_helper() -> AsyncTask<InstallMacosHelper> {
 /// the JavaScript thread because it waits for ServiceManagement termination and
 /// performs filesystem and TCC operations.
 #[napi(ts_return_type = "Promise<MacosHelperStatus>")]
-pub fn uninstall_macos_helper() -> AsyncTask<UninstallMacosHelper> {
-  AsyncTask::new(UninstallMacosHelper)
+pub fn uninstall_macos_helper(options: Option<MacosHelperOptions>) -> AsyncTask<UninstallMacosHelper> {
+  AsyncTask::new(UninstallMacosHelper(options.unwrap_or_default()))
 }
 
 /// Open System Settings at Privacy & Security > Accessibility.
@@ -67,10 +77,11 @@ pub fn open_macos_helper_accessibility_settings() -> napi::Result<()> {
 
 /// Open System Settings at General > Login Items & Extensions.
 #[napi]
-pub fn open_macos_helper_background_items_settings() -> napi::Result<()> {
+pub fn open_macos_helper_background_items_settings(options: Option<MacosHelperOptions>) -> napi::Result<()> {
   #[cfg(target_os = "macos")]
   {
-    auv_device_helper_macos::setup::open_background_items_settings().map_err(|error| napi::Error::from_reason(error.to_string()))
+    auv_device_helper_macos::setup::open_background_items_settings(&setup_options(options.unwrap_or_default()))
+      .map_err(|error| napi::Error::from_reason(error.to_string()))
   }
 
   #[cfg(not(target_os = "macos"))]
@@ -79,11 +90,11 @@ pub fn open_macos_helper_background_items_settings() -> napi::Result<()> {
   }
 }
 
-pub struct InstallMacosHelper;
+pub struct InstallMacosHelper(MacosHelperOptions);
 
-pub struct MacosHelperStatusTask;
+pub struct MacosHelperStatusTask(MacosHelperOptions);
 
-pub struct UninstallMacosHelper;
+pub struct UninstallMacosHelper(MacosHelperOptions);
 
 impl Task for MacosHelperStatusTask {
   type Output = MacosHelperStatus;
@@ -92,7 +103,7 @@ impl Task for MacosHelperStatusTask {
   fn compute(&mut self) -> napi::Result<Self::Output> {
     #[cfg(target_os = "macos")]
     {
-      Ok(status_value(auv_device_helper_macos::setup::status()))
+      Ok(status_value(auv_device_helper_macos::setup::status(&setup_options(self.0.clone()))))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -113,7 +124,7 @@ impl Task for InstallMacosHelper {
   fn compute(&mut self) -> napi::Result<Self::Output> {
     #[cfg(target_os = "macos")]
     {
-      auv_device_helper_macos::setup::install()
+      auv_device_helper_macos::setup::install(&setup_options(self.0.clone()))
         .map(status_value)
         .map_err(|error| napi::Error::from_reason(error.to_string()))
     }
@@ -136,7 +147,7 @@ impl Task for UninstallMacosHelper {
   fn compute(&mut self) -> napi::Result<Self::Output> {
     #[cfg(target_os = "macos")]
     {
-      auv_device_helper_macos::setup::uninstall()
+      auv_device_helper_macos::setup::uninstall(&setup_options(self.0.clone()))
         .map(status_value)
         .map_err(|error| napi::Error::from_reason(error.to_string()))
     }
@@ -149,6 +160,13 @@ impl Task for UninstallMacosHelper {
 
   fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
     Ok(output)
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn setup_options(options: MacosHelperOptions) -> auv_device_helper_macos::setup::Options {
+  auv_device_helper_macos::setup::Options {
+    helper_app: options.helper_app.map(std::path::PathBuf::from),
   }
 }
 
