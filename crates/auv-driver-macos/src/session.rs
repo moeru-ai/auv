@@ -565,6 +565,31 @@ impl WindowInput for WindowApi<'_> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.scroll_impl(window, point, scroll, options)
   }
+
+  // The mouse coordinator owns the desktop admission for the whole gesture, so
+  // this method does not reserve it again around the drag itself.
+  fn drag(
+    &self,
+    window: &Window,
+    mut movement: auv_driver_common::MoveMouseRequest,
+    button: auv_driver_common::MouseButton,
+    policy: InputPolicy,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    if policy != InputPolicy::ForegroundPreferred {
+      movement.target = Some(InputTarget::Window(window.clone()));
+      return self.session.input().drag_mouse(movement, button);
+    }
+    // Same preparation as a foreground window click: a PID-targeted gesture can
+    // be ignored by an inactive application, so foreground uses the HID route.
+    let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::from_millis(50)))?;
+    movement.target = Some(InputTarget::Foreground);
+    let drag_result = self.session.input().drag_mouse(movement, button);
+    let restore_result = self.restore_input(lease);
+    let (point, mut action) = drag_result?;
+    restore_result?;
+    action.focus_disturbance = DisturbanceLevel::Foreground;
+    Ok((point, action))
+  }
 }
 
 impl InputApi<'_> {

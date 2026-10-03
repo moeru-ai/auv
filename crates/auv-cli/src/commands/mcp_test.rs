@@ -93,6 +93,44 @@ async fn mcp_uses_the_same_typed_range_validation_as_cli() {
   assert!(error.message.contains("within 0..=1"), "unexpected typed validation error: {error}");
 }
 
+// ROOT CAUSE:
+//
+// If an MCP host sent the input keys advertised in x-auv-commands, input.drag
+// failed with `missing field 'start-x'` because serde renamed the positional
+// fields while the metadata advertised their Clap ids.
+//
+// Before the fix, only undocumented hyphenated keys worked.
+// The fix keeps the advertised keys (`start_x`, ...) as the decoded names.
+#[tokio::test]
+async fn drag_mcp_adapter_accepts_advertised_input_keys_with_typed_defaults() {
+  // Drive the adapter with exactly the keys the MCP schema advertises.
+  let server = McpServer::new(std::path::PathBuf::from(".")).unwrap();
+  let tools = server.tool_router.list_all();
+  let invoke = tools.iter().find(|tool| tool.name == "invoke").expect("invoke tool");
+  let schema = serde_json::to_value(&invoke.input_schema).unwrap();
+  let metadata = schema["x-auv-commands"].as_array().unwrap().iter().find(|command| command["id"] == "input.drag").expect("drag metadata");
+  let advertised: Vec<_> = metadata["arguments"].as_array().unwrap().iter().map(|argument| argument["input_key"].as_str().unwrap()).collect();
+  assert_eq!(advertised[..4], ["start_x", "start_y", "end_x", "end_y"]);
+  let inputs: Vec<_> = advertised[..4].iter().copied().zip(["120", "80", "320", "80"]).collect();
+  let adapters = core_invoke_adapters();
+  let adapter = adapters.iter().find(|adapter| adapter.command_id == "input.drag").expect("drag adapter");
+  let success = adapter
+    .invoke(McpInvokeInput {
+      target: None,
+      inputs: pairs(&inputs),
+      dry_run: true,
+      cancellation: Default::default(),
+    })
+    .await
+    .expect("screen-relative drag dry run should use typed defaults");
+
+  assert_eq!(success.result["relative_to"], "screen");
+  assert_eq!(success.result["button"], "left");
+  assert_eq!(success.result["duration_ms"], 300);
+  assert_eq!(success.result["screen_end"]["x"], 320.0);
+  assert!(success.result["action"].is_null());
+}
+
 #[tokio::test]
 async fn click_point_mcp_defaults_to_screen_coordinates_without_optional_inputs() {
   let adapters = core_invoke_adapters();

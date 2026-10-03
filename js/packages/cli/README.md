@@ -83,6 +83,35 @@ entrypoint at runtime, keep `*.node` files outside the ASAR with the packager's
 native-module/`asarUnpack` support. Keep the SDK independent of packaging policy
 so browser and remote-client consumers do not install a native executable.
 
+### Shipping your own macOS helper
+
+An application may ship the macOS helper under its own name, icon, bundle
+identifier, and Developer ID team instead of the official `AUV Helper`. Build
+it with `crates/auv-device-helper-macos/package/package.sh` and its
+`AUV_MACOS_HELPER_*` overrides, notarize and staple it, and embed the unpacked
+app in the application bundle without re-signing it (for example
+`YourApp.app/Contents/Library/Helpers/`). Pass that absolute path to both the
+daemon and setup:
+
+```ts
+import path from 'node:path'
+import process from 'node:process'
+
+import { installMacosHelper } from '@auv-js/cli'
+import { startAuv } from '@auv-js/sdk/node'
+
+const helperApp = path.join(process.resourcesPath, '..', 'Library', 'Helpers', 'Your Computer Use.app')
+
+const status = await installMacosHelper({ helperApp })
+const daemon = await startAuv({ binaryPath, platforms: { macos: { helperApp } } })
+```
+
+AUV reads the bundle identifier and Team ID from that app's signature, installs
+a copy under `~/Library/Application Support/<bundle identifier>/`, and the
+daemon trusts only that identity. The CLI equivalent is
+`auv setup macos-helper install --helper-app <path>`. See the
+[helper setup reference](../../../docs/ai/references/session-api/2026-10-01-macos-helper-setup.md#shipped-helper-identity).
+
 Supported packages currently cover macOS arm64/x64, glibc Linux arm64/x64, and
 Windows x64. Installing with optional dependencies disabled leaves no binary;
 `binaryPath()` reports that case with an actionable error.

@@ -163,6 +163,24 @@ its theme. Native SVG and shadow support currently requires macOS; use an AUV
 binary with overlay host theme support. See the [theme reference](../../../docs/ai/references/driver/2026-09-07-overlay-host-theme.md)
 for SVG artwork, status colors, and the raw environment format for other hosts.
 
+An application that ships its own macOS locked-session helper (its own name,
+icon, bundle identifier, and Developer ID team) passes the embedded app to the
+daemon so it trusts that helper instead of the official AUV Helper:
+
+```ts
+const daemon = await startAuv({
+  binaryPath,
+  platforms: {
+    macos: { helperApp: '/Applications/YourApp.app/Contents/Library/Helpers/Your Computer Use.app' },
+  },
+})
+```
+
+Pass the same path to `installMacosHelper({ helperApp })` from `@auv-js/cli`.
+`platforms.macos.helperApp` overrides any `AUV_MACOS_HELPER_APP` from the
+inherited or supplied environment and is ignored on other platforms. See
+[shipping your own macOS helper](../cli/README.md#shipping-your-own-macos-helper).
+
 ### Connect as a plugin/runner through `AUV_CONTEXT`
 
 `auv` cli has similar plugin capability like `kubectl` or `git`. You can build a `auv` plugin in Node.js, and when you have `auv-some-plugin` in your `PATH`, you can invoke it as:

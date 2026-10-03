@@ -7,6 +7,11 @@ Update 2026-09-23: [Native validation](2026-09-23-held-input-native-validation.m
 adds Windows posted-message/RDP and Linux GNOME/uinput receipt, plus isolated
 Portal protocol receipt. Live Portal and macOS desktop receipt remain pending.
 
+Update 2026-10-01: `auv invoke input.drag` exposes the complete DragMouse
+gesture to the CLI, MCP, and selected Runner routes. See
+[Invoke drag command](#invoke-drag-command). Cross-call MouseDown and MouseUp
+remain outside invoke.
+
 The owner approved primitive mouse input, complete hold/drag composition,
 logical mice, and conservative shared-resource scheduling. The implementation
 covers macOS, Windows, and Linux desktop routes, plus existing macOS PID-targeted
@@ -114,12 +119,83 @@ Started and terminal events are retained, and a single downstream handoff slot
 applies transport backpressure without buffering progress history. Disconnecting
 the receiver cancels even an operation still waiting for admission.
 
+## Invoke drag command
+
+`input.drag <START_X> <START_Y> <END_X> <END_Y>` is the invoke frontend for
+DragMouse. It is available on macOS, Windows, and Linux, and it uses the target
+and coordinate rules of `input.clickPoint`.
+
+- The command builds one straight cubic segment in screen coordinates. It
+  samples motion at 60 Hz over `--duration-ms`, which defaults to 300 and
+  accepts 0 through 30000. `--button` selects left, right, or middle.
+- A screen basis and a display basis use foreground desktop delivery. A window
+  basis, selected by `app:` or `window:`, calls `WindowInput::drag` with
+  `--input-policy`, which defaults to background preferred, like a window
+  click:
+  - Background policies use the window-targeted route on macOS and Windows,
+    without moving the pointer. Linux has no window-targeted pointer route,
+    so `background-preferred` focuses the window through AT-SPI and uses the
+    foreground portal, and `background-only` is rejected.
+  - `foreground-preferred` foregrounds the window as a foreground click does
+    (macOS input preparation, Windows `SetForegroundWindow`, Linux AT-SPI
+    focus) and then uses the desktop drag.
+  - No route falls back after a background drag reports `delivered`, because
+    delivery does not show whether the application consumed the gesture.
+  - Windows and Linux adapters compile from the same shape as their click
+    adapters. They have not been run.
+- Window and display bases require both endpoints inside the target frame.
+  `--normalized` applies to all four coordinates.
+- Local invoke and MCP call the local driver session. A selected Device or Run
+  sends the same plan to the Runner as one DragMouse request. DragMouse has no
+  window policy, so the Runner route refuses `foreground-preferred` before any
+  I/O (`TODO(drag-runner-window-policy)` in `crates/auv-cli-invoke/src/runner.rs`).
+- The result reports both requested and screen endpoints, the resolved window
+  or display, the final pointer position, and InputActionResult. It does not
+  verify the application drop. Callers verify that result separately.
+- Each invoke process ends after the command. Therefore invoke does not expose
+  cross-call MouseDown or MouseUp. `TODO(invoke-mouse-hold)` in
+  `crates/auv-cli-invoke/src/commands/input.rs` marks this deferral.
+
+### Live macOS observations (2026-10-02)
+
+Evidence level: one manual session on macOS 26 with an external display. These
+observations do not establish support across applications or OS versions.
+
+- **Foreground screen drag, Chrome receiver page.** A listen-only CGEventTap
+  recorded `mouseMoved` at the start point, one `leftMouseDown`
+  (`clickState=1`), 18 `leftMouseDragged` events about 16 ms apart along the
+  line, and one `leftMouseUp` (`clickState=0`). With the terminal frontmost and
+  Chrome inactive, the page element did not move. After `app.activate` for
+  Chrome, the same drag moved the element (owner observation). An inactive
+  window can therefore consume the first press as activation only.
+- **Window-targeted drag, inactive TextEdit.** A drag across the first text
+  line of an 84-character document reported `delivered`,
+  `window_targeted_mouse`, and no disturbance. TextEdit stayed inactive, and
+  its AX selected range stayed `(84, 0)`. A window-targeted
+  `input.clickPoint` at the same point and at an empty point near the bottom
+  left the range unchanged too. `delivered` is not consumption evidence (gap
+  review BG-7).
+- **Same drag, active TextEdit.** After `app.activate` for TextEdit, the same
+  window-targeted drag selected `(1, 40)` without moving the pointer. A
+  foreground screen drag over the same line, after a click collapsed the
+  selection, also selected `(1, 40)`. The NSTextView therefore ignored the
+  window-targeted events only while TextEdit was inactive.
+- **`--input-policy foreground-preferred`, inactive TextEdit.** With Chrome
+  frontmost, a window drag over the second line foregrounded TextEdit, used
+  `foreground_system_events`, reported `focus_disturbance: foreground`, and
+  selected `(73, 9)`. The document length stayed 84 characters.
+- The foreground route leaves the pointer at the end point; only the click and
+  scroll paths warp it back. `InputActionResult` still reports
+  `mouse_disturbance: temporary` for a drag.
+- The 2026-09-19 window-route receipt came from a fixture NSView that handles
+  raw mouse events directly. It does not cover standard AppKit controls.
+
 ## Platform boundaries
 
 | Route | Implementation | Evidence boundary |
 | --- | --- | --- |
-| macOS desktop | CGEvent down/dragged/up | Native build; live receipt pending |
-| macOS window | Fixed window/PID, window-local stamping, postToPid | AppKit receiver observed down → dragged → up on 2026-09-19 |
+| macOS desktop | CGEvent down/dragged/up | 2026-10-02: event-tap sequence recorded; Chrome page drag after activation (owner observation) |
+| macOS window | Fixed window/PID, window-local stamping, postToPid | Fixture NSView observed down → dragged → up on 2026-09-19; on 2026-10-02 a TextEdit NSTextView consumed a drag only while TextEdit was active (AX readback) |
 | Windows desktop | SendInput button transitions and absolute motion | Win32 receiver in Windows 11 RDP session: 15 cases passed on 2026-09-23 |
 | Windows window | Fixed child HWND, button mask on WM_MOUSEMOVE, posted down/up | Hidden Win32 receiver: 15 cases passed on 2026-09-23 |
 | Linux Portal | Retained RemoteDesktop session, button/motion calls | Native tests and isolated D-Bus held receipt passed on 2026-09-23; live receipt blocked by missing RemoteDesktop interface |

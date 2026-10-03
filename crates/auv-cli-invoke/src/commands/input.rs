@@ -12,6 +12,8 @@ pub fn group() -> CommandGroup {
   // unregistered until owner-approved implementations have behavioral evidence.
   // TODO(invoke-keyboard-hold): cross-call holds need a persistent invoke owner
   // and release route; expose them here after that frontend lifecycle is defined.
+  // TODO(invoke-mouse-hold): cross-call mouseDown/mouseUp have the same owner and
+  // release requirement. input.drag exposes only the complete one-admission gesture.
   CommandGroup::new("input", "INPUT")
     .command(focus_text_input_invoke_command())
     .command(ax_focus_text_input_invoke_command())
@@ -24,6 +26,7 @@ pub fn group() -> CommandGroup {
     .command(input_keyboard_invoke_command())
     .command(move_mouse_invoke_command())
     .command(click_point_invoke_command())
+    .command(drag_invoke_command())
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -367,24 +370,7 @@ async fn execute_hold_keys(
   }
 
   // Dropping the invoke future wakes the held-key wait, including RPC cancellation.
-  struct CancelOnDrop(std::sync::Arc<auv_driver::input_cancellation::InputCancellation>);
-  impl Drop for CancelOnDrop {
-    fn drop(&mut self) {
-      self.0.cancel();
-    }
-  }
-
-  let signal = std::sync::Arc::new(auv_driver::input_cancellation::InputCancellation::default());
-  let guard = CancelOnDrop(signal.clone());
-
-  let action = tokio::select! {
-    _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
-    result = tokio::task::spawn_blocking(move || auv_driver::input_cancellation::with_input_cancellation(signal, || {
-      session.input().hold_keys(&target, keys, policy, duration)
-    })) => result.map_err(|error| format!("input task failed: {error}"))??,
-  };
-
-  drop(guard);
+  let action = run_cancellable_input(&input.cancellation, move || session.input().hold_keys(&target, keys, policy, duration)).await?;
   targeted_keyboard_output(Some(&action)).map_err(Into::into)
 }
 
@@ -566,7 +552,8 @@ impl RelativeToArg {
 
 impl ClickPointArgs {
   fn basis(&self, target: Option<&crate::ExecutionTarget>) -> Result<RelativeToArg, String> {
-    let basis = click_point_basis(
+    let basis = point_basis(
+      "input.clickPoint",
       target,
       self.relative_to.map(RelativeToArg::as_str),
       self.normalized,
@@ -594,7 +581,9 @@ impl ClickPointArgs {
   }
 }
 
-pub(crate) fn click_point_basis(
+/// Resolves and validates the coordinate basis shared by point-based input commands.
+pub(crate) fn point_basis(
+  command_id: &str,
   target: Option<&crate::ExecutionTarget>,
   relative_to: Option<&str>,
   normalized: bool,
@@ -605,7 +594,7 @@ pub(crate) fn click_point_basis(
     Some("screen") => RelativeToArg::Screen,
     Some("window") => RelativeToArg::Window,
     Some("display") => RelativeToArg::Display,
-    Some(value) => return Err(format!("input.clickPoint has unknown --relative-to {value:?}")),
+    Some(value) => return Err(format!("{command_id} has unknown --relative-to {value:?}")),
     None => match target {
       None => RelativeToArg::Screen,
       Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. }) => RelativeToArg::Window,
@@ -616,18 +605,18 @@ pub(crate) fn click_point_basis(
     (None, RelativeToArg::Screen)
     | (Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. }), RelativeToArg::Window)
     | (Some(crate::ExecutionTarget::Display { .. }), RelativeToArg::Display) => {}
-    (None, RelativeToArg::Window) => return Err("input.clickPoint --relative-to window requires --target app: or window:".to_string()),
-    (None, RelativeToArg::Display) => return Err("input.clickPoint --relative-to display requires --target display:".to_string()),
-    (Some(_), _) => return Err(format!("input.clickPoint --target kind is incompatible with --relative-to {}", basis.as_str())),
+    (None, RelativeToArg::Window) => return Err(format!("{command_id} --relative-to window requires --target app: or window:")),
+    (None, RelativeToArg::Display) => return Err(format!("{command_id} --relative-to display requires --target display:")),
+    (Some(_), _) => return Err(format!("{command_id} --target kind is incompatible with --relative-to {}", basis.as_str())),
   }
   if normalized && basis == RelativeToArg::Screen {
-    return Err("input.clickPoint --normalized is valid only relative to a window or display".to_string());
+    return Err(format!("{command_id} --normalized is valid only relative to a window or display"));
   }
   if has_input_policy && basis != RelativeToArg::Window {
-    return Err("input.clickPoint --input-policy is valid only with --relative-to window".to_string());
+    return Err(format!("{command_id} --input-policy is valid only with --relative-to window"));
   }
   if has_title && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
-    return Err("input.clickPoint --title requires --target app:".to_string());
+    return Err(format!("{command_id} --title requires --target app:"));
   }
   Ok(basis)
 }
@@ -696,7 +685,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
             .ok_or_else(|| format!("input.clickPoint could not find window target {id:?}"))?,
           crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
         };
-        let point = resolve_local_point(args.x, args.y, args.normalized, window.frame.size, "window")?;
+        let point = resolve_local_point("input.clickPoint", args.x, args.y, args.normalized, window.frame.size, "window")?;
         let window_point = auv_driver::WindowPoint::new(point.x, point.y);
         let screen_point = ScreenPoint::new(window.frame.origin.x + point.x, window.frame.origin.y + point.y);
         let action = if input.dry_run {
@@ -730,7 +719,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           .into_iter()
           .find(|display| display.id == *id)
           .ok_or_else(|| format!("input.clickPoint could not find display target {id:?}"))?;
-        let point = resolve_local_point(args.x, args.y, args.normalized, display.frame.size, "display")?;
+        let point = resolve_local_point("input.clickPoint", args.x, args.y, args.normalized, display.frame.size, "display")?;
         let screen_point = ScreenPoint::new(display.frame.origin.x + point.x, display.frame.origin.y + point.y);
         let action = if input.dry_run {
           None
@@ -761,6 +750,7 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
 }
 
 pub(crate) fn resolve_local_point(
+  command_id: &str,
   x: f64,
   y: f64,
   normalized: bool,
@@ -774,7 +764,7 @@ pub(crate) fn resolve_local_point(
   };
   if !(0.0..=size.width).contains(&point.x) || !(0.0..=size.height).contains(&point.y) {
     return Err(format!(
-      "input.clickPoint point {},{} is outside target {basis} bounds 0..={},0..={}",
+      "{command_id} point {},{} is outside target {basis} bounds 0..={},0..={}",
       point.x, point.y, size.width, size.height
     ));
   }
@@ -798,6 +788,303 @@ pub fn click_point_output(result: ClickPointResult) -> InvokeCommandResult {
     fields.push(InvokeReportField::new("Display ID", display.id.clone()));
   }
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(
+  after_long_help = "Examples:\n  auv invoke input.drag 400 300 700 300\n  auv invoke input.drag 0.2 0.5 0.8 0.5 --target app:com.apple.TextEdit --relative-to window --normalized\n  auv invoke input.drag 20 38 380 38 --target app:com.apple.TextEdit --input-policy foreground-preferred\n  auv invoke input.drag 100 80 300 80 --target display:1 --button right --duration-ms 600\nThe button goes down at the start point, the pointer moves in a straight line, and the button goes up at the end point under one input admission. Screen and display drags move the real pointer; activate the target app first, because an inactive window can treat the first press as activation only. Window-relative drags default to background-preferred: window-targeted delivery that does not move the pointer, which an inactive application can ignore. Use --input-policy foreground-preferred to foreground the window before a desktop drag. Delivery does not verify the application drop result."
+)]
+struct DragArgs {
+  /// Start X coordinate in the selected coordinate basis.
+  start_x: f64,
+  /// Start Y coordinate in the selected coordinate basis.
+  start_y: f64,
+  /// End X coordinate in the selected coordinate basis.
+  end_x: f64,
+  /// End Y coordinate in the selected coordinate basis.
+  end_y: f64,
+  /// Mouse button held during the drag: left, right, or middle. Defaults to left.
+  #[arg(long, default_value = "left", value_parser = ["left", "right", "middle"])]
+  #[serde(default = "default_click_button")]
+  button: String,
+  /// Coordinate basis. Defaults from --target: screen, window, or display.
+  #[arg(long, value_enum)]
+  #[serde(rename = "relative-to", default)]
+  relative_to: Option<RelativeToArg>,
+  /// Interpret all coordinates as normalized values in 0..=1.
+  #[arg(long)]
+  #[serde(default)]
+  normalized: bool,
+  /// Window title text used with an app target.
+  #[arg(long, value_name = "TEXT")]
+  title: Option<String>,
+  /// Window input delivery policy. Valid only with --relative-to window.
+  #[arg(long, value_enum)]
+  #[serde(rename = "input-policy")]
+  input_policy: Option<InputPolicyArg>,
+  /// Pointer travel time from start to end in milliseconds (0..=30000).
+  #[arg(long, default_value_t = DEFAULT_DRAG_DURATION_MS)]
+  #[serde(rename = "duration-ms", default = "default_drag_duration_ms")]
+  duration_ms: u64,
+}
+
+// NOTICE: Many toolkits start a drag only after pointer motion passes a
+// threshold, so the default keeps a visible travel time instead of a jump.
+const DEFAULT_DRAG_DURATION_MS: u64 = 300;
+const MAX_DRAG_DURATION_MS: u64 = 30_000;
+
+fn default_drag_duration_ms() -> u64 {
+  DEFAULT_DRAG_DURATION_MS
+}
+
+/// A validated drag request before its coordinates are resolved against a
+/// window or display. Local and Runner execution share this plan.
+#[derive(Clone, Debug)]
+pub(crate) struct DragPlan {
+  pub(crate) basis: RelativeToArg,
+  pub(crate) start: auv_driver::Point,
+  pub(crate) end: auv_driver::Point,
+  pub(crate) normalized: bool,
+  pub(crate) title: Option<String>,
+  pub(crate) button: auv_driver::MouseButton,
+  pub(crate) duration: std::time::Duration,
+  /// Window delivery policy; `None` selects the driver default.
+  pub(crate) policy: Option<auv_driver::InputPolicy>,
+}
+
+impl DragArgs {
+  fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<DragPlan, String> {
+    let basis = point_basis(
+      "input.drag",
+      target,
+      self.relative_to.map(RelativeToArg::as_str),
+      self.normalized,
+      self.input_policy.is_some(),
+      self.title.is_some(),
+    )?;
+    let coordinates = [self.start_x, self.start_y, self.end_x, self.end_y];
+    if coordinates.iter().any(|value| !value.is_finite()) {
+      return Err("input.drag requires finite coordinates".to_string());
+    }
+    if self.normalized && coordinates.iter().any(|value| !(0.0..=1.0).contains(value)) {
+      return Err("input.drag --normalized coordinates must be within 0..=1".to_string());
+    }
+    if self.duration_ms > MAX_DRAG_DURATION_MS {
+      return Err(format!("input.drag --duration-ms must be within 0..={MAX_DRAG_DURATION_MS}"));
+    }
+    Ok(DragPlan {
+      basis,
+      start: auv_driver::Point::new(self.start_x, self.start_y),
+      end: auv_driver::Point::new(self.end_x, self.end_y),
+      normalized: self.normalized,
+      title: self.title.clone(),
+      button: parse_click_button(Some(&self.button))?,
+      duration: std::time::Duration::from_millis(self.duration_ms),
+      policy: self.input_policy.map(InputPolicyArg::driver_policy),
+    })
+  }
+}
+
+impl DragPlan {
+  /// Projects both endpoints from a window or display frame into screen space.
+  pub(crate) fn screen_points(&self, frame: auv_driver::Rect, basis: &str) -> Result<(ScreenPoint, ScreenPoint), crate::InvokeFailure> {
+    let local = |point: auv_driver::Point| {
+      resolve_local_point("input.drag", point.x, point.y, self.normalized, frame.size, basis)
+        .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))
+    };
+    let (start, end) = (local(self.start)?, local(self.end)?);
+    Ok((
+      ScreenPoint::new(frame.origin.x + start.x, frame.origin.y + start.y),
+      ScreenPoint::new(frame.origin.x + end.x, frame.origin.y + end.y),
+    ))
+  }
+
+  /// Builds one straight drag path in screen coordinates. Window-targeted
+  /// delivery also takes screen points; the driver stamps window-local positions.
+  pub(crate) fn movement(&self, target: auv_driver::InputTarget, start: ScreenPoint, end: ScreenPoint) -> auv_driver::MoveMouseRequest {
+    // A cubic segment with controls at 1/3 and 2/3 of the chord is the straight
+    // line. Curve points are offsets from the curve start, mapped at scale 1.
+    let (dx, dy) = (end.point().x - start.point().x, end.point().y - start.point().y);
+    let mut request = auv_driver::MoveMouseRequest::direct(start.point());
+    request.target = Some(target);
+    request.curve.segments.push(auv_driver::MouseCubicBezierSegment {
+      control_1: auv_driver::Point::new(dx / 3.0, dy / 3.0),
+      control_2: auv_driver::Point::new(dx * 2.0 / 3.0, dy * 2.0 / 3.0),
+      end: auv_driver::Point::new(dx, dy),
+    });
+    // NOTICE: 60 Hz sampling gives toolkits regular motion events during the
+    // drag. A 0.5 point tolerance only affects curves; this path is straight.
+    request.options = auv_driver::MouseMotionOptions {
+      duration: self.duration,
+      sample_rate_hz: 60,
+      curve_tolerance: 0.5,
+    };
+    request
+  }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct DragResult {
+  pub relative_to: String,
+  pub requested_start: auv_driver::Point,
+  pub requested_end: auv_driver::Point,
+  pub normalized: bool,
+  pub screen_start: ScreenPoint,
+  pub screen_end: ScreenPoint,
+  pub button: auv_driver::MouseButton,
+  pub duration_ms: u64,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub window: Option<auv_driver::Window>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub display: Option<auv_driver::Display>,
+  /// Pointer position the driver reports after release.
+  pub final_point: Option<ScreenPoint>,
+  pub action: Option<auv_driver::InputActionResult>,
+}
+
+impl DragResult {
+  pub(crate) fn planned(plan: &DragPlan, screen_start: ScreenPoint, screen_end: ScreenPoint) -> Self {
+    Self {
+      relative_to: plan.basis.as_str().to_string(),
+      requested_start: plan.start,
+      requested_end: plan.end,
+      normalized: plan.normalized,
+      screen_start,
+      screen_end,
+      button: plan.button,
+      duration_ms: u64::try_from(plan.duration.as_millis()).unwrap_or(u64::MAX),
+      window: None,
+      display: None,
+      final_point: None,
+      action: None,
+    }
+  }
+}
+
+#[invoke_command(
+  id = "input.drag",
+  target = OptionalPoint,
+  group = "input",
+  description = "Press a mouse button, move in a straight line, and release it at the end point.",
+  input = DragArgs,
+)]
+async fn drag(input: InvokeCommandInput, args: DragArgs) -> crate::InvokeExecutionResult {
+  let plan = args.plan(input.target.as_ref()).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+  execute_drag(&input, plan).await
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+async fn execute_drag(input: &InvokeCommandInput, plan: DragPlan) -> crate::InvokeExecutionResult {
+  // Screen-relative validation needs no target lookup, so its dry run stays hermetic.
+  let session = match (plan.basis, input.dry_run) {
+    (RelativeToArg::Screen, true) => None,
+    _ => Some(auv::local::open()?),
+  };
+  let mut result = match plan.basis {
+    RelativeToArg::Screen => {
+      DragResult::planned(&plan, ScreenPoint::new(plan.start.x, plan.start.y), ScreenPoint::new(plan.end.x, plan.end.y))
+    }
+    RelativeToArg::Window => {
+      let session = session.as_ref().expect("window resolution opens a session");
+      let window = match input.target.as_ref().expect("window-relative target validated") {
+        crate::ExecutionTarget::Application { id } => session.window().resolve(click_window_selector(id, plan.title.as_deref()))?,
+        crate::ExecutionTarget::Window { id } => {
+          session.window().list()?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
+            crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find window target {id:?}"))
+          })?
+        }
+        crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
+      };
+      let (start, end) = plan.screen_points(window.frame, "window")?;
+      let mut result = DragResult::planned(&plan, start, end);
+      result.window = Some(window);
+      result
+    }
+    RelativeToArg::Display => {
+      let crate::ExecutionTarget::Display { id } = input.target.as_ref().expect("display-relative target validated") else {
+        unreachable!("target/basis validated")
+      };
+      let session = session.as_ref().expect("display resolution opens a session");
+      let display = session.display().list()?.displays.into_iter().find(|display| display.id == *id).ok_or_else(|| {
+        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find display target {id:?}"))
+      })?;
+      let (start, end) = plan.screen_points(display.frame, "display")?;
+      let mut result = DragResult::planned(&plan, start, end);
+      result.display = Some(display);
+      result
+    }
+  };
+  if input.dry_run {
+    return drag_output(result).map_err(Into::into);
+  }
+
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let session = session.expect("delivery opens a session");
+  let movement = plan.movement(auv_driver::InputTarget::Foreground, result.screen_start, result.screen_end);
+  let button = plan.button;
+  // Window points use the driver's window drag policy, like a window click.
+  // Screen and display points use the desktop drag directly.
+  let (point, action) = match result.window.clone() {
+    Some(window) => {
+      let policy = plan.policy.unwrap_or_default();
+      run_cancellable_input(&input.cancellation, move || session.window().drag(&window, movement, button, policy)).await?
+    }
+    None => run_cancellable_input(&input.cancellation, move || session.input().drag_mouse(movement, button)).await?,
+  };
+  emit_input_action_result(&action);
+  result.final_point = Some(ScreenPoint::new(point.x, point.y));
+  result.action = Some(action);
+  drag_output(result).map_err(Into::into)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+async fn execute_drag(_input: &InvokeCommandInput, _plan: DragPlan) -> crate::InvokeExecutionResult {
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.drag is unavailable on this platform"))
+}
+
+pub fn drag_output(result: DragResult) -> InvokeCommandResult {
+  let mut fields = match result.action.as_ref() {
+    Some(action) => input_action_report_fields(action),
+    None => vec![
+      InvokeReportField::new("Delivery", "not_performed"),
+      InvokeReportField::new("Verification", "validation_only"),
+    ],
+  };
+  fields.push(InvokeReportField::new("Relative to", result.relative_to.clone()));
+  fields.push(InvokeReportField::new("Screen start", format!("{:.1},{:.1}", result.screen_start.point().x, result.screen_start.point().y)));
+  fields.push(InvokeReportField::new("Screen end", format!("{:.1},{:.1}", result.screen_end.point().x, result.screen_end.point().y)));
+  fields.push(InvokeReportField::new("Duration", format!("{} ms", result.duration_ms)));
+  if let Some(window) = &result.window {
+    fields.push(InvokeReportField::new("Window ID", window.reference.id.clone()));
+  }
+  if let Some(display) = &result.display {
+    fields.push(InvokeReportField::new("Display ID", display.id.clone()));
+  }
+  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+/// Runs one blocking driver input on the blocking pool. Invoke cancellation,
+/// or dropping the invoke future, wakes waits inside the driver input.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn run_cancellable_input<T: Send + 'static>(
+  cancellation: &crate::InvokeCancellation,
+  operation: impl FnOnce() -> auv_driver::DriverResult<T> + Send + 'static,
+) -> Result<T, crate::InvokeFailure> {
+  struct CancelOnDrop(std::sync::Arc<auv_driver::input_cancellation::InputCancellation>);
+  impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+      self.0.cancel();
+    }
+  }
+
+  let signal = std::sync::Arc::new(auv_driver::input_cancellation::InputCancellation::default());
+  let _guard = CancelOnDrop(signal.clone());
+  tokio::select! {
+    _ = cancellation.cancelled() => Err("invoke cancelled".to_string().into()),
+    result = tokio::task::spawn_blocking(move || auv_driver::input_cancellation::with_input_cancellation(signal, operation)) => {
+      Ok(result.map_err(|error| format!("input task failed: {error}"))??)
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -987,6 +1274,14 @@ pub(crate) fn decode_keyboard_input(input: &InvokeCommandInput) -> Result<Vec<au
     "input.keyboard" => decode_args::<InputKeyboardArgs>(input)?.into_keyboard_inputs(),
     _ => Err(format!("{} is not a keyboard input command", input.command_id)),
   }
+}
+
+/// Runner dispatch decodes transport arguments once. Local handlers already
+/// receive typed arguments; both validate through `DragArgs::plan`.
+pub(crate) fn decode_drag(input: &InvokeCommandInput) -> Result<DragPlan, crate::InvokeFailure> {
+  crate::command::decode_args::<DragArgs>(input)
+    .and_then(|args| args.plan(input.target.as_ref()))
+    .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))
 }
 
 pub(crate) fn decode_hold_keys(

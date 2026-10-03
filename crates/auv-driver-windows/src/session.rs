@@ -331,6 +331,27 @@ impl WindowInput for WindowApi<'_> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.scroll_impl(window, point, scroll, options)
   }
+
+  /// `ForegroundPreferred` foregrounds the window like a foreground click and
+  /// uses the `SendInput` desktop drag. Background policies post the held
+  /// gesture to the window's child receiver without raising it.
+  fn drag(
+    &self,
+    window: &Window,
+    mut movement: auv_driver_common::MoveMouseRequest,
+    button: auv_driver_common::MouseButton,
+    policy: InputPolicy,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    if !matches!(policy, InputPolicy::ForegroundPreferred) {
+      movement.target = Some(auv_driver_common::InputTarget::Window(window.clone()));
+      return self.session.input().drag_mouse(movement, button);
+    }
+    let activation_attempt = foreground_window_attempt(window, "pointer drag");
+    movement.target = Some(auv_driver_common::InputTarget::Foreground);
+    let (point, mut result) = self.session.input().drag_mouse(movement, button)?;
+    result.attempts.insert(0, activation_attempt);
+    Ok((point, result))
+  }
 }
 
 /// Foregrounds `window` before a foreground-only input delivery, reporting the

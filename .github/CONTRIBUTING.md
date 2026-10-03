@@ -83,6 +83,20 @@ The `.prototools` file records the Buf plugin source for tools that understand
 proto tool plugin manifests. The Nix dev shell remains the expected setup for
 schema work in this repository.
 
+## Release Homebrew formula
+
+Stable GitHub releases update
+[`moeru-ai/homebrew-tap`](https://github.com/moeru-ai/homebrew-tap)
+automatically. The `Update Homebrew` workflow downloads the two published
+macOS checksum files, renders `Formula/auv.rb`, and pushes it to the tap. The
+tap then installs and tests the formula on Intel and Apple Silicon runners.
+
+The AUV repository must have an Actions secret named
+`HOMEBREW_TAP_GITHUB_TOKEN`. Use a fine-grained GitHub personal access token
+with read and write `Contents` permission limited to `moeru-ai/homebrew-tap`.
+The workflow can also be dispatched manually with a stable release tag to
+retry or backfill an update.
+
 ## Before commit
 
 Before committing Rust changes, run:

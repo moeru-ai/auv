@@ -58,6 +58,24 @@ export interface AuvDaemonExit {
   readonly signal: NodeJS.Signals | null
 }
 
+/** macOS-specific launch configuration for an app-owned daemon. */
+export interface AuvMacosOptions {
+  /**
+   * Absolute path of the unpacked, notarized helper app shipped by the
+   * application embedding AUV, for example
+   * `YourApp.app/Contents/Library/Helpers/Your Computer Use.app`.
+   * The daemon then trusts only the bundle identifier and Team ID signed into
+   * that app instead of the official AUV Helper. Pass the same path to the
+   * `@auv-js/cli` setup functions so they install and inspect that helper.
+   */
+  helperApp?: string
+}
+
+/** Platform-specific launch configuration; ignored on other platforms. */
+export interface AuvPlatformOptions {
+  macos?: AuvMacosOptions
+}
+
 /** Options for starting one app-owned `auv serve` child process. */
 export interface StartAuvOptions extends OperationOptions {
   /**
@@ -87,6 +105,8 @@ export interface StartAuvOptions extends OperationOptions {
   overlay?: AuvOverlayOptions
   /** Durable short-token and Device-bearer authentication store. */
   pairingStore?: string
+  /** Platform-specific daemon configuration. */
+  platforms?: AuvPlatformOptions
   /**
    * Operator-trusted custom Runner provider manifests.
    * @default []
@@ -149,7 +169,8 @@ export class AuvDaemonStartError extends Error {
  * - A Node.js host owns the daemon's lifetime and launch configuration.
  *
  * Expects:
- * - A compatible AUV binary; explicit overlay themes replace environment themes.
+ * - A compatible AUV binary; explicit overlay themes and macOS helper apps
+ *   replace their environment equivalents.
  *
  * Returns:
  * - A healthy daemon handle with connection and shutdown methods.
@@ -170,6 +191,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     noDiscovery,
     overlay,
     pairingStore,
+    platforms,
     runnerProviders,
     shutdownTimeoutMs,
     signal,
@@ -233,6 +255,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
         ...process.env,
         ...environment,
         ...(overlay?.theme === undefined ? {} : { AUV_OVERLAY_THEME: serializeOverlayTheme(overlay.theme) }),
+        ...(platforms?.macos?.helperApp === undefined ? {} : { AUV_MACOS_HELPER_APP: platforms.macos.helperApp }),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

@@ -272,6 +272,37 @@ impl WindowInput for WindowApi<'_> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     self.scroll_impl(window, point, scroll, options)
   }
+
+  /// Linux has no window-targeted pointer route, so every accepted policy
+  /// focuses the window through AT-SPI and drags through the foreground portal,
+  /// matching `click`.
+  fn drag(
+    &self,
+    window: &Window,
+    mut movement: auv_driver_common::MoveMouseRequest,
+    button: auv_driver_common::MouseButton,
+    policy: InputPolicy,
+  ) -> DriverResult<(Point, InputActionResult)> {
+    if matches!(policy, InputPolicy::BackgroundOnly) {
+      return Err(invalid_input("linux window.drag cannot use background_only input policy"));
+    }
+    let focus_attempts = match focus_node(window, "0") {
+      Ok(result) => result.attempts,
+      Err(error) => vec![InputAttempt::failure(
+        InputDeliveryPath::AxFocus,
+        format!("AT-SPI could not foreground the target window before pointer delivery: {error}"),
+      )],
+    };
+    movement.target = Some(auv_driver_common::InputTarget::Foreground);
+    let (point, mut result) = self.session.input().drag_mouse(movement, button)?;
+    result.attempts.splice(0..0, focus_attempts);
+    add_foreground_window_fallback_reason(
+      &mut result,
+      InputDeliveryPath::WindowTargetedMouse,
+      "linux window.drag used foreground RemoteDesktop portal input; Wayland window-targeted background pointer delivery is not available in this slice",
+    );
+    Ok((point, result))
+  }
 }
 
 fn add_foreground_window_fallback_reason(result: &mut InputActionResult, unavailable_path: InputDeliveryPath, reason: &str) {

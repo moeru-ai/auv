@@ -14,6 +14,10 @@ enum SetupCommand {
 
 #[derive(Clone, Debug, Args)]
 struct MacosHelperArgs {
+  /// Manage this unpacked, notarized helper app shipped by an application
+  /// embedding AUV instead of the official AUV Helper.
+  #[arg(long, global = true, value_name = "PATH", env = "AUV_MACOS_HELPER_APP")]
+  helper_app: Option<std::path::PathBuf>,
   #[command(subcommand)]
   command: MacosHelperCommand,
 }
@@ -26,7 +30,8 @@ enum MacosHelperCommand {
     #[arg(long)]
     json: bool,
   },
-  /// Install and register the signed helper embedded in this AUV build.
+  /// Install and register the signed helper embedded in this AUV build, or the
+  /// app named by `--helper-app`.
   Install {
     /// Emit a stable machine-readable result after installation.
     #[arg(long)]
@@ -48,32 +53,37 @@ pub fn run(args: SetupArgs) -> Result<i32, String> {
   #[cfg(target_os = "macos")]
   {
     match args.command {
-      SetupCommand::MacosHelper(args) => match args.command {
-        MacosHelperCommand::Status { json } => {
-          print_status(&auv_device_helper_macos::setup::status(), json)?;
-          Ok(0)
+      SetupCommand::MacosHelper(args) => {
+        let options = auv_device_helper_macos::setup::Options {
+          helper_app: args.helper_app,
+        };
+        match args.command {
+          MacosHelperCommand::Status { json } => {
+            print_status(&auv_device_helper_macos::setup::status(&options), json)?;
+            Ok(0)
+          }
+          MacosHelperCommand::Install { json } => {
+            let status = auv_device_helper_macos::setup::install(&options).map_err(|error| error.to_string())?;
+            print_status(&status, json)?;
+            Ok(0)
+          }
+          MacosHelperCommand::Uninstall { json } => {
+            let status = auv_device_helper_macos::setup::uninstall(&options).map_err(|error| error.to_string())?;
+            print_status(&status, json)?;
+            Ok(0)
+          }
+          MacosHelperCommand::OpenAccessibilitySettings => {
+            auv_device_helper_macos::setup::open_accessibility_settings().map_err(|error| error.to_string())?;
+            println!("opened macOS Accessibility settings for helper authorization");
+            Ok(0)
+          }
+          MacosHelperCommand::OpenBackgroundItemsSettings => {
+            auv_device_helper_macos::setup::open_background_items_settings(&options).map_err(|error| error.to_string())?;
+            println!("opened macOS Login Items settings for helper authorization");
+            Ok(0)
+          }
         }
-        MacosHelperCommand::Install { json } => {
-          let status = auv_device_helper_macos::setup::install().map_err(|error| error.to_string())?;
-          print_status(&status, json)?;
-          Ok(0)
-        }
-        MacosHelperCommand::Uninstall { json } => {
-          let status = auv_device_helper_macos::setup::uninstall().map_err(|error| error.to_string())?;
-          print_status(&status, json)?;
-          Ok(0)
-        }
-        MacosHelperCommand::OpenAccessibilitySettings => {
-          auv_device_helper_macos::setup::open_accessibility_settings().map_err(|error| error.to_string())?;
-          println!("opened macOS Accessibility settings for AUV Helper authorization");
-          Ok(0)
-        }
-        MacosHelperCommand::OpenBackgroundItemsSettings => {
-          auv_device_helper_macos::setup::open_background_items_settings().map_err(|error| error.to_string())?;
-          println!("opened macOS Login Items settings for AUV Helper authorization");
-          Ok(0)
-        }
-      },
+      }
     }
   }
 

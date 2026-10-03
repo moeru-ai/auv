@@ -11,6 +11,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-tooling:
+    name: release tooling
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: scripts/tests/render-homebrew-formula
+
   rust:
     strategy:
       fail-fast: false

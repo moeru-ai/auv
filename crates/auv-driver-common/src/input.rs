@@ -435,6 +435,20 @@ pub trait WindowInput {
   fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult>;
 
   fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult>;
+
+  /// Drags along `movement` while holding `button`, under one input admission.
+  /// Movement points are screen coordinates, and the adapter sets
+  /// `movement.target`. `ForegroundPreferred` foregrounds the window the same
+  /// way as `click` and then uses desktop input. Background policies use the
+  /// adapter's window-targeted route when it has one; otherwise the adapter
+  /// follows its `click` policy.
+  fn drag(
+    &self,
+    window: &Window,
+    movement: crate::MoveMouseRequest,
+    button: MouseButton,
+    policy: InputPolicy,
+  ) -> DriverResult<(crate::Point, InputActionResult)>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

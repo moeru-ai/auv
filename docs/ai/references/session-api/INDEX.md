@@ -21,7 +21,7 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 Count: **38**
 
 - [`2026-10-02-macos-helper-protocol-compatibility.md`](2026-10-02-macos-helper-protocol-compatibility.md) — helper usability decided by daemon wire-protocol range, not frontend version; forward-only upgrades, `frontend-outdated`, signed security-epoch revocation, and the `HOST_INCOMPATIBLE` reason.
-- [`2026-10-01-macos-helper-setup.md`](2026-10-01-macos-helper-setup.md) — shared Rust/CLI/N-API helper setup, embedded signed app release path, per-user `SMAppService` registration, and remaining clean-host gate.
+- [`2026-10-01-macos-helper-setup.md`](2026-10-01-macos-helper-setup.md) — shared Rust/CLI/N-API helper setup, embedded signed app release path, shipped helper identities (`helperApp` / `--helper-app`), per-user `SMAppService` registration, and remaining clean-host gate.
 - [`2026-09-28-remote-device-entry-implementation-design.md`](2026-09-28-remote-device-entry-implementation-design.md) — current locked-existing-session-first Device unlock contract and three-platform implementation plan; signed-out entry deferred.
 - [`2026-09-30-device-lock-contract-and-review.md`](2026-09-30-device-lock-contract-and-review.md) — experimental lock API/CLI/MCP contract, configuration-specific gate evidence, pairing experience, and prioritized architecture review.
 - [`2026-09-27-device-entry-credential-decision.md`](2026-09-27-device-entry-credential-decision.md) — accepted target-local persistent credential enrollment and deletion; pre-login storage requirements now deferred.
