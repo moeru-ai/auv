@@ -37,7 +37,7 @@ use auv_driver_overlay::{Overlay, ShowOptions};
 /// session surface across platforms.
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayApi<'a> {
-  session: &'a WindowsDriverSession,
+  _session: &'a WindowsDriverSession,
 }
 
 /// Window-targeted enumeration and resolution capabilities.
@@ -52,7 +52,7 @@ pub struct WindowApi<'a> {
 /// supplied capture's coordinate space.
 #[derive(Clone, Copy, Debug)]
 pub struct VisionApi<'a> {
-  session: &'a WindowsDriverSession,
+  _session: &'a WindowsDriverSession,
 }
 
 /// Foreground pointer and keyboard input capabilities.
@@ -62,7 +62,7 @@ pub struct VisionApi<'a> {
 /// accessibility-targeted input path.
 #[derive(Clone, Copy, Debug)]
 pub struct InputApi<'a> {
-  session: &'a WindowsDriverSession,
+  _session: &'a WindowsDriverSession,
 }
 
 /// Text and rich clipboard snapshot/restore/set capabilities.
@@ -73,7 +73,7 @@ pub struct InputApi<'a> {
 /// not just text.
 #[derive(Clone, Copy, Debug)]
 pub struct ClipboardApi<'a> {
-  session: &'a WindowsDriverSession,
+  _session: &'a WindowsDriverSession,
 }
 
 /// Process-level automation readiness capabilities.
@@ -83,7 +83,7 @@ pub struct ClipboardApi<'a> {
 /// instead of macOS TCC permissions.
 #[derive(Clone, Copy, Debug)]
 pub struct PermissionApi<'a> {
-  session: &'a WindowsDriverSession,
+  _session: &'a WindowsDriverSession,
 }
 
 /// Window accessibility tree inspection capabilities.
@@ -92,7 +92,7 @@ pub struct PermissionApi<'a> {
 /// Automation tree for a window instead of the macOS `AXUIElement` tree.
 #[derive(Clone, Copy, Debug)]
 pub struct AccessibilityApi<'a> {
-  session: &'a WindowsDriverSession,
+  _session: &'a WindowsDriverSession,
 }
 
 /// Overlay show/remove capabilities.
@@ -102,12 +102,12 @@ pub struct AccessibilityApi<'a> {
 #[cfg(feature = "overlay")]
 #[derive(Clone, Copy, Debug)]
 pub struct OverlayApi<'a> {
-  session: &'a WindowsDriverSession,
+  _session: &'a WindowsDriverSession,
 }
 
 impl WindowsDriverSession {
   pub fn display(&self) -> DisplayApi<'_> {
-    DisplayApi { session: self }
+    DisplayApi { _session: self }
   }
 
   pub fn window(&self) -> WindowApi<'_> {
@@ -115,42 +115,40 @@ impl WindowsDriverSession {
   }
 
   pub fn vision(&self) -> VisionApi<'_> {
-    VisionApi { session: self }
+    VisionApi { _session: self }
   }
 
   pub fn input(&self) -> InputApi<'_> {
-    InputApi { session: self }
+    InputApi { _session: self }
   }
 
   pub fn clipboard(&self) -> ClipboardApi<'_> {
-    ClipboardApi { session: self }
+    ClipboardApi { _session: self }
   }
 
   pub fn permission(&self) -> PermissionApi<'_> {
-    PermissionApi { session: self }
+    PermissionApi { _session: self }
   }
 
   pub fn accessibility(&self) -> AccessibilityApi<'_> {
-    AccessibilityApi { session: self }
+    AccessibilityApi { _session: self }
   }
 
   #[cfg(feature = "overlay")]
   pub fn overlay(&self) -> OverlayApi<'_> {
-    OverlayApi { session: self }
+    OverlayApi { _session: self }
   }
 }
 
 #[cfg(feature = "overlay")]
 impl OverlayApi<'_> {
   pub fn show(&self, overlay: &Overlay, options: ShowOptions) -> DriverResult<()> {
-    let _ = self.session;
     auv_driver_overlay::show(overlay, options).map_err(|error| DriverError::Backend {
       message: error.to_string(),
     })
   }
 
   pub fn remove(&self) -> DriverResult<()> {
-    let _ = self.session;
     auv_driver_overlay::remove().map_err(|error| DriverError::Backend {
       message: error.to_string(),
     })
@@ -159,24 +157,20 @@ impl OverlayApi<'_> {
 
 impl WindowApi<'_> {
   pub fn list(&self) -> DriverResult<Vec<Window>> {
-    let _ = self.session;
     list_windows()
   }
 
   pub fn resolve(&self, selector: WindowSelector) -> DriverResult<Window> {
-    let _ = self.session;
     resolve_window(&selector)
   }
 
   /// Restores and foregrounds a window before foreground-only input delivery.
   pub fn activate(&self, window: &Window) -> DriverResult<()> {
-    let _ = self.session;
     activate_window(window)
   }
 
   /// Captures a single window's pixels via Win32 GDI `PrintWindow`.
   pub fn capture(&self, window: &Window) -> DriverResult<Capture> {
-    let _ = self.session;
     capture_window(window)
   }
 
@@ -188,13 +182,11 @@ impl WindowApi<'_> {
   /// Maps a window-relative point to its absolute screen position by offsetting
   /// against the window's screen-space frame origin.
   pub fn to_screen_point(&self, window: &Window, point: WindowPoint) -> DriverResult<ScreenPoint> {
-    let _ = self.session;
     Ok(screen_point_for_window_point(window, point))
   }
 
   /// Maps an absolute screen point into window-relative coordinates.
   pub fn to_window_point(&self, window: &Window, point: ScreenPoint) -> DriverResult<WindowPoint> {
-    let _ = self.session;
     Ok(window_point_for_screen_point(window, point))
   }
 
@@ -225,32 +217,26 @@ impl WindowApi<'_> {
   }
 
   pub fn move_to(&self, window: &Window, point: Point, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    let _ = self.session;
     mutate_window(window, WindowMutationKind::MoveTo { point }, options)
   }
 
   pub fn resize(&self, window: &Window, size: Size, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    let _ = self.session;
     mutate_window(window, WindowMutationKind::Resize { size }, options)
   }
 
   pub fn set_frame(&self, window: &Window, frame: Rect, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    let _ = self.session;
     mutate_window(window, WindowMutationKind::SetFrame { frame }, options)
   }
 
   pub fn minimize(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    let _ = self.session;
     mutate_window(window, WindowMutationKind::Minimize, options)
   }
 
   pub fn restore(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    let _ = self.session;
     mutate_window(window, WindowMutationKind::Restore, options)
   }
 
   pub fn zoom(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
-    let _ = self.session;
     mutate_window(window, WindowMutationKind::Zoom, options)
   }
 
@@ -385,7 +371,6 @@ impl VisionApi<'_> {
     region: RatioRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<TextRecognition> {
-    let _ = self.session;
     recognize_text_in_capture(capture, region, &options)
   }
 
@@ -400,7 +385,6 @@ impl VisionApi<'_> {
     region: RatioRect,
     options: TextRecognitionOptions,
   ) -> DriverResult<OcrMatches> {
-    let _ = self.session;
     find_text_in_capture(capture, query, region, &options)
   }
 }
@@ -476,7 +460,6 @@ impl InputApi<'_> {
   }
 
   pub fn current_position(&self) -> DriverResult<Point> {
-    let _ = self.session;
     current_position()
   }
 
@@ -494,26 +477,22 @@ impl InputApi<'_> {
     modifiers: auv_driver_common::ClickModifiers,
   ) -> DriverResult<InputActionResult> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
-    let _ = self.session;
     click_at(point, button, click, modifiers)
   }
 
   /// Moves the pointer to `point` and emits a mouse-wheel scroll.
   pub fn scroll_at(&self, point: Point, scroll: Scroll, settle: std::time::Duration) -> DriverResult<InputActionResult> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
-    let _ = self.session;
     scroll_at(point, scroll, settle)
   }
 
   /// Types `text` into the current foreground target as Unicode key events.
   pub fn type_text(&self, text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
-    let _ = self.session;
     type_text(text, options)
   }
 
   /// Presses a single key, special key, or shortcut (e.g. `ctrl+f`).
   pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
-    let _ = self.session;
     press_key(options)
   }
 
@@ -543,13 +522,11 @@ impl InputApi<'_> {
 
   /// Issues the system copy shortcut (Ctrl+C) against the foreground target.
   pub fn copy(&self) -> DriverResult<()> {
-    let _ = self.session;
     copy()
   }
 
   /// Issues the system paste shortcut (Ctrl+V) against the foreground target.
   pub fn paste(&self) -> DriverResult<()> {
-    let _ = self.session;
     paste()
   }
 }
@@ -558,32 +535,27 @@ impl ClipboardApi<'_> {
   /// Reads the current clipboard text, or an empty string when no Unicode text
   /// is present.
   pub fn snapshot(&self) -> DriverResult<String> {
-    let _ = self.session;
     snapshot()
   }
 
   /// Writes a previously captured snapshot back to the clipboard.
   pub fn restore(&self, snapshot: &str) -> DriverResult<()> {
-    let _ = self.session;
     restore_clipboard(snapshot)
   }
 
   /// Installs `text` as the clipboard's Unicode text payload.
   pub fn set_text(&self, text: &str) -> DriverResult<()> {
-    let _ = self.session;
     set_clipboard_text(text)
   }
 
   /// Captures every present clipboard format for exact, format-preserving
   /// restore, unlike `snapshot`, which is text-only.
   pub fn snapshot_rich(&self) -> DriverResult<ClipboardSnapshot> {
-    let _ = self.session;
     snapshot_clipboard_rich()
   }
 
   /// Restores a snapshot captured by `snapshot_rich`.
   pub fn restore_rich(&self, snapshot: &ClipboardSnapshot) -> DriverResult<()> {
-    let _ = self.session;
     restore_clipboard_rich(snapshot)
   }
 }
@@ -593,7 +565,6 @@ impl PermissionApi<'_> {
   /// UIAccess/UIPI, interactive session). Never fails: undeterminable signals
   /// are reported as `PermissionStatus::Unknown`.
   pub fn probe(&self) -> WindowsPermissionProbe {
-    let _ = self.session;
     probe_permissions()
   }
 }
@@ -602,31 +573,26 @@ impl AccessibilityApi<'_> {
   /// Captures the window's accessibility tree as a flattened, depth-first node
   /// list via UI Automation.
   pub fn snapshot_window(&self, window: &Window) -> DriverResult<AxTreeSnapshot> {
-    let _ = self.session;
     snapshot_window(window)
   }
 
   /// Moves keyboard focus to a node path from a recent UIA snapshot.
   pub fn focus_node(&self, window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
-    let _ = self.session;
     focus_node(window, node_path)
   }
 
   /// Selects or invokes an actionable node path from a recent UIA snapshot.
   pub fn select_node(&self, window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
-    let _ = self.session;
     select_node(window, node_path)
   }
 }
 
 impl DisplayApi<'_> {
   pub fn list(&self) -> DriverResult<ObservedDisplays> {
-    let _ = self.session;
     list_displays()
   }
 
   pub fn capture(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
-    let _ = self.session;
     if options.window.is_some() || options.region.is_some() {
       return Err(invalid_input("display.capture does not accept window or region capture options"));
     }
@@ -642,7 +608,6 @@ impl DisplayApi<'_> {
   }
 
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
-    let _ = self.session;
     if options.window.is_some() {
       return Err(invalid_input("display.capture_region does not accept nested window capture options"));
     }
