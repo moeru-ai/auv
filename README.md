@@ -48,18 +48,106 @@ AUV means **Application Use Via ...**.
 
 ### Install
 
-Install directly from GitHub:
+Official releases provide prebuilt binaries for macOS, Linux, and Windows.
+
+#### macOS
+
+Install AUV from the official Homebrew tap:
 
 ```sh
-cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
-auv --help
+brew install moeru-ai/tap/auv
+auv --version
 ```
 
-Third-party Protobuf sources are included in the repository; Cargo installs do
-not require Buf or a separate Protobuf dependency-generation step. See the
-[macOS Git-install verification](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md#regression-and-evidence).
+The Homebrew formula supports both Apple Silicon and Intel Macs.
 
-After installation, use the `auv` CLI directly:
+#### Linux
+
+Download the archive for your architecture from the
+[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest):
+
+- `auv-x86_64-unknown-linux-gnu.tar.gz` for x86-64
+- `auv-aarch64-unknown-linux-gnu.tar.gz` for ARM64
+
+Extract the archive, then place the `auv` executable in a directory on your
+`PATH`, such as `~/.local/bin`:
+
+```sh
+# This example uses the x86-64 archive. Use the ARM64 filename when needed.
+tar -xzf auv-x86_64-unknown-linux-gnu.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 0755 auv "$HOME/.local/bin/auv"
+auv --version
+```
+
+#### Windows
+
+On Windows x86-64, install AUV from this repository's Scoop bucket:
+
+```powershell
+scoop bucket add auv https://github.com/moeru-ai/auv
+scoop install auv/auv
+auv --version
+```
+
+Alternatively, download `auv-x86_64-pc-windows-msvc.zip` from the
+[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest), then
+extract it in PowerShell:
+
+```powershell
+Expand-Archive .\auv-x86_64-pc-windows-msvc.zip -DestinationPath .\auv
+.\auv\auv.exe --version
+```
+
+Move `auv.exe` to a directory on your `PATH` to use `auv` from any terminal.
+
+### Install with Cargo
+
+Install [Rust](https://www.rust-lang.org/tools/install) before using this
+method. Third-party Protobuf sources are included in the repository, so Cargo
+installs do not require Buf or a separate Protobuf dependency-generation step.
+
+#### macOS
+
+Install the Xcode Command Line Tools, then build AUV directly from GitHub:
+
+```sh
+xcode-select --install
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
+auv --version
+```
+
+#### Linux
+
+On Ubuntu or Debian, install AUV's native build dependencies first:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y \
+  pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
+  libpipewire-0.3-dev libwayland-dev libxkbcommon-dev libegl-dev \
+  libleptonica-dev libtesseract-dev
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
+auv --version
+```
+
+Package names may differ on other Linux distributions.
+
+#### Windows
+
+Install Rust with the MSVC toolchain, Visual Studio Build Tools, and the
+Windows SDK, then run:
+
+```powershell
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
+auv --version
+```
+
+See the
+[Cargo Git-install verification](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md#regression-and-evidence)
+for the currently tested platform configurations.
+
+After installing AUV with either method, inspect the available commands with:
 
 ```sh
 auv --help
@@ -70,8 +158,38 @@ auv invoke --help
 
 #### macOS
 
-OS permissions are required to be granted to the process that launches AUV,
-usually your terminal app.
+Official macOS release binaries include the signed `AUV Helper.app`. On macOS
+13 or later, install and register it for the current user with:
+
+```sh
+auv setup macos-helper install
+auv setup macos-helper status
+```
+
+The helper is installed under the current user's Application Support directory
+and does not require `sudo` or an administrator password. If macOS requires
+approval for the background item or Accessibility access, open the relevant
+System Settings panes with:
+
+```sh
+auv setup macos-helper open-background-items-settings
+auv setup macos-helper open-accessibility-settings
+```
+
+> [!NOTE]
+>
+> Projects that integrate AUV can rebrand `AUV Helper.app` with their own app
+> name, icon, bundle identifier, and Apple Developer signing identity. See
+> [Shipped helper identity](crates/auv-device-helper-macos/README.md#shipped-helper-identity)
+> for the packaging and setup options.
+
+Source builds created with `cargo install` do not embed the signed helper app.
+They can inspect or manage an already installed compatible helper, but a fresh
+`auv setup macos-helper install` requires an official release build or an app
+supplied by an integrating project.
+
+Other AUV operations require permissions to be granted to the process that
+launches AUV, usually your terminal app.
 
 Open **System Settings -> Privacy & Security** and enable:
 
