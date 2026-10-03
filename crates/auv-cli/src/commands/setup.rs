@@ -26,7 +26,8 @@ enum MacosHelperCommand {
     #[arg(long)]
     json: bool,
   },
-  /// Install and register the signed helper embedded in this AUV build.
+  /// Install and register the signed helper embedded in this AUV build, or the
+  /// app named by `AUV_MACOS_HELPER_APP`.
   Install {
     /// Emit a stable machine-readable result after installation.
     #[arg(long)]

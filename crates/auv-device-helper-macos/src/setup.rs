@@ -12,6 +12,44 @@ mod embedded {
   }
 }
 
+/// Signed helper app this frontend can install.
+#[cfg(target_os = "macos")]
+enum Payload<'a> {
+  /// Archive embedded by the release pipeline; its app version must equal
+  /// this crate's version.
+  Archive(&'static [u8]),
+  /// Unpacked app named by [`super::HELPER_APP_ENV`].
+  App(&'a std::path::Path),
+}
+
+#[cfg(target_os = "macos")]
+impl<'a> Payload<'a> {
+  fn for_identity(identity: &'a super::HelperIdentity) -> Option<Self> {
+    match &identity.source {
+      Some(app) => Some(Self::App(app)),
+      None => embedded::archive().map(Self::Archive),
+    }
+  }
+
+  fn version(&self) -> Option<String> {
+    match self {
+      Self::Archive(_) => Some(env!("CARGO_PKG_VERSION").to_string()),
+      Self::App(app) => installed_version(app),
+    }
+  }
+}
+
+/// User-facing name of the selected helper for messages.
+#[cfg(target_os = "macos")]
+fn helper_name() -> &'static str {
+  super::identity().map(super::HelperIdentity::display_name).unwrap_or("macOS helper")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn helper_name() -> &'static str {
+  "AUV Helper"
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum State {
   Unsupported,
@@ -45,6 +83,8 @@ impl State {
 pub struct Status {
   pub state: State,
   pub detail: Option<String>,
+  /// Whether this frontend carries a helper app it can install: an archive
+  /// embedded by a release build, or an app named by `AUV_MACOS_HELPER_APP`.
   pub helper_embedded: bool,
 }
 
@@ -69,20 +109,24 @@ pub enum Error {
 impl std::fmt::Display for Error {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Self::Unsupported => formatter.write_str("AUV Helper setup requires macOS 13 or later"),
-      Self::PayloadUnavailable => formatter.write_str(
-        "this development build does not contain a signed AUV Helper app; use an official macOS release or rebuild with AUV_MACOS_HELPER_APP_ARCHIVE_PATH",
+      Self::Unsupported => write!(formatter, "{} setup requires macOS 13 or later", helper_name()),
+      Self::PayloadUnavailable => write!(
+        formatter,
+        "this build does not contain a signed {} app; use an official macOS release, set AUV_MACOS_HELPER_APP, or rebuild with AUV_MACOS_HELPER_APP_ARCHIVE_PATH",
+        helper_name()
       ),
-      Self::UserUnavailable(detail) => write!(formatter, "AUV Helper setup needs the logged-in macOS user: {detail}"),
-      Self::InvalidInstallation(detail) => write!(formatter, "the installed AUV Helper failed validation: {detail}"),
-      Self::FrontendOutdated(detail) => write!(formatter, "this AUV frontend is too old for the installed AUV Helper: {detail}"),
-      Self::ArchiveRejected(detail) => write!(formatter, "the embedded AUV Helper failed validation: {detail}"),
-      Self::ExtractionFailed(detail) => write!(formatter, "the embedded AUV Helper could not be extracted: {detail}"),
-      Self::ServiceManagementFailed(detail) => write!(formatter, "AUV Helper registration failed: {detail}"),
-      Self::LaunchFailed(detail) => write!(formatter, "the registered AUV Helper did not become ready: {detail}"),
-      Self::RollbackFailed(detail) => write!(formatter, "AUV Helper update rollback failed: {detail}"),
-      Self::AccessibilityResetFailed(detail) => write!(formatter, "AUV Helper Accessibility authorization could not be reset: {detail}"),
-      Self::RemovalFailed(detail) => write!(formatter, "AUV Helper could not be removed: {detail}"),
+      Self::UserUnavailable(detail) => write!(formatter, "{} setup needs the logged-in macOS user: {detail}", helper_name()),
+      Self::InvalidInstallation(detail) => write!(formatter, "the installed {} failed validation: {detail}", helper_name()),
+      Self::FrontendOutdated(detail) => write!(formatter, "this AUV frontend is too old for the installed {}: {detail}", helper_name()),
+      Self::ArchiveRejected(detail) => write!(formatter, "the {} app to install failed validation: {detail}", helper_name()),
+      Self::ExtractionFailed(detail) => write!(formatter, "the {} app to install could not be staged: {detail}", helper_name()),
+      Self::ServiceManagementFailed(detail) => write!(formatter, "{} registration failed: {detail}", helper_name()),
+      Self::LaunchFailed(detail) => write!(formatter, "the registered {} did not become ready: {detail}", helper_name()),
+      Self::RollbackFailed(detail) => write!(formatter, "{} update rollback failed: {detail}", helper_name()),
+      Self::AccessibilityResetFailed(detail) => {
+        write!(formatter, "{} Accessibility authorization could not be reset: {detail}", helper_name())
+      }
+      Self::RemovalFailed(detail) => write!(formatter, "{} could not be removed: {detail}", helper_name()),
       Self::OpenSettingsFailed(detail) => write!(formatter, "could not open macOS settings: {detail}"),
       Self::Io(error) => write!(formatter, "helper setup I/O failed: {error}"),
     }
@@ -108,7 +152,17 @@ pub fn status() -> Status {
 
 #[cfg(target_os = "macos")]
 pub fn status() -> Status {
-  let embedded = embedded::archive().is_some();
+  let identity = match super::identity() {
+    Ok(identity) => identity,
+    Err(detail) => {
+      return Status {
+        state: State::Invalid,
+        detail: Some(detail.to_string()),
+        helper_embedded: false,
+      };
+    }
+  };
+  let embedded = Payload::for_identity(identity).is_some();
   if !supports_smappservice() {
     return Status {
       state: State::Unsupported,
@@ -123,7 +177,7 @@ pub fn status() -> Status {
       helper_embedded: embedded,
     };
   };
-  let layout = super::installed_layout(&home);
+  let layout = identity.layout(&home);
   if !layout.app.exists() {
     return Status {
       state: State::NotInstalled,
@@ -131,7 +185,7 @@ pub fn status() -> Status {
       helper_embedded: embedded,
     };
   }
-  if let Err(detail) = verify_static_installation(&home) {
+  if let Err(detail) = verify_static_installation(identity, &home) {
     return Status {
       state: State::Invalid,
       detail: Some(detail),
@@ -184,7 +238,7 @@ pub fn status() -> Status {
     }
   }
 
-  runtime_status(&home, uid, &layout.binary, embedded)
+  runtime_status(identity, &home, uid, &layout.binary, embedded)
 }
 
 /// Inspect ServiceManagement and socket readiness for an installation whose
@@ -194,7 +248,7 @@ pub fn status() -> Status {
 /// bundle and spawn `sw_vers`/`plutil`, and their answer cannot change while
 /// launchd starts the job.
 #[cfg(target_os = "macos")]
-fn runtime_status(home: &std::path::Path, uid: u32, binary: &std::path::Path, embedded: bool) -> Status {
+fn runtime_status(identity: &super::HelperIdentity, home: &std::path::Path, uid: u32, binary: &std::path::Path, embedded: bool) -> Status {
   let service = match service_status(binary) {
     Ok(service) => service,
     Err(error) => {
@@ -208,7 +262,7 @@ fn runtime_status(home: &std::path::Path, uid: u32, binary: &std::path::Path, em
   if service == ServiceStatus::RequiresApproval {
     return Status {
       state: State::RequiresApproval,
-      detail: Some("enable AUV Helper in System Settings > General > Login Items & Extensions".to_string()),
+      detail: Some(format!("enable {} in System Settings > General > Login Items & Extensions", identity.display_name())),
       helper_embedded: embedded,
     };
   }
@@ -220,7 +274,7 @@ fn runtime_status(home: &std::path::Path, uid: u32, binary: &std::path::Path, em
     };
   }
 
-  match helper_readiness(home, uid) {
+  match helper_readiness(identity, home, uid) {
     HelperReadiness::Ready => Status {
       state: State::Running,
       detail: None,
@@ -233,7 +287,7 @@ fn runtime_status(home: &std::path::Path, uid: u32, binary: &std::path::Path, em
     },
     HelperReadiness::Busy => Status {
       state: State::Busy,
-      detail: Some("AUV Helper is handling another request; try again after it finishes".to_string()),
+      detail: Some(format!("{} is handling another request; try again after it finishes", identity.display_name())),
       helper_embedded: embedded,
     },
     HelperReadiness::Revoked => Status {
@@ -243,9 +297,10 @@ fn runtime_status(home: &std::path::Path, uid: u32, binary: &std::path::Path, em
     },
     HelperReadiness::IdentityMismatch => Status {
       state: State::Invalid,
-      detail: Some(
-        "the private socket peer does not match the installed AUV Helper identity; stop the conflicting helper registration".to_string(),
-      ),
+      detail: Some(format!(
+        "the private socket peer does not match the installed {} identity; stop the conflicting helper registration",
+        identity.display_name()
+      )),
       helper_embedded: embedded,
     },
   }
@@ -276,10 +331,10 @@ impl HelperReadiness {
 }
 
 #[cfg(target_os = "macos")]
-fn helper_readiness(home: &std::path::Path, uid: u32) -> HelperReadiness {
+fn helper_readiness(identity: &super::HelperIdentity, home: &std::path::Path, uid: u32) -> HelperReadiness {
   use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
-  let socket = super::socket_path(home);
+  let socket = identity.socket_path(home);
   let valid_socket = std::fs::symlink_metadata(&socket)
     .is_ok_and(|metadata| metadata.file_type().is_socket() && metadata.uid() == uid && metadata.mode() & 0o077 == 0);
   if !valid_socket {
@@ -288,7 +343,7 @@ fn helper_readiness(home: &std::path::Path, uid: u32) -> HelperReadiness {
   let Ok(stream) = std::os::unix::net::UnixStream::connect(socket) else {
     return HelperReadiness::NotReady;
   };
-  HelperReadiness::from_identity(super::verify_installed_helper(&stream, home))
+  HelperReadiness::from_identity(super::verify_installed_helper(identity, &stream, home))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -301,6 +356,7 @@ pub fn install() -> Result<Status, Error> {
   if !supports_smappservice() {
     return Err(Error::Unsupported);
   }
+  let identity = super::identity().map_err(|detail| Error::ArchiveRejected(detail.to_string()))?;
   let current = status();
   match current.state {
     State::Unsupported => return Err(Error::Unsupported),
@@ -319,20 +375,23 @@ pub fn install() -> Result<Status, Error> {
     State::Busy => return Ok(current),
     State::Installed | State::Running | State::RequiresApproval => {
       let (uid, home) = current_user()?;
-      let layout = super::installed_layout(&home);
+      let layout = identity.layout(&home);
       let installed = installed_version(&layout.app);
-      if embedded::archive().is_none() || !upgrades_compatible_helper(installed.as_deref(), env!("CARGO_PKG_VERSION")) {
+      let upgrade = Payload::for_identity(identity)
+        .and_then(|payload| payload.version())
+        .is_some_and(|version| upgrades_compatible_helper(installed.as_deref(), &version));
+      if !upgrade {
         if current.state != State::Installed {
           return Ok(current);
         }
         register(&layout.binary)?;
-        return status_after_registration(&home, uid, &layout.binary);
+        return status_after_registration(identity, &home, uid, &layout.binary);
       }
     }
   }
 
-  let archive = embedded::archive().ok_or(Error::PayloadUnavailable)?;
-  install_embedded_app(archive)
+  let payload = Payload::for_identity(identity).ok_or(Error::PayloadUnavailable)?;
+  install_payload(identity, payload)
 }
 
 /// How the installed helper's declared protocol range relates to the
@@ -358,7 +417,7 @@ fn compatibility(declared: &std::ops::RangeInclusive<u8>, protocol: u8) -> Compa
   }
 }
 
-/// Whether `install` should replace a compatible helper with the embedded one.
+/// Whether `install` should replace a compatible helper with the payload one.
 ///
 /// Replacement only moves forward, so frontends at different versions converge
 /// on the newest helper instead of replacing each other's. An unreadable
@@ -393,14 +452,16 @@ pub fn uninstall() -> Result<Status, Error> {
     return Err(Error::Unsupported);
   }
 
+  let identity = super::identity().map_err(|detail| Error::InvalidInstallation(detail.to_string()))?;
   let (_, home) = current_user()?;
-  let layout = super::installed_layout(&home);
+  let layout = identity.layout(&home);
   let validation = if layout.app.exists() {
-    verify_static_installation(&home)
+    verify_static_installation(identity, &home)
   } else {
     Ok(())
   };
-  let retained = remove_installed_app(&layout.app, validation, || unregister(&layout.binary), reset_accessibility_authorization)?;
+  let retained =
+    remove_installed_app(&layout.app, validation, || unregister(&layout.binary), || reset_accessibility_authorization(&identity.bundle_id))?;
   let mut status = status();
   if let Some(reason) = retained {
     status.detail = Some(format!(
@@ -437,10 +498,11 @@ pub fn open_background_items_settings() -> Result<(), Error> {
 
 #[cfg(target_os = "macos")]
 pub fn open_background_items_settings() -> Result<(), Error> {
+  let identity = super::identity().map_err(|detail| Error::InvalidInstallation(detail.to_string()))?;
   let (_, home) = current_user()?;
-  let binary = super::installed_layout(&home).binary;
+  let binary = identity.layout(&home).binary;
   if binary.exists() {
-    verify_static_installation(&home).map_err(Error::InvalidInstallation)?;
+    verify_static_installation(identity, &home).map_err(Error::InvalidInstallation)?;
     run_helper(&binary, "--service-management-open-settings").map(|_| ())
   } else {
     let result =
@@ -454,9 +516,8 @@ pub fn open_background_items_settings() -> Result<(), Error> {
 }
 
 #[cfg(target_os = "macos")]
-fn reset_accessibility_authorization() -> Result<(), Error> {
-  let output =
-    std::process::Command::new("/usr/bin/tccutil").args(["reset", "Accessibility", super::BUNDLE_ID]).output().map_err(Error::Io)?;
+fn reset_accessibility_authorization(bundle_id: &str) -> Result<(), Error> {
+  let output = std::process::Command::new("/usr/bin/tccutil").args(["reset", "Accessibility", bundle_id]).output().map_err(Error::Io)?;
   if output.status.success() {
     Ok(())
   } else {
@@ -523,13 +584,13 @@ fn supports_smappservice() -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn verify_static_installation(home: &std::path::Path) -> Result<(), String> {
-  let layout = super::verify_installed_files(home).map_err(|_| "paths, ownership, or permissions do not match".to_string())?;
-  verify_app_signature(&layout.app)
+fn verify_static_installation(identity: &super::HelperIdentity, home: &std::path::Path) -> Result<(), String> {
+  let layout = super::verify_installed_files(identity, home).map_err(|_| "paths, ownership, or permissions do not match".to_string())?;
+  verify_app_signature(identity, &layout.app)
 }
 
 #[cfg(target_os = "macos")]
-fn verify_app_signature(app: &std::path::Path) -> Result<(), String> {
+fn verify_app_signature(identity: &super::HelperIdentity, app: &std::path::Path) -> Result<(), String> {
   use core_foundation::url::CFURL;
   use security_framework::os::macos::code_signing::{Flags, SecStaticCode};
 
@@ -537,7 +598,7 @@ fn verify_app_signature(app: &std::path::Path) -> Result<(), String> {
   let code = SecStaticCode::from_path(&path, Flags::NONE).map_err(|error| format!("cannot inspect code signature ({error})"))?;
   // Identity only: a revoked but genuine helper is replaced, not rejected as
   // tampered, so `status` checks its security epoch separately.
-  let requirement = super::helper_identity_requirement().map_err(|error| format!("cannot create code requirement ({error})"))?;
+  let requirement = identity.identity_requirement().map_err(|error| format!("cannot create code requirement ({error})"))?;
   code.check_validity(Flags::CHECK_ALL_ARCHITECTURES, &requirement).map_err(|error| format!("code signature does not match ({error})"))
 }
 
@@ -625,7 +686,7 @@ fn run_helper(binary: &std::path::Path, argument: &str) -> Result<String, Error>
 }
 
 #[cfg(target_os = "macos")]
-fn install_embedded_app(archive: &[u8]) -> Result<Status, Error> {
+fn install_payload(identity: &super::HelperIdentity, payload: Payload) -> Result<Status, Error> {
   use std::io::Write;
   use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
@@ -634,41 +695,53 @@ fn install_embedded_app(archive: &[u8]) -> Result<Status, Error> {
   // Add a per-user lock under the install root when a frontend can trigger
   // setup without user action; manual setup is serialized by the user today.
   let (uid, home) = current_user()?;
-  let layout = super::installed_layout(&home);
+  let layout = identity.layout(&home);
   let root = layout.app.parent().ok_or_else(|| Error::InvalidInstallation("the install root has no parent".to_string()))?;
   std::fs::create_dir_all(root)?;
   std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
 
   let work = tempfile::Builder::new().prefix(".helper-install.").tempdir_in(root)?;
-  let archive_path = work.path().join("AUV Helper.zip");
-  let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&archive_path)?;
-  file.write_all(archive)?;
-  file.sync_all()?;
-
   let extracted = work.path().join("extracted");
   std::fs::create_dir(&extracted)?;
-  let result = std::process::Command::new("/usr/bin/ditto").args(["-x", "-k"]).arg(&archive_path).arg(&extracted).status()?;
-  if !result.success() {
-    return Err(Error::ExtractionFailed(format!("ditto exited with {result}")));
+  let candidate = extracted.join(&identity.app_name);
+  match payload {
+    Payload::Archive(archive) => {
+      let archive_path = work.path().join("helper.zip");
+      let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&archive_path)?;
+      file.write_all(archive)?;
+      file.sync_all()?;
+      let result = std::process::Command::new("/usr/bin/ditto").args(["-x", "-k"]).arg(&archive_path).arg(&extracted).status()?;
+      if !result.success() {
+        return Err(Error::ExtractionFailed(format!("ditto exited with {result}")));
+      }
+      if installed_version(&candidate).as_deref() != Some(env!("CARGO_PKG_VERSION")) {
+        return Err(Error::ArchiveRejected(format!("embedded app version does not match {}", env!("CARGO_PKG_VERSION"))));
+      }
+    }
+    // Copy instead of registering the shipped app in place: its containing
+    // application may be replaced by an updater, while TCC and
+    // ServiceManagement need a stable, user-owned bundle path.
+    Payload::App(source) => {
+      let result = std::process::Command::new("/usr/bin/ditto").arg(source).arg(&candidate).status()?;
+      if !result.success() {
+        return Err(Error::ExtractionFailed(format!("ditto exited with {result}")));
+      }
+    }
   }
-  let candidate = extracted.join("AUV Helper.app");
-  verify_app_signature(&candidate).map_err(Error::ArchiveRejected)?;
-  if installed_version(&candidate).as_deref() != Some(env!("CARGO_PKG_VERSION")) {
-    return Err(Error::ArchiveRejected(format!("embedded app version does not match {}", env!("CARGO_PKG_VERSION"))));
-  }
+  verify_app_signature(identity, &candidate).map_err(Error::ArchiveRejected)?;
   let assessment = std::process::Command::new("/usr/sbin/spctl").args(["--assess", "--type", "execute"]).arg(&candidate).output()?;
   if !assessment.status.success() {
     return Err(Error::ArchiveRejected(String::from_utf8_lossy(&assessment.stderr).trim().to_string()));
   }
 
-  let backup = work.path().join("Previous AUV Helper.app");
+  let backup = work.path().join(format!("Previous {}", identity.app_name));
   let result = replace_installed_app(
     &layout.app,
     &candidate,
     &backup,
     || unregister(&layout.binary),
     || register(&layout.binary).map(|_| ()),
-    || status_after_registration(&home, uid, &layout.binary),
+    || status_after_registration(identity, &home, uid, &layout.binary),
   );
   match result {
     Err(Error::RollbackFailed(detail)) if backup.exists() => {
@@ -739,9 +812,17 @@ fn restore_previous_app(
 }
 
 #[cfg(target_os = "macos")]
-fn status_after_registration(home: &std::path::Path, uid: u32, binary: &std::path::Path) -> Result<Status, Error> {
-  let embedded = embedded::archive().is_some();
-  wait_for_registration(|| runtime_status(home, uid, binary, embedded), || std::thread::sleep(std::time::Duration::from_millis(100)))
+fn status_after_registration(
+  identity: &super::HelperIdentity,
+  home: &std::path::Path,
+  uid: u32,
+  binary: &std::path::Path,
+) -> Result<Status, Error> {
+  let embedded = Payload::for_identity(identity).is_some();
+  wait_for_registration(
+    || runtime_status(identity, home, uid, binary, embedded),
+    || std::thread::sleep(std::time::Duration::from_millis(100)),
+  )
 }
 
 #[cfg(target_os = "macos")]
@@ -940,17 +1021,18 @@ mod tests {
   #[test]
   fn readiness_rejects_a_socket_owned_by_the_wrong_process_identity() {
     let home = tempfile::Builder::new().prefix("ah").tempdir_in("/tmp").unwrap();
-    let layout = crate::installed_layout(home.path());
+    let identity = crate::HelperIdentity::official();
+    let layout = identity.layout(home.path());
     fs::create_dir_all(layout.binary.parent().unwrap()).unwrap();
     fs::create_dir_all(layout.launch_agent.parent().unwrap()).unwrap();
     fs::write(&layout.binary, []).unwrap();
     fs::write(&layout.launch_agent, []).unwrap();
-    let socket = crate::socket_path(home.path());
+    let socket = identity.socket_path(home.path());
     fs::create_dir_all(socket.parent().unwrap()).unwrap();
     let _listener = UnixListener::bind(&socket).unwrap();
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
 
-    assert_eq!(super::helper_readiness(home.path(), nix::unistd::geteuid().as_raw()), super::HelperReadiness::IdentityMismatch);
+    assert_eq!(super::helper_readiness(&identity, home.path(), nix::unistd::geteuid().as_raw()), super::HelperReadiness::IdentityMismatch);
   }
 
   // ROOT CAUSE:

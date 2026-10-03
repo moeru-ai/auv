@@ -9,7 +9,9 @@
 use std::io::{Read, Write};
 #[cfg(any(feature = "setup", feature = "transport"))]
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 #[cfg(feature = "transport")]
 use std::time::Duration;
 
@@ -45,12 +47,17 @@ pub(crate) const SUPPORTED_PROTOCOLS: std::ops::RangeInclusive<u8> = 1..=1;
 #[cfg(feature = "transport")]
 const MAX_PAYLOAD: usize = 1024;
 
+/// Bundle identifier of the official AUV helper. The LaunchAgent label and
+/// plist name always equal the helper's bundle identifier.
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) const BUNDLE_ID: &str = "ai.moeru.auv.helper";
+pub(crate) const OFFICIAL_BUNDLE_ID: &str = "ai.moeru.auv.helper";
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) const EXPECTED_TEAM_ID: &str = "433DLLA855";
-#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) const LAUNCH_AGENT_LABEL: &str = "ai.moeru.auv.helper";
+const OFFICIAL_TEAM_ID: &str = "433DLLA855";
+
+/// Names an unpacked, signed helper app shipped by the frontend, for example
+/// inside an application that embeds AUV. When set, AUV installs and trusts
+/// that app instead of the official AUV Helper; see [`HelperIdentity`].
+pub const HELPER_APP_ENV: &str = "AUV_MACOS_HELPER_APP";
 
 /// Oldest helper security epoch this build trusts.
 ///
@@ -64,34 +71,191 @@ pub(crate) const LAUNCH_AGENT_LABEL: &str = "ai.moeru.auv.helper";
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 pub(crate) const MIN_SECURITY_EPOCH: u32 = 1;
 
-/// Code requirement for the signed helper's identity: bundle identifier and
-/// pinned Team ID. `package/package.sh` checks the same identity with
-/// `codesign --test-requirement` after signing.
+/// Signed identity of the helper app this frontend installs and trusts.
+///
+/// Without [`HELPER_APP_ENV`], this is the official `AUV Helper.app` signed by
+/// the AUV Team ID and installed from the archive embedded in release builds.
+/// With it, the bundle identifier and Team ID come from the shipped app's own
+/// valid Apple-issued signature, so an application embedding AUV can ship a
+/// helper under its own name, icon, and signing team without rebuilding AUV.
+///
+/// NOTICE(helper-identity-trust-anchor): The trusted identity is whatever the
+/// process launching AUV selects. That is no weaker than before: a caller who
+/// controls this environment already controls the daemon that sends the
+/// enrollment credential. The identity still pins one bundle identifier and
+/// Team ID, so another process on the user's socket path is rejected.
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) fn helper_identity_requirement() -> Result<SecRequirement, security_framework::base::Error> {
-  helper_identity().parse()
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HelperIdentity {
+  pub(crate) bundle_id: String,
+  pub(crate) team_id: String,
+  /// Bundle file name, for example `AUV Helper.app`.
+  pub(crate) app_name: String,
+  /// Directory under `~/Library/Application Support` holding the installed app
+  /// and its private socket.
+  support_dir: String,
+  /// Unpacked app shipped by the frontend; `None` installs the embedded archive.
+  pub(crate) source: Option<PathBuf>,
 }
 
-/// Identity requirement plus `MIN_SECURITY_EPOCH`, for code the daemon trusts.
-///
-/// NOTICE(helper-security-epoch-requirement): The requirement language
-/// compares a quoted constant with a string Info.plist value numerically
-/// (`"10" >= "2"` holds), but never matches an integer-typed value, so the
-/// Info.plist entry must be a `<string>`. Verified with
-/// `codesign -v -R='info[AUVHelperSecurityEpoch] >= "2"'` on macOS 26.3.
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) fn helper_requirement() -> Result<SecRequirement, security_framework::base::Error> {
-  format!("{} and {}", helper_identity(), security_epoch_clause(MIN_SECURITY_EPOCH)).parse()
+impl HelperIdentity {
+  pub(crate) fn official() -> Self {
+    Self {
+      bundle_id: OFFICIAL_BUNDLE_ID.to_string(),
+      team_id: OFFICIAL_TEAM_ID.to_string(),
+      app_name: "AUV Helper.app".to_string(),
+      support_dir: "AUV".to_string(),
+      source: None,
+    }
+  }
+
+  /// Read the identity of a shipped helper app from its code signature.
+  ///
+  /// The app must be validly signed by an Apple-issued certificate with a
+  /// Team ID. It installs under `~/Library/Application Support/<bundle id>`,
+  /// so it never shares a socket or bundle path with another helper.
+  pub(crate) fn from_app(app: &Path) -> Result<Self, String> {
+    use core_foundation::url::CFURL;
+    use security_framework::os::macos::code_signing::SecStaticCode;
+
+    if !app.is_absolute() {
+      return Err("the helper app path must be absolute".to_string());
+    }
+    let app_name = app
+      .file_name()
+      .and_then(|name| name.to_str())
+      .filter(|name| name.len() > ".app".len() && name.ends_with(".app"))
+      .ok_or_else(|| "the helper app path must name an .app bundle".to_string())?
+      .to_string();
+    let url = CFURL::from_path(app, true).ok_or_else(|| "the helper app path is not a file URL".to_string())?;
+    let code = SecStaticCode::from_path(&url, Flags::NONE).map_err(|error| format!("cannot inspect the helper app signature ({error})"))?;
+    let anchor: SecRequirement = "anchor apple generic".parse().map_err(|error| format!("cannot create code requirement ({error})"))?;
+    code
+      .check_validity(Flags::CHECK_ALL_ARCHITECTURES, &anchor)
+      .map_err(|error| format!("the helper app is not validly signed by an Apple-issued certificate ({error})"))?;
+    let (bundle_id, team_id) = signing_identity(&code)?;
+    // Both values are formatted into a code requirement and a path, so accept
+    // only the characters Apple permits in bundle identifiers and Team IDs.
+    let valid_bundle_id =
+      !bundle_id.is_empty() && !bundle_id.starts_with('.') && bundle_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    if !valid_bundle_id {
+      return Err(format!("the helper app is signed with an unsupported identifier {bundle_id:?}"));
+    }
+    if team_id.is_empty() || !team_id.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+      return Err(format!("the helper app is signed with an unsupported Team ID {team_id:?}"));
+    }
+
+    Ok(Self {
+      support_dir: bundle_id.clone(),
+      bundle_id,
+      team_id,
+      app_name,
+      source: Some(app.to_path_buf()),
+    })
+  }
+
+  /// User-facing helper name, for example `AUV Helper`.
+  pub(crate) fn display_name(&self) -> &str {
+    self.app_name.strip_suffix(".app").unwrap_or(&self.app_name)
+  }
+
+  pub(crate) fn layout(&self, home: &Path) -> InstalledLayout {
+    let app = support_root(home, &self.support_dir).join(&self.app_name);
+    InstalledLayout {
+      binary: app.join("Contents").join("MacOS").join(HELPER_EXECUTABLE),
+      launch_agent: app.join("Contents").join("Library").join("LaunchAgents").join(format!("{}.plist", self.bundle_id)),
+      app,
+    }
+  }
+
+  pub(crate) fn socket_path(&self, home: &Path) -> PathBuf {
+    socket_path(&support_root(home, &self.support_dir))
+  }
+
+  /// Code requirement for the signed helper's identity: bundle identifier and
+  /// pinned Team ID. `package/package.sh` checks the same identity with
+  /// `codesign --test-requirement` after signing.
+  pub(crate) fn identity_requirement(&self) -> Result<SecRequirement, security_framework::base::Error> {
+    self.identity_clause().parse()
+  }
+
+  /// Identity requirement plus `MIN_SECURITY_EPOCH`, for code the daemon trusts.
+  ///
+  /// NOTICE(helper-security-epoch-requirement): The requirement language
+  /// compares a quoted constant with a string Info.plist value numerically
+  /// (`"10" >= "2"` holds), but never matches an integer-typed value, so the
+  /// Info.plist entry must be a `<string>`. Verified with
+  /// `codesign -v -R='info[AUVHelperSecurityEpoch] >= "2"'` on macOS 26.3.
+  pub(crate) fn requirement(&self) -> Result<SecRequirement, security_framework::base::Error> {
+    format!("{} and {}", self.identity_clause(), security_epoch_clause(MIN_SECURITY_EPOCH)).parse()
+  }
+
+  fn identity_clause(&self) -> String {
+    format!("identifier \"{}\" and anchor apple generic and certificate leaf[subject.OU] = \"{}\"", self.bundle_id, self.team_id)
+  }
+}
+
+/// The helper identity selected for this process; see [`HelperIdentity`].
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+pub(crate) fn identity() -> Result<&'static HelperIdentity, &'static str> {
+  static IDENTITY: std::sync::OnceLock<Result<HelperIdentity, String>> = std::sync::OnceLock::new();
+  IDENTITY
+    .get_or_init(|| match std::env::var_os(HELPER_APP_ENV).filter(|value| !value.is_empty()) {
+      Some(app) => {
+        let app = PathBuf::from(app);
+        HelperIdentity::from_app(&app).map_err(|error| format!("{HELPER_APP_ENV}={}: {error}", app.display()))
+      }
+      None => Ok(HelperIdentity::official()),
+    })
+    .as_ref()
+    .map_err(String::as_str)
+}
+
+/// Signing identifier and Team ID of validly signed static code.
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+fn signing_identity(code: &security_framework::os::macos::code_signing::SecStaticCode) -> Result<(String, String), String> {
+  use core_foundation::base::{CFType, TCFType};
+  use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+  use core_foundation::string::{CFString, CFStringRef};
+
+  // NOTICE: `security-framework` 3.7 does not wrap SecCodeCopySigningInformation.
+  // The function and keys are public Security.framework API since macOS 10.5
+  // (Team ID since 10.9); kSecCSSigningInformation is `1 << 1` in
+  // `Security/SecCode.h`. Remove this block if the crate gains a wrapper.
+  #[link(name = "Security", kind = "framework")]
+  unsafe extern "C" {
+    fn SecCodeCopySigningInformation(code: *const std::ffi::c_void, flags: u32, information: *mut CFDictionaryRef) -> i32;
+    static kSecCodeInfoIdentifier: CFStringRef;
+    static kSecCodeInfoTeamIdentifier: CFStringRef;
+  }
+  const SIGNING_INFORMATION: u32 = 1 << 1;
+
+  let mut information: CFDictionaryRef = std::ptr::null();
+  // SAFETY: `code` is a live SecStaticCodeRef and `information` is a valid
+  // out-pointer. On success the caller owns the returned dictionary.
+  let status = unsafe { SecCodeCopySigningInformation(code.as_concrete_TypeRef().cast(), SIGNING_INFORMATION, &mut information) };
+  if status != 0 || information.is_null() {
+    return Err(format!("cannot read the helper app signing information (OSStatus {status})"));
+  }
+  // SAFETY: The dictionary was returned under the create rule; the keys are
+  // immutable framework constants.
+  let information: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_create_rule(information) };
+  let value = |key: CFStringRef| {
+    // SAFETY: See above; the key outlives this borrow.
+    let key = unsafe { CFString::wrap_under_get_rule(key) };
+    information.find(&key).and_then(|value| value.downcast::<CFString>()).map(|value| value.to_string())
+  };
+  // SAFETY: Reading immutable extern framework constants.
+  let (identifier, team) = unsafe { (kSecCodeInfoIdentifier, kSecCodeInfoTeamIdentifier) };
+  let identifier = value(identifier).ok_or_else(|| "the helper app signature has no identifier".to_string())?;
+  let team = value(team).ok_or_else(|| "the helper app signature has no Team ID".to_string())?;
+  Ok((identifier, team))
 }
 
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
 fn security_epoch_clause(minimum: u32) -> String {
   format!("info[AUVHelperSecurityEpoch] >= \"{minimum}\"")
-}
-
-#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-fn helper_identity() -> String {
-  format!("identifier \"{BUNDLE_ID}\" and anchor apple generic and certificate leaf[subject.OU] = \"{EXPECTED_TEAM_ID}\"")
 }
 
 /// ServiceManagement registration state for the helper's LaunchAgent.
@@ -144,20 +308,21 @@ pub(crate) struct InstalledLayout {
   pub(crate) launch_agent: PathBuf,
 }
 
+/// Executable name inside every helper bundle; `package/package.sh` keeps it
+/// fixed when it renames the app.
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) fn installed_layout(home: &Path) -> InstalledLayout {
-  let root = home.join("Library").join("Application Support").join("AUV");
-  let app = root.join("AUV Helper.app");
-  InstalledLayout {
-    binary: app.join("Contents").join("MacOS").join("auv-device-helper-macos"),
-    launch_agent: app.join("Contents").join("Library").join("LaunchAgents").join(format!("{LAUNCH_AGENT_LABEL}.plist")),
-    app,
-  }
+const HELPER_EXECUTABLE: &str = "auv-device-helper-macos";
+
+/// `~/Library/Application Support/<support_dir>`, which holds an installed
+/// helper app and its private socket directory.
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+pub(crate) fn support_root(home: &Path, support_dir: &str) -> PathBuf {
+  home.join("Library").join("Application Support").join(support_dir)
 }
 
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-pub(crate) fn verify_installed_files(home: &Path) -> Result<InstalledLayout, IdentityError> {
-  let layout = installed_layout(home);
+pub(crate) fn verify_installed_files(identity: &HelperIdentity, home: &Path) -> Result<InstalledLayout, IdentityError> {
+  let layout = identity.layout(home);
   let root = layout.app.parent().ok_or(IdentityError::Mismatch)?;
   let contents = layout.app.join("Contents");
   let macos = contents.join("MacOS");
@@ -260,11 +425,14 @@ impl TryFrom<u8> for Operation {
   }
 }
 
+/// Private socket of the helper installed under `support_root`.
+///
 /// The containing directory is created by the user-session helper with mode
 /// 0700. Callers must resolve the target account's home directory using OS
 /// account data, never a home path supplied by the remote Device request.
-pub fn socket_path(home: &Path) -> PathBuf {
-  home.join("Library").join("Application Support").join("AUV").join("device-entry").join("host.sock")
+#[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
+pub(crate) fn socket_path(support_root: &Path) -> PathBuf {
+  support_root.join("device-entry").join("host.sock")
 }
 
 /// Enroll one credential into the installed helper's own login Keychain.
@@ -319,8 +487,9 @@ pub fn lock(home: &Path, uid: u32, selector: &str) -> Result<(), HostError> {
 
 #[cfg(feature = "transport")]
 fn call(home: &Path, operation: Operation, uid: u32, payload: &[u8]) -> Result<(), HostError> {
-  let mut stream = UnixStream::connect(socket_path(home)).map_err(|_| HostError::Unavailable)?;
-  verify_installed_helper(&stream, home).map_err(|error| match error {
+  let identity = identity().map_err(|_| HostError::Unavailable)?;
+  let mut stream = UnixStream::connect(identity.socket_path(home)).map_err(|_| HostError::Unavailable)?;
+  verify_installed_helper(identity, &stream, home).map_err(|error| match error {
     IdentityError::PeerUnavailable => HostError::Unavailable,
     IdentityError::Mismatch => HostError::Unauthorized,
     IdentityError::Revoked => HostError::Revoked,
@@ -390,22 +559,22 @@ fn verify_installed_helper(_stream: &UnixStream, _home: &Path) -> Result<(), Ide
 }
 
 #[cfg(all(target_os = "macos", any(feature = "setup", feature = "transport")))]
-fn verify_installed_helper(stream: &UnixStream, home: &Path) -> Result<(), IdentityError> {
+pub(crate) fn verify_installed_helper(identity: &HelperIdentity, stream: &UnixStream, home: &Path) -> Result<(), IdentityError> {
   // A user-writable socket path alone cannot authenticate the process that
   // accepted it. Bind dynamic code validation to the kernel's socket peer
   // audit token, which includes a PID version, before sending a credential.
-  // The pinned Team ID and designated requirement reject modifications to
+  // The identity's Team ID and designated requirement reject modifications to
   // the per-user app even though its containing directory is user-owned.
   // The security epoch rejects older signed helpers once they are revoked;
   // see `MIN_SECURITY_EPOCH`.
-  let layout = verify_installed_files(home)?;
+  let layout = verify_installed_files(identity, home)?;
 
   let code = code_for_socket_peer(stream)?;
-  let identity = helper_identity_requirement().map_err(|_| IdentityError::Mismatch)?;
-  code.check_validity(Flags::NONE, &identity).map_err(|_| IdentityError::Mismatch)?;
+  let requirement = identity.identity_requirement().map_err(|_| IdentityError::Mismatch)?;
+  code.check_validity(Flags::NONE, &requirement).map_err(|_| IdentityError::Mismatch)?;
   // Checked separately so a revoked genuine helper is reported as such
   // instead of looking like a foreign process.
-  let trusted = helper_requirement().map_err(|_| IdentityError::Mismatch)?;
+  let trusted = identity.requirement().map_err(|_| IdentityError::Mismatch)?;
   code.check_validity(Flags::NONE, &trusted).map_err(|_| IdentityError::Revoked)?;
   let actual = code.path(Flags::NONE).ok().and_then(|url| url.to_path()).ok_or(IdentityError::Mismatch)?;
 
@@ -523,14 +692,94 @@ mod tests {
     let root = tempfile::tempdir().unwrap();
     let real_home = root.path().join("real-home");
     let linked_home = root.path().join("linked-home");
-    let real_layout = installed_layout(&real_home);
+    let real_layout = HelperIdentity::official().layout(&real_home);
     std::fs::create_dir_all(real_layout.binary.parent().unwrap()).unwrap();
     std::fs::write(&real_layout.binary, []).unwrap();
     symlink(&real_home, &linked_home).unwrap();
 
-    let linked_layout = installed_layout(&linked_home);
+    let linked_layout = HelperIdentity::official().layout(&linked_home);
     let actual = std::fs::canonicalize(&real_layout.binary).unwrap();
     assert!(installed_helper_path_matches(&actual, &linked_layout).unwrap());
+  }
+
+  // The official helper keeps the paths released before identities became
+  // selectable, so installed helpers and their sockets stay reachable.
+  #[test]
+  fn official_identity_keeps_the_released_install_and_socket_paths() {
+    let home = Path::new("/Users/someone");
+    let identity = HelperIdentity::official();
+    let layout = identity.layout(home);
+
+    assert_eq!(layout.app, Path::new("/Users/someone/Library/Application Support/AUV/AUV Helper.app"));
+    assert_eq!(
+      layout.launch_agent,
+      Path::new("/Users/someone/Library/Application Support/AUV/AUV Helper.app/Contents/Library/LaunchAgents/ai.moeru.auv.helper.plist")
+    );
+    assert_eq!(identity.socket_path(home), Path::new("/Users/someone/Library/Application Support/AUV/device-entry/host.sock"));
+    assert_eq!(identity.display_name(), "AUV Helper");
+  }
+
+  #[test]
+  fn shipped_helper_installs_under_its_bundle_identifier() {
+    let home = Path::new("/Users/someone");
+    let identity = HelperIdentity {
+      bundle_id: "com.example.computer-use.helper".to_string(),
+      team_id: "ABCDE12345".to_string(),
+      app_name: "Example Computer Use.app".to_string(),
+      support_dir: "com.example.computer-use.helper".to_string(),
+      source: Some(PathBuf::from("/Applications/Example.app/Contents/Library/Helpers/Example Computer Use.app")),
+    };
+    let layout = identity.layout(home);
+    let root = Path::new("/Users/someone/Library/Application Support/com.example.computer-use.helper");
+
+    assert_eq!(layout.app, root.join("Example Computer Use.app"));
+    assert_eq!(layout.binary, root.join("Example Computer Use.app/Contents/MacOS/auv-device-helper-macos"));
+    assert_eq!(
+      layout.launch_agent,
+      root.join("Example Computer Use.app/Contents/Library/LaunchAgents/com.example.computer-use.helper.plist")
+    );
+    assert_eq!(identity.socket_path(home), root.join("device-entry/host.sock"));
+    assert_eq!(
+      identity.identity_clause(),
+      "identifier \"com.example.computer-use.helper\" and anchor apple generic and certificate leaf[subject.OU] = \"ABCDE12345\""
+    );
+  }
+
+  // An ad-hoc signature carries no Team ID and no Apple-issued anchor, so it
+  // must never become a trusted helper identity.
+  #[test]
+  fn shipped_helper_must_be_signed_by_an_apple_issued_certificate() {
+    let root = tempfile::tempdir().unwrap();
+    let app = root.path().join("Example Computer Use.app");
+    let macos = app.join("Contents").join("MacOS");
+    std::fs::create_dir_all(&macos).unwrap();
+    std::fs::copy("/usr/bin/true", macos.join(HELPER_EXECUTABLE)).unwrap();
+    std::fs::write(
+      app.join("Contents").join("Info.plist"),
+      format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleExecutable</key><string>{HELPER_EXECUTABLE}</string><key>CFBundleIdentifier</key><string>com.example.computer-use.helper</string></dict></plist>"
+      ),
+    )
+    .unwrap();
+    let signed = std::process::Command::new("/usr/bin/codesign").args(["--force", "--sign", "-"]).arg(&app).output().unwrap();
+    assert!(signed.status.success(), "{}", String::from_utf8_lossy(&signed.stderr));
+
+    let error = HelperIdentity::from_app(&app).unwrap_err();
+    assert!(error.contains("Apple-issued"), "{error}");
+  }
+
+  #[test]
+  fn shipped_helper_path_must_be_an_absolute_app_bundle() {
+    assert!(HelperIdentity::from_app(Path::new("Example.app")).unwrap_err().contains("absolute"));
+    assert!(HelperIdentity::from_app(Path::new("/tmp/example")).unwrap_err().contains(".app"));
+  }
+
+  // Apple platform code is Apple-anchored but has no Team ID; reading its
+  // signing information exercises the native lookup without a Developer ID.
+  #[test]
+  fn shipped_helper_requires_a_team_id() {
+    let error = HelperIdentity::from_app(Path::new("/System/Applications/Calculator.app")).unwrap_err();
+    assert!(error.contains("no Team ID"), "{error}");
   }
 
   // Guards NOTICE(helper-security-epoch-requirement): revocation relies on the

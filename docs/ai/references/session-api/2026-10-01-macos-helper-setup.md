@@ -1,7 +1,8 @@
 # macOS Helper Setup
 
 Status: per-user `SMAppService` implementation complete on 2026-10-01;
-configuration-specific signed and notarized installed gate passed on 2026-10-02.
+configuration-specific signed and notarized installed gate passed on 2026-10-02;
+shipped helper identities added on 2026-10-03.
 Clean-host release installation and broader configurations remain release
 gates.
 
@@ -83,6 +84,44 @@ raising the signed security epoch (`AUVHelperSecurityEpoch`) together with
 the daemon's `MIN_SECURITY_EPOCH`; see
 [helper compatibility and revocation](2026-10-02-macos-helper-protocol-compatibility.md#security-epoch-revocation).
 
+## Shipped helper identity
+
+An application that embeds AUV, such as an Electron app bundling the `auv`
+executable, may ship the helper under its own name, icon, bundle identifier,
+and Developer ID team. Setup and the daemon do not pin the official identity
+in that case:
+
+- `AUV_MACOS_HELPER_APP` names the unpacked, notarized helper app the
+  frontend ships. When it is unset or empty, the official
+  `ai.moeru.auv.helper` / `433DLLA855` identity and the embedded archive are
+  used exactly as before.
+- When it is set, the app must be validly signed by an Apple-issued
+  certificate with a Team ID. Its signing identifier and Team ID become the
+  trusted identity for this process; a missing or invalid app makes `status`
+  report `invalid` and `install` fail with the reason.
+- The app installs as a copy at
+  `~/Library/Application Support/<bundle identifier>/<App Name>.app`, never in
+  place, because the containing application may be replaced by its updater
+  while TCC and ServiceManagement need a stable path. Its socket is
+  `.../<bundle identifier>/device-entry/host.sock`, and the helper derives
+  that directory from its own installed location. Its Keychain service is
+  `<bundle identifier>.device-entry.v1`, because a Keychain item's ACL trusts
+  only the helper that created it. Each identity therefore coexists with the
+  official helper.
+- `helper_embedded` reports whether an install payload is available from
+  either source. Upgrades compare the installed version with the shipped app's
+  `CFBundleShortVersionString`; the protocol and security epoch rules are
+  unchanged.
+- `package/package.sh` builds such an app with `AUV_MACOS_HELPER_NAME`,
+  `AUV_MACOS_HELPER_BUNDLE_ID`, `AUV_MACOS_HELPER_ICON` (`.icon` or `.icns`),
+  and `AUV_MACOS_TEAM_ID`. The LaunchAgent plist and label follow the bundle
+  identifier, and the helper registers `<bundle identifier>.plist`.
+
+Trusting the identity chosen by the process that launches AUV does not weaken
+the boundary: whoever controls that environment already controls the daemon
+that sends the enrollment credential. The peer of the private socket must
+still match one bundle identifier and Team ID at the expected per-user path.
+
 ## Frontends
 
 - CLI:
@@ -133,6 +172,19 @@ under `ai.moeru.auv.device-entry.v1` succeeded, and a paired Device completed:
 - one open-lid `lock → LOCKED → unlock → USABLE` sequence; and
 - two `LOCKED → close lid → unlock → USABLE` sequences, with the owner
   observing the built-in display wake after unlock.
+
+On 2026-10-03, the same host packaged a renamed helper
+(`AUV Helper Identity Test`, bundle identifier
+`ai.moeru.auv.helper.identity-test`, `.icns` icon) with the package script
+overrides, signed it with Team ID `433DLLA855`, notarized it in submission
+`910b0a1e-71c7-4c3a-bacd-fd81c464befb`, and passed it through
+`AUV_MACOS_HELPER_APP` to a source-built CLI. Install placed it under
+`~/Library/Application Support/ai.moeru.auv.helper.identity-test/`, its
+LaunchAgent registered and ran, status reported `running` through the peer
+identity check on its own socket, a repeated install was a no-op, and uninstall
+unregistered it and removed the app. The official helper's status was
+unaffected. Device enrollment and unlock through a shipped helper were not
+exercised.
 
 This is configuration-specific installed behavior, not a general support or
 release claim. A clean-host first install, denied Background Item recovery,

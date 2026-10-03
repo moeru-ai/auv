@@ -1,13 +1,18 @@
-//! Native registration for the LaunchAgent embedded in `AUV Helper.app`.
+//! Native registration for the LaunchAgent embedded in the helper app.
+//!
+//! The plist is `Contents/Library/LaunchAgents/<bundle identifier>.plist`, so
+//! renamed helper apps register their own job without configuration.
 
 use objc2::rc::Retained;
-use objc2_foundation::{NSError, NSString};
+use objc2_foundation::{NSBundle, NSError, NSString};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 use crate::ServiceStatus;
 
 pub fn status() -> ServiceStatus {
-  let service = service();
+  let Ok(service) = service() else {
+    return ServiceStatus::NotFound;
+  };
   // SAFETY: `service` is a retained SMAppService created by the framework;
   // `status` has no caller-owned pointer or lifetime requirements.
   match unsafe { service.status() } {
@@ -19,7 +24,7 @@ pub fn status() -> ServiceStatus {
 }
 
 pub fn register() -> Result<ServiceStatus, String> {
-  let service = service();
+  let service = service()?;
   // SAFETY: `service` is retained for the complete Objective-C call and the
   // generated binding owns the NSError out-parameter contract.
   let before = unsafe { service.status() };
@@ -40,7 +45,7 @@ pub fn register() -> Result<ServiceStatus, String> {
 }
 
 pub fn unregister() -> Result<ServiceStatus, String> {
-  let service = service();
+  let service = service()?;
   // SAFETY: `service` remains retained across the Objective-C message send.
   let before = unsafe { service.status() };
   if !matches!(before, SMAppServiceStatus::Enabled | SMAppServiceStatus::RequiresApproval) {
@@ -83,9 +88,17 @@ pub fn open_settings() {
   unsafe { SMAppService::openSystemSettingsLoginItems() };
 }
 
-fn service() -> Retained<SMAppService> {
-  let name = NSString::from_str("ai.moeru.auv.helper.plist");
+/// Bundle identifier of the running helper app.
+pub(crate) fn bundle_identifier() -> Option<String> {
+  // `mainBundle` resolves the enclosing `.app` from `Contents/MacOS`, both for
+  // the LaunchAgent and for setup running the binary by path.
+  NSBundle::mainBundle().bundleIdentifier().map(|identifier| identifier.to_string())
+}
+
+fn service() -> Result<Retained<SMAppService>, String> {
+  let bundle_id = bundle_identifier().ok_or_else(|| "the helper is not running from an app bundle".to_string())?;
+  let name = NSString::from_str(&format!("{bundle_id}.plist"));
   // SAFETY: `name` is a valid retained NSString for the duration of the call;
   // the returned SMAppService is retained by the generated binding.
-  unsafe { SMAppService::agentServiceWithPlistName(&name) }
+  Ok(unsafe { SMAppService::agentServiceWithPlistName(&name) })
 }

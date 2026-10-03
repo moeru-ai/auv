@@ -48,7 +48,7 @@ auv-driver-macos = { version = "0.0.24", path = "../auv-driver-macos", optional 
 core-foundation = { version = "0.10", optional = true }
 nix = { version = "0.31", features = ["socket", "user"], optional = true }
 objc2 = { version = "0.6", features = ["std"], optional = true }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSError", "NSString", "alloc"], optional = true }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSBundle", "NSError", "NSString", "alloc"], optional = true }
 objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "block2", "objc2", "objc2-foundation"], optional = true }
 rustix = { version = "1", features = ["process"], optional = true }
 security-framework = { version = "3.7", optional = true }

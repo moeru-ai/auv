@@ -77,7 +77,21 @@ that copied path at runtime.
   `resources/bin/auv` through `extraResources`.
 
 The Electron main process should own the child process and pass the resulting
-absolute path to `startAuv()`. Importing `@auv-js/cli/binary` during staging
+absolute path to `startAuv()`.
+
+An application may ship the macOS helper under its own name, icon, bundle
+identifier, and Developer ID team instead of using the official `AUV Helper`.
+Build it with `crates/auv-device-helper-macos/package/package.sh` and its
+`AUV_MACOS_HELPER_*` overrides, notarize and staple it, and place the unpacked
+app inside the application bundle (for example
+`YourApp.app/Contents/Library/Helpers/`). Then set `AUV_MACOS_HELPER_APP` to
+that absolute path in the `environment` passed to `startAuv()` and for every
+`auv setup macos-helper` invocation (or in `process.env` before calling the
+binding's setup functions). AUV reads the bundle identifier and Team ID from
+that app's signature, installs a copy under
+`~/Library/Application Support/<bundle identifier>/`, and trusts only that
+identity. See the
+[helper setup reference](../../../docs/ai/references/session-api/2026-10-01-macos-helper-setup.md#shipped-helper-identity). Importing `@auv-js/cli/binary` during staging
 does not load the NAPI addon. If the application also imports the root NAPI
 entrypoint at runtime, keep `*.node` files outside the ASAR with the packager's
 native-module/`asarUnpack` support. Keep the SDK independent of packaging policy

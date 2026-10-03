@@ -23,8 +23,10 @@ pub async fn serve() -> Result<(), HostError> {
   }
 
   let home = PathBuf::from(std::env::var_os("HOME").ok_or(HostError::Unavailable)?);
-  prepare_socket_dir(&home, uid)?;
-  let path = socket_path(&home);
+  let executable = std::env::current_exe().map_err(|_| HostError::Unavailable)?;
+  let support = installed_support_root(&home, &executable)?;
+  prepare_socket_dir(&home, &support, uid)?;
+  let path = socket_path(&support);
 
   if let Ok(metadata) = fs::symlink_metadata(&path) {
     if !metadata.file_type().is_socket() || metadata.uid() != uid {
@@ -86,17 +88,37 @@ where
   }
 }
 
-fn prepare_socket_dir(home: &Path, uid: u32) -> Result<(), HostError> {
+/// Support directory of this running, installed helper.
+///
+/// The helper serves only from `~/Library/Application Support/<dir>/<Name>.app`,
+/// and its socket lives under that `<dir>`. This is the layout the daemon
+/// derives from its selected helper identity, so every helper identity gets
+/// its own socket without the helper being told which identity it has.
+fn installed_support_root(home: &Path, executable: &Path) -> Result<PathBuf, HostError> {
+  // <dir>/<Name>.app/Contents/MacOS/<executable>
+  let root = executable.ancestors().nth(4).ok_or(HostError::Unavailable)?;
+  let name = root.file_name().and_then(|name| name.to_str()).ok_or(HostError::Unavailable)?;
+  let expected = crate::support_root(home, name);
+  let installed = matches!(
+    (fs::canonicalize(root), fs::canonicalize(&expected)),
+    (Ok(actual), Ok(expected)) if actual == expected
+  );
+  if !installed {
+    return Err(HostError::Unavailable);
+  }
+  Ok(expected)
+}
+
+fn prepare_socket_dir(home: &Path, support: &Path, uid: u32) -> Result<(), HostError> {
   if !home.is_absolute() {
     return Err(HostError::Unavailable);
   }
 
   let library = home.join("Library");
-  let support = library.join("Application Support");
-  let auv = support.join("AUV");
-  let entry = auv.join("device-entry");
+  let application_support = library.join("Application Support");
+  let entry = socket_path(support).parent().ok_or(HostError::Unavailable)?.to_path_buf();
 
-  for path in [home, &library, &support, &auv, &entry] {
+  for path in [home, &library, &application_support, support, &entry] {
     if !path.exists() {
       DirBuilder::new().mode(0o700).create(path).map_err(|_| HostError::Unavailable)?;
     }
@@ -213,6 +235,29 @@ fn status(error: HostError) -> u8 {
 mod tests {
   use super::*;
   use crate::PROTOCOL_VERSION;
+
+  #[test]
+  fn installed_helper_serves_from_its_own_support_directory() {
+    let home = tempfile::tempdir().unwrap();
+    let support = crate::support_root(home.path(), "com.example.computer-use.helper");
+    let executable = support.join("Example Computer Use.app").join("Contents").join("MacOS").join("auv-device-helper-macos");
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::write(&executable, []).unwrap();
+
+    assert_eq!(installed_support_root(home.path(), &executable).unwrap(), support);
+    assert_eq!(socket_path(&support), support.join("device-entry").join("host.sock"));
+  }
+
+  #[test]
+  fn helper_outside_the_user_support_directory_does_not_serve() {
+    let home = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let executable = elsewhere.path().join("AUV").join("AUV Helper.app").join("Contents").join("MacOS").join("auv-device-helper-macos");
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::write(&executable, []).unwrap();
+
+    assert_eq!(installed_support_root(home.path(), &executable), Err(HostError::Unavailable));
+  }
 
   #[test]
   fn request_for_another_uid_is_rejected_before_vault_access() {

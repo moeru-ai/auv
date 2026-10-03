@@ -16,6 +16,8 @@ pub fn native_package_version() -> &'static str {
 pub struct MacosHelperStatus {
   pub state: String,
   pub detail: Option<String>,
+  /// Whether this binding can install a helper: one embedded by a release
+  /// build, or the app named by `AUV_MACOS_HELPER_APP`.
   pub helper_embedded: bool,
 }
 
@@ -28,7 +30,9 @@ pub fn macos_helper_status() -> AsyncTask<MacosHelperStatusTask> {
   AsyncTask::new(MacosHelperStatusTask)
 }
 
-/// Install and register the signed AUV Helper embedded in this build.
+/// Install and register the signed AUV Helper embedded in this build, or the
+/// app named by `AUV_MACOS_HELPER_APP` when the embedding application ships
+/// its own helper.
 ///
 /// The work runs off the JavaScript thread because archive verification and
 /// ServiceManagement registration perform blocking platform calls.

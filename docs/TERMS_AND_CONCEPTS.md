@@ -417,6 +417,12 @@ decisions; setup requires neither `sudo` nor an administrator credential.
 Uninstall terminates and unregisters the helper, resets only its Accessibility
 decision, and removes only its app bundle; target-local enrollment and the
 remaining AUV Application Support state are retained.
+The **helper identity** is the bundle identifier and Team ID that setup and
+the daemon trust. It is the official `ai.moeru.auv.helper` unless the frontend
+names a **shipped helper** with `AUV_MACOS_HELPER_APP`: an application that
+embeds AUV may ship its own signed helper app, whose identity is read from that
+app's signature and which installs under its own Application Support
+directory, socket, and Keychain service.
 The CLI and SDK packages are independent setup frontends for one per-user
 helper. The **helper protocol** is the daemon-to-helper wire version; the
 helper declares the range it supports in its signed Info.plist. Any helper
