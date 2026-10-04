@@ -48,41 +48,35 @@ AUV means **Application Use Via ...**.
 
 ### Install
 
-Official releases provide prebuilt binaries for macOS, Linux, and Windows.
+Install a prebuilt release:
 
 #### macOS
-
-Install AUV from the official Homebrew tap:
 
 ```sh
 brew install moeru-ai/tap/auv
 auv --version
 ```
 
-The Homebrew formula supports both Apple Silicon and Intel Macs.
+> [!NOTE]
+> The Homebrew formula supports Apple Silicon and Intel Macs.
 
 #### Linux
 
-Download the archive for your architecture from the
-[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest):
-
-- `auv-x86_64-unknown-linux-gnu.tar.gz` for x86-64
-- `auv-aarch64-unknown-linux-gnu.tar.gz` for ARM64
-
-Extract the archive, then place the `auv` executable in a directory on your
-`PATH`, such as `~/.local/bin`:
+Download `auv-x86_64-unknown-linux-gnu.tar.gz` from the
+[latest release](https://github.com/moeru-ai/auv/releases/latest). Then add the
+executable to `PATH`:
 
 ```sh
-# This example uses the x86-64 archive. Use the ARM64 filename when needed.
 tar -xzf auv-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p "$HOME/.local/bin"
 install -m 0755 auv "$HOME/.local/bin/auv"
 auv --version
 ```
 
-#### Windows
+> [!TIP]
+> The ARM64 release archive is `auv-aarch64-unknown-linux-gnu.tar.gz`.
 
-On Windows x86-64 or ARM64, install AUV from this repository's Scoop bucket:
+#### Windows
 
 ```powershell
 scoop bucket add auv https://github.com/moeru-ai/auv
@@ -90,36 +84,31 @@ scoop install auv/auv
 auv --version
 ```
 
-Scoop adds `auv.exe` to `PATH` and installs `auv-helper.exe` with it.
-
 > [!TIP]
-> `auv-helper.exe` must stay next to `auv.exe`. `auv setup windows-helper install`
-> uses this file. The helper is not a standalone command.
+> Scoop selects the native x86-64 or ARM64 build. It also installs
+> `auv-helper.exe`, but adds only `auv.exe` to `PATH`.
 
-To install AUV without Scoop, download the archive for your architecture from
-the [latest GitHub release](https://github.com/moeru-ai/auv/releases/latest):
-
-- `auv-x86_64-pc-windows-msvc.zip` for x86-64
-- `auv-aarch64-pc-windows-msvc.zip` for ARM64
-
-Then extract the archive. This example uses the x86-64 archive:
-
-```powershell
-Expand-Archive .\auv-x86_64-pc-windows-msvc.zip -DestinationPath .\auv
-.\auv\auv.exe --version
-```
-
-Add the extracted directory to `PATH` to use `auv` from any terminal.
+> [!NOTE]
+> Manual Windows archives are also available from the
+> [latest release](https://github.com/moeru-ai/auv/releases/latest). AUV requires
+> `auv.exe` and `auv-helper.exe` to remain in the same directory.
 
 ### Install with Cargo
 
-Install [Rust](https://www.rust-lang.org/tools/install) before using this
-method. Third-party Protobuf sources are included in the repository, so Cargo
-installs do not require Buf or a separate Protobuf dependency-generation step.
+Install [Rust](https://www.rust-lang.org/tools/install) and the prerequisites for
+your platform.
+
+> [!IMPORTANT]
+> Cargo builds do not include the macOS or Windows Helper payload. A prebuilt
+> release is required to install the platform Helper.
+
+> [!NOTE]
+> AUV includes its third-party Protobuf sources. Cargo installation does not
+> require Buf or a separate Protobuf generation step.
 
 #### macOS
 
-Install the Xcode Command Line Tools, then build AUV directly from GitHub:
+Install the Xcode Command Line Tools:
 
 ```sh
 xcode-select --install
@@ -129,7 +118,7 @@ auv --version
 
 #### Linux
 
-On Ubuntu or Debian, install AUV's native build dependencies first:
+On Ubuntu or Debian, install the native build dependencies:
 
 ```sh
 sudo apt-get update
@@ -141,41 +130,36 @@ cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
 auv --version
 ```
 
-Package names may differ on other Linux distributions.
+> [!NOTE]
+> Other Linux distributions can use different package names.
 
 #### Windows
 
 Install Rust with the MSVC toolchain, Visual Studio Build Tools, and the
-Windows SDK, then run:
+Windows SDK.
 
 ```powershell
 cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
 auv --version
 ```
 
-After installing AUV with either method, inspect the available commands with:
-
-```sh
-auv --help
-auv invoke --help
-```
-
 ### Setup
 
 #### macOS
 
-Official macOS release binaries include the signed `AUV Helper.app`. On macOS
-13 or later, install and register it for the current user with:
+Official macOS releases include the signed `AUV Helper.app`. On macOS 13 or
+later, install it for the current user:
 
 ```sh
 auv setup macos-helper install
 auv setup macos-helper status
 ```
 
-The helper is installed under the current user's Application Support directory
-and does not require `sudo` or an administrator password. If macOS requires
-approval for the background item or Accessibility access, open the relevant
-System Settings panes with:
+> [!TIP]
+> The installation does not require `sudo` or an administrator password.
+
+If macOS requests approval, open the Background Items and Accessibility
+settings:
 
 ```sh
 auv setup macos-helper open-background-items-settings
@@ -183,21 +167,13 @@ auv setup macos-helper open-accessibility-settings
 ```
 
 > [!NOTE]
->
-> Projects that integrate AUV can rebrand `AUV Helper.app` with their own app
+> Projects that integrate AUV can rebrand `AUV Helper.app`. They can change its
 > name, icon, bundle identifier, and Apple Developer signing identity. See
 > [Shipped helper identity](crates/auv-device-helper-macos/README.md#shipped-helper-identity)
-> for the packaging and setup options.
+> for packaging options.
 
-Source builds created with `cargo install` do not embed the signed helper app.
-They can inspect or manage an already installed compatible helper, but a fresh
-`auv setup macos-helper install` requires an official release build or an app
-supplied by an integrating project.
-
-Other AUV operations require permissions to be granted to the process that
-launches AUV, usually your terminal app.
-
-Open **System Settings -> Privacy & Security** and enable:
+Grant these permissions to the application that starts AUV, usually your
+terminal application:
 
 | Permission | Needed for |
 | --- | --- |
@@ -205,7 +181,7 @@ Open **System Settings -> Privacy & Security** and enable:
 | Screen Recording | Screenshots, OCR, visual inspection, and evidence capture. |
 | Automation | AppleScript/System Events app activation and foreground fallback paths. |
 
-After changing permissions, restart the terminal process and rerun:
+After you change the permissions, restart the terminal. Then run:
 
 ```sh
 auv doctor
@@ -214,38 +190,35 @@ auv invoke app.probePermissions
 
 #### Windows
 
-Windows release archives contain `auv.exe` and `auv-helper.exe` together.
-Scoop installs both files and preserves this layout automatically. From an
-elevated PowerShell, install the LocalSystem service and verify its status:
+> [!IMPORTANT]
+> The Windows setup commands require an elevated PowerShell.
 
 ```powershell
 auv setup windows-helper install
 auv setup windows-helper status
 ```
 
-The setup command copies both executables into the protected AUV installation
-directory. Do not expose `auv-helper.exe` through a Scoop shim or invoke it
-directly.
+> [!NOTE]
+> The setup command installs both executables in `%ProgramFiles%\AUV`.
+> `auv-helper.exe` is not a standalone command.
 
 ### Uninstall
 
-Uninstall the platform helper before you uninstall AUV.
+Use the instructions that match your installation method. If a platform Helper
+is installed, remove it first.
 
 #### macOS
-
-Remove `AUV Helper.app`. Then uninstall the Homebrew package:
 
 ```sh
 auv setup macos-helper uninstall
 brew uninstall auv
 ```
 
-The helper command keeps the enrollment data in the login Keychain. It also
-keeps other AUV data in the Application Support directory.
+> [!NOTE]
+> Helper removal keeps the enrollment data in the login Keychain. It also keeps
+> other AUV data in the Application Support directory.
 
 #### Linux
-
-If you installed the release binary in `~/.local/bin`, remove it with:
 
 ```sh
 rm "$HOME/.local/bin/auv"
@@ -253,22 +226,20 @@ rm "$HOME/.local/bin/auv"
 
 #### Windows
 
-Open an elevated PowerShell. Remove the Helper service before you uninstall the
-Scoop package:
+Run these commands from an elevated PowerShell:
 
 ```powershell
 auv setup windows-helper uninstall
 scoop uninstall auv
 ```
 
-The helper command keeps the device data in `%ProgramData%`.
+> [!NOTE]
+> Helper removal keeps the device data in `%ProgramData%`.
 
-If you installed the ZIP without Scoop, remove the extracted AUV directory.
+If you installed the ZIP manually, remove its directory from the file system.
 Then remove that directory from `PATH`.
 
 #### Cargo
-
-If you installed AUV with Cargo on any platform, uninstall it with:
 
 ```sh
 cargo uninstall auv-cli
