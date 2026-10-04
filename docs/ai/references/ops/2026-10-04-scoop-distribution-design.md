@@ -26,11 +26,16 @@ The PR adds three user-facing pieces:
    Excavator action; and
 3. the Scoop commands in the Windows installation section of `README.md`.
 
-The manifest exposes `auv.exe` through Scoop's `bin` property. It includes the
-package description, homepage, Apache-2.0 license, stable version, release URL,
-and SHA-256 hash. Its `checkver` reads AUV's GitHub releases, while
-`autoupdate` derives the versioned Windows archive URL and reads the published
-`.sha256` companion asset.
+The manifest exposes only `auv.exe` through Scoop's `bin` property. Windows
+release archives built with Helper support also contain a sibling
+`auv-helper.exe`; Scoop preserves that payload in the app directory without
+creating a command shim for it. This is the layout consumed by
+`auv setup windows-helper install`, while direct Helper invocation remains
+unsupported. The manifest includes the package description, homepage,
+Apache-2.0 license, stable version, release URL, SHA-256 hash, and post-install
+notes for the elevated Helper setup step. Its `checkver` reads AUV's GitHub
+releases, while `autoupdate` derives the versioned Windows archive URL and reads
+the published `.sha256` companion asset.
 
 ## Update workflow
 
@@ -60,7 +65,10 @@ the release, autoupdate definition, URL, or hash cannot be resolved, leaving
 the previous manifest in place.
 
 The initial PR should record one Windows installation check using the local
-manifest and verify `auv --version`. This is implementation evidence, not a
+manifest and verify `auv --version`. For a release archive built after the
+Windows Helper packaging change, the check should also verify that Scoop keeps
+`auv-helper.exe` beside the resolved `auv.exe` target and that the elevated
+setup command can consume that pair. This is implementation evidence, not a
 new permanent project-owned test harness.
 
 ## Deliberate exclusions

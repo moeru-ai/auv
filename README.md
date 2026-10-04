@@ -90,6 +90,10 @@ scoop install auv/auv
 auv --version
 ```
 
+Scoop exposes only `auv.exe` as a command. It keeps the sibling
+`auv-helper.exe` payload in the installed app directory for
+`auv setup windows-helper install`; the helper is not a standalone command.
+
 Alternatively, download `auv-x86_64-pc-windows-msvc.zip` from the
 [latest GitHub release](https://github.com/moeru-ai/auv/releases/latest), then
 extract it in PowerShell:
@@ -99,7 +103,8 @@ Expand-Archive .\auv-x86_64-pc-windows-msvc.zip -DestinationPath .\auv
 .\auv\auv.exe --version
 ```
 
-Move `auv.exe` to a directory on your `PATH` to use `auv` from any terminal.
+Keep `auv.exe` and `auv-helper.exe` together when moving an extracted release.
+Add their directory to `PATH` to use `auv` from any terminal.
 
 ### Install with Cargo
 
@@ -205,6 +210,26 @@ After changing permissions, restart the terminal process and rerun:
 auv doctor
 auv invoke app.probePermissions
 ```
+
+#### Windows
+
+Windows release archives built with Helper support contain `auv.exe` and
+`auv-helper.exe` together. Scoop preserves this layout automatically. From an
+elevated PowerShell, install the LocalSystem service and verify its status:
+
+```powershell
+auv setup windows-helper install
+auv setup windows-helper status
+```
+
+The setup command copies both executables into the protected AUV installation
+directory. Do not expose `auv-helper.exe` through a Scoop shim or invoke it
+directly. If setup reports that the sibling helper is missing, update AUV to a
+release whose Windows archive includes the helper payload.
+
+See the
+[Windows Helper installation lifecycle](docs/ai/references/session-api/2026-10-04-windows-helper-install.md)
+for first-pairing and uninstall instructions.
 
 ## Understand AUV
 
