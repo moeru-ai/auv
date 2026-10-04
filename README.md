@@ -90,25 +90,26 @@ scoop install auv/auv
 auv --version
 ```
 
-Scoop installs `auv.exe` and `auv-helper.exe` together, but exposes only
-`auv.exe` as a command. The helper remains beside it for
-`auv setup windows-helper install`; it is not a standalone command.
+Scoop adds `auv.exe` to `PATH` and installs `auv-helper.exe` with it.
 
-Alternatively, download the archive for your architecture from the
-[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest):
+> [!TIP]
+> `auv-helper.exe` must stay next to `auv.exe`. `auv setup windows-helper install`
+> uses this file. The helper is not a standalone command.
+
+To install AUV without Scoop, download the archive for your architecture from
+the [latest GitHub release](https://github.com/moeru-ai/auv/releases/latest):
 
 - `auv-x86_64-pc-windows-msvc.zip` for x86-64
 - `auv-aarch64-pc-windows-msvc.zip` for ARM64
 
-Then extract it in PowerShell:
+Then extract the archive. This example uses the x86-64 archive:
 
 ```powershell
 Expand-Archive .\auv-x86_64-pc-windows-msvc.zip -DestinationPath .\auv
 .\auv\auv.exe --version
 ```
 
-Keep `auv.exe` and `auv-helper.exe` together when moving an extracted release.
-Add their directory to `PATH` to use `auv` from any terminal.
+Add the extracted directory to `PATH` to use `auv` from any terminal.
 
 ### Install with Cargo
 
