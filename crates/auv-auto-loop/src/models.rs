@@ -276,3 +276,12 @@ pub struct ManualReviewItem {
   pub isolated_operation: Option<Box<OperationDef>>,
   pub created_at: String,
 }
+
+/// Durable record for an isolated operation persisted to disk.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersistedIsolationRecord {
+  pub operation_name: String,
+  pub reason_code: ReasonCode,
+  pub reason_description: String,
+  pub isolated_at: String,
+}

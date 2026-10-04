@@ -390,3 +390,92 @@ fn test_8_strict_mode_unverified_step_instant_isolation() {
   assert_eq!(logger.find_by_reason(ReasonCode::StrictStepFailed).len(), 1);
   assert_eq!(logger.find_by_reason(ReasonCode::AutoIsolatedConsecutiveFailures).len(), 1);
 }
+
+#[test]
+fn test_9_isolation_persistence_across_restarts() {
+  let logger = DecisionLogger::new();
+  let compiler = AutoCompiler::new(&logger);
+  let record = load_clean_record();
+  let op = compiler.compile(&record, None).unwrap();
+
+  let temp_dir = tempfile::tempdir().expect("Failed to create tempdir");
+  let persistence_path = temp_dir.path().join("catalog_isolation.jsonl");
+
+  // Step 1: Initialize catalog with persistence path
+  let mut catalog = OperationCatalog::with_persistence(&persistence_path).expect("Failed to create catalog with persistence");
+  assert_eq!(catalog.persistence_path(), Some(persistence_path.as_path()));
+  assert!(!catalog.is_isolated(&op.name));
+
+  let activated = catalog.register_active(op.clone());
+  assert!(activated);
+  assert!(catalog.get_active(&op.name).is_some());
+
+  // Step 2: Trigger consecutive failures to cause auto-isolation
+  let mut executor = RuntimeExecutor::new(&logger);
+  let mut fault_env = RuntimeEnvironment {
+    fault_audio_service_down: true,
+    playback_status: "Paused".to_string(),
+    current_volume: 0.99,
+    ..Default::default()
+  };
+
+  // Run 1: 1st failure
+  let res_1 = executor.execute(&op, &mut fault_env, &mut catalog);
+  assert!(matches!(
+    res_1,
+    ExecutionResult::GateFailed {
+      consecutive_failures: 1,
+      ..
+    }
+  ));
+  assert!(!catalog.is_isolated(&op.name));
+
+  // Run 2: 2nd failure -> auto-isolation
+  let res_2 = executor.execute(&op, &mut fault_env, &mut catalog);
+  assert!(matches!(res_2, ExecutionResult::EscalatedToVlm { isolated: true, .. }));
+  assert!(catalog.is_isolated(&op.name));
+  assert!(catalog.get_active(&op.name).is_none());
+
+  // Step 3: Verify the record was persisted to disk immediately
+  assert!(persistence_path.exists());
+  let content = std::fs::read_to_string(&persistence_path).expect("Failed to read persistence file");
+  assert!(!content.trim().is_empty());
+  assert!(content.contains(&op.name));
+  assert!(content.contains("AUTO_ISOLATED_CONSECUTIVE_FAILURES"));
+
+  // Step 4: Simulate system restart with a brand new catalog instance loading from the same path
+  drop(catalog);
+  let mut restarted_catalog = OperationCatalog::with_persistence(&persistence_path).expect("Failed to reload catalog with persistence");
+
+  // Verify isolation state is preserved across restart
+  assert!(restarted_catalog.is_isolated(&op.name), "Operation must remain isolated on restart");
+  let isolation_rec = restarted_catalog.get_isolated_record(&op.name).expect("Persisted isolation record must be present");
+  assert_eq!(isolation_rec.operation_name, op.name);
+  assert_eq!(isolation_rec.reason_code, ReasonCode::AutoIsolatedConsecutiveFailures);
+  assert!(!isolation_rec.isolated_at.is_empty());
+
+  // Step 5: Prevent bad operation revival!
+  // Attempting to register the bad operation into active pool must be rejected.
+  let revived = restarted_catalog.register_active(op.clone());
+  assert!(!revived, "Registering an isolated operation into active pool must be rejected");
+  assert!(restarted_catalog.get_active(&op.name).is_none(), "Bad operation must NOT be in active pool");
+  assert!(restarted_catalog.is_isolated(&op.name), "Bad operation must remain isolated");
+
+  // Step 6: Scheduler checks must immediately escalate to VLM without executing or requiring 2 failures
+  let scheduler = FastLoopScheduler::new(&logger);
+  let mut context = HashMap::new();
+  context.insert("App.ProcessName".to_string(), serde_json::json!("QQMusic.exe"));
+
+  let req = TaskRequest {
+    app_name: "QQMusic.exe".to_string(),
+    task_name: "prepare_playback".to_string(),
+    instruction: "把音乐调好：音量40%，切到下一首，确保在播".to_string(),
+    current_context: context,
+    embedding_vector: None,
+  };
+
+  let outcome = scheduler.schedule(&req, &restarted_catalog);
+  assert!(outcome.selected_operation.is_none(), "Isolated operation must not be selected");
+  assert_eq!(outcome.reason_code, ReasonCode::EscalateToVlm, "Must escalate to VLM immediately without execution");
+  assert!(!outcome.embedding_called, "Exact isolated key must not call embeddings");
+}

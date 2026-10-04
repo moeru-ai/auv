@@ -20,7 +20,7 @@ pub use compiler::AutoCompiler;
 pub use decision_log::DecisionLogger;
 pub use models::{
   CompilationMetadata, DecisionAction, DecisionCategory, DecisionLog, ManualReviewItem, OperationDef, OperationStepDef, ParameterDef,
-  PreconditionDef, ReasonCode, TargetMetadata, TrajectoryRecord, TrajectoryStep, VerificationGateDef,
+  PersistedIsolationRecord, PreconditionDef, ReasonCode, TargetMetadata, TrajectoryRecord, TrajectoryStep, VerificationGateDef,
 };
 pub use runtime::{ExecutionResult, RuntimeEnvironment, RuntimeExecutor};
 pub use scheduler::{FastLoopScheduler, OperationCatalog, SchedulingOutcome, TaskRequest};
