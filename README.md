@@ -57,26 +57,23 @@ brew install moeru-ai/tap/auv
 auv --version
 ```
 
-> [!NOTE]
-> The Homebrew formula supports Apple Silicon and Intel Macs.
-
 #### Linux
 
-Download `auv-x86_64-unknown-linux-gnu.tar.gz` from the
-[latest release](https://github.com/moeru-ai/auv/releases/latest). Then add the
-executable to `PATH`:
+##### x86-64
 
 ```sh
-tar -xzf auv-x86_64-unknown-linux-gnu.tar.gz
-mkdir -p "$HOME/.local/bin"
-install -m 0755 auv "$HOME/.local/bin/auv"
-auv --version
+mkdir -p "${HOME}/.local/bin" && curl -fsSL "https://github.com/moeru-ai/auv/releases/latest/download/auv-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C "${HOME}/.local/bin"
 ```
 
-> [!TIP]
-> The ARM64 release archive is `auv-aarch64-unknown-linux-gnu.tar.gz`.
+##### ARM64
+
+```sh
+mkdir -p "${HOME}/.local/bin" && curl -fsSL "https://github.com/moeru-ai/auv/releases/latest/download/auv-aarch64-unknown-linux-gnu.tar.gz" | tar -xz -C "${HOME}/.local/bin"
+```
 
 #### Windows
+
+##### Scoop
 
 ```powershell
 scoop bucket add auv https://github.com/moeru-ai/auv
@@ -84,27 +81,24 @@ scoop install auv/auv
 auv --version
 ```
 
-> [!TIP]
-> Scoop selects the native x86-64 or ARM64 build. It also installs
-> `auv-helper.exe`, but adds only `auv.exe` to `PATH`.
+##### Manual installation
 
-> [!NOTE]
-> Manual Windows archives are also available from the
-> [latest release](https://github.com/moeru-ai/auv/releases/latest). AUV requires
-> `auv.exe` and `auv-helper.exe` to remain in the same directory.
+Download the archive for your architecture:
+
+- [x86-64](https://github.com/moeru-ai/auv/releases/latest/download/auv-x86_64-pc-windows-msvc.zip)
+- [ARM64](https://github.com/moeru-ai/auv/releases/latest/download/auv-aarch64-pc-windows-msvc.zip)
+
+Extract the archive to a permanent directory. Add that directory to your user
+`PATH`. Keep `auv.exe` and `auv-helper.exe` in the same directory.
 
 ### Install with Cargo
 
-Install [Rust](https://www.rust-lang.org/tools/install) and the prerequisites for
-your platform.
+Prerequisites: [Rust](https://www.rust-lang.org/tools/install) and the platform
+build tools below. AUV includes the Protobuf sources, so Buf is not required.
 
-> [!IMPORTANT]
-> Cargo builds do not include the macOS or Windows Helper payload. A prebuilt
-> release is required to install the platform Helper.
-
-> [!NOTE]
-> AUV includes its third-party Protobuf sources. Cargo installation does not
-> require Buf or a separate Protobuf generation step.
+> [!WARNING]
+> `cargo install` does not include AUV Helper. Use an install method above if
+> you need it.
 
 #### macOS
 
