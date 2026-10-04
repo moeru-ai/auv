@@ -103,10 +103,13 @@ auv --version
 ```
 
 > [!NOTE]
-> Linux requires glibc. Linux musl is not supported.
+>
+> `AUV Helper.app` for macOS and `auv-helper.exe` for Windows are included in
+> the `proto` installation.
 
-> [!TIP]
-> The macOS and Windows archives include AUV Helper.
+> [!WARNING]
+>
+> Linux musl is not supported. (But PRs are welcomed!)
 
 ### Install with Cargo
 
