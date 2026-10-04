@@ -90,17 +90,18 @@ fn test_2_dirty_trajectory_rejection_into_manual_queue() {
   let compiler = AutoCompiler::new(&logger);
   let mut dirty_record = load_clean_record();
 
-  // Inject an ambiguous step simulating background state mutation without verifiable feedback
+  // Inject a realistic background state mutation with pre_state and post_state diff.
+  // Note: Neither action nor intent contains "ambiguous"; caught purely via state-diff on non-goal keys.
   dirty_record.structured_trajectory.insert(
     2,
     TrajectoryStep {
       step: 99,
-      intent: "Simulate unverified_mutation in background with no visible feedback".to_string(),
-      action: "simulate_ambiguous_mutation --silent".to_string(),
-      perception: "No direct perception signal available".to_string(),
-      result: serde_json::json!({ "mutation": true }),
-      pre_state: None,
-      post_state: None,
+      intent: "Update internal audio buffer prefetch configuration".to_string(),
+      action: "configure_audio_engine --prefetch-buffer 512".to_string(),
+      perception: "Internal driver registry updated with no visible audio change".to_string(),
+      result: serde_json::json!({ "success": true }),
+      pre_state: Some(serde_json::json!({ "prefetch_buffer_size": 256 })),
+      post_state: Some(serde_json::json!({ "prefetch_buffer_size": 512 })),
     },
   );
 
@@ -109,7 +110,8 @@ fn test_2_dirty_trajectory_rejection_into_manual_queue() {
 
   let review_item = result.unwrap_err();
   assert_eq!(review_item.reason_code, ReasonCode::RejectAmbiguousDrops);
-  assert!(review_item.reason_description.contains("ambiguous drop"));
+  assert!(review_item.reason_description.contains("ambiguous"));
+  assert!(review_item.reason_description.contains("prefetch_buffer_size"));
 
   // Check structured log
   let rejection_logs = logger.find_by_reason(ReasonCode::RejectAmbiguousDrops);

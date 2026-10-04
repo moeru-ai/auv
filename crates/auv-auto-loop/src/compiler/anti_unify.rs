@@ -1,11 +1,14 @@
-//! Parameter lifting and anti-unification across isomorphic trajectories.
+//! v0.1 Scalar Parameter Lifting & Anti-Unification across isomorphic trajectories.
 //!
-//! Parameter sources are strictly restricted to:
-//! 1. Anti-unification of >= 2 isomorphic trajectories (structural equivalence with differing literal args).
-//! 2. Explicit API whitelist (e.g. SetVolume(float) may be parameterized).
-//!
-//! FORBIDDEN: Actions that must remain parameter-less (such as Next(), SkipNext(), Play())
-//! are strictly barred from parameterization.
+//! Scope & Design Constraints:
+//! - v0.1 specifically lifts scalar quantities (currently process volume) when literal
+//!   arguments vary across structurally isomorphic trajectory skeletons.
+//! - General AST anti-unification for arbitrary domain verbs is deferred (TODO: anti-unify-v1).
+//! - Parameter sources are strictly restricted to:
+//!   1. Anti-unification of >= 2 isomorphic trajectories with varying scalar literals.
+//!   2. Explicit API whitelist (e.g. SetVolume(float)).
+//! - FORBIDDEN: Actions that must remain parameter-less (such as Next(), SkipNext(), Play())
+//!   are strictly barred from parameterization.
 
 use crate::models::{ParameterDef, TrajectoryRecord, TrajectoryStep};
 

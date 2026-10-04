@@ -59,10 +59,11 @@ pub fn evaluate_cleaning_gate(outcome: &CleaningOutcome) -> CompilationGateEvalu
     CompilationGateEvaluation {
       passed: false,
       reason_code: ReasonCode::RejectAmbiguousDrops,
-      message: format!(
-        "Cleaning gate rejected trajectory: {} ambiguous drop(s) detected",
-        outcome.dropped_steps.iter().filter(|s| s.is_ambiguous).count()
-      ),
+      message: {
+        let reasons: Vec<String> =
+          outcome.dropped_steps.iter().filter(|s| s.is_ambiguous).map(|s| format!("step {}: {}", s.step, s.reason)).collect();
+        format!("Cleaning gate rejected trajectory: {} ambiguous drop(s) detected [{}]", reasons.len(), reasons.join("; "))
+      },
     }
   } else {
     CompilationGateEvaluation {
