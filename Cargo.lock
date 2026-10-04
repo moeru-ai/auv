@@ -466,6 +466,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-auto-loop"
+version = "0.0.25"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "auv-base-evals"
 version = "0.0.25"
 dependencies = [

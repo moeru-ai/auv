@@ -20,6 +20,7 @@ members = [
   "crates/auv-tracing-otel",
   "crates/auv-scan",
   "supported/apps/auv-qqmusic",
+  "crates/auv-auto-loop",
   "crates/auv-driver",
   "crates/auv-driver-common",
   "crates/auv-driver-linux",

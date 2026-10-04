@@ -1,0 +1,23 @@
+[package]
+name = "auv-auto-loop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "AUV auto-loop v0.1: trajectory compiler, compilation gates, fast loop scheduler, and runtime auto-isolation"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
