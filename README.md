@@ -102,13 +102,11 @@ proto install auv latest --config-mode global --pin global
 auv --version
 ```
 
-The proto plugin supports Apple Silicon and Intel macOS, x86-64 and ARM64 GNU
-Linux with glibc, and x86-64 Windows. AUV does not currently publish proto
-artifacts for Linux musl or Windows ARM64.
+> [!NOTE]
+> Linux requires glibc. Linux musl is not supported.
 
-proto installs the official AUV release archive for the current platform. The
-macOS archive includes the signed `AUV Helper.app` used by the setup steps
-below.
+> [!TIP]
+> The macOS and Windows archives include AUV Helper.
 
 ### Install with Cargo
 

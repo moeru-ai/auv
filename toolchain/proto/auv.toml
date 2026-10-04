@@ -20,7 +20,10 @@ checksum-file = "auv-{arch}-apple-darwin.tar.gz.sha256"
 exe-path = "auv"
 
 [platform.windows]
-archs = [ "x86_64" ]
+archs = [
+  "x86_64",
+  "aarch64"
+]
 download-file = "auv-{arch}-pc-windows-msvc.zip"
 checksum-file = "auv-{arch}-pc-windows-msvc.zip.sha256"
 exe-path = "auv.exe"
