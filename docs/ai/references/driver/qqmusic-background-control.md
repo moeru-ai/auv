@@ -106,34 +106,49 @@ Benchmarked across 3 modes with identical 4-way latency split definitions (`disc
 - Optimized Verified Mode: `2026-10-04-windows-hotpath-optimized-verified-20x.jsonl`
 - Optimized Fast Mode: `2026-10-04-windows-hotpath-optimized-fast-20x.jsonl`
 
-#### 4-Way Split Metrics Comparison (P50 / P95 / Mean)
+#### Percentile Methodology Disclosure
+With $N=20$ samples, percentiles in the table below are computed using standard linear interpolation (`numpy.percentile(vals, p, method='linear')`), where median $P_{50} = \frac{\text{sorted}[9] + \text{sorted}[10]}{2}$.
+- Under standard linear interpolation: Baseline Total P50 is **891.32 ms**; Fast Mode Total P50 is **36.82 ms** (speedup: **~24.2x**).
+- Under nearest-rank / upper-median (`sorted[10]`): Baseline Total P50 is 1173.33 ms; Fast Mode Total P50 is 40.88 ms (speedup: **~28.7x**).
+- Under nearest-rank lower (`sorted[9]`): Baseline Total P50 is 609.30 ms; Fast Mode Total P50 is 32.77 ms (speedup: **~18.6x**).
+All three methods confirm order-of-magnitude acceleration (~19x to ~29x). The table below adopts the standard linear interpolation convention.
+
+#### 4-Way Split Metrics Comparison (Linear P50 / Linear P95 / Mean)
 
 | Metric | Baseline (Unoptimized) | Optimized (Verified Mode) | Optimized (Fast Mode) | Verification Notes |
 |---|---|---|---|---|
-| **discovery_ms** | 5.79 / 7.98 / 6.79 ms | 5.82 / 11.25 / 6.96 ms | 6.18 / 9.98 / 7.17 ms | One-time SMTC & window resolution |
-| **dispatch_ms** | 2.42 / 3.36 / 2.45 ms | **0.32 / 0.61 / 0.36 ms** (7.6x) | **0.35 / 0.75 / 0.39 ms** (6.9x) | Cached `ProcessAudioVolume` + idempotency |
-| **verification_ms** | 1132.29 / 3154.62 / 951.19 ms | 1183.30 / 1520.86 / 833.09 ms | **1.28 / 714.41 / 245.92 ms** (884x P50) | Fast mode skips Step 3 title poll |
-| **wgc_ms** | 33.62 / 39.16 / 46.61 ms | **4.93 / 6.35 / 20.77 ms** (6.8x) | **3.54 / 32.92 / 25.13 ms** (9.5x) | Subsampled mapped texture (live occluded window) |
-| **total_duration_ms** | 1173.33 / 3196.91 / 1007.88 ms | **1194.44 / 1532.10 / 861.73 ms** (100% succ) | **40.88 / 725.73 / 279.09 ms** (28.7x P50) | Total end-to-end replay duration |
+| **discovery_ms** | 5.76 / 8.71 / 6.79 ms | 5.76 / 11.86 / 6.96 ms | 6.06 / 10.68 / 7.17 ms | One-time SMTC & window resolution |
+| **dispatch_ms** | 2.42 / 3.37 / 2.45 ms | **0.31 / 0.63 / 0.36 ms** (7.8x) | **0.30 / 0.76 / 0.39 ms** (8.1x) | Cached `ProcessAudioVolume` + idempotency |
+| **verification_ms** | 848.25 / 3154.69 / 951.19 ms | 1139.32 / 1527.20 / 833.09 ms | **1.00 / 746.55 / 245.92 ms** (848x P50) | Aggregate S1+S2+S3 verification (see note below) |
+| **wgc_ms** | 33.37 / 51.95 / 46.61 ms | **4.89 / 22.43 / 20.77 ms** (6.8x) | **3.54 / 47.81 / 25.13 ms** (9.4x) | Subsampled mapped texture (live occluded window) |
+| **total_duration_ms** | 891.32 / 3197.07 / 1007.88 ms | **1149.45 / 1538.37 / 861.73 ms** (100% succ) | **36.82 / 757.87 / 279.09 ms** (24.2x P50) | Total end-to-end replay duration |
 
-> **Measurement Integrity & Redline Enforcement**:
-> 1. Fast mode (P50 40.88ms) and Verified mode (P50 1194.44ms) are strictly reported separately and not averaged together.
-> 2. Step 4 WGC health checks were executed against the live occluded window (HWND 0xa0db6, non-black ratio 88.6%), confirming genuine WGC latency reduction from ~33.6ms down to ~3.5-4.9ms P50 (zero reliance on the 0ms minimized skip path).
-> 3. Verified mode eliminated baseline 3.0s buffer timeouts (success rate increased from 18/20 (90%) to 20/20 (100%)).
+> **Measurement Integrity & Metric Disclosures**:
+> 1. **Fast vs Verified separation**: Fast mode (P50 36.82ms) and Verified mode (P50 1149.45ms) are strictly reported separately and not averaged together.
+> 2. **Step 4 live window proof**: WGC health checks were executed against the live occluded window (HWND 0xa0db6, non-black ratio 88.6%), confirming genuine WGC latency reduction from ~33.4ms down to ~3.5-4.9ms P50 (zero reliance on the 0ms minimized skip path).
+> 3. **Success rate**: Verified mode eliminated baseline 3.0s buffer timeouts (success rate increased from 18/20 (90%) to 20/20 (100%)).
+> 4. **`verification_ms` aggregate definition & Fast P95 source**: `verification_ms` is the sum of verification durations across Step 1, Step 2, and Step 3. In Fast mode, Step 3 title change polling is bypassed entirely (P50 0.68ms, max 1.61ms). The Fast mode P95 of 746.55ms (upper-median 714.41ms) comes **entirely from Step 2's play state wait** (`TryPlayAsync` stream transition) when QQ Music happened to be paused between iterations. Skipping Step 3 title polling explains the 848x reduction at P50, but does not eliminate Step 2 playback waits at P95 when the player was not already playing.
 
-### 4. Per-Step Breakdown Comparison (P50)
+### 4. Per-Step Breakdown Comparison (Linear P50)
 
-| Step | Operation | Baseline P50 | Verified P50 | Fast P50 | Improvement Mechanism |
+| Step | Operation | Baseline P50 | Verified P50 | Fast P50 | Improvement Mechanism & Behavioral Analysis |
 |---|---|---|---|---|---|
-| Step 1 | Query Playback State | 6.20 ms | 0.49 ms | 0.42 ms | Context reuse (zero redundant enumeration) |
-| Step 2 | Play & Volume 40% | 84.55 ms | 151.11 ms | 0.04 ms | Idempotency guard (skips redundant COM writes) |
-| Step 3 | Skip Next Track | 1050.26 ms | 1009.62 ms | 0.72 ms | Dispatch-only return in fast mode |
-| Step 4 | Verify Window Alive | 33.62 ms | 4.93 ms | 3.54 ms | Lightweight mapped texture subsampling |
+| Step 1 | Query Playback State | 6.11 ms | 0.48 ms | 0.42 ms | Context reuse (zero redundant enumeration) |
+| Step 2 | Play & Volume 40% | 84.49 ms | 151.09 ms | 0.04 ms | Idempotency guard for volume (0ms writes). Verified P50 regression explained below. |
+| Step 3 | Skip Next Track | 566.31 ms | 544.46 ms | 0.68 ms | Dispatch-only return in fast mode; adaptive backoff polling in verified mode |
+| Step 4 | Verify Window Alive | 33.37 ms | 4.89 ms | 3.54 ms | Lightweight mapped texture subsampling |
+
+#### Step 2 Verified P50 Regression Analysis (84.49 ms -> 151.09 ms)
+In Verified mode, Step 2 duration increased at P50 due to an explicit test condition and verification gate rigor difference:
+- **Volume**: Idempotency was 100% effective (`skipped_volume_write: true` in 20/20 runs, 0ms volume write).
+- **Play status**: After Step 3's track skip in the preceding iteration, QQ Music frequently transitioned to a buffering/paused inter-track state. Verified mode strictly required `PlaybackStatus::Playing` before proceeding, looping through adaptive polling intervals (71ms, 151ms, 231ms, 312ms, 472ms, 633ms).
+- **Baseline difference**: Baseline used a loose single-check check that exited earlier (sometimes accepting intermediate states), whereas Verified mode waited for confirmed playback state, trading ~66ms median wait time for 100% confirmed end-to-end success (vs 90% in baseline).
+- **Fast mode contrast**: In Fast mode, iterations where the track was already playing took **0.02–0.04 ms** (both volume and play write skipped), while iterations requiring play wait took 151–714 ms, exhibiting a clear bimodal distribution.
 
 ### 5. Fault Injection Validation
 - `volume` fault injection: Step 2 gate detected discrepancy (`vol_check: false`), escalated with `"would escalate to VLM"`, 0 VLM called.
 - `pause` fault injection: Step 2 gate detected discrepancy (`status_check: false`), escalated with `"would escalate to VLM"`, 0 VLM called.
 
-Decision: Hot-path optimizations validated. Fast mode delivers P50 40.88ms end-to-end operation latency (28.7x faster than baseline); Verified mode delivers 100% success rate with ~7x faster command dispatch and ~7x faster WGC health checks.
+Decision: Hot-path optimizations validated. Fast mode delivers P50 36.82ms end-to-end operation latency (24.2x faster than baseline under standard linear interpolation, ~19x nearest-rank, ~28.7x upper-median); Verified mode delivers 100% success rate with ~7.8x faster command dispatch and ~6.8x faster WGC health checks.
 
 
