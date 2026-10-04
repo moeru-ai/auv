@@ -6,12 +6,12 @@ installation gate must pass before this becomes a release support claim.
 `auv setup windows-helper` owns the installed lifecycle for the Windows Device
 entry host shipped in the release ZIP. The public product name is **AUV
 Helper**. Its installation consists of both `auv.exe`, which hosts the
-`AuvDevice` SCM service, and the sibling one-shot `auv-helper.exe` worker.
+`AuvDevice` SCM service, and the embedded one-shot `auv-helper.exe` worker.
 
 ## Commands and fixed layout
 
-Run these commands from an elevated PowerShell after extracting the Windows
-release ZIP:
+Run these commands from an elevated PowerShell after installing or extracting
+the single-binary Windows release:
 
 ```powershell
 .\auv.exe setup windows-helper status
@@ -20,10 +20,11 @@ release ZIP:
 ```
 
 Installation creates a protected `%ProgramFiles%\AUV` directory with a
-non-inheriting Administrators-and-SYSTEM-only DACL, copies both release
-binaries, registers `AuvDevice` as an automatic LocalSystem service, and waits
-for it to report `Running`. The service command continues to use the reviewed
-fixed contract: one `http://127.0.0.1:9847` listener and the SYSTEM-only
+non-inheriting Administrators-and-SYSTEM-only DACL, copies `auv.exe`, extracts
+its version-matched embedded `auv-helper.exe`, registers `AuvDevice` as an
+automatic LocalSystem service, and waits for it to report `Running`. The
+service command continues to use the reviewed fixed contract: one
+`http://127.0.0.1:9847` listener and the SYSTEM-only
 `%ProgramData%\AUVDeviceEntry` store and `pairings.json` path.
 
 The installer refuses a preexisting installation directory or service instead

@@ -93,7 +93,7 @@ Download the archive for your architecture:
 - [ARM64](https://github.com/moeru-ai/auv/releases/latest/download/auv-aarch64-pc-windows-msvc.zip)
 
 Extract the archive to a permanent directory. Add that directory to your user
-`PATH`. Keep `auv.exe` and `auv-helper.exe` in the same directory.
+`PATH`. The archive contains a single `auv.exe`; the Windows helper is embedded.
 
 ### Install with proto
 
@@ -108,8 +108,9 @@ auv --version
 
 > [!NOTE]
 >
-> `AUV Helper.app` for macOS and `auv-helper.exe` for Windows are included in
-> the `proto` installation.
+> `AUV Helper.app` for macOS is included in the `proto` installation. On
+> Windows, `auv-helper.exe` is embedded in `auv.exe` and extracted only by the
+> elevated helper setup command.
 
 > [!WARNING]
 >
@@ -242,8 +243,9 @@ auv setup windows-helper status
 ```
 
 > [!NOTE]
-> The setup command installs both executables in `%ProgramFiles%\AUV`.
-> `auv-helper.exe` is not a standalone command.
+> The setup command installs `auv.exe` and extracts its embedded
+> `auv-helper.exe` into `%ProgramFiles%\AUV`. The helper is not a standalone
+> command and does not need to be downloaded or placed beside `auv.exe`.
 
 ### Uninstall
 

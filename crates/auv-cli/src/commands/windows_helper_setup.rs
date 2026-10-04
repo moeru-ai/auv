@@ -23,6 +23,10 @@ const SERVICE_NAME: &str = "AuvDevice";
 const DISPLAY_NAME: &str = "AUV Device Helper";
 const LISTEN_URI: &str = "http://127.0.0.1:9847";
 
+mod embedded {
+  include!(concat!(env!("OUT_DIR"), "/embedded_windows_helper.rs"));
+}
+
 #[derive(Debug)]
 struct Layout {
   install_dir: PathBuf,
@@ -103,9 +107,9 @@ pub fn status(json: bool) -> Result<i32, String> {
 pub fn install(json: bool) -> Result<i32, String> {
   let layout = Layout::resolve()?;
   let source_auv = std::env::current_exe().map_err(|error| format!("failed to locate auv.exe: {error}"))?;
-  let source_helper = source_auv.with_file_name("auv-helper.exe");
+  let helper = embedded::EXECUTABLE
+    .ok_or("this auv.exe does not contain the Windows helper; install AUV from an official release, Scoop, or proto before running setup")?;
   require_regular_file(&source_auv, "auv.exe")?;
-  require_regular_file(&source_helper, "sibling auv-helper.exe")?;
 
   if layout.install_dir.exists() {
     return Err(format!(
@@ -133,7 +137,7 @@ pub fn install(json: bool) -> Result<i32, String> {
   }
   let result = (|| {
     fs::copy(&source_auv, &layout.auv).map_err(|error| format!("failed to install auv.exe: {error}"))?;
-    fs::copy(&source_helper, &layout.helper).map_err(|error| format!("failed to install auv-helper.exe: {error}"))?;
+    fs::write(&layout.helper, helper).map_err(|error| format!("failed to install embedded auv-helper.exe: {error}"))?;
     issue_first_pairing_token(&manager, &layout)?;
     let service = manager
       .create_service(
@@ -511,6 +515,17 @@ mod tests {
       ]
       .map(OsString::from)
     );
+  }
+
+  #[test]
+  fn configured_embedded_helper_is_a_pe_executable() {
+    let Some(helper) = embedded::EXECUTABLE else {
+      // Source and Cargo installs intentionally have no release-built payload.
+      return;
+    };
+
+    assert!(helper.starts_with(b"MZ"));
+    assert!(helper.len() > 2);
   }
 
   #[test]

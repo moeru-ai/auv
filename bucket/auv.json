@@ -4,7 +4,7 @@
     "homepage": "https://github.com/moeru-ai/auv",
     "license": "Apache-2.0",
     "notes": [
-        "Scoop installs auv-helper.exe beside auv.exe for helper setup.",
+        "The setup command installs AUV's internal Windows helper; do not invoke auv-helper.exe directly.",
         "To install the helper service, open an elevated PowerShell and run 'auv setup windows-helper install'."
     ],
     "architecture": {

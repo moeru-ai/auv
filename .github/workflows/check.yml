@@ -57,7 +57,13 @@ jobs:
       - run: cargo check
       - name: Build Windows helper
         if: runner.os == 'Windows'
-        run: cargo build --locked --package auv-driver-windows --bin auv-helper
+        shell: pwsh
+        run: |
+          cargo build --locked --package auv-driver-windows --bin auv-helper
+          $helper = (Resolve-Path "target/debug/auv-helper.exe").Path
+          $env:AUV_WINDOWS_HELPER_EXE_PATH = $helper
+          "AUV_WINDOWS_HELPER_EXE_PATH=$helper" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          cargo build --locked --package auv-cli --bin auv
       - run: cargo test
       - run: cargo run --quiet -- invoke --help
       - run: git diff --check
