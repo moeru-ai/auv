@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Prepare or update AUV pull requests with source-backed API change disclosures, before-and-after usage tables, and migration notes. Also use for retrospective API audits of specified PRs or revisions.
+description: Prepare or update AUV pull requests with source-backed CLI, Protobuf/Runner, and public API change disclosures, before-and-after usage, and migration notes. Also use for retrospective API audits of specified PRs or revisions.
 ---
 
 # Create PR
@@ -30,6 +30,19 @@ those claims later. Follow the repository's AGENTS.md and PR template.
 Trace each changed contract across the layers that actually expose it: shared
 Rust types, driver capabilities, `auv` APIs, CLI arguments, Runner/Proto, and SDKs.
 Do not scan unrelated modules or invent obligations for untouched layers.
+
+Always resolve these two surfaces explicitly for a caller-visible PR, even when
+one is unchanged:
+
+- **CLI:** inspect command definitions and dispatch, then show the exact command
+  line before and after. Include subcommands, flags, defaults, stdin/stdout
+  behavior, platform restrictions, and privilege requirements when relevant.
+  A prose feature name such as “adds setup support” is not a CLI disclosure.
+- **Protobuf / Runner API:** inspect changed `.proto` files, generated bindings,
+  Runner handlers, and their callers. Show exact RPC, message, field, enum, or
+  behavior changes, including field numbers and compatibility implications. If
+  the diff does not change this surface, say **No Protobuf or Runner API
+  changes**; do not omit the surface or infer a wire change from CLI behavior.
 
 Classify findings as added, removed, changed, or internal-only. Include:
 
@@ -78,6 +91,15 @@ table and refer to them from the relevant row. Do not put fenced blocks inside
 table cells. Define receiver types or setup when a snippet would otherwise be
 ambiguous. Label partial snippets and placeholders; do not imply they were run.
 
+For caller-visible PRs, give CLI and Protobuf / Runner their own headings in the
+published body. Under **CLI changes**, use a before/after table plus copyable
+command examples for every added or changed command family. Use `Not available`
+for a genuinely new command rather than hiding the before state. Under
+**Protobuf / Runner API changes**, use the same before/after form for wire or
+Runner changes, or the explicit unchanged statement required above. Other Rust
+or SDK changes may follow in the general API table. Do not substitute source
+links or a list of command names for concrete caller syntax.
+
 Then add only the migration notes that matter:
 
 - List added APIs with usable examples, and removed APIs with replacements.
@@ -104,6 +126,8 @@ owning `docs/ai/references/<responsibility>/` directory.
 
 Before publishing, compare the final diff with the table and migration notes.
 Update obsolete rows when scope changes; do not append contradictory follow-ups.
+Confirm that the final body contains the **CLI changes** and **Protobuf / Runner
+API changes** headings and that their claims match the inspected definitions.
 Use a structured body argument or `gh ... --body-file` to preserve code and
 newlines. Read the published body back to verify it reflects the intended text.
 
