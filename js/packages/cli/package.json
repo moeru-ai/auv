@@ -50,6 +50,7 @@
     "rootPublisher": "pnpm",
     "targets": [
       "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
       "aarch64-unknown-linux-gnu",
       "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
@@ -73,6 +74,7 @@
     "@auv-js/cli-darwin-x64": "workspace:*",
     "@auv-js/cli-linux-arm64-gnu": "workspace:*",
     "@auv-js/cli-linux-x64-gnu": "workspace:*",
+    "@auv-js/cli-win32-arm64-msvc": "workspace:*",
     "@auv-js/cli-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {

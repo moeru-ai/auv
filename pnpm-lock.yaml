@@ -284,6 +284,9 @@ importers:
       '@auv-js/cli-linux-x64-gnu':
         specifier: workspace:*
         version: link:npm/linux-x64-gnu
+      '@auv-js/cli-win32-arm64-msvc':
+        specifier: workspace:*
+        version: link:npm/win32-arm64-msvc
       '@auv-js/cli-win32-x64-msvc':
         specifier: workspace:*
         version: link:npm/win32-x64-msvc
@@ -295,6 +298,8 @@ importers:
   js/packages/cli/npm/linux-arm64-gnu: {}
 
   js/packages/cli/npm/linux-x64-gnu: {}
+
+  js/packages/cli/npm/win32-arm64-msvc: {}
 
   js/packages/cli/npm/win32-x64-msvc: {}
 

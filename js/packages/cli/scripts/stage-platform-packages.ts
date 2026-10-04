@@ -46,6 +46,11 @@ const targets: readonly Target[] = [
     packageDir: 'linux-x64-gnu',
   },
   {
+    archive: 'auv-aarch64-pc-windows-msvc.zip',
+    executable: 'auv.exe',
+    packageDir: 'win32-arm64-msvc',
+  },
+  {
     archive: 'auv-x86_64-pc-windows-msvc.zip',
     executable: 'auv.exe',
     packageDir: 'win32-x64-msvc',

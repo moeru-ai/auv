@@ -11,6 +11,7 @@ const PLATFORM_PACKAGES = new Map<string, readonly [string, string]>([
   ['darwin-x64', ['@auv-js/cli-darwin-x64', 'bin/auv']],
   ['linux-arm64', ['@auv-js/cli-linux-arm64-gnu', 'bin/auv']],
   ['linux-x64', ['@auv-js/cli-linux-x64-gnu', 'bin/auv']],
+  ['win32-arm64', ['@auv-js/cli-win32-arm64-msvc', 'bin/auv.exe']],
   ['win32-x64', ['@auv-js/cli-win32-x64-msvc', 'bin/auv.exe']],
 ])
 

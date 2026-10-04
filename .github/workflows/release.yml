@@ -64,6 +64,11 @@ jobs:
             archive: auv-x86_64-pc-windows-msvc.zip
             binding: auv-binding.win32-x64-msvc.node
             executable: auv.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            archive: auv-aarch64-pc-windows-msvc.zip
+            binding: auv-binding.win32-arm64-msvc.node
+            executable: auv.exe
 
     steps:
       - uses: actions/checkout@v6
