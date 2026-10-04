@@ -1,22 +1,40 @@
 {
-  "version": "0.0.25",
+  "version": "0.0.26",
   "description": "Invoke and inspect core computer-use capabilities",
   "homepage": "https://github.com/moeru-ai/auv",
   "license": "Apache-2.0",
   "notes": [
-    "Windows releases that include auv-helper.exe keep it beside auv.exe for helper setup.",
+    "Scoop installs auv-helper.exe beside auv.exe for helper setup.",
     "To install the helper service, open an elevated PowerShell and run 'auv setup windows-helper install'."
   ],
-  "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.25/auv-x86_64-pc-windows-msvc.zip",
-  "hash": "4da4a39db5e3e00de3b5df6403baa4b8a372bfe69dd66deaf550482c90e61a7e",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.26/auv-x86_64-pc-windows-msvc.zip",
+      "hash": "b884dfe3c0edddcf19d61288eac01139c9988ed15f601ae35ca98633581c8814"
+    },
+    "arm64": {
+      "url": "https://github.com/moeru-ai/auv/releases/download/v0.0.26/auv-aarch64-pc-windows-msvc.zip",
+      "hash": "d3626edac88ceec68998c47bed0eab0fd47b70b95caba9631be1edd5abbd965a"
+    }
+  },
   "bin": "auv.exe",
   "checkver": {
     "github": "https://github.com/moeru-ai/auv"
   },
   "autoupdate": {
-    "url": "https://github.com/moeru-ai/auv/releases/download/v$version/auv-x86_64-pc-windows-msvc.zip",
-    "hash": {
-      "url": "$url.sha256"
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/moeru-ai/auv/releases/download/v$version/auv-x86_64-pc-windows-msvc.zip",
+        "hash": {
+          "url": "$url.sha256"
+        }
+      },
+      "arm64": {
+        "url": "https://github.com/moeru-ai/auv/releases/download/v$version/auv-aarch64-pc-windows-msvc.zip",
+        "hash": {
+          "url": "$url.sha256"
+        }
+      }
     }
   }
 }

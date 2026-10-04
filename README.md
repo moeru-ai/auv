@@ -82,7 +82,7 @@ auv --version
 
 #### Windows
 
-On Windows x86-64, install AUV from this repository's Scoop bucket:
+On Windows x86-64 or ARM64, install AUV from this repository's Scoop bucket:
 
 ```powershell
 scoop bucket add auv https://github.com/moeru-ai/auv
@@ -90,13 +90,17 @@ scoop install auv/auv
 auv --version
 ```
 
-Scoop exposes only `auv.exe` as a command. It keeps the sibling
-`auv-helper.exe` payload in the installed app directory for
-`auv setup windows-helper install`; the helper is not a standalone command.
+Scoop installs `auv.exe` and `auv-helper.exe` together, but exposes only
+`auv.exe` as a command. The helper remains beside it for
+`auv setup windows-helper install`; it is not a standalone command.
 
-Alternatively, download `auv-x86_64-pc-windows-msvc.zip` from the
-[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest), then
-extract it in PowerShell:
+Alternatively, download the archive for your architecture from the
+[latest GitHub release](https://github.com/moeru-ai/auv/releases/latest):
+
+- `auv-x86_64-pc-windows-msvc.zip` for x86-64
+- `auv-aarch64-pc-windows-msvc.zip` for ARM64
+
+Then extract it in PowerShell:
 
 ```powershell
 Expand-Archive .\auv-x86_64-pc-windows-msvc.zip -DestinationPath .\auv
@@ -213,8 +217,8 @@ auv invoke app.probePermissions
 
 #### Windows
 
-Windows release archives built with Helper support contain `auv.exe` and
-`auv-helper.exe` together. Scoop preserves this layout automatically. From an
+Windows release archives contain `auv.exe` and `auv-helper.exe` together.
+Scoop installs both files and preserves this layout automatically. From an
 elevated PowerShell, install the LocalSystem service and verify its status:
 
 ```powershell
@@ -224,8 +228,7 @@ auv setup windows-helper status
 
 The setup command copies both executables into the protected AUV installation
 directory. Do not expose `auv-helper.exe` through a Scoop shim or invoke it
-directly. If setup reports that the sibling helper is missing, update AUV to a
-release whose Windows archive includes the helper payload.
+directly.
 
 See the
 [Windows Helper installation lifecycle](docs/ai/references/session-api/2026-10-04-windows-helper-install.md)
