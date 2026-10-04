@@ -227,9 +227,52 @@ The setup command copies both executables into the protected AUV installation
 directory. Do not expose `auv-helper.exe` through a Scoop shim or invoke it
 directly.
 
-See the
-[Windows Helper installation lifecycle](docs/ai/references/session-api/2026-10-04-windows-helper-install.md)
-for first-pairing and uninstall instructions.
+### Uninstall
+
+Uninstall the platform helper before you uninstall AUV.
+
+#### macOS
+
+Remove `AUV Helper.app`. Then uninstall the Homebrew package:
+
+```sh
+auv setup macos-helper uninstall
+brew uninstall auv
+```
+
+The helper command keeps the enrollment data in the login Keychain. It also
+keeps other AUV data in the Application Support directory.
+
+#### Linux
+
+If you installed the release binary in `~/.local/bin`, remove it with:
+
+```sh
+rm "$HOME/.local/bin/auv"
+```
+
+#### Windows
+
+Open an elevated PowerShell. Remove the Helper service before you uninstall the
+Scoop package:
+
+```powershell
+auv setup windows-helper uninstall
+scoop uninstall auv
+```
+
+The helper command keeps the device data in `%ProgramData%`.
+
+If you installed the ZIP without Scoop, remove the extracted AUV directory.
+Then remove that directory from `PATH`.
+
+#### Cargo
+
+If you installed AUV with Cargo on any platform, uninstall it with:
+
+```sh
+cargo uninstall auv-cli
+```
 
 ## Understand AUV
 
