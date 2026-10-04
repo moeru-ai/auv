@@ -1,5 +1,5 @@
 {
-  "name": "@auv-js/cli-darwin-arm64",
+  "name": "@auv-js/cli-win32-arm64-msvc",
   "version": "0.0.26",
   "cpu": [
     "arm64"
@@ -18,10 +18,10 @@
     "electron",
     "napi-rs"
   ],
-  "main": "auv-binding.darwin-arm64.node",
+  "main": "auv-binding.win32-arm64-msvc.node",
   "files": [
-    "auv-binding.darwin-arm64.node",
-    "bin/auv"
+    "auv-binding.win32-arm64-msvc.node",
+    "bin/auv.exe"
   ],
   "engines": {
     "node": ">=20.19.0"
@@ -31,6 +31,6 @@
     "access": "public"
   },
   "os": [
-    "darwin"
+    "win32"
   ]
 }

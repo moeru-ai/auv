@@ -113,5 +113,5 @@ daemon trusts only that identity. The CLI equivalent is
 [helper setup reference](../../../docs/ai/references/session-api/2026-10-01-macos-helper-setup.md#shipped-helper-identity).
 
 Supported packages currently cover macOS arm64/x64, glibc Linux arm64/x64, and
-Windows x64. Installing with optional dependencies disabled leaves no binary;
-`binaryPath()` reports that case with an actionable error.
+Windows arm64/x64. Installing with optional dependencies disabled leaves no
+binary; `binaryPath()` reports that case with an actionable error.

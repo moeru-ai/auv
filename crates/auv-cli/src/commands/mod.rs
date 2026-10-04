@@ -12,4 +12,6 @@ pub mod runner;
 pub mod serve;
 pub mod setup;
 #[cfg(windows)]
+pub mod windows_helper_setup;
+#[cfg(windows)]
 pub mod windows_service;

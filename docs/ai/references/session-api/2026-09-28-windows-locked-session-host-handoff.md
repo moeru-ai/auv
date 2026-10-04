@@ -51,8 +51,9 @@ gates supersede only the earlier limits they explicitly retested.
   WTS state afterward. No credential is placed in arguments, environment,
   files outside the protected vault, logs, or typed Device results.
 
-The worker executable is `auv-device-unlock-worker.exe`. It is a separate
-binary because the current `auv-daemon` crate is a library. The CLI now has
+The worker executable was originally named `auv-device-unlock-worker.exe`; the
+release artifact now ships it as `auv-helper.exe`. It is a separate binary
+because the current `auv-daemon` crate is a library. The CLI now has
 an opt-in Windows SCM service mode, installed temporarily for this gate. Ordinary
 foreground `auv serve` keeps Device entry unsupported. The SCM candidate
 binds the Windows policy only under its explicit `enable_device_entry` flag.

@@ -13,10 +13,10 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv = { package = "auv-core", version = "0.0.25", path = "../auv" }
-auv-api-client = { version = "0.0.25", path = "../auv-api-client" }
-auv-api-proto = { version = "0.0.25", path = "../auv-api-proto" }
-auv-api-server = { version = "0.0.25", path = "../auv-api-server" }
+auv = { package = "auv-core", version = "0.0.26", path = "../auv" }
+auv-api-client = { version = "0.0.26", path = "../auv-api-client" }
+auv-api-proto = { version = "0.0.26", path = "../auv-api-proto" }
+auv-api-server = { version = "0.0.26", path = "../auv-api-server" }
 fs2 = "0.4"
 getrandom = "0.3"
 hex = "0.4"
@@ -37,17 +37,17 @@ tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["serde", "v7"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-auv-driver-linux = { version = "0.0.25", path = "../auv-driver-linux" }
+auv-driver-linux = { version = "0.0.26", path = "../auv-driver-linux" }
 libloading = "0.8"
 zbus = "5.15"
 zeroize = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-auv-device-helper-macos = { version = "0.0.25", path = "../auv-device-helper-macos", default-features = false, features = ["transport"] }
-auv-driver-macos = { version = "0.0.25", path = "../auv-driver-macos" }
+auv-device-helper-macos = { version = "0.0.26", path = "../auv-device-helper-macos", default-features = false, features = ["transport"] }
+auv-driver-macos = { version = "0.0.26", path = "../auv-driver-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-auv-driver-windows = { version = "0.0.25", path = "../auv-driver-windows" }
+auv-driver-windows = { version = "0.0.26", path = "../auv-driver-windows" }
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Security",
