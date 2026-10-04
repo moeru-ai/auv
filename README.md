@@ -153,10 +153,6 @@ cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
 auv --version
 ```
 
-See the
-[Cargo Git-install verification](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md#regression-and-evidence)
-for the currently tested platform configurations.
-
 After installing AUV with either method, inspect the available commands with:
 
 ```sh
