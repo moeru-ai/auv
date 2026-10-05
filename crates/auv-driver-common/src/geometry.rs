@@ -249,6 +249,17 @@ impl RatioRect {
       height,
     }
   }
+
+  /// Whether this is a finite, non-empty rectangle inside the unit square.
+  pub fn is_normalized(&self) -> bool {
+    [self.x, self.y, self.width, self.height].iter().all(|value| value.is_finite())
+      && self.x >= 0.0
+      && self.y >= 0.0
+      && self.width > 0.0
+      && self.height > 0.0
+      && self.x + self.width <= 1.0
+      && self.y + self.height <= 1.0
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::{InputActionResult, Scroll, ScrollOptions};
 use crate::input_cancellation::current_input_cancellation;
-use crate::scroll_motion::{CumulativeQuantizer, partial_failure, pinned_options, wait_until};
+use crate::input_cancellation::wait_until;
+use crate::scroll_motion::{CumulativeQuantizer, partial_failure, pinned_options};
 use crate::{DriverError, DriverResult, Window, WindowInput, WindowPoint};
 
 // NOTICE(scroll-stream-velocity-limit): 50,000 logical px/s is far above any
@@ -204,7 +205,7 @@ pub fn run_window_scroll_stream<W: WindowInput + ?Sized>(
   };
   let reason = loop {
     next_tick += period;
-    wait_until(next_tick)?;
+    wait_until(next_tick, "scroll motion")?;
     let now = Instant::now();
     let (target, ending) = {
       let state = control.state.lock().unwrap();
@@ -249,7 +250,7 @@ pub fn run_window_scroll_stream<W: WindowInput + ?Sized>(
     }
   };
   if !options.settle.is_zero() && current_input_cancellation().is_none_or(|cancellation| !cancellation.is_cancelled()) {
-    wait_until(Instant::now() + options.settle)?;
+    wait_until(Instant::now() + options.settle, "scroll motion")?;
   }
   Ok(ScrollStreamResult {
     action: first_action,

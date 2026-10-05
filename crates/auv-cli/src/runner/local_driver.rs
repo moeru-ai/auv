@@ -2086,18 +2086,11 @@ fn ratio_rect_from_proto(region: Option<auv_api_proto::auv::api::image::v1::Norm
   let Some(region) = region else {
     return Ok(auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0));
   };
-  let values = [region.x, region.y, region.width, region.height];
-  if values.iter().any(|value| !value.is_finite())
-    || region.x < 0.0
-    || region.y < 0.0
-    || region.width <= 0.0
-    || region.height <= 0.0
-    || region.x + region.width > 1.0
-    || region.y + region.height > 1.0
-  {
+  let region = auv_driver::RatioRect::new(region.x, region.y, region.width, region.height);
+  if !region.is_normalized() {
     return Err(Status::invalid_argument("region must be a finite, positive rectangle inside normalized image bounds"));
   }
-  Ok(auv_driver::RatioRect::new(region.x, region.y, region.width, region.height))
+  Ok(region)
 }
 
 pub(super) fn rect_from_proto(rect: proto::ScreenRect, field: &'static str) -> Result<auv_driver::Rect, Status> {

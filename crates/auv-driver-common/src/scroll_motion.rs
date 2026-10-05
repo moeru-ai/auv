@@ -8,7 +8,6 @@
 //! when one sample is smaller than one native unit. See
 //! `docs/ai/references/driver/2026-10-06-scroll-motion-design.md`.
 
-use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::input::{
   InputActionResult, InputDeliveryPath, InputPolicy, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions,
 };
-use crate::input_cancellation::current_input_cancellation;
+use crate::input_cancellation::wait_until;
 use crate::{DriverError, DriverResult, Window, WindowInput, WindowPoint};
 
 /// Maps normalized elapsed time `t` in `[0, 1]` to normalized progress.
@@ -262,7 +261,7 @@ pub fn run_window_scroll_motion<W: WindowInput + ?Sized>(
   let mut next = 0;
   loop {
     let (elapsed, _) = schedule.at(next);
-    wait_until(started + elapsed)?;
+    wait_until(started + elapsed, "scroll motion")?;
     let index = schedule.latest_due(next, started.elapsed());
     let (scheduled_elapsed, progress) = schedule.at(index);
     let delta = quantizer.step(progress);
@@ -287,7 +286,7 @@ pub fn run_window_scroll_motion<W: WindowInput + ?Sized>(
     next = index + 1;
   }
   if !options.settle.is_zero() {
-    wait_until(Instant::now() + options.settle)?;
+    wait_until(Instant::now() + options.settle, "scroll motion")?;
   }
   let action = first_action.ok_or_else(|| invalid("scroll motion total is smaller than one native wheel unit"))?;
   Ok(ScrollMotionResult {
@@ -335,27 +334,6 @@ pub(crate) fn partial_failure(error: DriverError, delivered: Scroll, attempted: 
       attempted.delta_x,
       attempted.delta_y
     ),
-  }
-}
-
-/// Sleeps until `deadline`, waking early with an error on input cancellation.
-pub(crate) fn wait_until(deadline: Instant) -> DriverResult<()> {
-  let cancellation = current_input_cancellation();
-  let signal = Arc::new((Mutex::new(()), Condvar::new()));
-  if let Some(cancellation) = &cancellation {
-    let wake = signal.clone();
-    cancellation.register_wakeup(move || wake.1.notify_all());
-  }
-  let mut guard = signal.0.lock().unwrap();
-  loop {
-    if cancellation.as_ref().is_some_and(|cancellation| cancellation.is_cancelled()) {
-      return Err(invalid("scroll motion cancelled"));
-    }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-      return Ok(());
-    }
-    guard = signal.1.wait_timeout(guard, remaining).unwrap().0;
   }
 }
 

@@ -113,18 +113,8 @@ impl ScrollUntilRequest {
     if !(1..=10).contains(&self.no_motion_confirmations) {
       return Err(invalid("scroll-until no_motion_confirmations must be within 1..=10"));
     }
-    if let Some(region) = self.motion_region {
-      let values = [region.x, region.y, region.width, region.height];
-      if values.iter().any(|value| !value.is_finite())
-        || region.x < 0.0
-        || region.y < 0.0
-        || region.width <= 0.0
-        || region.height <= 0.0
-        || region.x + region.width > 1.0
-        || region.y + region.height > 1.0
-      {
-        return Err(invalid("scroll-until motion_region must be a non-empty normalized rectangle"));
-      }
+    if self.motion_region.is_some_and(|region| !region.is_normalized()) {
+      return Err(invalid("scroll-until motion_region must be a non-empty normalized rectangle"));
     }
     Ok(())
   }
@@ -364,18 +354,7 @@ impl ScrollUntilSurface for WindowScrollUntilSurface<'_> {
   }
 
   fn wait(&mut self, duration: Duration) -> DriverResult<()> {
-    let deadline = std::time::Instant::now() + duration;
-    let cancellation = auv_driver::input_cancellation::current_input_cancellation();
-    loop {
-      if cancellation.as_ref().is_some_and(|cancellation| cancellation.is_cancelled()) {
-        return Err(invalid("scroll-until cancelled"));
-      }
-      let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-      if remaining.is_zero() {
-        return Ok(());
-      }
-      std::thread::sleep(remaining.min(Duration::from_millis(20)));
-    }
+    auv_driver::input_cancellation::wait_until(std::time::Instant::now() + duration, "scroll-until")
   }
 }
 

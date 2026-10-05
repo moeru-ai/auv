@@ -1171,18 +1171,7 @@ pub(crate) struct ScrollPlan {
 
 impl ScrollArgs {
   fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<ScrollPlan, String> {
-    if !matches!(target, Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. })) {
-      return Err("input.scroll requires --target app: or window:".to_string());
-    }
-    if self.title.is_some() && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
-      return Err("input.scroll --title requires --target app:".to_string());
-    }
-    if !self.x.is_finite() || !self.y.is_finite() {
-      return Err("input.scroll requires finite coordinates".to_string());
-    }
-    if self.normalized && (!(0.0..=1.0).contains(&self.x) || !(0.0..=1.0).contains(&self.y)) {
-      return Err("input.scroll --normalized coordinates must be within 0..=1".to_string());
-    }
+    validate_window_point("input.scroll", target, self.title.as_deref(), self.x, self.y, self.normalized)?;
     if !self.dx.is_finite() || !self.dy.is_finite() {
       return Err("input.scroll requires finite --dx and --dy".to_string());
     }
@@ -1192,28 +1181,14 @@ impl ScrollArgs {
     if self.settle_ms > MAX_SCROLL_SETTLE_MS {
       return Err(format!("input.scroll --settle-ms must be within 0..={MAX_SCROLL_SETTLE_MS}"));
     }
-    if self.duration_ms > MAX_SCROLL_DURATION_MS {
-      return Err(format!("input.scroll --duration-ms must be within 0..={MAX_SCROLL_DURATION_MS}"));
-    }
-    if !(1..=MAX_SCROLL_SAMPLE_RATE_HZ).contains(&self.sample_rate_hz) {
-      return Err(format!("input.scroll --sample-rate-hz must be within 1..={MAX_SCROLL_SAMPLE_RATE_HZ}"));
-    }
-    if self.duration_ms == 0 && self.easing.is_some() {
-      return Err("input.scroll --easing requires a positive --duration-ms".to_string());
-    }
-    let motion = if self.duration_ms == 0 {
-      None
-    } else {
-      let function = self.easing.as_deref().map(parse_timing_function).transpose()?.unwrap_or(auv_driver::TimingFunction::Linear);
-      Some(auv_driver::ScrollMotion {
-        total: auv_driver::Scroll::new(self.dx, self.dy),
-        timing: auv_driver::MotionTiming::FixedDuration {
-          duration: std::time::Duration::from_millis(self.duration_ms),
-          function,
-        },
-        sample_rate_hz: self.sample_rate_hz,
-      })
-    };
+    let motion = timed_scroll_motion(
+      "input.scroll",
+      "--duration-ms",
+      auv_driver::Scroll::new(self.dx, self.dy),
+      self.duration_ms,
+      self.easing.as_deref(),
+      self.sample_rate_hz,
+    )?;
     Ok(ScrollPlan {
       point: auv_driver::Point::new(self.x, self.y),
       normalized: self.normalized,
@@ -1227,6 +1202,62 @@ impl ScrollArgs {
       motion,
     })
   }
+}
+
+/// Checks the target and window-local point shared by window-bound scroll commands.
+fn validate_window_point(
+  command: &str,
+  target: Option<&crate::ExecutionTarget>,
+  title: Option<&str>,
+  x: f64,
+  y: f64,
+  normalized: bool,
+) -> Result<(), String> {
+  if !matches!(target, Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. })) {
+    return Err(format!("{command} requires --target app: or window:"));
+  }
+  if title.is_some() && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
+    return Err(format!("{command} --title requires --target app:"));
+  }
+  if !x.is_finite() || !y.is_finite() {
+    return Err(format!("{command} requires finite coordinates"));
+  }
+  if normalized && (!(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y)) {
+    return Err(format!("{command} --normalized coordinates must be within 0..=1"));
+  }
+  Ok(())
+}
+
+/// The timed motion for a positive duration, or `None` to scroll at once.
+fn timed_scroll_motion(
+  command: &str,
+  duration_flag: &str,
+  total: auv_driver::Scroll,
+  duration_ms: u64,
+  easing: Option<&str>,
+  sample_rate_hz: u32,
+) -> Result<Option<auv_driver::ScrollMotion>, String> {
+  if duration_ms > MAX_SCROLL_DURATION_MS {
+    return Err(format!("{command} {duration_flag} must be within 0..={MAX_SCROLL_DURATION_MS}"));
+  }
+  if !(1..=MAX_SCROLL_SAMPLE_RATE_HZ).contains(&sample_rate_hz) {
+    return Err(format!("{command} --sample-rate-hz must be within 1..={MAX_SCROLL_SAMPLE_RATE_HZ}"));
+  }
+  if duration_ms == 0 {
+    return match easing {
+      Some(_) => Err(format!("{command} --easing requires a positive {duration_flag}")),
+      None => Ok(None),
+    };
+  }
+  let function = easing.map(parse_timing_function).transpose()?.unwrap_or(auv_driver::TimingFunction::Linear);
+  Ok(Some(auv_driver::ScrollMotion {
+    total,
+    timing: auv_driver::MotionTiming::FixedDuration {
+      duration: std::time::Duration::from_millis(duration_ms),
+      function,
+    },
+    sample_rate_hz,
+  }))
 }
 
 impl ScrollPlan {
@@ -1463,18 +1494,7 @@ pub(crate) struct ScrollUntilPlan {
 
 impl ScrollUntilArgs {
   fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<ScrollUntilPlan, String> {
-    if !matches!(target, Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. })) {
-      return Err("input.scrollUntil requires --target app: or window:".to_string());
-    }
-    if self.title.is_some() && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
-      return Err("input.scrollUntil --title requires --target app:".to_string());
-    }
-    if !self.x.is_finite() || !self.y.is_finite() {
-      return Err("input.scrollUntil requires finite coordinates".to_string());
-    }
-    if self.normalized && (!(0.0..=1.0).contains(&self.x) || !(0.0..=1.0).contains(&self.y)) {
-      return Err("input.scrollUntil --normalized coordinates must be within 0..=1".to_string());
-    }
+    validate_window_point("input.scrollUntil", target, self.title.as_deref(), self.x, self.y, self.normalized)?;
     let condition = match self.until.trim() {
       "end" => auv_scan::ScrollUntilCondition::End,
       value => match value.strip_prefix("text:") {
@@ -1484,30 +1504,17 @@ impl ScrollUntilArgs {
         None => return Err(format!("input.scrollUntil --until must be end or text:<query>, got {value:?}")),
       },
     };
-    if self.step_duration_ms == 0 && self.easing.is_some() {
-      return Err("input.scrollUntil --easing requires a positive --step-duration-ms".to_string());
-    }
-    if self.step_duration_ms > MAX_SCROLL_DURATION_MS {
-      return Err(format!("input.scrollUntil --step-duration-ms must be within 0..={MAX_SCROLL_DURATION_MS}"));
-    }
-    if !(1..=MAX_SCROLL_SAMPLE_RATE_HZ).contains(&self.sample_rate_hz) {
-      return Err(format!("input.scrollUntil --sample-rate-hz must be within 1..={MAX_SCROLL_SAMPLE_RATE_HZ}"));
-    }
     let delta = auv_driver::Scroll::new(self.dx, self.dy);
-    let step = if self.step_duration_ms == 0 {
-      auv_scan::ScrollUntilStep::Instant { delta }
-    } else {
-      let function = self.easing.as_deref().map(parse_timing_function).transpose()?.unwrap_or(auv_driver::TimingFunction::Linear);
-      auv_scan::ScrollUntilStep::Motion {
-        motion: auv_driver::ScrollMotion {
-          total: delta,
-          timing: auv_driver::MotionTiming::FixedDuration {
-            duration: std::time::Duration::from_millis(self.step_duration_ms),
-            function,
-          },
-          sample_rate_hz: self.sample_rate_hz,
-        },
-      }
+    let step = match timed_scroll_motion(
+      "input.scrollUntil",
+      "--step-duration-ms",
+      delta,
+      self.step_duration_ms,
+      self.easing.as_deref(),
+      self.sample_rate_hz,
+    )? {
+      Some(motion) => auv_scan::ScrollUntilStep::Motion { motion },
+      None => auv_scan::ScrollUntilStep::Instant { delta },
     };
     let request = auv_scan::ScrollUntilRequest {
       step,

@@ -19,3 +19,17 @@ fn projection_basis_serializes_generic_provenance() {
   assert_eq!(value["derivation_family"], serde_json::json!("camera_matrix"));
   assert_eq!(value["match_radius_px"], serde_json::json!(12.0));
 }
+
+#[test]
+fn ratio_rect_is_normalized_only_inside_the_unit_square() {
+  assert!(RatioRect::new(0.0, 0.0, 1.0, 1.0).is_normalized());
+  assert!(RatioRect::new(0.25, 0.1, 0.5, 0.8).is_normalized());
+  for rect in [
+    RatioRect::new(0.5, 0.0, 0.6, 1.0),
+    RatioRect::new(-0.1, 0.0, 0.5, 0.5),
+    RatioRect::new(0.0, 0.0, 0.0, 0.5),
+    RatioRect::new(0.0, 0.0, f64::NAN, 0.5),
+  ] {
+    assert!(!rect.is_normalized(), "{rect:?}");
+  }
+}
