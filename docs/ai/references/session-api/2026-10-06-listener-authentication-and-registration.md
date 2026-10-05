@@ -29,11 +29,11 @@ therefore broke first pairing in this setup. Windows had no such fallback.
 | Concern | Rule |
 |---|---|
 | Authentication | Follows the transport. Unix sockets and named pipes prove the owner. Every `http://` listener requires a paired Device bearer, loopback included. There is no unauthenticated TCP listener. |
-| Owner channel | On Linux and macOS the daemon always binds an owner Unix socket if none was configured. It issues first tokens, answers discovery, and receives executable Runner callbacks. The hidden Runner parent socket is gone. |
+| Owner channel | The daemon binds an owner Unix socket (Linux, macOS) or named pipe (Windows) if no `unix://` or `npipe://` listener was configured; a configured one is the owner channel instead. It issues first tokens, answers discovery, and receives executable Runner callbacks. The hidden Runner parent socket is gone. |
 | Pairing | Always available. `--pairing-store` only overrides `<store-root>/pairings.json`. |
 | Token issuance | `CreatePairingToken` accepts only the local owner. A paired bearer receives `PERMISSION_DENIED`. |
 | Device administration | The owner revokes, enables, disables, and unpairs any Device. A paired Device may do so only for itself, by its canonical ID; anything else receives `PERMISSION_DENIED`. Listing Devices stays open to paired Devices. |
-| Registration | `auv serve` registers by default: the owner socket sits next to the discovery descriptor and the descriptor is published. `--no-register` (formerly `--no-discovery`) binds a private owner socket in the temp directory and publishes nothing. |
+| Registration | `auv serve` registers by default: the owner socket sits next to the discovery descriptor and the descriptor is published. `--no-register` (formerly `--no-discovery`) binds a private owner socket in the temp directory and publishes nothing. With a configured `unix://` or `npipe://` listener, that listener is the owner channel and no socket is added, either way. |
 
 SSH access stays supported. A user who logs in to the daemon host is the owner
 and uses the discovered Unix socket. A user who forwards the Unix socket with
@@ -46,8 +46,8 @@ unauthenticated loopback TCP, and `auv serve` covers its remaining topologies.
 ## Deferred decisions
 
 - Resolved on 2026-10-06 (`TODO(windows-owner-listener)`): the Windows daemon
-  no longer runs as a LocalSystem service. It always binds its owner pipe
-  unless a named-pipe listener is configured. See
+  no longer runs as a LocalSystem service. It binds its owner pipe unless a
+  named-pipe listener is configured, which is then the owner channel. See
   [Windows Helper and daemon split](2026-10-06-windows-helper-daemon-split.md).
 - `TODO(pairing-admin-device)` in the pairing gRPC adapter: an explicitly
   granted, default-off administrator Device is deferred until a remote

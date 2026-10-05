@@ -6,7 +6,7 @@ use clap::Args;
 /// Run the AUV daemon API in the foreground.
 #[derive(Clone, Debug, Args)]
 #[command(
-  after_long_help = "Every daemon binds an owner-only local socket. It is published for discovery unless --no-register is set, and only it can create pairing tokens.\n\nhttp:// listeners always require a paired Device bearer, including loopback addresses.\n\nExamples:\n  # Serve on the default local socket\n  auv serve\n\n  # Also accept paired Devices over the network\n  auv serve --listen http://0.0.0.0:9847\n\n  # Run a temporary daemon that does not replace the default one\n  auv serve --no-register --store-root /tmp/auv-scratch"
+  after_long_help = "Every daemon has an owner-only local channel: a configured unix:// or npipe:// listener, or otherwise an added Unix socket (Linux, macOS) or named pipe (Windows). It is published for discovery unless --no-register is set, and only it can create pairing tokens.\n\nhttp:// listeners always require a paired Device bearer, including loopback addresses.\n\nExamples:\n  # Serve on the default local socket\n  auv serve\n\n  # Also accept paired Devices over the network\n  auv serve --listen http://0.0.0.0:9847\n\n  # Run a temporary daemon that does not replace the default one\n  auv serve --no-register --store-root /tmp/auv-scratch"
 )]
 pub struct ServeArgs {
   /// Fresh daemon instance UUID for launcher health verification.

@@ -3,7 +3,8 @@
 //! The Helper is `auv-helper.exe --service`, a LocalSystem SCM service with no
 //! network listener, pairing store, or daemon state. The AUV daemon is a
 //! separate, ordinary `auv serve` process that calls the Helper over its
-//! machine-local pipe. Installing the Helper never starts or configures it.
+//! machine-local pipe. Helper setup never installs, starts, or configures the
+//! daemon.
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -26,7 +27,8 @@ use windows_service::service::{Service, ServiceAccess, ServiceErrorControl, Serv
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 /// The 0.0.28 service that ran `auv.exe serve --windows-service` as LocalSystem.
-/// Install replaces it; it is recognized only by its exact recorded command.
+/// It is not migrated: install refuses while it exists, and uninstall removes
+/// it when its exact recorded command proves AUV registered it.
 const LEGACY_SERVICE_NAME: &str = "AuvDevice";
 const LEGACY_LISTEN_URI: &str = "http://127.0.0.1:9847";
 
@@ -38,7 +40,7 @@ mod embedded {
 struct Layout {
   install_dir: PathBuf,
   helper: PathBuf,
-  /// Helper-owned PIN vault, kept across install, upgrade, and uninstall.
+  /// Helper-owned PIN vault, kept across install and uninstall.
   vault_dir: PathBuf,
   legacy_auv: PathBuf,
   legacy_store_root: PathBuf,
@@ -109,10 +111,8 @@ struct Status {
   helper_installed: bool,
   install_directory: String,
   vault_directory: String,
-  /// The 0.0.28 `AuvDevice` daemon service, which install replaces.
+  /// The 0.0.28 `AuvDevice` daemon service, which uninstall removes.
   legacy_service: &'static str,
-  /// Pairings, policy, and audit kept from the 0.0.28 service; not imported.
-  legacy_store_root: Option<String>,
   detail: Option<String>,
 }
 
@@ -136,32 +136,22 @@ pub fn install(json: bool) -> Result<i32, String> {
     return Err(format!("{SERVICE_NAME} is already installed; run `auv setup windows-helper uninstall` first to replace it"));
   }
 
-  let legacy = open_service(
-    &manager,
-    LEGACY_SERVICE_NAME,
-    ServiceAccess::QUERY_STATUS | ServiceAccess::QUERY_CONFIG | ServiceAccess::START | ServiceAccess::STOP | ServiceAccess::DELETE,
-  )?;
-
-  match &legacy {
-    Some(service) => {
-      require_owned(service, LEGACY_SERVICE_NAME, &layout.legacy_command())?;
-      require_known_entries(&layout.install_dir, &[&layout.legacy_auv, &layout.helper])?;
-    }
-    None if layout.install_dir.exists() => {
-      return Err(format!(
-        "refusing to replace preexisting installation directory {}; uninstall the owned AUV installation first",
-        layout.install_dir.display()
-      ));
-    }
-    None => create_protected_install_directory(&layout.install_dir)?,
+  // The 0.0.28 Helper had no released users, so its daemon service and
+  // SYSTEM-only pairing store are not migrated. Uninstall removes the service.
+  if open_service(&manager, LEGACY_SERVICE_NAME, ServiceAccess::QUERY_STATUS)?.is_some() {
+    return Err(format!(
+      "the 0.0.28 {LEGACY_SERVICE_NAME} service is installed; run `auv setup windows-helper uninstall` first, then pair clients again with `auv serve`"
+    ));
   }
 
-  // The 0.0.28 service runs the same one-shot worker arguments, so a
-  // restarted legacy service can keep using the new auv-helper.exe.
-  let legacy_was_running = match &legacy {
-    Some(service) => stop(service, LEGACY_SERVICE_NAME)?,
-    None => false,
-  };
+  if layout.install_dir.exists() {
+    return Err(format!(
+      "refusing to replace preexisting installation directory {}; uninstall the owned AUV installation first",
+      layout.install_dir.display()
+    ));
+  }
+
+  create_protected_install_directory(&layout.install_dir)?;
   let result = (|| {
     fs::write(&layout.helper, helper).map_err(|error| format!("failed to install embedded auv-helper.exe: {error}"))?;
     let service = manager
@@ -183,28 +173,12 @@ pub fn install(json: bool) -> Result<i32, String> {
     if let Ok(Some(service)) =
       open_service(&manager, SERVICE_NAME, ServiceAccess::STOP | ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS)
     {
-      let _ = service.stop();
+      let _ = stop(&service, SERVICE_NAME);
       let _ = service.delete();
     }
-
-    match &legacy {
-      Some(service) if legacy_was_running => {
-        let _ = service.start::<&OsStr>(&[]);
-      }
-      Some(_) => {}
-      None => {
-        let _ = fs::remove_file(&layout.helper);
-        let _ = fs::remove_dir(&layout.install_dir);
-      }
-    }
-
+    let _ = fs::remove_file(&layout.helper);
+    let _ = fs::remove_dir(&layout.install_dir);
     return Err(error);
-  }
-
-  if let Some(service) = legacy {
-    service.delete().map_err(|error| format!("{SERVICE_NAME} is running, but failed to unregister {LEGACY_SERVICE_NAME}: {error}"))?;
-    remove_known_file(&layout.legacy_auv)?;
-    remove_legacy_bootstrap_files(&layout)?;
   }
 
   let status = inspect(&layout)?;
@@ -237,8 +211,9 @@ pub fn uninstall(json: bool) -> Result<i32, String> {
   }
 
   remove_legacy_bootstrap_files(&layout)?;
-  // Enrolled PINs are durable user state in the Helper-owned vault, and a
-  // 0.0.28 store may still hold pairings and audit. Both are preserved.
+  // Enrolled PINs are durable user state in the Helper-owned vault and are
+  // preserved. A 0.0.28 SYSTEM-only `%ProgramData%\AUVDeviceEntry` store is
+  // left untouched; nothing reads it any more.
   // TODO(windows-helper-purge): add an explicit, separately confirmed purge
   // command only when the owner approves destructive credential removal.
   let status = inspect(&layout)?;
@@ -256,16 +231,12 @@ fn inspect(layout: &Layout) -> Result<Status, String> {
     service.as_ref().and_then(|service| service.query_status().ok()).is_some_and(|status| status.current_state == ServiceState::Running);
   let service_owned = service.as_ref().is_some_and(|service| require_owned(service, SERVICE_NAME, &owned_command(layout)).is_ok());
   let ready = helper_installed && service_running && service_owned && legacy.is_none();
-  // TODO(windows-helper-legacy-import): The 0.0.28 SYSTEM-only store is kept
-  // but not imported into a daemon store. Importing needs an owner-approved
-  // mapping from one machine store to a per-user daemon store.
-  let legacy_store_root = layout.legacy_store_root.exists().then(|| layout.legacy_store_root.display().to_string());
   let detail = if ready {
-    legacy_store_root.as_ref().map(|_| {
-      "0.0.28 pairings, policy, and audit were kept but not imported; pair clients again with the per-user daemon and re-run `auv device-local enroll`".to_string()
-    })
+    None
   } else if legacy.is_some() {
-    Some(format!("the 0.0.28 {LEGACY_SERVICE_NAME} daemon service is still installed; run `auv setup windows-helper install` to replace it"))
+    Some(format!(
+      "the 0.0.28 {LEGACY_SERVICE_NAME} daemon service is installed; run `auv setup windows-helper uninstall`, then install again"
+    ))
   } else if service.is_some() && !service_owned {
     Some(format!("{SERVICE_NAME} exists but is not the AUV Helper service owned by this installation"))
   } else if service.is_some() && !service_running {
@@ -298,7 +269,6 @@ fn inspect(layout: &Layout) -> Result<Status, String> {
     } else {
       "absent"
     },
-    legacy_store_root,
     detail,
   })
 }
@@ -407,6 +377,11 @@ fn wait_for_state(service: &Service, name: &str, expected: ServiceState, timeout
     if status.current_state == expected {
       return Ok(());
     }
+    // A Helper Host that fails its identity or pipe checks stops without
+    // ever reporting Running; report that at once instead of timing out.
+    if expected == ServiceState::Running && status.current_state == ServiceState::Stopped {
+      return Err(format!("{name} stopped during startup with {:?}; check the System event log", status.exit_code));
+    }
     if Instant::now() >= deadline {
       return Err(format!("timed out waiting for {name} to reach {expected:?}; current state is {:?}", status.current_state));
     }
@@ -497,9 +472,6 @@ fn print_status(status: &Status, json: bool) -> Result<(), String> {
     println!("install_directory\t{}", status.install_directory);
     println!("vault_directory\t{}", status.vault_directory);
     println!("legacy_service\t{}", status.legacy_service);
-    if let Some(path) = &status.legacy_store_root {
-      println!("legacy_store_root\t{path}");
-    }
     if let Some(detail) = &status.detail {
       println!("detail\t{detail}");
     }

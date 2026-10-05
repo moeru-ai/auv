@@ -248,9 +248,13 @@ auv setup windows-helper status
 > `AuvHelper` service. The Helper does not listen on the network. Lock and
 > unlock work through an ordinary `auv serve` that runs as the logged-in user.
 > To accept paired Devices from the network, start that daemon with
-> `--listen http://0.0.0.0:9847`. An installation from 0.0.28 is migrated in
-> place: the old `AuvDevice` service is removed, enrolled PINs are kept, and
-> paired clients must pair again with the new daemon.
+> `--listen http://0.0.0.0:9847`. If a 0.0.28 Helper is installed, run
+> `auv setup windows-helper uninstall` first, then install again and pair
+> clients again.
+>
+> Evidence level: one installed lock and unlock gate on one Windows 11 host.
+> This is not a general support claim. See the
+> [Windows Helper and daemon split](docs/ai/references/session-api/2026-10-06-windows-helper-daemon-split.md#evidence).
 
 ### Uninstall
 

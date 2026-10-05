@@ -2,7 +2,10 @@
 
 Date: 2026-08-04
 
-Status: accepted
+Status: superseded on 2026-10-06 by
+[Listener authentication and registration](2026-10-06-listener-authentication-and-registration.md).
+Only the local owner can create pairing tokens, and a paired Device administers
+only itself. The shared-authority model below is historical.
 
 Pairing administration is performed against the live daemon through canonical
 `auv` operations. `auv-daemon` is the sole owner of pairing persistence;

@@ -55,11 +55,14 @@ const MAX_PIN_UTF16_UNITS: usize = 128;
 static DISPATCH: Mutex<()> = Mutex::new(());
 
 /// Serve the pipe until `stop` is set and `wake` has unblocked the listener.
-pub fn serve(stop: &AtomicBool) -> Result<(), String> {
+/// `on_ready` runs once the host identity is verified and the first pipe
+/// instance accepts connections, so SCM `Running` means the Helper is usable.
+pub fn serve(stop: &AtomicBool, on_ready: impl FnOnce()) -> Result<(), String> {
   crate::storage::require_system_host().map_err(|_| "the AUV Helper Host must run as LocalSystem in Session 0".to_string())?;
   // FIRST_PIPE_INSTANCE fails if any process already owns this name, so a
   // squatter makes the service fail to start instead of serving requests.
   let mut next = create_instance(true).map_err(|error| format!("failed to create the AUV Helper pipe: {error}"))?;
+  on_ready();
 
   loop {
     // SAFETY: `next` is a live, owned server instance. A client that
@@ -347,8 +350,12 @@ fn service_main(_arguments: Vec<std::ffi::OsString>) {
     return;
   };
 
-  let _ = handle.set_service_status(status(ServiceState::Running, ServiceControlAccept::STOP, 0, Duration::ZERO));
-  let result = serve(&STOP);
+  let _ = handle.set_service_status(status(ServiceState::StartPending, ServiceControlAccept::empty(), 0, Duration::from_secs(10)));
+  // Report Running only after the pipe exists. Setup treats Running as
+  // installed; reporting it first hid identity and pipe-creation failures.
+  let result = serve(&STOP, || {
+    let _ = handle.set_service_status(status(ServiceState::Running, ServiceControlAccept::STOP, 0, Duration::ZERO));
+  });
   // Unlock waits up to the worker deadline; tell SCM before draining it.
   let _ = handle.set_service_status(status(ServiceState::StopPending, ServiceControlAccept::empty(), 0, Duration::from_secs(30)));
 

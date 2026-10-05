@@ -97,31 +97,38 @@ second version ships (`TODO(windows-helper-protocol-range)`).
 - Requests run one at a time. A worker launch or vault write cannot interleave
   with another one.
 
-## Storage and migration
+### Threat model
+
+The Helper Host cannot tell the AUV daemon apart from any other process that
+runs as the same Windows user. Such a process can read the daemon's memory and
+files, so no pipe-level capability would separate them. Any process running as
+the enrolled user can therefore call `Observe` and then `Unlock` that user's
+own login directly, bypassing daemon pairing, the remote-entry policy switch,
+and daemon audit. The Helper guarantees only this: no caller can act on another
+account's login or PIN, and no caller receives a PIN. Separating the daemon
+from same-user processes would need a daemon running under its own service
+identity, which is the deferred daemon-lifecycle design.
+
+## Storage and 0.0.28 installations
 
 | State | Owner | Location |
 |---|---|---|
 | Pairing, policy, enrollment metadata, audit | daemon | `<store-root>`; the default store is under the user profile and inherits its private ACL |
-| Enrolled PIN | Helper Host | `%ProgramData%\AUVDeviceEnrollments` (same leaf as 0.0.28) |
-| 0.0.28 pairings, policy, and audit | none (kept) | `%ProgramData%\AUVDeviceEntry` |
+| Enrolled PIN | Helper Host | `%ProgramData%\AUVDeviceEnrollments` |
 
-`install` recognizes the 0.0.28 `AuvDevice` only by its exact recorded
-command, account, and startup type. It then does these steps:
-
-1. It stops `AuvDevice`.
-2. It writes the new `auv-helper.exe` and starts `AuvHelper`.
-3. Only after `AuvHelper` reports `Running`, it deletes `AuvDevice`, the old
-   `auv.exe` copy, and the bootstrap token directory.
-
-If a step fails, install restarts the old service. The worker arguments are
-unchanged, so the old service still works with the new `auv-helper.exe`. The
-vault leaf is reused as-is, so enrolled PINs survive. The old SYSTEM-only
-pairing and policy store is kept but not imported
-(`TODO(windows-helper-legacy-import)`). `status` reports it, and users pair
-clients again and re-run `auv device-local enroll`. `uninstall` removes both
-services when they are owned, and keeps the vault and the legacy store.
+The 0.0.28 Helper had no released users, so the owner decided on 2026-10-06 not
+to migrate it. `install` refuses while the 0.0.28 `AuvDevice` service exists.
+`uninstall` removes it, together with the old `auv.exe` copy and bootstrap token
+directory, but only when its exact recorded command, account, and startup type
+prove that AUV registered it. The 0.0.28 SYSTEM-only `%ProgramData%\AUVDeviceEntry`
+pairing and policy store is left untouched and is no longer read. Clients pair
+again with `auv serve`, and the user runs `auv device-local enroll` again.
 Replacing an installed `AuvHelper` in place is deferred
 (`TODO(windows-helper-upgrade)`): uninstall it, then install again.
+
+The Helper Host reports SCM `Running` only after its LocalSystem identity check
+passes and its first pipe instance exists. `install` treats `Running` as
+success and fails at once if the service stops during startup.
 
 `stop` waits for the service process to exit after SCM reports `Stopped`.
 Without this wait, an immediate removal of `auv-helper.exe` failed with
@@ -148,8 +155,9 @@ with `AUV_WINDOWS_HELPER_EXE_PATH` set to the built helper:
 - `cargo test -p auv-device-helper-windows -p auv-daemon -p auv-api-client
   -p auv-api-server -p auv-driver-windows`: all passed (13, 44, 8, 15, 97 + 1
   ignored).
-- `setup windows-helper status` on the 0.0.28 install reported `degraded` with
-  `legacy_service: installed`. `install` returned `ready`. After install,
+- (In-place migration, later removed.) `setup windows-helper status` on the
+  0.0.28 install reported `degraded` with `legacy_service: installed`.
+  `install` returned `ready`. After install,
   `AuvHelper` ran as LocalSystem in Session 0 with
   `"…\auv-helper.exe" --service`, `AuvDevice` was gone, `%ProgramFiles%\AUV`
   contained only `auv-helper.exe`, and nothing listened on 9847.
