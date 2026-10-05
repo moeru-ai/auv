@@ -412,17 +412,31 @@ What landed:
     - `max_steps`: 1..=1000;
     - `settle`: at most 10 s;
     - `no_motion_confirmations`: 1..=10;
-    - `motion_region`: an optional normalized rectangle.
+    - `motion_region`: an optional normalized rectangle;
+    - `observe`: what each observation carries (`ScrollUntilObserve
+      { capture, text }`). Both are on by default; callers opt out.
   - The step decides the axis, so there is no separate `direction` field. A
     step must move exactly one axis by a non-zero amount.
-  - `scroll_until(surface, request, notify)`:
-    - Captures once and checks the text condition before the first step.
-    - Each round is step → settle → one capture → motion comparison → text
-      check → end check.
-    - `End` needs `no_motion_confirmations` consecutive no-motion rounds.
+  - `scroll_until(surface, request, observer)`:
+    - Observes once before the first step, then once after each step's
+      settle. One observation is one capture, the motion comparison against
+      the previous capture, and (when needed) one text recognition.
+    - Built-in stops come first, in this order:
+      1. the text condition matches (`text_visible`);
+      2. `no_motion_confirmations` consecutive no-motion rounds
+         (`end_by_no_visual_progress`, for every condition);
+      3. the step budget.
+    - The observer then receives the `ScrollUntilObservation` by value: steps,
+      delivered total, motion, no-motion streak, capture, recognized text,
+      and `stop`. When `stop` is set, the loop ends there and the observer's
+      decision is ignored. Otherwise `ScrollUntilDecision::Stop` ends the loop
+      as `predicate_satisfied`.
+    - A text condition matches the first recognized line that contains the
+      query, case-insensitively (`TextRecognition::best_contains`). Its bounds
+      are the line's offset placed at the capture's screen bounds.
   - `ScrollUntilResult` holds:
-    - the stop reason: `end_by_no_visual_progress`, `text_visible`, or
-      `budget_exhausted`;
+    - the stop reason: `end_by_no_visual_progress`, `text_visible`,
+      `budget_exhausted`, or `predicate_satisfied`;
     - the step count and the delivered total;
     - the first step's `InputActionResult`;
     - the text match, with bounds in screen coordinates;
@@ -435,16 +449,36 @@ What landed:
     - `TODO(scroll-until-artifacts)`: no per-step capture artifacts;
     - `TODO(scroll-until-ax-boundary)`: no accessibility boundary check;
     - text search has no separate region.
-- Wire: `InputService/ScrollUntil` is a server-streaming RPC that sends
-  `progress` events, then one `completed` event. The loop runs on the Runner,
-  so screenshots never cross the network.
-- Rust client: `WindowClient::scroll_until`, which returns a stream of
-  `ScrollUntilEvent`.
-- JS SDK: `WindowClient.scrollUntil(point, request, options)`.
+- Wire: `InputService/ScrollUntil` is a bidirectional stream.
+  - **Requests:** the client sends `begin`, the loop request plus
+    `await_decisions`. Each observation is then sent to the client with
+    backpressure; it carries a raw RGBA `CapturedFrame` and a
+    `RecognizeTextResponse` unless the client opts out. With
+    `await_decisions`, the Runner waits for one `decision { stop }` after each
+    observation it does not end itself. A half-closed request stream or a
+    disconnect counts as a stop.
+  - **Running ahead:** without `await_decisions`, the Runner does not wait,
+    so it can run up to one step ahead of a client that aborts after an
+    observation.
+  - **Where the loop runs:** the loop and the built-in conditions stay on the
+    Runner. Only the client's predicate runs on the client.
+  - **Message size:** the InputService server lifts the encoding limit for
+    these captures, and the Rust client lifts its decoding limit.
+- Rust client:
+  - `WindowClient::scroll_until(point, request, options, await_decisions)`
+    returns a `ScrollUntilSession` with `next()` and `decide()`.
+  - `WindowClient::scroll_until_with(point, request, options, predicate)`
+    runs a synchronous predicate.
+- JS SDK: `WindowClient.scrollUntil(point, request, { until, onObservation,
+  signal })` resolves with the completion.
+  - `until` is an optional async predicate; returning `true` stops the loop.
+  - `onObservation` sees every observation.
+  - Without a `condition`, the call uses `end`.
 - Invoke and MCP: `auv invoke input.scrollUntil <x> <y> (--dx|--dy) --until
   end|text:<query>`, with `--max-steps`, `--settle-ms`, `--confirmations`,
   `--region`, and the timed-step flags from phase 1. MCP reaches it through
-  the registry `invoke` tool.
+  the registry `invoke` tool. Neither shows observations, so both opt out of
+  captures and text in observations.
 
 Choosing a step:
 
@@ -473,8 +507,38 @@ Row 137 is `TARGET ROW 137`.
 | Windows Edge (foreground) | `--dy 700 --until 'text:TARGET ROW 137'` | Missed (ran to the end): the step was close to the viewport height, so the row was always cut at an edge |
 | Windows Edge (foreground) | `--dy 500 --until 'text:…'`, instant and timed steps | `text_visible` at step 11 in both |
 
-Linux GNOME Wayland (portal route): not validated live. Unit tests pass and the
-CLI builds. Two existing `auv-driver-linux` capture problems block the
+Client predicate, 2026-10-06, macOS Chrome. The full path was the JS SDK
+(`tsx`), an isolated local daemon, and its Runner; the same lazy feed was used
+with `--dy 500` steps:
+
+| Case | Result |
+| --- | --- |
+| `until` stops when an observation's OCR text contains `feed item 100` | `predicate_satisfied` after 7 steps (8 observations, each with a 2.88 MB capture); the row was visible |
+| `until` stops at 2000 px delivered; capture and text opted out | `predicate_satisfied` after 4 steps; no opted-out payload arrived |
+| No predicate, `end` condition, `onObservation` only | `end_by_no_visual_progress` after 19 steps, 20 observations; all batches loaded |
+| `textVisible` condition with a predicate that never stops | `text_visible` at step 11 (built-in stop wins) |
+| Abort the call after observation 2 | Rejected at once; one step that was already in flight moved the page 500 px more, then delivery stopped |
+| `auv invoke input.scrollUntil` through the daemon Runner | `text_visible` at step 11 |
+
+Recognizing text in every observation costs time: a macOS round took about
+1.4-1.7 s with OCR on, against about 0.95 s without it. Callers that do not
+read the text should opt out.
+
+Linux GNOME Wayland (portal route), with the
+[#246](https://github.com/moeru-ai/auv/pull/246) capture fix applied. A
+maximized Electron window showed the same lazy feed, with `--dy 500` steps:
+
+| Case | Result |
+| --- | --- |
+| `--until end` | `end_by_no_visual_progress` after 18 steps; all batches loaded; `scrollY` = max (6899) |
+| Text `feed item 150` | `text_visible` at step 11; the row was visible |
+| Text `TARGET ROW 137` | Missed. Observations showed that Linux OCR read rows 130-139 but never the highlighted, bold row 137, so this is OCR recognition, not the loop |
+
+A Linux round takes about 6.8 s. Listing AT-SPI windows takes about 2 s, and
+Linux window capture lists them twice to re-check the target; OCR and the
+portal add the rest.
+
+Before #246, two existing `auv-driver-linux` capture problems blocked the
 observation loop:
 
 - **Repeated captures return a stale frame.** With one driver session, the
@@ -492,9 +556,9 @@ observation loop:
   worked.
 
 Both problems belong to the Linux capture driver, not to scroll-until. They are
-tracked in [#244](https://github.com/moeru-ai/auv/issues/244) (stale frames)
-and [#245](https://github.com/moeru-ai/auv/issues/245) (fullscreen first
-frame), with reproduction steps and probe files.
+tracked in [#244](https://github.com/moeru-ai/auv/issues/244) (stale frames,
+fixed by #246) and [#245](https://github.com/moeru-ai/auv/issues/245)
+(fullscreen first frame, open), with reproduction steps and probe files.
 
 ## Open Questions
 

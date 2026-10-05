@@ -596,8 +596,8 @@ fn scroll_stream_completion_maps_reason_and_optional_action() {
 }
 
 #[test]
-fn scroll_until_request_projection_keeps_step_condition_and_region() {
-  let request = scroll_until_request_to_proto(
+fn scroll_until_begin_projection_keeps_step_condition_region_and_opt_outs() {
+  let begin = scroll_until_begin_to_proto(
     proto::WindowRef {
       window_id: "window-1".to_string(),
     },
@@ -613,23 +613,104 @@ fn scroll_until_request_projection_keeps_step_condition_and_region() {
       settle: std::time::Duration::from_millis(500),
       no_motion_confirmations: 3,
       motion_region: Some(auv_driver::RatioRect::new(0.0, 0.2, 1.0, 0.6)),
+      observe: auv_scan::ScrollUntilObserve {
+        capture: false,
+        text: true,
+      },
     },
     auv_driver::ScrollOptions::default(),
+    true,
   )
   .expect("valid request");
   assert_eq!(
-    request.step,
-    Some(proto::scroll_until_request::Step::Instant(proto::Scroll {
+    begin.step,
+    Some(proto::scroll_until_begin::Step::Instant(proto::Scroll {
       delta_x: 0.0,
       delta_y: 600.0
     }))
   );
   assert_eq!(
-    request.condition,
-    Some(proto::scroll_until_request::Condition::TextVisible(proto::ScrollUntilTextVisible {
+    begin.condition,
+    Some(proto::scroll_until_begin::Condition::TextVisible(proto::ScrollUntilTextVisible {
       query: "Load more".to_string()
     }))
   );
-  assert_eq!((request.max_steps, request.no_motion_confirmations), (30, 3));
-  assert_eq!(request.motion_region.unwrap().height, 0.6);
+  assert_eq!((begin.max_steps, begin.no_motion_confirmations), (30, 3));
+  assert_eq!(begin.motion_region.unwrap().height, 0.6);
+  assert_eq!(
+    begin.observe,
+    Some(proto::ScrollUntilObserve {
+      omit_capture: true,
+      omit_text: false
+    })
+  );
+  assert!(begin.await_decisions);
+}
+
+#[test]
+fn scroll_until_observation_event_decodes_capture_text_and_decision_flag() {
+  let event = scroll_until_event_from_proto(proto::ScrollUntilResponse {
+    event: Some(proto::scroll_until_response::Event::Observation(proto::ScrollUntilObservation {
+      steps: 2,
+      delivered: Some(proto::Scroll {
+        delta_x: 0.0,
+        delta_y: 1000.0,
+      }),
+      motion: Some(proto::ViewportPixelMotion {
+        estimated_shift: 12,
+        normalized_diff: 0.2,
+        no_motion: false,
+      }),
+      no_motion_streak: 0,
+      capture: Some(proto::CapturedFrame {
+        image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
+          width: 2,
+          height: 1,
+          data: vec![0; 8],
+        }),
+        bounds: Some(proto::ScreenRect {
+          x: 0.0,
+          y: 0.0,
+          width: 2.0,
+          height: 1.0,
+        }),
+        scale_factor: 1.0,
+        ..Default::default()
+      }),
+      text: Some(proto::RecognizeTextResponse {
+        text: "row".to_string(),
+        ..Default::default()
+      }),
+      stop: proto::ScrollUntilStopReason::Unspecified as i32,
+      awaiting_decision: true,
+    })),
+  })
+  .expect("valid observation");
+  let ScrollUntilEvent::Observation {
+    observation,
+    awaiting_decision,
+  } = event
+  else {
+    panic!("expected an observation");
+  };
+  assert!(awaiting_decision);
+  assert_eq!((observation.steps, observation.stop), (2, None));
+  assert_eq!(observation.capture.expect("capture").image.dimensions(), (2, 1));
+  assert_eq!(observation.text.expect("text").text, "row");
+
+  let completed = scroll_until_event_from_proto(proto::ScrollUntilResponse {
+    event: Some(proto::scroll_until_response::Event::Completed(proto::ScrollUntilCompleted {
+      reason: proto::ScrollUntilStopReason::PredicateSatisfied as i32,
+      delivered: Some(proto::Scroll::default()),
+      ..Default::default()
+    })),
+  })
+  .expect("valid completion");
+  assert!(matches!(
+    completed,
+    ScrollUntilEvent::Completed(auv_scan::ScrollUntilResult {
+      reason: auv_scan::ScrollUntilStopReason::PredicateSatisfied,
+      ..
+    })
+  ));
 }

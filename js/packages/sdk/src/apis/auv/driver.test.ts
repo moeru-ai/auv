@@ -178,9 +178,11 @@ describe('runner Driver control surface', () => {
     expect(request.motion?.timing.case).toBe('fixedDuration')
   })
 
-  it('streams scroll-until progress and completion for the bound window', async () => {
+  it('answers scroll-until observations with a client predicate', async () => {
     const sent: Uint8Array[] = []
     let streamedMethod = ''
+    const decisions: Array<(stop: boolean) => void> = []
+    const nextDecision = () => new Promise<boolean>(resolve => decisions.push(resolve))
     const connection = await connect({
       local: true,
       transport: {
@@ -192,11 +194,80 @@ describe('runner Driver control surface', () => {
             close() {},
             async halfClose() {},
             responses: (async function* () {
+              for (const [steps, line] of [[0, 'feed item 1'], [1, 'TARGET ROW 137']] as const) {
+                const decision = nextDecision()
+                yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+                  event: { case: 'observation', value: { awaitingDecision: true, steps, text: { text: line } } },
+                }))
+                if (await decision) {
+                  yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+                    event: { case: 'completed', value: { reason: ScrollUntilStopReason.PREDICATE_SATISFIED, steps } },
+                  }))
+                  return
+                }
+              }
+            })(),
+            async send(body) {
+              sent.push(body)
+              const event = fromBinary(ScrollUntilRequestSchema, body).event
+              if (event.case === 'decision')
+                decisions.shift()!(event.value.stop)
+            },
+          }
+        },
+        async unary() {
+          return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, {
+            window: { ref: { windowId: 'until-target' } },
+          }))
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const seen: number[] = []
+
+    const completed = await window.scrollUntil({ x: 10, y: 20 }, {
+      maxSteps: 40,
+      noMotionConfirmations: 2,
+      settle: { nanos: 400_000_000 },
+      step: { case: 'instant', value: { deltaY: 600 } },
+    }, {
+      onObservation: observation => void seen.push(observation.steps),
+      until: async observation => observation.text?.text.includes('TARGET') ?? false,
+    })
+
+    expect(streamedMethod).toBe('/auv.api.driver.v1.InputService/ScrollUntil')
+    expect(completed.reason).toBe(ScrollUntilStopReason.PREDICATE_SATISFIED)
+    expect(seen).toEqual([0, 1])
+    const requests = sent.map(body => fromBinary(ScrollUntilRequestSchema, body).event)
+    expect(requests.map(event => event.case === 'decision' ? event.value.stop : event.case)).toEqual(['begin', false, true])
+    const begin = requests[0]!
+    expect(begin.case === 'begin' && begin.value.window?.windowId).toBe('until-target')
+    expect(begin.case === 'begin' && begin.value.awaitDecisions).toBe(true)
+    expect(begin.case === 'begin' && begin.value.condition.case).toBe('end')
+    expect(begin.case === 'begin' && begin.value.step.case === 'instant' && begin.value.step.value.deltaY).toBe(600)
+  })
+
+  it('runs scroll-until without decisions when no predicate is given', async () => {
+    const sent: Uint8Array[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() {
+          return {
+            close() {},
+            async halfClose() {},
+            responses: (async function* () {
               yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
-                event: { case: 'progress', value: { noMotionStreak: 1, steps: 3 } },
+                event: { case: 'observation', value: { steps: 0 } },
               }))
               yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
-                event: { case: 'completed', value: { reason: ScrollUntilStopReason.END_BY_NO_VISUAL_PROGRESS, steps: 4 } },
+                event: { case: 'observation', value: { steps: 1, stop: ScrollUntilStopReason.TEXT_VISIBLE } },
+              }))
+              yield toBinary(ScrollUntilResponseSchema, create(ScrollUntilResponseSchema, {
+                event: { case: 'completed', value: { reason: ScrollUntilStopReason.TEXT_VISIBLE, steps: 1 } },
               }))
             })(),
             async send(body) { sent.push(body) },
@@ -211,22 +282,22 @@ describe('runner Driver control surface', () => {
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
     const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
-    const events: string[] = []
-    for await (const event of await window.scrollUntil({ x: 10, y: 20 }, {
+    const stops: ScrollUntilStopReason[] = []
+
+    const completed = await window.scrollUntil({ x: 10, y: 20 }, {
       condition: { case: 'textVisible', value: { query: 'Load more' } },
-      maxSteps: 40,
-      noMotionConfirmations: 2,
-      settle: { nanos: 400_000_000 },
+      observe: { omitCapture: true },
       step: { case: 'instant', value: { deltaY: 600 } },
-    })) {
-      events.push(event.event.case ?? '')
-    }
-    expect(streamedMethod).toBe('/auv.api.driver.v1.InputService/ScrollUntil')
-    expect(events).toEqual(['progress', 'completed'])
-    const request = fromBinary(ScrollUntilRequestSchema, sent[0]!)
-    expect(request.window?.windowId).toBe('until-target')
-    expect(request.condition.case === 'textVisible' && request.condition.value.query).toBe('Load more')
-    expect(request.step.case === 'instant' && request.step.value.deltaY).toBe(600)
+    }, { onObservation: observation => void stops.push(observation.stop) })
+
+    expect(completed.reason).toBe(ScrollUntilStopReason.TEXT_VISIBLE)
+    expect(stops).toEqual([ScrollUntilStopReason.UNSPECIFIED, ScrollUntilStopReason.TEXT_VISIBLE])
+    const requests = sent.map(body => fromBinary(ScrollUntilRequestSchema, body).event)
+    expect(requests.map(event => event.case)).toEqual(['begin'])
+    const begin = requests[0]!
+    expect(begin.case === 'begin' && begin.value.awaitDecisions).toBe(false)
+    expect(begin.case === 'begin' && begin.value.observe?.omitCapture).toBe(true)
+    expect(begin.case === 'begin' && begin.value.condition.case === 'textVisible' && begin.value.condition.value.query).toBe('Load more')
   })
 
   it('drives a live scroll stream from a generator and stops when it finishes', async () => {

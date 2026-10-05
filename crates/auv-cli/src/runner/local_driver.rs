@@ -812,12 +812,21 @@ impl InputService for LocalInputService {
     Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
   }
 
-  async fn scroll_until(&self, request: Request<proto::ScrollUntilRequest>) -> Result<Response<Self::ScrollUntilStream>, Status> {
-    let request = request.into_inner();
-    let window_ref = request.window.clone().ok_or_else(|| Status::invalid_argument("window is required"))?;
-    let point = window_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
-    let options = scroll_options_from_proto(request.options.clone())?;
-    let until = scroll_until_request_from_proto(request)?;
+  async fn scroll_until(
+    &self,
+    request: Request<tonic::Streaming<proto::ScrollUntilRequest>>,
+  ) -> Result<Response<Self::ScrollUntilStream>, Status> {
+    use proto::scroll_until_request::Event;
+    let mut requests = request.into_inner();
+    let begin = match requests.next().await.transpose()?.and_then(|request| request.event) {
+      Some(Event::Begin(begin)) => begin,
+      _ => return Err(Status::invalid_argument("begin must be the first ScrollUntil event")),
+    };
+    let window_ref = begin.window.clone().ok_or_else(|| Status::invalid_argument("begin.window is required"))?;
+    let point = window_point_from_proto(begin.point.ok_or_else(|| Status::invalid_argument("begin.point is required"))?)?;
+    let options = scroll_options_from_proto(begin.options.clone())?;
+    let await_decisions = begin.await_decisions;
+    let until = scroll_until_request_from_proto(begin)?;
     until.validate().map_err(driver_status)?;
     let window = resolve_window_ref(&self.session, window_ref)?;
     require_point_inside_window(&window, point)?;
@@ -825,7 +834,7 @@ impl InputService for LocalInputService {
     let session = self.session.clone();
     tokio::spawn(async move {
       let disconnected = sender.clone();
-      let operation = relay_scroll_until(session, window, point, options, until, sender);
+      let operation = relay_scroll_until(session, window, point, options, until, await_decisions, requests, sender);
       tokio::select! {
         _ = disconnected.closed() => {},
         _ = operation => {},
@@ -1315,64 +1324,117 @@ fn scroll_stream_stop_reason_to_proto(reason: auv_driver::ScrollStreamStopReason
 /// (latest value) and the completion. Dropping this future (client
 /// disconnect) aborts the native task, whose cancellation guard stops the
 /// next wait.
+/// Runs the observation loop on the blocking input pool. Every observation is
+/// sent with backpressure (captures are large and each one matters to a
+/// predicate). With `await_decisions`, the loop blocks on the client's decision;
+/// a half-closed request stream or a dropped relay counts as a stop.
+#[allow(clippy::too_many_arguments)]
 async fn relay_scroll_until(
   session: auv_driver::LocalDriverSession,
   window: auv_driver::Window,
   point: auv_driver::WindowPoint,
   options: auv_driver::ScrollOptions,
   until: auv_scan::ScrollUntilRequest,
+  await_decisions: bool,
+  mut requests: tonic::Streaming<proto::ScrollUntilRequest>,
   sender: tokio::sync::mpsc::Sender<Result<proto::ScrollUntilResponse, Status>>,
 ) {
   use proto::scroll_until_response::Event;
   let response = |event| proto::ScrollUntilResponse { event: Some(event) };
-  let (progress_tx, mut progress_rx) = tokio::sync::watch::channel(None);
-  let mut tasks = tokio::task::JoinSet::new();
-  tasks.spawn(run_input_blocking(move || {
-    let mut surface = auv_scan::WindowScrollUntilSurface::new(&session, window, point, options);
-    auv_scan::scroll_until(&mut surface, &until, &mut |progress| {
-      progress_tx.send_replace(Some(progress.clone()));
-    })
-  }));
-  let mut progress_open = true;
-  loop {
-    tokio::select! {
-      biased;
-      result = tasks.join_next() => {
-        let event = result.expect("one native scroll-until task")
-          .map_err(|error| Status::internal(format!("input task failed: {error}")))
-          .and_then(|result| result)
-          .and_then(|result| Ok(response(Event::Completed(proto::ScrollUntilCompleted {
-            reason: match result.reason {
-              auv_scan::ScrollUntilStopReason::EndByNoVisualProgress => proto::ScrollUntilStopReason::EndByNoVisualProgress,
-              auv_scan::ScrollUntilStopReason::TextVisible => proto::ScrollUntilStopReason::TextVisible,
-              auv_scan::ScrollUntilStopReason::BudgetExhausted => proto::ScrollUntilStopReason::BudgetExhausted,
-            } as i32,
-            steps: result.steps,
-            delivered: Some(proto::Scroll { delta_x: result.delivered.delta_x, delta_y: result.delivered.delta_y }),
-            action: result.action.map(input_action_to_proto).transpose()?,
-            text_match: result.text_match.map(|matched| proto::ScrollUntilTextMatch {
-              text: matched.text,
-              bounds: Some(rect_to_proto(matched.bounds)),
-            }),
-            last_motion: result.last_motion.map(viewport_pixel_motion_to_proto),
-          }))));
-        let _ = sender.send(event).await;
+  let (decision_tx, decision_rx) = std::sync::mpsc::channel::<Result<bool, String>>();
+  let forward = async move {
+    // Owning the sender here drops it when forwarding ends, which wakes a
+    // blocked decision wait.
+    let decision_tx = decision_tx;
+    loop {
+      let decision = match requests.next().await {
+        Some(Ok(proto::ScrollUntilRequest {
+          event: Some(proto::scroll_until_request::Event::Decision(decision)),
+        })) => Ok(decision.stop),
+        Some(Ok(_)) => Err("only decision events may follow begin".to_string()),
+        Some(Err(status)) => Err(status.message().to_string()),
+        None => return,
+      };
+      let failed = decision.is_err();
+      if decision_tx.send(decision).is_err() || failed {
         return;
       }
-      changed = progress_rx.changed(), if progress_open => {
-        if changed.is_err() { progress_open = false; continue; }
-        let progress = progress_rx.borrow_and_update().clone();
-        if let Some(progress) = progress {
-          let event = response(Event::Progress(proto::ScrollUntilProgress {
-            steps: progress.steps,
-            delivered: Some(proto::Scroll { delta_x: progress.delivered.delta_x, delta_y: progress.delivered.delta_y }),
-            motion: progress.motion.map(viewport_pixel_motion_to_proto),
-            no_motion_streak: progress.no_motion_streak,
-          }));
-          if sender.send(Ok(event)).await.is_err() { return; }
-        }
-      }
     }
+  };
+  let observations = sender.clone();
+  let task = run_input_blocking(move || {
+    let mut surface = auv_scan::WindowScrollUntilSurface::new(&session, window, point, options);
+    auv_scan::scroll_until(&mut surface, &until, &mut |observation| {
+      let awaiting_decision = await_decisions && observation.stop.is_none();
+      let event = response(Event::Observation(scroll_until_observation_to_proto(observation, awaiting_decision)));
+      if observations.blocking_send(Ok(event)).is_err() {
+        return Err(auv_driver::DriverError::Backend {
+          message: "scroll-until client disconnected".to_string(),
+        });
+      }
+      if !awaiting_decision {
+        return Ok(auv_scan::ScrollUntilDecision::Continue);
+      }
+      match decision_rx.recv() {
+        Ok(Ok(true)) | Err(_) => Ok(auv_scan::ScrollUntilDecision::Stop),
+        Ok(Ok(false)) => Ok(auv_scan::ScrollUntilDecision::Continue),
+        Ok(Err(message)) => Err(auv_driver::DriverError::InvalidInput { message }),
+      }
+    })
+  });
+  tokio::pin!(task);
+  tokio::pin!(forward);
+  let mut forwarding = true;
+  let result = loop {
+    tokio::select! {
+      result = &mut task => break result,
+      () = &mut forward, if forwarding => forwarding = false,
+    }
+  };
+  let event = result.and_then(|result| {
+    Ok(response(Event::Completed(proto::ScrollUntilCompleted {
+      reason: scroll_until_stop_reason_to_proto(result.reason) as i32,
+      steps: result.steps,
+      delivered: Some(proto::Scroll {
+        delta_x: result.delivered.delta_x,
+        delta_y: result.delivered.delta_y,
+      }),
+      action: result.action.map(input_action_to_proto).transpose()?,
+      text_match: result.text_match.map(|matched| proto::ScrollUntilTextMatch {
+        text: matched.text,
+        bounds: Some(rect_to_proto(matched.bounds)),
+      }),
+      last_motion: result.last_motion.map(viewport_pixel_motion_to_proto),
+    })))
+  });
+  let _ = sender.send(event).await;
+}
+
+fn scroll_until_observation_to_proto(
+  observation: auv_scan::ScrollUntilObservation,
+  awaiting_decision: bool,
+) -> proto::ScrollUntilObservation {
+  proto::ScrollUntilObservation {
+    steps: observation.steps,
+    delivered: Some(proto::Scroll {
+      delta_x: observation.delivered.delta_x,
+      delta_y: observation.delivered.delta_y,
+    }),
+    motion: observation.motion.map(viewport_pixel_motion_to_proto),
+    no_motion_streak: observation.no_motion_streak,
+    capture: observation.capture.map(capture_to_proto),
+    text: observation.text.map(recognition_to_proto),
+    stop: observation.stop.map_or(proto::ScrollUntilStopReason::Unspecified, scroll_until_stop_reason_to_proto) as i32,
+    awaiting_decision,
+  }
+}
+
+fn scroll_until_stop_reason_to_proto(reason: auv_scan::ScrollUntilStopReason) -> proto::ScrollUntilStopReason {
+  match reason {
+    auv_scan::ScrollUntilStopReason::EndByNoVisualProgress => proto::ScrollUntilStopReason::EndByNoVisualProgress,
+    auv_scan::ScrollUntilStopReason::TextVisible => proto::ScrollUntilStopReason::TextVisible,
+    auv_scan::ScrollUntilStopReason::BudgetExhausted => proto::ScrollUntilStopReason::BudgetExhausted,
+    auv_scan::ScrollUntilStopReason::PredicateSatisfied => proto::ScrollUntilStopReason::PredicateSatisfied,
   }
 }
 
@@ -1656,19 +1718,19 @@ fn motion_timing_function_from_proto(function: Option<proto::MotionTimingFunctio
   Ok(function)
 }
 
-fn scroll_until_request_from_proto(request: proto::ScrollUntilRequest) -> Result<auv_scan::ScrollUntilRequest, Status> {
+fn scroll_until_request_from_proto(request: proto::ScrollUntilBegin) -> Result<auv_scan::ScrollUntilRequest, Status> {
   let step = match request.step {
-    Some(proto::scroll_until_request::Step::Instant(delta)) => auv_scan::ScrollUntilStep::Instant {
+    Some(proto::scroll_until_begin::Step::Instant(delta)) => auv_scan::ScrollUntilStep::Instant {
       delta: scroll_from_proto(Some(delta))?,
     },
-    Some(proto::scroll_until_request::Step::Motion(motion)) => auv_scan::ScrollUntilStep::Motion {
+    Some(proto::scroll_until_begin::Step::Motion(motion)) => auv_scan::ScrollUntilStep::Motion {
       motion: scroll_motion_from_proto(Some(motion))?,
     },
     None => return Err(Status::invalid_argument("step is required")),
   };
   let condition = match request.condition {
-    Some(proto::scroll_until_request::Condition::End(_)) => auv_scan::ScrollUntilCondition::End,
-    Some(proto::scroll_until_request::Condition::TextVisible(text)) => auv_scan::ScrollUntilCondition::TextVisible { query: text.query },
+    Some(proto::scroll_until_begin::Condition::End(_)) => auv_scan::ScrollUntilCondition::End,
+    Some(proto::scroll_until_begin::Condition::TextVisible(text)) => auv_scan::ScrollUntilCondition::TextVisible { query: text.query },
     None => return Err(Status::invalid_argument("condition is required")),
   };
   let motion_region = request.motion_region.map(|region| ratio_rect_from_proto(Some(region))).transpose()?;
@@ -1679,6 +1741,10 @@ fn scroll_until_request_from_proto(request: proto::ScrollUntilRequest) -> Result
     settle: duration_from_proto(request.settle, std::time::Duration::ZERO, "settle")?,
     no_motion_confirmations: request.no_motion_confirmations,
     motion_region,
+    observe: auv_scan::ScrollUntilObserve {
+      capture: !request.observe.is_some_and(|observe| observe.omit_capture),
+      text: !request.observe.is_some_and(|observe| observe.omit_text),
+    },
   })
 }
 
@@ -2264,9 +2330,11 @@ pub(super) async fn serve_inherited() -> Result<(), String> {
   })
   .max_decoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED)
   .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
+  // ScrollUntil observations carry full window captures by default.
   let input = InputServiceServer::new(LocalInputService {
     session: session.clone(),
-  });
+  })
+  .max_encoding_message_size(auv_api_proto::GRPC_MESSAGE_SIZE_UNLIMITED);
   let permission = PermissionServiceServer::new(LocalPermissionService {
     session: session.clone(),
   });

@@ -719,7 +719,7 @@ async fn execute_scroll_until(input: crate::InvokeCommandInput, context: auv::Au
   }
   input.cancellation.check().map_err(|error| error.to_string())?;
   let delivery = async {
-    let mut stream = resolved.scroll_until(point, plan.request.clone(), plan.options.clone()).await?;
+    let mut stream = resolved.scroll_until(point, plan.request.clone(), plan.options.clone(), false).await?;
     while let Some(event) = stream.next().await? {
       if let auv::client::runner::ScrollUntilEvent::Completed(result) = event {
         return Ok(result);

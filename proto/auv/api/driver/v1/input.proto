@@ -4,7 +4,9 @@ syntax = "proto3";
 package auv.api.driver.v1;
 
 import "auv/api/annotations/v1/annotations.proto";
+import "auv/api/driver/v1/capture.proto";
 import "auv/api/driver/v1/geometry.proto";
+import "auv/api/driver/v1/text_recognition.proto";
 import "auv/api/driver/v1/window.proto";
 import "auv/api/image/v1/region.proto";
 import "google/protobuf/duration.proto";
@@ -103,10 +105,14 @@ service InputService {
   }
   // Scrolls a window in steps and observes after each step (one capture per
   // observation) until consecutive steps show no visual motion, the text query
-  // becomes visible, or the step budget runs out. Streams progress per step.
+  // becomes visible, the client decides to stop, or the step budget runs out.
+  // The first request must be `begin`. Every observation is streamed, with its
+  // capture and recognized text unless opted out. With `await_decisions`, the
+  // Runner waits for one `decision` after each observation it does not end
+  // itself; a half-closed request stream counts as a stop.
   // "No visual progress" is not proof that no more content exists.
   // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
-  rpc ScrollUntil(ScrollUntilRequest) returns (stream ScrollUntilResponse) {
+  rpc ScrollUntil(stream ScrollUntilRequest) returns (stream ScrollUntilResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
@@ -493,7 +499,15 @@ message ScrollUntilTextVisible {
   string query = 1;
 }
 
-message ScrollUntilRequest {
+// Opt-outs for observation payloads; everything is included by default.
+// Motion evidence is always included. A text condition still recognizes text
+// when `omit_text` is set; only the observation omits it.
+message ScrollUntilObserve {
+  bool omit_capture = 1;
+  bool omit_text = 2;
+}
+
+message ScrollUntilBegin {
   // A previously resolved child resource, refreshed before delivery.
   WindowRef window = 1;
   WindowPoint point = 2;
@@ -515,6 +529,22 @@ message ScrollUntilRequest {
   // Region of the window compared for motion; absence is the whole window.
   optional auv.api.image.v1.NormalizedRect motion_region = 10;
   ScrollOptions options = 11;
+  ScrollUntilObserve observe = 12;
+  // The client runs a predicate and answers each observation that has
+  // `awaiting_decision` set.
+  bool await_decisions = 13;
+}
+
+// The client's verdict on the latest observation awaiting a decision.
+message ScrollUntilDecision {
+  bool stop = 1;
+}
+
+message ScrollUntilRequest {
+  oneof event {
+    ScrollUntilBegin begin = 1;
+    ScrollUntilDecision decision = 2;
+  }
 }
 
 enum ScrollUntilStopReason {
@@ -522,6 +552,8 @@ enum ScrollUntilStopReason {
   SCROLL_UNTIL_STOP_REASON_END_BY_NO_VISUAL_PROGRESS = 1;
   SCROLL_UNTIL_STOP_REASON_TEXT_VISIBLE = 2;
   SCROLL_UNTIL_STOP_REASON_BUDGET_EXHAUSTED = 3;
+  // The client's decision stopped the loop.
+  SCROLL_UNTIL_STOP_REASON_PREDICATE_SATISFIED = 4;
 }
 
 message ViewportPixelMotion {
@@ -537,18 +569,28 @@ message ScrollUntilTextMatch {
   ScreenRect bounds = 2;
 }
 
-message ScrollUntilProgress {
+// What the Runner saw before the first step (`steps` 0) and after each step.
+message ScrollUntilObservation {
   uint32 steps = 1;
   Scroll delivered = 2;
+  // Absent before the first step.
   ViewportPixelMotion motion = 3;
   uint32 no_motion_streak = 4;
+  // Absent when opted out.
+  CapturedFrame capture = 5;
+  // Same shape as `TextRecognitionService/RecognizeText`; absent when opted out.
+  RecognizeTextResponse text = 6;
+  // Set when a built-in condition or the budget ends the loop here.
+  ScrollUntilStopReason stop = 7;
+  // The Runner waits for one `decision` before continuing.
+  bool awaiting_decision = 8;
 }
 
 message ScrollUntilCompleted {
   ScrollUntilStopReason reason = 1;
   uint32 steps = 2;
   Scroll delivered = 3;
-  // Delivery evidence of the first step; absent if text was visible before any step.
+  // Delivery evidence of the first step; absent if the loop stopped before any step.
   InputActionResult action = 4;
   ScrollUntilTextMatch text_match = 5;
   ViewportPixelMotion last_motion = 6;
@@ -556,7 +598,7 @@ message ScrollUntilCompleted {
 
 message ScrollUntilResponse {
   oneof event {
-    ScrollUntilProgress progress = 1;
+    ScrollUntilObservation observation = 1;
     ScrollUntilCompleted completed = 2;
   }
 }

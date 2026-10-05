@@ -1516,6 +1516,11 @@ impl ScrollUntilArgs {
       settle: std::time::Duration::from_millis(self.settle_ms),
       no_motion_confirmations: self.confirmations,
       motion_region: self.region.as_deref().map(parse_normalized_region).transpose()?,
+      // The command reports only the result, so observations carry no payload.
+      observe: auv_scan::ScrollUntilObserve {
+        capture: false,
+        text: false,
+      },
     };
     request.validate().map_err(|error| format!("input.scrollUntil: {error}"))?;
     Ok(ScrollUntilPlan {
@@ -1607,7 +1612,7 @@ async fn execute_scroll_until(input: &InvokeCommandInput, plan: ScrollUntilPlan)
   let (request, options) = (plan.request.clone(), plan.options.clone());
   let result = run_cancellable_input(&input.cancellation, move || {
     let mut surface = auv_scan::WindowScrollUntilSurface::new(&session, window, point, options);
-    auv_scan::scroll_until(&mut surface, &request, &mut |_| {})
+    auv_scan::scroll_until(&mut surface, &request, &mut |_| Ok(auv_scan::ScrollUntilDecision::Continue))
   })
   .await?;
   if let Some(action) = &result.action {

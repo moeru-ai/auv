@@ -1398,11 +1398,17 @@ Scroll until is a bounded observation loop:
 - **Loop:** scroll one step, wait for the settle time, capture the window,
   and compare the capture with the previous one. One step is either an
   instant scroll or a scroll motion.
+- **Observations:** each one (before the first step and after every step)
+  carries motion evidence, plus the capture and recognized text unless the
+  caller opts out.
 - **Stop reasons:**
   - `text_visible`: OCR finds the query.
   - `end_by_no_visual_progress`: a configured number of consecutive steps
     showed no pixel motion.
   - `budget_exhausted`: the step budget ran out.
+  - `predicate_satisfied`: the caller's predicate stopped the loop. Over the
+    Runner protocol, the predicate runs on the client, and the Runner waits
+    for its decision.
 - **Pixel motion:** a shift search along the scroll axis (viewport pixel
   motion), shared with the NetEase sidebar policy.
 - **What "end" means:** an observation, not proof that no more content

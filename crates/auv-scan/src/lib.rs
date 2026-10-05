@@ -46,8 +46,8 @@ pub use scene_state_inspect::{
   SceneStateInspect, SceneStateListSummary, build_scene_state_inspect, format_scene_state_inspect_text, summarize_scene_state_inspect,
 };
 pub use scroll_until::{
-  ScrollUntilCondition, ScrollUntilProgress, ScrollUntilRequest, ScrollUntilResult, ScrollUntilStep, ScrollUntilStopReason,
-  ScrollUntilSurface, ScrollUntilTextMatch, WindowScrollUntilSurface, scroll_until,
+  ScrollUntilCondition, ScrollUntilDecision, ScrollUntilObservation, ScrollUntilObserve, ScrollUntilRequest, ScrollUntilResult,
+  ScrollUntilStep, ScrollUntilStopReason, ScrollUntilSurface, ScrollUntilTextMatch, WindowScrollUntilSurface, scroll_until,
 };
 pub use timeline::{
   DIAG_INSUFFICIENT_FRAMES, DIAG_UNSUPPORTED_FRAME_COUNT, SCAN_TIMELINE_SCHEMA_VERSION, ScanTimelineWire, TimelineDiagnosticWire,
