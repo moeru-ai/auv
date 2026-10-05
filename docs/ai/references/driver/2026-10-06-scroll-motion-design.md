@@ -291,6 +291,7 @@ observed motion window:
 | Windows 11 Edge, posted messages (Edge foreground) | ease-in-out 600 | Exact | 0.10/0.50/0.92 |
 | Linux GNOME, uinput hi-res | linear 600; ease-in-out 600; ease-out −450; ease-in +300 horizontal; ease-in-out 900 | 0-1.6% short (for example 886 of 900); Chromium received 886 in wheel deltas | Front-loaded; shorter observed duration |
 | Linux GNOME, uinput hi-res instant | 30, −45, 7 px vertical; 60 px horizontal; 120 px | 60 and 120 exact; 30, −45, 7 not delivered | — |
+| Linux GNOME, portal (CLI default, `auv invoke input.scroll --duration-ms`) | linear 600; ease-in-out 600; ease-out −480; ease-in +360 horizontal; ease-in-out 1200 document | Exact | Coarse: whole 120 px notches, so 600 px is five steps (linear 0.27/0.55/0.78) |
 
 The Chromium probe smooths each wheel event, so curve comparisons are
 approximate. Durations look shorter for ease-in, because the first movement
@@ -308,9 +309,22 @@ Linux findings:
 These are compositor/libinput behaviors on GNOME. The AUV conversion is
 exact: the driver delivers the requested hi-res units.
 
-Not live-validated: timed scroll through the Linux portal (CLI default). The
-consent dialog timed out on 2026-10-06. Its behavior follows from the
-instant-scroll evidence, but it is coarse: whole 120 px notches.
+The portal route delivered exact totals because each sample is a whole
+discrete notch. Neither the libinput threshold nor fractional rounding
+applies.
+
+Portal consent for this run was approved by AUV itself, at the owner's
+explicit request. A test-only helper used the Linux driver's AT-SPI support
+while `auv doctor --portal-authorize` was waiting:
+
+- it found the `xdg-desktop-portal-gnome` windows "Remote Desktop" and
+  "Share Screen";
+- it activated the "Allow Remote Interaction" switch (off by default; without
+  it the session starts with no keyboard or pointer access);
+- it activated "Share" in each dialog with `select_node` (`AxPress`).
+
+This is a validation technique for an owner-controlled machine, not a product
+feature. The saved tokens were deleted after the run.
 
 ## Open Questions
 
