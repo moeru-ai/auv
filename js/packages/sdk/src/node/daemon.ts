@@ -91,19 +91,26 @@ export interface StartAuvOptions extends OperationOptions {
   environment?: NodeJS.ProcessEnv
   /**
    * Listener URIs passed as repeated `--listen` arguments. Ports must be
-   * explicit. An empty list uses a caller-local Unix socket below `storeRoot`,
-   * or an owner-protected named pipe on Windows.
+   * explicit. `http://` listeners always require a paired Device bearer,
+   * including loopback. When no `unix://` or `npipe://` listener is listed, an
+   * owner endpoint is added: a Unix socket below `storeRoot`, or an
+   * owner-protected named pipe on Windows. The returned handle connects through
+   * that owner endpoint.
    * @default []
    */
   listeners?: readonly string[]
   /**
-   * Prevents this child daemon from publishing discovery metadata.
+   * Keeps this child daemon from registering as the default local daemon: it
+   * publishes no discovery metadata.
    * @default false
    */
-  noDiscovery?: boolean
+  noRegister?: boolean
   /** Overlay presentation defaults for this daemon and its Runner children. */
   overlay?: AuvOverlayOptions
-  /** Durable short-token and Device-bearer authentication store. */
+  /**
+   * Pairing token and Device-bearer store. Pairing is always available.
+   * @default '<storeRoot>/pairings.json'
+   */
   pairingStore?: string
   /** Platform-specific daemon configuration. */
   platforms?: AuvPlatformOptions
@@ -140,7 +147,7 @@ type AuvChildProcess = Result
 interface ResolvedStartAuvOptions extends StartAuvOptions {
   binaryPath: string
   listeners: readonly string[]
-  noDiscovery: boolean
+  noRegister: boolean
   runnerProviders: readonly string[]
   shutdownTimeoutMs: number
   startupTimeoutMs: number
@@ -188,7 +195,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     discoveryFile,
     environment,
     listeners,
-    noDiscovery,
+    noRegister,
     overlay,
     pairingStore,
     platforms,
@@ -201,7 +208,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   } = merge<ResolvedStartAuvOptions, StartAuvOptions>({
     binaryPath: 'auv',
     listeners: [],
-    noDiscovery: false,
+    noRegister: false,
     runnerProviders: [],
     shutdownTimeoutMs: 5_000,
     startupTimeoutMs: 10_000,
@@ -225,9 +232,11 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 
   const workingDirectory = resolve(configuredWorkingDirectory)
   const storeRoot = resolve(workingDirectory, configuredStoreRoot ?? join('.auv', 'store'))
-  const endpoints = Object.freeze(listeners.length === 0
-    ? [isWindows ? `npipe://./pipe/auv-${randomUUID()}` : `unix://${join(storeRoot, 'auv.sock')}`]
-    : [...listeners])
+  // The handle needs owner authority to connect without a bearer, so it names
+  // the owner endpoint explicitly instead of relying on the daemon's own one.
+  const ownerEndpoint = listeners.find(isOwnerEndpoint)
+    ?? (isWindows ? `npipe://./pipe/auv-${randomUUID()}` : `unix://${join(storeRoot, 'auv.sock')}`)
+  const endpoints = Object.freeze(listeners.includes(ownerEndpoint) ? [...listeners] : [ownerEndpoint, ...listeners])
 
   for (const endpoint of endpoints) {
     const url = new URL(endpoint)
@@ -242,7 +251,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
     discoveryFile,
     id,
     listeners: endpoints,
-    noDiscovery,
+    noRegister,
     pairingStore,
     runnerProviders,
     storeRoot: configuredStoreRoot,
@@ -286,7 +295,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
 
   try {
     await Promise.race([
-      waitForHealth(endpoints, pairingStore !== undefined, id, startupSignal),
+      waitForHealth(endpoints, id, startupSignal),
       completion.then((result) => {
         throw new AuvDaemonStartError(
           `AUV daemon exited before becoming healthy (code ${String(result.code)}, signal ${String(result.signal)})`,
@@ -296,7 +305,7 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
       }),
     ])
 
-    const connectionOptions = preferredConnection(endpoints, pairingStore !== undefined)
+    const connectionOptions = ownerConnection(ownerEndpoint)
     let stopping: Promise<AuvDaemonExit> | undefined
 
     return {
@@ -344,8 +353,11 @@ export async function startAuv(options: StartAuvOptions = {}): Promise<AuvDaemon
   }
 }
 
-function preferredConnection(endpoints: readonly string[], pairedHttp: boolean): AuvDaemonConnectionOptions {
-  const endpoint = endpoints.find(value => value.startsWith('unix://') || value.startsWith('npipe://')) ?? endpoints[0]!
+function isOwnerEndpoint(endpoint: string): boolean {
+  return endpoint.startsWith('unix://') || endpoint.startsWith('npipe://')
+}
+
+function ownerConnection(endpoint: string): AuvDaemonConnectionOptions {
   if (endpoint.startsWith('npipe://')) {
     return {
       endpoint,
@@ -353,17 +365,10 @@ function preferredConnection(endpoints: readonly string[], pairedHttp: boolean):
       transport: 'npipe',
     }
   }
-  if (endpoint.startsWith('unix://')) {
-    return {
-      endpoint: endpoint.slice('unix://'.length),
-      local: true,
-      transport: 'unix',
-    }
-  }
   return {
-    endpoint,
-    local: !pairedHttp,
-    transport: 'http',
+    endpoint: endpoint.slice('unix://'.length),
+    local: true,
+    transport: 'unix',
   }
 }
 
@@ -401,8 +406,8 @@ function serveArguments(options: StartAuvOptions & { id: string }): string[] {
   if (options.discoveryFile !== undefined)
     args.push('--discovery-file', options.discoveryFile)
 
-  if (options.noDiscovery)
-    args.push('--no-discovery')
+  if (options.noRegister)
+    args.push('--no-register')
   if (options.daemonIdleTimeoutSeconds !== undefined)
     args.push('--daemon-idle-timeout', String(options.daemonIdleTimeoutSeconds))
   for (const provider of options.runnerProviders ?? [])
@@ -445,7 +450,7 @@ async function stopChild(
  * Verifies readiness and launch identity through every configured listener.
  * startAuv -> waitForHealth -> checkHealth; stdout is diagnostic output only.
  */
-async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, id: string, signal: AbortSignal): Promise<void> {
+async function waitForHealth(endpoints: readonly string[], id: string, signal: AbortSignal): Promise<void> {
   await Promise.all(endpoints.map(async (endpoint) => {
     while (true) {
       let connection: AuvConnection | undefined
@@ -454,7 +459,8 @@ async function waitForHealth(endpoints: readonly string[], pairedHttp: boolean, 
         const namedPipe = endpoint.startsWith('npipe://')
         connection = await connect({
           endpoint: unix ? endpoint.slice('unix://'.length) : endpoint,
-          local: unix || namedPipe || !pairedHttp,
+          // Health is public, so paired HTTP listeners answer without a bearer.
+          local: unix || namedPipe,
           signal,
           transport: unix ? 'unix' : namedPipe ? 'npipe' : 'http',
         })

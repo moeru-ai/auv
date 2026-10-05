@@ -27,7 +27,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
       listeners: [`http://127.0.0.1:${port}`],
-      noDiscovery: true,
+      noRegister: true,
       storeRoot: 'state',
       workingDirectory,
     })
@@ -35,12 +35,14 @@ describe('startAuv', { timeout: 30_000 }, () => {
     try {
       expect(daemon.pid).toBeGreaterThan(0)
       expect(daemon.storeRoot).toBe(join(workingDirectory, 'state'))
-      expect(daemon.endpoints).toHaveLength(1)
-      expect(daemon.connectionOptions).toEqual({
-        endpoint: daemon.endpoints[0],
-        local: true,
-        transport: 'http',
-      })
+      // HTTP always requires a paired bearer, so the handle connects through
+      // the owner endpoint that startAuv adds in front of the HTTP listener.
+      expect(daemon.endpoints).toEqual(isWindows
+        ? [expect.stringMatching(/^npipe:\/\/\.\/pipe\/auv-/), `http://127.0.0.1:${port}`]
+        : [`unix://${join(workingDirectory, 'state', 'auv.sock')}`, `http://127.0.0.1:${port}`])
+      expect(daemon.connectionOptions).toEqual(isWindows
+        ? { endpoint: daemon.endpoints[0], local: true, transport: 'npipe' }
+        : { endpoint: join(workingDirectory, 'state', 'auv.sock'), local: true, transport: 'unix' })
       await expect(access(daemon.storeRoot)).resolves.toBeUndefined()
 
       const connection = await daemon.connect()
@@ -70,7 +72,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-reuse-'))
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      noDiscovery: true,
+      noRegister: true,
       workingDirectory,
     })
     const connections = await Promise.all([daemon.connect(), daemon.connect()])
@@ -119,7 +121,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const options = {
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
       listeners: [`http://127.0.0.1:${port}`],
-      noDiscovery: true,
+      noRegister: true,
       workingDirectory,
     }
     const first = await startAuv(options)
@@ -158,7 +160,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
       daemon = await startAuv({
         binaryPath: launcher,
         environment: { AUV_TEST_BINARY: join(workspace, 'target', 'debug', 'auv') },
-        noDiscovery: true,
+        noRegister: true,
         startupTimeoutMs: 3000,
         workingDirectory,
       })
@@ -181,7 +183,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'auv-js-npipe-'))
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
-      noDiscovery: true,
+      noRegister: true,
       storeRoot: 'state',
       workingDirectory,
     })
@@ -211,7 +213,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
   it('reports a missing executable as a daemon start error', async () => {
     await expect(startAuv({
       binaryPath: join(tmpdir(), 'missing-auv-test-binary'),
-      noDiscovery: true,
+      noRegister: true,
     })).rejects.toBeInstanceOf(AuvDaemonStartError)
   })
 
@@ -222,7 +224,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
       listeners: [`unix://${join(workingDirectory, 'auv.sock')}`],
-      noDiscovery: true,
+      noRegister: true,
       signal: controller.signal,
       workingDirectory,
     })
@@ -245,7 +247,7 @@ describe('startAuv', { timeout: 30_000 }, () => {
     const daemon = await startAuv({
       binaryPath: join(workspace, 'target', 'debug', 'auv'),
       listeners: [`unix://${socket}`, `http://127.0.0.1:${port}`],
-      noDiscovery: true,
+      noRegister: true,
       pairingStore: join(workingDirectory, 'pairings.json'),
       workingDirectory,
     })

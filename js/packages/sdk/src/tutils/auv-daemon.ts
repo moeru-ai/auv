@@ -73,7 +73,7 @@ export async function setupAuvDaemon(options: AuvDaemonFixtureOptions = {}): Pro
   const daemon = await startAuv({
     binaryPath: join(workspace, 'target', 'debug', 'auv'),
     listeners: [`unix://${ownerSocket}`, `http://127.0.0.1:${remotePort}`],
-    noDiscovery: true,
+    noRegister: true,
     pairingStore: join(root, 'pairings.json'),
     runnerProviders,
     storeRoot: join(root, 'store'),

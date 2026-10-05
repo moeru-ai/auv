@@ -106,7 +106,7 @@ import { app } from 'electron'
 const daemon = await startAuv({
   binaryPath: join(process.resourcesPath, 'bin', 'auv'),
   listeners: ['http://127.0.0.1:9847'],
-  noDiscovery: true,
+  noRegister: true,
   storeRoot: join(app.getPath('userData'), 'auv'),
 })
 
