@@ -1379,6 +1379,18 @@ and compositors can still smooth, hold back, or round wheel input, so the
 observed speed curve needs observation. See the
 [scroll motion design](ai/references/driver/2026-10-06-scroll-motion-design.md).
 
+## Scroll Stream
+
+A scroll stream is live wheel scrolling steered by caller velocity updates
+(logical px/s). The driver integrates velocity at a fixed sample rate,
+optionally limits acceleration, and quantizes the cumulative position like
+scroll motion. Every update renews a lease. Without renewal, the stream ramps
+to zero and completes as `lease_expired`. A stop also ramps to zero; a cancel
+ends at the next sample. Caller code (for example a JS generator that observes
+the page) stays client-side, and only velocity data crosses the Runner
+protocol. See the
+[scroll motion design](ai/references/driver/2026-10-06-scroll-motion-design.md).
+
 ## Prepare For Input Options
 
 Prepare for input options is a provisional term for how an action may prepare a

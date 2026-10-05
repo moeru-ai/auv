@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CaptureWindowRequestSchema, CaptureWindowResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
@@ -178,6 +178,66 @@ describe('runner Driver control surface', () => {
     expect(request.motion?.timing.case).toBe('fixedDuration')
   })
 
+  it('drives a live scroll stream from a generator and stops when it finishes', async () => {
+    const sent: Uint8Array[] = []
+    let streamedMethod = ''
+    let stopped: () => void = () => {}
+    const stopReceived = new Promise<void>((resolve) => {
+      stopped = resolve
+    })
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex(call) {
+          streamedMethod = call.method
+          return {
+            close() {},
+            async halfClose() {},
+            responses: (async function* () {
+              yield toBinary(StreamScrollResponseSchema, create(StreamScrollResponseSchema, { event: { case: 'started', value: {} } }))
+              await stopReceived
+              yield toBinary(StreamScrollResponseSchema, create(StreamScrollResponseSchema, {
+                event: { case: 'completed', value: { delivered: { deltaY: 120 }, reason: 1 } },
+              }))
+            })(),
+            async send(body) {
+              sent.push(body)
+              if (fromBinary(StreamScrollRequestSchema, body).event.case === 'stop')
+                stopped()
+            },
+          }
+        },
+        async unary() {
+          return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, {
+            window: { ref: { windowId: 'stream-target' } },
+          }))
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    function* steps() {
+      yield { holdMs: 5, velocityY: 600 }
+      yield { holdMs: 5, velocityY: -200 }
+    }
+    const completed = await window.scrollWith(steps(), {
+      lease: { nanos: 500_000_000 },
+      maxAcceleration: 4000,
+      point: { x: 10, y: 20 },
+      sampleRateHz: 60,
+    })
+
+    expect(streamedMethod).toBe('/auv.api.driver.v1.InputService/StreamScroll')
+    expect(completed.delivered?.deltaY).toBe(120)
+    const requests = sent.map(body => fromBinary(StreamScrollRequestSchema, body).event)
+    expect(requests.map(event => event.case)).toEqual(['begin', 'setVelocity', 'setVelocity', 'stop'])
+    expect(requests[0]!.case === 'begin' && requests[0]!.value.window?.windowId).toBe('stream-target')
+    expect(requests[0]!.case === 'begin' && requests[0]!.value.maxAcceleration).toBe(4000)
+    expect(requests[2]!.case === 'setVelocity' && requests[2]!.value.velocity?.deltaYPerSecond).toBe(-200)
+  })
+
   it('retains a created mouse and exact window owner across primitive and complete gestures', async () => {
     const calls: UnaryCall[] = []
     const connection = await connect({
@@ -263,7 +323,7 @@ describe('runner Driver control surface', () => {
     })
 
     expect(window.id).toBe('window-42')
-    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'scroll', 'scrollMotion'])
+    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'scroll', 'scrollMotion', 'scrollStream', 'scrollWith'])
 
     const capture = await window.capture()
     expect(capture.window?.frame?.width).toBe(1280)

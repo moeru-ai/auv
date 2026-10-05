@@ -13,8 +13,10 @@ Accepted by the owner on 2026-10-06 with these choices:
 
 Phase 1 (scroll motion and Linux high-resolution wheel) is implemented; see
 [Phase 1 Implementation and Evidence](#phase-1-implementation-and-evidence).
-Phases 2 and 3 are not implemented yet. Names marked *provisional* in those
-sections may still change. This note builds on the
+Phase 2 (live scroll control) is implemented; see
+[Phase 2 Implementation and Evidence](#phase-2-implementation-and-evidence).
+Phase 3 is not implemented yet, and names marked *provisional* in that section
+may still change. This note builds on the
 [scroll delta contract](2026-10-06-scroll-delta-contract.md): logical pixels,
 positive toward later content (down/right).
 
@@ -325,6 +327,66 @@ while `auv doctor --portal-authorize` was waiting:
 
 This is a validation technique for an owner-controlled machine, not a product
 feature. The saved tokens were deleted after the run.
+
+## Phase 2 Implementation and Evidence
+
+What landed:
+
+- `auv-driver-common::scroll_stream`:
+  - `ScrollVelocity`, with a ±50,000 px/s limit (`NOTICE(scroll-stream-velocity-limit)`);
+  - `ScrollStreamOptions`: sample rate 1..=1000, an optional
+    `max_acceleration` in px/s², and a lease in (0, 60s];
+  - `ScrollStreamControl` with `set_velocity`, `stop`, and `cancel`;
+  - `ScrollStreamStopReason` (`stopped`, `cancelled`, `lease_expired`);
+  - `run_window_scroll_stream`.
+- How the executor works:
+  - It integrates velocity into a cumulative position and quantizes it with
+    the phase 1 `CumulativeQuantizer::step_to`, so the delivered total is
+    exact.
+  - It ramps toward each requested velocity under `max_acceleration`.
+  - `stop` and lease expiry ramp to zero before completing. `cancel` ends at
+    the next sample.
+  - Like timed motion, it pins the first selected delivery path.
+- `WindowInput::scroll_stream` default method.
+- Wire: `InputService/StreamScroll` (bidirectional). It uses
+  `StreamScrollBegin`, `StreamScrollSetVelocity`, `StreamScrollStop`, and
+  `StreamScrollCancel`, and returns `started`, `progress` (latest value), and
+  `completed` events. `completed` carries the delivered total, an optional
+  action (absent when nothing moved), the stop reason, and the elapsed time.
+- Runner behavior:
+  - A half-closed request stream counts as a stop.
+  - An invalid velocity or out-of-order event cancels the stream with
+    `INVALID_ARGUMENT`.
+  - A disconnect aborts the native task.
+- Rust client: `WindowClient::scroll_stream` returns a `ScrollStreamSession`
+  with `set_velocity`, `stop`, `cancel`, and `next`.
+- JS SDK:
+  - `WindowClient.scrollStream(begin)` returns a controller with
+    `setVelocity`, `stop`, `cancel`, and `events`.
+  - `WindowClient.scrollWith(generator, begin)` consumes a sync or async
+    generator of `{ velocityX?, velocityY?, holdMs? }`. It renews the lease
+    while a step holds, and stops when the generator finishes. Generators stay
+    client-side; only velocity data crosses the wire.
+
+Not exposed through `auv invoke` or MCP: live control needs a client that keeps
+a stream open (`TODO(scroll-stream-invoke)`). The CLI keeps timed scroll for
+one-shot use.
+
+Live evidence, 2026-10-06. macOS Chrome with occlusion backgrounding disabled.
+The full path was the JS SDK (`tsx`), an isolated local daemon, its Runner,
+and window-targeted wheel delivery:
+
+| Case | Result |
+| --- | --- |
+| `scrollWith` profile 300 → 900 → 1500 → 600 px/s, 300 ms each, `max_acceleration` 6000 | Observed speed (6-frame windows) about 300 → 650-1100 (ramping) → 1500 → 600 → 0; delivered 1014 px = observed 1014 px; `stopped` |
+| Observation-driven generator: reads `scrollTop` over CDP each step and slows as the target nears | Target +1500 px, stopped at +1501 px |
+| `scrollStream` with a 300 ms lease and one update at 600 px/s | `lease_expired` after 404 ms; delivered 173 px |
+| Abort the SDK call 400 ms into 1000 px/s | 314 px before the abort, 0 px after |
+
+Windows and Linux: unit tests and native builds pass (see the PR). Each stream
+sample uses the same per-platform `WindowInput::scroll` delivery that phase 1
+validated live on Windows Edge and Linux GNOME. A separate live stream run on
+those hosts was not performed.
 
 ## Open Questions
 

@@ -216,8 +216,12 @@ impl CumulativeQuantizer {
 
   /// Delta in logical pixels needed to reach `progress` of the total.
   pub fn step(&mut self, progress: f64) -> Scroll {
-    let target =
-      ((self.total.delta_x * progress / self.quantum).round() as i64, (self.total.delta_y * progress / self.quantum).round() as i64);
+    self.step_to(Scroll::new(self.total.delta_x * progress, self.total.delta_y * progress))
+  }
+
+  /// Delta in logical pixels needed to reach an absolute cumulative `target`.
+  pub fn step_to(&mut self, target: Scroll) -> Scroll {
+    let target = ((target.delta_x / self.quantum).round() as i64, (target.delta_y / self.quantum).round() as i64);
     let delta = (target.0 - self.emitted_units.0, target.1 - self.emitted_units.1);
     self.emitted_units = target;
     Scroll::new(delta.0 as f64 * self.quantum, delta.1 as f64 * self.quantum)
@@ -294,7 +298,7 @@ pub fn run_window_scroll_motion<W: WindowInput + ?Sized>(
 }
 
 /// Reuses the first sample's selected path for the rest of the motion.
-fn pinned_options(action: &InputActionResult, options: &ScrollOptions) -> ScrollOptions {
+pub(crate) fn pinned_options(action: &InputActionResult, options: &ScrollOptions) -> ScrollOptions {
   let pinned = match action.selected_path {
     InputDeliveryPath::WindowTargetedWheel => Some((ScrollDeliveryCandidate::WindowTargetedWheel, InputPolicy::BackgroundOnly)),
     InputDeliveryPath::AxScroll => Some((ScrollDeliveryCandidate::AxScroll, InputPolicy::BackgroundOnly)),
@@ -319,7 +323,7 @@ fn pinned_options(action: &InputActionResult, options: &ScrollOptions) -> Scroll
   }
 }
 
-fn partial_failure(error: DriverError, delivered: Scroll, attempted: Scroll, started: bool) -> DriverError {
+pub(crate) fn partial_failure(error: DriverError, delivered: Scroll, attempted: Scroll, started: bool) -> DriverError {
   if !started {
     return error;
   }
@@ -335,7 +339,7 @@ fn partial_failure(error: DriverError, delivered: Scroll, attempted: Scroll, sta
 }
 
 /// Sleeps until `deadline`, waking early with an error on input cancellation.
-fn wait_until(deadline: Instant) -> DriverResult<()> {
+pub(crate) fn wait_until(deadline: Instant) -> DriverResult<()> {
   let cancellation = current_input_cancellation();
   let signal = Arc::new((Mutex::new(()), Condvar::new()));
   if let Some(cancellation) = &cancellation {

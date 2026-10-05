@@ -18,6 +18,9 @@ export type {
   RecognizeTextOptions,
   RunnerClient,
   RunnerRouteOptions,
+  ScrollStreamBegin,
+  ScrollStreamController,
+  ScrollWithStep,
   WindowClient,
 } from './driver'
 export { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'

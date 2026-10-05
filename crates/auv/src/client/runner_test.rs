@@ -559,3 +559,38 @@ fn scroll_motion_events_require_their_payloads() {
   .expect_err("completed without delivery evidence");
   assert!(matches!(completed, CapabilityError::InvalidResponse(_)));
 }
+
+#[test]
+fn scroll_stream_completion_maps_reason_and_optional_action() {
+  let completed = scroll_stream_event_from_proto(proto::StreamScrollResponse {
+    event: Some(proto::stream_scroll_response::Event::Completed(proto::StreamScrollCompleted {
+      delivered: Some(proto::Scroll::default()),
+      action: None,
+      reason: proto::ScrollStreamStopReason::LeaseExpired as i32,
+      elapsed: Some(prost_types::Duration {
+        seconds: 1,
+        nanos: 0,
+      }),
+    })),
+  })
+  .expect("idle stream completion");
+  assert_eq!(
+    completed,
+    ScrollStreamEvent::Completed {
+      delivered: auv_driver::Scroll::new(0.0, 0.0),
+      action: None,
+      reason: auv_driver::ScrollStreamStopReason::LeaseExpired,
+      elapsed: std::time::Duration::from_secs(1),
+    }
+  );
+  let unknown = scroll_stream_event_from_proto(proto::StreamScrollResponse {
+    event: Some(proto::stream_scroll_response::Event::Completed(proto::StreamScrollCompleted {
+      delivered: Some(proto::Scroll::default()),
+      action: None,
+      reason: proto::ScrollStreamStopReason::Unspecified as i32,
+      elapsed: Some(prost_types::Duration::default()),
+    })),
+  })
+  .expect_err("unspecified reason");
+  assert!(matches!(unknown, CapabilityError::InvalidResponse(_)));
+}

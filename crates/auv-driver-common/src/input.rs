@@ -465,6 +465,21 @@ pub trait WindowInput {
     crate::scroll_motion::run_window_scroll_motion(self, window, point, motion, options, notify)
   }
 
+  /// Delivers wheel input while the caller steers velocity through `control`,
+  /// until it stops or cancels or the lease expires. The first non-empty
+  /// sample selects the delivery path; later samples reuse it.
+  fn scroll_stream(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    control: &crate::ScrollStreamControl,
+    stream: crate::ScrollStreamOptions,
+    options: ScrollOptions,
+    notify: &mut dyn FnMut(crate::ScrollStreamProgress),
+  ) -> DriverResult<crate::ScrollStreamResult> {
+    crate::scroll_stream::run_window_scroll_stream(self, window, point, control, stream, options, notify)
+  }
+
   /// Drags along `movement` while holding `button`, under one input admission.
   /// Movement points are screen coordinates, and the adapter sets
   /// `movement.target`. `ForegroundPreferred` foregrounds the window the same

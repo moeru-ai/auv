@@ -90,6 +90,16 @@ service InputService {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
+  // Live window scroll steered by caller velocity updates. The client sends one
+  // begin event, then set_velocity events (each renews the lease), then stop
+  // or cancel. Delivery starts after begin. A missing renewal within the lease
+  // ramps to zero and completes; a disconnect stops at the next sample.
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc StreamScroll(stream StreamScrollRequest) returns (stream StreamScrollResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
   // Accepts one complete motion and streams delivery progress. Invalid input
   // ends the RPC with a gRPC status before the first pointer event.
   // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
@@ -385,6 +395,82 @@ message ScrollWindowPointMotionResponse {
     ScrollMotionStarted started = 1;
     ScrollMotionProgress progress = 2;
     ScrollMotionCompleted completed = 3;
+  }
+}
+
+// Logical pixels per second; positive is toward later content (down/right).
+message ScrollVelocity {
+  double delta_x_per_second = 1;
+  double delta_y_per_second = 2;
+}
+
+message StreamScrollBegin {
+  // A previously resolved child resource, refreshed before delivery.
+  WindowRef window = 1;
+  WindowPoint point = 2;
+  ScrollOptions options = 3;
+  // Samples per second, 1..=1000.
+  uint32 sample_rate_hz = 4;
+  // Limit on velocity change in logical px/s^2. Absence jumps to each
+  // requested velocity.
+  optional double max_acceleration = 5;
+  // Required, (0, 60s]. Every set_velocity renews it.
+  google.protobuf.Duration lease = 6;
+}
+
+message StreamScrollSetVelocity {
+  ScrollVelocity velocity = 1;
+}
+
+// Ramps to zero (subject to max_acceleration), then completes.
+message StreamScrollStop {}
+
+// Ends delivery at the next sample without ramping.
+message StreamScrollCancel {}
+
+message StreamScrollRequest {
+  // Begin must occur once and first.
+  oneof event {
+    StreamScrollBegin begin = 1;
+    StreamScrollSetVelocity set_velocity = 2;
+    StreamScrollStop stop = 3;
+    StreamScrollCancel cancel = 4;
+  }
+}
+
+enum ScrollStreamStopReason {
+  SCROLL_STREAM_STOP_REASON_UNSPECIFIED = 0;
+  SCROLL_STREAM_STOP_REASON_STOPPED = 1;
+  SCROLL_STREAM_STOP_REASON_CANCELLED = 2;
+  SCROLL_STREAM_STOP_REASON_LEASE_EXPIRED = 3;
+}
+
+message StreamScrollStarted {
+  Window window = 1;
+  WindowPoint point = 2;
+}
+
+message StreamScrollProgress {
+  google.protobuf.Duration elapsed = 1;
+  // Logical pixels delivered so far.
+  Scroll delivered = 2;
+  // Current, possibly ramping, velocity.
+  ScrollVelocity velocity = 3;
+}
+
+message StreamScrollCompleted {
+  Scroll delivered = 1;
+  // Delivery evidence of the first non-empty sample; absent if nothing moved.
+  InputActionResult action = 2;
+  ScrollStreamStopReason reason = 3;
+  google.protobuf.Duration elapsed = 4;
+}
+
+message StreamScrollResponse {
+  oneof event {
+    StreamScrollStarted started = 1;
+    StreamScrollProgress progress = 2;
+    StreamScrollCompleted completed = 3;
   }
 }
 

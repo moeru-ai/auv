@@ -22,7 +22,11 @@ import type {
   ScrollMotionSchema,
   ScrollOptionsSchema,
   ScrollSchema,
+  ScrollVelocitySchema,
   ScrollWindowPointMotionResponse,
+  StreamScrollBeginSchema,
+  StreamScrollCompleted,
+  StreamScrollResponse,
   TypeTextOptionsSchema,
 } from '../../gen/auv/api/driver/v1/input_pb'
 import type { ShowOverlayRequestSchema } from '../../gen/auv/api/driver/v1/overlay_pb'
@@ -114,6 +118,24 @@ export interface RunnerRouteOptions extends OperationOptions {
   runId?: string
   runnerClass: string
 }
+/** Begin parameters for `scrollStream`; the window comes from the client. */
+export type ScrollStreamBegin = InputFields<typeof StreamScrollBeginSchema, 'window'>
+
+export interface ScrollStreamController {
+  cancel: () => Promise<void>
+  /** Started, progress (latest value), and completed events. */
+  readonly events: AsyncIterable<StreamScrollResponse>
+  setVelocity: (velocity: Init<typeof ScrollVelocitySchema>) => Promise<void>
+  stop: () => Promise<void>
+}
+
+/** One generator step for `scrollWith`. Velocities are logical px/s. */
+export interface ScrollWithStep {
+  holdMs?: number
+  velocityX?: number
+  velocityY?: number
+}
+
 export interface WindowClient {
   capture: (options?: OperationOptions) => Promise<Shape<typeof CaptureService.method.captureWindow.output>>
   click: (point: Init<typeof WindowPointSchema>, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickWindowPoint.output>>
@@ -132,6 +154,20 @@ export interface WindowClient {
    * positive-down convention as `scroll`.
    */
   scrollMotion: (point: Init<typeof WindowPointSchema>, motion: Init<typeof ScrollMotionSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<AsyncIterable<ScrollWindowPointMotionResponse>>
+  /**
+   * Opens a live scroll stream. Delivery starts at zero velocity; steer it
+   * with `setVelocity` (logical px/s, positive = down/right). Every update
+   * renews `begin.lease`; without renewal the stream ramps to zero and
+   * completes. Aborting `options.signal` disconnects and stops delivery.
+   */
+  scrollStream: (begin: ScrollStreamBegin, options?: OperationOptions) => Promise<ScrollStreamController>
+  /**
+   * Drives a live scroll stream from a (possibly async) generator. Each yielded
+   * step sets the velocity and holds it for `holdMs` (default 100), renewing the
+   * lease while it holds. The stream stops (ramping down) when the generator
+   * finishes, and resolves with the completion event.
+   */
+  scrollWith: (steps: AsyncIterable<ScrollWithStep> | Iterable<ScrollWithStep>, begin: ScrollStreamBegin, options?: OperationOptions) => Promise<StreamScrollCompleted>
 }
 type Init<T extends DescMessage> = MessageInitShape<T>
 type InputFields<T extends DescMessage, K extends keyof Init<T>> = Omit<Init<T>, '$typeName' | K>
@@ -180,6 +216,16 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     service: method.parent.typeName,
     ...callOptions(options),
   })
+  const openScrollStream = async (windowId: string, begin: ScrollStreamBegin, options?: OperationOptions): Promise<ScrollStreamController> => {
+    const call = await duplex(InputService.method.streamScroll, options)
+    await call.send({ event: { case: 'begin', value: { ...begin, window: { windowId } } } })
+    return {
+      cancel: () => call.send({ event: { case: 'cancel', value: {} } }),
+      events: call.responses,
+      setVelocity: velocity => call.send({ event: { case: 'setVelocity', value: { velocity } } }),
+      stop: () => call.send({ event: { case: 'stop', value: {} } }),
+    }
+  }
   const window = (id: string): WindowClient => ({
     capture: options => unary(CaptureService.method.captureWindow, { window: { windowId: id } }, options),
     click: (point, clickOptions, options) => unary(InputService.method.clickWindowPoint, {
@@ -208,6 +254,33 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       point,
       window: { windowId: id },
     }, options),
+    scrollStream: (begin, options) => openScrollStream(id, begin, options),
+    scrollWith: async (steps, begin, options) => {
+      const controller = await openScrollStream(id, begin, options)
+      const completion = (async () => {
+        for await (const response of controller.events) {
+          if (response.event.case === 'completed')
+            return response.event.value
+        }
+        throw new Error('StreamScroll ended without a completion event')
+      })()
+      const leaseMs = durationMilliseconds(begin.lease)
+      for await (const step of steps) {
+        const velocity = { deltaXPerSecond: step.velocityX ?? 0, deltaYPerSecond: step.velocityY ?? 0 }
+        await controller.setVelocity(velocity)
+        let remaining = step.holdMs ?? 100
+        // Renew the lease while a step holds longer than half of it.
+        while (remaining > 0) {
+          const wait = Math.min(remaining, Math.max(leaseMs / 2, 1))
+          await delay(wait, options?.signal)
+          remaining -= wait
+          if (remaining > 0)
+            await controller.setVelocity(velocity)
+        }
+      }
+      await controller.stop()
+      return await completion
+    },
   })
 
   return {
@@ -286,4 +359,26 @@ function combineSignals(first?: AbortSignal, second?: AbortSignal): AbortSignal 
   if (second === undefined)
     return first
   return AbortSignal.any([first, second])
+}
+
+async function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const abort = () => {
+      clearTimeout(timer)
+      reject(signal?.reason)
+    }
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', abort, { once: true })
+  })
+}
+
+function durationMilliseconds(duration: ScrollStreamBegin['lease']): number {
+  if (!duration)
+    return 0
+  return Number(duration.seconds ?? 0n) * 1000 + (duration.nanos ?? 0) / 1_000_000
 }

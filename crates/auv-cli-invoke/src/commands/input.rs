@@ -1154,6 +1154,9 @@ pub(crate) fn parse_timing_function(value: &str) -> Result<auv_driver::TimingFun
 // Runner exposes only ScrollWindowPoint until a caller needs global scroll.
 // TODO(scroll-delivery-candidates-cli): the CLI keeps the Driver default
 // candidate ladder; expose an ordered candidate flag when a caller needs it.
+// TODO(scroll-stream-invoke): live velocity control (`InputService/StreamScroll`)
+// needs a caller that keeps a stream open, so it is SDK/Runner-only; add an
+// invoke surface when a one-shot protocol for it is designed.
 #[derive(Clone, Debug)]
 pub(crate) struct ScrollPlan {
   pub(crate) point: auv_driver::Point,
