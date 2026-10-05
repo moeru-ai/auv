@@ -23,7 +23,14 @@ use super::persistence::{RestoreTokenKind, RestoreTokenStore};
 use super::request::{run, session_connection};
 
 const PIPEWIRE_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
-const PIPEWIRE_REFRESH_WAIT: Duration = Duration::from_millis(100);
+// NOTICE: GNOME's mutter honors the negotiated `maxFramerate` and re-records a
+// frame skipped by that limit once the interval passes
+// (`maybe_schedule_follow_up_frame` in `src/backends/meta-screen-cast-stream-src.c`).
+// The cap therefore bounds the idle copy cost without losing the final screen
+// state, and the refresh wait must exceed one capped interval so that a
+// follow-up frame still lands inside it.
+const PIPEWIRE_MAX_FRAMERATE: u32 = 10;
+const PIPEWIRE_REFRESH_WAIT: Duration = Duration::from_millis(150);
 
 #[derive(Debug)]
 pub struct ScreenCastFrame {
@@ -167,7 +174,7 @@ fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
 
 struct PipeWireCaptureState {
   format: spa::param::video::VideoInfoRaw,
-  latest: Rc<RefCell<Option<Arc<image::RgbaImage>>>>,
+  latest: Rc<RefCell<LatestFrame>>,
   pending: Rc<RefCell<Option<PendingFrameRequest>>>,
   terminal_error: Rc<RefCell<Option<String>>>,
 }
@@ -179,17 +186,77 @@ struct PendingFrameRequest {
   stale_after: Option<Instant>,
 }
 
+/// Newest frame the stream delivered.
+///
+/// Frames that arrive while no capture waits keep only a compact raw copy (one
+/// memcpy, no pixel conversion). Conversion happens when a capture needs the
+/// frame. Invariant: `decoded`, when present, is the newest frame; storing a
+/// raw frame clears it.
+#[derive(Default)]
+struct LatestFrame {
+  raw: Option<RawFrame>,
+  decoded: Option<Arc<image::RgbaImage>>,
+}
+
+struct RawFrame {
+  bytes: Vec<u8>,
+  layout: FrameLayout,
+}
+
+impl LatestFrame {
+  fn is_empty(&self) -> bool {
+    self.raw.is_none() && self.decoded.is_none()
+  }
+
+  /// Copies the frame region of a mapped buffer, reusing the previous allocation.
+  fn store_raw(&mut self, source: &[u8], layout: FrameLayout) {
+    let mut bytes = self.raw.take().map(|raw| raw.bytes).unwrap_or_default();
+    bytes.clear();
+    bytes.extend_from_slice(&source[layout.offset..layout.end()]);
+    self.raw = Some(RawFrame {
+      bytes,
+      layout: FrameLayout {
+        offset: 0,
+        ..layout
+      },
+    });
+    self.decoded = None;
+  }
+
+  fn store_decoded(&mut self, image: Arc<image::RgbaImage>) {
+    self.decoded = Some(image);
+  }
+
+  fn clear(&mut self) {
+    self.raw = None;
+    self.decoded = None;
+  }
+
+  /// The newest frame as RGBA, converting a raw copy at most once.
+  fn image(&mut self) -> Option<DriverResult<Arc<image::RgbaImage>>> {
+    if let Some(image) = &self.decoded {
+      return Some(Ok(Arc::clone(image)));
+    }
+    let raw = self.raw.as_ref()?;
+    Some(raw.layout.convert(&raw.bytes).map(|image| {
+      let image = Arc::new(image);
+      self.decoded = Some(Arc::clone(&image));
+      image
+    }))
+  }
+}
+
 fn take_stale_frame_response(
   pending: &RefCell<Option<PendingFrameRequest>>,
-  latest: &RefCell<Option<Arc<image::RgbaImage>>>,
+  latest: &RefCell<LatestFrame>,
   now: Instant,
-) -> Option<(mpsc::SyncSender<WorkerFrameResult>, Arc<image::RgbaImage>)> {
+) -> Option<(mpsc::SyncSender<WorkerFrameResult>, WorkerFrameResult)> {
   let is_stale = pending.borrow().as_ref().and_then(|request| request.stale_after).is_some_and(|deadline| now >= deadline);
   if !is_stale {
     return None;
   }
+  let image = latest.borrow_mut().image()?.map_err(|error| error.to_string());
   let sender = pending.borrow_mut().take()?.sender;
-  let image = latest.borrow().clone()?;
   Some((sender, image))
 }
 
@@ -314,7 +381,7 @@ fn run_pipewire_receiver(
   let mainloop = pw::main_loop::MainLoop::new(None).map_err(|error| backend(format!("failed to create PipeWire mainloop: {error}")))?;
   let context = pw::context::Context::new(&mainloop).map_err(|error| backend(format!("failed to create PipeWire context: {error}")))?;
   let core = context.connect_fd(fd, None).map_err(|error| backend(format!("failed to connect to portal PipeWire remote: {error}")))?;
-  let latest = Rc::new(RefCell::new(None));
+  let latest = Rc::new(RefCell::new(LatestFrame::default()));
   let pending = Rc::new(RefCell::new(None));
   let terminal_error = Rc::new(RefCell::new(None));
   let state = PipeWireCaptureState {
@@ -371,23 +438,27 @@ fn run_pipewire_receiver(
         }
         return;
       };
-      if pending.is_none() && state.latest.borrow().is_some() {
-        // Dequeue and immediately release frames when nobody is waiting. This
-        // keeps the persistent stream live without continuously converting a
-        // full RGBA display while AUV is idle.
-        return;
-      }
       let datas = buffer.datas_mut();
-      let Some(data) = datas.first_mut() else {
-        if let Some(pending) = pending {
-          let _ = pending.sender.send(Err("PipeWire frame contained no data planes".to_string()));
+      let frame = match datas.first_mut() {
+        Some(data) => mapped_frame(data, state.format),
+        None => Err(backend("PipeWire frame contained no data planes")),
+      };
+      if pending.is_none() && !state.latest.borrow().is_empty() {
+        // Keep a raw copy of frames that arrive while nobody is waiting. The
+        // stream only sends frames on damage, so a dropped frame could be the
+        // last one before the screen goes static; a later capture would then
+        // return an outdated image. Conversion waits until a capture asks.
+        match frame {
+          Ok((source, layout)) => state.latest.borrow_mut().store_raw(source, layout),
+          // An unreadable newest frame must not leave an older one looking current.
+          Err(_) => state.latest.borrow_mut().clear(),
         }
         return;
-      };
-      match decode_pipewire_frame(data, state.format) {
+      }
+      match frame.and_then(|(source, layout)| layout.convert(source)) {
         Ok(image) => {
           let image = Arc::new(image);
-          *state.latest.borrow_mut() = Some(Arc::clone(&image));
+          state.latest.borrow_mut().store_decoded(Arc::clone(&image));
           if let Some(pending) = pending {
             let _ = pending.sender.send(Ok(image));
           }
@@ -424,7 +495,7 @@ fn run_pipewire_receiver(
         } else {
           *pending.borrow_mut() = Some(PendingFrameRequest {
             sender,
-            stale_after: latest.borrow().as_ref().map(|_| Instant::now() + PIPEWIRE_REFRESH_WAIT),
+            stale_after: (!latest.borrow().is_empty()).then(|| Instant::now() + PIPEWIRE_REFRESH_WAIT),
           });
         }
       }
@@ -432,8 +503,8 @@ fn run_pipewire_receiver(
       Err(mpsc::TryRecvError::Empty) => {}
     }
     mainloop.loop_().iterate(Duration::from_millis(20));
-    if let Some((sender, latest)) = take_stale_frame_response(&pending, &latest, Instant::now()) {
-      let _ = sender.send(Ok(latest));
+    if let Some((sender, image)) = take_stale_frame_response(&pending, &latest, Instant::now()) {
+      let _ = sender.send(image);
     }
   }
   Ok(())
@@ -486,6 +557,21 @@ fn pipewire_raw_video_format_param() -> Vec<u8> {
       spa::utils::Fraction { num: 0, denom: 1 },
       spa::utils::Fraction { num: 120, denom: 1 }
     ),
+    spa::pod::property!(
+      spa::param::format::FormatProperties::VideoMaxFramerate,
+      Choice,
+      Range,
+      Fraction,
+      spa::utils::Fraction {
+        num: PIPEWIRE_MAX_FRAMERATE,
+        denom: 1
+      },
+      spa::utils::Fraction { num: 1, denom: 1 },
+      spa::utils::Fraction {
+        num: PIPEWIRE_MAX_FRAMERATE,
+        denom: 1
+      }
+    ),
   );
   spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(object))
     .expect("PipeWire format pod serialization should be valid")
@@ -493,47 +579,91 @@ fn pipewire_raw_video_format_param() -> Vec<u8> {
     .into_inner()
 }
 
-fn decode_pipewire_frame(data: &mut spa::buffer::Data, format: spa::param::video::VideoInfoRaw) -> DriverResult<image::RgbaImage> {
-  let size = format.size();
-  let width = size.width;
-  let height = size.height;
-  if width == 0 || height == 0 {
-    return Err(backend("PipeWire stream reported empty video size"));
-  }
-  let video_format = format.format();
-  let bytes_per_pixel = pipewire_bytes_per_pixel(video_format)?;
-  let chunk = data.chunk();
-  let stride = chunk.stride();
-  if stride <= 0 {
-    return Err(backend(format!("unsupported PipeWire frame stride {stride}")));
-  }
-  let offset = usize::try_from(chunk.offset()).map_err(|error| backend(format!("invalid PipeWire frame offset: {error}")))?;
-  let stride = usize::try_from(stride).map_err(|error| backend(format!("invalid PipeWire frame stride: {error}")))?;
-  let width = usize::try_from(width).map_err(|error| backend(format!("invalid PipeWire frame width: {error}")))?;
-  let height = usize::try_from(height).map_err(|error| backend(format!("invalid PipeWire frame height: {error}")))?;
-  let row_bytes = width.checked_mul(bytes_per_pixel).ok_or_else(|| backend("PipeWire frame row size overflowed"))?;
-  let image_len =
-    width.checked_mul(height).and_then(|pixels| pixels.checked_mul(4)).ok_or_else(|| backend("PipeWire RGBA image size overflowed"))?;
-  let source = data.data().ok_or_else(|| backend("PipeWire frame buffer is not memory-mapped"))?;
-  let required = offset
-    .checked_add(stride.checked_mul(height.saturating_sub(1)).ok_or_else(|| backend("PipeWire frame stride overflowed"))?)
-    .and_then(|start| start.checked_add(row_bytes))
-    .ok_or_else(|| backend("PipeWire frame bounds overflowed"))?;
-  if required > source.len() {
-    return Err(backend(format!("PipeWire frame buffer is too small: need {required} bytes, have {}", source.len())));
-  }
-  let mut rgba = vec![0; image_len];
-  for y in 0..height {
-    let source_row = offset + y * stride;
-    let dest_row = y * width * 4;
-    for x in 0..width {
-      let source_pixel = source_row + x * bytes_per_pixel;
-      let dest_pixel = dest_row + x * 4;
-      write_rgba_pixel(video_format, &source[source_pixel..source_pixel + bytes_per_pixel], &mut rgba[dest_pixel..dest_pixel + 4])?;
+/// Validated geometry of one frame inside a mapped buffer.
+#[derive(Clone, Copy, Debug)]
+struct FrameLayout {
+  offset: usize,
+  stride: usize,
+  width: usize,
+  height: usize,
+  bytes_per_pixel: usize,
+  format: spa::param::video::VideoFormat,
+}
+
+impl FrameLayout {
+  fn new(format: spa::param::video::VideoInfoRaw, offset: u32, stride: i32, available: usize) -> DriverResult<Self> {
+    let size = format.size();
+    if size.width == 0 || size.height == 0 {
+      return Err(backend("PipeWire stream reported empty video size"));
     }
+    let video_format = format.format();
+    let bytes_per_pixel = pipewire_bytes_per_pixel(video_format)?;
+    if stride <= 0 {
+      return Err(backend(format!("unsupported PipeWire frame stride {stride}")));
+    }
+    let layout = Self {
+      offset: usize::try_from(offset).map_err(|error| backend(format!("invalid PipeWire frame offset: {error}")))?,
+      stride: usize::try_from(stride).map_err(|error| backend(format!("invalid PipeWire frame stride: {error}")))?,
+      width: usize::try_from(size.width).map_err(|error| backend(format!("invalid PipeWire frame width: {error}")))?,
+      height: usize::try_from(size.height).map_err(|error| backend(format!("invalid PipeWire frame height: {error}")))?,
+      bytes_per_pixel,
+      format: video_format,
+    };
+    let required = layout.checked_end()?;
+    if required > available {
+      return Err(backend(format!("PipeWire frame buffer is too small: need {required} bytes, have {available}")));
+    }
+    Ok(layout)
   }
-  image::RgbaImage::from_raw(u32::try_from(width).expect("width came from u32"), u32::try_from(height).expect("height came from u32"), rgba)
+
+  fn checked_end(&self) -> DriverResult<usize> {
+    let row_bytes = self.width.checked_mul(self.bytes_per_pixel).ok_or_else(|| backend("PipeWire frame row size overflowed"))?;
+    self
+      .offset
+      .checked_add(self.stride.checked_mul(self.height - 1).ok_or_else(|| backend("PipeWire frame stride overflowed"))?)
+      .and_then(|start| start.checked_add(row_bytes))
+      .ok_or_else(|| backend("PipeWire frame bounds overflowed"))
+  }
+
+  /// End of the last pixel row; `new` already checked it fits the buffer.
+  fn end(&self) -> usize {
+    self.offset + self.stride * (self.height - 1) + self.width * self.bytes_per_pixel
+  }
+
+  fn convert(&self, source: &[u8]) -> DriverResult<image::RgbaImage> {
+    let image_len = self
+      .width
+      .checked_mul(self.height)
+      .and_then(|pixels| pixels.checked_mul(4))
+      .ok_or_else(|| backend("PipeWire RGBA image size overflowed"))?;
+    if self.end() > source.len() {
+      return Err(backend(format!("PipeWire frame buffer is too small: need {} bytes, have {}", self.end(), source.len())));
+    }
+    let mut rgba = vec![0; image_len];
+    for y in 0..self.height {
+      let source_row = self.offset + y * self.stride;
+      let dest_row = y * self.width * 4;
+      for x in 0..self.width {
+        let source_pixel = source_row + x * self.bytes_per_pixel;
+        let dest_pixel = dest_row + x * 4;
+        write_rgba_pixel(self.format, &source[source_pixel..source_pixel + self.bytes_per_pixel], &mut rgba[dest_pixel..dest_pixel + 4])?;
+      }
+    }
+    image::RgbaImage::from_raw(
+      u32::try_from(self.width).expect("width came from u32"),
+      u32::try_from(self.height).expect("height came from u32"),
+      rgba,
+    )
     .ok_or_else(|| backend("failed to build RGBA image from PipeWire frame"))
+  }
+}
+
+/// The mapped bytes of one buffer plane with its validated frame layout.
+fn mapped_frame(data: &mut spa::buffer::Data, format: spa::param::video::VideoInfoRaw) -> DriverResult<(&[u8], FrameLayout)> {
+  let (offset, stride) = (data.chunk().offset(), data.chunk().stride());
+  let source = data.data().ok_or_else(|| backend("PipeWire frame buffer is not memory-mapped"))?;
+  let layout = FrameLayout::new(format, offset, stride, source.len())?;
+  Ok((source, layout))
 }
 
 fn pipewire_bytes_per_pixel(format: spa::param::video::VideoFormat) -> DriverResult<usize> {
