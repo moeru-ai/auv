@@ -492,7 +492,9 @@ observation loop:
   worked.
 
 Both problems belong to the Linux capture driver, not to scroll-until. They are
-follow-up candidates for a separate bug-fix slice.
+tracked in [#244](https://github.com/moeru-ai/auv/issues/244) (stale frames)
+and [#245](https://github.com/moeru-ai/auv/issues/245) (fullscreen first
+frame), with reproduction steps and probe files.
 
 ## Open Questions
 
