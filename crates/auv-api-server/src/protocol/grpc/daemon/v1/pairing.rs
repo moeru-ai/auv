@@ -39,14 +39,11 @@ impl PairingService for PairingServiceGrpc {
     Ok(Response::new(crate::protocol::pairing::pair_device(self.pairing()?.as_ref(), request.into_inner())?))
   }
 
-  // TODO(pairing-administration-authority): revoke, enable/disable, and
-  // unpair still accept any paired bearer. Only token issuance was narrowed to
-  // the owner; restrict these after the owner decides whether a Device may
-  // manage other Devices or only itself.
   async fn revoke_device_credential(
     &self,
     request: Request<proto::RevokeDeviceCredentialRequest>,
   ) -> Result<Response<proto::RevokeDeviceCredentialResponse>, Status> {
+    authorize_administration(&request, &request.get_ref().device_id)?;
     Ok(Response::new(crate::protocol::pairing::revoke_device_credential(self.pairing()?.as_ref(), request.into_inner())?))
   }
 
@@ -54,10 +51,31 @@ impl PairingService for PairingServiceGrpc {
     &self,
     request: Request<proto::SetPairedDeviceEnabledRequest>,
   ) -> Result<Response<proto::SetPairedDeviceEnabledResponse>, Status> {
+    authorize_administration(&request, &request.get_ref().device_selector)?;
     Ok(Response::new(crate::protocol::pairing::set_enabled(self.pairing()?.as_ref(), request.into_inner())?))
   }
 
   async fn unpair_device(&self, request: Request<proto::UnpairDeviceRequest>) -> Result<Response<proto::UnpairDeviceResponse>, Status> {
+    authorize_administration(&request, &request.get_ref().device_selector)?;
     Ok(Response::new(crate::protocol::pairing::unpair(self.pairing()?.as_ref(), request.into_inner())?))
   }
+}
+
+/// The local owner administers every paired Device; a paired Device may only
+/// revoke, disable, or unpair itself. Trust lists stay owned by the daemon
+/// host, as in RustDesk, Sunshine, and Parsec, so a leaked bearer cannot lock
+/// out or remove other Devices.
+///
+/// A paired caller must name its own canonical ID. The pairing store resolves
+/// an exact ID before labels or prefixes, so that selector cannot reach
+/// another Device.
+// TODO(pairing-admin-device): an explicitly granted, default-off administrator
+// Device (like RustDesk remote configuration or Tailscale signing nodes) is
+// deferred until a remote-administration workflow is owner-approved.
+fn authorize_administration<T>(request: &Request<T>, selector: &str) -> Result<(), Status> {
+  let caller = crate::authentication::caller(request)?;
+  if caller.is_local_owner() || caller.paired_device_id() == Some(selector.trim()) {
+    return Ok(());
+  }
+  Err(Status::permission_denied("paired Devices can only administer themselves by Device ID; manage other Devices on the daemon host"))
 }

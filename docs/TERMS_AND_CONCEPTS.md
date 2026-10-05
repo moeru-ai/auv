@@ -332,14 +332,15 @@ owner of pairing persistence; CLI, MCP, and other client interfaces administer
 trust through typed `auv` operations and never open or mutate the pairing store
 directly while the daemon is stopped.
 
-Only the local owner creates bootstrap tokens, through the daemon's
-owner-checked local channel. A paired Device bearer must not mint further
-enrollments, because one leaked credential could otherwise enroll replacement
-Devices that survive its own revocation. The local owner and every active
-paired Device bearer may still enable or disable a paired Device, unpair a
-Device, or revoke credentials; whether a Device may administer other Devices or
-only itself is an open decision. `PairDevice` is the only unauthenticated
-operation and requires a valid one-time bootstrap token.
+The pairing trust list belongs to the daemon host. Only the local owner,
+through the daemon's owner-checked local channel, creates bootstrap tokens and
+enables, disables, unpairs, or revokes other Devices. A paired Device bearer may
+only disable, unpair, or revoke itself, by its canonical Device ID; it must not
+mint enrollments or manage other Devices, so one leaked credential cannot
+enroll replacements or lock out the owner's other Devices. Paired Devices can
+still list Devices. A default-off administrator Device role is deferred.
+`PairDevice` is the only unauthenticated operation and requires a valid
+one-time bootstrap token.
 
 For the first native Device unlock release, every active paired Device bearer
 may request unlock of an **existing OS login session** without a separate

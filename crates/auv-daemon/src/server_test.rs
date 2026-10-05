@@ -938,7 +938,7 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
 }
 
 #[tokio::test]
-async fn only_the_local_owner_issues_pairing_tokens_while_paired_devices_share_administration() {
+async fn paired_devices_administer_only_themselves_and_cannot_issue_tokens() {
   let root = tempfile::tempdir().unwrap();
   let server = Server::bind(config(paired_http_listeners(), root.path())).await.unwrap();
   let owner = owner_endpoint(&server);
@@ -990,11 +990,30 @@ async fn only_the_local_owner_issues_pairing_tokens_while_paired_devices_share_a
   })
   .await
   .unwrap();
-  paired_a.pairing().set_enabled("Paired B", false).await.unwrap();
-  assert_eq!(paired_b.devices().list_devices().await.unwrap_err().code(), tonic::Code::Unauthenticated);
-  paired_a.pairing().set_enabled("paired-b", true).await.unwrap();
+
+  // ROOT CAUSE:
+  //
+  // If any paired bearer could administer every Device, one leaked credential
+  // could disable, revoke, or unpair the owner's other Devices.
+  //
+  // Before the fix, Device A could disable B and B could revoke A.
+  // The fix limits a paired Device to itself and leaves the rest to the owner.
+  for denied in [
+    paired_a.pairing().set_enabled("Paired B", false).await.unwrap_err(),
+    paired_a.pairing().set_enabled("paired-b", false).await.unwrap_err(),
+    paired_b.pairing().revoke_device_credential("paired-a").await.unwrap_err(),
+    paired_b.pairing().unpair("paired-a").await.unwrap_err(),
+  ] {
+    assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+  }
   paired_b.devices().list_devices().await.unwrap();
-  paired_b.pairing().revoke_device_credential("paired-a").await.unwrap();
+
+  local_client.pairing().set_enabled("Paired B", false).await.unwrap();
+  assert_eq!(paired_b.devices().list_devices().await.unwrap_err().code(), tonic::Code::Unauthenticated);
+  local_client.pairing().set_enabled("paired-b", true).await.unwrap();
+  paired_b.devices().list_devices().await.unwrap();
+
+  paired_a.pairing().revoke_device_credential("paired-a").await.unwrap();
   assert_eq!(paired_a.devices().list_devices().await.unwrap_err().code(), tonic::Code::Unauthenticated);
   shutdown.cancel();
   task.await.unwrap().unwrap();
