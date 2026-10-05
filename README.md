@@ -48,32 +48,176 @@ AUV means **Application Use Via ...**.
 
 ### Install
 
-Install directly from GitHub:
+Install a prebuilt release:
+
+#### macOS
 
 ```sh
-cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
-auv --help
+brew install moeru-ai/tap/auv
+auv --version
 ```
 
-Third-party Protobuf sources are included in the repository; Cargo installs do
-not require Buf or a separate Protobuf dependency-generation step. See the
-[macOS Git-install verification](docs/ai/references/session-api/2026-09-08-protobuf-source-distribution-reference.md#regression-and-evidence).
-
-After installation, use the `auv` CLI directly:
+Alternatively, without [Homebrew](https://brew.sh/):
 
 ```sh
-auv --help
-auv invoke --help
+curl -fsSL https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+```
+
+#### Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/moeru-ai/auv/main/install/install.sh | sh
+auv --version
+```
+
+> [!NOTE]
+>
+> Set `AUV_VERSION` or `AUV_INSTALL_DIR` to change the release version or the
+> install directory (default: `~/.local/bin`).
+
+#### Windows
+
+##### Scoop
+
+```powershell
+scoop bucket add auv https://github.com/moeru-ai/auv
+scoop install auv/auv
+auv --version
+```
+
+##### Manual installation
+
+Download the archive for your architecture:
+
+- [x86-64](https://github.com/moeru-ai/auv/releases/latest/download/auv-x86_64-pc-windows-msvc.zip)
+- [ARM64](https://github.com/moeru-ai/auv/releases/latest/download/auv-aarch64-pc-windows-msvc.zip)
+
+Extract the archive to a permanent directory. Add that directory to your user
+`PATH`. The archive contains a single `auv.exe`; the Windows helper is embedded.
+
+### Install with proto
+
+Install and configure [proto](https://moonrepo.dev/docs/proto) first. Then add
+the AUV plugin and install the latest release:
+
+```sh
+proto plugin add auv "https://raw.githubusercontent.com/moeru-ai/auv/main/toolchain/proto/auv.toml" --to global
+proto install auv latest --config-mode global --pin global
+auv --version
+```
+
+> [!NOTE]
+>
+> `AUV Helper.app` for macOS is included in the `proto` installation. On
+> Windows, `auv-helper.exe` is embedded in `auv.exe` and extracted only by the
+> elevated helper setup command.
+
+> [!WARNING]
+>
+> Linux musl is not supported. (But PRs are welcomed!)
+
+### Install with Nix
+
+Install [Nix](https://nixos.org/download/) 2.27 or later and enable the
+`nix-command` and `flakes` experimental features. On macOS, install Apple's
+build tools first:
+
+```sh
+xcode-select --install
+```
+
+Then install the default AUV package from this repository:
+
+```sh
+nix profile install 'git+https://github.com/moeru-ai/auv#default'
+auv --version
+```
+
+The `git+https` transport is required so Nix fetches AUV's Git submodules. The
+flake defines source-built packages for Apple Silicon and Intel macOS and for
+x86-64 and ARM64 Linux. The package does not support Windows or Linux musl.
+
+The Nix package does not embed the signed `AUV Helper.app`. On macOS, use
+Homebrew, proto, or a direct release download if you need to run
+`auv setup macos-helper install` with the official helper.
+
+### Install with Cargo
+
+Prerequisites: [Rust](https://www.rust-lang.org/tools/install) and the platform
+build tools below. AUV includes the Protobuf sources, so Buf is not required.
+
+> [!WARNING]
+> `cargo install` does not include AUV Helper. Use an install method above if
+> you need it.
+
+#### macOS
+
+Install the Xcode Command Line Tools:
+
+```sh
+xcode-select --install
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
+auv --version
+```
+
+#### Linux
+
+On Ubuntu or Debian, install the native build dependencies:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y \
+  pkg-config libclang-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
+  libpipewire-0.3-dev libwayland-dev libxkbcommon-dev libegl-dev \
+  libleptonica-dev libtesseract-dev
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
+auv --version
+```
+
+> [!NOTE]
+> Other Linux distributions can use different package names.
+
+#### Windows
+
+Install Rust with the MSVC toolchain, Visual Studio Build Tools, and the
+Windows SDK.
+
+```powershell
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
+auv --version
 ```
 
 ### Setup
 
 #### macOS
 
-OS permissions are required to be granted to the process that launches AUV,
-usually your terminal app.
+Official macOS releases include the signed `AUV Helper.app`. On macOS 13 or
+later, install it for the current user:
 
-Open **System Settings -> Privacy & Security** and enable:
+```sh
+auv setup macos-helper install
+auv setup macos-helper status
+```
+
+> [!TIP]
+> The installation does not require `sudo` or an administrator password.
+
+If macOS requests approval, open the Background Items and Accessibility
+settings:
+
+```sh
+auv setup macos-helper open-background-items-settings
+auv setup macos-helper open-accessibility-settings
+```
+
+> [!NOTE]
+> Projects that integrate AUV can rebrand `AUV Helper.app`. They can change its
+> name, icon, bundle identifier, and Apple Developer signing identity. See
+> [Shipped helper identity](crates/auv-device-helper-macos/README.md#shipped-helper-identity)
+> for packaging options.
+
+Grant these permissions to the application that starts AUV, usually your
+terminal application:
 
 | Permission | Needed for |
 | --- | --- |
@@ -81,11 +225,69 @@ Open **System Settings -> Privacy & Security** and enable:
 | Screen Recording | Screenshots, OCR, visual inspection, and evidence capture. |
 | Automation | AppleScript/System Events app activation and foreground fallback paths. |
 
-After changing permissions, restart the terminal process and rerun:
+After you change the permissions, restart the terminal. Then run:
 
 ```sh
 auv doctor
 auv invoke app.probePermissions
+```
+
+#### Windows
+
+> [!IMPORTANT]
+> The Windows setup commands require an elevated PowerShell.
+
+```powershell
+auv setup windows-helper install
+auv setup windows-helper status
+```
+
+> [!NOTE]
+> The setup command installs `auv.exe` and extracts its embedded
+> `auv-helper.exe` into `%ProgramFiles%\AUV`. The helper is not a standalone
+> command and does not need to be downloaded or placed beside `auv.exe`.
+
+### Uninstall
+
+Use the instructions that match your installation method. If a platform Helper
+is installed, remove it first.
+
+#### macOS
+
+```sh
+auv setup macos-helper uninstall
+brew uninstall auv
+```
+
+> [!NOTE]
+> Helper removal keeps the enrollment data in the login Keychain. It also keeps
+> other AUV data in the Application Support directory.
+
+#### Linux
+
+```sh
+rm "$HOME/.local/bin/auv"
+```
+
+#### Windows
+
+Run these commands from an elevated PowerShell:
+
+```powershell
+auv setup windows-helper uninstall
+scoop uninstall auv
+```
+
+> [!NOTE]
+> Helper removal keeps the device data in `%ProgramData%`.
+
+If you installed the ZIP manually, remove its directory from the file system.
+Then remove that directory from `PATH`.
+
+#### Cargo
+
+```sh
+cargo uninstall auv-cli
 ```
 
 ## Understand AUV

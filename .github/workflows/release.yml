@@ -158,15 +158,19 @@ jobs:
           pnpm exec napi build --platform --release --esm --js binding.js --dts binding.d.ts \
             --target '${{ matrix.target }}' -- --locked
 
-      - name: Build release binary
-        run: cargo build --locked --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
-
       - name: Build Windows helper
         if: runner.os == 'Windows'
         # TODO(windows-release-signing): Authenticode-sign both Windows
         # executables after a release certificate and provenance policy are
         # owner-approved; archive packaging alone is not a signing claim.
-        run: cargo build --locked --release --package auv-driver-windows --bin auv-helper --target "${{ matrix.target }}"
+        shell: pwsh
+        run: |
+          cargo build --locked --release --package auv-driver-windows --bin auv-helper --target "${{ matrix.target }}"
+          $helper = (Resolve-Path "target/${{ matrix.target }}/release/auv-helper.exe").Path
+          "AUV_WINDOWS_HELPER_EXE_PATH=$helper" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build release binary
+        run: cargo build --locked --release --package "${{ env.PACKAGE_NAME }}" --bin "${{ env.BINARY_NAME }}" --target "${{ matrix.target }}"
 
       - name: Sign macOS executable
         if: runner.os == 'macOS'
@@ -200,10 +204,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path @(
-            "target/${{ matrix.target }}/release/${{ matrix.executable }}",
-            "target/${{ matrix.target }}/release/auv-helper.exe"
-          ) -DestinationPath "${{ matrix.archive }}"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.executable }}" -DestinationPath "${{ matrix.archive }}"
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "${{ matrix.archive }}"))
           try {
@@ -211,9 +212,9 @@ jobs:
           } finally {
             $zip.Dispose()
           }
-          $expected = @("auv-helper.exe", "${{ matrix.executable }}") | Sort-Object
+          $expected = @("${{ matrix.executable }}")
           if (Compare-Object $expected $entries) {
-            throw "Windows release archive does not contain exactly auv.exe and auv-helper.exe"
+            throw "Windows release archive does not contain exactly auv.exe"
           }
 
       - name: Calculate hash

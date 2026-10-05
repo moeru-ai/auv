@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: Package group to publish
+        required: true
+        type: choice
+        options:
+          - npm
+          - crates
 
 permissions:
   contents: read
@@ -12,6 +21,7 @@ permissions:
 jobs:
   release-npm:
     name: Release npm packages
+    if: github.event_name == 'push' || inputs.packages == 'npm'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -55,6 +65,7 @@ jobs:
 
   release-crates:
     name: Publish crates.io packages
+    if: github.event_name == 'push' || inputs.packages == 'crates'
     runs-on: macos-latest
     permissions:
       contents: read

@@ -1,0 +1,41 @@
+name = "AUV"
+type = "cli"
+
+[platform.linux]
+archs = [
+  "x86_64",
+  "aarch64"
+]
+download-file = "auv-{arch}-unknown-linux-{libc}.tar.gz"
+checksum-file = "auv-{arch}-unknown-linux-{libc}.tar.gz.sha256"
+exe-path = "auv"
+
+[platform.macos]
+archs = [
+  "x86_64",
+  "aarch64"
+]
+download-file = "auv-{arch}-apple-darwin.tar.gz"
+checksum-file = "auv-{arch}-apple-darwin.tar.gz.sha256"
+exe-path = "auv"
+
+[platform.windows]
+archs = [
+  "x86_64",
+  "aarch64"
+]
+download-file = "auv-{arch}-pc-windows-msvc.zip"
+checksum-file = "auv-{arch}-pc-windows-msvc.zip.sha256"
+exe-path = "auv.exe"
+
+[install]
+download-url = "https://github.com/moeru-ai/auv/releases/download/v{version}/{download_file}"
+checksum-url = "https://github.com/moeru-ai/auv/releases/download/v{version}/{checksum_file}"
+
+[install.exes.auv]
+exe-path = "auv"
+primary = true
+
+[resolve]
+git-url = "https://github.com/moeru-ai/auv"
+version-pattern = "^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?<pre>-[0-9A-Za-z.-]+)?$"

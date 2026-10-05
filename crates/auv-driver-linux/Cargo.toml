@@ -25,7 +25,7 @@ name = "validate"
 path = "examples/validate.rs"
 
 [dependencies]
-auv-driver-common = { version = "0.0.26", path = "../auv-driver-common" }
+auv-driver-common = { version = "0.0.28", path = "../auv-driver-common" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"

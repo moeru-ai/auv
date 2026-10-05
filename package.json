@@ -1,7 +1,7 @@
 {
   "name": "@auv-js/root",
   "type": "module",
-  "version": "0.0.26",
+  "version": "0.0.28",
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "scripts": {

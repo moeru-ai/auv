@@ -1,6 +1,6 @@
 {
   "name": "@auv-js/cli-win32-arm64-msvc",
-  "version": "0.0.26",
+  "version": "0.0.28",
   "cpu": [
     "arm64"
   ],

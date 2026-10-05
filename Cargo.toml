@@ -49,7 +49,7 @@ default-members = [ "crates/auv-cli" ]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.26"
+version = "0.0.28"
 authors = [ "Moeru AI" ]
 edition = "2024"
 rust-version = "1.91"

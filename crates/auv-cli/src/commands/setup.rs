@@ -65,7 +65,7 @@ enum WindowsHelperCommand {
     #[arg(long)]
     json: bool,
   },
-  /// Install both release binaries and register the LocalSystem service.
+  /// Install auv.exe, extract its embedded helper, and register the LocalSystem service.
   Install {
     /// Emit a stable machine-readable result after installation.
     #[arg(long)]
