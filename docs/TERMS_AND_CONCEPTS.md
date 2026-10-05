@@ -1391,6 +1391,30 @@ the page) stays client-side, and only velocity data crosses the Runner
 protocol. See the
 [scroll motion design](ai/references/driver/2026-10-06-scroll-motion-design.md).
 
+## Scroll Until
+
+Scroll until is a bounded observation loop:
+
+- **Loop:** scroll one step, wait for the settle time, capture the window,
+  and compare the capture with the previous one. One step is either an
+  instant scroll or a scroll motion.
+- **Stop reasons:**
+  - `text_visible`: OCR finds the query.
+  - `end_by_no_visual_progress`: a configured number of consecutive steps
+    showed no pixel motion.
+  - `budget_exhausted`: the step budget ran out.
+- **Pixel motion:** a shift search along the scroll axis (viewport pixel
+  motion), shared with the NetEase sidebar policy.
+- **What "end" means:** an observation, not proof that no more content
+  exists. A slow lazy load, an occluded window, or capture failure can look
+  like an end.
+- **Where it runs:** on the Runner (`InputService/ScrollUntil`), so captures
+  stay local. It is reachable through `auv invoke input.scrollUntil` and the
+  Rust and JS clients.
+
+See the
+[scroll motion design](ai/references/driver/2026-10-06-scroll-motion-design.md#phase-3-implementation-and-evidence).
+
 ## Prepare For Input Options
 
 Prepare for input options is a provisional term for how an action may prepare a

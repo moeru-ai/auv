@@ -1075,3 +1075,93 @@ fn timed_scroll_plan_rejects_invalid_timing_before_io() {
     assert_eq!(error, expected);
   }
 }
+
+fn scroll_until_input(inputs: &[(&str, &str)], target: Option<crate::ExecutionTarget>) -> InvokeCommandInput {
+  InvokeCommandInput {
+    command_id: "input.scrollUntil".into(),
+    target,
+    inputs: inputs.iter().map(|(key, value)| ((*key).to_string(), (*value).to_string())).collect(),
+    typed_args: None,
+    dry_run: true,
+    cancellation: Default::default(),
+  }
+}
+
+#[test]
+fn scroll_until_cli_and_protocol_inputs_decode_to_the_same_request() {
+  let crate::InvokeCommandCliParse::Invoke { typed_args, .. } = scroll_until_invoke_command()
+    .parse_cli_args(&[
+      "10".into(),
+      "20".into(),
+      "--dy".into(),
+      "800".into(),
+      "--until".into(),
+      "text:Load more".into(),
+      "--settle-ms".into(),
+      "600".into(),
+      "--region".into(),
+      "0,0.1,1,0.8".into(),
+      "--step-duration-ms".into(),
+      "400".into(),
+      "--easing".into(),
+      "ease-in-out".into(),
+    ])
+    .unwrap()
+  else {
+    panic!("expected parsed invocation");
+  };
+  let protocol: ScrollUntilArgs = crate::command::decode_args(&scroll_until_input(
+    &[
+      ("x", "10"),
+      ("y", "20"),
+      ("dy", "800"),
+      ("until", "text:Load more"),
+      ("settle-ms", "600"),
+      ("region", "0,0.1,1,0.8"),
+      ("step-duration-ms", "400"),
+      ("easing", "ease-in-out"),
+    ],
+    scroll_window_target(),
+  ))
+  .unwrap();
+  for args in [
+    protocol,
+    typed_args.get::<ScrollUntilArgs>().unwrap().clone(),
+  ] {
+    let plan = args.plan(scroll_window_target().as_ref()).unwrap();
+    assert_eq!(
+      plan.request.condition,
+      auv_scan::ScrollUntilCondition::TextVisible {
+        query: "Load more".to_string()
+      }
+    );
+    assert_eq!(plan.request.settle, std::time::Duration::from_millis(600));
+    assert_eq!((plan.request.max_steps, plan.request.no_motion_confirmations), (50, 2));
+    assert_eq!(plan.request.motion_region, Some(auv_driver::RatioRect::new(0.0, 0.1, 1.0, 0.8)));
+    let auv_scan::ScrollUntilStep::Motion { motion } = plan.request.step else {
+      panic!("timed step");
+    };
+    assert_eq!(motion.total, auv_driver::Scroll::new(0.0, 800.0));
+  }
+}
+
+#[test]
+fn scroll_until_plan_rejects_invalid_requests_before_io() {
+  for (inputs, expected) in [
+    (vec![("dy", "100"), ("until", "bottom")], "input.scrollUntil --until must be end or text:<query>"),
+    (vec![("dx", "50"), ("dy", "100"), ("until", "end")], "step must move along one axis"),
+    (vec![("dy", "100"), ("until", "end"), ("max-steps", "0")], "max_steps must be within 1..=1000"),
+    (vec![("dy", "100"), ("until", "text: ")], "text query must not be empty"),
+    (vec![("dy", "100"), ("until", "end"), ("region", "0,0,2,1")], "motion_region must be a non-empty normalized rectangle"),
+    (vec![("dy", "100"), ("until", "end"), ("easing", "ease-in")], "--easing requires a positive --step-duration-ms"),
+  ] {
+    let mut all = vec![("x", "40"), ("y", "50")];
+    all.extend(inputs);
+    let input = scroll_until_input(&all, scroll_window_target());
+    let error = crate::command::decode_args::<ScrollUntilArgs>(&input).unwrap().plan(input.target.as_ref()).unwrap_err();
+    assert!(error.contains(expected), "{error} vs {expected}");
+  }
+  let input = scroll_until_input(&[("x", "1"), ("y", "1"), ("dy", "10"), ("until", "end")], None);
+  let error = crate::command::decode_args::<ScrollUntilArgs>(&input).unwrap().plan(None).unwrap_err();
+  assert_eq!(error, "input.scrollUntil requires --target app: or window:");
+}

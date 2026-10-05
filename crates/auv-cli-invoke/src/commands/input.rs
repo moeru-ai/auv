@@ -28,6 +28,7 @@ pub fn group() -> CommandGroup {
     .command(click_point_invoke_command())
     .command(drag_invoke_command())
     .command(scroll_invoke_command())
+    .command(scroll_until_invoke_command())
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -1295,15 +1296,7 @@ async fn scroll(input: InvokeCommandInput, args: ScrollArgs) -> crate::InvokeExe
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn execute_scroll(input: &InvokeCommandInput, plan: ScrollPlan) -> crate::InvokeExecutionResult {
   let session = auv::local::open()?;
-  let window = match input.target.as_ref().expect("window target validated") {
-    crate::ExecutionTarget::Application { id } => session.window().resolve(click_window_selector(id, plan.title.as_deref()))?,
-    crate::ExecutionTarget::Window { id } => {
-      session.window().list()?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
-        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.scroll could not find window target {id:?}"))
-      })?
-    }
-    crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
-  };
+  let window = resolve_local_window(&session, input, plan.title.as_deref(), "input.scroll")?;
   let point = plan.window_point(&window)?;
   let mut result = plan.result(window.clone(), point);
   if input.dry_run {
@@ -1325,6 +1318,27 @@ async fn execute_scroll(input: &InvokeCommandInput, plan: ScrollPlan) -> crate::
   emit_input_action_result(&action);
   result.action = Some(action);
   scroll_output(result).map_err(Into::into)
+}
+
+/// Resolves an `app:` (optionally by title) or `window:` target on the local
+/// driver for window-bound scroll commands.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn resolve_local_window(
+  session: &auv_driver::LocalDriverSession,
+  input: &InvokeCommandInput,
+  title: Option<&str>,
+  command_id: &str,
+) -> Result<auv_driver::Window, crate::InvokeFailure> {
+  match input.target.as_ref().expect("window target validated") {
+    crate::ExecutionTarget::Application { id } => Ok(session.window().resolve(click_window_selector(id, title))?),
+    crate::ExecutionTarget::Window { id } => session
+      .window()
+      .list()?
+      .into_iter()
+      .find(|window| window.reference.id == *id)
+      .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("{command_id} could not find window target {id:?}"))),
+    crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
+  }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -1355,6 +1369,283 @@ pub fn scroll_output(result: ScrollResult) -> InvokeCommandResult {
   fields.push(InvokeReportField::new("Window point", format!("{:.1},{:.1}", result.window_point.x, result.window_point.y)));
   fields.push(InvokeReportField::new("Window ID", result.window.reference.id.clone()));
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(
+  after_long_help = "Examples:\n  auv invoke input.scrollUntil 200 300 --dy 600 --until end --target app:com.google.Chrome\n  auv invoke input.scrollUntil 0.5 0.5 --normalized --dy 800 --until 'text:Load more' --settle-ms 600 --target window:12345\n  auv invoke input.scrollUntil 200 300 --dy 900 --step-duration-ms 500 --easing ease-in-out --until end --region 0,0.1,1,0.8 --target app:com.google.Chrome\nEach step scrolls --dx/--dy logical pixels (one axis; positive is down/right), waits --settle-ms so lazy content can load, then captures the window once. --until end stops after --confirmations consecutive steps without visual motion in --region; --until text:<query> stops when recognized text contains the query, or at the end; keep the step well below the visible height (for example 60-70%) so each line appears whole in at least one observation. --max-steps bounds the loop. An end stop means no visual progress was observed, not proof that no more content exists."
+)]
+struct ScrollUntilArgs {
+  /// X coordinate inside the target window.
+  x: f64,
+  /// Y coordinate inside the target window.
+  y: f64,
+  /// Horizontal step in logical pixels; positive scrolls right.
+  #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+  #[serde(default)]
+  dx: f64,
+  /// Vertical step in logical pixels; positive scrolls down.
+  #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+  #[serde(default)]
+  dy: f64,
+  /// Stop condition: end, or text:<query>.
+  #[arg(long, value_name = "CONDITION")]
+  until: String,
+  /// Step budget (1..=1000).
+  #[arg(long, default_value_t = DEFAULT_SCROLL_UNTIL_MAX_STEPS)]
+  #[serde(rename = "max-steps", default = "default_scroll_until_max_steps")]
+  max_steps: u32,
+  /// Wait after each step before observing, in milliseconds (0..=10000).
+  #[arg(long, default_value_t = DEFAULT_SCROLL_UNTIL_SETTLE_MS)]
+  #[serde(rename = "settle-ms", default = "default_scroll_until_settle_ms")]
+  settle_ms: u64,
+  /// Consecutive no-motion steps that count as the end (1..=10).
+  #[arg(long, default_value_t = DEFAULT_SCROLL_UNTIL_CONFIRMATIONS)]
+  #[serde(default = "default_scroll_until_confirmations")]
+  confirmations: u32,
+  /// Normalized window region x,y,width,height compared for motion.
+  #[arg(long, value_name = "X,Y,W,H")]
+  region: Option<String>,
+  /// Interpret X and Y as normalized values in 0..=1.
+  #[arg(long)]
+  #[serde(default)]
+  normalized: bool,
+  /// Window title text used with an app target.
+  #[arg(long, value_name = "TEXT")]
+  title: Option<String>,
+  /// Window input delivery policy. Defaults to background-preferred.
+  #[arg(long, value_enum)]
+  #[serde(rename = "input-policy")]
+  input_policy: Option<InputPolicyArg>,
+  /// Spread each step over this many milliseconds (0 scrolls each step at once).
+  #[arg(long, default_value_t = 0)]
+  #[serde(rename = "step-duration-ms", default)]
+  step_duration_ms: u64,
+  /// Timing function for --step-duration-ms (see input.scroll --easing).
+  #[arg(long, value_name = "FUNCTION")]
+  easing: Option<String>,
+  /// Samples per second for --step-duration-ms (1..=1000).
+  #[arg(long, default_value_t = DEFAULT_SCROLL_SAMPLE_RATE_HZ)]
+  #[serde(rename = "sample-rate-hz", default = "default_scroll_sample_rate_hz")]
+  sample_rate_hz: u32,
+}
+
+const DEFAULT_SCROLL_UNTIL_MAX_STEPS: u32 = 50;
+// NOTICE: 400 ms lets typical infinite lists request and render the next page
+// before the observation; slower feeds should raise --settle-ms.
+const DEFAULT_SCROLL_UNTIL_SETTLE_MS: u64 = 400;
+// NOTICE: two confirmations keep one slow lazy-load pause from ending the
+// scan early, matching the NetEase boundary policy.
+const DEFAULT_SCROLL_UNTIL_CONFIRMATIONS: u32 = 2;
+
+fn default_scroll_until_max_steps() -> u32 {
+  DEFAULT_SCROLL_UNTIL_MAX_STEPS
+}
+
+fn default_scroll_until_settle_ms() -> u64 {
+  DEFAULT_SCROLL_UNTIL_SETTLE_MS
+}
+
+fn default_scroll_until_confirmations() -> u32 {
+  DEFAULT_SCROLL_UNTIL_CONFIRMATIONS
+}
+
+/// A validated scroll-until before its point is resolved against the target
+/// window. Local and Runner execution share this plan.
+#[derive(Clone, Debug)]
+pub(crate) struct ScrollUntilPlan {
+  pub(crate) point: auv_driver::Point,
+  pub(crate) normalized: bool,
+  pub(crate) title: Option<String>,
+  pub(crate) request: auv_scan::ScrollUntilRequest,
+  pub(crate) options: auv_driver::ScrollOptions,
+}
+
+impl ScrollUntilArgs {
+  fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<ScrollUntilPlan, String> {
+    if !matches!(target, Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. })) {
+      return Err("input.scrollUntil requires --target app: or window:".to_string());
+    }
+    if self.title.is_some() && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
+      return Err("input.scrollUntil --title requires --target app:".to_string());
+    }
+    if !self.x.is_finite() || !self.y.is_finite() {
+      return Err("input.scrollUntil requires finite coordinates".to_string());
+    }
+    if self.normalized && (!(0.0..=1.0).contains(&self.x) || !(0.0..=1.0).contains(&self.y)) {
+      return Err("input.scrollUntil --normalized coordinates must be within 0..=1".to_string());
+    }
+    let condition = match self.until.trim() {
+      "end" => auv_scan::ScrollUntilCondition::End,
+      value => match value.strip_prefix("text:") {
+        Some(query) => auv_scan::ScrollUntilCondition::TextVisible {
+          query: query.trim().to_string(),
+        },
+        None => return Err(format!("input.scrollUntil --until must be end or text:<query>, got {value:?}")),
+      },
+    };
+    if self.step_duration_ms == 0 && self.easing.is_some() {
+      return Err("input.scrollUntil --easing requires a positive --step-duration-ms".to_string());
+    }
+    if self.step_duration_ms > MAX_SCROLL_DURATION_MS {
+      return Err(format!("input.scrollUntil --step-duration-ms must be within 0..={MAX_SCROLL_DURATION_MS}"));
+    }
+    if !(1..=MAX_SCROLL_SAMPLE_RATE_HZ).contains(&self.sample_rate_hz) {
+      return Err(format!("input.scrollUntil --sample-rate-hz must be within 1..={MAX_SCROLL_SAMPLE_RATE_HZ}"));
+    }
+    let delta = auv_driver::Scroll::new(self.dx, self.dy);
+    let step = if self.step_duration_ms == 0 {
+      auv_scan::ScrollUntilStep::Instant { delta }
+    } else {
+      let function = self.easing.as_deref().map(parse_timing_function).transpose()?.unwrap_or(auv_driver::TimingFunction::Linear);
+      auv_scan::ScrollUntilStep::Motion {
+        motion: auv_driver::ScrollMotion {
+          total: delta,
+          timing: auv_driver::MotionTiming::FixedDuration {
+            duration: std::time::Duration::from_millis(self.step_duration_ms),
+            function,
+          },
+          sample_rate_hz: self.sample_rate_hz,
+        },
+      }
+    };
+    let request = auv_scan::ScrollUntilRequest {
+      step,
+      condition,
+      max_steps: self.max_steps,
+      settle: std::time::Duration::from_millis(self.settle_ms),
+      no_motion_confirmations: self.confirmations,
+      motion_region: self.region.as_deref().map(parse_normalized_region).transpose()?,
+    };
+    request.validate().map_err(|error| format!("input.scrollUntil: {error}"))?;
+    Ok(ScrollUntilPlan {
+      point: auv_driver::Point::new(self.x, self.y),
+      normalized: self.normalized,
+      title: self.title.clone(),
+      request,
+      options: auv_driver::ScrollOptions {
+        policy: self.input_policy.map(InputPolicyArg::driver_policy).unwrap_or_default(),
+        ..auv_driver::ScrollOptions::default()
+      },
+    })
+  }
+}
+
+/// Parses `x,y,width,height` normalized to the window.
+fn parse_normalized_region(value: &str) -> Result<auv_driver::RatioRect, String> {
+  let numbers = value
+    .split(',')
+    .map(|part| part.trim().parse::<f64>().map_err(|error| format!("invalid --region value {part:?}: {error}")))
+    .collect::<Result<Vec<_>, _>>()?;
+  let [x, y, width, height] = numbers[..] else {
+    return Err("--region requires four values: x,y,width,height".to_string());
+  };
+  Ok(auv_driver::RatioRect::new(x, y, width, height))
+}
+
+impl ScrollUntilPlan {
+  pub(crate) fn window_point(&self, window: &auv_driver::Window) -> Result<auv_driver::WindowPoint, crate::InvokeFailure> {
+    let point = resolve_local_point("input.scrollUntil", self.point.x, self.point.y, self.normalized, window.frame.size, "window")
+      .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+    Ok(auv_driver::WindowPoint::new(point.x, point.y))
+  }
+
+  pub(crate) fn output(&self, window: auv_driver::Window, point: auv_driver::WindowPoint) -> ScrollUntilOutput {
+    ScrollUntilOutput {
+      requested_point: self.point,
+      normalized: self.normalized,
+      window_point: point.point(),
+      request: self.request.clone(),
+      policy: self.options.policy,
+      window,
+      result: None,
+    }
+  }
+}
+
+/// Runner dispatch decodes transport arguments once; both routes validate
+/// through `ScrollUntilArgs::plan`.
+pub(crate) fn decode_scroll_until(input: &InvokeCommandInput) -> Result<ScrollUntilPlan, crate::InvokeFailure> {
+  crate::command::decode_args::<ScrollUntilArgs>(input)
+    .and_then(|args| args.plan(input.target.as_ref()))
+    .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ScrollUntilOutput {
+  pub requested_point: auv_driver::Point,
+  pub normalized: bool,
+  pub window_point: auv_driver::Point,
+  pub request: auv_scan::ScrollUntilRequest,
+  pub policy: auv_driver::InputPolicy,
+  pub window: auv_driver::Window,
+  pub result: Option<auv_scan::ScrollUntilResult>,
+}
+
+#[invoke_command(
+  id = "input.scrollUntil",
+  target = RequiredWindow,
+  group = "input",
+  description = "Scroll a target window in steps until no visual motion remains, target text appears, or a step budget runs out.",
+  input = ScrollUntilArgs,
+)]
+async fn scroll_until(input: InvokeCommandInput, args: ScrollUntilArgs) -> crate::InvokeExecutionResult {
+  let plan = args.plan(input.target.as_ref()).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+  execute_scroll_until(&input, plan).await
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+async fn execute_scroll_until(input: &InvokeCommandInput, plan: ScrollUntilPlan) -> crate::InvokeExecutionResult {
+  let session = auv::local::open()?;
+  let window = resolve_local_window(&session, input, plan.title.as_deref(), "input.scrollUntil")?;
+  let point = plan.window_point(&window)?;
+  let mut output = plan.output(window.clone(), point);
+  if input.dry_run {
+    return scroll_until_output(output).map_err(Into::into);
+  }
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let (request, options) = (plan.request.clone(), plan.options.clone());
+  let result = run_cancellable_input(&input.cancellation, move || {
+    let mut surface = auv_scan::WindowScrollUntilSurface::new(&session, window, point, options);
+    auv_scan::scroll_until(&mut surface, &request, &mut |_| {})
+  })
+  .await?;
+  if let Some(action) = &result.action {
+    emit_input_action_result(action);
+  }
+  output.result = Some(result);
+  scroll_until_output(output).map_err(Into::into)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+async fn execute_scroll_until(_input: &InvokeCommandInput, _plan: ScrollUntilPlan) -> crate::InvokeExecutionResult {
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.scrollUntil is unavailable on this platform"))
+}
+
+pub fn scroll_until_output(output: ScrollUntilOutput) -> InvokeCommandResult {
+  let mut fields = match output.result.as_ref().and_then(|result| result.action.as_ref()) {
+    Some(action) => input_action_report_fields(action),
+    None => vec![InvokeReportField::new(
+      "Delivery",
+      if output.result.is_some() {
+        "none_needed"
+      } else {
+        "not_performed"
+      },
+    )],
+  };
+  if let Some(result) = &output.result {
+    fields.push(InvokeReportField::new("Stop reason", format!("{:?}", result.reason)));
+    fields.push(InvokeReportField::new("Steps", result.steps.to_string()));
+    fields.push(InvokeReportField::new("Delivered", format!("dx={} dy={}", result.delivered.delta_x, result.delivered.delta_y)));
+    if let Some(matched) = &result.text_match {
+      fields.push(InvokeReportField::new("Text match", matched.text.clone()));
+    }
+  } else {
+    fields.push(InvokeReportField::new("Verification", "validation_only"));
+  }
+  fields.push(InvokeReportField::new("Window ID", output.window.reference.id.clone()));
+  Ok(InvokeCommandOutput::from_result(&output)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 
 /// Runs one blocking driver input on the blocking pool. Invoke cancellation,

@@ -15,8 +15,10 @@ Phase 1 (scroll motion and Linux high-resolution wheel) is implemented; see
 [Phase 1 Implementation and Evidence](#phase-1-implementation-and-evidence).
 Phase 2 (live scroll control) is implemented; see
 [Phase 2 Implementation and Evidence](#phase-2-implementation-and-evidence).
-Phase 3 is not implemented yet, and names marked *provisional* in that section
-may still change. This note builds on the
+Phase 3 (scroll-until) is implemented; see
+[Phase 3 Implementation and Evidence](#phase-3-implementation-and-evidence).
+The implemented shape replaces the provisional sketch in
+[Scroll-until](#3-scroll-until-observation-loop). This note builds on the
 [scroll delta contract](2026-10-06-scroll-delta-contract.md): logical pixels,
 positive toward later content (down/right).
 
@@ -387,6 +389,110 @@ Windows and Linux: unit tests and native builds pass (see the PR). Each stream
 sample uses the same per-platform `WindowInput::scroll` delivery that phase 1
 validated live on Windows Edge and Linux GNOME. A separate live stream run on
 those hosts was not performed.
+
+## Phase 3 Implementation and Evidence
+
+What landed:
+
+- `auv-scan::viewport_pixels`:
+  - `compare_viewport_pixels(before, after, axis, policy)` searches a bounded
+    shift along `ScrollAxis::Vertical` or `Horizontal`. It reports
+    `ViewportPixelMotion { estimated_shift, normalized_diff, no_motion }`.
+  - `ViewportPixelPolicy` defaults come from the NetEase sidebar policy:
+    ±24 px search, 0.01 threshold, stride 4
+    (`NOTICE(viewport-pixel-defaults)`).
+  - Images of different sizes count as motion, so a resize never looks like
+    a stuck viewport.
+  - NetEase still uses its own copy and carries
+    `TODO(netease-core-viewport-pixels)` for the migration.
+- `auv-scan::scroll_until`:
+  - `ScrollUntilRequest` has these fields:
+    - `step`: `Instant { delta }` or `Motion { motion }`;
+    - `condition`: `End` or `TextVisible { query }`;
+    - `max_steps`: 1..=1000;
+    - `settle`: at most 10 s;
+    - `no_motion_confirmations`: 1..=10;
+    - `motion_region`: an optional normalized rectangle.
+  - The step decides the axis, so there is no separate `direction` field. A
+    step must move exactly one axis by a non-zero amount.
+  - `scroll_until(surface, request, notify)`:
+    - Captures once and checks the text condition before the first step.
+    - Each round is step → settle → one capture → motion comparison → text
+      check → end check.
+    - `End` needs `no_motion_confirmations` consecutive no-motion rounds.
+  - `ScrollUntilResult` holds:
+    - the stop reason: `end_by_no_visual_progress`, `text_visible`, or
+      `budget_exhausted`;
+    - the step count and the delivered total;
+    - the first step's `InputActionResult`;
+    - the text match, with bounds in screen coordinates;
+    - the last motion.
+  - `ScrollUntilSurface` is the dependency-injection boundary for scroll,
+    capture, OCR, and waiting. `WindowScrollUntilSurface` binds it to a
+    `LocalDriverSession` window. Its OCR searches the whole window, and its
+    waits check cancellation.
+  - Deferred:
+    - `TODO(scroll-until-artifacts)`: no per-step capture artifacts;
+    - `TODO(scroll-until-ax-boundary)`: no accessibility boundary check;
+    - text search has no separate region.
+- Wire: `InputService/ScrollUntil` is a server-streaming RPC that sends
+  `progress` events, then one `completed` event. The loop runs on the Runner,
+  so screenshots never cross the network.
+- Rust client: `WindowClient::scroll_until`, which returns a stream of
+  `ScrollUntilEvent`.
+- JS SDK: `WindowClient.scrollUntil(point, request, options)`.
+- Invoke and MCP: `auv invoke input.scrollUntil <x> <y> (--dx|--dy) --until
+  end|text:<query>`, with `--max-steps`, `--settle-ms`, `--confirmations`,
+  `--region`, and the timed-step flags from phase 1. MCP reaches it through
+  the registry `invoke` tool.
+
+Choosing a step:
+
+- **Text search:** keep the step at about 60-70% of the visible height (or
+  width). Each line then appears whole in at least one observation. A step
+  close to the viewport size can cut the target line at the edge every time.
+- **`End` and lazy loading:** a round takes at least `settle` plus capture
+  time. The rounds a load needs to show its content must fit within
+  `no_motion_confirmations` rounds; otherwise raise `settle` or the
+  confirmation count. "No visual progress" is observation, not proof that no
+  more content exists.
+
+Live evidence, 2026-10-06. The probe was a lazy-loading feed: near the bottom
+it appends a 40-row batch after a delay, four times, then shows `END OF FEED`.
+Row 137 is `TARGET ROW 137`.
+
+| Platform and route | Case | Result |
+| --- | --- | --- |
+| macOS Chrome (occlusion backgrounding off), direct invoke | `--dy 700 --until end`, 700 ms load | `end_by_no_visual_progress` after 17 steps; all 4 batches loaded; `scrollY` = max (7528) |
+| macOS Chrome, direct invoke | `--dy 700 --until 'text:TARGET ROW 137'` | `text_visible` at step 9 |
+| macOS Chrome, direct invoke | 1500 ms load with the default settle (400 ms); then `--settle-ms 1700` | Both ended after the final batch (a round took about 0.95 s with the default) |
+| macOS Chrome, direct invoke | Timed steps (`--step-duration-ms`) | Correct end |
+| macOS Chrome, isolated daemon Runner | Same end and text cases | Same results as direct invoke |
+| macOS, validation | `--max-steps 2000` | Rejected |
+| Windows Edge (foreground) | `--dy 700 --until end`; timed steps | `end_by_no_visual_progress` after 20 steps; timed run 11 steps; all batches loaded |
+| Windows Edge (foreground) | `--dy 700 --until 'text:TARGET ROW 137'` | Missed (ran to the end): the step was close to the viewport height, so the row was always cut at an edge |
+| Windows Edge (foreground) | `--dy 500 --until 'text:…'`, instant and timed steps | `text_visible` at step 11 in both |
+
+Linux GNOME Wayland (portal route): not validated live. Unit tests pass and the
+CLI builds. Two existing `auv-driver-linux` capture problems block the
+observation loop:
+
+- **Repeated captures return a stale frame.** With one driver session, the
+  persistent PipeWire receiver drops frames that arrive while no request is
+  pending. A later request waits 100 ms (`PIPEWIRE_REFRESH_WAIT`), then
+  returns the last decoded frame. A probe scrolled the page 300 px between
+  five captures: all five images had the same hash. As a result, scroll-until
+  always reports "no motion" and stops as `end_by_no_visual_progress` after
+  `no_motion_confirmations` steps, even though the page moved.
+- **No first frame with a fullscreen window in front.** With a fullscreen
+  Electron window in front, the first PipeWire frame did not arrive within
+  5 s; this is likely GNOME direct scanout. The Screenshot portal fallback
+  then opened GNOME's "Allow Applications to Take Screenshots?" dialog, which
+  also swallowed the wheel input. With the window maximized instead, capture
+  worked.
+
+Both problems belong to the Linux capture driver, not to scroll-until. They are
+follow-up candidates for a separate bug-fix slice.
 
 ## Open Questions
 

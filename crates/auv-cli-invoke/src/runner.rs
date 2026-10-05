@@ -50,6 +50,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
     }
     "input.drag" => return execute_drag(input, context).await,
     "input.scroll" => return execute_scroll(input, context).await,
+    "input.scrollUntil" => return execute_scroll_until(input, context).await,
     _ => {}
   }
 
@@ -695,6 +696,48 @@ async fn execute_hold_keys(
 
 /// Runner route for `input.drag`: the same plan and path as local invoke,
 /// resolved through Runner window/display services and one DragMouse call.
+async fn execute_scroll_until(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+  let plan = crate::commands::input::decode_scroll_until(&input)?;
+  let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
+  let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
+  let windows = runner.windows();
+  let resolved = match input.target.as_ref().expect("window target validated") {
+    crate::ExecutionTarget::Application { .. } => windows.resolve(selected_window_selector(&input)).await?,
+    crate::ExecutionTarget::Window { id } => {
+      let window = windows.list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
+        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.scrollUntil could not find window target {id:?}"))
+      })?;
+      windows.bind(window).map_err(|error| format!("WindowService/BindWindow failed: {error}"))?
+    }
+    crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
+  };
+  let point = plan.window_point(resolved.resource())?;
+  let mut output = plan.output(resolved.resource().clone(), point);
+  if input.dry_run {
+    return crate::commands::input::scroll_until_output(output).map_err(Into::into);
+  }
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let delivery = async {
+    let mut stream = resolved.scroll_until(point, plan.request.clone(), plan.options.clone()).await?;
+    while let Some(event) = stream.next().await? {
+      if let auv::client::runner::ScrollUntilEvent::Completed(result) = event {
+        return Ok(result);
+      }
+    }
+    Err(crate::InvokeFailure::from("ScrollUntil ended without completion evidence".to_string()))
+  };
+  let result = tokio::select! {
+    _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
+    result = delivery => result?,
+  };
+  if let Some(action) = &result.action {
+    crate::emit_input_action_result(action);
+  }
+  output.result = Some(result);
+  crate::commands::input::scroll_until_output(output).map_err(Into::into)
+}
+
 async fn execute_scroll(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
   let plan = crate::commands::input::decode_scroll(&input)?;
   let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;

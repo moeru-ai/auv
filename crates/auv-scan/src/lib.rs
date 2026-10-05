@@ -22,8 +22,10 @@ mod producer;
 mod reader;
 mod scene_state;
 mod scene_state_inspect;
+mod scroll_until;
 mod timeline;
 mod tracks;
+mod viewport_pixels;
 
 pub use association::{AssociationDiagnostic, AssociationResult, FrameObservation, associate_adjacent_frames};
 pub use coverage::{CoverageEntry, CoverageStatus, CoverageView, NegativeEvidence, build_coverage_view};
@@ -43,6 +45,10 @@ pub use scene_state::{
 pub use scene_state_inspect::{
   SceneStateInspect, SceneStateListSummary, build_scene_state_inspect, format_scene_state_inspect_text, summarize_scene_state_inspect,
 };
+pub use scroll_until::{
+  ScrollUntilCondition, ScrollUntilProgress, ScrollUntilRequest, ScrollUntilResult, ScrollUntilStep, ScrollUntilStopReason,
+  ScrollUntilSurface, ScrollUntilTextMatch, WindowScrollUntilSurface, scroll_until,
+};
 pub use timeline::{
   DIAG_INSUFFICIENT_FRAMES, DIAG_UNSUPPORTED_FRAME_COUNT, SCAN_TIMELINE_SCHEMA_VERSION, ScanTimelineWire, TimelineDiagnosticWire,
   TimelineMotionWire, TimelineSegmentWire, build_scan_timeline_from_bundle, format_scan_timeline_text,
@@ -51,3 +57,4 @@ pub use tracks::{
   DIAG_OBSERVATIONS_FRAME_MISMATCH, SCAN_TRACKS_SCHEMA_VERSION, ScanTracksWire, TrackSegmentWire, TracksDiagnosticWire,
   build_scan_tracks_from_bundle, format_scan_tracks_text,
 };
+pub use viewport_pixels::{ScrollAxis, ViewportPixelMotion, ViewportPixelPolicy, compare_viewport_pixels};

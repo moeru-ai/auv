@@ -25,6 +25,7 @@ auv-driver = { version = "0.0.28", path = "../auv-driver" }
 auv-driver-macos = { version = "0.0.28", path = "../auv-driver-macos" }
 auv-cli-common = { version = "0.0.28", path = "../auv-cli-common" }
 auv-cli-invoke = { version = "0.0.28", path = "../auv-cli-invoke" }
+auv-scan = { version = "0.0.28", path = "../auv-scan" }
 auv-media-macos = { version = "0.0.28", path = "../auv-media-macos" }
 auv-api-server = { version = "0.0.28", path = "../auv-api-server" }
 auv-api-client = { version = "0.0.28", path = "../auv-api-client" }

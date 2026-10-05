@@ -594,3 +594,42 @@ fn scroll_stream_completion_maps_reason_and_optional_action() {
   .expect_err("unspecified reason");
   assert!(matches!(unknown, CapabilityError::InvalidResponse(_)));
 }
+
+#[test]
+fn scroll_until_request_projection_keeps_step_condition_and_region() {
+  let request = scroll_until_request_to_proto(
+    proto::WindowRef {
+      window_id: "window-1".to_string(),
+    },
+    auv_driver::WindowPoint::new(10.0, 20.0),
+    auv_scan::ScrollUntilRequest {
+      step: auv_scan::ScrollUntilStep::Instant {
+        delta: auv_driver::Scroll::new(0.0, 600.0),
+      },
+      condition: auv_scan::ScrollUntilCondition::TextVisible {
+        query: "Load more".to_string(),
+      },
+      max_steps: 30,
+      settle: std::time::Duration::from_millis(500),
+      no_motion_confirmations: 3,
+      motion_region: Some(auv_driver::RatioRect::new(0.0, 0.2, 1.0, 0.6)),
+    },
+    auv_driver::ScrollOptions::default(),
+  )
+  .expect("valid request");
+  assert_eq!(
+    request.step,
+    Some(proto::scroll_until_request::Step::Instant(proto::Scroll {
+      delta_x: 0.0,
+      delta_y: 600.0
+    }))
+  );
+  assert_eq!(
+    request.condition,
+    Some(proto::scroll_until_request::Condition::TextVisible(proto::ScrollUntilTextVisible {
+      query: "Load more".to_string()
+    }))
+  );
+  assert_eq!((request.max_steps, request.no_motion_confirmations), (30, 3));
+  assert_eq!(request.motion_region.unwrap().height, 0.6);
+}

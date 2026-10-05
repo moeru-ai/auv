@@ -29,6 +29,9 @@ impl Default for MotionDetectionPolicy {
 
 impl MotionDetectionPolicy {
   pub fn compare(&self, before: &RgbaImage, after: &RgbaImage) -> MotionEvidence {
+    // TODO(netease-core-viewport-pixels): `auv_scan::compare_viewport_pixels`
+    // generalizes this comparison to both axes for core scroll-until; migrate
+    // NetEase to it in its own slice once its live scans are re-validated.
     // REVIEW(netease-scroll-motion): this bounded shift search is a first
     // motion-evidence implementation. Live NetEase testing showed it records
     // useful movement values, but it did not resolve completion for large

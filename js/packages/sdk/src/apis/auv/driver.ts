@@ -22,6 +22,8 @@ import type {
   ScrollMotionSchema,
   ScrollOptionsSchema,
   ScrollSchema,
+  ScrollUntilRequestSchema,
+  ScrollUntilResponse,
   ScrollVelocitySchema,
   ScrollWindowPointMotionResponse,
   StreamScrollBeginSchema,
@@ -129,6 +131,9 @@ export interface ScrollStreamController {
   stop: () => Promise<void>
 }
 
+/** `scrollUntil` request fields; the window and point come from the call. */
+export type ScrollUntilOptions = InputFields<typeof ScrollUntilRequestSchema, 'point' | 'window'>
+
 /** One generator step for `scrollWith`. Velocities are logical px/s. */
 export interface ScrollWithStep {
   holdMs?: number
@@ -161,6 +166,14 @@ export interface WindowClient {
    * completes. Aborting `options.signal` disconnects and stops delivery.
    */
   scrollStream: (begin: ScrollStreamBegin, options?: OperationOptions) => Promise<ScrollStreamController>
+  /**
+   * Scrolls in steps and observes after each step on the Runner until no
+   * visual motion remains (`condition.case === 'end'`), the query text appears
+   * (`'textVisible'`), or `maxSteps` runs out. Streams per-step progress and
+   * one completion. An end stop means no visual progress was observed, not
+   * proof that no more content exists.
+   */
+  scrollUntil: (point: Init<typeof WindowPointSchema>, request: ScrollUntilOptions, options?: OperationOptions) => Promise<AsyncIterable<ScrollUntilResponse>>
   /**
    * Drives a live scroll stream from a (possibly async) generator. Each yielded
    * step sets the velocity and holds it for `holdMs` (default 100), renewing the
@@ -255,6 +268,11 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       window: { windowId: id },
     }, options),
     scrollStream: (begin, options) => openScrollStream(id, begin, options),
+    scrollUntil: (point, request, options) => serverStream(InputService.method.scrollUntil, {
+      ...request,
+      point,
+      window: { windowId: id },
+    }, options),
     scrollWith: async (steps, begin, options) => {
       const controller = await openScrollStream(id, begin, options)
       const completion = (async () => {

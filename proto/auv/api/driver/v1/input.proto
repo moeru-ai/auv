@@ -6,6 +6,7 @@ package auv.api.driver.v1;
 import "auv/api/annotations/v1/annotations.proto";
 import "auv/api/driver/v1/geometry.proto";
 import "auv/api/driver/v1/window.proto";
+import "auv/api/image/v1/region.proto";
 import "google/protobuf/duration.proto";
 
 service InputService {
@@ -97,6 +98,15 @@ service InputService {
   // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
   // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
   rpc StreamScroll(stream StreamScrollRequest) returns (stream StreamScrollResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
+  // Scrolls a window in steps and observes after each step (one capture per
+  // observation) until consecutive steps show no visual motion, the text query
+  // becomes visible, or the step budget runs out. Streams progress per step.
+  // "No visual progress" is not proof that no more content exists.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc ScrollUntil(ScrollUntilRequest) returns (stream ScrollUntilResponse) {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
@@ -471,6 +481,83 @@ message StreamScrollResponse {
     StreamScrollStarted started = 1;
     StreamScrollProgress progress = 2;
     StreamScrollCompleted completed = 3;
+  }
+}
+
+// Stop when consecutive steps show no visual motion.
+message ScrollUntilEnd {}
+
+// Stop when recognized window text contains the query; reaching the end
+// without a match also stops.
+message ScrollUntilTextVisible {
+  string query = 1;
+}
+
+message ScrollUntilRequest {
+  // A previously resolved child resource, refreshed before delivery.
+  WindowRef window = 1;
+  WindowPoint point = 2;
+  // One axis only, finite and non-zero, in logical pixels per step.
+  oneof step {
+    Scroll instant = 3;
+    ScrollMotion motion = 4;
+  }
+  oneof condition {
+    ScrollUntilEnd end = 5;
+    ScrollUntilTextVisible text_visible = 6;
+  }
+  // 1..=1000.
+  uint32 max_steps = 7;
+  // Wait after each step before observing, at most 10s. Absence is zero.
+  google.protobuf.Duration settle = 8;
+  // Consecutive no-motion observations that count as the end, 1..=10.
+  uint32 no_motion_confirmations = 9;
+  // Region of the window compared for motion; absence is the whole window.
+  optional auv.api.image.v1.NormalizedRect motion_region = 10;
+  ScrollOptions options = 11;
+}
+
+enum ScrollUntilStopReason {
+  SCROLL_UNTIL_STOP_REASON_UNSPECIFIED = 0;
+  SCROLL_UNTIL_STOP_REASON_END_BY_NO_VISUAL_PROGRESS = 1;
+  SCROLL_UNTIL_STOP_REASON_TEXT_VISIBLE = 2;
+  SCROLL_UNTIL_STOP_REASON_BUDGET_EXHAUSTED = 3;
+}
+
+message ViewportPixelMotion {
+  // Best content shift in image pixels along the scroll axis.
+  int32 estimated_shift = 1;
+  // Mean absolute RGB difference in [0, 1] at that shift.
+  double normalized_diff = 2;
+  bool no_motion = 3;
+}
+
+message ScrollUntilTextMatch {
+  string text = 1;
+  ScreenRect bounds = 2;
+}
+
+message ScrollUntilProgress {
+  uint32 steps = 1;
+  Scroll delivered = 2;
+  ViewportPixelMotion motion = 3;
+  uint32 no_motion_streak = 4;
+}
+
+message ScrollUntilCompleted {
+  ScrollUntilStopReason reason = 1;
+  uint32 steps = 2;
+  Scroll delivered = 3;
+  // Delivery evidence of the first step; absent if text was visible before any step.
+  InputActionResult action = 4;
+  ScrollUntilTextMatch text_match = 5;
+  ViewportPixelMotion last_motion = 6;
+}
+
+message ScrollUntilResponse {
+  oneof event {
+    ScrollUntilProgress progress = 1;
+    ScrollUntilCompleted completed = 2;
   }
 }
 
