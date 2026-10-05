@@ -198,3 +198,44 @@ fn right_and_middle_partial_clicks_release_the_selected_button() {
     assert!(native::click_cleanup(button, &[], 2).is_empty());
   }
 }
+
+#[test]
+fn wheel_units_map_logical_pixels_to_win32_notches_with_scroll_down_positive() {
+  // ROOT CAUSE:
+  //
+  // If a caller sent `Scroll::new(0.0, 300.0)` meaning 300 logical pixels
+  // down, Windows multiplied it by WHEEL_DELTA as 300 upward notches.
+  //
+  // Before the fix, Windows treated deltas as notches with Win32's up-positive
+  // sign, unlike macOS pixels and Linux down-positive deltas.
+  // The fix keeps `Scroll` in logical pixels, positive toward later content.
+  assert_eq!(
+    wheel_units(Scroll::new(0.0, 100.0)).unwrap(),
+    WheelUnits {
+      vertical: -120,
+      horizontal: 0
+    }
+  );
+  assert_eq!(
+    wheel_units(Scroll::new(0.0, -50.0)).unwrap(),
+    WheelUnits {
+      vertical: 60,
+      horizontal: 0
+    }
+  );
+  assert_eq!(
+    wheel_units(Scroll::new(100.0, 0.0)).unwrap(),
+    WheelUnits {
+      vertical: 0,
+      horizontal: 120
+    }
+  );
+}
+
+#[test]
+fn wheel_units_reject_values_outside_posted_wheel_word() {
+  assert!(matches!(wheel_units(Scroll::new(0.0, f64::NAN)), Err(DriverError::InvalidInput { .. })));
+  assert!(matches!(wheel_units(Scroll::new(f64::INFINITY, 0.0)), Err(DriverError::InvalidInput { .. })));
+  assert!(wheel_units(Scroll::new(0.0, 27_305.0)).is_ok());
+  assert!(matches!(wheel_units(Scroll::new(0.0, 27_400.0)), Err(DriverError::InvalidInput { .. })));
+}

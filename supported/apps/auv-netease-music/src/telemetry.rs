@@ -188,7 +188,7 @@ pub(crate) fn emit_sidebar_scan_events(
       auv_tracing::emit_event!(SidebarScrolled {
         from_observation: observation.observation_index,
         to_observation: next.observation_index,
-        requested_delta: -scroll_amount,
+        requested_delta: scroll_amount,
         settle_ms: scroll_settle_ms,
         delivery_path: next.incoming_scroll_delivery_path.clone(),
         motion: next.scroll_motion.clone(),

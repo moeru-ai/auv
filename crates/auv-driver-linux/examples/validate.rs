@@ -27,7 +27,7 @@
 //!   paste-text <text>              paste text and restore clipboard
 //!   type-text <text>               type text through RemoteDesktop portal
 //!   press <key>                    press a key or shortcut through the portal
-//!   scroll <x> <y> <delta-y>       scroll through the portal
+//!   scroll <x> <y> <delta-y>       scroll logical pixels through the portal (positive = down)
 //!   click <x> <y>                  click through the portal
 //!   window-click <substr> <x> <y>  click window-local point
 //!   window-scroll <substr> <x> <y> <delta-y>

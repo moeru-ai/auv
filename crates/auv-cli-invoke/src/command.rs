@@ -336,6 +336,9 @@ pub enum TargetPolicy {
   RequiredApplication,
   OptionalKeyboard,
   OptionalPoint,
+  /// Window-bound input that needs a concrete window: an app (its main visible
+  /// window) or an exact window id.
+  RequiredWindow,
 }
 
 impl TargetPolicy {
@@ -345,10 +348,11 @@ impl TargetPolicy {
       Self::OptionalApplication | Self::RequiredApplication => &["application"],
       Self::OptionalKeyboard => &["application", "window"],
       Self::OptionalPoint => &["application", "window", "display"],
+      Self::RequiredWindow => &["application", "window"],
     }
   }
   pub fn required(self) -> bool {
-    self == Self::RequiredApplication
+    matches!(self, Self::RequiredApplication | Self::RequiredWindow)
   }
 
   pub fn help(self) -> &'static str {
@@ -362,6 +366,9 @@ impl TargetPolicy {
       Self::OptionalPoint => {
         "Optional app:<bundle-id>, window:<window-id>, or display:<display-id>; coordinate basis defaults from target. Bare values select an application."
       }
+      Self::RequiredWindow => {
+        "Required app:<bundle-id> (its main visible window; bare ids accepted) or window:<window-id>; coordinates are window-local. Display targets are unsupported."
+      }
     }
   }
 
@@ -369,16 +376,17 @@ impl TargetPolicy {
     use crate::ExecutionTarget;
     let target = input.target.as_ref();
     let valid = match (self, target) {
-      (Self::RequiredApplication, None) => false,
+      (Self::RequiredApplication | Self::RequiredWindow, None) => false,
       (_, None) => true,
       (Self::OptionalPoint, Some(_)) => true,
-      (Self::OptionalKeyboard, Some(ExecutionTarget::Application { .. } | ExecutionTarget::Window { .. })) => true,
+      (Self::OptionalKeyboard | Self::RequiredWindow, Some(ExecutionTarget::Application { .. } | ExecutionTarget::Window { .. })) => true,
       (Self::OptionalApplication | Self::RequiredApplication, Some(ExecutionTarget::Application { .. })) => true,
       _ => false,
     };
     if !valid {
       return Err(match (self, target) {
         (Self::RequiredApplication, None) => format!("{} requires --target app:", input.command_id),
+        (Self::RequiredWindow, None) => format!("{} requires --target app: or window:", input.command_id),
         (Self::Forbidden, _) => format!("{} forbids --target", input.command_id),
         (_, Some(target)) => {
           let kind = match target {

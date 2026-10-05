@@ -510,11 +510,11 @@ impl ViewObserver for LiveSidebarObserver {
   }
 
   fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
-    self.scroll_by(self.scroll_amount)
+    self.scroll_by(-self.scroll_amount)
   }
 
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
-    self.scroll_by(-self.scroll_amount)
+    self.scroll_by(self.scroll_amount)
   }
 }
 
@@ -534,7 +534,7 @@ impl SidebarScanObserver for LiveSidebarObserver {
   }
 
   fn scroll_seek_up(&mut self) -> Result<(), ParserDiagnostic> {
-    self.scroll_by_with_settle(self.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER, std::time::Duration::ZERO)
+    self.scroll_by_with_settle(-self.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER, std::time::Duration::ZERO)
   }
 
   fn observe_scroll_seek(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
@@ -559,11 +559,7 @@ impl SidebarScanObserver for LiveSidebarObserver {
   }
 
   fn scroll_down_for_query_recovery(&mut self) -> Result<(), ParserDiagnostic> {
-    self.scroll_by_with_policy(
-      -self.scroll_amount,
-      std::time::Duration::from_millis(self.scroll_settle_ms),
-      InputPolicy::ForegroundPreferred,
-    )
+    self.scroll_by_with_policy(self.scroll_amount, std::time::Duration::from_millis(self.scroll_settle_ms), InputPolicy::ForegroundPreferred)
   }
 }
 

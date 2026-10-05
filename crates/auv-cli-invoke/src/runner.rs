@@ -49,6 +49,7 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
       return execute_hold_keys(input, keys, policy, duration, context).await;
     }
     "input.drag" => return execute_drag(input, context).await,
+    "input.scroll" => return execute_scroll(input, context).await,
     _ => {}
   }
 
@@ -694,6 +695,43 @@ async fn execute_hold_keys(
 
 /// Runner route for `input.drag`: the same plan and path as local invoke,
 /// resolved through Runner window/display services and one DragMouse call.
+async fn execute_scroll(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
+  let plan = crate::commands::input::decode_scroll(&input)?;
+  let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
+  let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
+  let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
+
+  let windows = runner.windows();
+  let resolved = match input.target.as_ref().expect("window target validated") {
+    crate::ExecutionTarget::Application { .. } => windows.resolve(selected_window_selector(&input)).await?,
+    crate::ExecutionTarget::Window { id } => {
+      let window = windows.list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
+        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.scroll could not find window target {id:?}"))
+      })?;
+      windows.bind(window).map_err(|error| format!("WindowService/BindWindow failed: {error}"))?
+    }
+    crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
+  };
+  let point = plan.window_point(resolved.resource())?;
+  let mut result = plan.result(resolved.resource().clone(), point);
+  if input.dry_run {
+    return crate::commands::input::scroll_output(result).map_err(Into::into);
+  }
+
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let response = tokio::select! {
+    _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
+    response = resolved.scroll(point, plan.scroll, plan.options.clone()) => response?,
+  };
+  if response.window.reference != result.window.reference {
+    return Err("ScrollWindowPoint response changed the resolved WindowRef".to_string().into());
+  }
+  crate::emit_input_action_result(&response.action);
+  result.window = response.window;
+  result.action = Some(response.action);
+  crate::commands::input::scroll_output(result).map_err(Into::into)
+}
+
 async fn execute_drag(input: crate::InvokeCommandInput, context: auv::AuvContext) -> crate::InvokeExecutionResult {
   use crate::commands::input::{DragResult, RelativeToArg};
 

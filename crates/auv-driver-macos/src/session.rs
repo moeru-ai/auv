@@ -537,17 +537,9 @@ impl WindowApi<'_> {
     let screen_point = self.to_screen_point(window, point)?;
     let screen = screen_point.point();
     let window_point = point.point();
-    crate::native::input::scroll_window_point(
-      pid,
-      number,
-      screen.x,
-      screen.y,
-      window_point.x,
-      window_point.y,
-      scroll.delta_x,
-      scroll.delta_y,
-    )
-    .map_err(backend)?;
+    let (wheel_x, wheel_y) = core_graphics_wheel_pixels(scroll);
+    crate::native::input::scroll_window_point(pid, number, screen.x, screen.y, window_point.x, window_point.y, wheel_x, wheel_y)
+      .map_err(backend)?;
     if !settle.is_zero() {
       thread::sleep(settle);
     }
@@ -917,7 +909,8 @@ impl InputApi<'_> {
   pub fn scroll_global_hid(&self, point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
     let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
     let _ = self.session;
-    crate::native::pointer::scroll_point(point.x, point.y, scroll.delta_x, scroll.delta_y).map_err(backend)?;
+    let (wheel_x, wheel_y) = core_graphics_wheel_pixels(scroll);
+    crate::native::pointer::scroll_point(point.x, point.y, wheel_x, wheel_y).map_err(backend)?;
     if !settle.is_zero() {
       thread::sleep(settle);
     }
@@ -1503,6 +1496,18 @@ fn type_text_parts(options: TypeTextOptions) -> DriverResult<(Option<i32>, u64)>
   let submit_key_code = text_submit_key_code(options.submit)?;
   let inter_char_delay_ms = duration_millis(options.inter_char_delay)?;
   Ok((submit_key_code, inter_char_delay_ms))
+}
+
+/// Converts an AUV [`Scroll`] into CoreGraphics pixel wheel deltas `(wheel2, wheel1)`.
+///
+/// NOTICE(scroll-delta-sign): CoreGraphics pixel wheel values are positive
+/// toward earlier content (classic wheel-up / wheel-left), while AUV `Scroll`
+/// is positive toward later content, so both axes are negated. Live probes on
+/// macOS 26.3 showed synthetic HID-tap and pid-posted wheel events are not
+/// inverted by the natural-scrolling preference; see
+/// `docs/ai/references/driver/2026-10-06-scroll-delta-contract.md`.
+fn core_graphics_wheel_pixels(scroll: Scroll) -> (f64, f64) {
+  (-scroll.delta_x, -scroll.delta_y)
 }
 
 fn scroll_attempt_candidates(options: &ScrollOptions) -> Vec<ScrollDeliveryCandidate> {

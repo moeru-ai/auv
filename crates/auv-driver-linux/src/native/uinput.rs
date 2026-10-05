@@ -152,23 +152,15 @@ impl InputSession {
   }
 
   pub fn scroll_at(&mut self, point: Point, scroll: Scroll) -> DriverResult<()> {
-    if !scroll.delta_x.is_finite() || !scroll.delta_y.is_finite() {
-      return Err(invalid_input("scroll delta must be finite"));
-    }
+    let (notches, remainder) = super::wheel_notches(self.wheel_remainder, scroll)?;
     self.move_to(point)?;
-    // Portal-style continuous scroll uses 15 units per wheel notch in this
-    // backend. Keep fractional remainders so repeated small deltas accumulate.
-    let x = self.wheel_remainder.0 + scroll.delta_x / 15.0;
-    let y = self.wheel_remainder.1 - scroll.delta_y / 15.0;
-    if x.abs() > f64::from(i32::MAX) || y.abs() > f64::from(i32::MAX) {
-      return Err(invalid_input("scroll delta exceeds uinput range"));
-    }
+    // REL_WHEEL is positive toward earlier content; REL_HWHEEL is positive right.
     let events = [
-      InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_HWHEEL.0, x as i32),
-      InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_WHEEL.0, y as i32),
+      InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_HWHEEL.0, notches.0),
+      InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_WHEEL.0, -notches.1),
     ];
     self.device.emit(&events).map_err(|error| backend(format!("scroll uinput pointer: {error}")))?;
-    self.wheel_remainder = (x.fract(), y.fract());
+    self.wheel_remainder = remainder;
     Ok(())
   }
 }

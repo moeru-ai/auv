@@ -99,9 +99,10 @@ pub(crate) fn click_parts(click: &Click) -> DriverResult<(u32, Duration)> {
 }
 
 pub fn scroll_at(point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
+  let units = wheel_units(scroll)?;
   let _desktop = auv_driver_common::mouse_input::reserve_desktop_input()?;
   let start_time = std::time::Instant::now();
-  native::scroll(point, scroll)?;
+  native::scroll(point, units)?;
   let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   crate::latency::record_latency_event("scroll_at", elapsed_ms, None, Some("SendInput"), None);
   sleep_if_nonzero(settle);
@@ -344,6 +345,44 @@ fn foreground_result(
   }
 }
 
+/// Signed Win32 wheel deltas for one [`Scroll`], shared by `SendInput` and
+/// posted `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL` delivery.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WheelUnits {
+  /// Positive toward earlier content (Win32 wheel-up convention).
+  pub(crate) vertical: i32,
+  /// Positive toward the right (Win32 horizontal wheel convention).
+  pub(crate) horizontal: i32,
+}
+
+// NOTICE(scroll-pixels-per-notch): Win32 wheel input has no pixel unit. One
+// notch (`WHEEL_DELTA` = 120) scrolls 100 DIPs in Chromium and about three
+// lines in classic controls, so AUV maps 100 logical pixels to one notch.
+// Revisit with live evidence if a target class needs its own factor; see
+// `docs/ai/references/driver/2026-10-06-scroll-delta-contract.md`.
+const SCROLL_PIXELS_PER_WHEEL_NOTCH: f64 = 100.0;
+const WHEEL_DELTA_PER_NOTCH: f64 = 120.0;
+
+/// Converts AUV logical-pixel scroll deltas (positive toward later content)
+/// into Win32 wheel units. Rejects values that are non-finite or exceed the
+/// signed 16-bit word posted wheel messages carry.
+pub(crate) fn wheel_units(scroll: Scroll) -> DriverResult<WheelUnits> {
+  let units = |pixels: f64, axis: &str| -> DriverResult<i32> {
+    if !pixels.is_finite() {
+      return Err(invalid_input(format!("scroll {axis} must be finite")));
+    }
+    let units = (pixels * WHEEL_DELTA_PER_NOTCH / SCROLL_PIXELS_PER_WHEEL_NOTCH).round();
+    if units.abs() > f64::from(i16::MAX) {
+      return Err(invalid_input(format!("scroll {axis} {pixels} exceeds the Windows wheel delta range")));
+    }
+    Ok(units as i32)
+  };
+  Ok(WheelUnits {
+    vertical: units(-scroll.delta_y, "delta_y")?,
+    horizontal: units(scroll.delta_x, "delta_x")?,
+  })
+}
+
 fn sleep_if_nonzero(duration: Duration) {
   if !duration.is_zero() {
     std::thread::sleep(duration);
@@ -477,14 +516,14 @@ mod native {
 
   use auv_driver_common::error::DriverResult;
   use auv_driver_common::geometry::Point;
-  use auv_driver_common::input::{Scroll, TypeTextOptions};
+  use auv_driver_common::input::TypeTextOptions;
   use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
     MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
     MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WHEEL_DELTA,
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
   };
 
   use super::{KeyChord, normalize_absolute};
@@ -644,28 +683,16 @@ mod native {
     inputs
   }
 
-  pub(super) fn scroll(point: Point, scroll: Scroll) -> DriverResult<()> {
+  pub(super) fn scroll(point: Point, units: super::WheelUnits) -> DriverResult<()> {
     move_to(point)?;
     let mut inputs = Vec::new();
-    // Windows wheel deltas are signed multiples of WHEEL_DELTA (120). Positive
-    // vertical scrolls up and positive horizontal scrolls right, per the Win32
-    // wheel convention.
-    let vertical = wheel_amount(scroll.delta_y);
-    if vertical != 0 {
-      inputs.push(mouse_input(0, 0, vertical, MOUSEEVENTF_WHEEL));
+    if units.vertical != 0 {
+      inputs.push(mouse_input(0, 0, units.vertical, MOUSEEVENTF_WHEEL));
     }
-    let horizontal = wheel_amount(scroll.delta_x);
-    if horizontal != 0 {
-      inputs.push(mouse_input(0, 0, horizontal, MOUSEEVENTF_HWHEEL));
+    if units.horizontal != 0 {
+      inputs.push(mouse_input(0, 0, units.horizontal, MOUSEEVENTF_HWHEEL));
     }
     send_inputs(&inputs)
-  }
-
-  fn wheel_amount(delta: f64) -> i32 {
-    if !delta.is_finite() {
-      return 0;
-    }
-    (delta * f64::from(WHEEL_DELTA)).round() as i32
   }
 
   pub(super) fn type_text(text: &str, options: &TypeTextOptions, submit_key: Option<u16>) -> DriverResult<()> {
@@ -734,7 +761,7 @@ mod native {
 
   use auv_driver_common::error::{DriverError, DriverResult};
   use auv_driver_common::geometry::Point;
-  use auv_driver_common::input::{MouseButton, Scroll, TypeTextOptions};
+  use auv_driver_common::input::{MouseButton, TypeTextOptions};
 
   use super::KeyChord;
 
@@ -754,7 +781,7 @@ mod native {
     Err(DriverError::unsupported("input.click"))
   }
 
-  pub(super) fn scroll(_point: Point, _scroll: Scroll) -> DriverResult<()> {
+  pub(super) fn scroll(_point: Point, _units: super::WheelUnits) -> DriverResult<()> {
     Err(DriverError::unsupported("input.scroll"))
   }
 

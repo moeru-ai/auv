@@ -27,6 +27,7 @@ pub fn group() -> CommandGroup {
     .command(move_mouse_invoke_command())
     .command(click_point_invoke_command())
     .command(drag_invoke_command())
+    .command(scroll_invoke_command())
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
@@ -1060,6 +1061,195 @@ pub fn drag_output(result: DragResult) -> InvokeCommandResult {
   if let Some(display) = &result.display {
     fields.push(InvokeReportField::new("Display ID", display.id.clone()));
   }
+  Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
+}
+
+#[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
+#[command(
+  after_long_help = "Examples:\n  auv invoke input.scroll 200 300 --dy 300 --target app:com.google.Chrome\n  auv invoke input.scroll 0.5 0.5 --normalized --dy -600 --target window:12345 --input-policy background-only\nDeltas are logical pixels. Positive --dy scrolls toward later content (down) and positive --dx scrolls right, matching DOM WheelEvent; the natural-scrolling preference does not apply. The default background-preferred policy tries window-targeted delivery before a foreground wheel. Delivery does not prove the viewport moved: a covered Chromium window can accept a wheel event without scrolling, so verify with a capture."
+)]
+struct ScrollArgs {
+  /// X coordinate inside the target window.
+  x: f64,
+  /// Y coordinate inside the target window.
+  y: f64,
+  /// Horizontal delta in logical pixels; positive scrolls right.
+  #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+  #[serde(default)]
+  dx: f64,
+  /// Vertical delta in logical pixels; positive scrolls down.
+  #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+  #[serde(default)]
+  dy: f64,
+  /// Interpret X and Y as normalized values in 0..=1.
+  #[arg(long)]
+  #[serde(default)]
+  normalized: bool,
+  /// Window title text used with an app target.
+  #[arg(long, value_name = "TEXT")]
+  title: Option<String>,
+  /// Window input delivery policy. Defaults to background-preferred.
+  #[arg(long, value_enum)]
+  #[serde(rename = "input-policy")]
+  input_policy: Option<InputPolicyArg>,
+  /// Delay after delivery in milliseconds (0..=30000).
+  #[arg(long, default_value_t = 0)]
+  #[serde(rename = "settle-ms", default)]
+  settle_ms: u64,
+}
+
+const MAX_SCROLL_SETTLE_MS: u64 = 30_000;
+
+/// A validated window scroll before its point is resolved against the target
+/// window. Local and Runner execution share this plan.
+// TODO(screen-point-scroll): screen/display-relative scroll is deferred; the
+// Runner exposes only ScrollWindowPoint until a caller needs global scroll.
+// TODO(scroll-delivery-candidates-cli): the CLI keeps the Driver default
+// candidate ladder; expose an ordered candidate flag when a caller needs it.
+#[derive(Clone, Debug)]
+pub(crate) struct ScrollPlan {
+  pub(crate) point: auv_driver::Point,
+  pub(crate) normalized: bool,
+  pub(crate) title: Option<String>,
+  pub(crate) scroll: auv_driver::Scroll,
+  pub(crate) options: auv_driver::ScrollOptions,
+}
+
+impl ScrollArgs {
+  fn plan(&self, target: Option<&crate::ExecutionTarget>) -> Result<ScrollPlan, String> {
+    if !matches!(target, Some(crate::ExecutionTarget::Application { .. } | crate::ExecutionTarget::Window { .. })) {
+      return Err("input.scroll requires --target app: or window:".to_string());
+    }
+    if self.title.is_some() && !matches!(target, Some(crate::ExecutionTarget::Application { .. })) {
+      return Err("input.scroll --title requires --target app:".to_string());
+    }
+    if !self.x.is_finite() || !self.y.is_finite() {
+      return Err("input.scroll requires finite coordinates".to_string());
+    }
+    if self.normalized && (!(0.0..=1.0).contains(&self.x) || !(0.0..=1.0).contains(&self.y)) {
+      return Err("input.scroll --normalized coordinates must be within 0..=1".to_string());
+    }
+    if !self.dx.is_finite() || !self.dy.is_finite() {
+      return Err("input.scroll requires finite --dx and --dy".to_string());
+    }
+    if self.dx == 0.0 && self.dy == 0.0 {
+      return Err("input.scroll requires a non-zero --dx or --dy".to_string());
+    }
+    if self.settle_ms > MAX_SCROLL_SETTLE_MS {
+      return Err(format!("input.scroll --settle-ms must be within 0..={MAX_SCROLL_SETTLE_MS}"));
+    }
+    Ok(ScrollPlan {
+      point: auv_driver::Point::new(self.x, self.y),
+      normalized: self.normalized,
+      title: self.title.clone(),
+      scroll: auv_driver::Scroll::new(self.dx, self.dy),
+      options: auv_driver::ScrollOptions {
+        policy: self.input_policy.map(InputPolicyArg::driver_policy).unwrap_or_default(),
+        settle: std::time::Duration::from_millis(self.settle_ms),
+        ..auv_driver::ScrollOptions::default()
+      },
+    })
+  }
+}
+
+impl ScrollPlan {
+  /// Resolves the requested point against the target window's current size.
+  pub(crate) fn window_point(&self, window: &auv_driver::Window) -> Result<auv_driver::WindowPoint, crate::InvokeFailure> {
+    let point = resolve_local_point("input.scroll", self.point.x, self.point.y, self.normalized, window.frame.size, "window")
+      .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+    Ok(auv_driver::WindowPoint::new(point.x, point.y))
+  }
+
+  pub(crate) fn result(&self, window: auv_driver::Window, point: auv_driver::WindowPoint) -> ScrollResult {
+    let local = point.point();
+    ScrollResult {
+      requested_point: self.point,
+      normalized: self.normalized,
+      screen_point: ScreenPoint::new(window.frame.origin.x + local.x, window.frame.origin.y + local.y),
+      window_point: local,
+      scroll: self.scroll,
+      policy: self.options.policy,
+      window,
+      action: None,
+    }
+  }
+}
+
+/// Runner dispatch decodes transport arguments once. Local handlers already
+/// receive typed arguments; both validate through `ScrollArgs::plan`.
+pub(crate) fn decode_scroll(input: &InvokeCommandInput) -> Result<ScrollPlan, crate::InvokeFailure> {
+  crate::command::decode_args::<ScrollArgs>(input)
+    .and_then(|args| args.plan(input.target.as_ref()))
+    .map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ScrollResult {
+  pub requested_point: auv_driver::Point,
+  pub normalized: bool,
+  pub window_point: auv_driver::Point,
+  pub screen_point: ScreenPoint,
+  /// Logical pixels, positive toward later content (down/right).
+  pub scroll: auv_driver::Scroll,
+  pub policy: auv_driver::InputPolicy,
+  pub window: auv_driver::Window,
+  pub action: Option<auv_driver::InputActionResult>,
+}
+
+#[invoke_command(
+  id = "input.scroll",
+  target = RequiredWindow,
+  group = "input",
+  description = "Scroll at a point in a target window by logical-pixel deltas (positive dy scrolls down).",
+  input = ScrollArgs,
+)]
+async fn scroll(input: InvokeCommandInput, args: ScrollArgs) -> crate::InvokeExecutionResult {
+  let plan = args.plan(input.target.as_ref()).map_err(|message| crate::InvokeFailure::new(crate::FailureCode::InvalidInput, message))?;
+  execute_scroll(&input, plan).await
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+async fn execute_scroll(input: &InvokeCommandInput, plan: ScrollPlan) -> crate::InvokeExecutionResult {
+  let session = auv::local::open()?;
+  let window = match input.target.as_ref().expect("window target validated") {
+    crate::ExecutionTarget::Application { id } => session.window().resolve(click_window_selector(id, plan.title.as_deref()))?,
+    crate::ExecutionTarget::Window { id } => {
+      session.window().list()?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
+        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.scroll could not find window target {id:?}"))
+      })?
+    }
+    crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
+  };
+  let point = plan.window_point(&window)?;
+  let mut result = plan.result(window.clone(), point);
+  if input.dry_run {
+    return scroll_output(result).map_err(Into::into);
+  }
+
+  input.cancellation.check().map_err(|error| error.to_string())?;
+  let (scroll, options) = (plan.scroll, plan.options.clone());
+  let action = run_cancellable_input(&input.cancellation, move || session.window().scroll(&window, point, scroll, options)).await?;
+  emit_input_action_result(&action);
+  result.action = Some(action);
+  scroll_output(result).map_err(Into::into)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+async fn execute_scroll(_input: &InvokeCommandInput, _plan: ScrollPlan) -> crate::InvokeExecutionResult {
+  Err(crate::InvokeFailure::new(crate::FailureCode::Unsupported, "input.scroll is unavailable on this platform"))
+}
+
+pub fn scroll_output(result: ScrollResult) -> InvokeCommandResult {
+  let mut fields = match result.action.as_ref() {
+    Some(action) => input_action_report_fields(action),
+    None => vec![
+      InvokeReportField::new("Delivery", "not_performed"),
+      InvokeReportField::new("Verification", "validation_only"),
+    ],
+  };
+  fields.push(InvokeReportField::new("Scroll", format!("dx={} dy={} (logical px, +dy down)", result.scroll.delta_x, result.scroll.delta_y)));
+  fields.push(InvokeReportField::new("Window point", format!("{:.1},{:.1}", result.window_point.x, result.window_point.y)));
+  fields.push(InvokeReportField::new("Window ID", result.window.reference.id.clone()));
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))
 }
 

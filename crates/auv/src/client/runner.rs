@@ -199,6 +199,19 @@ pub struct WindowPointClick {
   pub action: auv_driver::InputActionResult,
 }
 
+/// Typed wheel-scroll result for one Runner-owned window point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowPointScroll {
+  /// Resolved target window.
+  pub window: auv_driver::Window,
+  /// Delivered window-local point.
+  pub point: auv_driver::WindowPoint,
+  /// Delivered scroll in logical pixels, positive toward later content.
+  pub scroll: auv_driver::Scroll,
+  /// Typed input-delivery evidence. It does not prove the viewport moved.
+  pub action: auv_driver::InputActionResult,
+}
+
 // Placement is selected by `Client`/`RunClient` before this route-bound
 // hierarchy is constructed. `Client::local()` is the explicit local-only
 // constraint; ordinary placement may resolve either a local or paired Device.
@@ -694,6 +707,41 @@ impl WindowClient {
       window: window_from_proto(required(response.window, "ClickWindowPoint response omitted Window")?)?,
       point: auv_driver::WindowPoint::new(point.x, point.y),
       action: input_action_result_from_proto(required(response.action, "ClickWindowPoint response omitted InputActionResult")?)?,
+    })
+  }
+
+  /// Delivers a wheel scroll at a window-local point.
+  ///
+  /// `scroll` is in logical pixels, positive toward later content (down/right).
+  pub async fn scroll(
+    &self,
+    point: auv_driver::WindowPoint,
+    scroll: auv_driver::Scroll,
+    options: auv_driver::ScrollOptions,
+  ) -> Result<WindowPointScroll, CapabilityError> {
+    let response = proto::input_service_client::InputServiceClient::new(self.runner.transport()?)
+      .scroll_window_point(proto::ScrollWindowPointRequest {
+        window: Some(self.window_ref.clone()),
+        point: Some(proto::WindowPoint {
+          x: point.point().x,
+          y: point.point().y,
+        }),
+        scroll: Some(proto::Scroll {
+          delta_x: scroll.delta_x,
+          delta_y: scroll.delta_y,
+        }),
+        options: Some(scroll_options_to_proto(options)?),
+      })
+      .await
+      .map_err(capability_status)?
+      .into_inner();
+    let point = required(response.point, "ScrollWindowPoint response omitted WindowPoint")?;
+    let scroll = required(response.scroll, "ScrollWindowPoint response omitted Scroll")?;
+    Ok(WindowPointScroll {
+      window: window_from_proto(required(response.window, "ScrollWindowPoint response omitted Window")?)?,
+      point: auv_driver::WindowPoint::new(point.x, point.y),
+      scroll: auv_driver::Scroll::new(scroll.delta_x, scroll.delta_y),
+      action: input_action_result_from_proto(required(response.action, "ScrollWindowPoint response omitted InputActionResult")?)?,
     })
   }
 }
@@ -1617,6 +1665,27 @@ fn click_options_to_proto(value: auv_driver::ClickOptions) -> Result<proto::Clic
       auv_driver::WindowClickStrategy::ChromiumCompatible => proto::WindowClickStrategy::ChromiumCompatible,
       auv_driver::WindowClickStrategy::PidTargeted => proto::WindowClickStrategy::PidTargeted,
     } as i32,
+  })
+}
+
+fn scroll_options_to_proto(value: auv_driver::ScrollOptions) -> Result<proto::ScrollOptions, CapabilityError> {
+  Ok(proto::ScrollOptions {
+    policy: input_policy_to_proto(value.policy) as i32,
+    delivery_candidates: value
+      .delivery_strategy
+      .candidates
+      .into_iter()
+      .map(|candidate| {
+        let candidate = match candidate {
+          auv_driver::ScrollDeliveryCandidate::AxScroll => proto::ScrollDeliveryCandidate::AxScroll,
+          auv_driver::ScrollDeliveryCandidate::WindowTargetedWheel => proto::ScrollDeliveryCandidate::WindowTargetedWheel,
+          auv_driver::ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => proto::ScrollDeliveryCandidate::WindowTargetedKeyboardScroll,
+          auv_driver::ScrollDeliveryCandidate::ForegroundHid => proto::ScrollDeliveryCandidate::ForegroundHid,
+        };
+        candidate as i32
+      })
+      .collect(),
+    settle: Some(duration_to_proto(value.settle)?),
   })
 }
 

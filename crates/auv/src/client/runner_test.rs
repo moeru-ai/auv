@@ -486,3 +486,28 @@ fn coordinate_origins_survive_transport_and_map_decode_errors() {
   assert!(text_recognition_from_proto(proto::RecognizeTextResponse::default()).unwrap().origin.is_none());
   assert!(matches!(position_from_proto(proto::Position::default()), Err(CapabilityError::InvalidResponse(_))));
 }
+
+#[test]
+fn scroll_options_projection_keeps_policy_candidate_order_and_settle() {
+  let options = scroll_options_to_proto(auv_driver::ScrollOptions {
+    policy: auv_driver::InputPolicy::BackgroundOnly,
+    delivery_strategy: auv_driver::ScrollDeliveryStrategy {
+      candidates: vec![
+        auv_driver::ScrollDeliveryCandidate::WindowTargetedWheel,
+        auv_driver::ScrollDeliveryCandidate::AxScroll,
+      ],
+    },
+    settle: std::time::Duration::from_millis(120),
+  })
+  .expect("valid scroll options");
+
+  assert_eq!(options.policy, proto::InputPolicy::BackgroundOnly as i32);
+  assert_eq!(
+    options.delivery_candidates,
+    vec![
+      proto::ScrollDeliveryCandidate::WindowTargetedWheel as i32,
+      proto::ScrollDeliveryCandidate::AxScroll as i32,
+    ]
+  );
+  assert_eq!(options.settle.expect("settle").nanos, 120_000_000);
+}

@@ -184,8 +184,8 @@ impl<'a> SongListScanner<'a> {
     self.pending_scroll_delivery_path = None;
     self.previous_crop = Some(self.capture_region_crop()?);
     let delta = match direction {
-      ScrollDirection::Up => self.inputs.scroll_amount * crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER,
-      ScrollDirection::Down => -self.inputs.scroll_amount * crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER,
+      ScrollDirection::Up => -self.inputs.scroll_amount * crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER,
+      ScrollDirection::Down => self.inputs.scroll_amount * crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER,
     };
     let mut no_motion_confirmations = 0usize;
     for _ in 0..crate::LIVE_TOP_SEEK_MAX_SCROLL_INPUTS {
@@ -251,7 +251,7 @@ impl<'a> SongListScanner<'a> {
         self.known_limits.push(format!("song list scan stopped after max_scrolls={}", self.inputs.max_scrolls));
         return Ok(());
       }
-      self.scroll_region(-self.inputs.scroll_amount, std::time::Duration::from_millis(self.inputs.scroll_settle_ms))?;
+      self.scroll_region(self.inputs.scroll_amount, std::time::Duration::from_millis(self.inputs.scroll_settle_ms))?;
     }
     Ok(())
   }

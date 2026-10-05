@@ -516,7 +516,7 @@ fn run_playlist_select_resolved(
     // Rescan replay rewinds to the top and scroll-seeks the target label instead
     // of replaying a stale observation-index page count.
     // NOTICE(a6c-5): top rewind step size matches live top seek; motion stop deferred.
-    let top_scroll_delta = inputs.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
+    let top_scroll_delta = -inputs.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
     let top_scrolls = top_seek_scroll_budget(inputs.max_scrolls);
     let mut last_scroll_context = None;
     for index in 0..top_scrolls {
@@ -613,7 +613,7 @@ fn run_playlist_select_resolved(
             .scroll(
               &window,
               sidebar_anchor,
-              Scroll::new(0.0, -inputs.scroll_amount),
+              Scroll::new(0.0, inputs.scroll_amount),
               ScrollOptions {
                 policy: InputPolicy::ForegroundPreferred,
                 settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
@@ -623,7 +623,7 @@ fn run_playlist_select_resolved(
             .map_err(|error| format!("playlist select page scroll failed: {error}"))?;
           last_scroll_context = Some(PrecedingScrollContext {
             step_name: format!("scroll-sidebar-target-page-{index}"),
-            delta_y: -inputs.scroll_amount,
+            delta_y: inputs.scroll_amount,
             policy: "foreground_preferred".to_string(),
             settle_ms: inputs.scroll_settle_ms,
             delivery_path: Some(result.selected_path.as_str().to_string()),
@@ -663,7 +663,7 @@ fn run_playlist_select_resolved(
       .scroll(
         &window,
         sidebar_anchor,
-        Scroll::new(0.0, -inputs.scroll_amount),
+        Scroll::new(0.0, inputs.scroll_amount),
         ScrollOptions {
           policy: InputPolicy::BackgroundPreferred,
           settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
@@ -673,7 +673,7 @@ fn run_playlist_select_resolved(
       .map_err(|error| format!("playlist select bottom padding scroll failed: {error}"))?;
     let bottom_padding_scroll = PrecedingScrollContext {
       step_name: format!("scroll-sidebar-bottom-padding-{attempt}"),
-      delta_y: -inputs.scroll_amount,
+      delta_y: inputs.scroll_amount,
       policy: "background_preferred".to_string(),
       settle_ms: inputs.scroll_settle_ms,
       delivery_path: Some(result.selected_path.as_str().to_string()),

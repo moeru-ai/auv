@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CaptureWindowRequestSchema, CaptureWindowResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
-import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
+import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
@@ -82,6 +82,44 @@ describe('runner Driver control surface', () => {
     expect(screen.options?.modifiers).toMatchObject(modifiers)
     expect(targeted.options?.modifiers).toMatchObject(modifiers)
     expect(targeted.window?.windowId).toBe('modifier-target')
+  })
+
+  it('sends window scroll deltas, policy, and ordered candidates unchanged', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          switch (call.method) {
+            case '/auv.api.driver.v1.InputService/ScrollWindowPoint':
+              return toBinary(ScrollWindowPointResponseSchema, create(ScrollWindowPointResponseSchema, { scroll: { deltaY: 300 } }))
+            case '/auv.api.driver.v1.WindowService/ResolveWindow':
+              return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, {
+                window: { ref: { windowId: 'scroll-target' } },
+              }))
+            default:
+              throw new Error(`unexpected unary call: ${call.method}`)
+          }
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const window = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const response = await window.scroll({ x: 10, y: 20 }, { deltaX: -15, deltaY: 300 }, {
+      deliveryCandidates: [ScrollDeliveryCandidate.WINDOW_TARGETED_WHEEL, ScrollDeliveryCandidate.FOREGROUND_HID],
+      policy: InputPolicy.BACKGROUND_ONLY,
+    })
+    const request = fromBinary(ScrollWindowPointRequestSchema, calls[1]!.body)
+    expect(request.window?.windowId).toBe('scroll-target')
+    expect(request.point).toMatchObject({ x: 10, y: 20 })
+    expect(request.scroll).toMatchObject({ deltaX: -15, deltaY: 300 })
+    expect(request.options?.policy).toBe(InputPolicy.BACKGROUND_ONLY)
+    expect(request.options?.deliveryCandidates).toEqual([ScrollDeliveryCandidate.WINDOW_TARGETED_WHEEL, ScrollDeliveryCandidate.FOREGROUND_HID])
+    expect(response.scroll?.deltaY).toBe(300)
   })
 
   it('retains a created mouse and exact window owner across primitive and complete gestures', async () => {
@@ -169,7 +207,7 @@ describe('runner Driver control surface', () => {
     })
 
     expect(window.id).toBe('window-42')
-    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id'])
+    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'scroll'])
 
     const capture = await window.capture()
     expect(capture.window?.frame?.width).toBe(1280)

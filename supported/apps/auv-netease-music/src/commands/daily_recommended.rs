@@ -203,7 +203,7 @@ impl DailyRecommendedRun<'_> {
       match self.session.window().scroll(
         &self.window,
         anchor,
-        Scroll::new(0.0, self.inputs.top_scroll_amount),
+        Scroll::new(0.0, -self.inputs.top_scroll_amount),
         ScrollOptions {
           policy: InputPolicy::BackgroundPreferred,
           settle: std::time::Duration::from_millis(self.inputs.settle_ms),

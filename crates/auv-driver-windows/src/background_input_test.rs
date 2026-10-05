@@ -1,4 +1,4 @@
-use super::native::{make_lparam, make_wheel_wparam, wheel_amount};
+use super::native::{make_lparam, make_wheel_wparam};
 
 #[test]
 fn make_lparam_packs_low_and_high_words() {
@@ -23,18 +23,6 @@ fn make_wheel_wparam_preserves_negative_delta() {
   let packed = make_wheel_wparam(-120).0;
   let high_word = (packed >> 16) as u16 as i16;
   assert_eq!(high_word, -120);
-}
-
-#[test]
-fn wheel_amount_scales_by_wheel_delta_unit() {
-  assert_eq!(wheel_amount(1.0), 120);
-  assert_eq!(wheel_amount(-0.5), -60);
-}
-
-#[test]
-fn wheel_amount_treats_non_finite_delta_as_zero() {
-  assert_eq!(wheel_amount(f64::NAN), 0);
-  assert_eq!(wheel_amount(f64::INFINITY), 0);
 }
 
 #[test]

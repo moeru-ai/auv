@@ -392,6 +392,20 @@ mod no_steal_tests {
   }
 
   #[test]
+  fn scroll_delta_maps_later_content_to_negative_core_graphics_wheel() {
+    // ROOT CAUSE:
+    //
+    // If a caller sent positive `delta_y` to mean "scroll down", macOS
+    // forwarded it unchanged as CoreGraphics `wheel1`, which scrolls up.
+    //
+    // Before the fix, macOS used the CoreGraphics sign while Linux used the
+    // opposite sign for the same `Scroll`.
+    // The fix keeps `Scroll` positive toward later content on every platform.
+    assert_eq!(core_graphics_wheel_pixels(Scroll::new(0.0, 120.0)), (-0.0, -120.0));
+    assert_eq!(core_graphics_wheel_pixels(Scroll::new(-30.0, -45.5)), (30.0, 45.5));
+  }
+
+  #[test]
   fn scroll_attempt_candidates_foreground_preferred_uses_foreground_hid_first() {
     let candidates = scroll_attempt_candidates(&ScrollOptions {
       policy: InputPolicy::ForegroundPreferred,

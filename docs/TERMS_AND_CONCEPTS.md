@@ -1338,6 +1338,19 @@ and product workflows should record the selected path next to observation
 evidence so reviewers can distinguish background delivery from foreground
 fallback.
 
+Scroll delta is the amount carried by a scroll action. It is logical pixels in
+the target's window coordinate space, with positive `delta_y` moving the
+viewport toward later content (down) and positive `delta_x` moving it right,
+matching DOM `WheelEvent` and Playwright `mouse.wheel`. Platform adapters
+convert to native wheel units and signs; the user's natural-scrolling
+preference does not apply to synthetic input. The same convention crosses the
+Runner protocol (`InputService/ScrollWindowPoint`), `auv invoke input.scroll`,
+and the SDKs; see the
+[scroll delta contract](ai/references/driver/2026-10-06-scroll-delta-contract.md)
+for per-platform evidence.
+A delivered wheel event is not a scroll: occluded Chromium renderers can accept
+the event without moving, so scroll success still needs observation evidence.
+
 ## Prepare For Input Options
 
 Prepare for input options is a provisional term for how an action may prepare a

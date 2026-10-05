@@ -359,8 +359,9 @@ fn bench_input_paths(samples: usize) -> (Vec<LatencyStats>, Vec<LatencyRecord>) 
   all_records.extend(key_recs);
 
   // 3. scroll_at
-  println!("  Testing `scroll_at` (delta_y = 1.0)...");
-  let scroll_val = Scroll::new(0.0, 1.0);
+  // One wheel notch (100 logical pixels) keeps the historical benchmark load.
+  println!("  Testing `scroll_at` (delta_y = 100.0)...");
+  let scroll_val = Scroll::new(0.0, 100.0);
   for _ in 0..5 {
     let _ = scroll_at(test_point, scroll_val, Duration::ZERO);
     sleep(Duration::from_millis(5));

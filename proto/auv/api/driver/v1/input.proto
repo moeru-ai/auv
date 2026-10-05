@@ -73,6 +73,14 @@ service InputService {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
+  // Wheel-style scroll at a window-local point. Delivery evidence only: a
+  // delivered wheel event does not prove the target viewport moved.
+  // TODO(screen-point-scroll): screen/display-relative scroll is deferred until
+  // a caller needs it; platform global scroll primitives do not share one API.
+  rpc ScrollWindowPoint(ScrollWindowPointRequest) returns (ScrollWindowPointResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
   // Accepts one complete motion and streams delivery progress. Invalid input
   // ends the RPC with a gRPC status before the first pointer event.
   // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
@@ -244,6 +252,50 @@ message ClickWindowPointResponse {
   Window window = 1;
   WindowPoint point = 2;
   InputActionResult action = 3;
+}
+
+// Ordered pre-execution scroll delivery plan entry. The response's selected
+// InputDeliveryPath is the post-execution fact.
+enum ScrollDeliveryCandidate {
+  SCROLL_DELIVERY_CANDIDATE_UNSPECIFIED = 0;
+  SCROLL_DELIVERY_CANDIDATE_AX_SCROLL = 1;
+  SCROLL_DELIVERY_CANDIDATE_WINDOW_TARGETED_WHEEL = 2;
+  SCROLL_DELIVERY_CANDIDATE_WINDOW_TARGETED_KEYBOARD_SCROLL = 3;
+  SCROLL_DELIVERY_CANDIDATE_FOREGROUND_HID = 4;
+}
+
+// Scroll amount in logical pixels of the target window's coordinate space.
+// Positive delta_y moves the viewport toward later content (down) and positive
+// delta_x moves it right, matching DOM WheelEvent. Both values must be finite
+// and at least one must be non-zero. The Driver converts to native wheel units;
+// the user's natural-scrolling preference does not apply.
+message Scroll {
+  double delta_x = 1;
+  double delta_y = 2;
+}
+
+message ScrollOptions {
+  InputPolicy policy = 1;
+  // Ordered delivery candidates without duplicates. Empty selects the Driver
+  // default ladder; the policy still decides whether foreground HID is legal.
+  repeated ScrollDeliveryCandidate delivery_candidates = 2;
+  google.protobuf.Duration settle = 3;
+}
+
+message ScrollWindowPointRequest {
+  // A previously resolved child resource. The Runner refreshes this reference
+  // before delivery so stale platform handles are never trusted as snapshots.
+  WindowRef window = 1;
+  WindowPoint point = 2;
+  Scroll scroll = 3;
+  ScrollOptions options = 4;
+}
+
+message ScrollWindowPointResponse {
+  Window window = 1;
+  WindowPoint point = 2;
+  Scroll scroll = 3;
+  InputActionResult action = 4;
 }
 
 message ClickScreenPointRequest {

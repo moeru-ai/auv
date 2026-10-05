@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ashpd::desktop::remote_desktop::{DeviceType, KeyState, NotifyPointerAxisOptions, RemoteDesktop, SelectDevicesOptions};
+use ashpd::desktop::remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions};
 use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
 use ashpd::desktop::{PersistMode, Session};
 use ashpd::enumflags2::BitFlags;
@@ -43,6 +43,7 @@ pub struct InputSession {
   devices: BitFlags<DeviceType>,
   streams: Vec<ScreenCastStream>,
   output_mappings: Vec<OutputMapping>,
+  wheel_remainder: (f64, f64),
 }
 
 impl std::fmt::Debug for InputSession {
@@ -69,6 +70,7 @@ impl InputSession {
       devices: BitFlags::empty(),
       streams: Vec::new(),
       output_mappings: Vec::new(),
+      wheel_remainder: (0.0, 0.0),
     };
     let persistent = restore_tokens.is_some() && input.remote_desktop.version() >= 2;
     let start = |restore: Option<&str>| {
@@ -221,15 +223,24 @@ impl InputSession {
 
   pub fn scroll_at(&mut self, point: Point, scroll: Scroll) -> DriverResult<()> {
     self.require_pointer()?;
+    let (notches, remainder) = crate::native::wheel_notches(self.wheel_remainder, scroll)?;
     self.move_pointer_to(point)?;
-    self.scroll(scroll)
-  }
-
-  fn scroll(&self, scroll: Scroll) -> DriverResult<()> {
-    run("notify pointer axis", async {
-      self.remote_desktop.notify_pointer_axis(&self.session, scroll.delta_x, scroll.delta_y, Default::default()).await?;
-      self.remote_desktop.notify_pointer_axis(&self.session, 0.0, 0.0, NotifyPointerAxisOptions::default().set_finish(true)).await
-    })
+    // NOTICE(portal-discrete-wheel): wheel scrolls use NotifyPointerAxisDiscrete.
+    // The continuous NotifyPointerAxis is a finger/touchpad axis: GNOME scaled
+    // it by 12 in Chromium and a `finish` event started kinetic scrolling, so a
+    // 120 px request moved ~5700 px (2026-10-06, `neko-gpu-1`). Discrete steps
+    // are positive toward later content (down/right).
+    run("notify pointer axis discrete", async {
+      if notches.1 != 0 {
+        self.remote_desktop.notify_pointer_axis_discrete(&self.session, Axis::Vertical, notches.1, Default::default()).await?;
+      }
+      if notches.0 != 0 {
+        self.remote_desktop.notify_pointer_axis_discrete(&self.session, Axis::Horizontal, notches.0, Default::default()).await?;
+      }
+      Ok::<(), ashpd::Error>(())
+    })?;
+    self.wheel_remainder = remainder;
+    Ok(())
   }
 
   fn notify_keyboard_keysym(&self, keysym: i32, state: KeyState) -> DriverResult<()> {

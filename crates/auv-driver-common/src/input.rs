@@ -363,6 +363,15 @@ pub struct KeyPressOptions {
   pub settle: Duration,
 }
 
+/// Scroll amount for one wheel-style scroll action.
+///
+/// Deltas are logical pixels in the target's window coordinate space (macOS
+/// points, DPI-scaled Windows pixels, Wayland logical pixels). Positive
+/// `delta_y` moves the viewport toward later content (scrolls down) and
+/// positive `delta_x` moves it right, matching DOM `WheelEvent` and Playwright
+/// `mouse.wheel`. Platform adapters own the conversion to native wheel units
+/// and signs; the user's natural-scrolling preference does not apply to
+/// synthetic input. See `docs/ai/references/driver/2026-10-06-scroll-delta-contract.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scroll {
   pub delta_x: f64,

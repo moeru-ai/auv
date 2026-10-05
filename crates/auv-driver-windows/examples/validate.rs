@@ -25,7 +25,7 @@
 //!   type <text>                    type text into the foreground window (3s focus delay)
 //!   press <key>                    press a key/shortcut (e.g. "enter", "ctrl+a")
 //!   click <x> <y>                  left click at screen coordinates
-//!   scroll <x> <y> <delta_y>       scroll at screen coordinates
+//!   scroll <x> <y> <delta_y>       scroll logical pixels at screen coordinates (positive = down)
 //!   move <substr> <x> <y>          move a window to a screen position
 //!   resize <substr> <w> <h>        resize a window
 //!   minimize <substr>              minimize a window

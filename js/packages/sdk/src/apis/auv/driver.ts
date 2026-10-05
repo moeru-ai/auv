@@ -19,6 +19,8 @@ import type {
   MoveMouseStreamResponse,
   PasteTextOptionsSchema,
   ScreenClickOptionsSchema,
+  ScrollOptionsSchema,
+  ScrollSchema,
   TypeTextOptionsSchema,
 } from '../../gen/auv/api/driver/v1/input_pb'
 import type { ShowOverlayRequestSchema } from '../../gen/auv/api/driver/v1/overlay_pb'
@@ -115,6 +117,12 @@ export interface WindowClient {
   click: (point: Init<typeof WindowPointSchema>, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickWindowPoint.output>>
   findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof TextRecognitionService.method.findWindowText.output>>
   readonly id: string
+  /**
+   * Wheel-scrolls at a window-local point. Deltas are logical pixels: positive
+   * `deltaY` scrolls toward later content (down) and positive `deltaX` scrolls
+   * right, like DOM `WheelEvent`. The result is delivery evidence only.
+   */
+  scroll: (point: Init<typeof WindowPointSchema>, scroll: Init<typeof ScrollSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.scrollWindowPoint.output>>
 }
 type Init<T extends DescMessage> = MessageInitShape<T>
 type InputFields<T extends DescMessage, K extends keyof Init<T>> = Omit<Init<T>, '$typeName' | K>
@@ -179,6 +187,12 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       }, { signal })
     },
     id,
+    scroll: (point, scroll, scrollOptions, options) => unary(InputService.method.scrollWindowPoint, {
+      options: scrollOptions,
+      point,
+      scroll,
+      window: { windowId: id },
+    }, options),
   })
 
   return {

@@ -60,7 +60,7 @@ pub(crate) fn click_at_window(
 
 #[cfg(target_os = "windows")]
 pub(crate) fn scroll_at_window(window: &Window, screen_point: Point, scroll: Scroll) -> DriverResult<()> {
-  native::scroll(window, screen_point, scroll)
+  native::scroll(window, screen_point, crate::input::wheel_units(scroll)?)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -87,14 +87,14 @@ pub(crate) fn mouse_backend(window: Window) -> DriverResult<std::sync::Arc<dyn a
 mod native {
   use auv_driver_common::error::DriverResult;
   use auv_driver_common::geometry::Point;
-  use auv_driver_common::input::{Click, ClickModifiers, Scroll};
+  use auv_driver_common::input::{Click, ClickModifiers};
   use auv_driver_common::window::Window;
   use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
   use windows::Win32::Graphics::Gdi::ScreenToClient;
   use windows::Win32::System::SystemServices::{MK_CONTROL, MK_LBUTTON, MK_SHIFT};
   use windows::Win32::UI::WindowsAndMessaging::{
-    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, ChildWindowFromPointEx, PostMessageW, WHEEL_DELTA, WM_LBUTTONDBLCLK,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
+    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, ChildWindowFromPointEx, PostMessageW, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
   };
 
   use crate::error::backend;
@@ -238,18 +238,16 @@ mod native {
     })
   }
 
-  pub(super) fn scroll(window: &Window, screen_point: Point, scroll: Scroll) -> DriverResult<()> {
+  pub(super) fn scroll(window: &Window, screen_point: Point, units: crate::input::WheelUnits) -> DriverResult<()> {
     let target = resolve_target_hwnd(window, screen_point)?;
     // WM_MOUSEWHEEL/WM_MOUSEHWHEEL report the pointer position in *screen*
     // coordinates, unlike WM_LBUTTONDOWN/UP which use client coordinates.
     let lparam = make_lparam(round_to_i32(screen_point.x), round_to_i32(screen_point.y));
-    let vertical = wheel_amount(scroll.delta_y);
-    if vertical != 0 {
-      post(target, WM_MOUSEWHEEL, make_wheel_wparam(vertical), lparam)?;
+    if units.vertical != 0 {
+      post(target, WM_MOUSEWHEEL, make_wheel_wparam(units.vertical), lparam)?;
     }
-    let horizontal = wheel_amount(scroll.delta_x);
-    if horizontal != 0 {
-      post(target, WM_MOUSEHWHEEL, make_wheel_wparam(horizontal), lparam)?;
+    if units.horizontal != 0 {
+      post(target, WM_MOUSEHWHEEL, make_wheel_wparam(units.horizontal), lparam)?;
     }
     Ok(())
   }
@@ -303,13 +301,6 @@ mod native {
   pub(super) fn make_wheel_wparam(delta: i32) -> WPARAM {
     let high = (delta as i16 as u16) as u32;
     WPARAM((high << 16) as usize)
-  }
-
-  pub(super) fn wheel_amount(delta: f64) -> i32 {
-    if !delta.is_finite() {
-      return 0;
-    }
-    (delta * f64::from(WHEEL_DELTA)).round() as i32
   }
 }
 

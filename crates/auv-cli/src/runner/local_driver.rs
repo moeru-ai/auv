@@ -704,17 +704,38 @@ impl InputService for LocalInputService {
     let point = window_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
     let options = click_options_from_proto(request.options)?;
     let window = resolve_window_ref(&self.session, window_ref)?;
-    let size = window.frame.size;
-    let raw = point.point();
-    if raw.x < 0.0 || raw.y < 0.0 || raw.x > size.width || raw.y > size.height {
-      return Err(Status::invalid_argument("point must be inside the current Window bounds"));
-    }
+    require_point_inside_window(&window, point)?;
     let session = self.session.clone();
     let target = window.clone();
     let action = run_input_blocking(move || session.window().click(&target, point, options)).await?;
     Ok(Response::new(proto::ClickWindowPointResponse {
       window: Some(window_to_proto(window)),
       point: Some(window_point_to_proto(point)),
+      action: Some(input_action_to_proto(action)?),
+    }))
+  }
+
+  async fn scroll_window_point(
+    &self,
+    request: Request<proto::ScrollWindowPointRequest>,
+  ) -> Result<Response<proto::ScrollWindowPointResponse>, Status> {
+    let request = request.into_inner();
+    let window_ref = request.window.ok_or_else(|| Status::invalid_argument("window is required"))?;
+    let point = window_point_from_proto(request.point.ok_or_else(|| Status::invalid_argument("point is required"))?)?;
+    let scroll = scroll_from_proto(request.scroll)?;
+    let options = scroll_options_from_proto(request.options)?;
+    let window = resolve_window_ref(&self.session, window_ref)?;
+    require_point_inside_window(&window, point)?;
+    let session = self.session.clone();
+    let target = window.clone();
+    let action = run_input_blocking(move || session.window().scroll(&target, point, scroll, options)).await?;
+    Ok(Response::new(proto::ScrollWindowPointResponse {
+      window: Some(window_to_proto(window)),
+      point: Some(window_point_to_proto(point)),
+      scroll: Some(proto::Scroll {
+        delta_x: scroll.delta_x,
+        delta_y: scroll.delta_y,
+      }),
       action: Some(input_action_to_proto(action)?),
     }))
   }
@@ -935,6 +956,17 @@ fn window_point_from_proto(point: proto::WindowPoint) -> Result<auv_driver::Wind
     return Err(Status::invalid_argument("point coordinates must be finite"));
   }
   Ok(auv_driver::WindowPoint::new(point.x, point.y))
+}
+
+/// Window-point input is accepted only inside the freshly resolved Window, so a
+/// stale caller geometry cannot deliver input to whatever lies outside it.
+fn require_point_inside_window(window: &auv_driver::Window, point: auv_driver::WindowPoint) -> Result<(), Status> {
+  let size = window.frame.size;
+  let raw = point.point();
+  if raw.x < 0.0 || raw.y < 0.0 || raw.x > size.width || raw.y > size.height {
+    return Err(Status::invalid_argument("point must be inside the current Window bounds"));
+  }
+  Ok(())
 }
 
 fn screen_point_from_proto(point: proto::ScreenPoint) -> Result<auv_driver::ScreenPoint, Status> {
@@ -1247,6 +1279,50 @@ fn click_options_from_proto(options: Option<proto::ClickOptions>) -> Result<auv_
       Ok(proto::WindowClickStrategy::PidTargeted) => auv_driver::WindowClickStrategy::PidTargeted,
       Err(_) => return Err(Status::invalid_argument("options.window_strategy is unknown")),
     },
+  })
+}
+
+fn scroll_from_proto(scroll: Option<proto::Scroll>) -> Result<auv_driver::Scroll, Status> {
+  let scroll = scroll.ok_or_else(|| Status::invalid_argument("scroll is required"))?;
+  if !scroll.delta_x.is_finite() || !scroll.delta_y.is_finite() {
+    return Err(Status::invalid_argument("scroll deltas must be finite"));
+  }
+  if scroll.delta_x == 0.0 && scroll.delta_y == 0.0 {
+    return Err(Status::invalid_argument("scroll requires a non-zero delta_x or delta_y"));
+  }
+  Ok(auv_driver::Scroll::new(scroll.delta_x, scroll.delta_y))
+}
+
+fn scroll_options_from_proto(options: Option<proto::ScrollOptions>) -> Result<auv_driver::ScrollOptions, Status> {
+  let Some(options) = options else {
+    return Ok(auv_driver::ScrollOptions::default());
+  };
+  let mut delivery_strategy = auv_driver::ScrollDeliveryStrategy::default();
+  if !options.delivery_candidates.is_empty() {
+    let mut candidates = Vec::with_capacity(options.delivery_candidates.len());
+    for value in options.delivery_candidates {
+      let candidate = match proto::ScrollDeliveryCandidate::try_from(value) {
+        Ok(proto::ScrollDeliveryCandidate::AxScroll) => auv_driver::ScrollDeliveryCandidate::AxScroll,
+        Ok(proto::ScrollDeliveryCandidate::WindowTargetedWheel) => auv_driver::ScrollDeliveryCandidate::WindowTargetedWheel,
+        Ok(proto::ScrollDeliveryCandidate::WindowTargetedKeyboardScroll) => {
+          auv_driver::ScrollDeliveryCandidate::WindowTargetedKeyboardScroll
+        }
+        Ok(proto::ScrollDeliveryCandidate::ForegroundHid) => auv_driver::ScrollDeliveryCandidate::ForegroundHid,
+        Ok(proto::ScrollDeliveryCandidate::Unspecified) | Err(_) => {
+          return Err(Status::invalid_argument("options.delivery_candidates contains an unknown candidate"));
+        }
+      };
+      if candidates.contains(&candidate) {
+        return Err(Status::invalid_argument("options.delivery_candidates must not repeat a candidate"));
+      }
+      candidates.push(candidate);
+    }
+    delivery_strategy = auv_driver::ScrollDeliveryStrategy { candidates };
+  }
+  Ok(auv_driver::ScrollOptions {
+    policy: input_policy_from_proto(options.policy)?,
+    delivery_strategy,
+    settle: duration_from_proto(options.settle, std::time::Duration::ZERO, "options.settle")?,
   })
 }
 
