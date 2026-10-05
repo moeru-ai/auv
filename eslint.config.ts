@@ -33,6 +33,7 @@ export default defineConfig({
     'crates/**',
     'supported/**',
     'devtools/**',
+    'bucket/**',
   ],
 }, {
   rules: {
