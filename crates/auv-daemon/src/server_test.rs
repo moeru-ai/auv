@@ -13,15 +13,76 @@ fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
     id: None,
     listeners,
     store_root: root.join("store"),
-    pairing_store: None,
+    pairing_store: root.join("pairings.json"),
     discovery_file: None,
-    publish_discovery: false,
+    register: false,
     daemon_idle_timeout: None,
     runner_providers: Vec::new(),
     first_party_runners: Default::default(),
     #[cfg(windows)]
     enable_device_entry: false,
   }
+}
+
+/// Paired TCP listener on an ephemeral loopback port. HTTP never treats
+/// loopback as the daemon owner, so HTTP route tests pair a Device first.
+fn paired_loopback() -> ListenEndpoint {
+  ListenEndpoint::Remote {
+    host: "127.0.0.1".into(),
+    port: 0,
+  }
+}
+
+/// One paired loopback listener plus an owner channel for issuing tokens.
+/// Unix daemons add their owner socket themselves; Windows adds its owner pipe
+/// only when no listener is configured, so tests name one explicitly.
+fn paired_http_listeners() -> Vec<ListenEndpoint> {
+  #[allow(unused_mut)]
+  let mut listeners = vec![paired_loopback()];
+  #[cfg(windows)]
+  listeners.push(ListenEndpoint::NamedPipe {
+    name: format!("auv-test-{}", uuid::Uuid::now_v7()),
+  });
+  listeners
+}
+
+fn remote_address(server: &Server) -> std::net::SocketAddr {
+  server
+    .endpoints()
+    .iter()
+    .find_map(|endpoint| match endpoint {
+      BoundEndpoint::Remote(address) => Some(*address),
+      _ => None,
+    })
+    .expect("paired TCP listener")
+}
+
+fn owner_endpoint(server: &Server) -> auv_api_client::ConnectEndpoint {
+  server.discovery_endpoint().expect("owner IPC listener").to_string().parse().unwrap()
+}
+
+/// Issues a token over the owner channel and enrolls one Device over paired
+/// TCP, returning its bearer.
+async fn pair_device(owner: auv_api_client::ConnectEndpoint, remote: std::net::SocketAddr, device_id: &str) -> String {
+  let token = GrpcClient::connect(owner)
+    .await
+    .unwrap()
+    .pairing()
+    .create_pairing_token(proto::CreatePairingTokenRequest { ttl: None })
+    .await
+    .unwrap()
+    .token;
+  auv_api_client::protocol::grpc::clients::daemon::v1::pairing::Client::pair_device(
+    format!("http://{remote}").parse().unwrap(),
+    proto::PairDeviceRequest {
+      token,
+      device_id: device_id.into(),
+      label: device_id.into(),
+    },
+  )
+  .await
+  .unwrap()
+  .device_credential
 }
 
 #[cfg(windows)]
@@ -33,15 +94,7 @@ async fn ordinary_windows_server_does_not_open_system_device_entry() {
   // ordinary `auv serve` fails before it can bind its existing API listener.
   // The SCM mode alone opts into LocalSystem-only Device entry state.
   let root = tempfile::tempdir().unwrap();
-  let server = super::Server::bind(config(
-    vec![ListenEndpoint::Tcp {
-      host: "127.0.0.1".into(),
-      port: 0,
-    }],
-    root.path(),
-  ))
-  .await
-  .unwrap();
+  let server = super::Server::bind(config(Vec::new(), root.path())).await.unwrap();
 
   assert!(server.device_local.is_none());
   assert!(!root.path().join("store/control/device-entry").exists());
@@ -80,20 +133,12 @@ async fn production_device_local_socket_serves_management_without_shared_routes(
   use tonic::transport::Endpoint;
 
   let root = tempfile::tempdir().unwrap();
-  let server = Server::bind(config(
-    vec![ListenEndpoint::Tcp {
-      host: "127.0.0.1".into(),
-      port: 0,
-    }],
-    root.path(),
-  ))
-  .await
-  .unwrap();
-  let BoundEndpoint::Tcp(address) = server.endpoint() else {
-    panic!("TCP endpoint")
+  let server = Server::bind(config(Vec::new(), root.path())).await.unwrap();
+  let BoundEndpoint::Unix(owner_socket) = server.endpoint() else {
+    panic!("owner Unix endpoint")
   };
 
-  let address = *address;
+  let owner_socket = owner_socket.clone();
   let socket = server.device_local.socket_path().to_path_buf();
   let shutdown = CancellationToken::new();
   let task = tokio::spawn(server.serve(shutdown.clone()));
@@ -119,15 +164,16 @@ async fn production_device_local_socket_serves_management_without_shared_routes(
 
   assert_eq!(control_mode, 0o700, "the socket parent is traversable by this daemon UID and root only");
 
-  let connection_socket = socket.clone();
-  let channel = Endpoint::try_from("http://[::]:50051")
-    .unwrap()
-    .connect_with_connector(tower::service_fn(move |_: tonic::codegen::http::Uri| {
-      let socket = connection_socket.clone();
-      async move { tokio::net::UnixStream::connect(socket).await.map(hyper_util::rt::TokioIo::new) }
-    }))
-    .await
-    .unwrap();
+  let unix_channel = |socket: std::path::PathBuf| async move {
+    Endpoint::try_from("http://[::]:50051")
+      .unwrap()
+      .connect_with_connector(tower::service_fn(move |_: tonic::codegen::http::Uri| {
+        let socket = socket.clone();
+        async move { tokio::net::UnixStream::connect(socket).await.map(hyper_util::rt::TokioIo::new) }
+      }))
+      .await
+  };
+  let channel = unix_channel(socket.clone()).await.unwrap();
 
   let mut local = DeviceLocalServiceClient::new(channel.clone());
 
@@ -138,7 +184,7 @@ async fn production_device_local_socket_serves_management_without_shared_routes(
 
   assert_eq!(missing_device_route.code(), tonic::Code::Unimplemented);
 
-  let mut shared = DeviceLocalServiceClient::connect(format!("http://{address}")).await.unwrap();
+  let mut shared = DeviceLocalServiceClient::new(unix_channel(owner_socket).await.unwrap());
   let missing_local_route = shared.get_policy(proto::GetPolicyRequest {}).await.unwrap_err();
 
   assert_eq!(missing_local_route.code(), tonic::Code::Unimplemented);
@@ -163,15 +209,7 @@ async fn deep_store_root_still_binds_private_device_local_socket() {
   let root = tempfile::tempdir().unwrap();
   let deep = root.path().join("nested".repeat(15)).join("project".repeat(15));
   std::fs::create_dir_all(&deep).unwrap();
-  let server = Server::bind(config(
-    vec![ListenEndpoint::Tcp {
-      host: "127.0.0.1".into(),
-      port: 0,
-    }],
-    &deep,
-  ))
-  .await
-  .unwrap();
+  let server = Server::bind(config(Vec::new(), &deep)).await.unwrap();
   let socket = server.device_local.socket_path().to_path_buf();
 
   assert!(socket.as_os_str().len() < 104);
@@ -291,26 +329,17 @@ async fn remote_display_runner() -> (runner_provider::RunnerProviderConfig, toki
 #[tokio::test]
 async fn typed_control_and_rest_share_the_daemon_backend() {
   let root = tempfile::tempdir().unwrap();
-  let server = Server::bind(config(
-    vec![ListenEndpoint::Tcp {
-      host: "127.0.0.1".into(),
-      port: 0,
-    }],
-    root.path(),
-  ))
-  .await
-  .unwrap();
-  let BoundEndpoint::Tcp(address) = server.endpoint() else {
-    panic!("TCP endpoint")
-  };
-  let address = *address;
+  let server = Server::bind(config(paired_http_listeners(), root.path())).await.unwrap();
+  let address = remote_address(&server);
+  let owner = owner_endpoint(&server);
   let shutdown = CancellationToken::new();
   let task = tokio::spawn(server.serve(shutdown.clone()));
-  let client = GrpcClient::connect(format!("http://{address}").parse().unwrap()).await.unwrap();
+  let client = GrpcClient::connect(owner.clone()).await.unwrap();
   let devices = client.devices().list_devices().await.unwrap();
   assert_eq!(devices.len(), 1);
   assert!(devices[0].local);
-  let http = reqwest::Client::new();
+  let credential = pair_device(owner, address, "rest-client").await;
+  let http = authorized_http(&credential);
 
   let discovery = http.get(format!("http://{address}/apis/auv/daemon/v1")).send().await.unwrap();
   assert_eq!(discovery.status(), reqwest::StatusCode::OK);
@@ -393,20 +422,8 @@ async fn device_entry_loopback_requires_authorization_before_selection() {
   let root = tempfile::tempdir().unwrap();
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   disabled_device_entry_policy(root.path());
-  let server = Server::bind(config(
-    vec![ListenEndpoint::Tcp {
-      host: "127.0.0.1".into(),
-      port: 0,
-    }],
-    root.path(),
-  ))
-  .await
-  .unwrap();
-  let BoundEndpoint::Tcp(address) = server.endpoint() else {
-    panic!("TCP endpoint")
-  };
-
-  let address = *address;
+  let server = Server::bind(config(vec![paired_loopback()], root.path())).await.unwrap();
+  let address = remote_address(&server);
   let shutdown = CancellationToken::new();
   let task = tokio::spawn(server.serve(shutdown.clone()));
   let mut devices = GrpcClient::connect(format!("http://{address}").parse().unwrap()).await.unwrap().devices();
@@ -453,6 +470,94 @@ async fn device_entry_loopback_requires_authorization_before_selection() {
 
   shutdown.cancel();
   task.await.unwrap().unwrap();
+}
+
+// ROOT CAUSE:
+//
+// If only an http:// listener was configured with a pairing store, that
+// listener required a bearer and no owner channel was guaranteed, so the first
+// pairing token could not be issued without a hand-configured Unix listener.
+//
+// Before the fix, first pairing worked only through a hidden Runner parent
+// socket. The fix always binds an owner socket and registers it for discovery.
+#[cfg(unix)]
+#[tokio::test]
+async fn registered_daemon_with_only_a_paired_listener_publishes_its_owner_socket() {
+  let root = tempfile::tempdir().unwrap();
+  let descriptor = root.path().join("daemon.json");
+  let mut options = config(vec![paired_loopback()], root.path());
+  options.discovery_file = Some(descriptor.clone());
+  options.register = true;
+  let server = Server::bind(options).await.unwrap();
+  let remote = remote_address(&server);
+  let owner_socket = root.path().join("auv.sock");
+
+  assert_eq!(server.discovery_endpoint(), Some(&BoundEndpoint::Unix(owner_socket.clone())));
+
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+  for _ in 0..100 {
+    if descriptor.exists() {
+      break;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+  }
+  let published = auv::discovery::read_descriptor(&descriptor).unwrap().expect("registered daemon descriptor");
+
+  assert_eq!(published.endpoint(), format!("unix://{}", owner_socket.display()));
+
+  let anonymous = GrpcClient::connect(format!("http://{remote}").parse().unwrap()).await.unwrap();
+
+  assert_eq!(
+    anonymous.pairing().create_pairing_token(proto::CreatePairingTokenRequest { ttl: None }).await.unwrap_err().code(),
+    tonic::Code::Unauthenticated
+  );
+
+  let credential = pair_device(auv_api_client::ConnectEndpoint::Unix(owner_socket), remote, "first-device").await;
+  let paired = GrpcClient::connect_paired(auv_api_client::PairedConnectConfig {
+    endpoint: format!("http://{remote}").parse().unwrap(),
+    device_credential: credential,
+  })
+  .await
+  .unwrap();
+
+  assert_eq!(paired.devices().list_devices().await.unwrap().len(), 1);
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unregistered_daemon_uses_a_private_owner_socket_and_publishes_nothing() {
+  let root = tempfile::tempdir().unwrap();
+  let descriptor = root.path().join("daemon.json");
+  let mut options = config(vec![paired_loopback()], root.path());
+  options.discovery_file = Some(descriptor.clone());
+  let server = Server::bind(options).await.unwrap();
+  let Some(BoundEndpoint::Unix(owner_socket)) = server.discovery_endpoint().cloned() else {
+    panic!("owner Unix endpoint")
+  };
+
+  assert_ne!(owner_socket, root.path().join("auv.sock"), "the default socket stays free for the registered daemon");
+
+  let shutdown = CancellationToken::new();
+  let task = tokio::spawn(server.serve(shutdown.clone()));
+  let token = GrpcClient::connect(auv_api_client::ConnectEndpoint::Unix(owner_socket.clone()))
+    .await
+    .unwrap()
+    .pairing()
+    .create_pairing_token(proto::CreatePairingTokenRequest { ttl: None })
+    .await
+    .unwrap();
+
+  assert!(!token.token.is_empty());
+  assert!(!descriptor.exists());
+
+  shutdown.cancel();
+  task.await.unwrap().unwrap();
+
+  assert!(!owner_socket.exists());
 }
 
 #[cfg(unix)]
@@ -534,23 +639,16 @@ async fn owner_verified_unix_can_reach_device_entry_policy() {
 async fn http_and_websocket_invoke_share_the_runner_route() {
   let root = tempfile::tempdir().unwrap();
   let (provider, runner_task) = remote_display_runner().await;
-  let mut daemon_config = config(
-    vec![ListenEndpoint::Tcp {
-      host: "127.0.0.1".into(),
-      port: 0,
-    }],
-    root.path(),
-  );
+  let mut daemon_config = config(paired_http_listeners(), root.path());
   daemon_config.runner_providers.push(provider);
   let server = Server::bind(daemon_config).await.unwrap();
-  let BoundEndpoint::Tcp(address) = server.endpoint() else {
-    panic!("TCP endpoint")
-  };
-  let address = *address;
+  let address = remote_address(&server);
+  let owner = owner_endpoint(&server);
   let shutdown = CancellationToken::new();
   let server_task = tokio::spawn(server.serve(shutdown.clone()));
+  let credential = pair_device(owner, address, "invoke-client").await;
 
-  let response = reqwest::Client::new()
+  let response = authorized_http(&credential)
     .post(format!("http://{address}/apis/auv/runtime/v1/invoke/{DISPLAY_SERVICE}/ListDisplays"))
     .header(reqwest::header::CONTENT_TYPE, "application/protobuf")
     .header("auv-runner-class", TEST_RUNNER_CLASS)
@@ -567,7 +665,7 @@ async fn http_and_websocket_invoke_share_the_runner_route() {
     .send(tokio_tungstenite::tungstenite::Message::Binary(
       transport_proto::ClientMessage {
         message: Some(transport_proto::client_message::Message::Open(transport_proto::Open {
-          credential: String::new(),
+          credential: credential.clone(),
           service: DISPLAY_SERVICE.into(),
           method: "ListDisplays".into(),
           runner_class: TEST_RUNNER_CLASS.into(),
@@ -615,6 +713,13 @@ async fn http_and_websocket_invoke_share_the_runner_route() {
   runner_task.abort();
 }
 
+/// HTTP client that sends one paired Device bearer on every request.
+fn authorized_http(credential: &str) -> reqwest::Client {
+  let mut headers = reqwest::header::HeaderMap::new();
+  headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer {credential}").parse().unwrap());
+  reqwest::Client::builder().default_headers(headers).build().unwrap()
+}
+
 fn websocket_server_message(message: tokio_tungstenite::tungstenite::Message) -> transport_proto::ServerMessage {
   transport_proto::ServerMessage::decode(message.into_data()).unwrap()
 }
@@ -631,37 +736,9 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   let root = tempfile::tempdir().unwrap();
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   disabled_device_entry_policy(root.path());
-  let mut server_config = config(
-    vec![
-      ListenEndpoint::Tcp {
-        host: "127.0.0.1".into(),
-        port: 0,
-      },
-      ListenEndpoint::Remote {
-        host: "127.0.0.1".into(),
-        port: 0,
-      },
-    ],
-    root.path(),
-  );
-  server_config.pairing_store = Some(root.path().join("pairings.json"));
-  let server = Server::bind(server_config).await.unwrap();
-  let local = server
-    .endpoints()
-    .iter()
-    .find_map(|endpoint| match endpoint {
-      BoundEndpoint::Tcp(value) => Some(*value),
-      _ => None,
-    })
-    .unwrap();
-  let remote = server
-    .endpoints()
-    .iter()
-    .find_map(|endpoint| match endpoint {
-      BoundEndpoint::Remote(value) => Some(*value),
-      _ => None,
-    })
-    .unwrap();
+  let server = Server::bind(config(paired_http_listeners(), root.path())).await.unwrap();
+  let owner = owner_endpoint(&server);
+  let remote = remote_address(&server);
   let shutdown = CancellationToken::new();
   let task = tokio::spawn(server.serve(shutdown.clone()));
   let http = reqwest::Client::new();
@@ -721,16 +798,24 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   };
   assert_eq!(end.grpc_status, tonic::Code::Unauthenticated as i32);
 
-  let token = http
-    .post(format!("http://{local}/apis/auv/daemon/v1/pairing/tokens"))
+  let anonymous_token = http
+    .post(format!("http://{remote}/apis/auv/daemon/v1/pairing/tokens"))
     .header(reqwest::header::CONTENT_TYPE, "application/json")
     .body(r#"{"ttl":"60s"}"#)
     .send()
     .await
     .unwrap();
-  assert_eq!(token.status(), reqwest::StatusCode::OK);
-  let token: serde_json::Value = serde_json::from_slice(&token.bytes().await.unwrap()).unwrap();
-  let token = token["token"].as_str().unwrap();
+  assert_eq!(anonymous_token.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+  let token = GrpcClient::connect(owner)
+    .await
+    .unwrap()
+    .pairing()
+    .create_pairing_token(proto::CreatePairingTokenRequest { ttl: None })
+    .await
+    .unwrap()
+    .token;
+  let token = token.as_str();
 
   let enrollment = http
     .post(format!("http://{remote}/apis/auv/daemon/v1/pairing/devices"))
@@ -761,6 +846,16 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   assert_eq!(enabled.status(), reqwest::StatusCode::OK);
   let enabled: serde_json::Value = serde_json::from_slice(&enabled.bytes().await.unwrap()).unwrap();
   assert!(enabled.get("changed").is_none(), "ProtoJSON omits default-valued scalar fields");
+
+  let paired_token = http
+    .post(format!("http://{remote}/apis/auv/daemon/v1/pairing/tokens"))
+    .bearer_auth(&credential)
+    .header(reqwest::header::CONTENT_TYPE, "application/json")
+    .body(r#"{"ttl":"60s"}"#)
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(paired_token.status(), reqwest::StatusCode::FORBIDDEN);
 
   let devices = http.get(format!("http://{remote}/apis/auv/daemon/v1/devices")).bearer_auth(&credential).send().await.unwrap();
   assert_eq!(devices.status(), reqwest::StatusCode::OK);
@@ -843,43 +938,15 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
 }
 
 #[tokio::test]
-async fn local_owner_and_paired_bearer_share_live_pairing_administration() {
+async fn only_the_local_owner_issues_pairing_tokens_while_paired_devices_share_administration() {
   let root = tempfile::tempdir().unwrap();
-  let mut server_config = config(
-    vec![
-      ListenEndpoint::Tcp {
-        host: "127.0.0.1".into(),
-        port: 0,
-      },
-      ListenEndpoint::Remote {
-        host: "127.0.0.1".into(),
-        port: 0,
-      },
-    ],
-    root.path(),
-  );
-  server_config.pairing_store = Some(root.path().join("pairings.json"));
-  let server = Server::bind(server_config).await.unwrap();
-  let local = server
-    .endpoints()
-    .iter()
-    .find_map(|endpoint| match endpoint {
-      BoundEndpoint::Tcp(value) => Some(*value),
-      _ => None,
-    })
-    .unwrap();
-  let remote = server
-    .endpoints()
-    .iter()
-    .find_map(|endpoint| match endpoint {
-      BoundEndpoint::Remote(value) => Some(*value),
-      _ => None,
-    })
-    .unwrap();
+  let server = Server::bind(config(paired_http_listeners(), root.path())).await.unwrap();
+  let owner = owner_endpoint(&server);
+  let remote = remote_address(&server);
   let shutdown = CancellationToken::new();
   let task = tokio::spawn(server.serve(shutdown.clone()));
 
-  let local_client = GrpcClient::connect(format!("http://{local}").parse().unwrap()).await.unwrap();
+  let local_client = GrpcClient::connect(owner).await.unwrap();
   let token_a = local_client.pairing().create_pairing_token(proto::CreatePairingTokenRequest { ttl: None }).await.unwrap().token;
   let enrollment_a = auv_api_client::protocol::grpc::clients::daemon::v1::pairing::Client::pair_device(
     format!("http://{remote}").parse().unwrap(),
@@ -897,7 +964,16 @@ async fn local_owner_and_paired_bearer_share_live_pairing_administration() {
   })
   .await
   .unwrap();
-  let token_b = paired_a.pairing().create_pairing_token(proto::CreatePairingTokenRequest { ttl: None }).await.unwrap().token;
+  // ROOT CAUSE:
+  //
+  // If a paired bearer could issue tokens, one leaked credential could enroll
+  // replacement Devices that survive its own revocation.
+  //
+  // Before the fix, any paired Device could create pairing tokens.
+  // The fix keeps token issuance on the owner-checked local channel only.
+  let denied = paired_a.pairing().create_pairing_token(proto::CreatePairingTokenRequest { ttl: None }).await.unwrap_err();
+  assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+  let token_b = local_client.pairing().create_pairing_token(proto::CreatePairingTokenRequest { ttl: None }).await.unwrap().token;
   let enrollment_b = auv_api_client::protocol::grpc::clients::daemon::v1::pairing::Client::pair_device(
     format!("http://{remote}").parse().unwrap(),
     proto::PairDeviceRequest {
@@ -934,19 +1010,7 @@ async fn health_identifies_each_daemon_instance_across_protocols_and_listeners()
   let mut ids = Vec::new();
   for supplied in [None, None, Some(explicit)] {
     let root = tempfile::tempdir().unwrap();
-    let mut options = config(
-      vec![
-        ListenEndpoint::Tcp {
-          host: "127.0.0.1".into(),
-          port: 0,
-        },
-        ListenEndpoint::Tcp {
-          host: "127.0.0.1".into(),
-          port: 0,
-        },
-      ],
-      root.path(),
-    );
+    let mut options = config(vec![paired_loopback(), paired_loopback()], root.path());
     options.id = supplied;
     let server = Server::bind(options).await.unwrap();
     let endpoints = server.endpoints().to_vec();
@@ -954,8 +1018,9 @@ async fn health_identifies_each_daemon_instance_across_protocols_and_listeners()
     let task = tokio::spawn(server.serve(shutdown.clone()));
     let mut id = None;
     for endpoint in endpoints {
-      let BoundEndpoint::Tcp(address) = endpoint else {
-        panic!("TCP listener")
+      // Health is public, so every paired TCP listener answers without a bearer.
+      let BoundEndpoint::Remote(address) = endpoint else {
+        continue;
       };
       let http: serde_json::Value =
         serde_json::from_slice(&reqwest::get(format!("http://{address}/health")).await.unwrap().bytes().await.unwrap()).unwrap();

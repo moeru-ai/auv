@@ -1,6 +1,5 @@
 //! Typed clap declarations for the built-in root commands.
 
-pub mod api_server;
 pub mod device_local;
 pub mod devices;
 pub mod doctor;

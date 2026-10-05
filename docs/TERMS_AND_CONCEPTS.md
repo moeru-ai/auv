@@ -332,16 +332,18 @@ owner of pairing persistence; CLI, MCP, and other client interfaces administer
 trust through typed `auv` operations and never open or mutate the pairing store
 directly while the daemon is stopped.
 
-The local owner and every active paired Device bearer are equal pairing
-administrators. Any of them may create bootstrap tokens, enable or disable a
-paired Device, unpair a Device, or revoke credentials. Pairing has no separate
-administrator role; `PairDevice` is the only unauthenticated operation and
-requires a valid one-time bootstrap token.
+Only the local owner creates bootstrap tokens, through the daemon's
+owner-checked local channel. A paired Device bearer must not mint further
+enrollments, because one leaked credential could otherwise enroll replacement
+Devices that survive its own revocation. The local owner and every active
+paired Device bearer may still enable or disable a paired Device, unpair a
+Device, or revoke credentials; whether a Device may administer other Devices or
+only itself is an open decision. `PairDevice` is the only unauthenticated
+operation and requires a valid one-time bootstrap token.
 
 For the first native Device unlock release, every active paired Device bearer
 may request unlock of an **existing OS login session** without a separate
-per-Device grant. A bearer enrolled through a token created by another paired
-Device receives the same request authority. The target-wide capability is
+per-Device grant. The target-wide capability is
 enabled by default; a target-local OS administrator may explicitly disable it.
 Disabling rejects remote unlock and remote OS login-session listing requests,
 but retains locally enrolled credentials. Re-enabling does not require
@@ -504,10 +506,28 @@ by the OS service manager and a controlled pre-login component; that broader
 lifecycle is not a gate for locked-session unlock. See the [host lifecycle
 decision](ai/references/session-api/2026-09-27-device-login-host-lifecycle-decision.md).
 
-The default local listener does not bind TCP. Linux and macOS use an owner-only
-Unix socket. Windows uses an owner-scoped named pipe and rejects remote pipe
-clients. A caller must use `--listen http://...` to bind TCP. A non-loopback
-TCP listener requires the paired-bearer trust boundary.
+Listener address, listener authentication, and default-daemon registration are
+independent decisions:
+
+- **Authentication follows the transport.** Local IPC proves the daemon owner:
+  Linux and macOS use an owner-only Unix socket checked by peer UID, and
+  Windows uses an owner-scoped named pipe that rejects remote pipe clients.
+  Every `http://` listener requires a paired Device bearer, including loopback
+  addresses, because loopback is not user identity on a multi-user host. An SSH
+  user reaches owner authority by forwarding the Unix socket, or paired
+  authority by forwarding the TCP port.
+- **Owner channel.** On Linux and macOS every daemon binds an owner socket even
+  when only `http://` listeners are configured. It issues first pairing tokens,
+  answers implicit discovery, and receives executable Runner callbacks.
+  Windows adds its owner pipe only when no listener is configured; the
+  LocalSystem service case is deferred.
+- **Pairing capability.** Pairing is always available. `--pairing-store` only
+  overrides the default `<store-root>/pairings.json` location.
+- **Registration.** A registered daemon is the caller's default local daemon:
+  its owner socket sits next to the discovery descriptor and it publishes that
+  descriptor. `auv serve --no-register` binds a private owner socket and
+  publishes nothing, so temporary or test daemons never replace the default
+  one. Discovery is this local descriptor, not network service discovery.
 
 The daemon control protobuf package is `auv.api.daemon.v1`. It owns Device,
 pairing, discovery, Run, RunnerClass, and Runner services and messages. It

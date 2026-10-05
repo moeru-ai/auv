@@ -27,6 +27,11 @@ impl PairingService for PairingServiceGrpc {
     &self,
     request: Request<proto::CreatePairingTokenRequest>,
   ) -> Result<Response<proto::CreatePairingTokenResponse>, Status> {
+    // A paired bearer must not mint further enrollments: one leaked credential
+    // could otherwise create replacement Devices that survive its revocation.
+    if !crate::authentication::caller(&request)?.is_local_owner() {
+      return Err(Status::permission_denied("pairing tokens can only be created by the daemon owner over local IPC"));
+    }
     Ok(Response::new(crate::protocol::pairing::create_token(self.pairing()?.as_ref(), request.into_inner())?))
   }
 
@@ -34,6 +39,10 @@ impl PairingService for PairingServiceGrpc {
     Ok(Response::new(crate::protocol::pairing::pair_device(self.pairing()?.as_ref(), request.into_inner())?))
   }
 
+  // TODO(pairing-administration-authority): revoke, enable/disable, and
+  // unpair still accept any paired bearer. Only token issuance was narrowed to
+  // the owner; restrict these after the owner decides whether a Device may
+  // manage other Devices or only itself.
   async fn revoke_device_credential(
     &self,
     request: Request<proto::RevokeDeviceCredentialRequest>,

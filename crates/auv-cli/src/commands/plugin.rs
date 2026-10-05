@@ -30,15 +30,7 @@ use auv::AuvContext;
 use auv::selection::RootSelection;
 
 const BUILTIN_COMMANDS: &[&str] = &[
-  "doctor",
-  "invoke",
-  "api-server",
-  "serve",
-  "devices",
-  "run",
-  "runner",
-  "mcp",
-  "plugin",
+  "doctor", "invoke", "serve", "devices", "run", "runner", "mcp", "plugin",
 ];
 
 pub async fn execute(

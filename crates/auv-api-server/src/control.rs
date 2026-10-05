@@ -61,6 +61,12 @@ impl CallerId {
     }
   }
 
+  /// Whether this caller authenticated through an owner-checked local
+  /// transport rather than a paired Device bearer.
+  pub fn is_local_owner(&self) -> bool {
+    self.identity == "local-owner"
+  }
+
   /// Returns the stable paired Device ID, if this caller used pairing.
   pub fn paired_device_id(&self) -> Option<&str> {
     self.identity.strip_prefix("paired-device:")

@@ -628,39 +628,17 @@ fn selected_unreachable_endpoint_is_not_reported_as_an_empty_list() {
 }
 
 #[test]
-fn nested_builtin_help_is_rendered_by_clap() {
-  let output = run(&["api-server", "serve", "--help"]);
+fn serve_help_explains_listener_authentication_and_registration() {
+  let output = run(&["serve", "--help"]);
 
-  assert_eq!(output.status.code(), Some(0), "api-server help must exit 0; stderr={}", stderr(&output));
+  assert_eq!(output.status.code(), Some(0), "serve help must exit 0; stderr={}", stderr(&output));
   let help = stdout(&output);
-  assert!(help.contains("Serve the AUV API until interrupted"), "unexpected api-server help:\n{help}");
-  assert!(help.contains("--host <HOST>"), "unexpected api-server help:\n{help}");
-  assert!(help.contains("--port <PORT>"), "unexpected api-server help:\n{help}");
-  assert!(help.contains("--remote-listen <IP>"), "unexpected api-server help:\n{help}");
-  assert!(help.contains("--pairing-store <PATH>"), "unexpected api-server help:\n{help}");
-  #[cfg(unix)]
-  assert!(help.contains("--unix-socket <PATH>"), "unexpected api-server help:\n{help}");
-  assert!(help.contains("--store-root <PATH>"), "unexpected api-server help:\n{help}");
-  assert!(help.contains("--daemon-idle-timeout <SECONDS>"), "unexpected api-server help:\n{help}");
-  assert!(help.contains("--runner-provider <PATH>"), "unexpected api-server help:\n{help}");
-}
-
-#[test]
-fn remote_server_requires_a_pairing_store() {
-  let output = run(&[
-    "api-server",
-    "serve",
-    "--remote-listen",
-    "127.0.0.1",
-    "--no-discovery",
-  ]);
-
-  assert_eq!(output.status.code(), Some(1));
-  assert!(
-    stderr(&output).contains("--remote-listen requires --pairing-store"),
-    "unexpected remote configuration error:\n{}",
-    stderr(&output)
-  );
+  assert!(help.contains("--listen <URI>"), "unexpected serve help:\n{help}");
+  assert!(help.contains("--pairing-store <PATH>"), "unexpected serve help:\n{help}");
+  assert!(help.contains("--no-register"), "unexpected serve help:\n{help}");
+  assert!(!help.contains("--no-discovery"), "unexpected serve help:\n{help}");
+  assert!(help.contains("http:// listeners always require a paired Device bearer"), "unexpected serve help:\n{help}");
+  assert!(help.contains("only it can create pairing tokens"), "unexpected serve help:\n{help}");
 }
 
 #[test]
@@ -1067,7 +1045,7 @@ fn selected_global_text_dry_run_returns_validation_without_delivery() {
       "serve",
       "--listen",
       &endpoint,
-      "--no-discovery",
+      "--no-register",
       "--store-root",
     ])
     .arg(directory.path().join("store"))

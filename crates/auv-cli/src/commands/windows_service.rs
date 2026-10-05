@@ -210,7 +210,7 @@ fn serve_service() -> Result<(), String> {
 
 fn service_options(args: ServeArgs) -> Result<super::serve::HostOptions, String> {
   let mut options = host_options(args)?;
-  options.publish_discovery = false;
+  options.register = false;
   options.local_driver_runner = false;
   options.emit_bound_endpoints = false;
   options.enable_device_entry = true;
@@ -306,7 +306,7 @@ mod tests {
       pairing_store: Some(root.join("pairings.json")),
       store_root: Some(root.to_path_buf()),
       discovery_file: None,
-      no_discovery: false,
+      no_register: false,
       daemon_idle_timeout: None,
       runner_providers: Vec::new(),
       windows_service: true,
@@ -317,7 +317,7 @@ mod tests {
     let service = service_options(args.clone()).unwrap();
 
     assert!(!service.local_driver_runner);
-    assert!(!service.publish_discovery);
+    assert!(!service.register);
     assert!(!service.emit_bound_endpoints);
     assert!(service.enable_device_entry);
 

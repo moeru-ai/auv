@@ -4,7 +4,6 @@ use std::ffi::OsString;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 
-use crate::commands::api_server::ApiServerArgs;
 use crate::commands::device_local::DeviceLocalArgs;
 use crate::commands::devices::DevicesArgs;
 use crate::commands::doctor::DoctorArgs;
@@ -57,9 +56,6 @@ enum RootCommand {
   Doctor(DoctorArgs),
   /// Invoke one core computer-use capability and record its run.
   Invoke(InvokeArgs),
-  /// Run the AUV API server.
-  #[command(hide = true)]
-  ApiServer(ApiServerArgs),
   /// Run the AUV daemon in the foreground.
   Serve(ServeArgs),
   /// Manage host-level support required by AUV.
@@ -140,7 +136,6 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     }
     Some(RootCommand::Doctor(args)) => crate::commands::doctor::run(args).await,
     Some(RootCommand::Invoke(args)) => crate::commands::invoke::run(args, &selection, &project_root).await,
-    Some(RootCommand::ApiServer(args)) => crate::commands::api_server::run(args, &project_root).await,
     Some(RootCommand::Serve(args)) => crate::commands::serve::run(args, &project_root).await,
     Some(RootCommand::Setup(args)) => {
       if selection.device_name.is_some() || selection.device_id.is_some() || selection.run_id.is_some() {

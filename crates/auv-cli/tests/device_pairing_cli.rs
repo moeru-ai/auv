@@ -152,6 +152,100 @@ fn pair_connect_saves_the_credential_without_printing_it_and_consumes_the_token(
   assert!(String::from_utf8_lossy(&reused.stderr).contains("invalid, expired, or has already been consumed"));
 }
 
+// ROOT CAUSE:
+//
+// If `--pairing-store` was set, every http:// listener required a bearer and
+// the daemon guaranteed no owner channel, so an HTTP-only daemon could not
+// issue its first pairing token.
+//
+// Before the fix, first pairing needed a hand-configured Unix listener (or a
+// hidden Runner socket). The fix always binds a registered owner socket and
+// keeps pairing on by default.
+#[test]
+fn http_only_daemon_issues_the_first_token_through_its_owner_socket() {
+  use std::io::BufRead as _;
+
+  let directory = tempfile::tempdir().unwrap();
+  let discovery = directory.path().join("discovery.json");
+  let profiles = directory.path().join("profiles.json");
+  let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+  let endpoint = format!("http://127.0.0.1:{port}");
+  let auv = env!("CARGO_BIN_EXE_auv");
+  let mut daemon = ChildGuard(
+    Command::new(auv)
+      .args([
+        "serve",
+        "--listen",
+        &endpoint,
+        "--store-root",
+        directory.path().join("store").to_str().unwrap(),
+        "--discovery-file",
+        discovery.to_str().unwrap(),
+      ])
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::inherit())
+      .spawn()
+      .unwrap(),
+  );
+  wait_for_path(&mut daemon.0, &discovery);
+
+  let anonymous = Command::new(auv).args(["devices", "pair", "--endpoint", &endpoint, "create-token"]).output().unwrap();
+  assert!(!anonymous.status.success());
+  assert!(String::from_utf8_lossy(&anonymous.stderr).contains("paired Device bearer required"));
+
+  let created = Command::new(auv).args(["devices", "pair", "create-token"]).env("AUV_DISCOVERY_FILE", &discovery).output().unwrap();
+  assert!(created.status.success(), "{}", String::from_utf8_lossy(&created.stderr));
+  let token = String::from_utf8(created.stdout).unwrap().trim().to_string();
+  assert!(directory.path().join("store").join("pairings.json").exists(), "pairing defaults to the store root");
+
+  let connected = Command::new(auv)
+    .args([
+      "devices",
+      "pair",
+      "--endpoint",
+      &endpoint,
+      "connect",
+      "--token",
+      &token,
+      "--label",
+      "Laptop",
+      "--profile",
+      "laptop",
+    ])
+    .env("AUV_CONFIG_PROFILES_FILE", &profiles)
+    .output()
+    .unwrap();
+  assert!(connected.status.success(), "{}", String::from_utf8_lossy(&connected.stderr));
+
+  // An unregistered daemon must leave the default descriptor and socket to
+  // the registered daemon while still serving its own private owner socket.
+  let published = std::fs::read_to_string(&discovery).unwrap();
+  let mut scratch = Command::new(auv)
+    .args([
+      "serve",
+      "--no-register",
+      "--store-root",
+      directory.path().join("scratch-store").to_str().unwrap(),
+    ])
+    .env("AUV_DISCOVERY_FILE", &discovery)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .unwrap();
+  let mut ready = String::new();
+  std::io::BufReader::new(scratch.stdout.take().unwrap()).read_line(&mut ready).unwrap();
+  let _scratch = ChildGuard(scratch);
+  let private = ready.trim().strip_prefix("auv serve: ").expect("unregistered daemon endpoint").to_string();
+  assert!(private.starts_with("unix://"), "{private}");
+  assert_ne!(private, format!("unix://{}", directory.path().join("auv.sock").display()));
+
+  let private_token = Command::new(auv).args(["devices", "pair", "--endpoint", &private, "create-token"]).output().unwrap();
+  assert!(private_token.status.success(), "{}", String::from_utf8_lossy(&private_token.stderr));
+  assert_eq!(std::fs::read_to_string(&discovery).unwrap(), published);
+}
+
 fn wait_for_path(child: &mut Child, path: &std::path::Path) {
   let deadline = Instant::now() + Duration::from_secs(15);
   while Instant::now() < deadline {

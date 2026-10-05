@@ -5,8 +5,7 @@ pub(crate) mod runner_grpc_proxy;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 #[cfg(unix)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::authentication::Authenticator;
@@ -30,27 +29,16 @@ use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio_stream::wrappers::UnixListenerStream;
 use tokio_util::sync::CancellationToken;
 
-/// Default loopback host for a local TCP listener.
-pub const DEFAULT_API_HOST: &str = "127.0.0.1";
-/// Default port for a local TCP listener.
-pub const DEFAULT_API_PORT: u16 = 9847;
-
 /// Server-side endpoint on which the API accepts gRPC connections.
+///
+/// The transport decides the listener's authentication: owner-checked local
+/// IPC trusts the daemon owner, and every TCP listener requires a paired Device
+/// bearer. Loopback TCP is not owner identity on a multi-user host, so there is
+/// intentionally no unauthenticated TCP variant.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ListenEndpoint {
-  /// Loopback-only TCP. Paired remote TCP uses the separate bearer-authorized
-  /// variant.
-  // TODO(local-tcp-authentication): loopback is not user identity on a multi-user
-  // host. Add a descriptor-delivered local credential before treating TCP as
-  // equivalent to owner-checked Unix transport outside development use.
-  Tcp {
-    /// Host or address to bind.
-    host: String,
-    /// TCP port to bind.
-    port: u16,
-  },
-  /// Paired gRPC authenticated by an opaque Device bearer.
-  ///
+  /// Paired gRPC authenticated by an opaque Device bearer. Loopback addresses
+  /// use the same policy, for example behind an SSH port forward.
   Remote {
     /// Host or address to bind.
     host: String,
@@ -71,17 +59,8 @@ pub enum ListenEndpoint {
   },
 }
 
-impl Default for ListenEndpoint {
-  fn default() -> Self {
-    Self::Tcp {
-      host: DEFAULT_API_HOST.to_string(),
-      port: DEFAULT_API_PORT,
-    }
-  }
-}
-
 /// Protocol-listener configuration consumed by a server-side SDK backend.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct BindConfig {
   /// Instance identity supplied by the daemon lifecycle owner.
   pub id: String,
@@ -93,17 +72,11 @@ pub struct BindConfig {
   pub pairing: Option<Arc<dyn Pairing>>,
   /// Optional inactivity deadline applied to daemon-owned runner supervision.
   pub daemon_idle_timeout: Option<std::time::Duration>,
-  /// Private Unix listener used by executable Runners when no caller-local
-  /// Unix listener was configured. Windows Runners use per-process named
-  /// pipes instead. The daemon SDK owns the path decision.
-  pub internal_runner_parent: Option<PathBuf>,
 }
 
 /// Resolved endpoint of a bound server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BoundEndpoint {
-  /// Bound caller-local TCP address.
-  Tcp(SocketAddr),
   /// Bound paired-bearer TCP address.
   Remote(SocketAddr),
   #[cfg(unix)]
@@ -117,7 +90,6 @@ pub enum BoundEndpoint {
 impl fmt::Display for BoundEndpoint {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      Self::Tcp(address) => write!(f, "http://{address}"),
       Self::Remote(address) => write!(f, "http://{address}"),
       #[cfg(unix)]
       Self::Unix(path) => write!(f, "unix://{}", path.display()),
@@ -184,50 +156,9 @@ impl Server {
       });
     }
 
-    let mut parent_endpoint = {
-      #[cfg(unix)]
-      {
-        endpoints
-          .iter()
-          .find(|endpoint| matches!(endpoint, BoundEndpoint::Unix(_)))
-          .or_else(|| endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_))))
-      }
-      #[cfg(not(unix))]
-      #[cfg(not(windows))]
-      {
-        endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_)))
-      }
-      #[cfg(windows)]
-      {
-        endpoints
-          .iter()
-          .find(|endpoint| matches!(endpoint, BoundEndpoint::NamedPipe(_)))
-          .or_else(|| endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_))))
-      }
-    }
-    .map(ToString::to_string);
-
-    if parent_endpoint.is_none()
-      && let Some(path) = config.internal_runner_parent
-    {
-      #[cfg(unix)]
-      let endpoint = ListenEndpoint::Unix { path };
-      #[cfg(not(unix))]
-      let endpoint = ListenEndpoint::Tcp {
-        host: DEFAULT_API_HOST.to_string(),
-        port: 0,
-      };
-      #[cfg(not(unix))]
-      let _ = path;
-
-      let (listener, endpoint, authenticator) = bind_listener(endpoint, pairing).await?;
-      parent_endpoint = Some(endpoint.to_string());
-      endpoints.push(endpoint);
-      listeners.push(BoundListenerState {
-        listener,
-        authenticator,
-      });
-    }
+    // Executable Runners call back through owner-checked IPC; a paired TCP
+    // listener would require them to hold a Device bearer.
+    let parent_endpoint = owner_endpoint(&endpoints).map(ToString::to_string);
     let daemon = factory(parent_endpoint)?;
     Ok(Self {
       id: config.id,
@@ -248,18 +179,10 @@ impl Server {
     &self.endpoints
   }
 
-  /// Endpoint safe for caller-local discovery, preferring owner-protected IPC
-  /// over loopback TCP and never returning a paired remote endpoint.
+  /// Endpoint safe for caller-local discovery: the first owner-checked IPC
+  /// listener, never a paired TCP endpoint.
   pub fn discovery_endpoint(&self) -> Option<&BoundEndpoint> {
-    #[cfg(unix)]
-    if let Some(endpoint) = self.endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Unix(_))) {
-      return Some(endpoint);
-    }
-    #[cfg(windows)]
-    if let Some(endpoint) = self.endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::NamedPipe(_))) {
-      return Some(endpoint);
-    }
-    self.endpoints.iter().find(|endpoint| matches!(endpoint, BoundEndpoint::Tcp(_)))
+    owner_endpoint(&self.endpoints)
   }
 
   /// Serves every listener until cancellation or one listener fails. One
@@ -307,6 +230,17 @@ impl Server {
       Err(errors.join("; "))
     }
   }
+}
+
+/// Returns the first listener whose transport proves the daemon owner.
+fn owner_endpoint(endpoints: &[BoundEndpoint]) -> Option<&BoundEndpoint> {
+  endpoints.iter().find(|endpoint| match endpoint {
+    BoundEndpoint::Remote(_) => false,
+    #[cfg(unix)]
+    BoundEndpoint::Unix(_) => true,
+    #[cfg(windows)]
+    BoundEndpoint::NamedPipe(_) => true,
+  })
 }
 
 async fn serve_listener(
@@ -409,21 +343,6 @@ async fn bind_listener(
   pairing: Option<Arc<dyn Pairing>>,
 ) -> Result<(BoundListener, BoundEndpoint, Authenticator), String> {
   Ok(match endpoint {
-    ListenEndpoint::Tcp { host, port } => {
-      let bind_addr = resolve_loopback_bind_addr(&host, port).await?;
-      let listener = TcpListener::bind(bind_addr).await.map_err(|error| format!("failed to bind API server {bind_addr}: {error}"))?;
-      let local_address = listener.local_addr().map_err(|error| format!("failed to read API server address: {error}"))?;
-      assert_socket_addr_is_loopback(local_address)?;
-      (
-        BoundListener::Tcp(listener),
-        BoundEndpoint::Tcp(local_address),
-        Authenticator::local(
-          #[cfg(unix)]
-          None,
-          pairing,
-        ),
-      )
-    }
     ListenEndpoint::Remote { host, port } => {
       let bind_addr = resolve_remote_bind_addr(&host, port)?;
       let listener = TcpListener::bind(bind_addr).await.map_err(|error| format!("failed to bind remote API server {bind_addr}: {error}"))?;
@@ -536,39 +455,6 @@ impl tonic::transport::server::Connected for NamedPipeIo {
 
 fn resolve_remote_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
   let ip = host.parse::<IpAddr>().map_err(|error| format!("remote listen host must be an explicit IP address, got {host:?}: {error}"))?;
-  Ok(SocketAddr::new(ip, port))
-}
-
-/// Rejects host strings that are not allowed loopback listen targets.
-pub fn assert_loopback_host(host: &str) -> Result<(), String> {
-  if host.eq_ignore_ascii_case("localhost") {
-    return Ok(());
-  }
-  match host.parse::<IpAddr>() {
-    Ok(ip) if ip.is_loopback() => Ok(()),
-    Ok(_) => Err(format!("API server refuses non-loopback host: {host}")),
-    Err(_) => Err(format!("API server refuses unrecognized host: {host}")),
-  }
-}
-
-/// Verifies a bound socket address is loopback-only.
-pub fn assert_socket_addr_is_loopback(addr: SocketAddr) -> Result<(), String> {
-  if addr.ip().is_loopback() {
-    return Ok(());
-  }
-  Err(format!("API server refused non-loopback bind address: {addr}"))
-}
-
-async fn resolve_loopback_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
-  assert_loopback_host(host)?;
-  if host.eq_ignore_ascii_case("localhost") {
-    let mut addresses =
-      tokio::net::lookup_host((host, port)).await.map_err(|error| format!("failed to resolve localhost for API server: {error}"))?;
-    return addresses
-      .find(|address| address.ip().is_loopback())
-      .ok_or_else(|| "localhost did not resolve to a loopback address".to_string());
-  }
-  let ip = host.parse::<IpAddr>().map_err(|error| format!("failed to parse API host {host}: {error}"))?;
   Ok(SocketAddr::new(ip, port))
 }
 

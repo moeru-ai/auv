@@ -5,15 +5,19 @@ use clap::Args;
 
 /// Run the AUV daemon API in the foreground.
 #[derive(Clone, Debug, Args)]
+#[command(
+  after_long_help = "Every daemon binds an owner-only local socket. It is published for discovery unless --no-register is set, and only it can create pairing tokens.\n\nhttp:// listeners always require a paired Device bearer, including loopback addresses.\n\nExamples:\n  # Serve on the default local socket\n  auv serve\n\n  # Also accept paired Devices over the network\n  auv serve --listen http://0.0.0.0:9847\n\n  # Run a temporary daemon that does not replace the default one\n  auv serve --no-register --store-root /tmp/auv-scratch"
+)]
 pub struct ServeArgs {
   /// Fresh daemon instance UUID for launcher health verification.
   #[arg(long)]
   pub id: Option<uuid::Uuid>,
-  /// Listener URI. May be repeated with unix://, npipe://, or http://IP:PORT.
+  /// Additional listener URI. May be repeated with unix://, npipe://, or
+  /// http://IP:PORT; http:// listeners require a paired Device bearer.
   #[arg(long = "listen", value_name = "URI")]
   pub listeners: Vec<String>,
 
-  /// Durable short-token and Device-bearer authentication store.
+  /// Pairing token and Device-bearer store [default: <STORE_ROOT>/pairings.json].
   #[arg(long, value_name = "PATH")]
   pub pairing_store: Option<PathBuf>,
 
@@ -22,12 +26,13 @@ pub struct ServeArgs {
   pub store_root: Option<PathBuf>,
 
   /// Publish daemon discovery metadata at this path.
-  #[arg(long, value_name = "PATH", conflicts_with = "no_discovery")]
+  #[arg(long, value_name = "PATH", conflicts_with = "no_register")]
   pub discovery_file: Option<PathBuf>,
 
-  /// Do not publish this foreground daemon for implicit client discovery.
+  /// Do not register as the default local daemon: bind the owner socket at a
+  /// private path and publish no discovery descriptor.
   #[arg(long)]
-  pub no_discovery: bool,
+  pub no_register: bool,
 
   /// Stop the daemon after this many seconds without live Runners.
   #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
@@ -64,22 +69,14 @@ pub(super) async fn run_listeners(options: HostOptions, project_root: &std::path
 }
 
 pub(super) fn host_options(args: ServeArgs) -> Result<HostOptions, String> {
-  let listeners = if args.listeners.is_empty() {
-    vec![auv_daemon::default_local_listener(
-      args.discovery_file.as_deref(),
-    )?]
-  } else {
-    args.listeners
-  };
-  let listeners =
-    listeners.iter().map(|listener| auv_daemon::parse_listener(listener, args.pairing_store.is_some())).collect::<Result<Vec<_>, _>>()?;
+  let listeners = args.listeners.iter().map(|listener| auv_daemon::parse_listener(listener)).collect::<Result<Vec<_>, _>>()?;
   Ok(HostOptions {
     id: args.id,
     listeners,
     pairing_store: args.pairing_store,
     store_root: args.store_root,
     discovery_file: args.discovery_file,
-    publish_discovery: !args.no_discovery,
+    register: !args.no_register,
     daemon_idle_timeout: args.daemon_idle_timeout,
     runner_providers: args.runner_providers,
     local_driver_runner: true,
@@ -95,7 +92,7 @@ pub(super) struct HostOptions {
   pub pairing_store: Option<PathBuf>,
   pub store_root: Option<PathBuf>,
   pub discovery_file: Option<PathBuf>,
-  pub publish_discovery: bool,
+  pub register: bool,
   pub daemon_idle_timeout: Option<u64>,
   pub runner_providers: Vec<PathBuf>,
   pub local_driver_runner: bool,
@@ -128,10 +125,10 @@ pub(super) async fn run_listeners_with_shutdown(
     } else {
       auv_daemon::runner_provider::FirstPartyRunnerRuntimes::default()
     },
+    pairing_store: options.pairing_store.map_or_else(|| store_root.join("pairings.json"), |path| resolve_path(project_root, &path)),
     store_root,
-    pairing_store: options.pairing_store.map(|path| resolve_path(project_root, &path)),
     discovery_file: options.discovery_file,
-    publish_discovery: options.publish_discovery,
+    register: options.register,
     daemon_idle_timeout: options.daemon_idle_timeout.map(std::time::Duration::from_secs),
     runner_providers: providers,
     #[cfg(windows)]
