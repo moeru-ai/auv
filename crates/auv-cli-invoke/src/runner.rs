@@ -719,6 +719,29 @@ async fn execute_scroll(input: crate::InvokeCommandInput, context: auv::AuvConte
   }
 
   input.cancellation.check().map_err(|error| error.to_string())?;
+  if let Some(motion) = plan.motion {
+    let delivery = async {
+      let mut stream = resolved.scroll_motion(point, motion, plan.options.clone()).await?;
+      while let Some(event) = stream.next().await? {
+        match event {
+          auv::client::runner::ScrollMotionEvent::Started { window, .. } if window.reference != result.window.reference => {
+            return Err(crate::InvokeFailure::from("ScrollWindowPointMotion changed the resolved WindowRef".to_string()));
+          }
+          auv::client::runner::ScrollMotionEvent::Completed { delivered, action } => return Ok((delivered, action)),
+          _ => {}
+        }
+      }
+      Err(crate::InvokeFailure::from("ScrollWindowPointMotion ended without completion evidence".to_string()))
+    };
+    let (delivered, action) = tokio::select! {
+      _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
+      response = delivery => response?,
+    };
+    crate::emit_input_action_result(&action);
+    result.delivered = Some(delivered);
+    result.action = Some(action);
+    return crate::commands::input::scroll_output(result).map_err(Into::into);
+  }
   let response = tokio::select! {
     _ = input.cancellation.cancelled() => return Err("invoke cancelled".to_string().into()),
     response = resolved.scroll(point, plan.scroll, plan.options.clone()) => response?,

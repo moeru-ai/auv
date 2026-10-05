@@ -889,6 +889,115 @@ fn scroll_rpc_preserves_candidate_order_and_rejects_unknown_or_repeated_candidat
 }
 
 #[test]
+fn scroll_motion_rpc_decodes_timing_and_rejects_invalid_plans_before_delivery() {
+  let motion = scroll_motion_from_proto(Some(proto::ScrollMotion {
+    total: Some(proto::Scroll {
+      delta_x: 0.0,
+      delta_y: 600.0,
+    }),
+    timing: Some(proto::scroll_motion::Timing::FixedDuration(proto::FixedDurationMotionTiming {
+      duration: Some(prost_types::Duration {
+        seconds: 0,
+        nanos: 400_000_000,
+      }),
+      function: Some(proto::MotionTimingFunction {
+        function: Some(proto::motion_timing_function::Function::CubicBezier(proto::CubicBezierMotionTimingFunction {
+          x1: 0.25,
+          y1: 0.1,
+          x2: 0.25,
+          y2: 1.0,
+        })),
+      }),
+    })),
+    sample_rate_hz: 120,
+  }))
+  .unwrap();
+  assert_eq!(motion.total, auv_driver::Scroll::new(0.0, 600.0));
+  assert_eq!(motion.sample_rate_hz, 120);
+  assert_eq!(
+    motion.timing,
+    auv_driver::MotionTiming::FixedDuration {
+      duration: std::time::Duration::from_millis(400),
+      function: auv_driver::TimingFunction::CubicBezier {
+        x1: 0.25,
+        y1: 0.1,
+        x2: 0.25,
+        y2: 1.0,
+      },
+    }
+  );
+
+  // An absent function selects linear timing.
+  let linear = scroll_motion_from_proto(Some(proto::ScrollMotion {
+    total: Some(proto::Scroll {
+      delta_x: 10.0,
+      delta_y: 0.0,
+    }),
+    timing: Some(proto::scroll_motion::Timing::FixedDuration(Default::default())),
+    sample_rate_hz: 0,
+  }))
+  .unwrap();
+  assert!(matches!(
+    linear.timing,
+    auv_driver::MotionTiming::FixedDuration {
+      function: auv_driver::TimingFunction::Linear,
+      ..
+    }
+  ));
+
+  let invalid_plans = [
+    None,
+    Some(proto::ScrollMotion {
+      total: Some(proto::Scroll {
+        delta_x: 0.0,
+        delta_y: 10.0,
+      }),
+      timing: None,
+      sample_rate_hz: 60,
+    }),
+    Some(proto::ScrollMotion {
+      total: Some(proto::Scroll::default()),
+      timing: Some(proto::scroll_motion::Timing::FixedDuration(Default::default())),
+      sample_rate_hz: 60,
+    }),
+    Some(proto::ScrollMotion {
+      total: Some(proto::Scroll {
+        delta_x: 0.0,
+        delta_y: 10.0,
+      }),
+      timing: Some(proto::scroll_motion::Timing::FixedDuration(proto::FixedDurationMotionTiming {
+        duration: None,
+        function: Some(proto::MotionTimingFunction {
+          function: Some(proto::motion_timing_function::Function::Standard(proto::StandardMotionTimingFunction::Unspecified as i32)),
+        }),
+      })),
+      sample_rate_hz: 60,
+    }),
+    Some(proto::ScrollMotion {
+      total: Some(proto::Scroll {
+        delta_x: 0.0,
+        delta_y: 10.0,
+      }),
+      timing: Some(proto::scroll_motion::Timing::FixedDuration(proto::FixedDurationMotionTiming {
+        duration: None,
+        function: Some(proto::MotionTimingFunction {
+          function: Some(proto::motion_timing_function::Function::CubicBezier(proto::CubicBezierMotionTimingFunction {
+            x1: 1.5,
+            y1: 0.0,
+            x2: 0.5,
+            y2: 1.0,
+          })),
+        }),
+      })),
+      sample_rate_hz: 60,
+    }),
+  ];
+  for plan in invalid_plans {
+    assert_eq!(scroll_motion_from_proto(plan).unwrap_err().code(), tonic::Code::InvalidArgument);
+  }
+}
+
+#[test]
 fn malformed_position_is_an_invalid_argument() {
   let error = position_from_proto(proto::Position::default()).unwrap_err();
   assert_eq!(error.code(), tonic::Code::InvalidArgument);

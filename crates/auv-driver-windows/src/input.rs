@@ -362,6 +362,8 @@ pub(crate) struct WheelUnits {
 // `docs/ai/references/driver/2026-10-06-scroll-delta-contract.md`.
 const SCROLL_PIXELS_PER_WHEEL_NOTCH: f64 = 100.0;
 const WHEEL_DELTA_PER_NOTCH: f64 = 120.0;
+/// Logical pixels per Win32 wheel unit, the smallest timed-scroll step.
+pub(crate) const SCROLL_PIXELS_PER_WHEEL_UNIT: f64 = SCROLL_PIXELS_PER_WHEEL_NOTCH / WHEEL_DELTA_PER_NOTCH;
 
 /// Converts AUV logical-pixel scroll deltas (positive toward later content)
 /// into Win32 wheel units. Rejects values that are non-finite or exceed the

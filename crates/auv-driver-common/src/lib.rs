@@ -12,6 +12,7 @@ pub mod mouse;
 pub mod mouse_input;
 pub mod permission;
 pub mod readiness;
+pub mod scroll_motion;
 pub mod selector;
 pub mod traits;
 pub mod vision;
@@ -41,6 +42,9 @@ pub use mouse::{
 };
 pub use permission::{PermissionProbe, PermissionStatus};
 pub use readiness::{ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus};
+pub use scroll_motion::{
+  CumulativeQuantizer, MotionTiming, ScrollMotion, ScrollMotionProgress, ScrollMotionResult, ScrollMotionSchedule, TimingFunction,
+};
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{ImageMatch, ImageMatchResult, OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions};

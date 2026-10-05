@@ -993,3 +993,85 @@ fn scroll_plan_resolves_window_point_and_reports_screen_point() {
   assert_eq!(result.policy, auv_driver::InputPolicy::BackgroundPreferred);
   assert!(result.action.is_none());
 }
+
+#[test]
+fn timing_function_names_and_cubic_bezier_forms_parse_to_driver_functions() {
+  assert_eq!(parse_timing_function("linear").unwrap(), auv_driver::TimingFunction::Linear);
+  assert_eq!(parse_timing_function("ease-in").unwrap(), auv_driver::TimingFunction::EaseInCubic);
+  assert_eq!(parse_timing_function("ease-out").unwrap(), auv_driver::TimingFunction::EaseOutCubic);
+  assert_eq!(parse_timing_function("ease-in-out").unwrap(), auv_driver::TimingFunction::EaseInOutCubic);
+  let bezier = auv_driver::TimingFunction::CubicBezier {
+    x1: 0.2,
+    y1: 0.8,
+    x2: 0.2,
+    y2: 1.0,
+  };
+  assert_eq!(parse_timing_function("cubic-bezier:0.2,0.8,0.2,1").unwrap(), bezier);
+  assert_eq!(parse_timing_function("cubic-bezier(0.2, 0.8, 0.2, 1)").unwrap(), bezier);
+  assert!(parse_timing_function("bounce").is_err());
+  assert!(parse_timing_function("cubic-bezier:0.2,0.8,0.2").is_err());
+  assert!(parse_timing_function("cubic-bezier:1.2,0,0.5,1").is_err());
+}
+
+#[test]
+fn timed_scroll_cli_and_protocol_inputs_decode_to_the_same_motion() {
+  let crate::InvokeCommandCliParse::Invoke { typed_args, .. } = scroll_invoke_command()
+    .parse_cli_args(&[
+      "10".into(),
+      "20".into(),
+      "--dy".into(),
+      "900".into(),
+      "--duration-ms".into(),
+      "600".into(),
+      "--easing".into(),
+      "ease-out".into(),
+      "--sample-rate-hz".into(),
+      "120".into(),
+    ])
+    .unwrap()
+  else {
+    panic!("expected parsed invocation");
+  };
+  let protocol: ScrollArgs = crate::command::decode_args(&scroll_input(
+    &[
+      ("x", "10"),
+      ("y", "20"),
+      ("dy", "900"),
+      ("duration-ms", "600"),
+      ("easing", "ease-out"),
+      ("sample-rate-hz", "120"),
+    ],
+    scroll_window_target(),
+  ))
+  .unwrap();
+  let expected = auv_driver::ScrollMotion {
+    total: auv_driver::Scroll::new(0.0, 900.0),
+    timing: auv_driver::MotionTiming::FixedDuration {
+      duration: std::time::Duration::from_millis(600),
+      function: auv_driver::TimingFunction::EaseOutCubic,
+    },
+    sample_rate_hz: 120,
+  };
+  for args in [protocol, typed_args.get::<ScrollArgs>().unwrap().clone()] {
+    assert_eq!(args.plan(scroll_window_target().as_ref()).unwrap().motion, Some(expected));
+  }
+  // Instant scrolls keep the default rate but carry no motion.
+  let instant: ScrollArgs =
+    crate::command::decode_args(&scroll_input(&[("x", "1"), ("y", "1"), ("dy", "10")], scroll_window_target())).unwrap();
+  assert_eq!(instant.plan(scroll_window_target().as_ref()).unwrap().motion, None);
+}
+
+#[test]
+fn timed_scroll_plan_rejects_invalid_timing_before_io() {
+  for (inputs, expected) in [
+    (vec![("easing", "ease-in")], "input.scroll --easing requires a positive --duration-ms"),
+    (vec![("duration-ms", "60001")], "input.scroll --duration-ms must be within 0..=60000"),
+    (vec![("duration-ms", "100"), ("sample-rate-hz", "0")], "input.scroll --sample-rate-hz must be within 1..=1000"),
+  ] {
+    let mut all = vec![("x", "40"), ("y", "50"), ("dy", "100")];
+    all.extend(inputs);
+    let input = scroll_input(&all, scroll_window_target());
+    let error = crate::command::decode_args::<ScrollArgs>(&input).unwrap().plan(input.target.as_ref()).unwrap_err();
+    assert_eq!(error, expected);
+  }
+}

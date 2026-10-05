@@ -1066,7 +1066,7 @@ pub fn drag_output(result: DragResult) -> InvokeCommandResult {
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
 #[command(
-  after_long_help = "Examples:\n  auv invoke input.scroll 200 300 --dy 300 --target app:com.google.Chrome\n  auv invoke input.scroll 0.5 0.5 --normalized --dy -600 --target window:12345 --input-policy background-only\nDeltas are logical pixels. Positive --dy scrolls toward later content (down) and positive --dx scrolls right, matching DOM WheelEvent; the natural-scrolling preference does not apply. The default background-preferred policy tries window-targeted delivery before a foreground wheel. Delivery does not prove the viewport moved: a covered Chromium window can accept a wheel event without scrolling, so verify with a capture."
+  after_long_help = "Examples:\n  auv invoke input.scroll 200 300 --dy 300 --target app:com.google.Chrome\n  auv invoke input.scroll 0.5 0.5 --normalized --dy -600 --target window:12345 --input-policy background-only\n  auv invoke input.scroll 200 300 --dy 1200 --duration-ms 800 --easing ease-in-out --target app:com.google.Chrome\nDeltas are logical pixels. Positive --dy scrolls toward later content (down) and positive --dx scrolls right, matching DOM WheelEvent; the natural-scrolling preference does not apply. With --duration-ms the total is spread over time by --easing (linear, ease-in, ease-out, ease-in-out, cubic-bezier:x1,y1,x2,y2) at --sample-rate-hz; the first sample selects the delivery path. The default background-preferred policy tries window-targeted delivery before a foreground wheel. Delivery does not prove the viewport moved: a covered Chromium window can accept a wheel event without scrolling, so verify with a capture."
 )]
 struct ScrollArgs {
   /// X coordinate inside the target window.
@@ -1096,9 +1096,57 @@ struct ScrollArgs {
   #[arg(long, default_value_t = 0)]
   #[serde(rename = "settle-ms", default)]
   settle_ms: u64,
+  /// Spread the scroll over this many milliseconds (0 scrolls at once; up to 60000).
+  #[arg(long, default_value_t = 0)]
+  #[serde(rename = "duration-ms", default)]
+  duration_ms: u64,
+  /// Timing function for --duration-ms: linear, ease-in, ease-out, ease-in-out, or cubic-bezier:x1,y1,x2,y2.
+  #[arg(long, value_name = "FUNCTION")]
+  easing: Option<String>,
+  /// Samples per second for --duration-ms (1..=1000).
+  #[arg(long, default_value_t = DEFAULT_SCROLL_SAMPLE_RATE_HZ)]
+  #[serde(rename = "sample-rate-hz", default = "default_scroll_sample_rate_hz")]
+  sample_rate_hz: u32,
 }
 
 const MAX_SCROLL_SETTLE_MS: u64 = 30_000;
+// NOTICE: 60 Hz matches a common display refresh, so each rendered frame can
+// receive one wheel sample. Higher rates mainly add native call overhead.
+const DEFAULT_SCROLL_SAMPLE_RATE_HZ: u32 = 60;
+const MAX_SCROLL_SAMPLE_RATE_HZ: u32 = 1_000;
+// TODO(scroll-motion-duration-limit): one minute bounds an accidental runaway
+// motion; raise it if a caller needs longer timed scrolls.
+const MAX_SCROLL_DURATION_MS: u64 = 60_000;
+
+fn default_scroll_sample_rate_hz() -> u32 {
+  DEFAULT_SCROLL_SAMPLE_RATE_HZ
+}
+
+/// Parses the CLI timing-function names shared by timed scroll and its docs.
+pub(crate) fn parse_timing_function(value: &str) -> Result<auv_driver::TimingFunction, String> {
+  let value = value.trim();
+  match value {
+    "linear" => return Ok(auv_driver::TimingFunction::Linear),
+    "ease-in" => return Ok(auv_driver::TimingFunction::EaseInCubic),
+    "ease-out" => return Ok(auv_driver::TimingFunction::EaseOutCubic),
+    "ease-in-out" => return Ok(auv_driver::TimingFunction::EaseInOutCubic),
+    _ => {}
+  }
+  let arguments = value
+    .strip_prefix("cubic-bezier:")
+    .or_else(|| value.strip_prefix("cubic-bezier(").and_then(|rest| rest.strip_suffix(')')))
+    .ok_or_else(|| format!("unknown easing {value:?}; expected linear, ease-in, ease-out, ease-in-out, or cubic-bezier:x1,y1,x2,y2"))?;
+  let numbers = arguments
+    .split(',')
+    .map(|part| part.trim().parse::<f64>().map_err(|error| format!("invalid cubic-bezier value {part:?}: {error}")))
+    .collect::<Result<Vec<_>, _>>()?;
+  let [x1, y1, x2, y2] = numbers[..] else {
+    return Err("cubic-bezier requires four values: x1,y1,x2,y2".to_string());
+  };
+  let function = auv_driver::TimingFunction::CubicBezier { x1, y1, x2, y2 };
+  function.validate().map_err(|error| error.to_string())?;
+  Ok(function)
+}
 
 /// A validated window scroll before its point is resolved against the target
 /// window. Local and Runner execution share this plan.
@@ -1113,6 +1161,8 @@ pub(crate) struct ScrollPlan {
   pub(crate) title: Option<String>,
   pub(crate) scroll: auv_driver::Scroll,
   pub(crate) options: auv_driver::ScrollOptions,
+  /// Present when --duration-ms is positive.
+  pub(crate) motion: Option<auv_driver::ScrollMotion>,
 }
 
 impl ScrollArgs {
@@ -1138,6 +1188,28 @@ impl ScrollArgs {
     if self.settle_ms > MAX_SCROLL_SETTLE_MS {
       return Err(format!("input.scroll --settle-ms must be within 0..={MAX_SCROLL_SETTLE_MS}"));
     }
+    if self.duration_ms > MAX_SCROLL_DURATION_MS {
+      return Err(format!("input.scroll --duration-ms must be within 0..={MAX_SCROLL_DURATION_MS}"));
+    }
+    if !(1..=MAX_SCROLL_SAMPLE_RATE_HZ).contains(&self.sample_rate_hz) {
+      return Err(format!("input.scroll --sample-rate-hz must be within 1..={MAX_SCROLL_SAMPLE_RATE_HZ}"));
+    }
+    if self.duration_ms == 0 && self.easing.is_some() {
+      return Err("input.scroll --easing requires a positive --duration-ms".to_string());
+    }
+    let motion = if self.duration_ms == 0 {
+      None
+    } else {
+      let function = self.easing.as_deref().map(parse_timing_function).transpose()?.unwrap_or(auv_driver::TimingFunction::Linear);
+      Some(auv_driver::ScrollMotion {
+        total: auv_driver::Scroll::new(self.dx, self.dy),
+        timing: auv_driver::MotionTiming::FixedDuration {
+          duration: std::time::Duration::from_millis(self.duration_ms),
+          function,
+        },
+        sample_rate_hz: self.sample_rate_hz,
+      })
+    };
     Ok(ScrollPlan {
       point: auv_driver::Point::new(self.x, self.y),
       normalized: self.normalized,
@@ -1148,6 +1220,7 @@ impl ScrollArgs {
         settle: std::time::Duration::from_millis(self.settle_ms),
         ..auv_driver::ScrollOptions::default()
       },
+      motion,
     })
   }
 }
@@ -1169,7 +1242,9 @@ impl ScrollPlan {
       window_point: local,
       scroll: self.scroll,
       policy: self.options.policy,
+      motion: self.motion,
       window,
+      delivered: None,
       action: None,
     }
   }
@@ -1192,7 +1267,13 @@ pub struct ScrollResult {
   /// Logical pixels, positive toward later content (down/right).
   pub scroll: auv_driver::Scroll,
   pub policy: auv_driver::InputPolicy,
+  /// Timed scroll plan when --duration-ms was positive.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub motion: Option<auv_driver::ScrollMotion>,
   pub window: auv_driver::Window,
+  /// Logical pixels delivered by a timed scroll (the total quantized to native wheel units).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub delivered: Option<auv_driver::Scroll>,
   pub action: Option<auv_driver::InputActionResult>,
 }
 
@@ -1228,7 +1309,16 @@ async fn execute_scroll(input: &InvokeCommandInput, plan: ScrollPlan) -> crate::
 
   input.cancellation.check().map_err(|error| error.to_string())?;
   let (scroll, options) = (plan.scroll, plan.options.clone());
-  let action = run_cancellable_input(&input.cancellation, move || session.window().scroll(&window, point, scroll, options)).await?;
+  let action = match plan.motion {
+    Some(motion) => {
+      let completed =
+        run_cancellable_input(&input.cancellation, move || session.window().scroll_motion(&window, point, &motion, options, &mut |_| {}))
+          .await?;
+      result.delivered = Some(completed.delivered);
+      completed.action
+    }
+    None => run_cancellable_input(&input.cancellation, move || session.window().scroll(&window, point, scroll, options)).await?,
+  };
   emit_input_action_result(&action);
   result.action = Some(action);
   scroll_output(result).map_err(Into::into)
@@ -1248,6 +1338,17 @@ pub fn scroll_output(result: ScrollResult) -> InvokeCommandResult {
     ],
   };
   fields.push(InvokeReportField::new("Scroll", format!("dx={} dy={} (logical px, +dy down)", result.scroll.delta_x, result.scroll.delta_y)));
+  if let Some(auv_driver::ScrollMotion {
+    timing: auv_driver::MotionTiming::FixedDuration { duration, function },
+    sample_rate_hz,
+    ..
+  }) = result.motion
+  {
+    fields.push(InvokeReportField::new("Motion", format!("{} ms, {function:?}, {sample_rate_hz} Hz", duration.as_millis())));
+  }
+  if let Some(delivered) = result.delivered {
+    fields.push(InvokeReportField::new("Delivered", format!("dx={} dy={}", delivered.delta_x, delivered.delta_y)));
+  }
   fields.push(InvokeReportField::new("Window point", format!("{:.1},{:.1}", result.window_point.x, result.window_point.y)));
   fields.push(InvokeReportField::new("Window ID", result.window.reference.id.clone()));
   Ok(InvokeCommandOutput::from_result(&result)?.with_report(InvokeReport::new(fields, Vec::new())))

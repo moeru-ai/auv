@@ -19,8 +19,10 @@ import type {
   MoveMouseStreamResponse,
   PasteTextOptionsSchema,
   ScreenClickOptionsSchema,
+  ScrollMotionSchema,
   ScrollOptionsSchema,
   ScrollSchema,
+  ScrollWindowPointMotionResponse,
   TypeTextOptionsSchema,
 } from '../../gen/auv/api/driver/v1/input_pb'
 import type { ShowOverlayRequestSchema } from '../../gen/auv/api/driver/v1/overlay_pb'
@@ -123,6 +125,13 @@ export interface WindowClient {
    * right, like DOM `WheelEvent`. The result is delivery evidence only.
    */
   scroll: (point: Init<typeof WindowPointSchema>, scroll: Init<typeof ScrollSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.scrollWindowPoint.output>>
+  /**
+   * Spreads one scroll over time with a timing function and streams
+   * `started`, `progress`, and `completed` events. Aborting `options.signal`
+   * stops the remaining samples. Totals use the same logical-pixel,
+   * positive-down convention as `scroll`.
+   */
+  scrollMotion: (point: Init<typeof WindowPointSchema>, motion: Init<typeof ScrollMotionSchema>, scrollOptions?: Init<typeof ScrollOptionsSchema>, options?: OperationOptions) => Promise<AsyncIterable<ScrollWindowPointMotionResponse>>
 }
 type Init<T extends DescMessage> = MessageInitShape<T>
 type InputFields<T extends DescMessage, K extends keyof Init<T>> = Omit<Init<T>, '$typeName' | K>
@@ -191,6 +200,12 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       options: scrollOptions,
       point,
       scroll,
+      window: { windowId: id },
+    }, options),
+    scrollMotion: (point, motion, scrollOptions, options) => serverStream(InputService.method.scrollWindowPointMotion, {
+      motion,
+      options: scrollOptions,
+      point,
       window: { windowId: id },
     }, options),
   })

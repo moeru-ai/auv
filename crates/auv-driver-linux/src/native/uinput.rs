@@ -24,13 +24,23 @@ pub(crate) struct InputSession {
   device: VirtualDevice,
   keys: AttributeSet<KeyCode>,
   wheel_remainder: (f64, f64),
+  /// Cumulative high-resolution units, used to emit legacy notches when the
+  /// running total crosses a notch boundary.
+  hi_res_total: (i64, i64),
 }
 
 impl InputSession {
   pub fn open() -> DriverResult<Self> {
     let keymap = Keymap::load()?;
     let keys: AttributeSet<KeyCode> = keymap.keys().chain([KeyCode::BTN_LEFT, KeyCode::BTN_RIGHT, KeyCode::BTN_MIDDLE]).collect();
-    let axes: AttributeSet<RelativeAxisCode> = [RelativeAxisCode::REL_WHEEL, RelativeAxisCode::REL_HWHEEL].into_iter().collect();
+    let axes: AttributeSet<RelativeAxisCode> = [
+      RelativeAxisCode::REL_WHEEL,
+      RelativeAxisCode::REL_HWHEEL,
+      RelativeAxisCode::REL_WHEEL_HI_RES,
+      RelativeAxisCode::REL_HWHEEL_HI_RES,
+    ]
+    .into_iter()
+    .collect();
     let properties: AttributeSet<PropType> = [PropType::POINTER].into_iter().collect();
     let device = VirtualDevice::builder()
       .and_then(|builder| {
@@ -53,6 +63,7 @@ impl InputSession {
       device,
       keys,
       wheel_remainder: (0.0, 0.0),
+      hi_res_total: (0, 0),
     })
   }
 
@@ -152,17 +163,39 @@ impl InputSession {
   }
 
   pub fn scroll_at(&mut self, point: Point, scroll: Scroll) -> DriverResult<()> {
-    let (notches, remainder) = super::wheel_notches(self.wheel_remainder, scroll)?;
+    let (units, remainder) = super::wheel_hi_res_units(self.wheel_remainder, scroll)?;
     self.move_to(point)?;
-    // REL_WHEEL is positive toward earlier content; REL_HWHEEL is positive right.
-    let events = [
-      InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_HWHEEL.0, notches.0),
-      InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_WHEEL.0, -notches.1),
-    ];
-    self.device.emit(&events).map_err(|error| backend(format!("scroll uinput pointer: {error}")))?;
+    let total = (self.hi_res_total.0 + i64::from(units.0), self.hi_res_total.1 + i64::from(units.1));
+    let events = wheel_events(self.hi_res_total, total);
+    if !events.is_empty() {
+      self.device.emit(&events).map_err(|error| backend(format!("scroll uinput pointer: {error}")))?;
+    }
+    self.hi_res_total = total;
     self.wheel_remainder = remainder;
     Ok(())
   }
+}
+
+/// Builds one event batch for a change of the cumulative high-resolution
+/// totals (positive toward later content). Hi-res axes carry every unit; the
+/// legacy axes carry whole notches when the running total crosses a notch
+/// boundary, per the kernel's REL_WHEEL_HI_RES convention
+/// (`Documentation/input/event-codes.rst`). REL_WHEEL is positive toward
+/// earlier content, and REL_HWHEEL is positive right.
+fn wheel_events(before: (i64, i64), after: (i64, i64)) -> Vec<InputEvent> {
+  let per_notch = super::HI_RES_UNITS_PER_WHEEL_NOTCH as i64;
+  let notches = |from: i64, to: i64| to / per_notch - from / per_notch;
+  let mut events = Vec::new();
+  let mut push = |code: RelativeAxisCode, value: i64| {
+    if value != 0 {
+      events.push(InputEvent::new(EventType::RELATIVE.0, code.0, value as i32));
+    }
+  };
+  push(RelativeAxisCode::REL_HWHEEL_HI_RES, after.0 - before.0);
+  push(RelativeAxisCode::REL_WHEEL_HI_RES, -(after.1 - before.1));
+  push(RelativeAxisCode::REL_HWHEEL, notches(before.0, after.0));
+  push(RelativeAxisCode::REL_WHEEL, -notches(before.1, after.1));
+  events
 }
 
 fn emit_key(device: &mut VirtualDevice, key: KeyCode, pressed: bool) -> DriverResult<()> {
@@ -212,6 +245,23 @@ mod tests {
     assert!(motion_events(Point::new(f64::NAN, 250.0), bounds).is_err());
     assert!(motion_events(Point::new(1.0, 250.0), bounds).is_err());
   }
+  #[test]
+  fn wheel_events_send_hi_res_units_and_legacy_notches_at_boundaries() {
+    let values = |events: Vec<InputEvent>| events.iter().map(|event| (event.code(), event.value())).collect::<Vec<_>>();
+    let (hwheel_hi, wheel_hi, hwheel, wheel) = (
+      RelativeAxisCode::REL_HWHEEL_HI_RES.0,
+      RelativeAxisCode::REL_WHEEL_HI_RES.0,
+      RelativeAxisCode::REL_HWHEEL.0,
+      RelativeAxisCode::REL_WHEEL.0,
+    );
+    // 60 px down: half a notch, hi-res only (negative REL_WHEEL_HI_RES = down).
+    assert_eq!(values(wheel_events((0, 0), (0, 60))), [(wheel_hi, -60)]);
+    // Crossing 120 completes one legacy notch.
+    assert_eq!(values(wheel_events((0, 60), (0, 130))), [(wheel_hi, -70), (wheel, -1)]);
+    assert_eq!(values(wheel_events((0, 0), (240, 0))), [(hwheel_hi, 240), (hwheel, 2)]);
+    assert!(wheel_events((5, 5), (5, 5)).is_empty());
+  }
+
   #[test]
   fn chord_batches_release_modifiers_in_reverse_without_duplicate_keys() {
     let (press, release) = chord_events(&[KeyCode::KEY_LEFTCTRL, KeyCode::KEY_LEFTSHIFT], KeyCode::KEY_A);

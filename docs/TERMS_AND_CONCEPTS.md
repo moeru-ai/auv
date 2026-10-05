@@ -1351,6 +1351,24 @@ for per-platform evidence.
 A delivered wheel event is not a scroll: occluded Chromium renderers can accept
 the event without moving, so scroll success still needs observation evidence.
 
+## Scroll Motion
+
+Scroll motion is one scroll total spread over time by a timing function
+(linear, cubic ease-in/out/in-out, or CSS `cubic-bezier`) at a sample rate.
+Each platform quantizes the cumulative target in its native wheel unit:
+
+- macOS: 1 px;
+- Windows: 1/120 notch;
+- Linux uinput: one high-resolution unit;
+- Linux portal: one notch.
+
+So the delivered total is exact, even when one sample is smaller than one
+unit. The first non-empty sample selects the delivery path, and later samples
+reuse it. Progress and completion are delivery evidence only. Applications
+and compositors can still smooth, hold back, or round wheel input, so the
+observed speed curve needs observation. See the
+[scroll motion design](ai/references/driver/2026-10-06-scroll-motion-design.md).
+
 ## Prepare For Input Options
 
 Prepare for input options is a provisional term for how an action may prepare a

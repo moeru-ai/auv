@@ -332,6 +332,11 @@ impl WindowInput for WindowApi<'_> {
     self.scroll_impl(window, point, scroll, options)
   }
 
+  /// One Win32 wheel unit (1/120 notch) in logical pixels.
+  fn scroll_quantum(&self) -> f64 {
+    crate::input::SCROLL_PIXELS_PER_WHEEL_UNIT
+  }
+
   /// `ForegroundPreferred` foregrounds the window like a foreground click and
   /// uses the `SendInput` desktop drag. Background policies post the held
   /// gesture to the window's child receiver without raising it.

@@ -273,6 +273,16 @@ impl WindowInput for WindowApi<'_> {
     self.scroll_impl(window, point, scroll, options)
   }
 
+  /// uinput carries 1 px high-resolution wheel units; the portal carries whole
+  /// 120 px notches (`TODO(linux-portal-hi-res-wheel)` in `native.rs`).
+  fn scroll_quantum(&self) -> f64 {
+    let state = self.session.state.lock().expect("linux driver session state poisoned");
+    match state.input_backend {
+      crate::InputBackend::Uinput => crate::native::SCROLL_PIXELS_PER_WHEEL_NOTCH / crate::native::HI_RES_UNITS_PER_WHEEL_NOTCH,
+      crate::InputBackend::Portal => crate::native::SCROLL_PIXELS_PER_WHEEL_NOTCH,
+    }
+  }
+
   /// Linux has no window-targeted pointer route, so every accepted policy
   /// focuses the window through AT-SPI and drags through the foreground portal,
   /// matching `click`.

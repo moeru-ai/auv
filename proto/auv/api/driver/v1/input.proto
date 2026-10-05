@@ -81,6 +81,15 @@ service InputService {
     option (auv.api.annotations.v1.discoverable) = true;
     option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
   }
+  // Spreads one window scroll over time with a timing function and streams
+  // started, progress, and completed events. Invalid input ends the RPC with a
+  // gRPC status before the first wheel event. The first non-empty sample
+  // selects the delivery path; later samples reuse it.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc ScrollWindowPointMotion(ScrollWindowPointMotionRequest) returns (stream ScrollWindowPointMotionResponse) {
+    option (auv.api.annotations.v1.discoverable) = true;
+    option (auv.api.annotations.v1.effect) = METHOD_EFFECT_INPUT;
+  }
   // Accepts one complete motion and streams delivery progress. Invalid input
   // ends the RPC with a gRPC status before the first pointer event.
   // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
@@ -296,6 +305,87 @@ message ScrollWindowPointResponse {
   WindowPoint point = 2;
   Scroll scroll = 3;
   InputActionResult action = 4;
+}
+
+// Standard timing functions mapping normalized time to normalized progress.
+enum StandardMotionTimingFunction {
+  STANDARD_MOTION_TIMING_FUNCTION_UNSPECIFIED = 0;
+  STANDARD_MOTION_TIMING_FUNCTION_LINEAR = 1;
+  STANDARD_MOTION_TIMING_FUNCTION_EASE_IN_CUBIC = 2;
+  STANDARD_MOTION_TIMING_FUNCTION_EASE_OUT_CUBIC = 3;
+  STANDARD_MOTION_TIMING_FUNCTION_EASE_IN_OUT_CUBIC = 4;
+}
+
+// CSS cubic-bezier(x1, y1, x2, y2). x1 and x2 must be within [0, 1]; y values
+// may overshoot to scroll back and forth.
+message CubicBezierMotionTimingFunction {
+  double x1 = 1;
+  double y1 = 2;
+  double x2 = 3;
+  double y2 = 4;
+}
+
+message MotionTimingFunction {
+  oneof function {
+    StandardMotionTimingFunction standard = 1;
+    CubicBezierMotionTimingFunction cubic_bezier = 2;
+  }
+}
+
+message FixedDurationMotionTiming {
+  // Zero delivers the total as one immediate sample.
+  google.protobuf.Duration duration = 1;
+  // Absence selects linear timing.
+  MotionTimingFunction function = 2;
+}
+
+message ScrollMotion {
+  // Total in logical pixels; positive is toward later content (down/right).
+  Scroll total = 1;
+  oneof timing {
+    FixedDurationMotionTiming fixed_duration = 2;
+  }
+  // Must be positive when the duration is positive.
+  uint32 sample_rate_hz = 3;
+}
+
+message ScrollWindowPointMotionRequest {
+  // A previously resolved child resource, refreshed before delivery.
+  WindowRef window = 1;
+  WindowPoint point = 2;
+  ScrollMotion motion = 3;
+  ScrollOptions options = 4;
+}
+
+message ScrollMotionStarted {
+  Window window = 1;
+  WindowPoint point = 2;
+  // Planned samples can be skipped when delivery falls behind schedule.
+  uint64 planned_sample_count = 3;
+  google.protobuf.Duration duration = 4;
+}
+
+message ScrollMotionProgress {
+  // This index can skip values when overdue samples are coalesced.
+  uint64 sample_index = 1;
+  google.protobuf.Duration scheduled_elapsed = 2;
+  // Logical pixels delivered so far.
+  Scroll delivered = 3;
+}
+
+message ScrollMotionCompleted {
+  // Logical pixels delivered; the total quantized to native wheel units.
+  Scroll delivered = 1;
+  // Delivery evidence of the first non-empty sample.
+  InputActionResult action = 2;
+}
+
+message ScrollWindowPointMotionResponse {
+  oneof event {
+    ScrollMotionStarted started = 1;
+    ScrollMotionProgress progress = 2;
+    ScrollMotionCompleted completed = 3;
+  }
 }
 
 message ClickScreenPointRequest {
