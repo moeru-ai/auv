@@ -1,3 +1,5 @@
+import slop from 'eslint-plugin-slop'
+
 import { defineConfig } from '@moeru/eslint-config'
 
 export default defineConfig({
@@ -36,6 +38,25 @@ export default defineConfig({
     'bucket/**',
   ],
 }, {
+  files: ['**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue}'],
+  name: 'auv/slop',
+  plugins: { slop },
+  rules: {
+    'slop/max-comment-length': 'warn',
+    'slop/no-chained-type-assertions': 'warn',
+    // Product strings can use this punctuation.
+    'slop/no-em-dash': 'off',
+    'slop/no-jargon': 'warn',
+    'slop/no-static-only-class': 'warn',
+    'slop/no-trivial-functions': 'warn',
+    // Named primitive aliases can express domain concepts.
+    'slop/no-trivial-type-aliases': 'off',
+    // The autofix workflow must preserve existing comment syntax.
+    'slop/prefer-jsdoc': 'off',
+  },
+  // Full inspection keeps editor and CI results independent of Git history.
+  settings: { slop: { inspection: { mode: 'full' } } },
+}, {
   rules: {
     'antfu/import-dedupe': 'error',
     // TODO: remove this
@@ -45,13 +66,10 @@ export default defineConfig({
 
     'no-console': ['error', { allow: ['warn', 'error', 'info'] }],
     'no-restricted-syntax': [
-      'warn',
-      // Catches the manual `error instanceof Error ? error.message : ...`
-      // pattern AGENTS.md forbids. The selector matches a ConditionalExpression
-      // whose test is `<x> instanceof Error` and whose consequent is `<x>.message`,
-      // so it does NOT false-positive on `error instanceof Error ? error : new Error(...)`
-      // (where the consequent is the error itself, not its `.message`). Antfu's
-      // default no-restricted-syntax patterns are preserved alongside.
+      'error',
+      // Catches `error instanceof Error ? error.message : ...`. The consequent
+      // must be `<x>.message`, so `error instanceof Error ? error : new Error(...)`
+      // is not flagged. Antfu's default patterns stay alongside.
       {
         message: 'Avoid `error instanceof Error ? error.message : ...`. Use `errorMessageFrom(error)` from \'@moeru/std\'. Pair with `?? \'fallback\'` when a default is needed.',
         selector: 'ConditionalExpression[test.type=\'BinaryExpression\'][test.operator=\'instanceof\'][test.right.name=\'Error\'][consequent.type=\'MemberExpression\'][consequent.property.name=\'message\']',
@@ -67,6 +85,15 @@ export default defineConfig({
       {
         message: 'Do not use namespace imports from `valibot`. Import the used Valibot APIs by name instead.',
         selector: 'ImportDeclaration[source.value=\'valibot\'] ImportNamespaceSpecifier',
+      },
+      {
+        message: 'Omit TypeScript and JavaScript source extensions from relative imports, dynamic imports, and re-exports.',
+        selector: [
+          'ImportDeclaration[source.value=/^\\.{1,2}\\/.*\\.[cm]?[jt]sx?$/]',
+          'ExportNamedDeclaration[source.value=/^\\.{1,2}\\/.*\\.[cm]?[jt]sx?$/]',
+          'ExportAllDeclaration[source.value=/^\\.{1,2}\\/.*\\.[cm]?[jt]sx?$/]',
+          'ImportExpression[source.value=/^\\.{1,2}\\/.*\\.[cm]?[jt]sx?$/]',
+        ].join(', '),
       },
       'TSEnumDeclaration[const=true]',
       'TSExportAssignment',

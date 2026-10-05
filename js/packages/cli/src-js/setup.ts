@@ -1,7 +1,9 @@
+// eslint-disable-next-line no-restricted-syntax -- the napi binding is a runtime file that tsdown never bundles by this exact specifier.
 import type { MacosHelperOptions, MacosHelperStatus as NativeMacosHelperStatus } from '../binding.js'
 
 import { isMacOS } from 'std-env'
 
+// eslint-disable-next-line no-restricted-syntax -- the napi binding is a runtime file that tsdown never bundles by this exact specifier.
 import {
   installMacosHelper as installNativeMacosHelper,
   macosHelperStatus as nativeMacosHelperStatus,

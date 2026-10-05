@@ -5,6 +5,7 @@ import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { constants } from 'node:os'
 
+// eslint-disable-next-line no-restricted-syntax -- this bin script runs as plain Node ESM, which needs the file extension.
 import { binaryPath } from '../dist/binary.js'
 
 try {
