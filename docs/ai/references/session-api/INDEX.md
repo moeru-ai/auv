@@ -20,9 +20,10 @@ the canonical local/remote operation interface and `auv-daemon` as the long-live
 
 Count: **40**
 
+- [`2026-10-06-windows-helper-daemon-split.md`](2026-10-06-windows-helper-daemon-split.md) — Windows Helper Host (`auv-helper.exe --service`, LocalSystem) split from the per-user `auv serve` daemon: private `\\.\pipe\auv-helper` protocol, caller-SID authorization, daemon-owned policy/audit/pairing, 0.0.28 `AuvDevice` migration, and installed-gate evidence.
 - [`2026-10-06-listener-authentication-and-registration.md`](2026-10-06-listener-authentication-and-registration.md) — transport-defined listener authentication, always-bound Unix owner socket, default-on pairing, owner-only token issuance and Device administration, `--no-register`, and removal of `auv api-server`.
 - [`2026-10-04-windows-helper-release.md`](2026-10-04-windows-helper-release.md) — icon-bearing `auv-helper.exe` target, build-time embedding, single-binary Windows release archive, Windows CI coverage, and the still-separate privileged installation gate.
-- [`2026-10-04-windows-helper-install.md`](2026-10-04-windows-helper-install.md) — protected extraction and install, SCM lifecycle, offline first-pairing bootstrap, status, and non-destructive uninstall contract.
+- [`2026-10-04-windows-helper-install.md`](2026-10-04-windows-helper-install.md) — historical 0.0.28 install that registered the daemon as the Helper service; superseded by the Windows Helper and daemon split.
 - [`2026-10-02-macos-helper-protocol-compatibility.md`](2026-10-02-macos-helper-protocol-compatibility.md) — helper usability decided by daemon wire-protocol range, not frontend version; forward-only upgrades, `frontend-outdated`, signed security-epoch revocation, and the `HOST_INCOMPATIBLE` reason.
 - [`2026-10-01-macos-helper-setup.md`](2026-10-01-macos-helper-setup.md) — shared Rust/CLI/N-API helper setup, embedded signed app release path, shipped helper identities (`helperApp` / `--helper-app`), per-user `SMAppService` registration, and remaining clean-host gate.
 - [`2026-09-28-remote-device-entry-implementation-design.md`](2026-09-28-remote-device-entry-implementation-design.md) — current locked-existing-session-first Device unlock contract and three-platform implementation plan; signed-out entry deferred.
@@ -30,7 +31,7 @@ Count: **40**
 - [`2026-09-27-device-entry-credential-decision.md`](2026-09-27-device-entry-credential-decision.md) — accepted target-local persistent credential enrollment and deletion; pre-login storage requirements now deferred.
 - [`2026-09-27-device-login-host-lifecycle-decision.md`](2026-09-27-device-login-host-lifecycle-decision.md) — historical machine-level daemon lifecycle decision for the deferred signed-out phase.
 - [`2026-09-27-device-unlock-authority-decision.md`](2026-09-27-device-unlock-authority-decision.md) — accepted paired-bearer authority for existing-session unlock; earlier sign-in scope deferred.
-- [`2026-09-29-windows-scm-host.md`](2026-09-29-windows-scm-host.md) — candidate Windows service lifecycle, restricted storage, and temporary installation procedure; final locked-console evidence is recorded in the Windows host handoff.
+- [`2026-09-29-windows-scm-host.md`](2026-09-29-windows-scm-host.md) — historical `serve --windows-service` daemon host and SYSTEM-only daemon storage; superseded by the Windows Helper and daemon split.
 - [`2026-09-27-remote-device-unlock-research.md`](2026-09-27-remote-device-unlock-research.md) — historical policy interview, three existing-session unlock proofs, and failed macOS signed-out delivery gates.
 - [`2026-09-28-macos-remote-desktop-loginwindow-research.md`](2026-09-28-macos-remote-desktop-loginwindow-research.md) — primary-source comparison of Apple remote desktop services and third-party login-window mechanisms; no AUV support claim.
 - [`2026-09-28-macos-locked-session-host-gate.md`](2026-09-28-macos-locked-session-host-gate.md) — historical signed Aqua helper, private Keychain and IPC, and supervised same-session unlock evidence under the former helper identity; current-identity evidence is recorded in the helper setup note, and neither gate is a production support claim.

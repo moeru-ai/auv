@@ -1,4 +1,9 @@
-//! One-shot Windows console helper. Installed only with the privileged host.
+//! AUV Helper for Windows.
+//!
+//! `--service` runs the SCM-registered LocalSystem Helper Host. The host starts
+//! this same executable in a selected console session as a one-shot worker:
+//! `--lock` for lock, or the pipe-name form for unlock. Any other invocation
+//! exits with status 2 so a direct launch never acts.
 
 #[cfg(target_os = "windows")]
 fn main() {
@@ -6,6 +11,20 @@ fn main() {
   let Some(first) = args.next() else {
     std::process::exit(2)
   };
+
+  if first == auv_device_helper_windows::SERVICE_ARGUMENT {
+    if args.next().is_some() {
+      std::process::exit(2);
+    }
+
+    // Outside SCM the dispatcher connection fails and nothing is served.
+    if let Err(error) = auv_device_helper_windows::host::run_service() {
+      eprintln!("{error}");
+      std::process::exit(1);
+    }
+
+    return;
+  }
 
   if first == "--lock" {
     let Some(session) = args.next().and_then(|value| value.parse::<u32>().ok()) else {

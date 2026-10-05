@@ -149,16 +149,18 @@ pub(crate) struct LocalState {
 
 impl LocalState {
   pub(crate) fn open(store_root: &Path, pairing: Option<Arc<dyn Pairing>>) -> Result<Self, String> {
+    let control_root = store_root.join("control");
+    let root = control_root.join("device-entry");
     #[cfg(unix)]
-    let root = {
-      let control_root = store_root.join("control");
-      let root = control_root.join("device-entry");
+    {
       private_directory(&control_root)?;
       private_directory(&root)?;
-      root
-    };
+    }
+    // NOTICE(device-entry-windows-store): The per-user daemon store sits under
+    // the user profile, whose inherited ACL already excludes other users.
+    // Unix-style owner/mode checks have no direct Windows counterpart here.
     #[cfg(windows)]
-    let root = super::storage_windows::root_path().map_err(|_| "failed to locate Windows Device entry storage".to_string())?;
+    std::fs::create_dir_all(&root).map_err(|error| format!("failed to create Device local directory: {error}"))?;
     let metadata = Arc::new(MetadataStore::open(&root).map_err(|error| format!("failed to open Device entry policy: {error}"))?);
     let audit = Arc::new(Audit::open(&root).map_err(|error| format!("failed to open Device entry audit: {error}"))?);
     let account_locks = Arc::new(AccountLocks::new());

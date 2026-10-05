@@ -1,5 +1,12 @@
 # Windows SCM daemon host
 
+> [!IMPORTANT]
+> Superseded on 2026-10-06 by
+> [Windows Helper and daemon split](2026-10-06-windows-helper-daemon-split.md).
+> `serve --windows-service`, the `AuvDevice` service, the SYSTEM-only daemon
+> store, and the bootstrap pairing token no longer exist. This note records the
+> 0.0.28 design and its evidence.
+
 Status: Windows service entrypoint implemented; native Windows compile, focused
 unit tests, and combined binary build passed. A uniquely named temporary
 installation started as LocalSystem in Session 0 and answered paired session

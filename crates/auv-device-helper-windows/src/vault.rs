@@ -27,10 +27,10 @@ use zeroize::{Zeroize, Zeroizing};
 
 use auv_driver_windows::device_session::{ConsoleLockState, ConsoleSession, observe_console};
 
-use super::storage_windows::{Descriptor, program_data_leaf, require_system_host, verify_object, wide};
+use crate::storage::{Descriptor, program_data_leaf, require_system_host, verify_object, wide};
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum VaultError {
+pub(crate) enum VaultError {
   #[error("the Windows enrollment vault is unavailable")]
   Unavailable,
   #[error("the Windows enrollment vault permissions are invalid")]
@@ -159,7 +159,7 @@ fn protect(sid: &str, credential: &str) -> Result<Zeroizing<Vec<u8>>, VaultError
 /// successful write is PENDING until `verify_while_locked` succeeds.
 // The DeviceLocalService enrollment backend holds the per-SID account lock
 // across metadata invalidation, this write, and publication of PENDING.
-pub(super) fn enroll(sid: &str, credential: &str) -> Result<(), VaultError> {
+pub(crate) fn enroll(sid: &str, credential: &str) -> Result<(), VaultError> {
   if credential.is_empty() || credential.chars().any(char::is_control) || credential.encode_utf16().count() > 128 {
     return Err(VaultError::RetrievalFailed);
   }
@@ -226,7 +226,7 @@ pub(super) fn enroll(sid: &str, credential: &str) -> Result<(), VaultError> {
 }
 
 /// Delete one account's protected credential after local peer authorization.
-pub(super) fn remove(sid: &str) -> Result<(), VaultError> {
+pub(crate) fn remove(sid: &str) -> Result<(), VaultError> {
   let (path, _root_guard) = item_path(sid)?;
 
   if !path.exists() {
@@ -252,7 +252,7 @@ pub(super) fn remove(sid: &str) -> Result<(), VaultError> {
 
 /// Host-internal retrieval. Never expose this through DeviceService, CLI,
 /// tracing, audit, or a remote request/response.
-pub(super) fn retrieve(sid: &str) -> Result<Zeroizing<String>, VaultError> {
+pub(crate) fn retrieve(sid: &str) -> Result<Zeroizing<String>, VaultError> {
   let (path, _root_guard) = item_path(sid)?;
 
   if !path.exists() {
@@ -331,7 +331,7 @@ fn wipe_dpapi_plain(output: &mut CRYPT_INTEGER_BLOB) {
 
 /// Prove a LocalSystem process can decrypt this account's item while its
 /// current physical-console session remains locked. No credential is returned.
-pub(super) fn verify_while_locked(target: &ConsoleSession) -> Result<(), VaultError> {
+pub(crate) fn verify_while_locked(target: &ConsoleSession) -> Result<(), VaultError> {
   let current = observe_console().map_err(|_| VaultError::NotLocked)?.ok_or(VaultError::NotLocked)?;
 
   if !target.same_login(&current) || current.lock_state != ConsoleLockState::Locked {

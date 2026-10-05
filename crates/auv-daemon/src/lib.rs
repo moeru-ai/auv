@@ -4,29 +4,9 @@
 mod daemon;
 mod devices;
 
-/// Fixed ProgramData root for the LocalSystem-owned Windows Device entry store.
-#[cfg(target_os = "windows")]
-pub fn windows_device_entry_store_root() -> Result<std::path::PathBuf, String> {
-  devices::windows_store_root()
-}
-
-/// Issue one short-lived pairing token before starting the Windows service.
-/// The caller must run as LocalSystem in Session 0. The protected store's
-/// lifetime lock prevents concurrent mutation by a running daemon, and only
-/// the token digest is persisted. The plaintext must stay on the target host
-/// until a client consumes it once.
-#[cfg(target_os = "windows")]
-pub fn issue_windows_bootstrap_token() -> Result<String, String> {
-  let store = pairing::PairingStore::open_system(windows_device_entry_store_root()?.join("pairings.json"))
-    .map_err(|error| format!("failed to open protected pairing store: {error}"))?;
-
-  let token = store
-    .issue_token(Some(std::time::Duration::from_secs(20 * 60)))
-    .map_err(|error| format!("failed to issue bootstrap pairing token: {error}"))?;
-  Ok(token.expose_once())
-}
-
 mod discovery;
+#[cfg(windows)]
+mod durable_windows;
 mod pairing;
 mod resource_id;
 
@@ -59,9 +39,6 @@ pub struct Config {
   pub runner_providers: Vec<runner_provider::RunnerProviderConfig>,
   /// First-party Runner runtime definitions.
   pub first_party_runners: runner_provider::FirstPartyRunnerRuntimes,
-  /// Admit the privileged Windows Device entry host only from SCM mode.
-  #[cfg(windows)]
-  pub enable_device_entry: bool,
 }
 
 /// Parses one listener URI. Every `http://` listener requires a paired Device
@@ -108,11 +85,13 @@ fn owner_listener(listeners: &[ListenEndpoint], discovery_file: Option<&Path>, r
   #[cfg(windows)]
   {
     let _ = (discovery_file, register);
-    // TODO(windows-owner-listener): Windows adds its owner pipe only when no
-    // listener was configured. Always binding one is deferred because the
-    // LocalSystem service's pipe owner is SYSTEM, which ordinary users cannot
-    // reach; see session-api/2026-10-05-windows-helper-and-daemon-service-architecture-research.md.
-    Ok(listeners.is_empty().then(|| ListenEndpoint::NamedPipe {
+    // The daemon always runs as its user; the LocalSystem Helper Host is a
+    // separate service. An owner pipe is therefore always reachable by that
+    // user, including beside `--listen http://...` network listeners.
+    if listeners.iter().any(|listener| matches!(listener, ListenEndpoint::NamedPipe { .. })) {
+      return Ok(None);
+    }
+    Ok(Some(ListenEndpoint::NamedPipe {
       name: format!("auv-{}", uuid::Uuid::now_v7()),
     }))
   }
@@ -126,10 +105,8 @@ fn owner_listener(listeners: &[ListenEndpoint], discovery_file: Option<&Path>, r
 /// Bound daemon server with discovery publication and graceful shutdown.
 pub struct Server {
   inner: auv_api_server::server::Server,
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   device_local: std::sync::Arc<devices::LocalState>,
-  #[cfg(windows)]
-  device_local: Option<std::sync::Arc<devices::LocalState>>,
   discovery_file: Option<PathBuf>,
   register: bool,
 }
@@ -137,14 +114,6 @@ pub struct Server {
 impl Server {
   /// Binds all configured listeners and opens daemon-owned state.
   pub async fn bind(config: Config) -> Result<Self, String> {
-    #[cfg(windows)]
-    let pairing = if config.enable_device_entry {
-      pairing::PairingStore::open_system(config.pairing_store)
-    } else {
-      pairing::PairingStore::open(config.pairing_store)
-    };
-
-    #[cfg(not(windows))]
     let pairing = pairing::PairingStore::open(config.pairing_store);
     let pairing = Some(std::sync::Arc::new(pairing.map_err(|error| format!("failed to open pairing store: {error}"))?)
       as std::sync::Arc<dyn auv_api_server::control::Pairing>);
@@ -152,19 +121,10 @@ impl Server {
     let mut listeners = config.listeners.into_iter().chain(owner);
     let listen = listeners.next().ok_or_else(|| "daemon requires at least one listener".to_string())?;
     let store_root = config.store_root;
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     let device_local = std::sync::Arc::new(devices::LocalState::open(&store_root, pairing.clone())?);
-    #[cfg(windows)]
-    let device_local = if config.enable_device_entry {
-      Some(std::sync::Arc::new(devices::LocalState::open(&store_root, pairing.clone())?))
-    } else {
-      None
-    };
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     let local_state_for_daemon = std::sync::Arc::clone(&device_local);
-    #[cfg(windows)]
-    let local_state_for_daemon = device_local.clone();
     let runner_providers = config.runner_providers;
     let first_party_runners = config.first_party_runners;
     let bound = auv_api_server::server::Server::bind_with(
@@ -218,7 +178,7 @@ impl Server {
       None
     };
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
       // These independent listeners share state but never share route tables.
       // If either fails, stop the other and wait for its socket cleanup.
@@ -237,30 +197,6 @@ impl Server {
           result?;
           paired_result
         }
-      }
-    }
-
-    #[cfg(windows)]
-    {
-      if let Some(device_local) = self.device_local {
-        let mut paired = Box::pin(self.inner.serve(shutdown.clone()));
-        let mut local = Box::pin(device_local.serve(shutdown.clone()));
-        tokio::select! {
-          result = &mut paired => {
-            shutdown.cancel();
-            let local_result = local.await;
-            result?;
-            local_result
-          }
-          result = &mut local => {
-            shutdown.cancel();
-            let paired_result = paired.await;
-            result?;
-            paired_result
-          }
-        }
-      } else {
-        self.inner.serve(shutdown).await
       }
     }
 

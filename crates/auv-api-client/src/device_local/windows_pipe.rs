@@ -1,7 +1,8 @@
 //! Windows DeviceLocalService pipe opening and connected-server identity.
 //!
 //! This module owns the Win32 handle and token calls. No HTTP/2 bytes reach a
-//! pipe until the kernel-reported server process is verified as LocalSystem.
+//! pipe until the kernel-reported server process is verified to run as this
+//! process's own user, matching the Unix socket's peer-UID check.
 
 use std::io;
 use std::mem::{align_of, size_of};
@@ -10,12 +11,12 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandl
 
 use tokio::net::windows::named_pipe::NamedPipeClient;
 use windows::Win32::Foundation::{ERROR_PIPE_BUSY, FALSE, HANDLE};
-use windows::Win32::Security::{GetTokenInformation, IsWellKnownSid, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid};
+use windows::Win32::Security::{EqualSid, GetTokenInformation, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser};
 use windows::Win32::Storage::FileSystem::{
   CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_MODE, OPEN_EXISTING, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
 };
-use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, GetNamedPipeServerSessionId};
-use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::core::{HRESULT, PCWSTR};
 
 // NOTICE(device-local-pipe-rights): GENERIC_WRITE includes the bit shared by
@@ -79,12 +80,10 @@ fn valid_name(name: &str) -> bool {
 
 fn verify_server(pipe: HANDLE) -> io::Result<()> {
   let mut server_pid = 0u32;
-  let mut server_session = u32::MAX;
-  // SAFETY: Both calls write one live u32 for this connected pipe handle.
+  // SAFETY: The call writes one live u32 for this connected pipe handle.
   unsafe { GetNamedPipeServerProcessId(pipe, &mut server_pid) }.map_err(|_| identity_error())?;
-  unsafe { GetNamedPipeServerSessionId(pipe, &mut server_session) }.map_err(|_| identity_error())?;
 
-  if server_pid == 0 || server_session != 0 {
+  if server_pid == 0 {
     return Err(identity_error());
   }
 
@@ -93,9 +92,32 @@ fn verify_server(pipe: HANDLE) -> io::Result<()> {
   let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, server_pid) }.map_err(|_| identity_error())?;
   // SAFETY: OpenProcess returned one owned process handle.
   let process = unsafe { OwnedHandle::from_raw_handle(process.0) };
+  let server = token_user(HANDLE(process.as_raw_handle()))?;
+  // SAFETY: GetCurrentProcess returns a pseudo handle that needs no close.
+  let current = token_user(unsafe { GetCurrentProcess() })?;
+
+  // SAFETY: Both SIDs point into their live, aligned TOKEN_USER buffers.
+  if unsafe { EqualSid(sid(&server), sid(&current)) }.is_err() {
+    return Err(identity_error());
+  }
+
+  // A server that exits while checked cannot consume credentials. Re-read
+  // the pipe association before transferring it into the gRPC transport.
+  let mut current_pid = 0u32;
+  unsafe { GetNamedPipeServerProcessId(pipe, &mut current_pid) }.map_err(|_| identity_error())?;
+
+  if current_pid != server_pid {
+    return Err(identity_error());
+  }
+
+  Ok(())
+}
+
+/// The aligned TOKEN_USER buffer for one process; its SID points inside it.
+fn token_user(process: HANDLE) -> io::Result<Vec<usize>> {
   let mut token = HANDLE::default();
-  // SAFETY: The process handle stays live; Windows writes one owned token.
-  unsafe { OpenProcessToken(HANDLE(process.as_raw_handle()), TOKEN_QUERY, &mut token) }.map_err(|_| identity_error())?;
+  // SAFETY: The process handle is live; Windows writes one owned token.
+  unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.map_err(|_| identity_error())?;
   // SAFETY: OpenProcessToken returned one owned token handle.
   let token = unsafe { OwnedHandle::from_raw_handle(token.0) };
   let mut bytes = 0u32;
@@ -108,35 +130,25 @@ fn verify_server(pipe: HANDLE) -> io::Result<()> {
 
   let mut data = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
   // SAFETY: The word buffer is aligned and large enough for TOKEN_USER and
-  // its SID; both stay live through IsWellKnownSid.
+  // its SID.
   unsafe { GetTokenInformation(HANDLE(token.as_raw_handle()), TokenUser, Some(data.as_mut_ptr().cast()), bytes, &mut bytes) }
     .map_err(|_| identity_error())?;
 
-  if (bytes as usize) < size_of::<TOKEN_USER>() {
+  if (bytes as usize) < size_of::<TOKEN_USER>() || sid(&data).0.is_null() {
     return Err(identity_error());
   }
 
-  // SAFETY: Windows initialized an aligned TOKEN_USER in the buffer.
-  let user = unsafe { data.as_ptr().cast::<TOKEN_USER>().read() };
+  Ok(data)
+}
 
-  if user.User.Sid.0.is_null() || !unsafe { IsWellKnownSid(user.User.Sid, WinLocalSystemSid) }.as_bool() {
-    return Err(identity_error());
-  }
-
-  // A service that exits while checked cannot consume credentials. Re-read
-  // the pipe association before transferring it into the gRPC transport.
-  let mut current_pid = 0u32;
-  unsafe { GetNamedPipeServerProcessId(pipe, &mut current_pid) }.map_err(|_| identity_error())?;
-
-  if current_pid != server_pid {
-    return Err(identity_error());
-  }
-
-  Ok(())
+fn sid(token_user: &[usize]) -> PSID {
+  // SAFETY: `token_user` came from `token_user` above, which checked that an
+  // aligned TOKEN_USER was initialized at its start.
+  unsafe { token_user.as_ptr().cast::<TOKEN_USER>().read() }.User.Sid
 }
 
 fn identity_error() -> io::Error {
-  io::Error::new(io::ErrorKind::PermissionDenied, "Device-local pipe server must be LocalSystem in Session 0")
+  io::Error::new(io::ErrorKind::PermissionDenied, "Device-local pipe server must run as this user")
 }
 
 #[cfg(test)]
@@ -161,14 +173,15 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn rejects_same_user_server_before_exposing_a_channel() {
+  async fn accepts_a_server_running_as_this_user() {
+    // The per-user daemon serves DeviceLocalService as the same account as
+    // its CLI; the former LocalSystem-only check rejected exactly this case.
     let name = format!("auv-device-local-test-{}", std::process::id());
     let path = format!(r"\\.\pipe\{name}");
     let server = ServerOptions::new().first_pipe_instance(true).reject_remote_clients(true).create(&path).unwrap();
-    let error = open_verified(&name).await.unwrap_err();
+    let accepted = tokio::spawn(async move { server.connect().await.map(|()| server) });
 
-    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-
-    drop(server);
+    open_verified(&name).await.unwrap();
+    accepted.await.unwrap().unwrap();
   }
 }

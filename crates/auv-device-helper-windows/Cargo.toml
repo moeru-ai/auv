@@ -1,0 +1,51 @@
+[package]
+name = "auv-device-helper-windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = true
+readme = "README.md"
+license.workspace = true
+authors.workspace = true
+description = "LocalSystem Windows Helper Host for existing-session Device entry"
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = ["host"]
+# The daemon links only the client and wire protocol. The installed
+# `auv-helper.exe` additionally links the LocalSystem host, vault, and SCM glue.
+host = ["dep:windows-service"]
+
+[[bin]]
+name = "auv-helper"
+path = "src/main.rs"
+required-features = ["host"]
+
+[dependencies]
+auv-driver-windows = { version = "0.0.28", path = "../auv-driver-windows" }
+thiserror = "2"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_IO",
+  "Win32_System_Memory",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+] }
+windows-service = { version = "0.8.1", optional = true }
+
+[build-dependencies]
+winresource = { version = "0.1.31", default-features = false }

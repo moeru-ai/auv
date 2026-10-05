@@ -165,7 +165,7 @@ jobs:
         # owner-approved; archive packaging alone is not a signing claim.
         shell: pwsh
         run: |
-          cargo build --locked --release --package auv-driver-windows --bin auv-helper --target "${{ matrix.target }}"
+          cargo build --locked --release --package auv-device-helper-windows --bin auv-helper --target "${{ matrix.target }}"
           $helper = (Resolve-Path "target/${{ matrix.target }}/release/auv-helper.exe").Path
           "AUV_WINDOWS_HELPER_EXE_PATH=$helper" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 

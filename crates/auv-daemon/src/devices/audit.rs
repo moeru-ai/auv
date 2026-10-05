@@ -4,17 +4,13 @@
 //! record schema is an allowlist: it cannot hold a credential or native error
 //! text, and this file is never exposed through paired Device or Run APIs.
 
-use std::fs::File;
-#[cfg(any(unix, test))]
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(windows)]
-use super::storage_windows::{self, Creation};
 use auv::devices::{DeviceEntryEffectKind, DeviceEntryErrorReason};
 use auv_api_server::device_local::LocalOsPrincipal;
 use serde::{Deserialize, Serialize};
@@ -24,8 +20,6 @@ pub(super) struct Audit {
   poisoned: AtomicBool,
   #[allow(dead_code)]
   path: PathBuf,
-  #[cfg(windows)]
-  _root_guard: File,
 }
 
 #[derive(Serialize)]
@@ -100,19 +94,28 @@ impl Audit {
     })
   }
 
+  /// The per-user daemon store inherits the user profile's private ACL.
   #[cfg(windows)]
   pub(super) fn open(root: &Path) -> Result<Self, DeviceEntryErrorReason> {
-    let root_guard = storage_windows::directory(root).map_err(|_| DeviceEntryErrorReason::AuditUnavailable)?;
     let path = root.join("device-entry-audit.jsonl");
-    let file = storage_windows::file(root, "device-entry-audit.jsonl", Creation::OpenOrCreate)
+    let file = OpenOptions::new()
+      .create(true)
+      .truncate(false)
+      .read(true)
+      .write(true)
+      .open(&path)
       .map_err(|_| DeviceEntryErrorReason::AuditUnavailable)?;
+
+    if !file.metadata().map_err(|_| DeviceEntryErrorReason::AuditUnavailable)?.file_type().is_file() {
+      return Err(DeviceEntryErrorReason::AuditUnavailable);
+    }
+
     validate_existing(&file)?;
     file.sync_all().map_err(|_| DeviceEntryErrorReason::AuditUnavailable)?;
     Ok(Self {
       file: Mutex::new(file),
       poisoned: AtomicBool::new(false),
       path,
-      _root_guard: root_guard,
     })
   }
 
@@ -123,8 +126,8 @@ impl Audit {
     bytes.push(b'\n');
     let mut file = self.file.lock().map_err(|_| DeviceEntryErrorReason::AuditUnavailable)?;
     self.require_healthy()?;
-    // The Windows handle has exact SYSTEM-only security rather than the
-    // standard OpenOptions append flag; reads may have moved its cursor.
+    // The Windows handle is opened read/write without the append flag so the
+    // same handle serves bounded reads; those reads may have moved its cursor.
     #[cfg(windows)]
     let write_result = file.seek(SeekFrom::End(0)).and_then(|_| file.write_all(&bytes)).and_then(|_| file.sync_data());
     #[cfg(unix)]
@@ -351,7 +354,6 @@ mod tests {
     let path = root.path().join("reader-fixture.jsonl");
     let file = OpenOptions::new().create_new(true).read(true).write(true).open(&path).unwrap();
     let audit = Audit {
-      _root_guard: file.try_clone().unwrap(),
       file: Mutex::new(file),
       poisoned: AtomicBool::new(false),
       path,

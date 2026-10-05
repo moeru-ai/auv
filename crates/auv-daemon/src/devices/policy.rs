@@ -584,6 +584,14 @@ mod tests {
     CallerId::local_owner()
   }
 
+  /// A local principal allowed to read every account's audit entries.
+  fn audit_reader() -> auv_api_server::device_local::LocalOsPrincipal {
+    #[cfg(unix)]
+    return auv_api_server::device_local::LocalOsPrincipal::UnixUid(0);
+    #[cfg(windows)]
+    return auv_api_server::device_local::LocalOsPrincipal::WindowsSid("S-1-5-18".into());
+  }
+
   fn paired_policy(host: Arc<Host>) -> (tempfile::TempDir, Arc<Policy<Arc<Host>>>, super::super::super::pairing::PairingStore, CallerId) {
     use super::super::super::pairing::PairingStore;
 
@@ -687,8 +695,6 @@ mod tests {
   // before the account lock can be released or native input delivered.
   #[tokio::test]
   async fn canceled_request_waiting_for_account_lock_has_terminal_audit_outcome() {
-    use auv_api_server::device_local::LocalOsPrincipal;
-
     let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Locked)]));
     let (_root, policy) = fixture(Arc::clone(&host));
     let policy = Arc::new(policy);
@@ -713,7 +719,7 @@ mod tests {
 
     assert_eq!(host.deliveries.load(Ordering::SeqCst), 0);
 
-    let entries = policy.audit.read_for_principal(&LocalOsPrincipal::UnixUid(0), 0, 10).unwrap().entries;
+    let entries = policy.audit.read_for_principal(&audit_reader(), 0, 10).unwrap().entries;
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].event, "attempt");
@@ -726,8 +732,6 @@ mod tests {
 
   #[tokio::test]
   async fn canceled_request_waiting_for_policy_gate_has_terminal_audit_outcome() {
-    use auv_api_server::device_local::LocalOsPrincipal;
-
     let host = Arc::new(Host::new(vec![session("s", UserSessionLockState::Locked)]));
     let (_root, policy) = fixture(Arc::clone(&host));
     let policy = Arc::new(policy);
@@ -737,7 +741,7 @@ mod tests {
       async move { policy.ensure(&caller(), UserSessionTarget::User("neko".into())).await }
     });
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
-      while policy.audit.read_for_principal(&LocalOsPrincipal::UnixUid(0), 0, 10).unwrap().entries.is_empty() {
+      while policy.audit.read_for_principal(&audit_reader(), 0, 10).unwrap().entries.is_empty() {
         tokio::task::yield_now().await;
       }
     })
@@ -753,7 +757,7 @@ mod tests {
     assert_eq!(host.observations.load(Ordering::SeqCst), 0);
     assert_eq!(host.deliveries.load(Ordering::SeqCst), 0);
 
-    let entries = policy.audit.read_for_principal(&LocalOsPrincipal::UnixUid(0), 0, 10).unwrap().entries;
+    let entries = policy.audit.read_for_principal(&audit_reader(), 0, 10).unwrap().entries;
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].event, "attempt");

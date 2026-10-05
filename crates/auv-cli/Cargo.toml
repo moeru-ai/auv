@@ -59,6 +59,7 @@ objc2-core-foundation = "0.3"
 swift-bridge-build = "0.1.59"
 
 [target.'cfg(windows)'.dependencies]
+auv-device-helper-windows = { version = "0.0.28", path = "../auv-device-helper-windows", default-features = false }
 windows-service = "0.8.1"
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_RemoteDesktop", "Win32_UI_Shell"] }
 zeroize = "1"

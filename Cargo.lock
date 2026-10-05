@@ -505,6 +505,7 @@ dependencies = [
  "auv-core",
  "auv-daemon",
  "auv-device-helper-macos",
+ "auv-device-helper-windows",
  "auv-driver",
  "auv-driver-macos",
  "auv-media-macos",
@@ -634,9 +635,9 @@ dependencies = [
  "auv-api-server",
  "auv-core",
  "auv-device-helper-macos",
+ "auv-device-helper-windows",
  "auv-driver-linux",
  "auv-driver-macos",
- "auv-driver-windows",
  "fs2",
  "futures-util",
  "getrandom 0.3.4",
@@ -686,6 +687,19 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "zeroize",
+]
+
+[[package]]
+name = "auv-device-helper-windows"
+version = "0.0.28"
+dependencies = [
+ "auv-driver-windows",
+ "tempfile",
+ "thiserror 2.0.21",
+ "windows 0.58.0",
+ "windows-service",
+ "winresource",
  "zeroize",
 ]
 
@@ -800,7 +814,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "windows 0.58.0",
- "winresource",
  "xcap",
  "zeroize",
 ]

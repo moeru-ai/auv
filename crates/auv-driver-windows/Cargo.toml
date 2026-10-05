@@ -22,10 +22,6 @@ latency-telemetry = []
 name = "auv-latency-benchmark"
 path = "src/bin/latency_benchmark.rs"
 
-[[bin]]
-name = "auv-helper"
-path = "src/bin/auv-helper.rs"
-
 [dependencies]
 auv-driver-common = { version = "0.0.28", path = "../auv-driver-common" }
 auv-driver-overlay = { version = "0.0.28", path = "../auv-driver-overlay", features = ["windows"], optional = true }
@@ -80,6 +76,3 @@ windows = { version = "0.58", features = [
   "Win32_Media_Audio_Endpoints"
 ] }
 xcap = "0.6"
-
-[build-dependencies]
-winresource = { version = "0.1.31", default-features = false }

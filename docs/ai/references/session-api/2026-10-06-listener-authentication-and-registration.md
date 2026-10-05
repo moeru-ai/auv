@@ -45,11 +45,10 @@ unauthenticated loopback TCP, and `auv serve` covers its remaining topologies.
 
 ## Deferred decisions
 
-- `TODO(windows-owner-listener)` in `auv-daemon`: Windows still adds an owner
-  pipe only when no listener is configured. For the LocalSystem service, the
-  pipe owner is SYSTEM, so ordinary users cannot reach it. Resolve this with
-  the Windows service lifecycle in
-  [`2026-10-05-windows-helper-and-daemon-service-architecture-research.md`](2026-10-05-windows-helper-and-daemon-service-architecture-research.md).
+- Resolved on 2026-10-06 (`TODO(windows-owner-listener)`): the Windows daemon
+  no longer runs as a LocalSystem service. It always binds its owner pipe
+  unless a named-pipe listener is configured. See
+  [Windows Helper and daemon split](2026-10-06-windows-helper-daemon-split.md).
 - `TODO(pairing-admin-device)` in the pairing gRPC adapter: an explicitly
   granted, default-off administrator Device is deferred until a remote
   administration workflow is approved.

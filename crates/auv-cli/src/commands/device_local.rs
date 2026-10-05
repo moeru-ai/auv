@@ -108,7 +108,7 @@ pub async fn run(args: DeviceLocalArgs, project_root: &Path) -> Result<i32, Stri
     let store_root = store_root_path(project_root, args.store_root.as_deref());
     DeviceLocalClient::connect_windows(&store_root)
       .await
-      .map_err(|error| format!("Device-local service unavailable or its LocalSystem identity could not be verified: {error}"))?
+      .map_err(|error| format!("Device-local service unavailable or not owned by this user; start `auv serve` first: {error}"))?
   };
   let service = client.service();
 

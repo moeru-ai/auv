@@ -6,9 +6,7 @@
 //! vault error text is serialized here.
 
 use std::collections::HashMap;
-#[cfg(unix)]
-use std::fs::OpenOptions;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -20,16 +18,12 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use super::policy::Enrollment;
-#[cfg(windows)]
-use super::storage_windows::{self, Creation};
 
 pub(super) struct MetadataStore {
   path: PathBuf,
   state: Mutex<State>,
   poisoned: AtomicBool,
   _process_lock: File,
-  #[cfg(windows)]
-  _root_guard: File,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -65,22 +59,19 @@ fn default_enabled() -> bool {
 
 impl MetadataStore {
   pub(super) fn open(root: &Path) -> Result<Self, DeviceEntryErrorReason> {
-    #[cfg(windows)]
-    let root_guard = storage_windows::directory(root).map_err(|_| DeviceEntryErrorReason::ServiceUnavailable)?;
     #[cfg(unix)]
     private_directory(root)?;
-    #[cfg(unix)]
     let process_lock = {
       let lock_path = root.join("device-entry-policy.lock");
       let mut lock_options = OpenOptions::new();
-      lock_options.create(true).read(true).write(true);
-      use std::os::unix::fs::OpenOptionsExt;
-      lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+      lock_options.create(true).truncate(false).read(true).write(true);
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::OpenOptionsExt;
+        lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+      }
       lock_options.open(lock_path).map_err(|_| DeviceEntryErrorReason::ServiceUnavailable)?
     };
-    #[cfg(windows)]
-    let process_lock = storage_windows::file(root, "device-entry-policy.lock", Creation::OpenOrCreate)
-      .map_err(|_| DeviceEntryErrorReason::ServiceUnavailable)?;
     #[cfg(unix)]
     private_file(&process_lock)?;
     process_lock.try_lock_exclusive().map_err(|_| DeviceEntryErrorReason::ServiceUnavailable)?;
@@ -98,8 +89,6 @@ impl MetadataStore {
       state: Mutex::new(state),
       poisoned: AtomicBool::new(false),
       _process_lock: process_lock,
-      #[cfg(windows)]
-      _root_guard: root_guard,
     })
   }
 
@@ -218,31 +207,25 @@ impl MetadataStore {
     let root = self.path.parent().expect("policy path has parent");
     #[cfg(unix)]
     private_directory(root).map_err(|_| std::io::Error::from(ErrorKind::PermissionDenied))?;
-    #[cfg(windows)]
-    let _root_guard = storage_windows::directory(root)?;
-    let temp_name = format!(".device-entry-policy-{}.tmp", uuid::Uuid::now_v7());
-    let temp = root.join(&temp_name);
-    #[cfg(unix)]
+    let temp = root.join(format!(".device-entry-policy-{}.tmp", uuid::Uuid::now_v7()));
     let mut file = {
       let mut options = OpenOptions::new();
       options.create_new(true).write(true);
+      #[cfg(unix)]
       options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
       options.open(&temp)?
     };
-    #[cfg(windows)]
-    let mut file = storage_windows::file(root, &temp_name, Creation::New)?;
     let result = (|| {
       serde_json::to_writer(&mut file, state)?;
       file.write_all(b"\n")?;
       file.sync_all()?;
-      #[cfg(windows)]
       drop(file);
       #[cfg(unix)]
       fs::rename(&temp, &self.path)?;
       #[cfg(unix)]
       File::open(root)?.sync_all()?;
       #[cfg(windows)]
-      storage_windows::replace(root, &temp_name, "device-entry-policy.json")?;
+      crate::durable_windows::replace_file(&temp, &self.path)?;
       Ok(())
     })();
 
@@ -354,7 +337,7 @@ fn read_private_file(path: &Path) -> Result<Option<Vec<u8>>, DeviceEntryErrorRea
     options.open(path)
   };
   #[cfg(windows)]
-  let opened = storage_windows::file(path.parent().expect("policy path has parent"), "device-entry-policy.json", Creation::Existing);
+  let opened = File::open(path);
   let bytes = match opened {
     Ok(file) => {
       let metadata = file.metadata().map_err(|_| DeviceEntryErrorReason::ServiceUnavailable)?;

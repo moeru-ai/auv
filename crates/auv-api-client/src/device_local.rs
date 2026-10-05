@@ -50,8 +50,7 @@ impl DeviceLocalClient {
   }
 
   /// Connect to the dedicated local pipe after verifying its server process
-  /// uses a LocalSystem token in Session 0. The CLI stays gated until the
-  /// installed service and enrollment policy pass their native host gate.
+  /// runs as this process's own user, the per-user daemon for `store_root`.
   #[cfg(windows)]
   pub async fn connect_windows(store_root: &Path) -> Result<Self, tonic::transport::Error> {
     let name = named_pipe_name(store_root);

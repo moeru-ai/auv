@@ -243,9 +243,14 @@ auv setup windows-helper status
 ```
 
 > [!NOTE]
-> The setup command installs `auv.exe` and extracts its embedded
-> `auv-helper.exe` into `%ProgramFiles%\AUV`. The helper is not a standalone
-> command and does not need to be downloaded or placed beside `auv.exe`.
+> The setup command extracts the `auv-helper.exe` that is embedded in `auv.exe`
+> into `%ProgramFiles%\AUV`. Then it registers that file as the LocalSystem
+> `AuvHelper` service. The Helper does not listen on the network. Lock and
+> unlock work through an ordinary `auv serve` that runs as the logged-in user.
+> To accept paired Devices from the network, start that daemon with
+> `--listen http://0.0.0.0:9847`. An installation from 0.0.28 is migrated in
+> place: the old `AuvDevice` service is removed, enrolled PINs are kept, and
+> paired clients must pair again with the new daemon.
 
 ### Uninstall
 
@@ -279,7 +284,8 @@ scoop uninstall auv
 ```
 
 > [!NOTE]
-> Helper removal keeps the device data in `%ProgramData%`.
+> Helper removal keeps the enrolled PINs in `%ProgramData%`. The daemon's own
+> pairing and policy data stays in its store.
 
 If you installed the ZIP manually, remove its directory from the file system.
 Then remove that directory from `PATH`.

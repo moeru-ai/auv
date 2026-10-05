@@ -19,8 +19,6 @@ fn config(listeners: Vec<ListenEndpoint>, root: &std::path::Path) -> Config {
     daemon_idle_timeout: None,
     runner_providers: Vec::new(),
     first_party_runners: Default::default(),
-    #[cfg(windows)]
-    enable_device_entry: false,
   }
 }
 
@@ -33,17 +31,10 @@ fn paired_loopback() -> ListenEndpoint {
   }
 }
 
-/// One paired loopback listener plus an owner channel for issuing tokens.
-/// Unix daemons add their owner socket themselves; Windows adds its owner pipe
-/// only when no listener is configured, so tests name one explicitly.
+/// One paired loopback listener. Every daemon adds its own owner IPC channel
+/// beside it, which tests use for issuing pairing tokens.
 fn paired_http_listeners() -> Vec<ListenEndpoint> {
-  #[allow(unused_mut)]
-  let mut listeners = vec![paired_loopback()];
-  #[cfg(windows)]
-  listeners.push(ListenEndpoint::NamedPipe {
-    name: format!("auv-test-{}", uuid::Uuid::now_v7()),
-  });
-  listeners
+  vec![paired_loopback()]
 }
 
 fn remote_address(server: &Server) -> std::net::SocketAddr {
@@ -87,38 +78,46 @@ async fn pair_device(owner: auv_api_client::ConnectEndpoint, remote: std::net::S
 
 #[cfg(windows)]
 #[tokio::test]
-async fn ordinary_windows_server_does_not_open_system_device_entry() {
+async fn windows_server_owns_device_entry_state_in_its_own_store() {
   // ROOT CAUSE:
   //
-  // If every Windows Server::bind opens the privileged Device entry store,
-  // ordinary `auv serve` fails before it can bind its existing API listener.
-  // The SCM mode alone opts into LocalSystem-only Device entry state.
+  // Device entry on Windows existed only inside `serve --windows-service`, so
+  // an ordinary daemon reported UNSUPPORTED_OS_STATE and could not use an
+  // installed Helper. Policy and audit now live in the daemon's own store and
+  // only privileged effects cross to the Helper Host.
   let root = tempfile::tempdir().unwrap();
-  let server = super::Server::bind(config(Vec::new(), root.path())).await.unwrap();
+  let server = super::Server::bind(config(vec![paired_loopback()], root.path())).await.unwrap();
 
-  assert!(server.device_local.is_none());
-  assert!(!root.path().join("store/control/device-entry").exists());
+  assert!(root.path().join("store/control/device-entry/device-entry-policy.lock").is_file());
+  assert!(root.path().join("store/control/device-entry/device-entry-audit.jsonl").is_file());
+  // A network listener no longer suppresses the owner pipe, which is the only
+  // channel that can issue the first pairing token.
+  assert!(matches!(server.discovery_endpoint(), Some(BoundEndpoint::NamedPipe(_))));
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn disabled_device_entry_policy(root: &std::path::Path) {
-  use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
   let control = root.join("store/control");
   let entry = control.join("device-entry");
   std::fs::create_dir_all(&entry).unwrap();
-  std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
-  std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o700)).unwrap();
   let mut options = std::fs::OpenOptions::new();
-  options.write(true).create_new(true).mode(0o600);
+  options.write(true).create_new(true);
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o700)).unwrap();
+    options.mode(0o600);
+  }
   std::io::Write::write_all(&mut options.open(entry.join("device-entry-policy.json")).unwrap(), br#"{"enabled":false,"enrollments":{}}"#)
     .unwrap();
 }
 
 fn device_entry_denied_reason() -> proto::DeviceEntryErrorReason {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   return proto::DeviceEntryErrorReason::Disabled;
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   return proto::DeviceEntryErrorReason::UnsupportedOsState;
 }
 
@@ -420,7 +419,7 @@ async fn device_entry_loopback_requires_authorization_before_selection() {
   // Before the fix, these requests reached the Device entry policy. The fix
   // requires paired authentication or a verified local transport first.
   let root = tempfile::tempdir().unwrap();
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   disabled_device_entry_policy(root.path());
   let server = Server::bind(config(vec![paired_loopback()], root.path())).await.unwrap();
   let address = remote_address(&server);
@@ -564,7 +563,7 @@ async fn unregistered_daemon_uses_a_private_owner_socket_and_publishes_nothing()
 #[tokio::test]
 async fn owner_verified_unix_can_reach_device_entry_policy() {
   let root = tempfile::tempdir().unwrap();
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   disabled_device_entry_policy(root.path());
   let socket = root.path().join("api.sock");
   let server = Server::bind(config(
@@ -734,7 +733,7 @@ async fn rest_pairing_bootstraps_and_authenticates_a_remote_device() {
   // Before the fix, JSON clients received 415 Unsupported Media Type.
   // The fix keeps the protobuf service as the source of the JSON route shape.
   let root = tempfile::tempdir().unwrap();
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   disabled_device_entry_policy(root.path());
   let server = Server::bind(config(paired_http_listeners(), root.path())).await.unwrap();
   let owner = owner_endpoint(&server);

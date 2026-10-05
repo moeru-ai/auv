@@ -59,7 +59,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo build --locked --package auv-driver-windows --bin auv-helper
+          cargo build --locked --package auv-device-helper-windows --bin auv-helper
           $helper = (Resolve-Path "target/debug/auv-helper.exe").Path
           $env:AUV_WINDOWS_HELPER_EXE_PATH = $helper
           "AUV_WINDOWS_HELPER_EXE_PATH=$helper" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

@@ -65,20 +65,18 @@ enum WindowsHelperCommand {
     #[arg(long)]
     json: bool,
   },
-  /// Install auv.exe, extract its embedded helper, and register the LocalSystem service.
+  /// Extract the embedded auv-helper.exe and register the LocalSystem AUV Helper service.
   Install {
     /// Emit a stable machine-readable result after installation.
     #[arg(long)]
     json: bool,
   },
-  /// Stop and unregister the service, then remove its installed binaries.
+  /// Stop and unregister the service, then remove its installed binary.
   Uninstall {
     /// Emit a stable machine-readable result after removal.
     #[arg(long)]
     json: bool,
   },
-  /// Remove the short-lived first-pairing token file after it is consumed.
-  ClearBootstrapToken,
 }
 
 pub fn run(args: SetupArgs) -> Result<i32, String> {
@@ -127,7 +125,6 @@ pub fn run(args: SetupArgs) -> Result<i32, String> {
         WindowsHelperCommand::Status { json } => super::windows_helper_setup::status(json),
         WindowsHelperCommand::Install { json } => super::windows_helper_setup::install(json),
         WindowsHelperCommand::Uninstall { json } => super::windows_helper_setup::uninstall(json),
-        WindowsHelperCommand::ClearBootstrapToken => super::windows_helper_setup::clear_bootstrap_token(),
       },
       SetupCommand::MacosHelper(_) => Err("macOS helper setup is available only on macOS".to_string()),
     }

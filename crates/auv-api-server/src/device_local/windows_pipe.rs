@@ -32,14 +32,6 @@ use windows::core::{PCWSTR, PWSTR};
 
 use super::{DeviceLocalControl, DeviceLocalGrpc, LocalOsPrincipal};
 
-// NOTICE(device-local-pipe-attributes): The installed Windows gate showed
-// CreateFileW requires FILE_READ_ATTRIBUTES (0x80) even when the client only
-// asks for data, READ_CONTROL, and SYNCHRONIZE. A target-local pipe matrix
-// admitted the same client with 0x00120083 and denied it with 0x00120003.
-// Keep FILE_CREATE_PIPE_INSTANCE (0x4) excluded; remove the extra attribute
-// right only after a Windows-native gate shows it is no longer required.
-const AUTHENTICATED_USER_PIPE_ACCESS: u32 = 0x0012_0083;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ClientIdentity {
   sid: String,
@@ -158,21 +150,10 @@ fn create_pipe(name: &str, first: bool) -> io::Result<NamedPipeServer> {
     return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid DeviceLocalService pipe name"));
   }
 
-  // Authenticated local users may connect so an ordinary account can later
-  // self-enroll. Grant READ_CONTROL, SYNCHRONIZE, FILE_READ_ATTRIBUTES,
-  // FILE_READ_DATA, and FILE_WRITE_DATA (0x00120083). GENERIC_WRITE includes
-  // the bit shared by FILE_APPEND_DATA and FILE_CREATE_PIPE_INSTANCE, letting an AU
-  // caller create a competing instance. See
-  // https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights.
-  // SID verification and backend policy remain mandatory.
-  // NOTICE(device-local-pipe-integrity): A LocalSystem service creates System
-  // integrity objects by default. That mandatory label rejects writes from
-  // ordinary interactive users even when the DACL grants the exact pipe data
-  // rights. Medium integrity admits those users; the DACL, SID impersonation,
-  // and per-account policy still authorize each request. Remove this explicit
-  // label only if the host no longer accepts local non-System enrollment.
-  // https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control
-  let sddl = format!("D:P(A;;GA;;;SY)(A;;0x{AUTHENTICATED_USER_PIPE_ACCESS:08x};;;AU)S:(ML;;NW;;;ME)");
+  // The per-user daemon serves this pipe, so only its own account (OW) and
+  // LocalSystem may open it, matching the Unix socket's 0700 directory. SID
+  // impersonation and backend policy still authorize every request.
+  let sddl = "D:P(A;;GA;;;SY)(A;;GA;;;OW)".to_string();
   let sddl = sddl.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
   let mut descriptor = PSECURITY_DESCRIPTOR::default();
   // SAFETY: The UTF-16 buffer is NUL-terminated and stays live for this call;
@@ -501,23 +482,15 @@ mod tests {
     assert!(probe.0.lock().unwrap().is_none());
   }
 
-  #[test]
-  fn authenticated_user_mask_allows_data_but_not_pipe_instance_creation() {
-    assert_eq!(AUTHENTICATED_USER_PIPE_ACCESS & 0x0000_0003, 0x0000_0003);
-    assert_eq!(AUTHENTICATED_USER_PIPE_ACCESS & 0x0000_0004, 0);
-    assert_eq!(AUTHENTICATED_USER_PIPE_ACCESS & 0x0000_0080, 0x0000_0080);
-    assert_eq!(AUTHENTICATED_USER_PIPE_ACCESS & 0x0012_0000, 0x0012_0000);
-  }
-
   #[tokio::test]
-  async fn authenticated_user_opens_the_actual_local_pipe_acl() {
+  async fn owner_opens_the_actual_local_pipe_acl() {
     // ROOT CAUSE:
     //
     // A service-created pipe denied the console account before gRPC because
     // Windows requires FILE_READ_ATTRIBUTES when opening a named pipe, even
     // though the client requested only data, READ_CONTROL, and SYNCHRONIZE.
     // Before the fix, CreateFileW returned ERROR_ACCESS_DENIED with 0x00120003.
-    // The ACL now admits that client without granting FILE_CREATE_PIPE_INSTANCE.
+    // The per-user daemon now owns this pipe and grants its owner full access.
     let name = format!("auv-device-local-acl-test-{}", std::process::id());
     let _server = create_pipe(&name, true).expect("create the real Device-local pipe ACL");
     let path = format!(r"\\.\pipe\{name}");
@@ -535,7 +508,7 @@ mod tests {
         HANDLE::default(),
       )
     }
-    .expect("an authenticated user should open the dedicated pipe");
+    .expect("the daemon's own user should open the dedicated pipe");
     // SAFETY: CreateFileW returned one owned handle.
     let _client = unsafe { OwnedHandle::from_raw_handle(raw.0) };
   }

@@ -1,8 +1,9 @@
-//! Candidate target-local Windows PIN enrollment for a LocalSystem service.
+//! Target-local Windows PIN enrollment in the per-user daemon.
 //!
 //! The named-pipe transport supplies a verified client SID. This backend
 //! never treats the requested user name as authority or lets a paired caller
-//! choose a credential. Binding waits for restricted metadata and audit files.
+//! choose a credential. Metadata stays here; the PIN goes only to the Helper
+//! Host vault, which accepts it only for this daemon's own account SID.
 
 use std::sync::Arc;
 
@@ -10,13 +11,12 @@ use auv_api_server::device_local::{
   AuditPage as LocalAuditPage, CredentialKind, DeviceLocalControl, EnrollAccount, Enrollment as LocalEnrollment, LocalControlError,
   LocalOsPrincipal,
 };
-use auv_driver_windows::device_session::observe_console;
+use auv_device_helper_windows::HostError;
 
 use super::audit::Audit;
 use super::local::{audit_page, complete_account_mutation, local_enrollment};
 use super::metadata::MetadataStore;
 use super::policy::{AccountLocks, Enrollment as StoredEnrollment};
-use super::vault_windows::{VaultError, enroll as vault_enroll, remove as vault_remove};
 
 const LOCAL_SYSTEM_SID: &str = "S-1-5-18";
 
@@ -44,7 +44,7 @@ impl WindowsLocalEnrollment {
   }
 
   fn current_account(&self, user: &str) -> Result<(String, String), LocalControlError> {
-    let console = observe_console().map_err(|_| LocalControlError::HostUnavailable)?.ok_or(LocalControlError::HostUnavailable)?;
+    let console = auv_device_helper_windows::observe().map_err(helper_error)?.ok_or(LocalControlError::HostUnavailable)?;
     let name = console.account_name();
 
     if user != name || console.account_sid.is_empty() {
@@ -96,7 +96,7 @@ impl DeviceLocalControl for WindowsLocalEnrollment {
     let visible_sid = if sid == LOCAL_SYSTEM_SID {
       None
     } else if is_administrator(principal) {
-      Some(observe_console().map_err(|_| LocalControlError::HostUnavailable)?.ok_or(LocalControlError::HostUnavailable)?.account_sid)
+      Some(auv_device_helper_windows::observe().map_err(helper_error)?.ok_or(LocalControlError::HostUnavailable)?.account_sid)
     } else {
       Some(sid.to_owned())
     };
@@ -133,8 +133,8 @@ impl DeviceLocalControl for WindowsLocalEnrollment {
       // Revoke the old generation before replacement. A failed DPAPI write
       // cannot leave the previously Ready PIN eligible for remote delivery.
       metadata.invalidate_for_enroll(&name, &sid).map_err(|_| LocalControlError::Persistence)?;
-      let text = std::str::from_utf8(credential.as_bytes()).map_err(|_| vault_error(VaultError::RetrievalFailed))?;
-      vault_enroll(&sid, text).map_err(vault_error)?;
+      let text = std::str::from_utf8(credential.as_bytes()).map_err(|_| LocalControlError::InvalidCredential)?;
+      auv_device_helper_windows::enroll(&sid, text).map_err(helper_error)?;
       let stored = metadata.publish_pending(&name, &sid).map_err(|_| LocalControlError::Persistence)?;
       Ok(local_enrollment(stored))
     })
@@ -169,10 +169,10 @@ impl DeviceLocalControl for WindowsLocalEnrollment {
       let existed = metadata.enrollment(&sid).map_err(|_| LocalControlError::Persistence)?.is_some();
       metadata.remove(&sid).map_err(|_| LocalControlError::Persistence)?;
 
-      match vault_remove(&sid) {
+      match auv_device_helper_windows::remove(&sid) {
         Ok(()) => Ok(()),
-        Err(VaultError::NotEnrolled) if existed => Ok(()),
-        Err(error) => Err(vault_error(error)),
+        Err(HostError::NotEnrolled) if existed => Ok(()),
+        Err(error) => Err(helper_error(error)),
       }
     })
     .await
@@ -222,13 +222,20 @@ fn authorize(principal: &LocalOsPrincipal, account_sid: &str) -> Result<(), Loca
   }
 }
 
-fn vault_error(error: VaultError) -> LocalControlError {
+fn helper_error(error: HostError) -> LocalControlError {
   match error {
-    VaultError::InvalidAccount => LocalControlError::InvalidAccount,
-    VaultError::NotEnrolled => LocalControlError::NotFound,
-    VaultError::Unavailable | VaultError::Permissions | VaultError::RetrievalFailed | VaultError::NotLocked => {
-      LocalControlError::HostUnavailable
-    }
+    HostError::InvalidRequest => LocalControlError::InvalidAccount,
+    HostError::InvalidCredential => LocalControlError::InvalidCredential,
+    HostError::NotEnrolled => LocalControlError::NotFound,
+    // The Helper Host stores PINs only for this daemon's own account.
+    HostError::Unauthorized => LocalControlError::PermissionDenied,
+    HostError::ProtocolUnsupported => LocalControlError::HostIncompatible,
+    HostError::Unavailable
+    | HostError::Untrusted
+    | HostError::StaleSession
+    | HostError::NotLocked
+    | HostError::VaultUnavailable
+    | HostError::Unverified => LocalControlError::HostUnavailable,
   }
 }
 

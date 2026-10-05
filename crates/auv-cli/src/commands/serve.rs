@@ -41,23 +41,10 @@ pub struct ServeArgs {
   /// Load an operator-trusted custom Runner provider manifest. May be repeated.
   #[arg(long = "runner-provider", value_name = "PATH")]
   pub runner_providers: Vec<PathBuf>,
-
-  /// Run as the installed AUV Windows service under LocalSystem.
-  #[cfg(windows)]
-  #[arg(long, hide = true)]
-  pub windows_service: bool,
 }
 
 pub async fn run(args: ServeArgs, project_root: &std::path::Path) -> Result<i32, String> {
-  #[cfg(windows)]
-  if args.windows_service {
-    return super::windows_service::run(args, project_root.to_path_buf());
-  }
-
-  run_listeners(host_options(args)?, project_root).await
-}
-
-pub(super) async fn run_listeners(options: HostOptions, project_root: &std::path::Path) -> Result<i32, String> {
+  let listeners = args.listeners.iter().map(|listener| auv_daemon::parse_listener(listener)).collect::<Result<Vec<_>, _>>()?;
   let shutdown = tokio_util::sync::CancellationToken::new();
   let signal = shutdown.clone();
   tokio::spawn(async move {
@@ -65,50 +52,9 @@ pub(super) async fn run_listeners(options: HostOptions, project_root: &std::path
       signal.cancel();
     }
   });
-  run_listeners_with_shutdown(options, project_root, shutdown, || Ok(())).await
-}
 
-pub(super) fn host_options(args: ServeArgs) -> Result<HostOptions, String> {
-  let listeners = args.listeners.iter().map(|listener| auv_daemon::parse_listener(listener)).collect::<Result<Vec<_>, _>>()?;
-  Ok(HostOptions {
-    id: args.id,
-    listeners,
-    pairing_store: args.pairing_store,
-    store_root: args.store_root,
-    discovery_file: args.discovery_file,
-    register: !args.no_register,
-    daemon_idle_timeout: args.daemon_idle_timeout,
-    runner_providers: args.runner_providers,
-    local_driver_runner: true,
-    emit_bound_endpoints: true,
-    #[cfg(windows)]
-    enable_device_entry: false,
-  })
-}
-
-pub(super) struct HostOptions {
-  pub id: Option<uuid::Uuid>,
-  pub listeners: Vec<auv_daemon::ListenEndpoint>,
-  pub pairing_store: Option<PathBuf>,
-  pub store_root: Option<PathBuf>,
-  pub discovery_file: Option<PathBuf>,
-  pub register: bool,
-  pub daemon_idle_timeout: Option<u64>,
-  pub runner_providers: Vec<PathBuf>,
-  pub local_driver_runner: bool,
-  pub emit_bound_endpoints: bool,
-  #[cfg(windows)]
-  pub enable_device_entry: bool,
-}
-
-pub(super) async fn run_listeners_with_shutdown(
-  options: HostOptions,
-  project_root: &std::path::Path,
-  shutdown: tokio_util::sync::CancellationToken,
-  on_bound: impl FnOnce() -> Result<(), String>,
-) -> Result<i32, String> {
-  let store_root = options.store_root.map_or_else(|| project_root.join(".auv").join("store"), |path| resolve_path(project_root, &path));
-  let providers = options
+  let store_root = args.store_root.map_or_else(|| project_root.join(".auv").join("store"), |path| resolve_path(project_root, &path));
+  let providers = args
     .runner_providers
     .iter()
     .map(|path| {
@@ -118,33 +64,23 @@ pub(super) async fn run_listeners_with_shutdown(
     })
     .collect::<Result<Vec<_>, _>>()?;
   let server = auv_daemon::Server::bind(auv_daemon::Config {
-    id: options.id,
-    listeners: options.listeners,
-    first_party_runners: if options.local_driver_runner {
-      first_party_runner_runtimes(&store_root)?
-    } else {
-      auv_daemon::runner_provider::FirstPartyRunnerRuntimes::default()
-    },
-    pairing_store: options.pairing_store.map_or_else(|| store_root.join("pairings.json"), |path| resolve_path(project_root, &path)),
+    id: args.id,
+    listeners,
+    first_party_runners: first_party_runner_runtimes(&store_root)?,
+    pairing_store: args.pairing_store.map_or_else(|| store_root.join("pairings.json"), |path| resolve_path(project_root, &path)),
     store_root,
-    discovery_file: options.discovery_file,
-    register: options.register,
-    daemon_idle_timeout: options.daemon_idle_timeout.map(std::time::Duration::from_secs),
+    discovery_file: args.discovery_file,
+    register: !args.no_register,
+    daemon_idle_timeout: args.daemon_idle_timeout.map(std::time::Duration::from_secs),
     runner_providers: providers,
-    #[cfg(windows)]
-    enable_device_entry: options.enable_device_entry,
   })
   .await?;
 
-  if options.emit_bound_endpoints {
-    for endpoint in server.endpoints() {
-      println!("auv serve: {endpoint}");
-    }
-
-    std::io::stdout().flush().map_err(|error| format!("failed to flush daemon listener log: {error}"))?;
+  for endpoint in server.endpoints() {
+    println!("auv serve: {endpoint}");
   }
 
-  on_bound()?;
+  std::io::stdout().flush().map_err(|error| format!("failed to flush daemon listener log: {error}"))?;
   server.serve(shutdown).await?;
   Ok(0)
 }

@@ -1,20 +1,19 @@
 //! Windows physical-console adapter for the shared Device policy.
 //!
-//! The installed LocalSystem service delegates exact-session input to its
-//! selected-session worker and reads back the console state.
+//! The daemon runs as the logged-in user. Console observation, PIN retrieval,
+//! and selected-session input belong to the installed LocalSystem Helper Host;
+//! this adapter only selects the login and maps the host's typed results.
 
 use auv::devices::{DeviceEntryErrorReason, UserSession, UserSessionConnectionKind, UserSessionLockState};
-use auv_driver_windows::device_session::{ConsoleLockState, ConsoleSession, ConsoleSessionError, observe_console};
-use auv_driver_windows::device_unlock_host::{HostError, lock_with_worker, unlock_with_worker};
+use auv_device_helper_windows::{ConsoleLockState, ConsoleSession, HostError};
 
 use super::policy::{ObservedSession, SessionHost};
-use super::vault_windows::{self, VaultError};
 
 pub(super) struct WindowsSessionHost;
 
 impl SessionHost for WindowsSessionHost {
   fn sessions(&self) -> Result<Vec<ObservedSession>, DeviceEntryErrorReason> {
-    Ok(observe_console().map_err(session_error)?.map(|session| vec![observed(&session)]).unwrap_or_default())
+    Ok(auv_device_helper_windows::observe().map_err(host_error)?.map(|session| vec![observed(&session)]).unwrap_or_default())
   }
 
   async fn verify_pending_credential(
@@ -24,7 +23,7 @@ impl SessionHost for WindowsSessionHost {
   ) -> Result<(), DeviceEntryErrorReason> {
     let session = selected_console(selected, ConsoleLockState::Locked)?;
     authorize_effect()?;
-    vault_windows::verify_while_locked(&session).map_err(vault_error)
+    auv_device_helper_windows::probe_locked(&session).map_err(host_error)
   }
 
   async fn verify_ready_credential(
@@ -32,8 +31,8 @@ impl SessionHost for WindowsSessionHost {
     _selected: &ObservedSession,
     _authorize_effect: &(dyn Fn() -> Result<(), DeviceEntryErrorReason> + Send + Sync),
   ) -> Result<(), DeviceEntryErrorReason> {
-    // Ready means the LocalSystem host retrieved the PIN in a prior locked
-    // attempt. The worker retrieves and submits it again during delivery.
+    // Ready means the Helper Host retrieved the PIN in a prior locked
+    // attempt. It retrieves and submits it again during delivery.
     // TODO(device-entry-windows-rotation): A confirmed OS rejection signal is
     // needed before suspending a rotated PIN; the worker currently reports an
     // unverified result instead. Reopen after the installed Winlogon gate.
@@ -42,34 +41,21 @@ impl SessionHost for WindowsSessionHost {
 
   fn unlock_locked(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
     let session = selected_console(selected, ConsoleLockState::Locked)?;
-    // Retrieval stays in this LocalSystem service; the driver receives the
-    // credential only for the one-shot pipe transfer to its worker.
-    let credential = vault_windows::retrieve(&session.account_sid).map_err(vault_error)?;
-    let after = unlock_with_worker(&session, &credential).map_err(host_error)?;
-
-    if !session.same_login(&after) || after.lock_state != ConsoleLockState::Usable {
-      return Err(DeviceEntryErrorReason::OutcomeUnverified);
-    }
-
-    Ok(())
+    // The host re-observes this exact login before retrieval and reads it
+    // back as usable after the worker exits. Policy observes independently.
+    auv_device_helper_windows::unlock(&session).map_err(host_error)
   }
 
   fn lock_usable(&self, selected: &ObservedSession) -> Result<(), DeviceEntryErrorReason> {
-    let current = selected_console(selected, ConsoleLockState::Usable)?;
-    let after = lock_with_worker(&current).map_err(host_error)?;
-
-    if !current.same_login(&after) || after.lock_state != ConsoleLockState::Locked {
-      return Err(DeviceEntryErrorReason::OutcomeUnverified);
-    }
-
-    Ok(())
+    let session = selected_console(selected, ConsoleLockState::Usable)?;
+    auv_device_helper_windows::lock(&session).map_err(host_error)
   }
 }
 
 /// Re-reads the console and returns it only if it is still the selected
 /// login, account, and expected lock state in both the selection and the OS.
 fn selected_console(selected: &ObservedSession, state: ConsoleLockState) -> Result<ConsoleSession, DeviceEntryErrorReason> {
-  let current = observe_console().map_err(session_error)?.ok_or(DeviceEntryErrorReason::StaleSession)?;
+  let current = auv_device_helper_windows::observe().map_err(host_error)?.ok_or(DeviceEntryErrorReason::StaleSession)?;
 
   if selected_matches_console(selected, &current, state) {
     Ok(current)
@@ -107,29 +93,19 @@ fn observed(session: &ConsoleSession) -> ObservedSession {
   }
 }
 
-fn session_error(error: ConsoleSessionError) -> DeviceEntryErrorReason {
-  match error {
-    ConsoleSessionError::ConsoleTransition => DeviceEntryErrorReason::StaleSession,
-    ConsoleSessionError::InconsistentRecord | ConsoleSessionError::UnsupportedPlatform => DeviceEntryErrorReason::UnsupportedOsState,
-    ConsoleSessionError::QueryFailed(_) | ConsoleSessionError::IdentityUnverified => DeviceEntryErrorReason::ServiceUnavailable,
-  }
-}
-
-fn vault_error(error: VaultError) -> DeviceEntryErrorReason {
-  match error {
-    VaultError::NotEnrolled => DeviceEntryErrorReason::Unenrolled,
-    VaultError::NotLocked | VaultError::InvalidAccount => DeviceEntryErrorReason::StaleSession,
-    VaultError::Unavailable | VaultError::Permissions | VaultError::RetrievalFailed => DeviceEntryErrorReason::ServiceUnavailable,
-  }
-}
-
-fn host_error(error: HostError) -> DeviceEntryErrorReason {
+pub(super) fn host_error(error: HostError) -> DeviceEntryErrorReason {
   match error {
     HostError::StaleSession | HostError::NotLocked => DeviceEntryErrorReason::StaleSession,
     HostError::Unverified => DeviceEntryErrorReason::OutcomeUnverified,
-    HostError::Unavailable | HostError::WorkerUnavailable | HostError::WorkerIdentity | HostError::TransferFailed => {
-      DeviceEntryErrorReason::ServiceUnavailable
-    }
+    HostError::NotEnrolled => DeviceEntryErrorReason::Unenrolled,
+    // The console login belongs to an account other than this daemon's user.
+    HostError::Unauthorized => DeviceEntryErrorReason::OccupiedDesktop,
+    HostError::ProtocolUnsupported => DeviceEntryErrorReason::HostIncompatible,
+    HostError::Unavailable
+    | HostError::Untrusted
+    | HostError::InvalidRequest
+    | HostError::InvalidCredential
+    | HostError::VaultUnavailable => DeviceEntryErrorReason::ServiceUnavailable,
   }
 }
 
@@ -166,6 +142,16 @@ mod tests {
 
     assert!(!selected_matches_console(&selected, &different, ConsoleLockState::Locked));
     assert!(!selected_matches_console(&selected, &session(ConsoleLockState::Usable), ConsoleLockState::Locked));
+  }
+
+  #[test]
+  fn helper_results_map_to_stable_device_entry_reasons() {
+    assert_eq!(host_error(HostError::Unavailable), DeviceEntryErrorReason::ServiceUnavailable);
+    assert_eq!(host_error(HostError::Untrusted), DeviceEntryErrorReason::ServiceUnavailable);
+    assert_eq!(host_error(HostError::ProtocolUnsupported), DeviceEntryErrorReason::HostIncompatible);
+    assert_eq!(host_error(HostError::Unauthorized), DeviceEntryErrorReason::OccupiedDesktop);
+    assert_eq!(host_error(HostError::NotEnrolled), DeviceEntryErrorReason::Unenrolled);
+    assert_eq!(host_error(HostError::Unverified), DeviceEntryErrorReason::OutcomeUnverified);
   }
 
   #[test]

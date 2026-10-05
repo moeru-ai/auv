@@ -20,10 +20,8 @@ const LOCAL_DEVICE_ID_FILE: &str = "device-id";
 /// Process-local view of durable control-plane identity and live resources.
 pub(crate) struct Daemon {
   local_device: proto::Device,
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   device_entry: std::sync::Arc<crate::devices::LocalState>,
-  #[cfg(windows)]
-  device_entry: Option<std::sync::Arc<crate::devices::LocalState>>,
   // TODO(distributed-run-authority): Runs are daemon-memory resources until a
   // coordinator/storage slice defines cross-daemon ownership, recovery, and
   // terminal append semantics in the accepted architecture document.
@@ -59,8 +57,7 @@ impl Daemon {
     parent_endpoint: Option<String>,
     first_party_runners: runner_provider::FirstPartyRunnerRuntimes,
     runner_providers: Vec<runner_provider::RunnerProviderConfig>,
-    #[cfg(any(target_os = "linux", target_os = "macos"))] device_entry: std::sync::Arc<crate::devices::LocalState>,
-    #[cfg(windows)] device_entry: Option<std::sync::Arc<crate::devices::LocalState>>,
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))] device_entry: std::sync::Arc<crate::devices::LocalState>,
   ) -> Result<Self, String> {
     let control_root = store_root.join("control");
     fs::create_dir_all(&control_root)
@@ -455,15 +452,7 @@ impl Control for Daemon {
   fn list_user_sessions(&self, _caller: &CallerId) -> Result<Vec<auv::devices::UserSession>, auv::devices::DeviceEntryErrorReason> {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
-      #[cfg(windows)]
-      {
-        self.device_entry.as_ref().ok_or(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)?.list_user_sessions()
-      }
-
-      #[cfg(not(windows))]
-      {
-        self.device_entry.list_user_sessions()
-      }
+      self.device_entry.list_user_sessions()
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -479,15 +468,7 @@ impl Control for Daemon {
   ) -> Result<auv::devices::UserSession, auv::devices::DeviceEntryErrorReason> {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
-      #[cfg(windows)]
-      {
-        self.device_entry.as_ref().ok_or(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)?.get_user_session(session_selector)
-      }
-
-      #[cfg(not(windows))]
-      {
-        self.device_entry.get_user_session(session_selector)
-      }
+      self.device_entry.get_user_session(session_selector)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -504,20 +485,7 @@ impl Control for Daemon {
   ) -> Result<auv::devices::EnsureUserSessionUnlockedEffect, auv::devices::DeviceEntryErrorReason> {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
-      #[cfg(windows)]
-      {
-        self
-          .device_entry
-          .as_ref()
-          .ok_or(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)?
-          .ensure_user_session_unlocked(caller, target)
-          .await
-      }
-
-      #[cfg(not(windows))]
-      {
-        self.device_entry.ensure_user_session_unlocked(caller, target).await
-      }
+      self.device_entry.ensure_user_session_unlocked(caller, target).await
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -534,20 +502,7 @@ impl Control for Daemon {
   ) -> Result<auv::devices::EnsureUserSessionLockedEffect, auv::devices::DeviceEntryErrorReason> {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
-      #[cfg(windows)]
-      {
-        self
-          .device_entry
-          .as_ref()
-          .ok_or(auv::devices::DeviceEntryErrorReason::UnsupportedOsState)?
-          .ensure_user_session_locked(caller, target)
-          .await
-      }
-
-      #[cfg(not(windows))]
-      {
-        self.device_entry.ensure_user_session_locked(caller, target).await
-      }
+      self.device_entry.ensure_user_session_locked(caller, target).await
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

@@ -1,8 +1,9 @@
 //! LocalSystem console worker placement and one-shot, local-only secret transfer.
 //!
 //! This is an internal host primitive, not a service registration. The caller
-//! must run under the installed LocalSystem service identity. No remote request
-//! may carry a secret or choose the worker executable.
+//! must be the installed LocalSystem Helper Host (`auv-device-helper-windows`),
+//! which is itself `auv-helper.exe`. No remote request may carry a secret or
+//! choose the worker executable.
 // TODO(device-session-control-module): Rename this public legacy unlock-named
 // module only with an explicit Rust API migration; the installed executable is
 // now the operation-neutral `auv-helper.exe`.
@@ -74,12 +75,18 @@ mod tests {
 
   #[test]
   fn installed_host_resolves_the_shipped_helper_beside_it() {
-    assert_eq!(super::helper_executable(Path::new("/Program Files/AUV/auv.exe")).unwrap(), Path::new("/Program Files/AUV/auv-helper.exe"));
+    // The Helper Host is itself auv-helper.exe, so it resolves to its own path.
+    #[cfg(windows)]
+    let installed = Path::new(r"C:\Program Files\AUV\auv-helper.exe");
+    #[cfg(not(windows))]
+    let installed = Path::new("/Program Files/AUV/auv-helper.exe");
+
+    assert_eq!(super::helper_executable(installed).unwrap(), installed);
   }
 
   #[test]
   fn installed_host_rejects_a_relative_executable_path() {
-    assert!(super::helper_executable(Path::new("auv.exe")).is_err());
+    assert!(super::helper_executable(Path::new("auv-helper.exe")).is_err());
   }
 }
 

@@ -47,7 +47,7 @@ auv-device-helper-macos = { version = "0.0.28", path = "../auv-device-helper-mac
 auv-driver-macos = { version = "0.0.28", path = "../auv-driver-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-auv-driver-windows = { version = "0.0.28", path = "../auv-driver-windows" }
+auv-device-helper-windows = { version = "0.0.28", path = "../auv-device-helper-windows", default-features = false }
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Security",
