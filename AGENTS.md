@@ -180,6 +180,33 @@ only by their own `#[cfg(test)]` blocks. Do not reintroduce this
 promotion/stability seam without an owner-approved slice that names a concrete
 production consumer.
 
+## Image Payloads
+
+Captured pixels are large. One Retina window capture is about 25 MB of RGBA,
+and a display capture about 80 MB. Treat image bytes as a resource that the
+Runner owns. Do not treat them as ordinary response data.
+
+- An API response must not carry full image pixels unless the caller
+  explicitly asked for them. Return a reference plus metadata instead:
+  bounds, origin, pixel size and scale. Add an explicit fetch for pixels, with
+  bounded size and encoding.
+- A client must never have to send pixels back that AUV produced. An
+  operation on a capture that AUV made, such as OCR, detection or crop, must
+  accept a reference to that capture.
+- Observations and streams, such as find-text evidence, scroll-until steps
+  and recent frames, return references, metadata or bounded thumbnails by
+  default. Full frames are opt-in.
+- Run recording persists evidence on the AUV side from the same references.
+  Do not route evidence through the client.
+- Only caller-owned images may be uploaded as pixels. An example is an image
+  the user supplies.
+
+Existing APIs that predate this rule:
+`RecognizeTextRequest.capture`, `FindWindowTextResponse.capture`,
+`FindDisplayTextResponse.capture`, `ScrollUntilObservation.capture` and
+`GetRecentFramesResponse` frames. Do not copy their shape into new APIs. When
+you change one of them, move it toward references.
+
 ## Architecture Surfaces
 
 - **Runtime responsibility**: Typed operation modules own execution semantics;
