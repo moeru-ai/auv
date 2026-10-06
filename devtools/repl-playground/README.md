@@ -35,8 +35,9 @@ controlled desktop.
 - **Offline replay**: every live run records its device calls. Replay re-runs
   the (possibly edited) script against that recording without touching the
   device, and stops with a divergence error at the first call that differs.
-- **Mock desktop**: a deterministic in-browser desktop (todo app + counter)
-  whose state changes on clicks, so everything works without a device.
+- **Mock desktop**: a deterministic in-browser desktop (todo app, counter, and
+  a music app with a 40-song list that scrolls and plays on click) whose state
+  changes on input, so everything works without a device.
 
 ## Quick start
 
@@ -162,8 +163,16 @@ const page = await music.scrollUntil(results, {
 `settle` 400 ms, `confirmations` 2) and scrolls along one axis. The result keeps
 the last observation's capture (`frame`) and OCR (`text`) as handles. An `end`
 stop means no visual motion was observed, not that no content is left. The
-daemon must be AUV 0.0.29 or later; the mock desktop has no scrollable content,
-so its loops end after `confirmations` steps.
+daemon must be AUV 0.0.29 or later. On the mock desktop, the Music window's
+song list scrolls (other windows do not):
+
+```ts
+const music = await auv.windows.resolve({ appName: 'Music' })
+const songs = area(music).region({ height: 420, left: 16, top: 82, width: 448 })
+const found = await music.scrollUntil(songs, { dy: 240, text: 'Remember' })
+await auv.input.click(area(found.match!), { count: 2 })
+await music.findText('Now playing: Remember', { within: area(music).region({ bottom: 0, height: 70 }) })
+```
 
 Script API types (`Area`, `Rect`, `Point`, `WindowHandle`, `TextMatch`, …) can
 be used by name in cells, e.g. `function toolbar(win: Area): Area`.

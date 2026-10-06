@@ -3,18 +3,71 @@ import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, Normali
 
 interface MockWindow extends WindowInfo {
   background: string
+  /** Window-specific painting under the widgets (e.g. a player bar or scrollbar). */
+  decorate?: (ctx: OffscreenCanvasRenderingContext2D, frame: Rect) => void
   widgets: () => Widget[]
 }
 
 interface Widget {
-  action?: 'done' | 'focus' | 'increment'
+  action?: 'done' | 'focus' | 'increment' | 'play'
+  /** Window-relative viewport the widget scrolls in; outside it, it is neither painted, hit nor recognized. */
+  clip?: Rect
   id: string
   label: string
   /** Window-relative rectangle. */
   rect: Rect
   role: 'button' | 'input' | 'text'
   rowIndex?: number
+  songIndex?: number
 }
+
+// Window-relative scroll viewport of the Music song list, and one row's height.
+const MUSIC_VIEW: Rect = { height: 420, width: 448, x: 16, y: 82 }
+const SONG_ROW = 48
+
+/** A deterministic playlist long enough to need several screens of scrolling. */
+const SONGS: Array<{ artist: string, title: string }> = [
+  ['Morning Static', 'Lumen Drive'],
+  ['Paper Satellites', 'Hollow Pines'],
+  ['Glass Harbor', 'Mira Vale'],
+  ['Night Bus Home', 'The Quiet Hours'],
+  ['Cobalt Summer', 'Lumen Drive'],
+  ['Small Fires', 'Ada North'],
+  ['Undertow', 'Hollow Pines'],
+  ['Signal Lost', 'Kite & Wire'],
+  ['Parallel Lines', 'Mira Vale'],
+  ['Slow Orbit', 'Ada North'],
+  ['Weather Report', 'The Quiet Hours'],
+  ['Afterglow', 'Kite & Wire'],
+  ['Northbound', 'Lumen Drive'],
+  ['Hush', 'Ada North'],
+  ['Tin Can Telephone', 'Hollow Pines'],
+  ['Late Arrival', 'Mira Vale'],
+  ['Static Bloom', 'Kite & Wire'],
+  ['Lantern Festival', 'The Quiet Hours'],
+  ['Open Water', 'Lumen Drive'],
+  ['Copper Moon', 'Ada North'],
+  ['Field Notes', 'Hollow Pines'],
+  ['Vapor Trail', 'Kite & Wire'],
+  ['Second Light', 'Mira Vale'],
+  ['Low Tide', 'The Quiet Hours'],
+  ['Silver Thread', 'Ada North'],
+  ['Reply', 'Lumen Drive'],
+  ['Overpass', 'Hollow Pines'],
+  ['Long Exposure', 'Kite & Wire'],
+  ['Departure Board', 'Mira Vale'],
+  ['Echo Valley', 'The Quiet Hours'],
+  ['Remember', 'Ada North'],
+  ['Quiet Engines', 'Lumen Drive'],
+  ['Starling', 'Hollow Pines'],
+  ['Neon Rain', 'Kite & Wire'],
+  ['Harbor Lights', 'Mira Vale'],
+  ['Last Train', 'The Quiet Hours'],
+  ['Morning Again', 'Ada North'],
+  ['Distant Shore', 'Lumen Drive'],
+  ['Closing Credits', 'Hollow Pines'],
+  ['Encore', 'Kite & Wire'],
+].map(([title, artist]) => ({ artist: artist!, title: title! }))
 
 const DISPLAYS: DisplayInfo[] = [
   { frame: { height: 900, width: 1440, x: 0, y: 0 }, id: '1', name: 'Built-in Retina Display', primary: true, scale: 2 },
@@ -28,7 +81,8 @@ function includes(text: string, query: string): boolean {
 }
 
 /**
- * A deterministic in-browser desktop: two displays, a todo app and a counter.
+ * A deterministic in-browser desktop: two displays, a todo app, a counter and
+ * a music app whose song list scrolls.
  * Clicks and keys mutate the scene so scripts observe real state changes;
  * OCR returns exact text geometry from the scene graph.
  */
@@ -38,6 +92,9 @@ export class MockBackend implements Backend {
   #count = 0
   #draft = ''
   #focused = false
+  /** Music list scroll offset in logical pixels, clamped to the list. */
+  #musicScroll = 0
+  #nowPlaying: null | number = null
   readonly #todos = [
     { done: false, text: 'Ship the AUV playground' },
     { done: false, text: 'Reply to issue #42' },
@@ -68,6 +125,17 @@ export class MockBackend implements Backend {
         { id: 'count', label: `Count: ${this.#count}`, rect: { height: 48, width: 360, x: 30, y: 70 }, role: 'text' },
         { action: 'increment', id: 'inc', label: 'Increment', rect: { height: 56, width: 200, x: 110, y: 170 }, role: 'button' },
       ],
+    },
+    {
+      app: 'Music',
+      background: '#fafafa',
+      bundleId: 'dev.auv.mock.music',
+      decorate: (ctx, frame) => this.#decorateMusic(ctx, frame),
+      frame: { height: 580, width: 480, x: 920, y: 120 },
+      id: 'w-music',
+      pid: 4103,
+      title: 'Music — Liked Songs',
+      widgets: () => this.#musicWidgets(),
     },
   ]
 
@@ -187,30 +255,31 @@ export class MockBackend implements Backend {
     return toInfo(window)
   }
 
-  async scrollWindow(windowId: string, point: Point, _delta: ScrollDelta): Promise<InputReceipt> {
+  async scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
     const frame = this.#window(windowId).frame
     await delay(20)
+    this.#scroll(windowId, point, delta)
     return { path: 'mock-wheel', point: { x: frame.x + point.x, y: frame.y + point.y } }
   }
 
   /**
-   * Same stop order as the AUV Runner: the built-in condition, then the
-   * client predicate, then the end and the budget.
-   * NOTICE(mock-scroll): mock windows have no scrollable content, so every
-   * step observes no motion and the loop ends after `confirmations` steps
-   * unless the text is already visible or the predicate stops it.
+   * Same stop order as the AUV Runner: the built-in condition, then the end
+   * and the budget, then the client predicate. Only the Music song list
+   * scrolls; elsewhere every step observes no motion.
    */
   async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
     let streak = 0
     let receipt: InputReceipt | undefined
     for (let steps = 1; ; steps++) {
+      const before = this.#musicScroll
       const delivered = await this.scrollWindow(windowId, point, request.delta)
+      const moved = this.#musicScroll !== before
       receipt ??= delivered
       await delay(Math.min(request.settleMs, 60))
       const capture = await this.captureWindow(windowId)
       const matches = this.#text(capture.bounds)
       const recognized = { matches, text: matches.map(match => match.text).join('\n') }
-      streak++
+      streak = moved ? 0 : streak + 1
       const match = request.text ? matches.find(candidate => includes(candidate.text, request.text!)) : undefined
       const outcome = { capture, receipt, recognized, steps }
       if (match)
@@ -219,7 +288,7 @@ export class MockBackend implements Backend {
         return { ...outcome, reason: 'end' }
       if (steps >= request.maxSteps)
         return { ...outcome, reason: 'budget' }
-      if (decide && await decide({ moved: false, steps, text: recognized.text }))
+      if (decide && await decide({ moved, steps, text: recognized.text }))
         return { ...outcome, reason: 'until' }
     }
   }
@@ -247,6 +316,21 @@ export class MockBackend implements Backend {
     return 0.95
   }
 
+  /** Player bar and scrollbar of the Music window. */
+  #decorateMusic(ctx: OffscreenCanvasRenderingContext2D, frame: Rect): void {
+    const view = offset(MUSIC_VIEW, frame)
+    ctx.fillStyle = '#f1f5f9'
+    ctx.fillRect(frame.x, frame.y + 510, frame.width, 70)
+    ctx.fillStyle = '#e2e8f0'
+    ctx.fillRect(frame.x, frame.y + 510, frame.width, 1)
+    const content = SONGS.length * SONG_ROW
+    const thumb = Math.max(30, view.height * view.height / content)
+    const top = view.y + (view.height - thumb) * (this.#musicScroll / Math.max(1, content - view.height))
+    ctx.fillStyle = 'rgba(100, 116, 139, 0.45)'
+    roundRect(ctx, { height: thumb, width: 5, x: view.x + view.width - 7, y: top }, 3)
+    ctx.fill()
+  }
+
   #display(id?: string): DisplayInfo {
     return DISPLAYS.find(display => display.id === id) ?? DISPLAYS.find(display => display.primary)!
   }
@@ -262,9 +346,11 @@ export class MockBackend implements Backend {
         continue
       for (const widget of window.widgets()) {
         const rect = offset(widget.rect, window.frame)
-        if (!widget.action || !contains(rect, point))
+        if (!widget.action || !contains(rect, point) || (widget.clip && !contains(offset(widget.clip, window.frame), point)))
           continue
         this.#focused = widget.action === 'focus'
+        if (widget.action === 'play' && widget.songIndex !== undefined)
+          this.#nowPlaying = widget.songIndex
         if (widget.action === 'increment')
           this.#count += 1
         if (widget.action === 'done' && widget.rowIndex !== undefined)
@@ -274,6 +360,22 @@ export class MockBackend implements Backend {
       this.#focused = false
       return
     }
+  }
+
+  #musicWidgets(): Widget[] {
+    const widgets: Widget[] = [
+      { id: 'music-header', label: `Liked Songs · ${SONGS.length} songs`, rect: { height: 30, width: 320, x: 16, y: 44 }, role: 'text' },
+    ]
+    SONGS.forEach((song, index) => {
+      const y = MUSIC_VIEW.y + index * SONG_ROW - this.#musicScroll
+      widgets.push(
+        { action: 'play', clip: MUSIC_VIEW, id: `song-${index}`, label: song.title, rect: { height: 40, width: 260, x: MUSIC_VIEW.x, y }, role: 'text', songIndex: index },
+        { action: 'play', clip: MUSIC_VIEW, id: `artist-${index}`, label: song.artist, rect: { height: 40, width: 160, x: MUSIC_VIEW.x + 270, y }, role: 'text', songIndex: index },
+      )
+    })
+    const playing = this.#nowPlaying === null ? undefined : SONGS[this.#nowPlaying]
+    widgets.push({ id: 'now-playing', label: playing ? `Now playing: ${playing.title} — ${playing.artist}` : 'Nothing playing', rect: { height: 44, width: 448, x: 16, y: 523 }, role: 'text' })
+    return widgets
   }
 
   #paintDesktop(ctx: OffscreenCanvasRenderingContext2D, bounds: Rect): void {
@@ -313,8 +415,18 @@ export class MockBackend implements Backend {
     ctx.fillStyle = '#374151'
     ctx.font = `600 14px ${FONT}`
     ctx.fillText(window.title ?? '', f.x + 90, f.y + 22)
+    window.decorate?.(ctx, f)
     for (const widget of window.widgets()) {
       const r = offset(widget.rect, f)
+      const clip = widget.clip && offset(widget.clip, f)
+      if (clip && !intersects(clip, r))
+        continue
+      ctx.save()
+      if (clip) {
+        ctx.beginPath()
+        ctx.rect(clip.x, clip.y, clip.width, clip.height)
+        ctx.clip()
+      }
       if (widget.role === 'button') {
         ctx.fillStyle = widget.action === 'increment' ? '#4f46e5' : '#e0e7ff'
         roundRect(ctx, r, 8)
@@ -346,6 +458,7 @@ export class MockBackend implements Backend {
         ctx.stroke()
       }
       ctx.textBaseline = 'alphabetic'
+      ctx.restore()
     }
   }
 
@@ -361,6 +474,17 @@ export class MockBackend implements Backend {
       this.#paintWindow(ctx, window)
     const rgba = new Uint8Array(ctx.getImageData(0, 0, width, height).data.buffer)
     return { bounds: { ...bounds }, height, rgba, scale, source, width }
+  }
+
+  /** Applies a wheel delta; only the Music song list scrolls. Returns whether it moved. */
+  #scroll(windowId: string, point: Point, delta: ScrollDelta): boolean {
+    if (windowId !== 'w-music' || !contains(MUSIC_VIEW, point))
+      return false
+    const max = SONGS.length * SONG_ROW - MUSIC_VIEW.height
+    const next = Math.min(max, Math.max(0, this.#musicScroll + (delta.dy ?? 0)))
+    const moved = next !== this.#musicScroll
+    this.#musicScroll = next
+    return moved
   }
 
   /** OCR ground truth: every widget label intersecting `area`, in screen space. */
@@ -384,6 +508,10 @@ export class MockBackend implements Backend {
         const textRect = widget.role === 'button'
           ? { height: fontSize + 4, width, x: r.x + (r.width - width) / 2, y: r.y + (r.height - fontSize) / 2 - 2 }
           : { height: fontSize + 4, width, x: r.x + 10, y: r.y + (r.height - fontSize) / 2 - 2 }
+        // Text cut off by a scroll viewport is not readable.
+        const clip = widget.clip && offset(widget.clip, window.frame)
+        if (clip && (!contains(clip, textRect) || !contains(clip, { x: textRect.x + textRect.width, y: textRect.y + textRect.height })))
+          continue
         if (widget.label && intersects(area, textRect))
           matches.push({ bounds: textRect, confidence: this.#confidence(widget), text: widget.label })
       }
