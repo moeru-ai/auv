@@ -1,0 +1,19 @@
+[package]
+name = "auv-driver-linux-x11"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = true
+readme = "README.md"
+description = "Legacy X11 compatibility driver for AUV; prefer the Wayland Linux driver"
+
+[dependencies]
+auv-driver-common = { version = "0.0.32", path = "../auv-driver-common" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+enigo = { version = "0.6.1", default-features = false, features = ["x11rb"] }
+xkeysym = "0.2.1"
+xcap = "0.6.2"
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::ops::Deref;
 
 use crate::{Driver, DriverDescriptor, DriverResult, DriverSession, LocalDriver, PlatformKind};
@@ -74,7 +75,7 @@ fn open_local_returns_target_platform_session() -> DriverResult<()> {
   Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[test]
 fn open_local_dereferences_to_target_platform_session() -> DriverResult<()> {
   let session = crate::open_local()?;
@@ -114,7 +115,10 @@ fn expected_platform() -> PlatformKind {
 
 #[cfg(target_os = "linux")]
 fn expected_driver_id() -> &'static str {
-  "linux.desktop"
+  match crate::linux::selected_backend_from_process() {
+    crate::linux::Backend::Wayland => "linux.desktop",
+    crate::linux::Backend::X11 => "linux.x11",
+  }
 }
 
 #[cfg(target_os = "macos")]
