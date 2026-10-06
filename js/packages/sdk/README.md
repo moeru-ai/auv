@@ -276,7 +276,7 @@ another route without a call, or refresh it by ID:
 
 ```ts
 const next = auv.runner({ runId: nextRun.id, runnerClass: 'auv.core.local' })
-const same = next.windows.bind(window) // a client, Window, WindowRef or window ID
+const same = next.windows.from(window) // a client, Window, WindowRef or window ID
 const fresh = await next.windows.get(window) // current metadata; NOT_FOUND once closed
 ```
 

@@ -545,12 +545,12 @@ describe('window clients', () => {
     const second = auv.runner({ runId: 'run-2', runnerClass: 'auv.core.local' })
 
     for (const target of [first, first.window, first.window.ref!, 'w-1'])
-      await second.windows.bind(target).click({ x: 1, y: 1 })
+      await second.windows.from(target).click({ x: 1, y: 1 })
 
     const clicks = calls.slice(1)
     expect(clicks.map(call => call.headers.get('auv-run-id'))).toEqual(['run-2', 'run-2', 'run-2', 'run-2'])
     expect(clicks.map(call => fromBinary(ClickWindowPointRequestSchema, call.body).window?.windowId)).toEqual(['w-1', 'w-1', 'w-1', 'w-1'])
-    expect(second.windows.bind(first).window.title).toBe('Inbox')
+    expect(second.windows.from(first).window.title).toBe('Inbox')
     await connection.close()
   })
 })
@@ -573,7 +573,7 @@ describe('windows.get', () => {
       },
     })
     const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
-    const stale = runner.windows.bind('w-2')
+    const stale = runner.windows.from('w-2')
     const fresh = await runner.windows.get(stale)
     expect(fresh.window.frame?.x).toBe(300)
     await expect(runner.windows.get('w-9')).rejects.toMatchObject({ name: 'AuvRpcError', rpcCode: 5 })

@@ -74,7 +74,7 @@ class AuvBackend implements Backend {
   }
 
   async captureWindow(windowId: string): Promise<CapturedFrame> {
-    const window = this.#runner.windows.bind(windowId)
+    const window = this.#runner.windows.from(windowId)
     const captured = await window.capture()
     return toFrame(captured.capture, `window:${windowId}`)
   }
@@ -88,7 +88,7 @@ class AuvBackend implements Backend {
   }
 
   async clickWindow(windowId: string, point: { x: number, y: number }, options?: ClickOptions): Promise<InputReceipt> {
-    const window = this.#runner.windows.bind(windowId)
+    const window = this.#runner.windows.from(windowId)
     const response = await window.click(point, {
       button: MOUSE_BUTTONS[options?.button ?? 'left'],
       click: toClick(options),
@@ -118,7 +118,7 @@ class AuvBackend implements Backend {
   }
 
   async findWindowText(windowId: string, query: string, region?: NormalizedRect): Promise<TextSearchResult> {
-    const window = this.#runner.windows.bind(windowId)
+    const window = this.#runner.windows.from(windowId)
     const response = await window.findText(query, region ? { region } : undefined)
     return {
       capture: response.capture ? toFrame(response.capture, `window:${windowId}`) : undefined,
@@ -150,13 +150,13 @@ class AuvBackend implements Backend {
   }
 
   async scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
-    const window = this.#runner.windows.bind(windowId)
+    const window = this.#runner.windows.from(windowId)
     const response = await window.scroll(point, { deltaX: delta.dx ?? 0, deltaY: delta.dy ?? 0 })
     return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
   }
 
   async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
-    const window = this.#runner.windows.bind(windowId)
+    const window = this.#runner.windows.from(windowId)
     let last: NativeObservation | undefined
     const completed = await window.scrollUntil(point, {
       condition: request.text ? { case: 'textVisible', value: { query: request.text } } : { case: 'end', value: {} },
@@ -190,7 +190,7 @@ class AuvBackend implements Backend {
     return { path: deliveryPath(response.action) }
   }
 
-  /** Window references are Device resources; clients are bound per Run with `windows.bind(id)`. */
+  /** Window references are Device resources; each call takes a client for the current Run with `windows.from(id)`. */
   #bind(): RunnerClient {
     return this.client.runner({ deviceId: this.device.id, runId: this.#runId, runnerClass: RUNNER_CLASS })
   }

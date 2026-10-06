@@ -114,12 +114,12 @@ export interface RunnerClient {
   recognizeText: (capture: Init<typeof CapturedFrameSchema>, options?: RecognizeTextOptions) => Promise<Shape<typeof TextRecognitionService.method.recognizeText.output>>
   readonly windows: {
     /**
-     * Binds a window to this route without a call: a client from any route
+     * A client for a window on this route, without a call. Takes a client from any route
      * (for example an earlier Run), a listed or resolved `Window`, a
      * `WindowRef`, or a window ID. Window references are Device resources,
      * not Run resources, so this is how a window outlives a Run.
      */
-    bind: (target: WindowTarget) => WindowClient
+    from: (target: WindowTarget) => WindowClient
     /**
      * The window `target` names, from a fresh listing and bound to this route.
      * Rejects with an `AuvRpcError` (`rpcCode` 5, NOT_FOUND) once it is gone.
@@ -426,7 +426,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       return unary(TextRecognitionService.method.recognizeText, { ...request, capture }, { signal })
     },
     windows: {
-      bind: target => window(windowOf(target)),
+      from: target => window(windowOf(target)),
       get: async (target, options) => {
         const id = windowOf(target).ref?.windowId
         const windows = (await unary(WindowService.method.listWindows, {}, options)).windows

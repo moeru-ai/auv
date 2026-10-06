@@ -720,7 +720,7 @@ impl WindowsClient {
       .map_err(capability_status)?
       .into_inner()
       .windows;
-    windows.into_iter().map(|window| self.bind(window_from_proto(window)?)).collect()
+    windows.into_iter().map(|window| self.from(window_from_proto(window)?)).collect()
   }
 
   /// Returns the window with `id` from a fresh listing, bound to this route.
@@ -730,7 +730,7 @@ impl WindowsClient {
     let windows = self.list().await?;
     let window = auv_driver::find_window(windows.iter().map(|client| client.resource().clone()), id)
       .map_err(|_| CapabilityError::NotFound(format!("window:{id}")))?;
-    self.bind(window)
+    self.from(window)
   }
 
   /// Resolves one window and returns a route-bound child client.
@@ -757,11 +757,10 @@ impl WindowsClient {
     })
   }
 
-  /// Binds a window resource to its stable WindowRef for subsequent
-  /// window-scoped capability calls on this route. Window references are
-  /// Device resources, so a client from one Run is re-bound to another Run's
-  /// route with `runner.windows().bind(client.resource().clone())`.
-  pub fn bind(&self, window: auv_driver::Window) -> Result<WindowClient, CapabilityError> {
+  /// A client for a known window on this route, without a call. Window
+  /// references are Device resources, so a client from one Run moves to
+  /// another Run's route with `runner.windows().from(client.resource().clone())`.
+  pub fn from(&self, window: auv_driver::Window) -> Result<WindowClient, CapabilityError> {
     if window.reference.id.trim().is_empty() {
       return Err(CapabilityError::InvalidResponse("listed Window omitted WindowRef id".to_string()));
     }

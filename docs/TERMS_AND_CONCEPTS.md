@@ -1055,8 +1055,8 @@ owner of a reference decides which routes may use it.
 
 - **Device resources.** Examples are `WindowRef` and display IDs. They name
   something the Device's platform owns. Any route to that Device can use them,
-  in any Run. Clients bind such a reference to their current route without a
-  call: `runner.windows().bind(window)` in Rust and `runner.windows.bind(target)`
+  in any Run. Clients get a client for such a reference on their current route
+  without a call: `runner.windows().from(window)` in Rust and `runner.windows.from(target)`
   in JS. The Runner re-resolves the reference before each operation. A
   reference whose window is gone fails with `NOT_FOUND`.
   `runner.windows().get(id)` refreshes metadata from a new listing. A Run
