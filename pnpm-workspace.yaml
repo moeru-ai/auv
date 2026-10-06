@@ -35,6 +35,7 @@ trustPolicyExclude:
   - semver@6.3.1
 
 packages:
+  - 'devtools/repl'
   - 'evals/auv-base/platforms/desktop-universal/test-objects'
   - 'crates/auv-inspect-server/viewer'
   - 'js/packages/*'
@@ -47,21 +48,40 @@ catalog:
   '@alint-js/core': ^0.3.0
   '@alint-js/plugin': '^0.3.0'
   '@alint-js/tools-fs': '^0.3.0'
+  '@base-ui/react': ^1.8.0
   '@bufbuild/buf': 1.72.0
   '@bufbuild/protobuf': 2.13.0
   '@bufbuild/protoc-gen-es': 2.13.0
+  '@codemirror/autocomplete': ^6.20.3
+  '@codemirror/commands': ^6.11.1
+  '@codemirror/lang-javascript': ^6.2.5
+  '@codemirror/language': ^6.12.4
+  '@codemirror/lint': ^6.9.7
+  '@codemirror/search': ^6.7.2
+  '@codemirror/state': ^6.7.6
+  '@codemirror/view': ^6.43.13
   '@decimalturn/toml-patch': ^3.0.2
   '@emnapi/core': ^1.11.2
   '@emnapi/runtime': ^1.11.2
+  '@eslint-react/eslint-plugin': ^3.0.0
   '@grpc/grpc-js': 1.14.4
   '@guiiai/logg': ^1.2.11
   '@hey-api/openapi-ts': ^0.99.0
+  '@iconify-json/lucide': ^1.2.139
+  '@lezer/highlight': ^1.2.5
   '@moeru/eslint-config': ^0.1.0-beta.20
   '@moeru/std': 0.1.0-beta.20
   '@napi-rs/cli': ^3.8.6
   '@pnpm/find-workspace-dir': 1000.1.5
   '@types/node': ^26.0.1
+  '@types/react': ^19.3.0
+  '@types/react-dom': ^19.3.0
+  '@typescript/vfs': ^1.6.5
+  '@unocss/eslint-plugin': ^66.10.5
+  '@vitejs/plugin-react': ^6.1.1
   '@vitest/browser-playwright': 4.1.10
+  acorn: ^8.18.0
+  birpc: ^4.2.0
   bumpp: ^12.2.0
   date-fns: 4.4.0
   doctoc: ^2.5.0
@@ -71,21 +91,30 @@ catalog:
   es-toolkit: ^1.50.0
   eslint: ^10.8.1
   eslint-plugin-oxlint: ^1.78.0
+  eslint-plugin-react-refresh: ^0.5.7
   eslint-plugin-slop: 0.1.3
+  magic-string: ^1.4.2
   nano-staged: ^1.0.2
   oxlint: ^1.78.0
   playwright: 1.62.1
   publint: ^0.3.23
+  react: ^19.3.0
+  react-dom: ^19.3.0
+  react-resizable-panels: ^4.14.2
   simple-git-hooks: ^2.13.1
 
   std-env: 4.2.0
   taze: ^19.14.1
   tinyexec: ^1.3.0
+  ts-blank-space: ^0.9.0
   tsdown: ^0.22.3
   tsx: ^4.23.12
   typescript: ^6.0.3
+  unocss: ^66.10.5
   unrun: ^0.3.1
   vite: ^8.1.0
+  zustand: ^5.0.15
+
 catalogs:
   vitest:
     '@vitest/coverage-v8': ^4.1.9

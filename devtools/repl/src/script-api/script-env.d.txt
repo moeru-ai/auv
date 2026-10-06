@@ -1,0 +1,32 @@
+// Minimal globals available inside playground cells. Loaded only into the
+// editor's language service; cells run in a module Web Worker.
+interface Console {
+  error: (...data: unknown[]) => void
+  info: (...data: unknown[]) => void
+  log: (...data: unknown[]) => void
+  warn: (...data: unknown[]) => void
+}
+declare const console: Console
+declare function setTimeout(handler: () => void, timeout?: number): number
+declare function clearTimeout(id: number): void
+declare const performance: { now: () => number }
+
+// Script API types by name, so cells can annotate helpers, e.g.
+// `function grow(area: Area): Area`. The API file is a module; these aliases
+// make its types global for cells only (they are erased before execution).
+type Area = import('./auv-api').Area
+type AreaEdges = import('./auv-api').AreaEdges
+type AreaLength = import('./auv-api').AreaLength
+type ClickOptions = import('./auv-api').ClickOptions
+type DisplayHandle = import('./auv-api').DisplayHandle
+type FocusOptions = import('./auv-api').FocusOptions
+type FrameHandle = import('./auv-api').FrameHandle
+type InputHandle = import('./auv-api').InputHandle
+type Point = import('./auv-api').Point
+type Positional = import('./auv-api').Positional
+type Rect = import('./auv-api').Rect
+type TextHandle = import('./auv-api').TextHandle
+type TextMatch = import('./auv-api').TextMatch
+type TextSearchOptions = import('./auv-api').TextSearchOptions
+type WindowHandle = import('./auv-api').WindowHandle
+type WindowSelector = import('./auv-api').WindowSelector

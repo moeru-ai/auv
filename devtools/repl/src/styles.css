@@ -1,0 +1,269 @@
+:root {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  --c-surface-0: #0b0d12;
+  --c-surface-1: #12151c;
+  --c-surface-2: #1a1e27;
+  --c-line: #262b36;
+  --c-fg: #e6e8ee;
+  --c-fg-muted: #a3a9b8;
+  --c-fg-subtle: #6b7385;
+  --c-accent: #7c6cf6;
+  --c-accent-strong: #6a58f2;
+  --c-good: #34d399;
+  --c-warn: #fbbf24;
+  --c-bad: #f87171;
+
+  /* Overlay palette shared by the desktop canvas and previews. */
+  --o-window: #38bdf8;
+  --o-text: #facc15;
+  --o-click: #f43f5e;
+  --o-hover: #a78bfa;
+
+  --syn-keyword: #c792ea;
+  --syn-function: #82aaff;
+  --syn-string: #c3e88d;
+  --syn-number: #f78c6c;
+  --syn-type: #ffcb6b;
+  --syn-variable: #e6e8ee;
+  --syn-comment: #6b7385;
+  --syn-punctuation: #89ddff;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --c-surface-0: #f6f7f9;
+    --c-surface-1: #ffffff;
+    --c-surface-2: #eef0f4;
+    --c-line: #dfe2e8;
+    --c-fg: #161a22;
+    --c-fg-muted: #4b5262;
+    --c-fg-subtle: #8a91a1;
+    --c-accent: #5b4be0;
+    --c-accent-strong: #4a3bd0;
+    --syn-keyword: #8b2fc9;
+    --syn-function: #1d5fd1;
+    --syn-string: #2f7d32;
+    --syn-number: #c2410c;
+    --syn-type: #a16207;
+    --syn-variable: #1f2430;
+    --syn-comment: #8a91a1;
+    --syn-punctuation: #0e7490;
+    color-scheme: light;
+  }
+}
+
+:root[data-theme='light'] {
+  --c-surface-0: #f6f7f9;
+  --c-surface-1: #ffffff;
+  --c-surface-2: #eef0f4;
+  --c-line: #dfe2e8;
+  --c-fg: #161a22;
+  --c-fg-muted: #4b5262;
+  --c-fg-subtle: #8a91a1;
+  --c-accent: #5b4be0;
+  --c-accent-strong: #4a3bd0;
+  --syn-keyword: #8b2fc9;
+  --syn-function: #1d5fd1;
+  --syn-string: #2f7d32;
+  --syn-number: #c2410c;
+  --syn-type: #a16207;
+  --syn-variable: #1f2430;
+  --syn-comment: #8a91a1;
+  --syn-punctuation: #0e7490;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--c-surface-0);
+  color: var(--c-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--c-accent) 35%, transparent);
+}
+
+/* ---- CodeMirror ---------------------------------------------------------- */
+
+.cm-editor {
+  height: 100%;
+  font-size: 13.5px;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+.cm-scroller {
+  font-family: var(--font-mono);
+  line-height: 1.65;
+}
+
+.cm-gutters {
+  background: var(--c-surface-1) !important;
+  border-right: 1px solid var(--c-line) !important;
+  color: var(--c-fg-subtle) !important;
+}
+
+.cm-activeLine {
+  background: color-mix(in srgb, var(--c-fg) 4%, transparent) !important;
+}
+
+.cm-activeLineGutter {
+  background: transparent !important;
+  color: var(--c-fg-muted) !important;
+}
+
+.cm-run-current {
+  background: color-mix(in srgb, var(--c-accent) 18%, transparent) !important;
+  box-shadow: inset 2px 0 0 var(--c-accent);
+}
+
+.cm-run-paused {
+  background: color-mix(in srgb, var(--c-warn) 16%, transparent) !important;
+  box-shadow: inset 2px 0 0 var(--c-warn);
+}
+
+.cm-run-error {
+  background: color-mix(in srgb, var(--c-bad) 14%, transparent) !important;
+  box-shadow: inset 2px 0 0 var(--c-bad);
+}
+
+.cm-run-executed {
+  background: color-mix(in srgb, var(--c-good) 4%, transparent);
+}
+
+.cm-run-timing {
+  margin-left: 1.75em;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--c-fg-subtle);
+  background: var(--c-surface-2);
+  font-family: var(--font-mono);
+  vertical-align: 1px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.cm-run-timing::before {
+  content: attr(data-text);
+}
+
+.cm-run-timing[data-hot='true'] {
+  color: var(--c-warn);
+}
+
+.cm-run-timing[data-top='true'] {
+  color: var(--c-fg-muted);
+}
+
+.cm-step-gutter {
+  width: 22px;
+}
+
+.cm-step-gutter .cm-gutterElement {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.cm-bp {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c-bad);
+}
+
+.cm-bp-ghost {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.cm-step-gutter .cm-gutterElement:hover .cm-bp-ghost {
+  background: color-mix(in srgb, var(--c-bad) 40%, transparent);
+}
+
+.cm-arrow {
+  color: var(--c-accent);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.cm-tooltip {
+  border: 1px solid var(--c-line) !important;
+  background: var(--c-surface-1) !important;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--c-accent) !important;
+  color: white !important;
+}
+
+.cm-diagnostic {
+  font-family: var(--font-sans);
+}
+
+.cm-lintRange-error {
+  background-image: none !important;
+  text-decoration: underline wavy var(--c-bad);
+  text-underline-offset: 3px;
+}
+
+.cm-time-cursor {
+  background: color-mix(in srgb, var(--o-hover) 16%, transparent) !important;
+  box-shadow: inset 2px 0 0 var(--o-hover);
+}
+
+.cm-completion-detail {
+  max-width: 420px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.cm-completion-detail code {
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  color: var(--c-fg);
+}
+
+.cm-completion-detail p {
+  margin: 6px 0 0;
+  color: var(--c-fg-muted);
+}
+
+/* The completion info panel is a child positioned outside the list, so the
+   autocomplete tooltip must not clip; the list itself keeps rounded corners. */
+.cm-tooltip.cm-tooltip-autocomplete {
+  overflow: visible;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  border-radius: 8px;
+}
+
+.cm-tooltip.cm-completionInfo {
+  padding: 0;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: var(--c-surface-1);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+}
