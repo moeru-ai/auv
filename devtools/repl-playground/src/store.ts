@@ -188,7 +188,7 @@ export interface StepEvent {
   seq: number
 }
 
-export type WindowData = Omit<WindowHandle, 'capture' | 'click' | 'findText'>
+export type WindowData = Omit<WindowHandle, 'capture' | 'click' | 'findText' | 'scroll' | 'scrollUntil'>
 
 const emptyTimings: TimingSnapshot = { lines: [], statements: [] }
 

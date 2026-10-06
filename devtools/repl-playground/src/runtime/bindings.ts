@@ -1,5 +1,5 @@
-import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, TextSearchResult, WindowInfo } from '../backend/types'
-import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, Point, Rect, TextHandle, WindowSelector } from '../script-api/api'
+import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, ScrollUntilRequest, TextSearchResult, WindowInfo } from '../backend/types'
+import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, Point, Rect, ScrollDelta, ScrollObservation, TextHandle, WindowSelector } from '../script-api/api'
 import type { Effect, Resource, WindowData } from '../store'
 import type { WireValue } from './protocol'
 
@@ -19,8 +19,14 @@ const RAW_FRAME_BUDGET = 256 * 1024 * 1024
 
 interface Binding {
   effect: Effect
-  run: (backend: Backend, scope: CallScope, args: WireValue[]) => Promise<WireValue>
+  run: (backend: Backend, scope: CallScope, args: WireValue[], context: CallContext) => Promise<WireValue>
 }
+
+// NOTICE(scroll-until-defaults): the same defaults as `auv invoke input.scroll-until`
+// (`crates/auv-cli-invoke/src/commands/input.rs`): 50 steps, 400 ms settle so lazy
+// lists can render the next page, and 2 confirmations so one slow load does
+// not end the scan. The protocol requires `maxSteps` and `confirmations` > 0.
+const SCROLL_UNTIL_DEFAULTS = { confirmations: 2, maxSteps: 50, settleMs: 400 }
 
 type ResourceBody = Resource extends infer R ? R extends unknown ? Omit<R, 'callId' | 'run' | 'seq'> : never : never
 
@@ -58,8 +64,8 @@ class CallScope {
     return handle
   }
 
-  input(action: InputHandle['action'], receipt: InputReceipt): InputHandle {
-    const handle: InputHandle = { $ref: `input:${nextHandle++}`, action, kind: 'input', path: receipt.path, point: receipt.point }
+  input(action: InputHandle['action'], receipt: InputReceipt, delta?: ScrollDelta): InputHandle {
+    const handle: InputHandle = { $ref: `input:${nextHandle++}`, action, delta, kind: 'input', path: receipt.path, point: receipt.point }
     this.#put(handle.$ref, { handle, kind: 'input' })
     return handle
   }
@@ -126,9 +132,34 @@ const BINDINGS: Record<string, Binding> = {
   }),
   'windows.list': read(async (backend, scope) => (await backend.listWindows()).map(info => scope.window(info))),
   'windows.resolve': read(async (backend, scope, [selector]) => scope.window(await backend.resolveWindow((selector ?? {}) as WindowSelector))),
+  'windows.scroll': input(async (backend, scope, [window, at, delta]) => {
+    const local = windowPoint(window, at)
+    const amount = scrollDelta(delta)
+    const receipt = await backend.scrollWindow(windowId(window), local.point, amount)
+    return scope.input('scroll', { ...receipt, point: receipt.point ?? local.screen }, amount)
+  }),
+  'windows.scrollUntil': input(async (backend, scope, [window, at, options], context) => {
+    const local = windowPoint(window, at)
+    const { decide, request } = scrollUntilRequest(options, context)
+    // TODO(repl-scroll-observations): only the last observation's capture and
+    // OCR become resources; record every step (with its own seq) when the
+    // timeline should replay a scan step by step.
+    const outcome = await backend.scrollWindowUntil(windowId(window), local.point, request, decide)
+    const frame = outcome.capture ? scope.frame(outcome.capture) : undefined
+    return {
+      frame,
+      input: outcome.receipt ? scope.input('scroll', { ...outcome.receipt, point: outcome.receipt.point ?? local.screen }, request.delta) : undefined,
+      match: outcome.match,
+      reason: outcome.reason,
+      steps: outcome.steps,
+      text: outcome.recognized ? scope.text(outcome.recognized, request.text, frame) : undefined,
+    }
+  }),
 }
 
 export interface CallContext {
+  /** Asks the script worker's `scrollUntil` predicate `predicateId` about an observation. */
+  decide?: (predicateId: number, observation: ScrollObservation) => Promise<boolean>
   /** 1-based hit count of the calling line (loop iteration). */
   hit: number
   line: null | number
@@ -169,7 +200,7 @@ export async function invokeBinding(backend: Backend | null, method: string, arg
       throw new Error('No device connected. Connect to an AUV daemon or use the mock desktop.')
     if (!binding)
       throw new Error(`Unknown binding: auv.${method}`)
-    const result = await binding.run(backend, scope, args)
+    const result = await binding.run(backend, scope, args, context)
     actions.endCall(callId, { endSeq: context.nextSeq(), refs: scope.refs, result, status: 'ok' })
     return result
   }
@@ -229,6 +260,39 @@ function resolveFrame(value: WireValue): { frame: CapturedFrame, handle: FrameHa
   return { frame: resource.frame, handle: resource.handle }
 }
 
+/** Validated scroll amount: finite numbers, not both zero. */
+function scrollDelta(value: WireValue): ScrollDelta {
+  const { dx = 0, dy = 0 } = (value ?? {}) as ScrollDelta
+  if (typeof dx !== 'number' || typeof dy !== 'number' || !Number.isFinite(dx) || !Number.isFinite(dy))
+    throw new TypeError('Expected a scroll amount { dx?, dy? } in logical pixels')
+  if (dx === 0 && dy === 0)
+    throw new RangeError('scroll: dx and dy cannot both be zero')
+  return { dx, dy }
+}
+
+/**
+ * `scrollUntil` options with defaults applied; a `{ $predicate }` placeholder
+ * from the worker becomes a `decide` callback back into the script.
+ */
+function scrollUntilRequest(value: WireValue, context: CallContext): { decide?: (observation: ScrollObservation) => Promise<boolean>, request: ScrollUntilRequest } {
+  const options = (value ?? {}) as ScrollDelta & { confirmations?: number, maxSteps?: number, settle?: number, text?: string, until?: { $predicate?: number } }
+  const delta = scrollDelta(options)
+  if (delta.dx !== 0 && delta.dy !== 0)
+    throw new RangeError('scrollUntil: scroll along one axis only (dx or dy)')
+  const predicateId = options.until?.$predicate
+  const decide = context.decide
+  return {
+    decide: predicateId === undefined || !decide ? undefined : observation => decide(predicateId, observation),
+    request: {
+      confirmations: options.confirmations ?? SCROLL_UNTIL_DEFAULTS.confirmations,
+      delta,
+      maxSteps: options.maxSteps ?? SCROLL_UNTIL_DEFAULTS.maxSteps,
+      settleMs: options.settle ?? SCROLL_UNTIL_DEFAULTS.settleMs,
+      text: options.text || undefined,
+    },
+  }
+}
+
 /**
  * `within` from text-search options, clipped to `bounds` (the searched image)
  * and expressed as the fractions AUV expects (`NormalizedRect`).
@@ -265,4 +329,17 @@ function windowId(value: WireValue): string {
   if (!ref?.startsWith('window:'))
     throw new TypeError('Expected a window handle from auv.windows.resolve()')
   return ref.slice('window:'.length)
+}
+
+/**
+ * Window-local point for a screen-space `at` (a point, or an area or
+ * rectangle's center); scrolling outside the window is rejected.
+ */
+function windowPoint(window: WireValue, at: WireValue): { point: Point, screen: Point } {
+  const screen = clickPoint(at)
+  const frame = windowBounds(window)
+  const point = { x: screen.x - frame.x, y: screen.y - frame.y }
+  if (point.x < 0 || point.y < 0 || point.x > frame.width || point.y > frame.height)
+    throw new RangeError(`scroll: (${Math.round(screen.x)}, ${Math.round(screen.y)}) is outside the window`)
+  return { point, screen }
 }

@@ -1,4 +1,4 @@
-import type { ClickOptions, Point, Rect, TextMatch, WindowSelector } from '../script-api/api'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, ScrollUntilResult, TextMatch, WindowSelector } from '../script-api/api'
 
 /**
  * One accessibility element. `path` is a stable-within-a-snapshot address
@@ -44,6 +44,13 @@ export interface Backend {
   pressKey: (key: string) => Promise<InputReceipt>
   recognizeText: (frame: CapturedFrame, region?: NormalizedRect) => Promise<TextSearchResult>
   resolveWindow: (selector: WindowSelector) => Promise<WindowInfo>
+  /** Wheel-scrolls once at a window-local point. */
+  scrollWindow: (windowId: string, point: Point, delta: ScrollDelta) => Promise<InputReceipt>
+  /**
+   * Scrolls at a window-local point in steps, observing after each, until the
+   * request's condition, `decide`, the end, or the budget stops it.
+   */
+  scrollWindowUntil: (windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>) => Promise<ScrollUntilOutcome>
   typeText: (text: string) => Promise<InputReceipt>
 }
 
@@ -81,6 +88,27 @@ export interface InputReceipt {
 export type NormalizedRect = Rect
 
 export type RunOutcomeKind = 'canceled' | 'failed' | 'succeeded'
+
+export interface ScrollUntilOutcome {
+  /** The last observation's capture and OCR, when the loop observed anything. */
+  capture?: CapturedFrame
+  match?: TextMatch
+  reason: ScrollUntilResult['reason']
+  /** Delivery evidence of the first step. */
+  receipt?: InputReceipt
+  recognized?: TextSearchResult
+  steps: number
+}
+
+/** `scrollUntil` parameters with the playground's defaults applied. */
+export interface ScrollUntilRequest {
+  confirmations: number
+  delta: ScrollDelta
+  maxSteps: number
+  settleMs: number
+  /** Built-in text condition; the loop otherwise stops at the end. */
+  text?: string
+}
 
 export interface TextSearchResult {
   capture?: CapturedFrame

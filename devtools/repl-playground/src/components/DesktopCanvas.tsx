@@ -419,6 +419,23 @@ function paintResource(ctx: CanvasRenderingContext2D, resource: Resource | undef
       ctx.strokeStyle = '#fff'
       ctx.lineWidth = px(1.5)
       ctx.stroke()
+      const delta = resource.handle.delta
+      if (resource.handle.action === 'scroll' && delta) {
+        // Arrow toward the content the scroll reveals (positive dy = down).
+        const length = Math.hypot(delta.dx ?? 0, delta.dy ?? 0) || 1
+        const ux = (delta.dx ?? 0) / length
+        const uy = (delta.dy ?? 0) / length
+        const tip = { x: point.x + ux * px(28), y: point.y + uy * px(28) }
+        ctx.strokeStyle = COLORS.click
+        ctx.lineWidth = px(2)
+        ctx.beginPath()
+        ctx.moveTo(point.x + ux * px(8), point.y + uy * px(8))
+        ctx.lineTo(tip.x, tip.y)
+        ctx.moveTo(tip.x - (ux + uy) * px(6), tip.y - (uy - ux) * px(6))
+        ctx.lineTo(tip.x, tip.y)
+        ctx.lineTo(tip.x - (ux - uy) * px(6), tip.y - (uy + ux) * px(6))
+        ctx.stroke()
+      }
       break
     }
     case 'text': {

@@ -1,5 +1,5 @@
 import type { ExecWorkerApi, HostApi, LogLevel, ResumeMode, RunOutcome, RunRequest, WireValue } from '../runtime/protocol'
-import type { AuvScriptApi, ClickOptions, Point, Rect, TextSearchOptions, WindowHandle } from '../script-api/api'
+import type { AuvScriptApi, ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, ScrollUntilOptions, TextSearchOptions, WindowHandle } from '../script-api/api'
 /// <reference lib="webworker" />
 import type { StepSite } from '../stepper/compile'
 
@@ -32,7 +32,17 @@ const persistentNames = new Set<string>()
 
 const now = () => performance.timeOrigin + performance.now()
 
+// `scrollUntil` predicates by id while their call runs; the host asks via `decide`.
+const predicates = new Map<number, (observation: ScrollObservation) => boolean | Promise<boolean>>()
+let nextPredicate = 1
+
 const api: ExecWorkerApi = {
+  async decide(predicateId, observation) {
+    const predicate = predicates.get(predicateId)
+    if (!predicate)
+      throw new Error(`scrollUntil predicate ${predicateId} is no longer running`)
+    return Boolean(await predicate(observation))
+  },
   resume(next) {
     resumeWaiter?.(next)
   },
@@ -99,6 +109,23 @@ function attachWindowMethods(window: WindowHandle): void {
     capture: { value: () => call('windows.capture', ref) },
     click: { value: (point: Point, options?: ClickOptions) => call('windows.click', ref, point, options) },
     findText: { value: (query: string, options?: TextSearchOptions) => call('windows.findText', ref, query, options) },
+    scroll: { value: (at: Point | Rect, delta: ScrollDelta) => call('windows.scroll', ref, at, delta) },
+    scrollUntil: {
+      value: async (at: Point | Rect, options: ScrollUntilOptions) => {
+        const { until, ...rest } = options ?? {}
+        if (!until)
+          return await call('windows.scrollUntil', ref, at, rest)
+        // Functions cannot cross to the host; send a placeholder it calls back through `decide`.
+        const predicateId = nextPredicate++
+        predicates.set(predicateId, until)
+        try {
+          return await call('windows.scrollUntil', ref, at, { ...rest, until: { $predicate: predicateId } })
+        }
+        finally {
+          predicates.delete(predicateId)
+        }
+      },
+    },
   })
 }
 

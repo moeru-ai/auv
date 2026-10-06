@@ -139,6 +139,32 @@ focus(await counter.findText('Increment')) // then to the matches, arcing over t
 focus(search, { zoom: false }) // pan only, keep the zoom level
 ```
 
+### Scrolling
+
+`win.scroll(at, { dx?, dy? })` wheel-scrolls once and `win.scrollUntil(at,
+options)` scrolls in steps, observing after each step on the Runner
+(`InputService/ScrollWindowPoint` and `ScrollUntil`). `at` is a screen-space
+point or the center of an area or rectangle (unlike `win.click`, which takes a
+window-relative point). Positive `dy` scrolls toward later content (down).
+
+```ts
+const results = area(music).region({ bottom: 80, left: '22%', top: 120 })
+await music.scroll(results, { dy: 600 })
+const found = await music.scrollUntil(results, { dy: 400, text: 'Remember' })
+// found.reason: 'text-visible' | 'until' | 'end' | 'budget'; found.match is screen-space
+const page = await music.scrollUntil(results, {
+  dy: 400,
+  until: obs => obs.text.includes('Reply'), // runs in the script for every observation
+})
+```
+
+`scrollUntil` uses the `auv invoke input.scroll-until` defaults (`maxSteps` 50,
+`settle` 400 ms, `confirmations` 2) and scrolls along one axis. The result keeps
+the last observation's capture (`frame`) and OCR (`text`) as handles. An `end`
+stop means no visual motion was observed, not that no content is left. The
+daemon must be AUV 0.0.29 or later; the mock desktop has no scrollable content,
+so its loops end after `confirmations` steps.
+
 Script API types (`Area`, `Rect`, `Point`, `WindowHandle`, `TextMatch`, …) can
 be used by name in cells, e.g. `function toolbar(win: Area): Area`.
 
@@ -175,6 +201,9 @@ These are known and intentionally deferred; each is marked in code.
   pixels inline (`RgbaFrame`), so a 5K capture moves ~80 MB per call. A
   daemon-side handle and `GetResource` API in AUV would let the REPL
   fetch thumbnails or PNGs by ref instead.
+- **Scroll** exposes `ScrollWindowPoint` and `ScrollUntil`; timed
+  (`ScrollWindowPointMotion`) and live (`StreamScroll`) scrolling are not in the
+  script API yet, and `scrollUntil` records only its last observation.
 - **AX tree and object detection** have no AUV driver RPC yet; only the mock
   desktop provides an AX tree. The AX panel shows the current tree, not the
   tree at the time cursor (that needs AX snapshots recorded per step).

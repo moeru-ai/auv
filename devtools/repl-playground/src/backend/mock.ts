@@ -1,5 +1,5 @@
-import type { ClickOptions, Point, Rect, TextMatch, WindowSelector } from '../script-api/api'
-import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, TextSearchResult, WindowInfo } from './types'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, TextMatch, WindowSelector } from '../script-api/api'
+import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 interface MockWindow extends WindowInfo {
   background: string
@@ -185,6 +185,43 @@ export class MockBackend implements Backend {
     if (!window)
       throw new Error(`No mock window matches ${JSON.stringify(selector)}`)
     return toInfo(window)
+  }
+
+  async scrollWindow(windowId: string, point: Point, _delta: ScrollDelta): Promise<InputReceipt> {
+    const frame = this.#window(windowId).frame
+    await delay(20)
+    return { path: 'mock-wheel', point: { x: frame.x + point.x, y: frame.y + point.y } }
+  }
+
+  /**
+   * Same stop order as the AUV Runner: the built-in condition, then the
+   * client predicate, then the end and the budget.
+   * NOTICE(mock-scroll): mock windows have no scrollable content, so every
+   * step observes no motion and the loop ends after `confirmations` steps
+   * unless the text is already visible or the predicate stops it.
+   */
+  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+    let streak = 0
+    let receipt: InputReceipt | undefined
+    for (let steps = 1; ; steps++) {
+      const delivered = await this.scrollWindow(windowId, point, request.delta)
+      receipt ??= delivered
+      await delay(Math.min(request.settleMs, 60))
+      const capture = await this.captureWindow(windowId)
+      const matches = this.#text(capture.bounds)
+      const recognized = { matches, text: matches.map(match => match.text).join('\n') }
+      streak++
+      const match = request.text ? matches.find(candidate => includes(candidate.text, request.text!)) : undefined
+      const outcome = { capture, receipt, recognized, steps }
+      if (match)
+        return { ...outcome, match, reason: 'text-visible' }
+      if (streak >= request.confirmations)
+        return { ...outcome, reason: 'end' }
+      if (steps >= request.maxSteps)
+        return { ...outcome, reason: 'budget' }
+      if (decide && await decide({ moved: false, steps, text: recognized.text }))
+        return { ...outcome, reason: 'until' }
+    }
   }
 
   async typeText(text: string): Promise<InputReceipt> {

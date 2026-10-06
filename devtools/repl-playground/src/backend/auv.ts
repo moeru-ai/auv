@@ -1,7 +1,7 @@
 import type { AuvClient, AuvConnection, Device, RunnerClient } from '@auv-js/sdk'
 
-import type { ClickOptions, Rect, WindowSelector } from '../script-api/api'
-import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, TextSearchResult, WindowInfo } from './types'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
+import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 import { AuvRemoteError, connect, createAuv, createHttpTransport, pairDevice } from '@auv-js/sdk'
 
@@ -9,6 +9,8 @@ type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
 type NativeDisplay = Awaited<ReturnType<RunnerClient['displays']['list']>>[number]
 type NativeFrame = NonNullable<CaptureResponse['capture']>
+type NativeObservation = Parameters<NonNullable<NonNullable<Parameters<WindowClient['scrollUntil']>[2]>['onObservation']>>[0]
+type NativeRecognized = Awaited<ReturnType<RunnerClient['recognizeText']>>
 type NativeWindow = Awaited<ReturnType<RunnerClient['windows']['list']>>[number]
 type WindowClient = Awaited<ReturnType<RunnerClient['windows']['resolve']>>
 
@@ -16,6 +18,14 @@ const RUNNER_CLASS = 'auv.core.local'
 
 // Mirrors `auv.api.driver.v1.MouseButton`; the enum is not re-exported by the SDK entry.
 const MOUSE_BUTTON = { left: 1, middle: 3, right: 2 } as const
+
+// Mirrors `auv.api.driver.v1.ScrollUntilStopReason`; the enum is not re-exported by the SDK entry.
+const STOP_REASONS: Record<number, ScrollUntilOutcome['reason']> = {
+  1: 'end',
+  2: 'text-visible',
+  3: 'budget',
+  4: 'until',
+}
 
 // Mirrors `auv.api.driver.v1.InputDeliveryPath` for display only.
 const DELIVERY_PATHS: Record<number, string> = {
@@ -104,11 +114,7 @@ class AuvBackend implements Backend {
       button: MOUSE_BUTTON[options?.button ?? 'left'],
       click: toClick(options),
     })
-    const frame = toRect(response.window?.frame)
-    return {
-      path: deliveryPath(response.action),
-      point: frame ? { x: frame.x + point.x, y: frame.y + point.y } : undefined,
-    }
+    return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
   }
 
   async dispose(): Promise<void> {
@@ -157,14 +163,7 @@ class AuvBackend implements Backend {
   async recognizeText(frame: CapturedFrame, region?: NormalizedRect): Promise<TextSearchResult> {
     if (!frame.native)
       throw new Error('This frame did not come from AUV and cannot be sent to the recognizer')
-    const response = await this.#runner.recognizeText(frame.native as NativeFrame, region ? { region } : undefined)
-    return {
-      // NOTICE(ocr-region-space): regions are treated as screen-space like
-      // TextMatch bounds. Revisit if RecognizeTextResponse.origin reports a
-      // non-screen space for a frame.
-      matches: response.regions.map(region => ({ bounds: toRect(region.bounds)!, confidence: region.confidence ?? 1, text: region.text })),
-      text: response.text,
-    }
+    return toRecognized(await this.#runner.recognizeText(frame.native as NativeFrame, region ? { region } : undefined))
   }
 
   async resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
@@ -172,6 +171,42 @@ class AuvBackend implements Backend {
     this.#windows.set(resolved.id, resolved)
     const window = (await this.#runner.windows.list()).find(candidate => candidate.ref?.windowId === resolved.id)
     return window ? toWindow(window) : { frame: { height: 0, width: 0, x: 0, y: 0 }, id: resolved.id }
+  }
+
+  async scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
+    const window = await this.#windowClient(windowId)
+    const response = await window.scroll(point, { deltaX: delta.dx ?? 0, deltaY: delta.dy ?? 0 })
+    return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
+  }
+
+  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+    const window = await this.#windowClient(windowId)
+    let last: NativeObservation | undefined
+    const completed = await window.scrollUntil(point, {
+      condition: request.text ? { case: 'textVisible', value: { query: request.text } } : { case: 'end', value: {} },
+      maxSteps: request.maxSteps,
+      noMotionConfirmations: request.confirmations,
+      settle: toDuration(request.settleMs),
+      step: { case: 'instant', value: { deltaX: request.delta.dx ?? 0, deltaY: request.delta.dy ?? 0 } },
+    }, {
+      onObservation: (observation) => {
+        last = observation
+      },
+      until: decide && (observation => decide({
+        moved: observation.motion ? !observation.motion.noMotion : false,
+        steps: observation.steps,
+        text: observation.text?.text ?? '',
+      })),
+    })
+    const match = completed.textMatch
+    return {
+      capture: last?.capture ? toFrame(last.capture, `window:${windowId}`) : undefined,
+      match: match ? { bounds: toRect(match.bounds)!, confidence: 1, text: match.text } : undefined,
+      reason: STOP_REASONS[completed.reason] ?? 'end',
+      receipt: completed.action ? { path: deliveryPath(completed.action) } : undefined,
+      recognized: last?.text ? toRecognized(last.text) : undefined,
+      steps: completed.steps,
+    }
   }
 
   async typeText(text: string): Promise<InputReceipt> {
@@ -252,6 +287,12 @@ function readableError(error: unknown): unknown {
   return error
 }
 
+/** Screen point of a window-local point, when the response reported the window frame. */
+function screenPoint(frame: Parameters<typeof toRect>[0], point: Point): Point | undefined {
+  const rect = toRect(frame)
+  return rect ? { x: rect.x + point.x, y: rect.y + point.y } : undefined
+}
+
 /**
  * AUV `Click`: the count, plus the interval AUV requires for repeated clicks
  * (`input.proto` `Click.interval`; it rejects a multi-click without one).
@@ -265,7 +306,7 @@ function toClick(options: ClickOptions | undefined) {
   const ms = options?.interval ?? 80
   if (!(ms > 0))
     throw new RangeError('click interval must be a positive number of milliseconds')
-  return { count, interval: { nanos: Math.round((ms % 1000) * 1e6), seconds: BigInt(Math.floor(ms / 1000)) } }
+  return { count, interval: toDuration(ms) }
 }
 
 function toDisplay(display: NativeDisplay): DisplayInfo {
@@ -276,6 +317,11 @@ function toDisplay(display: NativeDisplay): DisplayInfo {
     primary: display.primary,
     scale: display.scaleFactor || 1,
   }
+}
+
+/** `google.protobuf.Duration` from milliseconds. */
+function toDuration(ms: number) {
+  return { nanos: Math.round((ms % 1000) * 1e6), seconds: BigInt(Math.floor(ms / 1000)) }
 }
 
 function toFrame(capture: NativeFrame | undefined, source: string): CapturedFrame {
@@ -290,6 +336,17 @@ function toFrame(capture: NativeFrame | undefined, source: string): CapturedFram
     scale: capture.scaleFactor || 1,
     source,
     width,
+  }
+}
+
+/** OCR response as playground matches. */
+function toRecognized(response: NativeRecognized): TextSearchResult {
+  return {
+    // NOTICE(ocr-region-space): regions are treated as screen-space like
+    // TextMatch bounds. Revisit if RecognizeTextResponse.origin reports a
+    // non-screen space for a frame.
+    matches: response.regions.map(region => ({ bounds: toRect(region.bounds)!, confidence: region.confidence ?? 1, text: region.text })),
+    text: response.text,
   }
 }
 

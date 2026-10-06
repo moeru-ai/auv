@@ -1,5 +1,5 @@
-import type { ClickOptions, Point, WindowSelector } from '../script-api/api'
-import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, TextSearchResult, WindowInfo } from './types'
+import type { ClickOptions, Point, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
+import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 /** One device call of a live run: what was asked and what the device answered. */
 export interface RecordedCall {
@@ -88,6 +88,15 @@ export class RecordingBackend implements Backend {
 
   resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
     return this.#record('resolveWindow', [selector], () => this.inner.resolveWindow(selector))
+  }
+
+  scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
+    return this.#record('scrollWindow', [windowId, point, delta], () => this.inner.scrollWindow(windowId, point, delta))
+  }
+
+  scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+    // The predicate itself is not recorded; replay returns the recorded outcome.
+    return this.#record('scrollWindowUntil', [windowId, point, request, decide !== undefined], () => this.inner.scrollWindowUntil(windowId, point, request, decide))
   }
 
   typeText(text: string): Promise<InputReceipt> {
@@ -181,6 +190,17 @@ export class ReplayBackend implements Backend {
 
   resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
     return this.#next('resolveWindow', [selector])
+  }
+
+  scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
+    return this.#next('scrollWindow', [windowId, point, delta])
+  }
+
+  // NOTICE(replay-scroll-predicate): replay returns the recorded outcome
+  // without running an `until` predicate, so an edited predicate does not
+  // diverge; only whether one is present is compared.
+  scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+    return this.#next('scrollWindowUntil', [windowId, point, request, decide !== undefined])
   }
 
   typeText(text: string): Promise<InputReceipt> {

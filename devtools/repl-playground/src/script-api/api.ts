@@ -141,7 +141,9 @@ export interface FrameHandle {
 /** Receipt of a delivered input action. Delivery is not semantic success. */
 export interface InputHandle {
   readonly $ref: `input:${string}`
-  readonly action: 'activate' | 'click' | 'key' | 'type'
+  readonly action: 'activate' | 'click' | 'key' | 'scroll' | 'type'
+  /** Scroll amount for `scroll` receipts, in logical pixels. */
+  readonly delta?: ScrollDelta
   readonly kind: 'input'
   /** Delivery path chosen by the driver, e.g. `window-targeted`. */
   readonly path?: string
@@ -164,6 +166,51 @@ export interface Rect {
   width: number
   x: number
   y: number
+}
+
+/**
+ * Scroll amount in logical pixels: positive `dy` scrolls toward later content
+ * (down), positive `dx` scrolls right, like DOM `WheelEvent`.
+ */
+export interface ScrollDelta {
+  dx?: number
+  dy?: number
+}
+
+/** What `scrollUntil` saw after one step, for an `until` predicate. */
+export interface ScrollObservation {
+  /** Whether the viewport moved on this step (false before the first step). */
+  readonly moved: boolean
+  readonly steps: number
+  /** Full recognized window text after this step. */
+  readonly text: string
+}
+
+/** One step per observation; scroll along one axis only. */
+export interface ScrollUntilOptions extends ScrollDelta {
+  /** Consecutive no-motion steps that count as the end, 1–10. Default 2. */
+  confirmations?: number
+  /** Step budget, 1–1000. Default 50. */
+  maxSteps?: number
+  /** Milliseconds to wait after each step before observing, ≤ 10000. Default 400. */
+  settle?: number
+  /** Stop when recognized window text contains this (case-insensitive). */
+  text?: string
+  /** Stop when this returns `true` for an observation. */
+  until?: (observation: ScrollObservation) => boolean | Promise<boolean>
+}
+
+export interface ScrollUntilResult {
+  /** The last observation's capture, unless nothing was observed. */
+  readonly frame?: FrameHandle
+  /** Delivery receipt of the first step; absent if the loop stopped before scrolling. */
+  readonly input?: InputHandle
+  /** Where `text` was found, in screen space. */
+  readonly match?: TextMatch
+  readonly reason: 'budget' | 'end' | 'text-visible' | 'until'
+  readonly steps: number
+  /** The last observation's OCR result. */
+  readonly text?: TextHandle
 }
 
 /** Result of OCR over a frame, a window or a display. */
@@ -211,6 +258,21 @@ export interface WindowHandle {
   readonly id: string
   readonly kind: 'window'
   readonly pid?: number
+  /**
+   * Wheel-scrolls once at `at`: a screen-space point, or the center of an area
+   * or rectangle (unlike `click`, which takes a window-relative point). The
+   * receipt is delivery evidence only; it does not prove the content moved.
+   */
+  scroll: (at: Point | Rect, delta: ScrollDelta) => Promise<InputHandle>
+  /**
+   * Scrolls at `at` in steps, observing (capture + OCR) after each step, until
+   * `text` appears, `until` returns `true`, no visual motion remains, or
+   * `maxSteps` runs out. An `end` stop is not proof that no content is left.
+   */
+  scrollUntil: (at: Point | Rect, options: ScrollUntilOptions) => Promise<ScrollUntilResult>
+  // TODO(repl-scroll-motion): timed (`scrollMotion`) and live velocity
+  // (`scrollStream` / `scrollWith`) scrolling exist in `@auv-js/sdk` but are not
+  // exposed; add them when a script needs eased or continuous scrolling.
   readonly title?: string
 }
 
