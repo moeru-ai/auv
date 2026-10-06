@@ -38,6 +38,9 @@ export function DesktopCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewRef = useRef<View>({ k: 0.3, tx: 20, ty: 20 })
   const fittedRef = useRef(false)
+  // Keep fitting the desktop to the canvas as panels resize, until the user
+  // pans or zooms or a `focus()` moves the camera; "Fit" turns it back on.
+  const autoFitRef = useRef(true)
   const invalidateRef = useRef<() => void>(undefined)
   const [cursor, setCursor] = useState<null | Point>(null)
   const displays = usePlayground(state => state.displays)
@@ -79,6 +82,7 @@ export function DesktopCanvas() {
       const focus = activeFocus(state, scene)
       if (focus && focus.id !== appliedFocus && cw > 0) {
         appliedFocus = focus.id
+        autoFitRef.current = false
         const path = flight({ ...v }, viewFor(focus.rect, cw, ch, v, focus.zoom), cw, ch, focus.autoZoomOut)
         // The time until the next focus on the timeline bounds this flight.
         const next = state.focuses.find(candidate => candidate.seq > focus.seq)
@@ -118,11 +122,16 @@ export function DesktopCanvas() {
     invalidateRef.current = invalidate
     invalidate()
     const unsubscribe = usePlayground.subscribe(invalidate)
-    const resize = new ResizeObserver(invalidate)
+    const resize = new ResizeObserver(() => {
+      if (autoFitRef.current)
+        fittedRef.current = false
+      invalidate()
+    })
     resize.observe(canvas)
 
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
+      autoFitRef.current = false
       camera = null
       const v = viewRef.current
       const k2 = Math.min(6, Math.max(0.03, v.k * Math.exp(-event.deltaY * 0.0015)))
@@ -134,6 +143,7 @@ export function DesktopCanvas() {
     let drag: null | Point = null
     let downAt: null | Point = null
     const onDown = (event: PointerEvent) => {
+      autoFitRef.current = false
       camera = null
       drag = { x: event.clientX, y: event.clientY }
       downAt = drag
@@ -198,6 +208,7 @@ export function DesktopCanvas() {
           className="btn-ghost bg-surface-1/90 shadow"
           onClick={() => {
             fittedRef.current = false
+            autoFitRef.current = true
             invalidateRef.current?.()
           }}
           type="button"
