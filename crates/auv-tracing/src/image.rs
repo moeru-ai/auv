@@ -22,7 +22,8 @@ pub enum ImageArtifactError {
 /// NOTICE(image-artifact-webp): evidence is lossless WebP (`image/webp`,
 /// `.webp`): pixels round-trip exactly, which OCR evidence needs. On macOS
 /// display and window captures (2026-10-07) it was 30–74% smaller than PNG
-/// at 1–1.5× its encode time (~15–30 ms for a Retina window). Lossy AVIF was
+/// at 1.2–3.1× its encode time (~15–30 ms for a Retina window, 10–20 ms more
+/// than PNG; capture itself takes hundreds of ms). Lossy AVIF was
 /// rejected: 0.8–4 s per capture, and it blurs small text. See
 /// `docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md`.
 ///
