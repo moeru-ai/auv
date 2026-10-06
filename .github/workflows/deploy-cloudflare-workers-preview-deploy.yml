@@ -1,0 +1,188 @@
+name: Cloudflare Workers (Playground Preview) Deploy
+
+on:
+  workflow_run:
+    workflows:
+      - Cloudflare Workers (Playground Preview) Prepare
+    types:
+      - completed
+
+jobs:
+  ask-for-approval:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    name: Ask for approval to deploy - repl-playground
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Download preview metadata
+        uses: dawidd6/action-download-artifact@v19
+        with:
+          workflow_conclusion: success
+          run_id: ${{ github.event.workflow_run.id }}
+          name: playground-preview-meta
+          path: preview-meta
+          allow_forks: true
+      - name: Parse metadata
+        id: meta
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile } from 'node:fs/promises'
+
+          const metadata = JSON.parse(await readFile('preview-meta/preview-meta.json', 'utf8'))
+          if (
+            !/^\d+$/.test(metadata.prNumber)
+            || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(metadata.repositoryFullName)
+            || !/^[a-f0-9]{40}$/i.test(metadata.headSha)
+          ) {
+            throw new Error('Preview metadata has an invalid shape')
+          }
+          await appendFile(process.env.GITHUB_OUTPUT, 'PR_NUM=' + metadata.prNumber + '\n')
+          NODE
+      - name: Find preview comment
+        uses: peter-evans/find-comment@v4
+        id: preview-comment
+        with:
+          issue-number: ${{ steps.meta.outputs.PR_NUM }}
+          comment-author: github-actions[bot]
+          body-includes: to Cloudflare Workers (Preview) for *repl-playground*
+      - name: Request preview approval
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.preview-comment.outputs.comment-id }}
+          issue-number: ${{ steps.meta.outputs.PR_NUM }}
+          edit-mode: replace
+          body: |
+            ## ⏳ Approval required for deploying to Cloudflare Workers (Preview) for *repl-playground*.
+
+            Maintainers can approve [the deployment here](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+  deploy:
+    name: Deploy - repl-playground
+    needs: ask-for-approval
+    runs-on: ubuntu-latest
+    environment: Playground Preview
+    permissions:
+      contents: read
+      pull-requests: write
+      deployments: write
+    steps:
+      - name: Download preview metadata
+        uses: dawidd6/action-download-artifact@v19
+        with:
+          workflow_conclusion: success
+          run_id: ${{ github.event.workflow_run.id }}
+          name: playground-preview-meta
+          path: preview-meta
+          allow_forks: true
+      - name: Parse metadata
+        id: meta
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile } from 'node:fs/promises'
+
+          const metadata = JSON.parse(await readFile('preview-meta/preview-meta.json', 'utf8'))
+          if (
+            !/^\d+$/.test(metadata.prNumber)
+            || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(metadata.repositoryFullName)
+            || !/^[a-f0-9]{40}$/i.test(metadata.headSha)
+          ) {
+            throw new Error('Preview metadata has an invalid shape')
+          }
+          await appendFile(process.env.GITHUB_OUTPUT, [
+            'PR_NUM=' + metadata.prNumber,
+            'REPO_FULL_NAME=' + metadata.repositoryFullName,
+            'HEAD_SHA=' + metadata.headSha,
+            '',
+          ].join('\n'))
+          NODE
+      - name: Checkout pull request
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.meta.outputs.REPO_FULL_NAME }}
+          ref: ${{ steps.meta.outputs.HEAD_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Buf
+        uses: bufbuild/buf-action@v1
+        with:
+          version: "1.71.0"
+          setup_only: true
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - name: Install Wrangler
+        run: pnpm install --global wrangler@4
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Protobuf bindings
+        run: pnpm generate:proto
+      - name: Build repl-playground
+        id: build
+        run: pnpm --filter @auv-js/repl-playground build
+        continue-on-error: true
+      - name: Find preview comment
+        if: ${{ always() }}
+        uses: peter-evans/find-comment@v4
+        id: preview-comment
+        with:
+          issue-number: ${{ steps.meta.outputs.PR_NUM }}
+          comment-author: github-actions[bot]
+          body-includes: to Cloudflare Workers (Preview) for *repl-playground*
+      - name: Report build failure
+        if: ${{ steps.build.outcome != 'success' }}
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.preview-comment.outputs.comment-id }}
+          issue-number: ${{ steps.meta.outputs.PR_NUM }}
+          edit-mode: replace
+          body: |
+            ## ❌ Deploy to Cloudflare Workers (Preview) for *repl-playground* failed.
+
+            [Open the deployment log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+      - name: Fail after build error
+        if: ${{ steps.build.outcome != 'success' }}
+        run: exit 1
+      - name: Upload preview
+        if: ${{ steps.build.outcome == 'success' }}
+        id: wrangler-upload
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: versions upload -c ./apps/repl-playground/wrangler.toml --preview-alias pr-${{ steps.meta.outputs.PR_NUM }} --message "GitHub Actions uploaded preview for Pull Request ${{ steps.meta.outputs.PR_NUM }}" --tag v0.0.1-pr.${{ steps.meta.outputs.PR_NUM }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare preview URLs
+        if: ${{ steps.build.outcome == 'success' }}
+        id: preview-urls
+        run: |
+          deployment_url="${{ steps.wrangler-upload.outputs.deployment-url }}"
+          if [ -z "$deployment_url" ]; then
+            echo "Deployment URL from Wrangler upload is empty." >&2
+            exit 1
+          fi
+          host_without_scheme="${deployment_url#https://}"
+          host_without_scheme="${host_without_scheme#http://}"
+          preview_alias_url="https://pr-${{ steps.meta.outputs.PR_NUM }}-${host_without_scheme#*-}/playground/"
+          echo "deployment_url=$deployment_url/playground/" >> "$GITHUB_OUTPUT"
+          echo "preview_alias_url=$preview_alias_url" >> "$GITHUB_OUTPUT"
+      - name: Publish preview links
+        if: ${{ steps.build.outcome == 'success' }}
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.preview-comment.outputs.comment-id }}
+          issue-number: ${{ steps.meta.outputs.PR_NUM }}
+          edit-mode: replace
+          body: |
+            ## ✅ Cloudflare Workers preview for *repl-playground* is ready.
+
+            | Name | Link |
+            |:--|:--|
+            | 🔍 Deployment log | https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} |
+            | 😎 Deployment preview | ${{ steps.preview-urls.outputs.deployment_url }} |
+            | 🚀 Pull request preview | ${{ steps.preview-urls.outputs.preview_alias_url }} |

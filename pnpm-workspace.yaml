@@ -35,7 +35,7 @@ trustPolicyExclude:
   - semver@6.3.1
 
 packages:
-  - 'devtools/repl-playground'
+  - 'apps/repl-playground'
   - 'evals/auv-base/platforms/desktop-universal/test-objects'
   - 'crates/auv-inspect-server/viewer'
   - 'js/packages/*'

@@ -46,7 +46,7 @@ From the repository root:
 ```sh
 pnpm install
 pnpm generate:proto                  # generates the SDK's protobuf bindings
-pnpm -F @auv-js/repl-playground dev  # http://localhost:5180
+pnpm -F @auv-js/repl-playground dev  # http://localhost:5180/playground/
 ```
 
 The REPL runs against the SDK source in this repository (`js/packages/sdk`,

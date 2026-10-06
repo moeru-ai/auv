@@ -72,6 +72,7 @@ node_modules
 .pnpm-store/
 dist
 dist-ssr
+.wrangler/
 *.local
 .vitest-attachments/
 

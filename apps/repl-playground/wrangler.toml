@@ -1,0 +1,25 @@
+name = "moeru-ai-auv-playground"
+main = "./worker.js"
+compatibility_date = "2026-10-06"
+preview_urls = true
+
+# TODO(playground-root-handoff): Remove this exact-root route when the AUV
+# documentation site is ready to own auv.moeru.ai/. The playground routes can
+# remain on this independent Worker because the more specific route wins.
+[[routes]]
+pattern = "auv.moeru.ai/"
+zone_name = "moeru.ai"
+
+[[routes]]
+pattern = "auv.moeru.ai/playground"
+zone_name = "moeru.ai"
+
+[[routes]]
+pattern = "auv.moeru.ai/playground/*"
+zone_name = "moeru.ai"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+run_worker_first = true
+not_found_handling = "single-page-application"

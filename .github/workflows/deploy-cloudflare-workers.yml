@@ -1,0 +1,53 @@
+name: Cloudflare Workers (Playground)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy - repl-playground
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    environment:
+      name: Playground Production
+      url: https://auv.moeru.ai/playground/
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Buf
+        uses: bufbuild/buf-action@v1
+        with:
+          version: "1.71.0"
+          setup_only: true
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+      # NOTICE(wrangler-workspace-install): Keep Wrangler outside the workspace
+      # graph so wrangler-action can reuse it without changing the lockfile.
+      - name: Install Wrangler
+        run: pnpm install --global wrangler@4
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Protobuf bindings
+        run: pnpm generate:proto
+      - name: Build repl-playground
+        run: pnpm --filter @auv-js/repl-playground build
+      - name: Deploy repl-playground
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy -c ./apps/repl-playground/wrangler.toml
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
