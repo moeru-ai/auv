@@ -7,7 +7,7 @@ use clap::Args;
 
 use auv_tracing::ArtifactMetadata;
 
-use crate::artifact::emit_png_with_receipt;
+use crate::artifact::emit_image_with_receipt;
 #[cfg(target_os = "macos")]
 use auv_driver::overlay::{Overlay, components::CaptureFrame};
 #[cfg(target_os = "macos")]
@@ -73,7 +73,7 @@ pub async fn recorded_display_capture_output(
   image: Option<&image::RgbaImage>,
 ) -> InvokeCommandResult {
   let artifact = match image {
-    Some(image) => emit_png_with_receipt("auv.driver.display_capture", image).await,
+    Some(image) => emit_image_with_receipt("auv.driver.display_capture", image).await,
     None => None,
   };
   display_capture_output(display, capture, artifact)
@@ -109,7 +109,7 @@ async fn capture_primary_display_recorded_with_session(
   session: &auv_driver::LocalDriverSession,
 ) -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>), String> {
   let result = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
-  let artifact = emit_png_with_receipt("auv.driver.display_capture", &result.capture.image).await;
+  let artifact = emit_image_with_receipt("auv.driver.display_capture", &result.capture.image).await;
   Ok((result, artifact))
 }
 

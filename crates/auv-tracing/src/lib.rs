@@ -6,6 +6,8 @@ pub mod artifact;
 pub mod context;
 pub mod dispatch;
 pub mod event;
+#[cfg(feature = "image")]
+pub mod image;
 mod macros;
 pub mod propagation;
 pub mod record;
@@ -20,6 +22,8 @@ pub use artifact::{
 pub use context::{Context, ContextGuard, Instrumented, Span, SpanSpec, WithContext, emit_event, start_span};
 pub use dispatch::{BuildError, Dispatch, DispatchBuilder, DispatchFailure, DispatchStage, FlushError, configure, dispatcher};
 pub use event::{EventPayload, EventSchema, JsonPayload, JsonPayloadError};
+#[cfg(feature = "image")]
+pub use image::{ImageArtifactError, image_artifact};
 pub use propagation::{PropagationError, RemoteContext, TextMapReader, TextMapWriter, extract};
 pub use record::TraceRecord;
 #[cfg(feature = "file-store")]

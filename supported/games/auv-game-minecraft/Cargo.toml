@@ -23,7 +23,7 @@ tracing = [
 auv-file = { path = "../../../crates/auv-file" }
 auv-query-readiness = { path = "../../../crates/auv-query-readiness" }
 auv-driver = { path = "../../../crates/auv-driver" }
-auv-tracing = { path = "../../../crates/auv-tracing", optional = true }
+auv-tracing = { path = "../../../crates/auv-tracing", optional = true, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

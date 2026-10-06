@@ -21,7 +21,7 @@ tracing = ["dep:auv-tracing", "dep:image"]
 
 [dependencies]
 auv-driver = { path = "../../../crates/auv-driver" }
-auv-tracing = { path = "../../../crates/auv-tracing", optional = true }
+auv-tracing = { path = "../../../crates/auv-tracing", optional = true, features = ["image"] }
 clap = { version = "4.5", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 serde = { version = "1", features = ["derive"] }

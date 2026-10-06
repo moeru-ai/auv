@@ -457,11 +457,11 @@ impl LiveSidebarObserver {
   fn publish_observation_artifacts(&mut self, image: RgbaImage, recognition: TextRecognition, observation: SidebarViewportObservation) {
     let sidebar_bounds = self.sidebar_bounds;
     if let Some(task) = crate::telemetry::spawn_artifact_task(move || {
-      crate::telemetry::png_artifact("auv.netease.sidebar.window_capture", &image);
+      crate::telemetry::image_artifact("auv.netease.sidebar.window_capture", &image);
 
       let mut overlay = image;
       draw_overlay(&mut overlay, sidebar_bounds, &observation);
-      crate::telemetry::png_artifact("auv.netease.sidebar.overlay", &overlay);
+      crate::telemetry::image_artifact("auv.netease.sidebar.overlay", &overlay);
 
       crate::telemetry::json_artifact("auv.netease.sidebar.recognition", &recognition);
       crate::telemetry::json_artifact("auv.netease.sidebar.viewport_observation", &observation);

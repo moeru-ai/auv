@@ -17,6 +17,8 @@ repository.workspace = true
 default = []
 memory-store = []
 file-store = []
+# Image evidence encoding (`image_artifact`).
+image = ["dep:image"]
 
 [dependencies]
 futures-io = "0.3"
@@ -24,6 +26,7 @@ futures-util = { version = "0.3", features = ["io", "sink"] }
 futures-channel = "0.3"
 futures-executor = { version = "0.3", features = ["thread-pool"] }
 hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["webp"], optional = true }
 pin-project = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }

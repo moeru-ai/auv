@@ -297,6 +297,10 @@ const thumbnail = await runner.captures.image(frame!, {
 const bitmap = await createImageBitmap(new Blob([thumbnail.data], { type: 'image/jpeg' }))
 ```
 
+Encodings: `RGBA` (default, raw rows), `PNG`, `JPEG` (quality 85, smallest for
+photo-heavy screens) and `WEBP` (lossless, about JPEG's size for UI, exact
+pixels).
+
 A capture reference fails with NOT_FOUND once the Runner evicts it (least
 recently used beyond its memory budget, or idle for ten minutes); capture
 again. To OCR an image you own, pass `{ frame: { image, bounds, scaleFactor } }`.

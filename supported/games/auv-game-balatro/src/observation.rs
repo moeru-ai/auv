@@ -213,7 +213,7 @@ pub async fn hover_read_display_frame_points_via_api(
       {
         crate::run_read::emit_json_artifact(auv_driver::INPUT_ACTION_RESULT_PURPOSE, &moved);
         let pixels = driver.captures().pixels(&capture).await.map_err(api_error)?;
-        crate::run_read::emit_png_artifact("auv.balatro.object_hover.capture", &frame_source, &pixels.image);
+        crate::run_read::emit_image_artifact("auv.balatro.object_hover.capture", &frame_source, &pixels.image);
       }
       observations.push(HoverReadObservation {
         point: screen_point,
@@ -468,7 +468,7 @@ async fn observe_live_with_runners(
   // The detectors run on local pixels; OCR below reads the Runner-held capture.
   let capture = driver.captures().pixels(&captured).await.map_err(api_error)?;
   #[cfg(feature = "tracing")]
-  crate::run_read::emit_png_artifact("auv.balatro.observation.capture", &source, &capture.image);
+  crate::run_read::emit_image_artifact("auv.balatro.observation.capture", &source, &capture.image);
   let image = image::DynamicImage::ImageRgba8(capture.image.clone()).to_rgb8();
   let frame = image_proto::RgbFrame {
     width: image.width(),

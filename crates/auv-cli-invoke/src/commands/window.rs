@@ -16,7 +16,7 @@ use auv_tracing::ArtifactMetadata;
 use clap::{Args, ValueEnum};
 use std::time::Duration;
 
-use crate::artifact::{emit_png, emit_png_with_receipt};
+use crate::artifact::{emit_image, emit_image_with_receipt};
 
 pub fn group() -> CommandGroup {
   // TODO(invoke-window-stubs): incomplete window commands stay intentionally
@@ -153,7 +153,7 @@ pub async fn recorded_window_capture_output(
   image: Option<&image::RgbaImage>,
 ) -> InvokeCommandResult {
   let artifact = match image {
-    Some(image) => emit_png_with_receipt("auv.driver.window_capture", image).await,
+    Some(image) => emit_image_with_receipt("auv.driver.window_capture", image).await,
     None => None,
   };
   window_capture_output_with_artifact(window, capture, artifact)
@@ -202,7 +202,7 @@ async fn capture_selected_window_recorded_with_session(
   // before capture. The captured region is authoritative in capture.bounds.
   // TODO: descriptor refresh remains deferred until an owner-approved result
   // contract defines how the resolved and captured observations agree.
-  let artifact = emit_png_with_receipt("auv.driver.window_capture", &capture.image).await;
+  let artifact = emit_image_with_receipt("auv.driver.window_capture", &capture.image).await;
   Ok((WindowCapture { window, capture }, artifact))
 }
 
@@ -385,7 +385,7 @@ pub struct WindowTextClick {
 /// transport-independent `window.clickText` result.
 pub fn recorded_window_text_click_output(result: &WindowTextClick, ocr_source: Option<&image::RgbaImage>) -> InvokeCommandResult {
   if let Some(image) = ocr_source {
-    emit_png("auv.driver.window_ocr_source", image);
+    emit_image("auv.driver.window_ocr_source", image);
   }
   super::input::emit_input_action_result(&result.action);
   window_text_click_output_base(result)
@@ -466,7 +466,7 @@ async fn click_recognized_window_text_with_session(
   let point =
     session.window().to_window_point(&window, auv_driver::ScreenPoint::from(matched.action_point())).map_err(|error| error.to_string())?;
   let action = session.window().click(&window, point, options.clone()).map_err(|error| error.to_string())?;
-  emit_png("auv.driver.window_ocr_source", &capture.image);
+  emit_image("auv.driver.window_ocr_source", &capture.image);
   Ok(WindowTextClick {
     window,
     matches,
@@ -519,7 +519,7 @@ async fn recognize_window_text_with_session(
       // source screenshot and typed OCR matches, but not a structured
       // recognition-result artifact with query/bounds/confidence. Add it after
       // the artifact shape is accepted in the direct-command handoff.
-      emit_png("auv.driver.window_ocr_source", &capture.image);
+      emit_image("auv.driver.window_ocr_source", &capture.image);
       return Ok(WindowTextRecognition { window, matches });
     }
     thread::sleep(wait_options.poll_interval);
@@ -549,7 +549,7 @@ fn window_text_matches_output(
 /// `window.findText` result.
 pub fn recorded_window_text_matches_output(result: &WindowTextRecognition, ocr_source: Option<&image::RgbaImage>) -> InvokeCommandResult {
   if let Some(image) = ocr_source {
-    emit_png("auv.driver.window_ocr_source", image);
+    emit_image("auv.driver.window_ocr_source", image);
   }
   window_text_matches_output_base(result)
 }

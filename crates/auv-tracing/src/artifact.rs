@@ -93,6 +93,11 @@ impl<R> NewArtifact<R> {
     }
   }
 
+  /// Body length, known before emission so callers can enforce their own limits.
+  pub fn byte_length(&self) -> ByteLength {
+    self.byte_length
+  }
+
   pub(crate) fn detach(self) -> DetachedArtifact
   where
     R: AsyncRead + Unpin + Send + 'static,

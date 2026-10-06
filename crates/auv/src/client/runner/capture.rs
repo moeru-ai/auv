@@ -104,6 +104,8 @@ pub enum CaptureImageEncoding {
   Png,
   /// Fixed quality 85.
   Jpeg,
+  /// Lossless WebP.
+  Webp,
 }
 
 /// How [`CapturesClient::image`] shapes the pixels it returns.
@@ -214,6 +216,7 @@ fn encoding_to_proto(encoding: CaptureImageEncoding) -> image_proto::ImageEncodi
     CaptureImageEncoding::Rgba => image_proto::ImageEncoding::Rgba,
     CaptureImageEncoding::Png => image_proto::ImageEncoding::Png,
     CaptureImageEncoding::Jpeg => image_proto::ImageEncoding::Jpeg,
+    CaptureImageEncoding::Webp => image_proto::ImageEncoding::Webp,
   }
 }
 
@@ -222,6 +225,7 @@ fn encoding_from_proto(value: i32) -> Result<CaptureImageEncoding, CapabilityErr
     Ok(image_proto::ImageEncoding::Rgba) => Ok(CaptureImageEncoding::Rgba),
     Ok(image_proto::ImageEncoding::Png) => Ok(CaptureImageEncoding::Png),
     Ok(image_proto::ImageEncoding::Jpeg) => Ok(CaptureImageEncoding::Jpeg),
+    Ok(image_proto::ImageEncoding::Webp) => Ok(CaptureImageEncoding::Webp),
     _ => Err(CapabilityError::InvalidResponse("capture image has an unknown encoding".into())),
   }
 }

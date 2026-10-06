@@ -2123,9 +2123,18 @@ fn capture_image_to_proto(
         .map_err(|error| Status::internal(format!("PNG encoding failed: {error}")))?;
       Ok(encoded(image_proto::ImageEncoding::Png, data))
     }
+    image_proto::ImageEncoding::Webp => {
+      let mut data = Vec::new();
+      image::codecs::webp::WebPEncoder::new_lossless(&mut data)
+        .write_image(pixels.as_raw(), width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|error| Status::internal(format!("WebP encoding failed: {error}")))?;
+      Ok(encoded(image_proto::ImageEncoding::Webp, data))
+    }
     image_proto::ImageEncoding::Jpeg => {
-      // NOTICE(capture-jpeg-quality): quality 85 keeps UI text legible at about
-      // a tenth of the PNG size; a request field can follow if callers need it.
+      // NOTICE(capture-jpeg-quality): quality 85 keeps UI text legible. On
+      // macOS captures (2026-10-07) it was 0.2–0.8x the PNG size for UI and
+      // ~0.16x for photo-heavy screens; lossless WebP matched it on UI. A
+      // request field can follow if callers need another quality.
       let rgb = image::DynamicImage::ImageRgba8(pixels).to_rgb8();
       let mut data = Vec::new();
       image::codecs::jpeg::JpegEncoder::new_with_quality(&mut data, 85)

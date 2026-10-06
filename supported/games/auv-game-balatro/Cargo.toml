@@ -24,7 +24,7 @@ auv-api-client = { path = "../../../crates/auv-api-client" }
 auv-api-proto = { path = "../../../crates/auv-api-proto" }
 auv-api-server = { path = "../../../crates/auv-api-server" }
 auv-file = { path = "../../../crates/auv-file" }
-auv-tracing = { path = "../../../crates/auv-tracing", features = ["file-store"], optional = true }
+auv-tracing = { path = "../../../crates/auv-tracing", features = ["file-store", "image"], optional = true }
 auv-driver = { path = "../../../crates/auv-driver" }
 auv-inference-common = { path = "../../../crates/auv-inference-common" }
 auv-inference-ort = { path = "../../../crates/auv-inference-ort", optional = true }

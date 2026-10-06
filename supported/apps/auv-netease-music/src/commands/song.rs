@@ -270,7 +270,7 @@ impl<'a> SongListScanner<'a> {
   fn observe_page(&mut self, observation_index: usize) -> Result<SongListObservation, String> {
     auv_tracing::in_span!("auv.netease.song_list.observe", || {
       let capture = self.session.window().capture(&self.window).map_err(|error| format!("song list capture failed: {error}"))?;
-      crate::telemetry::png_artifact("auv.netease.song_list.capture", &capture.image);
+      crate::telemetry::image_artifact("auv.netease.song_list.capture", &capture.image);
       let recognition = self
         .session
         .vision()

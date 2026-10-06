@@ -23,6 +23,8 @@ enum ImageEncoding {
   IMAGE_ENCODING_PNG = 2;
   // Fixed quality 85.
   IMAGE_ENCODING_JPEG = 3;
+  // Lossless WebP: exact pixels, usually 30–70% smaller than PNG for UI.
+  IMAGE_ENCODING_WEBP = 4;
 }
 
 // Image bytes in a container format (`IMAGE_ENCODING_PNG` or `IMAGE_ENCODING_JPEG`).

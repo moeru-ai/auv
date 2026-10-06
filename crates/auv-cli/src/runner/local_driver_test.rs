@@ -1204,6 +1204,19 @@ fn capture_image_crops_outward_and_fits_inside_max_size() {
 }
 
 #[test]
+fn capture_image_webp_is_lossless() {
+  use auv_api_proto::auv::api::image::v1 as image_proto;
+  let capture = gradient_capture(10, 4);
+  let full = auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0);
+  let response = capture_image_to_proto(&capture, full, None, image_proto::ImageEncoding::Webp).unwrap();
+  let Some(proto::get_capture_image_response::Image::Encoded(webp)) = response.image else {
+    panic!("expected an encoded image");
+  };
+  assert_eq!((webp.encoding, webp.width, webp.height), (image_proto::ImageEncoding::Webp as i32, 10, 4));
+  assert_eq!(image::load_from_memory(&webp.data).unwrap().to_rgba8(), capture.image, "WebP keeps every pixel");
+}
+
+#[test]
 fn unknown_capture_reference_is_not_found_with_a_recapture_hint() {
   let captures = test_capture_store();
   let stored = captures.insert(gradient_capture(2, 2));

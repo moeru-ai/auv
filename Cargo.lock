@@ -1058,6 +1058,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "hex",
+ "image",
  "pin-project",
  "serde",
  "serde_json",

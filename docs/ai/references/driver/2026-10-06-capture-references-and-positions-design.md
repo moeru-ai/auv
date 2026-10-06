@@ -153,6 +153,34 @@ Run recording keeps its current shape in this slice. `auv-cli-invoke`
 persists PNG artifacts, now by explicit fetch. Persisting evidence on the AUV
 side from references is a follow-up (`TODO(runner-side-capture-artifacts)`).
 
+## Image encodings (measured 2026-10-07)
+
+Encoder comparison on real macOS captures, release build of the `image` crate
+0.25. The samples were three displays (6016×3384), a centered window-sized
+crop of each (55%), and that crop at logical 1×. Screen contents were not
+recorded.
+
+| Encoding | Size vs PNG | Encode time (window-sized, 3308×1861) | Lossless |
+| --- | --- | --- | --- |
+| PNG (`image` default) | 1× | 5–25 ms | yes |
+| WebP lossless | 0.26–0.71× | 15–32 ms | yes |
+| QOI | 0.73–0.96× | 3–14 ms | yes |
+| JPEG q85 | 0.15–0.82× (smallest on photo-heavy screens) | 27–34 ms | no |
+| AVIF q80, speed 10 | 0.02–0.4× | 0.8–1.2 s (2.7–3.9 s per display) | no |
+
+Decisions:
+
+- Evidence artifacts (screenshots, OCR sources, overlays) are lossless WebP,
+  through one shared encoder, `auv_tracing::image_artifact`, which replaces
+  per-app PNG code in invoke, NetEase, Apple Music, Minecraft and Balatro.
+- `GetCaptureImage` adds `WEBP` (lossless). JPEG 85 stays for display
+  thumbnails: it is the smallest on photo-heavy screens.
+- AVIF is rejected for call paths. It takes seconds per capture, and its
+  lossy chroma subsampling blurs small colored text.
+- QOI is the fastest lossless encoder. It is a candidate for compressing cold
+  captures inside the store (capture-store preprocessing, not designed
+  yet), not for evidence.
+
 ## Part B — Positions
 
 The domain already has the right model:

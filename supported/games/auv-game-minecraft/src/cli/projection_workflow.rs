@@ -1,7 +1,7 @@
 //! Direct Minecraft projection workflows used by CLI and library frontends.
 
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::evidence::{ProjectionEvidence, ScreenshotCapture, build_projection_evidence};
@@ -12,7 +12,7 @@ use crate::{
 use auv_tracing::{ArtifactMetadata, Attributes, ByteLength, Context, EmitBytesOptions, EventPayload};
 
 type AuvResult<T> = Result<T, String>;
-use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, ImageReader, Limits, RgbImage, codecs::png::PngEncoder};
+use image::{DynamicImage, ImageFormat, ImageReader, Limits, RgbImage};
 
 use super::query_live_action::DirectWindowPointClickExecutor;
 pub const MINECRAFT_SCREENSHOT_PURPOSE: &str = "auv.minecraft.screenshot";
@@ -248,7 +248,7 @@ async fn project_capture(
     Some(250),
   )?;
 
-  let screenshot_artifact = publish_png(MINECRAFT_SCREENSHOT_PURPOSE, &screenshot).await?;
+  let screenshot_artifact = publish_image(MINECRAFT_SCREENSHOT_PURPOSE, &screenshot).await?;
   let mut recorded_frame = bound.frame.clone();
   let mut recorded_evidence = evidence.clone();
   if let Some(screenshot_uri) = screenshot_artifact.as_ref().map(|artifact| artifact.uri().to_string()) {
@@ -268,7 +268,7 @@ async fn project_capture(
     );
   }
   if let ProjectionEvidence::Bound { overlay, .. } = &evidence {
-    drop(publish_png(MINECRAFT_OVERLAY_PURPOSE, overlay).await?);
+    drop(publish_image(MINECRAFT_OVERLAY_PURPOSE, overlay).await?);
   }
   Ok(ProjectedCapture {
     bound_frame: bound.frame,
@@ -373,7 +373,7 @@ pub(crate) async fn publish_json_artifact<T: serde::Serialize>(purpose: &'static
   Ok(super::keep_artifact_receipt(purpose, emission.await))
 }
 
-async fn publish_png(purpose: &'static str, image: &RgbImage) -> AuvResult<Option<ArtifactMetadata>> {
+async fn publish_image(purpose: &'static str, image: &RgbImage) -> AuvResult<Option<ArtifactMetadata>> {
   let context = Context::current();
   if !context.can_publish_artifacts() {
     return Ok(None);
@@ -381,24 +381,18 @@ async fn publish_png(purpose: &'static str, image: &RgbImage) -> AuvResult<Optio
   if let Err(error) = validate_minecraft_image_buffer(image.width(), image.height(), image.as_raw().len(), purpose) {
     return Ok(super::keep_artifact_receipt::<String>(purpose, Err(error)));
   }
-  let mut output = BoundedBytes::new(purpose, MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT);
-  if let Err(error) = PngEncoder::new(&mut output).write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgb8) {
-    return Ok(super::keep_artifact_receipt::<String>(purpose, Err(format!("failed to encode artifact: {error}"))));
-  }
-  Ok(publish_bytes(&context, purpose, "image/png", output.into_inner()).await)
-}
-
-async fn publish_bytes(context: &Context, purpose: &'static str, content_type: &'static str, bytes: Vec<u8>) -> Option<ArtifactMetadata> {
-  let options = EmitBytesOptions::new()
-    .with_purpose(purpose)
-    .with_content_type(content_type)
-    .with_attributes(Attributes::empty())
-    .with_file_extension("png");
-  let emission = match context.in_scope(|| auv_tracing::emit_bytes_artifact(options, bytes)) {
-    Ok(emission) => emission,
-    Err(error) => return super::keep_artifact_receipt::<String>(purpose, Err(error.to_string())),
+  let options = EmitBytesOptions::new().with_purpose(purpose).with_attributes(Attributes::empty());
+  let artifact = match auv_tracing::image_artifact(options, image) {
+    Ok(artifact) => artifact,
+    Err(error) => return Ok(super::keep_artifact_receipt::<String>(purpose, Err(error.to_string()))),
   };
-  super::keep_artifact_receipt(purpose, emission.await)
+  let length = artifact.byte_length().get();
+  if length > MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT {
+    let error = format!("{purpose} is {length} bytes, exceeding the {MINECRAFT_IMAGE_ARTIFACT_BYTE_LIMIT}-byte limit");
+    return Ok(super::keep_artifact_receipt::<String>(purpose, Err(error)));
+  }
+  let emission = context.in_scope(|| auv_tracing::emit_artifact(artifact));
+  Ok(super::keep_artifact_receipt(purpose, emission.await))
 }
 
 fn minecraft_image_decode_limits() -> Limits {
@@ -426,42 +420,4 @@ fn minecraft_decoded_image_buffer_length(width: u32, height: u32) -> AuvResult<u
     .and_then(|pixels| pixels.checked_mul(8))
     .ok_or_else(|| format!("decoded dimensions {width}x{height} overflow the image byte-length calculation"))?;
   usize::try_from(byte_length).map_err(|_| format!("decoded dimensions {width}x{height} do not fit this process"))
-}
-
-struct BoundedBytes {
-  label: String,
-  byte_limit: u64,
-  bytes: Vec<u8>,
-}
-
-impl BoundedBytes {
-  fn new(label: &str, byte_limit: u64) -> Self {
-    Self {
-      label: label.to_string(),
-      byte_limit,
-      bytes: Vec::new(),
-    }
-  }
-
-  fn into_inner(self) -> Vec<u8> {
-    self.bytes
-  }
-}
-
-impl Write for BoundedBytes {
-  fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-    let next_length =
-      self.bytes.len().checked_add(buffer.len()).ok_or_else(|| std::io::Error::other(format!("{} length overflow", self.label)))?;
-    let next_length = u64::try_from(next_length).map_err(|_| std::io::Error::other(format!("{} length does not fit u64", self.label)))?;
-    if next_length > self.byte_limit {
-      return Err(std::io::Error::other(format!("{} is {next_length} bytes, exceeding the {}-byte limit", self.label, self.byte_limit)));
-    }
-    self.bytes.try_reserve(buffer.len()).map_err(std::io::Error::other)?;
-    self.bytes.extend_from_slice(buffer);
-    Ok(buffer.len())
-  }
-
-  fn flush(&mut self) -> std::io::Result<()> {
-    Ok(())
-  }
 }

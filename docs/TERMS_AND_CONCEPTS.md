@@ -1327,7 +1327,9 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   unknown reference fails with `NOT_FOUND`; the caller captures again.
 - **Capture image fetch** (`GetCaptureImage`): the explicit call that moves
   pixels to a client, optionally cropped to a normalized region, fit inside a
-  maximum size, and encoded as RGBA, PNG, or JPEG.
+  maximum size, and encoded as RGBA, PNG, JPEG, or lossless WebP.
+- **Image evidence artifacts** (screenshots, OCR sources, overlays) are
+  lossless WebP (`image/webp`), encoded by `auv_tracing::image_artifact`.
 - OCR on a held capture sends only its reference
   (`RecognizeTextRequest.capture_ref`). Sending a `CapturedFrame` with pixels is
   for caller-owned images only.

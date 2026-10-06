@@ -5,8 +5,7 @@ mod platforms;
 
 #[cfg(feature = "tracing")]
 mod tracing {
-  use auv_tracing::{Attributes, ByteLength, EmitBytesOptions, NewArtifact};
-  use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
+  use auv_tracing::{Attributes, ByteLength, EmitBytesOptions};
   use serde::Serialize;
 
   const JSON_ARTIFACT_BYTE_LIMIT: u64 = 4 * 1024 * 1024;
@@ -67,14 +66,10 @@ mod tracing {
     if !auv_tracing::Context::current().can_publish_artifacts() {
       return;
     }
-    let mut body = Vec::new();
-    let prepared = PngEncoder::new(&mut body)
-      .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
-      .map_err(|error| format!("encode PNG artifact failed: {error}"))
-      .and_then(|()| emit_bytes(purpose, "image/png", body));
-    match prepared {
-      Ok(()) => {}
-      Err(error) => preparation_failed(purpose, error),
+    let options = EmitBytesOptions::new().with_purpose(purpose).with_attributes(Attributes::empty());
+    match auv_tracing::image_artifact(options, image) {
+      Ok(artifact) => drop(auv_tracing::emit_artifact!(artifact)),
+      Err(error) => preparation_failed(purpose, error.to_string()),
     }
   }
 
@@ -86,17 +81,6 @@ mod tracing {
       Ok(image) => image_artifact(purpose, &image),
       Err(error) => preparation_failed(purpose, error),
     }
-  }
-
-  fn emit_bytes(purpose: &'static str, content_type: &'static str, body: Vec<u8>) -> Result<(), String> {
-    let options = EmitBytesOptions::new()
-      .with_purpose(purpose)
-      .with_content_type(content_type)
-      .with_attributes(Attributes::empty())
-      .with_file_extension("png");
-    let artifact = NewArtifact::from_bytes(options, body).map_err(|error| error.to_string())?;
-    drop(auv_tracing::emit_artifact!(artifact));
-    Ok(())
   }
 
   fn preparation_failed(purpose: &'static str, error: String) {

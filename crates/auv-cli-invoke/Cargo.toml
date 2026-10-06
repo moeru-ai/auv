@@ -24,14 +24,14 @@ auv-cli-invoke-macros = { version = "0.0.29", path = "../auv-cli-invoke-macros" 
 auv-driver = { version = "0.0.29", path = "../auv-driver" }
 auv-media-macos = { version = "0.0.29", path = "../auv-media-macos" }
 auv-scan = { version = "0.0.29", path = "../auv-scan" }
-auv-tracing = { version = "0.0.29", path = "../auv-tracing" }
+auv-tracing = { version = "0.0.29", path = "../auv-tracing", features = ["image"] }
 anstream = "1"
 anstyle = "1"
 clap = { version = "4.5", features = ["derive"] }
 comfy-table = { version = "7", default-features = false }
 futures-executor = "0.3"
 futures-util = { version = "0.3", features = ["io"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 prost-types = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

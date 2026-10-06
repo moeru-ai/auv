@@ -1,5 +1,5 @@
 use auv_tracing::{ArtifactMetadata, EmitBytesOptions, EventPayload, NewArtifact};
-use image::{ExtendedColorType, ImageEncoder, RgbaImage, codecs::png::PngEncoder};
+use image::RgbaImage;
 
 #[derive(serde::Serialize)]
 struct ArtifactPreparationFailed {
@@ -12,21 +12,21 @@ impl EventPayload for ArtifactPreparationFailed {
   const VERSION: u32 = 1;
 }
 
-pub(crate) fn emit_png(purpose: &str, image: &RgbaImage) {
+pub(crate) fn emit_image(purpose: &str, image: &RgbaImage) {
   if !auv_tracing::Context::current().can_publish_artifacts() {
     return;
   }
-  match prepare_png(purpose, image) {
+  match prepare_image(purpose, image) {
     Ok(emission) => drop(emission),
     Err(error) => emit_preparation_failure(purpose, error),
   }
 }
 
-pub(crate) async fn emit_png_with_receipt(purpose: &str, image: &RgbaImage) -> Option<ArtifactMetadata> {
+pub(crate) async fn emit_image_with_receipt(purpose: &str, image: &RgbaImage) -> Option<ArtifactMetadata> {
   if !auv_tracing::Context::current().can_publish_artifacts() {
     return None;
   }
-  let emission = match prepare_png(purpose, image) {
+  let emission = match prepare_image(purpose, image) {
     Ok(emission) => emission,
     Err(error) => {
       emit_preparation_failure(purpose, error);
@@ -42,15 +42,10 @@ pub(crate) async fn emit_png_with_receipt(purpose: &str, image: &RgbaImage) -> O
   }
 }
 
-fn prepare_png(purpose: &str, image: &RgbaImage) -> Result<auv_tracing::ArtifactEmission, String> {
-  let mut body = Vec::new();
-  PngEncoder::new(&mut body)
-    .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
-    .map_err(|error| format!("failed to encode {purpose} PNG artifact: {error}"))
-    .and_then(|()| {
-      let options = EmitBytesOptions::new().with_purpose(purpose).with_content_type("image/png").with_file_extension("png");
-      auv_tracing::emit_bytes_artifact(options, body).map_err(|error| format!("invalid {purpose} artifact bytes: {error}"))
-    })
+fn prepare_image(purpose: &str, image: &RgbaImage) -> Result<auv_tracing::ArtifactEmission, String> {
+  let artifact =
+    auv_tracing::image_artifact(EmitBytesOptions::new().with_purpose(purpose), image).map_err(|error| format!("{purpose}: {error}"))?;
+  Ok(auv_tracing::emit_artifact(artifact))
 }
 
 fn emit_preparation_failure(purpose: &str, error: String) {

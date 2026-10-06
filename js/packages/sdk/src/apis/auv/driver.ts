@@ -58,7 +58,7 @@ import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 
-/** Pixels fetched from the Runner. `data` is RGBA8 rows for `ImageEncoding.RGBA`, otherwise PNG or JPEG bytes. */
+/** Pixels fetched from the Runner. `data` is RGBA8 rows for `ImageEncoding.RGBA`, otherwise PNG, JPEG or lossless WebP bytes. */
 export interface CaptureImage {
   data: Uint8Array
   encoding: ImageEncoding
