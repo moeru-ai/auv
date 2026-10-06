@@ -1,5 +1,5 @@
 {
-  "name": "@auv-js/repl",
+  "name": "@auv-js/repl-playground",
   "type": "module",
   "version": "0.0.0",
   "private": true,

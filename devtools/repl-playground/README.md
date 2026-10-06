@@ -1,4 +1,4 @@
-# AUV REPL
+# AUV REPL Playground
 
 An interactive, steppable TypeScript REPL for [AUV](https://github.com/moeru-ai/auv).
 Write automation scripts against `auv.*`, run them all at once or line by line,
@@ -44,8 +44,8 @@ From the repository root:
 
 ```sh
 pnpm install
-pnpm generate:proto           # generates the SDK's protobuf bindings
-pnpm -F @auv-js/repl dev      # http://localhost:5180
+pnpm generate:proto                  # generates the SDK's protobuf bindings
+pnpm -F @auv-js/repl-playground dev  # http://localhost:5180
 ```
 
 The REPL runs against the SDK source in this repository (`js/packages/sdk`,
@@ -199,10 +199,10 @@ These are known and intentionally deferred; each is marked in code.
 ## Development
 
 ```sh
-pnpm -F @auv-js/repl lint        # oxlint + eslint via moeru-lint
-pnpm -F @auv-js/repl typecheck
-pnpm -F @auv-js/repl test:run    # stepper, area, camera, binding and store tests
-pnpm -F @auv-js/repl build
+pnpm -F @auv-js/repl-playground lint      # oxlint + eslint via moeru-lint
+pnpm -F @auv-js/repl-playground typecheck
+pnpm -F @auv-js/repl-playground test:run  # stepper, area, camera, binding and store tests
+pnpm -F @auv-js/repl-playground build
 ```
 
 The root `pnpm lint`, `pnpm typecheck` and `pnpm test:run` include this package.
