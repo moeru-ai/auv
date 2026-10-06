@@ -5,8 +5,8 @@ export default {
     const url = new URL(request.url)
 
     if (url.pathname === '/') {
-      // TODO(playground-root-handoff): Remove this redirect and its exact-root
-      // route when the AUV documentation site takes ownership of `/`.
+      // TODO(playground-root-handoff): Remove this redirect when the AUV
+      // documentation site takes ownership of `/`.
       url.pathname = `${playgroundPrefix}/`
       return Response.redirect(url, 302)
     }

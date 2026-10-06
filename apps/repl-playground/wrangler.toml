@@ -2,21 +2,9 @@ name = "moeru-ai-auv-playground"
 main = "./worker.js"
 compatibility_date = "2026-10-06"
 preview_urls = true
-
-# TODO(playground-root-handoff): Remove this exact-root route when the AUV
-# documentation site is ready to own auv.moeru.ai/. The playground routes can
-# remain on this independent Worker because the more specific route wins.
-[[routes]]
-pattern = "auv.moeru.ai/"
-zone_name = "moeru.ai"
-
-[[routes]]
-pattern = "auv.moeru.ai/playground"
-zone_name = "moeru.ai"
-
-[[routes]]
-pattern = "auv.moeru.ai/playground/*"
-zone_name = "moeru.ai"
+# NOTICE(dashboard-managed-routes): Domain and route ownership intentionally
+# lives in the Cloudflare dashboard rather than this deploy configuration.
+workers_dev = false
 
 [assets]
 directory = "./dist"
