@@ -173,6 +173,14 @@ Decisions:
 - Evidence artifacts (screenshots, OCR sources, overlays) are lossless WebP,
   through one shared encoder, `auv_tracing::image_artifact`, which replaces
   per-app PNG code in invoke, NetEase, Apple Music, Minecraft and Balatro.
+- Capture evidence is stored at logical resolution (owner decision,
+  2026-10-07: evidence is for review and feedback). Area averaging
+  (`imageops::thumbnail`) took ~9 ms for a Retina window, versus 21–37 ms for
+  Triangle, CatmullRom or Lanczos3. Encoding a quarter of the pixels then
+  costs about what WebP took at native size, for a quarter of the pixels
+  stored. These stay native: NetEase sidebar target probes (OCR region input),
+  Balatro frames (detections in image pixels) and Minecraft screenshots (no
+  backing scale).
 - `GetCaptureImage` adds `WEBP` (lossless). JPEG 85 stays for display
   thumbnails: it is the smallest on photo-heavy screens.
 - AVIF is rejected for call paths. It takes seconds per capture, and its

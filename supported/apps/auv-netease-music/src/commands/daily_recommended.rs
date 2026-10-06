@@ -231,7 +231,7 @@ impl DailyRecommendedRun<'_> {
   fn click_text(&mut self, action: DailyRecommendedClick, query: &str, guard: impl Fn(ViewBounds, Size) -> bool) -> Result<(), String> {
     let action_id = action.action_id();
     let capture = self.session.window().capture(&self.window).map_err(|error| format!("{action_id}: capture failed: {error}"))?;
-    crate::telemetry::image_artifact(action.capture_purpose(), &capture.image);
+    crate::telemetry::capture_artifact(action.capture_purpose(), &capture);
     let recognition = self
       .session
       .vision()
@@ -267,7 +267,7 @@ impl DailyRecommendedRun<'_> {
   ) -> Result<(), String> {
     let action_id = action.action_id();
     let capture = self.session.window().capture(&self.window).map_err(|error| format!("{action_id}: capture failed: {error}"))?;
-    crate::telemetry::image_artifact(action.capture_purpose(), &capture.image);
+    crate::telemetry::capture_artifact(action.capture_purpose(), &capture);
     let recognition = self
       .session
       .vision()
@@ -311,7 +311,7 @@ impl DailyRecommendedRun<'_> {
 
   fn click_daily_recommended_card_body(&mut self) -> Result<(), String> {
     let capture = self.session.window().capture(&self.window).map_err(|error| format!("daily recommended card capture failed: {error}"))?;
-    crate::telemetry::image_artifact(DailyRecommendedClick::OpenDailyRecommendedCard.capture_purpose(), &capture.image);
+    crate::telemetry::capture_artifact(DailyRecommendedClick::OpenDailyRecommendedCard.capture_purpose(), &capture);
     let recognition = self
       .session
       .vision()
@@ -358,7 +358,7 @@ impl DailyRecommendedRun<'_> {
     auv_tracing::in_span!("auv.netease.daily_recommended.play_all_visibility", || {
       let capture =
         self.session.window().capture(&self.window).map_err(|error| format!("daily recommended fallback capture failed: {error}"))?;
-      crate::telemetry::image_artifact("auv.netease.daily_recommended.play_all_visibility_capture", &capture.image);
+      crate::telemetry::capture_artifact("auv.netease.daily_recommended.play_all_visibility_capture", &capture);
       let recognition = self
         .session
         .vision()
@@ -391,7 +391,7 @@ impl DailyRecommendedRun<'_> {
 
     auv_tracing::in_span!("auv.netease.daily_recommended.icon_verification", || {
       let capture = self.session.window().capture(&self.window).map_err(|error| format!("post-click icon capture failed: {error}"))?;
-      crate::telemetry::image_artifact("auv.netease.daily_recommended.icon_verification_capture", &capture.image);
+      crate::telemetry::capture_artifact("auv.netease.daily_recommended.icon_verification_capture", &capture);
       let scale = if capture.scale_factor.is_finite() && capture.scale_factor > 0.0 {
         capture.scale_factor
       } else {
@@ -438,7 +438,7 @@ impl DailyRecommendedRun<'_> {
     auv_tracing::in_span!("auv.netease.daily_recommended.playback_verification", || {
       let capture =
         self.session.window().capture(&self.window).map_err(|error| format!("post-click playback-state capture failed: {error}"))?;
-      crate::telemetry::image_artifact("auv.netease.daily_recommended.playback_verification_capture", &capture.image);
+      crate::telemetry::capture_artifact("auv.netease.daily_recommended.playback_verification_capture", &capture);
       let control_state = classify_bottom_playback_control_state(&capture.image);
       let bottom_text = self
         .session

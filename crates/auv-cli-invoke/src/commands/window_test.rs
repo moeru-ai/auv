@@ -180,7 +180,7 @@ fn recorded_window_text_click_result_keeps_resolution_and_delivery_together() {
     backend: "fixture".to_string(),
     fallback_reason: None,
   };
-  let output = recorded_window_text_click_output(&click, Some(&capture.image)).expect("window click result should serialize");
+  let output = recorded_window_text_click_output(&click, Some(&capture)).expect("window click result should serialize");
   let result = output.result().expect("click should have a result");
 
   assert_eq!(result["window"]["reference"]["id"], "window_click");

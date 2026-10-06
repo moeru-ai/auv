@@ -23,7 +23,7 @@ pub use context::{Context, ContextGuard, Instrumented, Span, SpanSpec, WithConte
 pub use dispatch::{BuildError, Dispatch, DispatchBuilder, DispatchFailure, DispatchStage, FlushError, configure, dispatcher};
 pub use event::{EventPayload, EventSchema, JsonPayload, JsonPayloadError};
 #[cfg(feature = "image")]
-pub use image::{ImageArtifactError, image_artifact};
+pub use image::{ImageArtifactError, ImageResolution, image_artifact};
 pub use propagation::{PropagationError, RemoteContext, TextMapReader, TextMapWriter, extract};
 pub use record::TraceRecord;
 #[cfg(feature = "file-store")]

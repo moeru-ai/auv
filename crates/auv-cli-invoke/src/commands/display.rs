@@ -7,7 +7,7 @@ use clap::Args;
 
 use auv_tracing::ArtifactMetadata;
 
-use crate::artifact::emit_image_with_receipt;
+use crate::artifact::emit_capture_with_receipt;
 #[cfg(target_os = "macos")]
 use auv_driver::overlay::{Overlay, components::CaptureFrame};
 #[cfg(target_os = "macos")]
@@ -65,15 +65,15 @@ async fn capture_display(input: InvokeCommandInput, _args: CaptureDisplayArgs) -
   }
 }
 
-/// Records and projects a Runner-held capture. `image` is its pixels when
+/// Records and projects a Runner-held capture. `evidence` is its pixels when
 /// this call records artifacts; without them the result reports metadata only.
 pub async fn recorded_display_capture_output(
   display: &auv_driver::Display,
   capture: super::CaptureResult<'_>,
-  image: Option<&image::RgbaImage>,
+  evidence: Option<&auv_driver::Capture>,
 ) -> InvokeCommandResult {
-  let artifact = match image {
-    Some(image) => emit_image_with_receipt("auv.driver.display_capture", image).await,
+  let artifact = match evidence {
+    Some(capture) => emit_capture_with_receipt("auv.driver.display_capture", capture).await,
     None => None,
   };
   display_capture_output(display, capture, artifact)
@@ -109,7 +109,7 @@ async fn capture_primary_display_recorded_with_session(
   session: &auv_driver::LocalDriverSession,
 ) -> Result<(auv_driver::DisplayCapture, Option<ArtifactMetadata>), String> {
   let result = session.display().capture(auv_driver::CaptureOptions::default()).map_err(|error| error.to_string())?;
-  let artifact = emit_image_with_receipt("auv.driver.display_capture", &result.capture.image).await;
+  let artifact = emit_capture_with_receipt("auv.driver.display_capture", &result.capture).await;
   Ok((result, artifact))
 }
 

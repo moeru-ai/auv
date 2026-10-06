@@ -420,12 +420,12 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
 async fn evidence_pixels(
   runner: &auv::client::runner::RunnerClient,
   capture: &auv::client::runner::RunnerCapture,
-) -> Result<Option<image::RgbaImage>, String> {
+) -> Result<Option<auv_driver::Capture>, String> {
   if !auv_tracing::Context::current().can_publish_artifacts() {
     return Ok(None);
   }
   let pixels = runner.captures().pixels(capture).await.map_err(|status| format!("CaptureService/GetCaptureImage failed: {status}"))?;
-  Ok(Some(pixels.image))
+  Ok(Some(pixels))
 }
 
 async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::client::runner::RunnerClient) -> crate::InvokeCommandResult {

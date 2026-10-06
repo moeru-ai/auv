@@ -62,23 +62,24 @@ mod tracing {
     }
   }
 
-  pub(super) fn image_artifact(purpose: &'static str, image: &image::RgbaImage) {
+  /// Records a window capture as evidence at logical resolution.
+  pub(super) fn capture_artifact(purpose: &'static str, capture: &auv_driver::Capture) {
     if !auv_tracing::Context::current().can_publish_artifacts() {
       return;
     }
     let options = EmitBytesOptions::new().with_purpose(purpose).with_attributes(Attributes::empty());
-    match auv_tracing::image_artifact(options, image) {
+    match auv_tracing::image_artifact(options, &capture.image, auv_tracing::ImageResolution::Logical(capture.scale_factor)) {
       Ok(artifact) => drop(auv_tracing::emit_artifact!(artifact)),
       Err(error) => preparation_failed(purpose, error.to_string()),
     }
   }
 
-  pub(super) fn image_artifact_with(purpose: &'static str, capture: impl FnOnce() -> Result<image::RgbaImage, String>) {
+  pub(super) fn capture_artifact_with(purpose: &'static str, capture: impl FnOnce() -> Result<auv_driver::Capture, String>) {
     if !auv_tracing::Context::current().can_publish_artifacts() {
       return;
     }
     match capture() {
-      Ok(image) => image_artifact(purpose, &image),
+      Ok(capture) => capture_artifact(purpose, &capture),
       Err(error) => preparation_failed(purpose, error),
     }
   }
@@ -118,9 +119,9 @@ mod tracing {
 
   pub(super) fn json_artifact<T: Serialize>(_purpose: &'static str, _value: &T) {}
 
-  pub(super) fn image_artifact<T>(_purpose: &'static str, _image: &T) {}
+  pub(super) fn capture_artifact<T>(_purpose: &'static str, _capture: &T) {}
 
-  pub(super) fn image_artifact_with<T>(_purpose: &'static str, _capture: impl FnOnce() -> Result<T, String>) {}
+  pub(super) fn capture_artifact_with<T>(_purpose: &'static str, _capture: impl FnOnce() -> Result<T, String>) {}
 }
 
 pub use platforms::*;

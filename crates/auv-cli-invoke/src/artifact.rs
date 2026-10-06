@@ -1,5 +1,4 @@
 use auv_tracing::{ArtifactMetadata, EmitBytesOptions, EventPayload, NewArtifact};
-use image::RgbaImage;
 
 #[derive(serde::Serialize)]
 struct ArtifactPreparationFailed {
@@ -12,21 +11,22 @@ impl EventPayload for ArtifactPreparationFailed {
   const VERSION: u32 = 1;
 }
 
-pub(crate) fn emit_image(purpose: &str, image: &RgbaImage) {
+/// Records a capture as evidence at logical resolution (see `ImageResolution::Logical`).
+pub(crate) fn emit_capture(purpose: &str, capture: &auv_driver::Capture) {
   if !auv_tracing::Context::current().can_publish_artifacts() {
     return;
   }
-  match prepare_image(purpose, image) {
+  match prepare_capture(purpose, capture) {
     Ok(emission) => drop(emission),
     Err(error) => emit_preparation_failure(purpose, error),
   }
 }
 
-pub(crate) async fn emit_image_with_receipt(purpose: &str, image: &RgbaImage) -> Option<ArtifactMetadata> {
+pub(crate) async fn emit_capture_with_receipt(purpose: &str, capture: &auv_driver::Capture) -> Option<ArtifactMetadata> {
   if !auv_tracing::Context::current().can_publish_artifacts() {
     return None;
   }
-  let emission = match prepare_image(purpose, image) {
+  let emission = match prepare_capture(purpose, capture) {
     Ok(emission) => emission,
     Err(error) => {
       emit_preparation_failure(purpose, error);
@@ -42,9 +42,10 @@ pub(crate) async fn emit_image_with_receipt(purpose: &str, image: &RgbaImage) ->
   }
 }
 
-fn prepare_image(purpose: &str, image: &RgbaImage) -> Result<auv_tracing::ArtifactEmission, String> {
-  let artifact =
-    auv_tracing::image_artifact(EmitBytesOptions::new().with_purpose(purpose), image).map_err(|error| format!("{purpose}: {error}"))?;
+fn prepare_capture(purpose: &str, capture: &auv_driver::Capture) -> Result<auv_tracing::ArtifactEmission, String> {
+  let options = EmitBytesOptions::new().with_purpose(purpose);
+  let artifact = auv_tracing::image_artifact(options, &capture.image, auv_tracing::ImageResolution::Logical(capture.scale_factor))
+    .map_err(|error| format!("{purpose}: {error}"))?;
   Ok(auv_tracing::emit_artifact(artifact))
 }
 

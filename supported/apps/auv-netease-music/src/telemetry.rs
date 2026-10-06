@@ -213,11 +213,16 @@ pub(crate) fn json_artifact<T: Serialize>(purpose: &'static str, value: &T) {
   }
 }
 
-pub(crate) fn image_artifact(purpose: &'static str, image: &image::RgbaImage) {
+/// Records a window capture as evidence at logical resolution.
+pub(crate) fn capture_artifact(purpose: &'static str, capture: &auv_driver::Capture) {
+  image_artifact(purpose, &capture.image, auv_tracing::ImageResolution::Logical(capture.scale_factor));
+}
+
+pub(crate) fn image_artifact(purpose: &'static str, image: &image::RgbaImage, resolution: auv_tracing::ImageResolution) {
   if !auv_tracing::Context::current().can_publish_artifacts() {
     return;
   }
-  match auv_tracing::image_artifact(auv_tracing::EmitBytesOptions::new().with_purpose(purpose), image) {
+  match auv_tracing::image_artifact(auv_tracing::EmitBytesOptions::new().with_purpose(purpose), image, resolution) {
     Ok(artifact) => drop(auv_tracing::emit_artifact(artifact)),
     Err(error) => preparation_failed(purpose, error.to_string()),
   }

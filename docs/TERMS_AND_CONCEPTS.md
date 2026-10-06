@@ -1330,6 +1330,12 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   maximum size, and encoded as RGBA, PNG, JPEG, or lossless WebP.
 - **Image evidence artifacts** (screenshots, OCR sources, overlays) are
   lossless WebP (`image/webp`), encoded by `auv_tracing::image_artifact`.
+  Captures are stored at logical resolution (`ImageResolution::Logical`), so
+  they line up with logical bounds, OCR boxes and click points. A downscaled
+  artifact records `image.source_width`, `image.source_height` and
+  `image.scale_factor` attributes. Evidence that must match an algorithm's
+  pixel input, such as OCR region probes or detector frames, stays
+  `ImageResolution::Native`.
 - OCR on a held capture sends only its reference
   (`RecognizeTextRequest.capture_ref`). Sending a `CapturedFrame` with pixels is
   for caller-owned images only.

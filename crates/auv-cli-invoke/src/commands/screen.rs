@@ -2,7 +2,7 @@ use crate::{CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommand
 use auv_tracing::ArtifactMetadata;
 use clap::Args;
 
-use crate::artifact::{emit_image, emit_image_with_receipt};
+use crate::artifact::{emit_capture, emit_capture_with_receipt};
 
 pub fn group() -> CommandGroup {
   // TODO(invoke-screen-stubs): row and image commands stay intentionally
@@ -81,7 +81,7 @@ async fn capture_screen_region_recorded(region: auv_driver::Rect) -> Result<(auv
         ..auv_driver::CaptureOptions::default()
       })
       .map_err(|error| error.to_string())?;
-    let artifact = emit_image_with_receipt("auv.driver.screen_region_capture", &capture.capture.image).await;
+    let artifact = emit_capture_with_receipt("auv.driver.screen_region_capture", &capture.capture).await;
     Ok((capture, artifact))
   }
   #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
@@ -108,15 +108,15 @@ fn region_capture_output(
   Ok(output.with_artifacts(artifact))
 }
 
-/// Records and projects a Runner-held region capture. `image` is its pixels
+/// Records and projects a Runner-held region capture. `evidence` is its pixels
 /// when this call records artifacts.
 pub async fn recorded_region_capture_output(
   display: &auv_driver::Display,
   capture: super::CaptureResult<'_>,
-  image: Option<&image::RgbaImage>,
+  evidence: Option<&auv_driver::Capture>,
 ) -> InvokeCommandResult {
-  let artifact = match image {
-    Some(image) => emit_image_with_receipt("auv.driver.screen_region_capture", image).await,
+  let artifact = match evidence {
+    Some(capture) => emit_capture_with_receipt("auv.driver.screen_region_capture", capture).await,
     None => None,
   };
   region_capture_output(display, capture, artifact)
@@ -230,7 +230,7 @@ async fn recognize_screen_text_with_cancellation(
   // screenshot and typed OCR matches, but not a structured
   // recognition-result artifact with query/bounds/confidence. Add that
   // after the artifact shape is accepted in the direct-command handoff.
-  emit_image("auv.driver.screen_ocr_source", &capture.capture.image);
+  emit_capture("auv.driver.screen_ocr_source", &capture.capture);
   Ok(matches)
 }
 
@@ -247,9 +247,12 @@ fn screen_text_matches_output(matches: &auv_driver::OcrMatches) -> InvokeCommand
 
 /// Records the OCR source and builds the transport-independent
 /// `screen.findText` result.
-pub fn recorded_screen_text_matches_output(matches: &auv_driver::OcrMatches, ocr_source: Option<&image::RgbaImage>) -> InvokeCommandResult {
-  if let Some(image) = ocr_source {
-    emit_image("auv.driver.screen_ocr_source", image);
+pub fn recorded_screen_text_matches_output(
+  matches: &auv_driver::OcrMatches,
+  ocr_source: Option<&auv_driver::Capture>,
+) -> InvokeCommandResult {
+  if let Some(capture) = ocr_source {
+    emit_capture("auv.driver.screen_ocr_source", capture);
   }
   screen_text_matches_output(matches)
 }
@@ -306,9 +309,9 @@ fn screen_text_click_output(result: &ScreenTextClick) -> InvokeCommandResult {
 
 /// Builds the transport-independent `screen.clickText` result and records the
 /// OCR source capture through the shared tracing artifact path.
-pub fn recorded_screen_text_click_output(result: &ScreenTextClick, ocr_source: Option<&image::RgbaImage>) -> InvokeCommandResult {
-  if let Some(image) = ocr_source {
-    emit_image("auv.driver.screen_ocr_source", image);
+pub fn recorded_screen_text_click_output(result: &ScreenTextClick, ocr_source: Option<&auv_driver::Capture>) -> InvokeCommandResult {
+  if let Some(capture) = ocr_source {
+    emit_capture("auv.driver.screen_ocr_source", capture);
   }
   screen_text_click_output(result)
 }
@@ -328,7 +331,7 @@ pub async fn click_recognized_screen_text(query: String) -> Result<ScreenTextCli
       .click_at(point, auv_driver::MouseButton::Left, auv_driver::Click::Single, Default::default())
       .map_err(|error| error.to_string())?;
     super::input::emit_input_action_result(&action);
-    emit_image("auv.driver.screen_ocr_source", &capture.capture.image);
+    emit_capture("auv.driver.screen_ocr_source", &capture.capture);
     Ok(ScreenTextClick {
       matches,
       point,

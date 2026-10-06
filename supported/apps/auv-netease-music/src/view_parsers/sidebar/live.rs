@@ -454,14 +454,21 @@ impl LiveSidebarObserver {
     Ok((capture.image.clone(), capture.scale_factor, window_recognition, observation))
   }
 
-  fn publish_observation_artifacts(&mut self, image: RgbaImage, recognition: TextRecognition, observation: SidebarViewportObservation) {
+  fn publish_observation_artifacts(
+    &mut self,
+    image: RgbaImage,
+    scale_factor: f64,
+    recognition: TextRecognition,
+    observation: SidebarViewportObservation,
+  ) {
     let sidebar_bounds = self.sidebar_bounds;
     if let Some(task) = crate::telemetry::spawn_artifact_task(move || {
-      crate::telemetry::image_artifact("auv.netease.sidebar.window_capture", &image);
+      let logical = auv_tracing::ImageResolution::Logical(scale_factor);
+      crate::telemetry::image_artifact("auv.netease.sidebar.window_capture", &image, logical);
 
       let mut overlay = image;
       draw_overlay(&mut overlay, sidebar_bounds, &observation);
-      crate::telemetry::image_artifact("auv.netease.sidebar.overlay", &overlay);
+      crate::telemetry::image_artifact("auv.netease.sidebar.overlay", &overlay, logical);
 
       crate::telemetry::json_artifact("auv.netease.sidebar.recognition", &recognition);
       crate::telemetry::json_artifact("auv.netease.sidebar.viewport_observation", &observation);
@@ -499,7 +506,7 @@ impl ViewObserver for LiveSidebarObserver {
       .map(|previous| self.motion_policy.compare(previous, &sidebar_crop));
     self.previous_sidebar_crop = Some(sidebar_crop);
     observation.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
-    self.publish_observation_artifacts(image, window_recognition, observation.clone());
+    self.publish_observation_artifacts(image, scale_factor, window_recognition, observation.clone());
 
     Ok(observation)
   }

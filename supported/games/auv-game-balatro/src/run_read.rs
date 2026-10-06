@@ -58,7 +58,9 @@ pub(crate) fn emit_image_artifact(purpose: &'static str, source: &str, image: &i
   }
   let options =
     EmitBytesOptions::new().with_purpose(purpose).with_attributes(Attributes::from_iter([("source", AttributeValue::string(source))]));
-  match auv_tracing::image_artifact(options, image) {
+  // NOTICE(balatro-native-evidence): detections and UI readings are recorded
+  // in image pixel coordinates, so evidence keeps native pixels to line up.
+  match auv_tracing::image_artifact(options, image, auv_tracing::ImageResolution::Native) {
     Ok(artifact) => drop(auv_tracing::emit_artifact(artifact)),
     Err(error) => context.in_scope(|| {
       auv_tracing::emit_event!(BalatroArtifactPreparationFailed {

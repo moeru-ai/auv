@@ -341,7 +341,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
 
   let before_capture = session.window().capture(&window).map_err(|error| format!("initial playback capture failed: {error}"))?;
-  crate::telemetry::image_artifact("auv.netease.playback.before_capture", &before_capture.image);
+  crate::telemetry::capture_artifact("auv.netease.playback.before_capture", &before_capture);
   let before_recognition = session
     .vision()
     .recognize_text_in_capture_with_options(&before_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
@@ -413,7 +413,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   }
 
   let mut after_capture = session.window().capture(&window).map_err(|error| format!("post-click detail capture failed: {error}"))?;
-  crate::telemetry::image_artifact("auv.netease.playback.after_click_capture", &after_capture.image);
+  crate::telemetry::capture_artifact("auv.netease.playback.after_click_capture", &after_capture);
   let mut recognition = session
     .vision()
     .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
@@ -453,7 +453,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     }
 
     after_capture = session.window().capture(&window).map_err(|error| format!("post-foreground-click detail capture failed: {error}"))?;
-    crate::telemetry::image_artifact("auv.netease.playback.after_foreground_click_capture", &after_capture.image);
+    crate::telemetry::capture_artifact("auv.netease.playback.after_foreground_click_capture", &after_capture);
     recognition = session
       .vision()
       .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())

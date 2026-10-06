@@ -382,7 +382,10 @@ async fn publish_image(purpose: &'static str, image: &RgbImage) -> AuvResult<Opt
     return Ok(super::keep_artifact_receipt::<String>(purpose, Err(error)));
   }
   let options = EmitBytesOptions::new().with_purpose(purpose).with_attributes(Attributes::empty());
-  let artifact = match auv_tracing::image_artifact(options, image) {
+  // NOTICE(minecraft-native-evidence): screenshots come from files without a
+  // backing scale, and overlays mark projected pixels, so evidence keeps
+  // native pixels.
+  let artifact = match auv_tracing::image_artifact(options, image, auv_tracing::ImageResolution::Native) {
     Ok(artifact) => artifact,
     Err(error) => return Ok(super::keep_artifact_receipt::<String>(purpose, Err(error.to_string()))),
   };

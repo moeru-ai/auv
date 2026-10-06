@@ -272,10 +272,11 @@ pub(crate) fn publish_sidebar_target_probe_artifacts(
   capture_context: &SidebarTargetProbeCaptureContext,
 ) {
   // NOTICE(a6c-7): probe image + recognition artifacts for ROI vs motion bisection.
+  // They stay at native resolution: they must match the exact OCR input.
   let payload = sidebar_target_probe_artifact(observation, probe, scroll_context, capture_context);
   auv_tracing::in_span!("auv.netease.sidebar_target_probe.evidence", || {
-    crate::telemetry::image_artifact("auv.netease.sidebar_target_probe.window_capture", window_image);
-    crate::telemetry::image_artifact("auv.netease.sidebar_target_probe.sidebar_crop", sidebar_crop);
+    crate::telemetry::image_artifact("auv.netease.sidebar_target_probe.window_capture", window_image, auv_tracing::ImageResolution::Native);
+    crate::telemetry::image_artifact("auv.netease.sidebar_target_probe.sidebar_crop", sidebar_crop, auv_tracing::ImageResolution::Native);
     crate::telemetry::json_artifact("auv.netease.sidebar_target_probe.recognition", recognition);
     crate::telemetry::json_artifact("auv.netease.sidebar_target_probe.result", &payload);
   });
