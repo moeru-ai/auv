@@ -678,13 +678,9 @@ async fn click_point(input: InvokeCommandInput, args: ClickPointArgs) -> InvokeC
           crate::ExecutionTarget::Application { id } => {
             session.window().resolve(click_window_selector(id, args.title.as_deref())).map_err(|error| error.to_string())?
           }
-          crate::ExecutionTarget::Window { id } => session
-            .window()
-            .list()
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .find(|window| window.reference.id == *id)
-            .ok_or_else(|| format!("input.clickPoint could not find window target {id:?}"))?,
+          crate::ExecutionTarget::Window { id } => {
+            auv_driver::find_window(session.window().list().map_err(|error| error.to_string())?, id).map_err(|error| error.to_string())?
+          }
           crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
         };
         let point = resolve_local_point("input.clickPoint", args.x, args.y, args.normalized, window.frame.size, "window")?;
@@ -990,11 +986,7 @@ async fn execute_drag(input: &InvokeCommandInput, plan: DragPlan) -> crate::Invo
       let session = session.as_ref().expect("window resolution opens a session");
       let window = match input.target.as_ref().expect("window-relative target validated") {
         crate::ExecutionTarget::Application { id } => session.window().resolve(click_window_selector(id, plan.title.as_deref()))?,
-        crate::ExecutionTarget::Window { id } => {
-          session.window().list()?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
-            crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find window target {id:?}"))
-          })?
-        }
+        crate::ExecutionTarget::Window { id } => auv_driver::find_window(session.window().list()?, id)?,
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
       let (start, end) = plan.screen_points(window.frame, "window")?;
@@ -1327,7 +1319,7 @@ async fn scroll(input: InvokeCommandInput, args: ScrollArgs) -> crate::InvokeExe
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn execute_scroll(input: &InvokeCommandInput, plan: ScrollPlan) -> crate::InvokeExecutionResult {
   let session = auv::local::open()?;
-  let window = resolve_local_window(&session, input, plan.title.as_deref(), "input.scroll")?;
+  let window = resolve_local_window(&session, input, plan.title.as_deref())?;
   let point = plan.window_point(&window)?;
   let mut result = plan.result(window.clone(), point);
   if input.dry_run {
@@ -1358,16 +1350,10 @@ fn resolve_local_window(
   session: &auv_driver::LocalDriverSession,
   input: &InvokeCommandInput,
   title: Option<&str>,
-  command_id: &str,
 ) -> Result<auv_driver::Window, crate::InvokeFailure> {
   match input.target.as_ref().expect("window target validated") {
     crate::ExecutionTarget::Application { id } => Ok(session.window().resolve(click_window_selector(id, title))?),
-    crate::ExecutionTarget::Window { id } => session
-      .window()
-      .list()?
-      .into_iter()
-      .find(|window| window.reference.id == *id)
-      .ok_or_else(|| crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("{command_id} could not find window target {id:?}"))),
+    crate::ExecutionTarget::Window { id } => Ok(auv_driver::find_window(session.window().list()?, id)?),
     crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
   }
 }
@@ -1609,7 +1595,7 @@ async fn scroll_until(input: InvokeCommandInput, args: ScrollUntilArgs) -> crate
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn execute_scroll_until(input: &InvokeCommandInput, plan: ScrollUntilPlan) -> crate::InvokeExecutionResult {
   let session = auv::local::open()?;
-  let window = resolve_local_window(&session, input, plan.title.as_deref(), "input.scrollUntil")?;
+  let window = resolve_local_window(&session, input, plan.title.as_deref())?;
   let point = plan.window_point(&window)?;
   let mut output = plan.output(window.clone(), point);
   if input.dry_run {

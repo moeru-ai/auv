@@ -179,12 +179,11 @@ pub async fn invoke(input: crate::InvokeCommandInput, context: auv::AuvContext) 
         Ok(capture) => crate::commands::screen::recorded_region_capture_output(&capture).await,
       },
     },
-    "window.list" => runner
-      .windows()
-      .list()
-      .await
-      .map_err(|status| format!("WindowService/ListWindows failed: {status}"))
-      .and_then(|windows| crate::commands::window::list_windows_output(&windows)),
+    "window.list" => {
+      runner.windows().list().await.map_err(|status| format!("WindowService/ListWindows failed: {status}")).and_then(|windows| {
+        crate::commands::window::list_windows_output(&windows.iter().map(|window| window.resource().clone()).collect::<Vec<_>>())
+      })
+    }
     "window.capture" => {
       let selector = selected_window_selector(&input);
       let response = match runner.windows().resolve(selector).await {
@@ -426,14 +425,7 @@ async fn selected_click_point(input: &crate::InvokeCommandInput, runner: &auv::c
           windows.resolve(selected_window_selector(input)).await.map_err(|status| format!("WindowService/ResolveWindow failed: {status}"))?
         }
         crate::ExecutionTarget::Window { id } => {
-          let window = windows
-            .list()
-            .await
-            .map_err(|status| format!("WindowService/ListWindows failed: {status}"))?
-            .into_iter()
-            .find(|window| window.reference.id == *id)
-            .ok_or_else(|| format!("input.clickPoint could not find window target {id:?}"))?;
-          windows.bind(window).map_err(|error| format!("WindowService/BindWindow failed: {error}"))?
+          windows.get(id).await.map_err(|status| format!("WindowService/ListWindows failed: {status}"))?
         }
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
@@ -650,13 +642,7 @@ async fn runner_keyboard_target(
     Some(crate::ExecutionTarget::Application { id }) => auv_driver::InputTarget::Application {
       bundle_id: id.clone(),
     },
-    Some(crate::ExecutionTarget::Window { id }) => {
-      auv_driver::InputTarget::Window(runner.windows().list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(
-        || auv_driver::DriverError::NotFound {
-          target: format!("window:{id}"),
-        },
-      )?)
-    }
+    Some(crate::ExecutionTarget::Window { id }) => auv_driver::InputTarget::Window(runner.windows().get(id).await?.resource().clone()),
     Some(crate::ExecutionTarget::Display { .. }) => unreachable!("target policy validated"),
   };
 
@@ -701,7 +687,7 @@ async fn execute_scroll_until(input: crate::InvokeCommandInput, context: auv::Au
   let auv = auv::Client::from_context(context).await.map_err(|error| error.to_string())?;
   let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
-  let resolved = resolve_runner_window(&runner, &input, "input.scrollUntil").await?;
+  let resolved = resolve_runner_window(&runner, &input).await?;
   let point = plan.window_point(resolved.resource())?;
   let mut output = plan.output(resolved.resource().clone(), point);
   if input.dry_run {
@@ -733,17 +719,11 @@ async fn execute_scroll_until(input: crate::InvokeCommandInput, context: auv::Au
 async fn resolve_runner_window(
   runner: &auv::client::runner::RunnerClient,
   input: &crate::InvokeCommandInput,
-  command_id: &str,
 ) -> Result<auv::client::runner::WindowClient, crate::InvokeFailure> {
   let windows = runner.windows();
   match input.target.as_ref().expect("window target validated") {
     crate::ExecutionTarget::Application { .. } => Ok(windows.resolve(selected_window_selector(input)).await?),
-    crate::ExecutionTarget::Window { id } => {
-      let window = windows.list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
-        crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("{command_id} could not find window target {id:?}"))
-      })?;
-      Ok(windows.bind(window).map_err(|error| format!("WindowService/BindWindow failed: {error}"))?)
-    }
+    crate::ExecutionTarget::Window { id } => Ok(windows.get(id).await?),
     crate::ExecutionTarget::Display { .. } => unreachable!("target validated"),
   }
 }
@@ -754,7 +734,7 @@ async fn execute_scroll(input: crate::InvokeCommandInput, context: auv::AuvConte
   let run = auv.run(Default::default()).await.map_err(|error| error.to_string())?;
   let runner = run.runner(auv::client::RunnerOptions::default()).await.map_err(|error| error.to_string())?;
 
-  let resolved = resolve_runner_window(&runner, &input, "input.scroll").await?;
+  let resolved = resolve_runner_window(&runner, &input).await?;
   let point = plan.window_point(resolved.resource())?;
   let mut result = plan.result(resolved.resource().clone(), point);
   if input.dry_run {
@@ -825,11 +805,7 @@ async fn execute_drag(input: crate::InvokeCommandInput, context: auv::AuvContext
       let windows = runner.windows();
       let window = match input.target.as_ref().expect("window-relative target validated") {
         crate::ExecutionTarget::Application { .. } => windows.resolve(selected_window_selector(&input)).await?.resource().clone(),
-        crate::ExecutionTarget::Window { id } => {
-          windows.list().await?.into_iter().find(|window| window.reference.id == *id).ok_or_else(|| {
-            crate::InvokeFailure::new(crate::FailureCode::NotFound, format!("input.drag could not find window target {id:?}"))
-          })?
-        }
+        crate::ExecutionTarget::Window { id } => windows.get(id).await?.resource().clone(),
         crate::ExecutionTarget::Display { .. } => unreachable!("target/basis validated"),
       };
       let (start, end) = plan.screen_points(window.frame, "window")?;

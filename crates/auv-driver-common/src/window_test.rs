@@ -50,3 +50,31 @@ fn window_mutation_types_serde_as_snake_case() {
   let decoded: WindowMutationResult = serde_json::from_value(encoded).expect("deserialize");
   assert_eq!(decoded, result);
 }
+
+fn window(id: &str) -> Window {
+  Window {
+    reference: WindowRef { id: id.to_string() },
+    title: None,
+    app_name: None,
+    app_bundle_id: None,
+    process_id: None,
+    frame: Rect::new(0.0, 0.0, 10.0, 10.0),
+    coordinate_space: CoordinateSpace::Screen,
+    is_main: false,
+    is_visible: true,
+  }
+}
+
+#[test]
+fn find_window_returns_the_window_with_the_exact_id() {
+  let found = find_window([window("1"), window("12")], "12").expect("window 12 is listed");
+
+  assert_eq!(found.reference.id, "12");
+}
+
+#[test]
+fn find_window_reports_a_missing_window_as_not_found() {
+  let error = find_window([window("1")], "2").expect_err("window 2 is not listed");
+
+  assert!(matches!(error, DriverError::NotFound { ref target } if target == "window:2"), "{error:?}");
+}

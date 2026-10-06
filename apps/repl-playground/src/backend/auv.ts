@@ -1,9 +1,9 @@
-import type { AuvClient, AuvConnection, Device, RunnerClient } from '@auv-js/sdk'
+import type { AuvClient, AuvConnection, Device, RunnerClient, WindowClient } from '@auv-js/sdk'
 
 import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
 import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
-import { AuvRemoteError, connect, createAuv, createHttpTransport, pairDevice } from '@auv-js/sdk'
+import { AuvRemoteError, connect, createAuv, createHttpTransport, InputDeliveryPath, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
 
 type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
@@ -11,37 +11,17 @@ type NativeDisplay = Awaited<ReturnType<RunnerClient['displays']['list']>>[numbe
 type NativeFrame = NonNullable<CaptureResponse['capture']>
 type NativeObservation = Parameters<NonNullable<NonNullable<Parameters<WindowClient['scrollUntil']>[2]>['onObservation']>>[0]
 type NativeRecognized = Awaited<ReturnType<RunnerClient['recognizeText']>>
-type NativeWindow = Awaited<ReturnType<RunnerClient['windows']['list']>>[number]
-type WindowClient = Awaited<ReturnType<RunnerClient['windows']['resolve']>>
+type NativeWindow = WindowClient['window']
 
 const RUNNER_CLASS = 'auv.core.local'
 
-// Mirrors `auv.api.driver.v1.MouseButton`; the enum is not re-exported by the SDK entry.
-const MOUSE_BUTTON = { left: 1, middle: 3, right: 2 } as const
+const MOUSE_BUTTONS = { left: MouseButton.LEFT, middle: MouseButton.MIDDLE, right: MouseButton.RIGHT } as const
 
-// Mirrors `auv.api.driver.v1.ScrollUntilStopReason`; the enum is not re-exported by the SDK entry.
-const STOP_REASONS: Record<number, ScrollUntilOutcome['reason']> = {
-  1: 'end',
-  2: 'text-visible',
-  3: 'budget',
-  4: 'until',
-}
-
-// Mirrors `auv.api.driver.v1.InputDeliveryPath` for display only.
-const DELIVERY_PATHS: Record<number, string> = {
-  1: 'noop',
-  2: 'ax-press',
-  3: 'ax-focus',
-  4: 'ax-set-value',
-  5: 'ax-scroll',
-  6: 'ax-selected-text',
-  7: 'window-targeted-mouse',
-  8: 'window-targeted-wheel',
-  9: 'window-targeted-keyboard',
-  10: 'window-targeted-keyboard-scroll',
-  11: 'clipboard-paste',
-  12: 'foreground-system-events',
-  13: 'unsupported',
+const STOP_REASONS: Partial<Record<ScrollUntilStopReason, ScrollUntilOutcome['reason']>> = {
+  [ScrollUntilStopReason.BUDGET_EXHAUSTED]: 'budget',
+  [ScrollUntilStopReason.END_BY_NO_VISUAL_PROGRESS]: 'end',
+  [ScrollUntilStopReason.PREDICATE_SATISFIED]: 'until',
+  [ScrollUntilStopReason.TEXT_VISIBLE]: 'text-visible',
 }
 
 export interface AuvBackendOptions {
@@ -57,7 +37,6 @@ class AuvBackend implements Backend {
   readonly label: string
   #runId?: string
   #runner: RunnerClient
-  readonly #windows = new Map<string, WindowClient>()
 
   constructor(
     private readonly connection: AuvConnection,
@@ -95,23 +74,23 @@ class AuvBackend implements Backend {
   }
 
   async captureWindow(windowId: string): Promise<CapturedFrame> {
-    const window = await this.#windowClient(windowId)
+    const window = this.#runner.windows.bind(windowId)
     const captured = await window.capture()
     return toFrame(captured.capture, `window:${windowId}`)
   }
 
   async clickScreen(point: { x: number, y: number }, options?: ClickOptions): Promise<InputReceipt> {
     const response = await this.#runner.input.clickScreenPoint(point, {
-      button: MOUSE_BUTTON[options?.button ?? 'left'],
+      button: MOUSE_BUTTONS[options?.button ?? 'left'],
       click: toClick(options),
     })
     return { path: deliveryPath(response.action), point }
   }
 
   async clickWindow(windowId: string, point: { x: number, y: number }, options?: ClickOptions): Promise<InputReceipt> {
-    const window = await this.#windowClient(windowId)
+    const window = this.#runner.windows.bind(windowId)
     const response = await window.click(point, {
-      button: MOUSE_BUTTON[options?.button ?? 'left'],
+      button: MOUSE_BUTTONS[options?.button ?? 'left'],
       click: toClick(options),
     })
     return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
@@ -139,7 +118,7 @@ class AuvBackend implements Backend {
   }
 
   async findWindowText(windowId: string, query: string, region?: NormalizedRect): Promise<TextSearchResult> {
-    const window = await this.#windowClient(windowId)
+    const window = this.#runner.windows.bind(windowId)
     const response = await window.findText(query, region ? { region } : undefined)
     return {
       capture: response.capture ? toFrame(response.capture, `window:${windowId}`) : undefined,
@@ -152,7 +131,7 @@ class AuvBackend implements Backend {
   }
 
   async listWindows(): Promise<WindowInfo[]> {
-    return (await this.#runner.windows.list()).map(toWindow)
+    return (await this.#runner.windows.list()).map(window => toWindow(window.window))
   }
 
   async pressKey(key: string): Promise<InputReceipt> {
@@ -167,20 +146,17 @@ class AuvBackend implements Backend {
   }
 
   async resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
-    const resolved = await this.#runner.windows.resolve(toSelector(selector))
-    this.#windows.set(resolved.id, resolved)
-    const window = (await this.#runner.windows.list()).find(candidate => candidate.ref?.windowId === resolved.id)
-    return window ? toWindow(window) : { frame: { height: 0, width: 0, x: 0, y: 0 }, id: resolved.id }
+    return toWindow((await this.#runner.windows.resolve(toSelector(selector))).window)
   }
 
   async scrollWindow(windowId: string, point: Point, delta: ScrollDelta): Promise<InputReceipt> {
-    const window = await this.#windowClient(windowId)
+    const window = this.#runner.windows.bind(windowId)
     const response = await window.scroll(point, { deltaX: delta.dx ?? 0, deltaY: delta.dy ?? 0 })
     return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
   }
 
   async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
-    const window = await this.#windowClient(windowId)
+    const window = this.#runner.windows.bind(windowId)
     let last: NativeObservation | undefined
     const completed = await window.scrollUntil(point, {
       condition: request.text ? { case: 'textVisible', value: { query: request.text } } : { case: 'end', value: {} },
@@ -214,28 +190,9 @@ class AuvBackend implements Backend {
     return { path: deliveryPath(response.action) }
   }
 
+  /** Window references are Device resources; clients are bound per Run with `windows.bind(id)`. */
   #bind(): RunnerClient {
-    // Window clients carry the route they were resolved with; a new Run needs new clients.
-    this.#windows.clear()
     return this.client.runner({ deviceId: this.device.id, runId: this.#runId, runnerClass: RUNNER_CLASS })
-  }
-
-  async #windowClient(windowId: string): Promise<WindowClient> {
-    const cached = this.#windows.get(windowId)
-    if (cached)
-      return cached
-    // NOTICE(window-client-by-id): the SDK builds a WindowClient only through
-    // `windows.resolve`. A window first seen in `windows.list` is re-resolved
-    // by process ID and exact title; ambiguous titles may pick a sibling.
-    const target = (await this.#runner.windows.list()).find(candidate => candidate.ref?.windowId === windowId)
-    if (!target)
-      throw new Error(`Window ${windowId} is no longer available`)
-    const resolved = await this.#runner.windows.resolve({
-      application: target.processId ? { case: 'processId', value: target.processId } : { case: 'frontmostApplication', value: true },
-      window: target.title ? { case: 'titleExact', value: target.title } : { case: 'mainVisible', value: true },
-    })
-    this.#windows.set(windowId, resolved)
-    return resolved
   }
 }
 
@@ -266,8 +223,10 @@ export async function pairBrowser(endpoint: string, token: string, label = 'AUV 
   }
 }
 
+/** Delivery path for display, e.g. `window-targeted-mouse` for `WINDOW_TARGETED_MOUSE`. */
 function deliveryPath(action: NativeAction): string | undefined {
-  return action ? DELIVERY_PATHS[action.selectedPath] : undefined
+  const name = action ? InputDeliveryPath[action.selectedPath] : undefined
+  return name && name !== 'UNSPECIFIED' ? name.toLowerCase().replaceAll('_', '-') : undefined
 }
 
 /**

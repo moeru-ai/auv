@@ -38,9 +38,11 @@ import type {
   FindWindowTextRequestSchema,
   RecognizeTextRequestSchema,
 } from '../../gen/auv/api/driver/v1/text_recognition_pb'
-import type { Window, WindowSelectorSchema } from '../../gen/auv/api/driver/v1/window_pb'
+import type { Window, WindowRef, WindowSelectorSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import type { AuvConnection, TypedDuplexCall } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
+
+import { create } from '@bufbuild/protobuf'
 
 import { AccessibilityService } from '../../gen/auv/api/driver/macos/v1/accessibility_pb'
 import { ApplicationService } from '../../gen/auv/api/driver/macos/v1/application_pb'
@@ -51,8 +53,8 @@ import { DisplayService } from '../../gen/auv/api/driver/v1/display_pb'
 import { InputService } from '../../gen/auv/api/driver/v1/input_pb'
 import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextRecognitionService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
-import { WindowService } from '../../gen/auv/api/driver/v1/window_pb'
-import { AuvProtocolError } from '../../transport/errors'
+import { WindowSchema, WindowService } from '../../gen/auv/api/driver/v1/window_pb'
+import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 
 export interface FindDisplayTextOptions extends InputFields<typeof FindDisplayTextRequestSchema, 'query' | 'selector'>, OperationOptions {}
@@ -111,7 +113,20 @@ export interface RunnerClient {
   }
   recognizeText: (capture: Init<typeof CapturedFrameSchema>, options?: RecognizeTextOptions) => Promise<Shape<typeof TextRecognitionService.method.recognizeText.output>>
   readonly windows: {
-    list: (options?: OperationOptions) => Promise<readonly Window[]>
+    /**
+     * Binds a window to this route without a call: a client from any route
+     * (for example an earlier Run), a listed or resolved `Window`, a
+     * `WindowRef`, or a window ID. Window references are Device resources,
+     * not Run resources, so this is how a window outlives a Run.
+     */
+    bind: (target: WindowTarget) => WindowClient
+    /**
+     * The window `target` names, from a fresh listing and bound to this route.
+     * Rejects with an `AuvRpcError` (`rpcCode` 5, NOT_FOUND) once it is gone.
+     */
+    get: (target: WindowTarget, options?: OperationOptions) => Promise<WindowClient>
+    /** Lists windows as ready-to-use clients carrying their metadata. */
+    list: (options?: OperationOptions) => Promise<readonly WindowClient[]>
     resolve: (selector: Init<typeof WindowSelectorSchema>, options?: OperationOptions) => Promise<WindowClient>
   }
 }
@@ -161,6 +176,7 @@ export interface WindowClient {
   capture: (options?: OperationOptions) => Promise<Shape<typeof CaptureService.method.captureWindow.output>>
   click: (point: Init<typeof WindowPointSchema>, clickOptions?: Init<typeof ClickOptionsSchema>, options?: OperationOptions) => Promise<Shape<typeof InputService.method.clickWindowPoint.output>>
   findText: (query: string, options?: FindWindowTextOptions) => Promise<Shape<typeof TextRecognitionService.method.findWindowText.output>>
+  /** Window ID; the same as `window.ref.windowId`. */
   readonly id: string
   /**
    * Wheel-scrolls at a window-local point. Deltas are logical pixels: positive
@@ -197,7 +213,19 @@ export interface WindowClient {
    * finishes, and resolves with the completion event.
    */
   scrollWith: (steps: AsyncIterable<ScrollWithStep> | Iterable<ScrollWithStep>, begin: ScrollStreamBegin, options?: OperationOptions) => Promise<StreamScrollCompleted>
+  /**
+   * Metadata from the call that produced this client (`resolve` or `list`),
+   * or just the reference for a client bound with `windows.client`. It is a
+   * snapshot: the Runner re-resolves the window before every operation.
+   */
+  readonly window: Window
 }
+// gRPC status code NOT_FOUND.
+const GRPC_NOT_FOUND = 5
+
+/** Anything that names one window: a client, a `Window`, a `WindowRef`, or a window ID. */
+export type WindowTarget = string | Window | WindowClient | WindowRef
+
 type Init<T extends DescMessage> = MessageInitShape<T>
 type InputFields<T extends DescMessage, K extends keyof Init<T>> = Omit<Init<T>, '$typeName' | K>
 
@@ -255,84 +283,90 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       stop: () => call.send({ event: { case: 'stop', value: {} } }),
     }
   }
-  const window = (id: string): WindowClient => ({
-    capture: options => unary(CaptureService.method.captureWindow, { window: { windowId: id } }, options),
-    click: (point, clickOptions, options) => unary(InputService.method.clickWindowPoint, {
-      options: clickOptions,
-      point,
-      window: { windowId: id },
-    }, options),
-    findText: (query, options = {}) => {
-      const { signal, ...request } = options
-      return unary(TextRecognitionService.method.findWindowText, {
-        ...request,
-        query,
+  const window = (metadata: Window): WindowClient => {
+    const id = metadata.ref?.windowId
+    if (id === undefined || id.length === 0)
+      throw new AuvProtocolError('Window omitted ref.windowId')
+    return {
+      capture: options => unary(CaptureService.method.captureWindow, { window: { windowId: id } }, options),
+      click: (point, clickOptions, options) => unary(InputService.method.clickWindowPoint, {
+        options: clickOptions,
+        point,
         window: { windowId: id },
-      }, { signal })
-    },
-    id,
-    scroll: (point, scroll, scrollOptions, options) => unary(InputService.method.scrollWindowPoint, {
-      options: scrollOptions,
-      point,
-      scroll,
-      window: { windowId: id },
-    }, options),
-    scrollMotion: (point, motion, scrollOptions, options) => serverStream(InputService.method.scrollWindowPointMotion, {
-      motion,
-      options: scrollOptions,
-      point,
-      window: { windowId: id },
-    }, options),
-    scrollStream: (begin, options) => openScrollStream(id, begin, options),
-    scrollUntil: async (point, request, options = {}) => {
-      const { onObservation, until, ...operation } = options
-      const call = await duplex(InputService.method.scrollUntil, operation)
-      const condition = request.condition?.case === undefined ? { case: 'end' as const, value: {} } : request.condition
-      await call.send({
-        event: {
-          case: 'begin',
-          value: { ...request, awaitDecisions: until !== undefined, condition, point, window: { windowId: id } },
-        },
-      })
-      for await (const response of call.responses) {
-        const event = response.event
-        if (event.case === 'completed')
-          return event.value
-        if (event.case !== 'observation')
-          continue
-        await onObservation?.(event.value)
-        if (event.value.awaitingDecision)
-          await call.send({ event: { case: 'decision', value: { stop: await until?.(event.value) ?? true } } })
-      }
-      throw new Error('ScrollUntil ended without a completion event')
-    },
-    scrollWith: async (steps, begin, options) => {
-      const controller = await openScrollStream(id, begin, options)
-      const completion = (async () => {
-        for await (const response of controller.events) {
-          if (response.event.case === 'completed')
-            return response.event.value
+      }, options),
+      findText: (query, options = {}) => {
+        const { signal, ...request } = options
+        return unary(TextRecognitionService.method.findWindowText, {
+          ...request,
+          query,
+          window: { windowId: id },
+        }, { signal })
+      },
+      id,
+      scroll: (point, scroll, scrollOptions, options) => unary(InputService.method.scrollWindowPoint, {
+        options: scrollOptions,
+        point,
+        scroll,
+        window: { windowId: id },
+      }, options),
+      scrollMotion: (point, motion, scrollOptions, options) => serverStream(InputService.method.scrollWindowPointMotion, {
+        motion,
+        options: scrollOptions,
+        point,
+        window: { windowId: id },
+      }, options),
+      scrollStream: (begin, options) => openScrollStream(id, begin, options),
+      scrollUntil: async (point, request, options = {}) => {
+        const { onObservation, until, ...operation } = options
+        const call = await duplex(InputService.method.scrollUntil, operation)
+        const condition = request.condition?.case === undefined ? { case: 'end' as const, value: {} } : request.condition
+        await call.send({
+          event: {
+            case: 'begin',
+            value: { ...request, awaitDecisions: until !== undefined, condition, point, window: { windowId: id } },
+          },
+        })
+        for await (const response of call.responses) {
+          const event = response.event
+          if (event.case === 'completed')
+            return event.value
+          if (event.case !== 'observation')
+            continue
+          await onObservation?.(event.value)
+          if (event.value.awaitingDecision)
+            await call.send({ event: { case: 'decision', value: { stop: await until?.(event.value) ?? true } } })
         }
-        throw new Error('StreamScroll ended without a completion event')
-      })()
-      const leaseMs = durationMilliseconds(begin.lease)
-      for await (const step of steps) {
-        const velocity = { deltaXPerSecond: step.velocityX ?? 0, deltaYPerSecond: step.velocityY ?? 0 }
-        await controller.setVelocity(velocity)
-        let remaining = step.holdMs ?? 100
-        // Renew the lease while a step holds longer than half of it.
-        while (remaining > 0) {
-          const wait = Math.min(remaining, Math.max(leaseMs / 2, 1))
-          await delay(wait, options?.signal)
-          remaining -= wait
-          if (remaining > 0)
-            await controller.setVelocity(velocity)
+        throw new Error('ScrollUntil ended without a completion event')
+      },
+      scrollWith: async (steps, begin, options) => {
+        const controller = await openScrollStream(id, begin, options)
+        const completion = (async () => {
+          for await (const response of controller.events) {
+            if (response.event.case === 'completed')
+              return response.event.value
+          }
+          throw new Error('StreamScroll ended without a completion event')
+        })()
+        const leaseMs = durationMilliseconds(begin.lease)
+        for await (const step of steps) {
+          const velocity = { deltaXPerSecond: step.velocityX ?? 0, deltaYPerSecond: step.velocityY ?? 0 }
+          await controller.setVelocity(velocity)
+          let remaining = step.holdMs ?? 100
+          // Renew the lease while a step holds longer than half of it.
+          while (remaining > 0) {
+            const wait = Math.min(remaining, Math.max(leaseMs / 2, 1))
+            await delay(wait, options?.signal)
+            remaining -= wait
+            if (remaining > 0)
+              await controller.setVelocity(velocity)
+          }
         }
-      }
-      await controller.stop()
-      return await completion
-    },
-  })
+        await controller.stop()
+        return await completion
+      },
+      window: metadata,
+    }
+  }
 
   return {
     displays: {
@@ -392,13 +426,22 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       return unary(TextRecognitionService.method.recognizeText, { ...request, capture }, { signal })
     },
     windows: {
-      list: async options => (await unary(WindowService.method.listWindows, {}, options)).windows,
+      bind: target => window(windowOf(target)),
+      get: async (target, options) => {
+        const id = windowOf(target).ref?.windowId
+        const windows = (await unary(WindowService.method.listWindows, {}, options)).windows
+        const found = windows.find(candidate => candidate.ref?.windowId === id)
+        // Same shape as a Runner NOT_FOUND status, so callers handle both alike.
+        if (!found)
+          throw new AuvRpcError(GRPC_NOT_FOUND, `window:${id} was not found`)
+        return window(found)
+      },
+      list: async options => (await unary(WindowService.method.listWindows, {}, options)).windows.map(window),
       resolve: async (selector, options) => {
         const response = await unary(WindowService.method.resolveWindow, { selector }, options)
-        const id = response.window?.ref?.windowId
-        if (id === undefined || id.length === 0)
-          throw new AuvProtocolError('ResolveWindowResponse omitted window.ref.windowId')
-        return window(id)
+        if (!response.window)
+          throw new AuvProtocolError('ResolveWindowResponse omitted window')
+        return window(response.window)
       },
     },
   }
@@ -432,4 +475,19 @@ function durationMilliseconds(duration: ScrollStreamBegin['lease']): number {
   if (!duration)
     return 0
   return Number(duration.seconds ?? 0n) * 1000 + (duration.nanos ?? 0) / 1_000_000
+}
+
+function isWindowClient(target: Exclude<WindowTarget, string>): target is WindowClient {
+  return 'window' in target && typeof target.capture === 'function'
+}
+
+/** `Window` metadata for any window target; IDs and refs carry only the reference. */
+function windowOf(target: WindowTarget): Window {
+  if (typeof target === 'string')
+    return create(WindowSchema, { ref: { windowId: target } })
+  if (isWindowClient(target))
+    return target.window
+  if ('windowId' in target)
+    return create(WindowSchema, { ref: { windowId: target.windowId } })
+  return target
 }

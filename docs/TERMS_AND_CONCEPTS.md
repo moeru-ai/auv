@@ -1048,6 +1048,26 @@ may expose selectors such as a display ref, native display id, or main-display
 flag. Display refs are scoped to an observation snapshot unless a command
 explicitly documents a stronger stability guarantee.
 
+## Resource reference scope
+
+A resource reference names something one capability call can operate on. The
+owner of a reference decides which routes may use it.
+
+- **Device resources.** Examples are `WindowRef` and display IDs. They name
+  something the Device's platform owns. Any route to that Device can use them,
+  in any Run. Clients bind such a reference to their current route without a
+  call: `runner.windows().bind(window)` in Rust and `runner.windows.bind(target)`
+  in JS. The Runner re-resolves the reference before each operation. A
+  reference whose window is gone fails with `NOT_FOUND`.
+  `runner.windows().get(id)` refreshes metadata from a new listing. A Run
+  records which calls belong to it. It does not own window references.
+  Clients must not re-resolve a known window by app or title only because the
+  Run changed.
+- **Runner resources.** An example is `FrameBufferRef`. Planned capture
+  references are another. They name state that lives inside one Runner
+  process. They are valid only on a Run-affine route that reaches the same
+  Runner, and they end with that Runner.
+
 ## Window
 
 A window is an application-owned observation surface with bounds, ownership

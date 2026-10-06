@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { CaptureWindowRequestSchema, CaptureWindowResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
 import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
-import { ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
+import { ListWindowsResponseSchema, ResolveWindowRequestSchema, ResolveWindowResponseSchema } from '../../gen/auv/api/driver/v1/window_pb'
 import { connect } from '../../node/index'
 import { createAuv } from './client'
 
@@ -445,7 +445,7 @@ describe('runner Driver control surface', () => {
     })
 
     expect(window.id).toBe('window-42')
-    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'scroll', 'scrollMotion', 'scrollStream', 'scrollUntil', 'scrollWith'])
+    expect(Object.keys(window).sort()).toEqual(['capture', 'click', 'findText', 'id', 'scroll', 'scrollMotion', 'scrollStream', 'scrollUntil', 'scrollWith', 'window'])
 
     const capture = await window.capture()
     expect(capture.window?.frame?.width).toBe(1280)
@@ -482,5 +482,101 @@ describe('runner Driver control surface', () => {
 
     expect(methods).toEqual(['/auv.api.driver.v1.DisplayService/ListDisplays'])
     expect(displays.map(display => display.displayId)).toEqual(['main'])
+  })
+})
+
+describe('window clients', () => {
+  async function windowConnection(calls: UnaryCall[]) {
+    return await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          switch (call.method) {
+            case '/auv.api.driver.v1.InputService/ClickWindowPoint':
+              return toBinary(ClickWindowPointResponseSchema, create(ClickWindowPointResponseSchema))
+            case '/auv.api.driver.v1.WindowService/ListWindows':
+              return toBinary(ListWindowsResponseSchema, create(ListWindowsResponseSchema, {
+                windows: [{ applicationName: 'Music', ref: { windowId: 'w-2' }, title: 'Liked Songs' }],
+              }))
+            case '/auv.api.driver.v1.WindowService/ResolveWindow':
+              return toBinary(ResolveWindowResponseSchema, create(ResolveWindowResponseSchema, {
+                window: { frame: { height: 600, width: 800, x: 10, y: 20 }, ref: { windowId: 'w-1' }, title: 'Inbox' },
+              }))
+            default:
+              throw new Error(`unexpected unary call: ${call.method}`)
+          }
+        },
+      },
+    })
+  }
+
+  it('keeps resolved and listed window metadata, and listed windows act without a resolve', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await windowConnection(calls)
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const resolved = await runner.windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    expect(resolved.id).toBe('w-1')
+    expect(resolved.window.title).toBe('Inbox')
+    expect(resolved.window.frame).toMatchObject({ height: 600, width: 800, x: 10, y: 20 })
+
+    const [listed] = await runner.windows.list()
+    expect(listed?.window.applicationName).toBe('Music')
+    await listed!.click({ x: 5, y: 5 })
+    expect(calls.map(call => call.method.split('/').pop())).toEqual(['ResolveWindow', 'ListWindows', 'ClickWindowPoint'])
+    expect(fromBinary(ClickWindowPointRequestSchema, calls[2]!.body).window?.windowId).toBe('w-2')
+    await connection.close()
+  })
+
+  // ROOT CAUSE:
+  //
+  // A window client kept its Run's route, and a stopped Run rejects routing.
+  //
+  // Before the fix, callers re-resolved the window by process and title per
+  // Run. The fix binds any window target to another route with no call.
+  it('rebinds a window from one Run to another without a call', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await windowConnection(calls)
+    const auv = createAuv(connection)
+    const first = await auv.runner({ runId: 'run-1', runnerClass: 'auv.core.local' }).windows.resolve({ application: { case: 'applicationBundleId', value: 'com.example.App' } })
+    const second = auv.runner({ runId: 'run-2', runnerClass: 'auv.core.local' })
+
+    for (const target of [first, first.window, first.window.ref!, 'w-1'])
+      await second.windows.bind(target).click({ x: 1, y: 1 })
+
+    const clicks = calls.slice(1)
+    expect(clicks.map(call => call.headers.get('auv-run-id'))).toEqual(['run-2', 'run-2', 'run-2', 'run-2'])
+    expect(clicks.map(call => fromBinary(ClickWindowPointRequestSchema, call.body).window?.windowId)).toEqual(['w-1', 'w-1', 'w-1', 'w-1'])
+    expect(second.windows.bind(first).window.title).toBe('Inbox')
+    await connection.close()
+  })
+})
+
+describe('windows.get', () => {
+  it('returns a fresh bound client, or a NOT_FOUND error once the window is gone', async () => {
+    const calls: UnaryCall[] = []
+    const connection = await connect({
+      local: true,
+      transport: {
+        close() {},
+        async connect() {},
+        async duplex() { throw new Error('unexpected duplex call') },
+        async unary(call) {
+          calls.push(call)
+          return toBinary(ListWindowsResponseSchema, create(ListWindowsResponseSchema, {
+            windows: [{ frame: { height: 1, width: 1, x: 300, y: 0 }, ref: { windowId: 'w-2' }, title: 'Moved' }],
+          }))
+        },
+      },
+    })
+    const runner = createAuv(connection).runner({ runnerClass: 'auv.core.local' })
+    const stale = runner.windows.bind('w-2')
+    const fresh = await runner.windows.get(stale)
+    expect(fresh.window.frame?.x).toBe(300)
+    await expect(runner.windows.get('w-9')).rejects.toMatchObject({ name: 'AuvRpcError', rpcCode: 5 })
+    await connection.close()
   })
 })

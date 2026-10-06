@@ -495,7 +495,13 @@ identity; malformed external Run IDs fail closed at that projection boundary.
 
 `RunnerClient -> WindowsClient -> WindowClient` retains the returned
 `WindowRef`; `WindowClient::capture`, `find_text`, and `click` send that exact
-child reference rather than repeating a selector. `DisplaysClient` and
+child reference rather than repeating a selector. `WindowsClient::list`
+returns bound `WindowClient`s, `get(id)` refreshes one by window ID, and
+`bind(window)` attaches a known window to the current route without a call.
+A `WindowRef` is a Device resource. It is not a Run resource, so a window from
+one Run is re-bound to another Run's route instead of being re-resolved (see
+[resource reference scope](../../../TERMS_AND_CONCEPTS.md#resource-reference-scope)).
+The JS SDK mirrors this as `windows.list`, `windows.get` and `windows.bind`. `DisplaysClient` and
 `InputClient` provide the adjacent portable capability surfaces. Platform
 extensions remain hierarchical rather than being flattened into
 `RunnerClient`: the implemented macOS branches are

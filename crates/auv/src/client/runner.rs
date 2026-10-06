@@ -36,6 +36,9 @@ pub enum CapabilityError {
   /// The capability response violates its typed domain contract.
   #[error("Runner response is invalid: {0}")]
   InvalidResponse(String),
+  /// A referenced resource is not observed by the Runner, e.g. a closed window.
+  #[error("{0} was not found")]
+  NotFound(String),
 }
 
 fn capability_status(status: tonic::Status) -> CapabilityError {
@@ -49,6 +52,7 @@ impl CapabilityError {
     match self {
       Self::Client(error) => Some(error.kind()),
       Self::KeyboardInput { source, .. } => Some(source.kind()),
+      Self::NotFound(_) => Some(crate::error::ClientErrorKind::NotFound),
       Self::InvalidArgument(_) | Self::InvalidResponse(_) => None,
     }
   }
@@ -708,15 +712,25 @@ pub struct WindowsClient {
 }
 
 impl WindowsClient {
-  /// Lists observed windows.
-  pub async fn list(&self) -> Result<Vec<auv_driver::Window>, CapabilityError> {
+  /// Lists observed windows as clients bound to this route.
+  pub async fn list(&self) -> Result<Vec<WindowClient>, CapabilityError> {
     let windows = proto::window_service_client::WindowServiceClient::new(self.runner.transport()?)
       .list_windows(proto::ListWindowsRequest {})
       .await
       .map_err(capability_status)?
       .into_inner()
       .windows;
-    windows.into_iter().map(window_from_proto).collect()
+    windows.into_iter().map(|window| self.bind(window_from_proto(window)?)).collect()
+  }
+
+  /// Returns the window with `id` from a fresh listing, bound to this route.
+  /// A window ID is a stable Device reference: this replaces re-resolving by
+  /// app or title, and fails with `NotFound` once the window is gone.
+  pub async fn get(&self, id: &str) -> Result<WindowClient, CapabilityError> {
+    let windows = self.list().await?;
+    let window = auv_driver::find_window(windows.iter().map(|client| client.resource().clone()), id)
+      .map_err(|_| CapabilityError::NotFound(format!("window:{id}")))?;
+    self.bind(window)
   }
 
   /// Resolves one window and returns a route-bound child client.
@@ -743,8 +757,10 @@ impl WindowsClient {
     })
   }
 
-  /// Binds a listed window resource to its stable WindowRef for subsequent
-  /// window-scoped capability calls.
+  /// Binds a window resource to its stable WindowRef for subsequent
+  /// window-scoped capability calls on this route. Window references are
+  /// Device resources, so a client from one Run is re-bound to another Run's
+  /// route with `runner.windows().bind(client.resource().clone())`.
   pub fn bind(&self, window: auv_driver::Window) -> Result<WindowClient, CapabilityError> {
     if window.reference.id.trim().is_empty() {
       return Err(CapabilityError::InvalidResponse("listed Window omitted WindowRef id".to_string()));

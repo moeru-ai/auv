@@ -261,6 +261,28 @@ const capture = await window.capture({ signal })
 const matches = await window.findText('Continue', { signal })
 ```
 
+`windows.resolve` and `windows.list` return `WindowClient`s that carry their
+`Window` metadata (`window.window.title`, `frame`, …). A listed window acts
+directly, without resolving it again:
+
+```ts
+const windows = await runner.windows.list({ signal })
+const music = windows.find(w => w.window.applicationBundleId === 'com.netease.163music')
+await music?.click({ x: 400, y: 50 }, { click: { count: 1 } })
+```
+
+A window reference belongs to the Device, not to a Run. Bind a known window to
+another route without a call, or refresh it by ID:
+
+```ts
+const next = auv.runner({ runId: nextRun.id, runnerClass: 'auv.core.local' })
+const same = next.windows.bind(window) // a client, Window, WindowRef or window ID
+const fresh = await next.windows.get(window) // current metadata; NOT_FOUND once closed
+```
+
+Driver enums such as `MouseButton`, `InputDeliveryPath` and
+`ScrollUntilStopReason` are exported from `@auv-js/sdk`.
+
 Create a Run for each workflow that needs its own correlation identity:
 
 ```ts

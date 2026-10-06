@@ -55,7 +55,7 @@ pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{ImageMatch, ImageMatchResult, OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions};
 pub use window::{
   ObservedWindows, Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
-  WindowMutationPolicy, WindowMutationResult, WindowMutationStrategy, WindowMutationVerification, WindowRef, WindowState,
+  WindowMutationPolicy, WindowMutationResult, WindowMutationStrategy, WindowMutationVerification, WindowRef, WindowState, find_window,
 };
 
 #[cfg(test)]

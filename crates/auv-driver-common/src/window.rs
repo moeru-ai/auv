@@ -3,6 +3,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+  error::{DriverError, DriverResult},
   geometry::{CoordinateSpace, Point, Rect, Size},
   input::DisturbanceLevel,
 };
@@ -23,6 +24,16 @@ pub struct Window {
   pub coordinate_space: CoordinateSpace,
   pub is_main: bool,
   pub is_visible: bool,
+}
+
+/// The window with `id` from an observation, or `NotFound` naming `window:<id>`.
+///
+/// Window targets are stable references, not selectors: callers that hold a
+/// window ID look it up here instead of re-resolving by app or title.
+pub fn find_window(windows: impl IntoIterator<Item = Window>, id: &str) -> DriverResult<Window> {
+  windows.into_iter().find(|window| window.reference.id == id).ok_or_else(|| DriverError::NotFound {
+    target: format!("window:{id}"),
+  })
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
