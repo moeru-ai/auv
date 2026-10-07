@@ -308,7 +308,7 @@ async fn press_keys_named(input: InvokeCommandInput, args: PressKeysArgs) -> cra
 }
 
 #[derive(Clone, Debug, Args, serde::Serialize, serde::Deserialize)]
-#[command(after_long_help = "Example:\n  auv invoke input.holdKeys shift --duration-ms 800")]
+#[command(after_long_help = "Examples:\n  auv invoke input.holdKeys shift --duration-ms 800")]
 struct HoldKeysArgs {
   /// One key combination. Modifiers precede ordinary keys.
   #[arg(value_name = "KEY", num_args = 1..)]

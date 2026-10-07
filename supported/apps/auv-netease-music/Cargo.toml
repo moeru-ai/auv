@@ -24,6 +24,11 @@ required-features = ["tracing"]
 name = "auv-runner-netease-music"
 path = "src/bin/auv-runner-netease-music.rs"
 
+# The test runs the `auv-netease-music` client binary, which needs `tracing`.
+[[test]]
+name = "custom_runner_e2e"
+required-features = ["tracing"]
+
 [dependencies]
 auv = { package = "auv-core", path = "../../../crates/auv" }
 auv-cli-common = { path = "../../../crates/auv-cli-common" }

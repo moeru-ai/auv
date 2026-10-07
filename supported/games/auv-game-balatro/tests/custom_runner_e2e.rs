@@ -10,12 +10,13 @@ async fn daemon_routes_the_app_owned_balatro_runner() {
   let directory = tempfile::tempdir().expect("create isolated daemon state");
   let socket = directory.path().join("auv.sock");
   let bound = Server::bind(Config {
-    pairing_store: None,
+    id: None,
+    pairing_store: directory.path().join("pairings.json"),
     listeners: vec![ListenEndpoint::Unix {
       path: socket.clone(),
     }],
     discovery_file: None,
-    publish_discovery: false,
+    register: false,
     store_root: directory.path().join("store"),
     runner_providers: vec![RunnerProviderConfig {
       runner_class: "auv.game.balatro".to_string(),

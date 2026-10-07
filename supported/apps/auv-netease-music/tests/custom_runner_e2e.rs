@@ -13,12 +13,13 @@ async fn daemon_supervises_and_aggregates_the_netease_runner() {
   runner_environment.insert("AUV_RUNNER_TEST_CONTEXT".to_string(), child_context_path.display().to_string());
   runner_environment.insert("AUV_RUNNER_TEST_BINARY".to_string(), env!("CARGO_BIN_EXE_auv-runner-netease-music").to_string());
   let bound = Server::bind(Config {
-    pairing_store: None,
+    id: None,
+    pairing_store: directory.path().join("pairings.json"),
     listeners: vec![ListenEndpoint::Unix {
       path: socket.clone(),
     }],
     discovery_file: None,
-    publish_discovery: false,
+    register: false,
     store_root: directory.path().join("store"),
     runner_providers: vec![RunnerProviderConfig {
       runner_class: "auv.app.netease_music".to_string(),
