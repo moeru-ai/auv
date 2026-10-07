@@ -66,7 +66,7 @@ jobs:
           cargo build --locked --package auv-cli --bin auv
       # Every workspace member, not only the `auv-cli` default member. Tests
       # that drive real input or desktops are `#[ignore]`d and run explicitly.
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --no-fail-fast
       - run: cargo run --quiet -- invoke --help
       - run: git diff --check
 
