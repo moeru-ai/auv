@@ -4,7 +4,9 @@
 use auv_driver_common::geometry::Rect;
 use auv_driver_common::window::{Window, WindowRef};
 use auv_driver_common::{CoordinateSpace, Driver};
-use auv_driver_windows::WindowsDriver;
+use auv_driver_windows::{
+  WindowsDriver, capture_window_health_cached, capture_window_health_strict, check_window_liveness, prewarm_wgc_window,
+};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, HBRUSH};
@@ -121,8 +123,14 @@ fn create_test_window(
   )
 }
 
+// Live smoke tests against real Win32/D3D11 capture device.
+// The D3D11 device and WGC capture session are process-wide resources,
+// so live acceptance tests must serialize to prevent cross-test cache invalidation.
+static WGC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_wgc_pixel_correctness_and_gdi_comparison() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let class_name = w!("AuvWgcPixelCorrectnessTest");
   // Blue=0xFF, Green=0x80, Red=0x40 -> in Win32 COLORREF (0x00BBGGRR): 0x00FF8040
   let (_test_win, driver_win) = create_test_window("AUV WGC Correctness Test", class_name, 200, 200, 480, 360, 0x00FF_8040);
@@ -191,6 +199,7 @@ fn test_wgc_pixel_correctness_and_gdi_comparison() {
 
 #[test]
 fn test_wgc_occlusion_isolation() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let target_class = w!("AuvWgcOcclusionTarget");
   let occluder_class = w!("AuvWgcOccluder");
 
@@ -221,6 +230,7 @@ fn test_wgc_occlusion_isolation() {
 
 #[test]
 fn test_wgc_resize_robustness() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let resize_class = w!("AuvWgcResizeTest");
   let (test_win, driver_win) = create_test_window("AUV WGC Resize Test", resize_class, 150, 150, 400, 300, 0x00AA_BBCC);
 
@@ -250,6 +260,7 @@ fn test_wgc_resize_robustness() {
 
 #[test]
 fn test_wgc_display_capture() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let session = WindowsDriver::default().open_local().expect("failed to open driver session");
   let display_cap = session.display().capture_wgc(None).expect("WGC display capture failed");
 
@@ -263,4 +274,58 @@ fn test_wgc_display_capture() {
     display_cap.capture.image.height(),
     display_cap.capture.scale_factor
   );
+}
+
+#[test]
+fn test_wgc_health_cached_and_liveness() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  let class_name = w!("AuvWgcHealthTest");
+  let (_test_win, driver_win) = create_test_window("AUV WGC Health Test", class_name, 200, 200, 400, 300, 0x0011_2233);
+
+  // 1. Liveness check on live window
+  let is_alive = check_window_liveness(&driver_win).expect("check_window_liveness should succeed");
+  assert!(is_alive, "live window must pass check_window_liveness");
+
+  // 2. Prewarm starts background worker
+  let prewarm_dur = prewarm_wgc_window(&driver_win).expect("prewarm_wgc_window should succeed");
+  println!("prewarm_wgc_window took {:?}", prewarm_dur);
+
+  // 3. Cached health check should hit fresh cache in <15ms
+  let t_cached = Instant::now();
+  let cached_health = capture_window_health_cached(&driver_win).expect("capture_window_health_cached should succeed");
+  let cached_dur = t_cached.elapsed();
+  println!("capture_window_health_cached took {:?}", cached_dur);
+  assert!(cached_health.is_fresh, "cached health must be fresh");
+  assert!(cached_health.alive, "test window must be alive");
+  assert!(cached_dur < Duration::from_millis(15), "cached check should be fast");
+
+  // 4. Strict health check should succeed with fresh sample
+  let strict_health = capture_window_health_strict(&driver_win).expect("capture_window_health_strict should succeed");
+  assert!(strict_health.is_fresh, "strict health must be fresh");
+  assert!(strict_health.alive, "test window must be alive");
+}
+
+#[test]
+fn test_wgc_worker_concurrent_with_capture_wgc_no_deadlock() {
+  let _lock = WGC_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  let class_name = w!("AuvWgcDeadlockTest");
+  let (_test_win, driver_win) = create_test_window("AUV WGC Deadlock Test", class_name, 220, 220, 400, 300, 0x0044_5566);
+
+  // Start health worker
+  let _ = prewarm_wgc_window(&driver_win).expect("prewarm must succeed");
+
+  let session = WindowsDriver::default().open_local().expect("failed to open driver session");
+
+  // Run concurrent formal WGC captures while background worker is actively sampling
+  for i in 0..5 {
+    let t0 = Instant::now();
+    let cap = session.window().capture_wgc(&driver_win).expect("formal WGC capture during worker execution failed");
+    assert_eq!(cap.backend, "wgc.windows");
+    assert!(cap.image.width() > 0);
+    println!("Concurrent capture {} succeeded in {:?}", i, t0.elapsed());
+
+    // Concurrently read cached health
+    let health = capture_window_health_cached(&driver_win).expect("cached health during capture failed");
+    assert!(health.alive);
+  }
 }

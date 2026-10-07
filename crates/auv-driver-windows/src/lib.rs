@@ -52,4 +52,7 @@ pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, Permissi
 pub use track_identity::{
   NormalizedTrackIdentity, TrackChangeVerdict, TrackIdentity, TrackIdentityLevel, evaluate_track_change, normalize_track_field,
 };
-pub use wgc::{WindowHealth, capture_window_health, capture_window_wgc, prewarm_wgc, prewarm_wgc_window, reset_d3d_context};
+pub use wgc::{
+  FastWindowVerification, WindowHealth, capture_window_health, capture_window_health_cached, capture_window_health_strict,
+  capture_window_wgc, check_window_liveness, prewarm_wgc, prewarm_wgc_window, reset_d3d_context,
+};
