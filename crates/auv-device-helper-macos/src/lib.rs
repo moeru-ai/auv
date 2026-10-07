@@ -1,4 +1,6 @@
-#![cfg(unix)]
+// Every dependent (auv-cli, auv-daemon, the npm CLI) uses this crate on macOS
+// only, and its default `host`/`transport` features need macOS APIs.
+#![cfg(target_os = "macos")]
 
 //! Private, target-local transport for the macOS locked-session host.
 //!

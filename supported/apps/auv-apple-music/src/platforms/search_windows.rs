@@ -255,10 +255,10 @@ mod platform {
 mod platform {
   use std::time::{Duration, Instant};
 
+  use auv_driver::LocalDriverSession;
   use auv_driver::geometry::RatioRect;
   use auv_driver::input::{InputPolicy, TextSubmit, TypeTextOptions};
   use auv_driver::window::{Window, WindowMutationOptions, WindowMutationVerification};
-  use auv_driver_windows::WindowsDriverSession;
 
   use super::{
     SearchDriver, SearchResultMatch, SearchVerification, SearchVerificationStatus, normalized, resolve_result_match, search_input_path,
@@ -266,7 +266,7 @@ mod platform {
   };
   use crate::platforms::window_windows::{ResolveOptions, resolve_window};
   pub(super) struct WindowsSearchDriver {
-    session: WindowsDriverSession,
+    session: LocalDriverSession,
     window: Option<Window>,
   }
 
