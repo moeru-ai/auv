@@ -119,6 +119,12 @@ mod native {
   }
 
   fn open_clipboard() -> DriverResult<ClipboardGuard> {
+    for _ in 0..10 {
+      if unsafe { OpenClipboard(HWND::default()) }.is_ok() {
+        return Ok(ClipboardGuard);
+      }
+      std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     unsafe { OpenClipboard(HWND::default()) }.map_err(|error| backend(format!("failed to open clipboard: {error}")))?;
     Ok(ClipboardGuard)
   }
