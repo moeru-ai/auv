@@ -313,7 +313,7 @@ fn print_group_summary(group_name: &str, runs: &[SingleProbeRun]) {
   );
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn main() -> Result<(), Box<dyn std::error::Error>> {
   ensure_input_desktop();
   let args: Vec<String> = env::args().collect();
 

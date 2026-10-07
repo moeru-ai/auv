@@ -24,12 +24,12 @@ path = "src/bin/latency_benchmark.rs"
 
 [[bin]]
 name = "replay-qqmusic-operation"
-path = "src/bin/replay_qqmusic_operation.rs"
+path = "src/bin/replay_qqmusic_operation/main.rs"
 
 
 [[bin]]
 name = "spike-verify-experiments"
-path = "src/bin/spike_verify_experiments.rs"
+path = "src/bin/spike_verify_experiments/main.rs"
 
 [dependencies]
 auv-driver-common = { version = "0.0.31", path = "../auv-driver-common" }

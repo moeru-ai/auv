@@ -996,7 +996,7 @@ fn compute_stats(mut vals: Vec<f64>) -> (f64, f64, f64) {
   (p50, p95, mean)
 }
 
-fn main() {
+pub(super) fn main() {
   ensure_input_desktop();
 
   let args: Vec<String> = env::args().collect();

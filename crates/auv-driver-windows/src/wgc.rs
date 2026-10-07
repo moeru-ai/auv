@@ -5,8 +5,9 @@
 //! with sub-10ms steady-state latency, coexisting with legacy GDI / PrintWindow
 //! backends under the `"wgc.windows"` backend tag.
 
+use std::time::Duration;
 #[cfg(target_os = "windows")]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use auv_driver_common::capture::{Capture, DisplayCapture};
 use auv_driver_common::error::DriverResult;
