@@ -81,7 +81,7 @@ Count: **65**
   as `CaptureRef`s, `GetCaptureImage` is the only pixel transfer; Part B
   proposed: one `Position`-based coordinate model)
 - [`2026-10-06-scroll-delta-contract.md`](2026-10-06-scroll-delta-contract.md): Scroll delta convention (logical px, positive = down) and its implementation across drivers, `ScrollWindowPoint`, `input.scroll`, and the JS SDK; Playwright/CUA comparison; macOS Chrome/Electron and Windows Edge evidence (occlusion backgrounding blocks macOS background scroll; Windows posted wheel reaches Chromium only in the foreground; Linux portal and uinput fixed to discrete 120 px notches on GNOME).
-- [`2026-10-07-verified-fast-path-spike.md`](2026-10-07-verified-fast-path-spike.md): QQ 音乐 Step 3 验证快慢路径触发条件单变量实测（间隔/生命周期/播放位置/事件时序 4 维度 86 样本实测分布）、交替极限环机理与 NO-GO 裁决依据。
+- [`2026-10-07-verified-fast-path-spike.md`](2026-10-07-verified-fast-path-spike.md): QQ 音乐 Step 3 验证快慢路径触发条件单变量实测（间隔/生命周期/播放位置/事件时序 4 维度 96 样本实测分布）、交替极限环机理与 NO-GO 裁决依据。
 - [qqmusic-background-control.md](qqmusic-background-control.md): Living document tracking QQ Music background control without stealing foreground focus across SMTC, CoreAudio, and UIA phases.
 - [windows-capture-parity.md](windows-capture-parity.md): Living document tracking Windows capture latency parity with macOS ScreenCaptureKit across baseline, WGC v1, and GPU-load degradation phases.
 

@@ -375,7 +375,7 @@ All percentiles computed using **Standard Linear Interpolation** with zero outli
 ### 3. Item 2 Verified Fast-Path Trigger Spike Summary
 
 Full Spike Report: [`2026-10-07-verified-fast-path-spike.md`](2026-10-07-verified-fast-path-spike.md)  
-Data File: [`2026-10-07-spike-verify-experiments.jsonl`](2026-10-07-spike-verify-experiments.jsonl) ($N=86$ live single-variable runs).
+Data File: [`2026-10-07-spike-verify-experiments.jsonl`](2026-10-07-spike-verify-experiments.jsonl) ($N=96$ live single-variable runs).
 
 1. **Physical Cause of Bimodal Distribution**:
    - The primary controlling variable is **Skip Interval** (time delta between consecutive track changes):
@@ -383,9 +383,9 @@ Data File: [`2026-10-07-spike-verify-experiments.jsonl`](2026-10-07-spike-verify
      - **$\ge 1.0\text{s}$ interval** (1s, 5s, 30s): Audio demuxing and decoding pipeline stabilizes, achieving **91.7% to 100% fast path rate (P50 77.1ms ~ 79.8ms)**.
 2. **Cold Launch & Position Hypotheses Refuted**:
    - Fresh `QQMusic.exe` process launch: First skip achieved 80% (4/5) fast path (<99ms).
-   - Playback position: Skipping at 2s into song achieved **100% fast path** ($N=10$, P50 47.8ms). Track change speed is independent of prebuffering at song end.
+   - Playback position: Skipping at 2s into song achieved **100% fast path** ($N=10$, P50 47.8ms); skipping at 30s and 60s also achieved **100% fast path** (P50 53.9ms and 64.8ms). Track change speed is independent of prebuffering at song end.
 3. **Event Timing Deltas**:
-   - `PlaybackInfoChanged` arrives consistently **40–50ms before** `MediaPropertiesChanged` on both fast and slow paths. Slow path delay is caused entirely by QQ Music's internal audio engine thread reset (~1050ms) before emitting events.
+   - `PlaybackInfoChanged` arrives consistently **15–50ms before** `MediaPropertiesChanged` on both fast and slow paths. Slow path delay is caused entirely by QQ Music's internal audio engine thread reset (~1050ms) before emitting events.
 4. **Honest Engineering Verdict: 【NO-GO】**:
    - Waiting $\ge 800\text{--}1000\text{ms}$ in the driver to trigger the 70ms fast path yields total latency of $1000 + 75 = 1075\text{ms}$, which offers zero net gain over the native 1150ms slow path while penalizing throughput.
    - For real-world user / agent operations (interval $\ge 1\text{s}$), the ~75ms fast path occurs naturally. The adaptive event-driven early exit (`on_media_properties_changed` + `on_playback_info_changed` with exponential backoff) is architecture-optimal.
@@ -408,7 +408,7 @@ In `crates/auv-driver-windows/src/wgc.rs`:
 
 - `docs/ai/references/driver/2026-10-07-windows-tail-warm-fast-20x.jsonl`: 20x warm Fast records with play fire-and-forget (P50 8.68ms, P95 29.70ms, Mean 15.71ms, 16 play calls dispatched without blocking).
 - `docs/ai/references/driver/2026-10-07-windows-tail-cold-fast-10x.jsonl`: 10x independent cold process Fast runs with eager prewarm (P50 24.44ms, P95 41.59ms, Mean 27.52ms, `wgc_ms` P50 2.51ms).
-- `docs/ai/references/driver/2026-10-07-spike-verify-experiments.jsonl`: 86x live single-variable runs across skip intervals, process lifecycles, playback positions, and event arrival deltas.
+- `docs/ai/references/driver/2026-10-07-spike-verify-experiments.jsonl`: 96x live single-variable runs across skip intervals, process lifecycles, playback positions, and event arrival deltas.
 - `docs/ai/references/driver/2026-10-07-verified-fast-path-spike.md`: Detailed spike report on Step 3 bimodal distribution, limit cycle oscillation, and NO-GO verdict.
 
 
