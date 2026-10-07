@@ -146,19 +146,44 @@ impl OverlayTheme {
 }
 
 /// Accepts existing typed RGBA values as well as host-friendly hex colors.
+///
+/// NOTICE(serde-json-arbitrary-precision): this dispatches on the input type with
+/// a visitor instead of `#[serde(untagged)]`. An untagged enum buffers its input,
+/// and with `serde_json/arbitrary_precision` (enabled by `auv-tracing` in every
+/// shipped binary) buffered numbers no longer deserialize as `f64`, so RGBA
+/// objects in `AUV_OVERLAY_THEME` were rejected.
 fn optional_color<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Color>, D::Error> {
-  #[derive(Deserialize)]
-  #[serde(untagged)]
-  enum Input {
-    Hex(String),
-    Rgba(Color),
+  struct ColorInput;
+
+  impl<'de> serde::de::Visitor<'de> for ColorInput {
+    type Value = Option<Color>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+      formatter.write_str("a hex color string or an RGBA object")
+    }
+
+    fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+      Ok(None)
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+      Ok(None)
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+      deserializer.deserialize_any(self)
+    }
+
+    fn visit_str<E: serde::de::Error>(self, hex: &str) -> Result<Self::Value, E> {
+      hex.parse().map(Some).map_err(E::custom)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+      Color::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(Some)
+    }
   }
-  Option::<Input>::deserialize(deserializer)?
-    .map(|value| match value {
-      Input::Hex(hex) => hex.parse().map_err(serde::de::Error::custom),
-      Input::Rgba(color) => Ok(color),
-    })
-    .transpose()
+
+  deserializer.deserialize_option(ColorInput)
 }
 
 #[cfg(test)]
