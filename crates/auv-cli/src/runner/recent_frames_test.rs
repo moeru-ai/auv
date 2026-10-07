@@ -24,7 +24,7 @@ struct FakeSource {
 }
 
 impl FrameSource for FakeSource {
-  fn capture(&mut self) -> Result<auv_driver::Capture, String> {
+  fn capture(&mut self) -> Result<auv_driver::Capture, auv_driver::DriverError> {
     Ok(capture(self.size, 1))
   }
 }
@@ -110,4 +110,99 @@ async fn service_applies_caller_size_to_a_generic_region_target() {
     }))
     .await
     .expect("close frame buffer");
+}
+
+#[derive(Clone, Copy)]
+enum Scripted {
+  Frame(u8),
+  StaleWindow,
+  BackendFailure,
+}
+
+/// Replays scripted capture results, then repeats the last one.
+struct ScriptedSource {
+  results: std::collections::VecDeque<Scripted>,
+}
+
+impl FrameSource for ScriptedSource {
+  fn capture(&mut self) -> Result<auv_driver::Capture, auv_driver::DriverError> {
+    let result = if self.results.len() > 1 {
+      self.results.pop_front()
+    } else {
+      self.results.front().copied()
+    };
+    match result.expect("scripted result") {
+      Scripted::Frame(value) => Ok(capture((2, 2), value)),
+      Scripted::StaleWindow => Err(auv_driver::DriverError::StaleObservation {
+        message: "window 1 was 955x558 pt at capture time but 1644x960 pt to its application".to_string(),
+        recovery: None,
+      }),
+      Scripted::BackendFailure => Err(auv_driver::DriverError::Backend {
+        message: "capture backend failed".to_string(),
+      }),
+    }
+  }
+}
+
+/// Runs the producer until `done` holds for the history, then stops it.
+fn run_until(results: Vec<Scripted>, done: impl Fn(&History) -> bool) -> Arc<Mutex<History>> {
+  let history = Arc::new(Mutex::new(History::new(4)));
+  let (stop, stop_requested) = std::sync::mpsc::channel();
+  let producer_history = Arc::clone(&history);
+  let mut source = ScriptedSource {
+    results: results.into(),
+  };
+  let producer = std::thread::spawn(move || run_producer(&mut source, 120, None, producer_history, stop_requested));
+  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+  while !done(&history.lock().expect("history")) {
+    assert!(std::time::Instant::now() < deadline, "producer did not reach the expected state");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+  }
+  let _ = stop.send(());
+  producer.join().expect("producer thread");
+  history
+}
+
+// ROOT CAUSE:
+//
+// If a window target was shown by Mission Control, its capture failed once and
+// the producer recorded a fault and stopped for good.
+//
+// The fix pauses the buffer on stale-window captures, reports the pause, and
+// keeps capturing.
+#[test]
+fn producer_pauses_on_a_stale_window_and_reports_it() {
+  let history = run_until(vec![Scripted::StaleWindow], |history| history.pause.as_ref().is_some_and(|pause| pause.skipped_captures >= 2));
+
+  let response = history.lock().expect("history").recent(0).expect("a paused buffer still answers");
+  let pause = response.pause.expect("pause is reported");
+  assert!(pause.reason.contains("955x558"));
+  assert!(pause.skipped_captures >= 2);
+  assert!(pause.since.is_some());
+  assert!(response.frames.is_empty());
+}
+
+#[test]
+fn producer_resumes_and_clears_the_pause_after_a_stale_window() {
+  let history = run_until(
+    vec![
+      Scripted::StaleWindow,
+      Scripted::StaleWindow,
+      Scripted::Frame(9),
+    ],
+    |history| history.latest_sequence >= 1,
+  );
+
+  let response = history.lock().expect("history").recent(0).expect("read recent frames");
+  assert!(response.pause.is_none());
+  let image = response.frames[0].frame.as_ref().and_then(|frame| frame.image.as_ref()).expect("RGBA frame");
+  assert_eq!(image.data[0], 9);
+}
+
+#[test]
+fn producer_stops_on_other_capture_failures() {
+  let history = run_until(vec![Scripted::BackendFailure], |history| history.fault.is_some());
+
+  let error = history.lock().expect("history").recent(0).expect_err("a stopped buffer with no frames reports its fault");
+  assert!(error.message().contains("capture backend failed"));
 }

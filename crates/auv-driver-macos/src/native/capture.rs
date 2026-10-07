@@ -1,13 +1,13 @@
 #[cfg(target_os = "macos")]
-use super::binding::ffi::{NativeWindowCaptureRequest, NativeWindowCaptureResponse, capture_window_image};
+use super::binding::ffi::{NativeWindowCaptureRequest, NativeWindowCaptureResponse, capture_window_image, window_ax_size};
 use super::types::AuvResult;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeWindowCapture {
   pub image_width: i64,
   pub image_height: i64,
-  /// Window size in points at capture time, as ScreenCaptureKit saw it.
-  pub window_size: auv_driver_common::Size,
+  /// Window frame in points at capture time, as ScreenCaptureKit saw it.
+  pub window_frame: auv_driver_common::Rect,
   pub rgba_bytes: Vec<u8>,
 }
 
@@ -45,7 +45,25 @@ fn decode_window_capture_response(response: NativeWindowCaptureResponse) -> AuvR
   Ok(NativeWindowCapture {
     image_width: response.image_width,
     image_height: response.image_height,
-    window_size: auv_driver_common::Size::new(response.window_width, response.window_height),
+    window_frame: auv_driver_common::Rect::new(response.window_x, response.window_y, response.window_width, response.window_height),
     rgba_bytes: response.rgba_bytes,
+  })
+}
+
+/// A window's size and minimized state as its application reports them over
+/// Accessibility.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowAxSize {
+  pub size: auv_driver_common::Size,
+  pub minimized: bool,
+}
+
+/// `None` when the window has no AX element or Accessibility is not granted.
+#[cfg(target_os = "macos")]
+pub fn window_ax_size_for(pid: u32, window_number: i64) -> Option<WindowAxSize> {
+  let response = window_ax_size(i64::from(pid), window_number);
+  response.found.then(|| WindowAxSize {
+    size: auv_driver_common::Size::new(response.width, response.height),
+    minimized: response.minimized,
   })
 }

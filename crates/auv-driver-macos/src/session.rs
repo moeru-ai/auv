@@ -2097,61 +2097,110 @@ fn capture_window_swift(window: &Window, resolution: CaptureResolution) -> Drive
     .parse::<i64>()
     .map_err(|error| invalid_input(format!("window ref {} was not a native macOS window id: {error}", window.reference.id)))?;
   let logical = resolution == CaptureResolution::Logical;
-  let mut capture = crate::native::capture::capture_window_rgba(native_window_id, logical).map_err(backend)?;
+  let capture_and_classify = || -> DriverResult<_> {
+    let capture = crate::native::capture::capture_window_rgba(native_window_id, logical).map_err(backend)?;
+    let frame = classify_captured_frame(window.frame.size, capture.window_frame.size, || {
+      window.process_id.and_then(|pid| crate::native::capture::window_ax_size_for(pid, native_window_id))
+    });
+    Ok((capture, frame))
+  };
   // NOTICE(window-capture-frame-mismatch): ScreenCaptureKit sizes the image
   // from the window's frame at capture time. Mission Control, App Exposé and
   // minimize animations shrink that frame (and the window-server bounds) for a
   // moment; Mission Control frames come back black (measured 2026-10-08:
-  // 949x554 pt for a 1644x960 pt window). Scaling such a frame by
-  // `window.frame` gave captures a wrong `scale_factor` (1.17) and garbage
-  // pixels. Retry once after the animation, then report the window as stale.
-  // Mission Control also returns some black frames at the full frame size
-  // while it opens; those pass this check, and only content checks can tell
-  // them apart from a dark window.
-  if !same_window_size(window.frame.size, capture.window_size) {
+  // 955x558 pt for a 1644x960 pt window while AX kept 1644x960). Scaling such
+  // a frame by `window.frame` gave captures a wrong `scale_factor` (1.17) and
+  // garbage pixels. A transformed frame is retried once after the animation,
+  // then reported as stale; a real resize (AX agrees with the captured size)
+  // is captured at the new frame. Mission Control also returns some black
+  // frames at the full frame size while it opens; those pass this check, and
+  // only content checks can tell them apart from a dark window.
+  let (mut capture, mut frame) = capture_and_classify()?;
+  if let CapturedWindowFrame::Transformed { .. } = frame {
     thread::sleep(Duration::from_millis(300));
-    capture = crate::native::capture::capture_window_rgba(native_window_id, logical).map_err(backend)?;
-    if !same_window_size(window.frame.size, capture.window_size) {
+    (capture, frame) = capture_and_classify()?;
+  }
+  let bounds = match frame {
+    CapturedWindowFrame::Resolved => window.frame,
+    CapturedWindowFrame::Resized => capture.window_frame,
+    CapturedWindowFrame::Transformed { minimized } => {
+      let cause = if minimized {
+        "the window is minimized"
+      } else {
+        "the window is shown by Mission Control, App Exposé or a window animation"
+      };
       return Err(DriverError::StaleObservation {
         message: format!(
-          "window {} was {}x{} pt at capture time but resolved as {}x{} pt",
-          window.reference.id, capture.window_size.width, capture.window_size.height, window.frame.size.width, window.frame.size.height
+          "window {} was {}x{} pt at capture time but resolved as {}x{} pt: {cause}",
+          window.reference.id,
+          capture.window_frame.size.width,
+          capture.window_frame.size.height,
+          window.frame.size.width,
+          window.frame.size.height
         ),
-        recovery: Some(
-          "the window was resized or is shown by Mission Control, App Exposé or a minimize animation; re-resolve the window and retry"
-            .to_string(),
-        ),
+        recovery: Some("retry once the window is shown normally again".to_string()),
       });
     }
-  }
+  };
   let width = u32::try_from(capture.image_width).map_err(|error| backend(format!("native capture returned invalid width: {error}")))?;
   let height = u32::try_from(capture.image_height).map_err(|error| backend(format!("native capture returned invalid height: {error}")))?;
   let image =
     RgbaImage::from_raw(width, height, capture.rgba_bytes).ok_or_else(|| backend("failed to decode native captured window RGBA image"))?;
-  let scale_factor = if window.frame.size.width > 0.0 {
-    f64::from(width) / window.frame.size.width
+  let scale_factor = if bounds.size.width > 0.0 {
+    f64::from(width) / bounds.size.width
   } else {
     1.0
   };
   Ok(Capture {
     origin: Some(auv_driver_common::Position::in_window(&window.reference, auv_driver_common::WindowPoint::new(0.0, 0.0))),
     image,
-    bounds: window.frame,
+    bounds,
     scale_factor,
     backend: "macos.screencapturekit.ffi".to_string(),
     fallback_reason: None,
   })
 }
 
-/// Whether a captured window frame matches the resolved one, allowing for
-/// point rounding between the window server and ScreenCaptureKit. A window
-/// resolved without a frame has nothing to compare against.
 #[cfg(target_os = "macos")]
-fn same_window_size(resolved: Size, captured: Size) -> bool {
-  if resolved.width <= 0.0 || resolved.height <= 0.0 {
-    return true;
+/// How the frame ScreenCaptureKit captured a window at relates to the frame
+/// the window was resolved with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CapturedWindowFrame {
+  /// The captured frame is the resolved frame.
+  Resolved,
+  /// The window was resized since it was resolved; its application agrees
+  /// with the captured size.
+  Resized,
+  /// The window server shows the window transformed (Mission Control, App
+  /// Exposé, a minimize animation) or minimized. Also used when the
+  /// application's size is unavailable, since a resize cannot be confirmed.
+  Transformed { minimized: bool },
+}
+
+#[cfg(target_os = "macos")]
+/// Classifies a captured window frame. `ax_size` is only consulted when the
+/// sizes differ, since it costs an Accessibility round trip.
+fn classify_captured_frame(
+  resolved: Size,
+  captured: Size,
+  ax_size: impl FnOnce() -> Option<crate::native::capture::WindowAxSize>,
+) -> CapturedWindowFrame {
+  // A window resolved without a frame has nothing to compare against.
+  if resolved.width <= 0.0 || resolved.height <= 0.0 || same_size(resolved, captured) {
+    return CapturedWindowFrame::Resolved;
   }
-  (resolved.width - captured.width).abs() <= 1.0 && (resolved.height - captured.height).abs() <= 1.0
+  match ax_size() {
+    Some(ax) if ax.minimized => CapturedWindowFrame::Transformed { minimized: true },
+    Some(ax) if same_size(ax.size, captured) => CapturedWindowFrame::Resized,
+    _ => CapturedWindowFrame::Transformed { minimized: false },
+  }
+}
+
+#[cfg(target_os = "macos")]
+/// Equal up to point rounding between ScreenCaptureKit, the window server and
+/// Accessibility.
+fn same_size(left: Size, right: Size) -> bool {
+  (left.width - right.width).abs() <= 1.0 && (left.height - right.height).abs() <= 1.0
 }
 
 #[cfg(target_os = "macos")]

@@ -9,6 +9,7 @@ import "auv/api/driver/v1/display.proto";
 import "auv/api/driver/v1/geometry.proto";
 import "auv/api/driver/v1/window.proto";
 import "auv/api/image/v1/image.proto";
+import "google/protobuf/timestamp.proto";
 
 service RecentFramesService {
   rpc OpenFrameBuffer(OpenFrameBufferRequest) returns (OpenFrameBufferResponse) {
@@ -85,6 +86,21 @@ message GetRecentFramesResponse {
   uint64 latest_sequence = 2;
   // Frames evicted from the buffer since it was opened.
   uint64 dropped_frames = 3;
+  // Present while the buffer is not adding frames because its target cannot
+  // be captured faithfully right now. The buffer keeps trying and clears this
+  // when a capture succeeds. Callers may ignore it; the newest frame then
+  // simply stays the same.
+  FrameBufferPause pause = 4;
+}
+
+// Why a frame buffer is temporarily not adding frames.
+message FrameBufferPause {
+  // The capture failure, for example a window shown by Mission Control or
+  // minimized.
+  string reason = 1;
+  // Captures skipped since the pause began.
+  uint64 skipped_captures = 2;
+  google.protobuf.Timestamp since = 3;
 }
 
 message CloseFrameBufferRequest {

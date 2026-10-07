@@ -12,6 +12,8 @@ private func emptyWindowCaptureResponse(
   NativeWindowCaptureResponse(
     image_width: 0,
     image_height: 0,
+    window_x: 0,
+    window_y: 0,
     window_width: 0,
     window_height: 0,
     rgba_bytes: RustVec<UInt8>(),
@@ -22,7 +24,7 @@ private func emptyWindowCaptureResponse(
 
 func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse {
   var capturedImage: CGImage?
-  var capturedFrame = CGSize.zero
+  var capturedFrame = CGRect.zero
   var captureError: Error?
   let status = nativeCaptureWindowForAuv(windowID: UInt32(max(request.window_id, 0)), logical: request.logical) { image, frame, error in
     capturedImage = image
@@ -56,6 +58,8 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCa
   return NativeWindowCaptureResponse(
     image_width: Int64(image.width),
     image_height: Int64(image.height),
+    window_x: Double(capturedFrame.minX),
+    window_y: Double(capturedFrame.minY),
     window_width: Double(capturedFrame.width),
     window_height: Double(capturedFrame.height),
     rgba_bytes: nativeByteVec(rgba),
@@ -67,7 +71,7 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCa
 private func nativeCaptureWindowForAuv(
   windowID: UInt32,
   logical: Bool,
-  completion: @escaping (CGImage?, CGSize, Error?) -> Void
+  completion: @escaping (CGImage?, CGRect, Error?) -> Void
 ) -> DispatchTimeoutResult {
   let semaphore = DispatchSemaphore(value: 0)
 
@@ -133,7 +137,7 @@ private func nativeCaptureWindowForAuv(
         semaphore.signal()
         return
       }
-      completion(image, window.frame.size, nil)
+      completion(image, window.frame, nil)
       semaphore.signal()
     }
   }

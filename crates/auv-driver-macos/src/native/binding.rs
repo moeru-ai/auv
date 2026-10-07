@@ -304,10 +304,21 @@ pub(crate) mod ffi {
   }
 
   #[swift_bridge(swift_repr = "struct")]
+  struct NativeWindowAxSizeResponse {
+    // False when the window has no AX element or Accessibility is not granted.
+    found: bool,
+    width: f64,
+    height: f64,
+    minimized: bool,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
   struct NativeWindowCaptureResponse {
     image_width: i64,
     image_height: i64,
-    // Window size in points that ScreenCaptureKit captured (`SCWindow.frame`).
+    // Window frame in points that ScreenCaptureKit captured (`SCWindow.frame`).
+    window_x: f64,
+    window_y: f64,
     window_width: f64,
     window_height: f64,
     rgba_bytes: Vec<u8>,
@@ -422,6 +433,7 @@ pub(crate) mod ffi {
     fn find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse;
     fn find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse;
     fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse;
+    fn window_ax_size(pid: i64, window_number: i64) -> NativeWindowAxSizeResponse;
     fn find_visual_rows(request: NativeVisualRowsRequest) -> NativeVisualRowsResponse;
     fn click_point(x: f64, y: f64, button_code: i32, click_count: i64, click_interval_ms: u64, modifier_flags: u64) -> NativeActionResponse;
     fn window_pointer_event(
