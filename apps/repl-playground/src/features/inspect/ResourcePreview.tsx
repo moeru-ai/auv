@@ -1,12 +1,12 @@
-import type { Rect } from '../script-api/api'
-import type { Resource } from '../store'
+import type { Rect } from '../../script-api/api'
+import type { Resource } from '../../store'
 
 import { useEffect, useRef } from 'react'
 
-import { confidenceAlpha, confidenceLabel } from '../ocr'
-import { usePlayground } from '../store'
+import { CopyButton } from '../../components/CopyButton'
+import { confidenceAlpha, confidenceLabel } from '../../ocr'
+import { usePlayground } from '../../store'
 import { ClickLoupe } from './ClickLoupe'
-import { CopyButton } from './ui'
 
 interface OverlayBox {
   /** Stroke opacity, e.g. from OCR confidence. */
@@ -105,7 +105,7 @@ export function ResourcePreview({ compact = false, resource }: { compact?: boole
         return (
           <div className="flex flex-col gap-1.5">
             <div className="text-[12px] text-fg-subtle flex gap-1.5 items-center">
-              <span className="i-lucide-search-x shrink-0" />
+              <span className="i-ph-magnifying-glass-minus shrink-0" />
               <span className="truncate">{handle.query ? `No text matched “${handle.query}”` : 'No text recognized'}</span>
             </div>
             {frame?.kind === 'frame' && (

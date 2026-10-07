@@ -14,6 +14,14 @@
   --c-good: #34d399;
   --c-warn: #fbbf24;
   --c-bad: #f87171;
+  --c-info: #60a5fa;
+
+  /* Resource handle kinds; chips, dots and previews share them. */
+  --k-display: #7dd3fc;
+  --k-frame: #c4b5fd;
+  --k-input: #fda4af;
+  --k-text: #fcd34d;
+  --k-window: #67e8f9;
 
   /* Overlay palette shared by the desktop canvas and previews. */
   --o-window: #38bdf8;
@@ -44,6 +52,15 @@
     --c-fg-subtle: #8a91a1;
     --c-accent: #5b4be0;
     --c-accent-strong: #4a3bd0;
+    --c-good: #059669;
+    --c-warn: #b45309;
+    --c-bad: #dc2626;
+    --c-info: #2563eb;
+    --k-display: #0369a1;
+    --k-frame: #6d28d9;
+    --k-input: #be123c;
+    --k-text: #a16207;
+    --k-window: #0e7490;
     --syn-keyword: #8b2fc9;
     --syn-function: #1d5fd1;
     --syn-string: #2f7d32;
@@ -66,6 +83,15 @@
   --c-fg-subtle: #8a91a1;
   --c-accent: #5b4be0;
   --c-accent-strong: #4a3bd0;
+  --c-good: #059669;
+  --c-warn: #b45309;
+  --c-bad: #dc2626;
+  --c-info: #2563eb;
+  --k-display: #0369a1;
+  --k-frame: #6d28d9;
+  --k-input: #be123c;
+  --k-text: #a16207;
+  --k-window: #0e7490;
   --syn-keyword: #8b2fc9;
   --syn-function: #1d5fd1;
   --syn-string: #2f7d32;

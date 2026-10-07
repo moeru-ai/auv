@@ -1,11 +1,12 @@
-import type { WireValue } from '../runtime/protocol'
-import type { CallRecord } from '../store'
+import type { WireValue } from '../../runtime/protocol'
+import type { CallRecord } from '../../store'
 
 import { useEffect, useRef, useState } from 'react'
 
-import { actions, usePlayground } from '../store'
-import { cursorSeq } from '../timeline'
-import { RefChip } from './ValueView'
+import { Empty } from '../../components/Empty'
+import { actions, usePlayground } from '../../store'
+import { cursorSeq } from '../../timeline'
+import { RefChip } from '../inspect/ValueView'
 
 /** Every binding call of the current run. Click a row to move the time cursor to it. */
 export function CallList() {
@@ -71,10 +72,6 @@ export function CallList() {
   )
 }
 
-export function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="text-fg-subtle p-6 text-center flex h-full items-center justify-center">{children}</div>
-}
-
 /** Handle chips shown before a row collapses the rest into `+N`. */
 const COLLAPSED_REFS = 3
 
@@ -101,7 +98,7 @@ function CallRow({ call, future, hovered, index, selected, share }: { call: Call
         {call.hit > 1 && <span className="text-[11px] text-fg-subtle font-mono ml-1">{`#${call.hit}`}</span>}
       </td>
       <td className="leading-5 font-mono py-1.5 pr-3 whitespace-nowrap">
-        <span className={`mr-1.5 rounded-full size-1.5 inline-block ${call.effect === 'input' ? 'bg-rose-400' : 'bg-violet-400'}`} title={call.effect} />
+        <span className={`mr-1.5 rounded-full size-1.5 inline-block ${call.effect === 'input' ? 'bg-kind-input' : 'bg-accent'}`} title={call.effect} />
         <span className={call.status === 'error' ? 'text-bad' : 'text-fg'}>{call.method}</span>
         <span className="text-fg-subtle">{`(${call.args.map(summarize).join(', ')})`}</span>
       </td>

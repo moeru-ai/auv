@@ -1,9 +1,9 @@
-import type { Point, Rect } from '../script-api/api'
-import type { Resource } from '../store'
+import type { Point, Rect } from '../../script-api/api'
+import type { Resource } from '../../store'
 
 import { useEffect, useRef } from 'react'
 
-import { usePlayground } from '../store'
+import { usePlayground } from '../../store'
 
 type FrameResource = Resource & { kind: 'frame' }
 type InputResource = Resource & { kind: 'input' }
@@ -39,7 +39,7 @@ export function ClickLoupe({ compact = false, resource }: { compact?: boolean, r
   return (
     <div className="flex flex-col gap-1.5">
       <div className="text-[11.5px] text-fg-subtle font-mono flex flex-wrap gap-x-2">
-        <span className="text-rose-300">{`${resource.handle.action} (${Math.round(point.x)}, ${Math.round(point.y)})`}</span>
+        <span className="text-kind-input">{`${resource.handle.action} (${Math.round(point.x)}, ${Math.round(point.y)})`}</span>
         {target && <span className="text-fg">{`on “${target.text}”`}</span>}
         {resource.handle.path && <span>{resource.handle.path}</span>}
       </div>

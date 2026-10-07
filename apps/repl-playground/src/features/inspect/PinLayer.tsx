@@ -1,6 +1,6 @@
-import type { Pin } from '../store'
+import type { Pin } from '../../store'
 
-import { actions, usePlayground } from '../store'
+import { actions, usePlayground } from '../../store'
 import { ValuePreview } from './HoverCard'
 import { ResourcePreview } from './ResourcePreview'
 
@@ -48,7 +48,7 @@ function PinnedCard({ pin }: { pin: Pin }) {
         className="pl-2.5 pr-1 border-b border-line bg-surface-2 flex gap-2 h-8 cursor-grab items-center active:cursor-grabbing"
         onPointerDown={startDrag}
       >
-        <span className="i-lucide-pin text-[12px] text-accent" />
+        <span className="i-ph-push-pin text-[12px] text-accent" />
         <span className="text-[12px] text-fg font-mono flex-1 truncate">{pin.label}</span>
         {pin.seq >= 0 && (
           <button
@@ -68,7 +68,7 @@ function PinnedCard({ pin }: { pin: Pin }) {
           onPointerDown={event => event.stopPropagation()}
           type="button"
         >
-          <span className="i-lucide-x text-[13px]" />
+          <span className="i-ph-x text-[13px]" />
         </button>
       </div>
       <div className="text-[12.5px] p-3 max-h-[60vh] overflow-auto">

@@ -34,8 +34,6 @@ export interface CallRecord {
   status: 'error' | 'ok' | 'pending'
 }
 
-export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error'
-
 /** Whether a binding call only observes the device or delivers input to it. */
 export type Effect = 'input' | 'read'
 
@@ -98,8 +96,6 @@ export interface PlaygroundState {
   binds: BindEvent[]
   breakpoints: number[]
   calls: CallRecord[]
-  connection: ConnectionStatus
-  connectionError?: string
   /** Time cursor as an event-log position; `null` follows the latest event. */
   cursor: null | number
   displays: DisplayInfo[]
@@ -196,7 +192,6 @@ export const usePlayground = create<PlaygroundState>(() => ({
   binds: [],
   breakpoints: [],
   calls: [],
-  connection: 'disconnected',
   cursor: null,
   displays: [],
   executedLines: [],

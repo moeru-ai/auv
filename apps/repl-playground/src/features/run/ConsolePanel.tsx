@@ -1,14 +1,14 @@
 import { useEffect, useRef } from 'react'
 
-import { actions, usePlayground } from '../store'
-import { Empty } from './Timeline'
-import { ValueView } from './ValueView'
+import { Empty } from '../../components/Empty'
+import { actions, usePlayground } from '../../store'
+import { ValueView } from '../inspect/ValueView'
 
 const LEVEL_STYLE = {
   error: 'text-bad bg-bad/6',
-  info: 'text-sky-300',
+  info: 'text-info',
   log: 'text-fg',
-  show: 'text-violet-300 bg-violet-500/6',
+  show: 'text-accent bg-accent/6',
   warn: 'text-warn bg-warn/6',
 } as const
 
@@ -36,7 +36,7 @@ export function ConsolePanel() {
       }}
     >
       <button className="btn-ghost right-2 top-1 absolute z-1" onClick={actions.clearConsole} type="button">
-        <span className="i-lucide-trash-2" />
+        <span className="i-ph-trash" />
         Clear
       </button>
       {logs.map(entry => (

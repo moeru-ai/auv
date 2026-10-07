@@ -67,7 +67,7 @@ catalog:
   '@grpc/grpc-js': 1.14.4
   '@guiiai/logg': ^1.2.11
   '@hey-api/openapi-ts': ^0.99.0
-  '@iconify-json/lucide': ^1.2.139
+  '@iconify-json/ph': ^1.2.2
   '@lezer/highlight': ^1.2.5
   '@moeru/eslint-config': ^0.1.0-beta.20
   '@moeru/std': 0.1.0-beta.20

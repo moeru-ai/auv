@@ -1,8 +1,8 @@
 import type { Range } from '@codemirror/state'
 import type { DecorationSet, ViewUpdate } from '@codemirror/view'
 
-import type { HoverInfo } from '../runtime/protocol'
-import type { PlaygroundState } from '../store'
+import type { HoverInfo } from '../../runtime/protocol'
+import type { PlaygroundState } from '../../store'
 
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, startCompletion } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -16,10 +16,10 @@ import { tags } from '@lezer/highlight'
 import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { language, session } from '../runtime/session'
-import { actions, usePlayground } from '../store'
-import { bindHistory, lineAt as timelineLineAt } from '../timeline'
-import { HoverCard } from './HoverCard'
+import { language, session } from '../../runtime/session'
+import { actions, usePlayground } from '../../store'
+import { bindHistory, lineAt as timelineLineAt } from '../../timeline'
+import { HoverCard } from '../inspect/HoverCard'
 
 const STORAGE_KEY = 'auv-playground:source'
 

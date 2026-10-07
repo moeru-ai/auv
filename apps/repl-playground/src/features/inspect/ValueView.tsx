@@ -1,19 +1,19 @@
-import type { WireValue } from '../runtime/protocol'
-import type { Resource } from '../store'
+import type { WireValue } from '../../runtime/protocol'
+import type { Resource } from '../../store'
 
 import { PreviewCard } from '@base-ui/react/preview-card'
 import { useState } from 'react'
 
-import { refHint } from '../handles'
-import { actions, usePlayground } from '../store'
+import { refHint } from '../../handles'
+import { actions, usePlayground } from '../../store'
 import { ResourcePreview } from './ResourcePreview'
 
 const KIND_STYLE: Record<string, string> = {
-  display: 'bg-sky-500/12 text-sky-300',
-  frame: 'bg-violet-500/14 text-violet-300',
-  input: 'bg-rose-500/14 text-rose-300',
-  text: 'bg-amber-500/14 text-amber-300',
-  window: 'bg-cyan-500/14 text-cyan-300',
+  display: 'bg-kind-display/14 text-kind-display',
+  frame: 'bg-kind-frame/14 text-kind-frame',
+  input: 'bg-kind-input/14 text-kind-input',
+  text: 'bg-kind-text/14 text-kind-text',
+  window: 'bg-kind-window/14 text-kind-window',
 }
 
 interface AreaValue {
@@ -96,9 +96,9 @@ export function ValueView({ depth = 0, value }: { depth?: number, value: WireVal
   if (value === undefined)
     return <span className="text-fg-subtle">undefined</span>
   if (typeof value === 'string')
-    return <span className="text-emerald-300">{JSON.stringify(value)}</span>
+    return <span className="text-syn-string">{JSON.stringify(value)}</span>
   if (typeof value === 'number' || typeof value === 'boolean')
-    return <span className="text-sky-300">{String(value)}</span>
+    return <span className="text-syn-number">{String(value)}</span>
   if (typeof value !== 'object')
     return <span>{String(value)}</span>
 
@@ -155,7 +155,7 @@ function AreaChip({ area }: { area: AreaValue }) {
   const rect = { height: area.height, width: area.width, x: area.x, y: area.y }
   return (
     <span
-      className="text-[11.5px] text-emerald-300 font-mono px-1.5 rounded bg-emerald-500/12 inline-flex gap-1 h-5 max-w-full cursor-default items-center"
+      className="text-[11.5px] text-syn-string font-mono px-1.5 rounded bg-syn-string/12 inline-flex gap-1 h-5 max-w-full cursor-default items-center"
       onMouseEnter={() => usePlayground.setState({ hoveredRect: rect })}
       onMouseLeave={() => usePlayground.setState({ hoveredRect: null })}
       title={area.from ? `area from ${area.from}` : 'area'}
@@ -182,7 +182,7 @@ function RefPreview({ refId, resource }: { refId: string, resource: Resource }) 
           title="Pin as a floating card"
           type="button"
         >
-          <span className="i-lucide-pin text-[13px]" />
+          <span className="i-ph-push-pin text-[13px]" />
         </button>
       </div>
       <ResourcePreview compact resource={resource} />

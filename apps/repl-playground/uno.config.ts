@@ -1,6 +1,13 @@
 import { defineConfig, presetIcons, presetWind4, transformerVariantGroup } from 'unocss'
 
 export default defineConfig({
+  content: {
+    pipeline: {
+      // Icon and color classes also live in plain `.ts` tables (e.g. the
+      // Device platform icons), which the default pipeline skips.
+      include: [/\.[jt]sx?($|\?)/, /\.html($|\?)/],
+    },
+  },
   presets: [
     presetWind4(),
     presetIcons({ scale: 1.1 }),
@@ -21,10 +28,24 @@ export default defineConfig({
       'fg-muted': 'var(--c-fg-muted)',
       'fg-subtle': 'var(--c-fg-subtle)',
       'good': 'var(--c-good)',
+      'info': 'var(--c-info)',
+      'kind': {
+        display: 'var(--k-display)',
+        frame: 'var(--k-frame)',
+        input: 'var(--k-input)',
+        text: 'var(--k-text)',
+        window: 'var(--k-window)',
+      },
       'line': 'var(--c-line)',
       'surface-0': 'var(--c-surface-0)',
       'surface-1': 'var(--c-surface-1)',
       'surface-2': 'var(--c-surface-2)',
+      'syn': {
+        keyword: 'var(--syn-keyword)',
+        number: 'var(--syn-number)',
+        string: 'var(--syn-string)',
+        type: 'var(--syn-type)',
+      },
       'warn': 'var(--c-warn)',
     },
     font: {

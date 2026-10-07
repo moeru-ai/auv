@@ -1,13 +1,13 @@
-import type { CameraFlight, View } from '../camera'
-import type { Point, Rect } from '../script-api/api'
-import type { CallRecord, FocusEvent, Mark, PlaygroundState, Resource } from '../store'
+import type { Point, Rect } from '../../script-api/api'
+import type { CallRecord, FocusEvent, Mark, PlaygroundState, Resource } from '../../store'
+import type { CameraFlight, View } from './camera'
 
 import { useEffect, useRef, useState } from 'react'
 
-import { flight, flightDuration, viewFor } from '../camera'
-import { confidenceAlpha } from '../ocr'
-import { nowMs, usePlayground } from '../store'
-import { callAt, callsUpTo, cursorSeq, latestFramesAt, pickAxNode } from '../timeline'
+import { confidenceAlpha } from '../../ocr'
+import { nowMs, usePlayground } from '../../store'
+import { callAt, callsUpTo, cursorSeq, latestFramesAt, pickAxNode } from '../../timeline'
+import { flight, flightDuration, viewFor } from './camera'
 
 const COLORS = {
   ax: '#22d3ee',
@@ -213,7 +213,7 @@ export function DesktopCanvas() {
           }}
           type="button"
         >
-          <span className="i-lucide-scan" />
+          <span className="i-ph-frame-corners" />
           Fit
         </button>
       </div>

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { session } from '../runtime/session'
-import { usePlayground } from '../store'
-import { CopyButton, IconButton } from './ui'
+import { CopyButton } from '../../components/CopyButton'
+import { IconButton } from '../../components/IconButton'
+import { session } from '../../runtime/session'
+import { usePlayground } from '../../store'
 
 const POSITION_KEY = 'auv-playground:debugbar'
 
@@ -70,33 +71,33 @@ export function DebugBar() {
       style={{ right: offset.right, top: offset.top }}
     >
       <span
-        className="i-lucide-grip-vertical text-[14px] text-fg-subtle mx-0.5 cursor-grab active:cursor-grabbing"
+        className="i-ph-dots-six-vertical text-[14px] text-fg-subtle mx-0.5 cursor-grab active:cursor-grabbing"
         onPointerDown={startDrag}
         title="Drag to move"
       />
       {!busy && (
         <>
-          <IconButton hint="Run all or the selection" icon="i-lucide-play" keys="⌘↩" label="Run" onClick={() => runEditor('run')} tone="primary" />
-          <IconButton hint="Run and pause at the first statement" icon="i-lucide-footprints" keys="⌘⇧↩" onClick={() => runEditor('step')} />
+          <IconButton hint="Run all or the selection" icon="i-ph-play-fill" keys="⌘↩" label="Run" onClick={() => runEditor('run')} tone="primary" />
+          <IconButton hint="Run and pause at the first statement" icon="i-ph-footprints" keys="⌘⇧↩" onClick={() => runEditor('step')} />
           <IconButton
             disabled={!hasRecording}
             hint={hasRecording ? 'Replay offline: re-run against the last live run’s recorded device calls' : 'Run live once to record device calls for offline replay'}
-            icon="i-lucide-history"
+            icon="i-ph-clock-counter-clockwise"
             onClick={() => runEditor('replay')}
           />
         </>
       )}
       {busy && (
         <>
-          <IconButton disabled={!paused} hint="Continue" icon="i-lucide-play" keys="F8" onClick={() => session.resume('continue')} />
-          <IconButton disabled={!paused} hint="Step to the next statement" icon="i-lucide-arrow-down-to-line" keys="F10" onClick={() => session.resume('step')} />
-          <IconButton hint="Stop at the next statement" icon="i-lucide-square" keys="⇧F5" onClick={() => session.stop()} />
+          <IconButton disabled={!paused} hint="Continue" icon="i-ph-play-fill" keys="F8" onClick={() => session.resume('continue')} />
+          <IconButton disabled={!paused} hint="Step to the next statement" icon="i-ph-arrow-line-down" keys="F10" onClick={() => session.resume('step')} />
+          <IconButton hint="Stop at the next statement" icon="i-ph-stop-fill" keys="⇧F5" onClick={() => session.stop()} />
         </>
       )}
       <span className={`text-[11.5px] font-mono ml-1.5 mr-1 flex gap-1.5 whitespace-nowrap items-center ${tone}`} data-run-status={status}>
-        {status === 'running' && <span className="i-lucide-loader-circle animate-spin" />}
-        {status === 'error' && <span className="i-lucide-circle-x" />}
-        {mode === 'replay' && status !== 'idle' && <span className="text-violet-300 px-1 rounded bg-violet-500/15">replay</span>}
+        {status === 'running' && <span className="i-ph-circle-notch animate-spin" />}
+        {status === 'error' && <span className="i-ph-x-circle" />}
+        {mode === 'replay' && status !== 'idle' && <span className="text-accent px-1 rounded bg-accent/15">replay</span>}
         {paused && currentLine !== null ? `paused L${currentLine}` : status === 'error' && errorLine ? `error · L${errorLine}` : status}
       </span>
       {status === 'error' && errorMessage && dismissedAt !== endedAt && (
@@ -114,11 +115,11 @@ function ErrorCard({ message, onDismiss }: { message: string, onDismiss: () => v
   return (
     <div className="mt-1.5 border border-bad/40 rounded-lg bg-surface-1 w-[min(420px,calc(100vw-32px))] shadow-xl right-0 top-full absolute" role="alert">
       <div className="text-[11px] text-bad font-medium pl-2.5 pr-1 pt-1 flex gap-1.5 items-center">
-        <span className="i-lucide-circle-x" />
+        <span className="i-ph-x-circle" />
         <span className="flex-1">{name}</span>
         <CopyButton label="Copy error" text={message} />
         <button aria-label="Dismiss" className="text-fg-subtle rounded flex size-6 cursor-pointer items-center justify-center hover:(text-fg bg-surface-2)" onClick={onDismiss} title="Dismiss" type="button">
-          <span className="i-lucide-x" />
+          <span className="i-ph-x" />
         </button>
       </div>
       <div className="text-[12px] text-fg leading-relaxed font-mono px-2.5 pb-2 max-h-40 select-text [overflow-wrap:anywhere] overflow-auto">{body}</div>

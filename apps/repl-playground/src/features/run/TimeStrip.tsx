@@ -1,10 +1,10 @@
-import type { CallRecord, PlaygroundState } from '../store'
+import type { CallRecord, PlaygroundState } from '../../store'
 
 import { useEffect, useRef, useState } from 'react'
 
-import { actions, nowMs, usePlayground } from '../store'
-import { callAt, cursorSeq, lineAt } from '../timeline'
-import { IconButton } from './ui'
+import { IconButton } from '../../components/IconButton'
+import { actions, nowMs, usePlayground } from '../../store'
+import { callAt, cursorSeq, lineAt } from '../../timeline'
 
 const CALL_COLORS = { error: '#f87171', input: '#fb7185', pending: '#fbbf24', read: '#a78bfa' }
 
@@ -128,9 +128,9 @@ export function TimeStrip() {
 
   return (
     <div className="px-2 border-t border-line bg-surface-1 flex shrink-0 gap-1 h-10 items-center">
-      <IconButton disabled={!hasEvents} hint="Previous call" icon="i-lucide-skip-back" onClick={() => jumpCall(-1)} />
-      <IconButton disabled={!hasEvents} hint="Next call" icon="i-lucide-skip-forward" onClick={() => jumpCall(1)} />
-      <IconButton active={following} disabled={!hasEvents} hint={following ? 'Following the latest event' : 'Follow the latest event'} icon="i-lucide-radio-tower" onClick={() => actions.setCursor(null)} />
+      <IconButton disabled={!hasEvents} hint="Previous call" icon="i-ph-skip-back" onClick={() => jumpCall(-1)} />
+      <IconButton disabled={!hasEvents} hint="Next call" icon="i-ph-skip-forward" onClick={() => jumpCall(1)} />
+      <IconButton active={following} disabled={!hasEvents} hint={following ? 'Following the latest event' : 'Follow the latest event'} icon="i-ph-broadcast" onClick={() => actions.setCursor(null)} />
       <div className="mx-2 flex-1 h-full relative">
         <canvas
           className="h-7 w-full block cursor-crosshair inset-x-0 top-1.5 absolute"

@@ -1,4 +1,4 @@
-import type { Rect } from './script-api/api'
+import type { Rect } from '../../script-api/api'
 
 export interface CameraFlight {
   /** View at progress `t` in [0, 1] (already eased). */

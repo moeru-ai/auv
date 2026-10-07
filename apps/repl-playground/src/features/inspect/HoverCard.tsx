@@ -1,12 +1,12 @@
-import type { HoverInfo, WireValue } from '../runtime/protocol'
-import type { CallRecord } from '../store'
+import type { HoverInfo, WireValue } from '../../runtime/protocol'
+import type { CallRecord } from '../../store'
 import type { Tick } from './TimeTicks'
 
 import { useState } from 'react'
 
-import { confidenceAlpha } from '../ocr'
-import { actions, usePlayground } from '../store'
-import { bindHistory, cursorSeq, framesOf, refOf, sampleIndexAt } from '../timeline'
+import { confidenceAlpha } from '../../ocr'
+import { actions, usePlayground } from '../../store'
+import { bindHistory, cursorSeq, framesOf, refOf, sampleIndexAt } from '../../timeline'
 import { FrameView, ResourcePreview } from './ResourcePreview'
 import { TimeTicks } from './TimeTicks'
 import { RefChip, ValueView } from './ValueView'
@@ -144,7 +144,7 @@ function CallSummary({ call, previewCall = call }: { call: CallRecord, previewCa
           </div>
           {noMatch && (
             <span className="text-[12px] text-fg-muted flex gap-1.5 items-center inset-0 justify-center absolute">
-              <span className="i-lucide-search-x" />
+              <span className="i-ph-magnifying-glass-minus" />
               No text matched
             </span>
           )}
@@ -166,7 +166,7 @@ function Section({ children, onPin, title }: { children: React.ReactNode, onPin:
           title="Pin this moment as a floating card"
           type="button"
         >
-          <span className="i-lucide-pin text-[13px]" />
+          <span className="i-ph-push-pin text-[13px]" />
         </button>
       </div>
       {children}

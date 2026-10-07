@@ -53,8 +53,12 @@ The REPL runs against the SDK source in this repository (`js/packages/sdk`,
 aliased in `vite.config.ts` and `tsconfig.json`), so it needs no SDK build and
 always matches the daemon built from the same checkout.
 
-The REPL starts on the mock desktop. To control a real Device, open
-**Connect device** (left rail) and pick one of two modes:
+The REPL starts on the mock desktop. The device indicator in the status bar's
+left corner shows the active Device; click it to open the device picker. Several
+daemons can stay connected at once: pick any Device they report (or the mock
+desktop) to make it the one scripts, the canvas and live view use. Switching is
+disabled while a run is in progress. To control a real Device, choose
+**Add a device…** and pick one of two modes:
 
 - **Local · no pairing** (same machine, development): a loopback listener
   without a pairing store accepts local connections without a credential.
@@ -76,6 +80,10 @@ The REPL starts on the mock desktop. To control a real Device, open
 
   Paste the token and press **Pair**. The browser keeps the credential and
   reconnects with it on the next visit.
+
+Daemons that were connected when the page closed reconnect on the next visit,
+and the previously active Device is restored. **Disconnect** keeps a daemon in
+the picker; **Forget** also drops its credential.
 
 Without `--pairing-store`, `auv devices pair create-token` fails with
 `pairing is not configured`; with it, unpaired HTTP requests are rejected.
@@ -201,6 +209,13 @@ store (zustand) ─▶ canvas, timeline, inspector, editor decorations
   host-resolved promise, and proxies `auv.*` to the host with birpc.
 - `runtime/bindings.ts` maps script calls onto a `Backend`, registers every
   result as a host-side resource, and returns plain handles to the worker.
+- `src/components` holds store-agnostic UI building blocks (icon buttons, tab
+  bars, panel frames). `src/features/*` groups the workbench by area:
+  `device` (connection registry and picker), `editor`, `desktop` (canvas and
+  camera), `inspect` (values, handles, previews, pins), `run` (calls, console,
+  time strip) and `workbench` (activity and status bars).
+- Icons are UnoCSS `presetIcons` classes from Iconify Phosphor
+  (`i-ph-*`, regular weight).
 
 ## Deliberate gaps
 
@@ -230,7 +245,7 @@ These are known and intentionally deferred; each is marked in code.
   (which clears REPL state). A user `try/catch` can swallow a stop request.
 - **Breakpoints are line numbers**; they do not move with edits.
 - **Not a sandbox.** The exec worker shares the page origin, and the paired
-  Device credential is stored in `localStorage`. Run only your own scripts and
+  Device credentials are stored in `localStorage`. Run only your own scripts and
   keep the REPL on a local origin.
 - `const` at the top level becomes reassignable across cells (same as
   `node:repl`), and a line starting with `(` or `[` continues the previous

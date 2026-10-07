@@ -324,13 +324,14 @@ class ExecSession {
 
 export const session = new ExecSession()
 
-/** Switches the active device backend and refreshes displays. */
+/**
+ * Switches the backend scripts and the canvas use, and refreshes displays.
+ * The device registry (`features/device`) owns backend lifecycles, so the
+ * previous backend stays open.
+ */
 export async function activateBackend(backend: Backend | null): Promise<void> {
-  const previous = usePlayground.getState().backend
   session.setLive(false)
-  usePlayground.setState({ axTree: null, backend, connection: backend ? 'connected' : 'disconnected', connectionError: undefined, displays: [], liveFrames: {} })
-  if (previous && previous !== backend)
-    await previous.dispose().catch(() => {})
+  usePlayground.setState({ axTree: null, backend, displays: [], liveFrames: {} })
   if (!backend)
     return
   const displays = await backend.listDisplays()

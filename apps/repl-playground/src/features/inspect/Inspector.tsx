@@ -1,16 +1,17 @@
-import type { AxNode } from '../backend/types'
-import type { InspectorTab, Resource } from '../store'
+import type { AxNode } from '../../backend/types'
+import type { InspectorTab, Resource } from '../../store'
 
 import { Tabs } from '@base-ui/react/tabs'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { refHint } from '../handles'
-import { session } from '../runtime/session'
-import { actions, usePlayground } from '../store'
-import { bindingsOf, consumersOf, cursorSeq, varsAt } from '../timeline'
+import { Empty } from '../../components/Empty'
+import { IconButton } from '../../components/IconButton'
+import { TabBar } from '../../components/TabBar'
+import { refHint } from '../../handles'
+import { session } from '../../runtime/session'
+import { actions, usePlayground } from '../../store'
+import { bindingsOf, consumersOf, cursorSeq, varsAt } from '../../timeline'
 import { ResourcePreview } from './ResourcePreview'
-import { Empty } from './Timeline'
-import { IconButton } from './ui'
 import { RefChip, ValueView } from './ValueView'
 
 interface RefGroup {
@@ -26,17 +27,13 @@ export function Inspector() {
   const tab = usePlayground(state => state.inspectorTab)
   return (
     <Tabs.Root className="bg-surface-1 flex flex-col h-full" onValueChange={value => usePlayground.setState({ inspectorTab: value as InspectorTab })} value={tab}>
-      <Tabs.List className="px-2 border-b border-line flex shrink-0 gap-1 h-9 items-center">
-        {[['handle', 'Handle'], ['call', 'Call'], ['ax', 'AX tree']].map(([value, label]) => (
-          <Tabs.Tab
-            className="text-[12.5px] text-fg-muted font-medium px-2.5 rounded-md h-7 cursor-pointer data-[active]:(text-fg bg-surface-2) hover:text-fg"
-            key={value}
-            value={value}
-          >
-            {label}
-          </Tabs.Tab>
-        ))}
-      </Tabs.List>
+      <TabBar
+        tabs={[
+          { label: 'Handle', value: 'handle' },
+          { label: 'Call', value: 'call' },
+          { label: 'AX tree', value: 'ax' },
+        ]}
+      />
       <Tabs.Panel className="flex-1 min-h-0" value="handle"><HandlePanel /></Tabs.Panel>
       <Tabs.Panel className="flex-1 min-h-0" value="call"><CallPanel /></Tabs.Panel>
       <Tabs.Panel className="flex-1 min-h-0" value="ax"><AxTreePanel /></Tabs.Panel>
@@ -107,10 +104,10 @@ function AxRow({ collapsed, depth, node, onToggle, selectedPath }: {
         >
           {isCollapsed ? '▸' : '▾'}
         </button>
-        <span className="text-sky-300">{node.role}</span>
-        {node.label && <span className="text-emerald-300 truncate">{JSON.stringify(node.label)}</span>}
+        <span className="text-syn-type">{node.role}</span>
+        {node.label && <span className="text-syn-string truncate">{JSON.stringify(node.label)}</span>}
         {node.value && <span className="text-fg-subtle truncate">{`= ${JSON.stringify(node.value)}`}</span>}
-        {node.actions && <span className="text-[10.5px] text-rose-300">{node.actions.join(' ')}</span>}
+        {node.actions && <span className="text-[10.5px] text-syn-keyword">{node.actions.join(' ')}</span>}
       </div>
       {!isCollapsed && node.children.map(child => (
         <AxRow collapsed={collapsed} depth={depth + 1} key={child.path} node={child} onToggle={onToggle} selectedPath={selectedPath} />
@@ -138,7 +135,7 @@ function AxTreePanel() {
     <div className="flex flex-col h-full">
       <div className="text-[11.5px] text-fg-subtle px-2 border-b border-line flex shrink-0 gap-1 h-8 items-center">
         <span className="flex-1">Hover to highlight · click the canvas to pick</span>
-        <IconButton hint="Refresh the accessibility tree" icon="i-lucide-refresh-cw" onClick={() => void session.refreshAxTree()} />
+        <IconButton hint="Refresh the accessibility tree" icon="i-ph-arrows-clockwise" onClick={() => void session.refreshAxTree()} />
       </div>
       <div className="text-[12.5px] font-mono py-1 flex-1 min-h-0 overflow-auto" onMouseLeave={() => usePlayground.setState({ hoveredRect: null })}>
         {tree
@@ -193,7 +190,7 @@ function CallPanel() {
     <div className="text-[12.5px] flex flex-col h-full">
       <div className="p-3 border-b border-line flex shrink-0 flex-col gap-2">
         <div className="font-mono flex gap-2 items-center">
-          <span className={`rounded-full size-1.5 ${call.effect === 'input' ? 'bg-rose-400' : 'bg-violet-400'}`} title={call.effect} />
+          <span className={`rounded-full size-1.5 ${call.effect === 'input' ? 'bg-kind-input' : 'bg-accent'}`} title={call.effect} />
           <span className={call.status === 'error' ? 'text-bad' : 'text-fg'}>{call.method}</span>
           <button
             className="text-[11px] text-fg-muted ml-auto px-1.5 rounded bg-surface-2 cursor-pointer hover:text-fg"
@@ -325,7 +322,7 @@ function HandlePanel() {
           title="Pin as a floating card"
           type="button"
         >
-          <span className="i-lucide-pin text-[13px]" />
+          <span className="i-ph-push-pin text-[13px]" />
         </button>
       </div>
       <ResourcePreview resource={resource} />

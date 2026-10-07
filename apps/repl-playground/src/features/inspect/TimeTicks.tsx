@@ -1,4 +1,4 @@
-import { actions } from '../store'
+import { actions } from '../../store'
 
 export interface Tick {
   label: string

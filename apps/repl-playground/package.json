@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "@eslint-react/eslint-plugin": "catalog:",
-    "@iconify-json/lucide": "catalog:",
+    "@iconify-json/ph": "catalog:",
     "@moeru/eslint-config": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",

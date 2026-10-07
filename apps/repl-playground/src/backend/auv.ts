@@ -201,7 +201,7 @@ class AuvBackend implements Backend {
   }
 }
 
-export async function createAuvBackend(options: AuvBackendOptions): Promise<{ backend: Backend, devices: readonly Device[] }> {
+export async function createAuvBackend(options: AuvBackendOptions): Promise<{ backend: Backend, device: Device, devices: readonly Device[] }> {
   const connection = await connect({
     credential: options.credential,
     transport: createHttpTransport({ endpoint: options.endpoint }),
@@ -213,7 +213,7 @@ export async function createAuvBackend(options: AuvBackendOptions): Promise<{ ba
     ?? devices[0]
   if (!device)
     throw new Error('The daemon reported no Devices')
-  return { backend: withReadableErrors(new AuvBackend(connection, client, device)), devices }
+  return { backend: withReadableErrors(new AuvBackend(connection, client, device)), device, devices }
 }
 
 /** Pairs this browser with a daemon using a one-time token from `auv devices pair create-token`. */
