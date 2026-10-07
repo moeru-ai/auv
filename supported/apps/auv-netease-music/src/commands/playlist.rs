@@ -1051,7 +1051,7 @@ fn capture_playlist_play_verification(
       .capture_with(window, crate::window_capture_options())
       .map_err(|error| format!("playlist play verification capture failed: {error}"))?;
     crate::telemetry::capture_artifact("auv.netease.playlist_play.verification_capture", &capture);
-    let control_state = classify_bottom_playback_control_state(&capture.image);
+    let control_state = classify_bottom_playback_control_state(&capture.image, capture.scale_factor);
     let bottom_text = recognize_playlist_bottom_text(session, &capture, inputs);
     let passed = playlist_play_verified_from_bottom_probe(control_state, before_bottom_text, bottom_text.as_deref());
     let verification = if passed {

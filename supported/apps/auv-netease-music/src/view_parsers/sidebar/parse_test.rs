@@ -172,3 +172,27 @@ fn parse_viewport_treats_playlist_named_rows_as_items_not_sections() {
   assert_eq!(observation.candidates[1].kind, SidebarCandidateKind::PlaylistItem);
   assert_eq!(observation.candidates[2].kind, SidebarCandidateKind::PlaylistItem);
 }
+
+// ROOT CAUSE:
+//
+// If the sidebar is captured at native resolution, OCR reads the small print
+// on cover thumbnails (x 32..64 pt) and returned it as playlist rows because
+// any text right of x 24 pt counted as a playlist.
+//
+// Before the fix, `CNS` and the short `UNDERTALE` cover text became items.
+// The fix drops text that ends left of the label column or is under 10 pt tall.
+#[test]
+fn parse_viewport_drops_text_read_off_cover_thumbnails() {
+  let recognition = fake_recognition(vec![
+    ("创建的歌单 215", 33.5, 42.0, 93.0, 14.0),
+    ("CNS", 32.0, 74.0, 20.5, 10.5),
+    ("UNDERTALE", 36.0, 110.0, 27.0, 5.0),
+    ("我喜欢的风格|Techno", 70.0, 112.0, 126.5, 13.0),
+    ("江 華子一上番年古", 80.5, 150.0, 108.5, 5.5),
+    ("羽毛", 71.5, 180.0, 25.5, 14.5),
+  ]);
+  let observation = parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 330.0, 400.0), &recognition);
+
+  let labels = observation.candidates.iter().filter_map(|candidate| candidate.label.as_deref()).collect::<Vec<_>>();
+  assert_eq!(labels, vec!["创建的歌单 215", "我喜欢的风格|Techno", "羽毛"]);
+}

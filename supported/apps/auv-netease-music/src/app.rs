@@ -347,7 +347,7 @@ impl LiveViewProvider {
     };
 
     let player = if scope.player {
-      PlayerView::from_control_state(classify_bottom_playback_control_state(&capture.image))
+      PlayerView::from_control_state(classify_bottom_playback_control_state(&capture.image, capture.scale_factor))
     } else {
       PlayerView::unknown()
     };

@@ -351,7 +351,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     .map_err(|error| format!("initial playback OCR failed: {error}"))?;
   let before_recognition = before_recognition.relative_to(&before_capture).map_err(|error| error.to_string())?;
   let before_screen = screen::classify_screen(&before_recognition, window_size);
-  let control_state = classify_bottom_playback_control_state(&before_capture.image);
+  let control_state = classify_bottom_playback_control_state(&before_capture.image, before_capture.scale_factor);
   let mut player = PlayerView::from_control_state(control_state);
   if let Some(text) = bottom_bar_text(&before_recognition, window_size) {
     player = player.with_observed_text(text);

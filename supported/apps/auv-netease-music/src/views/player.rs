@@ -111,15 +111,23 @@ impl PlayerView {
   }
 }
 
-pub(crate) fn classify_bottom_playback_control_state(image: &RgbaImage) -> PlaybackControlState {
-  if image.width() < 80 || image.height() < 80 {
+/// Classify the play/pause button in a window capture. Offsets are in points
+/// and scaled by `scale_factor`, so native and 1x captures both work.
+pub(crate) fn classify_bottom_playback_control_state(image: &RgbaImage, scale_factor: f64) -> PlaybackControlState {
+  let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+    scale_factor
+  } else {
+    1.0
+  };
+  let points = |value: f64| (value * scale).round() as i32;
+  if (image.width() as i32) < points(80.0) || (image.height() as i32) < points(80.0) {
     return PlaybackControlState::Unknown;
   }
 
   let center_x = image.width() as i32 / 2;
-  let center_y = image.height() as i32 - 38;
-  let half_width = 24i32;
-  let half_height = 22i32;
+  let center_y = image.height() as i32 - points(38.0);
+  let half_width = points(24.0);
+  let half_height = points(22.0);
   let left = (center_x - half_width).max(0);
   let right = (center_x + half_width).min(image.width() as i32 - 1);
   let top = (center_y - half_height).max(0);

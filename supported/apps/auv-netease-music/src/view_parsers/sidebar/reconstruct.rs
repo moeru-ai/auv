@@ -63,8 +63,18 @@ impl ReconstructionPolicy for NeteasePolicy {
     match candidate.kind {
       SidebarCandidateKind::SectionHeader => {
         let kind = SidebarSectionKind::from_label(label);
+        // The sidebar has one section per playlist collection kind, and its
+        // header text carries OCR noise that varies between frames (playlist
+        // count, a disclosure chevron read as `^`, `～` or nothing). Keying
+        // those sections by label split one collection into two and listed
+        // its rows twice.
+        let identity = if kind.is_playlist_collection() {
+          String::new()
+        } else {
+          normalize_identity(label)
+        };
         CandidateRole::Header {
-          section_key: (kind, normalize_identity(label)),
+          section_key: (kind, identity),
         }
       }
       SidebarCandidateKind::PlaylistItem | SidebarCandidateKind::NavigationItem => CandidateRole::Item {
@@ -172,3 +182,7 @@ impl ReconstructionPolicy for NeteasePolicy {
     }
   }
 }
+
+#[cfg(test)]
+#[path = "reconstruct_test.rs"]
+mod tests;

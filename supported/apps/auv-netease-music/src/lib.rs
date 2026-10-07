@@ -13,14 +13,14 @@ mod telemetry;
 
 /// Window capture options for NetEase flows.
 ///
-/// NOTICE(netease-logical-captures): NetEase OCR crops, motion thresholds and
-/// layout constants were validated on 1x window captures, because macOS
-/// ScreenCaptureKit window captures came back at 1x until 2026-10-07. Window
-/// captures now default to native (2x) resolution; NetEase keeps 1x until a
-/// native-resolution pass is validated live.
+/// NOTICE(netease-native-captures): NetEase reads names through OCR, and 1x
+/// captures misread dense CJK glyphs (about a quarter of a live 103-row
+/// sidebar on 2026-10-07), so NetEase captures at native resolution. Layout
+/// constants are in points; pixel analyses (motion crops, the play-button
+/// classifier, icon templates) scale or downscale to stay at 1x.
 pub(crate) fn window_capture_options() -> auv_driver::CaptureOptions {
   auv_driver::CaptureOptions {
-    resolution: auv_driver::CaptureResolution::Logical,
+    resolution: auv_driver::CaptureResolution::Native,
     ..Default::default()
   }
 }
@@ -723,6 +723,8 @@ fn empty_root() -> ViewNodeRecord {
   }
 }
 
+/// Crop `bounds` (window points) out of a capture image at one pixel per
+/// point, so motion thresholds tuned on 1x captures hold for native captures.
 fn crop_image(image: &RgbaImage, bounds: ViewBounds, scale_factor: f64) -> RgbaImage {
   let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
     scale_factor
@@ -745,7 +747,12 @@ fn crop_image(image: &RgbaImage, bounds: ViewBounds, scale_factor: f64) -> RgbaI
       crop.put_pixel(crop_x, crop_y, *image.get_pixel(x + crop_x, y + crop_y));
     }
   }
-  crop
+  if scale <= 1.0 {
+    return crop;
+  }
+  let width = ((crop.width() as f64 / scale).round() as u32).max(1);
+  let height = ((crop.height() as f64 / scale).round() as u32).max(1);
+  image::imageops::thumbnail(&crop, width, height)
 }
 
 #[cfg(target_os = "macos")]

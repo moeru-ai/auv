@@ -243,8 +243,12 @@ After that, native and logical window captures cost about the same.
 
 Consumers validated on 1x keep 1x:
 
-- NetEase flows request `Logical` (`NOTICE(netease-logical-captures)`) until
-  a native pass is validated live.
+- NetEase flows were the exception until 2026-10-07. They now request
+  `Native` (`NOTICE(netease-native-captures)`): a live sidebar comparison
+  read about 24 of 103 rows wrong at 1x and none at 2x, at about twice the
+  OCR time. Their pixel analyses (motion crops, the play-button classifier,
+  icon templates) stay at 1x, and text read off cover thumbnails is dropped
+  (`NOTICE(netease-cover-art-text)`).
 - Scroll-until compares motion per logical point
   (`NOTICE(scroll-until-logical-motion)`): `ViewportPixelPolicy` was tuned on
   1x captures.

@@ -72,7 +72,7 @@ pub(crate) fn candidate_from_evidence(observation_index: usize, node: &ViewEvide
     return None;
   }
   let kind = classify_sidebar_text(label, bounds.x);
-  if kind == SidebarCandidateKind::Unknown {
+  if kind == SidebarCandidateKind::Unknown || (kind == SidebarCandidateKind::PlaylistItem && is_cover_art_text(bounds)) {
     return None;
   }
 
@@ -85,6 +85,18 @@ pub(crate) fn candidate_from_evidence(observation_index: usize, node: &ViewEvide
     evidence_ids: vec![node.id.clone()],
     confidence: node.confidence,
   })
+}
+
+/// Text that OCR read off a playlist cover thumbnail rather than a row label.
+///
+/// NOTICE(netease-cover-art-text): native-resolution captures make the small
+/// print on cover thumbnails legible, so OCR returns it as extra rows. In the
+/// 2026-10-07 live sidebar every thumbnail spans x 32..64 pt and labels start
+/// at x ~70 pt with heights of 13..18 pt; cover text either ends left of the
+/// label column or is under 10 pt tall. Revisit if NetEase changes its row
+/// layout.
+fn is_cover_art_text(bounds: ViewBounds) -> bool {
+  bounds.x + bounds.width <= 66.0 || bounds.height < 10.0
 }
 
 pub(crate) fn classify_sidebar_text(label: &str, x: f64) -> SidebarCandidateKind {

@@ -6,8 +6,21 @@ fn classify_playback_control_state_distinguishes_pause_from_play_icon() {
   let pause = playback_control_test_image(PlaybackControlState::PauseVisible);
   let play = playback_control_test_image(PlaybackControlState::PlayVisible);
 
-  assert_eq!(classify_bottom_playback_control_state(&pause), PlaybackControlState::PauseVisible);
-  assert_eq!(classify_bottom_playback_control_state(&play), PlaybackControlState::PlayVisible);
+  assert_eq!(classify_bottom_playback_control_state(&pause, 1.0), PlaybackControlState::PauseVisible);
+  assert_eq!(classify_bottom_playback_control_state(&play, 1.0), PlaybackControlState::PlayVisible);
+}
+
+#[test]
+fn classify_playback_control_state_reads_native_resolution_captures() {
+  let pause = double(&playback_control_test_image(PlaybackControlState::PauseVisible));
+  let play = double(&playback_control_test_image(PlaybackControlState::PlayVisible));
+
+  assert_eq!(classify_bottom_playback_control_state(&pause, 2.0), PlaybackControlState::PauseVisible);
+  assert_eq!(classify_bottom_playback_control_state(&play, 2.0), PlaybackControlState::PlayVisible);
+}
+
+fn double(image: &RgbaImage) -> RgbaImage {
+  image::imageops::resize(image, image.width() * 2, image.height() * 2, image::imageops::FilterType::Nearest)
 }
 
 fn playback_control_test_image(state: PlaybackControlState) -> RgbaImage {
