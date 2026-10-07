@@ -177,15 +177,6 @@ export interface ScrollDelta {
   dy?: number
 }
 
-/** What `scrollUntil` saw after one step, for an `until` predicate. */
-export interface ScrollUntilUpdate {
-  /** Whether the viewport moved on this step (false before the first step). */
-  readonly moved: boolean
-  readonly steps: number
-  /** Full recognized window text after this step. */
-  readonly text: string
-}
-
 /** One step per update; scroll along one axis only. */
 export interface ScrollUntilOptions extends ScrollDelta {
   /** Consecutive no-motion steps that count as the end, 1–10. Default 2. */
@@ -211,6 +202,15 @@ export interface ScrollUntilResult {
   readonly steps: number
   /** The last update's OCR result. */
   readonly text?: TextHandle
+}
+
+/** What `scrollUntil` saw after one step, for an `until` predicate. */
+export interface ScrollUntilUpdate {
+  /** Whether the viewport moved on this step (false before the first step). */
+  readonly moved: boolean
+  readonly steps: number
+  /** Full recognized window text after this step. */
+  readonly text: string
 }
 
 /** Result of OCR over a frame, a window or a display. */

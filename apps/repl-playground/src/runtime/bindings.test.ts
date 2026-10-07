@@ -1,5 +1,5 @@
 import type { Backend, ScrollUntilRequest } from '../backend/types'
-import type { InputHandle, Rect, ScrollUntilUpdate, ScrollUntilResult, TextHandle } from '../script-api/api'
+import type { InputHandle, Rect, ScrollUntilResult, ScrollUntilUpdate, TextHandle } from '../script-api/api'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 

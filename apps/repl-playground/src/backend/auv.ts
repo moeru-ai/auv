@@ -9,8 +9,8 @@ type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
 type NativeDisplay = Awaited<ReturnType<RunnerClient['displays']['list']>>[number]
 type NativeFrame = NonNullable<CaptureResponse['capture']>
-type NativeScrollUpdate = Parameters<NonNullable<NonNullable<Parameters<WindowClient['scrollUntil']>[2]>['onUpdate']>>[0]
 type NativeRecognized = Awaited<ReturnType<RunnerClient['recognizeText']>>
+type NativeScrollUpdate = Parameters<NonNullable<NonNullable<Parameters<WindowClient['scrollUntil']>[2]>['onUpdate']>>[0]
 type NativeWindow = WindowClient['window']
 
 const RUNNER_CLASS = 'auv.core.local'

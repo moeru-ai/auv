@@ -1,5 +1,5 @@
 import type { ExecWorkerApi, HostApi, LogLevel, ResumeMode, RunOutcome, RunRequest, WireValue } from '../runtime/protocol'
-import type { AuvScriptApi, ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, ScrollUntilOptions, TextSearchOptions, WindowHandle } from '../script-api/api'
+import type { AuvScriptApi, ClickOptions, Point, Rect, ScrollDelta, ScrollUntilOptions, ScrollUntilUpdate, TextSearchOptions, WindowHandle } from '../script-api/api'
 /// <reference lib="webworker" />
 import type { StepSite } from '../stepper/compile'
 
