@@ -981,6 +981,7 @@ dependencies = [
  "auv-driver-macos",
  "auv-driver-windows",
  "auv-media-macos",
+ "auv-scan",
  "auv-tracing",
  "auv-view",
  "clap",

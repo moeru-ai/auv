@@ -36,6 +36,7 @@ auv-api-client = { path = "../../../crates/auv-api-client" }
 auv-api-proto = { path = "../../../crates/auv-api-proto" }
 auv-api-server = { path = "../../../crates/auv-api-server" }
 auv-driver = { path = "../../../crates/auv-driver" }
+auv-scan = { path = "../../../crates/auv-scan" }
 # auv-media-macos compiles on all targets (non-macOS calls return Unsupported),
 # so it is a normal dependency — this lets the platform-neutral CLI reuse its
 # `MediaCommand` type instead of re-declaring it.

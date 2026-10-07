@@ -309,15 +309,34 @@ impl DailyRecommendedRun<'_> {
     Ok(())
   }
 
+  /// Opens Daily Recommended from the recommendation home the sidebar click
+  /// just selected.
+  ///
+  /// NOTICE(netease-daily-page-settle): the page after a click renders after
+  /// `settle_ms` (a scroll settle) more often than not, so a single capture
+  /// can still show the previous page. Live runs (2026-10-07) missed the card
+  /// right after leaving the song list, and saw a stale "播放全部" that made
+  /// the flow skip navigation. Both checks poll until `PAGE_WAIT`.
   fn open_daily_recommended(&mut self) -> Result<(), String> {
-    if self.play_all_is_visible(false)? {
+    let deadline = std::time::Instant::now() + PAGE_WAIT;
+    loop {
+      if let Some(target) = self.find_daily_recommended_card()? {
+        return self.click_daily_recommended_card_body(target);
+      }
+      if std::time::Instant::now() >= deadline {
+        break;
+      }
+      std::thread::sleep(PAGE_POLL);
+    }
+    // Not the recommendation home: Daily Recommended may already be open.
+    if self.play_all_is_visible(true)? {
       return Ok(());
     }
-
-    self.click_daily_recommended_card_body()
+    Err("daily recommended card title was not found on recommendation home".to_string())
   }
 
-  fn click_daily_recommended_card_body(&mut self) -> Result<(), String> {
+  /// The "每日推荐" card title on the recommendation home, from one capture.
+  fn find_daily_recommended_card(&mut self) -> Result<Option<auv_driver::Positioned<auv_driver::vision::RecognizedText>>, String> {
     let capture = self
       .session
       .window()
@@ -330,12 +349,15 @@ impl DailyRecommendedRun<'_> {
       .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("daily recommended card OCR failed: {error}"))?;
     let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
-    let Some(mut target) = best_text_match(&recognition, "每日推荐", self.window.frame.size, |bounds, size| {
+    best_text_match(&recognition, "每日推荐", self.window.frame.size, |bounds, size| {
       bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35
-    })?
-    else {
-      return Err("daily recommended card title was not found on recommendation home".to_string());
-    };
+    })
+  }
+
+  fn click_daily_recommended_card_body(
+    &mut self,
+    mut target: auv_driver::Positioned<auv_driver::vision::RecognizedText>,
+  ) -> Result<(), String> {
     let bounds = ViewBounds::new(
       target.value.bounds.origin.x,
       target.value.bounds.origin.y,
@@ -352,7 +374,7 @@ impl DailyRecommendedRun<'_> {
       std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
     }
     auv_tracing::emit_event!(DailyRecommendedClick::OpenDailyRecommendedCard.delivered(target.value.text, bounds, result));
-    if self.play_all_is_visible(false)? {
+    if self.wait_for_play_all()? || self.reveal_play_all()? {
       Ok(())
     } else {
       self.click_text_foreground(DailyRecommendedClick::OpenDailyRecommendedTitleForegroundRetry, "每日推荐", |bounds, size| {
@@ -363,6 +385,53 @@ impl DailyRecommendedRun<'_> {
       } else {
         Err("daily recommended card body click did not reveal 播放全部".to_string())
       }
+    }
+  }
+
+  /// Scrolls the page up until "播放全部" shows or the top is reached.
+  ///
+  /// NOTICE(netease-daily-scroll-restore): NetEase reopens Daily Recommended
+  /// at its previous scroll position, so after a song scan the header with
+  /// "播放全部" is above the viewport (live, 2026-10-07).
+  fn reveal_play_all(&mut self) -> Result<bool, String> {
+    let size = self.window.frame.size;
+    let sidebar = broad_sidebar_probe_bounds(Size::new(size.width, size.height));
+    let content_left = sidebar.x + sidebar.width;
+    let anchor = WindowPoint::new(content_left + (size.width - content_left) * 0.5, size.height * 0.6);
+    let request = auv_scan::ScrollUntilRequest {
+      step: auv_scan::ScrollUntilStep::Instant {
+        delta: Scroll::new(0.0, -600.0),
+      },
+      condition: auv_scan::ScrollUntilCondition::TextVisible {
+        query: "播放全部".to_string(),
+      },
+      max_steps: 20,
+      settle: std::time::Duration::from_millis(300),
+      no_motion_confirmations: 2,
+      motion_region: None,
+      observe: auv_scan::ScrollUntilObserve { text: false },
+    };
+    let options = ScrollOptions {
+      policy: InputPolicy::BackgroundPreferred,
+      ..ScrollOptions::default()
+    };
+    let mut surface = auv_scan::WindowScrollUntilSurface::new(&self.session, self.window.clone(), anchor, options);
+    let result = auv_scan::scroll_until(&mut surface, &request, &mut |_| Ok(auv_scan::ScrollUntilDecision::Continue))
+      .map_err(|error| format!("daily recommended scroll to Play All failed: {error}"))?;
+    Ok(result.reason == auv_scan::ScrollUntilStopReason::TextVisible)
+  }
+
+  /// Polls for "播放全部" until `PAGE_WAIT` (see NOTICE(netease-daily-page-settle)).
+  fn wait_for_play_all(&mut self) -> Result<bool, String> {
+    let deadline = std::time::Instant::now() + PAGE_WAIT;
+    loop {
+      if self.play_all_is_visible(false)? {
+        return Ok(true);
+      }
+      if std::time::Instant::now() >= deadline {
+        return Ok(false);
+      }
+      std::thread::sleep(PAGE_POLL);
     }
   }
 
@@ -485,22 +554,34 @@ impl DailyRecommendedRun<'_> {
 }
 
 #[cfg(target_os = "macos")]
+/// How long a page may take to render after a navigation click.
+const PAGE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+const PAGE_POLL: std::time::Duration = std::time::Duration::from_millis(300);
+
 pub(crate) fn best_text_match(
   recognition: &TextRecognition,
   query: &str,
   window_size: Size,
   guard: impl Fn(ViewBounds, Size) -> bool,
 ) -> Result<Option<auv_driver::Positioned<auv_driver::vision::RecognizedText>>, String> {
+  let query = normalize_identity(query);
+  // An exact label beats one that only contains the query ("推荐" vs
+  // "每日推荐"); among equals, the topmost wins.
   Ok(
     recognition
       .positioned_regions()
       .map_err(|error| error.to_string())?
-      .filter(|region| normalize_identity(&region.value.text).contains(&normalize_identity(query)))
+      .filter(|region| normalize_identity(&region.value.text).contains(&query))
       .filter(|region| {
         let bounds = region.value.bounds;
         guard(ViewBounds::new(bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height), window_size)
       })
-      .min_by(|left, right| left.value.bounds.origin.y.partial_cmp(&right.value.bounds.origin.y).unwrap_or(std::cmp::Ordering::Equal)),
+      .min_by(|left, right| {
+        let inexact = |region: &auv_driver::Positioned<auv_driver::vision::RecognizedText>| normalize_identity(&region.value.text) != query;
+        inexact(left)
+          .cmp(&inexact(right))
+          .then(left.value.bounds.origin.y.partial_cmp(&right.value.bounds.origin.y).unwrap_or(std::cmp::Ordering::Equal))
+      }),
   )
 }
 
