@@ -6,13 +6,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::association::{AssociationResult, FrameObservation, associate_adjacent_frames};
+use crate::association::{AssociationResult, FrameItem, associate_adjacent_frames};
 use crate::reader::ScanFrameBundle;
 use crate::timeline::DIAG_INSUFFICIENT_FRAMES;
 
 pub const SCAN_TRACKS_SCHEMA_VERSION: &str = "scan-tracks-v0";
 
-pub const DIAG_OBSERVATIONS_FRAME_MISMATCH: &str = "observations_frame_mismatch";
+pub const DIAG_ITEMS_FRAME_MISMATCH: &str = "items_frame_mismatch";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanTracksWire {
@@ -43,17 +43,17 @@ fn insufficient_frames_diagnostic(found: usize) -> TracksDiagnosticWire {
   }
 }
 
-fn observations_frame_mismatch_diagnostic(frame_count: usize, observation_frame_count: usize) -> TracksDiagnosticWire {
+fn items_frame_mismatch_diagnostic(frame_count: usize, item_frame_count: usize) -> TracksDiagnosticWire {
   TracksDiagnosticWire {
-    code: DIAG_OBSERVATIONS_FRAME_MISMATCH.into(),
-    message: format!("observations_by_frame length {observation_frame_count} does not match frame count {frame_count}"),
+    code: DIAG_ITEMS_FRAME_MISMATCH.into(),
+    message: format!("items_by_frame length {item_frame_count} does not match frame count {frame_count}"),
   }
 }
 
-/// Build an adjacent multi-segment tracks wire from a frame bundle and per-frame observations.
+/// Build an adjacent multi-segment tracks wire from a frame bundle and per-frame items.
 ///
-/// Diagnostic precedence: insufficient frames first, then observations mismatch, else N-1 segments.
-pub fn build_scan_tracks_from_bundle(bundle: &ScanFrameBundle, observations_by_frame: &[Vec<FrameObservation>]) -> ScanTracksWire {
+/// Diagnostic precedence: insufficient frames first, then items mismatch, else N-1 segments.
+pub fn build_scan_tracks_from_bundle(bundle: &ScanFrameBundle, items_by_frame: &[Vec<FrameItem>]) -> ScanTracksWire {
   let frame_count = bundle.frames.len();
   if frame_count < 2 {
     return ScanTracksWire {
@@ -63,13 +63,13 @@ pub fn build_scan_tracks_from_bundle(bundle: &ScanFrameBundle, observations_by_f
     };
   }
 
-  if observations_by_frame.len() != frame_count {
+  if items_by_frame.len() != frame_count {
     return ScanTracksWire {
       schema_version: SCAN_TRACKS_SCHEMA_VERSION.to_string(),
       segments: Vec::new(),
-      diagnostics: vec![observations_frame_mismatch_diagnostic(
+      diagnostics: vec![items_frame_mismatch_diagnostic(
         frame_count,
-        observations_by_frame.len(),
+        items_by_frame.len(),
       )],
     };
   }
@@ -81,7 +81,7 @@ pub fn build_scan_tracks_from_bundle(bundle: &ScanFrameBundle, observations_by_f
     .map(|(index, window)| {
       let first = &window[0];
       let second = &window[1];
-      let associations = associate_adjacent_frames(&observations_by_frame[index], &observations_by_frame[index + 1]);
+      let associations = associate_adjacent_frames(&items_by_frame[index], &items_by_frame[index + 1]);
       TrackSegmentWire {
         from_frame_id: first.frame_id.clone(),
         to_frame_id: second.frame_id.clone(),
@@ -111,24 +111,22 @@ pub fn format_scan_tracks_text(tracks: &ScanTracksWire) -> String {
       match association {
         AssociationResult::Linked {
           track_id,
-          previous_observation_id,
-          current_observation_id,
+          previous_item_id,
+          current_item_id,
         } => lines.push(format!(
-          "[tracks.association] status=linked track_id={track_id} previous_observation_id={previous_observation_id} current_observation_id={current_observation_id}"
+          "[tracks.association] status=linked track_id={track_id} previous_item_id={previous_item_id} current_item_id={current_item_id}"
         )),
         AssociationResult::NewTrack {
           track_id,
-          current_observation_id,
-        } => lines.push(format!(
-          "[tracks.association] status=new_track track_id={track_id} current_observation_id={current_observation_id}"
-        )),
+          current_item_id,
+        } => lines.push(format!("[tracks.association] status=new_track track_id={track_id} current_item_id={current_item_id}")),
         AssociationResult::AmbiguousAssociation {
           label,
-          candidate_observation_ids,
+          candidate_item_ids,
           diagnostic,
         } => lines.push(format!(
-          "[tracks.association] status=ambiguous_association label={label} candidate_observation_ids=[{}] diagnostic_code={} diagnostic_message={}",
-          candidate_observation_ids.join(","),
+          "[tracks.association] status=ambiguous_association label={label} candidate_item_ids=[{}] diagnostic_code={} diagnostic_message={}",
+          candidate_item_ids.join(","),
           diagnostic.code,
           diagnostic.message,
         )),

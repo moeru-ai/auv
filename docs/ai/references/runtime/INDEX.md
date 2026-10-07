@@ -7,7 +7,7 @@ The dated notes below remain historical design and evidence records. Any path
 or ownership statement that assigns current code to the root `src/` tree or an
 `auv-runtime` package is superseded by the retirement handoff.
 
-Count: **32**
+Count: **33**
 
 - [`2026-05-27-action-resolver-v0.md`](2026-05-27-action-resolver-v0.md)
 - [`2026-06-13-core-graduation-local-handoff.md`](2026-06-13-core-graduation-local-handoff.md)
@@ -47,3 +47,5 @@ Count: **32**
 - Parent index: [`../INDEX.md`](../INDEX.md)
 - Docs overview: [`../../../README.md`](../../../README.md)
 - Shared vocabulary: [`../../../TERMS_AND_CONCEPTS.md`](../../../TERMS_AND_CONCEPTS.md)
+
+- [`2026-10-08-domain-result-naming-migration.md`](2026-10-08-domain-result-naming-migration.md) — Domain result names, proto/SDK migration, and restricted use of observation.

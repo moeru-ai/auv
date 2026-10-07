@@ -155,7 +155,7 @@ fn hand_crop_in_viewport(viewport: GameViewport) -> HandCrop {
   // NOTICE: These normalized bounds come from the 2043x1126 live Balatro
   // layout used by the Mod corpus. They exclude the confirmed left score-panel
   // and right deck-stack false positives while retaining highlighted hand
-  // cards. Replace them when observation owns a typed, dynamically resolved
+  // cards. Replace them when read owns a typed, dynamically resolved
   // hand-region contract across UI scales.
   let x = ((width as f32) * 0.265).floor() as u32;
   let y = ((height as f32) * 0.52).floor() as u32;

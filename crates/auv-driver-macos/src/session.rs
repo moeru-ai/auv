@@ -2077,7 +2077,7 @@ fn capture_window(window: &Window, resolution: CaptureResolution) -> DriverResul
   match capture_window_swift(window, resolution) {
     Ok(capture) => Ok(capture),
     // The window itself is in the wrong state; xcap would capture the same frame.
-    Err(error @ DriverError::StaleObservation { .. }) => Err(error),
+    Err(error @ DriverError::StaleUiReference { .. }) => Err(error),
     Err(swift_error) => {
       let fallback_reason = swift_error.to_string();
       capture_window_xcap(window, Some(fallback_reason.clone())).map(|capture| capture.at_resolution(resolution)).map_err(|xcap_error| {
@@ -2129,7 +2129,7 @@ fn capture_window_swift(window: &Window, resolution: CaptureResolution) -> Drive
       } else {
         "the window is shown by Mission Control, App Exposé or a window animation"
       };
-      return Err(DriverError::StaleObservation {
+      return Err(DriverError::StaleUiReference {
         message: format!(
           "window {} was {}x{} pt at capture time but resolved as {}x{} pt: {cause}",
           window.reference.id,

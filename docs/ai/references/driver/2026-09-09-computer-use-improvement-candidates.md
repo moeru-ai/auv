@@ -1,5 +1,10 @@
 # Computer-use references: AUV improvement candidates
 
+> Naming migration (2026-10-08): `StaleObservation` → `StaleUiReference`.
+> This dated note may retain the former names. Prefer concrete domain results;
+> reserve `observation` for information used to decide the next action.
+> See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
+
 > NOTICE: This historical review uses the revisions listed here. The [Wayland background input research](2026-09-13-wayland-background-input-research.md) records the 2026-09-13 decision, subsequent implementation PRs, and evidence boundaries. Candidate rows do not authorize implementation.
 
 Date: 2026-09-09. Change classification: docs-only research.

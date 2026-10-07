@@ -21,11 +21,11 @@ pub enum DriverError {
   InvalidInput {
     message: String,
   },
-  /// A recorded observation (e.g. an AX path or captured tree) no longer
+  /// A previously resolved UI reference (e.g. an AX path) no longer
   /// resolves against the live UI — the tree shifted since it was observed.
   /// Distinct from `NotFound` (which means a target was never located) and from
   /// `InvalidInput` (which means the caller supplied a malformed request).
-  StaleObservation {
+  StaleUiReference {
     message: String,
     recovery: Option<String>,
   },
@@ -66,7 +66,7 @@ impl fmt::Display for DriverError {
         }
         Ok(())
       }
-      Self::StaleObservation { message, recovery } | Self::RoleMismatch { message, recovery } => {
+      Self::StaleUiReference { message, recovery } | Self::RoleMismatch { message, recovery } => {
         f.write_str(message)?;
         if let Some(recovery) = recovery {
           write!(f, ": {recovery}")?;

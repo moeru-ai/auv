@@ -74,7 +74,7 @@ message ListPlaylistsDiagnostic {
 message ListPlaylistsCompleted {
   uint32 items_emitted = 1;
   repeated string known_limits = 2;
-  uint32 observations = 3;
+  uint32 viewports = 3;
 }
 
 message SelectPlaylistRequest {

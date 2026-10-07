@@ -1,4 +1,4 @@
-import type { ScrollObservation } from '../script-api/api'
+import type { ScrollUntilUpdate } from '../script-api/api'
 import type { BindSite, StepSite } from '../stepper/compile'
 
 // ---- Language worker (TypeScript service + cell compiler) ------------------
@@ -40,8 +40,8 @@ export interface DiagnosticInfo {
 }
 
 export interface ExecWorkerApi {
-  /** Runs the script's `scrollUntil` predicate `predicateId` for one observation. */
-  decide: (predicateId: number, observation: ScrollObservation) => Promise<boolean>
+  /** Runs the script's `scrollUntil` predicate `predicateId` for one update. */
+  decide: (predicateId: number, update: ScrollUntilUpdate) => Promise<boolean>
   resume: (mode: ResumeMode) => void
   run: (request: RunRequest) => Promise<RunOutcome>
   setBreakpoints: (lines: number[]) => void

@@ -9,7 +9,7 @@ impl PlaylistSidebarScan {
 }
 
 #[test]
-fn playlist_select_target_resolves_candidate_bounds_from_scan_observation() {
+fn playlist_select_target_resolves_candidate_bounds_from_scan_viewport() {
   let candidate_id = "obs2.candidate.ocr1.human_machine";
   let bounds = ViewBounds::new(71.0, 166.0, 72.0, 15.0);
   let mut scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
@@ -27,8 +27,8 @@ fn playlist_select_target_resolves_candidate_bounds_from_scan_observation() {
       }],
     }],
   });
-  scan.observations.push(SidebarViewportObservation {
-    observation_index: 2,
+  scan.viewports.push(SidebarViewport {
+    viewport_index: 2,
     candidates: vec![SidebarViewportCandidate {
       id: candidate_id.to_string(),
       kind: SidebarCandidateKind::PlaylistItem,
@@ -37,7 +37,7 @@ fn playlist_select_target_resolves_candidate_bounds_from_scan_observation() {
       evidence_ids: Vec::new(),
       confidence: Confidence::High,
     }],
-    ..SidebarViewportObservation::default()
+    ..SidebarViewport::default()
   });
 
   let target = scan.select_target("人造").expect("single playlist match should resolve");
@@ -45,7 +45,7 @@ fn playlist_select_target_resolves_candidate_bounds_from_scan_observation() {
   assert_eq!(target.label, "人造器械");
   assert_eq!(target.item_id, "item-human-machine");
   assert_eq!(target.anchor_id.as_deref(), Some("anchor-human-machine"));
-  assert_eq!(target.observation_index, Some(2));
+  assert_eq!(target.viewport_index, Some(2));
   assert_eq!(target.bounds, Some(bounds));
 }
 
@@ -68,8 +68,8 @@ fn playlist_select_target_resolves_by_candidate_id() {
       }],
     }],
   });
-  scan.observations.push(SidebarViewportObservation {
-    observation_index: 6,
+  scan.viewports.push(SidebarViewport {
+    viewport_index: 6,
     candidates: vec![SidebarViewportCandidate {
       id: candidate_id.to_string(),
       kind: SidebarCandidateKind::PlaylistItem,
@@ -78,14 +78,14 @@ fn playlist_select_target_resolves_by_candidate_id() {
       evidence_ids: Vec::new(),
       confidence: Confidence::High,
     }],
-    ..SidebarViewportObservation::default()
+    ..SidebarViewport::default()
   });
 
   let target = scan.select_target_by_candidate_id(candidate_id).expect("candidate id should resolve");
 
   assert_eq!(target.label, "我喜欢的风格 | Trance Vol.2");
   assert_eq!(target.candidate_id.as_deref(), Some(candidate_id));
-  assert_eq!(target.observation_index, Some(6));
+  assert_eq!(target.viewport_index, Some(6));
   assert_eq!(target.bounds, Some(bounds));
 }
 

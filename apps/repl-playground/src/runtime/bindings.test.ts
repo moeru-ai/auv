@@ -1,5 +1,5 @@
 import type { Backend, ScrollUntilRequest } from '../backend/types'
-import type { InputHandle, Rect, ScrollObservation, ScrollUntilResult, TextHandle } from '../script-api/api'
+import type { InputHandle, Rect, ScrollUntilUpdate, ScrollUntilResult, TextHandle } from '../script-api/api'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -95,17 +95,17 @@ describe('windows.scrollUntil', () => {
 
   it('applies the CLI defaults and asks the script predicate through decide', async () => {
     const requests: ScrollUntilRequest[] = []
-    const asked: Array<[number, ScrollObservation]> = []
+    const asked: Array<[number, ScrollUntilUpdate]> = []
     const backend = {
-      scrollWindowUntil: async (_id: string, _point: unknown, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>) => {
+      scrollWindowUntil: async (_id: string, _point: unknown, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>) => {
         requests.push(request)
         const stop = await decide?.({ moved: true, steps: 1, text: 'Remember' })
         return { reason: stop ? 'until' : 'end', steps: 1 }
       },
     } as unknown as Backend
-    const decide = async (predicateId: number, observation: ScrollObservation) => {
-      asked.push([predicateId, observation])
-      return observation.text.includes('Remember')
+    const decide = async (predicateId: number, update: ScrollUntilUpdate) => {
+      asked.push([predicateId, update])
+      return update.text.includes('Remember')
     }
     const result = await invokeBinding(backend, 'windows.scrollUntil', [{ $ref: 'window:7' }, { x: 600, y: 350 }, { dy: 400, until: { $predicate: 3 } }], { ...context, decide }) as ScrollUntilResult
     expect(requests[0]).toEqual({ confirmations: 2, delta: { dx: 0, dy: 400 }, maxSteps: 50, settleMs: 400, text: undefined })

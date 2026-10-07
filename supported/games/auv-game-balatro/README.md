@@ -630,7 +630,7 @@ The next Rust slice should keep changes inside:
 ```text
 supported/games/auv-game-balatro/src/cli.rs
 supported/games/auv-game-balatro/src/model.rs
-supported/games/auv-game-balatro/src/observation.rs
+supported/games/auv-game-balatro/src/read.rs
 supported/games/auv-game-balatro/tests/
 ```
 

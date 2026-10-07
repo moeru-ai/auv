@@ -1,4 +1,4 @@
-use crate::{Inputs, ScrollDirection, SongListItem, SongListObservation, SongListScanResult};
+use crate::{Inputs, ScrollDirection, SongListItem, SongListPage, SongListScanResult};
 use auv_driver::vision::TextRecognition;
 use auv_driver::{Size, WindowPoint};
 use auv_view::{
@@ -56,7 +56,7 @@ fn song_list_bounds(window_size: Size) -> ViewBounds {
   ViewBounds::new(x, y, window_size.width - x - 24.0, (bottom - y).max(1.0))
 }
 
-fn parse_song_list_rows(observation_index: usize, bounds: ViewBounds, recognition: &TextRecognition) -> Vec<SongListItem> {
+fn parse_song_list_rows(viewport_index: usize, bounds: ViewBounds, recognition: &TextRecognition) -> Vec<SongListItem> {
   let mut index_regions = recognition
     .regions
     .iter()
@@ -103,7 +103,7 @@ fn parse_song_list_rows(observation_index: usize, bounds: ViewBounds, recognitio
       continue;
     };
     rows.push(SongListItem {
-      id: format!("song.obs{observation_index}.{}", index.map(|value| value.to_string()).unwrap_or_else(|| auv_view::slug(&title))),
+      id: format!("song.obs{viewport_index}.{}", index.map(|value| value.to_string()).unwrap_or_else(|| auv_view::slug(&title))),
       index,
       title,
       row_text,
@@ -127,7 +127,7 @@ struct SongListScanner<'a> {
   window: auv_driver::Window,
   inputs: &'a Inputs,
   region_bounds: ViewBounds,
-  observations: Vec<SongListObservation>,
+  viewports: Vec<SongListPage>,
   items: Vec<SongListItem>,
   seen_items: HashSet<String>,
   boundary: ScrollBoundarySummary,
@@ -153,7 +153,7 @@ impl<'a> SongListScanner<'a> {
       window,
       inputs,
       region_bounds,
-      observations: Vec::new(),
+      viewports: Vec::new(),
       items: Vec::new(),
       seen_items: HashSet::new(),
       boundary: ScrollBoundarySummary::default(),
@@ -173,7 +173,7 @@ impl<'a> SongListScanner<'a> {
       window,
       song_list_region,
       items: self.items,
-      observations: self.observations,
+      viewports: self.viewports,
       boundary: self.boundary,
       diagnostics: self.diagnostics,
       known_limits: self.known_limits,
@@ -226,28 +226,28 @@ impl<'a> SongListScanner<'a> {
     let mut consecutive_no_new = 0usize;
     let mut consecutive_no_motion = 0usize;
     for _ in 0..=self.inputs.max_scrolls {
-      let observation = self.observe_page(self.observations.len())?;
-      let introduced_new = self.record_items(&observation.rows);
+      let viewport = self.read_page(self.viewports.len())?;
+      let introduced_new = self.record_items(&viewport.rows);
       if introduced_new {
         consecutive_no_new = 0;
-      } else if observation.incoming_scroll_delivery_path.is_some() {
+      } else if viewport.incoming_scroll_delivery_path.is_some() {
         consecutive_no_new += 1;
       }
-      if observation.scroll_motion.as_ref().is_some_and(|motion| motion.no_motion) {
+      if viewport.scroll_motion.as_ref().is_some_and(|motion| motion.no_motion) {
         consecutive_no_motion += 1;
       } else {
         consecutive_no_motion = 0;
       }
-      self.observations.push(observation);
+      self.viewports.push(viewport);
 
       if consecutive_no_new >= 2 || consecutive_no_motion >= 2 {
         self.seek_boundary(ScrollDirection::Down)?;
-        let final_observation = self.observe_page(self.observations.len())?;
-        self.record_items(&final_observation.rows);
-        self.observations.push(final_observation);
+        let final_viewport = self.read_page(self.viewports.len())?;
+        self.record_items(&final_viewport.rows);
+        self.viewports.push(final_viewport);
         return Ok(());
       }
-      if self.observations.len() > self.inputs.max_scrolls {
+      if self.viewports.len() > self.inputs.max_scrolls {
         self.known_limits.push(format!("song list scan stopped after max_scrolls={}", self.inputs.max_scrolls));
         return Ok(());
       }
@@ -267,8 +267,8 @@ impl<'a> SongListScanner<'a> {
     introduced_new
   }
 
-  fn observe_page(&mut self, observation_index: usize) -> Result<SongListObservation, String> {
-    auv_tracing::in_span!("auv.netease.song_list.observe", || {
+  fn read_page(&mut self, viewport_index: usize) -> Result<SongListPage, String> {
+    auv_tracing::in_span!("auv.netease.song_list.read_viewport", || {
       let capture = self
         .session
         .window()
@@ -290,11 +290,11 @@ impl<'a> SongListScanner<'a> {
       let scroll_motion =
         incoming_scroll_delivery_path.as_ref().and(self.previous_crop.as_ref()).map(|previous| self.motion_policy.compare(previous, &crop));
       self.previous_crop = Some(crop);
-      Ok(SongListObservation {
-        observation_index,
+      Ok(SongListPage {
+        viewport_index,
         incoming_scroll_delivery_path,
         scroll_motion,
-        rows: parse_song_list_rows(observation_index, self.region_bounds, &recognition),
+        rows: parse_song_list_rows(viewport_index, self.region_bounds, &recognition),
       })
     })
   }

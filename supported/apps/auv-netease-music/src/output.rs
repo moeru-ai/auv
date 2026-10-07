@@ -16,7 +16,7 @@ pub(crate) fn render_song_list_human(result: &crate::SongListScanResult) -> Stri
     "NetEase song list scan".to_string(),
     format!("target: {}", result.target),
     format!("items: {}", result.items.len()),
-    format!("observations: {}", result.observations.len()),
+    format!("viewports: {}", result.viewports.len()),
   ];
   if result.known_limits.is_empty() {
     lines.push("known_limits: (none)".to_string());

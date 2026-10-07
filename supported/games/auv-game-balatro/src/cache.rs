@@ -4,7 +4,7 @@ use image::RgbImage;
 use crate::model::CacheHint;
 
 // TODO(balatro-cache-v1): Reading cache storage and invalidation policy are
-// deferred until observation/read commands need cached enrichment.
+// deferred until read/read commands need cached enrichment.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReadingCache;
 

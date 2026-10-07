@@ -9,7 +9,7 @@ pub enum StaleReason {
   BaselineMismatchHard,
   // NOTICE(a4-min): produced only by reacquire(), not read_memory().
   RegionGoneAtReacquisition,
-  ObservationFailedAtReacquisition,
+  ReadFailedAtReacquisition,
 }
 
 impl StaleReason {
@@ -19,7 +19,7 @@ impl StaleReason {
       Self::SchemaMismatch => "schema_mismatch",
       Self::BaselineMismatchHard => "baseline_mismatch_hard",
       Self::RegionGoneAtReacquisition => "region_gone_at_reacquisition",
-      Self::ObservationFailedAtReacquisition => "observation_failed_at_reacquisition",
+      Self::ReadFailedAtReacquisition => "read_failed_at_reacquisition",
     }
   }
 }

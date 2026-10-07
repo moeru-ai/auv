@@ -1,4 +1,4 @@
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, ScrollUntilResult, TextMatch, WindowSelector } from '../script-api/api'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, ScrollUntilResult, TextMatch, WindowSelector } from '../script-api/api'
 
 /**
  * One accessibility element. `path` is a stable-within-a-snapshot address
@@ -61,7 +61,7 @@ export interface Backend {
    * Scrolls at a window-local point in steps, observing after each, until the
    * request's condition, `decide`, the end, or the budget stops it.
    */
-  scrollWindowUntil: (windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>) => Promise<ScrollUntilOutcome>
+  scrollWindowUntil: (windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>) => Promise<ScrollUntilOutcome>
   typeText: (text: string) => Promise<InputReceipt>
 }
 
@@ -95,7 +95,7 @@ export interface InputReceipt {
 export type RunOutcomeKind = 'canceled' | 'failed' | 'succeeded'
 
 export interface ScrollUntilOutcome {
-  /** The last observation's capture and OCR, when the loop observed anything. */
+  /** The last update's capture and OCR, when the loop observed anything. */
   capture?: CapturedFrame
   match?: TextMatch
   reason: ScrollUntilResult['reason']

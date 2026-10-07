@@ -1,8 +1,8 @@
-use super::{ReacquireObservation, ReacquireOutcome};
+use super::{ReacquireOutcome, ReacquireSnapshot};
 use crate::ParserDiagnostic;
 
 pub trait ReacquireDriverAdapter {
-  fn observe_viewport(&mut self) -> Result<ReacquireObservation, ParserDiagnostic>;
+  fn read_viewport(&mut self) -> Result<ReacquireSnapshot, ParserDiagnostic>;
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
   fn scroll_up(&mut self) -> Result<(), ParserDiagnostic>;
 }

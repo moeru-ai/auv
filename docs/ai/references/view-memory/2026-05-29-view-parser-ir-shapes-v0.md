@@ -1,5 +1,10 @@
 # AUV View Parser IR Shapes v0
 
+> Naming migration (2026-10-08): `ViewObservation` → `ParsedViewport`.
+> This dated note may retain the former names. Prefer concrete domain results;
+> reserve `observation` for information used to decide the next action.
+> See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
+
 Date: 2026-05-29
 
 Status: v0 IR types spec. Concrete shapes, **not** a re-statement of the

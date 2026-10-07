@@ -29,7 +29,7 @@ pub enum CashOutConfirmationBasis {
 pub enum CashOutConfirmationFailure {
   NoStoreTransition,
   NoObservableChange,
-  ObservationFailed { message: String },
+  ReadFailed { message: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -103,7 +103,7 @@ pub(crate) fn evaluate_cash_out_confirmation(
       return CashOutConfirmation::NotConfirmed {
         before_phase: before.phase,
         after_phase: None,
-        reason: CashOutConfirmationFailure::ObservationFailed { message },
+        reason: CashOutConfirmationFailure::ReadFailed { message },
       };
     }
   };

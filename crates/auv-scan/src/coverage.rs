@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct CoverageEntry {
   pub track_id: String,
   pub last_seen_frame_id: String,
-  pub observation_count: u32,
+  pub sighting_count: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,14 +106,14 @@ pub(crate) fn build_coverage_view_for_sequence(
         entries.push(CoverageEntry {
           track_id: track_id.clone(),
           last_seen_frame_id: last_frame_id.to_string(),
-          observation_count: 2,
+          sighting_count: 2,
         });
       }
       AssociationResult::NewTrack { track_id, .. } => {
         entries.push(CoverageEntry {
           track_id: track_id.clone(),
           last_seen_frame_id: last_frame_id.to_string(),
-          observation_count: 1,
+          sighting_count: 1,
         });
       }
       AssociationResult::AmbiguousAssociation { diagnostic, .. } => {
@@ -124,7 +124,7 @@ pub(crate) fn build_coverage_view_for_sequence(
 
   if frame_count >= 2 && associations.is_empty() {
     negative_evidence.push(NegativeEvidence {
-      code: "no_new_observation".into(),
+      code: "no_new_item".into(),
       after_frame_id: last_frame_id.to_string(),
     });
   }

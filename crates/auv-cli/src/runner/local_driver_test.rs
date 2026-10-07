@@ -123,7 +123,7 @@ fn application_activation_mapper_preserves_each_verification_variant() {
       observed_bundle_id: "com.example.Other".to_string(),
     },
     auv_driver::ApplicationActivationVerification::Unavailable {
-      reason: "observation unavailable".to_string(),
+      reason: "update unavailable".to_string(),
     },
   ];
   for verification in cases {
@@ -1049,7 +1049,7 @@ fn scroll_until_rpc_decodes_step_condition_and_region() {
   );
   assert_eq!(request.settle, std::time::Duration::from_millis(400));
   assert_eq!(request.motion_region, Some(auv_driver::RatioRect::new(0.0, 0.1, 1.0, 0.8)));
-  assert_eq!(request.observe, auv_scan::ScrollUntilObserve { text: true }, "payloads are opt-out");
+  assert_eq!(request.output, auv_scan::ScrollUntilOutputOptions { text: true }, "payloads are opt-out");
   assert!(request.validate().is_ok());
 
   let opted_out = scroll_until_request_from_proto(proto::ScrollUntilBegin {
@@ -1058,11 +1058,11 @@ fn scroll_until_rpc_decodes_step_condition_and_region() {
       delta_y: 10.0,
     })),
     condition: Some(proto::scroll_until_begin::Condition::End(proto::ScrollUntilEnd {})),
-    observe: Some(proto::ScrollUntilObserve { omit_text: true }),
+    output: Some(proto::ScrollUntilOutputOptions { omit_text: true }),
     ..Default::default()
   })
   .unwrap();
-  assert_eq!(opted_out.observe, auv_scan::ScrollUntilObserve { text: false });
+  assert_eq!(opted_out.output, auv_scan::ScrollUntilOutputOptions { text: false });
 
   for malformed in [
     proto::ScrollUntilBegin {
@@ -1096,9 +1096,9 @@ fn scroll_until_rpc_decodes_step_condition_and_region() {
 }
 
 #[test]
-fn scroll_until_observation_carries_capture_ref_text_and_stop_reason() {
+fn scroll_until_update_carries_capture_ref_text_and_stop_reason() {
   let captures = test_capture_store();
-  let observation = |capture_bytes: u32, text, stop| auv_scan::ScrollUntilObservation {
+  let update = |capture_bytes: u32, text, stop| auv_scan::ScrollUntilUpdate {
     steps: 3,
     delivered: auv_driver::Scroll::new(0.0, 1500.0),
     motion: Some(auv_scan::ViewportPixelMotion {
@@ -1118,8 +1118,8 @@ fn scroll_until_observation_carries_capture_ref_text_and_stop_reason() {
     text,
     stop,
   };
-  let proto = scroll_until_observation_to_proto(
-    observation(
+  let proto = scroll_until_update_to_proto(
+    update(
       2,
       Some(auv_driver::TextRecognition {
         origin: None,
@@ -1139,7 +1139,7 @@ fn scroll_until_observation_carries_capture_ref_text_and_stop_reason() {
   assert_eq!(proto.text.map(|text| text.text).as_deref(), Some("END OF FEED"));
   assert!(!proto.awaiting_decision);
 
-  let proto = scroll_until_observation_to_proto(observation(1, None, None), true, &captures);
+  let proto = scroll_until_update_to_proto(update(1, None, None), true, &captures);
   assert_eq!(proto.stop, proto::ScrollUntilStopReason::Unspecified as i32);
   assert!(proto.awaiting_decision && proto.text.is_none());
 }

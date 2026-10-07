@@ -1,4 +1,4 @@
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, TextMatch, WindowSelector } from '../script-api/api'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextMatch, WindowSelector } from '../script-api/api'
 import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 interface MockWindow extends WindowInfo {
@@ -90,7 +90,7 @@ function includes(text: string, query: string): boolean {
 /**
  * A deterministic in-browser desktop: two displays, a todo app, a counter and
  * a music app whose song list scrolls.
- * Clicks and keys mutate the scene so scripts observe real state changes;
+ * Clicks and keys mutate the scene so scripts output real state changes;
  * OCR returns exact text geometry from the scene graph.
  */
 export class MockBackend implements Backend {
@@ -287,7 +287,7 @@ export class MockBackend implements Backend {
    * and the budget, then the client predicate. Only the Music song list
    * scrolls; elsewhere every step observes no motion.
    */
-  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>): Promise<ScrollUntilOutcome> {
     let streak = 0
     let receipt: InputReceipt | undefined
     for (let steps = 1; ; steps++) {

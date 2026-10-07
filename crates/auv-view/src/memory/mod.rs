@@ -24,7 +24,7 @@ mod read;
 mod write;
 
 pub use reacquire::{
-  ReacquireCandidate, ReacquireConfig, ReacquireObservation, ReacquireOutcome, ReacquireStrategy, ReacquireTarget, ReacquiredNode, reacquire,
+  ReacquireCandidate, ReacquireConfig, ReacquireOutcome, ReacquireSnapshot, ReacquireStrategy, ReacquireTarget, ReacquiredNode, reacquire,
 };
 pub use reacquire_adapter::{ReacquireDriverAdapter, outcome_label, strategy_name};
 pub use read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory};
@@ -69,7 +69,7 @@ pub struct ViewNodeSnapshot {
   pub section_hint: Option<String>,
   pub bounds_window_local: Option<ViewBounds>,
   pub viewport_fingerprint_hint: Option<String>,
-  pub last_seen_observation_index: usize,
+  pub last_seen_viewport_index: usize,
   pub confidence: Confidence,
 }
 
@@ -97,7 +97,7 @@ pub fn snapshot_from_node(
   node: &ViewNodeRecord,
   parent: Option<String>,
   section_hint: Option<String>,
-  observation_index: usize,
+  viewport_index: usize,
 ) -> ViewNodeSnapshot {
   ViewNodeSnapshot {
     node_id: node.id.clone(),
@@ -108,7 +108,7 @@ pub fn snapshot_from_node(
     section_hint,
     bounds_window_local: Some(node.bounds),
     viewport_fingerprint_hint: node.label.as_ref().map(|label| crate::normalize_identity(label)),
-    last_seen_observation_index: observation_index,
+    last_seen_viewport_index: viewport_index,
     confidence: Confidence::Medium,
   }
 }
@@ -117,7 +117,7 @@ pub fn collect_node_snapshots(
   node: &ViewNodeRecord,
   parent: Option<String>,
   section_hint: Option<String>,
-  observation_index: usize,
+  viewport_index: usize,
   out: &mut BTreeMap<String, ViewNodeSnapshot>,
 ) {
   if node.kind == ViewNodeKind::Unknown {
@@ -130,10 +130,10 @@ pub fn collect_node_snapshots(
     section_hint
   };
 
-  out.insert(node.id.clone(), snapshot_from_node(node, parent.clone(), section_hint.clone(), observation_index));
+  out.insert(node.id.clone(), snapshot_from_node(node, parent.clone(), section_hint.clone(), viewport_index));
 
   for child in &node.children {
-    collect_node_snapshots(child, Some(node.id.clone()), section_hint.clone(), observation_index, out);
+    collect_node_snapshots(child, Some(node.id.clone()), section_hint.clone(), viewport_index, out);
   }
 }
 

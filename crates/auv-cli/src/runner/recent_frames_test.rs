@@ -133,7 +133,7 @@ impl FrameSource for ScriptedSource {
     };
     match result.expect("scripted result") {
       Scripted::Frame(value) => Ok(capture((2, 2), value)),
-      Scripted::StaleWindow => Err(auv_driver::DriverError::StaleObservation {
+      Scripted::StaleWindow => Err(auv_driver::DriverError::StaleUiReference {
         message: "window 1 was 955x558 pt at capture time but 1644x960 pt to its application".to_string(),
         recovery: None,
       }),

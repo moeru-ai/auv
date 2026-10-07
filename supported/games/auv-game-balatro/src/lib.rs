@@ -25,10 +25,10 @@ mod game_restart;
 mod hand_selection;
 pub mod model;
 mod object_sell;
-pub mod observation;
 pub mod output;
 mod pack_choose;
 mod pack_skip;
+pub mod read;
 pub mod runner;
 mod store_buy;
 mod store_next_round;
@@ -65,12 +65,12 @@ pub use object_sell::{
   ObjectSellClick, ObjectSellConfirmation, ObjectSellConfirmationBasis, ObjectSellConfirmationFailure, ObjectSellIncompleteReason,
   ObjectSellOutcome, ObjectSellRequest, ObjectSellResult, SellableObject,
 };
-pub use observation::{ObservationError, observe_image};
 pub use pack_choose::{
   PackChoice, PackChoiceId, PackChooseAction, PackChooseConfirmation, PackChooseConfirmationBasis, PackChooseConfirmationFailure,
   PackChooseControl, PackChooseRequest, PackChooseResult, PackChooseState, PackChooseStop,
 };
 pub use pack_skip::{PackSkipConfirmation, PackSkipConfirmationFailure, PackSkipRequest, PackSkipResult};
+pub use read::{ReadError, read_image};
 pub use store_buy::{
   StoreBuyClick, StoreBuyConfirmation, StoreBuyConfirmationBasis, StoreBuyConfirmationFailure, StoreBuyIncompleteReason, StoreBuyOutcome,
   StoreBuyRequest, StoreBuyResult,

@@ -27,7 +27,7 @@ use crate::model::{
 };
 
 #[derive(Debug, Error)]
-pub enum ObservationError {
+pub enum ReadError {
   #[error("inference error: {0}")]
   Inference(#[from] InferenceError),
   #[error("I/O error: {0}")]
@@ -46,7 +46,7 @@ pub struct HoverReadRequest {
 }
 
 #[derive(Clone, Debug)]
-pub struct HoverReadObservation {
+pub struct HoverReadResult {
   pub point: ScreenPoint,
   pub delivery: InputActionResult,
   pub recognition: TextRecognition,
@@ -54,12 +54,12 @@ pub struct HoverReadObservation {
 }
 
 /// Observes an image through an inference Runner attached to one AUV Run.
-pub async fn observe_image_via_api(
+pub async fn read_image_via_api(
   image_path: impl AsRef<Path>,
   config: &BalatroModelConfig,
   endpoint: Option<ConnectEndpoint>,
   no_cache: bool,
-) -> Result<BalatroState, ObservationError> {
+) -> Result<BalatroState, ReadError> {
   let image_path = image_path.as_ref();
   let image = image::open(image_path)?.to_rgb8();
   let image_size = ImageSize {
@@ -91,7 +91,7 @@ pub async fn observe_live_via_api(
   config: &BalatroModelConfig,
   endpoint: Option<ConnectEndpoint>,
   no_cache: bool,
-) -> Result<BalatroState, ObservationError> {
+) -> Result<BalatroState, ReadError> {
   let (entities_classes, ui_classes) = load_remote_class_names(config).await?;
   let auv = connect_auv(endpoint).await?;
   let run = auv.run(balatro_run_options()).await.map_err(api_error)?;
@@ -113,10 +113,7 @@ pub async fn observe_live_via_api(
 ///
 /// The returned point is in the Device screen's logical coordinate space; the
 /// caller retains the typed delivery result and verifies game state separately.
-pub async fn click_display_frame_point_via_api(
-  frame: &FrameRef,
-  point: Point,
-) -> Result<(ScreenPoint, InputActionResult), ObservationError> {
+pub async fn click_display_frame_point_via_api(frame: &FrameRef, point: Point) -> Result<(ScreenPoint, InputActionResult), ReadError> {
   validate_primary_display_frame(frame, "remote screen click")?;
 
   let auv = connect_auv(None).await?;
@@ -129,7 +126,7 @@ pub async fn click_display_frame_point_via_api(
       .iter()
       .find(|display| display.is_primary)
       .or_else(|| displays.displays.first())
-      .ok_or_else(|| ObservationError::Api("Driver Runner returned no displays".to_string()))?;
+      .ok_or_else(|| ReadError::Api("Driver Runner returned no displays".to_string()))?;
     let screen_point = project_display_frame_point(frame, display.frame, point);
     let response = driver
       .input()
@@ -145,7 +142,7 @@ pub async fn click_display_frame_point_via_api(
 }
 
 /// Moves the pointer for a point measured in an observed display frame.
-pub async fn move_display_frame_point_via_api(frame: &FrameRef, point: Point) -> Result<(ScreenPoint, InputActionResult), ObservationError> {
+pub async fn move_display_frame_point_via_api(frame: &FrameRef, point: Point) -> Result<(ScreenPoint, InputActionResult), ReadError> {
   validate_primary_display_frame(frame, "remote screen move")?;
   let auv = connect_auv(None).await?;
   let run = auv.run(balatro_run_options()).await.map_err(api_error)?;
@@ -157,7 +154,7 @@ pub async fn move_display_frame_point_via_api(frame: &FrameRef, point: Point) ->
       .iter()
       .find(|display| display.is_primary)
       .or_else(|| displays.displays.first())
-      .ok_or_else(|| ObservationError::Api("Driver Runner returned no displays".to_string()))?;
+      .ok_or_else(|| ReadError::Api("Driver Runner returned no displays".to_string()))?;
     let screen_point = project_display_frame_point(frame, display.frame, point);
     let action = move_mouse_to(&driver, screen_point.point()).await?;
     #[cfg(feature = "tracing")]
@@ -175,7 +172,7 @@ pub async fn move_display_frame_point_via_api(frame: &FrameRef, point: Point) ->
 pub async fn hover_read_display_frame_points_via_api(
   frame: &FrameRef,
   requests: &[HoverReadRequest],
-) -> Result<Vec<HoverReadObservation>, ObservationError> {
+) -> Result<Vec<HoverReadResult>, ReadError> {
   validate_primary_display_frame(frame, "remote hover read")?;
   let auv = connect_auv(None).await?;
   let run = auv.run(balatro_run_options()).await.map_err(api_error)?;
@@ -187,8 +184,8 @@ pub async fn hover_read_display_frame_points_via_api(
       .iter()
       .find(|display| display.is_primary)
       .or_else(|| displays.displays.first())
-      .ok_or_else(|| ObservationError::Api("Driver Runner returned no displays".to_string()))?;
-    let mut observations = Vec::with_capacity(requests.len());
+      .ok_or_else(|| ReadError::Api("Driver Runner returned no displays".to_string()))?;
+    let mut reads = Vec::with_capacity(requests.len());
     for (index, request) in requests.iter().enumerate() {
       let screen_point = project_display_frame_point(frame, display.frame, request.point);
       let moved = move_mouse_to(&driver, screen_point.point()).await?;
@@ -218,38 +215,38 @@ pub async fn hover_read_display_frame_points_via_api(
         let pixels = driver.captures().pixels(&capture).await.map_err(api_error)?;
         crate::run_read::emit_image_artifact("auv.balatro.object_hover.capture", &frame_source, &pixels.image);
       }
-      observations.push(HoverReadObservation {
+      reads.push(HoverReadResult {
         point: screen_point,
         delivery: moved,
         recognition,
         frame_source,
       });
     }
-    Ok(observations)
+    Ok(reads)
   }
   .await;
   finish_run(run, result).await
 }
 
-async fn move_mouse_to(driver: &auv::client::runner::RunnerClient, point: Point) -> Result<InputActionResult, ObservationError> {
+async fn move_mouse_to(driver: &auv::client::runner::RunnerClient, point: Point) -> Result<InputActionResult, ReadError> {
   let mut stream = driver.input().move_mouse(auv_driver::MoveMouseRequest::direct(point)).await.map_err(api_error)?;
   while let Some(event) = stream.next().await.map_err(api_error)? {
     if let auv::client::runner::MouseMotionEvent::Completed { action, .. } = event {
       return Ok(action);
     }
   }
-  Err(ObservationError::Api("MoveMouse ended without completion evidence".to_string()))
+  Err(ReadError::Api("MoveMouse ended without completion evidence".to_string()))
 }
 
-fn validate_primary_display_frame(frame: &FrameRef, operation: &str) -> Result<(), ObservationError> {
+fn validate_primary_display_frame(frame: &FrameRef, operation: &str) -> Result<(), ReadError> {
   if !frame.source.starts_with("daemon://display/primary") {
     // TODO(balatro-remote-window-projection): project resolved Window captures
     // after a production Linux Window consumer exists; live Linux currently
     // supplies the explicit primary-display fallback source.
-    return Err(ObservationError::Api(format!("{operation} requires a primary-display frame, received {:?}", frame.source)));
+    return Err(ReadError::Api(format!("{operation} requires a primary-display frame, received {:?}", frame.source)));
   }
   if frame.image_size.width == 0 || frame.image_size.height == 0 {
-    return Err(ObservationError::Api(format!("{operation} requires non-zero frame dimensions")));
+    return Err(ReadError::Api(format!("{operation} requires non-zero frame dimensions")));
   }
   Ok(())
 }
@@ -261,7 +258,7 @@ fn project_display_frame_point(frame: &FrameRef, bounds: auv_driver::Rect, point
   )
 }
 
-async fn connect_auv(endpoint: Option<ConnectEndpoint>) -> Result<Client, ObservationError> {
+async fn connect_auv(endpoint: Option<ConnectEndpoint>) -> Result<Client, ReadError> {
   match std::env::var("AUV_CONTEXT") {
     Ok(_) => Client::from_context(AuvContext::from_env().map_err(api_error)?).await.map_err(api_error),
     Err(std::env::VarError::NotPresent) => match endpoint {
@@ -298,7 +295,7 @@ fn balatro_runner_options() -> RunnerOptions {
   }
 }
 
-async fn finish_run<T>(run: RunClient, result: Result<T, ObservationError>) -> Result<T, ObservationError> {
+async fn finish_run<T>(run: RunClient, result: Result<T, ReadError>) -> Result<T, ReadError> {
   let outcome = if result.is_ok() {
     auv::runs::RunOutcome::Succeeded
   } else {
@@ -307,17 +304,17 @@ async fn finish_run<T>(run: RunClient, result: Result<T, ObservationError>) -> R
   merge_cleanup(result, run.finish_if_owned(outcome).await.map(|_| ()).map_err(api_error))
 }
 
-fn merge_cleanup<T>(result: Result<T, ObservationError>, cleanup: Result<(), ObservationError>) -> Result<T, ObservationError> {
+fn merge_cleanup<T>(result: Result<T, ReadError>, cleanup: Result<(), ReadError>) -> Result<T, ReadError> {
   match (result, cleanup) {
     (Ok(value), Ok(())) => Ok(value),
     (Err(primary), Ok(())) => Err(primary),
     (Ok(_), Err(cleanup)) => Err(cleanup),
-    (Err(primary), Err(cleanup)) => Err(ObservationError::Api(format!("{primary}; cleanup also failed: {cleanup}"))),
+    (Err(primary), Err(cleanup)) => Err(ReadError::Api(format!("{primary}; cleanup also failed: {cleanup}"))),
   }
 }
 
-fn api_error(error: impl std::fmt::Display) -> ObservationError {
-  ObservationError::Api(error.to_string())
+fn api_error(error: impl std::fmt::Display) -> ReadError {
+  ReadError::Api(error.to_string())
 }
 
 async fn detect_via_api(
@@ -326,7 +323,7 @@ async fn detect_via_api(
   entities_classes: Vec<String>,
   ui_classes: Vec<String>,
   frame: image_proto::RgbFrame,
-) -> Result<BalatroDetectionSets, ObservationError> {
+) -> Result<BalatroDetectionSets, ReadError> {
   let balatro =
     balatro_proto::balatro_detection_service_client::BalatroDetectionServiceClient::new(balatro.extension_transport().map_err(api_error)?)
       .max_decoding_message_size(auv::client::runner::IMAGE_RPC_MESSAGE_SIZE_LIMIT)
@@ -336,7 +333,7 @@ async fn detect_via_api(
     height: frame.height,
   };
   let image = RgbImage::from_raw(frame.width, frame.height, frame.data.clone())
-    .ok_or_else(|| ObservationError::Api("card attribute detectors received an invalid RGB frame".to_string()))?;
+    .ok_or_else(|| ReadError::Api("card attribute detectors received an invalid RGB frame".to_string()))?;
   let (hand_crop, hand_frame) = crop_hand_frame(&image);
   let hand_frame = image_proto::RgbFrame {
     width: hand_frame.image.width(),
@@ -402,12 +399,12 @@ async fn detect_via_api(
 
 fn batch_results(
   batch: balatro_proto::DetectObjectsBatchResponse,
-) -> Result<HashMap<String, balatro_proto::DetectObjectsResponse>, ObservationError> {
+) -> Result<HashMap<String, balatro_proto::DetectObjectsResponse>, ReadError> {
   batch
     .results
     .into_iter()
     .map(|entry| {
-      let result = entry.result.ok_or_else(|| ObservationError::Api(format!("batch result {} omitted result", entry.detector_id)))?;
+      let result = entry.result.ok_or_else(|| ReadError::Api(format!("batch result {} omitted result", entry.detector_id)))?;
       Ok((entry.detector_id, result))
     })
     .collect()
@@ -416,8 +413,8 @@ fn batch_results(
 fn take_batch_result(
   results: &mut HashMap<String, balatro_proto::DetectObjectsResponse>,
   detector_id: &str,
-) -> Result<balatro_proto::DetectObjectsResponse, ObservationError> {
-  results.remove(detector_id).ok_or_else(|| ObservationError::Api(format!("batch response omitted detector {detector_id}")))
+) -> Result<balatro_proto::DetectObjectsResponse, ReadError> {
+  results.remove(detector_id).ok_or_else(|| ReadError::Api(format!("batch response omitted detector {detector_id}")))
 }
 
 async fn observe_live_with_runners(
@@ -428,7 +425,7 @@ async fn observe_live_with_runners(
   entities_classes: Vec<String>,
   ui_classes: Vec<String>,
   no_cache: bool,
-) -> Result<BalatroState, ObservationError> {
+) -> Result<BalatroState, ReadError> {
   #[cfg(target_os = "linux")]
   let (source, captured) = {
     let _ = target;
@@ -446,7 +443,7 @@ async fn observe_live_with_runners(
   let (source, captured) = {
     // TODO(balatro-window-resolution-cache): cache a resolved Window only after
     // the platform exposes a typed move/resize/close invalidation signal; stale
-    // window identity or geometry is worse than the current per-observation lookup.
+    // window identity or geometry is worse than the current per-read lookup.
     let window = driver
       .windows()
       .resolve(auv_driver::WindowSelector {
@@ -471,7 +468,7 @@ async fn observe_live_with_runners(
   // The detectors run on local pixels; OCR below reads the Runner-held capture.
   let capture = driver.captures().pixels(&captured).await.map_err(api_error)?;
   #[cfg(feature = "tracing")]
-  crate::run_read::emit_image_artifact("auv.balatro.observation.capture", &source, &capture.image);
+  crate::run_read::emit_image_artifact("auv.balatro.read.capture", &source, &capture.image);
   let image = image::DynamicImage::ImageRgba8(capture.image.clone()).to_rgb8();
   let frame = image_proto::RgbFrame {
     width: image.width(),
@@ -493,7 +490,7 @@ async fn observe_live_with_runners(
   let mut state = build_state_from_detections(source, image_size, &image, detections, no_cache);
   enrich_ui_numeric_readings_from_recognition(&mut state, &capture, recognition);
   #[cfg(feature = "tracing")]
-  crate::run_read::emit_json_artifact("auv.balatro.observation.state", &state);
+  crate::run_read::emit_json_artifact("auv.balatro.read.state", &state);
   Ok(state)
 }
 
@@ -533,7 +530,7 @@ fn detector_spec(
   device: &auv_inference_ultralytics::InferenceDevice,
   input_size: u32,
   class_names: Vec<String>,
-) -> Result<balatro_proto::ObjectDetectorSpec, ObservationError> {
+) -> Result<balatro_proto::ObjectDetectorSpec, ReadError> {
   let (kind, index) = match device {
     auv_inference_ultralytics::InferenceDevice::Cpu => (balatro_proto::InferenceDeviceKind::Cpu, None),
     auv_inference_ultralytics::InferenceDevice::Cuda(index) => (balatro_proto::InferenceDeviceKind::Cuda, Some(*index)),
@@ -547,7 +544,7 @@ fn detector_spec(
   let index = index
     .map(u32::try_from)
     .transpose()
-    .map_err(|_| ObservationError::Api("inference device index exceeds the protobuf uint32 range".to_string()))?;
+    .map_err(|_| ReadError::Api("inference device index exceeds the protobuf uint32 range".to_string()))?;
   Ok(balatro_proto::ObjectDetectorSpec {
     detector_id: detector_id.to_string(),
     source: Some(model_source(model)?),
@@ -563,10 +560,10 @@ fn detector_spec(
   })
 }
 
-fn model_source(model: &BalatroModelAsset) -> Result<balatro_proto::object_detector_spec::Source, ObservationError> {
+fn model_source(model: &BalatroModelAsset) -> Result<balatro_proto::object_detector_spec::Source, ReadError> {
   Ok(match model {
     BalatroModelAsset::Local(path) => balatro_proto::object_detector_spec::Source::RunnerPath(
-      path.to_str().ok_or_else(|| ObservationError::Api(format!("Runner model path is not valid UTF-8: {}", path.display())))?.to_string(),
+      path.to_str().ok_or_else(|| ReadError::Api(format!("Runner model path is not valid UTF-8: {}", path.display())))?.to_string(),
     ),
     BalatroModelAsset::HuggingFace {
       repo_kind,
@@ -585,27 +582,27 @@ fn model_source(model: &BalatroModelAsset) -> Result<balatro_proto::object_detec
   })
 }
 
-async fn load_remote_class_names(config: &BalatroModelConfig) -> Result<(Vec<String>, Vec<String>), ObservationError> {
+async fn load_remote_class_names(config: &BalatroModelConfig) -> Result<(Vec<String>, Vec<String>), ReadError> {
   let entities = config.entities_classes.clone();
   let ui = config.ui_classes.clone();
   tokio::task::spawn_blocking(move || {
-    let load = |asset: BalatroModelAsset| -> Result<Vec<String>, ObservationError> {
-      let path = asset.resolve_path().map_err(|error| ObservationError::Api(error.to_string()))?;
+    let load = |asset: BalatroModelAsset| -> Result<Vec<String>, ReadError> {
+      let path = asset.resolve_path().map_err(|error| ReadError::Api(error.to_string()))?;
       Ok(crate::config::load_class_names(&path)?)
     };
     Ok((load(entities)?, load(ui)?))
   })
   .await
-  .map_err(|error| ObservationError::Api(format!("class-asset task failed: {error}")))?
+  .map_err(|error| ReadError::Api(format!("class-asset task failed: {error}")))?
 }
 
-fn detection_result_from_proto(response: balatro_proto::DetectObjectsResponse) -> Result<DetectionResult, ObservationError> {
-  let size = response.image_size.ok_or_else(|| ObservationError::Api("DetectObjects response omitted image_size".to_string()))?;
+fn detection_result_from_proto(response: balatro_proto::DetectObjectsResponse) -> Result<DetectionResult, ReadError> {
+  let size = response.image_size.ok_or_else(|| ReadError::Api("DetectObjects response omitted image_size".to_string()))?;
   let detections = response
     .detections
     .into_iter()
     .map(|detection| {
-      let bbox = detection.bounding_box.ok_or_else(|| ObservationError::Api("DetectObjects detection omitted bounding_box".to_string()))?;
+      let bbox = detection.bounding_box.ok_or_else(|| ReadError::Api("DetectObjects detection omitted bounding_box".to_string()))?;
       Ok(Detection {
         class_id: detection.class_id as usize,
         label: detection.label,
@@ -618,7 +615,7 @@ fn detection_result_from_proto(response: balatro_proto::DetectObjectsResponse) -
         },
       })
     })
-    .collect::<Result<Vec<_>, ObservationError>>()?;
+    .collect::<Result<Vec<_>, ReadError>>()?;
   Ok(DetectionResult {
     image_size: ImageSize {
       width: size.width,
@@ -751,7 +748,7 @@ fn normalize_ui_numeric_text(text: &str) -> Option<String> {
   (!normalized.is_empty()).then_some(normalized)
 }
 
-pub fn observe_image(image_path: impl AsRef<Path>, config: &BalatroModelConfig, no_cache: bool) -> Result<BalatroState, ObservationError> {
+pub fn read_image(image_path: impl AsRef<Path>, config: &BalatroModelConfig, no_cache: bool) -> Result<BalatroState, ReadError> {
   let image_path = image_path.as_ref();
   let image = image::open(image_path)?.to_rgb8();
   let image_size = ImageSize {
@@ -803,7 +800,7 @@ pub fn build_state_from_detections(
     // TODO(card-detector-empty-result): A configured specialized detector is
     // authoritative even when it returns no boxes; an entities fallback would
     // silently restore the false positives this path removes. Add an explicit
-    // fallback reason only with an owner-approved observation contract.
+    // fallback reason only with an owner-approved read contract.
     hand_detections
       .as_deref()
       .unwrap_or(&entity_detections)
@@ -1172,7 +1169,7 @@ fn store_item_kind(label: &str) -> Option<StoreItemKind> {
     "card_pack" => Some(StoreItemKind::CardPack),
     "poker_card_front" => Some(StoreItemKind::PlayingCard),
     // TODO(voucher-detection): detector-backed voucher labels are deferred
-    // until the entities dataset grows that class. Store observation currently
+    // until the entities dataset grows that class. Store read currently
     // adds a low-confidence layout fallback candidate instead.
     _ => None,
   }
@@ -1240,5 +1237,5 @@ fn center_x(detection: &Detection) -> f32 {
 }
 
 #[cfg(test)]
-#[path = "observation_test.rs"]
+#[path = "read_test.rs"]
 mod tests;

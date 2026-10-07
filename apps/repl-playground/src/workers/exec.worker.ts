@@ -1,5 +1,5 @@
 import type { ExecWorkerApi, HostApi, LogLevel, ResumeMode, RunOutcome, RunRequest, WireValue } from '../runtime/protocol'
-import type { AuvScriptApi, ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, ScrollUntilOptions, TextSearchOptions, WindowHandle } from '../script-api/api'
+import type { AuvScriptApi, ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, ScrollUntilOptions, TextSearchOptions, WindowHandle } from '../script-api/api'
 /// <reference lib="webworker" />
 import type { StepSite } from '../stepper/compile'
 
@@ -33,15 +33,15 @@ const persistentNames = new Set<string>()
 const now = () => performance.timeOrigin + performance.now()
 
 // `scrollUntil` predicates by id while their call runs; the host asks via `decide`.
-const predicates = new Map<number, (observation: ScrollObservation) => boolean | Promise<boolean>>()
+const predicates = new Map<number, (update: ScrollUntilUpdate) => boolean | Promise<boolean>>()
 let nextPredicate = 1
 
 const api: ExecWorkerApi = {
-  async decide(predicateId, observation) {
+  async decide(predicateId, update) {
     const predicate = predicates.get(predicateId)
     if (!predicate)
       throw new Error(`scrollUntil predicate ${predicateId} is no longer running`)
-    return Boolean(await predicate(observation))
+    return Boolean(await predicate(update))
   },
   resume(next) {
     resumeWaiter?.(next)

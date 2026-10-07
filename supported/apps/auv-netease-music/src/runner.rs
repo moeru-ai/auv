@@ -134,7 +134,7 @@ impl PlaylistService for Service {
       })
       .collect::<Vec<_>>();
     let emitted = u32::try_from(playlists.len()).unwrap_or(u32::MAX);
-    let observations = u32::try_from(scan.observations_len()).unwrap_or(u32::MAX);
+    let viewports = u32::try_from(scan.viewports_len()).unwrap_or(u32::MAX);
     let mut events: Vec<Result<proto::ListPlaylistsStreamResponse, Status>> =
       Vec::with_capacity(playlists.len() + scan.diagnostics().len() + 1);
     events.extend(playlists.into_iter().map(|playlist| {
@@ -155,7 +155,7 @@ impl PlaylistService for Service {
       event: Some(proto::list_playlists_stream_response::Event::Completed(proto::ListPlaylistsCompleted {
         items_emitted: emitted,
         known_limits: scan.known_limits().to_vec(),
-        observations,
+        viewports,
       })),
     }));
     Ok(Response::new(Box::pin(futures_util::stream::iter(events))))

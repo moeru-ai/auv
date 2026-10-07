@@ -216,9 +216,9 @@ async fn list(args: DeviceListArgs, selection: &auv::selection::RootSelection) -
     devices.retain(|device| selector.matches(&device.id, &device.name));
   }
   let profile_store = auv::profile::ProfileStore::from_env().map_err(|error| error.to_string())?;
-  let mut observations = auv::devices::Devices::observe_configured(&profile_store).await.map_err(|error| error.to_string())?;
+  let mut statuses = auv::devices::Devices::probe_configured(&profile_store).await.map_err(|error| error.to_string())?;
   if let Some(selector) = &selector {
-    observations.retain(|observation| observation.matches(selector));
+    statuses.retain(|status| status.matches(selector));
   }
 
   if args.json {
@@ -231,20 +231,20 @@ async fn list(args: DeviceListArgs, selection: &auv::selection::RootSelection) -
         value
       })
       .collect::<Vec<_>>();
-    for observation in &observations {
-      if devices.iter().any(|device| device.id.as_str() == observation.profile.device_id()) {
+    for status in &statuses {
+      if devices.iter().any(|device| device.id.as_str() == status.profile.device_id()) {
         continue;
       }
-      values.push(configured_device_json(observation));
+      values.push(configured_device_json(status));
     }
     println!("{}", serde_json::to_string_pretty(&values).map_err(|error| format!("failed to encode Device list: {error}"))?);
   } else {
     let mut rows = devices.iter().map(|device| device_table_row(device, "online")).collect::<Vec<_>>();
-    for observation in &observations {
-      if devices.iter().any(|device| device.id.as_str() == observation.profile.device_id()) {
+    for status in &statuses {
+      if devices.iter().any(|device| device.id.as_str() == status.profile.device_id()) {
         continue;
       }
-      rows.push(configured_device_table_row(observation));
+      rows.push(configured_device_table_row(status));
     }
     print_table(&rows, "(no devices)");
   }
@@ -504,7 +504,7 @@ fn device_table_row(device: &auv::devices::Device, status: &str) -> DeviceTableR
   }
 }
 
-fn configured_device_table_row(probe: &auv::devices::ConfiguredDeviceObservation) -> DeviceTableRow {
+fn configured_device_table_row(probe: &auv::devices::ConfiguredDeviceStatus) -> DeviceTableRow {
   DeviceTableRow {
     device_id: probe.profile.device_id().replace('-', "").chars().take(12).collect(),
     name: probe
@@ -526,7 +526,7 @@ fn device_json(device: &auv::devices::Device) -> serde_json::Value {
   })
 }
 
-fn configured_device_json(probe: &auv::devices::ConfiguredDeviceObservation) -> serde_json::Value {
+fn configured_device_json(probe: &auv::devices::ConfiguredDeviceStatus) -> serde_json::Value {
   serde_json::json!({
     "device_id": probe.profile.device_id(),
     "name": probe.remote.as_ref().map(|device| device.name.as_str()).filter(|name| !name.is_empty()).unwrap_or(probe.profile.device_name()),

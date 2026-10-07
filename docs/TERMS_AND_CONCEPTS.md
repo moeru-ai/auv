@@ -54,9 +54,9 @@ it is not an operation session or application runtime.
 
 ## Trace Record
 
-A `TraceRecord` is one full-fidelity producer observation: span start, span end,
+A `TraceRecord` is one full-fidelity producer record: span start, span end,
 typed event with canonical payload, or stored artifact metadata. Records are
-append-only observations. They do not imply commits, revisions, snapshots,
+append-only records. They do not imply commits, revisions, snapshots,
 idempotency, recovery, or reconstructed operation results.
 
 Trace names, error codes, artifact purposes, content types, and attribute keys
@@ -70,7 +70,7 @@ JSON numbers, byte limits, and artifact integrity.
 `TracingStore` is the write-only port for full-fidelity trace records and
 artifact bodies. It exposes `write`, `write_artifact`, and `flush`; generic
 lookup, snapshots, pagination, subscriptions, and artifact reads do not belong
-to this producer-side port. Concrete in-memory stores may expose observations
+to this producer-side port. Concrete in-memory stores may expose records
 for tests without turning those methods into the generic store contract.
 
 ## Trace Exporter
@@ -916,10 +916,19 @@ shared runtime and inspection model rather than an app-local manifest,
 artifact directory, process-global cache, or application-owned tracing-store
 reader.
 
-## Observation Scope
+## Observation Naming
 
-An observation scope is the coordinate and capture surface used by an
-observation or pointer action. The scope determines how region ratios are
+Use `observation` only for information gathered to inform the next action in a
+perception/decision/action loop. Prefer concrete domain names for frames,
+parsed viewports, query results, state, samples and stream updates. The
+[2026-10-08 naming migration](ai/references/runtime/2026-10-08-domain-result-naming-migration.md)
+records the coordinated proto, SDK and domain renames. Platform-defined terms
+such as `VNRecognizedTextObservation` retain their original names.
+
+## Coordinate Scope
+
+A coordinate scope is the coordinate and capture surface used by a
+capture, recognition result, or pointer action. The scope determines how region ratios are
 interpreted, how OCR or row bounds are projected into clickable coordinates,
 and which candidate objects are eligible for selection.
 
@@ -1030,7 +1039,7 @@ for current capability limits and evidence.
 
 ## Screen
 
-A screen is the logical desktop observation surface. It is the user-facing
+A screen is the logical desktop capture and input surface. It is the user-facing
 workspace formed by one or more displays.
 
 `screen` is a logical term, not a physical identifier. AUV should not expose a
@@ -1045,7 +1054,7 @@ logical screen.
 
 Display selectors identify which part of the screen to capture or inspect. AUV
 may expose selectors such as a display ref, native display id, or main-display
-flag. Display refs are scoped to an observation snapshot unless a command
+flag. Display refs are scoped to a discovery snapshot unless a command
 explicitly documents a stronger stability guarantee.
 
 ## Resource reference scope
@@ -1070,7 +1079,7 @@ owner of a reference decides which routes may use it.
 
 ## Window
 
-A window is an application-owned observation surface with bounds, ownership
+A window is an application-owned capture and input surface with bounds, ownership
 metadata, and a relationship to one or more displays.
 
 For the first macOS window-capture implementation, AUV treats a window as
@@ -1090,7 +1099,7 @@ reason it appears in the ordered list.
 
 Candidate list order is useful for presentation and fallback heuristics, but it
 is not a stable identity. Workflow code and legacy recipe compatibility paths
-should prefer explicit selectors such as a window ref from the same observation,
+should prefer explicit selectors such as a window ref from the same discovery result,
 a native window id, an owner/title predicate, or another documented stable
 selector over relying on a bare list index.
 
@@ -1127,7 +1136,7 @@ window id was requested.
 An overlay display is temporary visual feedback drawn over the live
 desktop to make AUV's selected scope, target geometry, and recent operation
 visible to a person. It is a trust and debugging surface, not an input delivery
-backend, an observation artifact, or semantic verification.
+backend, a captured evidence artifact, or semantic verification.
 
 An overlay display may follow a successful operation, such as outlining a
 captured display or showing the delivered click point. Rendering success proves
@@ -1179,9 +1188,9 @@ images remain unbound.
 `relative_to(&impl Positional)` rebases those offsets within the same coordinate
 space and retains the new origin; repeated rebasing to the same origin is
 idempotent. `positioned_regions()` carries that origin into each text center,
-without attaching a window manually. Unbound observations and cross-space
+without attaching a window manually. Unbound results and cross-space
 rebasing return errors. Capture and OCR origins survive Runner transport;
-older serialized observations without origins remain unbound.
+older serialized results without origins remain unbound.
 `Positioned<T>` keeps domain data alongside an explicitly selected position;
 that point may differ from the center of the observed bounds. These types do
 not assert visibility, freshness, or actionability. Input policies and delivery
@@ -1196,7 +1205,7 @@ proven safe by this contract.
 
 ## Region
 
-A region is a crop or filter applied inside an observation scope.
+A region is a crop or filter applied inside a coordinate scope.
 
 Region coordinates and ratios are relative to the current scope. For example, a
 `region_top_ratio` on a window-scoped command is relative to the captured
@@ -1351,7 +1360,7 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   (`RecognizeTextRequest.image`) and recent-frame buffers. `CapturedFrame` never
   carries pixels.
 - In Rust, `DisplayCapture<C>`, `RegionCapture<C>` and
-  `auv_scan::ScrollUntilObservation<C>` are generic over how the capture is
+  `auv_scan::ScrollUntilUpdate<C>` are generic over how the capture is
   held: `auv_driver::Capture` in process, `RunnerCapture` through the client.
   Physical image sizes are `auv_driver::PixelSize`; logical sizes are `Size`.
 - **Capture resolution** (`CaptureResolution`): captures default to `Native`,
@@ -1470,7 +1479,7 @@ Scroll until is a bounded observation loop:
 - **Loop:** scroll one step, wait for the settle time, capture the window,
   and compare the capture with the previous one. One step is either an
   instant scroll or a scroll motion.
-- **Observations:** each one (before the first step and after every step)
+- **Updates:** each one (before the first step and after every step)
   carries motion evidence, plus the capture and recognized text unless the
   caller opts out.
 - **Stop reasons:**
@@ -1605,13 +1614,13 @@ and OCR fragments, but it does not become a semantic song, email, file, or table
 record until Rust orchestration, a parser, or a legacy compatibility path
 interprets it.
 
-## List Item Observation
+## List Item Record
 
-A list item observation is recorded evidence extracted from a list item
+A list item record is recorded evidence extracted from a list item
 candidate on one scan page. It can include text fragments, geometry, source
 artifacts, row-filter metadata, and parser attributes.
 
-List item observations are the per-page entries that can later be merged into
+List item records are the per-page entries that can later be merged into
 an observed collection.
 
 ## AX Tree
@@ -1628,7 +1637,7 @@ elements inside an app surface.
 ## Capture Contract
 
 A capture contract is structured metadata that explains how an image artifact
-maps to an observation scope. It should include enough information to interpret
+maps to a coordinate scope. It should include enough information to interpret
 pixel bounds, project selected points back to logical coordinates, and diagnose
 why a capture was rejected.
 

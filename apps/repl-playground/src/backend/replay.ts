@@ -1,4 +1,4 @@
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
 import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 /** One device call of a live run: what was asked and what the device answered. */
@@ -113,7 +113,7 @@ export class RecordingBackend implements Backend {
     return this.#record('scrollWindow', [windowId, point, delta], () => this.inner.scrollWindow(windowId, point, delta))
   }
 
-  scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+  scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>): Promise<ScrollUntilOutcome> {
     // The predicate itself is not recorded; replay returns the recorded outcome.
     return this.#record('scrollWindowUntil', [windowId, point, request, decide !== undefined], () => this.inner.scrollWindowUntil(windowId, point, request, decide))
   }
@@ -225,7 +225,7 @@ export class ReplayBackend implements Backend {
   // NOTICE(replay-scroll-predicate): replay returns the recorded outcome
   // without running an `until` predicate, so an edited predicate does not
   // diverge; only whether one is present is compared.
-  scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+  scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>): Promise<ScrollUntilOutcome> {
     return this.#next('scrollWindowUntil', [windowId, point, request, decide !== undefined])
   }
 

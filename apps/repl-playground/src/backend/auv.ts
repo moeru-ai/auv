@@ -1,6 +1,6 @@
 import type { AuvClient, AuvConnection, Device, RunnerClient, WindowClient } from '@auv-js/sdk'
 
-import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollUntilUpdate, WindowSelector } from '../script-api/api'
 import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, ImageEncoding, InputDeliveryPath, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
@@ -9,7 +9,7 @@ type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
 type NativeDisplay = Awaited<ReturnType<RunnerClient['displays']['list']>>[number]
 type NativeFrame = NonNullable<CaptureResponse['capture']>
-type NativeObservation = Parameters<NonNullable<NonNullable<Parameters<WindowClient['scrollUntil']>[2]>['onObservation']>>[0]
+type NativeScrollUpdate = Parameters<NonNullable<NonNullable<Parameters<WindowClient['scrollUntil']>[2]>['onUpdate']>>[0]
 type NativeRecognized = Awaited<ReturnType<RunnerClient['recognizeText']>>
 type NativeWindow = WindowClient['window']
 
@@ -161,9 +161,9 @@ class AuvBackend implements Backend {
     return { path: deliveryPath(response.action), point: screenPoint(response.window?.frame, point) }
   }
 
-  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (observation: ScrollObservation) => Promise<boolean>): Promise<ScrollUntilOutcome> {
+  async scrollWindowUntil(windowId: string, point: Point, request: ScrollUntilRequest, decide?: (update: ScrollUntilUpdate) => Promise<boolean>): Promise<ScrollUntilOutcome> {
     const window = this.#runner.windows.from(windowId)
-    let last: NativeObservation | undefined
+    let last: NativeScrollUpdate | undefined
     const completed = await window.scrollUntil(point, {
       condition: request.text ? { case: 'textVisible', value: { query: request.text } } : { case: 'end', value: {} },
       maxSteps: request.maxSteps,
@@ -171,13 +171,13 @@ class AuvBackend implements Backend {
       settle: toDuration(request.settleMs),
       step: { case: 'instant', value: { deltaX: request.delta.dx ?? 0, deltaY: request.delta.dy ?? 0 } },
     }, {
-      onObservation: (observation) => {
-        last = observation
+      onUpdate: (update) => {
+        last = update
       },
-      until: decide && (observation => decide({
-        moved: observation.motion ? !observation.motion.noMotion : false,
-        steps: observation.steps,
-        text: observation.text?.text ?? '',
+      until: decide && (update => decide({
+        moved: update.motion ? !update.motion.noMotion : false,
+        steps: update.steps,
+        text: update.text?.text ?? '',
       })),
     })
     const match = completed.textMatch

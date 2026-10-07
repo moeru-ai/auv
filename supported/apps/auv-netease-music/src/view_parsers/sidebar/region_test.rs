@@ -317,10 +317,10 @@ fn detect_sidebar_region_expanded_bounds_parse_playlist_item() {
   ]);
   let region = detect_sidebar_region(None, window_size, &recognition).expect("expanded default window should detect sidebar region");
   let bounds = region.bounds.expect("expanded region should carry bounds");
-  let observation = parse_sidebar_viewport(0, bounds, &recognition);
+  let viewport = parse_sidebar_viewport(0, bounds, &recognition);
 
   assert!(
-    observation.candidates.iter().any(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem),
+    viewport.candidates.iter().any(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem),
     "expanded viewport should still classify playlist rows as PlaylistItem"
   );
 }
@@ -336,21 +336,21 @@ fn detect_sidebar_region_expanded_bounds_rejects_library_nav_rows() {
   ]);
   let region = detect_sidebar_region(None, window_size, &recognition).expect("expanded default window should detect sidebar region");
   let bounds = region.bounds.expect("expanded region should carry bounds");
-  let observation = parse_sidebar_viewport(0, bounds, &recognition);
+  let viewport = parse_sidebar_viewport(0, bounds, &recognition);
 
   assert!(
-    observation.candidates.iter().any(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem),
+    viewport.candidates.iter().any(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem),
     "playlist row should still parse after expansion"
   );
   assert!(
-    observation
+    viewport
       .candidates
       .iter()
       .all(|candidate| candidate.kind != SidebarCandidateKind::PlaylistItem || candidate.label.as_deref() == Some("VIP黑胶专属歌单")),
     "library/nav rows inside expanded viewport must not become PlaylistItem candidates"
   );
   assert!(
-    observation.candidates.iter().any(|candidate| {
+    viewport.candidates.iter().any(|candidate| {
       matches!(candidate.kind, SidebarCandidateKind::NavigationItem | SidebarCandidateKind::SectionHeader)
         && matches!(candidate.label.as_deref(), Some("推荐") | Some("发现音乐"))
     }),

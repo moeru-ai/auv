@@ -1,5 +1,10 @@
 # AUV Surface SLAM Direction
 
+> Naming migration (2026-10-08): `FrameObservation` → `FrameItem`.
+> This dated note may retain the former names. Prefer concrete domain results;
+> reserve `observation` for information used to decide the next action.
+> See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
+
 **Date:** 2026-07-05
 **Status:** direction note — docs-only; opens the next planning lane after S9b, does not approve implementation
 **Scope:** 2D video-stream consumption, temporal surface modeling, action/state transition proof

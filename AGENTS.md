@@ -193,7 +193,7 @@ Runner owns. Do not treat them as ordinary response data.
 - A client must never have to send pixels back that AUV produced. An
   operation on a capture that AUV made, such as OCR, detection or crop, must
   accept a reference to that capture.
-- Observations and streams, such as find-text evidence, scroll-until steps
+- Results and streams, such as find-text evidence, scroll-until steps
   and recent frames, return references, metadata or bounded thumbnails by
   default. Full frames are opt-in.
 - Run recording persists evidence on the AUV side from the same references.
@@ -201,7 +201,7 @@ Runner owns. Do not treat them as ordinary response data.
 - Only caller-owned images may be uploaded as pixels. An example is an image
   the user supplies.
 
-Captures, find-text evidence, scroll-until observations and OCR already
+Captures, find-text evidence, scroll-until updates and OCR already
 follow this rule: they use `CaptureRef`, and `GetCaptureImage` is the explicit
 pixel fetch (see "Capture Frame" in `docs/TERMS_AND_CONCEPTS.md`). One existing
 API predates it: `GetRecentFramesResponse` frames
@@ -308,6 +308,20 @@ API predates it: `GetRecentFramesResponse` frames
   broad constant that silently governs unrelated behavior.
 
 ## Naming & Comments
+
+- Use `observation` sparingly. Reserve it for information collected to inform
+  the **next action** in a perception/decision/action loop. A capture, frame,
+  query response, stored record, state snapshot, or streamed update is not an
+  observation merely because it was read or emitted. Prefer its concrete domain
+  name, such as `CapturedFrame`, `ParsedViewport`, `FrameItem`, `DeviceStatus`,
+  `ReadResult`, or `ScrollUntilUpdate`. Even in a decision loop, use the more
+  specific name when it communicates the payload better.
+- Keep third-party names intact (for example Apple's
+  `VNRecognizedTextObservation`). When renaming first-party terms, migrate
+  producers, consumers, proto/SDK fields, tests, and current documentation
+  together. Add a migration notice to older design notes instead of rewriting
+  historical evidence. See
+  `docs/ai/references/runtime/2026-10-08-domain-result-naming-migration.md`.
 
 - Prefer names that rely on the module boundary for context instead of
   repeating product, platform, protocol, or transport prefixes inside every

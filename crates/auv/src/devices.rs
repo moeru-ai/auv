@@ -1,4 +1,4 @@
-//! Device inventory, selector resolution, and configured-profile observation.
+//! Device inventory, selector resolution, and configured-profile probe.
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -261,13 +261,13 @@ pub enum DeviceAvailability {
   Unauthorized,
   /// The configured profile or remote identity is inconsistent.
   Invalid,
-  /// Observation failed for another reason.
+  /// Probe failed for another reason.
   Error,
 }
 
-/// One configured profile together with its live observation, when reachable.
+/// One configured profile together with its live probe, when reachable.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfiguredDeviceObservation {
+pub struct ConfiguredDeviceStatus {
   /// Stored non-secret profile metadata.
   pub profile: ConfiguredDevice,
   /// Classified live availability.
@@ -276,7 +276,7 @@ pub struct ConfiguredDeviceObservation {
   pub remote: Option<Device>,
 }
 
-impl ConfiguredDeviceObservation {
+impl ConfiguredDeviceStatus {
   /// Returns whether this profile satisfies a validated Device selector.
   pub fn matches(&self, selector: &DeviceSelector) -> bool {
     self.profile.device_id().parse::<DeviceId>().is_ok_and(|id| selector.matches(&id, self.profile.device_name()))
@@ -458,17 +458,17 @@ impl Devices {
 
   /// Observes all configured paired profiles without failing the whole list
   /// when an individual remote is offline or unauthorized.
-  pub async fn observe_configured(store: &ProfileStore) -> Result<Vec<ConfiguredDeviceObservation>, DeviceError> {
+  pub async fn probe_configured(store: &ProfileStore) -> Result<Vec<ConfiguredDeviceStatus>, DeviceError> {
     let configured = match store.list_devices() {
       Ok(configured) => configured,
       Err(profile::ProfileError::Open { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
       Err(error) => return Err(error.into()),
     };
-    Ok(join_all(configured.into_iter().map(|profile| observe_profile(store, profile))).await)
+    Ok(join_all(configured.into_iter().map(|profile| probe_profile(store, profile))).await)
   }
 }
 
-async fn observe_profile(store: &ProfileStore, profile: ConfiguredDevice) -> ConfiguredDeviceObservation {
+async fn probe_profile(store: &ProfileStore, profile: ConfiguredDevice) -> ConfiguredDeviceStatus {
   let context = AuvContext {
     config_profile: Some(profile.config_profile().to_string()),
     ..AuvContext::default()
@@ -477,7 +477,7 @@ async fn observe_profile(store: &ProfileStore, profile: ConfiguredDevice) -> Con
     Ok(client) => match client.devices().list().await {
       Ok(devices) => {
         let remote = devices.into_iter().find(|device| device.id.as_str() == profile.device_id());
-        ConfiguredDeviceObservation {
+        ConfiguredDeviceStatus {
           availability: if remote.is_some() {
             DeviceAvailability::Online
           } else {
@@ -487,13 +487,13 @@ async fn observe_profile(store: &ProfileStore, profile: ConfiguredDevice) -> Con
           remote,
         }
       }
-      Err(error) => ConfiguredDeviceObservation {
+      Err(error) => ConfiguredDeviceStatus {
         availability: availability_from_device_error(&error),
         profile,
         remote: None,
       },
     },
-    Err(error) => ConfiguredDeviceObservation {
+    Err(error) => ConfiguredDeviceStatus {
       availability: availability_from_context_error(&error),
       profile,
       remote: None,

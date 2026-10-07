@@ -314,21 +314,21 @@ pub fn run_songs_scan(_inputs: &crate::Inputs, _source: impl Into<SongSource>) -
 #[cfg(target_os = "macos")]
 impl LiveViewProvider {
   fn observe_window(&self, scope: ViewScope) -> Result<(ScreenView, MainView, PlayerView), String> {
-    let session = auv_driver::open_local().map_err(|error| format!("live observation driver open failed: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("live viewport driver open failed: {error}"))?;
     let window = session
       .window()
       .resolve(Window::main_visible().owned_by(App::bundle(self.inputs.app_id.clone())))
-      .map_err(|error| format!("live observation target window not found: {error}"))?;
+      .map_err(|error| format!("live viewport target window not found: {error}"))?;
     let capture = session
       .window()
       .capture_with(&window, crate::window_capture_options())
-      .map_err(|error| format!("live observation window capture failed: {error}"))?;
+      .map_err(|error| format!("live viewport window capture failed: {error}"))?;
 
     let (screen, main) = if scope.screen || scope.main {
       let recognition = session
         .vision()
         .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
-        .map_err(|error| format!("live observation full-window OCR failed: {error}"))?;
+        .map_err(|error| format!("live viewport full-window OCR failed: {error}"))?;
       let recognition = recognition.relative_to(&capture).map_err(|error| error.to_string())?;
       let window_size = Size::new(window.frame.size.width, window.frame.size.height);
       let screen = if scope.screen {

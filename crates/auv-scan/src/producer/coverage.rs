@@ -19,15 +19,15 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use super::{ScanProducerError, load_multi_frame_fixture};
-use crate::association::{FrameObservation, associate_adjacent_frames};
+use crate::association::{FrameItem, associate_adjacent_frames};
 use crate::coverage::{CoverageView, build_coverage_view};
 use crate::reader::ScanFrameBundle;
 
 const MANIFEST_FILE: &str = "manifest.json";
 
 #[derive(Debug, Deserialize)]
-struct ObservationFixture {
-  observation_id: String,
+struct FrameItemFixture {
+  item_id: String,
   label: String,
 }
 
@@ -36,7 +36,7 @@ struct CoverageFixture {
   #[serde(rename = "scenario")]
   _scenario: String,
   frame_fixture: String,
-  observations_by_frame: Vec<Vec<ObservationFixture>>,
+  items_by_frame: Vec<Vec<FrameItemFixture>>,
 }
 
 #[derive(Debug, Error)]
@@ -45,9 +45,9 @@ pub enum CoverageProducerError {
   MissingManifest { path: String },
   #[error("coverage fixture manifest invalid: {0}")]
   InvalidManifest(String),
-  #[error("observations_by_frame length {observation_frames} does not match bundle frame count {bundle_frames}")]
-  InvalidObservationShape {
-    observation_frames: usize,
+  #[error("items_by_frame length {item_frames} does not match bundle frame count {bundle_frames}")]
+  InvalidFrameItems {
+    item_frames: usize,
     bundle_frames: usize,
   },
   #[error("frame fixture not found at resolved path (frame_fixture={frame_fixture}, resolved_path={resolved_path})")]
@@ -63,14 +63,14 @@ pub enum CoverageProducerError {
   Json(#[from] serde_json::Error),
 }
 
-fn observations_from_fixture(raw: &[Vec<ObservationFixture>]) -> Vec<Vec<FrameObservation>> {
+fn items_from_fixture(raw: &[Vec<FrameItemFixture>]) -> Vec<Vec<FrameItem>> {
   raw
     .iter()
     .map(|frame| {
       frame
         .iter()
-        .map(|obs| FrameObservation {
-          observation_id: obs.observation_id.clone(),
+        .map(|obs| FrameItem {
+          item_id: obs.item_id.clone(),
           label: obs.label.clone(),
         })
         .collect()
@@ -120,10 +120,10 @@ pub fn build_coverage_fixture(coverage_fixture_dir: &Path) -> Result<CoverageVie
       .collect(),
   };
 
-  let observations_by_frame = observations_from_fixture(&fixture.observations_by_frame);
-  if observations_by_frame.len() != bundle.frames.len() {
-    return Err(CoverageProducerError::InvalidObservationShape {
-      observation_frames: observations_by_frame.len(),
+  let items_by_frame = items_from_fixture(&fixture.items_by_frame);
+  if items_by_frame.len() != bundle.frames.len() {
+    return Err(CoverageProducerError::InvalidFrameItems {
+      item_frames: items_by_frame.len(),
       bundle_frames: bundle.frames.len(),
     });
   }
@@ -132,7 +132,7 @@ pub fn build_coverage_fixture(coverage_fixture_dir: &Path) -> Result<CoverageVie
     Vec::new()
   } else {
     let last = bundle.frames.len() - 1;
-    associate_adjacent_frames(&observations_by_frame[last - 1], &observations_by_frame[last])
+    associate_adjacent_frames(&items_by_frame[last - 1], &items_by_frame[last])
   };
 
   Ok(build_coverage_view(&bundle, &associations))

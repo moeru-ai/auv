@@ -25,7 +25,7 @@ pub fn run_live_scan_until_query(inputs: &Inputs, query: &str) -> Result<Playlis
 
 // NOTICE(a6c-8b/a6c-10b): short numeric playlist labels get query custom_words
 // plus probe default languages when the caller did not set recognition_languages.
-// Full-window OCR fallback remains empty-sidebar-only in capture_observation.
+// Full-window OCR fallback remains empty-sidebar-only in capture_viewport.
 pub(crate) fn sidebar_ls_scan_ocr_options(base: &TextRecognitionOptions, query: Option<&str>) -> TextRecognitionOptions {
   let Some(query) = query else {
     return base.clone();
@@ -61,7 +61,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
           message: error.to_string(),
           node_id: None,
         },
-        "scan stopped before sidebar observation because the macOS driver could not be opened",
+        "scan stopped before sidebar viewport because the macOS driver could not be opened",
       ));
     }
   };
@@ -78,7 +78,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
           message: error.to_string(),
           node_id: None,
         },
-        "scan stopped before sidebar observation because the target window could not be resolved",
+        "scan stopped before sidebar viewport because the target window could not be resolved",
       ));
     }
   };
@@ -108,7 +108,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
           message: error.to_string(),
           node_id: None,
         },
-        "scan stopped before sidebar observation because the target window could not be captured",
+        "scan stopped before sidebar viewport because the target window could not be captured",
       ));
     }
   };
@@ -126,7 +126,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
           message: error.to_string(),
           node_id: None,
         },
-        "scan stopped before sidebar observation because full-window OCR failed",
+        "scan stopped before sidebar viewport because full-window OCR failed",
       ));
     }
   };
@@ -137,7 +137,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
       window_context,
       ViewRegionRecord::default(),
       diagnostic,
-      "scan stopped before sidebar observation because a blocking modal was detected",
+      "scan stopped before sidebar viewport because a blocking modal was detected",
     ));
   }
 
@@ -153,7 +153,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
             message: format!("failed to restore NetEase default sidebar screen from {:?}: {error}", restore.reason),
             node_id: None,
           },
-          "scan stopped before sidebar observation because the default screen restore click failed",
+          "scan stopped before sidebar viewport because the default screen restore click failed",
         ));
       }
       if inputs.scroll_settle_ms > 0 {
@@ -171,7 +171,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
               message: error.to_string(),
               node_id: None,
             },
-            "scan stopped before sidebar observation because the target window could not be captured after default screen restore",
+            "scan stopped before sidebar viewport because the target window could not be captured after default screen restore",
           ));
         }
       };
@@ -187,7 +187,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
               message: error.to_string(),
               node_id: None,
             },
-            "scan stopped before sidebar observation because full-window OCR failed after default screen restore",
+            "scan stopped before sidebar viewport because full-window OCR failed after default screen restore",
           ));
         }
       };
@@ -232,7 +232,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
             message: error.to_string(),
             node_id: None,
           },
-          "scan stopped before sidebar observation because the target window could not be captured after top seek",
+          "scan stopped before sidebar viewport because the target window could not be captured after top seek",
         ));
       }
     };
@@ -248,7 +248,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
             message: error.to_string(),
             node_id: None,
           },
-          "scan stopped before sidebar observation because full-window OCR failed after top seek",
+          "scan stopped before sidebar viewport because full-window OCR failed after top seek",
         ));
       }
     };
@@ -278,7 +278,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
               message: format!("failed to restore NetEase default sidebar screen from {:?}: {error}", restore.reason),
               node_id: None,
             },
-            "scan stopped before sidebar observation because the default screen restore click failed",
+            "scan stopped before sidebar viewport because the default screen restore click failed",
           ));
         }
         if inputs.scroll_settle_ms > 0 {
@@ -296,7 +296,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
                 message: error.to_string(),
                 node_id: None,
               },
-              "scan stopped before sidebar observation because the target window could not be captured after sidebar restore fallback",
+              "scan stopped before sidebar viewport because the target window could not be captured after sidebar restore fallback",
             ));
           }
         };
@@ -312,7 +312,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
                 message: error.to_string(),
                 node_id: None,
               },
-              "scan stopped before sidebar observation because full-window OCR failed after sidebar restore fallback",
+              "scan stopped before sidebar viewport because full-window OCR failed after sidebar restore fallback",
             ));
           }
         };
@@ -336,14 +336,14 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
           window_context,
           ViewRegionRecord::default(),
           diagnostic,
-          "scan stopped before sidebar observation because the sidebar region could not be detected",
+          "scan stopped before sidebar viewport because the sidebar region could not be detected",
         ));
       }
     }
   };
   let sidebar_bounds = sidebar_region.bounds.unwrap_or_default();
   let sidebar_ratio = bounds_to_ratio(sidebar_bounds, &capture);
-  let mut observer = LiveSidebarObserver {
+  let mut reader = LiveSidebarObserver {
     session,
     window: window.clone(),
     sidebar_bounds,
@@ -367,13 +367,13 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
   };
   let mut scan = match query {
     Some(query) => {
-      scan_sidebar_with_observer_until_query(&mut observer, options, inputs.category, inputs.scroll_amount, inputs.scroll_settle_ms, query)
+      scan_sidebar_with_observer_until_query(&mut reader, options, inputs.category, inputs.scroll_amount, inputs.scroll_settle_ms, query)
     }
-    None => scan_sidebar_with_observer(&mut observer, options, inputs.category, inputs.scroll_amount, inputs.scroll_settle_ms),
+    None => scan_sidebar_with_observer(&mut reader, options, inputs.category, inputs.scroll_amount, inputs.scroll_settle_ms),
   };
   scan.diagnostics.extend(pre_scan_diagnostics);
   scan.known_limits.extend(pre_scan_known_limits);
-  observer.finish_artifacts();
+  reader.finish_artifacts();
   scan.app = app_context;
   scan.window = window_context;
   scan.sidebar_region = sidebar_region;
@@ -400,10 +400,7 @@ struct LiveSidebarObserver {
 
 #[cfg(target_os = "macos")]
 impl LiveSidebarObserver {
-  fn capture_observation(
-    &mut self,
-    observation_index: usize,
-  ) -> Result<(RgbaImage, f64, TextRecognition, SidebarViewportObservation), ParserDiagnostic> {
+  fn capture_viewport(&mut self, viewport_index: usize) -> Result<(RgbaImage, f64, TextRecognition, SidebarViewport), ParserDiagnostic> {
     let capture = self.session.window().capture_with(&self.window, crate::window_capture_options()).map_err(|error| ParserDiagnostic {
       code: "window_capture_failed".to_string(),
       message: error.to_string(),
@@ -442,36 +439,30 @@ impl LiveSidebarObserver {
       sidebar_region_count,
       numeric_query,
     );
-    let mut observation = parse_sidebar_viewport(observation_index, parse_bounds, &window_recognition);
+    let mut viewport = parse_sidebar_viewport(viewport_index, parse_bounds, &window_recognition);
     if numeric_query && sidebar_region_count == 0 {
-      observation.parser_notes.push(ParserDiagnostic {
+      viewport.parser_notes.push(ParserDiagnostic {
         code: crate::view_parsers::sidebar::target_probe::LS_OCR_FULL_WINDOW_FALLBACK_NOTE.to_string(),
         message: "sidebar crop OCR returned zero regions; retried with full-window capture".to_string(),
         node_id: None,
       });
     }
 
-    Ok((capture.image.clone(), capture.scale_factor, window_recognition, observation))
+    Ok((capture.image.clone(), capture.scale_factor, window_recognition, viewport))
   }
 
-  fn publish_observation_artifacts(
-    &mut self,
-    image: RgbaImage,
-    scale_factor: f64,
-    recognition: TextRecognition,
-    observation: SidebarViewportObservation,
-  ) {
+  fn publish_viewport_artifacts(&mut self, image: RgbaImage, scale_factor: f64, recognition: TextRecognition, viewport: SidebarViewport) {
     let sidebar_bounds = self.sidebar_bounds;
     if let Some(task) = crate::telemetry::spawn_artifact_task(move || {
       let logical = auv_tracing::ImageResolution::Logical(scale_factor);
       crate::telemetry::image_artifact("auv.netease.sidebar.window_capture", &image, logical);
 
       let mut overlay = image;
-      draw_overlay(&mut overlay, sidebar_bounds, &observation);
+      draw_overlay(&mut overlay, sidebar_bounds, &viewport);
       crate::telemetry::image_artifact("auv.netease.sidebar.overlay", &overlay, logical);
 
       crate::telemetry::json_artifact("auv.netease.sidebar.recognition", &recognition);
-      crate::telemetry::json_artifact("auv.netease.sidebar.viewport_observation", &observation);
+      crate::telemetry::json_artifact("auv.netease.sidebar.viewport", &viewport);
     }) {
       self.pending_artifacts.push(task);
     }
@@ -480,40 +471,40 @@ impl LiveSidebarObserver {
   fn finish_artifacts(self) {
     for handle in self.pending_artifacts {
       if handle.join().is_err() {
-        crate::telemetry::preparation_failed("auv.netease.sidebar.observation_artifacts", "background artifact preparation panicked");
+        crate::telemetry::preparation_failed("auv.netease.sidebar.viewport_artifacts", "background artifact preparation panicked");
       }
     }
   }
 }
 
 #[cfg(target_os = "macos")]
-impl ViewObserver for LiveSidebarObserver {
-  type Observation = SidebarViewportObservation;
+impl ViewportReader for LiveSidebarObserver {
+  type Viewport = SidebarViewport;
 
-  fn observe(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    let (image, scale_factor, window_recognition, mut observation) = self.capture_observation(observation_index)?;
+  fn read_viewport(&mut self, viewport_index: usize) -> Result<SidebarViewport, ParserDiagnostic> {
+    let (image, scale_factor, window_recognition, mut viewport) = self.capture_viewport(viewport_index)?;
     // NOTICE(netease-scroll-ax-window-targeting): corroboration currently asks
     // macOS for the app's focused/first AX window because the typed AX capture
     // API does not yet accept a concrete native window ref. Re-open this only
     // if NetEase starts surfacing multiple competing windows during playlist
     // scans.
-    observation.ax_scrollbar_boundary = self.capture_ax_scrollbar_boundary();
+    viewport.ax_scrollbar_boundary = self.capture_ax_scrollbar_boundary();
     let sidebar_crop = crop_image(&image, self.sidebar_bounds, scale_factor);
     let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
-    observation.scroll_motion = incoming_scroll_delivery_path
+    viewport.scroll_motion = incoming_scroll_delivery_path
       .as_ref()
       .and(self.previous_sidebar_crop.as_ref())
       .map(|previous| self.motion_policy.compare(previous, &sidebar_crop));
     self.previous_sidebar_crop = Some(sidebar_crop);
-    observation.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
-    self.publish_observation_artifacts(image, scale_factor, window_recognition, observation.clone());
+    viewport.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
+    self.publish_viewport_artifacts(image, scale_factor, window_recognition, viewport.clone());
 
-    Ok(observation)
+    Ok(viewport)
   }
 
-  fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    let (_, _, _, observation) = self.capture_observation(0)?;
-    Ok(observation)
+  fn read_probe(&mut self) -> Result<SidebarViewport, ParserDiagnostic> {
+    let (_, _, _, viewport) = self.capture_viewport(0)?;
+    Ok(viewport)
   }
 
   fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
@@ -526,11 +517,11 @@ impl ViewObserver for LiveSidebarObserver {
 }
 
 #[cfg(target_os = "macos")]
-impl SidebarScanObserver for LiveSidebarObserver {
+impl SidebarScanReader for LiveSidebarObserver {
   fn reset_collection_phase(&mut self) {
     // NOTICE(netease-scroll-phase-state): top-seek rewind and collection reuse
-    // the same observer instance. Clear transient scroll/crop state so the
-    // first collected observation does not inherit rewind-phase motion
+    // the same reader instance. Clear transient scroll/crop state so the
+    // first collected viewport does not inherit rewind-phase motion
     // metadata.
     self.pending_scroll_delivery_path = None;
     self.previous_sidebar_crop = None;
@@ -544,25 +535,25 @@ impl SidebarScanObserver for LiveSidebarObserver {
     self.scroll_by_with_settle(-self.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER, std::time::Duration::ZERO)
   }
 
-  fn observe_scroll_seek(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+  fn observe_scroll_seek(&mut self, viewport_index: usize) -> Result<SidebarViewport, ParserDiagnostic> {
     std::thread::sleep(std::time::Duration::from_millis(LIVE_FAST_SEEK_SAMPLE_INTERVAL_MS));
     let capture = self.session.window().capture_with(&self.window, crate::window_capture_options()).map_err(|error| ParserDiagnostic {
       code: "window_capture_failed".to_string(),
       message: error.to_string(),
       node_id: None,
     })?;
-    let mut observation = empty_scroll_seek_observation(observation_index, self.sidebar_bounds);
+    let mut viewport = empty_scroll_seek_viewport(viewport_index, self.sidebar_bounds);
     let image = capture.image.clone();
     let scale_factor = capture.scale_factor;
     let sidebar_crop = crop_image(&image, self.sidebar_bounds, scale_factor);
     let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
-    observation.scroll_motion = incoming_scroll_delivery_path
+    viewport.scroll_motion = incoming_scroll_delivery_path
       .as_ref()
       .and(self.previous_sidebar_crop.as_ref())
       .map(|previous| self.motion_policy.compare(previous, &sidebar_crop));
     self.previous_sidebar_crop = Some(sidebar_crop);
-    observation.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
-    Ok(observation)
+    viewport.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
+    Ok(viewport)
   }
 
   fn scroll_down_for_query_recovery(&mut self) -> Result<(), ParserDiagnostic> {

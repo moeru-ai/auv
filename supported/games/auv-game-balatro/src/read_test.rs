@@ -13,7 +13,7 @@ use super::{
 };
 
 #[test]
-fn observation_routes_distinct_driver_and_balatro_runner_classes() {
+fn read_routes_distinct_driver_and_balatro_runner_classes() {
   let driver = driver_runner_options();
   let balatro = balatro_runner_options();
 
@@ -25,7 +25,7 @@ fn observation_routes_distinct_driver_and_balatro_runner_classes() {
 async fn class_assets_load_outside_the_async_runtime_thread() {
   // ROOT CAUSE:
   //
-  // If a remote observation resolved synchronous Hugging Face assets directly
+  // If a remote read resolved synchronous Hugging Face assets directly
   // inside Tokio, hf-hub tried to start a nested runtime and panicked. Asset
   // resolution must stay on the blocking pool while gRPC remains async.
   let directory = tempfile::tempdir().expect("class fixture directory");
@@ -231,7 +231,7 @@ fn one_identity_detection_cannot_read_multiple_overlapping_hand_slots() {
 fn ocr_region_is_limited_to_detected_numeric_ui() {
   // ROOT CAUSE:
   //
-  // If live observation sent the entire display back to Linux Tesseract, OCR
+  // If live read sent the entire display back to Linux Tesseract, OCR
   // dominated latency even though Balatro numeric readings occupy a small UI
   // region. The fix derives one padded OCR region from numeric UI detections
   // and ignores unrelated controls; the Runner crops the held capture to it.

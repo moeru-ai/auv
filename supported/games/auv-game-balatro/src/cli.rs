@@ -57,16 +57,16 @@ use crate::object_sell::{
   ObjectSellClick, ObjectSellConfirmation, ObjectSellIncompleteReason, ObjectSellOutcome, ObjectSellRequest, ObjectSellResult,
   SellableObject, emit_object_sell_completed, evaluate_object_sell_confirmation,
 };
-use crate::observation::{
-  HoverReadRequest, ObservationError, apply_ui_numeric_reading, click_display_frame_point_via_api, hover_read_display_frame_points_via_api,
-  is_numeric_ui_label, is_score_ui_label, is_single_ui_digit_label, move_display_frame_point_via_api, observe_image, observe_live_via_api,
-};
 pub use crate::output::OutputMode;
 use crate::pack_choose::{
   ObservedPackState, PackChoice, PackChoiceId, PackChooseAction, PackChooseConfirmation, PackChooseControl, PackChooseRequest,
   PackChooseResult, PackChooseState, PackChooseStop, emit_pack_choose_completed, evaluate_pack_choose_confirmation,
 };
 use crate::pack_skip::{PackSkipConfirmation, PackSkipRequest, PackSkipResult, emit_pack_skip_completed, evaluate_pack_skip_confirmation};
+use crate::read::{
+  HoverReadRequest, ReadError, apply_ui_numeric_reading, click_display_frame_point_via_api, hover_read_display_frame_points_via_api,
+  is_numeric_ui_label, is_score_ui_label, is_single_ui_digit_label, move_display_frame_point_via_api, observe_live_via_api, read_image,
+};
 use crate::store_buy::{
   StoreBuyClick, StoreBuyConfirmation, StoreBuyIncompleteReason, StoreBuyOutcome, StoreBuyRequest, StoreBuyResult, emit_store_buy_completed,
   evaluate_store_buy_confirmation,
@@ -263,10 +263,10 @@ pub struct OperationControlArgs {
   pub timeout_ms: Option<u64>,
   #[arg(long, alias = "detailed")]
   pub details: bool,
-  /// Optional card-specialized detector used by every observation in this operation.
+  /// Optional card-specialized detector used by every read in this operation.
   #[arg(long, value_name = "PATH")]
   pub cards_model: Option<PathBuf>,
-  /// Inference device used by every observation in this operation.
+  /// Inference device used by every read in this operation.
   #[arg(long, default_value = "cpu", value_parser = clap::value_parser!(InferenceDevice))]
   pub device: InferenceDevice,
 }
@@ -445,10 +445,10 @@ pub enum CliError {
     command: &'static str,
     reason: &'static str,
   },
-  #[error("observation command requires --image until live capture dispatch lands for this surface")]
+  #[error("read command requires --image until live capture dispatch lands for this surface")]
   MissingImage,
-  #[error("observation failed: {0}")]
-  Observation(#[from] ObservationError),
+  #[error("read failed: {0}")]
+  Read(#[from] ReadError),
   #[error("output failed: {0}")]
   Output(#[from] crate::output::OutputError),
   #[error("driver error: {0}")]
@@ -835,7 +835,7 @@ pub fn object_sell(request: ObjectSellRequest) -> Result<ObjectSellResult, CliEr
   let before_image = capture_window_to_temp(&session, &window, "object-sell-before")?;
   // TODO(balatro-object-sell-artifacts): emit captures through auv-tracing
   // once the shared in-memory capture encoder is owner-approved.
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(before_image);
   let before = before?;
   let (object, object_point) = match request.slot.zone {
@@ -859,7 +859,7 @@ pub fn object_sell(request: ObjectSellRequest) -> Result<ObjectSellResult, CliEr
   std::thread::sleep(Duration::from_millis(500));
   let selected = match capture_window_to_temp(&session, &window, "object-sell-selected") {
     Ok(image) => {
-      let selected = observe_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
+      let selected = read_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
       let _ = fs::remove_file(image);
       selected
     }
@@ -1223,7 +1223,7 @@ pub fn cash_out(request: CashOutRequest) -> Result<CashOutResult, CliError> {
   let before_image = capture_window_to_temp(&session, &window, "game-cash-out-before")?;
   // TODO(balatro-cash-out-artifacts): emit the before/after captures through
   // auv-tracing once the shared in-memory capture encoder is owner-approved.
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(&before_image);
   let before = before?;
   let selected_button = find_button(&before, "button_cash_out")?.clone();
@@ -1373,7 +1373,7 @@ pub fn game_restart(request: GameRestartRequest) -> Result<GameRestartResult, Cl
   let before_image = capture_window_to_temp(&session, &window, "game-restart-before")?;
   // TODO(balatro-game-restart-artifacts): emit captures through auv-tracing
   // once the shared in-memory capture encoder is owner-approved.
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true).ok();
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true).ok();
   let _ = fs::remove_file(before_image);
   let (first_target, first_point) =
     match before.as_ref().and_then(|state| restart_primary_button(&state.buttons).map(|button| (state, button))) {
@@ -1401,7 +1401,7 @@ pub fn game_restart(request: GameRestartRequest) -> Result<GameRestartResult, Cl
   std::thread::sleep(Duration::from_millis(900));
   let intermediate = match capture_window_to_temp(&session, &window, "game-restart-intermediate") {
     Ok(image) => {
-      let state = observe_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
+      let state = read_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
       let _ = fs::remove_file(image);
       state
     }
@@ -1504,12 +1504,12 @@ fn game_restart_via_api(request: GameRestartRequest, config: BalatroModelConfig)
     .enable_all()
     .build()
     .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
-  let mut state = observe_restart_state_via_api(&runtime, &request.target, &config, RestartObservation::AnyControl)?;
+  let mut state = observe_restart_state_via_api(&runtime, &request.target, &config, RestartState::AnyControl)?;
   let mut clicks = Vec::new();
 
   for _ in 0..6 {
     let Some(button) = restart_primary_button(&state.buttons).cloned() else {
-      state = observe_restart_state_via_api(&runtime, &request.target, &config, RestartObservation::AnyControl)?;
+      state = observe_restart_state_via_api(&runtime, &request.target, &config, RestartState::AnyControl)?;
       continue;
     };
     let opens_new_run_modal = button.id == "button_main_menu_play";
@@ -1561,9 +1561,9 @@ fn game_restart_via_api(request: GameRestartRequest, config: BalatroModelConfig)
       std::thread::sleep(Duration::from_millis(900));
     }
     let expected = if opens_new_run_modal {
-      RestartObservation::Started
+      RestartState::Started
     } else {
-      RestartObservation::Started
+      RestartState::Started
     };
     state = observe_restart_state_via_api(&runtime, &request.target, &config, expected)?;
     if matches!(state.phase, BalatroPhase::BlindSelect | BalatroPhase::Playing | BalatroPhase::Store) {
@@ -1586,7 +1586,7 @@ fn game_restart_via_api(request: GameRestartRequest, config: BalatroModelConfig)
 }
 
 #[derive(Clone, Copy)]
-enum RestartObservation {
+enum RestartState {
   AnyControl,
   Started,
 }
@@ -1595,15 +1595,15 @@ fn observe_restart_state_via_api(
   runtime: &tokio::runtime::Runtime,
   target: &str,
   config: &BalatroModelConfig,
-  expected: RestartObservation,
+  expected: RestartState,
 ) -> Result<BalatroState, CliError> {
   let mut last = None;
   for attempt in 0..3 {
     let state = runtime.block_on(observe_live_via_api(target, config, None, true))?;
     let started = matches!(state.phase, BalatroPhase::BlindSelect | BalatroPhase::Playing | BalatroPhase::Store);
     let matches_expected = match expected {
-      RestartObservation::AnyControl => restart_primary_button(&state.buttons).is_some() || started,
-      RestartObservation::Started => started,
+      RestartState::AnyControl => restart_primary_button(&state.buttons).is_some() || started,
+      RestartState::Started => started,
     };
     if matches_expected {
       return Ok(state);
@@ -1613,7 +1613,7 @@ fn observe_restart_state_via_api(
       std::thread::sleep(Duration::from_millis(250));
     }
   }
-  Ok(last.expect("bounded restart observation loop always records a state"))
+  Ok(last.expect("bounded restart read loop always records a state"))
 }
 
 #[derive(Debug, Serialize)]
@@ -1664,7 +1664,7 @@ pub fn store_buy(request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
   let before_image = capture_window_to_temp(&session, &window, "store-buy-before")?;
   // TODO(balatro-store-buy-artifacts): emit captures through auv-tracing once
   // the shared in-memory capture encoder is owner-approved.
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(before_image);
   let before = before?;
   let item = select_store_item(&before, request.slot.index)?.clone();
@@ -1677,7 +1677,7 @@ pub fn store_buy(request: StoreBuyRequest) -> Result<StoreBuyResult, CliError> {
   std::thread::sleep(Duration::from_millis(500));
   let selected = match capture_window_to_temp(&session, &window, "store-buy-selected") {
     Ok(image) => {
-      let selected = observe_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
+      let selected = read_image(&image, &BalatroModelConfig::default(), true).map_err(|error| error.to_string());
       let _ = fs::remove_file(image);
       selected
     }
@@ -1896,7 +1896,7 @@ fn observe_from_args(args: &ObserveArgs) -> Result<BalatroState, CliError> {
         .enable_all()
         .build()
         .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
-      let mut state = runtime.block_on(crate::observation::observe_image_via_api(image, &config, endpoint.clone(), args.no_cache))?;
+      let mut state = runtime.block_on(crate::read::read_image_via_api(image, &config, endpoint.clone(), args.no_cache))?;
       enrich_ui_numeric_readings_from_image(&mut state, image);
       return Ok(state);
     }
@@ -2133,7 +2133,7 @@ fn diagnostic_card_reads(image: &Path, state: &BalatroState, indices: &[u32]) ->
 }
 
 fn observe_image_with_ui_readings(image: &Path, config: &BalatroModelConfig, no_cache: bool) -> Result<BalatroState, CliError> {
-  let mut state = observe_image(image, config, no_cache)?;
+  let mut state = read_image(image, config, no_cache)?;
   enrich_ui_numeric_readings_from_image(&mut state, image);
   Ok(state)
 }
@@ -2193,9 +2193,9 @@ fn read_object_live_via_api(args: &SlotObserveArgs, zone: ObjectReadZone) -> Res
     custom_words: object_ocr_words().into_iter().map(str::to_string).collect(),
   };
   match runtime.block_on(hover_read_display_frame_points_via_api(&state.frame, &[request])) {
-    Ok(mut observations) => {
-      let observation = observations.pop().expect("one hover request returns one observation");
-      apply_hover_read_observation(&mut read, observation.recognition, observation.frame_source);
+    Ok(mut reads) => {
+      let result = reads.pop().expect("one hover request returns one result");
+      apply_hover_read_result(&mut read, result.recognition, result.frame_source);
     }
     Err(error) => {
       read.evidence.source = "remote_hover_ocr_failed".to_string();
@@ -2230,9 +2230,9 @@ fn hover_read_jokers_via_api(state: &mut BalatroState) -> Result<(), CliError> {
     .enable_all()
     .build()
     .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
-  let observations = runtime.block_on(hover_read_display_frame_points_via_api(&state.frame, &requests))?;
-  for ((index, _), observation) in pending.into_iter().zip(observations) {
-    if let Some((text, confidence)) = tooltip_recognition(&observation.recognition, state.jokers[index].bbox) {
+  let reads = runtime.block_on(hover_read_display_frame_points_via_api(&state.frame, &requests))?;
+  for ((index, _), read) in pending.into_iter().zip(reads) {
+    if let Some((text, confidence)) = tooltip_recognition(&read.recognition, state.jokers[index].bbox) {
       let joker = &mut state.jokers[index];
       joker.reading = Reading {
         status: ReadingStatus::Read,
@@ -2246,7 +2246,7 @@ fn hover_read_jokers_via_api(state: &mut BalatroState) -> Result<(), CliError> {
   Ok(())
 }
 
-fn apply_hover_read_observation(read: &mut ObjectReadResult, recognition: auv_driver::TextRecognition, frame_source: String) {
+fn apply_hover_read_result(read: &mut ObjectReadResult, recognition: auv_driver::TextRecognition, frame_source: String) {
   if let Some((text, confidence)) = tooltip_recognition(&recognition, read.bbox) {
     read.reading = ObjectReadValue {
       status: "read",
@@ -2376,7 +2376,7 @@ pub fn consumable_use(request: ConsumableUseRequest) -> Result<ConsumableUseResu
   let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "consumable-use-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(&before_image);
   let before = before?;
   let consumable = select_consumable(&before, request.slot.index)?.clone();
@@ -2570,7 +2570,7 @@ pub fn pack_skip(request: PackSkipRequest) -> Result<PackSkipResult, CliError> {
   let before_image = capture_window_to_temp(&session, &window, "pack-skip-before")?;
   // TODO(balatro-pack-skip-artifacts): emit the before/after captures through
   // auv-tracing once the shared in-memory capture encoder is owner-approved.
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(&before_image);
   let before = before?;
   let selected_button = find_button(&before, "button_card_pack_skip")?.clone();
@@ -2657,7 +2657,7 @@ pub fn pack_choose(request: PackChooseRequest) -> Result<PackChooseResult, CliEr
   let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "pack-choose-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(&before_image);
   let before = before?;
   let choices = active_pack_choices(&before);
@@ -2877,7 +2877,7 @@ pub fn store_next_round(request: StoreNextRoundRequest) -> Result<StoreNextRound
   // TODO(balatro-store-next-round-artifacts): emit the before/after captures
   // through auv-tracing once the shared in-memory capture encoder is
   // owner-approved.
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(&before_image);
   let before = before?;
   let selected_target = resolve_store_next_round_target(&before)?;
@@ -3343,7 +3343,7 @@ fn card_commit_via_api(kind: CardCommitKind, request: CardCommitRequest, config:
     .enable_all()
     .build()
     .map_err(|error| CliError::Message(format!("failed to create daemon client runtime: {error}")))?;
-  // TODO(balatro-remote-operation-session): observations still open several
+  // TODO(balatro-remote-operation-session): reads still open several
   // short-lived API clients. Reuse one operation session after that lifecycle
   // contract is owner-approved; see
   // `2026-08-05-linux-live-gameplay-evidence.md`.
@@ -3444,10 +3444,10 @@ fn card_commit_via_api(kind: CardCommitKind, request: CardCommitRequest, config:
       break;
     }
     let settle_deadline = Instant::now() + Duration::from_millis(request.timeout_ms.min(1200));
-    let mut observation_count = 0;
+    let mut read_count = 0;
     loop {
-      std::thread::sleep(Duration::from_millis(if observation_count == 0 { 750 } else { 500 }));
-      observation_count += 1;
+      std::thread::sleep(Duration::from_millis(if read_count == 0 { 750 } else { 500 }));
+      read_count += 1;
       match runtime.block_on(observe_live_via_api(&request.target, &config, None, true)) {
         Ok(after) => {
           confirmation = evaluate_card_commit_confirmation(&selected_before_submit, Ok(&after));
@@ -3458,8 +3458,7 @@ fn card_commit_via_api(kind: CardCommitKind, request: CardCommitRequest, config:
           // A changed hand with no stable score/round OCR is normally a frame
           // captured during Balatro's scoring animation. Observe once more,
           // but never turn that partial success evidence into a second click.
-          if observation_count >= 2 || (!matches!(confirmation, CardCommitConfirmation::Applied { .. }) && Instant::now() >= settle_deadline)
-          {
+          if read_count >= 2 || (!matches!(confirmation, CardCommitConfirmation::Applied { .. }) && Instant::now() >= settle_deadline) {
             break;
           }
         }
@@ -3737,7 +3736,7 @@ pub fn blind_select(request: BlindSelectRequest) -> Result<BlindSelectResult, Cl
   let before_image = capture_window_to_temp(&session, &window, "blind-select-before")?;
   // TODO(balatro-blind-action-artifacts): emit captures through auv-tracing
   // once the shared in-memory capture encoder is owner-approved.
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(before_image);
   let before = before?;
   let selected_button = select_button_for_slot(&before.buttons, "button_level_select", Some(request.slot.index))?.clone();
@@ -3840,7 +3839,7 @@ pub fn blind_skip(request: BlindSkipRequest) -> Result<BlindSkipResult, CliError
   let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(request.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "blind-skip-before")?;
-  let before = observe_image(&before_image, &BalatroModelConfig::default(), true);
+  let before = read_image(&before_image, &BalatroModelConfig::default(), true);
   let _ = fs::remove_file(before_image);
   let before = before?;
   let selected_button = select_button_for_slot(&before.buttons, "button_level_skip", None)?.clone();
@@ -4185,7 +4184,7 @@ fn capture_observable_window(
   label: &str,
   timeout_ms: u64,
   initial_delay_ms: u64,
-) -> Result<(PathBuf, Result<BalatroState, ObservationError>), CliError> {
+) -> Result<(PathBuf, Result<BalatroState, ReadError>), CliError> {
   let timeout = Duration::from_millis(timeout_ms);
   let deadline = Instant::now() + timeout;
   let mut delay = Duration::from_millis(initial_delay_ms.min(timeout_ms));
@@ -4196,7 +4195,7 @@ fn capture_observable_window(
     }
 
     let image = capture_window_to_temp(session, window, label)?;
-    match observe_image(&image, &BalatroModelConfig::default(), true).map(|mut state| {
+    match read_image(&image, &BalatroModelConfig::default(), true).map(|mut state| {
       enrich_ui_numeric_readings_from_image(&mut state, &image);
       state
     }) {
@@ -5046,7 +5045,7 @@ fn object_read_from_state(state: &BalatroState, slot: &str, zone: ObjectReadZone
     reading: ObjectReadValue::unread(),
     evidence: ObjectReadEvidence {
       frame: state.frame.source.clone(),
-      source: "observation_without_hover_ocr".to_string(),
+      source: "read_without_hover_ocr".to_string(),
       hover_required: true,
       hover_frame: None,
       hover_ocr_region: None,

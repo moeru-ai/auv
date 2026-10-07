@@ -1,5 +1,10 @@
 # S Line: Streaming Observation Substrate Roadmap
 
+> Naming migration (2026-10-08): `ObservationRequest` → `SceneRecommendation`.
+> This dated note may retain the former names. Prefer concrete domain results;
+> reserve `observation` for information used to decide the next action.
+> See the [migration and current mapping](../runtime/2026-10-08-domain-result-naming-migration.md) before implementing examples.
+
 **Date:** 2026-07-03  
 **Status:** roadmap / direction note — docs-only; does not approve downstream implementation slices  
 **Scope:** S-line direction after A-line scoped completion and before model-backend work  

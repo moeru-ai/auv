@@ -1,6 +1,6 @@
 //! Godot integration crate for AUV.
 //!
-//! This crate currently owns the AIRI Godot Stage dev observation client.
+//! This crate currently owns the AIRI Godot Stage dev inspection client.
 
 pub mod cli;
 
@@ -18,7 +18,7 @@ const CAPABILITY_QUERY_MESSAGE_TYPE: &str = "capability.query";
 const RENDER_EXPORT_STAGES_MESSAGE_TYPE: &str = "render.export_stages";
 
 #[derive(Debug, Error)]
-pub enum GodotDevObservationError {
+pub enum RenderInspectionError {
   #[error("failed to resolve user home directory for AIRI Godot discovery")]
   MissingHomeDirectory,
   #[error("failed to read {path}: {source}")]
@@ -35,7 +35,7 @@ pub enum GodotDevObservationError {
   MissingInstancePath,
   #[error("discovery record has unsupported transport {0:?}; expected websocket-json")]
   UnsupportedTransport(String),
-  #[error("failed to connect to Godot dev observation endpoint {endpoint}: {source}")]
+  #[error("failed to connect to Godot dev inspection endpoint {endpoint}: {source}")]
   Connect {
     endpoint: String,
     source: tungstenite::Error,
@@ -44,29 +44,29 @@ pub enum GodotDevObservationError {
   Send(tungstenite::Error),
   #[error("failed to read capability response: {0}")]
   Read(tungstenite::Error),
-  #[error("failed to create render observation output directory {path}: {source}")]
+  #[error("failed to create render inspection output directory {path}: {source}")]
   CreateOutputDir {
     path: PathBuf,
     source: std::io::Error,
   },
-  #[error("failed to write render observation manifest {path}: {source}")]
+  #[error("failed to write render inspection manifest {path}: {source}")]
   WriteManifest {
     path: PathBuf,
     source: std::io::Error,
   },
-  #[error("failed to write render observation artifact {path}: {message}")]
+  #[error("failed to write render inspection artifact {path}: {message}")]
   WriteArtifactFile { path: PathBuf, message: String },
   #[error("failed to capture Godot final window: {0}")]
   FinalCapture(String),
-  #[error("Godot dev observation response was not text")]
+  #[error("Godot dev inspection response was not text")]
   NonTextResponse,
-  #[error("failed to parse Godot dev observation response: {0}")]
+  #[error("failed to parse Godot dev inspection response: {0}")]
   ParseResponse(serde_json::Error),
-  #[error("Godot dev observation response type was {actual:?}; expected capability.query.response")]
+  #[error("Godot dev inspection response type was {actual:?}; expected capability.query.response")]
   UnexpectedResponseType { actual: Option<String> },
-  #[error("Godot dev observation response type was {actual:?}; expected render.export_stages.response")]
+  #[error("Godot dev inspection response type was {actual:?}; expected render.export_stages.response")]
   UnexpectedRenderExportResponseType { actual: Option<String> },
-  #[error("Godot dev observation returned {code}: {message}")]
+  #[error("Godot dev inspection returned {code}: {message}")]
   RemoteError { code: String, message: String },
 }
 
@@ -160,19 +160,19 @@ pub struct RenderExportedFile {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderObservationArtifact {
+pub struct RenderInspectionArtifact {
   pub manifest_path: PathBuf,
   pub output_dir: PathBuf,
-  pub request: RenderObservationRequest,
+  pub request: RenderInspectionRequest,
   pub capabilities: CapabilityQueryResult,
   pub final_capture: FinalCaptureResult,
   pub export: RenderExportStagesResult,
-  pub context_files: RenderObservationContextFiles,
+  pub context_files: RenderContextFiles,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderObservationRequest {
+pub struct RenderInspectionRequest {
   pub stages: Vec<String>,
 }
 
@@ -191,7 +191,7 @@ pub struct FinalCaptureResult {
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderObservationContextFiles {
+pub struct RenderContextFiles {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub context: Option<PathBuf>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,14 +207,14 @@ struct RenderExportStagesPayload<'a> {
   stages: &'a [String],
 }
 
-pub type Result<T> = std::result::Result<T, GodotDevObservationError>;
+pub type Result<T> = std::result::Result<T, RenderInspectionError>;
 
 pub fn query_current_capabilities() -> Result<CapabilityQueryResult> {
   let instance = read_current_instance()?;
   query_capabilities(&instance)
 }
 
-pub fn export_current_render_observation(output_dir: impl AsRef<Path>, stages: Vec<String>) -> Result<RenderObservationArtifact> {
+pub fn export_current_render_inspection(output_dir: impl AsRef<Path>, stages: Vec<String>) -> Result<RenderInspectionArtifact> {
   let instance = read_current_instance()?;
   let capabilities = query_capabilities(&instance)?;
   let selected_stages = if stages.is_empty() {
@@ -223,7 +223,7 @@ pub fn export_current_render_observation(output_dir: impl AsRef<Path>, stages: V
     stages
   };
   let output_dir = output_dir.as_ref().to_path_buf();
-  fs::create_dir_all(&output_dir).map_err(|source| GodotDevObservationError::CreateOutputDir {
+  fs::create_dir_all(&output_dir).map_err(|source| RenderInspectionError::CreateOutputDir {
     path: output_dir.clone(),
     source,
   })?;
@@ -232,10 +232,10 @@ pub fn export_current_render_observation(output_dir: impl AsRef<Path>, stages: V
   let context_files = write_context_files(&output_dir, export.context.as_ref())?;
   let final_capture = capture_final_window(&instance, &output_dir.join("final").join("screenshot.png"))?;
   let manifest_path = output_dir.join("manifest.json");
-  let artifact = RenderObservationArtifact {
+  let artifact = RenderInspectionArtifact {
     manifest_path: manifest_path.clone(),
     output_dir,
-    request: RenderObservationRequest {
+    request: RenderInspectionRequest {
       stages: selected_stages,
     },
     capabilities,
@@ -243,8 +243,8 @@ pub fn export_current_render_observation(output_dir: impl AsRef<Path>, stages: V
     export,
     context_files,
   };
-  let manifest = serde_json::to_vec_pretty(&artifact).expect("render observation manifest should serialize");
-  fs::write(&manifest_path, manifest).map_err(|source| GodotDevObservationError::WriteManifest {
+  let manifest = serde_json::to_vec_pretty(&artifact).expect("render inspection manifest should serialize");
+  fs::write(&manifest_path, manifest).map_err(|source| RenderInspectionError::WriteManifest {
     path: manifest_path,
     source,
   })?;
@@ -252,13 +252,13 @@ pub fn export_current_render_observation(output_dir: impl AsRef<Path>, stages: V
   Ok(artifact)
 }
 
-fn write_context_files(output_dir: &Path, context: Option<&Value>) -> Result<RenderObservationContextFiles> {
+fn write_context_files(output_dir: &Path, context: Option<&Value>) -> Result<RenderContextFiles> {
   let Some(context) = context else {
-    return Ok(RenderObservationContextFiles::default());
+    return Ok(RenderContextFiles::default());
   };
 
   let context_dir = output_dir.join("context");
-  fs::create_dir_all(&context_dir).map_err(|source| GodotDevObservationError::CreateOutputDir {
+  fs::create_dir_all(&context_dir).map_err(|source| RenderInspectionError::CreateOutputDir {
     path: context_dir.clone(),
     source,
   })?;
@@ -266,9 +266,9 @@ fn write_context_files(output_dir: &Path, context: Option<&Value>) -> Result<Ren
   let context_path = context_dir.join("context.json");
   write_json_artifact(&context_path, context)?;
 
-  let mut files = RenderObservationContextFiles {
+  let mut files = RenderContextFiles {
     context: Some(context_path),
-    ..RenderObservationContextFiles::default()
+    ..RenderContextFiles::default()
   };
 
   if let Some(view_snapshot) = context.get("viewSnapshot") {
@@ -287,11 +287,11 @@ fn write_context_files(output_dir: &Path, context: Option<&Value>) -> Result<Ren
 }
 
 fn write_json_artifact(path: &Path, value: &Value) -> Result<()> {
-  let encoded = serde_json::to_vec_pretty(value).map_err(|source| GodotDevObservationError::WriteArtifactFile {
+  let encoded = serde_json::to_vec_pretty(value).map_err(|source| RenderInspectionError::WriteArtifactFile {
     path: path.to_path_buf(),
     message: source.to_string(),
   })?;
-  fs::write(path, encoded).map_err(|source| GodotDevObservationError::WriteArtifactFile {
+  fs::write(path, encoded).map_err(|source| RenderInspectionError::WriteArtifactFile {
     path: path.to_path_buf(),
     message: source.to_string(),
   })
@@ -301,21 +301,21 @@ fn write_json_artifact(path: &Path, value: &Value) -> Result<()> {
 fn capture_final_window(instance: &InstanceDiscoveryRecord, path: &Path) -> Result<FinalCaptureResult> {
   use auv_driver::selector::{App, Window};
 
-  let session = auv_driver::open_local().map_err(|error| GodotDevObservationError::FinalCapture(error.to_string()))?;
+  let session = auv_driver::open_local().map_err(|error| RenderInspectionError::FinalCapture(error.to_string()))?;
   let window = session
     .window()
     .resolve(Window::main_visible().owned_by(App::pid(instance.pid)))
-    .map_err(|error| GodotDevObservationError::FinalCapture(error.to_string()))?;
-  let capture = session.window().capture(&window).map_err(|error| GodotDevObservationError::FinalCapture(error.to_string()))?;
+    .map_err(|error| RenderInspectionError::FinalCapture(error.to_string()))?;
+  let capture = session.window().capture(&window).map_err(|error| RenderInspectionError::FinalCapture(error.to_string()))?;
 
   if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|source| GodotDevObservationError::CreateOutputDir {
+    fs::create_dir_all(parent).map_err(|source| RenderInspectionError::CreateOutputDir {
       path: parent.to_path_buf(),
       source,
     })?;
   }
 
-  capture.image.save(path).map_err(|source| GodotDevObservationError::WriteArtifactFile {
+  capture.image.save(path).map_err(|source| RenderInspectionError::WriteArtifactFile {
     path: path.to_path_buf(),
     message: source.to_string(),
   })?;
@@ -334,14 +334,14 @@ fn capture_final_window(instance: &InstanceDiscoveryRecord, path: &Path) -> Resu
 
 #[cfg(not(target_os = "windows"))]
 fn capture_final_window(_instance: &InstanceDiscoveryRecord, _path: &Path) -> Result<FinalCaptureResult> {
-  Err(GodotDevObservationError::FinalCapture("Godot final window capture is currently implemented for Windows only".to_string()))
+  Err(RenderInspectionError::FinalCapture("Godot final window capture is currently implemented for Windows only".to_string()))
 }
 
 pub fn read_current_instance() -> Result<InstanceDiscoveryRecord> {
   let current_path = default_discovery_root()?.join("current.json");
   let current = read_json::<CurrentDiscoveryRecord>(&current_path)?;
   if current.instance_path.as_os_str().is_empty() {
-    return Err(GodotDevObservationError::MissingInstancePath);
+    return Err(RenderInspectionError::MissingInstancePath);
   }
 
   read_json(&current.instance_path)
@@ -361,7 +361,7 @@ pub fn query_capabilities(instance: &InstanceDiscoveryRecord) -> Result<Capabili
   }
 
   if envelope.message_type.as_deref() != Some("capability.query.response") {
-    return Err(GodotDevObservationError::UnexpectedResponseType {
+    return Err(RenderInspectionError::UnexpectedResponseType {
       actual: envelope.message_type,
     });
   }
@@ -384,7 +384,7 @@ fn export_render_stages(instance: &InstanceDiscoveryRecord, output_dir: &Path, s
   }
 
   if envelope.message_type.as_deref() != Some("render.export_stages.response") {
-    return Err(GodotDevObservationError::UnexpectedRenderExportResponseType {
+    return Err(RenderInspectionError::UnexpectedRenderExportResponseType {
       actual: envelope.message_type,
     });
   }
@@ -397,50 +397,50 @@ where
   T: for<'de> Deserialize<'de>,
 {
   if instance.transport != "websocket-json" {
-    return Err(GodotDevObservationError::UnsupportedTransport(instance.transport.clone()));
+    return Err(RenderInspectionError::UnsupportedTransport(instance.transport.clone()));
   }
 
   let url = format!("ws://{}/", instance.endpoint);
-  let (mut socket, _) = connect(url.as_str()).map_err(|source| GodotDevObservationError::Connect {
+  let (mut socket, _) = connect(url.as_str()).map_err(|source| RenderInspectionError::Connect {
     endpoint: instance.endpoint.clone(),
     source,
   })?;
 
   let request_text = serde_json::to_string(&request).expect("capability query request should serialize");
-  socket.send(Message::Text(request_text.into())).map_err(GodotDevObservationError::Send)?;
+  socket.send(Message::Text(request_text.into())).map_err(RenderInspectionError::Send)?;
 
-  let response = socket.read().map_err(GodotDevObservationError::Read)?;
-  let response_text = response.into_text().map_err(|_| GodotDevObservationError::NonTextResponse)?;
-  serde_json::from_str::<ResponseEnvelope<T>>(&response_text).map_err(GodotDevObservationError::ParseResponse)
+  let response = socket.read().map_err(RenderInspectionError::Read)?;
+  let response_text = response.into_text().map_err(|_| RenderInspectionError::NonTextResponse)?;
+  serde_json::from_str::<ResponseEnvelope<T>>(&response_text).map_err(RenderInspectionError::ParseResponse)
 }
 
 fn finish_response<T>(envelope: ResponseEnvelope<T>, request_id: &str) -> Result<T> {
   if envelope.status.as_deref() == Some("error") {
     let error = envelope.error.unwrap_or(RemoteErrorPayload {
       code: "unknown".to_string(),
-      message: "Godot dev observation returned an error without details".to_string(),
+      message: "Godot dev inspection returned an error without details".to_string(),
     });
-    return Err(GodotDevObservationError::RemoteError {
+    return Err(RenderInspectionError::RemoteError {
       code: error.code,
       message: error.message,
     });
   }
 
   if envelope.request_id.as_deref() != Some(request_id) {
-    return Err(GodotDevObservationError::RemoteError {
+    return Err(RenderInspectionError::RemoteError {
       code: "request_id_mismatch".to_string(),
-      message: "Godot dev observation response did not match the request id".to_string(),
+      message: "Godot dev inspection response did not match the request id".to_string(),
     });
   }
 
-  envelope.result.ok_or(GodotDevObservationError::RemoteError {
+  envelope.result.ok_or(RenderInspectionError::RemoteError {
     code: "missing_result".to_string(),
-    message: "Godot dev observation response did not include a result".to_string(),
+    message: "Godot dev inspection response did not include a result".to_string(),
   })
 }
 
 pub fn default_discovery_root() -> Result<PathBuf> {
-  let home = env::var_os("USERPROFILE").or_else(|| env::var_os("HOME")).ok_or(GodotDevObservationError::MissingHomeDirectory)?;
+  let home = env::var_os("USERPROFILE").or_else(|| env::var_os("HOME")).ok_or(RenderInspectionError::MissingHomeDirectory)?;
 
   Ok(PathBuf::from(home).join(".airi").join("godot-stage").join("dev"))
 }
@@ -449,11 +449,11 @@ fn read_json<T>(path: &Path) -> Result<T>
 where
   T: for<'de> Deserialize<'de>,
 {
-  let contents = fs::read_to_string(path).map_err(|source| GodotDevObservationError::ReadFile {
+  let contents = fs::read_to_string(path).map_err(|source| RenderInspectionError::ReadFile {
     path: path.to_path_buf(),
     source,
   })?;
-  serde_json::from_str(&contents).map_err(|source| GodotDevObservationError::ParseJson {
+  serde_json::from_str(&contents).map_err(|source| RenderInspectionError::ParseJson {
     path: path.to_path_buf(),
     source,
   })

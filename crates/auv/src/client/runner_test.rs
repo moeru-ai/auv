@@ -694,7 +694,7 @@ fn scroll_until_begin_projection_keeps_step_condition_region_and_opt_outs() {
       settle: std::time::Duration::from_millis(500),
       no_motion_confirmations: 3,
       motion_region: Some(auv_driver::RatioRect::new(0.0, 0.2, 1.0, 0.6)),
-      observe: auv_scan::ScrollUntilObserve { text: false },
+      output: auv_scan::ScrollUntilOutputOptions { text: false },
     },
     auv_driver::ScrollOptions::default(),
     true,
@@ -715,14 +715,14 @@ fn scroll_until_begin_projection_keeps_step_condition_region_and_opt_outs() {
   );
   assert_eq!((begin.max_steps, begin.no_motion_confirmations), (30, 3));
   assert_eq!(begin.motion_region.unwrap().height, 0.6);
-  assert_eq!(begin.observe, Some(proto::ScrollUntilObserve { omit_text: true }));
+  assert_eq!(begin.output, Some(proto::ScrollUntilOutputOptions { omit_text: true }));
   assert!(begin.await_decisions);
 }
 
 #[test]
-fn scroll_until_observation_event_decodes_capture_ref_text_and_decision_flag() {
+fn scroll_until_update_event_decodes_capture_ref_text_and_decision_flag() {
   let event = scroll_until_event_from_proto(proto::ScrollUntilResponse {
-    event: Some(proto::scroll_until_response::Event::Observation(proto::ScrollUntilObservation {
+    event: Some(proto::scroll_until_response::Event::Update(proto::ScrollUntilUpdate {
       steps: 2,
       delivered: Some(proto::Scroll {
         delta_x: 0.0,
@@ -743,18 +743,18 @@ fn scroll_until_observation_event_decodes_capture_ref_text_and_decision_flag() {
       awaiting_decision: true,
     })),
   })
-  .expect("valid observation");
-  let ScrollUntilEvent::Observation {
-    observation,
+  .expect("valid update");
+  let ScrollUntilEvent::Update {
+    update,
     awaiting_decision,
   } = event
   else {
-    panic!("expected an observation");
+    panic!("expected an update");
   };
   assert!(awaiting_decision);
-  assert_eq!((observation.steps, observation.stop), (2, None));
-  assert_eq!(observation.capture.reference.id(), LARGE_CAPTURE_ID);
-  assert_eq!(observation.text.expect("text").text, "row");
+  assert_eq!((update.steps, update.stop), (2, None));
+  assert_eq!(update.capture.reference.id(), LARGE_CAPTURE_ID);
+  assert_eq!(update.text.expect("text").text, "row");
 
   let completed = scroll_until_event_from_proto(proto::ScrollUntilResponse {
     event: Some(proto::scroll_until_response::Event::Completed(proto::ScrollUntilCompleted {

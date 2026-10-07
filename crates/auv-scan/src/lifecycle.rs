@@ -11,7 +11,7 @@ pub struct TransitionEvidence {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LifecycleEvent {
   Observed {
-    observation_id: String,
+    item_id: String,
     evidence: TransitionEvidence,
   },
   AssociationLinked {
@@ -38,7 +38,7 @@ pub enum LifecycleEvent {
     track_id: String,
     evidence: TransitionEvidence,
   },
-  ObservationFailed {
+  ReadFailed {
     reason_code: String,
     evidence: TransitionEvidence,
   },
@@ -49,7 +49,7 @@ pub enum LifecycleVerdict {
   Reacquired { track_id: String },
   Lost { track_id: String },
   AmbiguousReacquire { track_id: String },
-  ObservationFailed { reason_code: String },
+  ReadFailed { reason_code: String },
   Incomplete,
 }
 
@@ -70,7 +70,7 @@ fn has_evidence(event: &LifecycleEvent) -> bool {
     | LifecycleEvent::Reacquired { evidence, .. }
     | LifecycleEvent::Lost { evidence, .. }
     | LifecycleEvent::AmbiguousReacquire { evidence, .. }
-    | LifecycleEvent::ObservationFailed { evidence, .. } => !evidence.kind.is_empty() && !evidence.ref_id.is_empty(),
+    | LifecycleEvent::ReadFailed { evidence, .. } => !evidence.kind.is_empty() && !evidence.ref_id.is_empty(),
   }
 }
 
@@ -102,8 +102,8 @@ pub fn evaluate_lifecycle(events: &[LifecycleEvent]) -> Result<LifecycleVerdict,
           track_id: track_id.clone(),
         });
       }
-      LifecycleEvent::ObservationFailed { reason_code, .. } => {
-        return Ok(LifecycleVerdict::ObservationFailed {
+      LifecycleEvent::ReadFailed { reason_code, .. } => {
+        return Ok(LifecycleVerdict::ReadFailed {
           reason_code: reason_code.clone(),
         });
       }

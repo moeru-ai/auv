@@ -280,10 +280,10 @@ impl ScrollStreamSession {
 /// One event from a scroll-until operation.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ScrollUntilEvent {
-  /// One observation, in order. When `awaiting_decision` is set, the Runner
+  /// One update, in order. When `awaiting_decision` is set, the Runner
   /// waits for [`ScrollUntilSession::decide`] before continuing.
-  Observation {
-    observation: auv_scan::ScrollUntilObservation<RunnerCapture>,
+  Update {
+    update: auv_scan::ScrollUntilUpdate<RunnerCapture>,
     awaiting_decision: bool,
   },
   Completed(auv_scan::ScrollUntilResult),
@@ -301,7 +301,7 @@ impl ScrollUntilSession {
     self.responses.message().await.map_err(capability_status)?.map(scroll_until_event_from_proto).transpose()
   }
 
-  /// Answers the latest observation that is awaiting a decision.
+  /// Answers the latest update that is awaiting a decision.
   pub async fn decide(&self, decision: auv_scan::ScrollUntilDecision) -> Result<(), CapabilityError> {
     self
       .requests
@@ -409,14 +409,14 @@ impl RunnerClient {
     self.extension_transport()
   }
 
-  /// Returns display observation and capture capabilities.
+  /// Returns display inspection and capture capabilities.
   pub fn displays(&self) -> DisplaysClient {
     DisplaysClient {
       runner: self.clone(),
     }
   }
 
-  /// Returns window observation and input capabilities.
+  /// Returns window inspection and input capabilities.
   pub fn windows(&self) -> WindowsClient {
     WindowsClient {
       runner: self.clone(),
@@ -650,7 +650,7 @@ fn overlay_options_to_proto(value: auv_driver_overlay_common::ShowOptions) -> Re
   })
 }
 
-/// Display observation and capture operations.
+/// Display inspection and capture operations.
 #[derive(Clone, Debug)]
 pub struct DisplaysClient {
   runner: RunnerClient,
@@ -835,9 +835,9 @@ impl WindowsClient {
 #[derive(Clone, Debug)]
 pub struct WindowClient {
   runner: RunnerClient,
-  // TODO(window-client-observation): This is the resolve-time observation,
+  // TODO(window-client-snapshot): This is the resolve-time snapshot,
   // not current grounding. Stop retaining and exposing it once callers obtain
-  // window observations from the capability result that produced them.
+  // window snapshots from the capability result that produced them.
   window: auv_driver::Window,
   window_ref: proto::WindowRef,
 }
@@ -985,7 +985,7 @@ impl WindowClient {
 
   /// Scrolls in steps at a window-local point, observing after each step on
   /// the Runner, until the end, visible text, the caller's decision, or the
-  /// step budget. With `await_decisions`, answer each observation that awaits
+  /// step budget. With `await_decisions`, answer each update that awaits
   /// a decision through [`ScrollUntilSession::decide`].
   pub async fn scroll_until(
     &self,
@@ -1019,30 +1019,30 @@ impl WindowClient {
   }
 
   /// Runs [`Self::scroll_until`] with a client-side predicate: returning
-  /// `true` for an observation stops the loop as `predicate_satisfied`.
-  /// Observations the Runner already ends are not passed to `predicate`.
+  /// `true` for an update stops the loop as `predicate_satisfied`.
+  /// Updates the Runner already ends are not passed to `predicate`.
   pub async fn scroll_until_with(
     &self,
     point: auv_driver::WindowPoint,
     request: auv_scan::ScrollUntilRequest,
     options: auv_driver::ScrollOptions,
-    mut predicate: impl FnMut(&auv_scan::ScrollUntilObservation<RunnerCapture>) -> bool,
+    mut predicate: impl FnMut(&auv_scan::ScrollUntilUpdate<RunnerCapture>) -> bool,
   ) -> Result<auv_scan::ScrollUntilResult, CapabilityError> {
     let mut session = self.scroll_until(point, request, options, true).await?;
     while let Some(event) = session.next().await? {
       match event {
-        ScrollUntilEvent::Observation {
-          observation,
+        ScrollUntilEvent::Update {
+          update,
           awaiting_decision: true,
         } => {
-          let decision = if predicate(&observation) {
+          let decision = if predicate(&update) {
             auv_scan::ScrollUntilDecision::Stop
           } else {
             auv_scan::ScrollUntilDecision::Continue
           };
           session.decide(decision).await?;
         }
-        ScrollUntilEvent::Observation { .. } => {}
+        ScrollUntilEvent::Update { .. } => {}
         ScrollUntilEvent::Completed(result) => return Ok(result),
       }
     }
@@ -2146,8 +2146,8 @@ fn scroll_until_begin_to_proto(
       height: region.height,
     }),
     options: Some(scroll_options_to_proto(options)?),
-    observe: Some(proto::ScrollUntilObserve {
-      omit_text: !request.observe.text,
+    output: Some(proto::ScrollUntilOutputOptions {
+      omit_text: !request.output.text,
     }),
     await_decisions,
   })
@@ -2175,13 +2175,13 @@ fn scroll_until_event_from_proto(value: proto::ScrollUntilResponse) -> Result<Sc
     no_motion: value.no_motion,
   };
   match required(value.event, "ScrollUntil response omitted event")? {
-    Event::Observation(value) => Ok(ScrollUntilEvent::Observation {
-      observation: auv_scan::ScrollUntilObservation {
+    Event::Update(value) => Ok(ScrollUntilEvent::Update {
+      update: auv_scan::ScrollUntilUpdate {
         steps: value.steps,
-        delivered: scroll(value.delivered, "scroll-until observation omitted delivered")?,
+        delivered: scroll(value.delivered, "scroll-until update omitted delivered")?,
         motion: value.motion.map(motion),
         no_motion_streak: value.no_motion_streak,
-        capture: runner_capture_from_proto(required(value.capture, "scroll-until observation omitted its capture")?)?,
+        capture: runner_capture_from_proto(required(value.capture, "scroll-until update omitted its capture")?)?,
         text: value.text.map(text_recognition_from_proto).transpose()?,
         stop: scroll_until_stop_reason_from_proto(value.stop)?,
       },

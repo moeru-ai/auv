@@ -1,5 +1,5 @@
 import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, ScrollUntilRequest, TextSearchResult, WindowInfo } from '../backend/types'
-import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, Point, Rect, ScrollDelta, ScrollObservation, TextHandle, WindowSelector } from '../script-api/api'
+import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, Point, Rect, ScrollDelta, ScrollUntilUpdate, TextHandle, WindowSelector } from '../script-api/api'
 import type { Effect, Resource, WindowData } from '../store'
 import type { WireValue } from './protocol'
 
@@ -132,7 +132,7 @@ const BINDINGS: Record<string, Binding> = {
   'windows.scrollUntil': input(async (backend, scope, [window, at, options], context) => {
     const local = windowPoint(window, at)
     const { decide, request } = scrollUntilRequest(options, context)
-    // TODO(repl-scroll-observations): only the last observation's capture and
+    // TODO(repl-scroll-updates): only the last update's capture and
     // OCR become resources; record every step (with its own seq) when the
     // timeline should replay a scan step by step.
     const outcome = await backend.scrollWindowUntil(windowId(window), local.point, request, decide)
@@ -149,8 +149,8 @@ const BINDINGS: Record<string, Binding> = {
 }
 
 export interface CallContext {
-  /** Asks the script worker's `scrollUntil` predicate `predicateId` about an observation. */
-  decide?: (predicateId: number, observation: ScrollObservation) => Promise<boolean>
+  /** Asks the script worker's `scrollUntil` predicate `predicateId` about an update. */
+  decide?: (predicateId: number, update: ScrollUntilUpdate) => Promise<boolean>
   /** 1-based hit count of the calling line (loop iteration). */
   hit: number
   line: null | number
@@ -256,7 +256,7 @@ function scrollDelta(value: WireValue): ScrollDelta {
  * `scrollUntil` options with defaults applied; a `{ $predicate }` placeholder
  * from the worker becomes a `decide` callback back into the script.
  */
-function scrollUntilRequest(value: WireValue, context: CallContext): { decide?: (observation: ScrollObservation) => Promise<boolean>, request: ScrollUntilRequest } {
+function scrollUntilRequest(value: WireValue, context: CallContext): { decide?: (update: ScrollUntilUpdate) => Promise<boolean>, request: ScrollUntilRequest } {
   const options = (value ?? {}) as ScrollDelta & { confirmations?: number, maxSteps?: number, settle?: number, text?: string, until?: { $predicate?: number } }
   const delta = scrollDelta(options)
   if (delta.dx !== 0 && delta.dy !== 0)
@@ -264,7 +264,7 @@ function scrollUntilRequest(value: WireValue, context: CallContext): { decide?: 
   const predicateId = options.until?.$predicate
   const decide = context.decide
   return {
-    decide: predicateId === undefined || !decide ? undefined : observation => decide(predicateId, observation),
+    decide: predicateId === undefined || !decide ? undefined : update => decide(predicateId, update),
     request: {
       confirmations: options.confirmations ?? SCROLL_UNTIL_DEFAULTS.confirmations,
       delta,

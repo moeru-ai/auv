@@ -104,7 +104,7 @@ impl SidebarView {
     }
   }
 
-  /// Build a view when the sidebar was not reconstructed by this observation.
+  /// Build a view when the sidebar was not reconstructed by this viewport.
   pub fn unknown() -> Self {
     Self {
       state: SidebarState::Unknown,

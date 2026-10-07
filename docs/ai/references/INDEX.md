@@ -95,3 +95,5 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 2. Add one line to that folder’s `INDEX.md`.
 3. Add or adjust a row in this root index only when a **new folder** appears.
 4. When folding intermediate handoffs, leave a root tombstone that points at the merged durable note.
+
+Current terminology migration: [domain result naming](runtime/2026-10-08-domain-result-naming-migration.md).

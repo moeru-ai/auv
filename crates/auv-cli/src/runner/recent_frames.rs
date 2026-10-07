@@ -280,7 +280,7 @@ fn run_producer(
       // The target is transiently not capturable (for example a window shown
       // by Mission Control or minimized). Keep the buffer alive and retry on
       // the next tick instead of stopping it.
-      Err(error @ auv_driver::DriverError::StaleObservation { .. }) => {
+      Err(error @ auv_driver::DriverError::StaleUiReference { .. }) => {
         history.lock().expect("recent-frame history mutex poisoned").skip(error.to_string());
       }
       Err(error) => {
