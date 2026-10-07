@@ -41,6 +41,20 @@ fn wait_for_path(child: &mut Child, path: &std::path::Path) {
   panic!("daemon did not publish {} before the deadline", path.display());
 }
 
+// The daemon publishes its socket file a moment before it accepts
+// connections; under a loaded test run that gap showed up as
+// `ConnectionRefused`. Retry until the same deadline as `wait_for_path`.
+async fn connect_daemon(endpoint: &str) -> auv_api_client::protocol::grpc::Client {
+  let deadline = Instant::now() + Duration::from_secs(10);
+  loop {
+    match auv_api_client::protocol::grpc::Client::connect(endpoint.parse().expect("daemon endpoint")).await {
+      Ok(client) => return client,
+      Err(error) if Instant::now() >= deadline => panic!("connect API client: {error:?}"),
+      Err(_) => tokio::time::sleep(Duration::from_millis(25)).await,
+    }
+  }
+}
+
 #[cfg(unix)]
 fn interrupt(child: &Child) {
   let status = Command::new("/bin/kill").args(["-INT", &child.id().to_string()]).status().expect("signal daemon");
@@ -383,8 +397,7 @@ fn local_daemon_routes_runner_grpc_without_claims_or_leases() {
   wait_for_path(&mut daemon.0, &socket);
 
   tokio::runtime::Runtime::new().expect("test runtime").block_on(async {
-    let client =
-      auv_api_client::protocol::grpc::Client::connect(endpoint.parse().expect("daemon endpoint")).await.expect("connect API client");
+    let client = connect_daemon(&endpoint).await;
     let transport = client
       .routed_transport(auv_api_client::RunnerRoute {
         device_id: None,
@@ -450,8 +463,7 @@ fn windows_local_daemon_routes_runner_grpc_over_named_pipe() {
   assert!(endpoint.starts_with("npipe://./pipe/auv-"), "default Windows endpoint must be a named pipe: {endpoint}");
 
   let device_id = tokio::runtime::Runtime::new().expect("test runtime").block_on(async {
-    let client =
-      auv_api_client::protocol::grpc::Client::connect(endpoint.parse().expect("daemon endpoint")).await.expect("connect API client");
+    let client = connect_daemon(&endpoint).await;
     client
       .devices()
       .list_devices()

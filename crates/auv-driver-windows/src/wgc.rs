@@ -839,7 +839,8 @@ pub fn reset_d3d_context() {
 #[cfg(not(target_os = "windows"))]
 pub fn reset_d3d_context() {}
 
-#[cfg(test)]
+// The tests drive Direct3D and WGC directly, so they only build on Windows.
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
   use super::*;
   use windows::Graphics::Capture::Direct3D11CaptureFramePool;

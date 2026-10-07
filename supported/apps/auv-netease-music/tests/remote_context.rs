@@ -3,8 +3,10 @@
 fn remote_now_playing_has_a_tokio_io_reactor() {
   let socket = std::env::temp_dir().join(format!("auv-missing-netease-test-{}.sock", std::process::id()));
   let context = auv::AuvContext {
-    device_id: Some("device_test".to_string()),
-    run_id: Some("run_test".to_string()),
+    // Device and Run IDs are hexadecimal; anything else is rejected before
+    // the transport is opened.
+    device_id: Some("d".repeat(64)),
+    run_id: Some("e".repeat(32)),
     daemon_endpoint: Some(format!("unix://{}", socket.display())),
     ..Default::default()
   };
@@ -23,6 +25,6 @@ fn remote_now_playing_has_a_tokio_io_reactor() {
 
   assert_eq!(output.status.code(), Some(1));
   let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-  assert!(stderr.contains("now-playing read failed: transport error"), "unexpected stderr: {stderr}");
+  assert!(stderr.contains("now-playing read failed:") && stderr.contains("transport error"), "unexpected stderr: {stderr}");
   assert!(!stderr.contains("panicked"), "Tokio reactor panic regressed: {stderr}");
 }

@@ -17,7 +17,8 @@ use auv_auto_loop::scheduler::{FastLoopScheduler, OperationCatalog, TaskRequest}
 use std::collections::HashMap;
 
 fn load_clean_record() -> TrajectoryRecord {
-  let record_path = "f:/auv/docs/ai/references/driver/2026-10-04-qqmusic-vlm-record.json";
+  let record_path =
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/ai/references/driver/2026-10-04-qqmusic-vlm-record.json");
   let content = std::fs::read_to_string(record_path).expect("Failed to read 2026-10-04-qqmusic-vlm-record.json");
   serde_json::from_str(&content).expect("Failed to deserialize clean record.json")
 }
