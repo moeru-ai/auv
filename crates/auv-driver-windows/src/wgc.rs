@@ -58,6 +58,7 @@ pub struct HealthCacheEntry {
   pub target_size: (u32, u32),
 }
 
+#[cfg(target_os = "windows")]
 fn is_fresh_health_entry(entry: &HealthCacheEntry, now: Instant) -> bool {
   entry.health.is_fresh && now.saturating_duration_since(entry.captured_at) <= Duration::from_millis(30)
 }
