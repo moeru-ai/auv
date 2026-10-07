@@ -263,7 +263,7 @@ pub(crate) fn analyze_sidebar_target_probe(observation: &SidebarViewportObservat
 }
 
 pub(crate) fn publish_sidebar_target_probe_artifacts(
-  window_image: &RgbaImage,
+  capture: &auv_driver::Capture,
   sidebar_crop: &RgbaImage,
   recognition: &TextRecognition,
   observation: &SidebarViewportObservation,
@@ -272,10 +272,12 @@ pub(crate) fn publish_sidebar_target_probe_artifacts(
   capture_context: &SidebarTargetProbeCaptureContext,
 ) {
   // NOTICE(a6c-7): probe image + recognition artifacts for ROI vs motion bisection.
-  // They stay at native resolution: they must match the exact OCR input.
+  // Images are recorded at logical resolution like other evidence: the
+  // recognition JSON keeps the exact OCR boxes in points, which overlay the 1x
+  // image. Native probe frames cost ~2.6 MB each (~26 MB per select run).
   let payload = sidebar_target_probe_artifact(observation, probe, scroll_context, capture_context);
   auv_tracing::in_span!("auv.netease.sidebar_target_probe.evidence", || {
-    crate::telemetry::image_artifact("auv.netease.sidebar_target_probe.window_capture", window_image, auv_tracing::ImageResolution::Native);
+    crate::telemetry::capture_artifact("auv.netease.sidebar_target_probe.window_capture", capture);
     crate::telemetry::image_artifact("auv.netease.sidebar_target_probe.sidebar_crop", sidebar_crop, auv_tracing::ImageResolution::Native);
     crate::telemetry::json_artifact("auv.netease.sidebar_target_probe.recognition", recognition);
     crate::telemetry::json_artifact("auv.netease.sidebar_target_probe.result", &payload);
@@ -435,15 +437,7 @@ pub(crate) fn capture_sidebar_target_probe(
     parse_viewport,
   );
   let probe = analyze_sidebar_target_probe(&observation, target_label, query);
-  publish_sidebar_target_probe_artifacts(
-    &capture.image,
-    &sidebar_crop,
-    &recognition,
-    &observation,
-    &probe,
-    &scroll_context,
-    &capture_context,
-  );
+  publish_sidebar_target_probe_artifacts(&capture, &sidebar_crop, &recognition, &observation, &probe, &scroll_context, &capture_context);
 
   Ok(SidebarTargetProbeOutcome {
     probe,
