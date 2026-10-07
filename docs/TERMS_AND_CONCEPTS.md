@@ -1325,6 +1325,11 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   byte budget (512 MiB, `AUV_CAPTURE_STORE_BUDGET_MIB`) and captures unused for
   ten minutes (`AUV_CAPTURE_STORE_IDLE_SECONDS`). An evicted, expired or
   unknown reference fails with `NOT_FOUND`; the caller captures again.
+- **Image regions.** OCR, find-text and image fetches take `region` (fractions
+  of the image) or `screen_region` (a logical screen rectangle, clipped to the
+  image; exclusive with `region`). OCR result bounds are screen rectangles on
+  every driver, in the space of the capture's `bounds`; `origin` maps them
+  into the capture's owning space.
 - **Capture image fetch** (`GetCaptureImage`): the explicit call that moves
   pixels to a client, optionally cropped to a normalized region, fit inside a
   maximum size, and encoded as RGBA, PNG, JPEG, or lossless WebP.

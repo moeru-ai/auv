@@ -1,7 +1,7 @@
 import type { AuvClient, AuvConnection, Device, RunnerClient, WindowClient } from '@auv-js/sdk'
 
 import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
-import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
+import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, ImageEncoding, InputDeliveryPath, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
 
@@ -116,18 +116,18 @@ class AuvBackend implements Backend {
       await this.client.runs.stop({ outcome, runId }).catch(error => console.warn('AUV Run stop failed', error))
   }
 
-  async findDisplayText(query: string, displayId?: string, region?: NormalizedRect): Promise<TextSearchResult> {
+  async findDisplayText(query: string, displayId?: string, area?: Rect): Promise<TextSearchResult> {
     const selector = displayId ? { case: 'display' as const, value: { displayId } } : undefined
-    const response = await this.#runner.displays.findText(selector ? { selector } : undefined, query, region ? { region } : undefined)
+    const response = await this.#runner.displays.findText(selector ? { selector } : undefined, query, area ? { screenRegion: area } : undefined)
     return {
       capture: response.capture ? toFrame(response.capture, `display:${response.display?.displayId ?? 'primary'}`) : undefined,
       matches: response.matches.map(match => ({ bounds: toRect(match.bounds)!, confidence: match.confidence, text: match.text })),
     }
   }
 
-  async findWindowText(windowId: string, query: string, region?: NormalizedRect): Promise<TextSearchResult> {
+  async findWindowText(windowId: string, query: string, area?: Rect): Promise<TextSearchResult> {
     const window = this.#runner.windows.from(windowId)
-    const response = await window.findText(query, region ? { region } : undefined)
+    const response = await window.findText(query, area ? { screenRegion: area } : undefined)
     return {
       capture: response.capture ? toFrame(response.capture, `window:${windowId}`) : undefined,
       matches: response.matches.map(match => ({ bounds: toRect(match.bounds)!, confidence: match.confidence, text: match.text })),
@@ -147,8 +147,8 @@ class AuvBackend implements Backend {
     return { path: deliveryPath(response.action) }
   }
 
-  async recognizeText(frame: CapturedFrame, region?: NormalizedRect): Promise<TextSearchResult> {
-    return toRecognized(await this.#runner.recognizeText(frame.ref, region ? { region } : undefined))
+  async recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
+    return toRecognized(await this.#runner.recognizeText(frame.ref, area ? { screenRegion: area } : undefined))
   }
 
   async resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
@@ -306,9 +306,8 @@ function toFrame(capture: NativeFrame | undefined, source: string): CapturedFram
 /** OCR response as playground matches. */
 function toRecognized(response: NativeRecognized): TextSearchResult {
   return {
-    // NOTICE(ocr-region-space): regions are treated as screen-space like
-    // TextMatch bounds. Revisit if RecognizeTextResponse.origin reports a
-    // non-screen space for a frame.
+    // Region bounds are screen rectangles, like TextMatch bounds (see
+    // "Capture Frame" in docs/TERMS_AND_CONCEPTS.md).
     matches: response.regions.map(region => ({ bounds: toRect(region.bounds)!, confidence: region.confidence ?? 1, text: region.text })),
     text: response.text,
   }

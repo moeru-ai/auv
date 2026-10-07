@@ -46,7 +46,11 @@ message RecognizeTextRequest {
     // A caller-owned image, with pixels.
     ImageFrame image = 7;
   }
+  // Part of the image as fractions of its size.
   optional auv.api.image.v1.NormalizedRect region = 3;
+  // The same area in logical screen coordinates, clipped to the capture.
+  // Exclusive with `region`; a rectangle outside the capture is INVALID_ARGUMENT.
+  ScreenRect screen_region = 8;
   repeated string custom_words = 4;
   repeated string recognition_languages = 5;
 }
@@ -64,6 +68,9 @@ message FindWindowTextRequest {
   WindowRef window = 2;
   string query = 3;
   optional auv.api.image.v1.NormalizedRect region = 4;
+  // The same area in logical screen coordinates, clipped to the capture.
+  // Exclusive with `region`; a rectangle outside the capture is INVALID_ARGUMENT.
+  ScreenRect screen_region = 7;
   repeated string custom_words = 5;
   repeated string recognition_languages = 6;
 }
@@ -83,6 +90,9 @@ message FindDisplayTextRequest {
   DisplaySelector selector = 2;
   string query = 3;
   optional auv.api.image.v1.NormalizedRect region = 4;
+  // The same area in logical screen coordinates, clipped to the capture.
+  // Exclusive with `region`; a rectangle outside the capture is INVALID_ARGUMENT.
+  ScreenRect screen_region = 7;
   repeated string custom_words = 5;
   repeated string recognition_languages = 6;
 }

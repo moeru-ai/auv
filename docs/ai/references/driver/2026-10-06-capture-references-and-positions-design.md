@@ -39,7 +39,11 @@ against a local daemon, with read-only measurements on macOS.
   - Input is split by space: `ClickScreenPoint` versus `ClickWindowPoint`,
     `ScrollWindowPoint*` (window-local only), and `MoveMouse`/`DragMouse`
     (screen).
-  - OCR bounds are typed `ScreenRect`, but they are offsets from `origin`.
+  - OCR bounds are screen rectangles (`capture.bounds.origin` plus pixels /
+    scale on every driver); `origin` maps them into the capture's owning
+    space. This note first described them as offsets, which was wrong: one
+    consumer, scroll-until's `text_match`, made the same mistake and offset
+    matches twice (fixed with Part B.2).
   - Regions are 0–1 fractions (`NormalizedRect`).
   - The playground converts screen areas to fractions and to window-local
     points.
@@ -267,16 +271,20 @@ The wire and the SDK still split everything by space. Proposal:
      window or screen space. The Runner converts screen positions using the
      window's current frame, so callers stop converting by hand.
    - `MoveMouse`/`DragMouse` keep screen points.
-2. **Everything AUV returns is in screen space.** For AUV-produced captures,
-   `RecognizedText.bounds` and `TextMatch.bounds` are screen rectangles, as
-   their type already claims. The Runner applies `origin` before responding.
-   Offsets relative to `origin` remain only for caller-owned images, which have
-   no screen placement.
-3. **Regions accept a screen rectangle.** Every `region` field becomes a
-   `oneof { NormalizedRect normalized; ScreenRect screen; }`. A screen
-   rectangle is mapped into the image by the Runner and clipped to it. A
-   rectangle that misses the image entirely is `INVALID_ARGUMENT`. Clients pass
-   their areas directly.
+2. **Everything AUV returns is in screen space.** Already true:
+   `RecognizedText.bounds` and `TextMatch.bounds` are screen rectangles on
+   every driver, in the space of the capture's `bounds` (for a caller-owned
+   image, the `bounds` the caller supplied). Done (2026-10-07): scroll-until's
+   `text_match` no longer adds the capture origin a second time, and the
+   docs that called these offsets are corrected.
+3. **Regions accept a screen rectangle.** Done (2026-10-07):
+   `RecognizeTextRequest`, `FindWindowTextRequest`, `FindDisplayTextRequest`
+   and `GetCaptureImageRequest` gain `ScreenRect screen_region`, exclusive with
+   `region`. A sibling field was chosen over a `oneof`, because a `oneof` would
+   make JS callers write `{ area: { case, value } }`. The Runner maps the
+   rectangle into the image and clips it; a rectangle that misses the image is
+   `INVALID_ARGUMENT`. The Rust client takes `ImageRegion::{Normalized,
+   Screen}`; the playground passes its areas directly.
 4. **One normalized rectangle.**
    - Delete `auv-core`'s `NormalizedRegion` in favor of `auv-driver-common`'s
      type.

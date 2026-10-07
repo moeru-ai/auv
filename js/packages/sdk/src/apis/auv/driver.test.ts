@@ -43,9 +43,12 @@ describe('runner Driver control surface', () => {
     expect(recognize.source).toEqual({ case: 'captureRef', value: expect.objectContaining({ captureId: 'cap-1' }) })
     expect(recognize.region?.height).toBe(0.5)
 
+    await runner.recognizeText(frame, { screenRegion: { height: 40, width: 300, x: 20, y: 10 } })
+    expect(fromBinary(RecognizeTextRequestSchema, calls[1]!.body).screenRegion).toMatchObject({ height: 40, width: 300, x: 20, y: 10 })
+
     const image = await runner.captures.image('cap-1', { encoding: ImageEncoding.JPEG, maxSize: { height: 100, width: 100 } })
     expect(image).toMatchObject({ encoding: ImageEncoding.JPEG, height: 50, width: 80 })
-    const fetch = fromBinary(GetCaptureImageRequestSchema, calls[1]!.body)
+    const fetch = fromBinary(GetCaptureImageRequestSchema, calls[2]!.body)
     expect(fetch.capture?.captureId).toBe('cap-1')
     expect(fetch.maxSize).toMatchObject({ height: 100, width: 100 })
 

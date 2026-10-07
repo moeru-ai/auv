@@ -45,14 +45,15 @@ export interface Backend {
   clickWindow: (windowId: string, point: Point, options?: ClickOptions) => Promise<InputReceipt>
   dispose: () => Promise<void>
   endRun: (outcome: RunOutcomeKind) => Promise<void>
-  findDisplayText: (query: string, displayId?: string, region?: NormalizedRect) => Promise<TextSearchResult>
-  findWindowText: (windowId: string, query: string, region?: NormalizedRect) => Promise<TextSearchResult>
+  /** `area` limits the search to a logical screen rectangle. */
+  findDisplayText: (query: string, displayId?: string, area?: Rect) => Promise<TextSearchResult>
+  findWindowText: (windowId: string, query: string, area?: Rect) => Promise<TextSearchResult>
   readonly kind: 'auv' | 'mock' | 'replay'
   readonly label: string
   listDisplays: () => Promise<DisplayInfo[]>
   listWindows: () => Promise<WindowInfo[]>
   pressKey: (key: string) => Promise<InputReceipt>
-  recognizeText: (frame: CapturedFrame, region?: NormalizedRect) => Promise<TextSearchResult>
+  recognizeText: (frame: CapturedFrame, area?: Rect) => Promise<TextSearchResult>
   resolveWindow: (selector: WindowSelector) => Promise<WindowInfo>
   /** Wheel-scrolls once at a window-local point. */
   scrollWindow: (windowId: string, point: Point, delta: ScrollDelta) => Promise<InputReceipt>
@@ -90,12 +91,6 @@ export interface InputReceipt {
   /** Screen point actually targeted, when known. */
   point?: Point
 }
-
-/**
- * Part of a source image as fractions of its size, inside `[0, 1]` (mirrors
- * `auv.api.image.v1.NormalizedRect`). Same shape as `Rect`, different space.
- */
-export type NormalizedRect = Rect
 
 export type RunOutcomeKind = 'canceled' | 'failed' | 'succeeded'
 

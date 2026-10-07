@@ -1328,3 +1328,43 @@ async fn dropped_feedback_relay_wakes_and_releases_native_hold() {
   assert!(relay.await.unwrap_err().is_cancelled());
   tokio::time::timeout(std::time::Duration::from_secs(5), receiver.released.notified()).await.unwrap();
 }
+
+#[test]
+fn screen_regions_map_into_the_image_and_clip_to_it() {
+  // A window capture at (100, 200), 400x300 points.
+  let bounds = auv_driver::Rect::new(100.0, 200.0, 400.0, 300.0);
+  let screen = |x, y, width, height| {
+    Some(proto::ScreenRect {
+      x,
+      y,
+      width,
+      height,
+    })
+  };
+
+  assert_eq!(
+    image_region_from_proto(None, screen(200.0, 260.0, 100.0, 150.0), bounds).unwrap(),
+    auv_driver::RatioRect::new(0.25, 0.2, 0.25, 0.5)
+  );
+  // Clipped to the image: only the overlapping right half remains.
+  assert_eq!(
+    image_region_from_proto(None, screen(400.0, 200.0, 400.0, 300.0), bounds).unwrap(),
+    auv_driver::RatioRect::new(0.75, 0.0, 0.25, 1.0)
+  );
+  assert_eq!(image_region_from_proto(None, None, bounds).unwrap(), auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0));
+
+  let outside = image_region_from_proto(None, screen(0.0, 0.0, 50.0, 50.0), bounds).unwrap_err();
+  assert_eq!(outside.code(), tonic::Code::InvalidArgument);
+  let both = image_region_from_proto(
+    Some(auv_api_proto::auv::api::image::v1::NormalizedRect {
+      x: 0.0,
+      y: 0.0,
+      width: 1.0,
+      height: 1.0,
+    }),
+    screen(100.0, 200.0, 10.0, 10.0),
+    bounds,
+  )
+  .unwrap_err();
+  assert!(both.message().contains("exclusive"), "{}", both.message());
+}

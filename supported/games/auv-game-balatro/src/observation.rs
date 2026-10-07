@@ -197,12 +197,15 @@ pub async fn hover_read_display_frame_points_via_api(
       let recognition = driver
         .recognize_text(
           &capture,
-          Some(NormalizedRegion {
-            x: request.region.x,
-            y: request.region.y,
-            width: request.region.width,
-            height: request.region.height,
-          }),
+          Some(
+            NormalizedRegion {
+              x: request.region.x,
+              y: request.region.y,
+              width: request.region.width,
+              height: request.region.height,
+            }
+            .into(),
+          ),
           request.custom_words.clone(),
           vec!["zh-Hans".to_string(), "en-US".to_string()],
         )
@@ -482,7 +485,7 @@ async fn observe_live_with_runners(
   let detections = detect_via_api(balatro, config, entities_classes, ui_classes, frame).await?;
   let recognition = match ocr_region_for_ui(&detections.ui) {
     Some(region) => driver
-      .recognize_text(&captured, Some(region), Vec::new(), vec!["zh-Hans".to_string(), "en-US".to_string()])
+      .recognize_text(&captured, Some(region.into()), Vec::new(), vec!["zh-Hans".to_string(), "en-US".to_string()])
       .await
       .map_err(api_error)?,
     None => Default::default(),

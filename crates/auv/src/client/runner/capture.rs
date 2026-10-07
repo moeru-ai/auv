@@ -8,9 +8,7 @@
 use auv_api_proto::auv::api::driver::v1 as proto;
 use auv_api_proto::auv::api::image::v1 as image_proto;
 
-use super::{
-  CapabilityError, IMAGE_RPC_MESSAGE_SIZE_LIMIT, NormalizedRegion, RunnerClient, capability_status, position_from_proto, required,
-};
+use super::{CapabilityError, IMAGE_RPC_MESSAGE_SIZE_LIMIT, ImageRegion, RunnerClient, capability_status, position_from_proto, required};
 
 /// Reference to a capture held in the capture store of the Runner that
 /// produced it. It is a Runner resource: valid only on a Run-affine route to
@@ -97,7 +95,7 @@ pub enum CaptureImageEncoding {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CaptureImageOptions {
   /// Crop to this part of the capture first.
-  pub region: Option<NormalizedRegion>,
+  pub region: Option<ImageRegion>,
   /// Fit inside this pixel size, keeping the aspect ratio; never enlarges.
   pub max_size: Option<auv_driver::PixelSize>,
   pub encoding: CaptureImageEncoding,
@@ -139,12 +137,8 @@ impl CapturesClient {
         capture: Some(proto::CaptureRef {
           capture_id: capture.id().to_string(),
         }),
-        region: options.region.map(|region| image_proto::NormalizedRect {
-          x: region.x,
-          y: region.y,
-          width: region.width,
-          height: region.height,
-        }),
+        region: super::normalized_region(options.region),
+        screen_region: super::screen_region(options.region),
         max_size: options.max_size.map(|size| image_proto::PixelSize {
           width: size.width,
           height: size.height,

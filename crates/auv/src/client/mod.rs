@@ -570,7 +570,7 @@ impl RunnerExecution {
   pub async fn recognize_text(
     &self,
     source: impl Into<runner::RecognitionSource>,
-    region: Option<runner::NormalizedRegion>,
+    region: Option<runner::ImageRegion>,
     custom_words: Vec<String>,
     recognition_languages: Vec<String>,
   ) -> Result<auv_driver::TextRecognition, runner::CapabilityError> {

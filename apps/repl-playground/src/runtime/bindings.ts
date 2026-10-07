@@ -1,4 +1,4 @@
-import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, ScrollUntilRequest, TextSearchResult, WindowInfo } from '../backend/types'
+import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, ScrollUntilRequest, TextSearchResult, WindowInfo } from '../backend/types'
 import type { ClickOptions, DisplayHandle, FrameHandle, InputHandle, Point, Rect, ScrollDelta, ScrollObservation, TextHandle, WindowSelector } from '../script-api/api'
 import type { Effect, Resource, WindowData } from '../store'
 import type { WireValue } from './protocol'
@@ -104,7 +104,7 @@ const BINDINGS: Record<string, Binding> = {
   'displays.capture': read(async (backend, scope, [display]) => scope.frame(await backend.captureDisplay(displayId(display)))),
   'displays.findText': read(async (backend, scope, [query, display, options]) => {
     const within = searchArea(options, displayBounds(display))
-    return scope.text(await backend.findDisplayText(String(query), displayId(display), within?.region), String(query), undefined, within?.area)
+    return scope.text(await backend.findDisplayText(String(query), displayId(display), within?.area), String(query), undefined, within?.area)
   }),
   'displays.list': read(async (backend, scope) => (await backend.listDisplays()).map(info => scope.display(info))),
   'input.click': input(async (backend, scope, [target, options]) => scope.input('click', await backend.clickScreen(clickPoint(target), options as ClickOptions | undefined))),
@@ -113,13 +113,13 @@ const BINDINGS: Record<string, Binding> = {
   'text.recognize': read(async (backend, scope, [frame, options]) => {
     const source = resolveFrame(frame)
     const within = searchArea(options, source.handle.bounds)
-    return scope.text(await backend.recognizeText(source.frame, within?.region), undefined, source.handle, within?.area)
+    return scope.text(await backend.recognizeText(source.frame, within?.area), undefined, source.handle, within?.area)
   }),
   'windows.capture': read(async (backend, scope, [window]) => scope.frame(await backend.captureWindow(windowId(window)))),
   'windows.click': input(async (backend, scope, [window, point, options]) => scope.input('click', await backend.clickWindow(windowId(window), asPoint(point), options as ClickOptions | undefined))),
   'windows.findText': read(async (backend, scope, [window, query, options]) => {
     const within = searchArea(options, windowBounds(window))
-    return scope.text(await backend.findWindowText(windowId(window), String(query), within?.region), String(query), undefined, within?.area)
+    return scope.text(await backend.findWindowText(windowId(window), String(query), within?.area), String(query), undefined, within?.area)
   }),
   'windows.list': read(async (backend, scope) => (await backend.listWindows()).map(info => scope.window(info))),
   'windows.resolve': read(async (backend, scope, [selector]) => scope.window(await backend.resolveWindow((selector ?? {}) as WindowSelector))),
@@ -276,10 +276,10 @@ function scrollUntilRequest(value: WireValue, context: CallContext): { decide?: 
 }
 
 /**
- * `within` from text-search options, clipped to `bounds` (the searched image)
- * and expressed as the fractions AUV expects (`NormalizedRect`).
+ * `within` from text-search options: a screen area clipped to `bounds` (the
+ * searched image).
  */
-function searchArea(options: WireValue, bounds: Rect): undefined | { area: Rect, region: NormalizedRect } {
+function searchArea(options: WireValue, bounds: Rect): undefined | { area: Rect } {
   const within = (options as undefined | { within?: Partial<Rect> })?.within
   if (within === undefined)
     return undefined
@@ -291,11 +291,9 @@ function searchArea(options: WireValue, bounds: Rect): undefined | { area: Rect,
   const bottom = Math.min(within.y + within.height, bounds.y + bounds.height)
   if (right <= x || bottom <= y)
     throw new RangeError('within: the area does not overlap the searched window, display or frame')
-  const area = { height: bottom - y, width: right - x, x, y }
-  return {
-    area,
-    region: { height: area.height / bounds.height, width: area.width / bounds.width, x: (x - bounds.x) / bounds.width, y: (y - bounds.y) / bounds.height },
-  }
+  // The device takes the screen area directly (`screenRegion`); clipping here
+  // gives the same area for drawing the search on the canvas.
+  return { area: { height: bottom - y, width: right - x, x, y } }
 }
 
 /** Screen frame of a window handle as last reported by the device. */

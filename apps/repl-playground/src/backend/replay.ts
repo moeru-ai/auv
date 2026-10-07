@@ -1,5 +1,5 @@
-import type { ClickOptions, Point, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
-import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
+import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
+import type { AxNode, Backend, CapturedFrame, DisplayInfo, InputReceipt, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
 /** One device call of a live run: what was asked and what the device answered. */
 export interface RecordedCall {
@@ -81,12 +81,12 @@ export class RecordingBackend implements Backend {
     return this.inner.endRun(outcome)
   }
 
-  findDisplayText(query: string, displayId?: string, region?: NormalizedRect): Promise<TextSearchResult> {
-    return this.#record('findDisplayText', [query, displayId, region], () => this.inner.findDisplayText(query, displayId, region))
+  findDisplayText(query: string, displayId?: string, area?: Rect): Promise<TextSearchResult> {
+    return this.#record('findDisplayText', [query, displayId, area], () => this.inner.findDisplayText(query, displayId, area))
   }
 
-  findWindowText(windowId: string, query: string, region?: NormalizedRect): Promise<TextSearchResult> {
-    return this.#record('findWindowText', [windowId, query, region], () => this.inner.findWindowText(windowId, query, region))
+  findWindowText(windowId: string, query: string, area?: Rect): Promise<TextSearchResult> {
+    return this.#record('findWindowText', [windowId, query, area], () => this.inner.findWindowText(windowId, query, area))
   }
 
   listDisplays(): Promise<DisplayInfo[]> {
@@ -101,8 +101,8 @@ export class RecordingBackend implements Backend {
     return this.#record('pressKey', [key], () => this.inner.pressKey(key))
   }
 
-  recognizeText(frame: CapturedFrame, region?: NormalizedRect): Promise<TextSearchResult> {
-    return this.#record('recognizeText', [frame, region], () => this.inner.recognizeText(frame, region))
+  recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
+    return this.#record('recognizeText', [frame, area], () => this.inner.recognizeText(frame, area))
   }
 
   resolveWindow(selector: WindowSelector): Promise<WindowInfo> {
@@ -190,12 +190,12 @@ export class ReplayBackend implements Backend {
 
   async endRun(): Promise<void> {}
 
-  findDisplayText(query: string, displayId?: string, region?: NormalizedRect): Promise<TextSearchResult> {
-    return this.#next('findDisplayText', [query, displayId, region])
+  findDisplayText(query: string, displayId?: string, area?: Rect): Promise<TextSearchResult> {
+    return this.#next('findDisplayText', [query, displayId, area])
   }
 
-  findWindowText(windowId: string, query: string, region?: NormalizedRect): Promise<TextSearchResult> {
-    return this.#next('findWindowText', [windowId, query, region])
+  findWindowText(windowId: string, query: string, area?: Rect): Promise<TextSearchResult> {
+    return this.#next('findWindowText', [windowId, query, area])
   }
 
   listDisplays(): Promise<DisplayInfo[]> {
@@ -210,8 +210,8 @@ export class ReplayBackend implements Backend {
     return this.#next('pressKey', [key])
   }
 
-  recognizeText(frame: CapturedFrame, region?: NormalizedRect): Promise<TextSearchResult> {
-    return this.#next('recognizeText', [frame, region])
+  recognizeText(frame: CapturedFrame, area?: Rect): Promise<TextSearchResult> {
+    return this.#next('recognizeText', [frame, area])
   }
 
   resolveWindow(selector: WindowSelector): Promise<WindowInfo> {

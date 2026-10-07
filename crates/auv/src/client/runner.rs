@@ -77,6 +77,26 @@ pub struct NormalizedRegion {
   pub height: f64,
 }
 
+/// Part of an image: fractions of its size, or a logical screen rectangle
+/// that the Runner clips to the image.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ImageRegion {
+  Normalized(NormalizedRegion),
+  Screen(auv_driver::Rect),
+}
+
+impl From<NormalizedRegion> for ImageRegion {
+  fn from(region: NormalizedRegion) -> Self {
+    Self::Normalized(region)
+  }
+}
+
+impl From<auv_driver::Rect> for ImageRegion {
+  fn from(area: auv_driver::Rect) -> Self {
+    Self::Screen(area)
+  }
+}
+
 /// Selects a display by its canonical driver ID or exact name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DisplaySelector {
@@ -436,7 +456,7 @@ impl RunnerClient {
   pub async fn recognize_text(
     &self,
     source: impl Into<RecognitionSource>,
-    region: Option<NormalizedRegion>,
+    region: Option<ImageRegion>,
     custom_words: Vec<String>,
     recognition_languages: Vec<String>,
   ) -> Result<auv_driver::TextRecognition, CapabilityError> {
@@ -451,7 +471,8 @@ impl RunnerClient {
       .max_encoding_message_size(IMAGE_RPC_MESSAGE_SIZE_LIMIT)
       .recognize_text(proto::RecognizeTextRequest {
         source: Some(source),
-        region: region.map(normalized_region_to_proto),
+        region: normalized_region(region),
+        screen_region: screen_region(region),
         custom_words,
         recognition_languages,
       })
@@ -725,7 +746,8 @@ impl DisplaysClient {
       .find_display_text(proto::FindDisplayTextRequest {
         selector: selector.map(display_selector_to_proto),
         query: query.into(),
-        region: options.region.map(normalized_region_to_proto),
+        region: normalized_region(options.region),
+        screen_region: screen_region(options.region),
         custom_words: options.custom_words,
         recognition_languages: options.recognition_languages,
       })
@@ -863,7 +885,8 @@ impl WindowClient {
       .find_window_text(proto::FindWindowTextRequest {
         window: Some(self.window_ref.clone()),
         query: query.into(),
-        region: options.region.map(normalized_region_to_proto),
+        region: normalized_region(options.region),
+        screen_region: screen_region(options.region),
         custom_words: options.custom_words,
         recognition_languages: options.recognition_languages,
       })
@@ -1722,8 +1745,8 @@ impl InputClient {
 /// Optional OCR configuration shared by display and window searches.
 #[derive(Clone, Debug, Default)]
 pub struct FindTextOptions {
-  /// Optional normalized search region.
-  pub region: Option<NormalizedRegion>,
+  /// Search only this part of the capture.
+  pub region: Option<ImageRegion>,
   /// Extra recognition vocabulary.
   pub custom_words: Vec<String>,
   /// Ordered recognition language identifiers.
@@ -2234,12 +2257,24 @@ fn rect_to_proto(value: auv_driver::Rect) -> proto::ScreenRect {
   }
 }
 
-fn normalized_region_to_proto(value: NormalizedRegion) -> auv_api_proto::auv::api::image::v1::NormalizedRect {
-  auv_api_proto::auv::api::image::v1::NormalizedRect {
-    x: value.x,
-    y: value.y,
-    width: value.width,
-    height: value.height,
+/// The `region` field for an image region given as fractions.
+fn normalized_region(region: Option<ImageRegion>) -> Option<auv_api_proto::auv::api::image::v1::NormalizedRect> {
+  match region? {
+    ImageRegion::Normalized(value) => Some(auv_api_proto::auv::api::image::v1::NormalizedRect {
+      x: value.x,
+      y: value.y,
+      width: value.width,
+      height: value.height,
+    }),
+    ImageRegion::Screen(_) => None,
+  }
+}
+
+/// The `screen_region` field for an image region given in screen coordinates.
+fn screen_region(region: Option<ImageRegion>) -> Option<proto::ScreenRect> {
+  match region? {
+    ImageRegion::Screen(area) => Some(rect_to_proto(area)),
+    ImageRegion::Normalized(_) => None,
   }
 }
 

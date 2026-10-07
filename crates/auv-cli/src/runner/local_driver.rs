@@ -1950,7 +1950,7 @@ impl TextRecognitionService for LocalTextRecognitionService {
       Some(proto::recognize_text_request::Source::Image(frame)) => std::sync::Arc::new(image_frame_from_proto(frame)?),
       None => return Err(Status::invalid_argument("capture_ref or image is required")),
     };
-    let region = ratio_rect_from_proto(request.region)?;
+    let region = image_region_from_proto(request.region, request.screen_region, capture.bounds)?;
     let recognition = self
       .session
       .vision()
@@ -1967,9 +1967,9 @@ impl TextRecognitionService for LocalTextRecognitionService {
     if request.query.trim().is_empty() {
       return Err(Status::invalid_argument("query is required"));
     }
-    let region = ratio_rect_from_proto(request.region)?;
     let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
     let capture = self.session.window().capture(&window).map_err(driver_status)?;
+    let region = image_region_from_proto(request.region, request.screen_region, capture.bounds)?;
     let matches = self
       .session
       .vision()
@@ -2004,7 +2004,6 @@ impl TextRecognitionService for LocalTextRecognitionService {
       return Err(Status::invalid_argument("query is required"));
     }
     let display = display_selector_from_proto(request.selector)?;
-    let region = ratio_rect_from_proto(request.region)?;
     let captured = self
       .session
       .display()
@@ -2013,6 +2012,7 @@ impl TextRecognitionService for LocalTextRecognitionService {
         ..Default::default()
       })
       .map_err(driver_status)?;
+    let region = image_region_from_proto(request.region, request.screen_region, captured.capture.bounds)?;
     let matches = self
       .session
       .vision()
@@ -2173,6 +2173,39 @@ fn image_frame_from_proto(frame: proto::ImageFrame) -> Result<auv_driver::Captur
   })
 }
 
+/// The part of an image a request names: `region` as fractions of the image,
+/// or `screen_region` in logical screen coordinates, clipped to the image's
+/// screen `bounds`. Neither means the whole image.
+fn image_region_from_proto(
+  region: Option<auv_api_proto::auv::api::image::v1::NormalizedRect>,
+  screen_region: Option<proto::ScreenRect>,
+  bounds: auv_driver::Rect,
+) -> Result<auv_driver::RatioRect, Status> {
+  let Some(screen_region) = screen_region else {
+    return ratio_rect_from_proto(region);
+  };
+  if region.is_some() {
+    return Err(Status::invalid_argument("region and screen_region are exclusive"));
+  }
+  let area = rect_from_proto(screen_region, "screen_region")?;
+  if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+    return Err(Status::invalid_argument("screen_region needs an image with screen bounds"));
+  }
+  let left = area.origin.x.max(bounds.origin.x);
+  let top = area.origin.y.max(bounds.origin.y);
+  let right = (area.origin.x + area.size.width).min(bounds.origin.x + bounds.size.width);
+  let bottom = (area.origin.y + area.size.height).min(bounds.origin.y + bounds.size.height);
+  if right <= left || bottom <= top {
+    return Err(Status::invalid_argument("screen_region does not overlap the image"));
+  }
+  Ok(auv_driver::RatioRect::new(
+    (left - bounds.origin.x) / bounds.size.width,
+    (top - bounds.origin.y) / bounds.size.height,
+    (right - left) / bounds.size.width,
+    (bottom - top) / bounds.size.height,
+  ))
+}
+
 fn ratio_rect_from_proto(region: Option<auv_api_proto::auv::api::image::v1::NormalizedRect>) -> Result<auv_driver::RatioRect, Status> {
   let Some(region) = region else {
     return Ok(auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0));
@@ -2209,7 +2242,7 @@ impl CaptureService for LocalCaptureService {
   ) -> Result<Response<proto::GetCaptureImageResponse>, Status> {
     let request = request.into_inner();
     let capture = stored_capture(&self.captures, request.capture.ok_or_else(|| Status::invalid_argument("capture is required"))?)?;
-    let region = ratio_rect_from_proto(request.region)?;
+    let region = image_region_from_proto(request.region, request.screen_region, capture.bounds)?;
     let encoding = auv_api_proto::auv::api::image::v1::ImageEncoding::try_from(request.encoding)
       .map_err(|_| Status::invalid_argument("encoding is not a known ImageEncoding"))?;
     // Encoding a Retina capture takes long enough to stall the current-thread

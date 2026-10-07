@@ -306,6 +306,9 @@ Encodings: `RGBA` (default, raw rows), `PNG`, `JPEG` (quality 85, smallest for
 photo-heavy screens) and `WEBP` (lossless, about JPEG's size for UI, exact
 pixels).
 
+OCR and image fetches take a screen area directly with `screenRegion` (or
+`region` as fractions of the image); result bounds are screen rectangles.
+
 A capture reference fails with NOT_FOUND once the Runner evicts it (least
 recently used beyond its memory budget, or idle for ten minutes); capture
 again. To OCR an image you own, pass `{ frame: { image, bounds, scaleFactor } }`.
