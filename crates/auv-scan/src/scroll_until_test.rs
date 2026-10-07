@@ -94,14 +94,16 @@ impl ScrollUntilSurface for FakeList {
   fn recognize_text(&mut self, _: &Capture) -> DriverResult<TextRecognition> {
     self.recognitions += 1;
     let visible = self.text_row.filter(|row| (self.position..self.position + self.viewport).contains(row));
+    // Like the drivers, bounds are in the capture's screen space: the window
+    // sits at (100, 200) on screen.
     let mut regions = vec![RecognizedText {
       text: format!("row at {}", self.position),
-      bounds: Rect::new(0.0, 0.0, 40.0, 1.0),
+      bounds: Rect::new(100.0, 200.0, 40.0, 1.0),
       confidence: None,
     }];
     regions.extend(visible.map(|row| RecognizedText {
       text: "TARGET ROW".to_string(),
-      bounds: Rect::new(0.0, (row - self.position) as f64, 40.0, 1.0),
+      bounds: Rect::new(100.0, 200.0 + (row - self.position) as f64, 40.0, 1.0),
       confidence: None,
     }));
     Ok(TextRecognition {
@@ -185,7 +187,14 @@ fn text_condition_stops_as_soon_as_the_query_is_visible() {
   assert!(list.position <= 420 && 420 < list.position + 60, "{}", list.position);
   let matched = result.text_match.unwrap();
   assert_eq!(matched.text, "TARGET ROW");
-  // Screen bounds: the capture's screen origin plus the line's offset.
+  // ROOT CAUSE:
+  //
+  // If the window was not at the screen origin, the match was offset by the
+  // window origin twice: the drivers already return OCR bounds in screen
+  // space, and `text_match` added `capture.bounds.origin` again. The fake
+  // returned offsets instead of screen bounds, which hid it.
+  //
+  // The fix uses the driver's screen bounds as they are.
   assert_eq!(matched.bounds, Rect::new(100.0, 200.0 + (420 - list.position) as f64, 40.0, 1.0));
 }
 

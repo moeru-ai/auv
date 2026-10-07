@@ -140,9 +140,8 @@ pub enum ScrollUntilStopReason {
   PredicateSatisfied,
 }
 
-/// A recognized text match. `bounds` are logical screen coordinates: the
-/// recognized line's offset from the capture origin, placed at the capture's
-/// screen bounds.
+/// A recognized text match. `bounds` are logical screen coordinates, as the
+/// drivers report them for the capture.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScrollUntilTextMatch {
   pub text: String,
@@ -163,8 +162,8 @@ pub struct ScrollUntilObservation<C = Capture> {
   pub no_motion_streak: u32,
   /// The window capture this observation was made from.
   pub capture: C,
-  /// Text recognized in the capture, unless opted out. Region bounds are
-  /// offsets from the recognition origin, as for window text recognition.
+  /// Text recognized in the capture, unless opted out. Region bounds are in
+  /// the capture's screen space; `origin` maps them into its owning space.
   pub text: Option<TextRecognition>,
   /// Set when a built-in condition or the budget ends the loop at this
   /// observation. The observer's decision is then ignored.
@@ -247,7 +246,7 @@ pub fn scroll_until(
     } else {
       None
     };
-    result.text_match = query.zip(text.as_ref()).and_then(|(query, text)| text_match(text, query, &capture));
+    result.text_match = query.zip(text.as_ref()).and_then(|(query, text)| text_match(text, query));
     // Every condition, not only `End`, stops once the viewport stays still:
     // further steps cannot reveal anything new.
     let stop = if result.text_match.is_some() {
@@ -311,18 +310,13 @@ fn motion_frame(capture: &Capture, region: Option<RatioRect>) -> image::RgbaImag
   image::imageops::thumbnail(&crop, width, height)
 }
 
-/// The first recognized line containing `query` (case-insensitive), in screen
-/// coordinates. Window text recognition reports offsets from the capture
-/// origin, which is the top-left of the capture's screen bounds.
-fn text_match(text: &TextRecognition, query: &str, capture: &Capture) -> Option<ScrollUntilTextMatch> {
+/// The first recognized line containing `query` (case-insensitive). Driver
+/// OCR bounds are already in the capture's screen space
+/// (`capture.bounds.origin` plus pixels / scale), so they are used as they are.
+fn text_match(text: &TextRecognition, query: &str) -> Option<ScrollUntilTextMatch> {
   text.best_contains(query).map(|region| ScrollUntilTextMatch {
     text: region.text.clone(),
-    bounds: Rect::new(
-      capture.bounds.origin.x + region.bounds.origin.x,
-      capture.bounds.origin.y + region.bounds.origin.y,
-      region.bounds.size.width,
-      region.bounds.size.height,
-    ),
+    bounds: region.bounds,
   })
 }
 
