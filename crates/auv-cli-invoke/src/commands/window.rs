@@ -164,7 +164,7 @@ fn window_capture_output_with_artifact(
   capture: super::CaptureResult<'_>,
   artifact: Option<ArtifactMetadata>,
 ) -> InvokeCommandResult {
-  let pixel_size = capture.pixel_dimensions.report_value();
+  let pixel_size = capture.pixel_size_report();
   let mut output = InvokeCommandOutput::from_result(&WindowCaptureResult { window, capture })?;
   let mut fields = window_report_fields(window);
   fields.push(InvokeReportField::new("Pixel size", pixel_size));

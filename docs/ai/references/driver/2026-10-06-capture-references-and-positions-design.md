@@ -78,22 +78,35 @@ The rule this design follows is now in `AGENTS.md` ("Image Payloads", #251).
 
 ### Protobuf changes (`capture.proto`, `text_recognition.proto`, `input.proto`)
 
+Shapes as of the cleanup on 2026-10-07 (`refactor/capture-api-shapes`), which
+split pixel-carrying frames from references and gave RGBA one representation:
+
 ```proto
 message CaptureRef { string capture_id = 1; }
 
+// A capture the Runner holds: never pixels.
 message CapturedFrame {
-  CaptureRef ref = 7;                       // always set by the Runner
-  auv.api.image.v1.RgbaFrame image = 1;     // only when explicitly requested
+  reserved 1;                                // was `image`
+  CaptureRef ref = 7;                        // always set
   ScreenRect bounds = 2;
   double scale_factor = 3;
   string backend = 4;
   optional string fallback_reason = 5;
   Position origin = 6;
-  auv.api.image.v1.PixelSize pixel_size = 8; // known without pixels
+  auv.api.image.v1.PixelSize pixel_size = 8;
+}
+
+// Pixels with screen placement: caller-owned images and recent frames only.
+message ImageFrame {
+  auv.api.image.v1.RgbaFrame image = 1;
+  ScreenRect bounds = 2;
+  double scale_factor = 3;
+  string backend = 4;
+  optional string fallback_reason = 5;
+  Position origin = 6;
 }
 
 service CaptureService {
-  // existing Capture* RPCs: response capture has `ref`, no `image` by default
   rpc GetCaptureImage(GetCaptureImageRequest) returns (GetCaptureImageResponse);
 }
 
@@ -101,26 +114,35 @@ message GetCaptureImageRequest {
   CaptureRef capture = 1;
   optional auv.api.image.v1.NormalizedRect region = 2; // crop first
   auv.api.image.v1.PixelSize max_size = 3;             // fit inside; absent = native
-  ImageEncoding encoding = 4;                          // RGBA (default), PNG, JPEG
+  ImageEncoding encoding = 4;                          // RGBA (default), PNG, JPEG, WEBP
 }
 message GetCaptureImageResponse {
-  oneof image {
-    auv.api.image.v1.RgbaFrame rgba = 1;
-    EncodedImage encoded = 2;   // bytes + format + pixel size
-  }
+  reserved 1, 2;                                       // were the rgba/encoded oneof
+  auv.api.image.v1.EncodedImage image = 3;             // RGBA is raw rows
 }
 
 message RecognizeTextRequest {
+  reserved 2;                                          // was `CapturedFrame capture`
   oneof source {
     CaptureRef capture_ref = 6;   // AUV-produced capture: no pixels sent back
-    CapturedFrame capture = 2;    // caller-owned image only
+    ImageFrame image = 7;         // caller-owned image only
   }
   ...
 }
 ```
 
+Clients mirror this:
+
+- Rust's `CaptureImage` is one struct, `{ encoding, size, data }`, with
+  `into_rgba_image()`. JS returns the same fields.
+- `CaptureImageOptions.max_size` and `RunnerCapture.pixel_size` are
+  `auv_driver::PixelSize`, not tuples or separate fields.
+- The client no longer duplicates `DisplayCapture`, `RegionCapture` or
+  `ScrollUntilObservation`. They are generic over the capture type
+  (`DisplayCapture<RunnerCapture>`).
+
 The capture RPCs, the find-text responses and `ScrollUntilObservation.capture`
-return `CapturedFrame` with `ref` and metadata, without `image`.
+return `CapturedFrame`: `ref` and metadata, never pixels.
 `ScrollUntilObserve.omit_capture` is replaced by nothing: references cost
 nothing to return. A caller that wants pixels makes an explicit
 `GetCaptureImage` call.

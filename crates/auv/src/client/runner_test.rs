@@ -11,7 +11,6 @@ fn large_capture_metadata() -> proto::CapturedFrame {
       capture_id: LARGE_CAPTURE_ID.to_string(),
     }),
     origin: None,
-    image: None,
     pixel_size: Some(auv_api_proto::auv::api::image::v1::PixelSize {
       width: 1280,
       height: 1024,
@@ -70,11 +69,12 @@ impl proto::capture_service_server::CaptureService for LargeCaptureService {
       return Err(tonic::Status::not_found("capture was not found"));
     }
     Ok(tonic::Response::new(proto::GetCaptureImageResponse {
-      image: Some(proto::get_capture_image_response::Image::Rgba(auv_api_proto::auv::api::image::v1::RgbaFrame {
+      image: Some(auv_api_proto::auv::api::image::v1::EncodedImage {
+        encoding: auv_api_proto::auv::api::image::v1::ImageEncoding::Rgba as i32,
         width: 1280,
         height: 1024,
         data: vec![0; 1280 * 1024 * 4],
-      })),
+      }),
     }))
   }
 }
@@ -129,7 +129,7 @@ async fn capture_returns_a_reference_and_metadata_without_pixels() {
   let (runner, server) = serve_large_capture_fixture().await;
   let response = runner.displays().capture(None).await.expect("capture metadata");
   assert_eq!(response.capture.reference, CaptureRef::new(LARGE_CAPTURE_ID));
-  assert_eq!((response.capture.pixel_width, response.capture.pixel_height), (1280, 1024));
+  assert_eq!(response.capture.pixel_size, auv_driver::PixelSize::new(1280, 1024));
   assert_eq!(response.capture.bounds, auv_driver::Rect::new(0.0, 0.0, 1280.0, 1024.0));
   server.abort();
 }
@@ -264,7 +264,7 @@ fn runner_capture_projection_requires_a_reference_and_keeps_screen_contract() {
 
 #[test]
 fn recognition_source_sends_references_without_pixels() {
-  let frame = capture_to_proto(auv_driver::Capture {
+  let frame = image_frame_to_proto(auv_driver::Capture {
     origin: None,
     image: image::RgbaImage::from_raw(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).expect("valid RGBA fixture"),
     bounds: auv_driver::Rect::new(0.0, 0.0, 2.0, 1.0),
@@ -272,12 +272,33 @@ fn recognition_source_sends_references_without_pixels() {
     backend: "fixture".to_string(),
     fallback_reason: None,
   });
-  assert!(frame.r#ref.is_none(), "a caller-owned image has no Runner reference");
-  assert_eq!(frame.image.map(|image| image.data.len()), Some(8));
+  assert_eq!(frame.image.map(|image| image.data.len()), Some(8), "a caller-owned image carries its pixels");
   assert!(matches!(
     RecognitionSource::from(CaptureRef::new("cap-1")),
     RecognitionSource::Capture(reference) if reference.id() == "cap-1"
   ));
+}
+
+#[test]
+fn capture_image_converts_to_rgba_only_when_it_is_rgba() {
+  let rgba = CaptureImage {
+    encoding: CaptureImageEncoding::Rgba,
+    size: auv_driver::PixelSize::new(2, 1),
+    data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+  };
+  assert_eq!(rgba.clone().into_rgba_image().expect("RGBA rows").dimensions(), (2, 1));
+
+  let png = CaptureImage {
+    encoding: CaptureImageEncoding::Png,
+    ..rgba.clone()
+  };
+  assert!(matches!(png.into_rgba_image(), Err(CapabilityError::InvalidResponse(_))));
+
+  let truncated = CaptureImage {
+    data: vec![0; 7],
+    ..rgba
+  };
+  assert!(matches!(truncated.into_rgba_image(), Err(CapabilityError::InvalidResponse(_))));
 }
 
 #[test]

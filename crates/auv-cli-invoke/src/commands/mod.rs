@@ -11,21 +11,16 @@ pub mod window;
 #[derive(serde::Serialize)]
 pub struct CaptureResult<'a> {
   bounds: &'a auv_driver::Rect,
-  pixel_dimensions: PixelDimensions,
+  pixel_dimensions: auv_driver::PixelSize,
   scale_factor: f64,
   backend: &'a str,
   fallback_reason: Option<&'a str>,
 }
 
-#[derive(serde::Serialize)]
-struct PixelDimensions {
-  width: u32,
-  height: u32,
-}
-
-impl PixelDimensions {
-  fn report_value(&self) -> String {
-    format!("{}x{}", self.width, self.height)
+impl CaptureResult<'_> {
+  /// `WIDTHxHEIGHT` for human reports.
+  fn pixel_size_report(&self) -> String {
+    format!("{}x{}", self.pixel_dimensions.width, self.pixel_dimensions.height)
   }
 }
 
@@ -33,10 +28,7 @@ impl PixelDimensions {
 pub fn runner_capture_result(capture: &auv::client::runner::RunnerCapture) -> CaptureResult<'_> {
   CaptureResult {
     bounds: &capture.bounds,
-    pixel_dimensions: PixelDimensions {
-      width: capture.pixel_width,
-      height: capture.pixel_height,
-    },
+    pixel_dimensions: capture.pixel_size,
     scale_factor: capture.scale_factor,
     backend: &capture.backend,
     fallback_reason: capture.fallback_reason.as_deref(),
@@ -46,10 +38,7 @@ pub fn runner_capture_result(capture: &auv::client::runner::RunnerCapture) -> Ca
 pub fn capture_result(capture: &auv_driver::Capture) -> CaptureResult<'_> {
   CaptureResult {
     bounds: &capture.bounds,
-    pixel_dimensions: PixelDimensions {
-      width: capture.image.width(),
-      height: capture.image.height(),
-    },
+    pixel_dimensions: auv_driver::PixelSize::new(capture.image.width(), capture.image.height()),
     scale_factor: capture.scale_factor,
     backend: &capture.backend,
     fallback_reason: capture.fallback_reason.as_deref(),

@@ -213,6 +213,19 @@ impl Size {
   }
 }
 
+/// A size in physical image pixels, as opposed to a logical [`Size`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PixelSize {
+  pub width: u32,
+  pub height: u32,
+}
+
+impl PixelSize {
+  pub const fn new(width: u32, height: u32) -> Self {
+    Self { width, height }
+  }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
   pub origin: Point,

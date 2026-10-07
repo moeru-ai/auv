@@ -14,10 +14,7 @@ use crate::error::ClientError;
 mod capture;
 
 use capture::runner_capture_from_proto;
-pub use capture::{
-  CaptureImage, CaptureImageEncoding, CaptureImageOptions, CaptureRef, CapturesClient, DisplayCapture, RecognitionSource, RegionCapture,
-  RunnerCapture,
-};
+pub use capture::{CaptureImage, CaptureImageEncoding, CaptureImageOptions, CaptureRef, CapturesClient, RecognitionSource, RunnerCapture};
 
 /// Message-size policy for Runner RPCs that carry raw image frames
 /// (`GetCaptureImage`, and `RecognizeText` over a caller-owned image).
@@ -266,30 +263,10 @@ pub enum ScrollUntilEvent {
   /// One observation, in order. When `awaiting_decision` is set, the Runner
   /// waits for [`ScrollUntilSession::decide`] before continuing.
   Observation {
-    observation: ScrollUntilObservation,
+    observation: auv_scan::ScrollUntilObservation<RunnerCapture>,
     awaiting_decision: bool,
   },
   Completed(auv_scan::ScrollUntilResult),
-}
-
-/// What a Runner's scroll-until loop saw at one point. Mirrors
-/// [`auv_scan::ScrollUntilObservation`], with the capture held by the Runner.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ScrollUntilObservation {
-  /// Steps delivered so far.
-  pub steps: u32,
-  /// Logical pixels delivered so far.
-  pub delivered: auv_driver::Scroll,
-  /// Motion since the previous observation; `None` before the first step.
-  pub motion: Option<auv_scan::ViewportPixelMotion>,
-  pub no_motion_streak: u32,
-  /// The window capture this observation was made from.
-  pub capture: RunnerCapture,
-  /// Text recognized in the capture, unless opted out. Region bounds are
-  /// offsets from the recognition origin.
-  pub text: Option<auv_driver::TextRecognition>,
-  /// Set when a built-in condition or the budget ends the loop here.
-  pub stop: Option<auv_scan::ScrollUntilStopReason>,
 }
 
 /// Caller side of a scroll-until operation. Dropping the session disconnects;
@@ -468,7 +445,7 @@ impl RunnerClient {
       RecognitionSource::Capture(reference) => Source::CaptureRef(proto::CaptureRef {
         capture_id: reference.id().to_string(),
       }),
-      RecognitionSource::Image(image) => Source::Capture(capture_to_proto(image)),
+      RecognitionSource::Image(image) => Source::Image(image_frame_to_proto(image)),
     };
     let response = proto::text_recognition_service_client::TextRecognitionServiceClient::new(self.transport()?)
       .max_encoding_message_size(IMAGE_RPC_MESSAGE_SIZE_LIMIT)
@@ -673,7 +650,7 @@ impl DisplaysClient {
   }
 
   /// Captures one selected or primary display.
-  pub async fn capture(&self, selector: Option<DisplaySelector>) -> Result<DisplayCapture, CapabilityError> {
+  pub async fn capture(&self, selector: Option<DisplaySelector>) -> Result<auv_driver::DisplayCapture<RunnerCapture>, CapabilityError> {
     let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
       .capture_display(proto::CaptureDisplayRequest {
         selector: selector.map(display_selector_to_proto),
@@ -681,14 +658,18 @@ impl DisplaysClient {
       .await
       .map_err(capability_status)?
       .into_inner();
-    Ok(DisplayCapture {
+    Ok(auv_driver::DisplayCapture {
       display: display_from_proto(required(response.display, "CaptureDisplay response omitted Display")?)?,
       capture: runner_capture_from_proto(required(response.capture, "CaptureDisplay response omitted CapturedFrame")?)?,
     })
   }
 
   /// Captures a screen-coordinate region on one display.
-  pub async fn capture_region(&self, region: auv_driver::Rect, selector: Option<DisplaySelector>) -> Result<RegionCapture, CapabilityError> {
+  pub async fn capture_region(
+    &self,
+    region: auv_driver::Rect,
+    selector: Option<DisplaySelector>,
+  ) -> Result<auv_driver::RegionCapture<RunnerCapture>, CapabilityError> {
     let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
       .capture_region(proto::CaptureRegionRequest {
         region: Some(rect_to_proto(region)),
@@ -697,7 +678,7 @@ impl DisplaysClient {
       .await
       .map_err(capability_status)?
       .into_inner();
-    Ok(RegionCapture {
+    Ok(auv_driver::RegionCapture {
       display: display_from_proto(required(response.display, "CaptureRegion response omitted Display")?)?,
       capture: runner_capture_from_proto(required(response.capture, "CaptureRegion response omitted CapturedFrame")?)?,
     })
@@ -995,7 +976,7 @@ impl WindowClient {
     point: auv_driver::WindowPoint,
     request: auv_scan::ScrollUntilRequest,
     options: auv_driver::ScrollOptions,
-    mut predicate: impl FnMut(&ScrollUntilObservation) -> bool,
+    mut predicate: impl FnMut(&auv_scan::ScrollUntilObservation<RunnerCapture>) -> bool,
   ) -> Result<auv_scan::ScrollUntilResult, CapabilityError> {
     let mut session = self.scroll_until(point, request, options, true).await?;
     while let Some(event) = session.next().await? {
@@ -2145,7 +2126,7 @@ fn scroll_until_event_from_proto(value: proto::ScrollUntilResponse) -> Result<Sc
   };
   match required(value.event, "ScrollUntil response omitted event")? {
     Event::Observation(value) => Ok(ScrollUntilEvent::Observation {
-      observation: ScrollUntilObservation {
+      observation: auv_scan::ScrollUntilObservation {
         steps: value.steps,
         delivered: scroll(value.delivered, "scroll-until observation omitted delivered")?,
         motion: value.motion.map(motion),
@@ -2304,18 +2285,16 @@ fn window_from_proto(window: proto::Window) -> Result<auv_driver::Window, Capabi
   })
 }
 
-/// A caller-owned image for `RecognizeText`; it has no capture reference.
-fn capture_to_proto(capture: auv_driver::Capture) -> proto::CapturedFrame {
+/// A caller-owned image for `RecognizeText`, with its pixels.
+fn image_frame_to_proto(capture: auv_driver::Capture) -> proto::ImageFrame {
   let (width, height) = capture.image.dimensions();
-  proto::CapturedFrame {
-    r#ref: None,
+  proto::ImageFrame {
     origin: capture.origin.map(position_to_proto),
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width,
       height,
       data: capture.image.into_raw(),
     }),
-    pixel_size: Some(auv_api_proto::auv::api::image::v1::PixelSize { width, height }),
     bounds: Some(rect_to_proto(capture.bounds)),
     scale_factor: capture.scale_factor,
     backend: capture.backend,

@@ -39,10 +39,11 @@ message CaptureRef {
   string capture_id = 1;
 }
 
+// A capture the Runner holds: its reference and metadata, never its pixels.
+// Fetch pixels with GetCaptureImage.
 message CapturedFrame {
-  // Pixels. AUV-produced captures omit them; fetch them with GetCaptureImage.
-  // Caller-owned images sent to RecognizeText carry them.
-  auv.api.image.v1.RgbaFrame image = 1;
+  reserved 1;
+  reserved "image";
   // Logical screen-space bounds represented by the captured pixels.
   ScreenRect bounds = 2;
   double scale_factor = 3;
@@ -50,10 +51,26 @@ message CapturedFrame {
   optional string fallback_reason = 5;
   // Image top-left in its owning space. Missing means unbound, never screen by default.
   Position origin = 6;
-  // Set on every AUV-produced capture.
+  // Always set.
   CaptureRef ref = 7;
-  // Physical pixel size, known without the pixels.
+  // Physical pixel size.
   auv.api.image.v1.PixelSize pixel_size = 8;
+}
+
+// Pixels with their screen placement, where pixels must travel: images a
+// caller owns (RecognizeText) and frame-buffer frames.
+// TODO(recent-frames-capture-refs): frame-buffer frames move to CapturedFrame
+// references with the video stream; see
+// docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md.
+message ImageFrame {
+  auv.api.image.v1.RgbaFrame image = 1;
+  // Logical screen-space bounds represented by the pixels.
+  ScreenRect bounds = 2;
+  double scale_factor = 3;
+  string backend = 4;
+  optional string fallback_reason = 5;
+  // Image top-left in its owning space. Missing means unbound, never screen by default.
+  Position origin = 6;
 }
 
 message GetCaptureImageRequest {
@@ -68,10 +85,10 @@ message GetCaptureImageRequest {
 }
 
 message GetCaptureImageResponse {
-  oneof image {
-    auv.api.image.v1.RgbaFrame rgba = 1;
-    auv.api.image.v1.EncodedImage encoded = 2;
-  }
+  reserved 1, 2;
+  reserved "rgba", "encoded";
+  // RGBA is raw rows; other encodings are container bytes.
+  auv.api.image.v1.EncodedImage image = 3;
 }
 
 message CaptureWindowRequest {

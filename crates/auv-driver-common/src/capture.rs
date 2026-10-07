@@ -59,14 +59,17 @@ impl Capture {
   }
 }
 
+/// A display capture. `C` is how the capture is held: in-process pixels
+/// (`Capture`), or a Runner-held reference in the `auv-core` client.
 #[derive(Clone, Debug, PartialEq)]
-pub struct DisplayCapture {
+pub struct DisplayCapture<C = Capture> {
   pub display: Display,
-  pub capture: Capture,
+  pub capture: C,
 }
 
+/// A screen-region capture; `C` as for [`DisplayCapture`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct RegionCapture {
+pub struct RegionCapture<C = Capture> {
   pub display: Display,
-  pub capture: Capture,
+  pub capture: C,
 }

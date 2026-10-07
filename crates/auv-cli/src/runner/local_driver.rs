@@ -1947,8 +1947,8 @@ impl TextRecognitionService for LocalTextRecognitionService {
     let request = request.into_inner();
     let capture = match request.source {
       Some(proto::recognize_text_request::Source::CaptureRef(reference)) => stored_capture(&self.captures, reference)?,
-      Some(proto::recognize_text_request::Source::Capture(capture)) => std::sync::Arc::new(capture_from_proto(capture)?),
-      None => return Err(Status::invalid_argument("capture_ref or capture is required")),
+      Some(proto::recognize_text_request::Source::Image(frame)) => std::sync::Arc::new(image_frame_from_proto(frame)?),
+      None => return Err(Status::invalid_argument("capture_ref or image is required")),
     };
     let region = ratio_rect_from_proto(request.region)?;
     let recognition = self
@@ -2101,21 +2101,17 @@ fn capture_image_to_proto(
   }
   let (width, height) = pixels.dimensions();
   let encoded = |encoding: image_proto::ImageEncoding, data: Vec<u8>| proto::GetCaptureImageResponse {
-    image: Some(proto::get_capture_image_response::Image::Encoded(image_proto::EncodedImage {
+    image: Some(image_proto::EncodedImage {
       encoding: encoding as i32,
       width,
       height,
       data,
-    })),
+    }),
   };
   match encoding {
-    image_proto::ImageEncoding::Unspecified | image_proto::ImageEncoding::Rgba => Ok(proto::GetCaptureImageResponse {
-      image: Some(proto::get_capture_image_response::Image::Rgba(image_proto::RgbaFrame {
-        width,
-        height,
-        data: pixels.into_raw(),
-      })),
-    }),
+    image_proto::ImageEncoding::Unspecified | image_proto::ImageEncoding::Rgba => {
+      Ok(encoded(image_proto::ImageEncoding::Rgba, pixels.into_raw()))
+    }
     image_proto::ImageEncoding::Png => {
       let mut data = Vec::new();
       image::codecs::png::PngEncoder::new(&mut data)
@@ -2145,34 +2141,35 @@ fn capture_image_to_proto(
   }
 }
 
-fn capture_from_proto(capture: proto::CapturedFrame) -> Result<auv_driver::Capture, Status> {
-  let image = capture.image.ok_or_else(|| Status::invalid_argument("capture.image is required"))?;
+/// A caller-owned image with its pixels, validated.
+fn image_frame_from_proto(frame: proto::ImageFrame) -> Result<auv_driver::Capture, Status> {
+  let image = frame.image.ok_or_else(|| Status::invalid_argument("image.image is required"))?;
   let expected = usize::try_from(image.width)
     .ok()
     .and_then(|width| usize::try_from(image.height).ok().and_then(|height| width.checked_mul(height)))
     .and_then(|pixels| pixels.checked_mul(4))
-    .ok_or_else(|| Status::invalid_argument("capture.image dimensions overflow"))?;
+    .ok_or_else(|| Status::invalid_argument("image.image dimensions overflow"))?;
   if image.data.len() != expected {
     return Err(Status::invalid_argument(format!(
-      "capture.image.data has {} bytes; expected {expected} for {}x{} RGBA8",
+      "image.image.data has {} bytes; expected {expected} for {}x{} RGBA8",
       image.data.len(),
       image.width,
       image.height
     )));
   }
   let image = image::RgbaImage::from_raw(image.width, image.height, image.data)
-    .ok_or_else(|| Status::invalid_argument("capture.image is not valid RGBA8"))?;
-  let bounds = rect_from_proto(capture.bounds.ok_or_else(|| Status::invalid_argument("capture.bounds is required"))?, "capture.bounds")?;
-  if !capture.scale_factor.is_finite() || capture.scale_factor <= 0.0 {
-    return Err(Status::invalid_argument("capture.scale_factor must be finite and positive"));
+    .ok_or_else(|| Status::invalid_argument("image.image is not valid RGBA8"))?;
+  let bounds = rect_from_proto(frame.bounds.ok_or_else(|| Status::invalid_argument("image.bounds is required"))?, "image.bounds")?;
+  if !frame.scale_factor.is_finite() || frame.scale_factor <= 0.0 {
+    return Err(Status::invalid_argument("image.scale_factor must be finite and positive"));
   }
   Ok(auv_driver::Capture {
-    origin: capture.origin.map(position_from_proto).transpose()?,
+    origin: frame.origin.map(position_from_proto).transpose()?,
     image,
     bounds,
-    scale_factor: capture.scale_factor,
-    backend: capture.backend,
-    fallback_reason: capture.fallback_reason,
+    scale_factor: frame.scale_factor,
+    backend: frame.backend,
+    fallback_reason: frame.fallback_reason,
   })
 }
 
@@ -2370,15 +2367,25 @@ fn display_to_proto(display: auv_driver::Display) -> proto::Display {
   }
 }
 
-/// A capture with its pixels, for callers that explicitly asked for them.
-pub(super) fn capture_to_proto(capture: auv_driver::Capture) -> proto::CapturedFrame {
-  let mut frame = capture_metadata_to_proto(&capture);
-  frame.image = Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
-    width: capture.image.width(),
-    height: capture.image.height(),
-    data: capture.image.into_raw(),
-  });
-  frame
+/// A capture with its pixels, where pixels must travel (frame buffers).
+pub(super) fn image_frame_to_proto(capture: auv_driver::Capture) -> proto::ImageFrame {
+  proto::ImageFrame {
+    origin: capture.origin.map(position_to_proto),
+    bounds: Some(proto::ScreenRect {
+      x: capture.bounds.origin.x,
+      y: capture.bounds.origin.y,
+      width: capture.bounds.size.width,
+      height: capture.bounds.size.height,
+    }),
+    scale_factor: capture.scale_factor,
+    backend: capture.backend,
+    fallback_reason: capture.fallback_reason,
+    image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
+      width: capture.image.width(),
+      height: capture.image.height(),
+      data: capture.image.into_raw(),
+    }),
+  }
 }
 
 /// Stores a capture and returns its reference and metadata, without pixels
@@ -2394,7 +2401,6 @@ fn stored_capture_to_proto(captures: &CaptureStore, capture: auv_driver::Capture
 fn capture_metadata_to_proto(capture: &auv_driver::Capture) -> proto::CapturedFrame {
   proto::CapturedFrame {
     origin: capture.origin.clone().map(position_to_proto),
-    image: None,
     bounds: Some(proto::ScreenRect {
       x: capture.bounds.origin.x,
       y: capture.bounds.origin.y,

@@ -150,9 +150,10 @@ pub struct ScrollUntilTextMatch {
 }
 
 /// What the loop saw at one point: before the first step (`steps == 0`) and
-/// after each step's settle.
+/// after each step's settle. `C` is how the capture is held: in-process
+/// pixels (`Capture`), or a Runner-held reference in the `auv-core` client.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ScrollUntilObservation {
+pub struct ScrollUntilObservation<C = Capture> {
   /// Steps delivered so far.
   pub steps: u32,
   /// Logical pixels delivered so far.
@@ -161,7 +162,7 @@ pub struct ScrollUntilObservation {
   pub motion: Option<ViewportPixelMotion>,
   pub no_motion_streak: u32,
   /// The window capture this observation was made from.
-  pub capture: Capture,
+  pub capture: C,
   /// Text recognized in the capture, unless opted out. Region bounds are
   /// offsets from the recognition origin, as for window text recognition.
   pub text: Option<TextRecognition>,

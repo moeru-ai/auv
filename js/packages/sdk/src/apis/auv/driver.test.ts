@@ -26,7 +26,7 @@ describe('runner Driver control surface', () => {
           switch (call.method) {
             case '/auv.api.driver.v1.CaptureService/GetCaptureImage':
               return toBinary(GetCaptureImageResponseSchema, create(GetCaptureImageResponseSchema, {
-                image: { case: 'encoded', value: { data: new Uint8Array([1, 2]), encoding: ImageEncoding.JPEG, height: 50, width: 80 } },
+                image: { data: new Uint8Array([1, 2]), encoding: ImageEncoding.JPEG, height: 50, width: 80 },
               }))
             case '/auv.api.driver.v1.TextRecognitionService/RecognizeText':
               return toBinary(RecognizeTextResponseSchema, create(RecognizeTextResponseSchema, { text: 'ok' }))

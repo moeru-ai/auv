@@ -742,7 +742,7 @@ A recent frame buffer is a bounded, Runner-owned, in-memory sequence of screen
 captures for one Window, Display, or screen Region. The caller chooses the
 sampling rate and frame capacity. It may also choose exact output dimensions;
 when it does not, each capture keeps its native pixel dimensions. Buffered
-frames use the existing RGBA8 `CapturedFrame` contract and remain ordered by a
+frames are RGBA8 `ImageFrame`s (pixels with screen placement) and remain ordered by a
 buffer-local sequence number.
 
 A recent frame buffer performs capture scheduling, optional resizing, and tail
@@ -1337,8 +1337,14 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   pixel input, such as OCR region probes or detector frames, stays
   `ImageResolution::Native`.
 - OCR on a held capture sends only its reference
-  (`RecognizeTextRequest.capture_ref`). Sending a `CapturedFrame` with pixels is
-  for caller-owned images only.
+  (`RecognizeTextRequest.capture_ref`). Pixels travel as an `ImageFrame`
+  (*provisional*: pixels plus screen placement) only for caller-owned images
+  (`RecognizeTextRequest.image`) and recent-frame buffers. `CapturedFrame` never
+  carries pixels.
+- In Rust, `DisplayCapture<C>`, `RegionCapture<C>` and
+  `auv_scan::ScrollUntilObservation<C>` are generic over how the capture is
+  held: `auv_driver::Capture` in process, `RunnerCapture` through the client.
+  Physical image sizes are `auv_driver::PixelSize`; logical sizes are `Size`.
 
 Design and evidence:
 `docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md`.

@@ -130,7 +130,7 @@ impl History {
       // TODO(recent-frames-capture-refs): buffered frames still carry pixels.
       // Move them into the capture store and return references together with
       // the planned video stream (capture-references-and-positions design).
-      capture: Some(local_driver::capture_to_proto(capture)),
+      frame: Some(local_driver::image_frame_to_proto(capture)),
     });
   }
 

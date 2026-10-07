@@ -134,8 +134,7 @@ async fn runner_display_capture_reports_metadata_without_pixels() {
     bounds: Rect::new(0.0, 0.0, 1440.0, 900.0),
     origin: None,
     scale_factor: 2.0,
-    pixel_width: 2880,
-    pixel_height: 1800,
+    pixel_size: auv_driver::PixelSize::new(2880, 1800),
     backend: "fixture-runner".to_string(),
     fallback_reason: None,
   };

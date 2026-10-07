@@ -286,7 +286,7 @@ fn media_control_outcome_mapper_preserves_before_after_and_verification() {
 }
 
 #[test]
-fn captured_rgba_frame_preserves_alpha_and_screen_bounds() {
+fn image_frame_preserves_alpha_and_screen_bounds() {
   let capture = auv_driver::Capture {
     origin: Some(auv_driver::Position::in_window(
       &auv_driver::WindowRef {
@@ -301,8 +301,8 @@ fn captured_rgba_frame_preserves_alpha_and_screen_bounds() {
     fallback_reason: Some("fallback".to_string()),
   };
 
-  let frame = capture_to_proto(capture.clone());
-  assert_eq!(capture_from_proto(frame.clone()).unwrap(), capture);
+  let frame = image_frame_to_proto(capture.clone());
+  assert_eq!(image_frame_from_proto(frame.clone()).unwrap(), capture);
 
   assert_eq!(frame.image.as_ref().expect("image").data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
   assert_eq!(
@@ -320,8 +320,8 @@ fn captured_rgba_frame_preserves_alpha_and_screen_bounds() {
 }
 
 #[test]
-fn text_recognition_capture_rejects_malformed_rgba_before_ocr() {
-  let error = capture_from_proto(proto::CapturedFrame {
+fn text_recognition_image_rejects_malformed_rgba_before_ocr() {
+  let error = image_frame_from_proto(proto::ImageFrame {
     origin: None,
     image: Some(auv_api_proto::auv::api::image::v1::RgbaFrame {
       width: 2,
@@ -1134,7 +1134,6 @@ fn scroll_until_observation_carries_capture_ref_text_and_stop_reason() {
   assert_eq!((proto.steps, proto.no_motion_streak), (3, 2));
   assert_eq!(proto.stop, proto::ScrollUntilStopReason::EndByNoVisualProgress as i32);
   let capture = proto.capture.expect("capture");
-  assert!(capture.image.is_none(), "observations never carry pixels");
   let reference = capture.r#ref.expect("capture ref").capture_id;
   assert_eq!(captures.get(&reference).map(|stored| stored.image.dimensions()), Some((2, 1)));
   assert_eq!(proto.text.map(|text| text.text).as_deref(), Some("END OF FEED"));
@@ -1163,9 +1162,8 @@ fn capture_image_crops_outward_and_fits_inside_max_size() {
   // x 0.25..0.55 of 10 px covers pixels 2.5..5.5, rounded outward to 2..6.
   let region = auv_driver::RatioRect::new(0.25, 0.5, 0.3, 0.5);
   let response = capture_image_to_proto(&capture, region, None, image_proto::ImageEncoding::Rgba).unwrap();
-  let Some(proto::get_capture_image_response::Image::Rgba(frame)) = response.image else {
-    panic!("expected RGBA pixels");
-  };
+  let frame = response.image.expect("image");
+  assert_eq!(frame.encoding, image_proto::ImageEncoding::Rgba as i32, "RGBA is an encoding like the others");
   assert_eq!((frame.width, frame.height), (4, 2));
   assert_eq!(&frame.data[..4], &[2, 2, 0, 255], "the crop starts at the outward-rounded pixel");
 
@@ -1180,9 +1178,7 @@ fn capture_image_crops_outward_and_fits_inside_max_size() {
     image_proto::ImageEncoding::Png,
   )
   .unwrap();
-  let Some(proto::get_capture_image_response::Image::Encoded(png)) = bounded.image else {
-    panic!("expected an encoded image");
-  };
+  let png = bounded.image.expect("image");
   assert_eq!((png.encoding, png.width, png.height), (image_proto::ImageEncoding::Png as i32, 5, 2));
   assert_eq!(image::load_from_memory(&png.data).unwrap().to_rgba8().dimensions(), (5, 2));
 
@@ -1196,9 +1192,7 @@ fn capture_image_crops_outward_and_fits_inside_max_size() {
     image_proto::ImageEncoding::Jpeg,
   )
   .unwrap();
-  let Some(proto::get_capture_image_response::Image::Encoded(jpeg)) = enlarged.image else {
-    panic!("expected an encoded image");
-  };
+  let jpeg = enlarged.image.expect("image");
   assert_eq!((jpeg.width, jpeg.height), (10, 4), "max_size never enlarges");
   assert_eq!(image::load_from_memory(&jpeg.data).unwrap().to_rgb8().dimensions(), (10, 4));
 }
@@ -1209,9 +1203,7 @@ fn capture_image_webp_is_lossless() {
   let capture = gradient_capture(10, 4);
   let full = auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0);
   let response = capture_image_to_proto(&capture, full, None, image_proto::ImageEncoding::Webp).unwrap();
-  let Some(proto::get_capture_image_response::Image::Encoded(webp)) = response.image else {
-    panic!("expected an encoded image");
-  };
+  let webp = response.image.expect("image");
   assert_eq!((webp.encoding, webp.width, webp.height), (image_proto::ImageEncoding::Webp as i32, 10, 4));
   assert_eq!(image::load_from_memory(&webp.data).unwrap().to_rgba8(), capture.image, "WebP keeps every pixel");
 }

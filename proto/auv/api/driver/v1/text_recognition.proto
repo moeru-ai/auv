@@ -38,13 +38,13 @@ message TextMatch {
 }
 
 message RecognizeTextRequest {
-  reserved 1;
-  reserved "lease";
+  reserved 1, 2;
+  reserved "lease", "capture";
   oneof source {
     // A capture this Runner produced; no pixels travel.
     CaptureRef capture_ref = 6;
     // A caller-owned image, with pixels.
-    CapturedFrame capture = 2;
+    ImageFrame image = 7;
   }
   optional auv.api.image.v1.NormalizedRect region = 3;
   repeated string custom_words = 4;

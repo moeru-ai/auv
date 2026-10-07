@@ -96,7 +96,7 @@ fn region_capture_output(
   capture: super::CaptureResult<'_>,
   artifact: Option<ArtifactMetadata>,
 ) -> InvokeCommandResult {
-  let pixel_size = capture.pixel_dimensions.report_value();
+  let pixel_size = capture.pixel_size_report();
   let mut output = InvokeCommandOutput::from_result(&super::display_capture_result(display, capture))?;
   output.report = Some(InvokeReport::new(
     vec![

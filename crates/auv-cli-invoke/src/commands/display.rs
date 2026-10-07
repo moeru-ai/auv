@@ -157,7 +157,7 @@ fn display_capture_report(display: &auv_driver::Display, capture: &super::Captur
     InvokeReportField::new("Display ID", display.id.clone()),
     InvokeReportField::new("Display frame", display.frame.report_value()),
     InvokeReportField::new("Capture bounds", capture.bounds.report_value()),
-    InvokeReportField::new("Pixel size", capture.pixel_dimensions.report_value()),
+    InvokeReportField::new("Pixel size", capture.pixel_size_report()),
     InvokeReportField::new("Scale factor", format!("{:.3}", capture.scale_factor)),
   ];
   if let Some(reason) = capture.fallback_reason {

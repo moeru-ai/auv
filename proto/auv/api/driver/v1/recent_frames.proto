@@ -57,7 +57,7 @@ message OpenFrameBufferRequest {
   uint32 frame_capacity = 3;
   // When present, each captured frame is resized to this exact pixel size
   // before it enters the buffer. Absence preserves the capture's pixel size.
-  // CapturedFrame bounds and source scale metadata are not rewritten.
+  // ImageFrame bounds and source scale metadata are not rewritten.
   auv.api.image.v1.PixelSize output_size = 4;
 }
 
@@ -66,9 +66,11 @@ message OpenFrameBufferResponse {
 }
 
 message RecentFrame {
+  reserved 2;
+  reserved "capture";
   // Monotonically increasing within this frame buffer.
   uint64 sequence = 1;
-  CapturedFrame capture = 2;
+  ImageFrame frame = 3;
 }
 
 message GetRecentFramesRequest {

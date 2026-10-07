@@ -40,9 +40,8 @@ pub struct RunnerCapture {
   /// Image top-left in its owning coordinate space, when bound.
   pub origin: Option<auv_driver::Position>,
   pub scale_factor: f64,
-  /// Physical pixel width and height.
-  pub pixel_width: u32,
-  pub pixel_height: u32,
+  /// Physical pixel size.
+  pub pixel_size: auv_driver::PixelSize,
   pub backend: String,
   pub fallback_reason: Option<String>,
 }
@@ -53,20 +52,6 @@ impl auv_driver::Positional for RunnerCapture {
       message: "capture has no bound coordinate origin".into(),
     })
   }
-}
-
-/// A display capture held by the Runner.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DisplayCapture {
-  pub display: auv_driver::Display,
-  pub capture: RunnerCapture,
-}
-
-/// A screen-region capture held by the Runner.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RegionCapture {
-  pub display: auv_driver::Display,
-  pub capture: RunnerCapture,
 }
 
 /// What OCR reads: a capture this Runner holds (no pixels travel) or a
@@ -114,20 +99,29 @@ pub struct CaptureImageOptions {
   /// Crop to this part of the capture first.
   pub region: Option<NormalizedRegion>,
   /// Fit inside this pixel size, keeping the aspect ratio; never enlarges.
-  pub max_size: Option<(u32, u32)>,
+  pub max_size: Option<auv_driver::PixelSize>,
   pub encoding: CaptureImageEncoding,
 }
 
-/// Pixels fetched from the Runner.
+/// Pixels fetched from the Runner: raw RGBA8 rows for
+/// [`CaptureImageEncoding::Rgba`], otherwise container bytes.
 #[derive(Clone, Debug, PartialEq)]
-pub enum CaptureImage {
-  Rgba(image::RgbaImage),
-  Encoded {
-    encoding: CaptureImageEncoding,
-    width: u32,
-    height: u32,
-    data: Vec<u8>,
-  },
+pub struct CaptureImage {
+  pub encoding: CaptureImageEncoding,
+  /// Size after cropping and fitting.
+  pub size: auv_driver::PixelSize,
+  pub data: Vec<u8>,
+}
+
+impl CaptureImage {
+  /// The pixels as an `RgbaImage`; only for [`CaptureImageEncoding::Rgba`].
+  pub fn into_rgba_image(self) -> Result<image::RgbaImage, CapabilityError> {
+    if self.encoding != CaptureImageEncoding::Rgba {
+      return Err(CapabilityError::InvalidResponse(format!("capture image is {:?}, not RGBA", self.encoding)));
+    }
+    image::RgbaImage::from_raw(self.size.width, self.size.height, self.data)
+      .ok_or_else(|| CapabilityError::InvalidResponse("capture image contains malformed RGBA8 data".to_string()))
+  }
 }
 
 /// Explicit pixel access for captures held by one routed Runner.
@@ -151,29 +145,27 @@ impl CapturesClient {
           width: region.width,
           height: region.height,
         }),
-        max_size: options.max_size.map(|(width, height)| image_proto::PixelSize { width, height }),
+        max_size: options.max_size.map(|size| image_proto::PixelSize {
+          width: size.width,
+          height: size.height,
+        }),
         encoding: encoding_to_proto(options.encoding) as i32,
       })
       .await
       .map_err(capability_status)?
       .into_inner();
-    match required(response.image, "GetCaptureImage response omitted its image")? {
-      proto::get_capture_image_response::Image::Rgba(frame) => Ok(CaptureImage::Rgba(rgba_image(frame)?)),
-      proto::get_capture_image_response::Image::Encoded(image) => Ok(CaptureImage::Encoded {
-        encoding: encoding_from_proto(image.encoding)?,
-        width: image.width,
-        height: image.height,
-        data: image.data,
-      }),
-    }
+    let image = required(response.image, "GetCaptureImage response omitted its image")?;
+    Ok(CaptureImage {
+      encoding: encoding_from_proto(image.encoding)?,
+      size: auv_driver::PixelSize::new(image.width, image.height),
+      data: image.data,
+    })
   }
 
   /// Fetches a capture's full-resolution pixels as a driver `Capture`, for
   /// code that processes pixels locally (for example artifact writers).
   pub async fn pixels(&self, capture: &RunnerCapture) -> Result<auv_driver::Capture, CapabilityError> {
-    let CaptureImage::Rgba(image) = self.image(&capture.reference, CaptureImageOptions::default()).await? else {
-      return Err(CapabilityError::InvalidResponse("GetCaptureImage returned an encoded image for an RGBA request".into()));
-    };
+    let image = self.image(&capture.reference, CaptureImageOptions::default()).await?.into_rgba_image()?;
     Ok(auv_driver::Capture {
       origin: capture.origin.clone(),
       image,
@@ -185,8 +177,7 @@ impl CapturesClient {
   }
 }
 
-/// A Runner capture's reference and metadata; the frame must not carry pixels
-/// it does not need, and must carry a reference.
+/// A Runner capture's reference and metadata; the frame must carry a reference.
 pub(super) fn runner_capture_from_proto(capture: proto::CapturedFrame) -> Result<RunnerCapture, CapabilityError> {
   let reference = required(capture.r#ref, "CapturedFrame omitted its capture reference")?;
   if reference.capture_id.trim().is_empty() {
@@ -199,16 +190,10 @@ pub(super) fn runner_capture_from_proto(capture: proto::CapturedFrame) -> Result
     bounds: auv_driver::Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
     origin: capture.origin.map(position_from_proto).transpose()?,
     scale_factor: capture.scale_factor,
-    pixel_width: size.width,
-    pixel_height: size.height,
+    pixel_size: auv_driver::PixelSize::new(size.width, size.height),
     backend: capture.backend,
     fallback_reason: capture.fallback_reason,
   })
-}
-
-fn rgba_image(frame: image_proto::RgbaFrame) -> Result<image::RgbaImage, CapabilityError> {
-  image::RgbaImage::from_raw(frame.width, frame.height, frame.data)
-    .ok_or_else(|| CapabilityError::InvalidResponse("capture image contains malformed RGBA8 data".to_string()))
 }
 
 fn encoding_to_proto(encoding: CaptureImageEncoding) -> image_proto::ImageEncoding {

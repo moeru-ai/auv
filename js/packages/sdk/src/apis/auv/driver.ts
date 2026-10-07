@@ -10,7 +10,7 @@ import type { DurationSchema } from '@bufbuild/protobuf/wkt'
 
 import type { FocusTextRequestSchema } from '../../gen/auv/api/driver/macos/v1/accessibility_pb'
 import type { ActivateBundleIdRequestSchema } from '../../gen/auv/api/driver/macos/v1/application_pb'
-import type { CapturedFrameSchema, CaptureRefSchema, GetCaptureImageRequestSchema } from '../../gen/auv/api/driver/v1/capture_pb'
+import type { CaptureRefSchema, GetCaptureImageRequestSchema, ImageFrameSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import type { Display, DisplaySelectorSchema } from '../../gen/auv/api/driver/v1/display_pb'
 import type { ScreenPointSchema, ScreenRectSchema, WindowPointSchema } from '../../gen/auv/api/driver/v1/geometry_pb'
 import type {
@@ -39,6 +39,7 @@ import type {
   RecognizeTextRequestSchema,
 } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import type { Window, WindowRef, WindowSelectorSchema } from '../../gen/auv/api/driver/v1/window_pb'
+import type { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import type { AuvConnection, TypedDuplexCall } from '../../transport/connection'
 import type { OperationOptions } from '../../transport/types'
 
@@ -54,7 +55,6 @@ import { InputService } from '../../gen/auv/api/driver/v1/input_pb'
 import { OverlayService } from '../../gen/auv/api/driver/v1/overlay_pb'
 import { TextRecognitionService } from '../../gen/auv/api/driver/v1/text_recognition_pb'
 import { WindowSchema, WindowService } from '../../gen/auv/api/driver/v1/window_pb'
-import { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 import { AuvProtocolError, AuvRpcError } from '../../transport/errors'
 import { invokeDuplex, invokeServerStream, invokeUnary } from './invoke'
 
@@ -83,7 +83,7 @@ export interface PressKeyOptions extends OperationOptions {
 }
 
 /** What `recognizeText` reads: a Runner-held capture, or a caller-owned image (`frame`, pixels are sent). */
-export type RecognitionSource = CaptureTarget | { frame: Init<typeof CapturedFrameSchema> }
+export type RecognitionSource = CaptureTarget | { frame: Init<typeof ImageFrameSchema> }
 
 export interface RecognizeTextOptions extends InputFields<typeof RecognizeTextRequestSchema, 'source'>, OperationOptions {}
 
@@ -405,14 +405,9 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
       image: async (capture, options = {}) => {
         const { signal, ...request } = options
         const response = await unary(CaptureService.method.getCaptureImage, { ...request, capture: captureRefOf(capture) }, { signal })
-        switch (response.image.case) {
-          case 'encoded':
-            return response.image.value
-          case 'rgba':
-            return { data: response.image.value.data, encoding: ImageEncoding.RGBA, height: response.image.value.height, width: response.image.value.width }
-          default:
-            throw new AuvProtocolError('GetCaptureImageResponse omitted image')
-        }
+        if (!response.image)
+          throw new AuvProtocolError('GetCaptureImageResponse omitted image')
+        return response.image
       },
     },
     displays: {
@@ -470,7 +465,7 @@ export function createRunnerClient(connection: AuvConnection, route: RunnerRoute
     recognizeText: (source, options = {}) => {
       const { signal, ...request } = options
       const value = typeof source === 'object' && 'frame' in source
-        ? { case: 'capture' as const, value: source.frame }
+        ? { case: 'image' as const, value: source.frame }
         : { case: 'captureRef' as const, value: captureRefOf(source) }
       return unary(TextRecognitionService.method.recognizeText, { ...request, source: value }, { signal })
     },

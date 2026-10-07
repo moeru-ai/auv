@@ -50,7 +50,7 @@ fn history_retains_only_the_newest_native_rgba_frames() {
   let response = history.recent(1).expect("read recent frames");
   assert_eq!(response.frames.iter().map(|frame| frame.sequence).collect::<Vec<_>>(), [2, 3]);
   assert_eq!(response.dropped_frames, 1);
-  let image = response.frames[1].capture.as_ref().and_then(|capture| capture.image.as_ref()).expect("RGBA frame");
+  let image = response.frames[1].frame.as_ref().and_then(|frame| frame.image.as_ref()).expect("RGBA frame");
   assert_eq!((image.width, image.height, image.data.len()), (3, 2, 24));
 }
 
@@ -94,7 +94,7 @@ async fn service_applies_caller_size_to_a_generic_region_target() {
     .expect("get frame")
     .into_inner();
 
-  let image = batch.frames[0].capture.as_ref().and_then(|capture| capture.image.as_ref()).expect("RGBA frame");
+  let image = batch.frames[0].frame.as_ref().and_then(|frame| frame.image.as_ref()).expect("RGBA frame");
   assert_eq!((image.width, image.height, image.data.len()), (2, 1, 8));
   assert_eq!(
     opened.lock().expect("opened targets").as_slice(),
