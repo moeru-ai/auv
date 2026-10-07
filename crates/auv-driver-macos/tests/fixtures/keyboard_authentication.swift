@@ -53,6 +53,14 @@ private func lookup(_ name: String) -> UnsafeMutableRawPointer? {
 struct ContractTests {
   static func main() {
     let event = CGEvent(keyboardEventSource: nil, virtualKey: 12, keyDown: true)!
+    // The contract covers the 248-byte event record measured on macOS 26; on
+    // other layouts (macOS 14 CI runners) `post` refuses before any call, by
+    // design, so there is nothing further to exercise here.
+    let recordSize = event.getIntegerValueField(CGEventField(rawValue: 50)!)
+    guard recordSize == 248 else {
+      print("skipped: \(recordSize)-byte keyboard event record; the contract covers 248 bytes")
+      return
+    }
     let poster = KeyboardEventPosting(lookup: lookup, messageClass: Factory.self, postToPid: post)!
 
     // Authentication must be attached before the one platform-facing submission.

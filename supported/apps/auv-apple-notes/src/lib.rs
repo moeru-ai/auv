@@ -1,3 +1,7 @@
+//! Apple Notes commands over the macOS driver. The app only exists on macOS,
+//! so the library is empty elsewhere and the binary exits with a message.
+#![cfg(target_os = "macos")]
+
 pub mod app;
 pub mod cli;
 pub mod commands;
