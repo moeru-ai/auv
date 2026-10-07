@@ -5,7 +5,6 @@
 //! with sub-10ms steady-state latency, coexisting with legacy GDI / PrintWindow
 //! backends under the `"wgc.windows"` backend tag.
 
-#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 use auv_driver_common::capture::{Capture, DisplayCapture};
@@ -57,6 +56,10 @@ pub struct HealthCacheEntry {
   pub captured_at: Instant,
   pub sample_duration: Duration,
   pub target_size: (u32, u32),
+}
+
+fn is_fresh_health_entry(entry: &HealthCacheEntry, now: Instant) -> bool {
+  entry.health.is_fresh && now.saturating_duration_since(entry.captured_at) <= Duration::from_millis(30)
 }
 
 #[cfg(target_os = "windows")]
@@ -705,6 +708,9 @@ mod native {
     pub last_requested: Instant,
     pub last_refresh_duration: Duration,
     pub spawn_count: usize,
+    /// Monotonically identifies the current worker. Old workers must not be
+    /// allowed to clear state belonging to a replacement worker.
+    pub worker_generation: u64,
   }
 
   static HEALTH_STATE: Mutex<Option<HealthManagerState>> = Mutex::new(None);
@@ -723,6 +729,7 @@ mod native {
       last_requested: Instant::now(),
       last_refresh_duration: Duration::ZERO,
       spawn_count: 0,
+      worker_generation: 0,
     })
   }
 
@@ -740,6 +747,7 @@ mod native {
       state.cached_entry = None;
       state.target_key = None;
       state.worker_running = false;
+      state.worker_generation = state.worker_generation.wrapping_add(1);
       state.stop_requested = Arc::new(AtomicBool::new(false));
     }
     HEALTH_CONDVAR.notify_all();
@@ -756,6 +764,7 @@ mod native {
       state.target_key = Some(key.clone());
       state.cached_entry = None;
       state.worker_running = false;
+      state.worker_generation = state.worker_generation.wrapping_add(1);
       state.stop_requested = Arc::new(AtomicBool::new(false));
     }
 
@@ -765,27 +774,34 @@ mod native {
 
     state.worker_running = true;
     state.spawn_count += 1;
+    state.worker_generation = state.worker_generation.wrapping_add(1);
+    let worker_generation = state.worker_generation;
     let stop_flag = Arc::clone(&state.stop_requested);
     let worker_key = key.clone();
 
-    std::thread::Builder::new()
-      .name("wgc-health-worker".to_string())
-      .spawn(move || {
-        health_worker_loop(worker_key, stop_flag);
-      })
-      .map_err(|e| backend(format!("failed to spawn wgc health worker: {e}")))?;
+    let spawn_result = std::thread::Builder::new().name("wgc-health-worker".to_string()).spawn(move || {
+      health_worker_loop(worker_key, stop_flag, worker_generation);
+    });
+    if let Err(error) = spawn_result {
+      if let Some(ref mut state) = *guard
+        && state.worker_generation == worker_generation
+      {
+        state.worker_running = false;
+      }
+      return Err(backend(format!("failed to spawn wgc health worker: {error}")));
+    }
 
     Ok(())
   }
 
-  fn health_worker_loop(key: HealthCacheKey, stop_flag: Arc<AtomicBool>) {
+  fn health_worker_loop(key: HealthCacheKey, stop_flag: Arc<AtomicBool>, worker_generation: u64) {
     let hwnd = HWND(key.hwnd as _);
     let item = match item_for_window(hwnd) {
       Ok(it) => it,
       Err(_) => {
         let mut guard = lock_health_state();
         if let Some(ref mut state) = *guard {
-          if state.target_key.as_ref() == Some(&key) {
+          if state.target_key.as_ref() == Some(&key) && state.worker_generation == worker_generation {
             state.worker_running = false;
             state.cached_entry = None;
           }
@@ -800,7 +816,7 @@ mod native {
       {
         let mut guard = lock_health_state();
         if let Some(ref mut state) = *guard {
-          if state.target_key.as_ref() != Some(&key) {
+          if state.target_key.as_ref() != Some(&key) || state.worker_generation != worker_generation {
             break;
           }
           if state.last_requested.elapsed() >= Duration::from_millis(250) {
@@ -818,11 +834,10 @@ mod native {
       let sample_dur = sample_start.elapsed();
 
       match res {
-        Ok(mut health) => {
-          health.is_fresh = true;
+        Ok(health) if health.is_fresh => {
           let mut guard = lock_health_state();
           if let Some(ref mut state) = *guard {
-            if state.target_key.as_ref() == Some(&key) && !stop_flag.load(Ordering::SeqCst) {
+            if state.target_key.as_ref() == Some(&key) && state.worker_generation == worker_generation && !stop_flag.load(Ordering::SeqCst) {
               state.cached_entry = Some(HealthCacheEntry {
                 health,
                 captured_at: Instant::now(),
@@ -838,10 +853,16 @@ mod native {
             break;
           }
         }
+        Ok(_stale_health) => {
+          // A frame pool can return the last frame when no new frame arrived.
+          // Never refresh the cache timestamp for that stale sample.
+          std::thread::sleep(Duration::from_millis(12));
+          continue;
+        }
         Err(_err) => {
           let mut guard = lock_health_state();
           if let Some(ref mut state) = *guard {
-            if state.target_key.as_ref() == Some(&key) {
+            if state.target_key.as_ref() == Some(&key) && state.worker_generation == worker_generation {
               state.worker_running = false;
               state.cached_entry = None;
             }
@@ -856,7 +877,7 @@ mod native {
 
     let mut guard = lock_health_state();
     if let Some(ref mut state) = *guard {
-      if state.target_key.as_ref() == Some(&key) {
+      if state.target_key.as_ref() == Some(&key) && state.worker_generation == worker_generation {
         state.worker_running = false;
       }
     }
@@ -1026,7 +1047,7 @@ pub fn capture_window_health_cached(window: &Window) -> DriverResult<WindowHealt
       let age = entry.captured_at.elapsed();
       sample_age_ms = age.as_secs_f64() * 1000.0;
       sample_refresh_ms = entry.sample_duration.as_secs_f64() * 1000.0;
-      if age <= Duration::from_millis(30) {
+      if entry.health.is_fresh && age <= Duration::from_millis(30) {
         let mut health = entry.health.clone();
         health.is_fresh = true;
         drop(guard);
@@ -1062,6 +1083,7 @@ pub fn capture_window_health_cached(window: &Window) -> DriverResult<WindowHealt
     let state = native::get_or_init_state(&mut guard);
     if state.target_key.as_ref() == Some(&key)
       && let Some(ref entry) = state.cached_entry
+      && is_fresh_health_entry(entry, Instant::now())
       && entry.captured_at.elapsed() <= Duration::from_millis(30)
     {
       wait_success = true;
@@ -1096,6 +1118,9 @@ pub fn capture_window_health_cached(window: &Window) -> DriverResult<WindowHealt
   } else {
     drop(guard);
     let health = capture_window_health(window)?;
+    if !health.is_fresh {
+      return Err(backend("fresh WGC health sample unavailable"));
+    }
     let mut guard = native::lock_health_state();
     let state = native::get_or_init_state(&mut guard);
     if state.target_key.as_ref() == Some(&key) {
@@ -1155,7 +1180,7 @@ pub fn capture_window_health_strict(window: &Window) -> DriverResult<WindowHealt
       && let Some(ref entry) = state.cached_entry
     {
       let age = entry.captured_at.elapsed();
-      if age <= Duration::from_millis(30) {
+      if entry.health.is_fresh && age <= Duration::from_millis(30) {
         let mut health = entry.health.clone();
         health.is_fresh = true;
         let age_ms = age.as_secs_f64() * 1000.0;
@@ -1192,6 +1217,7 @@ pub fn capture_window_health_strict(window: &Window) -> DriverResult<WindowHealt
     let state = native::get_or_init_state(&mut guard);
     if state.target_key.as_ref() == Some(&key)
       && let Some(ref entry) = state.cached_entry
+      && is_fresh_health_entry(entry, Instant::now())
       && entry.captured_at.elapsed() <= Duration::from_millis(30)
     {
       let mut health = entry.health.clone();

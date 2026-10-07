@@ -885,7 +885,7 @@ fn execute_replay_optimized(
         };
         (
           dur,
-          health.alive,
+          health.alive && health.is_fresh,
           fh,
           "active".to_string(),
           serde_json::json!({
@@ -1133,10 +1133,10 @@ fn main() {
     i += 1;
   }
 
-  // Prewarm for all non-baseline experimental groups (including cold fast single-runs).
-  // "baseline" mode measures the unoptimized path without prewarming.
+  // Prewarm only warm experimental groups. Baseline and --cold runs must
+  // measure the uninitialized path without D3D/session/worker state.
   let mut wgc_init_dur = Duration::ZERO;
-  if mode == "baseline" {
+  if mode == "baseline" || is_single_cold_mode {
     reset_d3d_context();
   } else {
     wgc_init_dur += prewarm_wgc().unwrap_or(Duration::ZERO);
