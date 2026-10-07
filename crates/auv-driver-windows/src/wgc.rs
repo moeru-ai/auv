@@ -33,7 +33,7 @@ pub struct WindowHealth {
 #[cfg(target_os = "windows")]
 mod native {
   use std::sync::mpsc::sync_channel;
-  use std::sync::{Mutex, OnceLock};
+  use std::sync::{Arc, Mutex, RwLock};
   use std::time::Duration;
 
   use super::*;
@@ -65,15 +65,65 @@ mod native {
   unsafe impl Send for D3dContext {}
   unsafe impl Sync for D3dContext {}
 
-  static D3D_CONTEXT: OnceLock<D3dContext> = OnceLock::new();
+  static D3D_CONTEXT: RwLock<Option<Arc<D3dContext>>> = RwLock::new(None);
 
-  pub(crate) fn get_or_init_d3d_context() -> DriverResult<&'static D3dContext> {
-    if let Some(ctx) = D3D_CONTEXT.get() {
-      return Ok(ctx);
+  pub const DXGI_ERROR_DEVICE_REMOVED_CODE: i32 = 0x887A0005_u32 as i32;
+  pub const DXGI_ERROR_DEVICE_RESET_CODE: i32 = 0x887A0007_u32 as i32;
+
+  #[inline]
+  pub fn is_device_lost_hresult(hr: windows::core::HRESULT) -> bool {
+    hr.0 == DXGI_ERROR_DEVICE_REMOVED_CODE || hr.0 == DXGI_ERROR_DEVICE_RESET_CODE
+  }
+
+  #[inline]
+  pub fn is_device_lost_reason(reason: windows::core::Result<()>) -> bool {
+    match reason {
+      Ok(()) => false,
+      Err(e) => is_device_lost_hresult(e.code()),
+    }
+  }
+
+  pub fn reset_d3d_context() {
+    if let Ok(mut lock) = D3D_CONTEXT.write() {
+      *lock = None;
+    }
+    if let Ok(mut session) = ACTIVE_SESSION.lock() {
+      *session = None;
+    }
+  }
+
+  #[cfg(test)]
+  pub fn is_d3d_context_initialized() -> bool {
+    D3D_CONTEXT.read().map(|g| g.is_some()).unwrap_or(false)
+  }
+
+  pub fn check_device_lost_error(err: &windows::core::Error) {
+    if is_device_lost_hresult(err.code()) {
+      reset_d3d_context();
+    }
+  }
+
+  pub(crate) fn get_or_init_d3d_context() -> DriverResult<Arc<D3dContext>> {
+    if let Ok(guard) = D3D_CONTEXT.read()
+      && let Some(ctx) = guard.as_ref()
+    {
+      return Ok(Arc::clone(ctx));
+    }
+
+    let mut guard = D3D_CONTEXT.write().map_err(|_| backend("d3d context rwlock poisoned"))?;
+    if let Some(ref ctx) = *guard {
+      return Ok(Arc::clone(ctx));
     }
 
     crate::desktop::ensure_input_desktop();
 
+    let ctx = create_d3d_context()?;
+    let arc = Arc::new(ctx);
+    *guard = Some(Arc::clone(&arc));
+    Ok(arc)
+  }
+
+  fn create_d3d_context() -> DriverResult<D3dContext> {
     unsafe {
       let mut d3d11_device: Option<ID3D11Device> = None;
       let mut d3d11_context: Option<ID3D11DeviceContext> = None;
@@ -90,7 +140,10 @@ mod native {
         Some(&mut feature_level),
         Some(&mut d3d11_context),
       )
-      .map_err(|e| backend(format!("D3D11CreateDevice failed: {e}")))?;
+      .map_err(|e| {
+        check_device_lost_error(&e);
+        backend(format!("D3D11CreateDevice failed: {e}"))
+      })?;
 
       let d3d_device = d3d11_device.ok_or_else(|| backend("D3D11 device was None"))?;
       let d3d_context = d3d11_context.ok_or_else(|| backend("D3D11 context was None"))?;
@@ -103,16 +156,12 @@ mod native {
       let winrt_device: IDirect3DDevice =
         inspectable.cast().map_err(|e| backend(format!("failed to cast inspectable to IDirect3DDevice: {e}")))?;
 
-      let ctx = D3dContext {
+      Ok(D3dContext {
         device: d3d_device,
         context: Mutex::new(d3d_context),
         winrt_device,
-      };
-
-      let _ = D3D_CONTEXT.set(ctx);
+      })
     }
-
-    D3D_CONTEXT.get().ok_or_else(|| backend("failed to retrieve initialized D3D context"))
   }
 
   struct CachedSession {
@@ -152,6 +201,7 @@ mod native {
       }
       Err(e) => {
         // Propagate real WinRT COM errors (device removed, closed, access denied, etc.)
+        check_device_lost_error(&e);
         Err(backend(format!("Direct3D11CaptureFramePool::TryGetNextFrame failed: {e}")))
       }
     }
@@ -184,10 +234,10 @@ mod native {
 
     let mut staging_texture = None;
     unsafe {
-      d3d
-        .device
-        .CreateTexture2D(&staging_desc, None, Some(&mut staging_texture))
-        .map_err(|e| backend(format!("failed to create D3D11 staging texture: {e}")))?;
+      d3d.device.CreateTexture2D(&staging_desc, None, Some(&mut staging_texture)).map_err(|e| {
+        check_device_lost_error(&e);
+        backend(format!("failed to create D3D11 staging texture: {e}"))
+      })?;
     }
     let staging = staging_texture.ok_or_else(|| backend("staging texture was None"))?;
     s.staging_texture = Some(staging.clone());
@@ -200,7 +250,26 @@ mod native {
   /// calls on the same target, avoiding the ~70ms DWM session negotiation on every frame.
   pub fn capture_item_rgba(target_id: isize, item: &GraphicsCaptureItem, timeout: Duration) -> DriverResult<(image::RgbaImage, bool)> {
     let d3d = get_or_init_d3d_context()?;
-    let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
+    let res = capture_item_rgba_impl(&d3d, target_id, item, timeout);
+    if res.is_err() {
+      let reason = unsafe { d3d.device.GetDeviceRemovedReason() };
+      if is_device_lost_reason(reason) {
+        reset_d3d_context();
+      }
+    }
+    res
+  }
+
+  fn capture_item_rgba_impl(
+    d3d: &D3dContext,
+    target_id: isize,
+    item: &GraphicsCaptureItem,
+    timeout: Duration,
+  ) -> DriverResult<(image::RgbaImage, bool)> {
+    let size = item.Size().map_err(|e| {
+      check_device_lost_error(&e);
+      backend(format!("failed to read GraphicsCaptureItem size: {e}"))
+    })?;
 
     if size.Width <= 0 || size.Height <= 0 {
       return Err(crate::error::invalid_input(format!(
@@ -220,8 +289,12 @@ mod native {
       session_guard.take();
 
       let frame_pool =
-        Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)
-          .map_err(|e| backend(format!("failed to create Direct3D11CaptureFramePool: {e}")))?;
+        Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size).map_err(
+          |e| {
+            check_device_lost_error(&e);
+            backend(format!("failed to create Direct3D11CaptureFramePool: {e}"))
+          },
+        )?;
 
       let (sender, receiver) = sync_channel::<()>(4);
       // NOTICE: Discarding the WinRT EventRegistrationToken does not unregister the handler;
@@ -233,14 +306,23 @@ mod native {
           }
           Ok(())
         }))
-        .map_err(|e| backend(format!("failed to register FrameArrived handler: {e}")))?;
+        .map_err(|e| {
+          check_device_lost_error(&e);
+          backend(format!("failed to register FrameArrived handler: {e}"))
+        })?;
 
-      let session = frame_pool.CreateCaptureSession(item).map_err(|e| backend(format!("failed to create GraphicsCaptureSession: {e}")))?;
+      let session = frame_pool.CreateCaptureSession(item).map_err(|e| {
+        check_device_lost_error(&e);
+        backend(format!("failed to create GraphicsCaptureSession: {e}"))
+      })?;
 
       let _ = session.SetIsBorderRequired(false);
       let _ = session.SetIsCursorCaptureEnabled(false);
 
-      session.StartCapture().map_err(|e| backend(format!("failed to start GraphicsCaptureSession: {e}")))?;
+      session.StartCapture().map_err(|e| {
+        check_device_lost_error(&e);
+        backend(format!("failed to start GraphicsCaptureSession: {e}"))
+      })?;
 
       *session_guard = Some(CachedSession {
         target_id,
@@ -270,13 +352,22 @@ mod native {
 
     match frame_opt {
       Some(frame) => {
-        let surface = frame.Surface().map_err(|e| backend(format!("failed to obtain frame surface: {e}")))?;
+        let surface = frame.Surface().map_err(|e| {
+          check_device_lost_error(&e);
+          backend(format!("failed to obtain frame surface: {e}"))
+        })?;
 
-        let access: IDirect3DDxgiInterfaceAccess =
-          surface.cast().map_err(|e| backend(format!("failed to cast surface to IDirect3DDxgiInterfaceAccess: {e}")))?;
+        let access: IDirect3DDxgiInterfaceAccess = surface.cast().map_err(|e| {
+          check_device_lost_error(&e);
+          backend(format!("failed to cast surface to IDirect3DDxgiInterfaceAccess: {e}"))
+        })?;
 
-        let texture: ID3D11Texture2D =
-          unsafe { access.GetInterface().map_err(|e| backend(format!("failed to obtain ID3D11Texture2D from surface: {e}")))? };
+        let texture: ID3D11Texture2D = unsafe {
+          access.GetInterface().map_err(|e| {
+            check_device_lost_error(&e);
+            backend(format!("failed to obtain ID3D11Texture2D from surface: {e}"))
+          })?
+        };
 
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { texture.GetDesc(&mut desc) };
@@ -296,7 +387,10 @@ mod native {
           ctx.CopyResource(&staging, &texture);
 
           let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-          ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| backend(format!("failed to map staging texture: {e}")))?;
+          ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| {
+            check_device_lost_error(&e);
+            backend(format!("failed to map staging texture: {e}"))
+          })?;
 
           let width = desc.Width as usize;
           let height = desc.Height as usize;
@@ -337,7 +431,26 @@ mod native {
   /// without allocating and decoding full RGBA image.
   pub fn capture_item_health(target_id: isize, item: &GraphicsCaptureItem, timeout: Duration) -> DriverResult<WindowHealth> {
     let d3d = get_or_init_d3d_context()?;
-    let size = item.Size().map_err(|e| backend(format!("failed to read GraphicsCaptureItem size: {e}")))?;
+    let res = capture_item_health_impl(&d3d, target_id, item, timeout);
+    if res.is_err() {
+      let reason = unsafe { d3d.device.GetDeviceRemovedReason() };
+      if is_device_lost_reason(reason) {
+        reset_d3d_context();
+      }
+    }
+    res
+  }
+
+  fn capture_item_health_impl(
+    d3d: &D3dContext,
+    target_id: isize,
+    item: &GraphicsCaptureItem,
+    timeout: Duration,
+  ) -> DriverResult<WindowHealth> {
+    let size = item.Size().map_err(|e| {
+      check_device_lost_error(&e);
+      backend(format!("failed to read GraphicsCaptureItem size: {e}"))
+    })?;
 
     if size.Width <= 0 || size.Height <= 0 {
       return Err(crate::error::invalid_input(format!(
@@ -357,8 +470,12 @@ mod native {
       session_guard.take();
 
       let frame_pool =
-        Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)
-          .map_err(|e| backend(format!("failed to create Direct3D11CaptureFramePool: {e}")))?;
+        Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d.winrt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size).map_err(
+          |e| {
+            check_device_lost_error(&e);
+            backend(format!("failed to create Direct3D11CaptureFramePool: {e}"))
+          },
+        )?;
 
       let (sender, receiver) = sync_channel::<()>(4);
       let _token = frame_pool
@@ -368,14 +485,23 @@ mod native {
           }
           Ok(())
         }))
-        .map_err(|e| backend(format!("failed to register FrameArrived handler: {e}")))?;
+        .map_err(|e| {
+          check_device_lost_error(&e);
+          backend(format!("failed to register FrameArrived handler: {e}"))
+        })?;
 
-      let session = frame_pool.CreateCaptureSession(item).map_err(|e| backend(format!("failed to create GraphicsCaptureSession: {e}")))?;
+      let session = frame_pool.CreateCaptureSession(item).map_err(|e| {
+        check_device_lost_error(&e);
+        backend(format!("failed to create GraphicsCaptureSession: {e}"))
+      })?;
 
       let _ = session.SetIsBorderRequired(false);
       let _ = session.SetIsCursorCaptureEnabled(false);
 
-      session.StartCapture().map_err(|e| backend(format!("failed to start GraphicsCaptureSession: {e}")))?;
+      session.StartCapture().map_err(|e| {
+        check_device_lost_error(&e);
+        backend(format!("failed to start GraphicsCaptureSession: {e}"))
+      })?;
 
       *session_guard = Some(CachedSession {
         target_id,
@@ -404,13 +530,22 @@ mod native {
 
     match frame_opt {
       Some(frame) => {
-        let surface = frame.Surface().map_err(|e| backend(format!("failed to obtain frame surface: {e}")))?;
+        let surface = frame.Surface().map_err(|e| {
+          check_device_lost_error(&e);
+          backend(format!("failed to obtain frame surface: {e}"))
+        })?;
 
-        let access: IDirect3DDxgiInterfaceAccess =
-          surface.cast().map_err(|e| backend(format!("failed to cast surface to IDirect3DDxgiInterfaceAccess: {e}")))?;
+        let access: IDirect3DDxgiInterfaceAccess = surface.cast().map_err(|e| {
+          check_device_lost_error(&e);
+          backend(format!("failed to cast surface to IDirect3DDxgiInterfaceAccess: {e}"))
+        })?;
 
-        let texture: ID3D11Texture2D =
-          unsafe { access.GetInterface().map_err(|e| backend(format!("failed to obtain ID3D11Texture2D from surface: {e}")))? };
+        let texture: ID3D11Texture2D = unsafe {
+          access.GetInterface().map_err(|e| {
+            check_device_lost_error(&e);
+            backend(format!("failed to obtain ID3D11Texture2D from surface: {e}"))
+          })?
+        };
 
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { texture.GetDesc(&mut desc) };
@@ -426,7 +561,10 @@ mod native {
           ctx.CopyResource(&staging, &texture);
 
           let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-          ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| backend(format!("failed to map staging texture: {e}")))?;
+          ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).map_err(|e| {
+            check_device_lost_error(&e);
+            backend(format!("failed to map staging texture: {e}"))
+          })?;
 
           let width = desc.Width as usize;
           let height = desc.Height as usize;
@@ -657,6 +795,58 @@ pub fn capture_display_wgc(_selector: Option<&str>) -> DriverResult<DisplayCaptu
   Err(auv_driver_common::error::DriverError::unsupported("display.capture_wgc"))
 }
 
+/// Eagerly initializes the WGC Direct3D 11 device and context, returning the elapsed initialization duration.
+///
+/// Prewarming moves the ~30-50ms D3D11 device creation cost off the first capture's critical path.
+#[cfg(target_os = "windows")]
+pub fn prewarm_wgc() -> DriverResult<Duration> {
+  let start = Instant::now();
+  let d3d = native::get_or_init_d3d_context()?;
+  let dummy_size = windows::Graphics::SizeInt32 {
+    Width: 16,
+    Height: 16,
+  };
+  if let Ok(pool) = windows::Graphics::Capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
+    &d3d.winrt_device,
+    windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+    1,
+    dummy_size,
+  ) {
+    let _ = pool.Close();
+  }
+  Ok(start.elapsed())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn prewarm_wgc() -> DriverResult<Duration> {
+  Err(auv_driver_common::error::DriverError::unsupported("wgc.prewarm"))
+}
+
+/// Eagerly prewarms WGC for a specific window target, establishing the capture session
+/// and caching the initial frame so subsequent health checks take ~3-5ms.
+#[cfg(target_os = "windows")]
+pub fn prewarm_wgc_window(window: &Window) -> DriverResult<Duration> {
+  let start = Instant::now();
+  let _ = capture_window_health(window)?;
+  Ok(start.elapsed())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn prewarm_wgc_window(_window: &Window) -> DriverResult<Duration> {
+  Err(auv_driver_common::error::DriverError::unsupported("wgc.prewarm_window"))
+}
+
+/// Resets the cached D3D11 context and active WGC session.
+///
+/// Used for device-lost recovery and fault-injection testing.
+#[cfg(target_os = "windows")]
+pub fn reset_d3d_context() {
+  native::reset_d3d_context();
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn reset_d3d_context() {}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -664,8 +854,11 @@ mod tests {
   use windows::Graphics::DirectX::DirectXPixelFormat;
   use windows::Graphics::SizeInt32;
 
+  static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
   #[test]
   fn test_try_get_next_frame_empty() {
+    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let d3d = native::get_or_init_d3d_context().unwrap();
     let size = SizeInt32 {
       Width: 100,
@@ -681,5 +874,59 @@ mod tests {
     };
     assert!(res.is_ok(), "Expected Ok(None) for empty pool");
     assert!(res.unwrap().is_none(), "Expected None for empty pool");
+  }
+
+  #[test]
+  fn test_prewarm_wgc() {
+    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let _dur = prewarm_wgc().expect("prewarm_wgc should succeed");
+    assert!(native::is_d3d_context_initialized());
+    // Subsequent prewarm is a fast cache hit
+    let dur2 = prewarm_wgc().expect("second prewarm_wgc should succeed");
+    assert!(dur2 < Duration::from_millis(50));
+  }
+
+  #[test]
+  fn test_device_lost_recovery_simulation() {
+    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    // ROOT CAUSE:
+    //
+    // If GPU driver resets or device is lost (DXGI_ERROR_DEVICE_REMOVED 0x887A0005 or
+    // DXGI_ERROR_DEVICE_RESET 0x887A0007), OnceLock<D3dContext> prevented recovery,
+    // causing all subsequent WGC captures to permanently fail until process restart.
+    //
+    // Before the fix, D3D_CONTEXT was OnceLock and unrecoverable.
+    // The fix keeps a recoverable RwLock store, resetting both context and active session
+    // on device-lost so the next capture recreates the Direct3D device without panic.
+
+    // 1. Context must be initialized
+    let _ = prewarm_wgc().expect("prewarm should succeed");
+    assert!(native::is_d3d_context_initialized());
+
+    // 2. Fault injection: DXGI_ERROR_DEVICE_REMOVED (0x887A0005)
+    let removed_err = windows::core::Error::from(windows::core::HRESULT(native::DXGI_ERROR_DEVICE_REMOVED_CODE));
+    assert!(native::is_device_lost_hresult(removed_err.code()));
+    native::check_device_lost_error(&removed_err);
+    assert!(!native::is_d3d_context_initialized(), "context must be cleared after device-removed");
+
+    // 3. Re-create succeeds on subsequent capture / prewarm
+    let _ = prewarm_wgc().expect("re-creating context after device-removed must succeed");
+    assert!(native::is_d3d_context_initialized(), "context must be re-initialized");
+
+    // 4. Fault injection: DXGI_ERROR_DEVICE_RESET (0x887A0007)
+    let reset_err = windows::core::Error::from(windows::core::HRESULT(native::DXGI_ERROR_DEVICE_RESET_CODE));
+    assert!(native::is_device_lost_hresult(reset_err.code()));
+    native::check_device_lost_error(&reset_err);
+    assert!(!native::is_d3d_context_initialized(), "context must be cleared after device-reset");
+
+    // 5. Re-create succeeds again
+    let _ = prewarm_wgc().expect("re-creating context after device-reset must succeed");
+    assert!(native::is_d3d_context_initialized(), "context must be re-initialized");
+
+    // 6. Direct reset_d3d_context() wipe & recreation
+    reset_d3d_context();
+    assert!(!native::is_d3d_context_initialized());
+    let _ = prewarm_wgc().expect("prewarm after direct reset must succeed");
+    assert!(native::is_d3d_context_initialized());
   }
 }

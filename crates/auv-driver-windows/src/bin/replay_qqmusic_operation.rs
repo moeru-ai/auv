@@ -31,7 +31,7 @@ use auv_driver_windows::playback_guard::{
   DEFAULT_PLAY_POLL_TIMEOUT, DEFAULT_TARGET_VOLUME, DEFAULT_VOLUME_TOLERANCE, Step2Options, execute_step2_real_with_prestate,
 };
 use auv_driver_windows::track_identity::{TrackChangeVerdict, TrackIdentity, evaluate_track_change};
-use auv_driver_windows::wgc::{capture_window_health, capture_window_wgc};
+use auv_driver_windows::wgc::{capture_window_health, capture_window_wgc, prewarm_wgc, prewarm_wgc_window};
 use auv_driver_windows::window::list_windows;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -95,40 +95,43 @@ struct ReplayRecord {
   tokens_used: usize,
 
   // 10-field granular timing metrics
-  total_duration_ms: f64,
-  discovery_ms: f64,
-  manager_discovery_ms: f64,
-  session_discovery_ms: f64,
-  window_discovery_ms: f64,
-  audio_lookup_ms: f64,
-  volume_rw_ms: f64,
-  dispatch_ms: f64,
-  verification_ms: f64,
-  wgc_ms: f64,
-  serialization_ms: f64,
-  pacing_ms: f64,
+  pub total_duration_ms: f64,
+  pub discovery_ms: f64,
+  pub manager_discovery_ms: f64,
+  pub session_discovery_ms: f64,
+  pub window_discovery_ms: f64,
+  pub audio_lookup_ms: f64,
+  pub volume_rw_ms: f64,
+  pub dispatch_ms: f64,
+  pub verification_ms: f64,
+  pub wgc_ms: f64,
+  pub wgc_init_ms: f64,
+  pub wgc_capture_ms: f64,
+  pub serialization_ms: f64,
+  pub pacing_ms: f64,
 
   // 4 profiling dimensions & metadata
-  cache_state: String,
-  window_state: String,
-  frame_health: String,
-  identity_level: Option<String>,
+  pub cache_state: String,
+  pub window_state: String,
+  pub frame_health: String,
+  pub identity_level: Option<String>,
 
   // Idempotency & command counts
-  skipped_volume_write: bool,
-  skipped_play_write: bool,
-  volume_set_calls: usize,
-  play_calls: usize,
+  pub skipped_volume_write: bool,
+  pub skipped_play_write: bool,
+  pub play_dispatched: bool,
+  pub volume_set_calls: usize,
+  pub play_calls: usize,
 
   // Audio lookup statistics
-  audio_lookup_status: Option<String>,
-  audio_endpoint_count: Option<usize>,
+  pub audio_lookup_status: Option<String>,
+  pub audio_endpoint_count: Option<usize>,
 
-  success: bool,
-  confirmed: bool,
-  fault_injected: Option<String>,
-  escalated_to_vlm: bool,
-  steps: Vec<StepRecord>,
+  pub success: bool,
+  pub confirmed: bool,
+  pub fault_injected: Option<String>,
+  pub escalated_to_vlm: bool,
+  pub steps: Vec<StepRecord>,
 }
 
 struct DiscoveryTimings {
@@ -208,6 +211,7 @@ fn execute_replay_baseline(
   allow_restore: bool,
   pacing_ms: f64,
   cache_state: &str,
+  wgc_init_ms: f64,
 ) -> DriverResult<ReplayRecord> {
   let start_time = Instant::now();
   let mut steps = Vec::new();
@@ -521,7 +525,8 @@ fn execute_replay_baseline(
   let total_duration_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let dispatch_ms = s2_disp_ms + s3_disp_ms;
   let verification_ms = s1_verif_ms + s2_verif_ms + s3_verif_ms;
-  let wgc_ms = s4_dur;
+  let wgc_capture_ms = s4_dur;
+  let wgc_ms = wgc_capture_ms;
 
   Ok(ReplayRecord {
     iteration,
@@ -540,6 +545,8 @@ fn execute_replay_baseline(
     dispatch_ms,
     verification_ms,
     wgc_ms,
+    wgc_init_ms,
+    wgc_capture_ms,
     serialization_ms: 0.0,
     pacing_ms,
     cache_state: cache_state.to_string(),
@@ -548,6 +555,7 @@ fn execute_replay_baseline(
     identity_level: Some("title_only".to_string()),
     skipped_volume_write: false,
     skipped_play_write: false,
+    play_dispatched: play_calls > 0,
     volume_set_calls: vol_calls,
     play_calls,
     audio_lookup_status: None,
@@ -563,6 +571,7 @@ fn execute_replay_baseline(
 // ==============================================================================
 // OPTIMIZED EXECUTION (Context reuse + Idempotency + Event/Adaptive polling + Lightweight WGC)
 // ==============================================================================
+#[allow(clippy::too_many_arguments)]
 fn execute_replay_optimized(
   iteration: usize,
   fault_injection: Option<&str>,
@@ -571,6 +580,7 @@ fn execute_replay_optimized(
   pacing_ms: f64,
   cache_state: &str,
   cached_endpoint_id: Option<&str>,
+  wgc_init_ms: f64,
 ) -> DriverResult<(ReplayRecord, Option<String>)> {
   let start_time = Instant::now();
   let mut steps = Vec::new();
@@ -629,6 +639,7 @@ fn execute_replay_optimized(
     } else {
       DEFAULT_PLAY_POLL_TIMEOUT
     },
+    fire_and_forget_play: is_fast_mode,
   };
 
   let (s2_result, volume_rw_ms) = if fault_injection == Some("volume") {
@@ -898,7 +909,8 @@ fn execute_replay_optimized(
   let total_duration_ms = start_time.elapsed().as_secs_f64() * 1000.0;
   let dispatch_ms = s2_disp_ms + s3_disp_ms;
   let verification_ms = s1_verif_ms + s2_verif_ms + s3_verif_ms;
-  let wgc_ms = s4_dur;
+  let wgc_capture_ms = s4_dur;
+  let wgc_ms = wgc_capture_ms;
 
   let record = ReplayRecord {
     iteration,
@@ -921,6 +933,8 @@ fn execute_replay_optimized(
     dispatch_ms,
     verification_ms,
     wgc_ms,
+    wgc_init_ms,
+    wgc_capture_ms,
     serialization_ms: 0.0,
     pacing_ms,
     cache_state: cache_state.to_string(),
@@ -929,6 +943,7 @@ fn execute_replay_optimized(
     identity_level,
     skipped_volume_write: s2_result.skipped_volume_write,
     skipped_play_write: s2_result.skipped_play_write,
+    play_dispatched: s2_result.play_dispatched,
     volume_set_calls: s2_result.command_counts.set_volume_calls,
     play_calls: s2_result.command_counts.play_calls,
     audio_lookup_status: ctx.timings.audio_lookup_stats.as_ref().map(|s| match s.status {
@@ -983,6 +998,18 @@ fn compute_stats(mut vals: Vec<f64>) -> (f64, f64, f64) {
 
 fn main() {
   ensure_input_desktop();
+  let mut wgc_init_dur = prewarm_wgc().unwrap_or(Duration::ZERO);
+  if let Ok(windows) = list_windows()
+    && let Some(w) = windows.into_iter().find(|win| {
+      win.app_name.as_deref() == Some("QQMusic.exe")
+        || win.app_name.as_deref() == Some("QQMusic")
+        || win.title.as_deref().map(|t| t.contains("QQ音乐")).unwrap_or(false)
+    })
+    && let Ok(win_dur) = prewarm_wgc_window(&w)
+  {
+    wgc_init_dur += win_dur;
+  }
+  let wgc_init_ms = wgc_init_dur.as_secs_f64() * 1000.0;
 
   let args: Vec<String> = env::args().collect();
   let mut replays_count = 20usize;
@@ -1060,6 +1087,7 @@ fn main() {
   println!("Replays Count    : {}", replays_count);
   println!("Pacing Delay     : {:.1}ms (isolated from total_duration_ms)", pacing_delay_ms);
   println!("Cold Mode        : {}", is_single_cold_mode);
+  println!("WGC Prewarm      : {:.2}ms", wgc_init_ms);
   println!("Output JSONL     : {}", final_output);
   println!("Fault Injection  : {:?}", fault_inject);
   println!("Allow Restore    : {} (default false, zero-window-mutation redline)", allow_restore);
@@ -1070,9 +1098,9 @@ fn main() {
   if let Some(ref fi) = fault_inject {
     println!("[FAULT INJECTION MODE] Injecting fault: {}", fi);
     let record = match mode.as_str() {
-      "baseline" => execute_replay_baseline(1, Some(fi), allow_restore, 0.0, "cold"),
-      "fast" => execute_replay_optimized(1, Some(fi), allow_restore, true, 0.0, "cold", None).map(|(r, _)| r),
-      _ => execute_replay_optimized(1, Some(fi), allow_restore, false, 0.0, "cold", None).map(|(r, _)| r),
+      "baseline" => execute_replay_baseline(1, Some(fi), allow_restore, 0.0, "cold", wgc_init_ms),
+      "fast" => execute_replay_optimized(1, Some(fi), allow_restore, true, 0.0, "cold", None, wgc_init_ms).map(|(r, _)| r),
+      _ => execute_replay_optimized(1, Some(fi), allow_restore, false, 0.0, "cold", None, wgc_init_ms).map(|(r, _)| r),
     }
     .expect("Failed to execute fault injection replay");
 
@@ -1106,9 +1134,9 @@ fn main() {
     std::io::stdout().flush().unwrap();
 
     let res = match mode.as_str() {
-      "baseline" => execute_replay_baseline(iter, None, allow_restore, current_pacing, cache_state).map(|r| (r, None)),
-      "fast" => execute_replay_optimized(iter, None, allow_restore, true, current_pacing, cache_state, cached_ep_id.as_deref()),
-      _ => execute_replay_optimized(iter, None, allow_restore, false, current_pacing, cache_state, cached_ep_id.as_deref()),
+      "baseline" => execute_replay_baseline(iter, None, allow_restore, current_pacing, cache_state, wgc_init_ms).map(|r| (r, None)),
+      "fast" => execute_replay_optimized(iter, None, allow_restore, true, current_pacing, cache_state, cached_ep_id.as_deref(), wgc_init_ms),
+      _ => execute_replay_optimized(iter, None, allow_restore, false, current_pacing, cache_state, cached_ep_id.as_deref(), wgc_init_ms),
     };
 
     let (mut record, next_ep) = match res {

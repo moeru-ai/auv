@@ -305,6 +305,113 @@ All percentiles computed using standard linear interpolation ($R$ type 7 / numpy
 - `docs/ai/references/driver/2026-10-06-windows-verify-cold-fast-10x.jsonl`: 10x independent process cold Fast runs (P50 321.25ms, P95 466.00ms, Mean 344.46ms).
 - `docs/ai/references/driver/2026-10-06-windows-verify-cold-verified-10x.jsonl`: 10x independent process cold Verified runs (P50 391.88ms, P95 419.11ms, Mean 395.74ms).
 
+---
+
+## Phase 6 — Latency Tail Elimination, WGC Prewarming & Verified Path Spike (2026-10-07)
+
+### 1. Objective & Scope
+
+Branch: `perf/windows-latency-tail` (built upon `perf/windows-verify-path`).
+Eliminate latency tails and cold startup bottlenecks across three distinct tracks:
+1. **Item 1: Fast Mode Play Fire-and-Forget**: Eliminate the 40% tail where `Play()` blocked for ~1.5s waiting for playback status transitions in Fast mode.
+2. **Item 2: Verified Fast-Path Spike**: Investigate the bimodal distribution of Step 3 verification (~70ms fast path vs ~1150ms slow path) across 4 dimensions and evaluate engineering feasibility.
+3. **Item 3: Cold WGC Eager Prewarming & Device-Lost Resilience**: Move ~270ms of D3D11 device creation and initial capture negotiation out of operation execution into process startup, dropping Cold Fast P50 from ~321ms to <40ms.
+
+---
+
+### 2. Empirical Benchmark Data
+
+All percentiles computed using **Standard Linear Interpolation** with zero outlier filtering.
+
+#### Table 6.1: Warm Fast Latency Tail Elimination ($N=20$)
+
+| Metric (ms) | Verify-Path Fast (P50 / P95 / Mean) | Tail-Eliminated Fast (P50 / P95 / Mean) | Speedup / Tail Reduction | Description |
+|---|---|---|---|---|
+| **Total Duration** | **25.23 / 1455.49 / 288.41** | **8.68 / 29.70 / 15.71** | **2.9x / 49.0x tail reduction** | End-to-end operation execution latency |
+| `discovery_ms` (sum) | 4.99 / 14.19 / 6.35 | 4.22 / 19.26 / 6.05 | 1.2x | Total discovery phase |
+| `manager_discovery_ms` | 3.29 / 8.66 / 4.14 | 2.93 / 15.95 / 4.27 | 1.1x | SMTC manager acquisition |
+| `session_discovery_ms` | 0.00 / 0.01 / 0.01 | 0.01 / 0.03 / 0.01 | — | `GetCurrentSession()` fast path |
+| `window_discovery_ms` | 0.53 / 1.04 / 0.66 | 0.66 / 1.33 / 0.84 | — | QQ Music HWND resolution |
+| `audio_lookup_ms` | 0.53 / 8.23 / 1.55 | 0.55 / 1.09 / 0.93 | 1.0x / 7.6x | CoreAudio cached endpoint resolution |
+| `volume_rw_ms` | **0.00 / 1444.75 / 258.33** | **0.26 / 0.42 / 0.24** | **3440x tail reduction** | Step 2 volume read/write & play dispatch |
+| `dispatch_ms` | **0.37 / 1445.12 / 258.64** | **0.53 / 0.67 / 0.51** | **2157x tail reduction** | SMTC command dispatch latency |
+| `verification_ms` | 0.44 / 2.63 / 0.69 | 0.47 / 0.83 / 0.66 | 0.9x | Fast mode verification (no wait) |
+| `wgc_ms` | 3.17 / 40.46 / 22.00 | 2.71 / 9.12 / 7.85 | 1.2x / 4.4x | WGC window health check |
+| `wgc_init_ms` | — | 256.25 / 256.25 / 256.25 | — | Process startup prewarm duration |
+| `serialization_ms` | 0.01 / 0.02 / 0.01 | 0.07 / 0.11 / 0.08 | — | In-memory JSON serialization |
+| `pacing_ms` (isolated) | 50.00 / 50.00 / 50.00 | 50.00 / 50.00 / 50.00 | — | Inter-iteration pacing (strictly excluded) |
+
+**Command Counting & Idempotency Proof**:
+- `SetMasterVolume` calls: **0 total across 20 runs (skipped: 20/20, 100%)**.
+- `Play` calls: **16 calls dispatched across 20 runs (skipped: 4/20)**; `play_dispatched = true` in 16/16.
+- **Zero Blocking**: In all 16 `Play()` calls, fire-and-forget returned immediately after WinRT async dispatch without awaiting `MediaPlaybackStatus::Playing`, completely eliminating the 1.5s blocking tail.
+
+---
+
+#### Table 6.2: Cold Fast Process Startup & Execution ($N=10$, Independent Processes)
+
+| Metric (ms) | Cold Fast Baseline (P50 / P95 / Mean) | Cold Fast with Prewarm (P50 / P95 / Mean) | Speedup | Description |
+|---|---|---|---|---|
+| **Total Duration** | **321.25 / 466.00 / 344.46** | **24.44 / 41.59 / 27.52** | **13.1x faster** | End-to-end operation execution latency |
+| `discovery_ms` (sum) | 23.77 / 26.46 / 23.83 | 17.22 / 20.11 / 17.59 | 1.4x | Total cold discovery duration |
+| `manager_discovery_ms` | 14.79 / 18.01 / 15.20 | 6.99 / 8.98 / 7.30 | 2.1x | SMTC manager acquisition |
+| `session_discovery_ms` | 0.01 / 0.02 / 0.01 | 0.01 / 0.02 / 0.01 | — | `GetCurrentSession()` fast path |
+| `window_discovery_ms` | 0.76 / 1.02 / 0.81 | 0.99 / 1.41 / 1.03 | — | QQ Music HWND resolution |
+| `audio_lookup_ms` | 7.77 / 8.53 / 7.82 | 9.38 / 10.26 / 9.25 | — | Cold CoreAudio endpoint enumeration |
+| `volume_rw_ms` | 0.00 / 127.26 / 23.14 | 0.00 / 0.00 / 0.00 | — | Step 2 volume read/write |
+| `dispatch_ms` | 0.24 / 127.59 / 23.39 | 0.26 / 0.59 / 0.32 | — | Command dispatch latency |
+| `verification_ms` | 2.87 / 6.38 / 3.50 | 2.89 / 5.28 / 3.35 | — | Step 3 dispatch-only verification |
+| `wgc_ms` (in-operation) | **286.25 / 332.18 / 292.86** | **2.51 / 16.83 / 5.19** | **114.0x faster** | WGC window health check |
+| `wgc_init_ms` (startup) | — | **269.60 / 300.63 / 274.18** | — | Process startup D3D11 & session prewarm |
+| `serialization_ms` | 0.02 / 0.03 / 0.02 | 0.02 / 0.03 / 0.02 | — | In-memory JSON serialization |
+| `pacing_ms` (isolated) | 0.00 / 0.00 / 0.00 | 0.00 / 0.00 / 0.00 | — | Independent process runs (0 pacing) |
+
+**Prewarm Result**:
+- D3D11 context creation (~200ms) + initial frame pool and capture session negotiation (~70ms) are completely moved to process startup via `prewarm_wgc()` and `prewarm_wgc_window()`.
+- Cold Fast operation execution drops from 321.25ms to **24.44ms P50**, significantly outperforming the ~40ms brief target.
+
+---
+
+### 3. Item 2 Verified Fast-Path Trigger Spike Summary
+
+Full Spike Report: [`2026-10-07-verified-fast-path-spike.md`](2026-10-07-verified-fast-path-spike.md)  
+Data File: [`2026-10-07-spike-verify-experiments.jsonl`](2026-10-07-spike-verify-experiments.jsonl) ($N=86$ live single-variable runs).
+
+1. **Physical Cause of Bimodal Distribution**:
+   - The primary controlling variable is **Skip Interval** (time delta between consecutive track changes):
+     - **$<200\text{ms}$ interval** (e.g. 50ms test pacing): QQ Music enters an alternating limit-cycle oscillator: `Fast (70ms) -> Slow (1150ms) -> Fast (70ms) -> Slow (1150ms)`, yielding exactly 50% fast path rate.
+     - **$\ge 1.0\text{s}$ interval** (1s, 5s, 30s): Audio demuxing and decoding pipeline stabilizes, achieving **91.7% to 100% fast path rate (P50 77.1ms ~ 79.8ms)**.
+2. **Cold Launch & Position Hypotheses Refuted**:
+   - Fresh `QQMusic.exe` process launch: First skip achieved 80% (4/5) fast path (<99ms).
+   - Playback position: Skipping at 2s into song achieved **100% fast path** ($N=10$, P50 47.8ms). Track change speed is independent of prebuffering at song end.
+3. **Event Timing Deltas**:
+   - `PlaybackInfoChanged` arrives consistently **40–50ms before** `MediaPropertiesChanged` on both fast and slow paths. Slow path delay is caused entirely by QQ Music's internal audio engine thread reset (~1050ms) before emitting events.
+4. **Honest Engineering Verdict: 【NO-GO】**:
+   - Waiting $\ge 800\text{--}1000\text{ms}$ in the driver to trigger the 70ms fast path yields total latency of $1000 + 75 = 1075\text{ms}$, which offers zero net gain over the native 1150ms slow path while penalizing throughput.
+   - For real-world user / agent operations (interval $\ge 1\text{s}$), the ~75ms fast path occurs naturally. The adaptive event-driven early exit (`on_media_properties_changed` + `on_playback_info_changed` with exponential backoff) is architecture-optimal.
+
+---
+
+### 4. Item 3 Device-Lost Resilience Implementation
+
+In `crates/auv-driver-windows/src/wgc.rs`:
+- Replaced static immutable `OnceLock<D3dContext>` with thread-safe recoverable `RwLock<Option<Arc<D3dContext>>>`.
+- Added detection for Win32/DXGI device-lost errors:
+  - `DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`)
+  - `DXGI_ERROR_DEVICE_RESET` (`0x887A0007`)
+- Implemented automatic reset: on device-lost error, `reset_d3d_context()` clears the cached D3D11 device and active WGC session. Subsequent captures automatically recreate the device and session without panic, crash, or freeze.
+- Unit tested via `test_device_lost_recovery_simulation` and `test_prewarm_wgc`.
+
+---
+
+### 5. Archived Artifacts (Phase 6)
+
+- `docs/ai/references/driver/2026-10-07-windows-tail-warm-fast-20x.jsonl`: 20x warm Fast records with play fire-and-forget (P50 8.68ms, P95 29.70ms, Mean 15.71ms, 16 play calls dispatched without blocking).
+- `docs/ai/references/driver/2026-10-07-windows-tail-cold-fast-10x.jsonl`: 10x independent cold process Fast runs with eager prewarm (P50 24.44ms, P95 41.59ms, Mean 27.52ms, `wgc_ms` P50 2.51ms).
+- `docs/ai/references/driver/2026-10-07-spike-verify-experiments.jsonl`: 86x live single-variable runs across skip intervals, process lifecycles, playback positions, and event arrival deltas.
+- `docs/ai/references/driver/2026-10-07-verified-fast-path-spike.md`: Detailed spike report on Step 3 bimodal distribution, limit cycle oscillation, and NO-GO verdict.
+
+
 
 
 
