@@ -1133,3 +1133,23 @@ fn shared_key_symbols_preserve_macos_named_key_behavior() {
   assert!(special_key_code("back").is_err());
   assert!(special_key_code("insert").is_err());
 }
+
+// ROOT CAUSE:
+//
+// If Mission Control showed the target window, ScreenCaptureKit captured it
+// at its shrunk frame (949x554 pt for a 1644x960 pt window) and the driver
+// derived `scale_factor` from the resolved frame instead, returning a black
+// image with scale 1.17.
+//
+// The fix compares the captured frame with the resolved one and reports a
+// stale window when they differ by more than point rounding.
+#[test]
+fn window_capture_frame_check_rejects_a_shrunk_window_and_allows_rounding() {
+  let resolved = Size::new(1644.0, 960.0);
+
+  assert!(same_window_size(resolved, Size::new(1644.0, 960.0)));
+  assert!(same_window_size(resolved, Size::new(1644.5, 959.5)));
+  assert!(!same_window_size(resolved, Size::new(949.0, 554.0)));
+  assert!(!same_window_size(resolved, Size::new(1644.0, 1003.0)));
+  assert!(same_window_size(Size::new(0.0, 0.0), Size::new(1644.0, 960.0)));
+}

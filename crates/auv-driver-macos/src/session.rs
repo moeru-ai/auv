@@ -2076,6 +2076,8 @@ fn capture_window(window: &Window, resolution: CaptureResolution) -> DriverResul
   // path is still being proven across app/window states.
   match capture_window_swift(window, resolution) {
     Ok(capture) => Ok(capture),
+    // The window itself is in the wrong state; xcap would capture the same frame.
+    Err(error @ DriverError::StaleObservation { .. }) => Err(error),
     Err(swift_error) => {
       let fallback_reason = swift_error.to_string();
       capture_window_xcap(window, Some(fallback_reason.clone())).map(|capture| capture.at_resolution(resolution)).map_err(|xcap_error| {
@@ -2094,7 +2096,34 @@ fn capture_window_swift(window: &Window, resolution: CaptureResolution) -> Drive
     .id
     .parse::<i64>()
     .map_err(|error| invalid_input(format!("window ref {} was not a native macOS window id: {error}", window.reference.id)))?;
-  let capture = crate::native::capture::capture_window_rgba(native_window_id, resolution == CaptureResolution::Logical).map_err(backend)?;
+  let logical = resolution == CaptureResolution::Logical;
+  let mut capture = crate::native::capture::capture_window_rgba(native_window_id, logical).map_err(backend)?;
+  // NOTICE(window-capture-frame-mismatch): ScreenCaptureKit sizes the image
+  // from the window's frame at capture time. Mission Control, App Exposé and
+  // minimize animations shrink that frame (and the window-server bounds) for a
+  // moment; Mission Control frames come back black (measured 2026-10-08:
+  // 949x554 pt for a 1644x960 pt window). Scaling such a frame by
+  // `window.frame` gave captures a wrong `scale_factor` (1.17) and garbage
+  // pixels. Retry once after the animation, then report the window as stale.
+  // Mission Control also returns some black frames at the full frame size
+  // while it opens; those pass this check, and only content checks can tell
+  // them apart from a dark window.
+  if !same_window_size(window.frame.size, capture.window_size) {
+    thread::sleep(Duration::from_millis(300));
+    capture = crate::native::capture::capture_window_rgba(native_window_id, logical).map_err(backend)?;
+    if !same_window_size(window.frame.size, capture.window_size) {
+      return Err(DriverError::StaleObservation {
+        message: format!(
+          "window {} was {}x{} pt at capture time but resolved as {}x{} pt",
+          window.reference.id, capture.window_size.width, capture.window_size.height, window.frame.size.width, window.frame.size.height
+        ),
+        recovery: Some(
+          "the window was resized or is shown by Mission Control, App Exposé or a minimize animation; re-resolve the window and retry"
+            .to_string(),
+        ),
+      });
+    }
+  }
   let width = u32::try_from(capture.image_width).map_err(|error| backend(format!("native capture returned invalid width: {error}")))?;
   let height = u32::try_from(capture.image_height).map_err(|error| backend(format!("native capture returned invalid height: {error}")))?;
   let image =
@@ -2112,6 +2141,17 @@ fn capture_window_swift(window: &Window, resolution: CaptureResolution) -> Drive
     backend: "macos.screencapturekit.ffi".to_string(),
     fallback_reason: None,
   })
+}
+
+/// Whether a captured window frame matches the resolved one, allowing for
+/// point rounding between the window server and ScreenCaptureKit. A window
+/// resolved without a frame has nothing to compare against.
+#[cfg(target_os = "macos")]
+fn same_window_size(resolved: Size, captured: Size) -> bool {
+  if resolved.width <= 0.0 || resolved.height <= 0.0 {
+    return true;
+  }
+  (resolved.width - captured.width).abs() <= 1.0 && (resolved.height - captured.height).abs() <= 1.0
 }
 
 #[cfg(target_os = "macos")]

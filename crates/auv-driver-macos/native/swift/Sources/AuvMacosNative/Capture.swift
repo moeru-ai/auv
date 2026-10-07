@@ -12,6 +12,8 @@ private func emptyWindowCaptureResponse(
   NativeWindowCaptureResponse(
     image_width: 0,
     image_height: 0,
+    window_width: 0,
+    window_height: 0,
     rgba_bytes: RustVec<UInt8>(),
     error_message: message.intoRustString(),
     recovery_hint: recovery.intoRustString()
@@ -20,9 +22,11 @@ private func emptyWindowCaptureResponse(
 
 func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse {
   var capturedImage: CGImage?
+  var capturedFrame = CGSize.zero
   var captureError: Error?
-  let status = nativeCaptureWindowForAuv(windowID: UInt32(max(request.window_id, 0)), logical: request.logical) { image, error in
+  let status = nativeCaptureWindowForAuv(windowID: UInt32(max(request.window_id, 0)), logical: request.logical) { image, frame, error in
     capturedImage = image
+    capturedFrame = frame
     captureError = error
   }
   if status == .timedOut {
@@ -52,6 +56,8 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCa
   return NativeWindowCaptureResponse(
     image_width: Int64(image.width),
     image_height: Int64(image.height),
+    window_width: Double(capturedFrame.width),
+    window_height: Double(capturedFrame.height),
     rgba_bytes: nativeByteVec(rgba),
     error_message: nil,
     recovery_hint: nil
@@ -61,12 +67,12 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCa
 private func nativeCaptureWindowForAuv(
   windowID: UInt32,
   logical: Bool,
-  completion: @escaping (CGImage?, Error?) -> Void
+  completion: @escaping (CGImage?, CGSize, Error?) -> Void
 ) -> DispatchTimeoutResult {
   let semaphore = DispatchSemaphore(value: 0)
 
   guard #available(macOS 14.0, *) else {
-    completion(nil, NSError(
+    completion(nil, .zero, NSError(
       domain: "AuvMacosNative.Capture",
       code: 3,
       userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit screenshot capture requires macOS 14.0 or newer"]
@@ -77,12 +83,12 @@ private func nativeCaptureWindowForAuv(
 
   SCShareableContent.getWithCompletionHandler { content, error in
     if let error {
-      completion(nil, error)
+      completion(nil, .zero, error)
       semaphore.signal()
       return
     }
     guard let window = content?.windows.first(where: { $0.windowID == windowID }) else {
-      completion(nil, NSError(
+      completion(nil, .zero, NSError(
         domain: "AuvMacosNative.Capture",
         code: 1,
         userInfo: [NSLocalizedDescriptionKey: "window \(windowID) not found"]
@@ -111,7 +117,7 @@ private func nativeCaptureWindowForAuv(
       configuration: config
     ) { sampleBuffer, captureError in
       if let captureError {
-        completion(nil, captureError)
+        completion(nil, .zero, captureError)
         semaphore.signal()
         return
       }
@@ -119,7 +125,7 @@ private func nativeCaptureWindowForAuv(
         let sampleBuffer,
         let image = nativeImageFromSampleBuffer(sampleBuffer)
       else {
-        completion(nil, NSError(
+        completion(nil, .zero, NSError(
           domain: "AuvMacosNative.Capture",
           code: 2,
           userInfo: [NSLocalizedDescriptionKey: "window capture returned no image sample"]
@@ -127,7 +133,7 @@ private func nativeCaptureWindowForAuv(
         semaphore.signal()
         return
       }
-      completion(image, nil)
+      completion(image, window.frame.size, nil)
       semaphore.signal()
     }
   }

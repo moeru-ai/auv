@@ -307,6 +307,9 @@ pub(crate) mod ffi {
   struct NativeWindowCaptureResponse {
     image_width: i64,
     image_height: i64,
+    // Window size in points that ScreenCaptureKit captured (`SCWindow.frame`).
+    window_width: f64,
+    window_height: f64,
     rgba_bytes: Vec<u8>,
     error_message: Option<String>,
     recovery_hint: Option<String>,

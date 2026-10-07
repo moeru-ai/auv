@@ -6,6 +6,8 @@ use super::types::AuvResult;
 pub struct NativeWindowCapture {
   pub image_width: i64,
   pub image_height: i64,
+  /// Window size in points at capture time, as ScreenCaptureKit saw it.
+  pub window_size: auv_driver_common::Size,
   pub rgba_bytes: Vec<u8>,
 }
 
@@ -43,6 +45,7 @@ fn decode_window_capture_response(response: NativeWindowCaptureResponse) -> AuvR
   Ok(NativeWindowCapture {
     image_width: response.image_width,
     image_height: response.image_height,
+    window_size: auv_driver_common::Size::new(response.window_width, response.window_height),
     rgba_bytes: response.rgba_bytes,
   })
 }
