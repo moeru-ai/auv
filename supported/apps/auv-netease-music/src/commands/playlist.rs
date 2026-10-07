@@ -817,7 +817,10 @@ fn verify_playlist_select_title(
   target_label: &str,
 ) -> Result<PlaylistSelectVerification, String> {
   auv_tracing::in_span!("auv.netease.playlist_select.verification", || {
-    let capture = session.window().capture(window).map_err(|error| format!("playlist select verification capture failed: {error}"))?;
+    let capture = session
+      .window()
+      .capture_with(window, crate::window_capture_options())
+      .map_err(|error| format!("playlist select verification capture failed: {error}"))?;
     crate::telemetry::capture_artifact("auv.netease.playlist_select.verification_capture", &capture);
 
     let ocr_options = build_playlist_select_verification_ocr_options(inputs, target_label);
@@ -962,7 +965,10 @@ fn run_playlist_play_resolved(
   let diagnostics = select.diagnostics.clone();
   let mut known_limits = select.known_limits.clone();
 
-  let capture = session.window().capture(&window).map_err(|error| format!("playlist play-all capture failed: {error}"))?;
+  let capture = session
+    .window()
+    .capture_with(&window, crate::window_capture_options())
+    .map_err(|error| format!("playlist play-all capture failed: {error}"))?;
   crate::telemetry::capture_artifact("auv.netease.playlist_play.target_capture", &capture);
   let recognition = session
     .vision()
@@ -1040,7 +1046,10 @@ fn capture_playlist_play_verification(
   use crate::views::player::classify_bottom_playback_control_state;
 
   auv_tracing::in_span!("auv.netease.playlist_play.verification", || {
-    let capture = session.window().capture(window).map_err(|error| format!("playlist play verification capture failed: {error}"))?;
+    let capture = session
+      .window()
+      .capture_with(window, crate::window_capture_options())
+      .map_err(|error| format!("playlist play verification capture failed: {error}"))?;
     crate::telemetry::capture_artifact("auv.netease.playlist_play.verification_capture", &capture);
     let control_state = classify_bottom_playback_control_state(&capture.image);
     let bottom_text = recognize_playlist_bottom_text(session, &capture, inputs);

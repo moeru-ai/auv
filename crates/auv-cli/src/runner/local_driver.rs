@@ -2223,7 +2223,11 @@ impl CaptureService for LocalCaptureService {
   async fn capture_window(&self, request: Request<proto::CaptureWindowRequest>) -> Result<Response<proto::CaptureWindowResponse>, Status> {
     let request = request.into_inner();
     let window = resolve_window_ref(&self.session, request.window.ok_or_else(|| Status::invalid_argument("window is required"))?)?;
-    let capture = self.session.window().capture(&window).map_err(driver_status)?;
+    let options = auv_driver::CaptureOptions {
+      resolution: capture_resolution_from_proto(request.resolution)?,
+      ..Default::default()
+    };
+    let capture = self.session.window().capture_with(&window, options).map_err(driver_status)?;
     Ok(Response::new(proto::CaptureWindowResponse {
       window: Some(window_to_proto(window)),
       capture: Some(stored_capture_to_proto(&self.captures, capture)),
@@ -2234,12 +2238,14 @@ impl CaptureService for LocalCaptureService {
     &self,
     request: Request<proto::CaptureDisplayRequest>,
   ) -> Result<Response<proto::CaptureDisplayResponse>, Status> {
-    let display = display_selector_from_proto(request.into_inner().selector)?;
+    let request = request.into_inner();
+    let display = display_selector_from_proto(request.selector)?;
     let captured = self
       .session
       .display()
       .capture(auv_driver::CaptureOptions {
         display,
+        resolution: capture_resolution_from_proto(request.resolution)?,
         ..Default::default()
       })
       .map_err(driver_status)?;
@@ -2259,6 +2265,7 @@ impl CaptureService for LocalCaptureService {
       .capture_region(auv_driver::CaptureOptions {
         display,
         region: Some(region),
+        resolution: capture_resolution_from_proto(request.resolution)?,
         ..Default::default()
       })
       .map_err(driver_status)?;
@@ -2266,6 +2273,14 @@ impl CaptureService for LocalCaptureService {
       display: Some(display_to_proto(captured.display)),
       capture: Some(stored_capture_to_proto(&self.captures, captured.capture)),
     }))
+  }
+}
+
+fn capture_resolution_from_proto(value: i32) -> Result<auv_driver::CaptureResolution, Status> {
+  match proto::CaptureResolution::try_from(value) {
+    Ok(proto::CaptureResolution::Unspecified | proto::CaptureResolution::Native) => Ok(auv_driver::CaptureResolution::Native),
+    Ok(proto::CaptureResolution::Logical) => Ok(auv_driver::CaptureResolution::Logical),
+    Err(_) => Err(Status::invalid_argument("resolution is not a known CaptureResolution")),
   }
 }
 

@@ -3,7 +3,7 @@ import type { AuvClient, AuvConnection, Device, RunnerClient, WindowClient } fro
 import type { ClickOptions, Point, Rect, ScrollDelta, ScrollObservation, WindowSelector } from '../script-api/api'
 import type { Backend, CapturedFrame, DisplayInfo, InputReceipt, NormalizedRect, RunOutcomeKind, ScrollUntilOutcome, ScrollUntilRequest, TextSearchResult, WindowInfo } from './types'
 
-import { AuvRemoteError, connect, createAuv, createHttpTransport, ImageEncoding, InputDeliveryPath, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
+import { AuvRemoteError, CaptureResolution, connect, createAuv, createHttpTransport, ImageEncoding, InputDeliveryPath, MouseButton, pairDevice, ScrollUntilStopReason } from '@auv-js/sdk'
 
 type CaptureResponse = Awaited<ReturnType<RunnerClient['displays']['capture']>>
 type NativeAction = Awaited<ReturnType<RunnerClient['input']['typeText']>>['action']
@@ -68,8 +68,9 @@ class AuvBackend implements Backend {
     return this.#runId
   }
 
-  async captureDisplay(displayId?: string): Promise<CapturedFrame> {
-    const response = await this.#runner.displays.capture(displayId ? { selector: { case: 'display', value: { displayId } } } : undefined)
+  async captureDisplay(displayId?: string, options?: { logical?: boolean }): Promise<CapturedFrame> {
+    const selector = displayId ? { selector: { case: 'display' as const, value: { displayId } } } : undefined
+    const response = await this.#runner.displays.capture(selector, options?.logical ? { resolution: CaptureResolution.LOGICAL } : undefined)
     return toFrame(response.capture, `display:${response.display?.displayId ?? displayId ?? 'primary'}`)
   }
 

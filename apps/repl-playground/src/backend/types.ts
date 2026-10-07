@@ -29,7 +29,12 @@ export interface Backend {
   activateApp: (bundleId: string) => Promise<InputReceipt>
   /** Opens a correlation scope for one script execution, when supported. */
   beginRun: () => Promise<string | undefined>
-  captureDisplay: (displayId?: string) => Promise<CapturedFrame>
+  /**
+   * `logical` captures one pixel per point: for display-only frames such as
+   * live mode, a quarter of a Retina capture. Script captures stay native so
+   * OCR reads full detail.
+   */
+  captureDisplay: (displayId?: string, options?: { logical?: boolean }) => Promise<CapturedFrame>
   /**
    * Encoded pixels of a capture, fit inside `maxSize` (never enlarged). The
    * only call that moves pixels; everything else passes `CapturedFrame.ref`.

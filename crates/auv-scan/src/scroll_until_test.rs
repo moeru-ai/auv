@@ -19,6 +19,9 @@ struct FakeList {
   text_row: Option<i64>,
   scrolls: u32,
   recognitions: u32,
+  /// Backing pixels per point for native captures.
+  scale: u32,
+  resolutions: Vec<CaptureResolution>,
 }
 
 impl FakeList {
@@ -33,6 +36,8 @@ impl FakeList {
       text_row: None,
       scrolls: 0,
       recognitions: 0,
+      scale: 1,
+      resolutions: Vec::new(),
     }
   }
 
@@ -62,10 +67,17 @@ impl ScrollUntilSurface for FakeList {
     Ok((action(), step.delta()))
   }
 
-  fn capture(&mut self) -> DriverResult<Capture> {
+  fn capture(&mut self, resolution: CaptureResolution) -> DriverResult<Capture> {
+    self.resolutions.push(resolution);
     let position = self.position;
-    let image = RgbaImage::from_fn(40, self.viewport as u32, |_, y| {
-      let value = (((position + i64::from(y)) * 37).rem_euclid(251)) as u8;
+    let scale = if resolution == CaptureResolution::Native {
+      self.scale
+    } else {
+      1
+    };
+    // Each logical row spans `scale` backing rows.
+    let image = RgbaImage::from_fn(40 * scale, self.viewport as u32 * scale, |_, y| {
+      let value = (((position + i64::from(y / scale)) * 37).rem_euclid(251)) as u8;
       Rgba([value, value.wrapping_mul(3), value.wrapping_add(90), 255])
     });
     Ok(Capture {
@@ -73,7 +85,7 @@ impl ScrollUntilSurface for FakeList {
       image,
       // A window at (100, 200) on screen, so text matches must be offset.
       bounds: Rect::new(100.0, 200.0, 40.0, self.viewport as f64),
-      scale_factor: 1.0,
+      scale_factor: f64::from(scale),
       backend: "fake".to_string(),
       fallback_reason: None,
     })
@@ -352,4 +364,40 @@ fn text_condition_still_recognizes_when_text_is_opted_out() {
   .unwrap();
   assert_eq!(result.reason, ScrollUntilStopReason::TextVisible);
   assert!(list.recognitions > 0);
+}
+
+#[test]
+fn motion_only_loops_capture_at_logical_resolution() {
+  let mut list = FakeList::new(260);
+  let mut end = request(ScrollUntilCondition::End);
+  end.observe = ScrollUntilObserve { text: false };
+  scroll_until(&mut list, &end, &mut |_| Ok(ScrollUntilDecision::Continue)).unwrap();
+  assert!(list.resolutions.iter().all(|resolution| *resolution == CaptureResolution::Logical), "{:?}", list.resolutions);
+
+  let mut list = FakeList::new(260);
+  scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |_| Ok(ScrollUntilDecision::Continue)).unwrap();
+  assert!(list.resolutions.iter().all(|resolution| *resolution == CaptureResolution::Native), "text needs native pixels");
+}
+
+#[test]
+fn retina_captures_detect_the_same_motion_as_one_x_captures() {
+  // ROOT CAUSE:
+  //
+  // If a window capture came back at 2x, motion was compared in backing
+  // pixels, so the ±24 px search policy validated on 1x captures covered only
+  // 12 points and a step's shift read as twice as large.
+  //
+  // The fix compares motion per logical point whatever the capture resolution.
+  let run = |scale: u32| {
+    let mut list = FakeList::new(260);
+    list.scale = scale;
+    let mut seen = Vec::new();
+    scroll_until(&mut list, &request(ScrollUntilCondition::End), &mut |observation| {
+      seen.push((observation.steps, observation.motion.map(|motion| (motion.estimated_shift, motion.no_motion))));
+      Ok(ScrollUntilDecision::Continue)
+    })
+    .unwrap();
+    seen
+  };
+  assert_eq!(run(2), run(1));
 }

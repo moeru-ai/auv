@@ -51,8 +51,8 @@ export class RecordingBackend implements Backend {
     return this.inner.beginRun()
   }
 
-  captureDisplay(displayId?: string): Promise<CapturedFrame> {
-    return this.#record('captureDisplay', [displayId], () => this.inner.captureDisplay(displayId))
+  captureDisplay(displayId?: string, options?: { logical?: boolean }): Promise<CapturedFrame> {
+    return this.#record('captureDisplay', [displayId, options], () => this.inner.captureDisplay(displayId, options))
   }
 
   async captureImage(frame: CapturedFrame, maxSize: { height: number, width: number }): Promise<Blob> {
@@ -163,8 +163,8 @@ export class ReplayBackend implements Backend {
     return undefined
   }
 
-  captureDisplay(displayId?: string): Promise<CapturedFrame> {
-    return this.#next('captureDisplay', [displayId])
+  captureDisplay(displayId?: string, options?: { logical?: boolean }): Promise<CapturedFrame> {
+    return this.#next('captureDisplay', [displayId, options])
   }
 
   async captureImage(frame: CapturedFrame): Promise<Blob> {

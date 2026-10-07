@@ -649,11 +649,21 @@ impl DisplaysClient {
     })
   }
 
-  /// Captures one selected or primary display.
+  /// Captures one selected or primary display at native resolution.
   pub async fn capture(&self, selector: Option<DisplaySelector>) -> Result<auv_driver::DisplayCapture<RunnerCapture>, CapabilityError> {
+    self.capture_with(selector, auv_driver::CaptureResolution::Native).await
+  }
+
+  /// Captures one selected or primary display at `resolution`.
+  pub async fn capture_with(
+    &self,
+    selector: Option<DisplaySelector>,
+    resolution: auv_driver::CaptureResolution,
+  ) -> Result<auv_driver::DisplayCapture<RunnerCapture>, CapabilityError> {
     let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
       .capture_display(proto::CaptureDisplayRequest {
         selector: selector.map(display_selector_to_proto),
+        resolution: capture_resolution_to_proto(resolution) as i32,
       })
       .await
       .map_err(capability_status)?
@@ -664,16 +674,27 @@ impl DisplaysClient {
     })
   }
 
-  /// Captures a screen-coordinate region on one display.
+  /// Captures a screen-coordinate region on one display at native resolution.
   pub async fn capture_region(
     &self,
     region: auv_driver::Rect,
     selector: Option<DisplaySelector>,
   ) -> Result<auv_driver::RegionCapture<RunnerCapture>, CapabilityError> {
+    self.capture_region_with(region, selector, auv_driver::CaptureResolution::Native).await
+  }
+
+  /// Captures a screen-coordinate region on one display at `resolution`.
+  pub async fn capture_region_with(
+    &self,
+    region: auv_driver::Rect,
+    selector: Option<DisplaySelector>,
+    resolution: auv_driver::CaptureResolution,
+  ) -> Result<auv_driver::RegionCapture<RunnerCapture>, CapabilityError> {
     let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
       .capture_region(proto::CaptureRegionRequest {
         region: Some(rect_to_proto(region)),
         selector: selector.map(display_selector_to_proto),
+        resolution: capture_resolution_to_proto(resolution) as i32,
       })
       .await
       .map_err(capability_status)?
@@ -810,11 +831,17 @@ impl WindowClient {
     &self.window.reference
   }
 
-  /// Captures the resolved window.
+  /// Captures the resolved window at native resolution.
   pub async fn capture(&self) -> Result<WindowCapture, CapabilityError> {
+    self.capture_with(auv_driver::CaptureResolution::Native).await
+  }
+
+  /// Captures the resolved window at `resolution`.
+  pub async fn capture_with(&self, resolution: auv_driver::CaptureResolution) -> Result<WindowCapture, CapabilityError> {
     let response = proto::capture_service_client::CaptureServiceClient::new(self.runner.transport()?)
       .capture_window(proto::CaptureWindowRequest {
         window: Some(self.window_ref.clone()),
+        resolution: capture_resolution_to_proto(resolution) as i32,
       })
       .await
       .map_err(capability_status)?
@@ -2335,6 +2362,13 @@ fn text_recognition_from_proto(response: proto::RecognizeTextResponse) -> Result
       })
       .collect::<Result<_, CapabilityError>>()?,
   })
+}
+
+fn capture_resolution_to_proto(resolution: auv_driver::CaptureResolution) -> proto::CaptureResolution {
+  match resolution {
+    auv_driver::CaptureResolution::Native => proto::CaptureResolution::Native,
+    auv_driver::CaptureResolution::Logical => proto::CaptureResolution::Logical,
+  }
 }
 
 fn position_from_proto(position: proto::Position) -> Result<auv_driver::Position, CapabilityError> {

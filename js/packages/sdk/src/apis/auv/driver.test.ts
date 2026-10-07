@@ -3,7 +3,7 @@ import type { UnaryCall } from '../../transport/types'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
 
-import { CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
+import { CaptureResolution, CaptureWindowRequestSchema, CaptureWindowResponseSchema, GetCaptureImageRequestSchema, GetCaptureImageResponseSchema } from '../../gen/auv/api/driver/v1/capture_pb'
 import { ListDisplaysResponseSchema } from '../../gen/auv/api/driver/v1/display_pb'
 import { ClickScreenPointRequestSchema, ClickScreenPointResponseSchema, ClickWindowPointRequestSchema, ClickWindowPointResponseSchema, CreateMouseResponseSchema, DragMouseRequestSchema, DragMouseResponseSchema, HoldKeysRequestSchema, HoldKeysResponseSchema, InputPolicy, KeyDownRequestSchema, KeyDownResponseSchema, KeyUpRequestSchema, KeyUpResponseSchema, MouseButton, MouseDownRequestSchema, MouseDownResponseSchema, MouseUpRequestSchema, MouseUpResponseSchema, ScrollDeliveryCandidate, ScrollUntilRequestSchema, ScrollUntilResponseSchema, ScrollUntilStopReason, ScrollWindowPointMotionRequestSchema, ScrollWindowPointMotionResponseSchema, ScrollWindowPointRequestSchema, ScrollWindowPointResponseSchema, StandardMotionTimingFunction, StreamScrollRequestSchema, StreamScrollResponseSchema } from '../../gen/auv/api/driver/v1/input_pb'
 import { RecognizeTextRequestSchema, RecognizeTextResponseSchema } from '../../gen/auv/api/driver/v1/text_recognition_pb'
@@ -497,6 +497,10 @@ describe('runner Driver control surface', () => {
     expect(resolve.selector?.application).toEqual({ case: 'applicationBundleId', value: 'com.example.App' })
     const captureRequest = fromBinary(CaptureWindowRequestSchema, calls[1]!.body)
     expect(captureRequest.window?.windowId).toBe('window-42')
+    expect(captureRequest.resolution, 'native by default').toBe(CaptureResolution.UNSPECIFIED)
+
+    await window.capture({ resolution: CaptureResolution.LOGICAL })
+    expect(fromBinary(CaptureWindowRequestSchema, calls[2]!.body).resolution).toBe(CaptureResolution.LOGICAL)
     expect(calls.every(call => call.headers.get('auv-runner-class') === 'auv.core.local')).toBe(true)
   })
 

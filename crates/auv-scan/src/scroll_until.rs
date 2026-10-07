@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use auv_driver::{Capture, DriverError, DriverResult, InputActionResult, RatioRect, Rect, Scroll, TextRecognition};
+use auv_driver::{Capture, CaptureResolution, DriverError, DriverResult, InputActionResult, RatioRect, Rect, Scroll, TextRecognition};
 use serde::{Deserialize, Serialize};
 
 use crate::viewport_pixels::{ScrollAxis, ViewportPixelMotion, ViewportPixelPolicy, compare_viewport_pixels, crop_ratio};
@@ -194,8 +194,9 @@ pub struct ScrollUntilResult {
 pub trait ScrollUntilSurface {
   /// Delivers one step and returns the delivery evidence and delivered delta.
   fn scroll(&mut self, step: &ScrollUntilStep) -> DriverResult<(InputActionResult, Scroll)>;
-  /// Captures the current window. One capture serves both motion and text.
-  fn capture(&mut self) -> DriverResult<Capture>;
+  /// Captures the current window at `resolution`. One capture serves both
+  /// motion and text.
+  fn capture(&mut self, resolution: CaptureResolution) -> DriverResult<Capture>;
   /// Recognizes text in the whole capture.
   fn recognize_text(&mut self, capture: &Capture) -> DriverResult<TextRecognition>;
   /// Waits between a step and its observation; returns an error if cancelled.
@@ -231,8 +232,14 @@ pub fn scroll_until(
     text_match: None,
     last_motion: None,
   };
-  let mut capture = surface.capture()?;
-  let mut previous = crop_ratio(&capture.image, request.motion_region);
+  // Text needs native pixels; motion alone needs only one pixel per point.
+  let resolution = if query.is_some() || request.observe.text {
+    CaptureResolution::Native
+  } else {
+    CaptureResolution::Logical
+  };
+  let mut capture = surface.capture(resolution)?;
+  let mut previous = motion_frame(&capture, request.motion_region);
   let mut no_motion_streak = 0;
   loop {
     let text = if query.is_some() || request.observe.text {
@@ -276,8 +283,8 @@ pub fn scroll_until(
     result.action.get_or_insert(action);
     surface.wait(request.settle)?;
 
-    capture = surface.capture()?;
-    let current = crop_ratio(&capture.image, request.motion_region);
+    capture = surface.capture(resolution)?;
+    let current = motion_frame(&capture, request.motion_region);
     let motion = compare_viewport_pixels(&previous, &current, axis, policy);
     previous = current;
     no_motion_streak = if motion.no_motion {
@@ -287,6 +294,21 @@ pub fn scroll_until(
     };
     result.last_motion = Some(motion);
   }
+}
+
+/// `capture` cropped to `region` at one pixel per point, for motion checks.
+///
+/// NOTICE(scroll-until-logical-motion): `ViewportPixelPolicy` defaults (±24 px
+/// search, stride 4) were validated on 1x captures, so motion is compared per
+/// logical point whatever resolution the capture was taken at.
+fn motion_frame(capture: &Capture, region: Option<RatioRect>) -> image::RgbaImage {
+  let crop = crop_ratio(&capture.image, region);
+  if !capture.scale_factor.is_finite() || capture.scale_factor <= 1.0 {
+    return crop;
+  }
+  let width = ((f64::from(crop.width()) / capture.scale_factor).round() as u32).max(1);
+  let height = ((f64::from(crop.height()) / capture.scale_factor).round() as u32).max(1);
+  image::imageops::thumbnail(&crop, width, height)
 }
 
 /// The first recognized line containing `query` (case-insensitive), in screen
@@ -344,8 +366,12 @@ impl ScrollUntilSurface for WindowScrollUntilSurface<'_> {
     }
   }
 
-  fn capture(&mut self) -> DriverResult<Capture> {
-    self.session.window().capture(&self.window)
+  fn capture(&mut self, resolution: CaptureResolution) -> DriverResult<Capture> {
+    let options = auv_driver::CaptureOptions {
+      resolution,
+      ..Default::default()
+    };
+    self.session.window().capture_with(&self.window, options)
   }
 
   fn recognize_text(&mut self, capture: &Capture) -> DriverResult<TextRecognition> {

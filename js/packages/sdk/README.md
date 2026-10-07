@@ -297,6 +297,11 @@ const thumbnail = await runner.captures.image(frame!, {
 const bitmap = await createImageBitmap(new Blob([thumbnail.data], { type: 'image/jpeg' }))
 ```
 
+Captures are taken at native resolution (2x on Retina). For frames you only
+display, or compare for motion, pass `{ resolution: CaptureResolution.LOGICAL }`
+to `capture()` / `captureRegion()`: one pixel per point, a quarter of the
+pixels.
+
 Encodings: `RGBA` (default, raw rows), `PNG`, `JPEG` (quality 85, smallest for
 photo-heavy screens) and `WEBP` (lossless, about JPEG's size for UI, exact
 pixels).

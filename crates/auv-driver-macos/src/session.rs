@@ -4,7 +4,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver_common::capture::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, RegionCapture};
 use auv_driver_common::display::{Display, ObservedDisplays};
 use auv_driver_common::error::{DriverError, DriverResult};
 use auv_driver_common::geometry::{CoordinateSpace, Point, Positional, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
@@ -185,7 +185,11 @@ impl DisplayApi<'_> {
     if let Activation::ActivateFirst { .. } = options.activation {
       return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
-    capture_display_xcap(options.display.as_deref())
+    let resolution = options.resolution;
+    capture_display_xcap(options.display.as_deref()).map(|captured| DisplayCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
@@ -196,7 +200,11 @@ impl DisplayApi<'_> {
       return Err(invalid_input("display.capture_region cannot activate an application without an application target"));
     }
     let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
-    capture_region_xcap(options.display.as_deref(), region)
+    let resolution = options.resolution;
+    capture_region_xcap(options.display.as_deref(), region).map(|captured| RegionCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 }
 
@@ -284,7 +292,7 @@ impl WindowApi<'_> {
       activate_app_for_window(window)?;
       thread::sleep(settle);
     }
-    capture_window(window)
+    capture_window(window, options.resolution)
   }
 
   pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
@@ -2048,7 +2056,7 @@ fn integral_positive_capture_dimension(name: &str, value: f64) -> DriverResult<u
 }
 
 #[cfg(target_os = "macos")]
-fn capture_window(window: &Window) -> DriverResult<Capture> {
+fn capture_window(window: &Window, resolution: CaptureResolution) -> DriverResult<Capture> {
   // Prefer the Swift FFI ScreenCaptureKit path for typed window capture.
   //
   // Why this path exists instead of shelling out to `screencapture` or using
@@ -2066,11 +2074,11 @@ fn capture_window(window: &Window) -> DriverResult<Capture> {
   // writes part of primitive execution, and gives us a place to expose native
   // permission/error details. `xcap` stays as a fallback while the new native
   // path is still being proven across app/window states.
-  match capture_window_swift(window) {
+  match capture_window_swift(window, resolution) {
     Ok(capture) => Ok(capture),
     Err(swift_error) => {
       let fallback_reason = swift_error.to_string();
-      capture_window_xcap(window, Some(fallback_reason.clone())).map_err(|xcap_error| {
+      capture_window_xcap(window, Some(fallback_reason.clone())).map(|capture| capture.at_resolution(resolution)).map_err(|xcap_error| {
         backend(format!(
           "native Swift window capture failed before xcap fallback: {fallback_reason}; xcap fallback also failed: {xcap_error}"
         ))
@@ -2080,13 +2088,13 @@ fn capture_window(window: &Window) -> DriverResult<Capture> {
 }
 
 #[cfg(target_os = "macos")]
-fn capture_window_swift(window: &Window) -> DriverResult<Capture> {
+fn capture_window_swift(window: &Window, resolution: CaptureResolution) -> DriverResult<Capture> {
   let native_window_id = window
     .reference
     .id
     .parse::<i64>()
     .map_err(|error| invalid_input(format!("window ref {} was not a native macOS window id: {error}", window.reference.id)))?;
-  let capture = crate::native::capture::capture_window_rgba(native_window_id).map_err(backend)?;
+  let capture = crate::native::capture::capture_window_rgba(native_window_id, resolution == CaptureResolution::Logical).map_err(backend)?;
   let width = u32::try_from(capture.image_width).map_err(|error| backend(format!("native capture returned invalid width: {error}")))?;
   let height = u32::try_from(capture.image_height).map_err(|error| backend(format!("native capture returned invalid height: {error}")))?;
   let image =
@@ -2138,7 +2146,7 @@ fn capture_window_xcap(window: &Window, fallback_reason: Option<String>) -> Driv
 }
 
 #[cfg(not(target_os = "macos"))]
-fn capture_window(_window: &Window) -> DriverResult<Capture> {
+fn capture_window(_window: &Window, _resolution: CaptureResolution) -> DriverResult<Capture> {
   Err(DriverError::unsupported("capture_window"))
 }
 

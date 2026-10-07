@@ -1345,6 +1345,13 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   `auv_scan::ScrollUntilObservation<C>` are generic over how the capture is
   held: `auv_driver::Capture` in process, `RunnerCapture` through the client.
   Physical image sizes are `auv_driver::PixelSize`; logical sizes are `Size`.
+- **Capture resolution** (`CaptureResolution`): captures default to `Native`,
+  the display's backing pixels (2x on Retina), for OCR and small detail.
+  `Logical` captures one pixel per point, for display and motion checks, and
+  reports `scale_factor` 1. macOS ScreenCaptureKit window captures take
+  `Logical` directly; other backends downscale a native capture by area
+  averaging. Motion comparison (`ViewportPixelPolicy`) always runs per
+  logical point.
 
 Design and evidence:
 `docs/ai/references/driver/2026-10-06-capture-references-and-positions-design.md`.

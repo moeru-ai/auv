@@ -10,12 +10,14 @@ pub struct NativeWindowCapture {
 }
 
 #[cfg(target_os = "macos")]
-pub fn capture_window_rgba(window_id: i64) -> AuvResult<NativeWindowCapture> {
-  decode_window_capture_response(capture_window_image(NativeWindowCaptureRequest { window_id }))
+/// Captures a window at its backing resolution, or at one pixel per point
+/// when `logical`.
+pub fn capture_window_rgba(window_id: i64, logical: bool) -> AuvResult<NativeWindowCapture> {
+  decode_window_capture_response(capture_window_image(NativeWindowCaptureRequest { window_id, logical }))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn capture_window_rgba(_window_id: i64) -> AuvResult<NativeWindowCapture> {
+pub fn capture_window_rgba(_window_id: i64, _logical: bool) -> AuvResult<NativeWindowCapture> {
   Err("macOS native window capture is unsupported on this target".to_string())
 }
 

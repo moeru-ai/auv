@@ -182,10 +182,10 @@ export class MockBackend implements Backend {
     return undefined
   }
 
-  async captureDisplay(displayId?: string): Promise<CapturedFrame> {
+  async captureDisplay(displayId?: string, options?: { logical?: boolean }): Promise<CapturedFrame> {
     const display = this.#display(displayId)
     await delay(40)
-    return this.#render(display.frame, display.scale, `display:${display.id}`)
+    return this.#render(display.frame, options?.logical ? 1 : display.scale, `display:${display.id}`)
   }
 
   async captureImage(frame: CapturedFrame, maxSize: { height: number, width: number }): Promise<Blob> {

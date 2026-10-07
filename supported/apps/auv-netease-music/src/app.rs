@@ -319,7 +319,10 @@ impl LiveViewProvider {
       .window()
       .resolve(Window::main_visible().owned_by(App::bundle(self.inputs.app_id.clone())))
       .map_err(|error| format!("live observation target window not found: {error}"))?;
-    let capture = session.window().capture(&window).map_err(|error| format!("live observation window capture failed: {error}"))?;
+    let capture = session
+      .window()
+      .capture_with(&window, crate::window_capture_options())
+      .map_err(|error| format!("live observation window capture failed: {error}"))?;
 
     let (screen, main) = if scope.screen || scope.main {
       let recognition = session

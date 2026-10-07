@@ -340,7 +340,10 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   };
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
 
-  let before_capture = session.window().capture(&window).map_err(|error| format!("initial playback capture failed: {error}"))?;
+  let before_capture = session
+    .window()
+    .capture_with(&window, crate::window_capture_options())
+    .map_err(|error| format!("initial playback capture failed: {error}"))?;
   crate::telemetry::capture_artifact("auv.netease.playback.before_capture", &before_capture);
   let before_recognition = session
     .vision()
@@ -412,7 +415,10 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     std::thread::sleep(std::time::Duration::from_millis(inputs.settle_ms));
   }
 
-  let mut after_capture = session.window().capture(&window).map_err(|error| format!("post-click detail capture failed: {error}"))?;
+  let mut after_capture = session
+    .window()
+    .capture_with(&window, crate::window_capture_options())
+    .map_err(|error| format!("post-click detail capture failed: {error}"))?;
   crate::telemetry::capture_artifact("auv.netease.playback.after_click_capture", &after_capture);
   let mut recognition = session
     .vision()
@@ -452,7 +458,10 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       std::thread::sleep(std::time::Duration::from_millis(inputs.settle_ms));
     }
 
-    after_capture = session.window().capture(&window).map_err(|error| format!("post-foreground-click detail capture failed: {error}"))?;
+    after_capture = session
+      .window()
+      .capture_with(&window, crate::window_capture_options())
+      .map_err(|error| format!("post-foreground-click detail capture failed: {error}"))?;
     crate::telemetry::capture_artifact("auv.netease.playback.after_foreground_click_capture", &after_capture);
     recognition = session
       .vision()

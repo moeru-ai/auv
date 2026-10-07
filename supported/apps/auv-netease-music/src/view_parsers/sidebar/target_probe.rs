@@ -391,7 +391,10 @@ pub(crate) fn capture_sidebar_target_probe(
   scroll_context: SidebarTargetProbeScrollContext,
   previous_sidebar_crop: &mut Option<RgbaImage>,
 ) -> Result<SidebarTargetProbeOutcome, String> {
-  let capture = session.window().capture(window).map_err(|error| format!("sidebar target probe capture failed: {error}"))?;
+  let capture = session
+    .window()
+    .capture_with(window, crate::window_capture_options())
+    .map_err(|error| format!("sidebar target probe capture failed: {error}"))?;
   let sidebar_ratio = crate::bounds_to_ratio(sidebar_bounds, &capture);
   let ocr_options = build_sidebar_target_probe_ocr_options(&inputs.ocr_options, target_label, query);
   let sidebar_recognition = session

@@ -269,7 +269,11 @@ impl<'a> SongListScanner<'a> {
 
   fn observe_page(&mut self, observation_index: usize) -> Result<SongListObservation, String> {
     auv_tracing::in_span!("auv.netease.song_list.observe", || {
-      let capture = self.session.window().capture(&self.window).map_err(|error| format!("song list capture failed: {error}"))?;
+      let capture = self
+        .session
+        .window()
+        .capture_with(&self.window, crate::window_capture_options())
+        .map_err(|error| format!("song list capture failed: {error}"))?;
       crate::telemetry::capture_artifact("auv.netease.song_list.capture", &capture);
       let recognition = self
         .session
@@ -296,7 +300,11 @@ impl<'a> SongListScanner<'a> {
   }
 
   fn capture_region_crop(&mut self) -> Result<RgbaImage, String> {
-    let capture = self.session.window().capture(&self.window).map_err(|error| format!("song list seek capture failed: {error}"))?;
+    let capture = self
+      .session
+      .window()
+      .capture_with(&self.window, crate::window_capture_options())
+      .map_err(|error| format!("song list seek capture failed: {error}"))?;
     Ok(crate::crop_image(&capture.image, self.region_bounds, capture.scale_factor))
   }
 

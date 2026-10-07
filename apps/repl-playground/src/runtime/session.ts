@@ -213,7 +213,7 @@ class ExecSession {
         return
       for (const display of displays) {
         try {
-          const frame = await backend.captureDisplay(display.id)
+          const frame = await backend.captureDisplay(display.id, { logical: true })
           const bitmap = await decodeBitmap(backend, frame)
           actions.setLiveFrame(display.id, { bitmap, bounds: frame.bounds, capturedAt: Date.now() })
         }
@@ -338,7 +338,7 @@ export async function activateBackend(backend: Backend | null): Promise<void> {
   usePlayground.setState({ displays })
   // One snapshot per display so the canvas is not empty before live mode.
   for (const display of displays) {
-    void backend.captureDisplay(display.id)
+    void backend.captureDisplay(display.id, { logical: true })
       .then(async frame => actions.setLiveFrame(display.id, { bitmap: await decodeBitmap(backend, frame), bounds: frame.bounds, capturedAt: Date.now() }))
       .catch(error => console.warn(`Initial capture failed for display ${display.id}`, error))
   }

@@ -20,12 +20,14 @@ func nativeStringVec(_ values: [String]) -> RustVec<RustString> {
   return vector
 }
 
+// One bulk copy into Rust; see NOTICE(swift-bridge-bulk-bytes) in binding.rs.
 func nativeByteVec(_ values: [UInt8]) -> RustVec<UInt8> {
-  let vector = RustVec<UInt8>()
-  for value in values {
-    vector.push(value: value)
+  values.withUnsafeBufferPointer { buffer in
+    guard let base = buffer.baseAddress else {
+      return RustVec<UInt8>()
+    }
+    return native_byte_vec_from_raw(base, UInt(buffer.count))
   }
-  return vector
 }
 
 func nativeSanitize(_ raw: String?) -> String {

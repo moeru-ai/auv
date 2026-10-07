@@ -299,6 +299,8 @@ pub(crate) mod ffi {
   #[swift_bridge(swift_repr = "struct")]
   struct NativeWindowCaptureRequest {
     window_id: i64,
+    /// One pixel per point instead of the backing scale.
+    logical: bool,
   }
 
   #[swift_bridge(swift_repr = "struct")]
@@ -491,4 +493,29 @@ pub(crate) mod ffi {
     fn restore_clipboard(snapshot_payload: String) -> NativeActionResponse;
     fn set_clipboard_text(text: String) -> NativeActionResponse;
   }
+
+  extern "Rust" {
+    // Copies `len` bytes at `bytes` into a Rust `Vec<u8>` in one call.
+    fn native_byte_vec_from_raw(bytes: *const u8, len: usize) -> Vec<u8>;
+  }
 }
+
+/// Bulk byte transfer from Swift: `RustVec<UInt8>` only offers per-element
+/// `push`, one FFI call per byte.
+///
+/// NOTICE(swift-bridge-bulk-bytes): pushing an 81 MB Retina window capture
+/// byte by byte took ~2.5 s of a ~4 s capture (release build, 2026-10-07).
+/// swift-bridge 0.1.59 generates no bulk constructor for `RustVec`; remove this
+/// once it does.
+fn native_byte_vec_from_raw(bytes: *const u8, len: usize) -> Vec<u8> {
+  if bytes.is_null() || len == 0 {
+    return Vec::new();
+  }
+  // SAFETY: Swift passes the base address and count of a live `[UInt8]`
+  // buffer (`withUnsafeBufferPointer`) that outlives this call.
+  unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec()
+}
+
+#[cfg(test)]
+#[path = "binding_test.rs"]
+mod tests;

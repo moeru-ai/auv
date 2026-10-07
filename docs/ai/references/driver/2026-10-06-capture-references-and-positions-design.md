@@ -211,6 +211,40 @@ Decisions:
   captures inside the store (capture-store preprocessing, not designed
   yet), not for evidence.
 
+## Capture resolution (measured 2026-10-07)
+
+macOS window captures used to come back at 1x on Retina displays. The
+ScreenCaptureKit path passed the window's frame in points as
+`SCStreamConfiguration.width/height`, which are output pixels. Display
+captures (xcap) were 2x. The two capture paths disagreed, and every OCR on a
+window read half the detail.
+
+Decision (owner, 2026-10-07): captures default to native resolution, and
+`CaptureResolution::Logical` is opt-in. Logical captures serve display-only
+frames (playground live mode) and motion-only scroll-until loops.
+
+Release-build window captures on a 6K display, three samples each:
+
+| Capture | Before | After |
+| --- | --- | --- |
+| Native (2x, ~81 MB RGBA) | 3.7–4.7 s | 0.28–0.36 s |
+| Logical (1x) | 1.2–1.5 s | 0.27–0.29 s |
+| Display native (xcap) | ~50 ms | ~50 ms |
+| Display logical (xcap + area-average downscale) | — | ~78 ms |
+
+Most of the old window-capture time was swift-bridge copying pixels into a
+`RustVec` one byte per FFI call. A bulk Rust constructor
+(`native_byte_vec_from_raw`, `NOTICE(swift-bridge-bulk-bytes)`) removed it.
+After that, native and logical window captures cost about the same.
+
+Consumers validated on 1x keep 1x:
+
+- NetEase flows request `Logical` (`NOTICE(netease-logical-captures)`) until
+  a native pass is validated live.
+- Scroll-until compares motion per logical point
+  (`NOTICE(scroll-until-logical-motion)`): `ViewportPixelPolicy` was tuned on
+  1x captures.
+
 ## Part B — Positions
 
 The domain already has the right model:

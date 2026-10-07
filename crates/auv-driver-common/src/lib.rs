@@ -23,7 +23,7 @@ pub use accessibility::{AxFocusResult, AxTextRead, AxTextSelector, FocusTextOpti
 pub use application::{
   ApplicationActivationResult, ApplicationActivationVerification, ProcessActivationResult, ProcessActivationVerification,
 };
-pub use capture::{Activation, Capture, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
+pub use capture::{Activation, Capture, CaptureOptions, CaptureResolution, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{

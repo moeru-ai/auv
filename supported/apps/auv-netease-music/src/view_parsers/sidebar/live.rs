@@ -96,7 +96,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
   let mut pre_scan_diagnostics = Vec::new();
   let mut pre_scan_known_limits = Vec::new();
 
-  let mut capture = match session.window().capture(&window) {
+  let mut capture = match session.window().capture_with(&window, crate::window_capture_options()) {
     Ok(capture) => capture,
     Err(error) => {
       return Ok(PlaylistSidebarScan::empty_with_diagnostic(
@@ -159,7 +159,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
       if inputs.scroll_settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
       }
-      capture = match session.window().capture(&window) {
+      capture = match session.window().capture_with(&window, crate::window_capture_options()) {
         Ok(capture) => capture,
         Err(error) => {
           return Ok(PlaylistSidebarScan::empty_with_diagnostic(
@@ -220,7 +220,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
     } = top_probe;
     session = probe_session;
 
-    capture = match session.window().capture(&window) {
+    capture = match session.window().capture_with(&window, crate::window_capture_options()) {
       Ok(capture) => capture,
       Err(error) => {
         return Ok(PlaylistSidebarScan::empty_with_diagnostic(
@@ -284,7 +284,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
         if inputs.scroll_settle_ms > 0 {
           std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
         }
-        capture = match session.window().capture(&window) {
+        capture = match session.window().capture_with(&window, crate::window_capture_options()) {
           Ok(capture) => capture,
           Err(error) => {
             return Ok(PlaylistSidebarScan::empty_with_diagnostic(
@@ -404,7 +404,7 @@ impl LiveSidebarObserver {
     &mut self,
     observation_index: usize,
   ) -> Result<(RgbaImage, f64, TextRecognition, SidebarViewportObservation), ParserDiagnostic> {
-    let capture = self.session.window().capture(&self.window).map_err(|error| ParserDiagnostic {
+    let capture = self.session.window().capture_with(&self.window, crate::window_capture_options()).map_err(|error| ParserDiagnostic {
       code: "window_capture_failed".to_string(),
       message: error.to_string(),
       node_id: None,
@@ -546,7 +546,7 @@ impl SidebarScanObserver for LiveSidebarObserver {
 
   fn observe_scroll_seek(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
     std::thread::sleep(std::time::Duration::from_millis(LIVE_FAST_SEEK_SAMPLE_INTERVAL_MS));
-    let capture = self.session.window().capture(&self.window).map_err(|error| ParserDiagnostic {
+    let capture = self.session.window().capture_with(&self.window, crate::window_capture_options()).map_err(|error| ParserDiagnostic {
       code: "window_capture_failed".to_string(),
       message: error.to_string(),
       node_id: None,

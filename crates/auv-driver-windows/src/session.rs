@@ -174,6 +174,17 @@ impl WindowApi<'_> {
     capture_window(window)
   }
 
+  /// [`Self::capture`] with options; only `resolution` applies on Windows.
+  pub fn capture_with(&self, window: &Window, options: CaptureOptions) -> DriverResult<Capture> {
+    if options.display.is_some() || options.region.is_some() || options.window.is_some() {
+      return Err(invalid_input("window.capture_with does not accept display, region, or nested window capture options"));
+    }
+    if let Activation::ActivateFirst { .. } = options.activation {
+      return Err(invalid_input("window.capture_with cannot activate Windows windows in this slice"));
+    }
+    capture_window(window).map(|capture| capture.at_resolution(options.resolution))
+  }
+
   /// Captures a single window's pixels via Windows.Graphics.Capture (WGC).
   pub fn capture_wgc(&self, window: &Window) -> DriverResult<Capture> {
     crate::wgc::capture_window_wgc(window)
@@ -625,7 +636,11 @@ impl DisplayApi<'_> {
     if let Activation::ActivateFirst { .. } = options.activation {
       return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
-    capture_display(options.display.as_deref())
+    let resolution = options.resolution;
+    capture_display(options.display.as_deref()).map(|captured| DisplayCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 
   /// Captures a target display via Windows.Graphics.Capture (WGC).
@@ -641,7 +656,11 @@ impl DisplayApi<'_> {
       return Err(invalid_input("display.capture_region cannot activate an application without an application target"));
     }
     let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
-    capture_region(options.display.as_deref(), region)
+    let resolution = options.resolution;
+    capture_region(options.display.as_deref(), region).map(|captured| RegionCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 }
 

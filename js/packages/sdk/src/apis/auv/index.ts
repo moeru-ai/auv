@@ -1,5 +1,7 @@
 // Driver enums callers pass or read; without them clients mirror raw numbers.
 export { PermissionStatus } from '../../gen/auv/api/driver/macos/v1/permission_pb'
+export { CaptureResolution } from '../../gen/auv/api/driver/v1/capture_pb'
+
 export {
   DisturbanceLevel,
   InputDeliveryPath,
@@ -12,7 +14,6 @@ export {
   TextSubmit,
   WindowClickStrategy,
 } from '../../gen/auv/api/driver/v1/input_pb'
-
 export { BuiltInCursor, Easing } from '../../gen/auv/api/driver/v1/overlay_pb'
 export { ImageEncoding } from '../../gen/auv/api/image/v1/image_pb'
 export { createAuv } from './client'
@@ -30,6 +31,7 @@ export { createRunnerClient } from './driver'
 export type {
   CaptureImage,
   CaptureImageOptions,
+  CaptureOptions,
   CaptureTarget,
   FindDisplayTextOptions,
   FindWindowTextOptions,

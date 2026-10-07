@@ -139,7 +139,11 @@ impl DisplayApi<'_> {
     if let Activation::ActivateFirst { .. } = options.activation {
       return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
-    capture_display(&self.session.state, options.display.as_deref())
+    let resolution = options.resolution;
+    capture_display(&self.session.state, options.display.as_deref()).map(|captured| DisplayCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
@@ -151,7 +155,11 @@ impl DisplayApi<'_> {
       return Err(invalid_input("display.capture_region cannot activate an application without an application target"));
     }
     let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
-    capture_region(&self.session.state, options.display.as_deref(), region)
+    let resolution = options.resolution;
+    capture_region(&self.session.state, options.display.as_deref(), region).map(|captured| RegionCapture {
+      capture: captured.capture.at_resolution(resolution),
+      ..captured
+    })
   }
 }
 
@@ -177,7 +185,7 @@ impl WindowApi<'_> {
     if let Activation::ActivateFirst { .. } = options.activation {
       return Err(invalid_input("window.capture_with cannot activate Linux Wayland windows in this slice"));
     }
-    capture_window(&self.session.state, window)
+    capture_window(&self.session.state, window).map(|capture| capture.at_resolution(options.resolution))
   }
 
   pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {

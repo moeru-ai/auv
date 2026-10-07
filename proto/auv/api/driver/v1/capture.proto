@@ -91,12 +91,24 @@ message GetCaptureImageResponse {
   auv.api.image.v1.EncodedImage image = 3;
 }
 
+// The pixel resolution a capture is taken at.
+enum CaptureResolution {
+  // Native.
+  CAPTURE_RESOLUTION_UNSPECIFIED = 0;
+  // The display's backing pixels (2x on Retina). For OCR and small detail.
+  CAPTURE_RESOLUTION_NATIVE = 1;
+  // One pixel per logical point. For display and motion checks: a quarter of
+  // a Retina capture's pixels, and the image lines up with logical bounds.
+  CAPTURE_RESOLUTION_LOGICAL = 2;
+}
+
 message CaptureWindowRequest {
   reserved 1;
   reserved "lease";
   // A resolved child-resource reference. Selector convenience belongs in the
   // hierarchical client, which resolves once before entering this child API.
   WindowRef window = 2;
+  CaptureResolution resolution = 3;
 }
 
 message CaptureWindowResponse {
@@ -109,6 +121,7 @@ message CaptureDisplayRequest {
   reserved "lease";
   // Absence selects the primary display.
   DisplaySelector selector = 2;
+  CaptureResolution resolution = 3;
 }
 
 message CaptureDisplayResponse {
@@ -122,6 +135,7 @@ message CaptureRegionRequest {
   ScreenRect region = 2;
   // Absence resolves the Display containing the requested screen region.
   DisplaySelector selector = 3;
+  CaptureResolution resolution = 4;
 }
 
 message CaptureRegionResponse {

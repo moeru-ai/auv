@@ -21,7 +21,7 @@ private func emptyWindowCaptureResponse(
 func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse {
   var capturedImage: CGImage?
   var captureError: Error?
-  let status = nativeCaptureWindowForAuv(windowID: UInt32(max(request.window_id, 0))) { image, error in
+  let status = nativeCaptureWindowForAuv(windowID: UInt32(max(request.window_id, 0)), logical: request.logical) { image, error in
     capturedImage = image
     captureError = error
   }
@@ -60,6 +60,7 @@ func capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCa
 
 private func nativeCaptureWindowForAuv(
   windowID: UInt32,
+  logical: Bool,
   completion: @escaping (CGImage?, Error?) -> Void
 ) -> DispatchTimeoutResult {
   let semaphore = DispatchSemaphore(value: 0)
@@ -92,8 +93,15 @@ private func nativeCaptureWindowForAuv(
 
     let filter = SCContentFilter(desktopIndependentWindow: window)
     let config = SCStreamConfiguration()
-    config.width = max(1, Int(window.frame.width.rounded()))
-    config.height = max(1, Int(window.frame.height.rounded()))
+    // NOTICE(window-capture-pixel-scale): SCStreamConfiguration.width/height
+    // are output pixels, while SCWindow.frame is in points. Passing points
+    // captured Retina windows at 1x while display captures were 2x (measured
+    // 2026-10-07). `pointPixelScale` (macOS 14+) is the backing scale of the
+    // filtered content; see
+    // https://developer.apple.com/documentation/screencapturekit/scshareablecontentinfo.
+    let scale = logical ? 1.0 : CGFloat(SCShareableContent.info(for: filter).pointPixelScale)
+    config.width = max(1, Int((window.frame.width * scale).rounded()))
+    config.height = max(1, Int((window.frame.height * scale).rounded()))
     config.pixelFormat = kCVPixelFormatType_32BGRA
     config.colorSpaceName = CGColorSpace.sRGB
     config.showsCursor = false

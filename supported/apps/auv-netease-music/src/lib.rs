@@ -10,6 +10,20 @@ pub mod output;
 pub mod runner;
 pub mod scroll;
 mod telemetry;
+
+/// Window capture options for NetEase flows.
+///
+/// NOTICE(netease-logical-captures): NetEase OCR crops, motion thresholds and
+/// layout constants were validated on 1x window captures, because macOS
+/// ScreenCaptureKit window captures came back at 1x until 2026-10-07. Window
+/// captures now default to native (2x) resolution; NetEase keeps 1x until a
+/// native-resolution pass is validated live.
+pub(crate) fn window_capture_options() -> auv_driver::CaptureOptions {
+  auv_driver::CaptureOptions {
+    resolution: auv_driver::CaptureResolution::Logical,
+    ..Default::default()
+  }
+}
 pub mod view_parsers;
 pub mod views;
 pub mod windows;
