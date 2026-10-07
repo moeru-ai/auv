@@ -31,7 +31,7 @@ use auv_driver_windows::playback_guard::{
   DEFAULT_PLAY_POLL_TIMEOUT, DEFAULT_TARGET_VOLUME, DEFAULT_VOLUME_TOLERANCE, Step2Options, execute_step2_real_with_prestate,
 };
 use auv_driver_windows::track_identity::{TrackChangeVerdict, TrackIdentity, evaluate_track_change};
-use auv_driver_windows::wgc::{capture_window_health, capture_window_wgc, prewarm_wgc, prewarm_wgc_window};
+use auv_driver_windows::wgc::{capture_window_health, capture_window_wgc, prewarm_wgc, prewarm_wgc_window, reset_d3d_context};
 use auv_driver_windows::window::list_windows;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -998,18 +998,6 @@ fn compute_stats(mut vals: Vec<f64>) -> (f64, f64, f64) {
 
 fn main() {
   ensure_input_desktop();
-  let mut wgc_init_dur = prewarm_wgc().unwrap_or(Duration::ZERO);
-  if let Ok(windows) = list_windows()
-    && let Some(w) = windows.into_iter().find(|win| {
-      win.app_name.as_deref() == Some("QQMusic.exe")
-        || win.app_name.as_deref() == Some("QQMusic")
-        || win.title.as_deref().map(|t| t.contains("QQ音乐")).unwrap_or(false)
-    })
-    && let Ok(win_dur) = prewarm_wgc_window(&w)
-  {
-    wgc_init_dur += win_dur;
-  }
-  let wgc_init_ms = wgc_init_dur.as_secs_f64() * 1000.0;
 
   let args: Vec<String> = env::args().collect();
   let mut replays_count = 20usize;
@@ -1064,6 +1052,26 @@ fn main() {
     }
     i += 1;
   }
+
+  // Prewarm only for prewarmed experimental groups (e.g. warm "verified" and "fast" modes).
+  // "baseline" mode and "--cold" single-run must measure the cold path without caching D3D context or WGC session.
+  let mut wgc_init_dur = Duration::ZERO;
+  if mode == "baseline" || is_single_cold_mode {
+    reset_d3d_context();
+  } else {
+    wgc_init_dur += prewarm_wgc().unwrap_or(Duration::ZERO);
+    if let Ok(windows) = list_windows()
+      && let Some(w) = windows.into_iter().find(|win| {
+        win.app_name.as_deref() == Some("QQMusic.exe")
+          || win.app_name.as_deref() == Some("QQMusic")
+          || win.title.as_deref().map(|t| t.contains("QQ音乐")).unwrap_or(false)
+      })
+      && let Ok(win_dur) = prewarm_wgc_window(&w)
+    {
+      wgc_init_dur += win_dur;
+    }
+  }
+  let wgc_init_ms = wgc_init_dur.as_secs_f64() * 1000.0;
 
   let final_output = output_file.unwrap_or_else(|| match mode.as_str() {
     "baseline" => "docs/ai/references/driver/2026-10-04-windows-hotpath-baseline-20x.jsonl".to_string(),

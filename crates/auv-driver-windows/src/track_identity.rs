@@ -212,14 +212,19 @@ impl From<&crate::media::NowPlayingState> for TrackIdentity {
 /// Returns `(verdict, level)` where:
 /// - If `curr.level() == Indeterminate`: returns `(Indeterminate, Indeterminate)`.
 /// - If `prev.is_empty()`: returns `(Changed, curr.level())`.
-/// - If `curr` matches `prev` across normalized title and artist:
-///   - If both have distinct non-empty album titles and they differ: returns `(Changed, curr.level())`.
+/// - Compares only fields that are non-empty in BOTH snapshots (missing fields cannot serve
+///   as conflict evidence; e.g. an earlier TitleOnly snapshot followed by a Partial snapshot
+///   with identical title and now-populated artist must not be misjudged as a track change).
+/// - If any mutually non-empty field differs (e.g. title, artist, album_title, album_artist):
+///   returns `(Changed, curr.level())`.
+/// - If no fields can be compared (no shared non-empty fields):
+///   returns `(Indeterminate, curr.level())`.
+/// - If all mutually non-empty fields match:
 ///   - If `has_position_reset` is true (an explicit disambiguation signal such as playback
 ///     position reset or track id change): returns `(Changed, curr.level())`.
 ///   - If `has_position_reset` is false: returns `(Indeterminate, curr.level())`. Specifically for
-///     skip verification, a repeated track with no disambiguation signal must return `Indeterminate`
+///     skip verification, repeated or unconfirmed tracks with no disambiguation signal must return `Indeterminate`
 ///     (`confirmed: false`, never forced success).
-/// - If `curr` has a different title or different artist: returns `(Changed, curr.level())`.
 pub fn evaluate_track_change(
   prev: &TrackIdentity,
   curr: &TrackIdentity,
@@ -237,24 +242,49 @@ pub fn evaluate_track_change(
   let prev_norm = prev.normalized();
   let curr_norm = curr.normalized();
 
-  let title_matches = prev_norm.title == curr_norm.title;
-  let artist_matches = prev_norm.artist == curr_norm.artist;
+  let mut compared_count = 0;
+  let mut has_conflict = false;
 
-  if title_matches && artist_matches {
-    // If both specify album titles and they are distinct, it is a different release/album of the track.
-    if !prev_norm.album_title.is_empty() && !curr_norm.album_title.is_empty() && prev_norm.album_title != curr_norm.album_title {
-      return (TrackChangeVerdict::Changed, curr_level);
+  if !prev_norm.title.is_empty() && !curr_norm.title.is_empty() {
+    compared_count += 1;
+    if prev_norm.title != curr_norm.title {
+      has_conflict = true;
     }
+  }
 
-    // Repeated track (same title, same artist, no album discrepancy).
-    if has_position_reset {
-      (TrackChangeVerdict::Changed, curr_level)
-    } else {
-      (TrackChangeVerdict::Indeterminate, curr_level)
+  if !prev_norm.artist.is_empty() && !curr_norm.artist.is_empty() {
+    compared_count += 1;
+    if prev_norm.artist != curr_norm.artist {
+      has_conflict = true;
     }
-  } else {
-    // Either title is different or artist is different.
+  }
+
+  if !prev_norm.album_title.is_empty() && !curr_norm.album_title.is_empty() {
+    compared_count += 1;
+    if prev_norm.album_title != curr_norm.album_title {
+      has_conflict = true;
+    }
+  }
+
+  if !prev_norm.album_artist.is_empty() && !curr_norm.album_artist.is_empty() {
+    compared_count += 1;
+    if prev_norm.album_artist != curr_norm.album_artist {
+      has_conflict = true;
+    }
+  }
+
+  if has_conflict {
+    return (TrackChangeVerdict::Changed, curr_level);
+  }
+
+  if compared_count == 0 {
+    return (TrackChangeVerdict::Indeterminate, curr_level);
+  }
+
+  if has_position_reset {
     (TrackChangeVerdict::Changed, curr_level)
+  } else {
+    (TrackChangeVerdict::Indeterminate, curr_level)
   }
 }
 
@@ -468,5 +498,53 @@ mod tests {
     assert_eq!(id.album_title, "Collection");
     assert_eq!(id.album_artist, "Singer");
     assert_eq!(id.level(), TrackIdentityLevel::Full);
+  }
+
+  #[test]
+  fn test_incomplete_metadata_handling() {
+    // Regression test for P2 issue:
+    // Missing metadata in one snapshot must not be treated as a conflict.
+    // E.g. prev is TitleOnly ("晴天"), curr is Partial ("晴天", "周杰伦").
+    let prev_title_only = TrackIdentity::title_only("晴天");
+    let curr_with_artist = TrackIdentity::new("晴天", "周杰伦", "", "");
+
+    // Without position reset: should be Indeterminate (same track, newly completed artist metadata)
+    let (v1, l1) = evaluate_track_change(&prev_title_only, &curr_with_artist, false);
+    assert_eq!(v1, TrackChangeVerdict::Indeterminate);
+    assert_eq!(l1, TrackIdentityLevel::Partial);
+
+    // With position reset: should be Changed
+    let (v2, l2) = evaluate_track_change(&prev_title_only, &curr_with_artist, true);
+    assert_eq!(v2, TrackChangeVerdict::Changed);
+    assert_eq!(l2, TrackIdentityLevel::Partial);
+
+    // Reverse: prev has artist, curr lost artist (e.g. transient query degradation)
+    let (v3, l3) = evaluate_track_change(&curr_with_artist, &prev_title_only, false);
+    assert_eq!(v3, TrackChangeVerdict::Indeterminate);
+    assert_eq!(l3, TrackIdentityLevel::TitleOnly);
+
+    // Partial ("晴天", "周杰伦") -> Full ("晴天", "周杰伦", "叶惠美") without reset -> Indeterminate
+    let full = TrackIdentity::new("晴天", "周杰伦", "叶惠美", "");
+    let (v4, l4) = evaluate_track_change(&curr_with_artist, &full, false);
+    assert_eq!(v4, TrackChangeVerdict::Indeterminate);
+    assert_eq!(l4, TrackIdentityLevel::Full);
+
+    // Different title with incomplete metadata -> Changed
+    let diff_title_with_artist = TrackIdentity::new("七里香", "周杰伦", "", "");
+    let (v5, l5) = evaluate_track_change(&prev_title_only, &diff_title_with_artist, false);
+    assert_eq!(v5, TrackChangeVerdict::Changed);
+    assert_eq!(l5, TrackIdentityLevel::Partial);
+
+    // Conflicting artist where both are present -> Changed
+    let diff_artist = TrackIdentity::new("晴天", "翻唱歌手", "", "");
+    let (v6, l6) = evaluate_track_change(&curr_with_artist, &diff_artist, false);
+    assert_eq!(v6, TrackChangeVerdict::Changed);
+    assert_eq!(l6, TrackIdentityLevel::Partial);
+
+    // Zero shared non-empty fields: prev has only artist, curr has only title -> Indeterminate
+    let prev_artist_only = TrackIdentity::new("", "周杰伦", "", "");
+    let (v7, l7) = evaluate_track_change(&prev_artist_only, &prev_title_only, false);
+    assert_eq!(v7, TrackChangeVerdict::Indeterminate);
+    assert_eq!(l7, TrackIdentityLevel::TitleOnly);
   }
 }

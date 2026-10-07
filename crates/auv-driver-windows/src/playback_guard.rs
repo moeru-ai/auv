@@ -45,10 +45,12 @@ impl Step2Plan {
   /// Evaluates pre-state against target volume and tolerance.
   ///
   /// - `need_set_volume` is true if `|current_volume - target_volume| > tolerance`.
-  /// - `need_play` is true if `current_status != MediaPlaybackStatus::Playing`.
+  /// - `need_play` is true when playback is paused/stopped/closed.
+  ///   A `Changing` session is already transitioning, so it must be observed
+  ///   until it reaches `Playing` without dispatching a second `Play` command.
   pub fn evaluate(current_volume: f32, current_status: MediaPlaybackStatus, target_volume: f32, tolerance: f32) -> Self {
     let need_set_volume = (current_volume - target_volume).abs() > (tolerance + FLOAT_TOLERANCE_EPSILON);
-    let need_play = current_status != MediaPlaybackStatus::Playing;
+    let need_play = !matches!(current_status, MediaPlaybackStatus::Playing | MediaPlaybackStatus::Changing);
     Self {
       need_set_volume,
       need_play,
@@ -196,8 +198,9 @@ impl Step2Executor {
       (pre_volume, true)
     };
 
-    let (final_status, status_ok) = if plan.need_play {
-      if self.options.fire_and_forget_play {
+    let need_verify_play = plan.need_play || (pre_status == MediaPlaybackStatus::Changing && !self.options.fire_and_forget_play);
+    let (final_status, status_ok) = if need_verify_play {
+      if self.options.fire_and_forget_play && plan.need_play {
         (pre_status, true)
       } else {
         let st = sink.wait_for_playing(self.options.play_poll_timeout)?;
@@ -395,6 +398,46 @@ mod tests {
 
     assert_eq!(sink.counts.set_volume_calls, 0);
     assert_eq!(sink.counts.play_calls, 1);
+  }
+
+  #[test]
+  fn test_changing_waits_without_replaying() {
+    struct ChangingSink {
+      status: MediaPlaybackStatus,
+      counts: Step2CommandCounts,
+    }
+
+    impl PlaybackActionSink for ChangingSink {
+      fn get_volume(&self) -> DriverResult<f32> {
+        Ok(0.40)
+      }
+      fn set_volume(&mut self, _volume: f32) -> DriverResult<()> {
+        self.counts.set_volume_calls += 1;
+        Ok(())
+      }
+      fn get_playback_status(&self) -> DriverResult<MediaPlaybackStatus> {
+        Ok(self.status)
+      }
+      fn play(&mut self) -> DriverResult<()> {
+        self.counts.play_calls += 1;
+        self.status = MediaPlaybackStatus::Playing;
+        Ok(())
+      }
+      fn wait_for_playing(&self, _timeout: Duration) -> DriverResult<MediaPlaybackStatus> {
+        Ok(MediaPlaybackStatus::Playing)
+      }
+    }
+
+    let mut sink = ChangingSink {
+      status: MediaPlaybackStatus::Changing,
+      counts: Step2CommandCounts::default(),
+    };
+    let result = Step2Executor::default().execute_guarded(&mut sink).expect("changing playback should be verifiable");
+
+    assert_eq!(result.command_counts.play_calls, 0);
+    assert!(result.skipped_play_write);
+    assert!(result.gate_passed);
+    assert_eq!(result.final_status, MediaPlaybackStatus::Playing);
   }
 
   #[test]
