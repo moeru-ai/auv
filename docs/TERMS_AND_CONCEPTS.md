@@ -1325,6 +1325,10 @@ Across the Runner API, a capture frame stays in the Runner that produced it
   byte budget (512 MiB, `AUV_CAPTURE_STORE_BUDGET_MIB`) and captures unused for
   ten minutes (`AUV_CAPTURE_STORE_IDLE_SECONDS`). An evicted, expired or
   unknown reference fails with `NOT_FOUND`; the caller captures again.
+  Identical captures (pixels and metadata) share storage; OCR results and
+  fetched images are cached on the pixels; pixels idle for 30 s are packed
+  losslessly (QOI). Over budget, the store drops cached results first, then
+  packs, then evicts.
 - **Image regions.** OCR, find-text and image fetches take `region` (fractions
   of the image) or `screen_region` (a logical screen rectangle, clipped to the
   image; exclusive with `region`). OCR result bounds are screen rectangles on

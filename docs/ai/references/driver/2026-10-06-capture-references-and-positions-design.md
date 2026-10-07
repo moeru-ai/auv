@@ -249,6 +249,36 @@ Consumers validated on 1x keep 1x:
   (`NOTICE(scroll-until-logical-motion)`): `ViewportPixelPolicy` was tuned on
   1x captures.
 
+## Capture store preprocessing (2026-10-07)
+
+Captures held by reference let the Runner reuse work on them
+(`crates/auv-cli/src/runner/capture_store.rs`):
+
+- **Dedupe.** Identical captures (blake3 of pixels and metadata) share one
+  blob. This covers polling an unchanged window: `waitForText`, and the steps
+  at the end of a scroll-until loop.
+- **Derived caches** on the blob:
+  - OCR results, keyed by region, custom words and languages;
+  - `GetCaptureImage` results, keyed by region, max size and encoding. Raw
+    unresized RGBA is not cached, because it would duplicate the pixels.
+- **Cold packing.** Blobs idle for 30 s are packed losslessly as QOI (3-14 ms
+  for a Retina window) and unpacked on the next read.
+- **Budget order.** Drop derived caches, then pack the least recently used hot
+  blobs, then evict the least recently used captures.
+
+Release build on a 6K display, read-only:
+
+| Call | First | Repeated |
+| --- | --- | --- |
+| OCR on half the display | 3231 ms | 1 ms |
+| JPEG thumbnail (1440×900) | 59 ms | 1 ms |
+
+Deferred, with markers in code:
+
+- `TODO(capture-store-find-text-seed)`: find-text does not seed the OCR cache.
+- `TODO(capture-store-prepared-images)`: images are encoded on first fetch,
+  not prepared at capture time.
+
 ## Part B — Positions
 
 The domain already has the right model:

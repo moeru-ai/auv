@@ -1368,3 +1368,47 @@ fn screen_regions_map_into_the_image_and_clip_to_it() {
   .unwrap_err();
   assert!(both.message().contains("exclusive"), "{}", both.message());
 }
+
+#[tokio::test]
+async fn fetched_images_are_cached_on_the_capture_except_raw_pixels() {
+  use auv_api_proto::auv::api::image::v1 as image_proto;
+  let captures = test_capture_store();
+  let id = captures.insert(gradient_capture(10, 4));
+  let service = LocalCaptureService {
+    session: auv_driver::open_local().unwrap(),
+    captures: captures.clone(),
+  };
+  let request = |encoding: image_proto::ImageEncoding, max_size: Option<image_proto::PixelSize>| {
+    Request::new(proto::GetCaptureImageRequest {
+      capture: Some(proto::CaptureRef {
+        capture_id: id.clone(),
+      }),
+      region: None,
+      screen_region: None,
+      max_size,
+      encoding: encoding as i32,
+    })
+  };
+
+  let thumbnail = service
+    .get_capture_image(request(
+      image_proto::ImageEncoding::Jpeg,
+      Some(image_proto::PixelSize {
+        width: 5,
+        height: 5,
+      }),
+    ))
+    .await
+    .unwrap()
+    .into_inner();
+  let cached = captures
+    .image(&id, &ImageKey::new(RegionKey::new(None, None), Some((5, 5)), image_proto::ImageEncoding::Jpeg as i32))
+    .expect("cached JPEG");
+  assert_eq!(Some(cached.as_ref()), thumbnail.image.as_ref());
+
+  service.get_capture_image(request(image_proto::ImageEncoding::Rgba, None)).await.unwrap();
+  assert!(
+    captures.image(&id, &ImageKey::new(RegionKey::new(None, None), None, image_proto::ImageEncoding::Rgba as i32)).is_none(),
+    "raw pixels are not cached a second time"
+  );
+}

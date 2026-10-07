@@ -21,7 +21,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
-use super::capture_store::{CaptureStore, CaptureStoreOptions};
+use super::capture_store::{CaptureStore, CaptureStoreOptions, ImageKey, RecognitionKey, RegionKey};
 
 use auv_driver::{Driver as _, WindowInput as _};
 
@@ -1945,9 +1945,26 @@ fn input_action_to_proto(action: auv_driver::InputActionResult) -> Result<proto:
 impl TextRecognitionService for LocalTextRecognitionService {
   async fn recognize_text(&self, request: Request<proto::RecognizeTextRequest>) -> Result<Response<proto::RecognizeTextResponse>, Status> {
     let request = request.into_inner();
-    let capture = match request.source {
-      Some(proto::recognize_text_request::Source::CaptureRef(reference)) => stored_capture(&self.captures, reference)?,
-      Some(proto::recognize_text_request::Source::Image(frame)) => std::sync::Arc::new(image_frame_from_proto(frame)?),
+    // Results for a held capture are cached on its pixels: OCR is the costly
+    // step, and agents often read the same capture again with the same region.
+    // TODO(capture-store-find-text-seed): FindWindowText/FindDisplayText run a
+    // full recognition on the capture they store but do not seed this cache;
+    // the drivers expose only find-text there. Seed it once a shared
+    // recognition -> matches helper replaces the per-platform copies.
+    let cache_key = RecognitionKey::new(
+      RegionKey::new(request.region.as_ref(), request.screen_region.as_ref()),
+      &request.custom_words,
+      &request.recognition_languages,
+    );
+    let (capture, cached_as) = match request.source {
+      Some(proto::recognize_text_request::Source::CaptureRef(reference)) => {
+        if let Some(cached) = self.captures.recognition(&reference.capture_id, &cache_key) {
+          return Ok(Response::new(recognition_to_proto(auv_driver::TextRecognition::clone(&cached))));
+        }
+        let id = reference.capture_id.clone();
+        (stored_capture(&self.captures, reference)?, Some(id))
+      }
+      Some(proto::recognize_text_request::Source::Image(frame)) => (std::sync::Arc::new(image_frame_from_proto(frame)?), None),
       None => return Err(Status::invalid_argument("capture_ref or image is required")),
     };
     let region = image_region_from_proto(request.region, request.screen_region, capture.bounds)?;
@@ -1956,6 +1973,9 @@ impl TextRecognitionService for LocalTextRecognitionService {
       .vision()
       .recognize_text_in_capture_with_options(&capture, region, recognition_options(request.custom_words, request.recognition_languages))
       .map_err(driver_status)?;
+    if let Some(id) = cached_as {
+      self.captures.remember_recognition(&id, cache_key, recognition.clone());
+    }
     Ok(Response::new(recognition_to_proto(recognition)))
   }
 
@@ -2240,16 +2260,37 @@ impl CaptureService for LocalCaptureService {
     &self,
     request: Request<proto::GetCaptureImageRequest>,
   ) -> Result<Response<proto::GetCaptureImageResponse>, Status> {
+    use auv_api_proto::auv::api::image::v1::ImageEncoding;
     let request = request.into_inner();
-    let capture = stored_capture(&self.captures, request.capture.ok_or_else(|| Status::invalid_argument("capture is required"))?)?;
+    let reference = request.capture.ok_or_else(|| Status::invalid_argument("capture is required"))?;
+    let encoding =
+      ImageEncoding::try_from(request.encoding).map_err(|_| Status::invalid_argument("encoding is not a known ImageEncoding"))?;
+    // Encoded and resized images are cached on the capture's pixels, keyed by
+    // the region as requested. Raw RGBA is not: unresized it would duplicate
+    // the pixels themselves.
+    let max_size = request.max_size.filter(|size| size.width > 0 && size.height > 0);
+    let cacheable = !matches!(encoding, ImageEncoding::Unspecified | ImageEncoding::Rgba) || max_size.is_some();
+    let cache_key = ImageKey::new(
+      RegionKey::new(request.region.as_ref(), request.screen_region.as_ref()),
+      max_size.map(|size| (size.width, size.height)),
+      encoding as i32,
+    );
+    if cacheable && let Some(cached) = self.captures.image(&reference.capture_id, &cache_key) {
+      return Ok(Response::new(proto::GetCaptureImageResponse {
+        image: Some(auv_api_proto::auv::api::image::v1::EncodedImage::clone(&cached)),
+      }));
+    }
+    let id = reference.capture_id.clone();
+    let capture = stored_capture(&self.captures, reference)?;
     let region = image_region_from_proto(request.region, request.screen_region, capture.bounds)?;
-    let encoding = auv_api_proto::auv::api::image::v1::ImageEncoding::try_from(request.encoding)
-      .map_err(|_| Status::invalid_argument("encoding is not a known ImageEncoding"))?;
     // Encoding a Retina capture takes long enough to stall the current-thread
     // Runner runtime, so it runs on the blocking pool.
-    let response = tokio::task::spawn_blocking(move || capture_image_to_proto(&capture, region, request.max_size, encoding))
+    let response = tokio::task::spawn_blocking(move || capture_image_to_proto(&capture, region, max_size, encoding))
       .await
       .map_err(|error| Status::internal(format!("capture image task failed: {error}")))??;
+    if cacheable && let Some(image) = &response.image {
+      self.captures.remember_image(&id, cache_key, image.clone());
+    }
     Ok(Response::new(response))
   }
 

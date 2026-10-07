@@ -512,6 +512,7 @@ dependencies = [
  "auv-scan",
  "auv-tracing",
  "axum",
+ "blake3",
  "clap",
  "futures-core",
  "image",
