@@ -198,7 +198,10 @@ fn motion_delivers_exact_total_and_pins_the_first_selected_path() {
     .scroll_motion(
       &test_window(),
       WindowPoint::new(10.0, 20.0),
-      &motion(Scroll::new(0.0, 240.0), 50, TimingFunction::EaseOutCubic, 200),
+      // NOTICE(scroll-motion-test-timing): late samples are coalesced, so a
+      // 50 ms motion became one call when a loaded CI runner stalled. 500 ms
+      // keeps several calls unless the runner stalls for the whole motion.
+      &motion(Scroll::new(0.0, 240.0), 500, TimingFunction::EaseOutCubic, 200),
       ScrollOptions::default(),
       &mut |update| progress.push(update),
     )
@@ -235,7 +238,8 @@ fn failed_later_sample_reports_partial_delivery() {
     .scroll_motion(
       &test_window(),
       WindowPoint::new(10.0, 20.0),
-      &motion(Scroll::new(0.0, 120.0), 50, TimingFunction::Linear, 200),
+      // See NOTICE(scroll-motion-test-timing): the failure needs a second call.
+      &motion(Scroll::new(0.0, 120.0), 500, TimingFunction::Linear, 200),
       ScrollOptions::default(),
       &mut |_| {},
     )
