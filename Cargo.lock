@@ -500,6 +500,7 @@ dependencies = [
  "auv-api-client",
  "auv-api-proto",
  "auv-api-server",
+ "auv-auto-loop",
  "auv-cli-common",
  "auv-cli-invoke",
  "auv-core",
@@ -508,6 +509,7 @@ dependencies = [
  "auv-device-helper-windows",
  "auv-driver",
  "auv-driver-macos",
+ "auv-driver-windows",
  "auv-media-macos",
  "auv-scan",
  "auv-tracing",
@@ -810,6 +812,7 @@ dependencies = [
 name = "auv-driver-windows"
 version = "0.0.31"
 dependencies = [
+ "auv-auto-loop",
  "auv-driver-common",
  "auv-driver-overlay",
  "image",

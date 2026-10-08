@@ -19,8 +19,9 @@ pub mod scheduler;
 pub use compiler::AutoCompiler;
 pub use decision_log::DecisionLogger;
 pub use models::{
-  CompilationMetadata, DecisionAction, DecisionCategory, DecisionLog, ManualReviewItem, OperationDef, OperationStepDef, ParameterDef,
-  PersistedIsolationRecord, PreconditionDef, ReasonCode, TargetMetadata, TrajectoryRecord, TrajectoryStep, VerificationGateDef,
+  CompilationMetadata, DecisionAction, DecisionCategory, DecisionLog, ExecutionMode, ManualReviewItem, OPERATION_SCHEMA_VERSION,
+  OperationDef, OperationStepDef, ParameterDef, PersistedIsolationRecord, PreconditionDef, ReasonCode, TargetMetadata, TrajectoryRecord,
+  TrajectoryStep, VerificationGateDef,
 };
-pub use runtime::{ExecutionResult, RuntimeEnvironment, RuntimeExecutor};
+pub use runtime::{ExecutionResult, FakeOperationExecutor, OperationExecutor, RuntimeEnvironment, RuntimeExecutor};
 pub use scheduler::{FastLoopScheduler, OperationCatalog, SchedulingOutcome, TaskRequest};

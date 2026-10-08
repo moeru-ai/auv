@@ -254,6 +254,34 @@ pub struct OperationStepDef {
   pub is_unverified: bool,
 }
 
+// NOTICE(serde-json-arbitrary-precision): when serde_json enables arbitrary_precision,
+// Serde's internally tagged enum buffer stores numbers as internal maps {"$serde_json::private::Number": ...},
+// causing standard f32/f64 deserialization to fail with "invalid type: map, expected f32/f64".
+// These helper functions deserialize via serde_json::Value to correctly decode numbers under arbitrary_precision.
+fn deserialize_f32<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+  D: serde::Deserializer<'de>,
+{
+  let val = serde_json::Value::deserialize(deserializer)?;
+  match val {
+    serde_json::Value::Number(n) => n.as_f64().map(|f| f as f32).ok_or_else(|| serde::de::Error::custom("failed to parse number as f32")),
+    serde_json::Value::String(s) => s.parse::<f32>().map_err(|e| serde::de::Error::custom(format!("invalid f32 string: {e}"))),
+    other => Err(serde::de::Error::custom(format!("expected number, got {other:?}"))),
+  }
+}
+
+fn deserialize_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+  D: serde::Deserializer<'de>,
+{
+  let val = serde_json::Value::deserialize(deserializer)?;
+  match val {
+    serde_json::Value::Number(n) => n.as_f64().ok_or_else(|| serde::de::Error::custom("failed to parse number as f64")),
+    serde_json::Value::String(s) => s.parse::<f64>().map_err(|e| serde::de::Error::custom(format!("invalid f64 string: {e}"))),
+    other => Err(serde::de::Error::custom(format!("expected number, got {other:?}"))),
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum VerificationGateDef {
@@ -265,7 +293,9 @@ pub enum VerificationGateDef {
   #[serde(rename = "status_and_volume_gate")]
   StatusAndVolumeGate {
     expected_status: String,
+    #[serde(deserialize_with = "deserialize_f32")]
     expected_volume: f32,
+    #[serde(deserialize_with = "deserialize_f32")]
     volume_tolerance: f32,
     timeout_ms: u64,
     escalate_on_mismatch: String,
@@ -278,6 +308,7 @@ pub enum VerificationGateDef {
   },
   #[serde(rename = "wgc_alive_gate")]
   WgcAliveGate {
+    #[serde(deserialize_with = "deserialize_f64")]
     min_non_black_ratio: f64,
     timeout_ms: u64,
     escalate_on_mismatch: String,

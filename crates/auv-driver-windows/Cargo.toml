@@ -32,6 +32,7 @@ name = "spike-verify-experiments"
 path = "src/bin/spike_verify_experiments/main.rs"
 
 [dependencies]
+auv-auto-loop = { version = "0.0.31", path = "../auv-auto-loop" }
 auv-driver-common = { version = "0.0.31", path = "../auv-driver-common" }
 auv-driver-overlay = { version = "0.0.31", path = "../auv-driver-overlay", features = ["windows"], optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }

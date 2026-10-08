@@ -9,6 +9,7 @@ use crate::commands::devices::DevicesArgs;
 use crate::commands::doctor::DoctorArgs;
 use crate::commands::invoke::InvokeArgs;
 use crate::commands::mcp::McpArgs;
+use crate::commands::op::OpArgs;
 use crate::commands::plugin::PluginArgs;
 use crate::commands::run::RunArgs;
 use crate::commands::runner::RunnerArgs;
@@ -72,6 +73,8 @@ enum RootCommand {
   Run(RunArgs),
   /// Expose core AUV capabilities through MCP.
   Mcp(McpArgs),
+  /// Run compiled mode-aware operations.
+  Op(OpArgs),
   /// Inspect external auv-* command plugins visible on PATH.
   Plugin(PluginArgs),
   #[command(external_subcommand)]
@@ -149,6 +152,7 @@ async fn run_os(arguments: Vec<OsString>) -> Result<i32, String> {
     Some(RootCommand::Runner(args)) => crate::commands::runner::run(args, &selection).await,
     Some(RootCommand::Run(args)) => crate::commands::run::run(args, &selection).await,
     Some(RootCommand::Mcp(args)) => crate::commands::mcp::run(args, &project_root).await,
+    Some(RootCommand::Op(args)) => crate::commands::op::run(args).await,
     Some(RootCommand::Plugin(args)) => crate::commands::plugin::run(args).await,
     Some(RootCommand::External(mut arguments)) => {
       let command_name = arguments.remove(0);

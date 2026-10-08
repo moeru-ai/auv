@@ -22,6 +22,7 @@ pub mod mutation;
 pub mod ocr;
 pub mod permission;
 pub mod playback_guard;
+pub mod production_executor;
 mod readiness;
 mod session;
 pub mod track_identity;
@@ -47,6 +48,7 @@ pub use playback_guard::{
   DEFAULT_PLAY_POLL_TIMEOUT, DEFAULT_TARGET_VOLUME, DEFAULT_VOLUME_TOLERANCE, MockPlaybackSink, PlaybackActionSink, RealPlaybackSink,
   Step2CommandCounts, Step2Executor, Step2Options, Step2Plan, Step2Result, execute_step2_real, execute_step2_real_with_prestate,
 };
+pub use production_executor::{DiscoveryTimings, WindowsOperationContext, WindowsProductionExecutor};
 pub use readiness::assess_readiness;
 pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
 pub use track_identity::{

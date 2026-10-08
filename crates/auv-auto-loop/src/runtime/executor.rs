@@ -9,6 +9,7 @@
 use crate::decision_log::DecisionLogger;
 use crate::models::{DecisionAction, DecisionCategory, ExecutionMode, ManualReviewItem, OperationDef, ReasonCode, VerificationGateDef};
 use crate::scheduler::catalog::OperationCatalog;
+use crate::scheduler::matcher::TaskRequest;
 use chrono::Utc;
 use std::collections::HashMap;
 
@@ -92,6 +93,11 @@ impl ExecutionResult {
       _ => None,
     }
   }
+}
+
+/// Trait for executing a compiled operation against a runtime or driver environment.
+pub trait OperationExecutor: Send + Sync {
+  fn execute(&self, op: &OperationDef, request: &TaskRequest) -> ExecutionResult;
 }
 
 pub struct RuntimeExecutor<'a> {

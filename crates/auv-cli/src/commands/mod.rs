@@ -5,6 +5,7 @@ pub mod devices;
 pub mod doctor;
 pub mod invoke;
 pub mod mcp;
+pub mod op;
 pub mod plugin;
 pub mod run;
 pub mod runner;
