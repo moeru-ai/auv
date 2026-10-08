@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# Create or delete an ephemeral HAMi DRA X11 desktop. stdout is JSON.
+# NOTICE: OSWorld setup, reset and evaluation need a separately approved provider.
+set -euo pipefail
+
+usage() {
+  cat <<'HELP'
+Usage: create-on-k8s [--kubeconfig FILE] [--context NAME] create --node NODE [OPTIONS]
+       create-on-k8s [--kubeconfig FILE] [--context NAME] delete RECEIPT.json
+
+Create options:
+  --namespace NAME     Existing namespace (default: default)
+  --image IMAGE        Compatible Selkies EGL desktop image (default: pinned digest)
+  --device-class NAME  HAMi DeviceClass (default: hami-core-gpu.project-hami.io)
+  --gpu-cores N        HAMi cores, 1..100 (default: 25)
+  --gpu-memory SIZE    GPU memory capacity (default: 4Gi)
+  --timeout SECONDS    Startup deadline (default: 900)
+
+Requires Bash 3.2+, jq and kubectl. Uses KUBECONFIG/current context by default.
+Progress goes to stderr. A successful create prints the JSON receipt to stdout.
+HELP
+}
+fail() { printf 'create-on-k8s: %s\n' "$*" >&2; exit 1; }
+
+kube=(kubectl --request-timeout=30s)
+context=''
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --kubeconfig|--context)
+      [[ $# -ge 2 && -n $2 ]] || fail "$1 requires a value"
+      if [[ $1 == --context ]]; then context=$2; else kube+=(--kubeconfig "$2"); fi
+      shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) break ;;
+  esac
+done
+[[ $# -gt 0 ]] || { usage >&2; exit 1; }
+action=$1; shift
+namespace=default
+node=''
+image='ghcr.io/selkies-project/selkies-egl-desktop@sha256:2240baf54d6ebfbbbd8c15b9311cb90e90db9f05fe30eaf77b08eea0b09b77a7'
+device_class=hami-core-gpu.project-hami.io
+gpu_cores=25
+gpu_memory=4Gi
+startup_timeout=900
+receipt=''
+case $action in
+  create)
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        -h|--help) usage; exit 0 ;;
+        --node|--namespace|--image|--device-class|--gpu-cores|--gpu-memory|--timeout)
+          [[ $# -ge 2 && -n $2 ]] || fail "$1 requires a value"
+          case $1 in
+            --node) node=$2 ;; --namespace) namespace=$2 ;; --image) image=$2 ;;
+            --device-class) device_class=$2 ;; --gpu-cores) gpu_cores=$2 ;;
+            --gpu-memory) gpu_memory=$2 ;; --timeout) startup_timeout=$2 ;;
+          esac
+          shift 2 ;;
+        *) fail "Unknown create option: $1" ;;
+      esac
+    done
+    [[ -n $node ]] || fail '--node is required'
+    [[ $gpu_cores =~ ^([1-9][0-9]?|100)$ ]] || fail '--gpu-cores must be 1..100'
+    [[ $startup_timeout =~ ^[1-9][0-9]{0,8}$ ]] || fail '--timeout must be a positive integer (at most 9 digits)' ;;
+  delete)
+    if [[ ${1:-} == --help || ${1:-} == -h ]]; then usage; exit 0; fi
+    [[ $# -eq 1 ]] || fail 'delete requires one JSON receipt'
+    receipt=$1 ;;
+  *) fail "Unknown command: $action" ;;
+esac
+for dependency in jq kubectl; do
+  command -v "$dependency" >/dev/null || fail "Missing dependency: $dependency"
+done
+[[ -n $context ]] || context=$("${kube[@]}" config current-context)
+kube+=(--context "$context")
+umask 077
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/auv-desktop.XXXXXXXX")
+uid=''
+name=''
+complete=false
+
+# Use a server-side UID precondition. Never delete a replacement Pod by name.
+delete_pod() {
+  local path
+  path=$(jq -nr --arg ns "$namespace" --arg pod "$name" \
+    '"/api/v1/namespaces/\($ns|@uri)/pods/\($pod|@uri)"')
+  jq -n --arg uid "$uid" '{apiVersion:"v1",kind:"DeleteOptions",
+    preconditions:{uid:$uid},propagationPolicy:"Foreground"}' > "$tmp/delete.json"
+  if ! "${kube[@]}" delete --raw "$path" -f "$tmp/delete.json" > "$tmp/delete.out" 2> "$tmp/delete.err"; then
+    if grep -q '(NotFound)' "$tmp/delete.err"; then return 0; fi
+    cat "$tmp/delete.err" >&2
+    return 1
+  fi
+  # Allow normal termination plus DRA release and dependent garbage collection.
+  "${kube[@]}" -n "$namespace" wait --for=delete "pod/$name" --timeout=90s >&2
+}
+
+# EXIT also covers jq/kubectl errors. Signals enter the same cleanup path.
+# shellcheck disable=SC2329 # Called by the EXIT trap.
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ $action == create && $complete == false && -n $uid ]]; then
+    "${kube[@]}" -n "$namespace" describe pod "$name" >&2 || true
+    "${kube[@]}" -n "$namespace" logs "$name" --tail=60 >&2 || true
+    if ! delete_pod; then
+      printf 'Cleanup failed for %s/%s, UID %s\n' "$namespace" "$name" "$uid" >&2
+    fi
+  fi
+  rm -r -- "$tmp"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ $action == delete ]]; then
+  jq -e 'type == "object" and ([.context,.namespace,.pod,.uid] |
+    all(.[]; type == "string" and length > 0))' "$receipt" >/dev/null || fail 'Invalid receipt'
+  [[ $(jq -r .context "$receipt") == "$context" ]] || fail 'Receipt context differs from selected context'
+  namespace=$(jq -r .namespace "$receipt")
+  name=$(jq -r .pod "$receipt")
+  uid=$(jq -r .uid "$receipt")
+  delete_pod
+  jq -n --arg pod "$name" --arg uid "$uid" '{deleted:$pod,uid:$uid}'
+  exit 0
+fi
+
+# Read random bytes directly. Passwords never enter command arguments or receipts.
+name="auv-desktop-$(od -An -N5 -tx1 /dev/urandom | tr -d ' \n')"
+od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$tmp/password"
+jq -n --arg name "$name" --arg ns "$namespace" \
+  '{name:$name,namespace:$ns,labels:{"app.kubernetes.io/managed-by":"auv-k8s-desktop"}}' > "$tmp/meta.json"
+jq -n --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" '
+  $meta[0].name as $name | {apiVersion:"v1",kind:"Pod",metadata:$meta[0],spec:{
+    automountServiceAccountToken:false,restartPolicy:"Never",
+    nodeSelector:{"kubernetes.io/hostname":$node},
+    resourceClaims:[{name:"gpu",resourceClaimName:$name}],
+    containers:[{name:"desktop",image:$image,env:[
+      {name:"SELKIES_WAYLAND",value:"false"},{name:"SELKIES_MODE",value:"websockets"},
+      {name:"SELKIES_ENABLE_BASIC_AUTH",value:"true"},{name:"NVIDIA_DRIVER_CAPABILITIES",value:"all"},
+      {name:"DISPLAY",value:":20"},
+      {name:"PASSWD",valueFrom:{secretKeyRef:{name:$name,key:"password"}}}],
+      resources:{claims:[{name:"gpu",request:"gpu"}],
+        requests:{cpu:"1",memory:"2Gi"},limits:{cpu:"8",memory:"16Gi"}},
+      volumeMounts:[{name:"shm",mountPath:"/dev/shm"}]}],
+    volumes:[{name:"shm",emptyDir:{medium:"Memory",sizeLimit:"2Gi"}}]}}' > "$tmp/pod.json"
+printf 'Creating %s/%s on %s\n' "$namespace" "$name" "$node" >&2
+# Create the Pod first: its UID owns the Secret and claim. Kubernetes waits for both.
+"${kube[@]}" -n "$namespace" create -f "$tmp/pod.json" -o json > "$tmp/created.json"
+uid=$(jq -er '.metadata.uid | select(type == "string" and length > 0)' "$tmp/created.json")
+printf 'Pod UID: %s\n' "$uid" >&2
+jq --arg uid "$uid" '. + {ownerReferences:[{apiVersion:"v1",kind:"Pod",
+  name:.name,uid:$uid,blockOwnerDeletion:true}]}' "$tmp/meta.json" > "$tmp/owned.json"
+jq -n --slurpfile meta "$tmp/owned.json" --rawfile password "$tmp/password" \
+  '{apiVersion:"v1",kind:"Secret",metadata:$meta[0],type:"Opaque",stringData:{password:$password}}' > "$tmp/secret.json"
+"${kube[@]}" -n "$namespace" create -f "$tmp/secret.json" -o name >&2
+jq -n --slurpfile meta "$tmp/owned.json" --arg class "$device_class" \
+  --arg cores "$gpu_cores" --arg memory "$gpu_memory" '
+  {apiVersion:"resource.k8s.io/v1",kind:"ResourceClaim",metadata:$meta[0],spec:{devices:{requests:[
+    {name:"gpu",exactly:{deviceClassName:$class,allocationMode:"ExactCount",count:1,
+      capacity:{requests:{cores:$cores,memory:$memory}}}}]}}}' > "$tmp/claim.json"
+"${kube[@]}" -n "$namespace" create -f "$tmp/claim.json" -o name >&2
+
+probe=$(cat <<'PROBE'
+set -eu
+if [ ! -r /tmp/runtime-ubuntu/container-env ]; then
+  echo 'WAIT: desktop session environment'; exit 0
+fi
+. /tmp/runtime-ubuntu/container-env
+export DISPLAY=:20
+if ! pgrep -x plasmashell >/dev/null; then
+  echo 'WAIT: Plasma session'; exit 0
+fi
+if ! timeout 10 xdpyinfo >/dev/null 2>&1; then
+  echo 'WAIT: X11 display'; exit 0
+fi
+timeout 15 glxinfo -B
+PROBE
+)
+deadline=$((SECONDS + startup_timeout))
+last='Waiting for scheduling and image pull'
+reported=''
+report_time=$SECONDS
+while (( SECONDS < deadline )); do
+  "${kube[@]}" -n "$namespace" get pod "$name" -o json > "$tmp/state.json"
+  phase=$(jq -r '.status.phase // "Pending"' "$tmp/state.json")
+  case $phase in Failed|Succeeded) fail "Desktop exited: $phase" ;; esac
+  if [[ $phase == Running ]]; then
+    if "${kube[@]}" -n "$namespace" exec "$name" -c desktop -- bash -c "$probe" > "$tmp/probe.out" 2> "$tmp/probe.err"; then
+      output=$(cat "$tmp/probe.out")
+      if [[ $output == 'WAIT: '* ]]; then
+        last="Waiting for ${output#WAIT: }"
+      else
+        renderer=$(jq -Rrs 'split("\n") | map(select(startswith("OpenGL renderer string:"))) |
+          (.[0] // "") | sub("^OpenGL renderer string:\\s*"; "") | sub("\\s+$"; "")' "$tmp/probe.out")
+        [[ -n $renderer ]] || fail 'GLX did not report a renderer'
+        if ! jq -en --arg renderer "$renderer" --rawfile output "$tmp/probe.out" '
+          ($renderer | test("nvidia";"i")) and
+          ($renderer | test("llvmpipe|softpipe|swrast|software";"i") | not) and
+          ($output | test("Accelerated:\\s*no";"i") | not)' >/dev/null; then
+          fail "GPU rendering not verified: $renderer"
+        fi
+        jq -n --arg context "$context" --arg ns "$namespace" --arg pod "$name" \
+          --arg uid "$uid" --slurpfile state "$tmp/state.json" --arg renderer "$renderer" --arg image "$image" \
+          '{context:$context,namespace:$ns,pod:$pod,uid:$uid,node:$state[0].spec.nodeName,
+            display:":20",gpu_rendering_verified:true,renderer:$renderer,image:$image,
+            password_secret:$pod,desktop_port:8080}'
+        complete=true
+        printf 'Desktop ready: %s/%s; GPU: %s\n' "$namespace" "$name" "$renderer" >&2
+        exit 0
+      fi
+    else
+      last=$(cat "$tmp/probe.err")
+      last=${last:-Waiting for X11 and Plasma}
+    fi
+  else
+    waiting=$(jq -r '[.status.containerStatuses[]?.state.waiting? | select(. != null) |
+      (.reason // "") + ": " + (.message // "")] | join("; ")' "$tmp/state.json")
+    [[ -z $waiting ]] || last=$waiting
+  fi
+  if [[ $last != "$reported" ]] || (( SECONDS - report_time >= 30 )); then
+    printf '%s\n' "$last" >&2
+    reported=$last; report_time=$SECONDS
+  fi
+  sleep 5
+done
+fail "Timed out after ${startup_timeout}s: $last"

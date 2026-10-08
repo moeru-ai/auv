@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Exercise the public CLI with a fake kubectl process. No cluster is required.
+set -euo pipefail
+script=$(cd "$(dirname "$0")/.." && pwd)/create-on-k8s
+suite=$(mktemp -d "${TMPDIR:-/tmp}/auv-desktop-tests.XXXXXXXX")
+trap 'rm -r -- "$suite"' EXIT
+mkdir "$suite/bin"
+export PATH="$suite/bin:$PATH"
+cat > "$suite/bin/kubectl" <<'KUBE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$CASE_DIR/calls"
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --request-timeout=*) shift ;; --context|--kubeconfig|-n) shift 2 ;; *) break ;;
+  esac
+done
+case $1 in
+  config) echo test-context ;;
+  create)
+    body=$3
+    kind=$(jq -r .kind "$body")
+    cp "$body" "$CASE_DIR/$kind.json"
+    if [[ $kind == ResourceClaim && $SCENARIO == claim-failure ]]; then echo 'claim rejected' >&2; exit 1; fi
+    if [[ $kind == Pod ]]; then jq '.metadata.uid="original-uid"' "$body"; else echo "$kind/created"; fi ;;
+  get)
+    if [[ $SCENARIO == timeout ]]; then echo '{"status":{"phase":"Pending"}}'
+    else echo '{"status":{"phase":"Running"},"spec":{"nodeName":"gpu"}}'; fi ;;
+  exec)
+    case $SCENARIO in
+      interrupted) kill -TERM "$PPID"; exit 1 ;;
+      software) echo 'OpenGL renderer string: llvmpipe (LLVM 20)' ;;
+      not-accelerated) printf 'OpenGL renderer string: NVIDIA GPU\nAccelerated: no\n' ;;
+      missing-renderer) echo 'NVIDIA-SMI 610.57.04' ;;
+      *)
+        if [[ ! -f $CASE_DIR/probed ]]; then
+          touch "$CASE_DIR/probed"; echo 'WAIT: desktop session environment'
+        else printf 'Accelerated: yes\nOpenGL renderer string: NVIDIA GeForce RTX 3090\n'; fi ;;
+    esac ;;
+  delete)
+    cp "$5" "$CASE_DIR/delete.json"
+    if [[ $SCENARIO == conflict ]]; then echo 'Error from server (Conflict): UID mismatch' >&2; exit 1; fi
+    if [[ $SCENARIO == not-found ]]; then echo 'Error from server (NotFound): gone' >&2; exit 1; fi
+    echo '{}' ;;
+  wait) echo 'pod deleted' ;;
+  describe|logs) echo 'diagnostic output' ;;
+  *) echo "Unexpected fake kubectl command: $*" >&2; exit 2 ;;
+esac
+KUBE
+cat > "$suite/bin/sleep" <<'SLEEP'
+#!/usr/bin/env bash
+# Keep the timeout test real, while other startup retries run immediately.
+if [[ $SCENARIO == timeout ]]; then /bin/sleep 1; fi
+SLEEP
+chmod +x "$suite/bin/kubectl" "$suite/bin/sleep"
+
+new_case() {
+  export SCENARIO=$1 CASE_DIR="$suite/$1"
+  mkdir "$CASE_DIR"
+}
+run_create() {
+  local deadline=30
+  [[ $SCENARIO != timeout ]] || deadline=1
+  "$BASH" "$script" create --node gpu --namespace test --timeout "$deadline" > "$CASE_DIR/result" 2> "$CASE_DIR/log"
+}
+assert_cleaned() {
+  jq -e '.preconditions.uid == "original-uid" and .propagationPolicy == "Foreground"' "$CASE_DIR/delete.json" >/dev/null
+  [[ ! -s $CASE_DIR/result ]]
+}
+
+new_case success
+if ! run_create; then cat "$CASE_DIR/log" >&2; exit 1; fi
+jq -e '.gpu_rendering_verified and .renderer == "NVIDIA GeForce RTX 3090" and .uid == "original-uid"' "$CASE_DIR/result" >/dev/null
+jq -e '.spec.containers[0].env | map(select(.name == "PASSWD")) | .[0] |
+  has("value") == false and .valueFrom.secretKeyRef.key == "password"' "$CASE_DIR/Pod.json" >/dev/null
+jq -e '.metadata.ownerReferences[0].uid == "original-uid"' "$CASE_DIR/Secret.json" >/dev/null
+jq -e '.metadata.ownerReferences[0].uid == "original-uid"' "$CASE_DIR/ResourceClaim.json" >/dev/null
+grep -q 'Waiting for desktop session environment' "$CASE_DIR/log"
+grep -q 'Desktop ready:' "$CASE_DIR/log"
+[[ ! -f $CASE_DIR/delete.json ]]
+receipt="$CASE_DIR/result"
+echo 'PASS: create waits for desktop, returns JSON, and owns dependent resources'
+
+for scenario in software not-accelerated missing-renderer claim-failure timeout interrupted; do
+  new_case "$scenario"
+  if run_create; then echo "Unexpected success: $scenario" >&2; exit 1; fi
+  assert_cleaned
+  echo "PASS: $scenario fails without a receipt and cleans the original UID"
+done
+
+for scenario in delete-success conflict not-found; do
+  new_case "$scenario"
+  if "$BASH" "$script" delete "$receipt" > "$CASE_DIR/result" 2> "$CASE_DIR/log"; then
+    [[ $scenario != conflict ]]
+    jq -e '.uid == "original-uid" and (.deleted | startswith("auv-desktop-"))' "$CASE_DIR/result" >/dev/null
+  else
+    [[ $scenario == conflict ]]
+    [[ ! -s $CASE_DIR/result ]]
+    if grep -q ' wait ' "$CASE_DIR/calls"; then exit 1; fi
+  fi
+  jq -e '.preconditions.uid == "original-uid"' "$CASE_DIR/delete.json" >/dev/null
+  echo "PASS: $scenario uses a server-side UID precondition"
+done
+
+new_case wrong-context
+if "$BASH" "$script" --context other delete "$receipt" > "$CASE_DIR/result" 2> "$CASE_DIR/log"; then exit 1; fi
+[[ ! -f $CASE_DIR/delete.json ]]
+echo 'PASS: wrong context cannot delete a Pod'
+
+# ROOT CAUSE: Pod Running precedes creation of the desktop session file.
+# Run the actual embedded probe against a missing file, not a copied probe.
+probe=$(awk '/^probe=/ {copy=1; next} /^PROBE$/ {copy=0} copy' "$script")
+[[ -n $probe ]]
+probe=${probe//\/tmp\/runtime-ubuntu\/container-env/$suite/missing}
+bash -c "$probe" > "$suite/probe.out" 2> "$suite/probe.err"
+[[ $(cat "$suite/probe.out") == 'WAIT: desktop session environment' && ! -s $suite/probe.err ]]
+echo 'PASS: missing session file produces progress without shell errors'
