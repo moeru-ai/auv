@@ -55,7 +55,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | [`archive/skill-bundle/`](archive/skill-bundle/INDEX.md) | Retired | SkillBundle / recipe retirement | |
 | [`archive/phase-history/`](archive/phase-history/INDEX.md) | Historical | Early phase freeze / acceptance | |
 | [`archive/ax-copilot/`](archive/ax-copilot/INDEX.md) | Archived | macOS AX copilot vertical | |
-| [`ops/`](ops/INDEX.md) | Mixed | Setup, tooling, cross-cutting notes | |
+| [`ops/`](ops/INDEX.md) | Mixed | Setup, tooling, cross-cutting notes | [OSWorld Kubernetes provisioning](ops/2026-10-09-osworld-kubernetes-provisioning-reference.md) |
 
 ## Quick entry
 

@@ -2,7 +2,9 @@
 
 Setup, tooling, feature gates, cross-cutting notes
 
-Count: **26**
+Count: **27**
+
+- [`2026-10-09-osworld-kubernetes-provisioning-reference.md`](2026-10-09-osworld-kubernetes-provisioning-reference.md)
 
 - [`2026-05-12-setup.md`](2026-05-12-setup.md)
 - [`2026-05-13-airi-desktop-reuse.md`](2026-05-13-airi-desktop-reuse.md)

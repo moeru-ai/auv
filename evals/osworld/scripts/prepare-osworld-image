@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Runs inside the OSWorld init container, not on the client or node host.
+set -euo pipefail
+cd /image
+printf 'Downloading OSWorld VM archive (first run is about 12.3 GB)\n' >&2
+wget --timeout=30 --tries=3 --retry-on-host-error --waitretry=5 \
+  --no-verbose --show-progress --progress=dot:giga -O archive.zip "$VM_IMAGE_URL"
+printf '%s  archive.zip\n' "$VM_IMAGE_SHA256" | sha256sum --check -
+# Extract only the expected member; never expand untrusted archive paths.
+7z e -so archive.zip Ubuntu.qcow2 > System.qcow2
+test -s System.qcow2
+qemu-img info -f qcow2 System.qcow2
+rm archive.zip
+printf 'OSWorld base image verified and extracted\n' >&2

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Create or delete an ephemeral HAMi DRA X11 desktop. stdout is JSON.
-# NOTICE: OSWorld setup, reset and evaluation need a separately approved provider.
+# Create or delete an ephemeral OSWorld VM or Selkies GPU desktop. stdout is JSON.
+# TODO: Task setup/reset/evaluation remain outside provisioning; add a provider
+# only in an owner-approved runner integration slice, see ../README.md.
 set -euo pipefail
 
 usage() {
@@ -10,11 +11,18 @@ Usage: create-on-k8s [--kubeconfig FILE] [--context NAME] create --node NODE [OP
 
 Create options:
   --namespace NAME     Existing namespace (default: default)
-  --image IMAGE        Compatible Selkies EGL desktop image (default: pinned digest)
+  --profile NAME       osworld (default) or selkies
+                       OSWorld forwards guest AUV port 9847; install AUV separately
+  --image IMAGE        Container runtime image (profile-specific pinned default)
+  --vm-image-url URL   OSWorld ZIP containing Ubuntu.qcow2 (requires SHA256)
+  --vm-image-sha256 HEX  SHA256 of a custom VM ZIP archive
+  --kvm-resource NAME Existing Kubernetes device-plugin resource for /dev/kvm
+                      Default: software emulation; no privileged host access
+  --timeout SECONDS    Startup deadline (default: OSWorld 3600; Selkies 900)
+  Selkies only:
   --device-class NAME  HAMi DeviceClass (default: hami-core-gpu.project-hami.io)
   --gpu-cores N        HAMi cores, 1..100 (default: 25)
   --gpu-memory SIZE    GPU memory capacity (default: 4Gi)
-  --timeout SECONDS    Startup deadline (default: 900)
 
 Requires Bash 3.2+, jq and kubectl. Uses KUBECONFIG/current context by default.
 Progress goes to stderr. A successful create prints the JSON receipt to stdout.
@@ -38,29 +46,59 @@ done
 action=$1; shift
 namespace=default
 node=''
-image='ghcr.io/selkies-project/selkies-egl-desktop@sha256:2240baf54d6ebfbbbd8c15b9311cb90e90db9f05fe30eaf77b08eea0b09b77a7'
+profile=osworld
+image=''
+# Pins are from the official classic OSWorld provider and HF LFS metadata.
+# NOTICE: This is the classic image, not OSWorld V2; see ../README.md.
+vm_image_url='https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133/Ubuntu.qcow2.zip'
+vm_image_sha256=b795b6cd4c69b252c1b4f10150a347795555032501b60fd031751ed09b896712
+custom_vm_url=false
+custom_vm_sha=false
+gpu_options=false
+kvm_resource=''
 device_class=hami-core-gpu.project-hami.io
 gpu_cores=25
 gpu_memory=4Gi
-startup_timeout=900
+startup_timeout=''
 receipt=''
 case $action in
   create)
     while [[ $# -gt 0 ]]; do
       case $1 in
         -h|--help) usage; exit 0 ;;
-        --node|--namespace|--image|--device-class|--gpu-cores|--gpu-memory|--timeout)
+        --node|--namespace|--image|--profile|--vm-image-url|--vm-image-sha256|--kvm-resource|--device-class|--gpu-cores|--gpu-memory|--timeout)
           [[ $# -ge 2 && -n $2 ]] || fail "$1 requires a value"
           case $1 in
             --node) node=$2 ;; --namespace) namespace=$2 ;; --image) image=$2 ;;
-            --device-class) device_class=$2 ;; --gpu-cores) gpu_cores=$2 ;;
-            --gpu-memory) gpu_memory=$2 ;; --timeout) startup_timeout=$2 ;;
+            --profile) profile=$2 ;;
+            --vm-image-url) vm_image_url=$2; custom_vm_url=true ;;
+            --vm-image-sha256) vm_image_sha256=$2; custom_vm_sha=true ;;
+            --kvm-resource) kvm_resource=$2 ;;
+            --device-class) device_class=$2; gpu_options=true ;;
+            --gpu-cores) gpu_cores=$2; gpu_options=true ;;
+            --gpu-memory) gpu_memory=$2; gpu_options=true ;;
+            --timeout) startup_timeout=$2 ;;
           esac
           shift 2 ;;
         *) fail "Unknown create option: $1" ;;
       esac
     done
     [[ -n $node ]] || fail '--node is required'
+    case $profile in
+      osworld)
+        [[ $gpu_options == false ]] || fail 'GPU options require --profile selkies; the OSWorld VM does not use HAMi'
+        [[ $custom_vm_url == "$custom_vm_sha" ]] || fail '--vm-image-url and --vm-image-sha256 must be supplied together'
+        [[ $vm_image_url == https://* ]] || fail '--vm-image-url must use HTTPS'
+        [[ $vm_image_sha256 =~ ^[a-fA-F0-9]{64}$ ]] || fail '--vm-image-sha256 must be a 64-digit SHA256'
+        [[ -z $kvm_resource || $kvm_resource =~ ^[a-z0-9][a-z0-9.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail 'Invalid --kvm-resource (expected vendor.example/resource)'
+        image=${image:-happysixd/osworld-docker@sha256:0e6497a9295647cf05bf2b2af522fdd79bdeba2737595259cab310a3bcf6baa9}
+        startup_timeout=${startup_timeout:-3600} ;;
+      selkies)
+        [[ $custom_vm_url == false && $custom_vm_sha == false && -z $kvm_resource ]] || fail 'VM options require --profile osworld'
+        image=${image:-ghcr.io/selkies-project/selkies-egl-desktop@sha256:2240baf54d6ebfbbbd8c15b9311cb90e90db9f05fe30eaf77b08eea0b09b77a7}
+        startup_timeout=${startup_timeout:-900} ;;
+      *) fail 'Unknown profile (expected osworld or selkies)' ;;
+    esac
     [[ $gpu_cores =~ ^([1-9][0-9]?|100)$ ]] || fail '--gpu-cores must be 1..100'
     [[ $startup_timeout =~ ^[1-9][0-9]{0,8}$ ]] || fail '--timeout must be a positive integer (at most 9 digits)' ;;
   delete)
@@ -104,7 +142,10 @@ cleanup() {
   trap - EXIT INT TERM
   if [[ $action == create && $complete == false && -n $uid ]]; then
     "${kube[@]}" -n "$namespace" describe pod "$name" >&2 || true
-    "${kube[@]}" -n "$namespace" logs "$name" --tail=60 >&2 || true
+    "${kube[@]}" -n "$namespace" logs "$name" -c desktop --tail=60 >&2 || true
+    if [[ $profile == osworld ]]; then
+      "${kube[@]}" -n "$namespace" logs "$name" -c prepare-image --tail=20 >&2 || true
+    fi
     if ! delete_pod; then
       printf 'Cleanup failed for %s/%s, UID %s\n' "$namespace" "$name" "$uid" >&2
     fi
@@ -128,12 +169,53 @@ if [[ $action == delete ]]; then
   exit 0
 fi
 
-# Read random bytes directly. Passwords never enter command arguments or receipts.
+# Read random bytes directly for the per-instance resource name.
 name="auv-desktop-$(od -An -N5 -tx1 /dev/urandom | tr -d ' \n')"
-od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$tmp/password"
 jq -n --arg name "$name" --arg ns "$namespace" \
-  '{name:$name,namespace:$ns,labels:{"app.kubernetes.io/managed-by":"auv-k8s-desktop"}}' > "$tmp/meta.json"
-jq -n --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" '
+  '{name:$name,namespace:$ns,labels:{"app.kubernetes.io/managed-by":"auv-k8s-desktop","auv.dev/desktop":$name}}' > "$tmp/meta.json"
+if [[ $profile == osworld ]]; then
+  kvm=N
+  acceleration=software
+  if [[ -n $kvm_resource ]]; then kvm=Y; acceleration=kvm; fi
+  # The pinned runtime has wget, 7z and qemu-img. Init owns download and
+  # checksum verification; the guest gets only the verified read-only base disk.
+  # TODO: Shared persistent disk caching and guest GPU passthrough are deferred
+  # until separately approved; see ../README.md for this provisioning boundary.
+  # TODO: AUV installation and pairing are deferred to the guest integration
+  # slice. Forward 9847 now so that installing a daemon does not require a new VM.
+  # NOTICE: The pinned QEMU's TCG "max" reports AMD family 6, which makes the
+  # guest LLVM abort GNOME with "64-bit code requested on a subtarget that
+  # doesn't support it". Use the AMD64 CPUID identity proposed in QEMU #191.
+  # Remove when a new runtime's default passes the same GNOME/screenshot probe.
+  # https://gitlab.com/qemu-project/qemu/-/issues/191
+  jq -n --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" \
+    --arg url "$vm_image_url" --arg sha "$vm_image_sha256" --arg kvm "$kvm" \
+    --arg resource "$kvm_resource" --rawfile prepare "$(dirname "$0")/prepare-osworld-image" '
+    {apiVersion:"v1",kind:"Pod",metadata:$meta[0],spec:{
+      automountServiceAccountToken:false,restartPolicy:"Never",
+      nodeSelector:{"kubernetes.io/hostname":$node,"kubernetes.io/arch":"amd64"},
+      schedulingGates:[{name:"auv.dev/desktop-resources"}],
+      initContainers:[{name:"prepare-image",image:$image,command:["bash","-ceu",$prepare],
+        env:[{name:"VM_IMAGE_URL",value:$url},{name:"VM_IMAGE_SHA256",value:$sha}],
+        resources:{requests:{cpu:"100m",memory:"256Mi","ephemeral-storage":"40Gi"},
+          limits:{cpu:"2",memory:"1Gi","ephemeral-storage":"100Gi"}},
+        volumeMounts:[{name:"base",mountPath:"/image"}]}],
+      containers:[{name:"desktop",image:$image,env:[
+        {name:"RAM_SIZE",value:"4G"},{name:"CPU_CORES",value:"4"},{name:"DISK_SIZE",value:"32G"},
+        {name:"KVM",value:$kvm},{name:"NETWORK",value:"user"},
+        {name:"USER_PORTS",value:"5000,9222,8080,9847"}] +
+        if $kvm=="N" then [{name:"CPU_MODEL",value:"max,family=15,model=6,stepping=1"}] else [] end,
+        resources:{requests:({cpu:"1",memory:"5Gi","ephemeral-storage":"40Gi"} +
+          if $resource=="" then {} else {($resource):"1"} end),
+          limits:({cpu:"4",memory:"8Gi","ephemeral-storage":"100Gi"} +
+          if $resource=="" then {} else {($resource):"1"} end)},
+        volumeMounts:[{name:"base",mountPath:"/System.qcow2",subPath:"System.qcow2",readOnly:true},
+          {name:"storage",mountPath:"/storage"}]}],
+      volumes:[{name:"base",emptyDir:{sizeLimit:"60Gi"}},{name:"storage",emptyDir:{sizeLimit:"32Gi"}}]}}' > "$tmp/pod.json"
+else
+  # Passwords never enter command arguments or receipts.
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$tmp/password"
+  jq -n --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" '
   $meta[0].name as $name | {apiVersion:"v1",kind:"Pod",metadata:$meta[0],spec:{
     automountServiceAccountToken:false,restartPolicy:"Never",
     nodeSelector:{"kubernetes.io/hostname":$node},
@@ -147,24 +229,53 @@ jq -n --slurpfile meta "$tmp/meta.json" --arg node "$node" --arg image "$image" 
         requests:{cpu:"1",memory:"2Gi"},limits:{cpu:"8",memory:"16Gi"}},
       volumeMounts:[{name:"shm",mountPath:"/dev/shm"}]}],
     volumes:[{name:"shm",emptyDir:{medium:"Memory",sizeLimit:"2Gi"}}]}}' > "$tmp/pod.json"
+fi
 printf 'Creating %s/%s on %s\n' "$namespace" "$name" "$node" >&2
-# Create the Pod first: its UID owns the Secret and claim. Kubernetes waits for both.
+# Create the Pod first: its UID owns profile-specific dependent resources.
+# OSWorld is scheduling-gated; Selkies waits for its Secret and GPU claim.
 "${kube[@]}" -n "$namespace" create -f "$tmp/pod.json" -o json > "$tmp/created.json"
 uid=$(jq -er '.metadata.uid | select(type == "string" and length > 0)' "$tmp/created.json")
 printf 'Pod UID: %s\n' "$uid" >&2
 jq --arg uid "$uid" '. + {ownerReferences:[{apiVersion:"v1",kind:"Pod",
   name:.name,uid:$uid,blockOwnerDeletion:true}]}' "$tmp/meta.json" > "$tmp/owned.json"
-jq -n --slurpfile meta "$tmp/owned.json" --rawfile password "$tmp/password" \
-  '{apiVersion:"v1",kind:"Secret",metadata:$meta[0],type:"Opaque",stringData:{password:$password}}' > "$tmp/secret.json"
-"${kube[@]}" -n "$namespace" create -f "$tmp/secret.json" -o name >&2
-jq -n --slurpfile meta "$tmp/owned.json" --arg class "$device_class" \
-  --arg cores "$gpu_cores" --arg memory "$gpu_memory" '
+if [[ $profile == osworld ]]; then
+  # The official guest API executes commands without authentication. Keep the Pod
+  # unscheduled until ingress isolation exists; access it through kubectl tunnels.
+  # NOTICE: Requires a NetworkPolicy-enforcing CNI. Policies are additive: an
+  # existing allow policy selecting this Pod can still grant ingress.
+  jq -n --slurpfile meta "$tmp/owned.json" --arg name "$name" '
+    {apiVersion:"networking.k8s.io/v1",kind:"NetworkPolicy",metadata:$meta[0],spec:{
+      podSelector:{matchLabels:{"auv.dev/desktop":$name}},policyTypes:["Ingress"],ingress:[]}}' > "$tmp/policy.json"
+  "${kube[@]}" -n "$namespace" create -f "$tmp/policy.json" -o name >&2
+  "${kube[@]}" -n "$namespace" patch pod "$name" --type=json \
+    -p='[{"op":"remove","path":"/spec/schedulingGates"}]' >&2
+else
+  jq -n --slurpfile meta "$tmp/owned.json" --rawfile password "$tmp/password" \
+    '{apiVersion:"v1",kind:"Secret",metadata:$meta[0],type:"Opaque",stringData:{password:$password}}' > "$tmp/secret.json"
+  "${kube[@]}" -n "$namespace" create -f "$tmp/secret.json" -o name >&2
+  jq -n --slurpfile meta "$tmp/owned.json" --arg class "$device_class" \
+    --arg cores "$gpu_cores" --arg memory "$gpu_memory" '
   {apiVersion:"resource.k8s.io/v1",kind:"ResourceClaim",metadata:$meta[0],spec:{devices:{requests:[
     {name:"gpu",exactly:{deviceClassName:$class,allocationMode:"ExactCount",count:1,
       capacity:{requests:{cores:$cores,memory:$memory}}}}]}}}' > "$tmp/claim.json"
-"${kube[@]}" -n "$namespace" create -f "$tmp/claim.json" -o name >&2
+  "${kube[@]}" -n "$namespace" create -f "$tmp/claim.json" -o name >&2
+fi
 
-probe=$(cat <<'PROBE'
+if [[ $profile == osworld ]]; then
+  probe=$(cat <<'PROBE'
+set -eu
+frame=$(mktemp)
+trap 'rm -f "$frame"' EXIT
+# Match upstream API readiness; reject HTML/error bodies with 200. This is not
+# proof of a stable compositor or task success; see the live evidence note.
+wget --quiet --timeout=15 --tries=1 -O "$frame" http://127.0.0.1:5000/screenshot
+signature=$(od -An -N8 -tx1 "$frame" | tr -d ' \n')
+[ "$signature" = 89504e470d0a1a0a ] || { echo 'Screenshot is not PNG' >&2; exit 1; }
+echo OSWORLD_READY
+PROBE
+)
+else
+  probe=$(cat <<'PROBE'
 set -eu
 if [ ! -r /tmp/runtime-ubuntu/container-env ]; then
   echo 'WAIT: desktop session environment'; exit 0
@@ -180,6 +291,7 @@ fi
 timeout 15 glxinfo -B
 PROBE
 )
+fi
 deadline=$((SECONDS + startup_timeout))
 last='Waiting for scheduling and image pull'
 reported=''
@@ -188,10 +300,25 @@ while (( SECONDS < deadline )); do
   "${kube[@]}" -n "$namespace" get pod "$name" -o json > "$tmp/state.json"
   phase=$(jq -r '.status.phase // "Pending"' "$tmp/state.json")
   case $phase in Failed|Succeeded) fail "Desktop exited: $phase" ;; esac
+  if jq -e 'any(.status.initContainerStatuses[]?; (.state.terminated.exitCode // 0) != 0)' "$tmp/state.json" >/dev/null; then
+    fail 'VM image preparation failed (see prepare-image logs below)'
+  fi
   if [[ $phase == Running ]]; then
     if "${kube[@]}" -n "$namespace" exec "$name" -c desktop -- bash -c "$probe" > "$tmp/probe.out" 2> "$tmp/probe.err"; then
       output=$(cat "$tmp/probe.out")
-      if [[ $output == 'WAIT: '* ]]; then
+      if [[ $profile == osworld && $output == OSWORLD_READY ]]; then
+        jq -n --arg context "$context" --arg ns "$namespace" --arg pod "$name" \
+          --arg uid "$uid" --slurpfile state "$tmp/state.json" --arg image "$image" \
+          --arg url "$vm_image_url" --arg sha "$vm_image_sha256" --arg acceleration "$acceleration" '
+          {profile:"osworld",context:$context,namespace:$ns,pod:$pod,uid:$uid,node:$state[0].spec.nodeName,
+            image:$image,vm_image_url:$url,vm_image_sha256:$sha,acceleration:$acceleration,
+            osworld_ready:true,server_port:5000,desktop_port:8006,chromium_port:9222,vlc_port:8080,auv_port:9847}'
+        complete=true
+        printf 'OSWorld ready: %s/%s; acceleration: %s\n' "$namespace" "$name" "$acceleration" >&2
+        exit 0
+      elif [[ $profile == osworld ]]; then
+        fail 'Unexpected OSWorld readiness response'
+      elif [[ $output == 'WAIT: '* ]]; then
         last="Waiting for ${output#WAIT: }"
       else
         renderer=$(jq -Rrs 'split("\n") | map(select(startswith("OpenGL renderer string:"))) |
@@ -205,7 +332,7 @@ while (( SECONDS < deadline )); do
         fi
         jq -n --arg context "$context" --arg ns "$namespace" --arg pod "$name" \
           --arg uid "$uid" --slurpfile state "$tmp/state.json" --arg renderer "$renderer" --arg image "$image" \
-          '{context:$context,namespace:$ns,pod:$pod,uid:$uid,node:$state[0].spec.nodeName,
+          '{profile:"selkies",context:$context,namespace:$ns,pod:$pod,uid:$uid,node:$state[0].spec.nodeName,
             display:":20",gpu_rendering_verified:true,renderer:$renderer,image:$image,
             password_secret:$pod,desktop_port:8080}'
         complete=true
@@ -214,11 +341,16 @@ while (( SECONDS < deadline )); do
       fi
     else
       last=$(cat "$tmp/probe.err")
-      last=${last:-Waiting for X11 and Plasma}
+      last=${last:-Waiting for desktop readiness}
     fi
   else
-    waiting=$(jq -r '[.status.containerStatuses[]?.state.waiting? | select(. != null) |
-      (.reason // "") + ": " + (.message // "")] | join("; ")' "$tmp/state.json")
+    waiting=$(jq -r '
+      if any(.status.initContainerStatuses[]?; .state.running != null) then
+        "Preparing OSWorld VM disk (download, checksum, extraction); see prepare-image logs"
+      else
+        [((.status.initContainerStatuses // []) + (.status.containerStatuses // []))[]?.state.waiting? | select(. != null) |
+          (.reason // "") + ": " + (.message // "")] | join("; ")
+      end' "$tmp/state.json")
     [[ -z $waiting ]] || last=$waiting
   fi
   if [[ $last != "$reported" ]] || (( SECONDS - report_time >= 30 )); then
