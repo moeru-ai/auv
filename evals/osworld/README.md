@@ -70,7 +70,7 @@ still work. Stop tunnels separately. For startup failures, inspect
 Edit bootstrap manifests in `scripts/assets/`; `create-on-k8s` fills in names,
 images, credentials and resource options with jq. Image pins live in the script.
 The download helper uses the tools shipped in the pinned runtime: wget, 7z and
-qemu-img. Run `scripts/tests/test-create-on-k8s` and ShellCheck after changes.
+qemu-img. Run ShellCheck after changes.
 
 Evidence: the official disk has booted on Kubernetes under software emulation,
 with a visible GNOME desktop and working screenshot/noVNC endpoints. KVM and AUV
